@@ -76,7 +76,16 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   # `clientStream` is the capability which will receive server -> client messages, while
   # serverStream represents client -> server.
 
-  # TODO(someday): Add WebDAV and CalDAV methods?
+  # WebDAV methods
+  propfind @7 (path :Text, context :DavContext) -> Response;
+  proppatch @8 (path :Text, content :PropPatchContent, context :DavContext) -> Response;
+  mkcol @9 (path :Text, context :DavContext) -> Response;
+  copy @10 (path :Text, context :DavContext) -> Response;
+  move @11 (path :Text, context :DavContext) -> Response;
+  lock @12 (path :Text, context :DavContext) -> Response;
+  unlock @13 (path :Text, context :DavContext) -> Response;
+  acl @14 (path :Text, content :AclContent, context :DavContext) -> Response;
+  report @15 (path :Text, context :DavContext) -> Response;
 
   struct Context {
     # Additional per-request context.
@@ -99,6 +108,18 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
     # This corresponds to the Accept header
   }
 
+  struct DavContext {
+    # WebDAV-specific request context.
+
+    accept @0 :List(AcceptedType);
+    # This corresponds to the Accept header
+
+    dav @1 :List(Text);
+    depth @2 :UInt16; # Used with PROPFIND method
+    etag @3 :Text;
+    destination @4 :Text; # Used with MOVE method
+  }
+
   struct PostContent {
     mimeType @0 :Text;
     content @1 :Data;
@@ -106,6 +127,24 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   }
 
   struct PutContent {
+    mimeType @0 :Text;
+    content @1 :Data;
+    encoding @2 :Text;  # Content-Encoding header (optional).
+  }
+
+  struct PropFindContent {
+    mimeType @0 :Text;
+    content @1 :Data;
+    encoding @2 :Text;  # Content-Encoding header (optional).
+  }
+
+  struct PropPatchContent {
+    mimeType @0 :Text;
+    content @1 :Data;
+    encoding @2 :Text;  # Content-Encoding header (optional).
+  }
+
+  struct AclContent {
     mimeType @0 :Text;
     content @1 :Data;
     encoding @2 :Text;  # Content-Encoding header (optional).
@@ -154,12 +193,16 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
       created  @1 $httpStatus(id = 201, title = "Created");
       accepted @2 $httpStatus(id = 202, title = "Accepted");
 
+      noContent      @3 $httpStatus(id = 204, title = "No Content");
+      partialContent @4 $httpStatus(id = 206, title = "Partial Content");
+      multiStatus    @5 $httpStatus(id = 207, title = "Multi-Status");
+
+      # This seems to fit better here than in the 3xx range
+      notModified    @6 $httpStatus(id = 304, title = "Not Modified");
+
       # Not applicable:
       #   203 Non-Authoritative Information:  Only applicable to proxies?
-      #   204 No Content:  Meant for old form-based interaction.  Obsolete.  Seems like bad UX, too.
-      #     If desired, should be handled differently because there should be no entity body.
       #   205 Reset Content:  Like 204, but even stranger.
-      #   206 Partial Content:  Range requests not implemented yet.
       #   Others:  Not standard.
     }
 
