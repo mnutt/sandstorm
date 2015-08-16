@@ -1269,6 +1269,51 @@ function parseCookies(request) {
   return result;
 }
 
+function parseDestinationHeader(request) {
+  var header = request.headers["destination"];
+
+  if (header) {
+    // Destination header is a fully qualified URI
+    var parsed = url.parse(header);
+    return parsed.toString();
+  }
+}
+
+function parseDavHeader(request) {
+  var header = request.headers["dav"];
+
+  var result = [];
+  if (header) {
+    // DAV header looks like:
+    // DAV: 1,2,address-book,mkcol-extended
+    var davList = header.split(",");
+    for (var i in davList) {
+      result.push(davList[i].replace(/[^0-9a-z\-]/, ''));
+    }
+  }
+
+  return result;
+}
+
+function parseEtagHeader(request) {
+  var header = request.headers["etag"];
+
+  // Etag header looks like:
+  // Etag: "7776cdb01f44354af8bfa4db0c56eebcb1378975"
+  if (header && header.match(/^(?:W\/)?"(?:[ !#-\x7E\x80-\xFF]*|\r\n[\t ]|\\.)*"$/)) {
+    return header;
+  }
+}
+
+function parseDepthHeader(request) {
+  var header = request.headers["depth"];
+
+  var validHeaders = ["0", "1", "1,noroot", "infinity", "infinity,noroot"];
+  if (header && validHeaders.indexOf(header) >= 0) {
+    return header;
+  }
+}
+
 function parseAcceptHeader(request) {
   var header = request.headers["accept"];
 
@@ -1346,6 +1391,11 @@ Proxy.prototype.makeContext = function (request, response) {
 
   context.accept = parseAcceptHeader(request);
 
+  context.dav = parseDavHeader(request);
+  context.depth = parseDepthHeader(request);
+  context.etag = parseEtagHeader(request);
+  context.destination = parseDestinationHeader(request);
+
   var promise = new Promise(function (resolve, reject) {
     response.resolveResponseStream = resolve;
     response.rejectResponseStream = reject;
@@ -1395,21 +1445,24 @@ function makeSetCookieHeader(cookie) {
 
 // TODO(cleanup):  Auto-generate based on annotations in web-session.capnp.
 var successCodes = {
-  ok:       { id: 200, title: "OK" },
-  created:  { id: 201, title: "Created" },
-  accepted: { id: 202, title: "Accepted" }
+  ok:          { id: 200, title: "OK" },
+  created:     { id: 201, title: "Created" },
+  accepted:    { id: 202, title: "Accepted" },
+  multiStatus: { id: 207, title: "Multi-Status" }
 };
-var noContentSuccessCodes = [
-  // Indexed by shouldResetForm * 1
-  { id: 204, title: "No Content" },
-  { id: 205, title: "Reset Content" }
-];
+var noContentSuccessCodes = {
+  noContent:      { id: 204, title: "No Content" },
+  resetContent:   { id: 205, title: "Reset Content" },
+  partialContent: { id: 206, title: "Partial Content" },
+  multiStatus:    { id: 207, title: "Multi-Status" },
+  notModified:    { id: 304, title: "Not Modified" }
+};
 var redirectCodes = [
   // Indexed by switchToGet * 2 + isPermanent
   { id: 307, title: "Temporary Redirect" },
   { id: 308, title: "Permanent Redirect" },
   { id: 303, title: "See Other" },
-  { id: 301, title: "Moved Permanently" }
+  { id: 301, title: "Moved Permanently" },
 ];
 var errorCodes = {
   badRequest:            { id: 400, title: "Bad Request" },
@@ -1422,7 +1475,7 @@ var errorCodes = {
   requestEntityTooLarge: { id: 413, title: "Request Entity Too Large" },
   requestUriTooLong:     { id: 414, title: "Request-URI Too Long" },
   unsupportedMediaType:  { id: 415, title: "Unsupported Media Type" },
-  imATeapot:             { id: 418, title: "I'm a teapot" },
+  imATeapot:             { id: 418, title: "I'm a teapot" }
 };
 
 function ResponseStream(response, streamHandle, resolve, reject) {
@@ -1530,7 +1583,7 @@ Proxy.prototype.translateResponse = function (rpcResponse, response) {
     }
   } else if ("noContent" in rpcResponse) {
     var noContent = rpcResponse.noContent;
-    var noContentCode = noContentSuccessCodes[noContent.shouldResetForm * 1];
+    var noContentCode = noContentSuccessCodes[noContent.statusCode];
     response.writeHead(noContentCode.id, noContentCode.title);
     response.end();
   } else if ("redirect" in rpcResponse) {
@@ -1599,8 +1652,54 @@ Proxy.prototype.handleRequest = function (request, data, response, retryCount) {
       }, context);
     } else if (request.method === "DELETE") {
       return session.delete(path, context);
+    } else if (request.method === "PROPFIND") {
+      return session.propfind(path, {
+        mimeType: request.headers["content-type"] || "application/octet-stream",
+        content: data,
+        encoding: request.headers["content-encoding"]
+      }, context);
+    } else if (request.method === "PROPPATCH") {
+      return session.proppatch(path, {
+        mimeType: request.headers["content-type"] || "application/octet-stream",
+        content: data,
+        encoding: request.headers["content-encoding"]
+      }, context);
+    } else if (request.method === "MKCOL") {
+      return session.mkcol(path, {
+        mimeType: request.headers["content-type"] || "application/octet-stream",
+        content: data,
+        encoding: request.headers["content-encoding"]
+      }, context);
+    } else if (request.method === "COPY") {
+      return session.copy(path, context);
+    } else if (request.method === "MOVE") {
+      return session.move(path, context);
+    } else if (request.method === "LOCK") {
+      return session.lock(path, {
+        mimeType: request.headers["content-type"] || "application/octet-stream",
+        content: data,
+        encoding: request.headers["content-encoding"]
+      }, context);
+    } else if (request.method === "UNLOCK") {
+      return session.unlock(path, {
+        mimeType: request.headers["content-type"] || "application/octet-stream",
+        content: data,
+        encoding: request.headers["content-encoding"]
+      }, context);
+    } else if (request.method === "ACL") {
+      return session.acl(path, {
+        mimeType: request.headers["content-type"] || "application/octet-stream",
+        content: data,
+        encoding: request.headers["content-encoding"]
+      }, context);
+    } else if (request.method === "REPORT") {
+      return session.report(path, {
+        mimeType: request.headers["content-type"] || "application/octet-stream",
+        content: data,
+        encoding: request.headers["content-encoding"]
+      }, context);
     } else {
-      throw new Error("Sandstorm only supports GET, POST, PUT, and DELETE requests.");
+      throw new Error("Sandstorm only supports the following methods: GET, POST, PUT, DELETE, PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK, ACL, and REPORT.");
     }
 
   }).then(function (rpcResponse) {
@@ -1619,7 +1718,7 @@ Proxy.prototype.handleRequestStreaming = function (request, response, contentLen
   var session = this.getSession(request);
 
   var mimeType = request.headers["content-type"] || "application/octet-stream";
-  var encoding = request.headers["content-encoding"]
+  var encoding = request.headers["content-encoding"];
 
   var requestStreamPromise;
   if (request.method === "POST") {

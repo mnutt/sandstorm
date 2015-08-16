@@ -20,6 +20,7 @@
 // that server and then redirect incoming requests to it over standard HTTP on
 // the loopback network interface.
 
+
 #include <kj/main.h>
 #include <kj/debug.h>
 #include <kj/async-io.h>
@@ -891,6 +892,88 @@ public:
     return sendRequest(toBytes(httpRequest), context);
   }
 
+  kj::Promise<void> propfind(PropfindContext context) override {
+    PropfindParams::Reader params = context.getParams();
+    auto content = params.getContent();
+    kj::String httpRequest = makeHeaders("PROPFIND", params.getPath(), params.getContext(),
+                                         kj::str("Content-Type: ", content.getMimeType()),
+                                         kj::str("Content-Length: ", content.getContent().size()),
+                                         content.hasEncoding() ? kj::str("Content-Encoding: ", content.getEncoding()) : nullptr);
+    return sendRequest(toBytes(httpRequest, content.getContent()), context);
+  }
+
+  kj::Promise<void> proppatch(ProppatchContext context) override {
+    ProppatchParams::Reader params = context.getParams();
+    auto content = params.getContent();
+    kj::String httpRequest = makeHeaders("PROPPATCH", params.getPath(), params.getContext(),
+                                         kj::str("Content-Type: ", content.getMimeType()),
+                                         kj::str("Content-Length: ", content.getContent().size()),
+                                         content.hasEncoding() ? kj::str("Content-Encoding: ", content.getEncoding()) : nullptr);
+    return sendRequest(toBytes(httpRequest, content.getContent()), context);
+  }
+
+  kj::Promise<void> mkcol(MkcolContext context) override {
+    MkcolParams::Reader params = context.getParams();
+    auto content = params.getContent();
+    kj::String httpRequest = makeHeaders("MKCOL", params.getPath(), params.getContext(),
+                                         kj::str("Content-Type: ", content.getMimeType()),
+                                         kj::str("Content-Length: ", content.getContent().size()),
+                                         content.hasEncoding() ? kj::str("Content-Encoding: ", content.getEncoding()) : nullptr);
+    return sendRequest(toBytes(httpRequest, content.getContent()), context);
+  }
+
+  kj::Promise<void> copy(CopyContext context) override {
+    CopyParams::Reader params = context.getParams();
+    kj::String httpRequest = makeHeaders("COPY", params.getPath(), params.getContext());
+    return sendRequest(toBytes(httpRequest), context);
+  }
+
+  kj::Promise<void> move(MoveContext context) override {
+    MoveParams::Reader params = context.getParams();
+    kj::String httpRequest = makeHeaders("MOVE", params.getPath(), params.getContext());
+    return sendRequest(toBytes(httpRequest), context);
+  }
+
+  kj::Promise<void> lock(LockContext context) override {
+    LockParams::Reader params = context.getParams();
+    auto content = params.getContent();
+    kj::String httpRequest = makeHeaders("LOCK", params.getPath(), params.getContext(),
+                                         kj::str("Content-Type: ", content.getMimeType()),
+                                         kj::str("Content-Length: ", content.getContent().size()),
+                                         content.hasEncoding() ? kj::str("Content-Encoding: ", content.getEncoding()) : nullptr);
+    return sendRequest(toBytes(httpRequest, content.getContent()), context);
+  }
+
+  kj::Promise<void> unlock(UnlockContext context) override {
+    UnlockParams::Reader params = context.getParams();
+    auto content = params.getContent();
+    kj::String httpRequest = makeHeaders("UNLOCK", params.getPath(), params.getContext(),
+                                         kj::str("Content-Type: ", content.getMimeType()),
+                                         kj::str("Content-Length: ", content.getContent().size()),
+                                         content.hasEncoding() ? kj::str("Content-Encoding: ", content.getEncoding()) : nullptr);
+    return sendRequest(toBytes(httpRequest, content.getContent()), context);
+  }
+
+  kj::Promise<void> acl(AclContext context) override {
+    AclParams::Reader params = context.getParams();
+    auto content = params.getContent();
+    kj::String httpRequest = makeHeaders("ACL", params.getPath(), params.getContext(),
+                                         kj::str("Content-Type: ", content.getMimeType()),
+                                         kj::str("Content-Length: ", content.getContent().size()),
+                                         content.hasEncoding() ? kj::str("Content-Encoding: ", content.getEncoding()) : nullptr);
+    return sendRequest(toBytes(httpRequest, content.getContent()), context);
+  }
+
+  kj::Promise<void> report(ReportContext context) override {
+    ReportParams::Reader params = context.getParams();
+    auto content = params.getContent();
+    kj::String httpRequest = makeHeaders("REPORT", params.getPath(), params.getContext(),
+                                         kj::str("Content-Type: ", content.getMimeType()),
+                                         kj::str("Content-Length: ", content.getContent().size()),
+                                         content.hasEncoding() ? kj::str("Content-Encoding: ", content.getEncoding()) : nullptr);
+    return sendRequest(toBytes(httpRequest, content.getContent()), context);
+  }
+
   kj::Promise<void> postStreaming(PostStreamingContext context) override {
     PostStreamingParams::Reader params = context.getParams();
     kj::String httpRequest = makeHeaders("POST", params.getPath(), params.getContext(),
@@ -1062,6 +1145,25 @@ private:
             }, ", ")));
     } else {
       lines.add(kj::str("Accept: */*"));
+    }
+    auto depth = context.getDepth();
+    if (depth.size() > 0) {
+      lines.add(kj::str("Depth: ", depth));
+    }
+    auto etag = context.getEtag();
+    if (etag.size() > 0) {
+      lines.add(kj::str("Etag: ", etag));
+    }
+    auto destination = context.getDestination();
+    if (destination.size() > 0) {
+      lines.add(kj::str("Destination: ", destination));
+    }
+    auto dav = context.getDav();
+    if (dav.size() > 0) {
+      lines.add(kj::str("DAV: ", kj::strArray(
+                                              KJ_MAP(c, dav) {
+                                                return kj::str(c);
+                                              }, ",")));
     }
 
     lines.add(kj::str(""));
@@ -1601,3 +1703,4 @@ private:
 }  // namespace sandstorm
 
 KJ_MAIN(sandstorm::LegacyBridgeMain)
+

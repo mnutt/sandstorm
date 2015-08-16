@@ -77,15 +77,15 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   # serverStream represents client -> server.
 
   # WebDAV methods
-  propfind @7 (path :Text, context :DavContext) -> Response;
-  proppatch @8 (path :Text, content :PropPatchContent, context :DavContext) -> Response;
-  mkcol @9 (path :Text, context :DavContext) -> Response;
-  copy @10 (path :Text, context :DavContext) -> Response;
-  move @11 (path :Text, context :DavContext) -> Response;
-  lock @12 (path :Text, context :DavContext) -> Response;
-  unlock @13 (path :Text, context :DavContext) -> Response;
-  acl @14 (path :Text, content :AclContent, context :DavContext) -> Response;
-  report @15 (path :Text, context :DavContext) -> Response;
+  propfind @7 (path :Text, content :PropfindContent, context :Context) -> Response;
+  proppatch @8 (path :Text, content :ProppatchContent, context :Context) -> Response;
+  mkcol @9 (path :Text, content :MkcolContent, context :Context) -> Response;
+  copy @10 (path :Text, context :Context) -> Response;
+  move @11 (path :Text, context :Context) -> Response;
+  lock @12 (path :Text, content :LockContent, context :Context) -> Response;
+  unlock @13 (path :Text, content :UnlockContent, context :Context) -> Response;
+  acl @14 (path :Text, content :AclContent, context :Context) -> Response;
+  report @15 (path :Text, content :ReportContent, context :Context) -> Response;
 
   struct Context {
     # Additional per-request context.
@@ -106,18 +106,12 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
 
     accept @2 :List(AcceptedType);
     # This corresponds to the Accept header
-  }
 
-  struct DavContext {
     # WebDAV-specific request context.
-
-    accept @0 :List(AcceptedType);
-    # This corresponds to the Accept header
-
-    dav @1 :List(Text);
-    depth @2 :UInt16; # Used with PROPFIND method
-    etag @3 :Text;
-    destination @4 :Text; # Used with MOVE method
+    dav @3 :List(Text);
+    depth @4 :Text; # Used with PROPFIND method, can be an int or 'infinity'
+    etag @5 :Text;
+    destination @6 :Text; # Used with MOVE method
   }
 
   struct PostContent {
@@ -132,19 +126,43 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
     encoding @2 :Text;  # Content-Encoding header (optional).
   }
 
-  struct PropFindContent {
+  struct PropfindContent {
     mimeType @0 :Text;
     content @1 :Data;
     encoding @2 :Text;  # Content-Encoding header (optional).
   }
 
-  struct PropPatchContent {
+  struct ProppatchContent {
     mimeType @0 :Text;
     content @1 :Data;
     encoding @2 :Text;  # Content-Encoding header (optional).
   }
 
   struct AclContent {
+    mimeType @0 :Text;
+    content @1 :Data;
+    encoding @2 :Text;  # Content-Encoding header (optional).
+  }
+
+  struct MkcolContent {
+    mimeType @0 :Text;
+    content @1 :Data;
+    encoding @2 :Text;  # Content-Encoding header (optional).
+  }
+
+  struct LockContent {
+    mimeType @0 :Text;
+    content @1 :Data;
+    encoding @2 :Text;  # Content-Encoding header (optional).
+  }
+
+  struct UnlockContent {
+    mimeType @0 :Text;
+    content @1 :Data;
+    encoding @2 :Text;  # Content-Encoding header (optional).
+  }
+
+  struct ReportContent {
     mimeType @0 :Text;
     content @1 :Data;
     encoding @2 :Text;  # Content-Encoding header (optional).
@@ -267,6 +285,8 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
 
       noContent :group {
         # Return successful, but with no content (status codes 204 and 205)
+
+        statusCode @17 :SuccessCode;
 
         shouldResetForm @15 :Bool;
         # If this is the response to a form submission, should the form be reset to empty?
