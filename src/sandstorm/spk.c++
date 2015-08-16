@@ -20,6 +20,7 @@
 #include <kj/debug.h>
 #include <kj/io.h>
 #include <capnp/serialize.h>
+#include <capnp/serialize-packed.h>
 #include <capnp/compat/json.h>
 #include <sodium/crypto_sign.h>
 #include <sodium/crypto_hash_sha256.h>
@@ -45,6 +46,9 @@
 #include <kj/async-unix.h>
 #include <ctype.h>
 #include <time.h>
+#include <poll.h>
+#include <sandstorm/app-index/submit.capnp.h>
+#include <sodium/crypto_generichash_blake2b.h>
 
 #include "version.h"
 #include "fuse.h"
@@ -183,8 +187,54 @@ private:
   byte decodeTable[256];
 };
 
-constexpr Base32Decoder BASE64_DECODER;
-static_assert(BASE64_DECODER.verifyTable(), "Base32 decode table is incomplete.");
+constexpr Base32Decoder BASE32_DECODER;
+static_assert(BASE32_DECODER.verifyTable(), "Base32 decode table is incomplete.");
+
+kj::String appIdString(spk::AppId::Reader appId) {
+  auto bytes = capnp::AnyStruct::Reader(appId).getDataSection();
+  KJ_ASSERT(bytes.size() == 32);
+  return base32Encode(bytes);
+}
+
+kj::String packageIdString(spk::PackageId::Reader packageId) {
+  auto bytes = capnp::AnyStruct::Reader(packageId).getDataSection();
+  KJ_ASSERT(bytes.size() == 16);
+  return hexEncode(bytes);
+}
+
+static kj::Maybe<uint> parseHexDigit(char c) {
+  if ('0' <= c && c <= '9') {
+    return static_cast<uint>(c - '0');
+  } else if ('a' <= c && c <= 'f') {
+    return static_cast<uint>(c - 'a');
+  } else {
+    return nullptr;
+  }
+}
+
+static bool tryParsePackageId(kj::StringPtr in, spk::PackageId::Builder out) {
+  if (in.size() != 32) return false;
+
+  auto bytes = capnp::AnyStruct::Builder(kj::mv(out)).getDataSection();
+  KJ_ASSERT(bytes.size() == 16);
+
+  for (auto i: kj::indices(bytes)) {
+    byte b = 0;
+    KJ_IF_MAYBE(d, parseHexDigit(in[i*2])) {
+      b = *d;
+    } else {
+      return false;
+    }
+    KJ_IF_MAYBE(d, parseHexDigit(in[i*2+1])) {
+      b |= *d << 4;
+    } else {
+      return false;
+    }
+    bytes[i] = b;
+  }
+
+  return true;
+}
 
 // =======================================================================================
 // JSON handlers for AppId and PackageId, converting them to their standard textual form.
@@ -193,9 +243,7 @@ class AppIdJsonHandler: public capnp::JsonCodec::Handler<spk::AppId> {
 public:
   void encode(const capnp::JsonCodec& codec, spk::AppId::Reader input,
               capnp::JsonValue::Builder output) const override {
-    auto bytes = capnp::AnyStruct::Reader(input).getDataSection();
-    KJ_ASSERT(bytes.size() == 32);
-    output.setString(base32Encode(bytes));
+    output.setString(appIdString(input));
   }
 
   void decode(const capnp::JsonCodec& codec, capnp::JsonValue::Reader input,
@@ -208,14 +256,54 @@ class PackageIdJsonHandler: public capnp::JsonCodec::Handler<spk::PackageId> {
 public:
   void encode(const capnp::JsonCodec& codec, spk::PackageId::Reader input,
               capnp::JsonValue::Builder output) const override {
-    auto bytes = capnp::AnyStruct::Reader(input).getDataSection();
-    KJ_ASSERT(bytes.size() == 16);
-    output.setString(hexEncode(bytes));
+    output.setString(packageIdString(input));
   }
 
   void decode(const capnp::JsonCodec& codec, capnp::JsonValue::Reader input,
               spk::PackageId::Builder output) const override {
-    KJ_UNIMPLEMENTED("AppIdJsonHandler::decode");
+    KJ_UNIMPLEMENTED("PackageIdJsonHandler::decode");
+  }
+};
+
+class OversizeDataHandler: public capnp::JsonCodec::Handler<capnp::Data> {
+public:
+  void encode(const capnp::JsonCodec& codec, capnp::Data::Reader input,
+              capnp::JsonValue::Builder output) const override {
+    if (input.size() > 256) {
+      auto call = output.initCall();
+      call.setFunction("LargeDataBlob");
+      call.initParams(1)[0].setNumber(input.size());
+    } else {
+      auto call = output.initCall();
+      call.setFunction("Base64");
+      call.initParams(1)[0].setString(base64Encode(input, false));
+    }
+  }
+
+  capnp::Orphan<capnp::Data> decode(
+      const capnp::JsonCodec& codec, capnp::JsonValue::Reader input,
+      capnp::Orphanage orphanage) const override {
+    KJ_UNIMPLEMENTED("OversizeDataHandler::decode");
+  }
+};
+
+class OversizeTextHandler: public capnp::JsonCodec::Handler<capnp::Text> {
+public:
+  void encode(const capnp::JsonCodec& codec, capnp::Text::Reader input,
+              capnp::JsonValue::Builder output) const override {
+    if (input.size() > 256) {
+      auto call = output.initCall();
+      call.setFunction("LargeTextBlob");
+      call.initParams(1)[0].setNumber(input.size());
+    } else {
+      output.setString(input);
+    }
+  }
+
+  capnp::Orphan<capnp::Text> decode(
+      const capnp::JsonCodec& codec, capnp::JsonValue::Reader input,
+      capnp::Orphanage orphanage) const override {
+    KJ_UNIMPLEMENTED("OversizeTextHandler::decode");
   }
 };
 
@@ -374,7 +462,9 @@ public:
         .addSubCommand("verify", KJ_BIND_METHOD(*this, getVerifyMain),
                        "Verify signature on an spk and output the app ID (without unpacking).")
         .addSubCommand("dev", KJ_BIND_METHOD(*this, getDevMain),
-                       "Run an app in dev mode."))
+                       "Run an app in dev mode.")
+        .addSubCommand("publish", KJ_BIND_METHOD(*this, getPublishMain),
+                       "Publish a package to the app market."))
         .build();
   }
 
@@ -1450,6 +1540,8 @@ private:
       return validationError("Signature didn't match package contents.");
     }
 
+    auto appIdString = base32Encode(publicKey);
+
     KJ_IF_MAYBE(info, maybeInfo) {
       // Compute hash of input package (for package ID).
       byte hash[crypto_hash_sha256_BYTES];
@@ -1491,20 +1583,40 @@ private:
 
           {
             auto appId = capnp::AnyStruct::Builder(info->initAppId()).getDataSection();
-            KJ_ASSERT(appId.size() == sizeof(publicKey))
+            KJ_ASSERT(appId.size() == sizeof(publicKey));
             memcpy(appId.begin(), publicKey, sizeof(publicKey));
           }
           {
             auto packageId = capnp::AnyStruct::Builder(info->initPackageId()).getDataSection();
-            KJ_ASSERT(packageId.size() == sizeof(hash) / 2)
-            memcpy(packageId.begin(), publicKey, sizeof(hash) / 2);
+            KJ_ASSERT(packageId.size() == sizeof(hash) / 2);
+            memcpy(packageId.begin(), hash, sizeof(hash) / 2);
           }
 
           info->setTitle(manifest.getAppTitle());
           info->setVersion(manifest.getAppVersion());
           info->setMarketingVersion(manifest.getAppMarketingVersion());
-          info->setMetadata(manifest.getMetadata());
-          // TODO(now): Verify author signature.
+          auto metadata = manifest.getMetadata();
+          info->setMetadata(metadata);
+
+          // Validate some things.
+          if (metadata.hasWebsite()) requireHttpUrl(metadata.getWebsite());
+          if (metadata.hasCodeUrl()) requireHttpUrl(metadata.getCodeUrl());
+
+          // Check author PGP key.
+          auto author = metadata.getAuthor();
+          if (author.hasPgpSignature()) {
+            if (!metadata.hasPgpKeyring()) {
+              return validationError(
+                  "author's PGP signature is present but no PGP keyring is provided");
+            }
+
+            auto expectedContent = kj::str(
+                "I am the author of the Sandstorm.io app with the following ID: ",
+                appIdString);
+
+            info->setAuthorPgpKeyFingerprint(checkPgpSignature(expectedContent,
+                author.getPgpSignature(), metadata.getPgpKeyring(), validationError));
+          }
 
           foundManifest = true;
           break;
@@ -1516,7 +1628,124 @@ private:
       }
     }
 
-    return base32Encode(publicKey);
+    return appIdString;
+  }
+
+  static void requireHttpUrl(kj::StringPtr url) {
+    KJ_REQUIRE(url.startsWith("http://") || url.startsWith("https://"),
+               "web URLs must be HTTP", url);
+  }
+
+  static kj::String checkPgpSignature(
+      kj::StringPtr expectedContent, kj::ArrayPtr<const byte> sig, kj::ArrayPtr<const byte> key,
+      kj::Function<kj::String(kj::StringPtr problem)>& validationError) {
+    char keyfile[] = "/tmp/spk-pgp-key.XXXXXX";
+    int keyfd;
+    KJ_SYSCALL(keyfd = mkstemp(keyfile));
+    KJ_DEFER(unlink(keyfile));
+    kj::FdOutputStream(kj::AutoCloseFd(keyfd)).write(key.begin(), key.size());
+
+    char sigfile[] = "/tmp/spk-pgp-sig.XXXXXX";
+    int sigfd;
+    KJ_SYSCALL(sigfd = mkstemp(sigfile));
+    KJ_DEFER(unlink(sigfile));
+    kj::FdOutputStream(kj::AutoCloseFd(sigfd)).write(sig.begin(), sig.size());
+
+    // GPG unfortunately DEMANDS to read from its "home directory", which is expected to contain
+    // user configuration. We actively don't want this: we want it to run in a reproducible manner.
+    // So we create a fake home.
+    char gpghome[] = "/tmp/spk-fake-gpg-home.XXXXXX";
+    if (mkdtemp(gpghome) == nullptr) {
+      KJ_FAIL_SYSCALL("mkdtemp(gpghome)", errno, gpghome);
+    }
+    KJ_DEFER(recursivelyDelete(gpghome));
+
+    auto outPipe = Pipe::make();       // stdout -> signed text
+    auto messagePipe = Pipe::make();   // stderr -> human-readable messages
+    auto statusPipe = Pipe::make();    // fd 3 -> machine-readable messages
+
+    Subprocess::Options gpgOptions({
+        "gpg", "--homedir", gpghome, "--status-fd", "3", "--no-default-keyring",
+        "--keyring", keyfile, "--decrypt", sigfile});
+    gpgOptions.stdout = outPipe.writeEnd;
+    gpgOptions.stderr = messagePipe.writeEnd;
+    int moreFds[1] = { statusPipe.writeEnd };
+    gpgOptions.moreFds = moreFds;
+    Subprocess gpg(kj::mv(gpgOptions));
+
+    outPipe.writeEnd = nullptr;
+    messagePipe.writeEnd = nullptr;
+    statusPipe.writeEnd = nullptr;
+
+    // Gather output from GPG.
+    // TODO(cleanup): This really belongs in a library, perhaps in `Subprocess`.
+    kj::Vector<char> out, message, status;
+    bool outDone = false, messageDone = false, statusDone = false;
+    for (;;) {
+      kj::Vector<struct pollfd> pollfds;
+      typedef struct pollfd PollFd;
+      if (!outDone) pollfds.add(PollFd {outPipe.readEnd, POLLIN, 0});
+      if (!messageDone) pollfds.add(PollFd {messagePipe.readEnd, POLLIN, 0});
+      if (!statusDone) pollfds.add(PollFd {statusPipe.readEnd, POLLIN, 0});
+      if (pollfds.size() == 0) break;
+      KJ_SYSCALL(poll(pollfds.begin(), pollfds.size(), -1));
+      for (auto& item: pollfds) {
+        if (item.revents & POLLIN) {
+          // Data to read!
+          char buffer[1024];
+          size_t n = kj::FdInputStream(item.fd).read(buffer, 1, sizeof(buffer));
+          if (item.fd == outPipe.readEnd.get()) {
+            out.addAll(kj::arrayPtr(buffer, n));
+          } else if (item.fd == messagePipe.readEnd.get()) {
+            message.addAll(kj::arrayPtr(buffer, n));
+          } else if (item.fd == statusPipe.readEnd.get()) {
+            status.addAll(kj::arrayPtr(buffer, n));
+          } else {
+            KJ_FAIL_ASSERT("unexpected FD returned by poll()?");
+          }
+        } else if (item.revents != 0) {
+          // Woke up with no data available; must be EOF.
+          if (item.fd == outPipe.readEnd.get()) {
+            outDone = true;
+          } else if (item.fd == messagePipe.readEnd.get()) {
+            messageDone = true;
+          } else if (item.fd == statusPipe.readEnd.get()) {
+            statusDone = true;
+          } else {
+            KJ_FAIL_ASSERT("unexpected FD returned by poll()?");
+          }
+        }
+      }
+    }
+
+    if (gpg.waitForExit() != 0) {
+      return validationError(kj::str(
+          "SPK PGP signature check validation failed. GPG output follows.\n",
+          kj::implicitCast<kj::ArrayPtr<const char>>(message)));
+    }
+
+    auto content = trim(out);
+    if (content != expectedContent) {
+      return validationError(kj::str(
+          "SPK PGP signature signed incorrect text."
+          "\nExpected: ", expectedContent,
+          "\nActual:   ", content));
+    }
+
+    // Look for the VALIDSIG line which provides the PGP key fingerprint.
+    kj::String fingerprint;
+    for (auto& statusLine: split(status, '\n')) {
+      auto words = splitSpace(statusLine);
+      if (words.size() >= 3 &&
+          kj::heapString(words[0]) == "[GNUPG:]" &&
+          kj::heapString(words[1]) == "VALIDSIG") {
+        // This is the line we're looking for!
+        return kj::heapString(words[2]);
+      }
+    }
+
+    KJ_FAIL_ASSERT("couldn't find expected '[GNUPG:] VALIDSIG' line in GPG status output",
+                   kj::str(status.asPtr()));
   }
 
   static kj::String unpackImpl(
@@ -1648,9 +1877,13 @@ private:
 
       AppIdJsonHandler appIdHandler;
       PackageIdJsonHandler packageIdHandler;
+      OversizeDataHandler oversizeDataHandler;
+      OversizeTextHandler oversizeTextHandler;
       capnp::JsonCodec json;
       json.addTypeHandler(appIdHandler);
       json.addTypeHandler(packageIdHandler);
+      json.addTypeHandler(oversizeDataHandler);
+      json.addTypeHandler(oversizeTextHandler);
       json.setPrettyPrint(true);
 
       auto text = json.encode(info);
@@ -1967,6 +2200,234 @@ private:
       }
 
       kj::FdOutputStream(STDOUT_FILENO).write(buffer, n);
+    }
+  }
+
+  // =====================================================================================
+  // "publish" command
+
+  kj::Maybe<appindex::SubmissionState> publishState = appindex::SubmissionState::PUBLISH;
+  // By default `spk publish` publishes the package.
+
+  kj::String appIndexEndpoint = nullptr;
+  kj::String appIndexToken = nullptr;
+  // TODO(now): Fill in defaults.
+
+  kj::MainFunc getPublishMain() {
+    return addCommonOptions(OptionSet::KEYS_READONLY,
+        kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
+            "Publish an SPK to the Sandstorm app index, or check the status of a "
+            "previous submission.")
+        .addOption({'s', "status"}, [this]() {publishState = nullptr; return true;},
+            "Just check the review status of a previously-submitted SPK.")
+        .addOption({'e', "embargo"},
+            [this]() {publishState = appindex::SubmissionState::REVIEW; return true;},
+            "Embargoes the package, preventing it from being published publicly. However, "
+            "it will still be actively reviewed. You may run the command again later without "
+            "this flag to mark the app for publishing. This allows you to submit an app for "
+            "review in advance of a launch date but still control the exact time of launch.")
+        .addOption({'r', "remove"},
+            [this]() {publishState = appindex::SubmissionState::IGNORE; return true;},
+            "Removes a package listing. If the package was published, it is un-published. If the "
+            "package was still pending review, the review is canceled.")
+        .addOptionWithArg({"webkey"}, KJ_BIND_METHOD(*this, setPublishWebkey), "<webkey>",
+            "Submit to the index at the given webkey. If not specified, the main Sandstorm "
+            "app index is assumed.")
+        .expectArg("<spkfile>", KJ_BIND_METHOD(*this, doPublish)))
+        .build();
+  }
+
+  kj::MainBuilder::Validity setPublishWebkey(kj::StringPtr webkey) {
+    auto parts = split(webkey, '#');
+    if (parts.size() != 2) return "invalid webkey format";
+
+    appIndexEndpoint = kj::str(parts[0]);
+    appIndexToken = kj::str(parts[1]);
+
+    if (!appIndexEndpoint.startsWith("http://") && !appIndexEndpoint.startsWith("https://")) {
+      return "invalid webkey format";
+    }
+
+    return true;
+  }
+
+  kj::MainBuilder::Validity doPublish(kj::StringPtr spkfile) {
+    if (appIndexEndpoint == nullptr) {
+      context.exitError(
+          "Hello! The publishing tool isn't quite ready yet, but if you have an app "
+          "you'd like to publish please email kenton@sandstorm.io with a link to the spk!");
+    }
+
+    if (access(spkfile.cStr(), F_OK) < 0) {
+      return "no such file";
+    }
+
+    capnp::MallocMessageBuilder scratch;
+    auto arena = scratch.getOrphanage();
+
+    auto infoOrphan = arena.newOrphan<spk::VerifiedInfo>();
+    auto info = infoOrphan.get();
+    auto spkfd = raiiOpen(spkfile, O_RDONLY);
+    verifyImpl(spkfd, openTemporary("/tmp/spk-verify"), info,
+        [&](kj::StringPtr problem) -> kj::String {
+      validationError(spkfile, problem);
+    });
+
+    auto key = lookupKey(appIdString(info.getAppId()));
+
+    capnp::MallocMessageBuilder requestMessage;
+    auto request = requestMessage.getRoot<appindex::SubmissionRequest>();
+    request.setPackageId(info.getPackageId());
+    KJ_IF_MAYBE(s, publishState) {
+      auto mutation = request.initSetState();
+      mutation.setNewState(*s);
+      mutation.setSequenceNumber(time(nullptr));
+    } else {
+      request.setCheckStatus();
+    }
+    auto webkey = kj::str(appIndexEndpoint, '#', appIndexToken);
+    auto webkeyHash = request.initAppIndexWebkeyHash(16);
+    crypto_generichash_blake2b(webkeyHash.begin(), webkeyHash.size(),
+                               webkey.asBytes().begin(), webkey.size(), nullptr, 0);
+
+    // TODO(cleanup): Need a kj::VectorOutputStream or something which can dynamically grow.
+    byte buffer[1024];
+    byte* messageEnd;
+    {
+      kj::ArrayOutputStream stream(buffer);
+      capnp::writePackedMessage(stream, requestMessage);
+      messageEnd = stream.getArray().end();
+    }
+
+    KJ_ASSERT(buffer + sizeof(buffer) - messageEnd >= crypto_sign_BYTES);
+    crypto_sign_detached(messageEnd, nullptr, buffer, messageEnd - buffer,
+                         key.getPrivateKey().begin());
+    auto encodedRequest = kj::arrayPtr(buffer, messageEnd + crypto_sign_BYTES);
+
+    for (;;) {
+      {
+        context.warning("talking to index server...");
+
+        auto inPipe = Pipe::make();
+        auto outPipe = Pipe::make();
+
+        auto authHeader = kj::str("Authorization: Bearer ", appIndexToken);
+        auto url = kj::str(appIndexEndpoint, "/status");
+        Subprocess::Options curlOptions({
+            "curl", "-sS", "-X", "POST", "--data-binary", "@-", "-H", authHeader, url});
+        curlOptions.stdin = inPipe.readEnd;
+        curlOptions.stdout = outPipe.writeEnd;
+        Subprocess curl(kj::mv(curlOptions));
+        inPipe.readEnd = nullptr;
+        outPipe.writeEnd = nullptr;
+
+        kj::FdOutputStream(inPipe.writeEnd.get())
+            .write(encodedRequest.begin(), encodedRequest.size());
+        inPipe.writeEnd = nullptr;
+        auto data = readAllBytes(outPipe.readEnd);
+        if (curl.waitForExit() != 0) {
+          context.exitError("curl failed");
+        }
+
+        if (data.size() > 0 && data[0] == '\0') {
+          // Binary!
+          kj::ArrayInputStream dataStream(data.slice(1, data.size()));
+          capnp::PackedMessageReader messageReader(dataStream);
+          auto status = messageReader.getRoot<appindex::SubmissionStatus>();
+          switch (status.which()) {
+            case appindex::SubmissionStatus::PENDING:
+              switch (status.getRequestState()) {
+                case appindex::SubmissionState::IGNORE:
+                  context.exitInfo(
+                      "Your submission has been removed. It was never reviewed nor published.");
+                case appindex::SubmissionState::REVIEW:
+                  context.exitInfo(
+                      "Your submission is being reviewed. Since you've asked that it be embargoed, "
+                      "it won't be published when approved; you will need to run `spk publish` "
+                      "again without -e.");
+                case appindex::SubmissionState::PUBLISH:
+                  context.exitInfo(
+                      "Thanks for your submission! A human will look at your submission to make "
+                      "sure that everything is order before it goes live. If we spot any mistakes "
+                      "we'll let you know, otherwise your app will go live as soon as it has been "
+                      "checked. Either way, we'll send you an email at the contact address you "
+                      "provided in the metadata. (If you'd like to prevent this submission "
+                      "from going live immediately, run `spk publish` again with -e.)");
+              }
+              KJ_UNREACHABLE;
+
+            case appindex::SubmissionStatus::NEEDS_UPDATE:
+              switch (status.getRequestState()) {
+                case appindex::SubmissionState::IGNORE:
+                  context.exitInfo(kj::str(
+                      "Your submission has been removed. For reference, before removal, a human "
+                      "had checked your submission and found a problem. If you decide to submit "
+                      "again, please correct this problem first: ", status.getNeedsUpdate()));
+                case appindex::SubmissionState::REVIEW:
+                case appindex::SubmissionState::PUBLISH:
+                  context.exitInfo(kj::str(
+                      "A human checked your submission and found a problem. Please correct the "
+                      "following problem and submit again: ", status.getNeedsUpdate()));
+              }
+              KJ_UNREACHABLE;
+
+            case appindex::SubmissionStatus::APPROVED:
+              switch (status.getRequestState()) {
+                case appindex::SubmissionState::IGNORE:
+                  context.exitInfo(
+                      "Your submission has been removed. It had already been reviewed and "
+                      "approved, so if you change your mind you can publish it at any time "
+                      "by running `spk publish` again without flags.");
+                case appindex::SubmissionState::REVIEW:
+                  context.exitInfo(
+                      "Your submission is approved and can be published whenever you are ready. "
+                      "Run `spk publish` again without flags to make your app live.");
+                case appindex::SubmissionState::PUBLISH:
+                  // TODO(soon): Add link? Only for default app market.
+                  context.exitInfo(
+                      "Your submission is approved and is currently live!");
+              }
+              KJ_UNREACHABLE;
+
+            case appindex::SubmissionStatus::NOT_UPLOADED:
+              // Need to upload first...
+              if (publishState == nullptr) {
+                context.exitInfo("This package has not been uploaded to the index.");
+              }
+              break;
+          }
+        } else {
+          // Error message. :(
+          kj::FdOutputStream(STDERR_FILENO).write(data.begin(), data.size());
+          context.exitError("failed to connect to app index");
+        }
+      }
+
+      {
+        // If we get here, the server indicated that the app had not been uploaded.
+        context.warning("uploading package to index...");
+
+        KJ_SYSCALL(lseek(spkfd, 0, SEEK_SET));
+        auto outPipe = Pipe::make();
+
+        auto authHeader = kj::str("Authorization: Bearer ", appIndexToken);
+        auto url = kj::str(appIndexEndpoint, "/upload");
+        Subprocess::Options curlOptions({
+            "curl", "-sS", "-X", "POST", "--data-binary", "@-", "-H", authHeader, url});
+        curlOptions.stdin = spkfd;
+        curlOptions.stdout = outPipe.writeEnd;
+        Subprocess curl(kj::mv(curlOptions));
+        outPipe.writeEnd = nullptr;
+
+        auto response = readAll(outPipe.readEnd);
+        if (curl.waitForExit() != 0) {
+          context.exitError("curl failed");
+        }
+        if (response.size() > 0) {
+          context.exitError(kj::str(
+              "server returned error on upload: ", response));
+        }
+      }
     }
   }
 };

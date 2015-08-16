@@ -144,7 +144,12 @@ struct Manifest {
     # Command to execute (in a newly-allocated grain) to run this action.
 
     title @3 :Util.LocalizedText;
-    # Title of this action, to display in the action selector.
+    # (Obsolete) Title of this action, to display in the action selector.  This should no longer
+    # be used for new apps.
+
+    nounPhrase @5 : Util.LocalizedText;
+    # When this action is run, what kind of thing is created? E.g. Etherpad creates a "document".
+    # Displayed as "New <nounPhrase>" in the "create new grain" UI.
 
     description @4 :Util.LocalizedText;
     # Description of this action, suitable for help text.
@@ -226,35 +231,59 @@ struct Metadata {
     # from the list based on the context where it is to be displayed, possibly taking into account
     # parameters like size, display pixel density, and browser image format support.
 
-    main @0 :List(Icon);
-    # The icon which represents the app itself, such as in an "app grid" view showing the user
-    # all of their apps.
+    appGrid @0 :Icon;
+    # The icon shown on the app grid, in the "new grain" flow.
+    #
+    # Size: 128x128
+    # Data size limit: 64kB
 
-    grain @1 :List(Icon);
-    # An icon which represents one grain created with this app. If omitted, `main` will be used.
+    grain @1 :Icon;
+    # The icon shown to represent an individual grain, both in the grain table and on the sidebar.
+    # If omitted, the appGrid icon will be used.
+    #
+    # Size: 24x24
+    # Data size limit: 4kB
 
-    banner @2 :List(Icon);
-    # A big icon used when displaying this app in e.g. an app market. Generally this icon should be
-    # bigger and "flashier", though still square. If omitted, `main` will be used.
+    market @2 :Icon;
+    # The icon shown in the app market grid. If omitted, the appGrid icon will be used.
+    #
+    # Size: 150x150
+    # Data size limit: 64kB
+
+    marketBig @18 :Icon;
+    # The image shown in the app market when visiting the app's page directly, or when featuring
+    # a particular app with a bigger display. If omitted, the regular market icon will be used
+    # (raster images may look bad).
+    #
+    # Size: 300x300
+    # Data size limit: 256kB
   }
 
   struct Icon {
     # Represents one icon image.
 
-    width @0 :UInt32;
-    # The width (and height) of this icon image in pixels. This is only relevant for raster icons
-    # (e.g. PNG).
-
     union {
-      unknown @1 :Void;
+      unknown @0 :Void;
       # Unknown file format.
 
-      png @2 :Data;
-      # PNG-encoded image data.
+      svg @1 :Text;
+      # Scalable Vector Graphics image. This format is *highly* preferred whenever possible.
+      #
+      # The uncompressed SVG can be up to 4x the documented size limit, to account for the fact
+      # that it will be compressed when served.
 
-      svg @3 :Text;
-      # SVG image data. Note that SVG is usually preferred over PNG if it is available and the use
-      # case can handle it.
+      png :group {
+        # PNG image. You may specify one or both DPI levels.
+
+        dpi1x @2 :Data;
+        # Normal-resolution PNG. The image's resolution should exactly match the documented
+        # viewport size.
+
+        dpi2x @3 :Data;
+        # Double-resolution PNG for high-dpi displays. Any documented data size limit is also
+        # doubled for this PNG. (The size limit is only doubled, not quadrupled, because the size
+        # of a compressed image should be a function of total interior edge length, not area.)
+      }
     }
   }
 
@@ -320,14 +349,12 @@ struct Metadata {
     # due to use of third-party open source libraries.
   }
 
-  categories @10 :List(UInt64);
-  # List of category IDs under which this app should be classified. Categories are things
-  # like "productivity" or "dev tools". Each category ID is generated using `capnp id`. Note that
-  # although you can generate your own category IDs, an app market will only recognize a specific
-  # set of IDs.
+  categories @10 :List(Category);
+  # List of categories/genres to which this app belongs, sorted with best fit first. See the
+  # `Category` enum below.
   #
-  # TODO(soon): Figure out where we will define the available category IDs. Should we put a basic
-  #   list directly in this file?
+  # You can list multiple categories, but note that as with all things the app market moderators
+  # may ask you to make changes, e.g. if you list categories that don't fit or seem spammy.
 
   author :group {
     # Fields relating to the author of this app.
@@ -341,6 +368,11 @@ struct Metadata {
     # identity based on their PGP key. For exmaple, Keybase.io has done a really good job of
     # connecting PGP keys to other Internet identities in a verifiable way.
 
+    upstreamAuthor @19 :Text;
+    # Name of the original primary author of this app, if it is different from the person who
+    # produced the Sandstorm package. Setting this implies that the author connected to the PGP
+    # signature only "ported" the app to Sandstorm.
+
     contactEmail @11 :Text;
     # Email address to contact for any issues with this app. This includes end-user support
     # requests as well as app store administrator requests, so it is very important that this be a
@@ -353,25 +385,27 @@ struct Metadata {
     #
     # "I am the author of the Sandstorm.io app with the following ID: <app-id>"
     #
-    # Keep in mind that Sandstorm app IDs are also ed25519 public keys, and that every app package
-    # is signed by the private key corresponding to its app ID. Therefore this PGP signature forms
-    # a chain of trust that can be used to verify each app package.
+    # You can create a signature file using `gpg` like so:
     #
-    # Notice that the signature asserts authorship of all versions of the app, including possible
-    # future version, even if maintainership is transferred to a new author (and the new author
-    # receives the app private key). This is intentional: When users use the "auto-update" feature,
-    # the are making the decision to automatically trust all future versions of the app without
-    # re-verifying the author's identity. If you wish to transfer maintainership of your app but
-    # you do not trust the new maintainer with the power to publish new packages under your
-    # identity, then you should not give the new maintainer the app's private key; you should force
-    # them to create a new key. Sandstorm will not auto-update users to the new version without,
-    # at the very least, confirming their approval of the change in authorship.
-
-    pgpPublicKey @13 :Data;
-    # The public key used to create `pgpSignature`, in binary format, e.g. as output by
-    # `gpg --export <email>`. This is included here, rather than looked up from a keyserver, so
-    # that a package signature can be verified down to a key fingerprint in isolation.
+    #     echo -n "I am the author of the Sandstorm.io app with the following ID: <app-id>" |
+    #         gpg --sign > pgp-signature
+    #
+    # To learn how to set up gpg, visit Keybase (https://keybase.io) -- they have excellent
+    # documentation and tools. Moreover, if you create a Keybase account for your key and follow
+    # Keybase's instructions to link it to other social accounts (like your Github account), then
+    # the Sandstorm app install flow and app market will present this information to the user as
+    # "verified".
   }
+
+  pgpKeyring @13 :Data;
+  # A keyring in GPG keyring format containing all public keys needed to verify PGP signatures in
+  # this manifest (as of this writing, there is only one: `author.pgpSignature`).
+  #
+  # To generate a keyring containing just your public key, do:
+  #
+  #     gpg --export <key-id> > keyring
+  #
+  # Where `<key-id>` is a PGP key ID or email address associated with the key.
 
   description @14 :Util.LocalizedText;
   # The app's description description in Github-flavored Markdown format, to be displayed e.g.
@@ -427,7 +461,7 @@ struct OsiLicenseInfo {
   # Whether or not you are required to provide a `codeUrl` when specifying this license.
 }
 
-annotation osiInfo(enumerant) :OsiLicenseInfo;
+annotation osiInfo @0x9476412d0315d869 (enumerant) :OsiLicenseInfo;
 # Annotation applied to each item in the OpenSourceLicense enum.
 
 enum OpenSourceLicense {
@@ -493,19 +527,68 @@ struct VerifiedInfo {
   version @3 :UInt32;
   marketingVersion @4 :Util.LocalizedText;
 
-  authorIdentity @5 :Identity;
-  struct Identity {
-    pgpKeyId @0 :Text;
-    # Verified by checking the signature in-package.
-
-    websites @1 :List(Text);
-    githubHandle @2 :Text;
-    twitterHandle @3 :Text;
-    # Verified via Keybase. (Unfortunately, Keybase verifies handles and not user IDs...)
-  }
+  authorPgpKeyFingerprint @5 :Text;
 
   metadata @6 :Metadata;
   # Stuff extracted directly from manifest.
+}
+
+struct CategoryInfo {
+  title @0 :Text;
+}
+
+annotation categoryInfo @0x8d51dd236606d205 (enumerant) :CategoryInfo;
+
+enum Category {
+  # ------------------------------------
+  # "Meta": communication & coordination
+
+  productivity @1 $categoryInfo(title = "Productivity");
+  # Apps which manage productivity -- i.e. the "meta" apps you use to "get organized", NOT the apps
+  # you use to actually produce content.
+  #
+  # Examples: Note-taking, to-dos, calendars, kanban boards, project management, team management.
+  #
+  # NON-examples: Document editors (-> office), e-mail (-> communications).
+
+  communications @2 $categoryInfo(title = "Communications");
+  # Email, chat, conferencing, etc. Things that you use primarily to communicate, not to organize.
+
+  social @3 $categoryInfo(title = "Social");
+  # Social networking. Overlaps with communication, but focuses on organizing a network of people
+  # and surfacing content and interactions from your network that aren't explicitly addressed
+  # to you.
+
+  # ------------------------------------
+  # Content creation
+
+  webPublishing @4 $categoryInfo(title = "Web Publishing");
+  # Tools for publishing web sites and blogs.
+
+  office @5 $categoryInfo(title = "Office");
+  # Tools for the office: editors for documents, spreadsheets, presentations, etc.
+
+  developerTools @6 $categoryInfo(title = "DevTools");
+  # Tools for software engineering: source control, test automation, compilers, IDEs, etc.
+
+  science @7 $categoryInfo(title = "Science");
+  # Tools for scientific / academic pursuits: data gathering, data processing, paper publishing,
+  # etc.
+
+  # ------------------------------------
+  # Content consumption
+
+  media @8 $categoryInfo(title = "Media");
+  # Content *consuption*: Apps that aren't used to create content, but are used to display and
+  # consume it. Music players, photo galleries, video, feed readers, etc.
+
+  games @9 $categoryInfo(title = "Games");
+  # Games.
+
+  # ------------------------------------
+
+  other @0 $categoryInfo(title = "Other");
+  # Use if nothing else fits -- but consider sending us a pull request to add a better category!
 }
 
 # ==============================================================================

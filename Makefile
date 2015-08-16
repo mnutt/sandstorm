@@ -51,6 +51,10 @@ IMAGES= \
     shell/public/close.svg \
     shell/public/menu.svg \
     shell/public/inbox.svg \
+    shell/public/install.svg \
+    shell/public/notification.svg \
+    shell/public/restore.svg \
+    shell/public/upload.svg \
     shell/public/restart-m.svg \
     shell/public/trash-m.svg \
     shell/public/debug-m.svg \
@@ -58,13 +62,14 @@ IMAGES= \
     shell/public/key-m.svg \
     shell/public/share-m.svg \
     shell/public/close-m.svg \
-    shell/public/inbox-m.svg
+    shell/public/inbox-m.svg \
+    shell/public/notification-m.svg
 
 # ====================================================================
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean continuous shell-env fast deps bootstrap-ekam deps update-deps test installer-test
+.PHONY: all install clean continuous shell-env fast deps bootstrap-ekam deps update-deps test installer-test app-index-dev
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -213,3 +218,23 @@ sandstorm-$(BUILD)-fast.tar.xz: bundle
 	@$(call color,docker build)
 	@docker build -t sandstorm .
 	@touch .docker
+
+# ====================================================================
+# app-index.spk
+
+# This is currently really really hacky because spk is not good at using package definition file
+# that is not located at the root of the source tree. In particular it is hard for the package
+# definition file (living in the src tree) to refer to the `app-index` binary (living in the
+# tmp tree).
+#
+# TODO(cleanup): Make spk better so that it can handle this.
+
+app-index.spk: tmp/.ekam-run
+	@cp src/sandstorm/app-index/app-index.capnp tmp/sandstorm/app-index/app-index.capnp
+	@cp src/sandstorm/app-index/review.html tmp/sandstorm/app-index/review.html
+	spk pack -Isrc -Itmp -ptmp/sandstorm/app-index/app-index.capnp:pkgdef app-index.spk
+
+app-index-dev: tmp/.ekam-run
+	@cp src/sandstorm/app-index/app-index.capnp tmp/sandstorm/app-index/app-index.capnp
+	@cp src/sandstorm/app-index/review.html tmp/sandstorm/app-index/review.html
+	spk dev -Isrc -Itmp -ptmp/sandstorm/app-index/app-index.capnp:pkgdef
