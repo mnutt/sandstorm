@@ -1279,7 +1279,7 @@ function parseDestinationHeader(request) {
 
   if (header) {
     // Destination header is a fully qualified URI
-    var parsed = url.parse(header);
+    var parsed = Url.parse(header);
     return parsed.toString();
   }
 }
@@ -1467,7 +1467,7 @@ var redirectCodes = [
   { id: 307, title: "Temporary Redirect" },
   { id: 308, title: "Permanent Redirect" },
   { id: 303, title: "See Other" },
-  { id: 301, title: "Moved Permanently" },
+  { id: 301, title: "Moved Permanently" }
 ];
 var errorCodes = {
   badRequest:            { id: 400, title: "Bad Request" },
