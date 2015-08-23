@@ -170,6 +170,12 @@ if (Meteor.isClient) {
   HasUsers = new Mongo.Collection("hasUsers");  // dummy collection defined above
   Backers = new Mongo.Collection("backers");  // pseudo-collection defined above
 
+  if (Meteor.settings.public.quotaEnabled) {
+    window.testDisableQuotaClientSide = function () {
+      Meteor.settings.public.quotaEnabled = false;
+    }
+  }
+
   Router.onRun(function () {
     // Close menus any time we navigate.
     globalTopbar.reset();
@@ -304,6 +310,34 @@ if (Meteor.isClient) {
     return params;
   };
 
+  var billingPromptState = new ReactiveVar(null);
+
+  var ifQuotaAvailable = function (next) {
+    var reason = isUserOverQuota(Meteor.user());
+    if (reason) {
+      if (window.BlackrockPayments) {
+        billingPromptState.set({
+          reason: reason,
+          db: globalDb,
+          topbar: globalTopbar,
+          accountsUi: globalAccountsUi,
+          onComplete: function () {
+            billingPromptState.set(null);
+
+            // If the user successfully raised their quota, continue the operation.
+            if (!isUserOverQuota(Meteor.user())) {
+              next();
+            }
+          }
+        });
+      } else {
+        alert("You are out of storage space. Please delete some things and try again.");
+      }
+    } else {
+      next();
+    }
+  }
+
   Template.layout.helpers({
     showTopbar: function () {return Template.instance().showTopbar.get(); },
     adminAlertIsTooLarge: function () {
@@ -367,6 +401,31 @@ if (Meteor.isClient) {
         alertUrl = alertUrl.replace("$APPNAME", determineAppName(this.grainId));
       }
       return {text: text, className: className, alertUrl: alertUrl};
+    },
+    billingPromptState: function () {
+      return billingPromptState.get();
+    },
+    demoExpired: function () {
+      var user = Meteor.user();
+      if (!user) return false;
+      var expires = user.expires;
+      if (!expires) return false;
+      expires = expires.getTime() - Date.now();
+      if (expires <= 0) return true;
+      var comp = Tracker.currentComputation;
+      if (expires && comp) {
+        Meteor.setTimeout(comp.invalidate.bind(comp), expires);
+      }
+      return false;
+    },
+    canUpgradeDemo: function () {
+      return Meteor.settings.public.allowUninvited;
+    },
+    globalAccountsUi: function () {
+      return globalAccountsUi;
+    },
+    firstLogin: function () {
+      return isSignedUp() && !Meteor.loggingIn() && !Meteor.user().hasCompletedSignup;
     }
   });
 
@@ -378,6 +437,9 @@ if (Meteor.isClient) {
     "click #admin-alert-closer": function (event) {
       var template = Template.instance();
       template.showTopbar.set(false);
+    },
+    "click .demo-expired.logout": function (event) {
+      Meteor.logout();
     }
   });
 
@@ -460,7 +522,7 @@ if (Meteor.isClient) {
     } else {
       var action = UserActions.findOne(actionId);
       if (!action) {
-        console.error("no such action: ", actionId);
+        console.error("no such action:", actionId);
         return;
       }
 
@@ -570,16 +632,16 @@ if (Meteor.isClient) {
     },
 
     storageUsage: function() {
-      return prettySize(Meteor.user().storageUsage || 0);
+      return Meteor.userId() ? prettySize(Meteor.user().storageUsage || 0) : undefined;
     },
 
     storageQuota: function() {
-      var quota = Meteor.user().quota;
-      return (typeof quota === "number") ? prettySize(quota) : undefined;
+      var plan = globalDb.getMyPlan();
+      return plan ? prettySize(plan.storage) : undefined;
     },
 
     overQuota: function() {
-      return isUserOverQuota(Meteor.user());
+      return !window.BlackrockPayments && isUserOverQuota(Meteor.user());
     }
   });
 
@@ -625,81 +687,21 @@ if (Meteor.isClient) {
     },
 
     "click #install-apps-button": function (event) {
-      if (isUserOverQuota(Meteor.user())) {
-        // The install process would eventually fail. Alert the user now rather than let them go
-        // pick an app.
-        alert("You are out of storage space. Please delete some things and try again.");
-      } else {
-        document.location = "https://sandstorm.io/apps/?host=" + getOrigin();
-      }
+      ifQuotaAvailable(function () {
+        document.location = "https://apps.sandstorm.io/?host=" + getOrigin();
+      });
     },
 
     "click #upload-app-button": function (event) {
-      if (isUserOverQuota(Meteor.user())) {
-        // The install process would eventually fail. Alert the user now rather than let them go
-        // pick an app.
-        alert("You are out of storage space. Please delete some things and try again.");
-      } else {
+      ifQuotaAvailable(function () {
         Router.go("uploadForm", {});
-      }
+      });
     },
 
     "click #restore-backup-button":  function (event) {
-      var grainId = this.grainId;
-
-      // TODO(cleanup): Share code with "upload picture" and other upload buttons.
-      var input = document.createElement("input");
-      input.type = "file";
-      input.style = "display: none";
-      Session.set("uploadStatus", "Uploading");
-
-      input.addEventListener("change", function (e) {
-        // TODO(cleanup): Use Meteor's HTTP, although this may require sending them a PR to support
-        //   progress callbacks (and officially document that binary input is accepted).
-        var file = e.currentTarget.files[0];
-
-        var xhr = new XMLHttpRequest();
-
-        xhr.onreadystatechange = function () {
-          if (xhr.readyState == 4) {
-            if (xhr.status == 200) {
-              Session.set("uploadProgress", 0);
-              Session.set("uploadStatus", "Unpacking");
-              Meteor.call("restoreGrain", xhr.responseText, function (err, grainId) {
-                if (err) {
-                  Session.set("uploadStatus", undefined);
-                  Session.set("uploadError", {
-                    status: 200,
-                    statusText: err.reason + ": " + err.details,
-                  });
-                } else {
-                  Router.go("grain", {grainId: grainId});
-                }
-              });
-            } else {
-              Session.set("uploadError", {
-                status: xhr.status,
-                statusText: xhr.statusText,
-                response: xhr.responseText
-              });
-            }
-          }
-        };
-
-        if (xhr.upload) {
-          xhr.upload.addEventListener("progress", function (progressEvent) {
-            Session.set("uploadProgress",
-                Math.floor(progressEvent.loaded / progressEvent.total * 100));
-          });
-        }
-
-        xhr.open("POST", "/uploadBackup", true);
-        xhr.send(file);
-
-        Router.go("restoreGrainStatus");
+      ifQuotaAvailable(function () {
+        promptRestoreBackup();
       });
-
-      input.click();
     },
 
     "click .uninstall-app-button": function (event) {
@@ -726,7 +728,9 @@ if (Meteor.isClient) {
         var devIndex = event.currentTarget.getAttribute("data-index");
       }
 
-      launchAndEnterGrainByActionId(actionId, devId, devIndex);
+      ifQuotaAvailable(function () {
+        launchAndEnterGrainByActionId(actionId, devId, devIndex);
+      });
     },
 
     "click .action-required button": function (event) {
@@ -857,6 +861,62 @@ appNameFromActionName = function(name) {
   return name;
 }
 
+promptRestoreBackup = function() {
+  // TODO(cleanup): Share code with "upload picture" and other upload buttons.
+  var input = document.createElement("input");
+  input.type = "file";
+  input.style = "display: none";
+  Session.set("uploadStatus", "Uploading");
+
+  input.addEventListener("change", function (e) {
+    // TODO(cleanup): Use Meteor's HTTP, although this may require sending them a PR to support
+    //   progress callbacks (and officially document that binary input is accepted).
+    var file = e.currentTarget.files[0];
+
+    var xhr = new XMLHttpRequest();
+
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState == 4) {
+        if (xhr.status == 200) {
+          Session.set("uploadProgress", 0);
+          Session.set("uploadStatus", "Unpacking");
+          Meteor.call("restoreGrain", xhr.responseText, function (err, grainId) {
+            if (err) {
+              Session.set("uploadStatus", undefined);
+              Session.set("uploadError", {
+                status: 200,
+                statusText: err.reason + ": " + err.details,
+              });
+            } else {
+              Router.go("grain", {grainId: grainId});
+            }
+          });
+        } else {
+          Session.set("uploadError", {
+            status: xhr.status,
+            statusText: xhr.statusText,
+            response: xhr.responseText
+          });
+        }
+      }
+    };
+
+    if (xhr.upload) {
+      xhr.upload.addEventListener("progress", function (progressEvent) {
+        Session.set("uploadProgress",
+            Math.floor(progressEvent.loaded / progressEvent.total * 100));
+      });
+    }
+
+    xhr.open("POST", "/uploadBackup", true);
+    xhr.send(file);
+
+    Router.go("restoreGrainStatus");
+  });
+
+  input.click();
+}
+
 Router.map(function () {
   this.route("root", {
     path: "/",
@@ -910,7 +970,8 @@ Router.map(function () {
         apps = appNames.map(function (appName) {
           return appMap[appName.appId];
         });
-      } else if (allowDemoAccounts) {
+      } else if (allowDemoAccounts && !Meteor.settings.public.allowUninvited) {
+        // This seems to be a demo server.
         Meteor.setTimeout(function () { Router.go("demo", {}, {replaceState: true}); }, 0);
       }
 
@@ -1000,12 +1061,15 @@ Router.map(function () {
     path: "/account",
 
     data: function () {
-      if (!Meteor.userId()) {
+      if (!isSignedUp()) {
         // Not logged in.
-        Router.go("root");
+        if (!Meteor.loggingIn()) {
+          Router.go("root");
+        }
+      } else {
+        return new SandstormAccountSettingsUi(globalTopbar, globalDb,
+            window.location.protocol + "//" + makeWildcardHost("static"));
       }
-      return new SandstormAccountSettingsUi(globalTopbar,
-          window.location.protocol + "//" + makeWildcardHost("static"));
     }
   });
 });

@@ -18,13 +18,15 @@ allowDemo = Meteor.settings && Meteor.settings.public &&
                 Meteor.settings.public.allowDemoAccounts;
 
 var DEMO_EXPIRATION_MS = 60 * 60 * 1000;
+var DEMO_GRACE_MS = 10 * 60 * 1000;  // time between expiration and deletion
 
 if (Meteor.isServer) {
   Accounts.validateLoginAttempt(function (attempt) {
     // Enforce expiration times for demo accounts.
 
     if (attempt.user && attempt.user.expires) {
-      if (attempt.user.expires.getTime() < Date.now()) {
+      var expireIn = attempt.user.expires.getTime() - Date.now() + DEMO_GRACE_MS;
+      if (expireIn < 0) {
         throw new Meteor.Error(403, "This demo account has expired.");
       }
 
@@ -37,7 +39,7 @@ if (Meteor.isServer) {
       // Force connection close when account expires, so that the client reconnects and
       // re-authenticates, which fails.
       var connection = attempt.connection;
-      var handle = Meteor.setTimeout(function () { connection.close(); }, DEMO_EXPIRATION_MS);
+      var handle = Meteor.setTimeout(function () { connection.close(); }, expireIn);
       connection.onClose(function () { Meteor.clearTimeout(handle); });
     }
 
@@ -47,7 +49,7 @@ if (Meteor.isServer) {
   function cleanupExpiredUsers() {
     // Delete expired demo accounts and all their grains.
 
-    var now = new Date();
+    var now = new Date(Date.now() - DEMO_GRACE_MS);
     Meteor.users.find({expires: {$lt: now}}, {fields: {_id: 1, lastActive: 1, isAppDemoUser: 1}})
                 .forEach(function (user) {
       Grains.find({userId: user._id}, {fields: {_id: 1, lastUsed: 1}})
@@ -61,6 +63,7 @@ if (Meteor.isServer) {
       });
       console.log("delete user: " + user._id);
       Meteor.users.remove(user._id);
+      waitPromise(sandstormBackend.deleteUser(user._id));
       if (user.lastActive) {
         // When deleting a user, we can specify it as a "normal" user
         // (type: user) or as a user who started out by using the app
@@ -98,8 +101,76 @@ if (Meteor.isServer) {
         // Log them in on this connection.
         return Accounts._loginMethod(this, "createDemoUser", arguments,
             "demo", function () { return { userId: userId }; });
-      }
+      },
 
+      consumeDemoUser: function (token) {
+        check(token, String);
+        if (!this.userId) throw new Meteor.Error(403, "can't consume demo user when not logged in");
+
+        // Only users who have permission to create grains can consume a demo account.
+        if (!isSignedUp()) return false;
+
+        var hashed = Accounts._hashLoginToken(token);
+        var demoUser = Meteor.users.findOne({
+            expires: {$exists: true}, "services.resume.loginTokens.hashedToken": hashed});
+        var newUserId = this.userId;
+        if (demoUser) {
+          // Replace the demo user's ID with the full user's ID throughout the database.
+          //
+          // TODO(cleanup): Once we officially have account merging, use that.
+
+          // Record the set of grains now.
+          var grains = Grains.find({userId: demoUser._id}).fetch();
+
+          // Update database entries.
+          var toUpdate = {
+            userActions: ["userId"],
+            grains: ["userId"],
+            contacts: ["ownerId", "userId"],
+            apiTokens: ["userId", "owner.user.userId"],
+            notifications: ["userId"],
+          };
+
+          for (var name in toUpdate) {
+            var collection = globalDb.collections[name];
+            toUpdate[name].forEach(function (field) {
+              var query = {};
+              query[field] = demoUser._id;
+              var changes = {};
+              changes[field] = newUserId;
+              collection.update(query, {$set: changes}, {multi: true});
+            });
+          }
+
+          // Force all grains to shut down.
+          grains.map(function (grain) {
+            return shutdownGrain(grain._id, demoUser._id, false);
+          }).forEach(function (promise) {
+            waitPromise(promise);
+          });
+
+          // Transfer grain storage to new owner.
+          // Note: We don't parallelize this because it can cause some contention in the Blackrock
+          //   back-end.
+          grains.forEach(function (grain) {
+            return waitPromise(sandstormBackend.transferGrain(grain.userId, grain._id, newUserId));
+          });
+
+          Meteor.users.remove(demoUser._id);
+          waitPromise(sandstormBackend.deleteUser(demoUser._id));
+        }
+        return true;  // either suceeded or token was not valid (and never will be)
+      },
+
+      testExpireDemo: function () {
+        if (!isDemoUser()) throw new Meteor.Error(403, "not a demo user");
+
+        var newExpires = new Date(Date.now() + 15000);
+        if (Meteor.user().expires.getTime() < newExpires.getTime()) {
+          throw new Meteor.Error(403, "can't exend demo");
+        }
+        Meteor.users.update(this.userId, {$set: {expires: newExpires}});
+      }
     });
 
     // If demo mode is enabled, we permit the client to subscribe to
@@ -154,12 +225,9 @@ if (Meteor.isServer) {
     });
 
     Meteor.setInterval(cleanupExpiredUsers, DEMO_EXPIRATION_MS);
-
-    // The demo displays some assets loaded from sandstorm.io.
-    BrowserPolicy.content.allowOriginForAll("https://sandstorm.io");
   } else {
     // Just run once, in case the config just changed from allowing demos to prohibiting them.
-    Meteor.setTimeout(cleanupExpiredUsers, DEMO_EXPIRATION_MS);
+    Meteor.setTimeout(cleanupExpiredUsers, DEMO_EXPIRATION_MS + DEMO_GRACE_MS);
   }
 }
 
@@ -168,7 +236,31 @@ if (Meteor.isClient && allowDemo) {
     Router.go("demo");
     callback();
   }
-  Accounts.registerService("demo", globalAccountsUi);
+  // Note: We intentionally don't register the demo service with Accounts.registerService(); we
+  //   don't want it to appear in the sign-in drop-down.
+
+  window.testExpireDemo = function () {
+    Meteor.call("testExpireDemo");
+  }
+
+  Accounts.onLogin(function () {
+    // Note: We often don't have the right subscriptions yet to actually know if we're a demo
+    //   user, so we'll check again on the server side.
+    if (!isDemoUser()) {
+      var demoToken = localStorage.getItem("sandstormDemoLoginToken");
+      if (demoToken) {
+        Meteor.call("consumeDemoUser", demoToken, function (err, result) {
+          if (result) {
+            localStorage.removeItem("sandstormDemoLoginToken");
+
+            // Need to reload if a grain is open because otherwise the user is probably staring at
+            // an "unauthorized" notice or some other error.
+            window.location.reload();
+          }
+        });
+      }
+    }
+  });
 
   Template.demo.events({
     "click #createDemoUser": function (event) {
@@ -186,6 +278,7 @@ if (Meteor.isClient && allowDemo) {
           if (err) {
             window.alert(err);
           } else {
+            localStorage.setItem("sandstormDemoLoginToken", Accounts._storedLoginToken());
             Router.go("root");
           }
         }
@@ -249,7 +342,8 @@ if (Meteor.isClient && allowDemo) {
           userCallback: userCallbackFunction
         });
       }
-    }});
+    }
+  });
 }
 
 Router.map(function () {

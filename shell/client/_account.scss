@@ -1,13 +1,183 @@
-body>.main-content.account {
-  text-align: center;
+body>.popup.account>.frame {
+  width: 260px;
+}
 
-  >* {
-    width: 600px;
-    margin: 16px auto;
+.login-buttons-list {
+  margin: 16px auto;
+  width: 228px;
+
+  >a {
+    display: block;
+    margin: 0;
+    padding: 8px 16px;
+    color: black;
+    text-decoration: underline;
+    text-align: center;
+
+    &:hover {
+      background-color: #eee;
+    }
   }
 
-  >.identities {
+  // TODO(cleanup): Much of the below was brought it from Meteor's accounts-ui and needs cleanup.
+
+  button.login {
+    display: block;
+    width: 228px;  // can't use "width: 100%" due to margin, but we know the exact width...
+    box-sizing: border-box;
+
+    margin-top: 4px;
+    margin-bottom: 4px;
+
+    cursor: pointer;
+    padding: 4px 8px;
+
+    font-size: 80%;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+
+    text-align: center;
+    color: #fff;
+
+    $login-buttons-color: #596595;
+    $login-buttons-color-border: darken($login-buttons-color, 10%);
+    $login-buttons-color-active: lighten($login-buttons-color, 10%);
+    $login-buttons-color-active-border: darken($login-buttons-color-active, 10%);
+
+    background: $login-buttons-color;
+    border: 1px solid $login-buttons-color-border;
+
+    border-radius: 4px;
+
+    &:hover {
+      background-color: $login-buttons-color-active;
+    }
+    &:active {
+      background-color: $login-buttons-color-active;
+      box-shadow: 0 2px 3px 0 rgba(0, 0, 0, 0.2) inset;
+    }
+
+    &.login-button-disabled, &.login-button-disabled:active {
+      color: #ddd;
+      background-color: #aaa;
+      border: 1px solid lighten(#aaa, 10%);
+      box-shadow: none;
+    }
+
+    &.google { @extend %google-icon; }
+    &.github { @extend %github-icon; }
+
+    background-position: 6px center;
+    background-repeat: no-repeat;
+  }
+
+  .login-image {
+    display: inline-block;
+    position: absolute;
+    left: 6px;
+    top: 6px;
+    width: 16px;
+    height: 16px;
+  }
+
+  .login-buttons-with-only-one-button {
+    display: inline-block;
+    .login-button { display: inline-block; }
+    .login-text-and-button {
+      display: inline-block;
+    }
+  }
+
+  .login-display-name {
+    display: inline-block;
+    padding-right: 2px;
+    line-height: 1.5;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  }
+  .loading {
+    line-height: 1;
+    background-image: url("data:image/gif;base64,R0lGODlhEAALAPQAAP///wAAANra2tDQ0Orq6gYGBgAAAC4uLoKCgmBgYLq6uiIiIkpKSoqKimRkZL6+viYmJgQEBE5OTubm5tjY2PT09Dg4ONzc3PLy8ra2tqCgoMrKyu7u7gAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh/hpDcmVhdGVkIHdpdGggYWpheGxvYWQuaW5mbwAh+QQJCwAAACwAAAAAEAALAAAFLSAgjmRpnqSgCuLKAq5AEIM4zDVw03ve27ifDgfkEYe04kDIDC5zrtYKRa2WQgAh+QQJCwAAACwAAAAAEAALAAAFJGBhGAVgnqhpHIeRvsDawqns0qeN5+y967tYLyicBYE7EYkYAgAh+QQJCwAAACwAAAAAEAALAAAFNiAgjothLOOIJAkiGgxjpGKiKMkbz7SN6zIawJcDwIK9W/HISxGBzdHTuBNOmcJVCyoUlk7CEAAh+QQJCwAAACwAAAAAEAALAAAFNSAgjqQIRRFUAo3jNGIkSdHqPI8Tz3V55zuaDacDyIQ+YrBH+hWPzJFzOQQaeavWi7oqnVIhACH5BAkLAAAALAAAAAAQAAsAAAUyICCOZGme1rJY5kRRk7hI0mJSVUXJtF3iOl7tltsBZsNfUegjAY3I5sgFY55KqdX1GgIAIfkECQsAAAAsAAAAABAACwAABTcgII5kaZ4kcV2EqLJipmnZhWGXaOOitm2aXQ4g7P2Ct2ER4AMul00kj5g0Al8tADY2y6C+4FIIACH5BAkLAAAALAAAAAAQAAsAAAUvICCOZGme5ERRk6iy7qpyHCVStA3gNa/7txxwlwv2isSacYUc+l4tADQGQ1mvpBAAIfkECQsAAAAsAAAAABAACwAABS8gII5kaZ7kRFGTqLLuqnIcJVK0DeA1r/u3HHCXC/aKxJpxhRz6Xi0ANAZDWa+kEAA7AAAAAAAAAAAA");
+    width: 16px;
+    background-position: center center;
+    background-repeat: no-repeat;
+  }
+
+  label, .email .info {
+    font-size: 80%;
+    margin-top: 7px;
+    margin-bottom: -2px;
+  }
+
+  .email .info {
+    border-radius: 50%;
+    padding: 0px 6px;
+    float: right;
+    cursor: pointer;
+    background-color: #762f87;
+    color: white;
+  }
+
+  label {
+    // Bootstrap sets labels as 'display: block;'. Undo that.
+    display: inline;
+  }
+
+  input[type=text], input[type=email], input[type=password] {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 4px;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    line-height: 1;
+  }
+
+  .login-button-form-submit { margin-top: 8px; }
+  .message { font-size: 80%; margin-top: 8px; line-height: 1.3; }
+  .error-message { color: red; }
+  .info-message { color: green; }
+  .additional-link { font-size: 75%; }
+
+  .accounts-close {
+    position: absolute;
+    top: 0;
+    right: 5px;
+
+    font-size: 20px;
+    font-weight: bold;
+    line-height: 20px;
+    text-decoration: none;
+    color: #000;
+    opacity: 0.4;
+
+    &:hover {
+      opacity: 0.8;
+    }
+  }
+
+  .or {
+    text-align: center;
+    .hline { text-decoration: line-through; color: lightgrey; }
+    .or-text { font-weight: bold; }
+  }
+
+  p.troubleshooting-link {
+    text-align: center;
+    a {
+      color: black;
+    }
+  }
+}
+
+body>.main-content.account {
+  text-align: left;
+
+  >* {
+    margin: 16px 24px;
+  }
+
+  >.profile>.identities {
     padding: 0;
+    padding-left: 16px;
 
     >li {
       display: inline-block;
@@ -97,105 +267,8 @@ body>.main-content.account {
       >form {
         position: absolute;
         z-index: 4;
-        left: calc(50% - 300px);
-        right: calc(50% - 300px);
+        left: 40px;
         top: 64px;
-        height: auto;
-        background-color: white;
-        border: 1px solid #ccc;
-        box-shadow: 0px 2px 2px rgba(0, 0, 0, 0.2);
-
-        >ul {
-          padding: 8px;
-
-          >li {
-            list-style-type: none;
-            overflow: hidden;
-            margin-bottom: 8px;
-
-            label {
-              display: block;
-              font-weight: bold;
-              text-align: right;
-            }
-
-            input[type="text"], select {
-              display: block;
-              width: 400px;
-              float: right;
-              box-sizing: border-box;
-              font-size: inherit;
-              line-height: inherit;
-              background-color: white;
-              border: 1px solid #ccc;
-              padding: 2px;
-              margin-left: 8px;
-            }
-
-            &.handle {
-              label::after {
-                content: "@";
-                float: right;
-                margin-right: -20px;
-                font-family: monospace;
-                padding-top: 2px;
-                color: #888;
-              }
-
-              input[type="text"] {
-                padding-left: 1em;
-                font-family: monospace;
-              }
-            }
-
-            &.picture {
-              button {
-                float: right;
-                border: none;
-                padding: 0;
-                width: 256px;
-                height: 256px;
-                margin-right: 144px;
-                margin-left: 8px;
-                position: relative;
-                background-color: transparent;
-
-                &:hover {
-                  cursor: pointer;
-
-                  &::before {
-                    position: absolute;
-                    content: " ";
-                    display: block;
-                    top: 0;
-                    left: 0;
-                    width: 100%;
-                    height: 100%;
-                    background-color: rgba(0, 0, 0, 0.2);
-                    z-index: 1;
-                  }
-                }
-
-                >img {
-                  display: block;
-                  max-width: 100%;
-                  max-height: 100%;
-                  margin: auto;
-                }
-              }
-            }
-
-            &.save {
-              text-align: right;
-            }
-
-            >.details {
-              display: block;
-              clear: right;
-              font-size: 80%;
-            }
-          }
-        }
       }
     }
 
@@ -233,6 +306,358 @@ body>.main-content.account {
         line-height: 64px;
         color: #888;
         font-weight: bold;
+      }
+    }
+  }
+
+  section {
+    >h2 {
+      text-align: left;
+      border-bottom: 1px solid #aaa;
+      text-transform: uppercase;
+      font-weight: bold;
+      margin-right: 48px;
+    }
+
+    >.balance {
+      margin-left: 16px;
+      box-sizing: border-box;
+      margin: 1em auto 2em;
+      padding-left: 150px;
+      text-align: left;
+
+      >.amount {
+        border: 1px solid #ccc;
+        padding: 4px 16px;
+        margin: 0 16px;
+      }
+
+      >.details {
+        font-size: 80%;
+        color: #444;
+      }
+    }
+
+    >table {
+      text-align: left;
+      margin-left: 16px;
+      min-width: 600px;
+      border-collapse: collapse;
+      border-spacing: 0;
+
+      >thead {
+        td {
+          border-right: 1px solid white;
+          background-color: #ccc;
+          padding-left: 10px;
+        }
+        td:first-child {
+          background-color: white;
+          padding-left: 0;
+        }
+      }
+
+      td:nth-child(1) {
+        width: 100px;
+      }
+
+      td:nth-child(2) {
+        width: 300px;
+      }
+
+      td:nth-child(3) {
+        width: 100px;
+      }
+
+      td:nth-child(4) {
+        width: 80px;
+      }
+
+      >tbody {
+        >tr>td {
+          padding: 16px;
+
+          >button {
+            background-color: transparent;
+            border: 1px solid #ccc;
+            color: #5d5d5d;
+            cursor: pointer;
+            text-transform: uppercase;
+            border-radius: 2px;
+
+            &:hover {
+              background-color: #eee;
+            }
+          }
+
+          &.add-new-card {
+            >button {
+              font-size: 16px;
+              font-weight: bold;
+            }
+
+            >span {
+              margin-left: 16px;
+            }
+          }
+          &.checkbox {
+            text-align: right;
+            text-transform: uppercase;
+            font-size: 10pt;
+            >label {
+              font-size: 0;
+              position: relative;
+              display: inline-block;
+              vertical-align: top;
+              width: 16px;
+              height: 16px;
+              margin-left: 16px;
+              border: 1px solid #aaa;
+              cursor: pointer;
+              border-radius: 2px;
+              >input {
+                visibility: hidden;
+              }
+              &.selected {
+                background: #aaa;
+                cursor: initial;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+#first-sign-in.main-content {
+  h1 {
+    text-align: center;
+  }
+  >.account-profile-editor {
+    position: static;
+    margin: auto;
+  }
+}
+
+form.account-profile-editor {
+  width: 600px;
+  height: auto;
+  background-color: white;
+  border: 1px solid #ccc;
+  box-shadow: 0px 2px 2px rgba(0, 0, 0, 0.2);
+
+  >ul {
+    padding: 8px;
+
+    >li {
+      list-style-type: none;
+      overflow: hidden;
+      margin-bottom: 8px;
+
+      label {
+        display: block;
+        font-weight: bold;
+        text-align: right;
+      }
+
+      input[type="text"], input[type="email"], select {
+        display: block;
+        width: 400px;
+        float: right;
+        box-sizing: border-box;
+        font-size: inherit;
+        line-height: inherit;
+        background-color: white;
+        border: 1px solid #ccc;
+        padding: 2px;
+        margin-left: 8px;
+      }
+
+      input:invalid {
+        border: 1px solid #c00;
+      }
+
+      &.handle {
+        label::after {
+          content: "@";
+          float: right;
+          margin-right: -20px;
+          font-family: monospace;
+          padding-top: 2px;
+          color: #888;
+        }
+
+        input[type="text"] {
+          padding-left: 1em;
+          font-family: monospace;
+        }
+      }
+
+      &.picture {
+        button {
+          float: right;
+          border: none;
+          padding: 0;
+          width: 256px;
+          height: 256px;
+          margin-right: 144px;
+          margin-left: 8px;
+          position: relative;
+          background-color: transparent;
+
+          &:hover {
+            cursor: pointer;
+
+            &::before {
+              position: absolute;
+              content: " ";
+              display: block;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              background-color: rgba(0, 0, 0, 0.2);
+              z-index: 1;
+            }
+          }
+
+          >img {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            margin: auto;
+          }
+        }
+      }
+
+      &.save {
+        text-align: right;
+      }
+
+      >.details {
+        display: block;
+        clear: right;
+        font-size: 80%;
+      }
+    }
+  }
+}
+
+body>.main-content.account,
+body>.popup {
+  .mobile-iframe-hack {
+    display: none;
+
+    // TODO(soon): mobile
+    // position: absolute;
+    // width: 60px;
+    // height: 20px;
+    // z-index: 1;
+    // border: 0px;
+  }
+
+  .mobile-iframe-hack.fullscreen {
+    display: initial;
+    width: 100%;
+    height: 100%;
+    position: fixed;
+    top: 32px;
+    left: 0px;
+    z-index: 10000000;
+    border: 0px;
+  }
+}
+
+body>.popup.billing-prompt>.frame {
+  text-align: center;
+
+  @media #{$desktop} {
+    width: 932px;
+    max-width: 90%;
+    margin: 0 auto;
+    position: relative;
+    border: 1px solid #ccc;  // prevent margin collapse
+  }
+
+  @media #{$mobile} {
+    max-width: 500px;
+  }
+
+  >p.reason {
+    margin: 16px;
+    font-weight: bold;
+  }
+}
+
+body>.popup.billing-prompt>.frame, body>.main-content.account>section.subscription {
+  h3 { text-align: left; }
+
+  >.subscriptions {
+    max-width: 900px;
+    font-size: 11px;
+    margin: 32px 16px;
+
+    >.subscription {
+      display: inline-block;
+      border: 2px dashed #999;
+      border-radius: 4px;
+      height: 190px;
+      width: 180px;
+      margin: 8px;
+      padding: 8px;
+      cursor: pointer;
+      text-align: center;
+
+      &.selected {
+        cursor: auto;
+        border-style: solid;
+      }
+
+      &.selecting {
+        background-size: 96px 96px;
+        // TODO(soon): need spinner with transparent or #eee background
+        background-image: url("/spinner_96.gif");
+        background-repeat: no-repeat;
+        background-position: center;
+      }
+
+      h4 {
+        font-size: 16px;
+        text-transform: uppercase;
+        margin-bottom: 0;
+        text-align: center;
+      }
+
+      >table {
+        border-collapse: collapse;
+        border-spacing: 0;
+        margin: 0px auto 16px auto;
+
+        td {
+          padding-bottom: 8px;
+
+          &:nth-child(1) {
+            padding-right: 4px;
+            border-right: 1px solid #ccc;
+            text-align: right;
+          }
+
+          &:nth-child(2) {
+            padding-left: 4px;
+            text-align: left;
+          }
+        }
+
+        tr:last-child>td {
+          padding-bottom: 0px;
+        }
+      }
+
+      >hr {
+        border: none;
+        border-bottom: 2px solid #ccc;
+        margin: 4px 4px 8px;
       }
     }
   }

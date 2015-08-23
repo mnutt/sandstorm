@@ -28,6 +28,29 @@ limitations under the License.
 <template name="layout">
   {{>sandstormTopbar globalTopbar}}
 
+  {{#with demoExpired}}
+    {{>title "Demo Expired"}}
+
+    <div id="demo-expired" class="main-content">
+      <h1>Demo Expired</h1>
+      {{#if canUpgradeDemo}}
+        <p>Thanks for trying the Sandstorm Demo! Your demo account has expired. If
+          you'd like to continue using Sandstorm and make your data permanent, please sign in.</p>
+        <div class="login">
+          {{> loginButtonsList globalAccountsUi}}
+        </div>
+      {{else}}
+        <p>Thanks for trying the Sandstorm Demo! Your demo account has expired.</p>
+        <p><button class="logout">Sign out</button></p>
+      {{/if}}
+    </div>
+  {{else}}
+  {{#if firstLogin}}
+    <div id="first-sign-in" class="main-content">
+      {{> sandstormAccountsFirstSignIn globalAccountsUi}}
+    </div>
+  {{else}}
+
   {{!-- standard topbar items --}}
   {{#sandstormTopbarItem name="homelink" topbar=globalTopbar}}
     <a href="/" id="homelink" class="navlink">Sandstorm</a>
@@ -67,7 +90,14 @@ limitations under the License.
     {{/if}}
   {{/with}}
 
+  {{#with billingPromptState}}
+    {{>billingPrompt}}
+  {{/with}}
+
   {{> yield}}
+
+  {{/if}}
+  {{/with}}
 </template>
 
 <template name="lightLayout">
@@ -222,29 +252,6 @@ limitations under the License.
               {{/each}}
             </tbody>
           </table>
-
-          {{#if isDemoUser}}
-            <aside>
-              <form id="signup" action="https://sandstorm.us7.list-manage.com/subscribe/post?u=1a036c5ea0fc3c215793748ed&amp;id=5d9399a0af" method="post">
-                <p>Join our mailing list for updates<br>
-                <input type="email" name="EMAIL" placeholder="e-mail" required><input type="submit" value="&#10003;"></p>
-              </form>
-              <a id="preorder" href="https://sandstorm.io/preorder.html">
-                <span>Early Bird</span>
-                <span>Pre-order Now</span>
-              </a>
-              <div id="social">
-                <ul>
-                  <li id="github"><a href="https://github.com/sandstorm-io/sandstorm">Github</a></li>
-                  <li id="feed"><a href="https://blog.sandstorm.io/feed.xml">Atom/RSS feed</a></li>
-                  <li id="twitter"><a href="https://twitter.com/SandstormIO">Twitter</a></li>
-                  <li id="google-plus"><a href="https://google.com/+SandstormIo">Google+</a></li>
-                  <li id="facebook"><a href="https://facebook.com/sandstorm.io">Facebook</a></li>
-                </ul>
-                <p>Connect with us</p>
-              </div>
-            </aside>
-          {{/if}}
         {{else}}
           {{#unless selectedTab.sharedWithMe}}
             <div id="install-arrow"></div>
@@ -354,9 +361,11 @@ limitations under the License.
 </template>
 
 <template name="whoHasAccess">
-  <h4 class="tabbed">Who has access</h4>
-  {{#basicTabs name="" tabs=tabs}}
-  {{#tabContent slug="table"}}
+   <img src="/people.svg">
+</template>
+<template name="whoHasAccessPopup">
+  <h4 class="who-has-access">Who has access</h4>
+  <div class="tables-container">
     <h5>People</h5>
     {{#if transitiveShares.empty}}
       <p> You have granted access to nobody. </p>
@@ -384,7 +393,7 @@ limitations under the License.
             <tr>
               <td>
                 <span class="token-petname" data-token-id="{{_id}}">
-                  {{petname}} ({{dateString created}})
+                  {{getPetname}} ({{dateString created}})
                 </span>
               </td>
               <td>
@@ -411,13 +420,8 @@ limitations under the License.
           {{/if}}
         {{/each}}
       </table>
-    {{/if}}
-  {{/tabContent}}
-  {{#tabContent slug="graph"}}
-    <p>Graph view is unimplemented. :(</p>
-  {{/tabContent}}
-  {{/basicTabs}}
-  <button class="share-with-others">&lt;&lt; Done</button>
+      {{/if}}
+   </div>
 </template>
 
 <template name="selectRole">
@@ -441,6 +445,7 @@ limitations under the License.
 <template name="emailInviteTab">
   <form class="email-invite">
     <p>
+    <img class="inline-icon" src="/people-m.svg">
     <input onclick="select()" type="text"
            class="emails" placeholder="Enter email addresses">
     {{> selectRole}}
@@ -450,13 +455,15 @@ limitations under the License.
                 placeholder="Type a personal message (optional)..."></textarea>
     </div>
     {{#if completionState.clear}}
+    <div class="button-container">
       <button>Send</button>
+    </div>
     {{/if}}
   </form>
   {{#with completionState}}
     {{#if success}}
      <p>Successfully sent.</p>
-     <p><button class="reset-invite">&lt;&lt; Send more invites</button></p>
+     <p><button class="reset-invite">+ Send more invites</button></p>
     {{/if}}
     {{#if pending}}
       <p>Sending...</p>
@@ -470,21 +477,25 @@ limitations under the License.
 
 <template name="sharableLinkTab">
   <form class="new-share-token">
-    <p> Anyone with this link{{#if viewInfo.roles}}:{{else}} can access the grain.{{/if}}
+    <p>
+      <img class="inline-icon" src="/people-m.svg">
+      Anyone with this link{{#if viewInfo.roles}}:{{else}} can access the grain.{{/if}}
       {{> selectRole}}
     </p>
     <input type="text" class="label" placeholder="Label (optional)">
     <p class="label-explanation">
       Use a label to remind yourself to whom you sent this unique link.</p>
     {{#if completionState.clear}}
-      <button>Create</button>
+      <div class="button-container">
+        <button>Create</button>
+      </div>
     {{/if}}
   </form>
   {{#with completionState}}
     {{#if success}}
-      <p>Copy this link:</p>
+      <p><img class="inline-icon" src="/copy-m.svg"> Copy this link:</p>
       <a id="share-token-text" class="copy-me" href="{{shareToken}}">{{success.url}}</a>
-      <p><button class="reset-share-token">&lt;&lt; create another link</button></p>
+      <p><button class="reset-share-token">+ Create another link</button></p>
     {{/if}}
     {{#if pending}}
       <p>Generating...</p>
@@ -494,7 +505,7 @@ limitations under the License.
 </template>
 
 <template name="shareWithOthers">
-  <h4 class="tabbed">Share with others...</h4>
+  <h4 class="share-with-others">Share with others</h4>
   {{#if oldSharingModel}}
     <p>This grain uses the old sharing model. You can share it by copy/pasting the URL from the
        location bar.</p>
@@ -505,26 +516,29 @@ limitations under the License.
       <p><button id="privatize-grain">upgrade</button></p>
     {{/if}}
   {{else}}
-    {{#basicTabs name="" tabs=tabs}}
-      {{#tabContent slug="invite"}}
+  <div class="share-tabs" data-which-tab="send-invite">
+    <section class="send-invite">
+      <h5 class="tab-top"> Send an invite </h5>
+      <div class="tab-content">
         {{> emailInviteTab}}
-      {{/tabContent}}
-      {{#tabContent slug="link"}}
+      </div>
+    </section>
+    <section class="sharable-link">
+      <h5 class="tab-top"> Get sharable link </h5>
+      <div class="tab-content">
         {{> sharableLinkTab}}
-      {{/tabContent}}
-    {{/basicTabs}}
-    <div class="footer">
-      <button class="who-has-access">See who has access &gt;&gt;</button>
-    </div>
+      </div>
+    </section>
+  </div>
+  <div class="footer">
+    <img class="inline-icon" src="/people-m.svg">
+    <button class="who-has-access">See who has access</button>
+  </div>
   {{/if}}
 </template>
 
 <template name="grainSharePopup">
-  {{#if currentMode.whoHasAccess}}
-    {{> whoHasAccess}}
-  {{else}}
-    {{> shareWithOthers }}
-  {{/if}}
+  {{> shareWithOthers }}
 </template>
 
 <template name="grainPowerboxRequest">
@@ -556,7 +570,7 @@ limitations under the License.
 
 <template name="grain">
   {{>sandstormTopbarItem name="title" priority=5 topbar=globalTopbar template="grainTitle"}}
-  {{#sandstormTopbarItem name="grain-size" topbar=globalTopbar}}
+  {{#sandstormTopbarItem name="grain-size" priority=5 topbar=globalTopbar}}
     {{grainSize}}
   {{/sandstormTopbarItem}}
 
@@ -608,6 +622,18 @@ limitations under the License.
     {{/if}}
     {{/if}}
     {{/if}}
+  </div>
+</template>
+
+<template name="newGrain">
+  <div class="main-content">
+    {{> sandstormAppList }}
+  </div>
+</template>
+
+<template name="selectGrain">
+  <div class="main-content">
+    {{> sandstormGrainList}}
   </div>
 </template>
 
@@ -698,7 +724,9 @@ limitations under the License.
 
 <template name="account">
   <div class="account main-content">
-    {{>sandstormAccountSettings .}}
+    {{#if .}}
+      {{>sandstormAccountSettings .}}
+    {{/if}}
   </div>
 </template>
 
@@ -708,7 +736,7 @@ limitations under the License.
   <div id="signup" class="main-content">
   <div class="centered-box">
   {{#if alreadySignedUp}}
-    <p>You're all signed up!  Now go <a href="https://sandstorm.io/apps/?host={{origin}}">install
+    <p>You're all signed up!  Now go <a href="https://apps.sandstorm.io/?host={{origin}}">install
       some apps</a>.</p>
   {{else}}
     {{#if keyIsValid}}
@@ -815,7 +843,7 @@ limitations under the License.
     {{else}}
       {{#if isDemoUser}}
         <p>Sorry, demo users are not allowed to upload new apps, but you can
-          <a href="https://sandstorm.io/apps/?host={{origin}}">install apps from sandstorm.io</a>.</p>
+          <a href="https://apps.sandstorm.io/?host={{origin}}">install apps from sandstorm.io</a>.</p>
       {{else}}
         <p>Sorry, Sandstorm is in closed alpha.  To install apps, you must first be invited.</p>
       {{/if}}
@@ -950,7 +978,7 @@ limitations under the License.
        (<a class="reset-login-tokens" data-servicename="github" href="">log out all users</a>)<br>
        <input type="checkbox" name="emailTokenLogin" value="value" checked={{emailTokenEnabled}}> Enable Passwordless Email Login<br>
       <span class="details">Choose which services users may use to identify themselves. Anyone can log in, but only users you {{#linkTo route="adminInvites" data=getToken}}invite{{/linkTo}} will be able to install apps or create files.</span></p>
-    <p>SMTP Url: <input id="smptUrl" type="text" name="smtpUrl" value="{{smtpUrl}}"><button id="admin-settings-send-toggle">Test</button><br>
+    <p>SMTP Url: <button id="admin-settings-send-toggle">Test</button><input id="smptUrl" type="text" name="smtpUrl" value="{{smtpUrl}}"><br>
       <span class="details">Address of an SMTP relay server, like <code>smtp://user:pass@host:port</code>, which will be used by email apps and to send {{#linkTo route="adminInvites" data=getToken}}email invites{{/linkTo}}. The SMTP server should be configured to allow sending email from your Sandstorm domain and from email addresses that will be used to send invites.</span>
     </p>
     {{#if isEmailTestActive}}
@@ -972,7 +1000,7 @@ limitations under the License.
         <td>Name</td>
         <td>User Class</td>
         {{#if quotaEnabled}}
-          <td>Quota</td>
+          <td>Plan</td>
           <td>Used</td>
         {{/if}}
         <td>Created</td>
@@ -994,7 +1022,7 @@ limitations under the License.
             </select>
           </td>
           {{#if quotaEnabled}}
-            <td>{{userQuota}}</td>
+            <td>{{plan}}</td>
             <td>{{userStorageUsage}}</td>
           {{/if}}
           <td title="{{createdAt}}">{{dateString createdAt}}</td>
@@ -1083,10 +1111,13 @@ limitations under the License.
 
 <template name="adminAdvanced">
   <form id="admin-settings-form">
-    <p>Splash Dialog: <input type="textarea" name="splashDialog" value="{{splashDialog}}"><br>
-       Signup Dialog: <input type="textarea" name="signupDialog" value="{{signupDialog}}"><br>
+    <p>Splash Dialog: <input type="text" name="splashDialog" value="{{splashDialog}}"><br>
+       Signup Dialog: <input type="text" name="signupDialog" value="{{signupDialog}}"><br>
       <span class="details">This will be used as text in the splash page and signup page respectively.</span></p>
-    <p>Admin Alert: <input type="textarea" name="adminAlert" value="{{adminAlert}}"><br>
+    <p>Terms of Service URL: <input type="text" name="termsUrl" value="{{termsUrl}}"><br>
+       Privacy Policy URL: <input type="text" name="privacyUrl" value="{{privacyUrl}}"><br>
+      <span class="details">If provided, new users will be required to agree to these.</span></p>
+    <p>Admin Alert: <input type="text" name="adminAlert" value="{{adminAlert}}"><br>
        Alert Time (e.g. "5/9/2022 6:00 PM"): <input id="alertTime" type="text" name="alertTime" value="{{alertTime}}"><br>
        Alert URL (optional): <input id="alertUrl" type="text" name="alertUrl" value="{{alertUrl}}"><br>
       <span class="details">

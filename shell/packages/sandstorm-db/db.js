@@ -45,10 +45,11 @@
 //               inviter admin attached to the key.
 //   signupEmail: If the user was invited by email, then this field contains the email address that
 //                the invite was sent to.
-//   quota: Number of bytes this user is allowed to store.
+//   plan: _id of an entry in the Plans table which determines the user's qutoa.
 //   storageUsage: Number of bytes this user is currently storing.
 //   expires: Date when this user's account should be deleted. Only present for demo users.
 //   isAppDemoUser: True if this is a demo user who arrived via an /appdemo/ link.
+//   payments: Object defined by payments module, if loaded.
 
 Packages = new Mongo.Collection("packages");
 // Packages which are installed or downloading.
@@ -59,7 +60,7 @@ Packages = new Mongo.Collection("packages");
 //   progress:  Float.  -1 = N/A, 0-1 = fractional progress (e.g. download percentage),
 //       >1 = download byte count.
 //   error:  If status is "failed", error message string.
-//   manifest:  If status is "ready", the package manifest.  See "Manifest" in grain.capnp.
+//   manifest:  If status is "ready", the package manifest.  See "Manifest" in package.capnp.
 //   appId:  If status is "ready", the application ID string.  Packages representing different
 //       versions of the same app have the same appId.  The spk tool defines the app ID format
 //       and can cryptographically verify that a package belongs to a particular app ID.
@@ -173,7 +174,6 @@ SignupKeys = new Mongo.Collection("signupKeys");
 //   used:  Boolean indicating whether this key has already been consumed.
 //   note:  Text note assigned when creating key, to keep track of e.g. whom the key was for.
 //   email: If this key was sent as an email invite, the email address to which it was sent.
-//   quota: If present, the storage quota to assign to the user claiming this invite.
 
 ActivityStats = new Mongo.Collection("activityStats");
 // Contains usage statistics taken on a regular interval. Each entry is a data point.
@@ -390,13 +390,27 @@ AssetUploadTokens = new Mongo.Collection("assetUploadTokens");
 //           identityId: Which of the user's identities shall be updated.
 //   expires:   Time when this token will go away if unused.
 
+Plans = new Mongo.Collection("plans");
+// Subscription plans, which determine quota.
+//
+// Each contains:
+//   _id: Plan ID, usually a short string like "free", "standard", "large", "mega", ...
+//   storage: Number of bytes this user is allowed to store.
+//   compute: Number of kilobyte-RAM-seconds this user is allowed to consume.
+//   grains: Total number of grains this user can create (often `Infinity`).
+//   price: Price per month in US cents.
+
 if (Meteor.isServer) {
   Meteor.publish("credentials", function () {
     // Data needed for isSignedUp() and isAdmin() to work.
 
     if (this.userId) {
-      return Meteor.users.find({_id: this.userId},
-          {fields: {signupKey: 1, isAdmin: 1, expires: 1, quota: 1, storageUsage: 1}});
+      return [
+        Meteor.users.find({_id: this.userId},
+            {fields: {signupKey: 1, isAdmin: 1, expires: 1, storageUsage: 1,
+                      plan: 1, hasCompletedSignup: 1}}),
+        Plans.find()
+      ];
     } else {
       return [];
     }
@@ -418,32 +432,67 @@ isSignedUp = function() {
   // Returns true if the user has presented an invite key.
 
   var user = Meteor.user();
-  if (user && user.signupKey) {
-    return true;
-  } else {
-    return false;
-  }
+
+  if (!user) return false;  // not signed in
+
+  if (user.expires) return false;  // demo user.
+
+  if (Meteor.settings.public.allowUninvited) return true;  // all accounts qualify
+
+  if (user.signupKey) return true;  // user is invited
+
+  return false;
 }
 
 isSignedUpOrDemo = function () {
   var user = Meteor.user();
-  if (user && (user.signupKey || user.expires)) {
-    return true;
-  } else {
-    return false;
-  }
+
+  if (!user) return false;  // not signed in
+
+  if (user.expires) return true;  // demo user.
+
+  if (Meteor.settings.public.allowUninvited) return true;  // all accounts qualify
+
+  if (user.signupKey) return true;  // user is invited
+
+  return false;
 }
 
 isUserOverQuota = function (user) {
-  return Meteor.settings.public.quotaEnabled &&
-         typeof user.quota === "number" &&
-         user.storageUsage && user.storageUsage >= user.quota;
+  // Return false if user has quota space remaining, true if it is full. When this returns true,
+  // we will not allow the user to create new grains, though they may be able to open existing ones
+  // which may still increase their storage usage.
+  //
+  // (Actually returns a string which can be fed into `billingPrompt` as the reason.)
+
+  if (!Meteor.settings.public.quotaEnabled || user.isAdmin) return false;
+
+  var plan = Plans.findOne(user.plan || "free");
+
+  if (plan.grains < Infinity) {
+    var count = Grains.find({userId: user._id}, {fields: {}, limit: plan.grains}).count();
+    if (count >= plan.grains) return "outOfGrains";
+  }
+
+  return plan && user.storageUsage && user.storageUsage >= plan.storage && "outOfStorage";
 }
 
 isUserExcessivelyOverQuota = function (user) {
-  return Meteor.settings.public.quotaEnabled &&
-         typeof user.quota === "number" &&
-         user.storageUsage && user.storageUsage >= user.quota * 1.2;
+  // Return true if user is so far over quota that we should prevent their existing grains from
+  // running at all.
+  //
+  // (Actually returns a string which can be fed into `billingPrompt` as the reason.)
+
+  if (!Meteor.settings.public.quotaEnabled || user.isAdmin) return false;
+
+  var plan = Plans.findOne(user.plan || "free");
+
+  if (plan.grains < Infinity) {
+    var count = Grains.find({userId: user._id}, {fields: {}, limit: plan.grains * 2}).count();
+    if (count >= plan.grains * 2) return "outOfGrains";
+  }
+
+  return plan && user.storageUsage && user.storageUsage >= plan.storage * 1.2 && "outOfStorage";
 }
 
 isAdmin = function() {
@@ -604,6 +653,66 @@ if (Meteor.isServer) {
 
 // =======================================================================================
 // Below this point are newly-written or refactored functions.
+
+_.extend(SandstormDb.prototype, {
+  // TODO(cleanup): These methods shouldn't take a raw mongo queries or "aggregations" as inputs.
+  //   We want methods corresponding to each kind of query that is performed in practice. Letting
+  //   the caller pass an arbitrary query and aggregations is problematic because:
+  //   - We can't type-check them to prevent Mongo injections.
+  //   - It defeats the purpose of clearly seeing what kinds of queries we need to support, and
+  //     therefore what kind of indexes we might need.
+  //   - It doesn't make it any easier for us to substitute a non-Mongo database in the future.
+  //   - If the caller is just going to pass in a match-all query, we may be forcing Mongo into
+  //     a slower path by using $and.
+  userGrains: function userGrains (user, query, aggregations) {
+    var filteredQuery = { $and: [ { userId: user}, query ] };
+    return this.collections.grains.find(filteredQuery, aggregations);
+  },
+
+  currentUserGrains: function currentUserGrains (query, aggregations) {
+    return this.userGrains(Meteor.userId(), query, aggregations);
+  },
+
+  userApiTokens: function userApiTokens (user) {
+    return this.collections.apiTokens.find({'owner.user.userId': user});
+  },
+
+  currentUserApiTokens: function currentUserApiTokens () {
+    return this.userApiTokens(Meteor.userId());
+  },
+
+  userActions: function userActions (user, query, aggregations) {
+    var filteredQuery = { $and: [ {userId: user}, query ] };
+    return this.collections.userActions.find(filteredQuery, aggregations);
+  },
+
+  currentUserActions: function currentUserActions (query, aggregations) {
+    return this.userActions(Meteor.userId(), query, aggregations);
+  },
+
+  getPlan: function (id) {
+    check(id, String);
+    var plan = Plans.findOne(id);
+    if (!plan) {
+      throw new Error("no such plan: " + id);
+    }
+    return plan;
+  },
+
+  listPlans: function () {
+    return Plans.find({});
+  },
+
+  getMyPlan: function () {
+    var user = Meteor.user();
+    return user && Plans.findOne(user.plan || "free");
+  },
+
+  getSetting: function (name) {
+    var setting = Settings.findOne(name);
+    return setting && setting.value;
+  },
+});
 
 if (Meteor.isServer) {
   var Crypto = Npm.require("crypto");

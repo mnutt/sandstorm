@@ -138,6 +138,12 @@ function fetchProfilePictures() {
   });
 }
 
+function assignPlans() {
+  if (Meteor.settings.public.quotaEnabled && SandstormDb.paymentsMigrationHook) {
+    SandstormDb.paymentsMigrationHook(SignupKeys, Plans.find().fetch());
+  }
+}
+
 // This must come after all the functions named within are defined.
 // Only append to this list!  Do not modify or remove list entries;
 // doing so is likely change the meaning and semantics of user databases.
@@ -148,6 +154,7 @@ var MIGRATIONS = [
   mergeRoleAssignmentsIntoApiTokens,
   fixOasisStorageUsageStats,
   fetchProfilePictures,
+  assignPlans,
 ];
 
 function migrateToLatest() {
