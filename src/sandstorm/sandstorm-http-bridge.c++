@@ -265,6 +265,12 @@ public:
         KJ_IF_MAYBE(mimeType, findHeader("content-type")) {
           content.setMimeType(*mimeType);
         }
+        KJ_IF_MAYBE(dav, findHeader("dav")) {
+          content.setDav(*dav);
+        }
+        KJ_IF_MAYBE(etag, findHeader("etag")) {
+          content.setEtag(*etag);
+        }
         KJ_IF_MAYBE(disposition, findHeader("content-disposition")) {
           // Parse `attachment; filename="foo"`
           // TODO(cleanup):  This is awful.  Use KJ parser library?
@@ -325,6 +331,9 @@ public:
       case WebSession::Response::NO_CONTENT: {
         auto noContent = builder.initNoContent();
         noContent.setShouldResetForm(statusInfo.noContent.shouldResetForm);
+        KJ_IF_MAYBE(dav, findHeader("dav")) {
+          noContent.setDav(*dav);
+        }
         break;
       }
       case WebSession::Response::REDIRECT: {

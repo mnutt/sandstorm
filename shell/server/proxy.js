@@ -1502,6 +1502,12 @@ Proxy.prototype.translateResponse = function (rpcResponse, response) {
     if (content.language) {
       response.setHeader("Content-Language", content.language);
     }
+    if (content.dav) {
+      response.setHeader("DAV", content.dav);
+    }
+    if (content.etag) {
+      response.setHeader("ETag", content.etag);
+    }
     if (("disposition" in content) && ("download" in content.disposition)) {
       response.setHeader("Content-Disposition", "attachment; filename=\"" +
           content.disposition.download.replace(/([\\"\n])/g, "\\$1") + "\"");
@@ -1534,6 +1540,10 @@ Proxy.prototype.translateResponse = function (rpcResponse, response) {
   } else if ("noContent" in rpcResponse) {
     var noContent = rpcResponse.noContent;
     var noContentCode = noContentSuccessCodes[noContent.statusCode];
+    if (noContent.dav) {
+      response.setHeader("DAV", noContent.dav);
+    }
+
     response.writeHead(noContentCode.id, noContentCode.title);
     response.end();
   } else if ("redirect" in rpcResponse) {
