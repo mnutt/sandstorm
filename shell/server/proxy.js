@@ -1421,6 +1421,7 @@ var errorCodes = {
   notAcceptable:         { id: 406, title: "Not Acceptable" },
   conflict:              { id: 409, title: "Conflict" },
   gone:                  { id: 410, title: "Gone" },
+  preconditionFailed:    { id: 412, title: "Precondition Failed" },
   requestEntityTooLarge: { id: 413, title: "Request Entity Too Large" },
   requestUriTooLong:     { id: 414, title: "Request-URI Too Long" },
   unsupportedMediaType:  { id: 415, title: "Unsupported Media Type" },

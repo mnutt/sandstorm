@@ -241,6 +241,7 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
       notAcceptable         @4 $httpStatus(id = 406, title = "Not Acceptable");
       conflict              @5 $httpStatus(id = 409, title = "Conflict");
       gone                  @6 $httpStatus(id = 410, title = "Gone");
+      preconditionFailed   @11 $httpStatus(id = 412, title = "Precondition Failed");
       requestEntityTooLarge @7 $httpStatus(id = 413, title = "Request Entity Too Large");
       requestUriTooLong     @8 $httpStatus(id = 414, title = "Request-URI Too Long");
       unsupportedMediaType  @9 $httpStatus(id = 415, title = "Unsupported Media Type");
