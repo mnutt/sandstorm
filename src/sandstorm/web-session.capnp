@@ -109,10 +109,9 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
     # This corresponds to the Accept header
 
     # WebDAV-specific request context.
-    dav @3 :List(Text);
-    depth @4 :Text; # Used with PROPFIND method, can be an int or 'infinity'
-    etag @5 :Text;
-    destination @6 :Text; # Used with MOVE method
+    depth @3 :Text; # Used with PROPFIND method, can be an int or 'infinity'
+    destination @4 :Text; # Used with MOVE method
+    overwrite @5 :Bool; # Used with MOVE method
   }
 
   struct PostContent {

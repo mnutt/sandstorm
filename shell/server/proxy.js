@@ -1239,33 +1239,17 @@ function parseDestinationHeader(request) {
   if (header) {
     // Destination header is a fully qualified URI
     var parsed = Url.parse(header);
-    return parsed.toString();
+    return parsed.href;
   }
 }
 
-function parseDavHeader(request) {
-  var header = request.headers["dav"];
+function parseOverwriteHeader(request) {
+  var header = request.headers["overwrite"];
 
-  var result = [];
   if (header) {
-    // DAV header looks like:
-    // DAV: 1,2,address-book,mkcol-extended
-    var davList = header.split(",");
-    for (var i in davList) {
-      result.push(davList[i].replace(/[^0-9a-z\-]/, ''));
-    }
-  }
-
-  return result;
-}
-
-function parseEtagHeader(request) {
-  var header = request.headers["etag"];
-
-  // Etag header looks like:
-  // Etag: "7776cdb01f44354af8bfa4db0c56eebcb1378975"
-  if (header && header.match(/^(?:W\/)?"(?:[ !#-\x7E\x80-\xFF]*|\r\n[\t ]|\\.)*"$/)) {
-    return header;
+    return header.toLowerCase() != "f";
+  } else {
+    return true;
   }
 }
 
@@ -1355,10 +1339,11 @@ Proxy.prototype.makeContext = function (request, response) {
 
   context.accept = parseAcceptHeader(request);
 
-  context.dav = parseDavHeader(request);
   context.depth = parseDepthHeader(request);
-  context.etag = parseEtagHeader(request);
   context.destination = parseDestinationHeader(request);
+  if(context.destination) {
+    context.overwrite = parseOverwriteHeader(request);
+  }
 
   var promise = new Promise(function (resolve, reject) {
     response.resolveResponseStream = resolve;

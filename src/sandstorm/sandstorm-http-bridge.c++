@@ -1156,20 +1156,16 @@ private:
     if (depth.size() > 0) {
       lines.add(kj::str("Depth: ", depth));
     }
-    auto etag = context.getEtag();
-    if (etag.size() > 0) {
-      lines.add(kj::str("Etag: ", etag));
-    }
     auto destination = context.getDestination();
     if (destination.size() > 0) {
       lines.add(kj::str("Destination: ", destination));
-    }
-    auto dav = context.getDav();
-    if (dav.size() > 0) {
-      lines.add(kj::str("DAV: ", kj::strArray(
-                                              KJ_MAP(c, dav) {
-                                                return kj::str(c);
-                                              }, ",")));
+
+      auto overwrite = context.getOverwrite();
+      if (overwrite) {
+        lines.add(kj::str("Overwrite: T"));
+      } else {
+        lines.add(kj::str("Overwrite: F"));
+      }
     }
 
     lines.add(kj::str(""));
