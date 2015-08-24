@@ -784,47 +784,6 @@ tryProxyRequest = function (hostId, req, res) {
   if (hostId === "api") {
     // This is a request for the API host.
 
-    if (req.method === "OPTIONS") {
-      // Reply to CORS preflight request.
-
-      // All we want to do is permit APIs to be accessed from arbitrary origins. Since clients must
-      // send a valid Authorization header, and since cookies are not used for authorization, this
-      // is perfectly safe. In a sane world, we would only need to send back
-      // "Access-Control-Allow-Origin: *" and be done with it.
-      //
-      // However, CORS demands that we explicitly whitelist individual methods and headers for use
-      // cross-origin, as if this is somehow useful for implementing any practical security policy
-      // (it isn't). To make matters worse, we are REQUIRED to enumerate each one individually.
-      // We cannot just write "*" for these lists. WTF, CORS?
-      //
-      // Luckily, the request tells us exactly what method and headers are being requested, so we
-      // only need to copy those over, rather than create an exhaustive list. But this is still
-      // overly complicated.
-
-      var accessControlHeaders = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, HEAD, POST, PUT, DELETE",
-        "Access-Control-Max-Age": "3600"
-      };
-
-      // Copy all requested headers to the allowed headers list.
-      var requestedHeaders = req.headers["access-control-request-headers"];
-      if (requestedHeaders) {
-        accessControlHeaders["Access-Control-Allow-Headers"] = requestedHeaders;
-      }
-
-      // Add the requested method to the allowed methods list, if it's not there already.
-      var requestedMethod = req.headers["access-control-request-method"];
-      if (requestedMethod &&
-          !(_.contains(["GET", "HEAD", "POST", "PUT", "DELETE"], requestedMethod))) {
-        accessControlHeaders["Access-Control-Allow-Methods"] += ", " + requestedMethod;
-      }
-
-      res.writeHead(204, accessControlHeaders);
-      res.end();
-      return true;
-    }
-
     var responseHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Content-Type": "text/plain",
@@ -1703,8 +1662,50 @@ Proxy.prototype.handleRequest = function (request, data, response, retryCount) {
         content: data,
         encoding: request.headers["content-encoding"]
       }, context);
+    } else if (request.method === "OPTIONS") {
+      return session.options(path, context).then(function (rpcResponse) {
+
+        // All we want to do is permit APIs to be accessed from arbitrary origins. Since clients must
+        // send a valid Authorization header, and since cookies are not used for authorization, this
+        // is perfectly safe. In a sane world, we would only need to send back
+        // "Access-Control-Allow-Origin: *" and be done with it.
+        //
+        // However, CORS demands that we explicitly whitelist individual methods and headers for use
+        // cross-origin, as if this is somehow useful for implementing any practical security policy
+        // (it isn't). To make matters worse, we are REQUIRED to enumerate each one individually.
+        // We cannot just write "*" for these lists. WTF, CORS?
+        //
+        // Luckily, the request tells us exactly what method and headers are being requested, so we
+        // only need to copy those over, rather than create an exhaustive list. But this is still
+        // overly complicated.
+
+        var accessControlHeaders = {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, HEAD, POST, PUT, DELETE",
+          "Access-Control-Max-Age": "3600"
+        };
+
+        // Copy all requested headers to the allowed headers list.
+        var requestedHeaders = request.headers["access-control-request-headers"];
+        if (requestedHeaders) {
+          accessControlHeaders["Access-Control-Allow-Headers"] = requestedHeaders;
+        }
+
+        // Add the requested method to the allowed methods list, if it's not there already.
+        var requestedMethod = request.headers["access-control-request-method"];
+        if (requestedMethod &&
+            !(_.contains(["GET", "HEAD", "POST", "PUT", "DELETE"], requestedMethod))) {
+          accessControlHeaders["Access-Control-Allow-Methods"] += ", " + requestedMethod;
+        }
+
+        for (header in accessControlHeaders) {
+          response.setHeader(header, accessControlHeaders[header]);
+        }
+
+        return rpcResponse;
+      });
     } else {
-      throw new Error("Sandstorm only supports the following methods: GET, POST, PUT, DELETE, PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK, ACL, and REPORT.");
+      throw new Error("Sandstorm only supports the following methods: GET, POST, PUT, DELETE, PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK, ACL, REPORT, and OPTIONS.");
     }
 
   }).then(function (rpcResponse) {

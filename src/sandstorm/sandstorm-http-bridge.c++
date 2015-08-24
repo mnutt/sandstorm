@@ -974,6 +974,12 @@ public:
     return sendRequest(toBytes(httpRequest, content.getContent()), context);
   }
 
+  kj::Promise<void> options(OptionsContext context) override {
+    OptionsParams::Reader params = context.getParams();
+    kj::String httpRequest = makeHeaders("OPTIONS", params.getPath(), params.getContext());
+    return sendRequest(toBytes(httpRequest), context);
+  }
+
   kj::Promise<void> postStreaming(PostStreamingContext context) override {
     PostStreamingParams::Reader params = context.getParams();
     kj::String httpRequest = makeHeaders("POST", params.getPath(), params.getContext(),

@@ -86,6 +86,7 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   unlock @13 (path :Text, content :UnlockContent, context :Context) -> Response;
   acl @14 (path :Text, content :AclContent, context :Context) -> Response;
   report @15 (path :Text, content :ReportContent, context :Context) -> Response;
+  options @16 (path :Text, context :Context) -> Response;
 
   struct Context {
     # Additional per-request context.
