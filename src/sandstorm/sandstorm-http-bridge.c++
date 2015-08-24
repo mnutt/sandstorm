@@ -93,10 +93,11 @@ struct HttpStatusInfo {
   };
 };
 
-HttpStatusInfo noContentInfo(bool shouldResetForm) {
+HttpStatusInfo noContentInfo(bool shouldResetForm, WebSession::Response::SuccessCode code) {
   HttpStatusInfo result;
   result.type = WebSession::Response::NO_CONTENT;
   result.noContent.shouldResetForm = shouldResetForm;
+  result.successCode = code;
   return result;
 }
 
@@ -134,8 +135,9 @@ std::unordered_map<uint, HttpStatusInfo> makeStatusCodes() {
         static_cast<WebSession::Response::ClientErrorCode>(enumerant.getOrdinal());
   }
 
-  result[204] = noContentInfo(false);
-  result[205] = noContentInfo(true);
+  result[204] = noContentInfo(false, result[204].successCode);
+  result[205] = noContentInfo(true, result[205].successCode);
+  result[304] = noContentInfo(false, result[304].successCode);
 
   result[301] = redirectInfo(true, true);
   result[302] = redirectInfo(false, true);
@@ -330,6 +332,7 @@ public:
       }
       case WebSession::Response::NO_CONTENT: {
         auto noContent = builder.initNoContent();
+        noContent.setStatusCode(statusInfo.successCode);
         noContent.setShouldResetForm(statusInfo.noContent.shouldResetForm);
         KJ_IF_MAYBE(dav, findHeader("dav")) {
           noContent.setDav(*dav);
