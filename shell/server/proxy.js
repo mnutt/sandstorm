@@ -1599,7 +1599,7 @@ Proxy.prototype.handleRequest = function (request, data, response, retryCount) {
     var path = request.url.slice(1);  // remove leading '/'
     var session = self.getSession(request);
 
-    if (request.method === "GET") {
+    if (request.method === "GET" || request.method === "HEAD") {
       return session.get(path, context);
     } else if (request.method === "POST") {
       return session.post(path, {
@@ -1704,7 +1704,7 @@ Proxy.prototype.handleRequest = function (request, data, response, retryCount) {
         return rpcResponse;
       });
     } else {
-      throw new Error("Sandstorm only supports the following methods: GET, POST, PUT, DELETE, PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK, ACL, REPORT, and OPTIONS.");
+      throw new Error("Sandstorm only supports the following methods: GET, POST, PUT, DELETE, HEAD, PROPFIND, PROPPATCH, MKCOL, COPY, MOVE, LOCK, UNLOCK, ACL, REPORT, and OPTIONS.");
     }
 
   }).then(function (rpcResponse) {
