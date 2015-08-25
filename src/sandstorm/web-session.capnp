@@ -270,10 +270,10 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
         language @3 :Text;  # Content-Language header (optional).
         mimeType @4 :Text;  # Content-Type header.
 
-        dav @19 :Text;
+        dav @18 :Text;
         # Supported webdav modes
 
-        etag @20 :Text;
+        etag @19 :Text;
 
         body :union {
           bytes @5 :Data;
@@ -298,8 +298,10 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
         # If this is the response to a form submission, should the form be reset to empty?
         # Distinguishes between HTTP response 204 (False) and 205 (True)
 
-        dav @18 :Text;
+        dav @20 :Text;
         # Supported webdav modes
+
+        etag @21 :Text;
       }
 
       redirect :group {

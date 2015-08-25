@@ -337,6 +337,9 @@ public:
         KJ_IF_MAYBE(dav, findHeader("dav")) {
           noContent.setDav(*dav);
         }
+        KJ_IF_MAYBE(etag, findHeader("etag")) {
+          noContent.setEtag(*etag);
+        }
         break;
       }
       case WebSession::Response::REDIRECT: {

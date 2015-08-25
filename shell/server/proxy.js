@@ -1543,6 +1543,9 @@ Proxy.prototype.translateResponse = function (rpcResponse, response) {
     if (noContent.dav) {
       response.setHeader("DAV", noContent.dav);
     }
+    if (content.etag) {
+      response.setHeader("ETag", content.etag);
+    }
 
     response.writeHead(noContentCode.id, noContentCode.title);
     response.end();
