@@ -725,11 +725,22 @@ getProxyForApiToken = function (token) {
   });
 }
 
+function apiUseBasicAuth(req) {
+  // For clients with no convenient way to add an "Authorization: Bearer" header, we allow the token
+  // to be transmitted as a basic auth password.
+  var agent = req.headers["user-agent"];
+  if (agent && ((agent.slice(0, 4) === "git/") || (agent.slice(0, 16) === "GitHub-Hookshot/"))) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
 function apiTokenForRequest(req) {
   var auth = req.headers.authorization;
   if (auth && auth.slice(0, 7).toLowerCase() === "bearer ") {
     return auth.slice(7).trim();
-  } else if (auth && auth.slice(0, 6).toLowerCase() === "basic ") {
+  } else if (auth && auth.slice(0, 6).toLowerCase() === "basic " && apiUseBasicAuth(req)) {
     return (new Buffer(auth.slice(6).trim(), "base64")).toString().split(":")[1];
   } else {
     return undefined;
@@ -815,8 +826,13 @@ tryProxyRequest = function (hostId, req, res) {
         proxy.requestHandler(req, res);
       }, errorHandler);
     } else {
-      res.writeHead(401, {"Content-Type": "text/plain",
-                          "WWW-Authenticate": "Basic realm=\"Sandstorm API\""});
+      if (apiUseBasicAuth(req)) {
+        res.writeHead(401, {"Content-Type": "text/plain",
+                            "WWW-Authenticate": "Basic realm=\"Sandstorm API\""});
+      } else {
+        // TODO(someday): Display some sort of nifty API browser.
+        res.writeHead(403, responseHeaders);
+      }
       res.end("Missing or invalid authorization header.\n\n" +
           "This address serves APIs, which allow external apps (such as a phone app) to\n" +
           "access data on your Sandstorm server. This address is not meant to be opened\n" +
