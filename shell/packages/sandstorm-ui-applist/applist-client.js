@@ -31,7 +31,8 @@ var actionToTemplateObject = function(action) {
     _id: action._id,
     iconSrc: iconForAction(action),
     appTitle: title,
-    noun: nounFromAction(action, title)
+    noun: nounFromAction(action, title),
+    appId: action.appId
   };
 };
 var matchActions = function (searchString, sortOrder) {
@@ -80,6 +81,13 @@ Template.sandstormAppList.helpers({
   searching: function() {
     var ref = Template.instance().data;
     return ref._filter.get().length > 0;
+  },
+  myGrainsCount: function () {
+    return Template.instance().data._db.currentUserGrains({}, {}).count();
+  },
+  actionsCount: function() {
+    var ref = Template.instance().data;
+    return ref._db.currentUserActions({}).count();
   },
   actions: function() {
     var ref = Template.instance().data;
@@ -135,26 +143,48 @@ Template.sandstormAppList.helpers({
   },
   origin: function() {
     return document.location.protocol + "//" + document.location.host;
+  },
+  isSignedUpOrDemo: function() {
+    return this._db.isSignedUpOrDemo();
   }
 });
 Template.sandstormAppList.events({
+  "click .install-button": function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    Template.instance().data._quotaEnforcer.ifQuotaAvailable(function () {
+      window.open("https://apps.sandstorm.io/?host=" +
+          document.location.protocol + "//" + document.location.host, "_blank");
+    });
+  },
+  "click .upload-button": function (event) {
+    Template.instance().data._quotaEnforcer.ifPlanAllowsCustomApps(function () {
+      // N.B.: this calls into a global in shell.js.
+      // TODO(cleanup): refactor into a safer dependency.
+      promptUploadApp();
+    });
+  },
   "click .restore-button": function (event) {
-    // N.B.: this calls into a global in shell.js.
-    // TODO(cleanup): refactor into a safer dependency.
-    promptRestoreBackup();
+    Template.instance().data._quotaEnforcer.ifQuotaAvailable(function () {
+      // N.B.: this calls into a global in shell.js.
+      // TODO(cleanup): refactor into a safer dependency.
+      promptRestoreBackup();
+    });
   },
   "click .app-action": function(event) {
-    var actionId = event.currentTarget.getAttribute("data-actionid");
-    // N.B.: this calls into a global in shell.js.
-    // TODO(cleanup): refactor into a safer dependency.
-    launchAndEnterGrainByActionId(actionId);
+    var actionId = this._id;
+    Template.instance().data._quotaEnforcer.ifQuotaAvailable(function () {
+      // N.B.: this calls into a global in shell.js.
+      // TODO(cleanup): refactor into a safer dependency.
+      launchAndEnterGrainByActionId(actionId);
+    });
   },
   "click .dev-action": function(event) {
-    var devId = event.currentTarget.getAttribute("data-devid");
-    var actionIndex = event.currentTarget.getAttribute("data-actionindex");
+    var devId = this._id;
+    var actionIndex = this.actionIndex;
     // N.B.: this calls into a global in shell.js.
     // TODO(cleanup): refactor into a safer dependency.
-    launchAndEnterGrainByActionId("dev", devId, actionIndex);
+    launchAndEnterGrainByActionId("dev", this._id, this.actionIndex);
   },
   // We use keyup rather than keypress because keypress's event.currentTarget.value will not
   // have taken into account the keypress generating this event, so we'll miss a letter to
@@ -178,7 +208,15 @@ Template.sandstormAppList.events({
   }
 });
 Template.sandstormAppList.onCreated(function() {
-  this.subscribe("grainsMenu"); // provides userActions, grains, apitokens
   this.subscribe("devApps");
   this.subscribe("userPackages");
+});
+Template.sandstormAppList.onRendered(function () {
+  // Auto-focus search bar on desktop, but not mobile (on mobile it will open the software
+  // keyboard which is undesirable). window.orientation is generally defined on mobile browsers
+  // but not desktop browsers, but some mobile browsers don't support it, so we also check
+  // clientWidth. Note that it's better to err on the side of not auto-focusing.
+  if (window.orientation === undefined && window.innerWidth > 600) {
+    this.findAll(".search-bar")[0].focus();
+  }
 });

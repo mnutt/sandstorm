@@ -34,6 +34,7 @@ var mapGrainsToTemplateObject = function (grains) {
       appTitle: appTitle,
       lastUsed: grain.lastUsed,
       iconSrc: iconSrc,
+      isOwnedByMe: true,
     };
   });
 };
@@ -59,6 +60,7 @@ var mapApiTokensToTemplateObject = function (apiTokens) {
       appTitle: appTitle,
       lastUsed: ownerData.lastUsed,
       iconSrc: iconSrc,
+      isOwnedByMe: false,
     };
   });
 };
@@ -80,14 +82,35 @@ Template.sandstormGrainList.helpers({
   filteredSortedGrains: filteredSortedGrains,
   searchText: function() {
     return Template.instance().data._filter.get();
+  },
+  myGrainsCount: function () {
+    return Template.instance().data._db.currentUserGrains({}, {}).count();
+  },
+  hasAnyGrainsCreatedOrSharedWithMe: function() {
+    var _db = Template.instance().data._db;
+    return !! (_db.currentUserGrains({}, {}).count() ||
+               _db.currentUserApiTokens().count());
+  },
+  myGrainsSize: function () {
+    // TODO(cleanup): extract prettySize and other similar helpers from globals into a package
+    // TODO(cleanup): access Meteor.user() through db object
+    return prettySize(Meteor.user().storageUsage);
   }
 });
 Template.sandstormGrainList.onCreated(function () {
-  Template.instance().subscribe("grainsMenu");
   Template.instance().subscribe("userPackages");
 });
+Template.sandstormGrainList.onRendered(function () {
+  // Auto-focus search bar on desktop, but not mobile (on mobile it will open the software
+  // keyboard which is undesirable). window.orientation is generally defined on mobile browsers
+  // but not desktop browsers, but some mobile browsers don't support it, so we also check
+  // clientWidth. Note that it's better to err on the side of not auto-focusing.
+  if (window.orientation === undefined && window.innerWidth > 600) {
+    this.findAll(".search-bar")[0].focus();
+  }
+});
 Template.sandstormGrainList.events({
-  "click tr": function(event) {
+  "click tbody tr": function(event) {
     var grainId = event.currentTarget.getAttribute('data-grainid');
     Router.go("grain", {grainId: grainId});
   },
@@ -109,4 +132,3 @@ Template.sandstormGrainList.events({
     }
   }
 });
-

@@ -80,6 +80,9 @@ if (Meteor.isServer) {
       if (!isSignedUp()) {
         throw new Meteor.Error(403, "Unauthorized", "Only invited users can upload apps.");
       }
+      if (globalDb.isUninvitedFreeUser()) {
+        throw new Meteor.Error(403, "Unauthorized", "Only paid users can upload apps.");
+      }
       var token = Random.id();
       uploadTokens[token] = setTimeout(function () {
         delete uploadTokens[token];
@@ -110,22 +113,32 @@ Meteor.methods({
     }
 
     if (!this.userId) {
-      throw new Meteor.Error(403, "You must be logged in to install packages.");
-    }
-
-    if (!isSignedUp() && !isDemoUser()) {
+      if (allowDemo && isSafeDemoAppUrl(url)) {
+        // continue on
+      } else {
+        throw new Meteor.Error(403, "You must be logged in to install packages.");
+      }
+    } else if (!isSignedUp() && !isDemoUser()) {
       throw new Meteor.Error(403,
-          "Sorry, Sandstorm is in closed alpha. You must receive an alpha key before you " +
-          "can install packages.");
-    }
-
-    if (isUserOverQuota(Meteor.user())) {
+          "This Sandstorm server requires you to get an invite before installing apps.");
+    } else if (isUserOverQuota(Meteor.user())) {
       throw new Meteor.Error(402,
           "You are out of storage space. Please delete some things and try again.");
     }
 
     if (!this.isSimulation) {
       var pkg = Packages.findOne(packageId);
+
+      if (!pkg || pkg.status !== "ready") {
+        if (!this.userId || isDemoUser() || globalDb.isUninvitedFreeUser()) {
+          if (!isSafeDemoAppUrl(url)) {
+            // TODO(someday): Billing prompt on client side.
+            throw new Meteor.Error(403, "Sorry, demo and free users cannot upload custom apps; " +
+                "they may only install apps from apps.sandstorm.io.");
+          }
+        }
+      }
+
       if (pkg) {
         if (isRetry) {
           if (pkg.status !== "failed") {
@@ -145,12 +158,6 @@ Meteor.methods({
           startInstall(packageId, url, false, pkg.appId);
         }
       } else {
-        if (isDemoUser()) {
-          if (!isSafeDemoAppUrl(url)) {
-            throw new Meteor.Error(403, "Sorry, demo users cannot upload new apps.");
-          }
-        }
-
         startInstall(packageId, url, true);
       }
     }
@@ -234,51 +241,11 @@ if (Meteor.isClient) {
       Meteor.call("upgradeGrains", this.appId, this.version, this.packageId);
     }
   });
+}
 
-  Template.uploadForm.events({
-    "click #uploadButton": function (event) {
-      Session.set("uploadError", undefined);
-
-      var file = document.getElementById("uploadFile").files[0];
-      if (!file) {
-        alert("Please select a file.");
-        return;
-      }
-
-      var xhr = new XMLHttpRequest();
-
-      xhr.onreadystatechange = function () {
-        if (xhr.readyState == 4) {
-          Session.set("uploadProgress", undefined);
-          if (xhr.status == 200) {
-            Router.go("install", {packageId: xhr.responseText});
-          } else {
-            Session.set("uploadError", {
-              status: xhr.status,
-              statusText: xhr.statusText,
-              response: xhr.responseText
-            });
-          }
-        }
-      };
-
-      if (xhr.upload) {
-        xhr.upload.addEventListener("progress", function (progressEvent) {
-          Session.set("uploadProgress",
-              Math.round(progressEvent.loaded / progressEvent.total * 100));
-        });
-      }
-
-      Meteor.call("newUploadToken", function (err, result) {
-        if (err) {
-          console.error(err);
-        } else {
-          xhr.open("POST", "/upload/" + result, true);
-          xhr.send(file);
-        }
-      });
-    }
-  });
+function referredFromSandstorm() {
+  return document.referrer.lastIndexOf("https://sandstorm.io/apps/", 0) === 0 ||
+         document.referrer.lastIndexOf("https://apps.sandstorm.io/", 0) === 0;
 }
 
 Router.map(function () {
@@ -294,29 +261,52 @@ Router.map(function () {
       ];
     },
 
-    onBeforeAction: function () {
+    data: function () {
+      if (!this.ready()) return;
+
       var packageId = this.params.packageId;
       var package = Packages.findOne(packageId);
-      if (allowDemo && this.ready() && !Meteor.user() && package) {
-        Router.go("appdemo", {appId: package.appId}, {replaceState: true});
-      } else {
-        this.next();
-      }
-    },
-
-    data: function () {
-      var packageId = this.params.packageId;
       var userId = Meteor.userId();
-      if (!userId) {
-        return { error: "You must sign in to install packages.", packageId: packageId };
-      }
-
       var packageUrl = this.params.query && this.params.query.url;
 
-      if (!isSignedUp() && !isDemoUser()) {
-        return { error: "Sorry, Sandstorm is in closed alpha.  You must receive an alpha " +
-                        "key before you can install packages.",
-                 packageId: packageId };
+      if (!userId) {
+        if (allowDemo && isSafeDemoAppUrl(packageUrl)) {
+          if (package && package.status === "ready") {
+            Router.go("appdemo", {appId: package.appId}, {replaceState: true});
+          } else {
+            // continue on and install...
+          }
+        } else {
+          return { error: "You must sign in to install packages.", packageId: packageId };
+        }
+      } else {
+        try {
+          // When the user clicks to install an app, the app store is opened in a new tab. When they
+          // choose an app in the app store, they are redirected back to Sandstorm. But we'd really
+          // like to bring them back to the tab where they clicked "install apps". It turns out we
+          // can exploit a terrible feature of the web platform to do this: window.opener is a
+          // pointer to the tab which opened this tab, and we can actually reach right into it and
+          // call functions in it. So, we redirect the original tab to install the app, then close
+          // this one.
+          if (globalGrains.get().length === 0 &&
+              window.opener.location.hostname === window.location.hostname &&
+              window.opener.Router) {
+            if (referredFromSandstorm()) {
+              // Hack: Communicate to parent that we were referred from Sandstorm.
+              window.opener.referredFromSandstorm = packageId;
+            }
+            window.opener.Router.go("install", {packageId: packageId}, {query: this.params.query});
+            window.close();
+          }
+        } catch (err) {
+          // Probably security error because window.opener is in a different domain.
+        }
+
+        if (!isSignedUp() && !isDemoUser()) {
+          return { error:
+              "This Sandstorm server requires you to get an invite before installing apps.",
+              packageId: packageId };
+        }
       }
 
       // If ensureInstalled throws an exception without even starting installation, we'll treat
@@ -333,7 +323,6 @@ Router.map(function () {
          }
       });
 
-      var package = Packages.findOne(packageId);
       if (package === undefined) {
         if (!packageUrl) {
           return { error: "Unknown package ID: " + packageId +
@@ -401,8 +390,7 @@ Router.map(function () {
           // OK, the app is installed and everything and there's no warnings to print, so let's
           // just go to it! We use `replaceState` so that if the user clicks "back" they don't just
           // get redirected forward again, but end up back at the app list.
-          Session.set("selectedTab", {appId: package.appId});
-          Router.go("root", {}, {replaceState: true});
+          Router.go("newGrain", {}, {replaceState: true});
         }
 
         return result;
@@ -421,35 +409,16 @@ Router.map(function () {
         }
 
         if (!result.hasOlderVersion && !result.hasNewerVersion &&
-            (document.referrer.lastIndexOf("https://sandstorm.io/apps/", 0) === 0 ||
-             document.referrer.lastIndexOf("https://apps.sandstorm.io/", 0) === 0)) {
+            (window.referredFromSandstorm === packageId || referredFromSandstorm())) {
           // Skip confirmation because we assume the Sandstorm app list is not evil.
           // TODO(security): This is not excellent. Think harder.
+          delete window.referredFromSandstorm;
           addUserActions(result.packageId);
-          Session.set("selectedTab", {appId: package.appId});
-          Router.go("root", {}, {replaceState: true});
+          Router.go("newGrain", {}, {replaceState: true});
         }
 
         return result;
       }
-    }
-  });
-
-  this.route("uploadForm", {
-    path: "/install",
-
-    waitOn: function () {
-      return Meteor.subscribe("credentials");
-    },
-
-    data: function () {
-      return {
-        isSignedUp: isSignedUp(),
-        isDemoUser: isDemoUser(),
-        progress: Session.get("uploadProgress"),
-        error: Session.get("uploadError"),
-        origin: getOrigin()
-      };
     }
   });
 
@@ -481,7 +450,7 @@ Router.map(function () {
           self.response.writeHead(500, {
             "Content-Type": "text/plain"
           });
-          self.response.write(error.stack);
+          self.response.write("Unpacking SPK failed; is it valid?");
           self.response.end();
         };
       } else {

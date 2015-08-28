@@ -14,21 +14,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-@font-face {
-  font-family: 'Open Sans';
-  font-style: normal;
-  font-weight: normal;
-  src: local('Open Sans Light'), local('OpenSans-Light'), url(/opensans-light.woff) format('woff');
-}
-
-@font-face {
-  font-family: 'Open Sans';
-  font-style: normal;
-  font-weight: bold;
-  src: local('Open Sans Semibold'), local('OpenSans-Semibold'), url(/opensans-semibold.woff) format('woff');
-}
+// Include fonts (a somewhat verbose incantation) from _fonts.scss
+@import "_fonts.scss";
 
 @import "_geometry.scss";
+@import "_colors.scss";
 
 // Some utility partials intended to be extended or mixin'd
 @import "_partials.scss";
@@ -43,7 +33,7 @@ body {
   margin: 0;
   width: 100%;
   height: 100%;
-  font-family: "Open Sans", sans-serif;
+  font-family: "Source Sans Pro", sans-serif;
   font-weight: normal;
   background-color: white;
 }
@@ -132,29 +122,38 @@ img {
   vertical-align: middle;
 }
 
-.main-content {
+.main-content, .first-sign-in-main-content {
   margin: 0;
   padding: 0;
   position: fixed;
   left: 0;
-  width: 100%;
-  top: 32px;
+  right: 0;
   bottom: 0px;
-  color: black;
+  color: $default-content-foreground-color;
+  background-color: $default-content-background-color;
   overflow: auto;
-}
 
-.main-content a {
-  font-weight: bold;
-  text-decoration: none;
-  color: #428bca;
+  @media #{$desktop} {
+    top: 32px;
+    &.show-navbar {
+      left: 200px;
+    }
+  }
+  @media #{$mobile} {
+    top: 48px;
+  }
+  a {
+    font-weight: bold;
+    text-decoration: none;
+    color: #65468e;
+  }
 }
 
 @import "_grainlog.scss";
 
 .centered-box {
   margin: 16px auto;
-  width: 600px;
+  max-width: 600px;
   font-size: 125%;
 }
 
@@ -191,22 +190,21 @@ img {
   color: red;
 }
 
-#app .interstitial-button-box {
+.main-content .interstitial-button-box {
   text-align: center;
-}
-
-#app .interstitial-button-box button {
-  font-family: inherit;
-  font-size: inherit;
-  font-weight: 600;
-  background-color: #428bca;
-
-  padding: 8px;
-  line-height: 1.33;
-  border-radius: 4px;
-  border: none;
-  color: white;
-  cursor: pointer;
+  background-color: $default-content-background-color;
+  & button {
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: 600;
+    background-color: #762f87;
+    padding: 8px;
+    line-height: 1.33;
+    border-radius: 4px;
+    border: none;
+    color: white;
+    cursor: pointer;
+  }
 }
 
 #notification-list {
@@ -275,6 +273,11 @@ img {
 .notification-header {
   color: #ccc;
 }
+#intro {
+  background-color: #b6b6b6;
+  overflow: auto;
+  height: 100%;
+}
 #intro h1 {
   text-align: center;
   font-size: 100px;
@@ -304,7 +307,7 @@ svg {
   cursor: pointer;
 }
 
-#intro p {
+#intro>p {
   text-align: center;
 }
 
@@ -312,7 +315,18 @@ svg {
   margin-top: 0;
 }
 
-#app iframe {
+div.grain-container {
+  &.active-grain {
+    z-index: 0;
+    background: white;
+  }
+  &.inactive-grain {
+    z-index: -2;
+    display: none;
+  }
+}
+
+iframe.grain-frame {
   border: none;
   padding: 0;
   width: 100%;
@@ -320,27 +334,19 @@ svg {
   margin: 0;
   display: block;
   position: absolute;
+  background-color: white;
 }
 
-body.ios #app iframe {
-  /* iOS Safari refuses to scroll iframes. But if you set display: inline and position: static
-   * (the defaults for iframes, but we overrode them above) then it will expand the iframe's
-   * content to be big enough to contain the entire embedded page, which then allows you to make
-   * the *parent* element scrollable. Unfortunately display: inline also has the effect of causing
-   * a sliver of empty space to appear below the iframe, I suppose so that surrounding text
-   * containing letters like "p" or "g" has space to render the below-line tail of those letters.
-   * This sliver causes an ugly scroll bar to appear on desktop even when the content of the iframe
-   * does not exceed the page height because the sliver is just below the 100%-tall iframe. In
-   * order to avoid harming everyone else's experience in order to work around Safari, we
-   * explicitly detect iOS in Javascript and apply a body class to match against it.
+body.ios .main-content {
+  /* iOS Safari refuses to scroll iframes inside fixed position divs. So under iOS, we change the
+   * main-content div to be position relative and explicitly give it a size, so that the div is the
+   * one scrolling.
+   * -webkit-overflow-scrolling is a hint to iOS that the div should scroll correctly.
    */
-  display: inline;
-  position: static;
-}
-
-body.ios #app.main-content {
-  /* Hint to iOS that this div is scrollable. */
   -webkit-overflow-scrolling: touch;
+  position: relative;
+  width: 100%;
+  height: calc(100vh - #{$topbar-height-mobile});
 }
 
 #grain-loading-spinner {
@@ -386,7 +392,7 @@ body.ios #app.main-content {
   margin-left: 2px;
 }
 
-div.popup p {
+div.popup>p {
   margin-top: 0;
 }
 
@@ -424,66 +430,59 @@ div.popup h2 {
   transform: scaleX(-1);
 }
 
-#intro .action-required {
-  background-color: #eee;
+.demo-box {
+  width: 800px;
+  height: 500px;
+  margin: 64px auto;
+  background-color: white;
   border-radius: 8px;
-  width: 600px;
-  margin: 16px auto;
-  padding: 12px;
-  position: fixed;
-  right: 16px;
-  z-index: 16;
-}
-
-#intro .action-required h1 {
-  color: red;
+  overflow: hidden;
   text-align: center;
-  font-size: 75px;
-  font-weight: bold;
-  margin: 0 auto;
-}
 
-#intro .action-required p {
-  text-align: left;
-  max-width: 600px;
-  margin: 1em auto;
-}
+  h2 {
+    font-weight: normal;
+    font-size: 24pt;
+    margin: 56px 120px 1em;
+    >a {
+      font-weight: bold;
+      color: black;
+    }
+  }
+  p {
+    margin: 1em 56px;
+    font-size: 15pt;
+    text-align: left;
+    >a {
+      font-weight: 600;
+      color: #65468e;
+    }
+  }
 
-#intro .action-required button {
-  font-family: inherit;
-  background-color: #428bca;
+  button {
+    @extend %unstyled-button;
+    display: block;
+    width: 100%;
+    height: 100px;
+    background: linear-gradient(to right, black, #7f4b8c);
+    color: white;
+    font-size: 34pt;
+    cursor: pointer;
+    margin: 48px 0;
+  }
 
-  font-size: 150%;
-  padding: 8px;
-  border-radius: 4px;
-  border: none;
-  color: white;
-  cursor: pointer;
-  text-align: center;
-}
-
-#demo h2 {
-  text-align: center;
-}
-
-#demo input {
-  width: 100%;
-  font-size: 60px;
-  text-align: center;
-}
-#demo button {
-  font-family: inherit;
-  background-color: #428bca;
-
-  padding: 10px 16px;
-  font-size: 60px;
-  line-height: 1.33;
-  border-radius: 6px;
-  border: none;
-  color: white;
-  cursor: pointer;
-  width: 100%;
-  text-align: center;
+  @media #{$mobile} {
+    width: auto;
+    height: auto;
+    margin: 64px 8px;
+    h2 {
+      margin: 1em 32px;
+    }
+  }
+  @media (max-width: 500px) {
+    button {
+      font-size: 28px;
+    }
+  }
 }
 
 .devLogin {
@@ -497,7 +496,7 @@ ul.backer-list, ul.dev-list, ul.advisor-list {
 }
 
 ul.advisor-list {
-  width: 650px;
+  max-width: 650px;
   margin-left: -25px;
 }
 
@@ -552,7 +551,7 @@ ul.backer-list img, ul.dev-list img, ul.advisor-list img {
   font-family: inherit;
   font-size: inherit;
   font-weight: 600;
-  background-color: #428bca;
+  background-color: #762f87;
 
   margin-top: 20px;
   padding: 8px;
@@ -583,7 +582,7 @@ body>.popup.admin-alert>.frame>p {
   cursor: pointer;
 }
 
-@media screen and (max-width: 900px) {
+@media screen and #{$mobile} {
   #menu[data-show="true"] {
     left: 0px;
   }
@@ -597,11 +596,8 @@ body>.popup.admin-alert>.frame>p {
     -webkit-transition: background-color 200ms;
     transition: background-color 200ms;
   }
-  .main-content {
-    top: 48px;
-  }
 
-  #demo > .centered-box {
+  #demo.centered-box {
     width: 80%;
   }
 

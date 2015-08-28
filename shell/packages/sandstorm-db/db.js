@@ -397,6 +397,7 @@ Plans = new Mongo.Collection("plans");
 //   _id: Plan ID, usually a short string like "free", "standard", "large", "mega", ...
 //   storage: Number of bytes this user is allowed to store.
 //   compute: Number of kilobyte-RAM-seconds this user is allowed to consume.
+//   computeLabel: Label to display to the user describing this plan's compute units.
 //   grains: Total number of grains this user can create (often `Infinity`).
 //   price: Price per month in US cents.
 
@@ -700,12 +701,36 @@ _.extend(SandstormDb.prototype, {
   },
 
   listPlans: function () {
-    return Plans.find({});
+    return Plans.find({}, {sort: {price: 1}});
   },
 
   getMyPlan: function () {
     var user = Meteor.user();
     return user && Plans.findOne(user.plan || "free");
+  },
+
+  getMyUsage: function (user) {
+    user = user || Meteor.user();
+    if (user && user.pseudoUsage) {
+      if (Meteor.isClient) {
+        return user.pseudoUsage;  // filled by pseudo-subscription to "getMyUsage"
+      } else {
+        return {
+          grains: Grains.find({userId: user._id}).count(),
+          storage: user.storageUsage || 0,
+          compute: 0   // not tracked yet
+        };
+      }
+    } else {
+      return {grains: 0, storage: 0, compute: 0};
+    }
+  },
+
+  isUninvitedFreeUser: function () {
+    if (!Meteor.settings.public.allowUninvited) return false;
+
+    var user = Meteor.user();
+    return user && !user.expires && (!user.plan || user.plan === "free");
   },
 
   getSetting: function (name) {

@@ -49,7 +49,8 @@ IMAGES= \
     shell/public/download.svg \
     shell/public/down.svg \
     shell/public/email.svg \
-    shell/public/install.svg \
+    shell/public/github.svg \
+    shell/public/google.svg \
     shell/public/key.svg \
     shell/public/link.svg \
     shell/public/menu.svg \
@@ -59,7 +60,9 @@ IMAGES= \
     shell/public/restore.svg \
     shell/public/settings.svg \
     shell/public/share.svg \
+    shell/public/search.svg \
     shell/public/trash.svg \
+    shell/public/troubleshoot.svg \
     shell/public/upload.svg \
     shell/public/up.svg \
                              \
@@ -75,7 +78,19 @@ IMAGES= \
     shell/public/restart-m.svg \
     shell/public/settings-m.svg \
     shell/public/share-m.svg \
-    shell/public/trash-m.svg
+    shell/public/trash-m.svg \
+    shell/public/troubleshoot-m.svg \
+                                  \
+    shell/public/github-color.svg \
+    shell/public/google-color.svg \
+    shell/public/email-494949.svg \
+                                  \
+    shell/public/install-6A237C.svg \
+    shell/public/install-9E40B5.svg \
+    shell/public/upload-B7B7B7.svg \
+    shell/public/upload-5D5D5D.svg \
+    shell/public/restore-B7B7B7.svg \
+    shell/public/restore-5D5D5D.svg
 
 # ====================================================================
 # Meta rules
@@ -198,9 +213,44 @@ shell/client/changelog.html: CHANGELOG.md
 	@echo '</template>' >> tmp/changelog.html
 	@cp tmp/changelog.html shell/client/changelog.html
 
+shell/public/install-6A237C.svg: icons/install.svg
+	@$(call color,custom color $<)
+	@sed -e 's/#111111/#6A237C/g' < $< > $@
+
+shell/public/install-9E40B5.svg: icons/install.svg
+	@$(call color,custom color $<)
+	@sed -e 's/#111111/#9E40B5/g' < $< > $@
+
+shell/public/upload-B7B7B7.svg: icons/upload.svg
+	@$(call color,custom color $<)
+	@sed -e 's/#111111/#B7B7B7/g' < $< > $@
+
+shell/public/upload-5D5D5D.svg: icons/upload.svg
+	@$(call color,custom color $<)
+	@sed -e 's/#111111/#5D5D5D/g' < $< > $@
+
+shell/public/restore-B7B7B7.svg: icons/restore.svg
+	@$(call color,custom color $<)
+	@sed -e 's/#111111/#B7B7B7/g' < $< > $@
+
+shell/public/restore-5D5D5D.svg: icons/restore.svg
+	@$(call color,custom color $<)
+	@sed -e 's/#111111/#5D5D5D/g' < $< > $@
+
 shell/public/%.svg: icons/%.svg
 	@$(call color,color for dark background $<)
-	@sed -e 's/#000000/#CCCCCC/g' < $< > $@
+	@sed -e 's/#111111/#CCCCCC/g' < $< > $@
+
+shell/public/google-color.svg: icons/google.svg
+	@$(call color,custom color $<)
+	@sed -e 's/#111111/#a53232/g' < $< > $@
+shell/public/github-color.svg: icons/github.svg
+	@$(call color,custom color $<)
+	@sed -e 's/#111111/#191919/g' < $< > $@
+
+shell/public/email-494949.svg: icons/email.svg
+	@$(call color,custom color $<)
+	@sed -e 's/#111111/#494949/g' < $< > $@
 
 shell/public/%-m.svg: icons/%.svg
 	@$(call color,color for light background $<)

@@ -238,7 +238,7 @@ struct Metadata {
     # Data size limit: 64kB
 
     grain @1 :Icon;
-    # The icon shown to represent an individual grain, both in the grain table and on the sidebar.
+    # The icon shown to represent an individual grain, both in the grain table and on the navbar.
     # If omitted, the appGrid icon will be used.
     #
     # Size: 24x24
@@ -413,9 +413,9 @@ struct Metadata {
   # you can include a list of screenshots separately).
 
   shortDescription @15 :Util.LocalizedText;
-  # A one-line description, possibly displayed in a directory of apps. If not provided, this will
-  # be generated algorithmically from `description` by taking all text up to the first period.
-  # Use only plain text here, not Markdown.
+  # A very short (one-to-three words) description of what the app does. For exmaple,
+  # "Document editor", or "Notetaking", or "Email client". This will be displayed under the app
+  # title in the grid view in the app market.
 
   screenshots @16 :List(Screenshot);
   # Screenshots to use for marketing purposes.

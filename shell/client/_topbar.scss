@@ -1,7 +1,7 @@
 @media #{$mobile} {
   // Only show the menu button on mobile
   body>.menu-button {
-    background-color: black;
+    background-color: $topbar-background-color;
     display: inline-block;
     vertical-align: top;
     background-image:url(/menu.svg);
@@ -20,7 +20,7 @@
     z-index: 1000;
   }
   body>.menu-button:hover {
-    background-color: #666;
+    background-color: $topbar-background-color-hover;
   }
 }
 
@@ -46,7 +46,6 @@ body>.topbar-update {
 }
 
 body>.topbar {
-  font-weight: bold;
   position: fixed;
   top: 0;
   margin: 0;
@@ -54,19 +53,20 @@ body>.topbar {
   width: 100%;
   text-align: left;
   z-index: 100;
-  overflow: hidden;
 
   line-height: 32px;
   height: 32px;
-  background-color: black;
+  background-color: $topbar-background-color;
   color: #ccc;
 
   @media #{$mobile} {
     line-height: 48px;
     height: 48px;
-    background-color: #eee;
-    color: black;
+    // TODO(now): figure out if these colors should be different
+    //background-color: #eee;
+    //color: black;
     transition: height 0.2s;
+    overflow: hidden;
 
     &.expanded {
       height: 100%;
@@ -88,7 +88,7 @@ body>.topbar {
       overflow: hidden;
 
       &:hover {
-        background-color: #888;
+        background-color: $topbar-background-color-hover;
       }
 
       &:focus {
@@ -133,7 +133,7 @@ body>.topbar {
       height: 48px;
 
       &:hover {
-        background-color: #888;
+        background-color: $topbar-background-color-hover;
       }
 
       &:focus {
@@ -144,6 +144,10 @@ body>.topbar {
 
   %hamburger-menu-item {
     // Common styling for topbar items that are displayed as a hamburger menu item on mobile.
+    box-sizing: border-box;
+    @media #{$desktop} {
+      height: $topbar-height-desktop;
+    }
 
     @media #{$mobile} {
       display: block;
@@ -152,22 +156,20 @@ body>.topbar {
       background-size: 32px 32px;
       background-repeat: no-repeat;
       background-color: transparent;
-      color: black;
       text-align: left;
       padding-left: 48px;
       font-size: 14pt;
-      height: 48px;
+      height: $topbar-height-mobile;
       font-weight: normal;
-      font-family: sans-serif;
       text-decoration: none;
 
       &:hover {
-        background-color: white;
+        background-color: $topbar-background-color-hover;
       }
     }
   }
 
-  >li {
+  >ul>li, >ul>ul>li, >ul>ul>ul>li {
     // Each "item" in the topbar is an <li>, so this style applies to all of them.
 
     display: inline-block;
@@ -188,237 +190,398 @@ body>.topbar {
     }
   }
 
-  >.homelink {
-    >a { @extend %hamburger-menu-item; }
-
+  >.menubar {
+    padding-left: 0;
+    margin-left: 0;
+    box-sizing: border-box;
+    border-bottom: 1px solid $topbar-border-color;
+    overflow: hidden;
     @media #{$desktop} {
-      padding-left: 32px;
-      padding-right: 8px;
-      background-image: url("/icon.png");
-      background-repeat: no-repeat;
-      background-position: 8px center;
-      border-right: 1px solid #666;
+      height: $topbar-height-desktop;
+    }
 
-      // Without this, Firefox renders the right-floats pushed down a line.
-      float:left;
-
-      // TODO(cleanup): Use of filter for brightness on hover is hacky and not very widely
-      //   supported.
-      -webkit-filter: brightness(0.75);
-      filter: brightness(0.75);
-
-      a {
-        color: white;
-        text-decoration: none;
+    >.toggle-navbar {
+      >button {
+        @extend %unstyled-button;
+        @extend %hamburger-menu-item;
+        margin: 0px;
+        @media #{$desktop} {
+          height: $topbar-height-desktop;
+        }
       }
 
-      &:hover {
-        -webkit-filter: none;
-        filter: none;
-        background-color: #666;
+      @media #{$desktop} {
+        padding-left: 32px;
+        padding-right: 8px;
+        background-image: url("/icon.png");
+        background-repeat: no-repeat;
+        background-position: 8px center;
+        border-right: 1px solid #666;
+
+        // Without this, Firefox renders the right-floats pushed down a line.
+        float:left;
+
+        // TODO(cleanup): Use of filter for brightness on hover is hacky and not very widely
+        //   supported.
+
+        &:hover {
+          -webkit-filter: none;
+          filter: none;
+          background-color: $topbar-background-color-hover;
+        }
+
+        // Allow the LI to feel "disabled", in which case, it does not
+        // visually respond to hover.
+        &.disabled {
+          &:hover {
+            background-color: $topbar-background-color;
+          }
+        }
+      }
+
+      @media #{$mobile} {
+        display: none;
+        >a {
+          background-image: url("/icon32.png");
+        }
       }
     }
 
-    @media #{$mobile} {
-      >a {
-        background-image: url("/icon32.png");
+    >.title {
+      padding-left: 8px;
+      white-space: nowrap;
+      text-overflow: ellipsis;  // Doesn't seem to work since size is dynamic. Left here in vain.
+      overflow: hidden;
+
+      >span.editable {
+        display: inline-block;
+        padding: 0 8px;
+        margin-left: -8px;
+        @media #{$desktop} {
+          min-height: $topbar-height-desktop;
+        }
+        @media #{$mobile} {
+          min-height: $topbar-height-mobile;
+        }
+
+        &:hover {
+          cursor: pointer;
+          color: $topbar-foreground-color-hover;
+          background-color: $topbar-background-color-hover;
+        }
+      }
+
+      @media #{$desktop} {
+        // Heuristically try to prevent the title from bumping everything else off the top bar.
+        // The size of 700px was empirically found to provide enough space for "everything else".
+        max-width: calc(100% - 700px);
+      }
+      @media #{$mobile} {
+        max-width: calc(100% - 150px);  // hamburger, notifications, and admin alert are each ~50px.
+        background-color: $topbar-background-color;
+        color: $topbar-foreground-color;
+        padding-left: 60px;
+        font-size: 120%;
       }
     }
-  }
 
-  >.title {
-    padding-left: 8px;
-
-    >span.editable {
-      display: inline-block;
-      padding: 0 8px;
-      margin-left: -8px;
-
-      &:hover {
-        cursor: pointer;
-        color: white;
-        background-color: #888;
+    >.grain-size {
+      @media #{$mobile} {
+        display: none;
       }
     }
 
-    @media #{$mobile} {
-      background-color: black;
-      color: #ccc;
-      padding-left: 60px;
-      font-size: 120%;
-    }
-  }
+    >.share>button.show-popup {
+      @extend %topbar-button;
+      @extend %hamburger-menu-item;
 
-  >.grain-size {
-    @media #{$mobile} {
-      display: none;
-    }
-  }
-
-  >.share>button.show-popup {
-    @extend %topbar-button;
-    @extend %hamburger-menu-item;
-
-    @media #{$desktop} {
       background-image: url("/share.svg");
       background-position: left;
       background-repeat: no-repeat;
-      border-radius: 4px;
-      background-color: #428bca;
-      color: white;
-      padding-left: 26px;
-      padding-right: 4px;
-      height: 28px;
-      line-height: 28px;
-      font-size: 12pt;
-      margin-top: 2px;
 
-      &:hover {
-        background-color: #428bca;
+      @media #{$desktop} {
+        background-color: #762f87;
+        color: white;
+        padding-left: 32px;
+        padding-right: 8px;
+        height: 32px;
+        line-height: 28px;
+        font-size: 12pt;
+
+        &:hover {
+          background-color: lighten(#762f87, 8);
+        }
       }
     }
 
-    @media #{$mobile} {
-      background-image: url("/share-m.svg");
+    // Buttons for misc grain actions.
+    >li>button.grain-button, >.webkey>button.show-popup {
+      @extend %icon-button;
+      @extend %hamburger-menu-item;
     }
-  }
-
-  // Buttons for misc grain actions.
-  >li>button.grain-button, >.webkey>button.show-popup {
-    @extend %icon-button;
-    @extend %hamburger-menu-item;
-  }
-  @media #{$desktop} {
     >.delete>button    { background-image: url("/trash.svg"); }
     >.debug-log>button { background-image: url("/debug.svg"); }
     >.backup>button    { background-image: url("/download.svg"); }
     >.restart>button   { background-image: url("/restart.svg"); }
     >.webkey>button    { background-image: url("/key.svg"); }
     >.who-has-access img { width: 20px; }
-  }
-  @media #{$mobile} {
-    >.delete>button    { background-image: url("/trash-m.svg"); }
-    >.debug-log>button { background-image: url("/debug-m.svg"); }
-    >.backup>button    { background-image: url("/download-m.svg"); }
-    >.restart>button   { background-image: url("/restart-m.svg"); }
-    >.webkey>button    { background-image: url("/key-m.svg"); }
-  }
 
-  >.admin-alert {
-    @media #{$desktop} {
-      float: right;
-    }
+    >.admin-alert {
+      @media #{$desktop} {
+        float: right;
+      }
 
-    @media #{$mobile} {
-      position: fixed;
-      top: 0;
-      right: 48px;
-      width: 48px;
-      height: 48px;
-      text-align: center;
-    }
-
-    >button.show-popup {
-      @extend %icon-button;
-      @extend %mobile-icon-button;
-    }
-
-    .alert {
-      background-color: #762f87;
-      color: white;
-      text-decoration: none;
-
-      display: inline-block;
-      padding-left: 8px;
-      padding-right: 8px;
-      margin-right: 8px;
-    }
-
-    .alert.countdown-second,
-    .alert.countdown-now {
-      // Turn red when there's less than a minute left.
-      background-color: #e82538;
-    }
-
-    a:hover {
-      background-color: #9d3aa5;
-    }
-  }
-
-  >.notifications {
-    @media #{$desktop} {
-      float: right;
-    }
-
-    @media #{$mobile} {
-      position: fixed;
-      top: 0;
-      right: 0;
-      width: 48px;
-      height: 48px;
-    }
-
-    >button.show-popup {
-      @extend %icon-button;
-      @extend %mobile-icon-button;
-
-      background-image: url("/notification.svg");
-
-      >.count {
-        display: block;
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        width: 16px;
-        height: 16px;
-        background-color: red;
-        border-radius: 8px;
-        color: white;
-        line-height: 16px;
+      @media #{$mobile} {
+        position: fixed;
+        top: 0;
+        right: 48px;
+        width: 48px;
+        height: 48px;
         text-align: center;
-        font-size: 8pt;
+      }
 
-        @media #{$mobile} {
-          left: 4px;
-          bottom: 8px;
+      >button.show-popup {
+        @extend %icon-button;
+        @extend %mobile-icon-button;
+      }
+
+      .alert {
+        background-color: #762f87;
+        color: white;
+        text-decoration: none;
+
+        display: inline-block;
+        padding-left: 8px;
+        padding-right: 8px;
+        margin-right: 8px;
+      }
+
+      .alert.countdown-second,
+      .alert.countdown-now {
+        // Turn red when there's less than a minute left.
+        background-color: #e82538;
+      }
+
+      a:hover {
+        background-color: #9d3aa5;
+      }
+    }
+
+    >.notifications {
+      @media #{$desktop} {
+        float: right;
+      }
+
+      @media #{$mobile} {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 48px;
+        height: 48px;
+      }
+
+      >button.show-popup {
+        @extend %icon-button;
+        @extend %mobile-icon-button;
+
+        background-image: url("/notification.svg");
+
+        >.count {
+          display: block;
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          width: 16px;
+          height: 16px;
+          background-color: red;
+          border-radius: 8px;
+          color: white;
+          line-height: 16px;
+          text-align: center;
+          font-size: 8pt;
+
+          @media #{$mobile} {
+            left: 4px;
+            bottom: 8px;
+          }
+        }
+      }
+    }
+
+    >.account {
+      >button.show-popup {
+        @extend %hamburger-menu-item;
+        >a.expiring-soon {
+          color: #e82538;
+        }
+      }
+
+      @media #{$desktop} {
+        float: right;
+        display: block;
+
+        >button.show-popup {
+          >a {
+            padding: 0 8px;
+            display: block;
+
+            &.highlight {
+              background-color: #762f87;
+              color: white;
+            }
+          }
+        }
+      }
+      @media #{$mobile} {
+        >a {
+          font-weight: normal;
         }
       }
     }
   }
 
-  >.account {
-    >button.show-popup {
-      @extend %hamburger-menu-item;
-
-      >a.expiring-soon {
-        color: #e82538;
+  >.navbar {
+    @media #{$desktop} {
+      &.hide-desktop {
+        // !important used to override other classes that might assign e.g. display: block
+        display: none !important;
       }
     }
-
     @media #{$desktop} {
-      float: right;
-      display: block;
-
-      >button.show-popup {
-        padding: 0 8px;
+      position: fixed;
+      top: $topbar-height-desktop;
+      bottom: 0px;
+      left: 0px;
+      width: $navbar-width-desktop;
+      background-color: #303030;
+      color: #606060;
+      li {
+        line-height: 32px;
+        height: 32px;
+        display: block;
+        position: relative;
+        border-bottom: 1px solid $topbar-border-color;
+        margin: 0;
+        box-sizing: border-box;
+        list-style-type: none;
+        a {
+          display: block;
+          box-sizing: border-box;
+          min-height: 32px;
+          padding-left: 32px;
+          text-decoration: none;
+          text-overflow: ellipsis;
+          overflow: hidden;
+          white-space: nowrap;
+          &, &:visited, &:active, &:hover {
+            color: inherit;
+            outline: 0px;
+          }
+        }
+        &.navitem-open-grain, &.navitem-create-grain {
+          font-size: 150%;
+          line-height: 48px;
+          height: 48px;
+          background-color: $topbar-background-color;
+          color: $topbar-foreground-color;
+          &:hover {
+            background-color: $topbar-background-color-hover;
+            color: $topbar-foreground-color-hover;
+          }
+          &.current, &.current:hover {
+            background-color: $topbar-background-color-active;
+            color: $topbar-foreground-color-active;
+          }
+          // Make the "Open" and "New" verbs align with the start
+          // of the app icon.
+          a {
+            padding-left: 4px;
+          }
+        }
       }
     }
     @media #{$mobile} {
-      >a {
-        font-weight: normal;
-        font-family: sans-serif;
+      position: relative;
+      li {
+        font-size: 14pt;
+        line-height: 48px;
+        height: 48px;
+        display: block;
+        position: relative;
+        border-bottom: 1px solid #676767;
+        margin: 0;
+        box-sizing: border-box;
+        a {
+          display: block;
+          box-sizing: border-box;
+          padding-left: 48px;
+          text-decoration: none;
+          text-overflow: ellipsis;
+          overflow: hidden;
+          white-space: nowrap;
+          &, &:visited, &:active, &:hover {
+            color: inherit;
+            outline: 0px;
+          }
+        }
       }
     }
-  }
-
-  >.admin {
-    >a { @extend %hamburger-menu-item; }
-    @media #{$desktop} { display: none; }
-  }
-
-  >.about {
-    >a { @extend %hamburger-menu-item; }
-    @media #{$desktop} { display: none; }
+    margin: 0;
+    padding: 0;
+    z-index: 100;
+    >ul.navbar-grains {
+      margin: 0;
+      padding: 0;
+      position: absolute;
+      top: 96px;
+      bottom: 0px;
+      left: 0px;
+      width: 200px;
+      //height: 100%; // TODO: fix this, it should be 100% - (height of Open + New)
+      overflow-y: auto;
+      >li.navitem-grain {
+        a {
+          padding-right: 32px;
+        }
+        background-color: $topbar-background-color;
+        color: $topbar-foreground-color;
+        &:hover {
+          background-color: $topbar-background-color-hover;
+          color: $topbar-foreground-color-hover;
+        }
+        &.current, &.current:hover {
+          background-color: $topbar-background-color-active;
+          color: $topbar-foreground-color-active;
+        }
+        .app-icon {
+          @extend %pseudo-img-tag;
+          position: absolute;
+          top: 2px;
+          left: 2px;
+          width: 24px;
+          height: 24px;
+          margin: 2px;
+        }
+        .close-button {
+          @extend %unstyled-button;
+          cursor: pointer;
+          box-sizing: border-box;
+          position: absolute;
+          top: 1px;
+          right: 0px;
+          width: 24px;
+          height: 24px;
+          margin: 2px;
+          display: block;
+          background-image: url("/close.svg");
+          border: 1px transparent;
+          border-radius: 4px;
+          &:hover {
+            border: 1px solid $topbar-foreground-color-hover;
+          }
+        }
+      }
+    }
   }
 }
 
@@ -475,11 +638,11 @@ body>.popup {
       }
 
       &.align-left::before {
-        left: 42px;
+        left: 41px;
       }
 
       &.align-right::before {
-        right: 42px;
+        right: 41px;
       }
     }
 
@@ -609,6 +772,7 @@ body>.popup {
       padding: 3px;
       width: 45%;
       text-align: center;
+      font-size: 14px; // Size must be the same on mobile and desktop for correct absolute position.
       top: -26px;
       background-position: 15px 2px, left;
       background-size: 20px, 20px;

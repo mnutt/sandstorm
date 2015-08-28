@@ -1,13 +1,24 @@
 <template name="sandstormGrainList">
   <div class="grain-list">
-    <h2>Grains</h2>
-    <input class="search-bar" type="text" placeholder="search" value="{{ searchText }}" />
+    <div class="non-usage-info">
+    <h1>Grains</h1>
+    <div class="search-row">
+      <img title="Search" class="search-icon" src="/search.svg"><input class="search-bar" type="text" placeholder="search" value="{{ searchText }}">
+    </div>
+    </div>
+    <div class="usage-info">
+      <p class="grain-count"><strong>Grains I own:</strong> {{ myGrainsCount }}</p>
+      {{#if quotaEnabled}}
+        <p class="grains-size"><strong>My grains' total size:</strong> {{ myGrainsSize }}</p>
+      {{/if}}
+    </div>
     <table class="grain-list-table">
       <thead>
         <tr>
-            <td class="td-app-icon">App</td>
+            <td class="td-app-icon"></td>
             <td class="grain-name">Name</td>
-            <td>Last Activity</td>
+            <td class="last-used">Last Activity</td>
+            <td class="shared-or-owned">Mine/Shared</td>
             {{!-- Collaborators, size TODO
             <td>Collaborators</td>
             <td>Size</td>
@@ -17,9 +28,10 @@
       <tbody>
         {{#each filteredSortedGrains}}
         <tr class="grain" data-grainid="{{ _id }}">
-          <td class="td-app-icon"><img class="app-icon" src="{{ iconSrc }}" title="{{appTitle}}"></td>
+          <td class="td-app-icon"><div class="app-icon" title="{{appTitle}}" style="background-image: url('{{ iconSrc }}');"></div></td>
           <td class="grain-name"><a href="{{ pathFor route='grain' grainId=_id }}">{{title}}</a></td>
-          <td>{{dateString lastUsed}}</td>
+          <td class="last-used">{{dateString lastUsed}}</td>
+          <td class="shared-or-owned">{{#if isOwnedByMe }}My grain{{else}}Shared with me{{/if}}</td>
           {{!-- Collaborators, size TODO
           <td>TODO: collaborators</td>
           <td>{{ size }}</td>
@@ -28,5 +40,16 @@
         {{/each}}
       </tbody>
     </table>
+
+    {{#unless hasAnyGrainsCreatedOrSharedWithMe}}
+    <div class="no-grains">
+      <p><strong>You have no grains.</strong></p>
+
+      <p>A grain is an instance of a Sandstorm app. A grain might be a document, a chat room,
+        a mail box, a notebook, a blog, or more.</p>
+
+      <p><a href="/grain/new">Install apps now to start creating.</a></p>
+    </div>
+    {{/unless}}
   </div>
 </template>

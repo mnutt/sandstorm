@@ -25,6 +25,12 @@ if (Meteor.isClient) {
   getOrigin = function() {
     return document.location.protocol + "//" + document.location.host;
   }
+
+  // Subscribe to basic grain information first and foremost, since
+  // without it we might e.g. redirect to the wrong place on login.
+  Meteor.startup(function() {
+    Meteor.subscribe("grainsMenu");
+  });
 }
 
 if (Meteor.isServer) {
@@ -177,7 +183,7 @@ if (Meteor.isClient) {
   }
 
   Router.onRun(function () {
-    // Close menus any time we navigate.
+    // Close menus and popups any time we navigate.
     globalTopbar.reset();
     this.next();
   });
@@ -265,7 +271,6 @@ if (Meteor.isClient) {
 
   Template.layout.onCreated(function () {
     this.timer = new Tracker.Dependency();
-    this.showTopbar = new ReactiveVar(false);
     var resizeTracker = this.resizeTracker = new Tracker.Dependency();
     this.resizeFunc = function() {
       resizeTracker.changed();
@@ -293,7 +298,7 @@ if (Meteor.isClient) {
     //
     // - The current app title, if we can determine it, or
     //
-    // - The empty string "", if we can't determine the current app     //   title.
+    // - The empty string "", if we can't determine the current app title.
     var params = "";
 
     // Try our hardest to find the package's name, falling back on the default if needed.
@@ -312,22 +317,27 @@ if (Meteor.isClient) {
 
   var billingPromptState = new ReactiveVar(null);
 
+  var showBillingPrompt = function (reason, next) {
+    billingPromptState.set({
+      reason: reason,
+      db: globalDb,
+      topbar: globalTopbar,
+      accountsUi: globalAccountsUi,
+      onComplete: function () {
+        billingPromptState.set(null);
+        if (next) next();
+      }
+    });
+  };
+
   var ifQuotaAvailable = function (next) {
     var reason = isUserOverQuota(Meteor.user());
     if (reason) {
       if (window.BlackrockPayments) {
-        billingPromptState.set({
-          reason: reason,
-          db: globalDb,
-          topbar: globalTopbar,
-          accountsUi: globalAccountsUi,
-          onComplete: function () {
-            billingPromptState.set(null);
-
-            // If the user successfully raised their quota, continue the operation.
-            if (!isUserOverQuota(Meteor.user())) {
-              next();
-            }
+        showBillingPrompt(reason, function () {
+          // If the user successfully raised their quota, continue the operation.
+          if (!isUserOverQuota(Meteor.user())) {
+            next();
           }
         });
       } else {
@@ -338,8 +348,34 @@ if (Meteor.isClient) {
     }
   }
 
+  ifPlanAllowsCustomApps = function (next) {
+    if (globalDb.isDemoUser() || globalDb.isUninvitedFreeUser()) {
+      if (window.BlackrockPayments) {
+        showBillingPrompt("customApp", function () {
+          // If the user successfully chose a plan, continue the operation.
+          if (!globalDb.isDemoUser() && !globalDb.isUninvitedFreeUser()) {
+            next();
+          }
+        });
+      } else {
+        alert("Sorry, demo users cannot upload custom apps.");
+      }
+    } else {
+      next();
+    }
+  }
+
+  globalQuotaEnforcer = {
+    ifQuotaAvailable: ifQuotaAvailable,
+    ifPlanAllowsCustomApps: ifPlanAllowsCustomApps
+  };
+
+  function makeAccountSettingsUi() {
+    return new SandstormAccountSettingsUi(globalTopbar, globalDb,
+        window.location.protocol + "//" + makeWildcardHost("static"));
+  }
+
   Template.layout.helpers({
-    showTopbar: function () {return Template.instance().showTopbar.get(); },
     adminAlertIsTooLarge: function () {
       Template.instance().resizeTracker.depend();
       var setting = Settings.findOne({_id: "adminAlert"});
@@ -425,19 +461,15 @@ if (Meteor.isClient) {
       return globalAccountsUi;
     },
     firstLogin: function () {
-      return isSignedUp() && !Meteor.loggingIn() && !Meteor.user().hasCompletedSignup;
+      return credentialsSubscription.ready() && isSignedUp() && !Meteor.loggingIn()
+          && !Meteor.user().hasCompletedSignup;
+    },
+    accountSettingsUi: function () {
+      return makeAccountSettingsUi();
     }
   });
 
   Template.layout.events({
-    "click #admin-alert-icon": function (event) {
-      var template = Template.instance();
-      template.showTopbar.set(!template.showTopbar.get());
-    },
-    "click #admin-alert-closer": function (event) {
-      var template = Template.instance();
-      template.showTopbar.set(false);
-    },
     "click .demo-expired.logout": function (event) {
       Meteor.logout();
     }
@@ -449,7 +481,7 @@ if (Meteor.isClient) {
     }
   });
 
-  Meteor.subscribe("credentials");
+  credentialsSubscription = Meteor.subscribe("credentials");
 
   makeDateString = function (date) {
     // Note: this is also used by grain.js.
@@ -476,6 +508,24 @@ if (Meteor.isClient) {
     return result;
   };
   Template.registerHelper("dateString", makeDateString);
+  Template.registerHelper("showNavbar", function() {
+    // We show the navbar when:
+    //
+    // - The session indicates we should (i.e., the user clicked on
+    //   the Sandstorm logo in the top-left), or
+    //
+    // - We've blocked reload, since we cover the toggle and
+    //   you'd be unable to switch to other grains before page
+    //   refresh otherwise.
+    //
+    // We actively hide the navbar when:
+    //
+    // - The user is not logged-in. This is because "Open" and "New"
+    //   would have no meaning for a non-logged-in user, and since they
+    //   can't open any new grains, "multi-grain" has no meaning for them.
+    return Meteor.user() && (Session.get("show-navbar") || globalTopbar.isUpdateBlocked());
+  });
+
 
   Template.registerHelper("quotaEnabled", function() {
     return Meteor.settings.public.quotaEnabled;
@@ -548,89 +598,7 @@ if (Meteor.isClient) {
     });
   };
 
-  Tracker.autorun(function() {
-    if (isSignedUpOrDemo()) {
-      Session.set("selectedTab", {myFiles: true});
-    } else {
-      Session.set("selectedTab", {sharedWithMe: true});
-    }
-  });
-
   Template.root.helpers({
-    filteredGrains: function () {
-      var selectedTab = Session.get("selectedTab");
-      var userId = Meteor.userId();
-      if (selectedTab.sharedWithMe) {
-        var result = [];
-        var uniqueGrains = {};
-        ApiTokens.find({'owner.user.userId': userId},
-                       {sort:{created:1}}).forEach(function(apiToken) {
-          if (!(apiToken.grainId in uniqueGrains)) {
-            result.push({_id : apiToken.grainId, title: apiToken.owner.user.title});
-            uniqueGrains[apiToken.grainId] = true;
-          }
-        });
-        return result;
-      } else if (selectedTab.myFiles) {
-        return Grains.find({userId: userId}, {sort: {lastUsed: -1}}).fetch();
-      } else {
-        return Grains.find({userId: userId, appId: selectedTab.appId},
-                           {sort: {lastUsed: -1}}).fetch();
-      }
-    },
-
-    actions: function () {
-      return UserActions.find({userId: Meteor.userId(), appId: Session.get("selectedTab").appId});
-    },
-
-    devActions: function () {
-      var userId = Meteor.userId();
-      if (userId) {
-        var appId = Session.get("selectedTab").appId;
-        if (appId) {
-          var app = DevApps.findOne(appId);
-          if (app && app.manifest.actions) {
-            return app.manifest.actions.map(function (action, i) {
-              return {
-                _id: app._id,
-                index: i,
-                title: action.title.defaultText
-              };
-            });
-          };
-        }
-      }
-      return [];
-    },
-
-    selectedTab: function () {
-      return Session.get("selectedTab");
-    },
-
-    selectedAppMarketingVersion: function () {
-      var appMap = this.appMap;
-      var app = appMap && appMap[Session.get("selectedTab").appId];
-      return app && app.appMarketingVersion && app.appMarketingVersion.defaultText;
-    },
-
-    selectedAppIsDev: function () {
-      var tab = Session.get("selectedTab");
-      return tab && tab.appId && DevApps.findOne(tab.appId) ? true : false;
-    },
-
-    appTabClass: function (appId) {
-      if (Session.get("selectedTab").appId == appId) {
-        return "selected";
-      } else {
-        return "";
-      }
-    },
-
-    splashDialog: function() {
-      var setting = Settings.findOne("splashDialog");
-      return (setting && setting.value) || DEFAULT_SPLASH_DIALOG;
-    },
-
     storageUsage: function() {
       return Meteor.userId() ? prettySize(Meteor.user().storageUsage || 0) : undefined;
     },
@@ -646,95 +614,16 @@ if (Meteor.isClient) {
   });
 
   Template.root.events({
-    "click .applist-tab": function (event) {
-      Session.set("selectedTab", {appId: event.currentTarget.getAttribute("data-appid")});
-      Session.set("showMenu", false);
-    },
-    "click .applist-tab-my-files": function (event) {
-      Session.set("selectedTab", {myFiles: true});
-      Session.set("showMenu", false);
-    },
-    "click .applist-tab-shared-with-me": function (event) {
-      Session.set("selectedTab", {sharedWithMe: true});
-      Session.set("showMenu", false);
-    },
-    "click .applist-tab-settings": function (event) {
-      Router.go("adminSettings", {});
-      Session.set("showMenu", false);
-    },
-    "click .applist-tab-invite": function (event) {
-      Router.go("invite", {});
-      Session.set("showMenu", false);
-    },
-    "click .applist-tab-stats": function (event) {
-      Router.go("stats", {});
-      Session.set("showMenu", false);
-    },
-    "click .applist-tab-about": function (event) {
-      Router.go("about", {});
-      Session.set("showMenu", false);
-    },
-    "click #applist-closer": function (event) {
-      Session.set("showMenu", false);
-    },
-
-    "click #applist-grains tbody tr.grain": function (event) {
-      Router.go("grain", {grainId: event.currentTarget.getAttribute("data-grainid")});
-    },
-
-    "click button.show-apps": function (event) {
-      Session.set("showMenu", true);
-    },
-
-    "click #install-apps-button": function (event) {
-      ifQuotaAvailable(function () {
-        document.location = "https://apps.sandstorm.io/?host=" + getOrigin();
-      });
-    },
-
-    "click #upload-app-button": function (event) {
-      ifQuotaAvailable(function () {
-        Router.go("uploadForm", {});
-      });
-    },
-
-    "click #restore-backup-button":  function (event) {
-      ifQuotaAvailable(function () {
-        promptRestoreBackup();
-      });
-    },
-
     "click .uninstall-app-button": function (event) {
+      // TODO(cleanup): This event handler is no longer used, but the new UI does not yet implement
+      //   uninstall. Leave this code here for reference until it does.
       var appId = event.currentTarget.getAttribute("data-appid");
       if (window.confirm("Really uninstall this app?")) {
         UserActions.find({appId: appId, userId: Meteor.userId()}).forEach(function (action) {
           UserActions.remove(action._id);
         });
         Meteor.call("deleteUnusedPackages", appId);
-        if (!Packages.findOne({appId: appId})) {
-          Session.set("selectedTab", {myFiles:true});
-        }
       }
-    },
-
-    "click .new-grain-button": function (event) {
-      var packageId;
-      var command;
-      var actionTitle;
-
-      var actionId = event.currentTarget.getAttribute("data-actionid");
-      if (actionId === "dev") {
-        var devId = event.currentTarget.getAttribute("data-devid");
-        var devIndex = event.currentTarget.getAttribute("data-index");
-      }
-
-      ifQuotaAvailable(function () {
-        launchAndEnterGrainByActionId(actionId, devId, devIndex);
-      });
-    },
-
-    "click .action-required button": function (event) {
-      event.currentTarget.parentNode.parentNode.style.display = "none";
     },
   });
 
@@ -825,10 +714,6 @@ function getBuildInfo() {
   };
 }
 
-function isMissingWildcardParent() {
-  return Meteor.settings && Meteor.settings.public && Meteor.settings.public.missingWildcardParentUrl;
-}
-
 appNameFromPackage = function(packageObj) {
   // This function takes a Package object from Mongo and returns an
   // app title.
@@ -861,60 +746,93 @@ appNameFromActionName = function(name) {
   return name;
 }
 
-promptRestoreBackup = function() {
+var promptForFile = function (callback) {
   // TODO(cleanup): Share code with "upload picture" and other upload buttons.
   var input = document.createElement("input");
   input.type = "file";
   input.style = "display: none";
-  Session.set("uploadStatus", "Uploading");
 
   input.addEventListener("change", function (e) {
-    // TODO(cleanup): Use Meteor's HTTP, although this may require sending them a PR to support
-    //   progress callbacks (and officially document that binary input is accepted).
-    var file = e.currentTarget.files[0];
-
-    var xhr = new XMLHttpRequest();
-
-    xhr.onreadystatechange = function () {
-      if (xhr.readyState == 4) {
-        if (xhr.status == 200) {
-          Session.set("uploadProgress", 0);
-          Session.set("uploadStatus", "Unpacking");
-          Meteor.call("restoreGrain", xhr.responseText, function (err, grainId) {
-            if (err) {
-              Session.set("uploadStatus", undefined);
-              Session.set("uploadError", {
-                status: 200,
-                statusText: err.reason + ": " + err.details,
-              });
-            } else {
-              Router.go("grain", {grainId: grainId});
-            }
-          });
-        } else {
-          Session.set("uploadError", {
-            status: xhr.status,
-            statusText: xhr.statusText,
-            response: xhr.responseText
-          });
-        }
-      }
-    };
-
-    if (xhr.upload) {
-      xhr.upload.addEventListener("progress", function (progressEvent) {
-        Session.set("uploadProgress",
-            Math.floor(progressEvent.loaded / progressEvent.total * 100));
-      });
-    }
-
-    xhr.open("POST", "/uploadBackup", true);
-    xhr.send(file);
-
-    Router.go("restoreGrainStatus");
+    callback(e.currentTarget.files[0]);
   });
 
+  // IE wants the input element to be in the DOM, but only during the click() call.
+  document.body.appendChild(input);
   input.click();
+  document.body.removeChild(input);
+}
+
+var startUpload = function (file, endpoint, onComplete) {
+  // TODO(cleanup): Use Meteor's HTTP, although this may require sending them a PR to support
+  //   progress callbacks (and officially document that binary input is accepted).
+
+  Session.set("uploadStatus", "Uploading");
+
+  var xhr = new XMLHttpRequest();
+
+  xhr.onreadystatechange = function () {
+    if (xhr.readyState == 4) {
+      console.log(xhr.status);
+      if (xhr.status == 200) {
+        Session.set("uploadProgress", 0);
+        onComplete(xhr.responseText);
+      } else {
+        Session.set("uploadError", {
+          status: xhr.status,
+          statusText: xhr.statusText,
+          response: xhr.responseText
+        });
+      }
+    }
+  };
+
+  if (xhr.upload) {
+    xhr.upload.addEventListener("progress", function (progressEvent) {
+      Session.set("uploadProgress",
+          Math.floor(progressEvent.loaded / progressEvent.total * 100));
+    });
+  }
+
+  xhr.open("POST", endpoint, true);
+  xhr.send(file);
+
+  Router.go("uploadStatus");
+}
+
+promptRestoreBackup = function() {
+  promptForFile(function (file) {
+    startUpload(file, "/uploadBackup", function (response) {
+      Session.set("uploadStatus", "Unpacking");
+      Meteor.call("restoreGrain", response, function (err, grainId) {
+        if (err) {
+          console.log(err);
+          Session.set("uploadStatus", undefined);
+          Session.set("uploadError", {
+            status: "",
+            statusText: err.message
+          });
+        } else {
+          Router.go("grain", {grainId: grainId});
+        }
+      });
+    });
+  });
+}
+
+promptUploadApp = function () {
+  promptForFile(function (file) {
+    Meteor.call("newUploadToken", function (err, token) {
+      if (err) {
+        console.error(err);
+        alert(err.message);
+      } else {
+        startUpload(file, "/upload/" + token, function (response) {
+          Session.set("uploadStatus", undefined);
+          Router.go("install", {packageId: response})
+        });
+      }
+    });
+  });
 }
 
 Router.map(function () {
@@ -922,74 +840,25 @@ Router.map(function () {
     path: "/",
     waitOn: function () {
       return [
-        Meteor.subscribe("credentials"),
         Meteor.subscribe("hasUsers"),
-        Meteor.subscribe("grainsMenu"),
-        Meteor.subscribe("devApps")
+        Meteor.subscribe("grainsMenu")
       ];
     },
     data: function () {
-      if (!this.ready()) {
-        return;
-      }
-
-      var apps;
-      var appMap = {};
-      var allowDemoAccounts = Meteor.settings && Meteor.settings.public &&
-            Meteor.settings.public.allowDemoAccounts;
-      var userId = Meteor.userId();
-      if (userId) {
-        var appNames = [];
-
-        DevApps.find().forEach(function (app) {
-          var action = app.manifest && app.manifest.actions && app.manifest.actions[0];
-          var name = (app.manifest.appTitle && app.manifest.appTitle.defaultText) ||
-              appNameFromActionName(action && action.title && action.title.defaultText);
-          appMap[app._id] = {
-            name: name,
-            appId: app._id,
-            isDev: true,
-            appMarketingVersion: app.manifest.appMarketingVersion
-          };
-          appNames.push({name: name, appId: app._id});
-        });
-
-        UserActions.find({userId: userId}).forEach(function (action) {
-          if (!(action.appId in appMap)) {
-            var name = action.appTitle || appNameFromActionName(action.title);
-            appMap[action.appId] = {
-              name: name,
-              appId: action.appId,
-              appMarketingVersion: action.appMarketingVersion
-            };
-            appNames.push({name: name, appId: action.appId});
-          }
-        });
-
-        appNames.sort(function (a, b) { return a.name.localeCompare(b.name); });
-        apps = appNames.map(function (appName) {
-          return appMap[appName.appId];
-        });
-      } else if (allowDemoAccounts && !Meteor.settings.public.allowUninvited) {
-        // This seems to be a demo server.
-        Meteor.setTimeout(function () { Router.go("demo", {}, {replaceState: true}); }, 0);
+      // If the user is logged-in, and can create new grains, and
+      // has no grains yet, then send them to "new".
+      if (this.ready() && Meteor.userId() && !Meteor.loggingIn()) {
+        if (globalDb.currentUserGrains({}, {}).count() === 0 &&
+            globalDb.currentUserApiTokens().count() === 0) {
+          Router.go("newGrain", {}, {replaceState: true});
+        } else {
+          Router.go("selectGrain", {}, {replaceState: true});
+        }
       }
 
       return {
-        host: document.location.host,
-        origin: getOrigin(),
-        isSignedUpOrDemo: isSignedUpOrDemo(),
-        isAdmin: isAdmin(),
-        isDemoUser: isDemoUser(),
-        isFirstRun: !HasUsers.findOne("hasUsers"),
-        build: getBuildInfo().build,
-        missingWildcardParent: isMissingWildcardParent(),
-        allowDemoAccounts: allowDemoAccounts,
-        apps: apps,
-        showMenu: Session.get("showMenu"),
-        appMap: appMap,
-        hideSplashScreen: isSignedUpOrDemo() ||
-          ApiTokens.findOne({"owner.user.userId": Meteor.userId()})
+        isFirstRun: this.ready() && !HasUsers.findOne("hasUsers"),
+        build: getBuildInfo().build
       };
     }
   });
@@ -1041,8 +910,8 @@ Router.map(function () {
     }
   });
 
-  this.route("restoreGrainStatus", {
-    path: "/restore",
+  this.route("uploadStatus", {
+    path: "/upload",
 
     waitOn: function () {
       return Meteor.subscribe("credentials");
@@ -1061,14 +930,14 @@ Router.map(function () {
     path: "/account",
 
     data: function () {
-      if (!isSignedUp()) {
-        // Not logged in.
-        if (!Meteor.loggingIn()) {
-          Router.go("root");
-        }
+      // Don't allow logged-out or demo users to visit the accounts page. There should be no way
+      // for them to get there except for typing the URL manually. In theory showing the accounts
+      // page to a demo user could make some sense for editing their profile, but we really do not
+      // want them signing up for subscription plans!
+      if ((!Meteor.user() && !Meteor.loggingIn()) || globalDb.isDemoUser()) {
+        Router.go("root", {}, {replaceState: true});
       } else {
-        return new SandstormAccountSettingsUi(globalTopbar, globalDb,
-            window.location.protocol + "//" + makeWildcardHost("static"));
+        return makeAccountSettingsUi();
       }
     }
   });

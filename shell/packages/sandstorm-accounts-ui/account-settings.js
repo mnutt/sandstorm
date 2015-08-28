@@ -18,11 +18,11 @@ SandstormAccountSettingsUi = function (topbar, db, staticHost) {
   this._topbar = topbar;
   this._db = db;
   this._staticHost = staticHost;
-  this._editing = new ReactiveVar(null);
 }
 
 Template.sandstormAccountSettings.onCreated(function () {
   this.subscribe("accountIdentities");
+  this._profileSaved = new ReactiveVar(true);
 });
 
 GENDERS = {male: "male", female: "female", neutral: "neutral", robot: "robot"};
@@ -30,10 +30,6 @@ GENDERS = {male: "male", female: "female", neutral: "neutral", robot: "robot"};
 var helpers = {
   identities: function () {
     return SandstormDb.getUserIdentities(Meteor.user());
-  },
-
-  editing: function () {
-    return Template.instance().data._editing.get() === this.id;
   },
 
   isNeutral: function () {
@@ -49,6 +45,10 @@ var helpers = {
     } catch (e) {
       return false;
     }
+  },
+
+  profileSaved: function () {
+    return Template.instance()._profileSaved.get();
   },
 
   db: function () {
@@ -80,7 +80,7 @@ Template.sandstormAccountsFirstSignIn.helpers({
   }
 });
 
-var submitProfileForm = function (event) {
+var submitProfileForm = function (event, cb) {
   event.preventDefault();
   var form = Template.instance().find("form");
 
@@ -112,38 +112,39 @@ var submitProfileForm = function (event) {
     return;
   }
 
-  // Our "data" might be AccountsUi or it might be SandstormAccountSettingsUi.
-  // TODO(cleanup): That's terrible. Fix it.
-  var data = Template.instance().data;
-  if (data._editing) {
-    data._editing.set(null);
-  }
-
   Meteor.call("updateProfile", newProfile, function (err) {
-    if (err) alert("Error updating profile: " + err.message);
+    if (err) {
+      alert("Error updating profile: " + err.message);
+    } else if (cb) {
+      console.log(cb);
+      cb();
+    }
   });
 }
 
 Template.sandstormAccountSettings.events({
-  "click .identities>.display>ul>.edit>button": function (event) {
-    Template.instance().data._editing.set(this.id);
+  "submit form.account-profile-editor": function (event, instance) {
+    submitProfileForm(event, function () {
+      instance._profileSaved.set(true);
+    });
   },
-  "click .identities>.edit>form>ul>.save>.cancel": function (event) {
-    event.preventDefault();
-    Template.instance().data._editing.set(null);
-  },
-  "submit .identities>.edit>form": submitProfileForm
+  "change": function () { Template.instance()._profileSaved.set(false); },
+  "input input": function () { Template.instance()._profileSaved.set(false); },
+  "keypress": function () { Template.instance()._profileSaved.set(false); },
 });
 
 Template.sandstormAccountsFirstSignIn.events({
-  "submit form": submitProfileForm
+  "submit form": function (event) {
+    submitProfileForm(event);
+  }
 });
 
 Template._accountProfileEditor.events({
   "click .picture button": function (event) {
     event.preventDefault();
 
-    var staticHost = Template.instance().data._staticHost;
+    var staticHost = Template.parentData(1)._staticHost;
+    if (!staticHost) throw new Error("missing _staticHost");
 
     // TODO(cleanup): Share code with "restore backup" and other upload buttons.
     var input = document.createElement("input");
@@ -177,6 +178,9 @@ Template._accountProfileEditor.events({
       if (file && token) doUpload();
     });
 
+    // IE wants the input element to be in the DOM, but only during the click() call.
+    document.body.appendChild(input);
     input.click();
+    document.body.removeChild(input);
   }
 });
