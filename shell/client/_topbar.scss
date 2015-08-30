@@ -201,21 +201,29 @@ body>.topbar {
     }
 
     >.toggle-navbar {
+      cursor: pointer;
+
       >button {
         @extend %unstyled-button;
         @extend %hamburger-menu-item;
+        cursor: pointer;
         margin: 0px;
         @media #{$desktop} {
           height: $topbar-height-desktop;
+        }
+        &:focus {
+          outline: none;
         }
       }
 
       @media #{$desktop} {
         padding-left: 32px;
         padding-right: 8px;
-        background-image: url("/icon.png");
-        background-repeat: no-repeat;
-        background-position: 8px center;
+
+        background-image: url("/icon.png"), url("/down.svg");
+        background-repeat: no-repeat, no-repeat;
+        background-position: 8px center, 8px 24px;
+        background-size: auto, 16px 8px;
         border-right: 1px solid #666;
 
         // Without this, Firefox renders the right-floats pushed down a line.
@@ -249,11 +257,25 @@ body>.topbar {
 
     >.title {
       padding-left: 8px;
-      white-space: nowrap;
-      text-overflow: ellipsis;  // Doesn't seem to work since size is dynamic. Left here in vain.
       overflow: hidden;
+      @media #{$desktop} {
+        // Heuristically try to prevent the title from bumping everything else off the top bar.
+        // The size of 700px was empirically found to provide enough space for "everything else".
+        max-width: calc(100% - 700px);
+      }
+      @media #{$mobile} {
+        width: 100%; // needs to span the whole row because the border-bottom is needed to draw
+                     // the horizontal rule when the menu is expanded
+        background-color: $topbar-background-color;
+        color: $topbar-foreground-color;
+        padding-left: 56px;
+        font-size: 120%;
+      }
 
       >span.editable {
+        white-space: nowrap;
+        text-overflow: ellipsis;  // Doesn't seem to work since size is dynamic. Left here in vain.
+        overflow: hidden;
         display: inline-block;
         padding: 0 8px;
         margin-left: -8px;
@@ -262,6 +284,7 @@ body>.topbar {
         }
         @media #{$mobile} {
           min-height: $topbar-height-mobile;
+          max-width: calc(100% - 150px);
         }
 
         &:hover {
@@ -269,19 +292,6 @@ body>.topbar {
           color: $topbar-foreground-color-hover;
           background-color: $topbar-background-color-hover;
         }
-      }
-
-      @media #{$desktop} {
-        // Heuristically try to prevent the title from bumping everything else off the top bar.
-        // The size of 700px was empirically found to provide enough space for "everything else".
-        max-width: calc(100% - 700px);
-      }
-      @media #{$mobile} {
-        max-width: calc(100% - 150px);  // hamburger, notifications, and admin alert are each ~50px.
-        background-color: $topbar-background-color;
-        color: $topbar-foreground-color;
-        padding-left: 60px;
-        font-size: 120%;
       }
     }
 
@@ -296,12 +306,14 @@ body>.topbar {
       @extend %hamburger-menu-item;
 
       background-image: url("/share.svg");
-      background-position: left;
       background-repeat: no-repeat;
+      background-position: 8px center;
 
       @media #{$desktop} {
+        background-position: left;
         background-color: #762f87;
-        color: white;
+        color: #cccccc; // Have the text match the icon.
+                        // This is the single place the button text is visible.
         padding-left: 32px;
         padding-right: 8px;
         height: 32px;
@@ -378,6 +390,7 @@ body>.topbar {
         right: 0;
         width: 48px;
         height: 48px;
+        background-color: $topbar-background-color; // needed to cover an overflowing title
       }
 
       >button.show-popup {
@@ -585,6 +598,12 @@ body>.topbar {
   }
 }
 
+body>.topbar.show-navbar>.menubar>.toggle-navbar {
+  @media #{$desktop} {
+    background-image: url("/icon.png"), url("/up.svg");
+  }
+}
+
 // =======================================================================================
 
 body>.popup.who-has-access>.frame {
@@ -684,7 +703,7 @@ body>.popup {
     >h4 {
       margin: 0px;
       font-size: 14px;
-      padding-left: 10px;
+      padding-left: $topbar-popup-padding;
       line-height: 32px;
       border-bottom: 1px solid #ccc;
       margin-bottom: 16px;
@@ -699,12 +718,12 @@ body>.popup {
     }
 
     >* {
-      margin-left: 16px;
-      margin-right: 16px;
+      margin-left: $topbar-popup-padding;
+      margin-right: $topbar-popup-padding;
     }
 
     >*:last-child {
-      margin-bottom: 16px;
+      margin-bottom: $topbar-popup-padding;
     }
 
     &.centered {
@@ -723,7 +742,7 @@ body>.popup {
       text-transform: uppercase;
       background-color: $popup-background-color;
       margin-bottom: 0;
-      padding: 10px 20px;
+      padding: $topbar-popup-padding 20px;
     }
 
     >h4.share-with-others {
@@ -731,7 +750,7 @@ body>.popup {
       padding-bottom: 30px;
     }
     >h4.who-has-access {
-      padding-bottom: 10px;
+      padding-bottom: $topbar-popup-padding;
       border-bottom: 1px solid #ccc;
     }
 
@@ -748,7 +767,7 @@ body>.popup {
     }
 
     .share-tabs {
-      padding: 10px;
+      padding: $topbar-popup-padding;
       border-top: 1px solid #ccc;
       position: relative;
       margin: 0;
@@ -877,7 +896,7 @@ body>.popup {
       border-top: 1px solid #ccc;
       margin: 0px;
       padding-top: 5px;
-      padding-bottom: 10px;
+      padding-bottom: $topbar-popup-padding;
       text-align: right;
       font-size: 10pt;
       >.who-has-access {

@@ -273,6 +273,7 @@ Router.map(function () {
         if (allowDemo && isSafeDemoAppUrl(packageUrl)) {
           if (package && package.status === "ready") {
             Router.go("appdemo", {appId: package.appId}, {replaceState: true});
+            return;
           } else {
             // continue on and install...
           }
@@ -297,6 +298,7 @@ Router.map(function () {
             }
             window.opener.Router.go("install", {packageId: packageId}, {query: this.params.query});
             window.close();
+            return;
           }
         } catch (err) {
           // Probably security error because window.opener is in a different domain.
@@ -390,7 +392,7 @@ Router.map(function () {
           // OK, the app is installed and everything and there's no warnings to print, so let's
           // just go to it! We use `replaceState` so that if the user clicks "back" they don't just
           // get redirected forward again, but end up back at the app list.
-          Router.go("newGrain", {}, {replaceState: true});
+          Router.go("newGrain", {}, {replaceState: true, query: {highlight: package.appId }});
         }
 
         return result;
