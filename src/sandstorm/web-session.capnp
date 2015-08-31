@@ -108,10 +108,29 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
     accept @2 :List(AcceptedType);
     # This corresponds to the Accept header
 
-    # WebDAV-specific request context.
-    depth @3 :Text; # Used with PROPFIND method, can be an int or 'infinity'
-    destination @4 :Text; # Used with MOVE method
-    overwrite @5 :Bool; # Used with MOVE method
+    additionalHeaders @3 :List(Header);
+    # Additional headers present in the request. Only whitelisted headers are
+    # permitted.
+
+    struct Header {
+      name @0 :Text;  # lower-cased name
+      value @1 :Text;
+    }
+
+    const headerWhitelist :List(Text) = [
+      "depth",                 # webdav PROPFIND
+      "destination",           # webdav COPY/MOVE
+      "overwrite",             # webdav COPY/MOVE
+      "oc-total-length",       # Owncloud client
+      "oc-chunk-size",         # Owncloud client
+      "x-oc-mtime",            # Owncloud client
+      "oc-fileid",             # Owncloud client
+      "oc-chunked",            # Owncloud client
+    ];
+    # Non-standard request headers which are whitelisted for backwards-compatibility
+    # purposes. This whitelist exists to help avoid the need to modify code originally written
+    # without Sandstorm in mind -- especially to avoid modifying client apps. Feel free
+    # to send us pull requests adding additional headers.
   }
 
   struct PostContent {

@@ -1249,35 +1249,6 @@ function parseCookies(request) {
   return result;
 }
 
-function parseDestinationHeader(request) {
-  var header = request.headers["destination"];
-
-  if (header) {
-    // Destination header is a fully qualified URI
-    var parsed = Url.parse(header);
-    return parsed.href;
-  }
-}
-
-function parseOverwriteHeader(request) {
-  var header = request.headers["overwrite"];
-
-  if (header) {
-    return header.toLowerCase() != "f";
-  } else {
-    return true;
-  }
-}
-
-function parseDepthHeader(request) {
-  var header = request.headers["depth"];
-
-  var validHeaders = ["0", "1", "1,noroot", "infinity", "infinity,noroot"];
-  if (header && validHeaders.indexOf(header) >= 0) {
-    return header;
-  }
-}
-
 function parseAcceptHeader(request) {
   var header = request.headers["accept"];
 
@@ -1355,11 +1326,15 @@ Proxy.prototype.makeContext = function (request, response) {
 
   context.accept = parseAcceptHeader(request);
 
-  context.depth = parseDepthHeader(request);
-  context.destination = parseDestinationHeader(request);
-  if(context.destination) {
-    context.overwrite = parseOverwriteHeader(request);
-  }
+  context.additionalHeaders = [];
+  WebSession.Context.headerWhitelist.forEach(function(headerName) {
+    if(request.headers[headerName]) {
+      context.additionalHeaders.push({
+        name: headerName,
+        value: request.headers[headerName]
+      });
+    };
+  });
 
   var promise = new Promise(function (resolve, reject) {
     response.resolveResponseStream = resolve;

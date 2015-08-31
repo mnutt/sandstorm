@@ -1167,19 +1167,10 @@ private:
     } else {
       lines.add(kj::str("Accept: */*"));
     }
-    auto depth = context.getDepth();
-    if (depth.size() > 0) {
-      lines.add(kj::str("Depth: ", depth));
-    }
-    auto destination = context.getDestination();
-    if (destination.size() > 0) {
-      lines.add(kj::str("Destination: ", destination));
-
-      auto overwrite = context.getOverwrite();
-      if (overwrite) {
-        lines.add(kj::str("Overwrite: T"));
-      } else {
-        lines.add(kj::str("Overwrite: F"));
+    auto additionalHeaderList = context.getAdditionalHeaders();
+    if (additionalHeaderList.size() > 0) {
+      for (auto header : additionalHeaderList) {
+        lines.add(kj::str(header.getName(), ": ", header.getValue()));
       }
     }
 
@@ -1720,4 +1711,3 @@ private:
 }  // namespace sandstorm
 
 KJ_MAIN(sandstorm::LegacyBridgeMain)
-
