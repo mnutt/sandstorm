@@ -36,6 +36,18 @@ SANDSTORM_ALTHOME = Meteor.settings && Meteor.settings.home;
 SANDSTORM_LOGDIR = (SANDSTORM_ALTHOME || "") + "/var/log";
 SANDSTORM_VARDIR = (SANDSTORM_ALTHOME || "") + "/var/sandstorm";
 
+// User-agent strings that should be allowed to use http basic authentication.
+// These are regex matches, so ensure they are escaped properly with double
+// backslashes.
+BASIC_AUTH_USER_AGENTS = [
+  "git\\/",
+  "GitHub-Hookshot\\/",
+  "mirall\\/",
+  "Mozilla\\/5\.0 \\([\\d\\.]+\\) mirall\\/",
+  "litmus\\/",
+];
+BASIC_AUTH_USER_AGENTS_REGEX = new RegExp("^(" + BASIC_AUTH_USER_AGENTS.join("|") + ")", '');
+
 sandstormExe = function (progname) {
   if (SANDSTORM_ALTHOME) {
     return SANDSTORM_ALTHOME + "/latest/bin/" + progname;
@@ -729,11 +741,7 @@ function apiUseBasicAuth(req) {
   // For clients with no convenient way to add an "Authorization: Bearer" header, we allow the token
   // to be transmitted as a basic auth password.
   var agent = req.headers["user-agent"];
-  if (agent && ((agent.slice(0, 4) === "git/") || (agent.slice(0, 16) === "GitHub-Hookshot/"))) {
-    return true;
-  } else {
-    return false;
-  }
+  return agent.match(BASIC_AUTH_USER_AGENTS_REGEX);
 }
 
 function apiTokenForRequest(req) {
