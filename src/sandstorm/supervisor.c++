@@ -2099,7 +2099,7 @@ public:
     context.allowCancellation();
 
     auto params = context.getParams();
-    auto path = params.getPath();
+    auto path = kj::str(percentDecode(params.getPath()).asChars());
 
     {
       // Prohibit non-canonical requests.
