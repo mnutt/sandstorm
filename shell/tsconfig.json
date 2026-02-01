@@ -8,6 +8,7 @@
     "checkJs": false,
     "jsx": "preserve",
     "noEmit": true,
+    "skipLibCheck": true,
 
     /* Strict Type-Checking Options */
     "strict": true,
