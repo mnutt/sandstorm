@@ -55,7 +55,8 @@ module.exports["@disabled Test Ip Networking"] = function (browser) {
     .frameParent()
 };
 
-module.exports["Test Ip Interface"] = function (browser) {
+// TODO: Skipped due to node-capnp compatibility issues with Node 22.
+module.exports["@disabled Test Ip Interface"] = function (browser) {
   browser
     .loginDevAccount(null, true)
     .installApp("https://alpha-hlngxit86q1mrs2iplnx.sandstorm.io/test-11.spk",
