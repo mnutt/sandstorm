@@ -9,6 +9,25 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: generate deps cache key
+        id: deps-cache-key
+        run: |
+          # Generate a hash based on all submodule SHAs
+          DEPS_HASH=$(git submodule status | sha256sum | cut -d' ' -f1)
+          echo "hash=$DEPS_HASH" >> $GITHUB_OUTPUT
+      - name: cache deps build artifacts
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/llvm-build
+            deps/boringssl/build
+            deps/libsodium/build
+            deps/ekam/bin
+            tmp/.deps
+          key: deps-${{ runner.os }}-${{ steps.deps-cache-key.outputs.hash }}
       - name: setup python 3.10
         uses: actions/setup-python@v5
         with:
@@ -88,7 +107,13 @@ jobs:
           # the constant below.
           make lint | tee lint.log
           num_problems=$(cat lint.log | grep ' problems (0 errors, ' | awk '{print $2}')
-          [ "$num_problems" = 776 ]
+          [ "$num_problems" = 774 ]
+      - name: setup chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: 142
+      - name: remove system chrome
+        run: sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable
       - name: test
         run: |
           set -o pipefail
