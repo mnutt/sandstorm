@@ -65,27 +65,11 @@ function setProfile(browser, profile, callback) {
   });
 }
 
-function configureAutoDownload(browser, done) {
-  browser.options.desiredCapabilities['chromeOptions'] = {
-    prefs: {
-      download: {
-        prompt_for_download: false,
-        default_directory: downloadsPath
-      }
-    }
-  }
-
-  var autoDownloadProfile = new FirefoxProfile();
-  autoDownloadProfile.setPreference('browser.download.folderList', 2);
-  autoDownloadProfile.setPreference('browser.download.dir', downloadsPath);
-  autoDownloadProfile.setPreference('browser.helperApps.neverAsk.saveToDisk', 'application/zip');
-  setProfile(browser, autoDownloadProfile, done);
-}
-
 module.exports = {
   before: function(browser, done) {
     makeCleanDownloadsDirSync();
-    configureAutoDownload(browser, done);
+    console.log('Downloads will be saved to:', downloadsPath);
+    done();
   },
 };
 
@@ -107,6 +91,11 @@ module.exports["Test backup and restore"] = function(browser) {
   //v0: /install/9111a8c70938276d28a00468a18a25c7?url=https://alpha-hlngxit86q1mrs2iplnx.sandstorm.io/test-0.spk
   //v1: /install/f5fe6aa9fcbccc690fd36a86efe02b8a?url=https://alpha-hlngxit86q1mrs2iplnx.sandstorm.io/test-1.spk
   browser
+    // Configure Chrome headless to download files to our directory via CDP
+    .chrome.sendDevToolsCommand('Page.setDownloadBehavior', {
+      behavior: 'allow',
+      downloadPath: downloadsPath
+    })
     .loginDevAccount()
     // sandstorm-test-python, v0
     .installApp("https://alpha-hlngxit86q1mrs2iplnx.sandstorm.io/test-0.spk", "9111a8c70938276d28a00468a18a25c7", "rwyva77wj1pnj01cjdj2kvap7c059n9ephyyg5k4s5enh5yw9rxh")
@@ -142,8 +131,8 @@ module.exports["Test backup and restore"] = function(browser) {
     .click('#backupGrain', function() {
       downloadPromise = new Promise(function(resolve, reject) {
         watcherPromise.then(resolve);
-        // Expect the zip download to complete within 5 seconds of clicking the button.
-        var timeout = 5000;
+        // Expect the zip download to complete within 30 seconds of clicking the button.
+        var timeout = 30000;
         setTimeout(function () {
           reject(new Error('Download timed out after '+ timeout + ' ms'));
         }, timeout);

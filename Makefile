@@ -369,23 +369,28 @@ shell/public/%-m.svg: icons/%.svg
 	@# Make completely black.
 	@sed -e 's/#111111/#000000/g' < $< > $@
 
-shell-build: shell/imports/* shell/imports/*/* shell/imports/*/*/* shell/imports/*/*/*/* shell/client/main.ts shell/server/main.ts shell/public/* shell/i18n/* shell/.meteor/packages shell/.meteor/release shell/.meteor/versions tmp/.shell-env
+shell-build/.built: shell/imports/* shell/imports/*/* shell/imports/*/*/* shell/imports/*/*/*/* shell/client/main.ts shell/server/main.ts shell/public/* shell/i18n/* shell/.meteor/packages shell/.meteor/release shell/.meteor/versions tmp/.shell-env
 	@$(call color,building meteor frontend)
 	@test -z "$$(find -L shell/* -type l)" || (echo "error: broken symlinks in shell: $$(find -L shell/* -type l)" >&2 && exit 1)
 	@OLD=`pwd` && cd shell && meteor build --directory "$$OLD/shell-build"
+	@touch shell-build/.built
+
+shell-build: shell-build/.built
 
 # ====================================================================
 # Bundle
 
-bundle: tmp/.ekam-run shell-build make-bundle.sh localedata-C meteor-bundle-main.js
+bundle/README.md: tmp/.ekam-run shell-build/.built make-bundle.sh localedata-C meteor-bundle-main.js
 	@$(call color,bundle)
 	@CC=$(CC) ./make-bundle.sh
 
-sandstorm-$(BUILD).tar.xz: bundle
+bundle: bundle/README.md
+
+sandstorm-$(BUILD).tar.xz: bundle/README.md
 	@$(call color,compress release bundle)
 	@tar c --transform="s,^bundle,sandstorm-$(BUILD)," bundle | xz -c -9e > sandstorm-$(BUILD).tar.xz
 
-sandstorm-$(BUILD)-fast.tar.xz: bundle
+sandstorm-$(BUILD)-fast.tar.xz: bundle/README.md
 	@$(call color,compress fast bundle)
 	@tar c --transform="s,^bundle,sandstorm-$(BUILD)," bundle | xz -c -0 --threads=0 > sandstorm-$(BUILD)-fast.tar.xz
 

@@ -42,6 +42,46 @@ if (Meteor.isServer) {
   Mongo.Collection.prototype.ensureIndexOnServer = function () {};
 }
 
+// Polyfill for findAndModify that works with MongoDB driver 4.x+
+// Replaces the broken fongandrew:find-and-modify package
+// Note: Driver 4.x returns ModifyResult { value: doc, ok: 1 }
+//       Driver 5.x+ returns doc directly by default
+if (Meteor.isServer) {
+  Mongo.Collection.prototype.findAndModify = function (options) {
+    const raw = this.rawCollection();
+    const query = options.query || {};
+    const projection = options.fields || undefined;
+
+    let result;
+    if (options.remove) {
+      // Use findOneAndDelete for remove operations
+      result = raw.findOneAndDelete(query, {
+        projection,
+      }).await();
+    } else {
+      // Use findOneAndUpdate for update operations
+      const update = options.update || {};
+      const returnDocument = options.new ? 'after' : 'before';
+      const upsert = options.upsert || false;
+
+      result = raw.findOneAndUpdate(query, update, {
+        projection,
+        returnDocument,
+        upsert,
+      }).await();
+    }
+
+    // Handle both driver 4.x (returns ModifyResult) and 5.x+ (returns doc directly)
+    if (result && typeof result === 'object' && 'value' in result && 'ok' in result) {
+      // Driver 4.x: already wrapped in ModifyResult
+      return result;
+    } else {
+      // Driver 5.x+: wrap the document in ModifyResult format
+      return { ok: 1, value: result };
+    }
+  };
+}
+
 // TODO(soon): Systematically go through this file and add ensureIndexOnServer() as needed.
 
 const collectionOptions = { defineMutationMethods: Meteor.isClient };

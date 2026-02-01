@@ -50,7 +50,11 @@ module.exports["Basic web publishing"] = function (browser) {
 
 // Source at https://github.com/jparyani/sandstorm-test-app/tree/web-publishing
 module.exports["Web publishing with grain shutdown"] = function (browser) {
+  var publicAddress = null;
+
   browser
+    // Disable browser caching to ensure we get fresh content after shutdown
+    .chrome.sendDevToolsCommand('Network.setCacheDisabled', { cacheDisabled: true })
     .init()
     .loginDevAccount()
     .uploadTestApp()
@@ -59,12 +63,27 @@ module.exports["Web publishing with grain shutdown"] = function (browser) {
     .grainFrame()
     .waitForElementVisible("#public-address", short_wait)
     .getText("#public-address", function (result) {
-      this
-        .click("#shutdown")
-        .pause(short_wait)
-        .url(result.value)
-        .waitForElementVisible("#result", short_wait)
-        .assert.containsText("#result", "Shutdown success")
-        .end();
-    });
+      publicAddress = result.value;
+      console.log("Public address:", publicAddress);
+    })
+    // Wait for and click the shutdown button
+    .waitForElementVisible("#shutdown", short_wait)
+    .click("#shutdown")
+    // Wait for the navigation to /shutdown to complete (button disappears as page changes)
+    .waitForElementNotPresent("#shutdown", medium_wait)
+    .frameParent()
+    // Wait for the grain to process the shutdown and update static content
+    .pause(medium_wait)
+    .perform(function(client, done) {
+      console.log("Navigating to public address:", publicAddress);
+      client.url(publicAddress, function() {
+        done();
+      });
+    })
+    .waitForElementVisible("#result", medium_wait)
+    .getText("#result", function(result) {
+      console.log("Actual #result text:", JSON.stringify(result.value));
+    })
+    .assert.textContains("#result", "Shutdown success")
+    .end();
 };

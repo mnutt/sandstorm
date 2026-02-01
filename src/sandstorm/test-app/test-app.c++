@@ -155,9 +155,11 @@ public:
       response.initBody().setBytes(isPowerboxRequest ? *TEST_POWERBOX_HTML : *TEST_APP_HTML);
       return kj::READY_NOW;
     } else if (path == "shutdown" || path == "/shutdown/") {
-      auto staticFd = raiiOpen("/var/www/index.html", O_RDWR|O_CREAT);
+      std::cerr << "SHUTDOWN: Received shutdown request, path=" << path.cStr() << std::endl;
+      auto staticFd = raiiOpen("/var/www/index.html", O_RDWR|O_CREAT|O_TRUNC);
       auto data = TEST_SHUTDOWN_HTML.get();
-      KJ_SYSCALL(write(staticFd.get(), data.begin(), data.size()));
+      auto written = write(staticFd.get(), data.begin(), data.size());
+      std::cerr << "SHUTDOWN: Wrote " << written << " bytes to /var/www/index.html" << std::endl;
       auto response = context.getResults();
       auto content = response.initContent();
       content.setStatusCode(sandstorm::WebSession::Response::SuccessCode::OK);
@@ -368,6 +370,7 @@ public:
   }
 
   kj::MainBuilder::Validity run() {
+    std::cerr << "STARTUP: Test app starting up" << std::endl;
     KJ_SYSCALL_HANDLE_ERRORS(mkdir("/var/www", 0700)) {
       case EEXIST:
         break;
@@ -375,9 +378,25 @@ public:
         KJ_FAIL_ASSERT("Failed to create /var/www");
     }
     {
-      auto staticFd = raiiOpen("/var/www/index.html", O_RDWR|O_CREAT);
-      auto data = TEST_STATIC_HTML.get();
-      KJ_SYSCALL(write(staticFd.get(), data.begin(), data.size()));
+      // Check if file already exists with shutdown content - don't overwrite if so
+      bool shouldWrite = true;
+      KJ_IF_MAYBE(existingFd, raiiOpenIfExists("/var/www/index.html", O_RDONLY)) {
+        char buf[128];
+        ssize_t n = read(existingFd->get(), buf, sizeof(buf) - 1);
+        if (n > 0) {
+          buf[n] = '\0';
+          if (strstr(buf, "Shutdown success") != nullptr) {
+            std::cerr << "STARTUP: Found shutdown content, not overwriting" << std::endl;
+            shouldWrite = false;
+          }
+        }
+      }
+      if (shouldWrite) {
+        auto staticFd = raiiOpen("/var/www/index.html", O_RDWR|O_CREAT|O_TRUNC);
+        auto data = TEST_STATIC_HTML.get();
+        KJ_SYSCALL(write(staticFd.get(), data.begin(), data.size()));
+        std::cerr << "STARTUP: Wrote initial static content to /var/www/index.html" << std::endl;
+      }
     }
 
     // Set up RPC on file descriptor 3.

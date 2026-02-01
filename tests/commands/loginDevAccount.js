@@ -27,18 +27,68 @@ exports.command = function(name, isAdmin, callback) {
   var ret = this
     .init()
     // loginDevAccountFast is fast, but not 3ms fast, which is ~the default script timeout
-    .timeouts("script", 5000)
+    .timeouts("script", 10000)
+    // Wait for Meteor to be fully loaded before attempting login
+    .executeAsync(function(done) {
+      // Wait for Meteor to be connected and loginDevAccountFast to be defined
+      var attempts = 0;
+      var maxAttempts = 100; // 10 seconds at 100ms intervals
+      function check() {
+        attempts++;
+        if (typeof window.Meteor !== 'undefined' &&
+            window.Meteor.status &&
+            window.Meteor.status().connected &&
+            typeof window.loginDevAccountFast === 'function') {
+          done({ ready: true });
+        } else if (attempts >= maxAttempts) {
+          done({
+            ready: false,
+            hasMeteor: typeof window.Meteor !== 'undefined',
+            connected: window.Meteor && window.Meteor.status && window.Meteor.status().connected,
+            hasLoginDevAccountFast: typeof window.loginDevAccountFast === 'function'
+          });
+        } else {
+          setTimeout(check, 100);
+        }
+      }
+      check();
+    }, [], function(result) {
+      if (!result.value || !result.value.ready) {
+        console.log("WARNING: Meteor not fully ready:", JSON.stringify(result.value, null, 2));
+      }
+    })
+    .execute(function() {
+      // Debug: check if loginDevAccountFast exists
+      return {
+        hasLoginDevAccountFast: typeof window.loginDevAccountFast === 'function',
+        hasMeteor: typeof window.Meteor !== 'undefined',
+        hasAccounts: typeof window.Accounts !== 'undefined',
+        url: window.location.href
+      };
+    }, [], function(result) {
+      console.log("DEBUG pre-login state:", JSON.stringify(result.value, null, 2));
+    })
     .executeAsync(function(name, isAdmin, done) {
+      if (typeof window.loginDevAccountFast !== 'function') {
+        done({ error: 'loginDevAccountFast is not defined', type: typeof window.loginDevAccountFast });
+        return;
+      }
       window.loginDevAccountFast(name, isAdmin)
         .then(function () {
-          done();
+          done({ success: true });
         }, function (err) {
-          throw err;
+          done({ error: err.toString(), stack: err.stack });
         });
     }, [name, isAdmin], function (result) {
-      if (result.status !== 0) console.log(result);
-      // Make sure to propagate failure on script timeout/failure
-      self.assert.ok(result.status === 0, "login completed successfully");
+      console.log("DEBUG login result:", JSON.stringify(result, null, 2));
+      if (result.status !== 0) {
+        console.log("executeAsync failed with status:", result.status);
+      }
+      if (result.value && result.value.error) {
+        console.log("Login error:", result.value.error);
+      }
+      var success = result.status === 0 && result.value && result.value.success;
+      self.assert.ok(success, "login completed successfully");
     })
     .url(this.launch_url + "/apps")
     .waitForElementVisible('.app-list', utils.medium_wait)

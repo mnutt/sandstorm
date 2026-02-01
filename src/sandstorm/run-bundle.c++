@@ -318,6 +318,21 @@ private:
 
 // =======================================================================================
 
+enum class MongoVersion { V2_6, V7 };
+
+MongoVersion getMongoVersion() {
+  // Check /var/mongo/version file to determine which MongoDB version to use.
+  // If the file doesn't exist or contains "2.6", use MongoDB 2.6.
+  // If the file contains "7", use MongoDB 7.0.
+  if (access("/var/mongo/version", F_OK) == 0) {
+    auto contents = trim(readAll(raiiOpen("/var/mongo/version", O_RDONLY)));
+    if (contents == "7") return MongoVersion::V7;
+  }
+  return MongoVersion::V2_6;  // Default to old version
+}
+
+// =======================================================================================
+
 class RunBundleMain {
   // Main class for the Sandstorm bundle runner.  This is a convenience tool for running the
   // Sandstorm binary bundle, which is a packaged chroot environment containing everything needed
@@ -507,6 +522,27 @@ public:
                   .build();
             },
             "Renew the server's SSL/TLS certificate with ACME.")
+        .addSubCommand("migrate-mongo",
+            [this]() {
+              return kj::MainBuilder(context, VERSION,
+                      "Migrates MongoDB from 2.6 to 6.0. Sandstorm must be stopped first. "
+                      "This exports data using mongodump, reinitializes the database with "
+                      "MongoDB 7.0, and imports the data using mongorestore. The old data "
+                      "is backed up to var/mongo-2.6-backup/.")
+                  .callAfterParsing(KJ_BIND_METHOD(*this, migrateMongo))
+                  .build();
+            },
+            "Migrate MongoDB to version 6.0.")
+        .addSubCommand("rollback-mongo",
+            [this]() {
+              return kj::MainBuilder(context, VERSION,
+                      "Reverts MongoDB from 6.0 back to 2.6. Sandstorm must be stopped first. "
+                      "This restores the backup created during migration. Use this if you "
+                      "encounter issues after migration.")
+                  .callAfterParsing(KJ_BIND_METHOD(*this, rollbackMongo))
+                  .build();
+            },
+            "Rollback MongoDB to version 2.6.")
         .build();
   }
 
@@ -1243,6 +1279,209 @@ public:
       return req.send().ignoreResult();
     })).wait(io.waitScope);
     KJ_UNREACHABLE;
+  }
+
+  kj::MainBuilder::Validity migrateMongo() {
+    changeToInstallDir();
+    const Config config = readConfig();
+
+    // 1. Verify Sandstorm is stopped
+    KJ_IF_MAYBE(pid, getRunningPid()) {
+      return "Sandstorm is still running. Please run 'sandstorm stop' first.";
+    }
+
+    // 2. Check if already migrated
+    if (access("../var/mongo/version", F_OK) == 0) {
+      auto ver = trim(readAll(raiiOpen("../var/mongo/version", O_RDONLY)));
+      if (ver == "7") {
+        return "MongoDB is already at version 7. No migration needed.";
+      }
+    }
+
+    // 3. Check binaries exist
+    if (access("bin/mongod7", F_OK) != 0) {
+      return "MongoDB 7binary not found. Please update Sandstorm first.";
+    }
+    if (access("bin/mongodump", F_OK) != 0) {
+      return "mongodump binary not found. Please update Sandstorm first.";
+    }
+    if (access("bin/mongorestore7", F_OK) != 0) {
+      return "mongorestore7 binary not found. Please update Sandstorm first.";
+    }
+
+    // 4. Check MongoDB 2.6 data exists
+    if (access("../var/mongo", F_OK) != 0) {
+      return "No MongoDB data directory found at var/mongo/.";
+    }
+
+    // 5. Check that password file exists (means database was initialized)
+    if (access("../var/mongo/passwd", F_OK) != 0) {
+      return "No MongoDB password file found. The database may not have been initialized yet. "
+             "Please start Sandstorm at least once before migrating.";
+    }
+
+    checkAccess();
+
+    // Enter chroot environment
+    enterChroot(nullptr, false);
+
+    // Now we're inside the chroot - paths are different
+    context.warning("** Starting MongoDB migration from 2.6 to 6.0...");
+
+    // Clean up stale processes/files from previous failed attempts
+    if (access("/var/pid/mongo-migration.pid", F_OK) == 0) {
+      auto pidStr = trim(readAll(raiiOpen("/var/pid/mongo-migration.pid", O_RDONLY)));
+      KJ_IF_MAYBE(pid, parseUInt(pidStr, 10)) {
+        // Try to kill leftover MongoDB process
+        if (kill(*pid, SIGTERM) == 0) {
+          context.warning("** Killing leftover MongoDB process from previous attempt...");
+          int n = 3;
+          while (n > 0) n = sleep(n);
+          kill(*pid, SIGKILL);  // Make sure it's dead
+        }
+      }
+    }
+    unlink("/var/mongo/mongod.lock");
+    unlink("/var/pid/mongo-migration.pid");
+
+    // Read password for authentication
+    auto password = trim(readAll(raiiOpen("/var/mongo/passwd", O_RDONLY)));
+
+    // 6. Start old mongod for export (without auth for simplicity during migration)
+    // We use the production port since nothing else is running during migration
+    context.warning("** Starting old MongoDB (2.6) for export...");
+    pid_t oldMongoPid = startMongoForMigration(config, "/bin/mongod", config.mongoPort, "/var/mongo", true);
+
+    // Brief wait for MongoDB to fully initialize
+    {
+      int n = 3;
+      while (n > 0) n = sleep(n);
+    }
+
+    // 7. Run mongodump
+    context.warning("** Exporting data with mongodump...");
+    // Remove old backup directory if it exists from a previous failed attempt
+    if (access("/var/mongo-backup", F_OK) == 0) {
+      recursivelyDelete("/var/mongo-backup");
+    }
+    KJ_SYSCALL(mkdir("/var/mongo-backup", 0700));
+    KJ_SYSCALL(chown("/var/mongo-backup", config.uids.uid, config.uids.gid));
+    runMongoDump(config, config.mongoPort, password, "/var/mongo-backup");
+
+    // 8. Stop old mongod
+    context.warning("** Stopping old MongoDB...");
+    killMongo(oldMongoPid);
+
+    // 9. Backup old data directory
+    context.warning("** Backing up old data directory...");
+    KJ_SYSCALL(rename("/var/mongo", "/var/mongo-2.6-backup"));
+    KJ_SYSCALL(mkdir("/var/mongo", 0700));
+    KJ_SYSCALL(chown("/var/mongo", config.uids.uid, config.uids.gid));
+
+    // 10. Copy password file to new directory
+    copyFile("/var/mongo-2.6-backup/passwd", "/var/mongo/passwd");
+    KJ_SYSCALL(chown("/var/mongo/passwd", config.uids.uid, config.uids.gid));
+
+    // Steps 11-15 involve MongoDB 7setup - if any fail, we need to rollback
+    pid_t newMongoPid = 0;
+    KJ_ON_SCOPE_FAILURE({
+      // Rollback on any failure after backup was created
+      context.warning("** Migration failed! Rolling back...");
+      if (newMongoPid != 0) {
+        kill(newMongoPid, SIGKILL);
+        waitpid(newMongoPid, nullptr, WNOHANG);
+      }
+      // Restore the backup
+      recursivelyDelete("/var/mongo");
+      rename("/var/mongo-2.6-backup", "/var/mongo");
+      context.warning("** Rollback complete. Original data restored.");
+    });
+
+    // 11. Start new mongod (without auth initially for setup)
+    context.warning("** Starting MongoDB 7.0...");
+    newMongoPid = startMongoForMigration(config, "/bin/mongod7", config.mongoPort, "/var/mongo", false);
+
+    // 12. Initialize replica set with production port (same port used after restart)
+    context.warning("** Initializing replica set...");
+    runMongosh(config, config.mongoPort, nullptr,
+        kj::str("rs.initiate({_id: 'ssrs', members: [{_id: 0, host: 'localhost:",
+                config.mongoPort, "'}]})"));
+
+    // Wait for replica set election
+    {
+      int n = 5;
+      while (n > 0) n = sleep(n);
+    }
+
+    // 13. Create user
+    // clusterMonitor role is needed for oplog tailing (Meteor's real-time updates)
+    context.warning("** Creating database user...");
+    runMongosh(config, config.mongoPort, nullptr,
+        kj::str("db.getSiblingDB('admin').createUser({user: 'sandstorm', pwd: '", password,
+                "', roles: ['readWriteAnyDatabase','userAdminAnyDatabase','dbAdminAnyDatabase','clusterMonitor']})"));
+
+    // 14. Run mongorestore
+    context.warning("** Importing data with mongorestore...");
+    runMongoRestore7(config, config.mongoPort, password, "/var/mongo-backup");
+
+    // 15. Stop new mongod
+    context.warning("** Stopping MongoDB 7.0...");
+    killMongo(newMongoPid);
+    newMongoPid = 0;  // Mark as stopped so rollback doesn't try to kill again
+
+    // 16. Write version file
+    {
+      auto fd = raiiOpen("../var/mongo/version", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      kj::FdOutputStream(fd.get()).write("7", 1);
+    }
+
+    context.exitInfo(kj::str(
+      "Migration complete!\n"
+      "Old data backed up to: var/mongo-2.6-backup/\n"
+      "Dump files stored in: var/mongo-backup/\n"
+      "You can now run 'sandstorm start' to use MongoDB 7.0.\n"
+      "Run 'sandstorm rollback-mongo' if you need to revert."));
+  }
+
+  kj::MainBuilder::Validity rollbackMongo() {
+    changeToInstallDir();
+    const Config config = readConfig();
+
+    // 1. Verify Sandstorm is stopped
+    KJ_IF_MAYBE(pid, getRunningPid()) {
+      return "Sandstorm is still running. Please run 'sandstorm stop' first.";
+    }
+
+    // 2. Check we're on version 7
+    if (access("../var/mongo/version", F_OK) != 0) {
+      return "No version file found. MongoDB appears to be at version 2.6 already.";
+    }
+    auto ver = trim(readAll(raiiOpen("../var/mongo/version", O_RDONLY)));
+    if (ver != "7") {
+      context.exitError(kj::str("Unexpected MongoDB version: ", ver, ". Expected '7'."));
+    }
+
+    // 3. Check backup exists
+    if (access("../var/mongo-2.6-backup", F_OK) != 0) {
+      return "No backup found at var/mongo-2.6-backup/. Cannot rollback.";
+    }
+
+    checkAccess();
+
+    context.warning("** Rolling back to MongoDB 2.6...");
+
+    // 4. Move current mongo dir aside
+    auto timestamp = time(nullptr);
+    auto failedDir = kj::str("../var/mongo-7-failed-", timestamp);
+    KJ_SYSCALL(rename("../var/mongo", failedDir.cStr()));
+
+    // 5. Restore backup
+    KJ_SYSCALL(rename("../var/mongo-2.6-backup", "../var/mongo"));
+
+    context.exitInfo(kj::str(
+      "Rollback complete!\n"
+      "MongoDB 7 data saved to: ", failedDir.slice(3), "\n"
+      "You can now run 'sandstorm start' to use MongoDB 2.6."));
   }
 
 private:
@@ -2250,13 +2489,52 @@ private:
         }
       }
 
-      KJ_SYSCALL(execl("/bin/mongod", "/bin/mongod", "--fork",
-          "--bind_ip", "127.0.0.1", "--port", kj::str(config.mongoPort).cStr(),
-          "--dbpath", "/var/mongo", "--logpath", "/var/log/mongo.log",
-          "--pidfilepath", "/var/pid/mongo.pid",
-          "--auth", "--nohttpinterface", "--noprealloc", "--nopreallocj", "--smallfiles",
-          "--replSet", "ssrs", "--oplogSize", "16",
-          EXEC_END_ARGS));
+      MongoVersion version = getMongoVersion();
+      auto portStr = kj::str(config.mongoPort);
+
+      if (version == MongoVersion::V7) {
+        KJ_LOG(WARNING, "Starting MongoDB 7.0");
+        // MongoDB 7.0 requires keyFile for replica set auth
+        // Generate one if it doesn't exist
+        if (access("/var/mongo/keyfile", F_OK) != 0) {
+          // Generate a random keyFile (MongoDB requires 6-1024 chars)
+          int fd = open("/dev/urandom", O_RDONLY);
+          KJ_ASSERT(fd >= 0, "Failed to open /dev/urandom");
+          unsigned char randomBytes[512];  // 512 bytes -> 1024 hex chars
+          KJ_ASSERT(read(fd, randomBytes, sizeof(randomBytes)) == sizeof(randomBytes));
+          close(fd);
+
+          // Hex encode to get 1024 characters
+          auto keyFd = open("/var/mongo/keyfile", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+          KJ_ASSERT(keyFd >= 0, "Failed to create keyfile");
+          static const char hex[] = "0123456789abcdef";
+          for (size_t i = 0; i < sizeof(randomBytes); i++) {
+            char buf[2] = { hex[randomBytes[i] >> 4], hex[randomBytes[i] & 0xf] };
+            KJ_ASSERT(write(keyFd, buf, 2) == 2);
+          }
+          close(keyFd);
+          KJ_SYSCALL(chown("/var/mongo/keyfile", config.uids.uid, config.uids.gid));
+        }
+
+        // MongoDB 7.0 - removed deprecated flags (nohttpinterface, noprealloc, nopreallocj, smallfiles)
+        KJ_SYSCALL(execl("/bin/mongod7", "/bin/mongod7", "--fork",
+            "--bind_ip", "127.0.0.1", "--port", portStr.cStr(),
+            "--dbpath", "/var/mongo", "--logpath", "/var/log/mongo.log",
+            "--pidfilepath", "/var/pid/mongo.pid",
+            "--auth", "--keyFile", "/var/mongo/keyfile",
+            "--replSet", "ssrs", "--oplogSize", "16",
+            EXEC_END_ARGS));
+      } else {
+        // MongoDB 2.6 - original flags
+        KJ_LOG(WARNING, "Starting MongoDB 2.6");
+        KJ_SYSCALL(execl("/bin/mongod", "/bin/mongod", "--fork",
+            "--bind_ip", "127.0.0.1", "--port", portStr.cStr(),
+            "--dbpath", "/var/mongo", "--logpath", "/var/log/mongo.log",
+            "--pidfilepath", "/var/pid/mongo.pid",
+            "--auth", "--nohttpinterface", "--noprealloc", "--nopreallocj", "--smallfiles",
+            "--replSet", "ssrs", "--oplogSize", "16",
+            EXEC_END_ARGS));
+      }
       KJ_UNREACHABLE;
     });
 
@@ -2265,17 +2543,16 @@ private:
     auto status = process.waitForExit();
 
     if (status == 0) {
-      // Even after the startup command exits, MongoDB takes exactly two seconds to elect itself as
-      // master of the repl set (of which it is the only damned member). Unforutnately, if Node
-      // connects during this time, it fails, sometimes without actually exiting, leaving the entire
-      // server hosed. It appears that this always takes exactly two seconds from startup, since
-      // MongoDB does some sort of heartbeat every second where it checks the replset status, and it
-      // takes three of these for the election to complete, and the first of the three happens
-      // immediately on startup, meaning the last one is two seconds in. So, we'll sleep for 3
-      // seconds to be safe.
-      // TODO(cleanup): There must be a better way...
-      int n = 3;
+      // Even after the startup command exits, MongoDB takes time to elect itself as master of the
+      // repl set (of which it is the only member). If Node connects during this time, it fails,
+      // sometimes without actually exiting, leaving the entire server hosed.
+      // MongoDB 2.6 takes about 2-3 seconds for election.
+      // MongoDB 7uses a Raft-based protocol with longer default election timeout.
+      MongoVersion version = getMongoVersion();
+      int n = (version == MongoVersion::V7) ? 10 : 3;
+      KJ_LOG(WARNING, "Waiting for MongoDB replica set election", n);
       while (n > 0) n = sleep(n);
+      KJ_LOG(WARNING, "Done waiting for MongoDB");
       KJ_IF_MAYBE(mongoPid, parseUInt(trim(readAll("/var/pid/mongo.pid")), 10)) {
         return *mongoPid;
       }
@@ -2337,9 +2614,10 @@ private:
       kj::String password(chars.releaseAsArray());
 
       // Create the mongo user.
+      // clusterMonitor role is needed for oplog tailing (Meteor's real-time updates)
       auto command = kj::str(
         "db.createUser({user: \"sandstorm\", pwd: \"", password, "\", "
-        "roles: [\"readWriteAnyDatabase\",\"userAdminAnyDatabase\",\"dbAdminAnyDatabase\"]})");
+        "roles: [\"readWriteAnyDatabase\",\"userAdminAnyDatabase\",\"dbAdminAnyDatabase\",\"clusterMonitor\"]})");
       mongoCommand(config, fdBundle, command, "admin");
 
       // Store the password.
@@ -2593,13 +2871,20 @@ private:
 
   void setupShellEnvironment(const Config& config, kj::StringPtr sandstormHome = nullptr) {
     kj::String authPrefix;
-    kj::StringPtr authSuffix;
+    kj::String authSuffix;
     auto passwordFile = kj::str(sandstormHome, "/var/mongo/passwd");
     if (access(passwordFile.cStr(), F_OK) == 0) {
       // Read the password.
       auto password = trim(readAll(raiiOpen(passwordFile, O_RDONLY)));
       authPrefix = kj::str("sandstorm:", password, "@");
-      authSuffix = "?authSource=admin";
+
+      // MongoDB 7may benefit from replica set name in connection strings for oplog tailing
+      MongoVersion version = getMongoVersion();
+      if (version == MongoVersion::V7) {
+        authSuffix = kj::str("?authSource=admin&replicaSet=ssrs");
+      } else {
+        authSuffix = kj::str("?authSource=admin");
+      }
 
       // Oplog is only configured if we have a password.
       KJ_SYSCALL(setenv("MONGO_OPLOG_URL",
@@ -3334,10 +3619,18 @@ private:
         std::initializer_list<kj::StringPtr> optionArgs,
         std::initializer_list<kj::StringPtr> fileArgs,
         kj::StringPtr dbName = "meteor") {
+    MongoVersion version = getMongoVersion();
     auto db = kj::str("127.0.0.1:", config.mongoPort, "/", dbName);
 
     kj::Vector<const char*> args;
-    args.add("/bin/mongo");
+    if (version == MongoVersion::V7) {
+      // MongoDB 7.0 uses mongosh (legacy mongo shell was removed in 6.0)
+      args.add("/bin/mongosh");
+      // mongosh is Node.js-based and requires HOME to be set
+      setenv("HOME", "/tmp", 1);
+    } else {
+      args.add("/bin/mongo");
+    }
 
     // If /var/mongo/passwd exists, we interpret it as containing the password for a Mongo user
     // "sandstorm", and assume we are expected to log in as this user.
@@ -3367,6 +3660,226 @@ private:
     // OK, run the Mongo client!
     KJ_SYSCALL(execv(args[0], const_cast<char**>(args.begin())));
     KJ_UNREACHABLE;
+  }
+
+  // ---------------------------------------------------------------------------
+  // MongoDB migration helpers
+
+  pid_t startMongoForMigration(const Config& config, kj::StringPtr binary, uint port,
+                                kj::StringPtr dbpath, bool useOldFlags) {
+    // Start MongoDB for migration without authentication.
+    // Runs mongod without --fork so we can manage the child process directly.
+    auto portStr = kj::str(port);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+      // Child process
+      dropPrivs(config.uids);
+      clearSignalMask();
+
+      // Redirect stdout/stderr to log file
+      int logFd = open("/var/log/mongo-migration.log",
+                       O_WRONLY | O_CREAT | O_APPEND, 0640);
+      if (logFd >= 0) {
+        dup2(logFd, STDOUT_FILENO);
+        dup2(logFd, STDERR_FILENO);
+        close(logFd);
+      }
+
+      if (useOldFlags) {
+        // MongoDB 2.6 with deprecated flags, but no auth
+        // Start in standalone mode (no --replSet) to avoid replica set election issues
+        KJ_SYSCALL(execl(binary.cStr(), binary.cStr(),
+            "--bind_ip", "127.0.0.1", "--port", portStr.cStr(),
+            "--dbpath", dbpath.cStr(),
+            "--nohttpinterface", "--noprealloc", "--nopreallocj", "--smallfiles",
+            EXEC_END_ARGS));
+      } else {
+        // MongoDB 7.0 without auth initially
+        KJ_SYSCALL(execl(binary.cStr(), binary.cStr(),
+            "--bind_ip", "127.0.0.1", "--port", portStr.cStr(),
+            "--dbpath", dbpath.cStr(),
+            "--replSet", "ssrs", "--oplogSize", "16",
+            EXEC_END_ARGS));
+      }
+      _exit(1);
+    }
+
+    KJ_SYSCALL(pid, "fork failed");
+
+    // Wait for MongoDB to be ready
+    {
+      int n = 3;
+      while (n > 0) n = sleep(n);
+    }
+
+    return pid;
+  }
+
+  void waitForMongoPrimary(const Config& config, uint port, int timeoutSeconds) {
+    // Poll replica set status until a primary is elected or timeout.
+    // Uses the old mongo shell (MongoDB 2.6) to check rs.status().
+    auto hostArg = kj::str("127.0.0.1:", port, "/admin");
+
+    for (int elapsed = 0; elapsed < timeoutSeconds; elapsed += 2) {
+      // Run mongo shell to check if we're primary
+      Subprocess process([&]() -> int {
+        dropPrivs(config.uids);
+        clearSignalMask();
+        KJ_SYSCALL(execl("/bin/mongo", "/bin/mongo",
+            "--quiet", "--eval",
+            "var status = rs.status(); "
+            "if (status.myState === 1) { quit(0); } else { quit(1); }",
+            hostArg.cStr(),
+            EXEC_END_ARGS));
+        KJ_UNREACHABLE;
+      });
+
+      auto status = process.waitForExit();
+      if (status == 0) {
+        context.warning("** Replica set is ready (node is PRIMARY).");
+        return;
+      }
+
+      // Not ready yet, wait and retry
+      {
+        int n = 2;
+        while (n > 0) n = sleep(n);
+      }
+    }
+
+    context.warning("** Warning: Timed out waiting for PRIMARY, attempting dump anyway...");
+  }
+
+  void runMongoDump(const Config& config, uint port, kj::StringPtr password, kj::StringPtr outDir) {
+    // Run mongodump from MongoDB 2.6 bundle
+    auto hostArg = kj::str("127.0.0.1:", port);
+    auto passwordArg = kj::str("--password=", password);
+
+    Subprocess process([&]() -> int {
+      dropPrivs(config.uids);
+      clearSignalMask();
+      KJ_SYSCALL(execl("/bin/mongodump", "/bin/mongodump",
+          "--host", hostArg.cStr(),
+          "-u", "sandstorm",
+          passwordArg.cStr(),
+          "--authenticationDatabase", "admin",
+          "--out", outDir.cStr(),
+          EXEC_END_ARGS));
+      KJ_UNREACHABLE;
+    });
+    process.waitForSuccess();
+  }
+
+  void runMongoRestore7(const Config& config, uint port, kj::StringPtr password, kj::StringPtr inDir) {
+    // Run mongorestore from MongoDB 7.0 bundle
+    auto hostArg = kj::str("127.0.0.1:", port);
+    auto passwordArg = kj::str("--password=", password);
+
+    Subprocess process([&]() -> int {
+      dropPrivs(config.uids);
+      clearSignalMask();
+      KJ_SYSCALL(execl("/bin/mongorestore7", "/bin/mongorestore7",
+          "--host", hostArg.cStr(),
+          "-u", "sandstorm",
+          passwordArg.cStr(),
+          "--authenticationDatabase", "admin",
+          "--drop",  // Drop existing collections before restore
+          "--nsExclude=admin.system.users",  // Skip old MONGODB-CR users; we create new SCRAM user
+          inDir.cStr(),
+          EXEC_END_ARGS));
+      KJ_UNREACHABLE;
+    });
+    process.waitForSuccess();
+  }
+
+  void runMongosh(const Config& config, uint port, kj::Maybe<kj::StringPtr> maybePassword,
+                  kj::StringPtr command) {
+    // Run a mongosh command for MongoDB 7.0
+    char commandFile[] = "/tmp/mongosh-command.XXXXXX";
+    int commandRawFd;
+    KJ_SYSCALL(commandRawFd = mkstemp(commandFile));
+    kj::AutoCloseFd commandFd(commandRawFd);
+    KJ_DEFER(unlink(commandFile));
+    kj::FdOutputStream(kj::mv(commandFd)).write(command.begin(), command.size());
+    // Make readable by sandstorm user after dropping privileges
+    KJ_SYSCALL(chown(commandFile, config.uids.uid, config.uids.gid));
+
+    auto hostArg = kj::str("127.0.0.1:", port, "/admin");
+
+    Subprocess process([&]() -> int {
+      dropPrivs(config.uids);
+      clearSignalMask();
+
+      // mongosh (Node.js) needs HOME set
+      setenv("HOME", "/tmp", 1);
+
+      kj::Vector<const char*> args;
+      args.add("/bin/mongosh");
+      args.add("--quiet");
+
+      kj::String passwordArg;
+      KJ_IF_MAYBE(password, maybePassword) {
+        passwordArg = kj::str("--password=", *password);
+        args.add("-u");
+        args.add("sandstorm");
+        args.add(passwordArg.cStr());
+        args.add("--authenticationDatabase");
+        args.add("admin");
+      }
+
+      args.add(hostArg.cStr());
+      args.add("--file");
+      args.add(commandFile);
+      args.add(nullptr);
+
+      KJ_SYSCALL(execv(args[0], const_cast<char**>(args.begin())));
+      KJ_UNREACHABLE;
+    });
+    process.waitForSuccess();
+  }
+
+  void killMongo(pid_t pid) {
+    // Kill a MongoDB child process gracefully
+    if (pid == 0) return;
+
+    kill(pid, SIGTERM);
+
+    // Wait for process to exit (with timeout using polling)
+    for (int i = 0; i < 10; i++) {
+      int status;
+      pid_t result = waitpid(pid, &status, WNOHANG);
+      if (result > 0) {
+        // Process exited
+        return;
+      } else if (result < 0) {
+        if (errno == ECHILD) {
+          // Not our child or already reaped
+          return;
+        }
+      }
+      // Still running, wait a bit
+      int n = 1;
+      while (n > 0) n = sleep(n);
+    }
+
+    // Timeout - kill hard
+    context.warning("MongoDB did not stop gracefully, sending SIGKILL.");
+    kill(pid, SIGKILL);
+    waitpid(pid, nullptr, 0);
+  }
+
+  void copyFile(kj::StringPtr src, kj::StringPtr dst) {
+    // Copy a file from src to dst
+    auto srcFd = raiiOpen(src, O_RDONLY);
+    auto dstFd = raiiOpen(dst, O_WRONLY | O_CREAT | O_TRUNC, 0640);
+
+    char buffer[4096];
+    ssize_t bytesRead;
+    while ((bytesRead = read(srcFd, buffer, sizeof(buffer))) > 0) {
+      kj::FdOutputStream(dstFd.get()).write(buffer, bytesRead);
+    }
+    KJ_SYSCALL(bytesRead, "read failed during file copy");
   }
 
   // ---------------------------------------------------------------------------
