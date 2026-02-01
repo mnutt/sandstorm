@@ -102,10 +102,10 @@ jobs:
           make lint | tee lint.log
           num_problems=$(cat lint.log | grep ' problems (0 errors, ' | awk '{print $2}')
           [ "$num_problems" = 774 ]
-      #- name: test
-      #  run: |
-      #    set -o pipefail
-      #    (make test |& tee testlog.txt; echo "Result: $?")
+      - name: test
+        run: |
+          set -o pipefail
+          (make test |& tee testlog.txt; echo "Result: $?")
       - name: upload test log
         if: always()
         uses: actions/upload-artifact@v4
