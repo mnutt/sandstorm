@@ -2549,7 +2549,7 @@ private:
       // MongoDB 2.6 takes about 2-3 seconds for election.
       // MongoDB 7uses a Raft-based protocol with longer default election timeout.
       MongoVersion version = getMongoVersion();
-      int n = (version == MongoVersion::V7) ? 10 : 3;
+      int n = (version == MongoVersion::V7) ? 4 : 3;
       KJ_LOG(WARNING, "Waiting for MongoDB replica set election", n);
       while (n > 0) n = sleep(n);
       KJ_LOG(WARNING, "Done waiting for MongoDB");

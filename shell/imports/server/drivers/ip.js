@@ -198,12 +198,17 @@ const intToIpv4 = (num) => {
 };
 
 const addressToString = (address) => {
+  console.log("addressToString called with:", JSON.stringify(address));
   const ipv6num = (BigInt(address.upper64) << 64n) + BigInt(address.lower64);
+  console.log("ipv6num:", ipv6num.toString());
 
   if ((ipv6num >> 32n) === bits16) {
     // this is an ipv4 address, we should return it as such
     const ipv4num = Number(ipv6num & bits32);
-    return intToIpv4(ipv4num);
+    console.log("Detected IPv4, ipv4num:", ipv4num);
+    const result = intToIpv4(ipv4num);
+    console.log("IPv4 address string:", result);
+    return result;
   }
 
   const hex = ipv6num.toString(16);
