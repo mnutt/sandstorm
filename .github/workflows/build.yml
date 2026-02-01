@@ -108,6 +108,12 @@ jobs:
           make lint | tee lint.log
           num_problems=$(cat lint.log | grep ' problems (0 errors, ' | awk '{print $2}')
           [ "$num_problems" = 774 ]
+      - name: setup chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: 114
+      - name: remove system chrome
+        run: sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable
       - name: test
         run: |
           set -o pipefail
