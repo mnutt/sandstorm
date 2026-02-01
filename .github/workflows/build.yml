@@ -21,6 +21,11 @@ jobs:
             which go || sudo apt-get install golang-go
 
             sudo apt-get install -y build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ccache
+
+            # Ubuntu 24.04 restricts unprivileged user namespaces by default via AppArmor
+            # Sandstorm requires user namespaces for sandboxing, so disable this restriction
+            echo "kernel.apparmor_restrict_unprivileged_userns = 0" | sudo tee /etc/sysctl.d/99-userns.conf
+            sudo sysctl --system
       - name: install meteor
         run: |
             curl https://install.meteor.com/ | sh
