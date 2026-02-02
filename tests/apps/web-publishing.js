@@ -77,6 +77,6 @@ module.exports["Web publishing with grain shutdown"] = function (browser) {
     .getText("#result", function(result) {
       console.log("Actual #result text:", JSON.stringify(result.value));
     })
-    .assert.textContains("#result", "Shutdown success")
+    .assert.containsText("#result", "Shutdown success")
     .end();
 };
