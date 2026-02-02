@@ -163,9 +163,6 @@ echo
 
 set +e
 
-# Skip Meteor unit tests - meteortesting:browser-tests requires Node 16+ for Playwright
-# TODO: Re-enable after upgrading to Meteor 3.x
-export SKIP_UNITTESTS=true
 export RUN_XFAIL="${RUN_XFAIL:-false}"
 "$NPM" test
 
