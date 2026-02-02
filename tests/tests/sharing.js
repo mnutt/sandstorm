@@ -70,7 +70,9 @@ module.exports["Test open direct share link"] = function (browser) {
             .frame(null)
 
             // Next, try visiting the link while not logged in.
-            .execute("window.Meteor.logout()")
+            .executeAsync(function(done) {
+              Meteor.logout(function() { done(); });
+            }, [])
             .url(browser.launch_url + "/shared/" + result.value.result.token)
             .waitForElementVisible(".grain-interstitial", short_wait)
             .assert.containsText(".grain-interstitial",
