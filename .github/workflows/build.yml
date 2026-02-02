@@ -113,7 +113,9 @@ jobs:
         with:
           chrome-version: 142
       - name: remove system chrome
-        run: sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable
+        run: |
+          sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable
+          sudo rm -rf /opt/google/chrome
       - name: test
         run: |
           set -o pipefail
