@@ -45,7 +45,7 @@ CXXFLAGS2=-std=c++1z -include cstdint $(WARNINGS) $(CXXFLAGS) -DSANDSTORM_BUILD=
 CFLAGS2=$(CFLAGS) -pthread -fPIC -DKJ_STD_COMPAT
 # -lrt is not used by sandstorm itself, but the test app uses it. It would be
 #  nice if we could not link everything against it.
-LIBS2=$(LIBS) deps/libsodium/build/src/libsodium/.libs/libsodium.a deps/boringssl/build/ssl/libssl.a deps/boringssl/build/crypto/libcrypto.a -lz -ldl -pthread -lrt
+LIBS2=$(LIBS) deps/libsodium/build/src/libsodium/.libs/libsodium.a deps/boringssl/build/libssl.a deps/boringssl/build/libcrypto.a -lz -ldl -pthread -lrt
 
 define color
   printf '\033[0;34m==== $1 ====\033[0m\n'
@@ -240,7 +240,7 @@ deps/boringssl/build/Makefile: | tmp/.deps deps/llvm-build
 	@mkdir -p deps/boringssl/build
 	cd deps/boringssl/build && cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$(CC)" -DCMAKE_CXX_COMPILER="$(CXX)" -DCMAKE_C_FLAGS="-fPIE" -DCMAKE_CXX_FLAGS="-fPIE" ..
 
-deps/boringssl/build/ssl/libssl.a: deps/boringssl/build/Makefile
+deps/boringssl/build/libssl.a: deps/boringssl/build/Makefile
 	@$(call color,building BoringSSL)
 	cd deps/boringssl/build && make -j$(PARALLEL)
 
@@ -266,13 +266,13 @@ tmp/ekam-bin: tmp/.deps
 	    (cd deps/ekam && $(MAKE) bin/ekam-bootstrap && \
 	     cd ../.. && ln -s ../deps/ekam/bin/ekam-bootstrap tmp/ekam-bin)
 
-tmp/.ekam-run: tmp/ekam-bin src/sandstorm/* tmp/.deps deps/boringssl/build/ssl/libssl.a deps/libsodium/build/src/libsodium/.libs/libsodium.a | deps/llvm-build
+tmp/.ekam-run: tmp/ekam-bin src/sandstorm/* tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/libsodium/.libs/libsodium.a | deps/llvm-build
 	@$(call color,building sandstorm with ekam)
 	@CC="$(CC)" CXX="$(CXX)" CFLAGS="$(CFLAGS2)" CXXFLAGS="$(CXXFLAGS2)" \
 	    LIBS="$(LIBS2)" NODEJS=$(NODEJS) tmp/ekam-bin -j$(PARALLEL)
 	@touch tmp/.ekam-run
 
-continuous: tmp/.deps deps/boringssl/build/ssl/libssl.a deps/libsodium/build/src/libsodium/.libs/libsodium.a | deps/llvm-build
+continuous: tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/libsodium/.libs/libsodium.a | deps/llvm-build
 	@CC="$(CC)" CXX="$(CXX)" CFLAGS="$(CFLAGS2)" CXXFLAGS="$(CXXFLAGS2)" \
 	    LIBS="$(LIBS2)" NODEJS=$(NODEJS) $(EKAM) -j$(PARALLEL) -l 100000 -c -n :41315 || \
 	    ($(call color,You probably need to install ekam and put it on your path; see github.com/sandstorm-io/ekam) && false)

@@ -22,10 +22,7 @@
 "use strict";
 
 var utils = require("../utils"),
-    short_wait = utils.short_wait,
-    medium_wait = utils.medium_wait,
-    long_wait = utils.long_wait,
-    very_long_wait = utils.very_long_wait;
+    short_wait = utils.short_wait;
 
 module.exports = {};
 
@@ -64,26 +61,19 @@ module.exports["Web publishing with grain shutdown"] = function (browser) {
     .waitForElementVisible("#public-address", short_wait)
     .getText("#public-address", function (result) {
       publicAddress = result.value;
-      console.log("Public address:", publicAddress);
     })
     // Wait for and click the shutdown button
     .waitForElementVisible("#shutdown", short_wait)
     .click("#shutdown")
     // Wait for the navigation to /shutdown to complete (button disappears as page changes)
-    .waitForElementNotPresent("#shutdown", medium_wait)
+    .waitForElementNotPresent("#shutdown", short_wait)
     .frameParent()
-    // Wait for the grain to process the shutdown and update static content
-    .pause(medium_wait)
     .perform(function(client, done) {
-      console.log("Navigating to public address:", publicAddress);
       client.url(publicAddress, function() {
         done();
       });
     })
-    .waitForElementVisible("#result", medium_wait)
-    .getText("#result", function(result) {
-      console.log("Actual #result text:", JSON.stringify(result.value));
-    })
-    .assert.textContains("#result", "Shutdown success")
+    .waitForElementVisible("#result", short_wait)
+    .assert.containsText("#result", "Shutdown success")
     .end();
 };

@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+#include <cstring>
 #include <iostream>
 #include <map>
 
@@ -155,11 +156,9 @@ public:
       response.initBody().setBytes(isPowerboxRequest ? *TEST_POWERBOX_HTML : *TEST_APP_HTML);
       return kj::READY_NOW;
     } else if (path == "shutdown" || path == "/shutdown/") {
-      std::cerr << "SHUTDOWN: Received shutdown request, path=" << path.cStr() << std::endl;
       auto staticFd = raiiOpen("/var/www/index.html", O_RDWR|O_CREAT|O_TRUNC);
       auto data = TEST_SHUTDOWN_HTML.get();
-      auto written = write(staticFd.get(), data.begin(), data.size());
-      std::cerr << "SHUTDOWN: Wrote " << written << " bytes to /var/www/index.html" << std::endl;
+      KJ_SYSCALL(write(staticFd.get(), data.begin(), data.size()));
       auto response = context.getResults();
       auto content = response.initContent();
       content.setStatusCode(sandstorm::WebSession::Response::SuccessCode::OK);
@@ -386,7 +385,6 @@ public:
         if (n > 0) {
           buf[n] = '\0';
           if (strstr(buf, "Shutdown success") != nullptr) {
-            std::cerr << "STARTUP: Found shutdown content, not overwriting" << std::endl;
             shouldWrite = false;
           }
         }
@@ -395,7 +393,6 @@ public:
         auto staticFd = raiiOpen("/var/www/index.html", O_RDWR|O_CREAT|O_TRUNC);
         auto data = TEST_STATIC_HTML.get();
         KJ_SYSCALL(write(staticFd.get(), data.begin(), data.size()));
-        std::cerr << "STARTUP: Wrote initial static content to /var/www/index.html" << std::endl;
       }
     }
 

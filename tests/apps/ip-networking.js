@@ -27,12 +27,11 @@ var utils = require("../utils"),
 
 var IP_INTERFACE_TEST_PORT = parseInt(process.env.IP_INTERFACE_TEST_PORT, 10) || "30027";
 
+// TODO: Skipped due to node-capnp compatibility issues with Node Buffers.
 module.exports = {
   '@disabled': true
 };
 
-// TODO: Skipped due to node-capnp compatibility issues with Node 22.
-// ByteStream.write() data is not being properly passed to the grain.
 module.exports["Test Ip Networking"] = function (browser) {
   browser
     .loginDevAccount(null, true)
@@ -57,7 +56,6 @@ module.exports["Test Ip Networking"] = function (browser) {
     .frameParent()
 };
 
-// TODO: Skipped due to node-capnp compatibility issues with Node 22.
 module.exports["Test Ip Interface"] = function (browser) {
   browser
     .loginDevAccount(null, true)
