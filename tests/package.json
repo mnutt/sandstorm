@@ -3,6 +3,7 @@
   "description": "Tests for the sandstorm platform",
   "version": "0.0.1",
   "devDependencies": {
+    "@puppeteer/browsers": "1.0.0",
     "chromedriver": "^142.0.3",
     "nightwatch": "^2.6.0"
   },
