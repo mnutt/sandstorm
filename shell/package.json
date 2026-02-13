@@ -20,7 +20,6 @@
     "@root/csr": "^0.8.1",
     "@root/keypairs": "^0.9.0",
     "@root/pem": "^1.0.4",
-    "@types/fibers": "^3.1.1",
     "@types/meteor": "^1.4.87",
     "acme-dns-01-cloudflare": "^1.2.5",
     "acme-dns-01-desec": "^3.0.0",
@@ -38,11 +37,11 @@
     "acme-dns-01-vultr": "^3.0.2",
     "babel-runtime": "^6.26.0",
     "body-parser": "^1.20.1",
+    "connect": "^3.7.0",
     "content-type": "^1.0.4",
-    "fibers": "^4.0.3",
-    "heapdump": "^0.3.15",
     "intro.js": "git+https://github.com/sandstorm-io/intro.js.git#8e1c7604f251ec874bf4ae4d7b4f11a14cee697e",
     "ip": "^1.1.8",
+    "jquery": "^3.7.1",
     "ldapjs": "^1.0.2",
     "mailparser": "^0.6.2",
     "meteor-node-stubs": "^1.2.3",
@@ -50,6 +49,7 @@
     "nodemailer": "^6.8.0",
     "nodemailer-smtp-pool": "^2.8.3",
     "openid-client": "^4.9.1",
+    "request": "^2.88.2",
     "smtp-server": "^1.17.0",
     "stripe": "^8.222.0",
     "xml-crypto": "^2.1.5",
@@ -62,6 +62,7 @@
     "babel-eslint": "^10.1.0",
     "chai": "^4.3.7",
     "eslint": "^6.8.0",
+    "sass": "^1.93.2",
     "typescript": "^4.9.4"
   }
 }

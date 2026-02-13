@@ -51,9 +51,9 @@ const HOSTNAME = Url.parse(ROOT_URL).hostname;
 
 export const stripe = StripeModule(Meteor.settings.stripeKey);
 
-BlackrockPayments = {};
+globalThis.BlackrockPayments = {};
 
-MailchimpSubscribers = new Mongo.Collection("mailchimpSubscribers");
+globalThis.MailchimpSubscribers = new Mongo.Collection("mailchimpSubscribers");
 // List of mailing list subscribers. We keep a copy of this rather than hit Mailchimp in real time
 // because Mailchimp is sllooowwwww. We keep it up to date with webhooks.
 //
@@ -144,7 +144,7 @@ var serveSandcat = Meteor.bindEnvironment(function (res) {
   res.end(new Buffer(Assets.getBinary("sandstorm-purplecircle.png")));
 });
 
-hashSourceId = (id) => {
+const hashSourceId = (id) => {
   return Crypto.createHash("sha256").update(ROOT_URL + ":" + id).digest("base64");
 };
 
@@ -162,7 +162,7 @@ export async function findOriginalSourceIdAsync(hashedId, customerId) {
   throw new Meteor.Error(400, "Id not found");
 }
 
-sanitizeSource = (source, isPrimary) => {
+const sanitizeSource = (source, isPrimary) => {
   var result = _.pick(source, "last4", "brand", "exp_year", "exp_month", "isPrimary");
   result.isPrimary = isPrimary;
   result.id = hashSourceId(source.id);
@@ -207,7 +207,7 @@ async function sendEmail(db, user, mailSubject, mailText, mailHtml, config) {
         '  </div>' +
         '</div>';
 
-  let email = _.find(SandstormDb.getUserEmails(user), function (email) { return email.primary; });
+  let email = _.find(await SandstormDb.getUserEmailsAsync(user), function (email) { return email.primary; });
   if (email) {
     email = email.email;
   } else {
@@ -240,7 +240,7 @@ async function sendEmail(db, user, mailSubject, mailText, mailHtml, config) {
   }
 }
 
-sendInvoice = async (db, user, invoice, config) => {
+const sendInvoice = async (db, user, invoice, config) => {
   let total = 0;
   invoice.items.forEach(item => total += item.amountCents);
 
@@ -349,7 +349,7 @@ async function handleWebhookEvent(db, event) {
 
   if (event.type === "invoice.payment_succeeded" || event.type === "invoice.payment_failed") {
     const invoice = event.data.object;
-    const user = Meteor.users.findOne({"payments.id": invoice.customer});
+    const user = await Meteor.users.findOneAsync({"payments.id": invoice.customer});
     if (!user) {
       console.error("Stripe event didn't match any user: " + event.id);
       return;
@@ -407,10 +407,10 @@ async function handleWebhookEvent(db, event) {
       await sendInvoice(db, user, { items }, config);
     }
 
-    Meteor.users.update({_id: user._id}, {$set: mod});
+    await Meteor.users.updateAsync({_id: user._id}, {$set: mod});
   } else if (event.type === "customer.subscription.deleted") {
     const customerId = event.data.object.customer;
-    const user = Meteor.users.findOne({"payments.id": customerId});
+    const user = await Meteor.users.findOneAsync({"payments.id": customerId});
     if (!user) {
       console.error("Stripe event didn't match any user: " + event.id);
       return;
@@ -421,7 +421,7 @@ async function handleWebhookEvent(db, event) {
 
     if (!customer.subscriptions || customer.subscriptions.data.length === 0) {
       // OK, the customer really is unsubscribed. Downgrade them.
-      Meteor.users.update(user._id, { $set: { plan: "free" } });
+      await Meteor.users.updateAsync(user._id, { $set: { plan: "free" } });
     }
   }
 }
@@ -480,7 +480,7 @@ async function updateMailchimp(db) {
   var shard = key.split("-")[1];
 
   var lastChanged =
-      (MailchimpSubscribers.findOne({}, {sort: {lastChanged: -1}}) || {}).lastChanged;
+      (await MailchimpSubscribers.findOneAsync({}, {sort: {lastChanged: -1}}) || {}).lastChanged;
 
   var count = 100;
   var retry = false;
@@ -511,16 +511,17 @@ async function updateMailchimp(db) {
     retry = true;
   }
 
-  (result.data.members || []).forEach(function (member) {
+  for (const member of (result.data.members || [])) {
     check(member, {email_address: String, status: String, last_changed: String});
-    MailchimpSubscribers.upsert({_id: member.email_address}, {$set: {
+    await MailchimpSubscribers.upsertAsync({_id: member.email_address}, {$set: {
       canonical: canonicalizeEmail(member.email_address),
       subscribed: member.status === "subscribed",
       lastChanged: new Date(member.last_changed)
     }});
-    var count = db.findAccountsByEmail(member.email_address).map(updateBonuses).length;
+    var count = (await Promise.all((await db.findAccountsByEmailAsync(member.email_address))
+        .map(updateBonuses))).length;
     console.log("Mailchimp:", member.email_address, member.status, "(" + count + " users)");
-  });
+  }
 }
 
 function processMailchimpWebhook(db, req, res) {
@@ -541,7 +542,7 @@ function processMailchimpWebhook(db, req, res) {
   });
 }
 
-BlackrockPayments.makeConnectHandler = function (db) {
+globalThis.BlackrockPayments.makeConnectHandler = function (db) {
   return function (req, res, next) {
     if (req.headers.host === db.makeWildcardHost("payments")) {
       if (req.url === "/checkout") {
@@ -568,7 +569,7 @@ async function createUser(token, email) {
     email: email,
     description: Meteor.userId()  // TODO(soon): Do we want to store backrefs to our database in stripe?
   });
-  Meteor.users.update({_id: Meteor.userId()}, {$set: {payments: {id: data.id}}});
+  await Meteor.users.updateAsync({_id: Meteor.userId()}, {$set: {payments: {id: data.id}}});
   return data;
 }
 
@@ -594,7 +595,7 @@ async function cancelSubscription(userId, customerId) {
     }
   } else {
     // Hmm, no current subscription. Set to free.
-    Meteor.users.update({_id: this.userId}, {$set: { plan: "free" }});
+    await Meteor.users.updateAsync({_id: userId}, {$set: { plan: "free" }});
     return {};
   }
 }
@@ -747,7 +748,7 @@ var methods = {
       }
     }
 
-    Meteor.users.update({_id: this.userId}, {$set: { plan: newPlan }});
+    await Meteor.users.updateAsync({_id: this.userId}, {$set: { plan: newPlan }});
     return { subscription: newPlan, subscriptionEnds: null };
   },
 
@@ -776,12 +777,12 @@ var methods = {
       { customer: customerId, items: [{plan: plan}] }
     );
 
-    Meteor.users.update({_id: this.userId}, {$set: { plan: plan }});
+    await Meteor.users.updateAsync({_id: this.userId}, {$set: { plan: plan }});
     return sanitizedSource;
   },
 
   unsubscribeMailingList: async function () {
-    var emails = SandstormDb.getUserEmails(Meteor.user()).filter(function (entry) {
+    var emails = (await SandstormDb.getUserEmailsAsync(Meteor.user())).filter(function (entry) {
       return entry.verified;
     }).map(function (entry) {
       return canonicalizeEmail(entry.email);
@@ -789,8 +790,8 @@ var methods = {
 
     var listId = Meteor.settings.mailchimpListId;
     var key = Meteor.settings.mailchimpKey;
-    const subscribedEntries = MailchimpSubscribers.find(
-        { canonical: { $in: emails }, subscribed: true }).fetch();
+    const subscribedEntries = await MailchimpSubscribers.find(
+        { canonical: { $in: emails }, subscribed: true }).fetchAsync();
     for (const entry of subscribedEntries) {
       if (key && listId) {
         var shard = key.split("-")[1];
@@ -805,7 +806,7 @@ var methods = {
         });
       }
 
-      MailchimpSubscribers.update({_id: entry._id}, {$set: {subscribed: false}});
+      await MailchimpSubscribers.updateAsync({_id: entry._id}, {$set: {subscribed: false}});
     }
 
     await updateBonuses(Meteor.user());
@@ -813,7 +814,7 @@ var methods = {
 
   subscribeMailingList: async function () {
 
-    var emails = SandstormDb.getUserEmails(Meteor.user()).filter(function (entry) {
+    var emails = (await SandstormDb.getUserEmailsAsync(Meteor.user())).filter(function (entry) {
       return entry.primary;
     });
 
@@ -830,7 +831,7 @@ var methods = {
       var hash = Crypto.createHash("md5").update(email).digest("hex");
       var url = "https://"+shard+".api.mailchimp.com/3.0/lists/" + listId + "/members/" + hash;
 
-      if (MailchimpSubscribers.find({_id: email}).count() > 0) {
+      if (await MailchimpSubscribers.find({ _id: email }).countAsync() > 0) {
         // User already exists in Mailchimp.
         console.log("Mailchimp: re-subscribing", email);
         await httpCallAsync("PATCH", url, {
@@ -848,7 +849,7 @@ var methods = {
       }
     }
 
-    MailchimpSubscribers.upsert({_id: email},
+    await MailchimpSubscribers.upsertAsync({_id: email},
         {$set: {canonical: canonicalizeEmail(email), subscribed: true}});
     await updateBonuses(Meteor.user());
   }
@@ -873,7 +874,7 @@ async function getAllStripeCustomers() {
   return results;
 }
 
-BlackrockPayments.getTotalCharges = async function() {
+globalThis.BlackrockPayments.getTotalCharges = async function() {
   var hasMore = true;
   var results = [];
 
@@ -892,8 +893,9 @@ BlackrockPayments.getTotalCharges = async function() {
   }, 0) / 100;
 };
 
-BlackrockPayments.suspendAccount = async function (db, userId) {
-  var payments = db.collections.users.findOne({_id: userId}).payments;
+globalThis.BlackrockPayments.suspendAccount = async function (db, userId) {
+  const user = await db.collections.users.findOneAsync({ _id: userId });
+  var payments = (user || {}).payments;
   if (payments && payments.id) {
     await cancelSubscription(userId, payments.id);
 
@@ -901,7 +903,7 @@ BlackrockPayments.suspendAccount = async function (db, userId) {
   }
 };
 
-BlackrockPayments.deleteAccount = function (db, user) {
+globalThis.BlackrockPayments.deleteAccount = function (db, user) {
   var payments = user.payments;
   if (payments && payments.id) {
     var customerId = payments.id;
@@ -935,14 +937,14 @@ async function getStripeBonus(user, paymentsBonuses) {
   return bonus;
 }
 
-function getMailchimpBonus(user, paymentsBonuses) {
-  var emails = SandstormDb.getUserEmails(user).filter(function (entry) {
+async function getMailchimpBonus(user, paymentsBonuses) {
+  var emails = (await SandstormDb.getUserEmailsAsync(user)).filter(function (entry) {
     return entry.verified;
   }).map(function (entry) {
     return canonicalizeEmail(entry.email);
   });
   if (emails.length > 0 &&
-      MailchimpSubscribers.find({canonical: {$in: emails}, subscribed: true}).count() > 0) {
+      await MailchimpSubscribers.find({ canonical: { $in: emails }, subscribed: true }).countAsync() > 0) {
     if (paymentsBonuses) paymentsBonuses.mailingList = true;
     return { storage: MAILING_LIST_BONUS };
   } else {
@@ -964,7 +966,7 @@ async function updateBonuses(user) {
   if (!_.isEqual(user.planBonus, bonus) ||
       !user.payments ||
       !_.isEqual(user.payments.bonuses, paymentsBonuses)) {
-    Meteor.users.update(user._id, {$set: {planBonus: bonus, "payments.bonuses": paymentsBonuses}});
+    await Meteor.users.updateAsync(user._id, {$set: {planBonus: bonus, "payments.bonuses": paymentsBonuses}});
   }
 
   return paymentsBonuses;
@@ -974,12 +976,13 @@ if (Meteor.settings.public.stripePublicKey) {
   Meteor.publish("myBonuses", function () {
     if (!this.userId) return [];
 
-    const user = Meteor.users.findOne({_id: this.userId});
-    if (user) {
-      updateBonuses(user).catch((err) => {
-        console.error("Failed to update bonuses:", err);
-      });
-    }
+    Meteor.users.findOneAsync({_id: this.userId}).then((user) => {
+      if (!user) return;
+      return updateBonuses(user);
+    }).catch((err) => {
+      console.error("Failed to update bonuses:", err);
+    });
+
     return Meteor.users.find({_id: this.userId}, {fields: {"payments.bonuses": 1}});
   });
 }
