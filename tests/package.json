@@ -19,7 +19,7 @@
     "es6-promise": "4.2.8",
     "firefox-profile": "4.7.0",
     "jszip": "^3.10.1",
-    "mailcomposer": "^0.2.12",
+    "mailcomposer": "^4.0.2",
     "mailparser": "3.9.3",
     "selenium-standalone": "10.0.2",
     "simplesmtp": "0.3.35",
