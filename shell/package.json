@@ -20,7 +20,7 @@
     "@root/csr": "^0.8.1",
     "@root/keypairs": "^0.10.3",
     "@root/pem": "^1.0.4",
-    "@types/meteor": "^1.4.87",
+    "@types/meteor": "2.9.11",
     "acme-dns-01-cloudflare": "^1.2.5",
     "acme-dns-01-desec": "^3.0.0",
     "acme-dns-01-digitalocean": "^3.0.1",
@@ -63,6 +63,6 @@
     "chai": "^4.5.0",
     "eslint": "^6.8.0",
     "sass": "^1.93.2",
-    "typescript": "^4.9.5"
+    "typescript": "^5.9.3"
   }
 }
