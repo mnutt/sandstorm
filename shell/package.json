@@ -41,7 +41,7 @@
     "content-type": "^1.0.4",
     "intro.js": "git+https://github.com/sandstorm-io/intro.js.git#8e1c7604f251ec874bf4ae4d7b4f11a14cee697e",
     "ip": "^2.0.1",
-    "jquery": "^3.7.1",
+    "jquery": "^4.0.0",
     "ldapjs": "^3.0.7",
     "mailparser": "^3.9.3",
     "meteor-node-stubs": "^1.2.25",
