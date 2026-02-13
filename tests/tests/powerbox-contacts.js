@@ -114,8 +114,12 @@ module.exports["Test powerbox request contact"] = function (browser) {
                     .waitForElementVisible("form.test-identity button", short_wait)
                     .click("form.test-identity button")
                     .waitForElementVisible("form.test-identity div.result", short_wait)
-                    .assert.textContains("form.test-identity div.result",
-                                         "failed to fetch profile")
+                    .perform(function (client, done) {
+                      client.expect.element("form.test-identity div.result")
+                          .text.to.contain("failed to fetch profile")
+                          .before(medium_wait);
+                      done();
+                    })
                     .end()
                 });
               });
