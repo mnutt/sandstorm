@@ -2,7 +2,6 @@ import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
 
 import nodemailer from "nodemailer";
-import smtpPool from "nodemailer-smtp-pool";
 
 import { globalDb } from "/imports/db-deprecated";
 
@@ -64,14 +63,15 @@ const makePool = function (mailConfig) {
     rejectUnauthorized: false,
   };
 
-  const pool = nodemailer.createTransport(smtpPool({
+  const pool = nodemailer.createTransport({
+    pool: true,
     host: mailConfig.hostname,
     port: mailConfig.port,
     secure,
     tls: tlsOptions,
     auth,
     // TODO(someday): allow maxConnections to be configured?
-  }));
+  });
 
   pool._sendMailAsync = pool.sendMail.bind(pool);
   return pool;
