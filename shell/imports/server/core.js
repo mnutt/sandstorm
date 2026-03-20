@@ -57,7 +57,7 @@ class SandstormCoreImpl {
 
       return restoreInternal(this.db, sturdyRef,
                              { grain: Match.ObjectIncluding({ grainId: this.grainId }) },
-                             [], token);
+                             [], token, undefined, undefined, this.grainId);
     });
   }
 
@@ -87,7 +87,8 @@ class SandstormCoreImpl {
   makeChildToken(parent, owner, requirements) {
     return inMeteor(() => {
       // Compute the save ApiToken template.
-      return makeSaveTemplateForChild(this.db, parent.toString(), requirements);
+      return makeSaveTemplateForChild(this.db, parent.toString(), requirements, undefined,
+                                      this.grainId);
     }).then(saveTemplate => {
       // Create a dummy PersistentImpl and invoke its own save() method.
       return new PersistentImpl(this.db, saveTemplate).save({ sealFor: owner });
@@ -427,7 +428,8 @@ Meteor.methods({
 
 });
 
-const makeSaveTemplateForChild = function (db, parentToken, requirements, parentTokenInfo) {
+const makeSaveTemplateForChild = function (db, parentToken, requirements, parentTokenInfo,
+                                           restoringGrainId) {
   // Constructs (part of) an ApiToken record appropriate to be used when save()ing a capability
   // that was originally created by restore()ing `parentToken`. This fills in everything that is
   // appropriate to fill in based only on the parent. Some fields -- especially `owner`, `created`,
@@ -488,6 +490,10 @@ const makeSaveTemplateForChild = function (db, parentToken, requirements, parent
     saveTemplate.requirements = (saveTemplate.requirements || []).concat(requirements);
   }
 
+  if (restoringGrainId && !saveTemplate.grainId) {
+    saveTemplate.grainId = restoringGrainId;
+  }
+
   return saveTemplate;
 };
 
@@ -513,7 +519,7 @@ class DummyObserver {
 }
 
 restoreInternal = (db, originalToken, ownerPattern, requirements, originalTokenInfo,
-                   currentTokenId, currentTokenKey) => {
+                   currentTokenId, currentTokenKey, restoringGrainId) => {
   // Restores the token `originalToken`, which is a Buffer.
   //
   // `ownerPattern` is a match pattern (i.e. used with check()) that the token's owner must match.
@@ -576,7 +582,8 @@ restoreInternal = (db, originalToken, ownerPattern, requirements, originalTokenI
     // A token which chains to some parent token.  Restore the parent token (possibly recursively),
     // checking requirements on the way up.
     return restoreInternal(db, originalToken, Match.Any, requirements,
-                           originalTokenInfo, token.parentToken, token.parentTokenKey);
+                           originalTokenInfo, token.parentToken, token.parentTokenKey,
+                           restoringGrainId);
   }
 
   // Check the passed-in `requirements`.
@@ -608,7 +615,8 @@ restoreInternal = (db, originalToken, ownerPattern, requirements, originalTokenI
     return { cap };
   } else {
     // Construct a template ApiToken for use if the restored capability is save()d later.
-    const saveTemplate = makeSaveTemplateForChild(db, originalToken, requirements, originalTokenInfo);
+    const saveTemplate = makeSaveTemplateForChild(db, originalToken, requirements,
+                                                  originalTokenInfo, restoringGrainId);
 
     if (token.frontendRef) {
       // A token which represents a capability implemented by a pseudo-driver.

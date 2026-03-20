@@ -4,10 +4,18 @@ import { EventEmitter } from "events";
 import chai from "chai";
 
 import {
+  allocateManagedRawUdpPort,
+  getOrCreateManagedRawUdpSocket,
   Ecn,
+  MANAGED_RAW_UDP_MAX_PORT,
+  MANAGED_RAW_UDP_MIN_PORT,
   RawUdpSocketImpl,
+  IpInterfaceImpl,
+  managedRawUdpSockets,
+  normalizeLocalSocketInfo,
   socketAddressToEndpoint,
 } from "/imports/server/drivers/ip";
+import { hashSturdyRef } from "/imports/server/persistent";
 
 class FakeDgramSocket extends EventEmitter {
   constructor(localAddress = { address: "127.0.0.1", port: 4000 }) {
@@ -36,7 +44,75 @@ class FakeDgramSocket extends EventEmitter {
   }
 }
 
+class FakeGrainsCollection {
+  constructor(docs) {
+    this.docs = docs;
+  }
+
+  findOne(query) {
+    if (typeof query === "string") {
+      return this.docs.find((doc) => doc._id === query) || null;
+    }
+
+    return this.docs.find((doc) => {
+      if (query._id) {
+        if (typeof query._id === "string") {
+          if (doc._id !== query._id) return false;
+        } else if ("$ne" in query._id) {
+          if (doc._id === query._id.$ne) return false;
+        }
+      }
+
+      if ("rawUdpPublicPort" in query) {
+        const portQuery = query.rawUdpPublicPort;
+        if (portQuery && typeof portQuery === "object" && "$exists" in portQuery) {
+          const exists = "rawUdpPublicPort" in doc;
+          if (exists !== portQuery.$exists) return false;
+        } else if (doc.rawUdpPublicPort !== portQuery) {
+          return false;
+        }
+      }
+
+      return true;
+    }) || null;
+  }
+
+  update(query, modifier) {
+    const doc = this.findOne(query);
+    if (!doc) return 0;
+
+    if (modifier.$set) {
+      Object.assign(doc, modifier.$set);
+    }
+
+    if (modifier.$unset) {
+      Object.keys(modifier.$unset).forEach((key) => {
+        delete doc[key];
+      });
+    }
+
+    return 1;
+  }
+}
+
+class FakeApiTokensCollection {
+  constructor(docs) {
+    this.docs = docs;
+  }
+
+  findOne(query) {
+    return this.docs.find((doc) => {
+      return Object.keys(query).every((key) => doc[key] === query[key]);
+    }) || null;
+  }
+}
+
 describe("RawUdpSocketImpl", function () {
+  afterEach(function () {
+    managedRawUdpSockets.clear();
+    delete global.globalBackend;
+  });
+
   it("maps incoming packets into raw udp metadata", async function () {
     const socket = new FakeDgramSocket({ address: "127.0.0.1", port: 4100 });
     const rawSocket = new RawUdpSocketImpl(socket);
@@ -124,6 +200,164 @@ describe("RawUdpSocketImpl", function () {
         maxReceiveSegments: 1,
         maxTransmitSegments: 1,
       },
+    });
+  });
+
+  it("normalizes wildcard local endpoints to loopback for reporting", function () {
+    chai.assert.deepEqual(
+      normalizeLocalSocketInfo({ address: "0.0.0.0", port: 4700 }),
+      { address: "127.0.0.1", port: 4700 },
+    );
+    chai.assert.deepEqual(
+      normalizeLocalSocketInfo({ address: "::", port: 4701 }),
+      { address: "::1", port: 4701 },
+    );
+  });
+
+  it("uses normalized local endpoint metadata for wildcard-bound sockets", async function () {
+    const socket = new FakeDgramSocket({ address: "0.0.0.0", port: 4800 });
+    const rawSocket = new RawUdpSocketImpl(socket);
+    const received = [];
+
+    rawSocket.setReceiver({
+      receive(packet) {
+        received.push(packet);
+      },
+    });
+
+    socket.emit("message", Buffer.from("hello"), { address: "127.0.0.9", port: 4900 });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    chai.assert.deepEqual(rawSocket.getLocalEndpoint(), {
+      endpoint: socketAddressToEndpoint("127.0.0.1", 4800),
+    });
+    chai.assert.lengthOf(received, 1);
+    chai.assert.deepEqual(received[0].dst, socketAddressToEndpoint("127.0.0.1", 4800));
+  });
+
+  it("allocates one high managed raw udp port per grain", function () {
+    const db = {
+      collections: {
+        grains: new FakeGrainsCollection([
+          { _id: "grain-a" },
+          { _id: "grain-b", rawUdpPublicPort: 45000 },
+        ]),
+      },
+    };
+
+    const port = allocateManagedRawUdpPort(db, "grain-a");
+    chai.assert.isAtLeast(port, MANAGED_RAW_UDP_MIN_PORT);
+    chai.assert.isAtMost(port, MANAGED_RAW_UDP_MAX_PORT);
+    chai.assert.notStrictEqual(port, 45000);
+    chai.assert.strictEqual(allocateManagedRawUdpPort(db, "grain-a"), port);
+  });
+
+  it("prefers a requested stable port for managed raw udp allocation", function () {
+    const db = {
+      collections: {
+        grains: new FakeGrainsCollection([
+          { _id: "grain-a" },
+          { _id: "grain-b", rawUdpPublicPort: 45000 },
+        ]),
+      },
+    };
+
+    const port = allocateManagedRawUdpPort(db, "grain-a", 46789);
+    chai.assert.strictEqual(port, 46789);
+    chai.assert.strictEqual(allocateManagedRawUdpPort(db, "grain-a"), 46789);
+  });
+
+  it("derives the grain id for managed raw udp from the parent token chain", function () {
+    const db = {
+      collections: {
+        apiTokens: new FakeApiTokensCollection([
+          { _id: hashSturdyRef("parent-sturdy-ref"), grainId: "grain-from-parent" },
+        ]),
+      },
+    };
+
+    const ipInterface = new IpInterfaceImpl(db, {
+      parentTokenKey: "parent-sturdy-ref",
+    });
+
+    chai.assert.strictEqual(ipInterface.grainId, "grain-from-parent");
+  });
+
+  it("wakes a managed grain when packets arrive without a receiver", async function () {
+    const socket = new FakeDgramSocket({ address: "127.0.0.1", port: 5000 });
+    const rawSocket = new RawUdpSocketImpl(socket, { managedGrainId: "grain-123" });
+    const woken = [];
+    global.globalBackend = {
+      useGrain(grainId, cb) {
+        woken.push(grainId);
+        return cb({
+          keepAlive() {
+            return Promise.resolve();
+          },
+        });
+      },
+    };
+
+    socket.emit("message", Buffer.from("wake"), { address: "127.0.0.9", port: 5001 });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    chai.assert.deepEqual(woken, ["grain-123"]);
+  });
+
+  it("drops a disconnected managed receiver and wakes the grain", async function () {
+    const socket = new FakeDgramSocket({ address: "127.0.0.1", port: 5050 });
+    const rawSocket = new RawUdpSocketImpl(socket, { managedGrainId: "grain-456" });
+    const woken = [];
+    global.globalBackend = {
+      useGrain(grainId, cb) {
+        woken.push(grainId);
+        return cb({
+          keepAlive() {
+            return Promise.resolve();
+          },
+        });
+      },
+    };
+
+    rawSocket.setReceiver({
+      receive() {
+        const err = new Error("remote exception: grain is not running");
+        err.kjType = "disconnected";
+        return Promise.reject(err);
+      },
+    });
+
+    socket.emit("message", Buffer.from("wake"), { address: "127.0.0.9", port: 5051 });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    chai.assert.deepEqual(woken, ["grain-456"]);
+    chai.assert.strictEqual(rawSocket.receiver, null);
+  });
+
+  it("reuses an already-restored managed socket for the grain", async function () {
+    const rawSocket = new RawUdpSocketImpl(new FakeDgramSocket(), { managedGrainId: "grain-789" });
+    managedRawUdpSockets.set("grain-789", rawSocket);
+
+    const result = await getOrCreateManagedRawUdpSocket({
+      collections: {
+        grains: new FakeGrainsCollection([{ _id: "grain-789", rawUdpPublicPort: 47000 }]),
+      },
+    }, "grain-789", 47000);
+
+    chai.assert.strictEqual(result, rawSocket);
+  });
+
+  it("keeps managed raw udp sockets bound when closed", function () {
+    const socket = new FakeDgramSocket({ address: "127.0.0.1", port: 5100 });
+    const rawSocket = new RawUdpSocketImpl(socket, { managedGrainId: "grain-123" });
+
+    rawSocket.close();
+
+    chai.assert.strictEqual(socket.closed, false);
+    chai.assert.deepEqual(rawSocket.getLocalEndpoint(), {
+      endpoint: socketAddressToEndpoint("127.0.0.1", 5100),
     });
   });
 });

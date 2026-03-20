@@ -17,7 +17,8 @@
 import { Meteor } from "meteor/meteor";
 import { Match, check } from "meteor/check";
 
-import { PersistentImpl } from "/imports/server/persistent";
+import { PersistentImpl, fetchApiToken } from "/imports/server/persistent";
+import { inMeteor } from "/imports/server/async-helpers";
 import Net from "net";
 import Tls from "tls";
 import Dgram from "dgram";
@@ -49,6 +50,8 @@ class ByteStreamConnection {
 class IpInterfaceImpl extends PersistentImpl {
   constructor(db, saveTemplate) {
     super(db, saveTemplate);
+    this.db = db;
+    this.grainId = resolveSaveTemplateGrainId(db, saveTemplate);
   }
 
   listenTcp(portNum, port) {
@@ -127,6 +130,12 @@ class IpInterfaceImpl extends PersistentImpl {
   }
 
   bindRawUdp(portNum) {
+    if (this.grainId) {
+      return getOrCreateManagedRawUdpSocket(this.db, this.grainId, portNum).then((socket) => {
+        return { socket };
+      });
+    }
+
     return bindRawUdpSocket({
       type: "udp4",
       bindPort: portNum,
@@ -177,6 +186,28 @@ Meteor.startup(() => {
         return [];
       }
     },
+  });
+});
+
+Meteor.startup(() => {
+  if (typeof globalDb === "undefined" || !globalDb.collections || !globalDb.collections.grains) {
+    return;
+  }
+
+  const grains = globalDb.collections.grains.find({
+    rawUdpPublicPort: { $exists: true },
+  }, {
+    fields: { rawUdpPublicPort: 1 },
+  }).fetch();
+
+  grains.forEach((grain) => {
+    const port = getManagedRawUdpPortField(grain);
+    if (!isManagedRawUdpPort(port)) return;
+
+    ensureManagedRawUdpSocketForPort(globalDb, grain._id, port, true).catch((err) => {
+      console.error("failed to restore managed raw udp socket for grain " + grain._id +
+          " on port " + port + ":", err);
+    });
   });
 });
 
@@ -308,11 +339,159 @@ const nodeAddressToEndpoint = (info) => {
   return socketAddressToEndpoint(info.address, info.port);
 };
 
+const normalizeLocalSocketInfo = (info) => {
+  if (!info || !info.address) return info;
+
+  if (info.address === "0.0.0.0") {
+    return Object.assign({}, info, { address: "127.0.0.1" });
+  }
+
+  if (info.address === "::") {
+    return Object.assign({}, info, { address: "::1" });
+  }
+
+  return info;
+};
+
 const normalizeEcn = (ecn) => {
   if (ecn === Ecn.ect0 || ecn === "ect0") return Ecn.ect0;
   if (ecn === Ecn.ect1 || ecn === "ect1") return Ecn.ect1;
   if (ecn === Ecn.ce || ecn === "ce") return Ecn.ce;
   return Ecn.notEct;
+};
+
+const MANAGED_RAW_UDP_MIN_PORT = 40000;
+const MANAGED_RAW_UDP_MAX_PORT = 59999;
+const managedRawUdpSockets = new Map();
+const managedRawUdpWakePromises = new Map();
+
+const getManagedRawUdpPortField = (grain) => {
+  return grain && grain.rawUdpPublicPort;
+};
+
+const resolveSaveTemplateGrainId = (db, saveTemplate) => {
+  if (!saveTemplate) return null;
+  if (saveTemplate.grainId) return saveTemplate.grainId;
+
+  if (saveTemplate.parentTokenKey) {
+    const parentToken = fetchApiToken(db, saveTemplate.parentTokenKey);
+    if (parentToken && parentToken.grainId) {
+      return parentToken.grainId;
+    }
+  }
+
+  const requirements = saveTemplate.requirements || [];
+  for (let i = 0; i < requirements.length; i++) {
+    const requirement = requirements[i];
+    if (requirement && requirement.permissionsHeld && requirement.permissionsHeld.grainId) {
+      return requirement.permissionsHeld.grainId;
+    }
+  }
+
+  return null;
+};
+
+const clearManagedRawUdpPort = (db, grainId, port) => {
+  db.collections.grains.update({
+    _id: grainId,
+    rawUdpPublicPort: port,
+  }, {
+    $unset: { rawUdpPublicPort: "" },
+  });
+};
+
+const isManagedRawUdpPort = (port) => {
+  return Number.isInteger(port) &&
+      port >= MANAGED_RAW_UDP_MIN_PORT &&
+      port <= MANAGED_RAW_UDP_MAX_PORT;
+};
+
+const allocateManagedRawUdpPort = (db, grainId, preferredPort) => {
+  const grains = db.collections.grains;
+  const existing = grains.findOne(grainId, { fields: { rawUdpPublicPort: 1 } });
+  if (!existing) {
+    throw new Meteor.Error(404, "Grain Not Found", "Grain ID: " + grainId);
+  }
+
+  const existingPort = getManagedRawUdpPortField(existing);
+  if (existingPort) return existingPort;
+
+  if (isManagedRawUdpPort(preferredPort)) {
+    const taken = grains.findOne({
+      _id: { $ne: grainId },
+      rawUdpPublicPort: preferredPort,
+    }, {
+      fields: { _id: 1 },
+    });
+
+    if (!taken) {
+      const updated = grains.update({
+        _id: grainId,
+        rawUdpPublicPort: { $exists: false },
+      }, {
+        $set: { rawUdpPublicPort: preferredPort },
+      });
+
+      if (updated > 0) return preferredPort;
+
+      const refreshed = grains.findOne(grainId, { fields: { rawUdpPublicPort: 1 } });
+      if (refreshed && refreshed.rawUdpPublicPort) {
+        return refreshed.rawUdpPublicPort;
+      }
+    }
+  }
+
+  const rangeSize = MANAGED_RAW_UDP_MAX_PORT - MANAGED_RAW_UDP_MIN_PORT + 1;
+  const start = Math.floor(Math.random() * rangeSize);
+  for (let i = 0; i < rangeSize; i++) {
+    const port = MANAGED_RAW_UDP_MIN_PORT + ((start + i) % rangeSize);
+    const taken = grains.findOne({
+      _id: { $ne: grainId },
+      rawUdpPublicPort: port,
+    }, {
+      fields: { _id: 1 },
+    });
+    if (taken) continue;
+
+    const updated = grains.update({
+      _id: grainId,
+      rawUdpPublicPort: { $exists: false },
+    }, {
+      $set: { rawUdpPublicPort: port },
+    });
+
+    if (updated > 0) return port;
+
+    const refreshed = grains.findOne(grainId, { fields: { rawUdpPublicPort: 1 } });
+    if (refreshed && refreshed.rawUdpPublicPort) {
+      return refreshed.rawUdpPublicPort;
+    }
+  }
+
+  throw new Error("no available managed raw udp ports");
+};
+
+const wakeManagedRawUdpGrain = (grainId) => {
+  if (managedRawUdpWakePromises.has(grainId)) {
+    return managedRawUdpWakePromises.get(grainId);
+  }
+
+  const backend = typeof globalBackend === "undefined" ? null : globalBackend;
+  if (!backend) return Promise.resolve();
+
+  const wakePromise = inMeteor(() => {
+    return backend.useGrain(grainId, (supervisor) => {
+      const uiView = supervisor.getMainView().view;
+      return uiView.getViewInfo().then(() => undefined);
+    });
+  }).catch((err) => {
+    console.error("managed raw udp wake failed for grain " + grainId + ":", err);
+  }).then(() => {
+    managedRawUdpWakePromises.delete(grainId);
+  });
+
+  managedRawUdpWakePromises.set(grainId, wakePromise);
+  return wakePromise;
 };
 
 class RawUdpSocketImpl {
@@ -321,9 +500,13 @@ class RawUdpSocketImpl {
     this.receiver = null;
     this.closed = false;
     this.fixedRemoteEndpoint = options.fixedRemoteEndpoint || null;
+    this.managedGrainId = options.managedGrainId || null;
 
     this.socket.on("message", (msg, rinfo) => {
-      if (!this.receiver) return;
+      if (!this.receiver) {
+        this.maybeWakeForIncoming();
+        return;
+      }
 
       if (this.fixedRemoteEndpoint && !endpointsEqual(nodeAddressToEndpoint(rinfo),
           this.fixedRemoteEndpoint)) {
@@ -332,7 +515,7 @@ class RawUdpSocketImpl {
 
       let localInfo;
       try {
-        localInfo = this.socket.address();
+        localInfo = normalizeLocalSocketInfo(this.socket.address());
       } catch (err) {
         console.error("failed to read raw udp local address:", err);
         return;
@@ -347,6 +530,15 @@ class RawUdpSocketImpl {
       };
 
       Promise.resolve(this.receiver.receive(packet)).catch((err) => {
+        if (this.managedGrainId && err &&
+            (err.kjType === "disconnected" || err.kjType === "failed" ||
+             /disconnected|not running|canceled|cancelled/i.test(String(err.message || err)))) {
+          this.receiver = null;
+          console.error("managed raw udp receiver became stale for grain " +
+              this.managedGrainId + ":", err && err.message ? err.message : err);
+          this.maybeWakeForIncoming();
+        }
+
         console.error("raw udp receiver callback failed:", err);
       });
     });
@@ -356,6 +548,11 @@ class RawUdpSocketImpl {
         console.error("raw udp socket error:", err);
       }
     });
+  }
+
+  maybeWakeForIncoming() {
+    if (!this.managedGrainId) return;
+    void wakeManagedRawUdpGrain(this.managedGrainId);
   }
 
   send(packet) {
@@ -397,7 +594,7 @@ class RawUdpSocketImpl {
       throw new Error("raw udp socket is closed");
     }
 
-    const info = this.socket.address();
+    const info = normalizeLocalSocketInfo(this.socket.address());
     return { endpoint: nodeAddressToEndpoint(info) };
   }
 
@@ -413,6 +610,11 @@ class RawUdpSocketImpl {
 
   close() {
     if (this.closed) return;
+    if (this.managedGrainId) {
+      this.receiver = null;
+      return;
+    }
+
     this.closed = true;
     this.receiver = null;
     this.socket.close();
@@ -437,6 +639,42 @@ const bindRawUdpSocket = ({ type, bindPort, fixedRemoteEndpoint }) => {
 
     socket.bind(bindPort);
   });
+};
+
+const bindManagedRawUdpSocket = (grainId, bindPort) => {
+  return bindRawUdpSocket({
+    type: "udp4",
+    bindPort,
+  }).then((socket) => {
+    socket.managedGrainId = grainId;
+    return socket;
+  });
+};
+
+const ensureManagedRawUdpSocketForPort = (db, grainId, bindPort, allowReallocate = true) => {
+  const existing = managedRawUdpSockets.get(grainId);
+  if (existing) return Promise.resolve(existing);
+
+  return bindManagedRawUdpSocket(grainId, bindPort).catch((err) => {
+    if (allowReallocate && err && err.code === "EADDRINUSE") {
+      clearManagedRawUdpPort(db, grainId, bindPort);
+      const reallocatedPort = allocateManagedRawUdpPort(db, grainId);
+      return ensureManagedRawUdpSocketForPort(db, grainId, reallocatedPort, false);
+    }
+
+    throw err;
+  }).then((socket) => {
+    managedRawUdpSockets.set(grainId, socket);
+    return socket;
+  });
+};
+
+const getOrCreateManagedRawUdpSocket = (db, grainId, requestedPort) => {
+  const existing = managedRawUdpSockets.get(grainId);
+  if (existing) return Promise.resolve(existing);
+
+  const allocatedPort = allocateManagedRawUdpPort(db, grainId, requestedPort);
+  return ensureManagedRawUdpSocketForPort(db, grainId, allocatedPort, true);
 };
 
 class IpNetworkImpl extends PersistentImpl {
@@ -637,10 +875,17 @@ class UdpPortImpl {
 }
 
 export {
+  MANAGED_RAW_UDP_MAX_PORT,
+  MANAGED_RAW_UDP_MIN_PORT,
+  allocateManagedRawUdpPort,
   Ecn,
   IpInterfaceImpl,
   IpRemoteHostImpl,
   RawUdpSocketImpl,
   bindRawUdpSocket,
+  getOrCreateManagedRawUdpSocket,
+  managedRawUdpSockets,
+  normalizeLocalSocketInfo,
   socketAddressToEndpoint,
+  wakeManagedRawUdpGrain,
 };
