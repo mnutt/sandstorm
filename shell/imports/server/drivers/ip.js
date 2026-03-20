@@ -125,11 +125,22 @@ class IpInterfaceImpl extends PersistentImpl {
       });
     });
   }
+
+  bindRawUdp(portNum) {
+    return bindRawUdpSocket({
+      type: "udp4",
+      bindPort: portNum,
+    }).then((socket) => {
+      return { socket };
+    });
+  }
 }
 
 // TODO(cleanup): Meteor.startup() needed because 00-startup.js runs *after* code in subdirectories
 //   (ugh).
 Meteor.startup(() => {
+  if (typeof globalFrontendRefRegistry === "undefined") return;
+
   globalFrontendRefRegistry.register({
     frontendRefField: "ipInterface",
     typeId: IpRpc.IpInterface.typeId,
@@ -187,6 +198,13 @@ class BoundUdpPortImpl {
 const bits16 = (1n << 16n) - 1n;
 const bits32 = (1n << 32n) - 1n;
 
+const Ecn = IpRpc.Ecn || {
+  notEct: "notEct",
+  ect0: "ect0",
+  ect1: "ect1",
+  ce: "ce",
+};
+
 const intToIpv4 = (num) => {
   const part1 = num & 255;
   const part2 = ((num >> 8) & 255);
@@ -239,6 +257,188 @@ const addressType = (address) => {
   return type;
 };
 
+const ipv4StringToInt = (address) => {
+  const parts = address.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    throw new Error("only IPv4 addresses are currently supported");
+  }
+
+  return (((parts[0] << 24) >>> 0) |
+          (parts[1] << 16) |
+          (parts[2] << 8) |
+          parts[3]) >>> 0;
+};
+
+const stringToIpAddress = (address) => {
+  if (address.indexOf(":") !== -1) {
+    throw new Error("IPv6 raw UDP is not yet supported");
+  }
+
+  return {
+    upper64: 0,
+    lower64: 0x0000ffff00000000 + ipv4StringToInt(address),
+  };
+};
+
+const socketAddressToEndpoint = (address, port) => {
+  return {
+    address: stringToIpAddress(address),
+    port,
+  };
+};
+
+const endpointToSocketAddress = (endpoint) => {
+  return {
+    address: addressToString(endpoint.address),
+    port: endpoint.port,
+  };
+};
+
+const endpointToDgramType = (endpoint) => {
+  return addressType(addressToString(endpoint.address));
+};
+
+const endpointsEqual = (left, right) => {
+  return left.port === right.port &&
+      left.address.upper64 === right.address.upper64 &&
+      left.address.lower64 === right.address.lower64;
+};
+
+const nodeAddressToEndpoint = (info) => {
+  return socketAddressToEndpoint(info.address, info.port);
+};
+
+const normalizeEcn = (ecn) => {
+  if (ecn === Ecn.ect0 || ecn === "ect0") return Ecn.ect0;
+  if (ecn === Ecn.ect1 || ecn === "ect1") return Ecn.ect1;
+  if (ecn === Ecn.ce || ecn === "ce") return Ecn.ce;
+  return Ecn.notEct;
+};
+
+class RawUdpSocketImpl {
+  constructor(socket, options = {}) {
+    this.socket = socket;
+    this.receiver = null;
+    this.closed = false;
+    this.fixedRemoteEndpoint = options.fixedRemoteEndpoint || null;
+
+    this.socket.on("message", (msg, rinfo) => {
+      if (!this.receiver) return;
+
+      if (this.fixedRemoteEndpoint && !endpointsEqual(nodeAddressToEndpoint(rinfo),
+          this.fixedRemoteEndpoint)) {
+        return;
+      }
+
+      let localInfo;
+      try {
+        localInfo = this.socket.address();
+      } catch (err) {
+        console.error("failed to read raw udp local address:", err);
+        return;
+      }
+
+      const packet = {
+        payload: msg,
+        src: nodeAddressToEndpoint(rinfo),
+        dst: nodeAddressToEndpoint(localInfo),
+        ecn: Ecn.notEct,
+        truncated: false,
+      };
+
+      Promise.resolve(this.receiver.receive(packet)).catch((err) => {
+        console.error("raw udp receiver callback failed:", err);
+      });
+    });
+
+    this.socket.on("error", (err) => {
+      if (!this.closed) {
+        console.error("raw udp socket error:", err);
+      }
+    });
+  }
+
+  send(packet) {
+    if (this.closed) {
+      throw new Error("raw udp socket is closed");
+    }
+
+    if (!packet || !packet.dst) {
+      throw new Error("raw udp packet is missing destination");
+    }
+
+    const dst = endpointToSocketAddress(packet.dst);
+    if (dst.address.indexOf(":") !== -1) {
+      throw new Error("IPv6 raw udp send is not yet supported");
+    }
+
+    if (this.fixedRemoteEndpoint && !endpointsEqual(packet.dst, this.fixedRemoteEndpoint)) {
+      throw new Error("raw udp packet destination does not match connected remote peer");
+    }
+
+    const payload = packet.payload || Buffer.alloc(0);
+    return new Promise((resolve, reject) => {
+      this.socket.send(payload, 0, payload.length, dst.port, dst.address, (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(undefined);
+        }
+      });
+    });
+  }
+
+  setReceiver(receiver) {
+    this.receiver = receiver;
+  }
+
+  getLocalEndpoint() {
+    if (this.closed) {
+      throw new Error("raw udp socket is closed");
+    }
+
+    const info = this.socket.address();
+    return { endpoint: nodeAddressToEndpoint(info) };
+  }
+
+  getCapabilities() {
+    return {
+      capabilities: {
+        mayFragment: true,
+        maxReceiveSegments: 1,
+        maxTransmitSegments: 1,
+      },
+    };
+  }
+
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.receiver = null;
+    this.socket.close();
+  }
+}
+
+const bindRawUdpSocket = ({ type, bindPort, fixedRemoteEndpoint }) => {
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+    const socket = Dgram.createSocket(type);
+
+    socket.on("listening", () => {
+      resolved = true;
+      resolve(new RawUdpSocketImpl(socket, { fixedRemoteEndpoint }));
+    });
+
+    socket.on("error", (err) => {
+      if (!resolved) {
+        reject(err);
+      }
+    });
+
+    socket.bind(bindPort);
+  });
+};
+
 class IpNetworkImpl extends PersistentImpl {
   constructor(db, saveTemplate, tls) {
     super(db, saveTemplate);
@@ -264,6 +464,8 @@ class IpNetworkImpl extends PersistentImpl {
 // TODO(cleanup): Meteor.startup() needed because 00-startup.js runs *after* code in subdirectories
 //   (ugh).
 Meteor.startup(() => {
+  if (typeof globalFrontendRefRegistry === "undefined") return;
+
   globalFrontendRefRegistry.register({
     frontendRefField: "ipNetwork",
     typeId: IpRpc.IpNetwork.typeId,
@@ -336,6 +538,24 @@ class IpRemoteHostImpl {
     }
 
     return { port: new UdpPortImpl(this.address, portNum) };
+  }
+
+  connectRawUdp(portNum) {
+    if (this.tls) {
+      const error = new Error("Datagram Transport Layer Security is not yet supported");
+      error.kjType = "unimplemented";
+      throw error;
+    }
+
+    const endpoint = socketAddressToEndpoint(this.address, portNum);
+    const type = endpointToDgramType(endpoint);
+    return bindRawUdpSocket({
+      type,
+      bindPort: 0,
+      fixedRemoteEndpoint: endpoint,
+    }).then((socket) => {
+      return { socket };
+    });
   }
 }
 
@@ -416,3 +636,11 @@ class UdpPortImpl {
   }
 }
 
+export {
+  Ecn,
+  IpInterfaceImpl,
+  IpRemoteHostImpl,
+  RawUdpSocketImpl,
+  bindRawUdpSocket,
+  socketAddressToEndpoint,
+};
