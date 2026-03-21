@@ -447,6 +447,71 @@ describe("RawUdpSocketImpl", function () {
     chai.assert.strictEqual(result.managedGrainId, "grain-local");
   });
 
+  it("retries a new backend-managed allocation on bind conflict before exposing the port",
+      async function () {
+    const requestedPort = 55000;
+    const backendPort = new FakeBackendManagedPort(
+      socketAddressToEndpoint("127.0.0.1", 5501));
+    const attemptedPorts = [];
+    const grainDoc = { _id: "grain-retry" };
+
+    global.globalBackend = {
+      ensureManagedRawUdpPort(grainId, portNum) {
+        attemptedPorts.push(portNum);
+        if (attemptedPorts.length === 1) {
+          const err = new Error("address already in use");
+          err.code = "EADDRINUSE";
+          return Promise.reject(err);
+        }
+
+        return Promise.resolve({ port: backendPort });
+      },
+
+      dropManagedRawUdpPort() {
+        return Promise.resolve();
+      },
+    };
+
+    const result = await getOrCreateManagedRawUdpSocket({
+      collections: {
+        grains: new FakeGrainsCollection([grainDoc]),
+      },
+    }, "grain-retry", requestedPort);
+
+    chai.assert.notInstanceOf(result, RawUdpSocketImpl);
+    chai.assert.lengthOf(attemptedPorts, 2);
+    chai.assert.strictEqual(attemptedPorts[0], requestedPort);
+    chai.assert.notStrictEqual(attemptedPorts[1], requestedPort);
+    chai.assert.strictEqual(grainDoc.rawUdpPublicPort, attemptedPorts[1]);
+  });
+
+  it("does not silently reallocate a persisted backend-managed port on bind conflict",
+      async function () {
+    const grainDoc = { _id: "grain-stable", rawUdpPublicPort: 5600 };
+    global.globalBackend = {
+      ensureManagedRawUdpPort() {
+        const err = new Error("address already in use");
+        err.code = "EADDRINUSE";
+        return Promise.reject(err);
+      },
+    };
+
+    let threw = false;
+    try {
+      await getOrCreateManagedRawUdpSocket({
+        collections: {
+          grains: new FakeGrainsCollection([grainDoc]),
+        },
+      }, "grain-stable", 5600);
+    } catch (err) {
+      threw = true;
+      chai.assert.match(err.message, /address already in use/i);
+    }
+
+    chai.assert.isTrue(threw);
+    chai.assert.strictEqual(grainDoc.rawUdpPublicPort, 5600);
+  });
+
   it("keeps managed raw udp sockets bound when closed", function () {
     const socket = new FakeDgramSocket({ address: "127.0.0.1", port: 5100 });
     const rawSocket = new RawUdpSocketImpl(socket, { managedGrainId: "grain-123" });

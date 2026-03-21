@@ -402,6 +402,20 @@ const clearManagedRawUdpPort = (db, grainId, port) => {
   });
 };
 
+const releaseManagedRawUdpPort = (db, grainId, port) => {
+  clearManagedRawUdpPort(db, grainId, port);
+  managedRawUdpSockets.delete(grainId);
+
+  const backend = typeof globalBackend === "undefined" ? null : globalBackend;
+  if (backend && typeof backend.dropManagedRawUdpPort === "function") {
+    Promise.resolve(backend.dropManagedRawUdpPort(grainId, port)).catch((err) => {
+      if (!isBackendManagedRawUdpUnavailable(err)) {
+        console.error("failed to drop backend-managed raw udp port:", err);
+      }
+    });
+  }
+};
+
 const isManagedRawUdpPort = (port) => {
   return Number.isInteger(port) &&
       port >= MANAGED_RAW_UDP_MIN_PORT &&
@@ -515,6 +529,12 @@ const getManagedRawUdpWakeListenerCap = () => {
 const isBackendManagedRawUdpUnavailable = (err) => {
   return err && (err.kjType === "unimplemented" ||
       /managed rawudp ports are not yet implemented|unimplemented/i.test(err.message || ""));
+};
+
+const isManagedRawUdpBindConflict = (err) => {
+  return err && (err.code === "EADDRINUSE" ||
+      err.kjType === "overloaded" ||
+      /address already in use|eaddrinuse/i.test(err.message || ""));
 };
 
 class BackendManagedRawUdpSocketImpl {
@@ -717,7 +737,7 @@ const ensureLocalManagedRawUdpSocketForPort = (db, grainId, bindPort, allowReall
 
   return bindManagedRawUdpSocket(grainId, bindPort).catch((err) => {
     if (allowReallocate && err && err.code === "EADDRINUSE") {
-      clearManagedRawUdpPort(db, grainId, bindPort);
+      releaseManagedRawUdpPort(db, grainId, bindPort);
       const reallocatedPort = allocateManagedRawUdpPort(db, grainId);
       return ensureLocalManagedRawUdpSocketForPort(db, grainId, reallocatedPort, false);
     }
@@ -729,7 +749,7 @@ const ensureLocalManagedRawUdpSocketForPort = (db, grainId, bindPort, allowReall
   });
 };
 
-const ensureBackendManagedRawUdpSocketForPort = (grainId, bindPort) => {
+const ensureBackendManagedRawUdpSocketForPort = (db, grainId, bindPort, allowReallocate = true) => {
   const existing = managedRawUdpSockets.get(grainId);
   if (existing) return Promise.resolve(existing);
 
@@ -744,11 +764,20 @@ const ensureBackendManagedRawUdpSocketForPort = (grainId, bindPort) => {
     const socket = new BackendManagedRawUdpSocketImpl(result.port, grainId);
     managedRawUdpSockets.set(grainId, socket);
     return socket;
+  }).catch((err) => {
+    if (allowReallocate && isManagedRawUdpBindConflict(err)) {
+      releaseManagedRawUdpPort(db, grainId, bindPort);
+      const reallocatedPort = allocateManagedRawUdpPort(db, grainId);
+      return ensureBackendManagedRawUdpSocketForPort(db, grainId, reallocatedPort, false);
+    }
+
+    throw err;
   });
 };
 
 const ensureManagedRawUdpSocketForPort = (db, grainId, bindPort, allowReallocate = true) => {
-  return ensureBackendManagedRawUdpSocketForPort(grainId, bindPort).catch((err) => {
+  return ensureBackendManagedRawUdpSocketForPort(db, grainId, bindPort, allowReallocate)
+      .catch((err) => {
     if (isBackendManagedRawUdpUnavailable(err)) {
       return ensureLocalManagedRawUdpSocketForPort(db, grainId, bindPort, allowReallocate);
     }
@@ -761,8 +790,10 @@ const getOrCreateManagedRawUdpSocket = (db, grainId, requestedPort) => {
   const existing = managedRawUdpSockets.get(grainId);
   if (existing) return Promise.resolve(existing);
 
-  const allocatedPort = allocateManagedRawUdpPort(db, grainId, requestedPort);
-  return ensureManagedRawUdpSocketForPort(db, grainId, allocatedPort, true);
+  const grain = db.collections.grains.findOne(grainId, { fields: { rawUdpPublicPort: 1 } });
+  const existingPort = getManagedRawUdpPortField(grain);
+  const allocatedPort = existingPort || allocateManagedRawUdpPort(db, grainId, requestedPort);
+  return ensureManagedRawUdpSocketForPort(db, grainId, allocatedPort, !existingPort);
 };
 
 class IpNetworkImpl extends PersistentImpl {
