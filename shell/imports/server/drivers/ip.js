@@ -25,6 +25,7 @@ import Dgram from "dgram";
 import Capnp from "/imports/server/capnp";
 
 const IpRpc = Capnp.importSystem("sandstorm/ip.capnp");
+const BackendRpc = Capnp.importSystem("sandstorm/backend.capnp");
 
 class ByteStreamConnection {
   constructor(connection) {
@@ -364,6 +365,7 @@ const MANAGED_RAW_UDP_MIN_PORT = 40000;
 const MANAGED_RAW_UDP_MAX_PORT = 59999;
 const managedRawUdpSockets = new Map();
 const managedRawUdpWakePromises = new Map();
+let managedRawUdpWakeListenerCap = null;
 
 const getManagedRawUdpPortField = (grain) => {
   return grain && grain.rawUdpPublicPort;
@@ -493,6 +495,64 @@ const wakeManagedRawUdpGrain = (grainId) => {
   managedRawUdpWakePromises.set(grainId, wakePromise);
   return wakePromise;
 };
+
+class ManagedRawUdpWakeListenerImpl {
+  wake(grainId) {
+    return wakeManagedRawUdpGrain(grainId).then(() => undefined);
+  }
+}
+
+const getManagedRawUdpWakeListenerCap = () => {
+  if (!managedRawUdpWakeListenerCap) {
+    managedRawUdpWakeListenerCap = new Capnp.Capability(
+        new ManagedRawUdpWakeListenerImpl(),
+        BackendRpc.ManagedRawUdpWakeListener);
+  }
+
+  return managedRawUdpWakeListenerCap;
+};
+
+const isBackendManagedRawUdpUnavailable = (err) => {
+  return err && (err.kjType === "unimplemented" ||
+      /managed rawudp ports are not yet implemented|unimplemented/i.test(err.message || ""));
+};
+
+class BackendManagedRawUdpSocketImpl {
+  constructor(portCap, managedGrainId) {
+    this.portCap = portCap;
+    this.managedGrainId = managedGrainId;
+  }
+
+  send(packet) {
+    return this.portCap.send(packet).then(() => undefined);
+  }
+
+  setReceiver(receiver) {
+    return this.portCap.setReceiver(receiver);
+  }
+
+  getLocalEndpoint() {
+    return this.portCap.getLocalEndpoint().then((result) => {
+      return result;
+    });
+  }
+
+  getCapabilities() {
+    return {
+      capabilities: {
+        mayFragment: true,
+        maxReceiveSegments: 1,
+        maxTransmitSegments: 1,
+      },
+    };
+  }
+
+  close() {
+    this.portCap.clearReceiver().catch((err) => {
+      console.error("failed to clear backend-managed raw udp receiver:", err);
+    });
+  }
+}
 
 class RawUdpSocketImpl {
   constructor(socket, options = {}) {
@@ -651,7 +711,7 @@ const bindManagedRawUdpSocket = (grainId, bindPort) => {
   });
 };
 
-const ensureManagedRawUdpSocketForPort = (db, grainId, bindPort, allowReallocate = true) => {
+const ensureLocalManagedRawUdpSocketForPort = (db, grainId, bindPort, allowReallocate = true) => {
   const existing = managedRawUdpSockets.get(grainId);
   if (existing) return Promise.resolve(existing);
 
@@ -659,13 +719,41 @@ const ensureManagedRawUdpSocketForPort = (db, grainId, bindPort, allowReallocate
     if (allowReallocate && err && err.code === "EADDRINUSE") {
       clearManagedRawUdpPort(db, grainId, bindPort);
       const reallocatedPort = allocateManagedRawUdpPort(db, grainId);
-      return ensureManagedRawUdpSocketForPort(db, grainId, reallocatedPort, false);
+      return ensureLocalManagedRawUdpSocketForPort(db, grainId, reallocatedPort, false);
     }
 
     throw err;
   }).then((socket) => {
     managedRawUdpSockets.set(grainId, socket);
     return socket;
+  });
+};
+
+const ensureBackendManagedRawUdpSocketForPort = (grainId, bindPort) => {
+  const existing = managedRawUdpSockets.get(grainId);
+  if (existing) return Promise.resolve(existing);
+
+  const backend = typeof globalBackend === "undefined" ? null : globalBackend;
+  if (!backend || typeof backend.ensureManagedRawUdpPort !== "function") {
+    return Promise.reject(new Meteor.Error("unimplemented",
+        "managed RawUdp ports are not yet implemented in the backend"));
+  }
+
+  return Promise.resolve(backend.ensureManagedRawUdpPort(
+      grainId, bindPort, getManagedRawUdpWakeListenerCap())).then((result) => {
+    const socket = new BackendManagedRawUdpSocketImpl(result.port, grainId);
+    managedRawUdpSockets.set(grainId, socket);
+    return socket;
+  });
+};
+
+const ensureManagedRawUdpSocketForPort = (db, grainId, bindPort, allowReallocate = true) => {
+  return ensureBackendManagedRawUdpSocketForPort(grainId, bindPort).catch((err) => {
+    if (isBackendManagedRawUdpUnavailable(err)) {
+      return ensureLocalManagedRawUdpSocketForPort(db, grainId, bindPort, allowReallocate);
+    }
+
+    throw err;
   });
 };
 

@@ -107,6 +107,35 @@ class FakeApiTokensCollection {
   }
 }
 
+class FakeBackendManagedPort {
+  constructor(endpoint = socketAddressToEndpoint("127.0.0.1", 5200)) {
+    this.endpoint = endpoint;
+    this.sent = [];
+    this.receiver = null;
+    this.clearCount = 0;
+  }
+
+  send(packet) {
+    this.sent.push(packet);
+    return Promise.resolve();
+  }
+
+  setReceiver(receiver) {
+    this.receiver = receiver;
+    return Promise.resolve();
+  }
+
+  clearReceiver() {
+    this.receiver = null;
+    this.clearCount += 1;
+    return Promise.resolve();
+  }
+
+  getLocalEndpoint() {
+    return Promise.resolve({ endpoint: this.endpoint });
+  }
+}
+
 describe("RawUdpSocketImpl", function () {
   afterEach(function () {
     managedRawUdpSockets.clear();
@@ -291,8 +320,14 @@ describe("RawUdpSocketImpl", function () {
       useGrain(grainId, cb) {
         woken.push(grainId);
         return cb({
-          keepAlive() {
-            return Promise.resolve();
+          getMainView() {
+            return {
+              view: {
+                getViewInfo() {
+                  return Promise.resolve({});
+                },
+              },
+            };
           },
         });
       },
@@ -313,8 +348,14 @@ describe("RawUdpSocketImpl", function () {
       useGrain(grainId, cb) {
         woken.push(grainId);
         return cb({
-          keepAlive() {
-            return Promise.resolve();
+          getMainView() {
+            return {
+              view: {
+                getViewInfo() {
+                  return Promise.resolve({});
+                },
+              },
+            };
           },
         });
       },
@@ -347,6 +388,63 @@ describe("RawUdpSocketImpl", function () {
     }, "grain-789", 47000);
 
     chai.assert.strictEqual(result, rawSocket);
+  });
+
+  it("prefers a backend-managed raw udp port when available", async function () {
+    const backendPort = new FakeBackendManagedPort(
+      socketAddressToEndpoint("127.0.0.1", 5300));
+    global.globalBackend = {
+      ensureManagedRawUdpPort(grainId, portNum, wakeListener) {
+        chai.assert.strictEqual(grainId, "grain-backend");
+        chai.assert.strictEqual(portNum, 5300);
+        chai.assert.isOk(wakeListener);
+        return Promise.resolve({ port: backendPort });
+      },
+    };
+
+    const result = await getOrCreateManagedRawUdpSocket({
+      collections: {
+        grains: new FakeGrainsCollection([{ _id: "grain-backend", rawUdpPublicPort: 5300 }]),
+      },
+    }, "grain-backend", 5300);
+
+    chai.assert.deepEqual(await result.getLocalEndpoint(), {
+      endpoint: socketAddressToEndpoint("127.0.0.1", 5300),
+    });
+
+    const receiver = { receive() {} };
+    await result.setReceiver(receiver);
+    chai.assert.strictEqual(backendPort.receiver, receiver);
+
+    await result.send({
+      payload: Buffer.from("backend"),
+      dst: socketAddressToEndpoint("127.0.0.1", 5301),
+    });
+    chai.assert.lengthOf(backendPort.sent, 1);
+
+    result.close();
+    await new Promise((resolve) => setImmediate(resolve));
+    chai.assert.strictEqual(backendPort.clearCount, 1);
+  });
+
+  it("falls back to the local managed socket path when backend raw udp is unimplemented",
+      async function () {
+    global.globalBackend = {
+      ensureManagedRawUdpPort() {
+        const err = new Error("managed RawUdp ports are not yet implemented in the backend");
+        err.kjType = "unimplemented";
+        return Promise.reject(err);
+      },
+    };
+
+    const result = await getOrCreateManagedRawUdpSocket({
+      collections: {
+        grains: new FakeGrainsCollection([{ _id: "grain-local", rawUdpPublicPort: 5400 }]),
+      },
+    }, "grain-local", 5400);
+
+    chai.assert.instanceOf(result, RawUdpSocketImpl);
+    chai.assert.strictEqual(result.managedGrainId, "grain-local");
   });
 
   it("keeps managed raw udp sockets bound when closed", function () {

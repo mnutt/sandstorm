@@ -19,7 +19,9 @@
 
 #include <sandstorm/backend.capnp.h>
 #include <map>
+#include <string>
 #include <kj/async-io.h>
+#include <kj/refcount.h>
 #include <capnp/rpc-twoparty.h>
 #include <kj/one-of.h>
 #include <kj/vector.h>
@@ -30,6 +32,38 @@ namespace kj {
 }
 
 namespace sandstorm {
+
+class BackendImpl;
+
+class ManagedRawUdpPortImpl final: public ManagedRawUdpPort::Server,
+    public kj::Refcounted,
+    private kj::TaskSet::ErrorHandler {
+public:
+  ManagedRawUdpPortImpl(BackendImpl& backend, kj::String grainId, uint portNum,
+      ManagedRawUdpWakeListener::Client&& wakeListener, kj::Own<kj::DatagramPort>&& port);
+
+  kj::StringPtr getGrainId() const;
+  uint getPortNum() const;
+
+  kj::Promise<void> send(SendContext context) override;
+  kj::Promise<void> setReceiver(SetReceiverContext context) override;
+  kj::Promise<void> clearReceiver(ClearReceiverContext context) override;
+  kj::Promise<void> getLocalEndpoint(GetLocalEndpointContext context) override;
+
+private:
+  BackendImpl& backend;
+  kj::String grainId;
+  uint portNum;
+  ManagedRawUdpWakeListener::Client wakeListener;
+  kj::Own<kj::DatagramPort> port;
+  kj::Own<kj::DatagramReceiver> datagramReceiver;
+  kj::Maybe<RawUdpReceiver::Client> receiver;
+  kj::TaskSet tasks;
+
+  kj::Promise<void> receiveLoop();
+  kj::Promise<void> triggerWake();
+  void taskFailed(kj::Exception&& exception) override;
+};
 
 class BackendImpl final: public Backend::Server, private kj::TaskSet::ErrorHandler {
 public:
@@ -57,8 +91,12 @@ protected:
   kj::Promise<void> downloadBackup(DownloadBackupContext context) override;
   kj::Promise<void> deleteBackup(DeleteBackupContext context) override;
   kj::Promise<void> getGrainStorageUsage(GetGrainStorageUsageContext context) override;
+  kj::Promise<void> ensureManagedRawUdpPort(EnsureManagedRawUdpPortContext context) override;
+  kj::Promise<void> dropManagedRawUdpPort(DropManagedRawUdpPortContext context) override;
 
 private:
+  friend class ManagedRawUdpPortImpl;
+
   kj::LowLevelAsyncIoProvider& ioProvider;
   kj::Network& network;
   SandstormCoreFactory::Client coreFactory;
@@ -117,6 +155,7 @@ private:
       kj::Vector<char> soFar = kj::Vector<char>());
 
   void taskFailed(kj::Exception&& exception) override;
+  std::map<std::string, kj::Own<ManagedRawUdpPortImpl>> managedRawUdpPorts;
 };
 
 }  // namespace sandstorm
