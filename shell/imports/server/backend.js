@@ -42,6 +42,14 @@ class SandstormBackend {
     return waitPromise(this._backendCap.deleteUser(userId));
   }
 
+  ensureManagedRawUdpPort(grainId, portNum, wakeListener) {
+    return this._backendCap.ensureManagedRawUdpPort(grainId, portNum, wakeListener);
+  }
+
+  dropManagedRawUdpPort(grainId, portNum) {
+    return this._backendCap.dropManagedRawUdpPort(grainId, portNum);
+  }
+
   shutdownGrain(grainId, ownerId, keepSessions) {
     if (!keepSessions) {
       globalDb.collections.sessions.remove({ grainId: grainId });

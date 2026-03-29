@@ -19,7 +19,9 @@
 
 #include <sandstorm/backend.capnp.h>
 #include <map>
+#include <string>
 #include <kj/async-io.h>
+#include <kj/refcount.h>
 #include <capnp/rpc-twoparty.h>
 #include <kj/one-of.h>
 #include <kj/vector.h>
@@ -31,6 +33,9 @@ namespace kj {
 
 namespace sandstorm {
 
+class BackendImpl;
+class ManagedRawUdpPortImpl;
+
 class BackendImpl final: public Backend::Server, private kj::TaskSet::ErrorHandler {
 public:
   BackendImpl(kj::LowLevelAsyncIoProvider& ioProvider,
@@ -40,6 +45,7 @@ public:
               kj::Maybe<uid_t> sandboxUid,
               bool useExperimentalSeccompFilter,
               bool logSeccompViolations);
+  ~BackendImpl();
 
 protected:
   kj::Promise<void> ping(PingContext context) override;
@@ -57,6 +63,8 @@ protected:
   kj::Promise<void> downloadBackup(DownloadBackupContext context) override;
   kj::Promise<void> deleteBackup(DeleteBackupContext context) override;
   kj::Promise<void> getGrainStorageUsage(GetGrainStorageUsageContext context) override;
+  kj::Promise<void> ensureManagedRawUdpPort(EnsureManagedRawUdpPortContext context) override;
+  kj::Promise<void> dropManagedRawUdpPort(DropManagedRawUdpPortContext context) override;
 
 private:
   kj::LowLevelAsyncIoProvider& ioProvider;
@@ -117,6 +125,13 @@ private:
       kj::Vector<char> soFar = kj::Vector<char>());
 
   void taskFailed(kj::Exception&& exception) override;
+
+  struct ManagedRawUdpPortState {
+    uint portNum;
+    kj::Own<ManagedRawUdpPortImpl> impl;
+  };
+
+  std::map<std::string, ManagedRawUdpPortState> managedRawUdpPorts;
 };
 
 }  // namespace sandstorm

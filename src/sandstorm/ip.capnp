@@ -118,6 +118,14 @@ interface IpInterface @0xe32c506ee93ed6fa {
   listenUdp @1 (portNum :UInt16, port :UdpPort) -> (handle :Util.Handle);
   # Binds `port` to the given UDP port number, so that it will receive any incoming UDP datagrams
   # sent to the port.
+
+  bindRawUdp @2 (portNum :UInt16) -> (socket :RawUdpSocket);
+  # Bind a raw UDP socket to the given local UDP port number.
+  #
+  # Unlike `listenUdp()`, which adapts UDP into the higher-level `UdpPort` capability model, this
+  # returns a socket-like capability which exposes per-packet metadata such as source and
+  # destination addresses. This is intended for low-level transports that need true UDP semantics,
+  # such as QUIC.
 }
 
 interface IpRemoteHost @0x905dd76b298b3130 {
@@ -135,6 +143,13 @@ interface IpRemoteHost @0x905dd76b298b3130 {
 
   getTcpPort @0 (portNum :UInt16) -> (port :TcpPort);
   getUdpPort @1 (portNum :UInt16) -> (port :UdpPort);
+
+  connectRawUdp @2 (portNum :UInt16) -> (socket :RawUdpSocket);
+  # Create a raw UDP socket intended to communicate with this host on the given port.
+  #
+  # The implementation may use this information to preconfigure or attenuate the returned socket,
+  # but the exact behavior is implementation-defined. Callers that require the ability to
+  # communicate with multiple remote hosts should request a broader capability.
 }
 
 interface TcpPort @0xeab20e1af07806b4 {
@@ -177,6 +192,126 @@ interface UdpPort @0xc6212e1217d001ce {
   #
   # TODO(someday): Cap'n Proto should support marking methods as "fast-but-unreliable", with all
   #   the properties of UDP. Then, this method should be marked as such.
+}
+
+struct UdpEndpoint {
+  # A UDP endpoint on an IP network.
+
+  address @0 :IpAddress;
+  port @1 :UInt16;
+}
+
+enum Ecn {
+  # Explicit Congestion Notification markings, as applied to an IP packet.
+
+  notEct @0;
+  ect0 @1;
+  ect1 @2;
+  ce @3;
+}
+
+struct UdpPacket {
+  # A UDP packet with explicit packet metadata.
+  #
+  # On receive, all fields describe the packet that actually arrived from the network.
+  #
+  # On send, `payload` and `dst` are the primary caller-controlled fields. The implementation may
+  # fill in, ignore, or validate the remaining fields according to how the socket was created. In
+  # particular, callers must not assume they can spoof `src`.
+
+  payload @0 :Data;
+  # UDP payload. As with all UDP traffic, delivery is unreliable and packets may be duplicated,
+  # reordered, or dropped.
+
+  src @1 :UdpEndpoint;
+  # Source endpoint from which the packet was received.
+  #
+  # On receive, this is populated by the platform and identifies the remote sender.
+  #
+  # On send, implementations should treat this as informational only. They may ignore it, populate
+  # it from the bound local endpoint, or reject the send if it conflicts with socket configuration.
+
+  dst @2 :UdpEndpoint;
+  # Destination endpoint to which the packet was sent.
+  #
+  # On receive, this is the local address and port on which the packet arrived. This is useful on
+  # multi-homed systems and for transports which need to distinguish which local address was used.
+  #
+  # On send, this names the intended remote destination, subject to any constraints implied by the
+  # socket capability (for example, a socket derived from `IpRemoteHost.connectRawUdp()` may be
+  # fixed to one remote host and/or port).
+
+  ecn @3 :Ecn = notEct;
+  # Explicit Congestion Notification codepoint associated with the packet, if known.
+  #
+  # Implementations that cannot observe ECN should leave this as `notEct`.
+
+  truncated @4 :Bool = false;
+  # True if the underlying packet was larger than the delivered payload and had to be truncated.
+}
+
+interface RawUdpReceiver @0x95f6125d9c2ca565 {
+  # Receives raw UDP packets and their associated metadata.
+
+  receive @0 (packet :UdpPacket);
+}
+
+interface RawUdpSocket @0xd5ac0e83b5f20f47 {
+  # Socket-like capability exposing raw UDP packet semantics.
+  #
+  # This interface is intended for advanced transports that require packet metadata, such as source
+  # and destination addresses. Unlike `UdpPort`, it is not designed to abstract over non-IP
+  # datagram transports.
+
+  send @0 (packet :UdpPacket);
+  # Send one UDP packet.
+  #
+  # The implementation must derive the actual source endpoint from the socket's binding and must
+  # not allow the caller to spoof it.
+  #
+  # The implementation may ignore fields that are constrained by how the socket was created
+  # (e.g. a fixed local port or fixed remote peer), or may reject packets that conflict with those
+  # constraints.
+
+  setReceiver @1 (receiver :RawUdpReceiver);
+  # Register the receiver that will be called with inbound packets.
+  #
+  # Re-registering replaces the previous receiver.
+
+  getLocalEndpoint @2 () -> (endpoint :UdpEndpoint);
+  # Return the local endpoint to which this socket is currently bound.
+  #
+  # If the socket is bound to a wildcard address, the returned address reflects the socket's local
+  # binding rather than necessarily the exact local address chosen for any future outgoing packet.
+
+  getCapabilities @3 () -> (capabilities :RawUdpCapabilities);
+  # Return capability and performance characteristics of this socket.
+  #
+  # This allows callers to discover whether the implementation may fragment outgoing datagrams and
+  # how much batching it can efficiently describe on send and receive.
+
+  close @4 ();
+  # Close the socket and release any associated resources.
+}
+
+struct RawUdpCapabilities {
+  # Describes capability and batching characteristics of a `RawUdpSocket`.
+
+  mayFragment @0 :Bool = true;
+  # True if outgoing datagrams sent through this socket may be fragmented at the IP layer.
+  #
+  # Transports such as QUIC generally prefer this to be false so that path MTU discovery behaves
+  # predictably.
+
+  maxReceiveSegments @1 :UInt16 = 1;
+  # Maximum number of datagrams that might be represented by one receive notification.
+  #
+  # Implementations that do not batch receives should return 1.
+
+  maxTransmitSegments @2 :UInt16 = 1;
+  # Maximum number of datagrams that the socket can efficiently send as one logical transmit.
+  #
+  # Implementations that do not support transmit batching should return 1.
 }
 
 struct IpPortPowerboxMetadata {

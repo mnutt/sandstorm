@@ -15,12 +15,14 @@
 // limitations under the License.
 
 #include "backend.h"
+#include <unordered_map>
 #include <kj/debug.h>
 #include "util.h"
 #include "spk.h"
 #include <capnp/serialize.h>
 #include <capnp/serialize-async.h>
 #include <stdio.h>  // rename()
+#include <arpa/inet.h>
 
 namespace sandstorm {
 
@@ -49,13 +51,13 @@ static void tryRecursivelyDelete(kj::StringPtr path) {
 }
 
 BackendImpl::BackendImpl(
-  kj::LowLevelAsyncIoProvider& ioProvider,
-  kj::Network& network,
-  SandstormCoreFactory::Client&& sandstormCoreFactory,
-  kj::Maybe<Cgroup>&& cgroup,
-  kj::Maybe<uid_t> sandboxUid,
-  bool useExperimentalSeccompFilter,
-  bool logSeccompViolations)
+    kj::LowLevelAsyncIoProvider& ioProvider,
+    kj::Network& network,
+    SandstormCoreFactory::Client&& sandstormCoreFactory,
+    kj::Maybe<Cgroup>&& cgroup,
+    kj::Maybe<uid_t> sandboxUid,
+    bool useExperimentalSeccompFilter,
+    bool logSeccompViolations)
     : ioProvider(ioProvider), network(network), coreFactory(kj::mv(sandstormCoreFactory)),
       sandboxUid(sandboxUid),
       tasks(*this),
@@ -69,6 +71,207 @@ void BackendImpl::taskFailed(kj::Exception&& exception) {
 }
 
 // =======================================================================================
+
+namespace {
+
+constexpr uint64_t IPV4_MAPPED_PREFIX = 0x0000ffff00000000ull;
+
+static uint32_t ipv4StringToInt(kj::StringPtr address) {
+  in_addr addr;
+  KJ_REQUIRE(inet_pton(AF_INET, address.cStr(), &addr) == 1, "unsupported IPv4 address", address);
+  return ntohl(addr.s_addr);
+}
+
+static void setIpv4Address(::sandstorm::IpAddress::Builder builder, kj::StringPtr address) {
+  builder.setUpper64(0);
+  builder.setLower64(IPV4_MAPPED_PREFIX + ipv4StringToInt(address));
+}
+
+static void setUdpEndpoint(::sandstorm::UdpEndpoint::Builder builder,
+    kj::StringPtr address, uint port) {
+  setIpv4Address(builder.initAddress(), address);
+  builder.setPort(port);
+}
+
+static uint64_t endpointCacheKey(::sandstorm::UdpEndpoint::Reader endpoint) {
+  auto ip = endpoint.getAddress();
+  KJ_REQUIRE(ip.getUpper64() == 0, "only IPv4 raw udp is currently supported");
+  auto lower = ip.getLower64();
+  KJ_REQUIRE((lower & 0xffffffff00000000ull) == IPV4_MAPPED_PREFIX,
+      "only IPv4-mapped endpoints are supported");
+
+  return (lower << 16) | endpoint.getPort();
+}
+
+static void setUdpEndpointFromIpv4AddressString(
+    ::sandstorm::UdpEndpoint::Builder builder, kj::StringPtr addressString) {
+  size_t separator = addressString.size();
+  while (separator > 0 && addressString[separator - 1] != ':') {
+    --separator;
+  }
+
+  KJ_REQUIRE(separator > 0 && separator < addressString.size(),
+      "unexpected IPv4 socket address format", addressString);
+
+  auto host = kj::heapString(addressString.slice(0, separator - 1));
+  auto portString = kj::heapString(addressString.slice(separator, addressString.size()));
+  setUdpEndpoint(builder, host, kj::StringPtr(portString).parseAs<uint>());
+}
+
+static kj::String endpointToAddressString(::sandstorm::UdpEndpoint::Reader endpoint) {
+  auto ip = endpoint.getAddress();
+  KJ_REQUIRE(ip.getUpper64() == 0, "only IPv4 raw udp is currently supported");
+  auto lower = ip.getLower64();
+  KJ_REQUIRE((lower & 0xffffffff00000000ull) == IPV4_MAPPED_PREFIX,
+      "only IPv4-mapped endpoints are supported");
+
+  uint32_t ipv4 = lower & 0xffffffffu;
+  return kj::str((ipv4 >> 24) & 0xff, ".", (ipv4 >> 16) & 0xff, ".",
+      (ipv4 >> 8) & 0xff, ".", ipv4 & 0xff, ":", endpoint.getPort());
+}
+
+}  // namespace
+
+class ManagedRawUdpPortImpl final: public ManagedRawUdpPort::Server,
+    public kj::Refcounted,
+    private kj::TaskSet::ErrorHandler {
+public:
+  ManagedRawUdpPortImpl(kj::Network& network, kj::String grainId, uint portNum,
+      ManagedRawUdpWakeListener::Client&& wakeListener, kj::Own<kj::DatagramPort>&& port)
+      : network(network),
+        grainId(kj::mv(grainId)),
+        portNum(portNum),
+        wakeListener(kj::mv(wakeListener)),
+        port(kj::mv(port)),
+        datagramReceiver(this->port->makeReceiver()),
+        tasks(static_cast<kj::TaskSet::ErrorHandler&>(*this)) {
+    tasks.add(receiveLoop());
+  }
+
+  kj::StringPtr getGrainId() const {
+    return grainId;
+  }
+
+  uint getPortNum() const {
+    return portNum;
+  }
+
+  kj::Promise<void> send(SendContext context) override;
+  kj::Promise<void> setReceiver(SetReceiverContext context) override;
+  kj::Promise<void> clearReceiver(ClearReceiverContext context) override;
+  kj::Promise<void> getLocalEndpoint(GetLocalEndpointContext context) override;
+
+private:
+  kj::Network& network;
+  kj::String grainId;
+  uint portNum;
+  ManagedRawUdpWakeListener::Client wakeListener;
+  kj::Own<kj::DatagramPort> port;
+  kj::Own<kj::DatagramReceiver> datagramReceiver;
+  kj::Maybe<RawUdpReceiver::Client> receiver;
+  std::unordered_map<uint64_t, kj::Own<kj::NetworkAddress>> destinationCache;
+  bool wakeInFlight = false;
+  kj::TaskSet tasks;
+
+  kj::Promise<void> receiveLoop();
+  kj::Promise<void> triggerWakeIfNeeded();
+  kj::Promise<void> triggerWake();
+  void taskFailed(kj::Exception&& exception) override;
+};
+
+kj::Promise<void> ManagedRawUdpPortImpl::send(SendContext context) {
+  auto packet = context.getParams().getPacket();
+  auto dst = packet.getDst();
+  auto key = endpointCacheKey(dst);
+  auto iter = destinationCache.find(key);
+  if (iter != destinationCache.end()) {
+    auto payload = kj::heapArray(packet.getPayload());
+    return port->send(payload.begin(), payload.size(), *iter->second).ignoreResult();
+  }
+
+  auto dstString = endpointToAddressString(dst);
+
+  return network.parseAddress(dstString).then(
+      [this, key, payload = kj::heapArray(packet.getPayload())]
+      (kj::Own<kj::NetworkAddress>&& address)
+          mutable -> kj::Promise<void> {
+    auto& cachedAddress = destinationCache[key];
+    cachedAddress = kj::mv(address);
+    return port->send(payload.begin(), payload.size(), *cachedAddress).ignoreResult();
+  });
+}
+
+kj::Promise<void> ManagedRawUdpPortImpl::setReceiver(SetReceiverContext context) {
+  receiver = context.getParams().getReceiver();
+  return kj::READY_NOW;
+}
+
+kj::Promise<void> ManagedRawUdpPortImpl::clearReceiver(ClearReceiverContext context) {
+  receiver = nullptr;
+  return kj::READY_NOW;
+}
+
+kj::Promise<void> ManagedRawUdpPortImpl::getLocalEndpoint(GetLocalEndpointContext context) {
+  setUdpEndpoint(context.getResults().initEndpoint(), kj::StringPtr("127.0.0.1"), portNum);
+  return kj::READY_NOW;
+}
+
+kj::Promise<void> ManagedRawUdpPortImpl::receiveLoop() {
+  return datagramReceiver->receive().then([this]() {
+    auto content = datagramReceiver->getContent();
+
+    KJ_IF_MAYBE(currentReceiver, receiver) {
+      auto request = currentReceiver->receiveRequest();
+      auto packet = request.initPacket();
+      packet.setPayload(content.value);
+      packet.setTruncated(content.isTruncated);
+      auto sourceAddress = datagramReceiver->getSource().toString();
+      setUdpEndpointFromIpv4AddressString(packet.initSrc(), sourceAddress);
+      setUdpEndpoint(packet.initDst(), kj::StringPtr("127.0.0.1"), portNum);
+
+      return request.send().ignoreResult().then([this]() {
+        return receiveLoop();
+      }, [this](kj::Exception&& exception) {
+        if (exception.getType() == kj::Exception::Type::DISCONNECTED) {
+          receiver = nullptr;
+          return triggerWakeIfNeeded().then([this]() {
+            return receiveLoop();
+          });
+        }
+
+        return kj::Promise<void>(kj::mv(exception));
+      });
+    } else {
+      return triggerWakeIfNeeded().then([this]() {
+        return receiveLoop();
+      });
+    }
+  });
+}
+
+kj::Promise<void> ManagedRawUdpPortImpl::triggerWakeIfNeeded() {
+  if (wakeInFlight) return kj::READY_NOW;
+
+  wakeInFlight = true;
+  return triggerWake().then([this]() -> void {
+    wakeInFlight = false;
+  }).catch_([this](kj::Exception&& exception) -> kj::Promise<void> {
+    wakeInFlight = false;
+    return kj::Promise<void>(kj::mv(exception));
+  });
+}
+
+kj::Promise<void> ManagedRawUdpPortImpl::triggerWake() {
+  auto request = wakeListener.wakeRequest();
+  request.setGrainId(grainId);
+  return request.send().ignoreResult();
+}
+
+void ManagedRawUdpPortImpl::taskFailed(kj::Exception&& exception) {
+  KJ_LOG(ERROR, "managed raw udp port task failed", grainId, portNum, exception);
+}
+
+BackendImpl::~BackendImpl() = default;
 
 kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
     kj::StringPtr grainId, kj::StringPtr packageId,
@@ -775,5 +978,45 @@ kj::Promise<void> BackendImpl::getGrainStorageUsage(GetGrainStorageUsageContext 
   return kj::READY_NOW;
 }
 
-} // namespace sandstorm
+kj::Promise<void> BackendImpl::ensureManagedRawUdpPort(EnsureManagedRawUdpPortContext context) {
+  auto params = context.getParams();
+  auto grainId = kj::heapString(validateId(params.getGrainId()));
+  auto portNum = params.getPortNum();
 
+  auto iter = managedRawUdpPorts.find(grainId.cStr());
+  if (iter != managedRawUdpPorts.end()) {
+    auto& existing = iter->second;
+    KJ_REQUIRE(existing.portNum == portNum,
+        "managed RawUdp port already exists for grain on a different port", grainId, portNum,
+        existing.portNum);
+    context.getResults().setPort(kj::addRef(*existing.impl));
+    return kj::READY_NOW;
+  }
+
+  auto wakeListener = params.getWakeListener();
+  return network.parseAddress(kj::str("0.0.0.0:", portNum)).then(
+      [this, grainId = kj::mv(grainId), portNum, wakeListener = kj::mv(wakeListener),
+       context](kj::Own<kj::NetworkAddress>&& address) mutable {
+    auto datagramPort = address->bindDatagramPort();
+    auto managedPort = kj::refcounted<ManagedRawUdpPortImpl>(
+        network, kj::mv(grainId), portNum, kj::mv(wakeListener), kj::mv(datagramPort));
+    auto insertResult = managedRawUdpPorts.insert(
+        std::make_pair(std::string(managedPort->getGrainId().cStr()),
+            ManagedRawUdpPortState { portNum, kj::mv(managedPort) }));
+    KJ_REQUIRE(insertResult.second, "failed to install managed RawUdp port");
+    context.getResults().setPort(kj::addRef(*insertResult.first->second.impl));
+  });
+}
+
+kj::Promise<void> BackendImpl::dropManagedRawUdpPort(DropManagedRawUdpPortContext context) {
+  auto params = context.getParams();
+  auto grainId = validateId(params.getGrainId());
+  auto iter = managedRawUdpPorts.find(grainId.cStr());
+  if (iter != managedRawUdpPorts.end() && iter->second.portNum == params.getPortNum()) {
+    managedRawUdpPorts.erase(iter);
+  }
+
+  return kj::READY_NOW;
+}
+
+} // namespace sandstorm

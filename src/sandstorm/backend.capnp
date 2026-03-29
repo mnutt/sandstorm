@@ -23,6 +23,7 @@ using Package = import "package.capnp";
 using Supervisor = import "supervisor.capnp".Supervisor;
 using SandstormCore = import "supervisor.capnp".SandstormCore;
 using GrainInfo = import "grain.capnp".GrainInfo;
+using Ip = import "ip.capnp";
 
 using WebSession = import "web-session.capnp".WebSession;
 using ApiSession = import "api-session.capnp".ApiSession;
@@ -104,6 +105,36 @@ interface Backend {
   #
   # On single-machine Sandstorm, this walks the directory tree, which may be slow. Therefore,
   # it is recommended that this not be called often.
+
+  ensureManagedRawUdpPort @16 (grainId :Text, portNum :UInt16,
+      wakeListener :ManagedRawUdpWakeListener) -> (port :ManagedRawUdpPort);
+  # Ensures that a Sandstorm-managed RawUdp port exists for the given grain and returns a
+  # capability used to attach/detach the grain's live receiver. This is intended to move the
+  # steady-state UDP packet loop into the backend while keeping wake and policy in the shell.
+
+  dropManagedRawUdpPort @17 (grainId :Text, portNum :UInt16);
+  # Drops a previously-managed RawUdp port. This should generally be used only when clearing a
+  # grain's persisted RawUdp exposure.
+}
+
+interface ManagedRawUdpWakeListener {
+  wake @0 (grainId :Text);
+  # Called by the backend when an incoming datagram arrives on a managed port that currently has no
+  # attached receiver. The shell should wake the grain and reattach its receiver.
+}
+
+interface ManagedRawUdpPort {
+  send @0 (packet :Ip.UdpPacket);
+  # Sends a UDP packet through the managed public socket.
+
+  setReceiver @1 (receiver :Ip.RawUdpReceiver);
+  # Attaches the currently-live app receiver to this public socket.
+
+  clearReceiver @2 ();
+  # Detaches the live receiver while keeping the public socket bound for wake-on-incoming.
+
+  getLocalEndpoint @3 () -> (endpoint :Ip.UdpEndpoint);
+  # Returns the local endpoint of the managed public socket.
 }
 
 interface GatewayRouter {
