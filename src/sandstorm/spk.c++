@@ -43,13 +43,17 @@
 #include <sys/xattr.h>
 #include <capnp/schema-parser.h>
 #include <capnp/dynamic.h>
+#include <capnp/rpc-twoparty.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <kj/async-unix.h>
+#include <kj/async-io.h>
+#include <kj/compat/http.h>
 #include <ctype.h>
 #include <time.h>
 #include <poll.h>
 #include <sandstorm/app-index/submit.capnp.h>
+#include <sandstorm/supervisor.capnp.h>
 #include <sodium/crypto_generichash_blake2b.h>
 
 #include "version.h"
@@ -60,6 +64,7 @@
 #include "id-to-text.h"
 #include "appid-replacements.h"
 #include "config.h"
+#include "web-session-bridge.h"
 
 namespace sandstorm {
 
@@ -157,6 +162,30 @@ private:
   bool committed = false;
 };
 
+class TemporaryDirectory {
+public:
+  explicit TemporaryDirectory(kj::StringPtr pattern) {
+    path = kj::heapString(pattern);
+    if (mkdtemp(path.begin()) == nullptr) {
+      KJ_FAIL_SYSCALL("mkdtemp(path)", errno, path);
+    }
+  }
+  ~TemporaryDirectory() noexcept(false) {
+    if (!keep) {
+      recursivelyDelete(path.cStr());
+    }
+  }
+
+  KJ_DISALLOW_COPY(TemporaryDirectory);
+
+  kj::StringPtr getPath() const { return path; }
+  void dontDelete() { keep = true; }
+
+private:
+  kj::String path;
+  bool keep = false;
+};
+
 class SpkTool final: public AbstractMain {
   // Main class for the Sandstorm spk tool.
 
@@ -215,6 +244,8 @@ public:
                        "Unpack an spk to a directory, verifying its signature.")
         .addSubCommand("verify", KJ_BIND_METHOD(*this, getVerifyMain),
                        "Verify signature on an spk and output the app ID (without unpacking).")
+        .addSubCommand("app", KJ_BIND_METHOD(*this, getAppMain),
+                       "Run local app development helpers.")
         .addSubCommand("dev", KJ_BIND_METHOD(*this, getDevMain),
                        "Run an app in dev mode.")
         .addSubCommand("publish", KJ_BIND_METHOD(*this, getPublishMain),
@@ -1045,7 +1076,7 @@ private:
     auto sourceMap = packageDef.getSourceMap();
 
     if (packageDef.hasFileList()) {
-      auto fileListFile = packageDef.getFileList();
+      auto fileListFile = resolvePackagePath(packageDef.getFileList());
       if (access(fileListFile.cStr(), F_OK) != 0) {
         context.exitInfo(kj::str("\"", fileListFile,
             "\" does not exist. Have you run `spk dev` yet?"));
@@ -1880,6 +1911,309 @@ private:
   }
 
   // =====================================================================================
+  // "app" command
+
+  kj::String serveAddr = kj::heapString("127.0.0.1:3000");
+  kj::String serveBaseUrl;
+  kj::String serveSessionId = kj::heapString("serve");
+  kj::String serveGrainId = kj::heapString("serve");
+  bool serveDevMode = false;
+  bool serveKeepTemp = false;
+
+  kj::MainFunc getAppMain() {
+    return kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
+        "Helpers for running an app locally without a full Sandstorm server.")
+        .addSubCommand("serve", KJ_BIND_METHOD(*this, getAppServeMain),
+            "Serve a package definition on a local HTTP port through a standalone supervisor.")
+        .build();
+  }
+
+  kj::MainFunc getAppServeMain() {
+    return addCommonOptions(OptionSet::ALL_READONLY,
+        kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
+            "Stage the current app, launch sandstorm-supervisor directly, and expose the grain "
+            "over local HTTP.")
+        .addOptionWithArg({"addr"}, KJ_BIND_METHOD(*this, setServeAddr), "<host:port>",
+            "Listen on the given local address. Default: 127.0.0.1:3000")
+        .addOptionWithArg({"port"}, KJ_BIND_METHOD(*this, setServePort), "<port>",
+            "Listen on 127.0.0.1:<port>.")
+        .addOptionWithArg({"base-url"}, KJ_BIND_METHOD(*this, setServeBaseUrl), "<url>",
+            "Base URL exposed to the app. Default: http://<addr>")
+        .addOptionWithArg({"session"}, KJ_BIND_METHOD(*this, setServeSessionId), "<id>",
+            "Stable session ID to expose to the app. Default: serve")
+        .addOptionWithArg({"grain-id"}, KJ_BIND_METHOD(*this, setServeGrainId), "<id>",
+            "Grain ID to pass to sandstorm-supervisor. Default: serve")
+        .addOption({"proc"}, KJ_BIND_METHOD(*this, enableMountProc),
+            "Mount /proc inside the sandbox.")
+        .addOption({"dev"}, KJ_BIND_METHOD(*this, enableServeDevMode),
+            "Pass --dev to sandstorm-supervisor for debugging-friendly sandboxing.")
+        .addOption({"keep-temp"}, KJ_BIND_METHOD(*this, enableServeKeepTemp),
+            "Keep the staged temporary directory after exit for debugging.")
+        .callAfterParsing(KJ_BIND_METHOD(*this, doAppServe)))
+        .build();
+  }
+
+  kj::MainBuilder::Validity setServeAddr(kj::StringPtr value) {
+    if (value.findFirst(':') == nullptr) {
+      return "expected <host:port>";
+    }
+    serveAddr = kj::heapString(value);
+    return true;
+  }
+
+  kj::MainBuilder::Validity setServePort(kj::StringPtr value) {
+    KJ_IF_MAYBE(i, parseUInt(value, 10)) {
+      if (*i < 1 || *i > 65535) return "port out-of-range";
+      serveAddr = kj::str("127.0.0.1:", value);
+      return true;
+    } else {
+      return "invalid port";
+    }
+  }
+
+  kj::MainBuilder::Validity setServeBaseUrl(kj::StringPtr value) {
+    serveBaseUrl = kj::heapString(value);
+    return true;
+  }
+
+  kj::MainBuilder::Validity setServeSessionId(kj::StringPtr value) {
+    serveSessionId = kj::heapString(value);
+    return true;
+  }
+
+  kj::MainBuilder::Validity setServeGrainId(kj::StringPtr value) {
+    if (value.findFirst('/') != nullptr) return "invalid grain id";
+    serveGrainId = kj::heapString(value);
+    return true;
+  }
+
+  kj::MainBuilder::Validity enableServeDevMode() {
+    serveDevMode = true;
+    return true;
+  }
+
+  kj::MainBuilder::Validity enableServeKeepTemp() {
+    serveKeepTemp = true;
+    return true;
+  }
+
+  kj::Array<kj::String> getManifestCommand() {
+    auto command = packageDef.getManifest().getContinueCommand();
+    auto argv = command.getArgv();
+    KJ_REQUIRE(argv.size() > 0, "manifest continueCommand.argv must not be empty");
+
+    kj::Vector<kj::String> result;
+    if (command.hasDeprecatedExecutablePath()) {
+      result.add(kj::heapString(command.getDeprecatedExecutablePath()));
+    }
+    for (auto arg: argv) {
+      result.add(kj::heapString(arg));
+    }
+    return result.releaseAsArray();
+  }
+
+  kj::Array<kj::String> getManifestEnvironment() {
+    auto env = packageDef.getManifest().getContinueCommand().getEnviron();
+    kj::Vector<kj::String> result;
+    for (auto item: env) {
+      result.add(kj::str(item.getKey(), "=", item.getValue()));
+    }
+    return result.releaseAsArray();
+  }
+
+  kj::String resolvePackagePath(kj::StringPtr path) {
+    if (path.startsWith("/")) {
+      return kj::heapString(path);
+    }
+
+    if (sourceDir != nullptr) {
+      return kj::str(sourceDir, "/", path);
+    } else {
+      return kj::heapString(path);
+    }
+  }
+
+  kj::String requireSupervisorBinary() {
+    KJ_IF_MAYBE(i, installHome) {
+      auto candidate = kj::str(*i, "/sandstorm");
+      if (access(candidate.cStr(), X_OK) == 0) {
+        return candidate;
+      }
+    }
+
+    if (access("/opt/sandstorm/latest/sandstorm", X_OK) == 0) {
+      return kj::heapString("/opt/sandstorm/latest/sandstorm");
+    }
+
+    if (access("/etc/init.d/sandstorm", X_OK) == 0) {
+      return kj::heapString("/etc/init.d/sandstorm");
+    }
+
+    context.exitError("Couldn't find Sandstorm supervisor binary. Please install Sandstorm.");
+  }
+
+  kj::Tuple<kj::String, uint> splitServeAddress() {
+    KJ_IF_MAYBE(colonPos, serveAddr.findLast(':')) {
+      auto host = kj::heapString(serveAddr.slice(0, *colonPos));
+      auto portText = serveAddr.slice(*colonPos + 1);
+      KJ_IF_MAYBE(port, parseUInt(portText, 10)) {
+        return kj::tuple(kj::mv(host), *port);
+      }
+    }
+
+    context.exitError(kj::str("Invalid listen address: ", serveAddr));
+  }
+
+  struct ServerFuseMount {
+    kj::AutoCloseFd connection;
+    kj::AutoCloseFd fuseFd;
+  };
+
+  ServerFuseMount requestServerFuseMount(kj::StringPtr serverBinary) {
+    int serverSocket[2];
+    KJ_SYSCALL(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, serverSocket));
+    kj::AutoCloseFd clientEnd(serverSocket[0]);
+    kj::AutoCloseFd serverEnd(serverSocket[1]);
+
+    pid_t sandstormPid = fork();
+    if (sandstormPid == 0) {
+      dup2(serverEnd, STDIN_FILENO);
+      dup2(serverEnd, STDOUT_FILENO);
+
+      KJ_SYSCALL(execl(serverBinary.cStr(), serverBinary.cStr(), "mount-fuse", (char*)nullptr),
+                 serverBinary);
+      KJ_UNREACHABLE;
+    }
+
+    serverEnd = nullptr;
+
+    {
+      auto msg = kj::str(getuid(), "\n");
+      kj::FdOutputStream((int)clientEnd).write(msg.begin(), msg.size());
+    }
+    {
+      auto msg = kj::str(getgid(), "\n");
+      kj::FdOutputStream((int)clientEnd).write(msg.begin(), msg.size());
+    }
+    {
+      auto msg = kj::str(packageDef.getId(), "\n");
+      kj::FdOutputStream((int)clientEnd).write(msg.begin(), msg.size());
+    }
+    {
+      auto msg = kj::str(mountProc ? "1" : "0", "\n");
+      kj::FdOutputStream((int)clientEnd).write(msg.begin(), msg.size());
+    }
+    {
+      auto msg = kj::str(serveGrainId, "\n");
+      kj::FdOutputStream((int)clientEnd).write(msg.begin(), msg.size());
+    }
+    {
+      auto msg = kj::str(serveDevMode ? "1" : "0", "\n");
+      kj::FdOutputStream((int)clientEnd).write(msg.begin(), msg.size());
+    }
+
+    auto fuseFd = receiveFd(clientEnd, [](kj::ArrayPtr<const kj::byte> bytes) {
+      kj::FdOutputStream(STDOUT_FILENO).write(bytes.begin(), bytes.size());
+    });
+    return ServerFuseMount { kj::mv(clientEnd), kj::mv(fuseFd) };
+  }
+
+  kj::MainBuilder::Validity doAppServe() {
+    ensurePackageDefParsed();
+
+    if (serveBaseUrl == nullptr) {
+      serveBaseUrl = kj::str("http://", serveAddr);
+    }
+
+    auto io = kj::setupAsyncIo();
+    TemporaryDirectory tempDir("/tmp/spk-app-serve-XXXXXX");
+    if (serveKeepTemp) tempDir.dontDelete();
+    auto varDir = kj::str(tempDir.getPath(), "/var");
+
+    context.warning(kj::str("spk app serve temp dir: ", tempDir.getPath()));
+    auto supervisorBinary = requireSupervisorBinary();
+    auto mount = requestServerFuseMount(supervisorBinary);
+    auto& mountConnection = mount.connection;
+    auto& fuseFd = mount.fuseFd;
+
+    kj::Function<void(kj::StringPtr)> callback = [](kj::StringPtr) {};
+    auto rootNode = makeUnionFs(sourceDir, packageDef.getSourceMap(), packageDef.getManifest(),
+                                packageDef.getBridgeConfig(), getHttpBridgeExe(), callback);
+    FuseOptions fuseOptions;
+    auto fuseTask = bindFuse(io.unixEventPort, fuseFd, kj::mv(rootNode), fuseOptions)
+        .eagerlyEvaluate([&](kj::Exception&& e) {
+          tempDir.dontDelete();
+          KJ_LOG(ERROR, e);
+        });
+
+    auto supervisorFd = receiveFd(mountConnection, [](kj::ArrayPtr<const kj::byte> bytes) {
+      kj::FdOutputStream(STDOUT_FILENO).write(bytes.begin(), bytes.size());
+    });
+
+    auto connection = io.lowLevelProvider->wrapSocketFd(kj::mv(supervisorFd),
+        kj::LowLevelAsyncIoProvider::ALREADY_CLOEXEC |
+        kj::LowLevelAsyncIoProvider::TAKE_OWNERSHIP);
+
+    capnp::TwoPartyVatNetwork network(*connection, capnp::rpc::twoparty::Side::CLIENT);
+    auto rpcClient = capnp::makeRpcClient(network);
+
+    capnp::MallocMessageBuilder message;
+    auto hostId = message.initRoot<capnp::rpc::twoparty::VatId>();
+    hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
+    Supervisor::Client supervisorCap = rpcClient.bootstrap(hostId).castAs<Supervisor>();
+
+    auto keepAliveReq = supervisorCap.keepAliveRequest();
+    keepAliveReq.send().wait(io.waitScope);
+
+    auto mainView = supervisorCap.getMainViewRequest().send().wait(io.waitScope).getView();
+    auto sessionReq = mainView.newSessionRequest();
+    sessionReq.setSessionType(capnp::typeId<WebSession>());
+    sessionReq.getUserInfo().initDisplayName().setDefaultText("Local Dev User");
+    sessionReq.getUserInfo().setPreferredHandle("dev");
+    sessionReq.getUserInfo().setPronouns(Profile::Pronouns::NEUTRAL);
+    sessionReq.setTabId(kj::arrayPtr(reinterpret_cast<const kj::byte*>(serveSessionId.begin()),
+                                     serveSessionId.size()));
+    auto sessionParams = sessionReq.initSessionParams().initAs<WebSession::Params>();
+    sessionParams.setBasePath(serveBaseUrl);
+    sessionParams.setUserAgent("spk-app-serve/0");
+    sessionParams.initAcceptableLanguages(1).set(0, "en-US");
+    WebSession::Client webSession = sessionReq.send().wait(io.waitScope).getSession()
+        .castAs<WebSession>();
+
+    kj::UnixEventPort::captureSignal(SIGINT);
+    kj::UnixEventPort::captureSignal(SIGTERM);
+
+    kj::HttpHeaderTable::Builder headerTableBuilder;
+    WebSessionBridge::Tables bridgeTables(headerTableBuilder);
+    auto headerTable = headerTableBuilder.build();
+
+    WebSessionBridge::Options bridgeOptions;
+    bridgeOptions.allowCookies = true;
+    auto bridge = kj::refcounted<WebSessionBridge>(
+        io.provider->getTimer(), webSession, nullptr, bridgeTables, bridgeOptions);
+    kj::HttpServer server(io.provider->getTimer(), *headerTable, *bridge);
+
+    auto listenAddr = splitServeAddress();
+    auto listener = io.provider->getNetwork().parseAddress(kj::get<0>(listenAddr),
+        kj::get<1>(listenAddr)).wait(io.waitScope)->listen();
+
+    context.warning(kj::str("Serving app at ", serveBaseUrl, "\nPress Ctrl+C to stop."));
+
+    auto signalTask = io.unixEventPort.onSignal(SIGINT)
+        .exclusiveJoin(io.unixEventPort.onSignal(SIGTERM))
+        .then([&](siginfo_t&&) {
+      mountConnection = nullptr;
+      return;
+    });
+
+    server.listenHttp(*listener)
+        .exclusiveJoin(kj::mv(signalTask))
+        .wait(io.waitScope);
+
+    return true;
+  }
+
+  // =====================================================================================
   // "dev" command
 
   kj::String serverBinary;
@@ -2124,9 +2458,9 @@ private:
       context.warning("Updating file list.");
 
       // Merge with the existing file list.
-      auto path = packageDef.getFileList();
+      auto path = resolvePackagePath(packageDef.getFileList());
       if (access(path.cStr(), F_OK) == 0) {
-        auto fileList = raiiOpen(packageDef.getFileList(), O_RDONLY);
+        auto fileList = raiiOpen(path, O_RDONLY);
         auto sourceMap = packageDef.getSourceMap();
         for (auto& line: splitLines(readAll(fileList))) {
           auto mapping = mapFile(sourceDir, sourceMap, line);

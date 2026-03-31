@@ -456,6 +456,15 @@ public:
                   .build();
             },
             "For internal use only.")
+        .addSubCommand("mount-fuse",
+            [this]() {
+              return kj::MainBuilder(context, VERSION,
+                      "For internal use only: Requests a privileged FUSE mount on behalf of a "
+                      "client.")
+                  .callAfterParsing(KJ_BIND_METHOD(*this, mountFuse))
+                  .build();
+            },
+            "For internal use only.")
         .addSubCommand("dev-shell",
             [this]() {
               return kj::MainBuilder(context, VERSION,
@@ -1069,6 +1078,27 @@ public:
     kj::FdOutputStream((int)sock).write(&DEVMODE_COMMAND_CONNECT, 1);
 
     // Send our "stdout" (which is actually a socket) to the devmode server.
+    sendFd(sock, STDOUT_FILENO);
+
+    return true;
+  }
+
+  kj::MainBuilder::Validity mountFuse() {
+    struct stat stats;
+    KJ_SYSCALL(fstat(STDOUT_FILENO, &stats));
+    if (!S_ISSOCK(stats.st_mode)) {
+      return "This command is for internal use only.";
+    }
+
+    changeToInstallDir();
+    checkDevAccess();
+
+    if (getRunningPid() == nullptr) {
+      context.exitError("Sandstorm is not running.");
+    }
+
+    auto sock = connectToDevDaemon();
+    kj::FdOutputStream((int)sock).write(&DEVMODE_COMMAND_MOUNT_FUSE, 1);
     sendFd(sock, STDOUT_FILENO);
 
     return true;
@@ -3351,6 +3381,10 @@ private:
   // Command code sent by `sandstorm dev-shell` command to hook in a development version of the
   // shell.
 
+  static constexpr kj::byte DEVMODE_COMMAND_MOUNT_FUSE = 3;
+  // Command code sent by `sandstorm mount-fuse`, which asks the dev daemon to mount /dev/fuse,
+  // launch a supervisor in the same namespace, and send back the FUSE plus supervisor sockets.
+
   [[noreturn]] void runDevSession(const Config& config,
       kj::AutoCloseFd internalFd, kj::Array<kj::AutoCloseFd> shellInherited,
       pid_t serverMonitorPid) {
@@ -3405,6 +3439,214 @@ private:
         // Send signal to server monitor to request shell startup.
         sigval.sival_int = 1;  // indicates start
         KJ_SYSCALL(sigqueue(serverMonitorPid, SIGINT, sigval));
+
+        return;
+      }
+
+      if (commandCode == DEVMODE_COMMAND_MOUNT_FUSE) {
+        context.warning("** Accepted new mount-fuse session connection...");
+
+        shellInherited = nullptr;
+
+        auto fd = receiveFd(internalFd);
+        internalFd = nullptr;
+
+        KJ_SYSCALL(dup2(fd, STDOUT_FILENO));
+        KJ_SYSCALL(dup2(fd, STDERR_FILENO));
+
+        if (signal(SIGCHLD, SIG_DFL) == SIG_ERR) {
+          KJ_FAIL_SYSCALL("signal(SIGCHLD, SIG_DFL)", errno);
+        }
+
+        kj::FdInputStream rawInput((int)fd);
+        kj::BufferedInputStreamWrapper input(rawInput);
+
+        uid_t uid;
+        KJ_IF_MAYBE(line, readLine(input)) {
+          KJ_IF_MAYBE(parsed, parseUInt(*line, 10)) {
+            uid = *parsed;
+          } else {
+            KJ_FAIL_ASSERT("Expected numeric uid.");
+          }
+        } else {
+          KJ_FAIL_ASSERT("Expected uid.");
+        }
+
+        gid_t gid;
+        KJ_IF_MAYBE(line, readLine(input)) {
+          KJ_IF_MAYBE(parsed, parseUInt(*line, 10)) {
+            gid = *parsed;
+          } else {
+            KJ_FAIL_ASSERT("Expected numeric gid.");
+          }
+        } else {
+          KJ_FAIL_ASSERT("Expected gid.");
+        }
+
+        auto readRequiredLine = [&](kj::StringPtr name) -> kj::String {
+          KJ_IF_MAYBE(line, readLine(input)) {
+            return kj::mv(*line);
+          } else {
+            KJ_FAIL_ASSERT(kj::str("Expected ", name, "."));
+          }
+        };
+
+        auto appId = readRequiredLine("app ID");
+        auto mountProcLine = readRequiredLine("mountProc");
+        auto grainId = readRequiredLine("grain ID");
+        auto devModeLine = readRequiredLine("dev mode flag");
+
+        bool mountProc = false;
+        if (mountProcLine == "1") {
+          mountProc = true;
+        } else {
+          KJ_REQUIRE(mountProcLine == "0", "Expected value of '1' or '0' for mountProc.");
+        }
+
+        bool devMode = false;
+        if (devModeLine == "1") {
+          devMode = true;
+        } else {
+          KJ_REQUIRE(devModeLine == "0", "Expected value of '1' or '0' for dev mode.");
+        }
+
+        for (char c: appId) {
+          if (!isalnum(c)) {
+            context.exitError("Invalid app ID. Must contain only alphanumerics.");
+          }
+        }
+
+        char pkgDir[] = "/var/sandstorm/apps/spk-serve-XXXXXX";
+        if (mkdtemp(pkgDir) == nullptr) {
+          KJ_FAIL_SYSCALL("mkdtemp(pkgDir)", errno, pkgDir);
+        }
+        KJ_DEFER(rmdir(pkgDir));
+        if (runningAsRoot) { KJ_SYSCALL(chown(pkgDir, uid, gid)); }
+
+        auto fuseFd = raiiOpen("/dev/fuse", O_RDWR);
+        auto mountOptions = kj::str("fd=", fuseFd, ",rootmode=40000,"
+            "user_id=", uid, ",group_id=", gid, ",allow_other");
+
+        KJ_SYSCALL(mount("/dev/fuse", pkgDir, "fuse",
+                         MS_NOSUID | MS_NODEV, mountOptions.cStr()));
+        KJ_DEFER(umount2(pkgDir, MNT_FORCE | UMOUNT_NOFOLLOW));
+
+        sendFd(fd, fuseFd);
+        fuseFd = nullptr;
+
+        capnp::ReaderOptions manifestLimits;
+        manifestLimits.traversalLimitInWords = spk::Manifest::SIZE_LIMIT_IN_WORDS;
+        capnp::StreamFdMessageReader reader(
+            raiiOpen(kj::str(pkgDir, "/sandstorm-manifest"), O_RDONLY), manifestLimits);
+        auto manifest = reader.getRoot<spk::Manifest>();
+        auto continueCommand = manifest.getContinueCommand();
+        KJ_REQUIRE(continueCommand.getArgv().size() > 0,
+            "manifest continueCommand.argv must not be empty");
+
+        kj::Vector<kj::String> argv;
+        auto executable = kj::heapString(context.getProgramName());
+        argv.add(kj::heapString("supervisor"));
+        argv.add(kj::heapString("--pkg"));
+        argv.add(kj::heapString(pkgDir));
+
+        char varTemplate[] = "/var/sandstorm/apps/spk-serve-var-XXXXXX";
+        if (mkdtemp(varTemplate) == nullptr) {
+          KJ_FAIL_SYSCALL("mkdtemp(varTemplate)", errno, varTemplate);
+        }
+        KJ_SYSCALL(rmdir(varTemplate));
+        auto varDir = kj::heapString(varTemplate);
+
+        argv.add(kj::heapString("--var"));
+        argv.add(kj::mv(varDir));
+
+        if (mountProc) {
+          argv.add(kj::heapString("--proc"));
+        }
+        if (devMode) {
+          argv.add(kj::heapString("--dev"));
+        }
+
+        for (auto env: continueCommand.getEnviron()) {
+          argv.add(kj::str("-e", env.getKey(), "=", env.getValue()));
+        }
+
+        argv.add(kj::heapString("-n"));
+        argv.add(kj::mv(appId));
+        argv.add(kj::mv(grainId));
+
+        if (continueCommand.hasDeprecatedExecutablePath()) {
+          argv.add(kj::heapString(continueCommand.getDeprecatedExecutablePath()));
+        }
+        for (auto arg: continueCommand.getArgv()) {
+          argv.add(kj::heapString(arg));
+        }
+
+        kj::Vector<const char*> execArgv;
+        for (auto& arg: argv) {
+          execArgv.add(arg.cStr());
+        }
+        execArgv.add(nullptr);
+
+        pid_t supervisorPid;
+        KJ_SYSCALL(supervisorPid = fork());
+        if (supervisorPid == 0) {
+          KJ_SYSCALL(execv(executable.cStr(), const_cast<char**>(execArgv.begin())));
+          KJ_UNREACHABLE;
+        }
+        KJ_DEFER({
+          if (supervisorPid > 0) {
+            kill(supervisorPid, SIGTERM);
+            waitpid(supervisorPid, nullptr, 0);
+          }
+        });
+
+        auto socketPath = kj::str(varTemplate, "/socket");
+        auto deadline = time(nullptr) + 20;
+        kj::AutoCloseFd supervisorSocket;
+        for (;;) {
+          int status;
+          pid_t waited = waitpid(supervisorPid, &status, WNOHANG);
+          if (waited < 0) {
+            KJ_FAIL_SYSCALL("waitpid(supervisorPid, &status, WNOHANG)", errno);
+          } else if (waited == supervisorPid) {
+            context.exitError(kj::str(
+                "sandstorm-supervisor exited before creating its socket at ", socketPath, "."));
+          }
+
+          int sock_;
+          KJ_SYSCALL(sock_ = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+          kj::AutoCloseFd sock(sock_);
+
+          struct sockaddr_un addr;
+          memset(&addr, 0, sizeof(addr));
+          addr.sun_family = AF_UNIX;
+          strcpy(addr.sun_path, socketPath.cStr());
+
+          if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
+            supervisorSocket = kj::mv(sock);
+            break;
+          }
+
+          int error = errno;
+          if (error != ENOENT && error != ECONNREFUSED) {
+            KJ_FAIL_SYSCALL("connect(sock, &addr, sizeof(addr))", error, socketPath);
+          }
+          if (time(nullptr) >= deadline) {
+            context.exitError(kj::str(
+                "Timed out waiting for supervisor socket at ", socketPath, "."));
+          }
+          KJ_SYSCALL(usleep(100000));
+        }
+
+        sendFd(fd, supervisorSocket);
+        supervisorSocket = nullptr;
+
+        char junk;
+        while (kj::FdInputStream(fd.get()).tryRead(&junk, 1, 1) > 0) {}
+
+        kill(supervisorPid, SIGTERM);
+        waitpid(supervisorPid, nullptr, 0);
+        supervisorPid = -1;
 
         return;
       }
@@ -3941,6 +4183,7 @@ private:
 
 constexpr kj::byte RunBundleMain::DEVMODE_COMMAND_CONNECT;
 constexpr kj::byte RunBundleMain::DEVMODE_COMMAND_SHELL;
+constexpr kj::byte RunBundleMain::DEVMODE_COMMAND_MOUNT_FUSE;
 
 }  // namespace sandstorm
 
