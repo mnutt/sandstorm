@@ -52,6 +52,31 @@ windows when debugging. You can do this by setting `SHOW_BROWSER=true`:
 
     SHOW_BROWSER=true make test
 
+## Running node-capnp baseline benchmarks
+
+The node-capnp baseline benchmark drives Sandstorm through the browser and
+test-only Meteor methods. The benchmark code does not import `capnp` directly;
+it measures the shell/backend RPC paths that currently use node-capnp.
+
+To run it against a local test Sandstorm instance:
+
+    make benchmark-node-capnp
+
+To run it against an already-running test-mode Sandstorm:
+
+    cd tests
+    LAUNCH_URL=http://local.sandstorm.io:6080 npm run benchmark:node-capnp
+
+You can tune the run with environment variables:
+
+    NODE_CAPNP_BENCH_ITERS=1000 NODE_CAPNP_BENCH_WARMUP=100 make benchmark-node-capnp
+
+The app/system-API scheduling sub-benchmark defaults to fewer iterations since
+it creates scheduled-job records. Tune it separately with
+`NODE_CAPNP_BENCH_APP_ITERS` and `NODE_CAPNP_BENCH_APP_WARMUP`.
+
+Results are printed to stdout and written to `tests/reports/benchmarks/`.
+
 ## Dealing with tests which are expected to fail
 
 Some tests are known to fail, either always or intermittently. Obviously

@@ -12,7 +12,8 @@
     "url": "https://github.com/sandstorm-io/sandstorm.git"
   },
   "scripts": {
-    "test": "./run-tests.sh"
+    "test": "./run-tests.sh",
+    "benchmark:node-capnp": "./run-benchmarks.sh"
   },
   "dependencies": {
     "chai": "^4.5.0",

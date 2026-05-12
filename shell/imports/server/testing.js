@@ -219,10 +219,140 @@ function makeTransferRequest(statusOrError, onEnd) {
   return request;
 }
 
+function benchmarkNowNs() {
+  const now = process.hrtime();
+  return now[0] * 1e9 + now[1];
+}
+
+function benchmarkNumber(value, fallback, min, max) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function summarizeBenchmarkSamples(samples, totalNs) {
+  const sorted = samples.slice().sort((left, right) => left - right);
+  const percentile = (fraction) => {
+    const index = Math.min(sorted.length - 1, Math.floor(sorted.length * fraction));
+    return sorted[index] / 1e6;
+  };
+
+  const totalMs = totalNs / 1e6;
+  return {
+    iterations: samples.length,
+    totalMs,
+    opsPerSecond: samples.length / (totalMs / 1000),
+    avgMs: totalMs / samples.length,
+    minMs: sorted[0] / 1e6,
+    p50Ms: percentile(0.50),
+    p95Ms: percentile(0.95),
+    p99Ms: percentile(0.99),
+    maxMs: sorted[sorted.length - 1] / 1e6,
+  };
+}
+
+async function runBenchmark(name, options, operation) {
+  for (let i = 0; i < options.warmup; ++i) {
+    await operation();
+  }
+
+  const samples = [];
+  const totalStart = benchmarkNowNs();
+  for (let i = 0; i < options.iterations; ++i) {
+    const start = benchmarkNowNs();
+    await operation();
+    samples.push(benchmarkNowNs() - start);
+  }
+
+  const summary = summarizeBenchmarkSamples(samples, benchmarkNowNs() - totalStart);
+  summary.name = name;
+  if (options.includeSamples) {
+    summary.samplesMs = samples.map(sample => sample / 1e6);
+  }
+
+  return summary;
+}
+
+async function runSupervisorBenchmarks(grainId, options) {
+  if (!grainId) return [];
+
+  const grainInfo = await globalThis.globalBackend.continueGrain(grainId);
+  const supervisor = grainInfo.supervisor;
+
+  try {
+    const results = [];
+    results.push(await runBenchmark("supervisor.keepAlive", options, async () => {
+      await supervisor.keepAlive();
+    }));
+
+    results.push(await runBenchmark("supervisor.getMainView", options, async () => {
+      const result = await supervisor.getMainView();
+      if (result.view && result.view.close) {
+        result.view.close();
+      }
+    }));
+
+    return results;
+  } finally {
+    if (supervisor.close) {
+      supervisor.close();
+    }
+  }
+}
+
 if(isTesting) {
   Meteor.methods({
     async runDueJobsAt(whenMillis) {
       await runDueJobs(new Date(whenMillis));
+    },
+
+    benchmarkNodeCapnpBaseline: async function (rawOptions) {
+      const raw = rawOptions || {};
+      const options = {
+        iterations: benchmarkNumber(raw.iterations, 200, 1, 10000),
+        warmup: benchmarkNumber(raw.warmup, 20, 0, 1000),
+        includeSamples: !!raw.includeSamples,
+      };
+
+      const grain = raw.grainId && await globalDb.collections.grains.findOneAsync(
+        raw.grainId,
+        { fields: { packageId: 1 } });
+      const readyPackage = await globalDb.collections.packages.findOneAsync(
+        { status: "ready" },
+        { fields: { _id: 1 } });
+      const packageId = raw.packageId || (grain && grain.packageId) ||
+          (readyPackage && readyPackage._id);
+      const grainId = raw.grainId || null;
+      const results = [];
+      const backend = globalThis.globalBackend.cap();
+
+      results.push(await runBenchmark("backend.ping", options, async () => {
+        await backend.ping();
+      }));
+
+      if (packageId) {
+        results.push(await runBenchmark("backend.tryGetPackage", options, async () => {
+          await backend.tryGetPackage(packageId);
+        }));
+      } else {
+        results.push({
+          name: "backend.tryGetPackage",
+          skipped: true,
+          reason: "No ready package was available.",
+        });
+      }
+
+      results.push(...await runSupervisorBenchmarks(grainId, options));
+
+      return {
+        benchmark: "node-capnp-baseline",
+        generatedAt: new Date().toISOString(),
+        iterations: options.iterations,
+        warmup: options.warmup,
+        packageId,
+        grainId,
+        results,
+      };
     },
 
     createMockGithubUser: async function () {

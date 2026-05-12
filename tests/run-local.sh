@@ -158,6 +158,10 @@ echo
 set +e
 
 export RUN_XFAIL="${RUN_XFAIL:-false}"
-"$NPM" test
+if [[ "${RUN_BENCHMARKS:-false}" == "true" ]]; then
+  "$NPM" run benchmark:node-capnp
+else
+  "$NPM" test
+fi
 
 cleanExit $?

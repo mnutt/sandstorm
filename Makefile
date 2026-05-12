@@ -139,7 +139,7 @@ IMAGES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test installer-test app-index-dev lint
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test benchmark-node-capnp installer-test app-index-dev lint
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -168,6 +168,10 @@ fast: sandstorm-$(BUILD)-fast.tar.xz
 
 test: sandstorm-$(BUILD)-fast.tar.xz test-app.spk tests/assets/meteor-testapp.spk
 	tests/run-local.sh sandstorm-$(BUILD)-fast.tar.xz test-app.spk
+
+benchmark-node-capnp: sandstorm-$(BUILD)-fast.tar.xz test-app.spk tests/assets/meteor-testapp.spk
+	RUN_BENCHMARKS=true tests/run-local.sh sandstorm-$(BUILD)-fast.tar.xz test-app.spk
+
 lint: shell-env
 	cd shell && meteor npm run lint
 typecheck-ts:
