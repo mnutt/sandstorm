@@ -53,6 +53,45 @@
       "src_folders": ["unittests"],
       "start_session": false,
       "exclude": ["tests", "apps"]
+    },
+    "benchmarks": {
+      "src_folders": ["benchmarks"],
+      "exclude": ["tests", "apps", "unittests"],
+      "launch_url": "http://local.sandstorm.io:6080",
+      "globals": {
+        "waitForConditionPollInterval": 100
+      },
+      "webdriver": {
+        "start_process": true,
+        "server_path": "node_modules/chromedriver/lib/chromedriver/chromedriver",
+        "port": 4444
+      },
+      "backwards_compatibility_mode": true,
+      "disable_colors": true,
+      "screenshots": {
+        "enabled": true,
+        "on_failure": true,
+        "on_error": true,
+        "path": "screenshots"
+      },
+      "desiredCapabilities": {
+        "browserName": "chrome",
+        "goog:chromeOptions": {
+          "binary": "${NIGHTWATCH_CHROME_BINARY}",
+          "args": [
+            "--headless",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--host-resolver-rules=MAP local.sandstorm.io 127.0.0.1,MAP *.local.sandstorm.io 127.0.0.1"
+          ],
+          "prefs": {
+            "download.prompt_for_download": false,
+            "download.directory_upgrade": true,
+            "safebrowsing.enabled": true
+          }
+        }
+      }
     }
   }
 }

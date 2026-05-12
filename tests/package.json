@@ -14,7 +14,8 @@
   },
   "scripts": {
     "compare-visual-snapshots": "node ./compare-visual-snapshots.js",
-    "test": "./run-tests.sh"
+    "test": "./run-tests.sh",
+    "benchmark:node-capnp": "./run-benchmarks.sh"
   },
   "dependencies": {
     "chai": "^4.5.0",

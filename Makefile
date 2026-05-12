@@ -134,3 +134,7 @@ release-gate-upgrade-308:
 	@echo "release-gate-upgrade-308 has not been migrated to CMake." >&2
 	@echo "Run tests/release-gates/upgrade-from-308.sh manually with CMake-built packages." >&2
 	@false
+
+.PHONY: benchmark-node-capnp
+benchmark-node-capnp: configure
+	RUN_BENCHMARKS=true $(CMAKE_BUILD) --target system-test
