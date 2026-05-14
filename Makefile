@@ -138,3 +138,6 @@ release-gate-upgrade-308:
 .PHONY: benchmark-node-capnp
 benchmark-node-capnp: configure
 	RUN_BENCHMARKS=true $(CMAKE_BUILD) --target system-test
+
+.PHONY: capnp-es-schemas
+$(eval $(call cmake_target,capnp-es-schemas,capnp-es-schemas))

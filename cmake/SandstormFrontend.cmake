@@ -133,8 +133,27 @@ function(sandstorm_add_frontend_targets)
     COMMENT "Installing Meteor shell dependencies"
     VERBATIM)
 
+  set(CAPNP_ES_DIR "$ENV{HOME}/p/personal/capnp-es" CACHE PATH "capnp-es checkout")
+  set(CAPNP_ES_COMPILER "${CAPNP_ES_DIR}/dist/compiler/capnpc-ts.mjs"
+    CACHE FILEPATH "capnp-es TypeScript compiler")
+  file(GLOB_RECURSE _capnp_es_schema_sources CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/sandstorm/*.capnp")
+  set(_capnp_es_stamp "${_frontend_dir}/capnp-es-schemas.stamp")
+  add_custom_command(
+    OUTPUT "${_capnp_es_stamp}"
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "CAPNP_ES_DIR=${CAPNP_ES_DIR}" "CAPNP_ES_COMPILER=${CAPNP_ES_COMPILER}"
+      "${_meteor_bin}/node" "${PROJECT_SOURCE_DIR}/tools/generate-capnp-es-schemas.mjs"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${_capnp_es_stamp}"
+    DEPENDS "${PROJECT_SOURCE_DIR}/tools/generate-capnp-es-schemas.mjs"
+      "${CAPNP_ES_COMPILER}" ${_capnp_es_schema_sources}
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    COMMENT "Generating capnp-es schemas"
+    VERBATIM)
+  add_custom_target(capnp-es-schemas DEPENDS "${_capnp_es_stamp}")
+
   add_custom_target(shell-env
-    DEPENDS shell-assets stage-native "${_shell_npm_stamp}")
+    DEPENDS shell-assets stage-native "${_shell_npm_stamp}" "${_capnp_es_stamp}")
 
   add_custom_target(clean-frontend
     COMMAND "${CMAKE_COMMAND}" -E rm -rf
@@ -216,6 +235,7 @@ function(sandstorm_add_frontend_targets)
       WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/shell"
       DEPENDS
         shell-assets
+        "${_capnp_es_stamp}"
         "${SANDSTORM_NATIVE_STAGE_STAMP}"
         "${_shell_npm_stamp}"
         "${PROJECT_SOURCE_DIR}/cmake/CheckShellSymlinks.cmake"
