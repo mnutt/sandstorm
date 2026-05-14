@@ -102,6 +102,42 @@ function printBenchmark(result) {
 }
 
 function browserScheduleBenchmark(options, doneBenchmark) {
+  function getMeteor() {
+    return window.Meteor ||
+        window.Package && window.Package.meteor && window.Package.meteor.Meteor;
+  }
+
+  function frameState() {
+    const meteor = getMeteor();
+    return {
+      meteor: typeof meteor,
+      meteorCall: typeof (meteor && meteor.call),
+      href: window.location.href,
+      title: document.title,
+      body: document.body && document.body.innerText &&
+          document.body.innerText.slice(0, 200),
+    };
+  }
+
+  function waitForMeteorCall() {
+    const deadline = Date.now() + (options.meteorWaitMs || 30000);
+    return new Promise((resolve, reject) => {
+      function poll() {
+        const meteor = getMeteor();
+        if (meteor && typeof meteor.call === "function") {
+          resolve();
+        } else if (Date.now() >= deadline) {
+          reject(new Error("Timed out waiting for app Meteor.call: " +
+              JSON.stringify(frameState())));
+        } else {
+          window.setTimeout(poll, 50);
+        }
+      }
+
+      poll();
+    });
+  }
+
   function summarize(samples, totalMs) {
     const sorted = samples.slice().sort((left, right) => left - right);
     const percentile = (fraction) => {
@@ -125,7 +161,7 @@ function browserScheduleBenchmark(options, doneBenchmark) {
 
   function scheduleOne(label) {
     return new Promise((resolve, reject) => {
-      window.Meteor.call("schedule", label, function (err) {
+      getMeteor().call("schedule", label, function (err) {
         if (err) {
           reject(err);
         } else {
@@ -136,6 +172,8 @@ function browserScheduleBenchmark(options, doneBenchmark) {
   }
 
   (async function () {
+    await waitForMeteorCall();
+
     for (let i = 0; i < options.warmup; ++i) {
       await scheduleOne("node-capnp-benchmark-warmup-" + i + "-" + Date.now());
     }
@@ -167,6 +205,26 @@ function writeBenchmarkReport(result) {
   console.log("wrote benchmark report: " + reportPath);
 }
 
+function reloadActiveGrainFrame(client, done) {
+  client.frame(null)
+    .execute(function () {
+      const active = window.globalGrains && window.globalGrains.getActive &&
+          window.globalGrains.getActive();
+      const selector = active && active.grainId ?
+        "#grain-frame-" + active.grainId() :
+        ".grain-container.active-grain iframe.grain-frame";
+      const frame = document.querySelector(selector);
+      if (!frame) return { error: "active grain frame not found", selector: selector };
+
+      frame.src = frame.src;
+      return { selector: selector, src: frame.src };
+    }, [], function (result) {
+      const value = result.value || {};
+      client.assert.equal(value.error || null, null, "active grain frame reloaded");
+      done();
+    });
+}
+
 module.exports["Benchmark node-capnp through Sandstorm paths"] = function (browser) {
   let grainId = null;
   const benchmarkOptions = {
@@ -183,9 +241,9 @@ module.exports["Benchmark node-capnp through Sandstorm paths"] = function (brows
   let benchmarkResult = null;
 
   browser
-    .timeouts("script", very_long_wait)
     .loginDevAccount()
     .uploadMeteorTestApp()
+    .timeouts("script", very_long_wait)
     .waitForElementVisible("button.action", medium_wait)
     .click("button.action")
     .grainFrame()
@@ -216,11 +274,21 @@ module.exports["Benchmark node-capnp through Sandstorm paths"] = function (brows
         done();
       });
     })
+    .perform(reloadActiveGrainFrame)
+    .pause(1000)
     .grainFrame()
+    .timeouts("script", very_long_wait)
     .perform(function (client, done) {
       client.executeAsync(browserScheduleBenchmark, [appBenchmarkOptions], function (result) {
         const value = result.value || {};
-        client.assert.equal(value.error, null, "app schedule benchmark completed without error");
+        client.assert.equal(value.error || null, null,
+            "app schedule benchmark completed without error");
+        client.assert.ok(!!value.result, "app schedule benchmark returned results");
+        if (!value.result) {
+          done();
+          return;
+        }
+
         if (benchmarkResult && value.result) {
           benchmarkResult.results.push(value.result);
         }

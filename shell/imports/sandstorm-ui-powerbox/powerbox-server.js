@@ -31,6 +31,17 @@ function encodePowerboxDescriptor(desc) {
               .replace(/\//g, "_");
 }
 
+function tagIdVariants(id) {
+  const result = [id, String(id)];
+  const number = Number(id);
+  if (Number.isFinite(number) &&
+      (Number.isSafeInteger(number) || String(id) !== String(number))) {
+    result.push(number);
+  }
+
+  return unique(result);
+}
+
 const resolveAccountIdForPowerbox = async (userId) => {
   if (!userId) return userId;
 
@@ -337,7 +348,7 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
             .find({
               $or: [{ userId: this.userId }, { _id: { $in: sharedGrainIds } }],
               "cachedViewInfo.matchRequests.tags.id":
-                  { $in: queryDescriptor.tags.map(tag => tag.id) },
+                  { $in: unique(queryDescriptor.tags.flatMap(tag => tagIdVariants(tag.id))) },
             }, { fields: { "cachedViewInfo.matchRequests": 1 } })
             .fetchAsync();
         grains.forEach((grain) => {

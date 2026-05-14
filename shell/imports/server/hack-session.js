@@ -34,6 +34,7 @@ const HackSessionContext = Capnp.importSystem("sandstorm/hack-session.capnp").Ha
 const SystemPersistent = Capnp.importSystem("sandstorm/supervisor.capnp").SystemPersistent;
 const Grain = Capnp.importSystem("sandstorm/grain.capnp");
 const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
+const Util = Capnp.importSystem("sandstorm/util.capnp");
 
 
 const ROOT_URL = Url.parse(process.env.ROOT_URL);
@@ -45,6 +46,20 @@ class SessionContextImpl {
     this.sessionId = sessionId;
     this.accountId = accountId;
     this.tabId = tabId;
+  }
+
+  getSharedPermissions() {
+    return {
+      var: new Capnp.Capability({
+        get() {
+          return {};
+        },
+
+        subscribe() {
+          return {};
+        },
+      }, Util.Assignable.Getter),
+    };
   }
 
   claimRequest(sturdyRef, requiredPermissions) {
@@ -127,7 +142,7 @@ class SessionContextImpl {
       let apiTokenOwner = { clientPowerboxOffer: { sessionId: this.sessionId, }, };
       const isUiView = descriptor && descriptor.tags && descriptor.tags.length === 1 &&
           descriptor.tags[0] && descriptor.tags[0].id &&
-          descriptor.tags[0].id === Grain.UiView.typeId;
+          String(descriptor.tags[0].id) === String(Grain.UiView.typeId);
       if (isUiView) {
         let tagValue = {};
         if (descriptor.tags[0].value) {
