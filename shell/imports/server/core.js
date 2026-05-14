@@ -109,21 +109,34 @@ class SandstormCoreImpl {
               throw new Error("Grain not found.");
             }
 
-            const castedNotification = notification.castAs(PersistentOngoingNotification);
-            const wakelockToken = (await castedNotification.save()).sturdyRef.toString("utf8");
+            let wakelockToken;
+            let castedNotification;
+            try {
+              castedNotification = notification.castAs(PersistentOngoingNotification);
+              wakelockToken = (await castedNotification.save()).sturdyRef.toString("utf8");
+            } catch (err) {
+              // SandstormApi.stayAwake() allows non-persistent notifications. They can still
+              // create a wake-lock handle, but cannot be called back after dismissal.
+              if (!isNonPersistentNotificationError(err)) {
+                throw err;
+              }
+            } finally {
+              if (castedNotification) castedNotification.close();
+            }
 
-            // We have to close both the casted cap and the original. Perhaps this should be fixed in
-            // node-capnp?
-            castedNotification.close();
             notification.close();
-            const notificationId = await this.db.collections.notifications.insertAsync({
+            const notificationRecord = {
               ongoing: wakelockToken,
               grainId: grainId,
               userId: grain.userId,
               text: displayInfo.caption,
               timestamp: new Date(),
               isUnread: true,
-            });
+            };
+
+            if (!wakelockToken) delete notificationRecord.ongoing;
+
+            const notificationId = await this.db.collections.notifications.insertAsync(notificationRecord);
 
             return {
               handle: await globalThis.globalFrontendRefRegistry.create(this.db,
@@ -205,6 +218,13 @@ class SandstormCoreImpl {
   }
 }
 
+function isNonPersistentNotificationError(err) {
+  const message = String(err && err.message || err);
+  return message.includes("Called null capability") ||
+      message.includes("Method not implemented") ||
+      message.includes("unimplemented");
+}
+
 const makeSandstormCore = (db, grainId) => {
   return new Capnp.Capability(new SandstormCoreImpl(db, grainId), SandstormCore);
 };
@@ -216,14 +236,22 @@ class NotificationHandle extends PersistentImpl {
     super(db, saveTemplate);
     this.notificationId = notificationId;
     this.db = db;
+    this.closeScheduled = false;
   }
 
   close() {
-    return inMeteor(async () => {
-      if (!this.isSaved()) {
-        await dismissNotification(this.db, this.notificationId);
-      }
-    });
+    if (this.closeScheduled) return;
+    this.closeScheduled = true;
+
+    Meteor.setTimeout(() => {
+      inMeteor(async () => {
+        if (!this.isSaved()) {
+          await dismissNotification(this.db, this.notificationId);
+        }
+      }).catch((err) => {
+        console.error("Error closing notification handle:", err);
+      });
+    }, 1000);
   }
 }
 

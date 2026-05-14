@@ -166,6 +166,10 @@ class SandstormBackend {
       delete command.executablePath;
     }
 
+    if (command.deprecatedExecutablePath === "") {
+      delete command.deprecatedExecutablePath;
+    }
+
     return await this._backendCap.startGrain(ownerId, grainId, packageId, command, isNew, isDev,
                                              mountProc);
   }

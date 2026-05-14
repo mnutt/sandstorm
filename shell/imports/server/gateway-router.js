@@ -40,6 +40,11 @@ const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
 const SESSION_PROXY_TIMEOUT = 60000;
 const DNS_CACHE_TTL_SECONDS = 30;
 
+function logGatewayCapnp(message, fields) {
+  if (!process.env.CAPNP_ES_DEBUG) return;
+  console.log("[capnp-es gateway]", message, JSON.stringify(fields || {}));
+}
+
 globalThis.currentTlsKeysCallback = null;
 
 // If this is Blackrock and we started up within one hour of a scheduled maintenance, we want to
@@ -244,9 +249,19 @@ async function getUiViewAndUserInfo(grainId, vertex, accountId, identityId, sess
 
   let uiView;
   const viewInfo = await globalThis.globalBackend.useGrain(grainId, supervisor => {
+    logGatewayCapnp("getMainView.start", { grainId, sessionId });
     uiView = supervisor.getMainView().view;
+    logGatewayCapnp("getMainView.pipelineView", { grainId, sessionId });
+    logGatewayCapnp("getViewInfo.start", { grainId, sessionId });
     return uiView.getViewInfo();
   }).catch(error => {
+    logGatewayCapnp("getViewInfo.error", {
+      grainId,
+      sessionId,
+      kjType: error && error.kjType,
+      code: error && error.code,
+      message: error && error.message,
+    });
     if (error.kjType === "failed" || error.kjType === "unimplemented") {
       // Method not implemented.
       // TODO(apibump): Don't treat 'failed' as 'unimplemented'. Unfortunately, old apps built
@@ -257,11 +272,13 @@ async function getUiViewAndUserInfo(grainId, vertex, accountId, identityId, sess
       throw error;
     }
   });
+  logGatewayCapnp("getViewInfo.done", { grainId, sessionId, usedFallback: !viewInfo });
 
   if (viewInfo) {
     const cachedViewInfo = _.omit(viewInfo, "appTitle", "grainIcon");
     await globalDb.collections.grains.updateAsync(grainId, { $set: { cachedViewInfo: cachedViewInfo } });
   }
+  const sessionViewInfo = viewInfo ? _.omit(viewInfo, "grainIcon") : {};
 
   const permissionsResult = await SandstormPermissions.grainPermissionsAsync(
       globalDb, vertex, viewInfo || {}, observer.invalidate.bind(observer));
@@ -289,7 +306,7 @@ async function getUiViewAndUserInfo(grainId, vertex, accountId, identityId, sess
       _id: sessionId,
     }, {
       $set: {
-        viewInfo: viewInfo || {},
+        viewInfo: sessionViewInfo,
         permissions: permissionsResult.permissions,
       },
     });
@@ -367,33 +384,46 @@ class GatewayRouterImpl {
           session.grainId, vertex, actingAccountId, session.identityId, sessionId, observer);
 
       const serializedParams = Capnp.serialize(WebSession.Params, params);
+      logGatewayCapnp("openUiSession.paramsSerialized", {
+        grainId: session.grainId,
+        sessionId,
+        bytes: serializedParams.length,
+        powerboxRequest: !!session.powerboxRequest,
+      });
 
       let rawSession;
       const sessionContext = makeHackSessionContext(
           session.grainId, sessionId, actingAccountId, session.tabId);
       if (session.powerboxRequest) {
+        logGatewayCapnp("newRequestSession.start", { grainId: session.grainId, sessionId });
         rawSession = (await uiView.newRequestSession(userInfo, sessionContext,
              WebSession.typeId, serializedParams, session.powerboxRequest.descriptors,
              new Buffer(session.tabId, "hex"))).session;
+        logGatewayCapnp("newRequestSession.done", { grainId: session.grainId, sessionId });
       } else {
+        logGatewayCapnp("newSession.start", { grainId: session.grainId, sessionId });
         rawSession = (await uiView.newSession(userInfo, sessionContext,
              WebSession.typeId, serializedParams, new Buffer(session.tabId, "hex"))).session;
+        logGatewayCapnp("newSession.done", { grainId: session.grainId, sessionId });
       }
 
+      logGatewayCapnp("sessionCapability.cast", { grainId: session.grainId, sessionId });
       let persistent = rawSession.castAs(SystemPersistent);
 
       // TODO(security): List the user's permissions as a requirement here, in case save()
       //   is called. Currently nothing obtained through a WebSession can be saved anyway, so
       //   this is not relevant.
       let cap = persistent.addRequirements([], observer).cap;
+      logGatewayCapnp("sessionCapability.addRequirements", { grainId: session.grainId, sessionId });
 
       let hasLoaded = session.hasLoaded;
-      let webSession = cap.castAs(WebSession);
+      let webSession = Capnp.proxyClient(cap.castAs(WebSession), WebSession);
 
       rawSession.close();
       persistent.close();
       cap.close();
       uiView.close();
+      logGatewayCapnp("openUiSession.return", { grainId: session.grainId, sessionId });
 
       if (session.denied) {
         // Apparently access was denied in the past, but this time it succeded, so remove the error

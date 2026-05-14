@@ -400,12 +400,12 @@ async function extractManifestAssets(manifest) {
   const icons = metadata.icons;
   if (icons) {
     const handleIcon = async (icon) => {
-      if (icon.svg) {
+      if (hasUnionField(icon, "svg")) {
         icon.assetId = await globalDb.addStaticAsset({ mimeType: "image/svg+xml" }, icon.svg);
         icon.format = "svg";
         delete icon.svg;
         return true;
-      } else if (icon.png) {
+      } else if (hasUnionField(icon, "png")) {
         // Use the 1x version for 'normal' DPI, unless 1x isn't provided, in which case use 2x.
         const normalDpi = icon.png.dpi1x || icon.png.dpi2x;
         if (!normalDpi) return false;
@@ -453,8 +453,12 @@ async function extractManifestAssets(manifest) {
 
   const license = metadata.license;
   if (license) {
-    if (license.proprietary) license.proprietary = await handleLocalizedText(license.proprietary);
-    if (license.publicDomain) license.publicDomain = await handleLocalizedText(license.proprietary);
+    if (hasUnionField(license, "proprietary")) {
+      license.proprietary = await handleLocalizedText(license.proprietary);
+    }
+    if (hasUnionField(license, "publicDomain")) {
+      license.publicDomain = await handleLocalizedText(license.publicDomain);
+    }
     if (license.notices) license.notices = await handleLocalizedText(license.notices);
   }
 
@@ -513,8 +517,8 @@ function getAllManifestAssets(manifest) {
 
   const license = metadata.license;
   if (license) {
-    if (license.proprietary) handleLocalizedText(license.proprietary);
-    if (license.publicDomain) handleLocalizedText(license.publicDomain);
+    if (hasUnionField(license, "proprietary")) handleLocalizedText(license.proprietary);
+    if (hasUnionField(license, "publicDomain")) handleLocalizedText(license.publicDomain);
     if (license.notices) handleLocalizedText(license.notices);
   }
 
@@ -522,4 +526,10 @@ function getAllManifestAssets(manifest) {
   if (metadata.changeLog) handleLocalizedText(metadata.changeLog);
 
   return result;
+}
+
+function hasUnionField(value, fieldName) {
+  const guardName = `_is${fieldName[0].toUpperCase()}${fieldName.slice(1)}`;
+  if (typeof value[guardName] === "boolean") return value[guardName];
+  return Object.prototype.hasOwnProperty.call(value, fieldName);
 }

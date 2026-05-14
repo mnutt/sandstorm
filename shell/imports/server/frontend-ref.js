@@ -55,7 +55,7 @@ class FrontendRefRegistry {
   async query(db, userAccountId, tag) {
     // Performs a powerbox query using the appropriate registered handler.
 
-    const handler = this._typeIdHandlers[tag.id];
+    const handler = this._typeIdHandlers[String(tag.id)];
     if (handler) {
       return await handler.query(db, userAccountId, tag.value);
     } else {
@@ -140,11 +140,12 @@ class FrontendRefRegistry {
     }
 
     if (object.typeId) {
-      if (object.typeId in this._typeIdHandlers) {
+      const typeId = String(object.typeId);
+      if (typeId in this._typeIdHandlers) {
         throw new Error("typeId handler already registered: " + object.typeId);
       }
 
-      this._typeIdHandlers[object.typeId] = object;
+      this._typeIdHandlers[typeId] = object;
     }
   }
 }

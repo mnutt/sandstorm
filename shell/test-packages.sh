@@ -51,10 +51,6 @@ __EOF__
 # over its own bundled version, and the system gyp doesn't work.
 export PYTHONPATH=$("$SCRIPT_DIR/../find-meteor-dev-bundle.sh")/lib/node_modules/npm/node_modules/node-gyp/gyp/pylib
 
-# Terrible hack: Make capnp.node available to tests.
-rm -f /tmp/node_modules
-ln -s "$(dirname "$PWD")/node_modules" /tmp/node_modules
-
 meteor test \
   --once \
   --driver-package=meteortesting:mocha \

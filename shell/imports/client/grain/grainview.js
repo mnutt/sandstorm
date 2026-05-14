@@ -882,10 +882,17 @@ class GrainView {
     } else if (grain && Meteor.userId() === grain.userId) {
       return !!grain.trashed;
     } else {
-      return !!this._db.collections.apiTokens.findOne({
+      const tokenQuery = {
         grainId: this._grainId,
         "owner.user.accountId": Meteor.userId(),
+      };
+
+      return !!this._db.collections.apiTokens.findOne({
+        ...tokenQuery,
         trashed: { $exists: true },
+      }) && !this._db.collections.apiTokens.findOne({
+        ...tokenQuery,
+        trashed: { $exists: false },
       });
     }
   }

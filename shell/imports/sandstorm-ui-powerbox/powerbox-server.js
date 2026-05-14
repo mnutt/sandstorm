@@ -31,6 +31,17 @@ function encodePowerboxDescriptor(desc) {
               .replace(/\//g, "_");
 }
 
+function tagIdVariants(id) {
+  const result = [id, String(id)];
+  const number = Number(id);
+  if (Number.isFinite(number) &&
+      (Number.isSafeInteger(number) || String(id) !== String(number))) {
+    result.push(number);
+  }
+
+  return _.uniq(result);
+}
+
 const resolveAccountIdForPowerbox = async (userId) => {
   if (!userId) return userId;
 
@@ -337,7 +348,7 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
             .find({
               $or: [{ userId: this.userId }, { _id: { $in: sharedGrainIds } }],
               "cachedViewInfo.matchRequests.tags.id":
-                  { $in: queryDescriptor.tags.map(tag => tag.id) },
+                  { $in: _.uniq(_.flatten(queryDescriptor.tags.map(tag => tagIdVariants(tag.id)))) },
             }, { fields: { "cachedViewInfo.matchRequests": 1 } })
             .fetchAsync();
         grains.forEach((grain) => {
@@ -349,18 +360,20 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
             // Build map of descriptor tags by ID.
             const grainTagsById = {};
             grainDescriptor.tags.forEach(tag => {
-              grainTagsById[tag.id] = tag.value;
+              tagIdVariants(tag.id).forEach(id => {
+                grainTagsById[String(id)] = tag.value;
+              });
             });
 
             let allMatched = true;
             queryDescriptor.tags.forEach(queryTag => {
               if (!allMatched) return;
 
-              if (queryTag.id in grainTagsById) {
-                const value = grainTagsById[queryTag.id];
+              if (String(queryTag.id) in grainTagsById) {
+                const value = grainTagsById[String(queryTag.id)];
                 // Null values match everything, so only pay attention if non-null.
                 if (value && queryTag.value) {
-                  if (!Capnp.matchPowerboxQuery(queryTag.value, value)) {
+                  if (!Capnp.matchPowerboxQuery(queryTag.value, value, queryTag.id)) {
                     allMatched = false;
                   }
                 }

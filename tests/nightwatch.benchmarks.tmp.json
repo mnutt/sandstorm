@@ -12,7 +12,7 @@
 
   "test_settings": {
     "default": {
-      "launch_url": "http://local.sandstorm.io:6080",
+"launch_url" : "http://local.sandstorm.io:9000",
       "globals": {
         "asyncHookTimeout": 180000,
         "waitForConditionPollInterval": 100
@@ -58,7 +58,7 @@
     "benchmarks": {
       "src_folders": ["benchmarks"],
       "exclude": ["tests", "apps", "unittests"],
-      "launch_url": "http://local.sandstorm.io:6080",
+"launch_url" : "http://local.sandstorm.io:9000",
       "globals": {
         "asyncHookTimeout": 180000,
         "waitForConditionPollInterval": 100

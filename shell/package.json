@@ -37,6 +37,7 @@
     "acme-dns-01-vultr": "^3.0.2",
     "babel-runtime": "^6.26.0",
     "body-parser": "^2.2.2",
+    "capnp-es": "file:../../../p/personal/capnp-es",
     "connect": "^3.7.0",
     "content-type": "^1.0.4",
     "intro.js": "git+https://github.com/sandstorm-io/intro.js.git#8e1c7604f251ec874bf4ae4d7b4f11a14cee697e",

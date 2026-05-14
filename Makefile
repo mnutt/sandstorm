@@ -40,6 +40,9 @@ METEOR_SPK_VERSION=0.6.0
 METEOR_SPK=$(PWD)/meteor-spk-$(METEOR_SPK_VERSION)/meteor-spk
 NODEJS=$(METEOR_DEV_BUNDLE)/bin/node
 NODE_HEADERS=$(METEOR_DEV_BUNDLE)/include/node
+CAPNP_ES_DIR ?= $(HOME)/p/personal/capnp-es
+CAPNP_ES_COMPILER ?= $(CAPNP_ES_DIR)/dist/compiler/capnpc-ts.mjs
+CAPNP_ES_SCHEMA_SOURCES := $(shell find src/sandstorm -name '*.capnp' | sort)
 WARNINGS=-Wall -Wextra -Wglobal-constructors -Wno-sign-compare -Wno-unused-parameter
 CXXFLAGS2=-std=c++1z -include cstdint $(WARNINGS) $(CXXFLAGS) -DSANDSTORM_BUILD=$(BUILD) -DKJ_HAS_OPENSSL -DKJ_HAS_ZLIB -DKJ_HAS_LIBDL -pthread -fPIC -I$(NODE_HEADERS) -DKJ_STD_COMPAT
 CFLAGS2=$(CFLAGS) -pthread -fPIC -DKJ_STD_COMPAT
@@ -139,7 +142,7 @@ IMAGES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test benchmark-node-capnp installer-test app-index-dev lint
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test benchmark-node-capnp installer-test app-index-dev lint capnp-es-schemas
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -286,9 +289,17 @@ continuous: tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/lib
 
 shell-env: tmp/.shell-env
 
+capnp-es-schemas: tmp/.capnp-es-schemas
+
+tmp/.capnp-es-schemas: tools/generate-capnp-es-schemas.mjs $(CAPNP_ES_COMPILER) $(CAPNP_ES_SCHEMA_SOURCES)
+	@$(call color,generating capnp-es schemas)
+	@mkdir -p tmp
+	@CAPNP_ES_DIR=$(CAPNP_ES_DIR) CAPNP_ES_COMPILER=$(CAPNP_ES_COMPILER) $(NODEJS) tools/generate-capnp-es-schemas.mjs
+	@touch tmp/.capnp-es-schemas
+
 # Note that we need Ekam to build node_modules before we can run Meteor, hence
 # the dependency on tmp/.ekam-run.
-tmp/.shell-env: tmp/.ekam-run $(IMAGES) shell/imports/client/changelog.html shell/client/styles/_icons.scss shell/package.json shell/package-lock.json
+tmp/.shell-env: tmp/.ekam-run tmp/.capnp-es-schemas $(IMAGES) shell/imports/client/changelog.html shell/client/styles/_icons.scss shell/package.json shell/package-lock.json
 	@$(call color,configuring meteor frontend)
 	@mkdir -p tmp
 	@mkdir -p node_modules/capnp
@@ -451,6 +462,8 @@ meteor-testapp-dev: $(METEOR_SPK)
 tests/assets/meteor-testapp.spk: \
 		meteor-testapp \
 		$(METEOR_SPK) \
+		meteor-testapp/package.json \
+		meteor-testapp/package-lock.json \
 		meteor-testapp/client/* \
 		meteor-testapp/server/* \
 		meteor-testapp/.meteor/*

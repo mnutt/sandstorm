@@ -283,25 +283,16 @@ Template.grainBackupPopup.events({
 
 Template.grainRestartButton.events({
   "click button": function (event) {
-    this.reset();
     const activeGrain = globalGrains.getActive();
     const grainId = activeGrain.grainId();
+    const revealIdentity = !activeGrain.isIncognito();
 
     Meteor.call("shutdownGrain", grainId, function (err) {
       if (err) {
         alert("Restart failed: " + err); // TODO(someday): make this better UI
       } else {
-        const frames = document.getElementsByClassName("grain-frame");
-        for (let i = 0; i < frames.length; i++) {
-          const frame = frames[i];
-          if (frame.dataset.grainid == grainId) {
-            // Re-assign frame.src; this causes the browser to refresh the
-            // iframe's contents.
-            //
-            // eslint-disable-next-line no-self-assign
-            frame.src = frame.src;
-          }
-        }
+        activeGrain.reset(revealIdentity);
+        activeGrain.openSession();
       }
     });
   },
@@ -687,8 +678,9 @@ Template.grainInMyTrash.events({
   "click button.restore-from-trash": function (event, instance) {
     const grain = globalGrains.getActive();
     const data = Template.currentData();
+    const revealIdentity = !grain.isIncognito();
     Meteor.callAsync("moveGrainsOutOfTrash", [data.grainId]).then(() => {
-      grain.reset(!grain.isIncognito());
+      grain.reset(revealIdentity);
       grain.openSession();
     }).catch((err) => {
       console.error(err && err.stack || err);
