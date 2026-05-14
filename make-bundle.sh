@@ -133,12 +133,6 @@ cp "$SOURCE_ROOT/server-profiler.js" "$BUNDLE_DIR/server-profiler.js"
  PATH=$METEOR_DEV_BUNDLE/lib/node_modules/.bin:$METEOR_DEV_BUNDLE/bin:$PATH \
    "$METEOR_DEV_BUNDLE/bin/npm" audit --omit=dev --audit-level=high)
 
-# Ensure node-capnp is present where server startup looks first
-# (process.cwd() starts at /programs/server in the runtime chroot).
-mkdir -p "$BUNDLE_DIR/programs/server/node_modules"
-cp "$NODE_MODULES_DIR/capnp.js" "$BUNDLE_DIR/programs/server/node_modules/capnp.js"
-cp "$NODE_MODULES_DIR/capnp.node" "$BUNDLE_DIR/programs/server/node_modules/capnp.node"
-
 # Copy over key binaries.
 mkdir -p "$BUNDLE_DIR/bin"
 cp "$NATIVE_STAGE/bin/sandstorm-http-bridge" "$BUNDLE_DIR/bin/sandstorm-http-bridge"

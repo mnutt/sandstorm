@@ -5,10 +5,10 @@
         iframes to be re-rendered, losing state. --}}
   {{#with unpackedGrainState}}
     <div class="grain-container {{#if active}}active-grain{{else}}inactive-grain{{/if}}">
-    {{#if error}}
-      {{#if inMyTrash}}
-        {{> grainInMyTrash . }}
-      {{else if inOwnersTrash}}
+    {{#if inMyTrash}}
+      {{> grainInMyTrash . }}
+    {{else if error}}
+      {{#if inOwnersTrash}}
         {{> grainInOwnersTrash ""}}
       {{else if grainOwnerSuspended}}
         {{> grainOwnerSuspended ""}}
