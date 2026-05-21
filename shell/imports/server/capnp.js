@@ -92,6 +92,12 @@ const MODULES = Object.values(SCHEMAS);
 const interfaceByTypeId = new Map();
 const enumByDisplayName = new Map();
 const CAPNP_DEBUG_ENABLED = !!process.env.CAPNP_ES_DEBUG;
+const sortedFieldsCache = new WeakMap();
+const wrappedClientMethodCache = new WeakMap();
+const capitalizedFieldNameCache = new WeakMap();
+const enumNameCache = new WeakMap();
+const structConverterCache = new WeakMap();
+const fieldValueConverterCache = new WeakMap();
 let nextCapabilityStreamId = 0;
 let nextRpcDebugId = 0;
 
@@ -143,8 +149,8 @@ class WrappedClient {
     this._shared = shared || { client: rawClientOf(generatedClient), refs: 1, closed: false };
     this.client = this._shared.client;
 
-    for (const method of InterfaceClass.Client.methods) {
-      this[method.methodName] = (...args) => callMethod(this, method, args);
+    for (const [name, fn] of wrappedClientMethods(InterfaceClass)) {
+      this[name] = fn;
     }
   }
 
@@ -156,6 +162,21 @@ class WrappedClient {
   close() {
     closeSharedClient(this);
   }
+}
+
+function wrappedClientMethods(InterfaceClass) {
+  let methods = wrappedClientMethodCache.get(InterfaceClass);
+  if (methods) return methods;
+
+  methods = InterfaceClass.Client.methods.map((method) => [
+    method.methodName,
+    function wrappedCapnpMethod(...args) {
+      return callMethod(this, method, args);
+    },
+  ]);
+
+  wrappedClientMethodCache.set(InterfaceClass, methods);
+  return methods;
 }
 
 class Connection {
@@ -296,19 +317,26 @@ function callMethod(wrapped, method, args) {
     console.log("[capnp-es rpc]", debugId, "call.start", methodLabel(method));
   }
 
-  const result = wrapped._client[method.methodName]((params) => {
-    fillStructFromArgs(params, method.ParamsClass._capnp.fields, args);
-  });
-  return new ResultPromise(method.ResultsClass, result, method, debugId, startedAt);
+  const call = { method };
+  if (args.length > 0) {
+    call.paramsFunc = (params) => {
+      fillStructFromArgs(params, method.ParamsClass._capnp.fields, args);
+    };
+  }
+
+  const answer = wrapped.client.call(call);
+  return new ResultPromise(method.ResultsClass, answer, method, debugId, startedAt);
 }
 
 class ResultPromise {
-  constructor(ResultsClass, generatedPromise, method, debugId, startedAt) {
+  constructor(ResultsClass, answer, method, debugId, startedAt) {
     this._ResultsClass = ResultsClass;
-    this._promise = generatedPromise;
+    this._answer = answer;
     this._method = method;
     this._debugId = debugId;
     this._startedAt = startedAt;
+    this._pipeline = null;
+    this._plainPromise = null;
 
     for (const field of ResultsClass._capnp.fields) {
       const isInterface = field.type?.kind === "interface";
@@ -319,24 +347,29 @@ class ResultPromise {
         get: () => {
           if (isCapability) {
             return wrapClient(Supervisor.SystemPersistent,
-                generatedPromise.pipeline.getPipeline(Supervisor.SystemPersistent, field.offset)
+                this.pipeline().getPipeline(Supervisor.SystemPersistent, field.offset)
                   .client());
           } else {
             const InterfaceClass = interfaceByTypeId.get(field.type.typeId);
-            const getter = `get${capitalize(field.name)}`;
-            if (!InterfaceClass || typeof generatedPromise[getter] !== "function") {
-              throw new Error(`No pipeline getter for result field: ${field.name}`);
-            }
+            if (!InterfaceClass) throw new Error(`No pipeline getter for result field: ${field.name}`);
 
             if (this._debugId !== null) {
               console.log("[capnp-es rpc]", this._debugId, "pipeline.get", field.name,
                   "->", InterfaceClass._capnp?.displayName || field.type.displayName);
             }
-            return wrapClient(InterfaceClass, generatedPromise[getter]());
+            return wrapClient(InterfaceClass, this.pipeline().getPipeline(InterfaceClass, field.offset).client());
           }
         },
       });
     }
+  }
+
+  pipeline() {
+    if (!this._pipeline) {
+      this._pipeline = new capnp.Pipeline(this._ResultsClass, this._answer);
+    }
+
+    return this._pipeline;
   }
 
   then(onFulfilled, onRejected) {
@@ -351,9 +384,14 @@ class ResultPromise {
     return this.promise().finally(onFinally);
   }
 
-  async promise() {
+  promise() {
+    if (!this._plainPromise) this._plainPromise = this.resolvePlain();
+    return this._plainPromise;
+  }
+
+  async resolvePlain() {
     try {
-      const value = structToPlain(await this._promise.promise());
+      const value = structToPlain(await this._answer.struct());
       if (this._debugId !== null) {
         console.log("[capnp-es rpc]", this._debugId, "call.done",
             methodLabel(this._method), Date.now() - this._startedAt + "ms");
@@ -567,7 +605,7 @@ function setField(struct, field, value) {
     }
 
     case "data": {
-      const data = struct[`_init${capitalize(field.name)}`](value.length);
+      const data = struct[`_init${capitalizedFieldName(field)}`](value.length);
       data.copyBuffer(Buffer.from(value));
       return;
     }
@@ -584,7 +622,7 @@ function setField(struct, field, value) {
 
     case "list": {
       if (value && value.array instanceof Array) value = value.array;
-      const list = struct[`_init${capitalize(field.name)}`](value.length);
+      const list = struct[`_init${capitalizedFieldName(field)}`](value.length);
       for (let i = 0; i < value.length; i++) {
         setListElement(list, field.type.elementType, i, value[i]);
       }
@@ -596,7 +634,7 @@ function setField(struct, field, value) {
       if (value instanceof capnp.Struct) {
         struct[field.name] = value;
       } else {
-        fillStruct(struct[`_init${capitalize(field.name)}`](), value);
+        fillStruct(struct[`_init${capitalizedFieldName(field)}`](), value);
       }
       return;
     }
@@ -696,15 +734,11 @@ function setListElement(list, elementType, index, value) {
   }
 }
 
-function fieldToPlain(struct, field) {
+function fieldToPlain(struct, field, alreadyCheckedUnion) {
   try {
-    if (field.type?.kind === "void") {
-      if (field.discriminantValue !== undefined &&
-          typeof struct.which === "function" &&
-          struct.which() !== field.discriminantValue) {
-        return undefined;
-      }
+    if (!alreadyCheckedUnion && isInactiveUnionField(struct, field)) return undefined;
 
+    if (field.type?.kind === "void") {
       return null;
     }
 
@@ -721,15 +755,126 @@ function fieldToPlain(struct, field) {
 }
 
 function structToPlain(struct) {
-  const out = {};
-  for (const field of sortedFields(struct.constructor._capnp.fields || [])) {
-    if (isNullPointerField(struct, field)) continue;
-    const hasMethod = struct[`_has${capitalize(field.name)}`];
-    if (typeof hasMethod === "function" && !hasPointerField(struct, hasMethod)) continue;
-    const value = fieldToPlain(struct, field);
-    if (value !== undefined) out[field.name] = value;
+  return structConverter(struct.constructor)(struct);
+}
+
+function structConverter(StructClass) {
+  let converter = structConverterCache.get(StructClass);
+  if (!converter) {
+    converter = makeStructConverter(StructClass._capnp.fields || []);
+    structConverterCache.set(StructClass, converter);
   }
-  return out;
+
+  return converter;
+}
+
+function makeStructConverter(fields) {
+  const entries = sortedFields(fields).map((field) => ({
+    field,
+    name: field.name,
+    hasMethodName: `_has${capitalizedFieldName(field)}`,
+    isPointer: isPointerField(field),
+    discriminantValue: field.discriminantValue,
+    isVoid: field.type?.kind === "void",
+    convert: valueConverterFor(field.type, field),
+  }));
+  const hasUnionFields = entries.some((entry) => entry.discriminantValue !== undefined);
+  return compileStructConverter(entries, hasUnionFields);
+}
+
+function compileStructConverter(entries, hasUnionFields) {
+  const lines = [
+    "\"use strict\";",
+    "return function convertStruct(struct) {",
+    "const out = {};",
+  ];
+
+  if (hasUnionFields) {
+    lines.push(
+      "const activeUnion = typeof struct.which === \"function\" ? struct.which() : undefined;",
+      "const checkedUnion = activeUnion !== undefined;",
+    );
+  } else {
+    lines.push("const checkedUnion = true;");
+  }
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    lines.push("{");
+    if (hasUnionFields && entry.discriminantValue !== undefined) {
+      lines.push("if (!checkedUnion) {");
+      emitFallbackEntry(lines, i, entry);
+      lines.push(`} else if (activeUnion === ${JSON.stringify(entry.discriminantValue)}) {`);
+      emitFastEntry(lines, i, entry);
+      lines.push("}");
+    } else {
+      emitFastEntry(lines, i, entry);
+    }
+
+    lines.push("}");
+  }
+
+  lines.push(
+    "return out;",
+    "};",
+  );
+
+  return Function("helpers", "entries", lines.join("\n"))({
+    fieldEntryToPlain,
+    hasPointerField,
+    isNullPointerField,
+  }, entries);
+}
+
+function emitFastEntry(lines, index, entry) {
+  if (entry.isPointer) {
+    lines.push(
+      `const hasMethod = struct[${JSON.stringify(entry.hasMethodName)}];`,
+      "if (typeof hasMethod === \"function\" ? " +
+        "helpers.hasPointerField(struct, hasMethod) : " +
+        `!helpers.isNullPointerField(struct, entries[${index}].field)) {`,
+    );
+  }
+
+  lines.push(entry.isVoid ?
+    "const value = null;" :
+    `const value = entries[${index}].convert(struct[${JSON.stringify(entry.name)}]);`);
+  lines.push(`if (value !== undefined) out[${JSON.stringify(entry.name)}] = value;`);
+
+  if (entry.isPointer) {
+    lines.push("}");
+  }
+}
+
+function emitFallbackEntry(lines, index, entry) {
+  lines.push(
+    `const value = helpers.fieldEntryToPlain(struct, entries[${index}], false);`,
+    `if (value !== undefined) out[${JSON.stringify(entry.name)}] = value;`,
+  );
+}
+
+function fieldEntryToPlain(struct, entry, alreadyCheckedUnion) {
+  try {
+    if (!alreadyCheckedUnion && isInactiveUnionField(struct, entry.field)) return undefined;
+
+    if (entry.isVoid) return null;
+
+    const value = struct[entry.name];
+    return entry.convert(value);
+  } catch (err) {
+    if (isInactiveUnionAccess(err) ||
+        entry.discriminantValue !== undefined && isOutOfBoundsDataAccess(err)) {
+      return undefined;
+    }
+
+    throw err;
+  }
+}
+
+function isInactiveUnionField(struct, field) {
+  return field.discriminantValue !== undefined &&
+      typeof struct.which === "function" &&
+      struct.which() !== field.discriminantValue;
 }
 
 function hasPointerField(struct, hasMethod) {
@@ -742,6 +887,17 @@ function hasPointerField(struct, hasMethod) {
 }
 
 function isNullPointerField(struct, field) {
+  if (!isPointerField(field)) return false;
+
+  try {
+    return capnp.utils.isNull(capnp.utils.getPointer(field.offset, struct));
+  } catch (err) {
+    if (isOutOfBoundsPointerAccess(err)) return true;
+    throw err;
+  }
+}
+
+function isPointerField(field) {
   switch (field.type?.kind) {
     case "anyPointer":
     case "data":
@@ -749,12 +905,7 @@ function isNullPointerField(struct, field) {
     case "list":
     case "struct":
     case "text":
-      try {
-        return capnp.utils.isNull(capnp.utils.getPointer(field.offset, struct));
-      } catch (err) {
-        if (isOutOfBoundsPointerAccess(err)) return true;
-        throw err;
-      }
+      return true;
     default:
       return false;
   }
@@ -771,30 +922,55 @@ function isOutOfBoundsDataAccess(err) {
 }
 
 function valueToPlain(value, type, field) {
-  if (value === undefined || value === null) return value;
+  if (field) {
+    let converter = fieldValueConverterCache.get(field);
+    if (!converter) {
+      converter = valueConverterFor(type, field);
+      fieldValueConverterCache.set(field, converter);
+    }
 
+    return converter(value);
+  }
+
+  return valueConverterFor(type, field)(value);
+}
+
+function valueConverterFor(type, field) {
   switch (type?.kind) {
     case "anyPointer":
-      return anyPointerToPlain(value, field);
+      return (value) => value === undefined || value === null ? value : anyPointerToPlain(value, field);
     case "data":
-      return Buffer.from(value.toUint8Array());
+      return (value) => value === undefined || value === null ? value :
+        Buffer.from(value.toUint8Array());
     case "enum":
-      return enumName(type.displayName, value);
+      return (value) => value === undefined || value === null ? value :
+        enumName(type.displayName, value);
     case "interface": {
       const InterfaceClass = interfaceByTypeId.get(type.typeId);
-      return InterfaceClass ? wrapClient(InterfaceClass, value) : value;
+      return (value) => value === undefined || value === null ? value :
+        InterfaceClass ? wrapClient(InterfaceClass, value) : value;
     }
-    case "list":
-      return Array.from({ length: value.length }, (_, i) =>
-        valueToPlain(value.get(i), type.elementType));
+    case "list": {
+      const convertElement = valueConverterFor(type.elementType);
+      return (value) => {
+        if (value === undefined || value === null) return value;
+
+        const out = new Array(value.length);
+        for (let i = 0; i < value.length; i++) {
+          out[i] = convertElement(value.get(i));
+        }
+
+        return out;
+      };
+    }
     case "group":
     case "struct":
-      return structToPlain(value);
+      return (value) => value === undefined || value === null ? value : structToPlain(value);
     case "int64":
     case "uint64":
-      return int64ToPlain(value);
+      return (value) => value === undefined || value === null ? value : int64ToPlain(value);
     default:
-      return value;
+      return (value) => value;
   }
 }
 
@@ -842,7 +1018,25 @@ function pointerToBuffer(value) {
 }
 
 function sortedFields(fields) {
-  return [...fields].sort((a, b) => a.codeOrder - b.codeOrder);
+  if (!fields || fields.length <= 1) return fields || [];
+
+  let sorted = sortedFieldsCache.get(fields);
+  if (!sorted) {
+    sorted = [...fields].sort((a, b) => a.codeOrder - b.codeOrder);
+    sortedFieldsCache.set(fields, sorted);
+  }
+
+  return sorted;
+}
+
+function capitalizedFieldName(field) {
+  let name = capitalizedFieldNameCache.get(field);
+  if (!name) {
+    name = capitalize(field.name);
+    capitalizedFieldNameCache.set(field, name);
+  }
+
+  return name;
 }
 
 function enumValue(displayName, value) {
@@ -858,11 +1052,16 @@ function enumName(displayName, value) {
   const enumObject = enumByDisplayName.get(displayName);
   if (!enumObject) return value;
 
-  for (const [name, enumValue_] of Object.entries(enumObject)) {
-    if (enumValue_ === value) return lowerCamel(name);
+  let names = enumNameCache.get(enumObject);
+  if (!names) {
+    names = new Map();
+    for (const [name, enumValue_] of Object.entries(enumObject)) {
+      names.set(enumValue_, lowerCamel(name));
+    }
+    enumNameCache.set(enumObject, names);
   }
 
-  return value;
+  return names.get(value) ?? value;
 }
 
 function isEnumObject(value) {
