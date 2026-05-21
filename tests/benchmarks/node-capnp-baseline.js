@@ -198,9 +198,24 @@ function browserScheduleBenchmark(options, doneBenchmark) {
 
 function writeBenchmarkReport(result) {
   const reportDir = path.resolve(__dirname, "../reports/benchmarks");
+  const profileDir = path.join(reportDir, "profiles");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const reportPath = path.join(reportDir, "node-capnp-baseline-" + stamp + ".json");
   fs.mkdirSync(reportDir, { recursive: true });
+
+  for (const benchmark of result.results || []) {
+    if (!benchmark.profile) continue;
+
+    const baseName = benchmark.profileFileName ||
+        ("node-capnp-baseline-" + benchmark.name.replace(/[^a-zA-Z0-9_.-]/g, "_") + ".cpuprofile");
+    const profilePath = path.join(profileDir, stamp + "-" + baseName);
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.writeFileSync(profilePath, JSON.stringify(benchmark.profile) + "\n");
+    benchmark.profilePath = profilePath;
+    delete benchmark.profile;
+    delete benchmark.profileFileName;
+  }
+
   fs.writeFileSync(reportPath, JSON.stringify(result, null, 2) + "\n");
   console.log("wrote benchmark report: " + reportPath);
 }
@@ -231,6 +246,9 @@ module.exports["Benchmark node-capnp through Sandstorm paths"] = function (brows
     iterations: envNumber("NODE_CAPNP_BENCH_ITERS", 200),
     warmup: envNumber("NODE_CAPNP_BENCH_WARMUP", 20),
     includeSamples: process.env.NODE_CAPNP_BENCH_SAMPLES === "true",
+    profile: process.env.NODE_CAPNP_BENCH_PROFILE === "true",
+    profilePrefix: process.env.NODE_CAPNP_BENCH_PROFILE_PREFIX || "node-capnp-baseline",
+    profileSamplingIntervalUs: envNumber("NODE_CAPNP_BENCH_PROFILE_INTERVAL_US", 1000),
   };
   const appBenchmarkOptions = {
     iterations: envNumber("NODE_CAPNP_BENCH_APP_ITERS",
