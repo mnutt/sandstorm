@@ -20,6 +20,7 @@ import { Address4, Address6 } from "ip-address";
 import Url from "url";
 
 import { SPECIAL_IPV4_ADDRESSES, SPECIAL_IPV6_ADDRESSES } from "/imports/constants";
+import { isTesting } from "/imports/shared/testing";
 
 const lookupAsync = Dns.lookup.bind(Dns);
 
@@ -111,6 +112,10 @@ function parseCidr(cidr) {
 
 const SPECIAL_FILTERS = SPECIAL_IPV4_ADDRESSES.concat(SPECIAL_IPV6_ADDRESSES).map(parseCidr);
 
+function isLoopbackAddress(addr) {
+  return addr === "127.0.0.1" || addr === "::1";
+}
+
 async function selectSafeAddress(db, parsedUrl, addresses) {
   // TODO(perf): Subscribe to blacklist changes so that we don't have to do a new lookup and
   //   parse each time.
@@ -122,9 +127,12 @@ async function selectSafeAddress(db, parsedUrl, addresses) {
     if (address.family !== 4 && address.family !== 6) continue;
 
     let ok = true;
-    blacklist.forEach(test => { if (test(address.address)) { ok = false; } });
+    const testingLoopback = isTesting && isLoopbackAddress(address.address);
 
-    SPECIAL_FILTERS.forEach(test => { if (test(address.address)) { ok = false; } });
+    if (!testingLoopback) {
+      blacklist.forEach(test => { if (test(address.address)) { ok = false; } });
+      SPECIAL_FILTERS.forEach(test => { if (test(address.address)) { ok = false; } });
+    }
 
     if (ok) {
       const host = parsedUrl.host;

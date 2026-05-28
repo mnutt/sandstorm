@@ -51,8 +51,14 @@ import {
 } from "/imports/server/transfers-server";
 import { SandstormAutoupdateApps } from "/imports/sandstorm-autoupdate-apps/autoupdate-apps";
 import { isTesting } from "/imports/shared/testing";
+import Capnp from "/imports/server/capnp";
 import Crypto from "crypto";
 import { EventEmitter } from "events";
+import NodeHttp from "http";
+
+const OutboundHttpSession =
+    Capnp.importSystem("sandstorm/outbound-http-session.capnp").OutboundHttpSession;
+const ByteStream = Capnp.importSystem("sandstorm/util.capnp").ByteStream;
 
 async function clearUser(id) {
   await globalDb.collections.userActions.removeAsync({ userId: id });
@@ -295,6 +301,195 @@ if(isTesting) {
       }
 
       throw new Meteor.Error("setup-session-still-valid", "Setup session token still authorized.");
+    },
+
+    testRegressionOutboundHttpSession: async function () {
+      function makeResponseStream() {
+        const chunks = [];
+        let resolveDone;
+        let rejectDone;
+        const donePromise = new Promise((resolve, reject) => {
+          resolveDone = resolve;
+          rejectDone = reject;
+        });
+
+        return {
+          cap: new Capnp.Capability({
+            write(data) {
+              chunks.push(Buffer.from(data));
+            },
+
+            done() {
+              resolveDone(Buffer.concat(chunks).toString("utf8"));
+            },
+          }, ByteStream),
+
+          async read() {
+            return await donePromise;
+          },
+
+          fail(err) {
+            rejectDone(err);
+          },
+        };
+      }
+
+      const seenRequests = [];
+      const server = NodeHttp.createServer((req, res) => {
+        const chunks = [];
+        req.on("data", (chunk) => chunks.push(chunk));
+        req.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          seenRequests.push({
+            method: req.method,
+            url: req.url,
+            headers: req.headers,
+            body,
+          });
+
+          if (req.url === "/api/headers") {
+            if (req.headers.authorization !== "Bearer app-token" ||
+                req.headers["x-api-key"] !== "api-key" ||
+                body !== "hello buffered") {
+              res.writeHead(500, { "Content-Type": "text/plain" });
+              res.end("unexpected headers or body");
+              return;
+            }
+
+            res.writeHead(200, {
+              "Content-Type": "text/plain",
+              "X-Reply": "yes",
+            });
+            res.write("response ");
+            res.end("body");
+          } else if (req.url === "/api/redirect") {
+            res.writeHead(302, {
+              Location: "http://127.0.0.1/elsewhere",
+              "X-Redirect-Test": "not-followed",
+            });
+            res.end("redirect body");
+          } else if (req.url === "/api/streaming-upload") {
+            if (body !== "part-onepart-two") {
+              res.writeHead(500, { "Content-Type": "text/plain" });
+              res.end("unexpected streaming body");
+              return;
+            }
+
+            res.writeHead(201, { "Content-Type": "text/plain" });
+            res.end("streamed response");
+          } else if (req.url === "/api/method") {
+            res.writeHead(200, { "Content-Type": "text/plain" });
+            res.end("method ok");
+          } else {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            res.end("not found");
+          }
+        });
+      });
+
+      await new Promise((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+
+      try {
+        const port = server.address().port;
+        const baseUrl = "http://127.0.0.1:" + port + "/api";
+        const cap = globalThis.globalFrontendRefRegistry.restore(globalDb, {
+          frontendRef: { outboundHttp: { baseUrl } },
+        }, { outboundHttp: { baseUrl } }).castAs(OutboundHttpSession);
+
+        const responseStream = makeResponseStream();
+        const response = await cap.request("post", "headers", [
+          { name: "Authorization", value: "Bearer app-token" },
+          { name: "X-Api-Key", value: "api-key" },
+          { name: "Stripe-Version", value: "2026-01-01" },
+        ], Buffer.from("hello buffered"), responseStream.cap);
+        const responseBody = await responseStream.read();
+
+        if (response.statusCode !== 200 ||
+            !response.headers.some((header) =>
+              header.name === "x-reply" && header.value === "yes") ||
+            responseBody !== "response body") {
+          throw new Meteor.Error("outbound-http-buffered",
+              "Buffered request or streamed response did not return expected result.");
+        }
+
+        const redirectStream = makeResponseStream();
+        const redirect = await cap.request("get", "redirect", [], Buffer.alloc(0), redirectStream.cap);
+        const redirectBody = await redirectStream.read();
+        if (redirect.statusCode !== 302 ||
+            !redirect.headers.some((header) =>
+              header.name === "location" && header.value === "http://127.0.0.1/elsewhere") ||
+            redirectBody !== "redirect body" ||
+            seenRequests.filter((request) => request.url === "/api/redirect").length !== 1) {
+          throw new Meteor.Error("outbound-http-redirect",
+              "Redirect response was not returned without following.");
+        }
+
+        const streamingResponseStream = makeResponseStream();
+        const streaming = await cap.requestStreaming(
+            "post", "streaming-upload", [], streamingResponseStream.cap);
+        await streaming.requestStream.write(Buffer.from("part-one"));
+        const streamingResponsePromise = streaming.requestStream.getResponse();
+        await streaming.requestStream.write(Buffer.from("part-two"));
+        await streaming.requestStream.done();
+        const streamingResponse = await streamingResponsePromise;
+        const streamingResponseBody = await streamingResponseStream.read();
+        if (streamingResponse.statusCode !== 201 ||
+            streamingResponseBody !== "streamed response") {
+          throw new Meteor.Error("outbound-http-streaming",
+              "Streaming request or response did not return expected result.");
+        }
+
+        const expectFailure = async function (name, promise) {
+          try {
+            await promise;
+          } catch (err) {
+            return;
+          }
+
+          throw new Meteor.Error(name, "Expected outbound HTTP request to fail.");
+        };
+
+        await expectFailure("outbound-http-block-host",
+            cap.request("get", "headers", [{ name: "Host", value: "evil.example" }],
+                Buffer.alloc(0), makeResponseStream().cap));
+        await expectFailure("outbound-http-block-proxy",
+            cap.request("get", "headers", [{ name: "Proxy-Authorization", value: "secret" }],
+                Buffer.alloc(0), makeResponseStream().cap));
+        await expectFailure("outbound-http-block-sec",
+            cap.request("get", "headers", [{ name: "Sec-Fetch-Site", value: "cross-site" }],
+                Buffer.alloc(0), makeResponseStream().cap));
+        await expectFailure("outbound-http-path-dotdot",
+            cap.request("get", "../outside", [], Buffer.alloc(0), makeResponseStream().cap));
+        await expectFailure("outbound-http-path-absolute",
+            cap.request("get", "/api/headers", [], Buffer.alloc(0), makeResponseStream().cap));
+        await expectFailure("outbound-http-path-url",
+            cap.request("get", "http://127.0.0.1:" + port + "/api/headers", [],
+                Buffer.alloc(0), makeResponseStream().cap));
+        await expectFailure("outbound-http-path-encoded-slash",
+            cap.request("get", "..%2foutside", [], Buffer.alloc(0), makeResponseStream().cap));
+
+        const getOnlyCap = globalThis.globalFrontendRefRegistry.restore(globalDb, {
+          frontendRef: { outboundHttp: { baseUrl, methods: ["GET"] } },
+        }, { outboundHttp: { baseUrl, methods: ["GET"] } }).castAs(OutboundHttpSession);
+        await expectFailure("outbound-http-method-restricted",
+            getOnlyCap.request("post", "method", [], Buffer.alloc(0), makeResponseStream().cap));
+
+        const methodStream = makeResponseStream();
+        const methodResponse = await getOnlyCap.request(
+            "get", "method", [], Buffer.alloc(0), methodStream.cap);
+        const methodBody = await methodStream.read();
+        if (methodResponse.statusCode !== 200 || methodBody !== "method ok") {
+          throw new Meteor.Error("outbound-http-method-allowed",
+              "Allowed method did not succeed.");
+        }
+
+        return true;
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
     },
 
     testRegressionLdapQuotaReturnValue: async function () {

@@ -266,3 +266,27 @@ Template.httpOAuthPowerboxConfiguration.onCreated(function () {
     });
   });
 });
+
+Template.outboundHttpUrlPowerboxCard.powerboxIconSrc = () => "/web-m.svg";
+
+Template.outboundHttpArbitraryPowerboxCard.powerboxIconSrc = () => "/web-m.svg";
+Template.outboundHttpArbitraryPowerboxConfiguration.events({
+  "click .connect-button": function (event, instance) {
+    event.preventDefault();
+    const input = instance.find("form>input.url");
+
+    const outboundHttp = {
+      baseUrl: input.value,
+    };
+
+    if (this.option.methods && this.option.methods.length > 0) {
+      outboundHttp.methods = this.option.methods;
+    }
+
+    this.powerboxRequest.completeNewFrontendRef({
+      outboundHttp: {
+        ...outboundHttp,
+      },
+    });
+  },
+});

@@ -93,3 +93,21 @@
 <template name="httpOAuthPowerboxConfiguration">
   {{_ "powerboxBuiltins.httpOAuthPowerboxConfiguration.requestPermissionsFromService" option.oauthServiceInfo.service}}
 </template>
+
+<template name="outboundHttpUrlPowerboxCard">
+  Use outbound HTTP API at {{option.frontendRef.outboundHttp.baseUrl}}
+</template>
+
+<template name="outboundHttpArbitraryPowerboxCard">
+  Connect to an outbound HTTP API
+</template>
+
+<template name="outboundHttpArbitraryPowerboxConfiguration">
+  <form>
+    Enter the base URL for the outbound HTTP API.
+    <input class="url" type="text" placeholder="https://api.example.com/v1">
+    <div class="choose-buttons">
+      <button class="connect-button">Connect</button>
+    </div>
+  </form>
+</template>
