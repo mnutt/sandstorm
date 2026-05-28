@@ -614,6 +614,9 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   #   * Access-Control-*
   # * Sandstorm uses these for sandboxing:
   #   * Content-Security-Policy
+  #   * Cross-Origin-Embedder-Policy
+  #   * Cross-Origin-Opener-Policy
+  #   * Cross-Origin-Resource-Policy
   #   * Referrer-Policy
   #   * X-Frame-Options
   # * Redundant or irrelevant to Cap'n Proto RPC:

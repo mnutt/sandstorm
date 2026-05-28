@@ -7,11 +7,14 @@ ExtraHeadersResponse::ExtraHeadersResponse(kj::HttpService::Response& orig, cons
   extraHeaders(extraHeaders) {}
 
 kj::HttpHeaders ExtraHeadersResponse::addExtraHeaders(const kj::HttpHeaders& headers) {
-  // Return a shallow copy of `headers` with `extraHeaders` added to it.
+  // Return a shallow copy of `headers` with `extraHeaders` added where the response did not
+  // already choose a value.
   kj::HttpHeaders newHeaders = headers.cloneShallow();
   extraHeaders.forEach(
     [&](kj::HttpHeaderId id, kj::StringPtr value) {
-      newHeaders.set(id, value);
+      if (newHeaders.get(id) == nullptr) {
+        newHeaders.set(id, value);
+      }
     },
     [&](kj::StringPtr name, kj::StringPtr value) {
       newHeaders.add(name, value);

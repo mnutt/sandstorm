@@ -50,6 +50,9 @@ public:
     kj::HttpHeaderId hContentEncoding;
     kj::HttpHeaderId hContentLanguage;
     kj::HttpHeaderId hContentSecurityPolicy;
+    kj::HttpHeaderId hCrossOriginEmbedderPolicy;
+    kj::HttpHeaderId hCrossOriginOpenerPolicy;
+    kj::HttpHeaderId hCrossOriginResourcePolicy;
     kj::HttpHeaderId hCookie;
     kj::HttpHeaderId hETag;
     kj::HttpHeaderId hIfMatch;
@@ -57,7 +60,6 @@ public:
     kj::HttpHeaderId hReferrerPolicy;
     kj::HttpHeaderId hSecWebSocketProtocol;
     kj::HttpHeaderId hVary;
-    kj::HttpHeaderId hXFrameOptions;
 
     kj::HttpHeaderId hDav;
     kj::HttpHeaderId hDepth;

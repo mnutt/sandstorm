@@ -189,10 +189,10 @@ the new experimental seccomp filter. Defaults to false.
 ### ALLOW_LEGACY_RELAXED_CSP
 
 A boolean (true/false or yes/no) that controls whether to allow apps to
-load client-side scripts from third-party servers. Several apps are not
-yet compatible with the new Content Security Policy, so the legacy one is
-currently enabled by default. Once app support is deemed sufficiently
-adequate, the new CSP will become the default.
+load client-side scripts and assets from third-party servers. The strict
+policy is enabled by default. If you still need compatibility with an app
+that loads third-party resources directly, set this to `true` while the app
+is updated to embed those resources in its package instead.
 
 ### IS_TESTING
 

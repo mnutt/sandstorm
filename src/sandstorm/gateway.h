@@ -63,6 +63,9 @@ public:
     kj::HttpHeaderId hContentType;
     kj::HttpHeaderId hContentLanguage;
     kj::HttpHeaderId hContentEncoding;
+    kj::HttpHeaderId hCrossOriginEmbedderPolicy;
+    kj::HttpHeaderId hCrossOriginOpenerPolicy;
+    kj::HttpHeaderId hCrossOriginResourcePolicy;
     kj::HttpHeaderId hCookie;
     kj::HttpHeaderId hDav;
     kj::HttpHeaderId hLocation;

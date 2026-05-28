@@ -33,7 +33,7 @@ struct Config {
   kj::Maybe<kj::String> stripeKey = nullptr;
   kj::Maybe<kj::String> stripePublicKey = nullptr;
 
-  bool allowLegacyRelaxedCSP = true;
+  bool allowLegacyRelaxedCSP = false;
 
   bool useExperimentalSeccompFilter = false;
   bool logSeccompViolations = false;

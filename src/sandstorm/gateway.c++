@@ -81,6 +81,9 @@ GatewayService::Tables::Tables(kj::HttpHeaderTable::Builder& headerTableBuilder)
       hContentType(headerTableBuilder.add("Content-Type")),
       hContentLanguage(headerTableBuilder.add("Content-Language")),
       hContentEncoding(headerTableBuilder.add("Content-Encoding")),
+      hCrossOriginEmbedderPolicy(headerTableBuilder.add("Cross-Origin-Embedder-Policy")),
+      hCrossOriginOpenerPolicy(headerTableBuilder.add("Cross-Origin-Opener-Policy")),
+      hCrossOriginResourcePolicy(headerTableBuilder.add("Cross-Origin-Resource-Policy")),
       hCookie(headerTableBuilder.add("Cookie")),
       hDav(headerTableBuilder.add("Dav")),
       hLocation(headerTableBuilder.add("Location")),
@@ -104,6 +107,11 @@ GatewayService::GatewayService(
       defaultHeaders(kj::HttpHeaders(tables.headerTable)) {
   // Tell chrome not to involve us in its spying on its users:
   defaultHeaders.set(tables.hPermissionsPolicy, "interest-cohort=()");
+  defaultHeaders.set(tables.hCrossOriginOpenerPolicy, "same-origin");
+  defaultHeaders.set(tables.hCrossOriginResourcePolicy, "same-site");
+  if (!allowLegacyRelaxedCSP) {
+    defaultHeaders.set(tables.hCrossOriginEmbedderPolicy, "require-corp");
+  }
 }
 
 template <typename Key, typename Value>
@@ -268,6 +276,7 @@ kj::Promise<void> GatewayService::requestHelper(
                 respHeaders.set(tables.hContentEncoding, resource.getEncoding());
               }
               respHeaders.set(tables.hAccessControlAllowOrigin, "*");
+              respHeaders.set(tables.hCrossOriginResourcePolicy, "cross-origin");
 
               auto body = resource.getBody();
               auto stream = response.send(200, "OK", respHeaders, body.size());
@@ -327,6 +336,7 @@ kj::Promise<void> GatewayService::requestHelper(
             "sandstorm-sid=", parsed.query[0].value, "; HttpOnly",
             baseUrl.scheme == "https" ? "; Secure" : ""));
         responseHeaders.set(tables.hLocation, kj::mv(path));
+        responseHeaders.set(tables.hCrossOriginResourcePolicy, "cross-origin");
 
         response.send(303, "See Other", responseHeaders, uint64_t(0));
         return kj::READY_NOW;
@@ -756,6 +766,7 @@ kj::Promise<void> GatewayService::getStaticPublished(
   }
 
   responseHeaders.set(tables.hCacheControl, "public, max-age=30");
+  responseHeaders.set(tables.hCrossOriginResourcePolicy, "cross-origin");
 
   if (path == "apps/index.json" ||
       (path.size() == 62 && path.startsWith("apps/") && path.endsWith(".json")) ||

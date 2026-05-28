@@ -78,6 +78,7 @@ function serveStaticAsset(req, res) {
           // To be safe, send these again, although it shouldn't be necessary.
           "Content-Security-Policy": assetCspHeader,
           "Access-Control-Allow-Origin": "*",
+          "Cross-Origin-Resource-Policy": "cross-origin",
           "X-Content-Type-Options": "nosniff",
         });
         res.end();
@@ -116,6 +117,7 @@ function serveStaticAsset(req, res) {
           // totally side-effect-free and the asset ID acts as a capability to prevent loading
           // assets you're not supposed to know about.
           "Access-Control-Allow-Origin": "*",
+          "Cross-Origin-Resource-Policy": "cross-origin",
 
           // Extra protection against content type trickery.
           "X-Content-Type-Options": "nosniff",

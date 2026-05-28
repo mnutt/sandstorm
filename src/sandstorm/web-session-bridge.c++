@@ -73,6 +73,9 @@ WebSessionBridge::Tables::Tables(kj::HttpHeaderTable::Builder& headerTableBuilde
       hContentEncoding(headerTableBuilder.add("Content-Encoding")),
       hContentLanguage(headerTableBuilder.add("Content-Language")),
       hContentSecurityPolicy(headerTableBuilder.add("Content-Security-Policy")),
+      hCrossOriginEmbedderPolicy(headerTableBuilder.add("Cross-Origin-Embedder-Policy")),
+      hCrossOriginOpenerPolicy(headerTableBuilder.add("Cross-Origin-Opener-Policy")),
+      hCrossOriginResourcePolicy(headerTableBuilder.add("Cross-Origin-Resource-Policy")),
       hCookie(headerTableBuilder.add("Cookie")),
       hETag(headerTableBuilder.add("ETag")),
       hIfMatch(headerTableBuilder.add("If-Match")),
@@ -80,7 +83,6 @@ WebSessionBridge::Tables::Tables(kj::HttpHeaderTable::Builder& headerTableBuilde
       hReferrerPolicy(headerTableBuilder.add("Referrer-Policy")),
       hSecWebSocketProtocol(headerTableBuilder.add("Sec-WebSocket-Protocol")),
       hVary(headerTableBuilder.add("Vary")),
-      hXFrameOptions(headerTableBuilder.add("X-Frame-Options")),
 
       hDav(headerTableBuilder.add("DAV")),
       hDepth(headerTableBuilder.add("Depth")),
@@ -1145,6 +1147,12 @@ kj::Promise<void> WebSessionBridge::handleResponse(
 
     kj::HttpHeaders headers(tables.headerTable);
 
+    headers.set(tables.hCrossOriginOpenerPolicy, "same-origin");
+    headers.set(tables.hCrossOriginResourcePolicy, "cross-origin");
+    if (!allowLegacyRelaxedCSP) {
+      headers.set(tables.hCrossOriginEmbedderPolicy, "require-corp");
+    }
+
     if (options.allowCookies && in.hasSetCookies()) {
       for (auto cookie: in.getSetCookies()) {
         kj::Vector<kj::StringPtr> parts;
@@ -1227,7 +1235,6 @@ kj::Promise<void> WebSessionBridge::handleResponse(
       KJ_ASSERT(!options.isApi);
       headers.set(tables.hContentSecurityPolicy,
           kj::str("frame-ancestors ", fr->parent, " ", fr->self));
-      headers.set(tables.hXFrameOptions, kj::str("ALLOW-FROM ", fr->parent));
     }
 
     auto addlHeaders = in.getAdditionalHeaders();
@@ -1260,10 +1267,6 @@ kj::Promise<void> WebSessionBridge::handleResponse(
     } else if(!allowLegacyRelaxedCSP) {
       // Disallow loading of remote resources. Note the following:
       //
-      // - Currently there are still exceptions for images and media, as these have
-      //   some legitimate use cases (e.g. embedding images in feeds in ttrss) and
-      //   we want to provide a way for a user to allow these via the UI before we
-      //   block them by default
       // - The unsafe-* directives are currently necessary to avoid breaking many
       //   apps. They make CSP not particularly useful in mitating XSS attacks,
       //   but do not present an information-leaking hazard.
@@ -1292,8 +1295,8 @@ kj::Promise<void> WebSessionBridge::handleResponse(
             "default-src 'none'; "
             "webrtc 'block'; "
 #define UNSAFE "'unsafe-inline' 'unsafe-eval' data: blob:; "
-            "img-src * " UNSAFE
-            "media-src * " UNSAFE
+            "img-src 'self' data: blob:; "
+            "media-src 'self' data: blob:; "
             "script-src 'self' " UNSAFE
             "style-src 'self' " UNSAFE
             "child-src 'self' " UNSAFE
