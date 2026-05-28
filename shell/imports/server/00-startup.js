@@ -19,17 +19,21 @@ import { Meteor } from "meteor/meteor";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
-import { globalFrontendRefRegistry } from "/imports/server/frontend-ref";
+import { deleteAccount } from "/imports/blackrock-payments/server/payments-server";
+import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
+import { getGlobalBackend } from "/imports/server/backend-instance";
 import { PersistentImpl } from "/imports/server/persistent";
 import { migrateToLatest, reconcileOidcUsersIndex } from "/imports/server/migrations";
 import { ACCOUNT_DELETION_SUSPENSION_TIME } from "/imports/constants";
 import { onInMeteor } from "/imports/server/async-helpers";
+import { registerPaymentsApi } from "/imports/blackrock-payments/server/payments-api-server";
+import { registerUiViewQueryHandler } from "/imports/sandstorm-ui-powerbox/powerbox-server";
 import { SandstormAutoupdateApps } from "/imports/sandstorm-autoupdate-apps/autoupdate-apps";
 let url = require("url");
 
-export const migrationsReady = migrateToLatest(globalDb, globalThis.globalBackend);
+export const migrationsReady = migrateToLatest(globalDb, getGlobalBackend());
 await migrationsReady;
-await reconcileOidcUsersIndex(globalDb, globalThis.globalBackend);
+await reconcileOidcUsersIndex(globalDb, getGlobalBackend());
 
 process.on('unhandledRejection', (reason, p) => {
   // Please Node, do not crash when a promise rejection isn't caught, thanks.
@@ -41,24 +45,24 @@ process.on('uncaughtException', (err) => {
   console.error("Unhandled exception: ", err);
 });
 
-globalThis.SandstormPowerbox.registerUiViewQueryHandler(globalFrontendRefRegistry);
+registerUiViewQueryHandler(frontendRefRegistry);
 
-if (Meteor.settings.public.stripePublicKey && globalThis.BlackrockPayments.registerPaymentsApi) {
-  // TODO(cleanup): Meteor.startup() needed because globalThis.unwrapFrontendCap is not defined yet when this
+if (Meteor.settings.public.stripePublicKey) {
+  // TODO(cleanup): Meteor.startup() needed because unwrapFrontendCap is not defined yet when this
   //   first runs. Move it into an import.
-  Meteor.startup(() => {
-    globalThis.BlackrockPayments.registerPaymentsApi(
-        globalFrontendRefRegistry, PersistentImpl, globalThis.unwrapFrontendCap);
+  Meteor.startup(async () => {
+    const { unwrapFrontendCap } = await import("/imports/server/core");
+    registerPaymentsApi(frontendRefRegistry, PersistentImpl, unwrapFrontendCap);
   });
 }
 
-globalThis.getWildcardOrigin = globalDb.getWildcardOrigin.bind(globalDb);
+export const getWildcardOrigin = globalDb.getWildcardOrigin.bind(globalDb);
 
 Meteor.onConnection((connection) => {
   // TODO(cleanup): This is the best way I've thought of so far to allow methods declared in
   //   packages to actually use the DB, but it's pretty sad.
   connection.sandstormDb = globalDb;
-  connection.frontendRefRegistry = globalFrontendRefRegistry;
+  connection.frontendRefRegistry = frontendRefRegistry;
 });
 SandstormDb.periodicCleanup(5 * 60 * 1000, SandstormPermissions.cleanupSelfDestructing(globalDb));
 SandstormDb.periodicCleanup(10 * 60 * 1000,
@@ -73,10 +77,10 @@ SandstormDb.periodicCleanup(24 * 60 * 60 * 1000, () => {
     console.error("Error updating app index:", err);
   });
 });
-const deleteAccount = Meteor.settings.public.stripePublicKey && globalThis.BlackrockPayments.deleteAccount;
+const deleteAccountHook = Meteor.settings.public.stripePublicKey && deleteAccount;
 SandstormDb.periodicCleanup(24 * 60 * 60 * 1000, () => {
-  globalDb.deletePendingAccounts(ACCOUNT_DELETION_SUSPENSION_TIME, globalThis.globalBackend,
-      deleteAccount).catch((err) => {
+  globalDb.deletePendingAccounts(ACCOUNT_DELETION_SUSPENSION_TIME, getGlobalBackend(),
+      deleteAccountHook).catch((err) => {
     console.error("Error deleting pending accounts:", err);
   });
 });

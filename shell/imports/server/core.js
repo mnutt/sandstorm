@@ -20,11 +20,13 @@ import { pick } from "/imports/shared/collection-utils";
 
 import Crypto from "crypto";
 import { inMeteor } from "/imports/server/async-helpers";
-import { globalFrontendRefRegistry } from "/imports/server/frontend-ref";
 import { StaticAssetImpl, IdenticonStaticAssetImpl } from "/imports/server/static-asset";
 import { PersistentImpl, hashSturdyRef, generateSturdyRef, checkRequirements,
          fetchApiToken, insertApiToken } from "/imports/server/persistent";
 import { SandstormBackend } from "/imports/server/backend";
+import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
+import { setGlobalBackend } from "/imports/server/backend-instance";
+import { logActivity } from "/imports/server/notifications-server";
 import { hashAppIdForIdenticon } from "/imports/sandstorm-identicons/helpers";
 import { globalDb } from "/imports/db-deprecated";
 import { schedulePeriodic, scheduleOneShot } from "/imports/server/scheduled-job";
@@ -56,7 +58,7 @@ class SandstormCoreImpl {
         throw new Error("no such token");
       }
 
-      return await globalThis.restoreInternal(this.db, sturdyRef,
+      return await restoreInternal(this.db, sturdyRef,
           { grain: Match.ObjectIncluding({ grainId: this.grainId }) },
           [], token);
     });
@@ -127,7 +129,7 @@ class SandstormCoreImpl {
             });
 
             return {
-              handle: await globalThis.globalFrontendRefRegistry.create(this.db,
+              handle: await frontendRefRegistry.create(this.db,
                   { notificationHandle: notificationId }),
             };
           });
@@ -138,7 +140,7 @@ class SandstormCoreImpl {
 
   backgroundActivity(event) {
     return inMeteor(() => {
-      return globalThis.logActivity(this.grainId, null, event);
+      return logActivity(this.grainId, null, event);
     });
   }
 
@@ -168,7 +170,7 @@ class SandstormCoreImpl {
   }
 
   getIdentityId(identity) {
-    return globalThis.unwrapFrontendCap(identity, "identity", async (accountId) => {
+    return unwrapFrontendCap(identity, "identity", async (accountId) => {
       const grain = await this.db.getGrainAsync(this.grainId);
       if (!grain) {
         throw new Error("Grain not found.");
@@ -291,7 +293,7 @@ const makePersistentUiView = async function (db, saveTemplate, grainId) {
                               PersistentUiView);
 };
 
-globalFrontendRefRegistry.register({
+frontendRefRegistry.register({
   frontendRefField: "notificationHandle",
 
   restore(db, saveTemplate, notificationId) {
@@ -310,7 +312,7 @@ async function dismissNotification(db, notificationId, callCancel) {
       if (!callCancel) {
         await dropInternal(db, id, { frontend: null });
       } else {
-        const notificationCap = (await globalThis.restoreInternal(db, id, { frontend: null }, [])).cap;
+        const notificationCap = (await restoreInternal(db, id, { frontend: null }, [])).cap;
         const castedNotification = notificationCap.castAs(PersistentOngoingNotification);
         await dropInternal(db, id, { frontend: null });
         try {
@@ -516,7 +518,7 @@ class DummyObserver {
   }
 }
 
-globalThis.restoreInternal = async (db, originalToken, ownerPattern, requirements, originalTokenInfo,
+export const restoreInternal = async (db, originalToken, ownerPattern, requirements, originalTokenInfo,
                          currentTokenId, currentTokenKey) => {
   // Restores the token `originalToken`, which is a Buffer.
   //
@@ -579,7 +581,7 @@ globalThis.restoreInternal = async (db, originalToken, ownerPattern, requirement
   if (token.parentToken) {
     // A token which chains to some parent token.  Restore the parent token (possibly recursively),
     // checking requirements on the way up.
-    return globalThis.restoreInternal(db, originalToken, Match.Any, requirements,
+    return restoreInternal(db, originalToken, Match.Any, requirements,
                            originalTokenInfo, token.parentToken, token.parentTokenKey);
   }
 
@@ -599,7 +601,7 @@ globalThis.restoreInternal = async (db, originalToken, ownerPattern, requirement
     const observer = new DummyObserver();
 
     // Ensure the grain is running, then restore the capability.
-    const cap = (await globalThis.globalBackend.useGrain(token.grainId, (supervisor) => {
+    const cap = (await globalBackend.useGrain(token.grainId, (supervisor) => {
       // Note that in this case it is the supervisor's job to implement SystemPersistent, so we
       // don't generate a saveTemplate here.
       let promise = supervisor.restore(token.objectId, [], new Buffer(originalToken, "utf8"));
@@ -617,7 +619,7 @@ globalThis.restoreInternal = async (db, originalToken, ownerPattern, requirement
     if (token.frontendRef) {
       // A token which represents a capability implemented by a pseudo-driver.
 
-      const cap = globalThis.globalFrontendRefRegistry.restore(db, saveTemplate, token.frontendRef);
+      const cap = frontendRefRegistry.restore(db, saveTemplate, token.frontendRef);
       return { cap };
     } else if (token.grainId) {
       // It's a UiView.
@@ -665,7 +667,7 @@ async function dropInternal(db, sturdyRef, ownerPattern) {
       });
     }
   } else if (token.objectId) {
-    await globalThis.globalBackend.useGrain(token.grainId, (supervisor) => {
+    await globalBackend.useGrain(token.grainId, (supervisor) => {
       return supervisor.drop(token.objectId);
     });
 
@@ -711,13 +713,14 @@ const backendAddress = { capabilityStreamFd: parseInt(process.env.SANDSTORM_BACK
 let sandstormBackendConnection = Capnp.connect(backendAddress, sandstormCoreFactory);
 let sandstormBackend = sandstormBackendConnection.restore(null, Backend);
 
-globalThis.globalBackend = new SandstormBackend(globalDb, sandstormBackend);
-globalThis.globalBackend._backendConnection = sandstormBackendConnection;  // ... don't GC this, please.
+const globalBackend = new SandstormBackend(globalDb, sandstormBackend);
+globalBackend._backendConnection = sandstormBackendConnection;  // ... don't GC this, please.
+setGlobalBackend(globalBackend);
 Meteor.onConnection((connection) => {
-  connection.sandstormBackend = globalThis.globalBackend;
+  connection.sandstormBackend = globalBackend;
 });
 
-globalThis.unwrapFrontendCap = (cap, type, callback) => {
+export const unwrapFrontendCap = (cap, type, callback) => {
   // Expect that `cap` is a Cap'n Proto capability implemented by the frontend as a frontendRef
   // with the given type (the name of one of the fields of frontendRef). Unwraps the capability
   // and then calls callback() with the `frontendRef[type]` descriptor object as

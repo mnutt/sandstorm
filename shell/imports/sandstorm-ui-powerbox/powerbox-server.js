@@ -207,7 +207,7 @@ class PowerboxOption {
   }
 }
 
-function registerUiViewQueryHandler(frontendRefRegistry) {
+export function registerUiViewQueryHandler(frontendRefRegistry) {
   // TODO(cleanup): Maybe this belongs in a different file? But where?
 
   frontendRefRegistry.register({
@@ -447,5 +447,3 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
     this.error(err);
   });
 });
-
-globalThis.SandstormPowerbox = { registerUiViewQueryHandler };

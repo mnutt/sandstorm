@@ -19,7 +19,9 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 
 import { allowDemo } from "/imports/demo";
 import { isSafeDemoAppUrl } from "/imports/install";
-import { globalDb } from "/imports/db-deprecated";
+import { SandstormAppInstall } from "/imports/client/apps/install-client";
+import { globalGrains } from "/imports/client/shell-state";
+import { globalDb, isDemoUser, isSignedUp } from "/imports/db-deprecated";
 
 Router.map(function () {
   this.route("install", {
@@ -122,4 +124,3 @@ Router.map(function () {
     },
   });
 });
-

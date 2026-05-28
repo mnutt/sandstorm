@@ -2,7 +2,7 @@ import { Meteor } from "meteor/meteor";
 import { Template } from "meteor/templating";
 
 import { prettySize } from "/imports/client/shell/formatting";
-import { globalDb } from "/imports/db-deprecated";
+import { globalDb, isUserOverQuota } from "/imports/db-deprecated";
 
 import "/imports/client/shell/styles/root-ui.scss";
 
@@ -17,6 +17,6 @@ Template.root.helpers({
   },
 
   overQuota: function () {
-    return !Meteor.settings.public.stripePublicKey && globalThis.isUserOverQuota(Meteor.user());
+    return !Meteor.settings.public.stripePublicKey && isUserOverQuota(Meteor.user());
   },
 });

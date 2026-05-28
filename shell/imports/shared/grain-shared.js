@@ -151,7 +151,7 @@ Meteor.methods({
             : globalDb.collections.grains.remove(grainsQuery);
       } else {
         const account = await Meteor.users.findOneAsync({ _id: this.userId });
-        numDeleted = await globalDb.deleteGrains(grainsQuery, globalThis.globalBackend,
+        numDeleted = await globalDb.deleteGrains(grainsQuery, this.connection.sandstormBackend,
             (account && account.expires) ? "demoGrain" : "grain");
       }
 

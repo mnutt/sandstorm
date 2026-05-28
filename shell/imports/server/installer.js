@@ -22,6 +22,7 @@ import { throttle } from "/imports/shared/collection-utils";
 
 import { inMeteor } from "/imports/server/async-helpers";
 import { withSsrfSafeFetch } from "/imports/server/networking";
+import { getGlobalBackend } from "/imports/server/backend-instance";
 import { globalDb } from "/imports/db-deprecated";
 
 let installers;  // set to {} on main replica
@@ -61,7 +62,7 @@ const deletePackageInternal = async (pkg) => {
         $set: { status: "delete" },
         $unset: { shouldCleanup: "" },
       });
-      await globalThis.globalBackend.cap().deletePackage(packageId);
+      await getGlobalBackend().cap().deletePackage(packageId);
       await globalDb.collections.packages.removeAsync(packageId);
 
       // Clean up assets (icon, etc).
@@ -286,7 +287,7 @@ class AppInstaller {
     return this.wrapCallback(() => {
       this.cleanup();
 
-      globalThis.globalBackend.cap().tryGetPackage(this.packageId).then(this.wrapCallback((info) => {
+      getGlobalBackend().cap().tryGetPackage(this.packageId).then(this.wrapCallback((info) => {
         if (info.appId) {
           this.appId = info.appId;
           this.authorPgpKeyFingerprint = info.authorPgpKeyFingerprint;
@@ -332,7 +333,7 @@ class AppInstaller {
       }, 500);
 
       const result = await readPackageFromStream(
-          Readable.fromWeb(response.body), globalThis.globalBackend, (chunkLen) => {
+          Readable.fromWeb(response.body), getGlobalBackend(), (chunkLen) => {
         bytesReceived += chunkLen;
         updateDownloadProgress();
       });

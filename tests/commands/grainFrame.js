@@ -36,10 +36,8 @@ exports.command = function(grainId) {
 
   return self.perform(function (client, done) {
     client.execute(function () {
-      var active = window.globalGrains && window.globalGrains.getActive &&
-          window.globalGrains.getActive();
-      if (active && active.grainId) {
-        return "#grain-frame-" + active.grainId();
+      if (window.__sandstormTest && window.__sandstormTest.activeGrainFrameSelector) {
+        return window.__sandstormTest.activeGrainFrameSelector();
       }
 
       return null;

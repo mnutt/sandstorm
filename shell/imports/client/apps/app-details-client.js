@@ -4,8 +4,11 @@ import { ReactiveVar } from "meteor/reactive-var";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { groupBy } from "/imports/shared/collection-utils";
 
+import { callMeteor } from "/imports/client/globals";
+import { launchAndEnterGrainByActionId, promptRestoreBackup } from "/imports/client/shell-client";
 import { iconSrcForPackage } from "/imports/sandstorm-identicons/helpers";
 import { SandstormDb } from "/imports/sandstorm-db/db";
+import { SandstormGrainListPage } from "/imports/client/grain/grainlist-client";
 
 import "/imports/client/apps/styles/app-details-ui.scss";
 
@@ -476,7 +479,7 @@ Template.sandstormAppDetailsPage.events({
     if (window.confirm("Really uninstall " + getAppTitle(ref) + "?")) {
       // TODO(soon): make this a method on SandstormDb to uninstall an app for a user by appId/userId
       db.collections.userActions.find({ appId: ref._appId, userId: Meteor.userId() }).forEach(function (action) {
-        globalThis.callMeteor("removeUserAction", action._id);
+        callMeteor("removeUserAction", action._id);
       });
 
       Router.go("apps");
@@ -490,7 +493,7 @@ Template.sandstormAppDetailsPage.events({
   "click .upgradeGrains": function (event) {
     const ref = Template.instance().data;
     const pkg = latestPackageForAppId(ref._db, ref._appId);
-    globalThis.callMeteor("upgradeGrains", ref._appId, pkg.manifest.appVersion, pkg._id);
+    callMeteor("upgradeGrains", ref._appId, pkg.manifest.appVersion, pkg._id);
   },
 
   "click button.toggle-show-trash": function (event, instance) {

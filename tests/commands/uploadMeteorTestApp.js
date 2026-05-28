@@ -39,7 +39,7 @@ exports.command = function() {
     .setValue("input[type=file]", testappPath)
     .execute(function () {
       const testappFile = document.querySelector("input[type=file]").files[0];
-      uploadApp(testappFile);
+      window.__sandstormTest.uploadApp(testappFile);
     }, [])
     .waitForElementVisible(confirmInstallSelector, long_wait)
     .click(confirmInstallSelector)

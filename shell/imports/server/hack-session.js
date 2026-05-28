@@ -28,7 +28,7 @@ import { inMeteor } from "/imports/server/async-helpers";
 import { ssrfSafeLookup } from "/imports/server/networking";
 import Capnp from "/imports/server/capnp";
 import { SandstormDb } from "/imports/sandstorm-db/db";
-import { globalDb } from "/imports/db-deprecated";
+import { globalDb, makeWildcardHost, matchWildcardHost } from "/imports/db-deprecated";
 
 const HackSessionContext = Capnp.importSystem("sandstorm/hack-session.capnp").HackSessionContext;
 const SystemPersistent = Capnp.importSystem("sandstorm/supervisor.capnp").SystemPersistent;
@@ -101,7 +101,8 @@ class SessionContextImpl {
                         "doesn't have a token.");
       }
 
-      return await globalThis.restoreInternal(
+      const { restoreInternal } = await import("/imports/server/core");
+      return await restoreInternal(
           globalDb, sturdyRef,
           { clientPowerboxRequest: Match.ObjectIncluding({ sessionId: this.sessionId }) },
           requirements, token);
@@ -244,8 +245,9 @@ class SessionContextImpl {
   }
 
   activity(event) {
-    return inMeteor(() => {
-      return globalThis.logActivity(this.grainId, this.accountId || "anonymous", event);
+    return inMeteor(async () => {
+      const { logActivity } = await import("/imports/server/notifications-server");
+      return logActivity(this.grainId, this.accountId || "anonymous", event);
     });
   }
 }
@@ -285,7 +287,8 @@ Meteor.methods({
       throw new Meteor.Error(400, "Invalid webkey: token doesn't match hostname.");
     }
 
-    const cap = (await globalThis.restoreInternal(db, token,
+    const { restoreInternal } = await import("/imports/server/core");
+    const cap = (await restoreInternal(db, token,
         Match.Optional({ webkey: Match.Optional(Match.Any) }), [])).cap;
     const castedCap = cap.castAs(SystemPersistent);
     const owner = {
@@ -295,7 +298,7 @@ Meteor.methods({
       },
     };
     if (saveLabel) {
-      grainOwner.saveLabel = {
+      owner.clientPowerboxRequest.saveLabel = {
         defaultText: saveLabel,
       };
     }
@@ -400,8 +403,9 @@ class HackSessionContextImpl extends SessionContextImpl {
     return result;
   }
 
-  send(email) {
-    return globalThis.hackSendEmail(this, email);
+  async send(email) {
+    const { hackSendEmail } = await import("/imports/server/drivers/mail");
+    return hackSendEmail(this, email);
   }
 
   getPublicId() {

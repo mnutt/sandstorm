@@ -53,7 +53,7 @@ function formatCents(cents) {
   return (cents / 100).toFixed(2);
 }
 
-globalThis.BlackrockPayments.registerPaymentsApi =
+export const registerPaymentsApi =
     (frontendRefRegistry, PersistentImpl, unwrapFrontendCap) => {
   class PaymentSourceImpl extends PersistentImpl {
     // A payment source, such as a credit card.

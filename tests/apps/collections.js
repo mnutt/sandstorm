@@ -73,13 +73,10 @@ module.exports["Test Collections"] = function (browser) {
 
           browser.executeAsync(function (bobAccountId, done) {
             // Share Collection A to Bob.
-            var grainId = Grains.findOne()._id;
-            Meteor.call("newApiToken", { accountId: Meteor.userId() },
-                        grainId, "petname", { allAccess: null },
-                        { user: { accountId: bobAccountId, title: "Collection A", } },
-                        function(error, result) {
-                          done({ error: error, grainId: grainId, });
-                        });
+            window.__sandstormTest.createApiTokenForFirstGrain(
+                { allAccess: null },
+                { user: { accountId: bobAccountId, title: "Collection A", } },
+                done);
           }, [bobAccountId], function (result) {
             var grainIdA = result.value.grainId;
             browser.assert.equal(!result.value.error, true);
@@ -262,13 +259,13 @@ module.exports["Test collections anonymous user"] = function (browser) {
     .installApp(COLLECTIONS_PACKAGE_URL, COLLECTIONS_PACKAGE_ID, COLLECTIONS_APP_ID);
   browser = setGrainTitle(browser, "Collection A");
   browser.executeAsync(function (done) {
-    var grainId = Grains.findOne()._id;
-    Meteor.call("newApiToken", { accountId: Meteor.userId() },
-                grainId, "petname", { allAccess: null },
-                { webkey: { forSharing: true }, },
-                function(error, result) {
-                  done({ error: error, grainId: grainId, token: (result || {}).token });
-                });
+    window.__sandstormTest.createApiTokenForFirstGrain(
+        { allAccess: null },
+        { webkey: { forSharing: true }, },
+        function(response) {
+          response.token = (response.result || {}).token;
+          done(response);
+        });
   }, [], function (result) {
     var grainIdA = result.value.grainId;
     var tokenA = result.value.token;

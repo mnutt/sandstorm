@@ -9,13 +9,14 @@ import SandstormAccountSettingsUi from "/imports/client/accounts/account-setting
 import AccountsUi from "/imports/client/accounts/accounts-ui";
 import { isDevelopmentServer } from "/imports/client/dev-mode";
 import downloadFile from "/imports/client/download-file";
-import { globalDb } from "/imports/db-deprecated";
+import { globalTopbar } from "/imports/client/shell-state";
+import { HasUsers } from "/imports/client/shell-client";
+import { globalDb, isAdmin, makeWildcardHost } from "/imports/db-deprecated";
 
 import "/imports/client/setup-wizard/styles/setup-wizard-ui.scss";
 
 // Pseudocollection telling the client if there's an admin user yet.
-const HasAdmin = new Mongo.Collection("hasAdmin");
-globalThis.HasAdmin = HasAdmin;
+export const HasAdmin = new Mongo.Collection("hasAdmin");
 
 const AdminToken = new Mongo.Collection("adminToken"); // see Meteor.publish("adminToken")
 

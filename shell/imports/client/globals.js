@@ -22,17 +22,15 @@ import { Tracker } from "meteor/tracker";
 import { ReactiveVar } from "meteor/reactive-var";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 
-const callMeteor = function (methodName, ...args) {
+export const callMeteor = function (methodName, ...args) {
   return Meteor.callAsync(methodName, ...args).catch((err) => {
     console.error(methodName + " failed:", err);
   });
 };
-globalThis.callMeteor = callMeteor;
 
-const getOrigin = function () {
+export const getOrigin = function () {
   return document.location.protocol + "//" + document.location.host;
 };
-globalThis.getOrigin = getOrigin;
 
 // Use HTML5 document visibility API to track whether Sandstorm is currently the foreground tab.
 // For old browsers that don't support the API, document.hidden will be undefined which is falsy --
@@ -40,8 +38,7 @@ globalThis.getOrigin = getOrigin;
 //
 // (Note that tracking window focus does not work because the Sandstorm window is considered
 // blured when focus is inside an iframe.)
-const browserTabHidden = new ReactiveVar(document.hidden);
-globalThis.browserTabHidden = browserTabHidden;
+export const browserTabHidden = new ReactiveVar(document.hidden);
 
 if ("visibilityState" in document) {
   document.addEventListener("visibilitychange", () => {
@@ -56,8 +53,7 @@ function currentPathFromWindow() {
   return window.location.pathname + window.location.search + window.location.hash;
 }
 
-const currentPath = new ReactiveVar(currentPathFromWindow());
-globalThis.currentPath = currentPath;
+export const currentPath = new ReactiveVar(currentPathFromWindow());
 
 Tracker.autorun(() => {
   // Set current path whenever IronRouter detects a change.
@@ -68,10 +64,9 @@ Tracker.autorun(() => {
   }
 });
 
-const currentPathChanged = () => {
+export const currentPathChanged = () => {
   // Call after using window.history API to change the path. IronRouter does not observe such
   // changes.
 
   currentPath.set(currentPathFromWindow());
 };
-globalThis.currentPathChanged = currentPathChanged;

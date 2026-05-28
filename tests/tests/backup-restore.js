@@ -182,7 +182,7 @@ module.exports["Test backup and restore"] = function(browser) {
       // This function is run in the browser context.
       var input = document.querySelector('button.restore-button input[type=file]');
       var file = input.files[0];
-      restoreBackup(file);
+      window.__sandstormTest.restoreBackup(file);
     }, [])
     .waitForElementVisible('#grainTitle', medium_wait)
     .assert.textContains('#grainTitle', 'Untitled Test App test page')

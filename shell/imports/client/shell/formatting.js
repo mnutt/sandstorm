@@ -15,4 +15,3 @@ export const prettySize = function (size) {
 
   return size.toPrecision(3) + suffix;
 };
-globalThis.prettySize = prettySize;

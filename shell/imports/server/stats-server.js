@@ -22,6 +22,7 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 
 import { globalDb } from "/imports/db-deprecated";
 import { httpCallAsync } from "/imports/server/http-helpers";
+import { getTotalCharges } from "/imports/blackrock-payments/server/payments-server";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -202,8 +203,8 @@ async function recordStats() {
     plans: planStats,
   };
   record.computeTime = Date.now() - now;
-  if (Meteor.settings.public.stripePublicKey && globalThis.BlackrockPayments.getTotalCharges) {
-    record.totalCharges = await globalThis.BlackrockPayments.getTotalCharges();
+  if (Meteor.settings.public.stripePublicKey) {
+    record.totalCharges = await getTotalCharges();
   }
 
   await globalDb.collections.activityStats.insertAsync(record);
