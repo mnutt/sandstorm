@@ -83,14 +83,13 @@ module.exports["Test open direct share link"] = function (browser) {
         .waitForElementVisible("#grainTitle", medium_wait)
         .assert.textContains("#grainTitle", expectedHackerCMSGrainTitle)
         .executeAsync(function (data, done) {
-          var grainId = Grains.findOne()._id;
-          Meteor.call("newApiToken", { accountId: Meteor.userId() },
-                      grainId, "petname", { allAccess: null },
-                      { user: { accountId: data, title: "user2 title", } },
-                      function(error, result) {
-                        Meteor.logout();
-                        done({ error: error, result: result, });
-                      });
+          window.__sandstormTest.createApiTokenForFirstGrain(
+              { allAccess: null },
+              { user: { accountId: data, title: "user2 title", } },
+              function(response) {
+                Meteor.logout();
+                done(response);
+              });
         }, [devAccountId2], function (result) {
           browser.assert.equal(!result.value.error, true)
           browser
@@ -229,13 +228,10 @@ module.exports["Test revoked share link"] = function (browser) {
     .waitForElementVisible("#grainTitle", medium_wait)
     .assert.textContains("#grainTitle", expectedHackerCMSGrainTitle)
     .executeAsync(function (done) {
-      var grainId = Grains.findOne()._id;
-      Meteor.call("newApiToken", { accountId: Meteor.userId() },
-                  grainId, "petname", { allAccess: null },
-                  { webkey: { forSharing: true }, },
-                  function(error, result) {
-                    done({ error: error, result: result, });
-                  });
+      window.__sandstormTest.createApiTokenForFirstGrain(
+          { allAccess: null },
+          { webkey: { forSharing: true }, },
+          done);
     }, [], function (result) {
       browser.assert.equal(!result.value.error, true)
       browser.executeAsync(function(tokenId, done) {

@@ -21,6 +21,7 @@ import { _ } from "meteor/underscore";
 import { inMeteor } from "/imports/server/async-helpers";
 import { httpCallAsync } from "/imports/http-helpers";
 import { PersistentImpl } from "/imports/server/persistent";
+import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
 import { ssrfSafeLookup } from "/imports/server/networking";
 import { REQUEST_HEADER_WHITELIST, RESPONSE_HEADER_WHITELIST }
     from "/imports/server/header-whitelist";
@@ -225,7 +226,7 @@ function registerHttpApiFrontendRef(registry) {
   });
 }
 
-Meteor.startup(() => { registerHttpApiFrontendRef(globalThis.globalFrontendRefRegistry); });
+Meteor.startup(() => { registerHttpApiFrontendRef(frontendRefRegistry); });
 
 // =======================================================================================
 

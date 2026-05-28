@@ -23,7 +23,7 @@ import { createAppActivityDesktopNotification } from "/imports/server/desktop-no
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 
-globalThis.logActivity = async function (grainId, accountIdOrAnonymous, event) {
+export async function logActivity(grainId, accountIdOrAnonymous, event) {
   // accountIdOrAnonymous is the string "anonymous" for an anonymous user, or is null for a
   // non-user-initiated ("background") activity.
 
@@ -109,10 +109,11 @@ globalThis.logActivity = async function (grainId, accountIdOrAnonymous, event) {
 
   // Add everyone who is mentioned.
   if (event.users && event.users.length > 0) {
+    const { unwrapFrontendCap } = await import("/imports/server/core");
     const promises = [];
     event.users.forEach(user => {
       if (user.identity && (user.mentioned || user.subscribed)) {
-        promises.push(globalThis.unwrapFrontendCap(user.identity, "identity", targetId => {
+        promises.push(unwrapFrontendCap(user.identity, "identity", targetId => {
           addRecipient({ accountId: targetId });
         }));
       }
@@ -209,7 +210,7 @@ globalThis.logActivity = async function (grainId, accountIdOrAnonymous, event) {
     });
     await Promise.all(notifyPromises);
   }
-};
+}
 
 Meteor.methods({
   testNotifications: async function () {

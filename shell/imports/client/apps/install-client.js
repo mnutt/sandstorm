@@ -3,6 +3,7 @@ import { Template } from "meteor/templating";
 import { ReactiveVar } from "meteor/reactive-var";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 
+import { callMeteor } from "/imports/client/globals";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
 const INSTALL_STEPS = ["download", "verify", "unpack", "analyze", "ready", "failed", "delete"];
@@ -10,7 +11,7 @@ const checkStep = function (step) {
   if (INSTALL_STEPS.indexOf(step) === -1) throw new Error("Invalid step " + step + ".");
 };
 
-const SandstormAppInstall = class SandstormAppInstall {
+export const SandstormAppInstall = class SandstormAppInstall {
   constructor(packageId, packageUrl, db) {
     this._packageId = packageId;
     this._packageUrl = packageUrl;
@@ -128,7 +129,6 @@ const SandstormAppInstall = class SandstormAppInstall {
     return Math.round(progress * 100) + "%";
   }
 };
-globalThis.SandstormAppInstall = SandstormAppInstall;
 
 Template.sandstormAppInstallPage.onCreated(function () {
   const ref = Template.instance().data;
@@ -256,7 +256,7 @@ Template.sandstormAppInstallPage.helpers({
 Template.sandstormAppInstallPage.events({
   "click #retry": function (event) {
     const ref = Template.instance().data;
-    globalThis.callMeteor("ensureInstalled", ref._packageId, ref._packageUrl, true);
+    callMeteor("ensureInstalled", ref._packageId, ref._packageUrl, true);
   },
 
   "click #cancelDownload": function (event) {
@@ -267,6 +267,6 @@ Template.sandstormAppInstallPage.events({
 
   "click #confirmInstall": function (event) {
     const ref = Template.instance().data;
-    globalThis.callMeteor("addUserActions", ref.packageId());
+    callMeteor("addUserActions", ref.packageId());
   },
 });

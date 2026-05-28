@@ -21,6 +21,7 @@ import { Accounts } from "meteor/accounts-base";
 import { allowDemo } from "/imports/demo";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
+import { getGlobalBackend } from "/imports/server/backend-instance";
 
 const DEMO_EXPIRATION_MS = 60 * 60 * 1000;
 const DEMO_GRACE_MS = 10 * 60 * 1000;  // time between expiration and deletion
@@ -61,7 +62,7 @@ async function cleanupExpiredUsers() {
       .fetchAsync();
   for (const user of expiredUsers) {
     console.log("delete demo user: " + user._id);
-    await globalDb.deleteAccount(user._id, globalThis.globalBackend);
+    await globalDb.deleteAccount(user._id, getGlobalBackend());
 
     // Record stats about demo accounts.
     let deleteStatsType = "demoUser";

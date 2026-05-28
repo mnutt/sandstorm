@@ -24,7 +24,9 @@ import { _ } from "meteor/underscore";
 
 import { formatFutureTime } from "/imports/dates";
 import { ACCOUNT_DELETION_SUSPENSION_TIME } from "/imports/constants";
+import { callMeteor } from "/imports/client/globals";
 import SandstormAccountSettingsUi from "/imports/client/accounts/account-settings-ui";
+import { processOptins } from "/imports/blackrock-payments/client/payments-client";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
 Template.sandstormAccountSettings.onCreated(function () {
@@ -271,7 +273,7 @@ Template.sandstormAccountSettings.events({
   },
 
   "click button.make-primary": function (ev, instance) {
-    globalThis.callMeteor("setPrimaryEmail", ev.target.getAttribute("data-email"));
+    callMeteor("setPrimaryEmail", ev.target.getAttribute("data-email"));
   },
 
   "input input.confirm": function (evt, instance) {
@@ -369,7 +371,7 @@ const submitProfileForm = function (form, cb) {
   // Stop here unless payments are enabled.
   if (Meteor.settings.public.stripePublicKey) {
     // Pass off to payments module.
-    globalThis.BlackrockPayments.processOptins(form);
+    processOptins(form);
   }
 };
 

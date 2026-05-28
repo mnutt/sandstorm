@@ -20,12 +20,15 @@ import { HTTP } from "meteor/http";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
-import { FrontendRefRegistry } from "/imports/server/frontend-ref";
+import { deleteAccount } from "/imports/blackrock-payments/server/payments-server";
+import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
+import { getGlobalBackend } from "/imports/server/backend-instance";
 import { PersistentImpl } from "/imports/server/persistent";
 import { migrateToLatest } from "/imports/server/migrations";
 import { ACCOUNT_DELETION_SUSPENSION_TIME } from "/imports/constants";
-import { onInMeteor } from "/imports/server/async-helpers";
 import { monkeyPatchHttp } from "/imports/server/networking";
+import { registerPaymentsApi } from "/imports/blackrock-payments/server/payments-api-server";
+import { registerUiViewQueryHandler } from "/imports/sandstorm-ui-powerbox/powerbox-server";
 import { SandstormAutoupdateApps } from "/imports/sandstorm-autoupdate-apps/autoupdate-apps";
 let url = require("url");
 
@@ -39,26 +42,24 @@ process.on('uncaughtException', (err) => {
   console.error("Unhandled exception: ", err);
 });
 
-globalThis.globalFrontendRefRegistry = new FrontendRefRegistry();
+registerUiViewQueryHandler(frontendRefRegistry);
 
-globalThis.SandstormPowerbox.registerUiViewQueryHandler(globalThis.globalFrontendRefRegistry);
-
-if (Meteor.settings.public.stripePublicKey && globalThis.BlackrockPayments.registerPaymentsApi) {
-  // TODO(cleanup): Meteor.startup() needed because globalThis.unwrapFrontendCap is not defined yet when this
+if (Meteor.settings.public.stripePublicKey) {
+  // TODO(cleanup): Meteor.startup() needed because unwrapFrontendCap is not defined yet when this
   //   first runs. Move it into an import.
-  Meteor.startup(() => {
-    globalThis.BlackrockPayments.registerPaymentsApi(
-        globalThis.globalFrontendRefRegistry, PersistentImpl, globalThis.unwrapFrontendCap);
+  Meteor.startup(async () => {
+    const { unwrapFrontendCap } = await import("/imports/server/core");
+    registerPaymentsApi(frontendRefRegistry, PersistentImpl, unwrapFrontendCap);
   });
 }
 
-globalThis.getWildcardOrigin = globalDb.getWildcardOrigin.bind(globalDb);
+export const getWildcardOrigin = globalDb.getWildcardOrigin.bind(globalDb);
 
 Meteor.onConnection((connection) => {
   // TODO(cleanup): This is the best way I've thought of so far to allow methods declared in
   //   packages to actually use the DB, but it's pretty sad.
   connection.sandstormDb = globalDb;
-  connection.frontendRefRegistry = globalThis.globalFrontendRefRegistry;
+  connection.frontendRefRegistry = frontendRefRegistry;
 });
 SandstormDb.periodicCleanup(5 * 60 * 1000, SandstormPermissions.cleanupSelfDestructing(globalDb));
 SandstormDb.periodicCleanup(10 * 60 * 1000,
@@ -73,10 +74,10 @@ SandstormDb.periodicCleanup(24 * 60 * 60 * 1000, () => {
     console.error("Error updating app index:", err);
   });
 });
-const deleteAccount = Meteor.settings.public.stripePublicKey && globalThis.BlackrockPayments.deleteAccount;
+const deleteAccountHook = Meteor.settings.public.stripePublicKey && deleteAccount;
 SandstormDb.periodicCleanup(24 * 60 * 60 * 1000, () => {
-  globalDb.deletePendingAccounts(ACCOUNT_DELETION_SUSPENSION_TIME, globalThis.globalBackend,
-      deleteAccount).catch((err) => {
+  globalDb.deletePendingAccounts(ACCOUNT_DELETION_SUSPENSION_TIME, getGlobalBackend(),
+      deleteAccountHook).catch((err) => {
     console.error("Error deleting pending accounts:", err);
   });
 });
@@ -84,7 +85,7 @@ SandstormDb.periodicCleanup(24 * 60 * 60 * 1000, () => {
 monkeyPatchHttp(globalDb, HTTP);
 
 Meteor.startup(() => {
-  migrateToLatest(globalDb, globalThis.globalBackend).catch((err) => {
+  migrateToLatest(globalDb, getGlobalBackend()).catch((err) => {
     console.error("Migration startup failed:", err.stack || err);
     throw err;
   });

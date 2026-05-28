@@ -139,7 +139,6 @@ import "../imports/client/grain/contact-autocomplete";
 import "../imports/client/grain/grainlist-client";
 import "../imports/client/grain/settings-client";
 import "../imports/client/setup-wizard/wizard";
-import "../imports/client/vendor/ansi-up";
 import "../imports/client/widgets/widgets-client";
 import "../imports/db-deprecated";
 import "../imports/client/00-startup";

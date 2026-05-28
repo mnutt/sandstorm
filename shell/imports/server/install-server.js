@@ -23,6 +23,7 @@ import { allowDemo } from "/imports/demo";
 import { isSafeDemoAppUrl } from "/imports/install"
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
+import { getGlobalBackend } from "/imports/server/backend-instance";
 import { cancelDownload, readPackageFromStream } from "/imports/server/installer";
 
 const TOKEN_CLEANUP_MINUTES = 120;  // Give enough time for large uploads on slow connections.
@@ -31,7 +32,7 @@ const TOKEN_CLEANUP_TIMER = TOKEN_CLEANUP_MINUTES * 60 * 1000;
 async function cleanupToken(tokenId) {
   check(tokenId, String);
   await globalDb.collections.spkTokens.removeAsync({ _id: tokenId });
-  await globalThis.globalBackend.cap().deleteBackup(tokenId);
+  await getGlobalBackend().cap().deleteBackup(tokenId);
 }
 
 Meteor.startup(() => {
@@ -88,7 +89,7 @@ Meteor.methods({
 
   upgradeGrains: async function (appId, version, packageId) {
     await this.connection.sandstormDb.upgradeGrains(
-        appId, version, packageId, globalThis.globalBackend);
+        appId, version, packageId, getGlobalBackend());
   },
 
   ensureInstalled: async function (packageId, url, isRetry) {
@@ -169,7 +170,7 @@ Router.map(function () {
         this.response.end();
       } else if (this.request.method === "POST") {
         try {
-          const packageId = (await readPackageFromStream(this.request, globalThis.globalBackend)).packageId;
+          const packageId = (await readPackageFromStream(this.request, getGlobalBackend())).packageId;
           this.response.writeHead(200, {
             "Content-Length": packageId.length,
             "Content-Type": "text/plain",

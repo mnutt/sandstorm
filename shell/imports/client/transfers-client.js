@@ -21,6 +21,7 @@ import { TAPi18n } from "/imports/tapi18n";
 
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
+import { globalSubs, prettySize } from "/imports/client/shell-client";
 
 function isValidServerUrl(str) {
   let url;

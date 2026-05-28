@@ -168,5 +168,5 @@ ansi_up = {
   }
 };
 
-// Meteor export.
-globalThis.AnsiUp = ansi_up;
+export const AnsiUp = ansi_up;
+export default ansi_up;

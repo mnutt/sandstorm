@@ -16,8 +16,10 @@
 
 import { Accounts } from "meteor/accounts-base";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
+import { registerTestApi } from "/imports/client/test-api";
+import { setDevAccountLoginHandler } from "/imports/shared/dev-accounts";
 
-const loginDevAccount = function (displayName, isAdmin, callback) {
+export const loginDevAccount = function (displayName, isAdmin, callback) {
   Accounts.callLoginMethod({
     methodName: "createDevAccount",
     methodArguments: [displayName, isAdmin],
@@ -30,12 +32,8 @@ const loginDevAccount = function (displayName, isAdmin, callback) {
     },
   });
 };
-globalThis.loginDevAccount = loginDevAccount;
-if (typeof window !== "undefined") {
-  window.loginDevAccount = loginDevAccount;
-}
 
-const loginDevAccountFast = function (displayName, isAdmin) {
+export const loginDevAccountFast = function (displayName, isAdmin) {
   return new Promise(function (resolve, reject) {
     // This skips the firstSignUp page. Mostly used for testing purposes.
     const profile = {
@@ -58,7 +56,10 @@ const loginDevAccountFast = function (displayName, isAdmin) {
     });
   });
 };
-globalThis.loginDevAccountFast = loginDevAccountFast;
-if (typeof window !== "undefined") {
-  window.loginDevAccountFast = loginDevAccountFast;
-}
+
+setDevAccountLoginHandler(loginDevAccount);
+
+registerTestApi({
+  loginDevAccount,
+  loginDevAccountFast,
+});

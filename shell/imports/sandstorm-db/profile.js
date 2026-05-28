@@ -132,7 +132,7 @@ if (Meteor.isServer) {
 
   makeIdenticon = function (id) {
     const hash = id.slice(0, 32);
-    return httpProtocol + "//" + makeWildcardHost("static") + "/identicon/" + hash + "?s=256";
+    return httpProtocol + "//" + globalDb.makeWildcardHost("static") + "/identicon/" + hash + "?s=256";
   };
 
   const Url = Npm.require("url");
@@ -437,7 +437,7 @@ SandstormDb.prototype.findAccountsByEmail = async function (email) {
 };
 
 SandstormDb.fillInPictureUrl = function (user) {
-  const staticHost = httpProtocol + "//" + makeWildcardHost("static");
+  const staticHost = httpProtocol + "//" + globalDb.makeWildcardHost("static");
   let url = staticAssetUrl(user.profile.picture, staticHost);
   if (!url && user.profile && user.profile.identicon) {
     url = makeIdenticon(user.profile.identicon);

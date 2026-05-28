@@ -7,10 +7,13 @@ import { _ } from "meteor/underscore";
 import { TAPi18n } from "/imports/tapi18n";
 
 import { introJs } from "intro.js";
+import { callMeteor } from "/imports/client/globals";
 import { isDevelopmentServer } from "/imports/client/dev-mode";
+import { promptUploadApp } from "/imports/client/shell-client";
 import { SandstormDb } from "/imports/sandstorm-db/db";
+import { isSignedUpOrDemo, makeWildcardHost } from "/imports/db-deprecated";
 
-const SandstormAppList = function (db, quotaEnforcer) {
+export const SandstormAppList = function (db, quotaEnforcer) {
   this._filter = new ReactiveVar("");
   this._sortOrder = new ReactiveVar([["appTitle", 1]]);
   this._staticHost = db.makeWildcardHost("static");
@@ -18,7 +21,6 @@ const SandstormAppList = function (db, quotaEnforcer) {
   this._quotaEnforcer = quotaEnforcer;
   this._uninstalling = new ReactiveVar(false);
 };
-globalThis.SandstormAppList = SandstormAppList;
 
 const matchesApp = function (needle, app) {
   const pkg = app && app.pkg;
@@ -233,7 +235,7 @@ Template.sandstormAppListPage.events({
     const db = Template.instance().data._db;
     const appId = this.appId;
     db.collections.userActions.find({ appId: this.appId }).forEach(function (action) {
-      globalThis.callMeteor("removeUserAction", action._id);
+      callMeteor("removeUserAction", action._id);
     });
   },
 

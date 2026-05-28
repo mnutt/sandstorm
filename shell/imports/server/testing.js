@@ -14,8 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/* global MailchimpSubscribers */
-
 import { Meteor } from "meteor/meteor";
 import { Accounts } from "meteor/accounts-base";
 import { HTTP } from "meteor/http";
@@ -23,13 +21,18 @@ import { Random } from "meteor/random";
 import { SHA256 } from "meteor/sha";
 import { ServiceConfiguration } from "meteor/service-configuration";
 import { globalDb } from "/imports/db-deprecated";
+import { getGlobalBackend } from "/imports/server/backend-instance";
 import { httpCallAsync } from "/imports/http-helpers";
 import { checkAuthAsync, clearAdminToken } from "/imports/server/auth";
 import { setAccountSuspensionEmailSenderForTests } from "/imports/server/account-suspension";
 import { setAdminEmailSenderForTests } from "/imports/server/admin-server";
+import { getCurrentTlsKeysCallback, setCurrentTlsKeysCallback } from "/imports/server/tls-keys-callback";
 import {
   handleWebhookEvent,
+  MailchimpSubscribers,
+  setPaymentsEmailSenderForTests,
   setPaymentsHttpCallForTests,
+  setSuspendAccountForTests,
   stripe as testStripe,
   updateMailchimp,
 } from "/imports/blackrock-payments/server/payments-server";
@@ -59,7 +62,7 @@ async function clearUser(id) {
   await globalDb.removeApiTokens({ userId: id });
   const grains = await globalDb.collections.grains.find({ userId: id }).fetchAsync();
   for (const grain of grains) {
-    await globalThis.globalBackend.deleteGrain(grain._id);
+    await getGlobalBackend().deleteGrain(grain._id);
   }
 
   await globalDb.collections.grains.removeAsync({ userId: id });
@@ -392,7 +395,7 @@ if(isTesting) {
             userId: accountId,
             connection: {
               sandstormDb: globalDb,
-              sandstormBackend: globalThis.globalBackend,
+              sandstormBackend: getGlobalBackend(),
             },
           }, [email, token, false]);
         } catch (err) {
@@ -544,7 +547,7 @@ if(isTesting) {
           userId: null,
           connection: {
             sandstormDb: globalDb,
-            sandstormBackend: globalThis.globalBackend,
+            sandstormBackend: getGlobalBackend(),
           },
         }, [email, options]);
       };
@@ -730,7 +733,6 @@ if(isTesting) {
       const backendDeletedUsers = [];
       const callbackDeletedUsers = [];
       const oldStripePublicKey = Meteor.settings.public.stripePublicKey;
-      const oldPaymentsSuspend = globalThis.BlackrockPayments.suspendAccount;
 
       const insertAccountWithCredential = async (accountId, credentialId, email, fields) => {
         await Meteor.users.insertAsync({
@@ -759,7 +761,7 @@ if(isTesting) {
           userId,
           connection: {
             sandstormDb: globalDb,
-            sandstormBackend: globalThis.globalBackend,
+            sandstormBackend: getGlobalBackend(),
           },
         }, args);
       };
@@ -770,9 +772,9 @@ if(isTesting) {
         sentEmails.push({ ...message });
       });
       Meteor.settings.public.stripePublicKey = "pk_test_enabled";
-      globalThis.BlackrockPayments.suspendAccount = async function (_db, userId) {
+      setSuspendAccountForTests(async function (_db, userId) {
         suspendedPaymentUsers.push(userId);
-      };
+      });
 
       await globalDb.collections.settings.upsertAsync({ _id: "serverTitle" }, {
         $set: { value: "Suspension Test Server" },
@@ -931,8 +933,8 @@ if(isTesting) {
         return true;
       } finally {
         setAccountSuspensionEmailSenderForTests(null);
+        setSuspendAccountForTests(null);
         Meteor.settings.public.stripePublicKey = oldStripePublicKey;
-        globalThis.BlackrockPayments.suspendAccount = oldPaymentsSuspend;
         await globalDb.collections.settings.removeAsync({
           _id: { $in: ["serverTitle", "smtpConfig", "organizationMembership"] },
         });
@@ -1239,7 +1241,7 @@ if(isTesting) {
           userId: callerId,
           connection: {
             sandstormDb: globalDb,
-            sandstormBackend: globalThis.globalBackend,
+            sandstormBackend: getGlobalBackend(),
           },
         }, [notificationId]);
       };
@@ -1248,7 +1250,7 @@ if(isTesting) {
           userId: callerId,
           connection: {
             sandstormDb: globalDb,
-            sandstormBackend: globalThis.globalBackend,
+            sandstormBackend: getGlobalBackend(),
           },
         }, []);
       };
@@ -1400,13 +1402,13 @@ if(isTesting) {
         "organizationSettings",
         "tlsKeys",
       ];
-      const originalTlsCallback = globalThis.currentTlsKeysCallback;
+      const originalTlsCallback = getCurrentTlsKeysCallback();
 
       const adminContext = {
         userId: adminId,
         connection: {
           sandstormDb: globalDb,
-          sandstormBackend: globalThis.globalBackend,
+          sandstormBackend: getGlobalBackend(),
         },
         unblock() {},
       };
@@ -1614,7 +1616,7 @@ if(isTesting) {
         }
 
         let tlsCallbackCalled = false;
-        globalThis.currentTlsKeysCallback = {
+        setCurrentTlsKeysCallback({
           async setKeys(key, certChain) {
             tlsCallbackCalled = true;
             if (key !== "test-key" || certChain !== "test-cert") {
@@ -1622,7 +1624,7 @@ if(isTesting) {
                   "setTlsKeys passed unexpected values to currentTlsKeysCallback.");
             }
           },
-        };
+        });
         await callAdminMethod("setTlsKeys", [null, { key: "test-key", certChain: "test-cert" }]);
         setting = await globalDb.collections.settings.findOneAsync("tlsKeys");
         if (!tlsCallbackCalled || !setting ||
@@ -1631,11 +1633,11 @@ if(isTesting) {
               "setTlsKeys did not validate and persist TLS keys.");
         }
 
-        globalThis.currentTlsKeysCallback = {
+        setCurrentTlsKeysCallback({
           async setKeys() {
             throw new Meteor.Error("synthetic-tls-failure", "Synthetic TLS validation failure.");
           },
-        };
+        });
         try {
           await callAdminMethod("setTlsKeys", [null, { key: "bad-key", certChain: "bad-cert" }]);
           throw new Meteor.Error("admin-tls-failure-accepted",
@@ -1702,7 +1704,7 @@ if(isTesting) {
         return true;
       } finally {
         setAdminEmailSenderForTests(null);
-        globalThis.currentTlsKeysCallback = originalTlsCallback;
+        setCurrentTlsKeysCallback(originalTlsCallback);
         await ServiceConfiguration.configurations.removeAsync({ service: { $in: ["github", "oidc"] } });
         await globalDb.collections.settings.removeAsync({ _id: { $in: settingIds } });
         await globalDb.collections.signupKeys.removeAsync({
@@ -1728,7 +1730,6 @@ if(isTesting) {
       const originalEventsRetrieve = testStripe.events.retrieve;
       const originalCustomersRetrieve = testStripe.customers.retrieve;
       const originalSubscriptionsDel = testStripe.subscriptions.del;
-      const originalSandstormEmail = globalThis.SandstormEmail;
       const oldMailchimpListId = Meteor.settings.mailchimpListId;
       const oldMailchimpKey = Meteor.settings.mailchimpKey;
       const eventById = {};
@@ -1787,11 +1788,9 @@ if(isTesting) {
       await insertAccountWithEmail(mailchimpUserId, mailchimpCredentialId,
           "mailchimp-user@example.com", {});
 
-      globalThis.SandstormEmail = {
-        async send(message) {
-          sentPaymentEmails.push(message);
-        },
-      };
+      setPaymentsEmailSenderForTests(async function (message) {
+        sentPaymentEmails.push(message);
+      });
       testStripe.events.retrieve = async function (eventId) {
         return eventById[eventId];
       };
@@ -1941,7 +1940,7 @@ if(isTesting) {
         testStripe.events.retrieve = originalEventsRetrieve;
         testStripe.customers.retrieve = originalCustomersRetrieve;
         testStripe.subscriptions.del = originalSubscriptionsDel;
-        globalThis.SandstormEmail = originalSandstormEmail;
+        setPaymentsEmailSenderForTests(null);
         Meteor.settings.mailchimpListId = oldMailchimpListId;
         Meteor.settings.mailchimpKey = oldMailchimpKey;
         setPaymentsHttpCallForTests(null);
@@ -1976,7 +1975,7 @@ if(isTesting) {
         userId: id,
         connection: {
           sandstormDb: globalDb,
-          sandstormBackend: globalThis.globalBackend,
+          sandstormBackend: getGlobalBackend(),
         },
       });
       const callTransferMethod = async (name, user, args) => {

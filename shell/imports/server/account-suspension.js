@@ -18,6 +18,7 @@ import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
 import { _ } from "meteor/underscore";
 
+import { suspendAccount } from "/imports/blackrock-payments/server/payments-server";
 import { send } from "/imports/server/email";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
@@ -106,7 +107,7 @@ Meteor.methods({
     const db = this.connection.sandstormDb;
 
     if (Meteor.settings.public.stripePublicKey) {
-      await globalThis.BlackrockPayments.suspendAccount(db, userId);
+      await suspendAccount(db, userId);
     }
 
     await db.suspendAccount(userId, this.userId, willDelete);
@@ -129,7 +130,7 @@ Meteor.methods({
     }
 
     if (Meteor.settings.public.stripePublicKey) {
-      await globalThis.BlackrockPayments.suspendAccount(db, this.userId);
+      await suspendAccount(db, this.userId);
     }
 
     await db.suspendAccount(this.userId, null, true);

@@ -17,6 +17,7 @@
 import { Meteor } from "meteor/meteor";
 
 import { fetchApiToken } from "/imports/server/persistent";
+import { getGlobalBackend } from "/imports/server/backend-instance";
 import Capnp from "/imports/server/capnp";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
@@ -85,11 +86,12 @@ export const runDueJobs = async (nowMillis) => {
     let intervalHandle;
 
     promises.push(Promise.resolve().then(async () => {
-      let callback = (await globalThis.restoreInternal(db, job.callback, { frontend: null }, [], token)).cap;
+      const { restoreInternal } = await import("/imports/server/core");
+      let callback = (await restoreInternal(db, job.callback, { frontend: null }, [], token)).cap;
       callback = callback.castAs(ScheduledJob.Callback);
 
       intervalHandle = Meteor.setInterval(() => {
-        globalThis.globalBackend.useGrain(job.grainId, (supervisor) => {
+        getGlobalBackend().useGrain(job.grainId, (supervisor) => {
           return supervisor.keepAlive();
         });
         db.updateScheduledJobKeepAlive(job._id).catch((err) => {
