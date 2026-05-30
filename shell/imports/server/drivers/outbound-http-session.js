@@ -17,7 +17,6 @@
 import { Meteor } from "meteor/meteor";
 import { Match, check } from "meteor/check";
 
-import Url from "url";
 import Http from "http";
 import Https from "https";
 import Request from "request";
@@ -53,6 +52,8 @@ const BLOCKED_HEADERS = new Set([
 ]);
 
 const OUTBOUND_HTTP_REQUEST_TIMEOUT_MS = 120 * 1000;
+const ENCODED_PATH_SEPARATOR = /%(2f|5c)/i;
+const INVALID_PERCENT_ENCODING = /%(?![0-9a-fA-F]{2})/;
 
 function makeTimeoutError() {
   const err = new Error("Outbound HTTP request timed out.");
@@ -60,19 +61,76 @@ function makeTimeoutError() {
   return err;
 }
 
+function isDotSegment(segment) {
+  const lower = segment.toLowerCase();
+  return lower === "." ||
+      lower === ".." ||
+      lower === "%2e" ||
+      lower === ".%2e" ||
+      lower === "%2e." ||
+      lower === "%2e%2e";
+}
+
+function validatePathScope(pathname, description) {
+  if (INVALID_PERCENT_ENCODING.test(pathname)) {
+    throw new Meteor.Error(400, description + " must not contain malformed percent escapes.");
+  }
+
+  if (pathname.includes("\\") || ENCODED_PATH_SEPARATOR.test(pathname)) {
+    throw new Meteor.Error(400, description + " must not contain encoded slashes.");
+  }
+
+  if (pathname.split("/").some(isDotSegment)) {
+    throw new Meteor.Error(400, description + " must not contain dot segments.");
+  }
+}
+
+function rawPathnameFromHttpUrl(url) {
+  const authority = /^https?:\/\/[^/?#]*/i.exec(url);
+  if (!authority) return null;
+
+  const pathStart = authority[0].length;
+  if (url[pathStart] !== "/") return "/";
+
+  let pathEnd = url.length;
+  const queryStart = url.indexOf("?", pathStart);
+  const fragmentStart = url.indexOf("#", pathStart);
+  if (queryStart !== -1) pathEnd = Math.min(pathEnd, queryStart);
+  if (fragmentStart !== -1) pathEnd = Math.min(pathEnd, fragmentStart);
+
+  return url.slice(pathStart, pathEnd) || "/";
+}
+
 function validateBaseUrl(url) {
   check(url, String);
 
-  const parsed = Url.parse(url);
+  if (url.includes("\\")) {
+    throw new Meteor.Error(400, "URL path must not contain encoded slashes.");
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (err) {
+    throw new Meteor.Error(400, "Invalid URL.");
+  }
+
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Meteor.Error(400, "URL must be HTTP or HTTPS.");
   }
+
+  const rawPathname = rawPathnameFromHttpUrl(url);
+  if (!rawPathname) {
+    throw new Meteor.Error(400, "URL must be HTTP or HTTPS.");
+  }
+
+  validatePathScope(rawPathname, "URL path");
 
   if (!parsed.hostname) {
     throw new Meteor.Error(400, "URL must include a host.");
   }
 
-  if (parsed.auth) {
+  if (parsed.username || parsed.password) {
     throw new Meteor.Error(400, "URL must not include credentials.");
   }
 
@@ -84,7 +142,7 @@ function validateBaseUrl(url) {
     throw new Meteor.Error(400, "URL must not include a query string.");
   }
 
-  return Url.format(parsed);
+  return parsed.toString();
 }
 
 function methodName(method) {
@@ -244,27 +302,19 @@ class OutboundHttpSessionImpl extends PersistentImpl {
     }
 
     const pathOnly = path.split(/[?#]/, 1)[0];
-    if (pathOnly.includes("\\") || /%(2f|5c)/i.test(pathOnly)) {
-      throw new Meteor.Error(400, "Request path must not contain encoded slashes.");
-    }
+    validatePathScope(pathOnly, "Request path");
 
     if (path === "") return this._baseUrl;
 
-    const base = Url.parse(this._baseUrl);
+    const base = new URL(this._baseUrl);
     const basePath = base.pathname || "/";
     const basePrefix = basePath.endsWith("/") ? basePath : basePath + "/";
 
-    const requestBase = Url.format({
-      protocol: base.protocol,
-      slashes: true,
-      auth: null,
-      hostname: base.hostname,
-      port: base.port,
-      pathname: basePrefix,
-    });
+    const requestBase = new URL(this._baseUrl);
+    requestBase.pathname = basePrefix;
 
-    const resolved = new URL(path || "", requestBase);
-    const expectedOrigin = base.protocol + "//" + base.host;
+    const resolved = new URL(path || "", requestBase.toString());
+    const expectedOrigin = base.origin;
 
     if (resolved.origin !== expectedOrigin ||
         !(resolved.pathname === basePath || resolved.pathname.startsWith(basePrefix))) {
@@ -310,7 +360,7 @@ class OutboundHttpSessionImpl extends PersistentImpl {
         if (timedOut) return;
 
         try {
-          const parsed = Url.parse(safe.proxy ? fullUrl : safe.url);
+          const parsed = new URL(safe.proxy ? fullUrl : safe.url);
           requestHeaders.host = safe.proxy ? parsed.host : safe.host;
 
           const options = safe.proxy ? {
@@ -324,7 +374,7 @@ class OutboundHttpSessionImpl extends PersistentImpl {
             protocol: parsed.protocol,
             hostname: parsed.hostname,
             port: parsed.port,
-            path: parsed.path,
+            path: parsed.pathname + parsed.search,
             headers: requestHeaders,
             servername: safe.host.split(":")[0],
           };

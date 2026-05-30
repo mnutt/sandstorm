@@ -474,6 +474,31 @@ if(isTesting) {
           throw new Meteor.Error(name, "Expected outbound HTTP request to fail.");
         };
 
+        const expectRestoreFailure = function (name, unsafeBaseUrl) {
+          try {
+            globalThis.globalFrontendRefRegistry.restore(globalDb, {
+              frontendRef: { outboundHttp: { baseUrl: unsafeBaseUrl } },
+            }, { outboundHttp: { baseUrl: unsafeBaseUrl } }).castAs(OutboundHttpSession);
+          } catch (err) {
+            return;
+          }
+
+          throw new Meteor.Error(name, "Expected outbound HTTP base URL to fail.");
+        };
+
+        expectRestoreFailure("outbound-http-base-encoded-slash",
+            "http://127.0.0.1:" + port + "/api%2foutside");
+        expectRestoreFailure("outbound-http-base-encoded-backslash",
+            "http://127.0.0.1:" + port + "/api%5coutside");
+        expectRestoreFailure("outbound-http-base-backslash",
+            "http://127.0.0.1:" + port + "/api\\outside");
+        expectRestoreFailure("outbound-http-base-dotdot",
+            "http://127.0.0.1:" + port + "/api/../outside");
+        expectRestoreFailure("outbound-http-base-encoded-dotdot",
+            "http://127.0.0.1:" + port + "/api/%2e%2e/outside");
+        expectRestoreFailure("outbound-http-base-malformed-percent",
+            "http://127.0.0.1:" + port + "/api/%zz/outside");
+
         await expectFailure("outbound-http-block-host",
             cap.request("get", "headers", [{ name: "Host", value: "evil.example" }],
                 Buffer.alloc(0), makeResponseStream().cap));
@@ -492,6 +517,8 @@ if(isTesting) {
                 Buffer.alloc(0), makeResponseStream().cap));
         await expectFailure("outbound-http-path-encoded-slash",
             cap.request("get", "..%2foutside", [], Buffer.alloc(0), makeResponseStream().cap));
+        await expectFailure("outbound-http-path-malformed-percent",
+            cap.request("get", "%zz/outside", [], Buffer.alloc(0), makeResponseStream().cap));
 
         const getOnlyCap = globalThis.globalFrontendRefRegistry.restore(globalDb, {
           frontendRef: { outboundHttp: { baseUrl, methods: ["GET"] } },
