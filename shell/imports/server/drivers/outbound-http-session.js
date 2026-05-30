@@ -20,10 +20,11 @@ import { Match, check } from "meteor/check";
 import Url from "url";
 import Http from "http";
 import Https from "https";
+import Request from "request";
 
 import Capnp from "/imports/server/capnp";
 import { PersistentImpl } from "/imports/server/persistent";
-import { ssrfSafeLookup } from "/imports/server/networking";
+import { ssrfSafeLookupOrProxy } from "/imports/server/networking";
 
 const OutboundHttpSession =
     Capnp.importSystem("sandstorm/outbound-http-session.capnp").OutboundHttpSession;
@@ -305,14 +306,20 @@ class OutboundHttpSessionImpl extends PersistentImpl {
         reject(timeoutError);
       }, OUTBOUND_HTTP_REQUEST_TIMEOUT_MS);
 
-      ssrfSafeLookup(this._db, fullUrl).then((safe) => {
+      ssrfSafeLookupOrProxy(this._db, fullUrl).then((safe) => {
         if (timedOut) return;
 
         try {
-          const parsed = Url.parse(safe.url);
-          requestHeaders.host = safe.host;
+          const parsed = Url.parse(safe.proxy ? fullUrl : safe.url);
+          requestHeaders.host = safe.proxy ? parsed.host : safe.host;
 
-          const options = {
+          const options = safe.proxy ? {
+            method: httpMethod,
+            url: fullUrl,
+            proxy: safe.proxy,
+            followRedirect: false,
+            headers: requestHeaders,
+          } : {
             method: httpMethod,
             protocol: parsed.protocol,
             hostname: parsed.hostname,
@@ -322,10 +329,11 @@ class OutboundHttpSessionImpl extends PersistentImpl {
             servername: safe.host.split(":")[0],
           };
 
-          const requestMethod = parsed.protocol === "https:" ? Https.request : Http.request;
+          const requestMethod = safe.proxy ? Request :
+              parsed.protocol === "https:" ? Https.request : Http.request;
 
           const responsePromise = new Promise((resolveResponse, rejectResponse) => {
-            req = requestMethod(options, (resp) => {
+            const handleResponse = (resp) => {
               let response;
               try {
                 response = {
@@ -346,7 +354,10 @@ class OutboundHttpSessionImpl extends PersistentImpl {
                 console.error("OutboundHttpSession response stream failed:", err.stack || err);
                 req.destroy(err);
               });
-            });
+            };
+
+            req = safe.proxy ? requestMethod(options) : requestMethod(options, handleResponse);
+            if (safe.proxy) req.on("response", handleResponse);
 
             req.on("error", (err) => {
               clearRequestTimeout();

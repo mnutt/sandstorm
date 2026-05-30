@@ -364,6 +364,23 @@ if(isTesting) {
     },
 
     testRegressionOutboundHttpSession: async function () {
+      const previousProxyEnv = {
+        HTTP_PROXY: process.env.HTTP_PROXY,
+        http_proxy: process.env.http_proxy,
+        HTTPS_PROXY: process.env.HTTPS_PROXY,
+        https_proxy: process.env.https_proxy,
+      };
+
+      function restoreProxyEnv() {
+        Object.keys(previousProxyEnv).forEach((key) => {
+          if (previousProxyEnv[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = previousProxyEnv[key];
+          }
+        });
+      }
+
       function makeResponseStream() {
         const chunks = [];
         let resolveDone;
@@ -453,6 +470,11 @@ if(isTesting) {
       });
 
       try {
+        delete process.env.HTTP_PROXY;
+        delete process.env.http_proxy;
+        delete process.env.HTTPS_PROXY;
+        delete process.env.https_proxy;
+
         const port = server.address().port;
         const baseUrl = "http://127.0.0.1:" + port + "/api";
         const cap = globalThis.globalFrontendRefRegistry.restore(globalDb, {
@@ -546,9 +568,66 @@ if(isTesting) {
               "Allowed method did not succeed.");
         }
 
+        const proxySeenRequests = [];
+        const proxyServer = NodeHttp.createServer((req, res) => {
+          const chunks = [];
+          req.on("data", (chunk) => chunks.push(chunk));
+          req.on("end", () => {
+            proxySeenRequests.push({
+              method: req.method,
+              url: req.url,
+              headers: req.headers,
+              body: Buffer.concat(chunks).toString("utf8"),
+            });
+
+            if (req.method === "GET" &&
+                req.url === "http://outbound-http-proxy-test.invalid/api/proxy" &&
+                req.headers.host === "outbound-http-proxy-test.invalid") {
+              res.writeHead(200, {
+                "Content-Type": "text/plain",
+                "X-Proxy-Test": "yes",
+              });
+              res.end("proxied response");
+            } else {
+              res.writeHead(502, { "Content-Type": "text/plain" });
+              res.end("unexpected proxy request");
+            }
+          });
+        });
+
+        await new Promise((resolve, reject) => {
+          proxyServer.on("error", reject);
+          proxyServer.listen(0, "127.0.0.1", resolve);
+        });
+
+        try {
+          process.env.HTTP_PROXY = "http://127.0.0.1:" + proxyServer.address().port;
+
+          const proxyBaseUrl = "http://outbound-http-proxy-test.invalid/api";
+          const proxyCap = globalThis.globalFrontendRefRegistry.restore(globalDb, {
+            frontendRef: { outboundHttp: { baseUrl: proxyBaseUrl } },
+          }, { outboundHttp: { baseUrl: proxyBaseUrl } }).castAs(OutboundHttpSession);
+          const proxyStream = makeResponseStream();
+          const proxyResponse = await proxyCap.request(
+              "get", "proxy", [], Buffer.alloc(0), proxyStream.cap);
+          const proxyBody = await proxyStream.read();
+          if (proxyResponse.statusCode !== 200 ||
+              !proxyResponse.headers.some((header) =>
+                header.name === "x-proxy-test" && header.value === "yes") ||
+              proxyBody !== "proxied response" ||
+              proxySeenRequests.length !== 1) {
+            throw new Meteor.Error("outbound-http-proxy",
+                "Outbound HTTP request did not use configured HTTP proxy.");
+          }
+        } finally {
+          await new Promise((resolve) => proxyServer.close(resolve));
+          delete process.env.HTTP_PROXY;
+        }
+
         return true;
       } finally {
         await new Promise((resolve) => server.close(resolve));
+        restoreProxyEnv();
       }
     },
 
