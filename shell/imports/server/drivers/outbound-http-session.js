@@ -51,6 +51,14 @@ const BLOCKED_HEADERS = new Set([
   "keep-alive",
 ]);
 
+const OUTBOUND_HTTP_REQUEST_TIMEOUT_MS = 120 * 1000;
+
+function makeTimeoutError() {
+  const err = new Error("Outbound HTTP request timed out.");
+  err.kjType = "overloaded";
+  return err;
+}
+
 function validateBaseUrl(url) {
   check(url, String);
 
@@ -277,42 +285,87 @@ class OutboundHttpSessionImpl extends PersistentImpl {
       requestHeaders["content-length"] = String(contentLength);
     }
 
-    return ssrfSafeLookup(this._db, fullUrl).then((safe) => {
-      const parsed = Url.parse(safe.url);
-      requestHeaders.host = safe.host;
+    return new Promise((resolve, reject) => {
+      let req;
+      let timeoutHandle;
+      let timedOut = false;
+      let timeoutError;
 
-      const options = {
-        method: httpMethod,
-        protocol: parsed.protocol,
-        hostname: parsed.hostname,
-        port: parsed.port,
-        path: parsed.path,
-        headers: requestHeaders,
-        servername: safe.host.split(":")[0],
+      const clearRequestTimeout = () => {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+          timeoutHandle = undefined;
+        }
       };
 
-      const requestMethod = parsed.protocol === "https:" ? Https.request : Http.request;
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        timeoutError = makeTimeoutError();
+        if (req) req.destroy(timeoutError);
+        reject(timeoutError);
+      }, OUTBOUND_HTTP_REQUEST_TIMEOUT_MS);
 
-      let req;
-      const responsePromise = new Promise((resolve, reject) => {
-        req = requestMethod(options, (resp) => {
-          const response = {
-            statusCode: resp.statusCode,
-            statusText: resp.statusMessage || "",
-            headers: responseHeaders(resp),
+      ssrfSafeLookup(this._db, fullUrl).then((safe) => {
+        if (timedOut) return;
+
+        try {
+          const parsed = Url.parse(safe.url);
+          requestHeaders.host = safe.host;
+
+          const options = {
+            method: httpMethod,
+            protocol: parsed.protocol,
+            hostname: parsed.hostname,
+            port: parsed.port,
+            path: parsed.path,
+            headers: requestHeaders,
+            servername: safe.host.split(":")[0],
           };
 
-          resolve(response);
-          writeResponseBody(resp, responseStream).catch((err) => {
-            console.error("OutboundHttpSession response stream failed:", err.stack || err);
-            req.destroy(err);
+          const requestMethod = parsed.protocol === "https:" ? Https.request : Http.request;
+
+          const responsePromise = new Promise((resolveResponse, rejectResponse) => {
+            req = requestMethod(options, (resp) => {
+              let response;
+              try {
+                response = {
+                  statusCode: resp.statusCode,
+                  statusText: resp.statusMessage || "",
+                  headers: responseHeaders(resp),
+                };
+              } catch (err) {
+                clearRequestTimeout();
+                rejectResponse(err);
+                req.destroy(err);
+                return;
+              }
+
+              resolveResponse(response);
+              writeResponseBody(resp, responseStream).then(clearRequestTimeout, (err) => {
+                clearRequestTimeout();
+                console.error("OutboundHttpSession response stream failed:", err.stack || err);
+                req.destroy(err);
+              });
+            });
+
+            req.on("error", (err) => {
+              clearRequestTimeout();
+              rejectResponse(err);
+            });
           });
-        });
 
-        req.on("error", reject);
+          resolve({ req, responsePromise });
+        } catch (err) {
+          if (req) req.destroy(err);
+          else {
+            clearRequestTimeout();
+          }
+          reject(err);
+        }
+      }, (err) => {
+        clearRequestTimeout();
+        reject(err);
       });
-
-      return { req, responsePromise };
     });
   }
 
