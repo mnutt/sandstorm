@@ -58,6 +58,7 @@ import NodeHttp from "http";
 
 const OutboundHttpSession =
     Capnp.importSystem("sandstorm/outbound-http-session.capnp").OutboundHttpSession;
+const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
 const ByteStream = Capnp.importSystem("sandstorm/util.capnp").ByteStream;
 
 async function clearUser(id) {
@@ -498,6 +499,79 @@ if(isTesting) {
             "http://127.0.0.1:" + port + "/api/%2e%2e/outside");
         expectRestoreFailure("outbound-http-base-malformed-percent",
             "http://127.0.0.1:" + port + "/api/%zz/outside");
+
+        const outboundHttpDescriptor = function (tagMethodsList) {
+          return Capnp.serializePacked(Powerbox.PowerboxDescriptor, {
+            tags: tagMethodsList.map((tagMethods) => {
+              const tag = { baseUrl };
+              if (tagMethods) tag.methods = tagMethods.map(method => method.toLowerCase());
+
+              return {
+                id: OutboundHttpSession.typeId,
+                value: Capnp.serialize(OutboundHttpSession.PowerboxTag, tag),
+              };
+            }),
+          }).toString("base64");
+        };
+
+        const publishPowerboxOptions = async function (descriptorList) {
+          const sub = makeFakeSubscription(null);
+          const resultPromise = new Promise((resolve, reject) => {
+            sub.ready = function () {
+              sub.readyCalled = true;
+              resolve(sub.addedDocs.powerboxOptions || {});
+            };
+
+            sub.error = reject;
+          });
+
+          sub.connection = {
+            sandstormDb: globalDb,
+            frontendRefRegistry: globalThis.globalFrontendRefRegistry,
+          };
+
+          getPublishHandler("powerboxOptions").apply(
+              sub, ["outbound-http-method-attenuation", descriptorList]);
+          return await resultPromise;
+        };
+
+        const intersectedPowerboxOptions = await publishPowerboxOptions([
+          outboundHttpDescriptor([["GET", "POST"], ["POST", "DELETE"]]),
+        ]);
+        const intersectedUrlOption =
+            intersectedPowerboxOptions["outbound-http-url-" + baseUrl];
+        const intersectedArbitraryOption =
+            intersectedPowerboxOptions["outbound-http-arbitrary"];
+        if (!intersectedUrlOption ||
+            intersectedUrlOption.frontendRef.outboundHttp.methods.join(",") !== "POST" ||
+            !intersectedArbitraryOption ||
+            intersectedArbitraryOption.methods.join(",") !== "POST") {
+          throw new Meteor.Error("outbound-http-method-intersection",
+              "Powerbox did not intersect outbound HTTP method constraints.");
+        }
+
+        const disjointPowerboxOptions = await publishPowerboxOptions([
+          outboundHttpDescriptor([["GET"], ["POST"]]),
+        ]);
+        if (disjointPowerboxOptions["outbound-http-url-" + baseUrl] ||
+            disjointPowerboxOptions["outbound-http-arbitrary"]) {
+          throw new Meteor.Error("outbound-http-method-disjoint",
+              "Powerbox offered outbound HTTP methods with an empty intersection.");
+        }
+
+        const unionedPowerboxOptions = await publishPowerboxOptions([
+          outboundHttpDescriptor([["GET"]]),
+          outboundHttpDescriptor([["POST"]]),
+        ]);
+        const unionedUrlOption = unionedPowerboxOptions["outbound-http-url-" + baseUrl];
+        const unionedArbitraryOption = unionedPowerboxOptions["outbound-http-arbitrary"];
+        if (!unionedUrlOption ||
+            unionedUrlOption.frontendRef.outboundHttp.methods.join(",") !== "GET,POST" ||
+            !unionedArbitraryOption ||
+            unionedArbitraryOption.methods.join(",") !== "GET,POST") {
+          throw new Meteor.Error("outbound-http-method-union",
+              "Powerbox did not union outbound HTTP method constraints.");
+        }
 
         await expectFailure("outbound-http-block-host",
             cap.request("get", "headers", [{ name: "Host", value: "evil.example" }],

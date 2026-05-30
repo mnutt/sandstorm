@@ -518,6 +518,7 @@ function registerOutboundHttpFrontendRef(registry) {
 
       options.push({
         _id: "outbound-http-arbitrary",
+        outboundHttpArbitrary: true,
         methods,
         cardTemplate: "outboundHttpArbitraryPowerboxCard",
         configureTemplate: "outboundHttpArbitraryPowerboxConfiguration",
