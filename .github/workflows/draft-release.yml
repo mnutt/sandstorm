@@ -1,0 +1,213 @@
+name: draft_release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch, tag, or commit SHA to build. Defaults to the workflow branch.
+        required: false
+        type: string
+      build_number:
+        description: Numeric Sandstorm BUILD value. Defaults to the workflow run number.
+        required: false
+        type: string
+      tag_name:
+        description: Release tag to create. Defaults to sandstorm-<build>-<branch>.
+        required: false
+        type: string
+      release_name:
+        description: Release title. Defaults to Sandstorm build <build>.
+        required: false
+        type: string
+
+run-name: draft release for ${{ github.ref_name }}
+
+permissions:
+  contents: write
+
+env:
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+
+jobs:
+  build_tarball:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: prepare release metadata
+        id: release-metadata
+        env:
+          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          source_ref="$INPUT_SOURCE_REF"
+          if [ -z "$source_ref" ]; then
+            source_ref="$GITHUB_REF_NAME"
+          fi
+
+          build_number="$INPUT_BUILD_NUMBER"
+          if [ -z "$build_number" ]; then
+            build_number="${GITHUB_RUN_NUMBER}"
+          fi
+
+          if ! [[ "$build_number" =~ ^[0-9]+$ ]]; then
+            echo "build_number must be numeric, got: $build_number" >&2
+            exit 1
+          fi
+
+          tag_name="$INPUT_TAG_NAME"
+          if [ -z "$tag_name" ]; then
+            display_ref="${source_ref#refs/heads/}"
+            display_ref="${display_ref#refs/tags/}"
+            safe_ref="$(printf '%s' "$display_ref" | tr -c 'A-Za-z0-9._-' '-')"
+            tag_name="sandstorm-${build_number}-${safe_ref}"
+          fi
+
+          release_name="$INPUT_RELEASE_NAME"
+          if [ -z "$release_name" ]; then
+            release_name="Sandstorm build ${build_number}"
+          fi
+
+          {
+            echo "source_ref=$source_ref"
+            echo "build_number=$build_number"
+            echo "tag_name=$tag_name"
+            echo "release_name=$release_name"
+            echo "tarball=sandstorm-${build_number}.tar.xz"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release-metadata.outputs.source_ref }}
+          submodules: true
+
+      - name: generate deps cache key
+        id: deps-cache-key
+        run: |
+          set -euo pipefail
+          deps_hash="$(git submodule status | sha256sum | cut -d' ' -f1)"
+          echo "hash=$deps_hash" >> "$GITHUB_OUTPUT"
+
+      - name: cache deps build artifacts
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/llvm-build
+            deps/boringssl/build
+            deps/libsodium/build
+            deps/ekam/bin
+            tmp/.deps
+          key: deps-${{ runner.os }}-${{ steps.deps-cache-key.outputs.hash }}
+
+      - name: setup python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: install dependencies
+        run: |
+          set -euo pipefail
+
+          export DEBIAN_FRONTEND=noninteractive
+          echo "The build of boringssl requires golang."
+          echo "The github runner seems to have some version of golang already; installing golang-go breaks."
+          which go || (sudo apt-get update && sudo apt-get install -y golang-go)
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ccache \
+            cmake \
+            curl \
+            discount \
+            git \
+            libcap-dev \
+            python3 \
+            strace \
+            unzip \
+            xz-utils \
+            zip \
+            zlib1g-dev
+
+          # Install OpenSSL 1.1, required for Meteor/Node compatibility.
+          curl -fsSLO http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+          sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+          rm libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+
+      - name: install meteor
+        run: |
+          set -euo pipefail
+          curl https://install.meteor.com/ | sh
+
+      - name: cache ccache files
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-release-${{ github.run_number }}
+          restore-keys: ccache-release-
+
+      - name: print and zero ccache stats
+        run: |
+          set -euo pipefail
+          mkdir -p "$CCACHE_DIR"
+          ccache -s
+          ccache -z
+
+      - name: build release tarball
+        run: |
+          set -euo pipefail
+          set -x
+
+          export CCACHE_COMPRESS="true"
+          export CCACHE_COMPRESSLEVEL="6"
+          export CCACHE_MAXSIZE="1G"
+          export CCACHE_SLOPPINESS="time_macros"
+          export PATH="/usr/lib/ccache:$PATH"
+          export npm_config_python="$(which python)"
+
+          make \
+            CC="$(which clang)" \
+            CXX="$(which clang++)" \
+            BUILD="${{ steps.release-metadata.outputs.build_number }}" \
+            all
+
+      - name: print ccache stats
+        if: always()
+        run: ccache -s
+
+      - name: upload sandstorm tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release-metadata.outputs.tarball }}
+          path: ${{ steps.release-metadata.outputs.tarball }}
+          if-no-files-found: error
+
+      - name: write release notes
+        run: |
+          set -euo pipefail
+          built_sha="$(git rev-parse HEAD)"
+          cat > release-notes.md <<EOF
+          Built from \`${GITHUB_REPOSITORY}@${built_sha}\`.
+
+          Source ref: \`${{ steps.release-metadata.outputs.source_ref }}\`
+
+          Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          EOF
+
+      - name: create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NAME: ${{ steps.release-metadata.outputs.release_name }}
+          TAG_NAME: ${{ steps.release-metadata.outputs.tag_name }}
+          TARBALL: ${{ steps.release-metadata.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          target_sha="$(git rev-parse HEAD)"
+          gh release create "$TAG_NAME" "$TARBALL" \
+            --draft \
+            --target "$target_sha" \
+            --title "$RELEASE_NAME" \
+            --notes-file release-notes.md
