@@ -22,7 +22,61 @@ function deriveIntroducer(cap) {
     }
   }
 
+  if (cap && cap.owner && cap.owner.clientPowerboxRequest) {
+    const session = globalDb.collections.sessions.findOne({
+      _id: cap.owner.clientPowerboxRequest.sessionId,
+    });
+    if (session && session.userId) return session.userId;
+  }
+
   return null;
+}
+
+function grainIdForCap(cap) {
+  if (cap.owner.grain) return cap.owner.grain.grainId;
+
+  if (cap.owner.clientPowerboxRequest) {
+    const session = globalDb.collections.sessions.findOne({
+      _id: cap.owner.clientPowerboxRequest.sessionId,
+    });
+    return (session && session.grainId) || cap.owner.clientPowerboxRequest.grainId;
+  }
+
+  return null;
+}
+
+const METHOD_NAMES = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+];
+
+function methodName(method) {
+  if (typeof method === "number") return METHOD_NAMES[method] || String(method);
+  return String(method).toUpperCase();
+}
+
+function outboundHttpDetails(cap) {
+  if (!cap.frontendRef || !cap.frontendRef.outboundHttp) return null;
+
+  const outboundHttp = cap.frontendRef.outboundHttp;
+  return {
+    baseUrl: outboundHttp.baseUrl,
+    methods: outboundHttp.methods && outboundHttp.methods.length > 0 ?
+        outboundHttp.methods.map(methodName).join(", ") : "Any method",
+  };
+}
+
+function prepareAccountForCard(account) {
+  if (!account) return;
+
+  SandstormDb.fillInPictureUrl(account);
+  account.intrinsicNames = account.loginCredentials ?
+      globalDb.getAccountIntrinsicNames(account) : [];
 }
 
 const capDetails = function (cap) {
@@ -30,14 +84,14 @@ const capDetails = function (cap) {
 
   const introducerAccountId = deriveIntroducer(cap);
   const introducerAccount = introducerAccountId && Meteor.users.findOne({ _id: introducerAccountId });
-  SandstormDb.fillInPictureUrl(introducerAccount);
-  introducerAccount.intrinsicNames = globalDb.getAccountIntrinsicNames(introducerAccount);
+  prepareAccountForCard(introducerAccount);
+
   const introducer = {
     account: introducerAccount,
   };
 
-  if (cap.owner.grain !== undefined) {
-    const grainId = cap.owner.grain.grainId;
+  const grainId = grainIdForCap(cap);
+  if (grainId) {
     const grain = globalDb.collections.grains.findOne(grainId);
     if (!grain) {
       // Grain was deleted.  Don't show anything.
@@ -52,9 +106,12 @@ const capDetails = function (cap) {
     const grainOwnerAccount = (introducerAccountId === grain.userId) ? undefined
         : Meteor.users.findOne({ _id: grain.userId });
 
+    prepareAccountForCard(grainOwnerAccount);
+
     ownerInfo.grain = {
       _id: grainId,
       ownerAccount: grainOwnerAccount,
+      grainOwnerAccount,
       title: grainTitle,
       pkg,
       appIcon,
@@ -69,6 +126,7 @@ const capDetails = function (cap) {
     created: cap.created,
     introducer,
     ownerInfo,
+    outboundHttp: outboundHttpDetails(cap),
   };
 };
 
@@ -82,14 +140,23 @@ Template.newAdminNetworkCapabilities.onCreated(function () {
           $or: [
             { "frontendRef.ipNetwork": { $exists: true } },
             { "frontendRef.ipInterface": { $exists: true } },
+            { "frontendRef.outboundHttp": { $exists: true } },
           ],
         },
         {
-          "owner.grain": { $exists: true },
+          $or: [
+            { "owner.grain": { $exists: true } },
+            { "owner.clientPowerboxRequest": { $exists: true } },
+          ],
         },
       ],
     });
-    const grainIds = apiTokens.map(token => token.owner.grain.grainId);
+    const sessionIds = apiTokens
+        .map(token => token.owner.clientPowerboxRequest && token.owner.clientPowerboxRequest.sessionId)
+        .filter(id => !!id);
+    this.subscribe("adminSessions", sessionIds);
+
+    const grainIds = apiTokens.map(grainIdForCap).filter(id => !!id);
     this.subscribe("adminGrains", grainIds);
 
     const packageIds = globalDb.collections.grains.find({
@@ -104,6 +171,13 @@ Template.newAdminNetworkCapabilities.onCreated(function () {
     apiTokens.forEach((token) => {
       const introducer = deriveIntroducer(token);
       if (introducer) accountIds.push(introducer);
+    });
+    globalDb.collections.grains.find({
+      _id: {
+        $in: grainIds,
+      },
+    }).forEach((grain) => {
+      if (grain.userId) accountIds.push(grain.userId);
     });
 
     this.subscribe("adminProfiles", accountIds);
@@ -134,6 +208,14 @@ Template.newAdminNetworkCapabilities.helpers({
   ipInterfaceCaps() {
     return globalDb.collections.apiTokens.find({
       "frontendRef.ipInterface": { $exists: true },
+    }).map(capDetails)
+      .filter((item) => !!item);
+  },
+
+  outboundHttpCaps() {
+    return globalDb.collections.apiTokens.find({
+      "frontendRef.outboundHttp": { $exists: true },
+      "owner.clientPowerboxRequest": { $exists: false },
     }).map(capDetails)
       .filter((item) => !!item);
   },
@@ -181,6 +263,11 @@ const matchesCap = function (needle, cap) {
 
   if (cap.introducer.account) {
     if (cap.introducer.account._id.toLowerCase().indexOf(needle) !== -1) return true;
+  }
+
+  if (cap.outboundHttp) {
+    if (cap.outboundHttp.baseUrl.toLowerCase().indexOf(needle) !== -1) return true;
+    if (cap.outboundHttp.methods.toLowerCase().indexOf(needle) !== -1) return true;
   }
 
   return false;

@@ -758,6 +758,7 @@ Meteor.publish("adminApiTokens", async function (token) {
     $or: [
       { "frontendRef.ipNetwork": { $exists: true } },
       { "frontendRef.ipInterface": { $exists: true } },
+      { "frontendRef.outboundHttp": { $exists: true } },
     ],
   }, {
     fields: {
