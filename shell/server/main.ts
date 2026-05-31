@@ -77,6 +77,7 @@ import "../imports/server/admin/network-capabilities-server";
 import "../imports/server/admin/personalization-server";
 import "../imports/server/admin/system-status-server";
 import "../imports/server/drivers/external-ui-view";
+import "../imports/server/drivers/outbound-http-session";
 import "../imports/server/drivers/ip";
 import "../imports/server/drivers/mail";
 import "../imports/db-deprecated";

@@ -493,6 +493,10 @@ const ApiTokens = new Mongo.Collection("apiTokens", collectionOptions);
 //                   want to encrypt the full URL since this would make it hard to show a
 //                   meaningful audit UI, but maybe we could figure out a way to extract the key
 //                   part and encrypt it separately?
+//       outboundHttp: An OutboundHttpSession capability pointing to an external HTTP service.
+//                     Object containing:
+//           baseUrl: Base URL to which the capability is scoped.
+//           methods: Optional list of HTTP methods allowed by this capability.
 //       scheduledJob:
 //           id: _id in the ScheduledJobs table
 //   parentToken: If present, then this token represents exactly the capability represented by
@@ -573,6 +577,10 @@ const ApiTokens = new Mongo.Collection("apiTokens", collectionOptions);
 //           basic :group { username :Text; password :Text; }
 //           refresh :Text;
 //         }
+//       }
+//       outboundHttp :group {
+//         baseUrl :Text;
+//         methods :List(Text);
 //       }
 //     }
 //     child :group {

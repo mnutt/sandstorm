@@ -48,6 +48,63 @@ const removeObsolete = function (arr) {
   });
 };
 
+const OUTBOUND_HTTP_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+];
+
+const describeOutboundHttpMethods = function (methods) {
+  if (methods && methods.length > 0) {
+    return methods.map(method => String(method).toUpperCase()).join(", ");
+  } else {
+    return OUTBOUND_HTTP_METHODS.join(", ");
+  }
+};
+
+const describeOutboundHttpUrl = function (url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+
+    return {
+      scheme: parsed.protocol.slice(0, -1).toUpperCase(),
+      host: parsed.host,
+      basePath: parsed.pathname || "/",
+      isPlainHttp: parsed.protocol === "http:",
+    };
+  } catch (err) {
+    return null;
+  }
+};
+
+const describeOutboundHttp = function (url, methods) {
+  const urlParts = describeOutboundHttpUrl(url);
+  if (!urlParts) return null;
+
+  return {
+    ...urlParts,
+    methodsSummary: describeOutboundHttpMethods(methods),
+  };
+};
+
+const outboundHttpDisclosureHelpers = function (getOutboundHttp) {
+  return {
+    urlDetails: function () {
+      const outboundHttp = getOutboundHttp(this);
+      return describeOutboundHttp(outboundHttp.baseUrl, outboundHttp.methods);
+    },
+
+    methodsSummary: function () {
+      return describeOutboundHttpMethods(getOutboundHttp(this).methods);
+    },
+  };
+};
+
 Template.ipNetworkPowerboxCard.helpers({
   encryption: function () {
     const encryption = this.option.frontendRef.ipNetwork.encryption || {};
@@ -265,4 +322,51 @@ Template.httpOAuthPowerboxConfiguration.onCreated(function () {
       },
     });
   });
+});
+
+Template.outboundHttpUrlPowerboxCard.powerboxIconSrc = () => "/web-m.svg";
+Template.outboundHttpUrlPowerboxCard.helpers(outboundHttpDisclosureHelpers(
+    data => data.option.frontendRef.outboundHttp));
+
+Template.outboundHttpArbitraryPowerboxCard.powerboxIconSrc = () => "/web-m.svg";
+Template.outboundHttpArbitraryPowerboxCard.helpers({
+  methodsSummary: function () {
+    return describeOutboundHttpMethods(this.option.methods);
+  },
+});
+Template.outboundHttpArbitraryPowerboxConfiguration.onCreated(function () {
+  this._outboundHttpUrl = new ReactiveVar("");
+});
+Template.outboundHttpArbitraryPowerboxConfiguration.helpers({
+  urlDetails: function () {
+    return describeOutboundHttp(Template.instance()._outboundHttpUrl.get(), this.option.methods);
+  },
+
+  methodsSummary: function () {
+    return describeOutboundHttpMethods(this.option.methods);
+  },
+});
+Template.outboundHttpArbitraryPowerboxConfiguration.events({
+  "input input.url, change input.url": function (event, instance) {
+    instance._outboundHttpUrl.set(event.currentTarget.value);
+  },
+
+  "click .connect-button": function (event, instance) {
+    event.preventDefault();
+    const input = instance.find("form>input.url");
+
+    const outboundHttp = {
+      baseUrl: input.value,
+    };
+
+    if (this.option.methods && this.option.methods.length > 0) {
+      outboundHttp.methods = this.option.methods;
+    }
+
+    this.powerboxRequest.completeNewFrontendRef({
+      outboundHttp: {
+        ...outboundHttp,
+      },
+    });
+  },
 });

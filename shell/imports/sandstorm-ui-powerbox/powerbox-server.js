@@ -24,6 +24,16 @@ import Capnp from "/imports/server/capnp";
 const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
 const Grain = Capnp.importSystem("sandstorm/grain.capnp");
 
+const OUTBOUND_HTTP_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+];
+
 function encodePowerboxDescriptor(desc) {
   return Capnp.serializePacked(Powerbox.PowerboxDescriptor, desc)
               .toString("base64")
@@ -44,6 +54,72 @@ const resolveAccountIdForPowerbox = async (userId) => {
 
   return account ? account._id : userId;
 };
+
+function normalizeOutboundHttpMethods(methods) {
+  if (!methods || methods.length === 0) return null;
+
+  const present = {};
+  methods.forEach(method => {
+    present[String(method).toUpperCase()] = true;
+  });
+
+  return OUTBOUND_HTTP_METHODS.filter(method => present[method]);
+}
+
+function intersectOutboundHttpMethods(left, right) {
+  left = normalizeOutboundHttpMethods(left);
+  right = normalizeOutboundHttpMethods(right);
+
+  if (!left) return right;
+  if (!right) return left;
+
+  const rightSet = {};
+  right.forEach(method => {
+    rightSet[method] = true;
+  });
+
+  return left.filter(method => rightSet[method]);
+}
+
+function unionOutboundHttpMethods(left, right) {
+  left = normalizeOutboundHttpMethods(left);
+  right = normalizeOutboundHttpMethods(right);
+
+  if (!left || !right) return null;
+
+  const present = {};
+  left.concat(right).forEach(method => {
+    present[method] = true;
+  });
+
+  return OUTBOUND_HTTP_METHODS.filter(method => present[method]);
+}
+
+function outboundHttpMethodAccessor(option) {
+  if (option.frontendRef && option.frontendRef.outboundHttp) {
+    return {
+      methods: option.frontendRef.outboundHttp.methods,
+      setMethods(methods) {
+        if (methods && methods.length > 0) {
+          option.frontendRef.outboundHttp.methods = methods;
+        } else {
+          delete option.frontendRef.outboundHttp.methods;
+        }
+      },
+    };
+  } else if (option.outboundHttpArbitrary) {
+    return {
+      methods: option.methods,
+      setMethods(methods) {
+        if (methods && methods.length > 0) {
+          option.methods = methods;
+        } else {
+          delete option.methods;
+        }
+      },
+    };
+  }
+}
 
 Meteor.methods({
   async newFrontendRef(sessionId, frontendRefRequest) {
@@ -162,6 +238,18 @@ class PowerboxOption {
 
       return true;
     } else {
+      // Outbound HTTP methods are attenuation, so conjunctive tags must narrow the method set.
+      const thisOutboundHttp = outboundHttpMethodAccessor(this);
+      const otherOutboundHttp = outboundHttpMethodAccessor(other);
+      if (thisOutboundHttp && otherOutboundHttp) {
+        const methods = intersectOutboundHttpMethods(
+            thisOutboundHttp.methods, otherOutboundHttp.methods);
+        if (methods && methods.length === 0) return false;
+
+        thisOutboundHttp.setMethods(methods);
+        return true;
+      }
+
       // No intersection logic needed for other types.
       return true;
     }
@@ -185,6 +273,13 @@ class PowerboxOption {
       if (!this.frontendRef.verifiedEmail.verifierId &&
           other.frontendRef.verifiedEmail.verifierId) {
         this.frontendRef.verifiedEmail.verifierId = other.frontendRef.verifiedEmail.verifierId;
+      }
+    } else {
+      const thisOutboundHttp = outboundHttpMethodAccessor(this);
+      const otherOutboundHttp = outboundHttpMethodAccessor(other);
+      if (thisOutboundHttp && otherOutboundHttp) {
+        thisOutboundHttp.setMethods(
+            unionOutboundHttpMethods(thisOutboundHttp.methods, otherOutboundHttp.methods));
       }
     }
   }

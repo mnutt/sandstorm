@@ -93,3 +93,44 @@
 <template name="httpOAuthPowerboxConfiguration">
   {{_ "powerboxBuiltins.httpOAuthPowerboxConfiguration.requestPermissionsFromService" option.oauthServiceInfo.service}}
 </template>
+
+<template name="outboundHttpUrlPowerboxCard">
+  {{#with urlDetails}}
+    <div>Outbound HTTP API: {{scheme}} {{host}}{{basePath}}</div>
+    <div>Allowed methods: {{methodsSummary}}</div>
+    <div>The app may send request headers and bodies to this endpoint.</div>
+    {{#if isPlainHttp}}
+      <div class="warning-message">Warning: this endpoint uses unencrypted HTTP.</div>
+    {{/if}}
+  {{else}}
+    <div>Outbound HTTP API: {{option.frontendRef.outboundHttp.baseUrl}}</div>
+    <div>Allowed methods: {{methodsSummary}}</div>
+  {{/with}}
+</template>
+
+<template name="outboundHttpArbitraryPowerboxCard">
+  <div>Connect to an outbound HTTP API</div>
+  <div>Allowed methods: {{methodsSummary}}</div>
+  <div>The app may send request headers and bodies to the endpoint you choose.</div>
+</template>
+
+<template name="outboundHttpArbitraryPowerboxConfiguration">
+  <form>
+    <p>Enter the base URL for the outbound HTTP API.</p>
+    <input class="url" type="text" placeholder="https://api.example.com/v1">
+    {{#with urlDetails}}
+      <p>Endpoint: {{scheme}} {{host}}{{basePath}}</p>
+      <p>Allowed methods: {{methodsSummary}}</p>
+      <p>The app may send request headers and bodies to this endpoint.</p>
+      {{#if isPlainHttp}}
+        <p class="warning-message">Warning: this endpoint uses unencrypted HTTP.</p>
+      {{/if}}
+    {{else}}
+      <p>Allowed methods: {{methodsSummary}}</p>
+      <p>The app may send request headers and bodies to this endpoint.</p>
+    {{/with}}
+    <div class="choose-buttons">
+      <button class="connect-button">Connect</button>
+    </div>
+  </form>
+</template>

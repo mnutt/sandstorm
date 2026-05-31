@@ -16,6 +16,7 @@ Meteor.publish("adminGrains", async function (grainIds) {
     fields: {
       title: 1,
       packageId: 1,
+      userId: 1,
     },
   });
 });
@@ -38,6 +39,25 @@ Meteor.publish("adminPackages", async function (packageIds) {
   });
 });
 
+Meteor.publish("adminSessions", async function (sessionIds) {
+  // If the caller is an admin, publishes the Sessions referred to by the provided list of session
+  // IDs. Otherwise, does nothing.
+  if (!await this.connection.sandstormDb.isAdminById(this.userId)) return [];
+  check(sessionIds, [String]);
+
+  const db = this.connection.sandstormDb;
+  return db.collections.sessions.find({
+    _id: {
+      $in: sessionIds,
+    },
+  }, {
+    fields: {
+      grainId: 1,
+      userId: 1,
+    },
+  });
+});
+
 Meteor.publish("adminProfiles", async function (userIds) {
   // If the caller is an admin, publishes the Users listed by ID in userIds.
   // Otherwise, does nothing.
@@ -49,5 +69,5 @@ Meteor.publish("adminProfiles", async function (userIds) {
     _id: {
       $in: userIds,
     },
-  }, { fields: { profile: 1 } });
+  }, { fields: { profile: 1, loginCredentials: 1, type: 1 } });
 });
