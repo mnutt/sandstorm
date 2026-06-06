@@ -38,8 +38,14 @@ module.exports = {
   "Test demo login command" : function (browser) {
     browser
       .loginDemo()
-      .waitForElementVisible('.topbar .account>.show-popup', short_wait)
-      .assert.textContains(".topbar .account>.show-popup", "Demo")
+      .execute(function () {
+        var user = Meteor.user();
+        return !!(user && user.expires);
+      }, [], function (result) {
+        browser.assert.strictEqual(result.value, true, "current user is a demo user");
+      })
+      .waitForElementVisible('.topbar .login>.show-popup', short_wait)
+      .assert.textContains(".topbar .login>.show-popup", "Create account")
       .end();
   },
 };
