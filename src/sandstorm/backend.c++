@@ -122,7 +122,8 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
   kj::Own<kj::AsyncInputStream> stdoutPipe;
   kj::Vector<kj::String> argv;
 
-  argv.add(kj::heapString("supervisor"));
+  bool useIsolateRuntime = command.hasIsolate();
+  argv.add(kj::heapString(useIsolateRuntime ? "isolate-supervisor" : "supervisor"));
 
   KJ_IF_MAYBE(u, sandboxUid) {
     argv.add(kj::heapString("--uid"));
@@ -153,16 +154,33 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
     argv.add(kj::str("-e", env.getKey(), "=", env.getValue()));
   }
 
+  if (useIsolateRuntime) {
+    auto isolateConfig = command.getIsolate();
+    argv.add(kj::heapString("--isolate-main-module"));
+    argv.add(kj::heapString(isolateConfig.getMainModule()));
+
+    if (isolateConfig.hasCompatibilityDate()) {
+      argv.add(kj::heapString("--isolate-compatibility-date"));
+      argv.add(kj::heapString(isolateConfig.getCompatibilityDate()));
+    }
+  }
+
   argv.add(kj::heapString(packageId));
   argv.add(kj::heapString(grainId));
 
   argv.add(kj::heapString("--"));
 
-  if (command.hasDeprecatedExecutablePath()) {
-    argv.add(kj::heapString(command.getDeprecatedExecutablePath()));
-  }
-  for (auto arg: command.getArgv()) {
-    argv.add(kj::heapString(arg));
+  if (!useIsolateRuntime) {
+    if (command.hasDeprecatedExecutablePath()) {
+      argv.add(kj::heapString(command.getDeprecatedExecutablePath()));
+    }
+    for (auto arg: command.getArgv()) {
+      argv.add(kj::heapString(arg));
+    }
+  } else {
+    // Isolate commands are selected by `command.isolate`; process argv is not executed. Keep the
+    // separator so the isolate supervisor can later accept runtime-specific args without option
+    // parsing ambiguity.
   }
 
   Subprocess::Options options(KJ_MAP(a, argv) -> const kj::StringPtr { return a; });
@@ -776,4 +794,3 @@ kj::Promise<void> BackendImpl::getGrainStorageUsage(GetGrainStorageUsageContext 
 }
 
 } // namespace sandstorm
-
