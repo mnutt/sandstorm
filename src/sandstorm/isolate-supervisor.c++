@@ -400,6 +400,25 @@ enum class FetchMethod {
   PATCH,
 };
 
+enum class SessionKind {
+  NORMAL,
+  REQUEST,
+  OFFER,
+};
+
+kj::StringPtr sessionKindName(SessionKind kind) {
+  switch (kind) {
+    case SessionKind::NORMAL:
+      return "normal";
+    case SessionKind::REQUEST:
+      return "request";
+    case SessionKind::OFFER:
+      return "offer";
+  }
+
+  KJ_UNREACHABLE;
+}
+
 struct FetchHeader {
   kj::String name;
   kj::String value;
@@ -709,8 +728,11 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
 
 class IsolateWebSessionImpl final: public WebSession::Server {
 public:
-  IsolateWebSessionImpl(kj::Own<IsolateRuntimeConfig> config, kj::StringPtr pathPrefix = "")
+  IsolateWebSessionImpl(
+      kj::Own<IsolateRuntimeConfig> config, kj::StringPtr pathPrefix = "",
+      SessionKind sessionKind = SessionKind::NORMAL)
       : pathPrefix(kj::heapString(pathPrefix)),
+        sessionKind(sessionKind),
         runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config))) {}
 
   kj::Promise<void> get(GetContext context) override {
@@ -757,6 +779,7 @@ public:
 
 private:
   kj::String pathPrefix;
+  SessionKind sessionKind;
   kj::Own<IsolateRuntimeAdapter> runtime;
 
   kj::String prefixedPath(kj::StringPtr path) {
@@ -768,6 +791,7 @@ private:
   }
 
   kj::Promise<void> fetch(FetchRequest&& request, WebSession::Response::Builder response) {
+    addHeader(request, "x-sandstorm-session-type", sessionKindName(sessionKind));
     return runtime->fetch(kj::mv(request))
         .then([response](FetchResponse&& fetchResponse) mutable {
       writeFetchResponse(kj::mv(fetchResponse), response);
@@ -801,6 +825,26 @@ public:
     kj::StringPtr pathPrefix = isApiSession ? runtimeConfig->apiPath.asPtr() : kj::StringPtr("");
     context.getResults().setSession(
         kj::heap<IsolateWebSessionImpl>(kj::addRef(*runtimeConfig), pathPrefix));
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> newRequestSession(NewRequestSessionContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.getSessionType() == capnp::typeId<WebSession>(),
+        "Unsupported isolate grain request session type.");
+
+    context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
+        kj::addRef(*runtimeConfig), "", SessionKind::REQUEST));
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> newOfferSession(NewOfferSessionContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.getSessionType() == capnp::typeId<WebSession>(),
+        "Unsupported isolate grain offer session type.");
+
+    context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
+        kj::addRef(*runtimeConfig), "", SessionKind::OFFER));
     return kj::READY_NOW;
   }
 
