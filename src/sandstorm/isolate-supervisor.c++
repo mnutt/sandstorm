@@ -84,6 +84,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String mainModule;
   kj::String compatibilityDate;
   kj::String appTitle;
+  kj::String apiPath;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
@@ -216,6 +217,8 @@ kj::Array<byte> copyBindingValue(spk::Manifest::IsolateConfig::Binding::Reader b
 
 void validateIsolateRuntimeConfig(IsolateRuntimeConfig& config) {
   KJ_REQUIRE(config.mainModule.size() > 0, "Isolate command is missing mainModule.");
+  KJ_REQUIRE(config.apiPath.size() == 0 || config.apiPath.endsWith("/"),
+      "Isolate bridgeConfig.apiPath must be empty or end with '/'.", config.apiPath);
 
   for (auto i: kj::indices(config.compatibilityFlags)) {
     auto& flag = config.compatibilityFlags[i];
@@ -263,6 +266,7 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(spk::Manifest::IsolateConfig::Re
   result->mainModule = kj::heapString(config.getMainModule());
   result->compatibilityDate = kj::heapString(config.getCompatibilityDate());
   auto bridgeConfig = config.getBridgeConfig();
+  result->apiPath = kj::heapString(bridgeConfig.getApiPath());
   auto viewInfo = bridgeConfig.getViewInfo();
   result->viewInfoMessage = kj::heap<capnp::MallocMessageBuilder>(
       viewInfo.totalSize().wordCount + 4);
@@ -705,39 +709,44 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
 
 class IsolateWebSessionImpl final: public WebSession::Server {
 public:
-  explicit IsolateWebSessionImpl(kj::Own<IsolateRuntimeConfig> config)
-      : runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config))) {}
+  IsolateWebSessionImpl(kj::Own<IsolateRuntimeConfig> config, kj::StringPtr pathPrefix = "")
+      : pathPrefix(kj::heapString(pathPrefix)),
+        runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config))) {}
 
   kj::Promise<void> get(GetContext context) override {
     auto params = context.getParams();
     auto method = params.getIgnoreBody() ? FetchMethod::HEAD : FetchMethod::GET;
-    auto request = makeFetchRequest(method, params.getPath(), params.getContext());
+    auto request = makeFetchRequest(method, prefixedPath(params.getPath()), params.getContext());
     return fetch(kj::mv(request), context.getResults());
   }
 
   kj::Promise<void> post(PostContext context) override {
     auto params = context.getParams();
-    auto request = makeFetchRequest(FetchMethod::POST, params.getPath(), params.getContext());
+    auto request = makeFetchRequest(FetchMethod::POST, prefixedPath(params.getPath()),
+        params.getContext());
     setFetchRequestBody(request, params.getContent());
     return fetch(kj::mv(request), context.getResults());
   }
 
   kj::Promise<void> put(PutContext context) override {
     auto params = context.getParams();
-    auto request = makeFetchRequest(FetchMethod::PUT, params.getPath(), params.getContext());
+    auto request = makeFetchRequest(FetchMethod::PUT, prefixedPath(params.getPath()),
+        params.getContext());
     setFetchRequestBody(request, params.getContent());
     return fetch(kj::mv(request), context.getResults());
   }
 
   kj::Promise<void> delete_(DeleteContext context) override {
     auto params = context.getParams();
-    auto request = makeFetchRequest(FetchMethod::DELETE_, params.getPath(), params.getContext());
+    auto request = makeFetchRequest(FetchMethod::DELETE_, prefixedPath(params.getPath()),
+        params.getContext());
     return fetch(kj::mv(request), context.getResults());
   }
 
   kj::Promise<void> patch(PatchContext context) override {
     auto params = context.getParams();
-    auto request = makeFetchRequest(FetchMethod::PATCH, params.getPath(), params.getContext());
+    auto request = makeFetchRequest(FetchMethod::PATCH, prefixedPath(params.getPath()),
+        params.getContext());
     setFetchRequestBody(request, params.getContent());
     return fetch(kj::mv(request), context.getResults());
   }
@@ -747,7 +756,16 @@ public:
   }
 
 private:
+  kj::String pathPrefix;
   kj::Own<IsolateRuntimeAdapter> runtime;
+
+  kj::String prefixedPath(kj::StringPtr path) {
+    if (pathPrefix.size() == 0) {
+      return kj::heapString(path);
+    } else {
+      return kj::str(pathPrefix, path);
+    }
+  }
 
   kj::Promise<void> fetch(FetchRequest&& request, WebSession::Response::Builder response) {
     return runtime->fetch(kj::mv(request))
@@ -773,11 +791,16 @@ public:
 
   kj::Promise<void> newSession(NewSessionContext context) override {
     auto params = context.getParams();
-    KJ_REQUIRE(params.getSessionType() == capnp::typeId<WebSession>(),
+    auto sessionType = params.getSessionType();
+    bool isWebSession = sessionType == capnp::typeId<WebSession>();
+    bool isApiSession = sessionType == capnp::typeId<ApiSession>() &&
+        runtimeConfig->apiPath.size() > 0;
+    KJ_REQUIRE(isWebSession || isApiSession,
         "Unsupported isolate grain session type.");
 
+    kj::StringPtr pathPrefix = isApiSession ? runtimeConfig->apiPath.asPtr() : kj::StringPtr("");
     context.getResults().setSession(
-        kj::heap<IsolateWebSessionImpl>(kj::addRef(*runtimeConfig)));
+        kj::heap<IsolateWebSessionImpl>(kj::addRef(*runtimeConfig), pathPrefix));
     return kj::READY_NOW;
   }
 
