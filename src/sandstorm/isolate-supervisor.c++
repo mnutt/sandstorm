@@ -28,6 +28,7 @@
 #include <kj/debug.h>
 #include <kj/io.h>
 #include <kj/refcount.h>
+#include <sandstorm/api-session.capnp.h>
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/package.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
@@ -261,10 +262,21 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(spk::Manifest::IsolateConfig::Re
   auto result = kj::refcounted<IsolateRuntimeConfig>();
   result->mainModule = kj::heapString(config.getMainModule());
   result->compatibilityDate = kj::heapString(config.getCompatibilityDate());
-  auto viewInfo = config.getBridgeConfig().getViewInfo();
+  auto bridgeConfig = config.getBridgeConfig();
+  auto viewInfo = bridgeConfig.getViewInfo();
   result->viewInfoMessage = kj::heap<capnp::MallocMessageBuilder>(
       viewInfo.totalSize().wordCount + 4);
   result->viewInfoMessage->setRoot(viewInfo);
+  auto powerboxApis = bridgeConfig.getPowerboxApis();
+  if (powerboxApis.size() > 0) {
+    auto copiedViewInfo = result->viewInfoMessage->getRoot<UiView::ViewInfo>();
+    auto descriptors = copiedViewInfo.initMatchRequests(powerboxApis.size());
+    for (auto i: kj::indices(powerboxApis)) {
+      auto tag = descriptors[i].initTags(1)[0];
+      tag.setId(capnp::typeId<ApiSession>());
+      tag.getValue().setAs<ApiSession::PowerboxTag>(powerboxApis[i].getTag());
+    }
+  }
   result->appTitle = kj::heapString(viewInfo.getAppTitle().getDefaultText());
   for (auto flag: config.getCompatibilityFlags()) {
     result->compatibilityFlags.add(kj::heapString(flag));
