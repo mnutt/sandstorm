@@ -19,6 +19,7 @@
 #include "util.h"
 #include "version.h"
 
+#include <capnp/message.h>
 #include <capnp/rpc-twoparty.h>
 #include <capnp/schema.h>
 #include <capnp/serialize.h>
@@ -82,6 +83,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String mainModule;
   kj::String compatibilityDate;
   kj::String appTitle;
+  kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
   kj::Vector<Binding> bindings;
@@ -259,8 +261,11 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(spk::Manifest::IsolateConfig::Re
   auto result = kj::refcounted<IsolateRuntimeConfig>();
   result->mainModule = kj::heapString(config.getMainModule());
   result->compatibilityDate = kj::heapString(config.getCompatibilityDate());
-  result->appTitle = kj::heapString(
-      config.getBridgeConfig().getViewInfo().getAppTitle().getDefaultText());
+  auto viewInfo = config.getBridgeConfig().getViewInfo();
+  result->viewInfoMessage = kj::heap<capnp::MallocMessageBuilder>(
+      viewInfo.totalSize().wordCount + 4);
+  result->viewInfoMessage->setRoot(viewInfo);
+  result->appTitle = kj::heapString(viewInfo.getAppTitle().getDefaultText());
   for (auto flag: config.getCompatibilityFlags()) {
     result->compatibilityFlags.add(kj::heapString(flag));
   }
@@ -746,8 +751,11 @@ public:
       : runtimeConfig(kj::mv(runtimeConfig)) {}
 
   kj::Promise<void> getViewInfo(GetViewInfoContext context) override {
-    auto viewInfo = context.getResults();
-    viewInfo.initAppTitle().setDefaultText(appTitleOrDefault(*runtimeConfig));
+    context.setResults(runtimeConfig->viewInfoMessage->getRoot<UiView::ViewInfo>().asReader());
+
+    if (runtimeConfig->appTitle.size() == 0) {
+      context.getResults().initAppTitle().setDefaultText(appTitleOrDefault(*runtimeConfig));
+    }
     return kj::READY_NOW;
   }
 
