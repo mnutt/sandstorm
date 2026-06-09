@@ -26,6 +26,7 @@
 #include <kj/async-io.h>
 #include <kj/async-unix.h>
 #include <kj/debug.h>
+#include <kj/encoding.h>
 #include <kj/io.h>
 #include <kj/refcount.h>
 #include <sandstorm/api-session.capnp.h>
@@ -419,6 +420,32 @@ kj::StringPtr sessionKindName(SessionKind kind) {
   KJ_UNREACHABLE;
 }
 
+struct SessionMetadata {
+  kj::String basePath;
+  kj::String userAgent;
+  kj::String acceptableLanguages;
+  kj::String tabId;
+};
+
+SessionMetadata copySessionMetadata(
+    WebSession::Params::Reader params, capnp::Data::Reader tabId) {
+  SessionMetadata result;
+  result.basePath = kj::heapString(params.getBasePath());
+  result.userAgent = kj::heapString(params.getUserAgent());
+  result.acceptableLanguages = kj::strArray(
+      KJ_MAP(language, params.getAcceptableLanguages()) {
+    return kj::str(language);
+  }, ",");
+  result.tabId = kj::encodeHex(tabId);
+  return result;
+}
+
+SessionMetadata copyApiSessionMetadata(capnp::Data::Reader tabId) {
+  SessionMetadata result;
+  result.tabId = kj::encodeHex(tabId);
+  return result;
+}
+
 struct FetchHeader {
   kj::String name;
   kj::String value;
@@ -730,9 +757,11 @@ class IsolateWebSessionImpl final: public WebSession::Server {
 public:
   IsolateWebSessionImpl(
       kj::Own<IsolateRuntimeConfig> config, kj::StringPtr pathPrefix = "",
-      SessionKind sessionKind = SessionKind::NORMAL)
+      SessionKind sessionKind = SessionKind::NORMAL,
+      SessionMetadata&& sessionMetadata = SessionMetadata())
       : pathPrefix(kj::heapString(pathPrefix)),
         sessionKind(sessionKind),
+        sessionMetadata(kj::mv(sessionMetadata)),
         runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config))) {}
 
   kj::Promise<void> get(GetContext context) override {
@@ -780,6 +809,7 @@ public:
 private:
   kj::String pathPrefix;
   SessionKind sessionKind;
+  SessionMetadata sessionMetadata;
   kj::Own<IsolateRuntimeAdapter> runtime;
 
   kj::String prefixedPath(kj::StringPtr path) {
@@ -790,8 +820,24 @@ private:
     }
   }
 
-  kj::Promise<void> fetch(FetchRequest&& request, WebSession::Response::Builder response) {
+  void addSessionHeaders(FetchRequest& request) {
     addHeader(request, "x-sandstorm-session-type", sessionKindName(sessionKind));
+    if (sessionMetadata.userAgent.size() > 0) {
+      addHeader(request, "user-agent", sessionMetadata.userAgent);
+    }
+    if (sessionMetadata.acceptableLanguages.size() > 0) {
+      addHeader(request, "accept-language", sessionMetadata.acceptableLanguages);
+    }
+    if (sessionMetadata.tabId.size() > 0) {
+      addHeader(request, "x-sandstorm-tab-id", sessionMetadata.tabId);
+    }
+    if (sessionMetadata.basePath.size() > 0) {
+      addHeader(request, "x-sandstorm-base-path", sessionMetadata.basePath);
+    }
+  }
+
+  kj::Promise<void> fetch(FetchRequest&& request, WebSession::Response::Builder response) {
+    addSessionHeaders(request);
     return runtime->fetch(kj::mv(request))
         .then([response](FetchResponse&& fetchResponse) mutable {
       writeFetchResponse(kj::mv(fetchResponse), response);
@@ -823,8 +869,12 @@ public:
         "Unsupported isolate grain session type.");
 
     kj::StringPtr pathPrefix = isApiSession ? runtimeConfig->apiPath.asPtr() : kj::StringPtr("");
+    auto sessionMetadata = isWebSession
+        ? copySessionMetadata(params.getSessionParams().getAs<WebSession::Params>(), params.getTabId())
+        : copyApiSessionMetadata(params.getTabId());
     context.getResults().setSession(
-        kj::heap<IsolateWebSessionImpl>(kj::addRef(*runtimeConfig), pathPrefix));
+        kj::heap<IsolateWebSessionImpl>(
+            kj::addRef(*runtimeConfig), pathPrefix, SessionKind::NORMAL, kj::mv(sessionMetadata)));
     return kj::READY_NOW;
   }
 
@@ -833,8 +883,10 @@ public:
     KJ_REQUIRE(params.getSessionType() == capnp::typeId<WebSession>(),
         "Unsupported isolate grain request session type.");
 
+    auto sessionMetadata = copySessionMetadata(
+        params.getSessionParams().getAs<WebSession::Params>(), params.getTabId());
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
-        kj::addRef(*runtimeConfig), "", SessionKind::REQUEST));
+        kj::addRef(*runtimeConfig), "", SessionKind::REQUEST, kj::mv(sessionMetadata)));
     return kj::READY_NOW;
   }
 
@@ -843,8 +895,10 @@ public:
     KJ_REQUIRE(params.getSessionType() == capnp::typeId<WebSession>(),
         "Unsupported isolate grain offer session type.");
 
+    auto sessionMetadata = copySessionMetadata(
+        params.getSessionParams().getAs<WebSession::Params>(), params.getTabId());
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
-        kj::addRef(*runtimeConfig), "", SessionKind::OFFER));
+        kj::addRef(*runtimeConfig), "", SessionKind::OFFER, kj::mv(sessionMetadata)));
     return kj::READY_NOW;
   }
 
