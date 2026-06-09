@@ -60,6 +60,7 @@
 
 #include "version.h"
 #include "send-fd.h"
+#include "isolate-supervisor.h"
 #include "supervisor.h"
 #include "util.h"
 #include "spk.h"
@@ -360,7 +361,10 @@ public:
 
     {
       auto programName = context.getProgramName();
-      if (programName.endsWith("supervisor")) {  // historically "sandstorm-supervisor"
+      if (programName.endsWith("isolate-supervisor")) {
+        alternateMain = kj::heap<IsolateSupervisorMain>(context);
+        return alternateMain->getMain();
+      } else if (programName.endsWith("supervisor")) {  // historically "sandstorm-supervisor"
         alternateMain = kj::heap<SupervisorMain>(context);
         return alternateMain->getMain();
       } else if (programName == "spk" || programName.endsWith("/spk")) {
