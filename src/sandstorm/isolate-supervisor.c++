@@ -81,6 +81,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
 
   kj::String mainModule;
   kj::String compatibilityDate;
+  kj::String appTitle;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
   kj::Vector<Binding> bindings;
@@ -258,6 +259,8 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(spk::Manifest::IsolateConfig::Re
   auto result = kj::refcounted<IsolateRuntimeConfig>();
   result->mainModule = kj::heapString(config.getMainModule());
   result->compatibilityDate = kj::heapString(config.getCompatibilityDate());
+  result->appTitle = kj::heapString(
+      config.getBridgeConfig().getViewInfo().getAppTitle().getDefaultText());
   for (auto flag: config.getCompatibilityFlags()) {
     result->compatibilityFlags.add(kj::heapString(flag));
   }
@@ -302,6 +305,10 @@ kj::String htmlEscape(kj::StringPtr text) {
 
 void appendString(kj::Vector<char>& target, kj::StringPtr value) {
   target.addAll(value);
+}
+
+kj::StringPtr appTitleOrDefault(IsolateRuntimeConfig& config) {
+  return config.appTitle.size() > 0 ? config.appTitle.asPtr() : kj::StringPtr("Isolate grain");
 }
 
 kj::String renderCompatibilityFlagsHtml(IsolateRuntimeConfig& config) {
@@ -591,6 +598,7 @@ public:
       if (request.method == FetchMethod::GET) {
         auto escapedMainModule = htmlEscape(config->mainModule);
         auto escapedCompatibilityDate = htmlEscape(config->compatibilityDate);
+        auto escapedAppTitle = htmlEscape(appTitleOrDefault(*config));
         auto compatibilityFlags = renderCompatibilityFlagsHtml(*config);
         auto modules = renderModuleListHtml(*config);
         auto bindings = renderBindingListHtml(*config);
@@ -601,6 +609,7 @@ public:
             "<p>The isolate supervisor is wired into Sandstorm, "
             "and the workerd adapter seam has loaded the package configuration, "
             "but V8 execution is not implemented yet.</p>"
+            "<p>App title: <code>", escapedAppTitle, "</code></p>"
             "<p>Main module: <code>", escapedMainModule, "</code></p>"
             "<p>Compatibility date: <code>", escapedCompatibilityDate, "</code></p>"
             "<h2>Compatibility flags</h2>", compatibilityFlags,
@@ -738,7 +747,7 @@ public:
 
   kj::Promise<void> getViewInfo(GetViewInfoContext context) override {
     auto viewInfo = context.getResults();
-    viewInfo.initAppTitle().setDefaultText("Isolate grain");
+    viewInfo.initAppTitle().setDefaultText(appTitleOrDefault(*runtimeConfig));
     return kj::READY_NOW;
   }
 
