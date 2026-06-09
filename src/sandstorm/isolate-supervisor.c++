@@ -31,6 +31,7 @@
 #include <kj/refcount.h>
 #include <sandstorm/api-session.capnp.h>
 #include <sandstorm/grain.capnp.h>
+#include <sandstorm/identity.capnp.h>
 #include <sandstorm/package.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
 #include <sandstorm/util.capnp.h>
@@ -425,10 +426,60 @@ struct SessionMetadata {
   kj::String userAgent;
   kj::String acceptableLanguages;
   kj::String tabId;
+  kj::String userDisplayName;
+  kj::String userId;
+  kj::String userHandle;
+  kj::String userPicture;
+  kj::String userPronouns;
+  kj::String permissions;
 };
 
+kj::String textIdentityId(capnp::Data::Reader id) {
+  KJ_ASSERT(id.size() == 32, "Identity ID not a SHA-256?");
+  return kj::encodeHex(id.slice(0, kj::min(id.size(), 16)));
+}
+
+kj::String formatPermissions(
+    UiView::ViewInfo::Reader viewInfo, capnp::List<bool>::Reader userPermissions) {
+  auto configPermissions = viewInfo.getPermissions();
+  kj::Vector<kj::String> permissionVec(configPermissions.size());
+
+  for (uint i = 0; i < configPermissions.size() && i < userPermissions.size(); ++i) {
+    if (userPermissions[i]) {
+      permissionVec.add(kj::str(configPermissions[i].getName()));
+    }
+  }
+
+  return kj::strArray(permissionVec, ",");
+}
+
+kj::String formatPronouns(Profile::Pronouns pronouns) {
+  capnp::EnumSchema schema = capnp::Schema::from<Profile::Pronouns>();
+  uint pronounValue = static_cast<uint>(pronouns);
+  auto enumerants = schema.getEnumerants();
+  if (pronounValue > 0 && pronounValue < enumerants.size()) {
+    return kj::str(enumerants[pronounValue].getProto().getName());
+  } else {
+    return nullptr;
+  }
+}
+
+void copyUserMetadata(
+    SessionMetadata& result, UserInfo::Reader userInfo, UiView::ViewInfo::Reader viewInfo) {
+  result.userDisplayName = kj::heapString(userInfo.getDisplayName().getDefaultText());
+  result.permissions = formatPermissions(viewInfo, userInfo.getPermissions());
+
+  if (userInfo.getIdentityId().size() > 0) {
+    result.userId = textIdentityId(userInfo.getIdentityId());
+    result.userHandle = kj::heapString(userInfo.getPreferredHandle());
+    result.userPicture = kj::heapString(userInfo.getPictureUrl());
+    result.userPronouns = formatPronouns(userInfo.getPronouns());
+  }
+}
+
 SessionMetadata copySessionMetadata(
-    WebSession::Params::Reader params, capnp::Data::Reader tabId) {
+    WebSession::Params::Reader params, UserInfo::Reader userInfo,
+    UiView::ViewInfo::Reader viewInfo, capnp::Data::Reader tabId) {
   SessionMetadata result;
   result.basePath = kj::heapString(params.getBasePath());
   result.userAgent = kj::heapString(params.getUserAgent());
@@ -437,12 +488,15 @@ SessionMetadata copySessionMetadata(
     return kj::str(language);
   }, ",");
   result.tabId = kj::encodeHex(tabId);
+  copyUserMetadata(result, userInfo, viewInfo);
   return result;
 }
 
-SessionMetadata copyApiSessionMetadata(capnp::Data::Reader tabId) {
+SessionMetadata copyApiSessionMetadata(
+    UserInfo::Reader userInfo, UiView::ViewInfo::Reader viewInfo, capnp::Data::Reader tabId) {
   SessionMetadata result;
   result.tabId = kj::encodeHex(tabId);
+  copyUserMetadata(result, userInfo, viewInfo);
   return result;
 }
 
@@ -822,6 +876,20 @@ private:
 
   void addSessionHeaders(FetchRequest& request) {
     addHeader(request, "x-sandstorm-session-type", sessionKindName(sessionKind));
+    addHeader(request, "x-sandstorm-username", sessionMetadata.userDisplayName);
+    addHeader(request, "x-sandstorm-permissions", sessionMetadata.permissions);
+    if (sessionMetadata.userId.size() > 0) {
+      addHeader(request, "x-sandstorm-user-id", sessionMetadata.userId);
+    }
+    if (sessionMetadata.userHandle.size() > 0) {
+      addHeader(request, "x-sandstorm-preferred-handle", sessionMetadata.userHandle);
+    }
+    if (sessionMetadata.userPicture.size() > 0) {
+      addHeader(request, "x-sandstorm-user-picture", sessionMetadata.userPicture);
+    }
+    if (sessionMetadata.userPronouns.size() > 0) {
+      addHeader(request, "x-sandstorm-user-pronouns", sessionMetadata.userPronouns);
+    }
     if (sessionMetadata.userAgent.size() > 0) {
       addHeader(request, "user-agent", sessionMetadata.userAgent);
     }
@@ -862,6 +930,7 @@ public:
   kj::Promise<void> newSession(NewSessionContext context) override {
     auto params = context.getParams();
     auto sessionType = params.getSessionType();
+    auto viewInfo = runtimeConfig->viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
     bool isWebSession = sessionType == capnp::typeId<WebSession>();
     bool isApiSession = sessionType == capnp::typeId<ApiSession>() &&
         runtimeConfig->apiPath.size() > 0;
@@ -870,8 +939,9 @@ public:
 
     kj::StringPtr pathPrefix = isApiSession ? runtimeConfig->apiPath.asPtr() : kj::StringPtr("");
     auto sessionMetadata = isWebSession
-        ? copySessionMetadata(params.getSessionParams().getAs<WebSession::Params>(), params.getTabId())
-        : copyApiSessionMetadata(params.getTabId());
+        ? copySessionMetadata(params.getSessionParams().getAs<WebSession::Params>(),
+            params.getUserInfo(), viewInfo, params.getTabId())
+        : copyApiSessionMetadata(params.getUserInfo(), viewInfo, params.getTabId());
     context.getResults().setSession(
         kj::heap<IsolateWebSessionImpl>(
             kj::addRef(*runtimeConfig), pathPrefix, SessionKind::NORMAL, kj::mv(sessionMetadata)));
@@ -883,8 +953,10 @@ public:
     KJ_REQUIRE(params.getSessionType() == capnp::typeId<WebSession>(),
         "Unsupported isolate grain request session type.");
 
+    auto viewInfo = runtimeConfig->viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
     auto sessionMetadata = copySessionMetadata(
-        params.getSessionParams().getAs<WebSession::Params>(), params.getTabId());
+        params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
+        params.getTabId());
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
         kj::addRef(*runtimeConfig), "", SessionKind::REQUEST, kj::mv(sessionMetadata)));
     return kj::READY_NOW;
@@ -895,8 +967,10 @@ public:
     KJ_REQUIRE(params.getSessionType() == capnp::typeId<WebSession>(),
         "Unsupported isolate grain offer session type.");
 
+    auto viewInfo = runtimeConfig->viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
     auto sessionMetadata = copySessionMetadata(
-        params.getSessionParams().getAs<WebSession::Params>(), params.getTabId());
+        params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
+        params.getTabId());
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
         kj::addRef(*runtimeConfig), "", SessionKind::OFFER, kj::mv(sessionMetadata)));
     return kj::READY_NOW;
