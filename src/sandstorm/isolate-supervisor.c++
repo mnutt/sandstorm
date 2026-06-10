@@ -1300,13 +1300,102 @@ private:
   kj::Own<IsolateRuntimeHost> runtimeHost;
 };
 
+class WorkerdSidecarProcess final {
+public:
+  WorkerdSidecarProcess(
+      kj::ArrayPtr<const kj::String> runtimeArgs,
+      kj::ArrayPtr<const kj::String> environment,
+      IsolateRuntimeConfig& runtimeConfig) {
+    if (runtimeArgs.size() == 0) {
+      KJ_LOG(WARNING, "No isolate sidecar command configured; runtime remains in diagnostics mode.",
+          runtimeConfig.workerdBundleDir, runtimeConfig.workerdSocketPath);
+      return;
+    }
+
+    auto argv = KJ_MAP(arg, runtimeArgs) -> kj::StringPtr {
+      return arg;
+    };
+    auto childEnvStrings = makeSidecarEnvironment(environment, runtimeConfig);
+    auto childEnv = KJ_MAP(item, childEnvStrings) -> kj::StringPtr {
+      return item;
+    };
+
+    auto stdoutNull = raiiOpen("/dev/null", O_WRONLY | O_CLOEXEC);
+    Subprocess::Options options(argv.asPtr());
+    options.environment = childEnv.asPtr();
+    options.stdout = stdoutNull;
+    process = Subprocess(kj::mv(options));
+
+    KJ_IF_MAYBE(p, process) {
+      KJ_LOG(WARNING, "Started isolate sidecar process.",
+          runtimeArgs[0], p->getPid(), runtimeConfig.workerdBundleDir,
+          runtimeConfig.workerdSocketPath);
+    }
+  }
+
+  ~WorkerdSidecarProcess() noexcept(false) {
+    stop();
+  }
+
+  KJ_DISALLOW_COPY(WorkerdSidecarProcess);
+
+  void stop() {
+    KJ_IF_MAYBE(p, process) {
+      if (p->isRunning()) {
+        KJ_LOG(WARNING, "Stopping isolate sidecar process.", p->getPid());
+        p->signal(SIGTERM);
+      }
+      process = nullptr;
+    }
+  }
+
+private:
+  kj::Maybe<Subprocess> process;
+
+  static bool hasEnvVar(kj::ArrayPtr<const kj::String> environment, kj::StringPtr name) {
+    for (auto& item: environment) {
+      KJ_IF_MAYBE(separator, item.findFirst('=')) {
+        if (item.slice(0, *separator) == name) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  static kj::Array<kj::String> makeSidecarEnvironment(
+      kj::ArrayPtr<const kj::String> environment,
+      IsolateRuntimeConfig& runtimeConfig) {
+    kj::Vector<kj::String> result(environment.size() + 6);
+    for (auto& item: environment) {
+      result.add(kj::heapString(item));
+    }
+
+    if (!hasEnvVar(environment, "PATH")) {
+      result.add(kj::heapString("PATH=/bin:/usr/bin"));
+    }
+
+    result.add(kj::str("SANDSTORM_ISOLATE_RUNTIME_DIR=", runtimeConfig.workerdBundleDir));
+    result.add(kj::str("SANDSTORM_ISOLATE_RUNTIME_MANIFEST=",
+        runtimeConfig.workerdBundleDir, "/runtime-manifest.json"));
+    result.add(kj::str("SANDSTORM_ISOLATE_SOCKET=", runtimeConfig.workerdSocketPath));
+    result.add(kj::str("SANDSTORM_ISOLATE_MAIN_MODULE=", runtimeConfig.mainModule));
+    result.add(kj::str("SANDSTORM_ISOLATE_COMPATIBILITY_DATE=",
+        runtimeConfig.compatibilityDate));
+    return result.releaseAsArray();
+  }
+};
+
 class IsolateSupervisorImpl final: public Supervisor::Server {
 public:
   IsolateSupervisorImpl(
       kj::StringPtr varPath, kj::Own<CapRedirector> coreRedirector,
-      kj::Own<IsolateRuntimeConfig> runtimeConfig, kj::Own<IsolateRuntimeHost> runtimeHost)
+      kj::Own<IsolateRuntimeConfig> runtimeConfig, kj::Own<IsolateRuntimeHost> runtimeHost,
+      kj::Own<WorkerdSidecarProcess> sidecar)
       : varPath(kj::heapString(varPath)), coreRedirector(kj::mv(coreRedirector)),
-        runtimeConfig(kj::mv(runtimeConfig)), runtimeHost(kj::mv(runtimeHost)) {}
+        runtimeConfig(kj::mv(runtimeConfig)), runtimeHost(kj::mv(runtimeHost)),
+        sidecar(kj::mv(sidecar)) {}
 
   kj::Promise<void> getMainView(GetMainViewContext context) override {
     context.getResults().setView(kj::heap<IsolateUiViewImpl>(
@@ -1330,6 +1419,7 @@ public:
   }
 
   kj::Promise<void> shutdown(ShutdownContext context) override {
+    sidecar->stop();
     _exit(0);
   }
 
@@ -1355,6 +1445,7 @@ private:
   kj::Own<CapRedirector> coreRedirector;
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
+  kj::Own<WorkerdSidecarProcess> sidecar;
 };
 
 }  // namespace
@@ -1558,9 +1649,12 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   auto ioContext = kj::setupAsyncIo();
   auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
       ioContext.provider->getNetwork(), ioContext.provider->getTimer());
+  auto sidecar = kj::heap<WorkerdSidecarProcess>(
+      runtimeArgs.asPtr(), environment.asPtr(), *runtimeConfig);
   auto coreRedirector = kj::refcounted<CapRedirector>();
   Supervisor::Client mainCap = kj::heap<IsolateSupervisorImpl>(
-      varPath, kj::addRef(*coreRedirector), kj::mv(runtimeConfig), kj::mv(runtimeHost));
+      varPath, kj::addRef(*coreRedirector), kj::mv(runtimeConfig), kj::mv(runtimeHost),
+      kj::mv(sidecar));
   auto listener = kj::heap<TwoPartyServerWithClientBootstrap>(
       kj::mv(mainCap), kj::mv(coreRedirector));
 
