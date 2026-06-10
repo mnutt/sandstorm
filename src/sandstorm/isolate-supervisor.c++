@@ -87,6 +87,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String compatibilityDate;
   kj::String appTitle;
   kj::String apiPath;
+  kj::String workerdBundleDir;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
@@ -174,6 +175,25 @@ kj::StringPtr bindingTypeName(IsolateRuntimeConfig::BindingType type) {
       return "publicFetch";
     case IsolateRuntimeConfig::BindingType::SERVICE:
       return "service";
+  }
+
+  KJ_UNREACHABLE;
+}
+
+kj::StringPtr moduleFileExtension(IsolateRuntimeConfig::ModuleType type) {
+  switch (type) {
+    case IsolateRuntimeConfig::ModuleType::ES_MODULE:
+      return ".mjs";
+    case IsolateRuntimeConfig::ModuleType::COMMON_JS_MODULE:
+      return ".cjs";
+    case IsolateRuntimeConfig::ModuleType::TEXT:
+      return ".txt";
+    case IsolateRuntimeConfig::ModuleType::DATA:
+      return ".bin";
+    case IsolateRuntimeConfig::ModuleType::WASM:
+      return ".wasm";
+    case IsolateRuntimeConfig::ModuleType::JSON:
+      return ".json";
   }
 
   KJ_UNREACHABLE;
@@ -391,6 +411,131 @@ kj::String renderBindingListHtml(IsolateRuntimeConfig& config) {
   result.addAll(kj::StringPtr("</ul>"));
   result.add('\0');
   return kj::String(result.releaseAsArray());
+}
+
+void ensureDirectory(kj::StringPtr path) {
+  if (mkdir(path.cStr(), 0770) != 0) {
+    int error = errno;
+    if (error != EEXIST) {
+      KJ_FAIL_SYSCALL("mkdir", error, path);
+    }
+  }
+}
+
+void writeAllToFd(int fd, kj::ArrayPtr<const byte> content) {
+  while (content.size() > 0) {
+    ssize_t n;
+    KJ_SYSCALL(n = write(fd, content.begin(), content.size()));
+    KJ_REQUIRE(n > 0, "write() made no progress");
+    auto written = static_cast<size_t>(n);
+    content = content.slice(written, content.size());
+  }
+}
+
+void writeFile(kj::StringPtr path, kj::ArrayPtr<const byte> content) {
+  int fd;
+  KJ_SYSCALL(fd = open(path.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0660), path);
+  KJ_DEFER(close(fd));
+  writeAllToFd(fd, content);
+}
+
+void appendJsonString(kj::Vector<char>& result, kj::StringPtr text) {
+  result.add('"');
+  for (char c: text) {
+    switch (c) {
+      case '"': result.addAll(kj::StringPtr("\\\"")); break;
+      case '\\': result.addAll(kj::StringPtr("\\\\")); break;
+      case '\b': result.addAll(kj::StringPtr("\\b")); break;
+      case '\f': result.addAll(kj::StringPtr("\\f")); break;
+      case '\n': result.addAll(kj::StringPtr("\\n")); break;
+      case '\r': result.addAll(kj::StringPtr("\\r")); break;
+      case '\t': result.addAll(kj::StringPtr("\\t")); break;
+      default:
+        result.add(c < 0x20 ? ' ' : c);
+        break;
+    }
+  }
+  result.add('"');
+}
+
+void appendJsonField(kj::Vector<char>& result, kj::StringPtr name, kj::StringPtr value) {
+  appendJsonString(result, name);
+  result.addAll(kj::StringPtr(": "));
+  appendJsonString(result, value);
+}
+
+kj::String moduleBundleFileName(size_t index, IsolateRuntimeConfig::ModuleType type) {
+  return kj::str("module-", index, moduleFileExtension(type));
+}
+
+kj::String bindingBundleFileName(size_t index) {
+  return kj::str("binding-", index, ".bin");
+}
+
+kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& config) {
+  auto bundleDir = kj::str(varPath, "/isolate-runtime");
+  auto modulesDir = kj::str(bundleDir, "/modules");
+  auto bindingsDir = kj::str(bundleDir, "/bindings");
+  ensureDirectory(bundleDir);
+  ensureDirectory(modulesDir);
+  ensureDirectory(bindingsDir);
+
+  kj::Vector<char> manifest;
+  manifest.addAll(kj::StringPtr("{\n  "));
+  appendJsonField(manifest, "mainModule", config.mainModule);
+  manifest.addAll(kj::StringPtr(",\n  "));
+  appendJsonField(manifest, "compatibilityDate", config.compatibilityDate);
+
+  manifest.addAll(kj::StringPtr(",\n  \"compatibilityFlags\": ["));
+  for (auto i: kj::indices(config.compatibilityFlags)) {
+    if (i > 0) manifest.addAll(kj::StringPtr(", "));
+    appendJsonString(manifest, config.compatibilityFlags[i]);
+  }
+  manifest.addAll(kj::StringPtr("],\n  \"modules\": [\n"));
+
+  for (auto i: kj::indices(config.modules)) {
+    auto& module = config.modules[i];
+    auto fileName = moduleBundleFileName(i, module.type);
+    writeFile(kj::str(modulesDir, "/", fileName), module.content);
+
+    if (i > 0) manifest.addAll(kj::StringPtr(",\n"));
+    manifest.addAll(kj::StringPtr("    { "));
+    appendJsonField(manifest, "name", module.name);
+    manifest.addAll(kj::StringPtr(", "));
+    appendJsonField(manifest, "type", moduleTypeName(module.type));
+    manifest.addAll(kj::StringPtr(", "));
+    appendJsonField(manifest, "file", kj::str("modules/", fileName));
+    manifest.addAll(kj::StringPtr(" }"));
+  }
+
+  manifest.addAll(kj::StringPtr("\n  ],\n  \"bindings\": [\n"));
+  for (auto i: kj::indices(config.bindings)) {
+    auto& binding = config.bindings[i];
+    if (binding.value.size() > 0) {
+      writeFile(kj::str(bindingsDir, "/", bindingBundleFileName(i)), binding.value);
+    }
+
+    if (i > 0) manifest.addAll(kj::StringPtr(",\n"));
+    manifest.addAll(kj::StringPtr("    { "));
+    appendJsonField(manifest, "name", binding.name);
+    manifest.addAll(kj::StringPtr(", "));
+    appendJsonField(manifest, "type", bindingTypeName(binding.type));
+    if (binding.value.size() > 0) {
+      manifest.addAll(kj::StringPtr(", "));
+      appendJsonField(manifest, "file", kj::str("bindings/", bindingBundleFileName(i)));
+    }
+    if (binding.serviceName.size() > 0) {
+      manifest.addAll(kj::StringPtr(", "));
+      appendJsonField(manifest, "serviceName", binding.serviceName);
+    }
+    manifest.addAll(kj::StringPtr(" }"));
+  }
+
+  manifest.addAll(kj::StringPtr("\n  ]\n}\n"));
+  manifest.add('\0');
+  auto manifestText = kj::String(manifest.releaseAsArray());
+  writeFile(kj::str(bundleDir, "/runtime-manifest.json"), manifestText.asBytes());
+  return bundleDir;
 }
 
 enum class FetchMethod {
@@ -729,6 +874,7 @@ public:
         auto escapedMainModule = htmlEscape(config->mainModule);
         auto escapedCompatibilityDate = htmlEscape(config->compatibilityDate);
         auto escapedAppTitle = htmlEscape(appTitleOrDefault(*config));
+        auto escapedBundleDir = htmlEscape(config->workerdBundleDir);
         auto compatibilityFlags = renderCompatibilityFlagsHtml(*config);
         auto modules = renderModuleListHtml(*config);
         auto bindings = renderBindingListHtml(*config);
@@ -742,6 +888,7 @@ public:
             "<p>App title: <code>", escapedAppTitle, "</code></p>"
             "<p>Main module: <code>", escapedMainModule, "</code></p>"
             "<p>Compatibility date: <code>", escapedCompatibilityDate, "</code></p>"
+            "<p>Runtime bundle: <code>", escapedBundleDir, "</code></p>"
             "<h2>Compatibility flags</h2>", compatibilityFlags,
             "<h2>Modules</h2>", modules,
             "<h2>Bindings</h2>", bindings);
@@ -1239,10 +1386,12 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
     KJ_SYSCALL(setuid(*u));
   }
 
+  runtimeConfig->workerdBundleDir = prepareWorkerdBundle(varPath, *runtimeConfig);
+
   KJ_LOG(WARNING, "Starting isolate supervisor with workerd adapter skeleton.",
       grainId, pkgPath, runtimeConfig->mainModule, runtimeConfig->compatibilityDate,
       runtimeConfig->compatibilityFlags.size(), runtimeConfig->modules.size(),
-      runtimeConfig->bindings.size());
+      runtimeConfig->bindings.size(), runtimeConfig->workerdBundleDir);
 
   auto ioContext = kj::setupAsyncIo();
   auto coreRedirector = kj::refcounted<CapRedirector>();
