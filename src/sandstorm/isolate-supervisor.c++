@@ -88,6 +88,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String appTitle;
   kj::String apiPath;
   kj::String workerdBundleDir;
+  kj::String workerdSocketPath;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
@@ -865,6 +866,22 @@ public:
       : config(kj::mv(config)) {}
 
   kj::Promise<FetchResponse> fetch(FetchRequest&& request) override {
+    if (hasSidecarEndpoint()) {
+      return fetchPlaceholder(kj::mv(request), "sidecar endpoint configured");
+    }
+
+    return fetchPlaceholder(kj::mv(request), "sidecar endpoint not configured");
+  }
+
+private:
+  kj::Own<IsolateRuntimeConfig> config;
+
+  bool hasSidecarEndpoint() {
+    return config->workerdSocketPath.size() > 0;
+  }
+
+  kj::Promise<FetchResponse> fetchPlaceholder(
+      FetchRequest&& request, kj::StringPtr runtimeState) {
     if (request.method == FetchMethod::GET || request.method == FetchMethod::HEAD) {
       FetchResponse response;
       response.statusCode = 200;
@@ -875,6 +892,7 @@ public:
         auto escapedCompatibilityDate = htmlEscape(config->compatibilityDate);
         auto escapedAppTitle = htmlEscape(appTitleOrDefault(*config));
         auto escapedBundleDir = htmlEscape(config->workerdBundleDir);
+        auto escapedSocketPath = htmlEscape(config->workerdSocketPath);
         auto compatibilityFlags = renderCompatibilityFlagsHtml(*config);
         auto modules = renderModuleListHtml(*config);
         auto bindings = renderBindingListHtml(*config);
@@ -885,10 +903,12 @@ public:
             "<p>The isolate supervisor is wired into Sandstorm, "
             "and the workerd adapter seam has loaded the package configuration, "
             "but V8 execution is not implemented yet.</p>"
+            "<p>Runtime state: <code>", runtimeState, "</code></p>"
             "<p>App title: <code>", escapedAppTitle, "</code></p>"
             "<p>Main module: <code>", escapedMainModule, "</code></p>"
             "<p>Compatibility date: <code>", escapedCompatibilityDate, "</code></p>"
             "<p>Runtime bundle: <code>", escapedBundleDir, "</code></p>"
+            "<p>Runtime socket: <code>", escapedSocketPath, "</code></p>"
             "<h2>Compatibility flags</h2>", compatibilityFlags,
             "<h2>Modules</h2>", modules,
             "<h2>Bindings</h2>", bindings);
@@ -905,9 +925,6 @@ public:
         "Isolate workerd adapter is configured, but V8 execution is not implemented yet.").asBytes());
     return kj::mv(response);
   }
-
-private:
-  kj::Own<IsolateRuntimeConfig> config;
 };
 
 kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
@@ -1387,11 +1404,13 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   }
 
   runtimeConfig->workerdBundleDir = prepareWorkerdBundle(varPath, *runtimeConfig);
+  runtimeConfig->workerdSocketPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.sock");
 
   KJ_LOG(WARNING, "Starting isolate supervisor with workerd adapter skeleton.",
       grainId, pkgPath, runtimeConfig->mainModule, runtimeConfig->compatibilityDate,
       runtimeConfig->compatibilityFlags.size(), runtimeConfig->modules.size(),
-      runtimeConfig->bindings.size(), runtimeConfig->workerdBundleDir);
+      runtimeConfig->bindings.size(), runtimeConfig->workerdBundleDir,
+      runtimeConfig->workerdSocketPath);
 
   auto ioContext = kj::setupAsyncIo();
   auto coreRedirector = kj::refcounted<CapRedirector>();
