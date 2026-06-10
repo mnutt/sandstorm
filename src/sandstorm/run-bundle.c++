@@ -436,6 +436,12 @@ public:
               return alternateMain->getMain();
             },
             "Manipulate spk files.")
+        .addSubCommand("isolate-dev-sidecar",
+            [this]() {
+              alternateMain = kj::heap<IsolateDevSidecarMain>(context);
+              return alternateMain->getMain();
+            },
+            "Run the built-in isolate development sidecar.")
         .addSubCommand("continue",
             [this]() {
               return kj::MainBuilder(context, VERSION,
