@@ -2059,10 +2059,13 @@ public:
     switch (method) {
       case kj::HttpMethod::GET:
         return get(kj::mv(path), response);
+      case kj::HttpMethod::HEAD:
+        return head(kj::mv(path), response);
       case kj::HttpMethod::PUT:
         return requestBody.readAllBytes(MAX_STORAGE_VALUE_BYTES)
-            .then([this, path = kj::mv(path), &response](kj::Array<byte>&& body) mutable {
-          writeFile(path, body);
+            .then([this, key = kj::mv(key), path = kj::mv(path), &response]
+                (kj::Array<byte>&& body) mutable {
+          writeStorageFile(path, key, body);
           return sendJson(response, 200, "OK", renderStored(body.size()));
         });
       case kj::HttpMethod::DELETE:
@@ -2137,6 +2140,38 @@ private:
         "{\n  \"ok\": false,\n  \"error\": \"storage key not found\"\n}\n"));
   }
 
+  kj::Promise<void> head(kj::String path, kj::HttpService::Response& response) {
+    KJ_IF_MAYBE(fd, raiiOpenIfExists(path, O_RDONLY | O_CLOEXEC)) {
+      struct stat stats;
+      KJ_SYSCALL(fstat(*fd, &stats));
+      kj::HttpHeaders responseHeaders(headerTable);
+      responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream");
+      responseHeaders.add("X-Sandstorm-Storage-Bytes", kj::str(stats.st_size));
+      response.send(200, "OK", responseHeaders, uint64_t(0));
+      return kj::READY_NOW;
+    }
+
+    kj::HttpHeaders responseHeaders(headerTable);
+    response.send(404, "Not Found", responseHeaders, uint64_t(0));
+    return kj::READY_NOW;
+  }
+
+  void writeStorageFile(kj::StringPtr path, kj::StringPtr key, kj::ArrayPtr<const byte> content) {
+    auto tmpPath = kj::str(config.storageRootPath, "/.tmp-", getpid(), "-", key);
+    unlinkIfExists(tmpPath);
+
+    int fd;
+    KJ_SYSCALL(fd = open(tmpPath.cStr(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0660),
+        tmpPath);
+    KJ_DEFER(close(fd));
+    writeAllToFd(fd, content);
+    KJ_SYSCALL(fsync(fd), tmpPath);
+    KJ_SYSCALL(rename(tmpPath.cStr(), path.cStr()), tmpPath, path);
+
+    auto dirFd = raiiOpen(config.storageRootPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    KJ_SYSCALL(fsync(dirFd), config.storageRootPath);
+  }
+
   kj::String renderStored(size_t bytes) {
     return kj::str("{\n  \"ok\": true,\n  \"bytes\": ", bytes, "\n}\n");
   }
@@ -2145,9 +2180,28 @@ private:
     auto files = listDirectory(config.storageRootPath);
     kj::Vector<char> json;
     json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"keys\": ["));
-    for (auto i: kj::indices(files)) {
-      if (i > 0) json.addAll(kj::StringPtr(", "));
-      appendJsonString(json, files[i]);
+    bool first = true;
+    for (auto& file: files) {
+      if (file.startsWith(".")) {
+        continue;
+      }
+
+      auto path = kj::str(config.storageRootPath, "/", file);
+      KJ_IF_MAYBE(fd, raiiOpenIfExists(path, O_RDONLY | O_CLOEXEC)) {
+        struct stat stats;
+        KJ_SYSCALL(fstat(*fd, &stats));
+        if (!S_ISREG(stats.st_mode)) {
+          continue;
+        }
+
+        if (!first) json.addAll(kj::StringPtr(", "));
+        json.addAll(kj::StringPtr("{ "));
+        appendJsonField(json, "name", file);
+        json.addAll(kj::StringPtr(", \"bytes\": "));
+        json.addAll(kj::str(stats.st_size));
+        json.addAll(kj::StringPtr(" }"));
+        first = false;
+      }
     }
     json.addAll(kj::StringPtr("]\n}\n"));
     json.add('\0');
