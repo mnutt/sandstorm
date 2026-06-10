@@ -95,6 +95,13 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::Vector<Binding> bindings;
 };
 
+struct IsolateRuntimeHost final: public kj::Refcounted {
+  IsolateRuntimeHost(kj::Network& network, kj::Timer& timer): network(network), timer(timer) {}
+
+  kj::Network& network;
+  kj::Timer& timer;
+};
+
 IsolateRuntimeConfig::ModuleType getModuleType(
     spk::Manifest::IsolateConfig::Module::Reader module) {
   switch (module.which()) {
@@ -862,8 +869,8 @@ public:
 
 class WorkerdRuntimeAdapter final: public IsolateRuntimeAdapter {
 public:
-  explicit WorkerdRuntimeAdapter(kj::Own<IsolateRuntimeConfig> config)
-      : config(kj::mv(config)) {}
+  WorkerdRuntimeAdapter(kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host)
+      : config(kj::mv(config)), host(kj::mv(host)) {}
 
   kj::Promise<FetchResponse> fetch(FetchRequest&& request) override {
     if (hasSidecarEndpoint()) {
@@ -875,6 +882,7 @@ public:
 
 private:
   kj::Own<IsolateRuntimeConfig> config;
+  kj::Own<IsolateRuntimeHost> host;
 
   bool hasSidecarEndpoint() {
     return config->workerdSocketPath.size() > 0;
@@ -983,13 +991,13 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
 class IsolateWebSessionImpl final: public WebSession::Server {
 public:
   IsolateWebSessionImpl(
-      kj::Own<IsolateRuntimeConfig> config, kj::StringPtr pathPrefix = "",
-      SessionKind sessionKind = SessionKind::NORMAL,
+      kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
+      kj::StringPtr pathPrefix = "", SessionKind sessionKind = SessionKind::NORMAL,
       SessionMetadata&& sessionMetadata = SessionMetadata())
       : pathPrefix(kj::heapString(pathPrefix)),
         sessionKind(sessionKind),
         sessionMetadata(kj::mv(sessionMetadata)),
-        runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config))) {}
+        runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host))) {}
 
   kj::Promise<void> get(GetContext context) override {
     auto params = context.getParams();
@@ -1094,8 +1102,9 @@ private:
 
 class IsolateUiViewImpl final: public UiView::Server {
 public:
-  explicit IsolateUiViewImpl(kj::Own<IsolateRuntimeConfig> runtimeConfig)
-      : runtimeConfig(kj::mv(runtimeConfig)) {}
+  IsolateUiViewImpl(kj::Own<IsolateRuntimeConfig> runtimeConfig,
+      kj::Own<IsolateRuntimeHost> runtimeHost)
+      : runtimeConfig(kj::mv(runtimeConfig)), runtimeHost(kj::mv(runtimeHost)) {}
 
   kj::Promise<void> getViewInfo(GetViewInfoContext context) override {
     context.setResults(runtimeConfig->viewInfoMessage->getRoot<UiView::ViewInfo>().asReader());
@@ -1123,7 +1132,8 @@ public:
         : copyApiSessionMetadata(params.getUserInfo(), viewInfo, params.getTabId());
     context.getResults().setSession(
         kj::heap<IsolateWebSessionImpl>(
-            kj::addRef(*runtimeConfig), pathPrefix, SessionKind::NORMAL, kj::mv(sessionMetadata)));
+            kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), pathPrefix, SessionKind::NORMAL,
+            kj::mv(sessionMetadata)));
     return kj::READY_NOW;
   }
 
@@ -1137,7 +1147,8 @@ public:
         params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
         params.getTabId());
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
-        kj::addRef(*runtimeConfig), "", SessionKind::REQUEST, kj::mv(sessionMetadata)));
+        kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::REQUEST,
+        kj::mv(sessionMetadata)));
     return kj::READY_NOW;
   }
 
@@ -1151,24 +1162,27 @@ public:
         params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
         params.getTabId());
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
-        kj::addRef(*runtimeConfig), "", SessionKind::OFFER, kj::mv(sessionMetadata)));
+        kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::OFFER,
+        kj::mv(sessionMetadata)));
     return kj::READY_NOW;
   }
 
 private:
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
+  kj::Own<IsolateRuntimeHost> runtimeHost;
 };
 
 class IsolateSupervisorImpl final: public Supervisor::Server {
 public:
   IsolateSupervisorImpl(
       kj::StringPtr varPath, kj::Own<CapRedirector> coreRedirector,
-      kj::Own<IsolateRuntimeConfig> runtimeConfig)
+      kj::Own<IsolateRuntimeConfig> runtimeConfig, kj::Own<IsolateRuntimeHost> runtimeHost)
       : varPath(kj::heapString(varPath)), coreRedirector(kj::mv(coreRedirector)),
-        runtimeConfig(kj::mv(runtimeConfig)) {}
+        runtimeConfig(kj::mv(runtimeConfig)), runtimeHost(kj::mv(runtimeHost)) {}
 
   kj::Promise<void> getMainView(GetMainViewContext context) override {
-    context.getResults().setView(kj::heap<IsolateUiViewImpl>(kj::addRef(*runtimeConfig)));
+    context.getResults().setView(kj::heap<IsolateUiViewImpl>(
+        kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost)));
     return kj::READY_NOW;
   }
 
@@ -1212,6 +1226,7 @@ private:
   kj::String varPath;
   kj::Own<CapRedirector> coreRedirector;
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
+  kj::Own<IsolateRuntimeHost> runtimeHost;
 };
 
 }  // namespace
@@ -1413,9 +1428,11 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
       runtimeConfig->workerdSocketPath);
 
   auto ioContext = kj::setupAsyncIo();
+  auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
+      ioContext.provider->getNetwork(), ioContext.provider->getTimer());
   auto coreRedirector = kj::refcounted<CapRedirector>();
   Supervisor::Client mainCap = kj::heap<IsolateSupervisorImpl>(
-      varPath, kj::addRef(*coreRedirector), kj::mv(runtimeConfig));
+      varPath, kj::addRef(*coreRedirector), kj::mv(runtimeConfig), kj::mv(runtimeHost));
   auto listener = kj::heap<TwoPartyServerWithClientBootstrap>(
       kj::mv(mainCap), kj::mv(coreRedirector));
 
