@@ -133,7 +133,11 @@ struct Manifest {
     # If present, run this command as an isolate grain rather than as a Linux process inside the
     # traditional Sandstorm sandbox. In isolate commands, `argv` names the runtime sidecar command
     # launched by isolate-supervisor. That sidecar receives the generated runtime bundle and socket
-    # paths through `SANDSTORM_ISOLATE_*` environment variables.
+    # paths through `SANDSTORM_ISOLATE_*` environment variables. The same variable names may be
+    # referenced in `argv` and `environ` as `${SANDSTORM_ISOLATE_WORKERD_CONFIG}`,
+    # `${SANDSTORM_ISOLATE_SOCKET}`, `${SANDSTORM_ISOLATE_RUNTIME_DIR}`,
+    # `${SANDSTORM_ISOLATE_RUNTIME_MANIFEST}`, `${SANDSTORM_ISOLATE_MAIN_MODULE}`, and
+    # `${SANDSTORM_ISOLATE_COMPATIBILITY_DATE}`.
   }
 
   struct IsolateConfig {

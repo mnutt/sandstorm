@@ -1481,7 +1481,10 @@ public:
       return;
     }
 
-    auto argv = KJ_MAP(arg, runtimeArgs) -> kj::StringPtr {
+    auto argvStrings = KJ_MAP(arg, runtimeArgs) {
+      return expandSidecarPlaceholders(arg, runtimeConfig);
+    };
+    auto argv = KJ_MAP(arg, argvStrings) -> kj::StringPtr {
       return arg;
     };
     auto childEnvStrings = makeSidecarEnvironment(environment, runtimeConfig);
@@ -1497,7 +1500,7 @@ public:
 
     KJ_IF_MAYBE(p, process) {
       KJ_LOG(WARNING, "Started isolate sidecar process.",
-          runtimeArgs[0], p->getPid(), runtimeConfig.workerdBundleDir,
+          argvStrings[0], p->getPid(), runtimeConfig.workerdBundleDir,
           runtimeConfig.workerdSocketPath);
     }
   }
@@ -1558,12 +1561,62 @@ private:
     return false;
   }
 
+  static bool appendPlaceholder(
+      kj::Vector<char>& result, kj::StringPtr input, size_t& pos, kj::StringPtr token,
+      kj::StringPtr value) {
+    if (!input.slice(pos, input.size()).startsWith(token)) {
+      return false;
+    }
+
+    result.addAll(value);
+    pos += token.size();
+    return true;
+  }
+
+  static kj::String expandSidecarPlaceholders(
+      kj::StringPtr input, IsolateRuntimeConfig& runtimeConfig) {
+    kj::Vector<char> result(input.size() + 1);
+    size_t pos = 0;
+    while (pos < input.size()) {
+      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_RUNTIME_DIR}",
+          runtimeConfig.workerdBundleDir)) {
+        continue;
+      }
+      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_WORKERD_CONFIG}",
+          runtimeConfig.workerdConfigPath)) {
+        continue;
+      }
+      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_RUNTIME_MANIFEST}",
+          kj::str(runtimeConfig.workerdBundleDir, "/runtime-manifest.json"))) {
+        continue;
+      }
+      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_SOCKET}",
+          runtimeConfig.workerdSocketPath)) {
+        continue;
+      }
+      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_MAIN_MODULE}",
+          runtimeConfig.mainModule)) {
+        continue;
+      }
+      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_COMPATIBILITY_DATE}",
+          runtimeConfig.compatibilityDate)) {
+        continue;
+      }
+
+      result.add(input[pos]);
+      ++pos;
+    }
+
+    result.add('\0');
+    return kj::String(result.releaseAsArray());
+  }
+
   static kj::Array<kj::String> makeSidecarEnvironment(
       kj::ArrayPtr<const kj::String> environment,
       IsolateRuntimeConfig& runtimeConfig) {
     kj::Vector<kj::String> result(environment.size() + 7);
     for (auto& item: environment) {
-      result.add(kj::heapString(item));
+      result.add(expandSidecarPlaceholders(item, runtimeConfig));
     }
 
     if (!hasEnvVar(environment, "PATH")) {
