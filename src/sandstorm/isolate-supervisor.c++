@@ -42,6 +42,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/inotify.h>
+#include <dirent.h>
 #include <unistd.h>
 #include <time.h>
 #include <fcntl.h>
@@ -469,6 +470,54 @@ void unlinkIfExists(kj::StringPtr path) {
       KJ_FAIL_SYSCALL("unlink", error, path);
     }
   }
+}
+
+uint64_t computeDiskUsage(kj::StringPtr path) {
+  struct stat stats;
+  if (lstat(path.cStr(), &stats) != 0) {
+    int error = errno;
+    if (error == ENOENT || error == ENOTDIR) {
+      return 0;
+    }
+
+    KJ_FAIL_SYSCALL("lstat", error, path);
+  }
+
+  uint64_t total = static_cast<uint64_t>(stats.st_blocks) * 512;
+  if (!S_ISDIR(stats.st_mode)) {
+    return total;
+  }
+
+  DIR* dir = opendir(path.cStr());
+  if (dir == nullptr) {
+    int error = errno;
+    if (error == ENOENT || error == ENOTDIR) {
+      return total;
+    }
+
+    KJ_FAIL_SYSCALL("opendir", error, path);
+  }
+  KJ_DEFER(closedir(dir));
+
+  for (;;) {
+    errno = 0;
+    auto entry = readdir(dir);
+    if (entry == nullptr) {
+      int error = errno;
+      if (error != 0) {
+        KJ_FAIL_SYSCALL("readdir", error, path);
+      }
+      break;
+    }
+
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+      continue;
+    }
+
+    total += computeDiskUsage(kj::str(path, "/", entry->d_name));
+  }
+
+  return total;
 }
 
 void appendJsonString(kj::Vector<char>& result, kj::StringPtr text) {
@@ -2214,10 +2263,10 @@ public:
   IsolateSupervisorImpl(
       kj::UnixEventPort& eventPort, kj::StringPtr varPath, kj::Own<CapRedirector> coreRedirector,
       kj::Own<IsolateRuntimeConfig> runtimeConfig, kj::Own<IsolateRuntimeHost> runtimeHost,
-      kj::Own<WorkerdSidecarProcess> sidecar)
+      kj::Own<WorkerdSidecarProcess> sidecar, SandstormCore::Client sandstormCore)
       : eventPort(eventPort), varPath(kj::heapString(varPath)), coreRedirector(kj::mv(coreRedirector)),
         runtimeConfig(kj::mv(runtimeConfig)), runtimeHost(kj::mv(runtimeHost)),
-        sidecar(kj::mv(sidecar)) {}
+        sidecar(kj::mv(sidecar)), sandstormCore(kj::mv(sandstormCore)) {}
 
   kj::Promise<void> getMainView(GetMainViewContext context) override {
     context.getResults().setView(kj::heap<IsolateUiViewImpl>(
@@ -2235,9 +2284,15 @@ public:
   }
 
   kj::Promise<void> syncStorage(SyncStorageContext context) override {
+    (void)context;
     auto fd = raiiOpen(varPath, O_RDONLY | O_DIRECTORY);
     KJ_SYSCALL(syncfs(fd));
-    return kj::READY_NOW;
+
+    auto bytes = computeDiskUsage(varPath);
+    KJ_LOG(WARNING, "Reporting isolate grain disk usage.", varPath, bytes);
+    auto req = sandstormCore.reportGrainSizeRequest();
+    req.setBytes(bytes);
+    return req.send().ignoreResult();
   }
 
   kj::Promise<void> shutdown(ShutdownContext context) override {
@@ -2304,6 +2359,7 @@ private:
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
   kj::Own<WorkerdSidecarProcess> sidecar;
+  SandstormCore::Client sandstormCore;
 
   class LogWatcher final: public Handle::Server, private kj::TaskSet::ErrorHandler {
   public:
@@ -2758,12 +2814,14 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   KJ_LOG(WARNING, "Isolate supervisor sidecar readiness complete.");
 
   auto coreRedirector = kj::refcounted<CapRedirector>();
+  SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
+      kj::addRef(*coreRedirector)).castAs<SandstormCore>();
   KJ_LOG(WARNING, "Isolate supervisor core redirector created.");
 
   KJ_LOG(WARNING, "Creating isolate supervisor capability.");
   Supervisor::Client mainCap = kj::heap<IsolateSupervisorImpl>(
       ioContext.unixEventPort, varPath, kj::addRef(*coreRedirector), kj::mv(runtimeConfig),
-      kj::mv(runtimeHost), kj::mv(sidecar));
+      kj::mv(runtimeHost), kj::mv(sidecar), kj::mv(coreCap));
   KJ_LOG(WARNING, "Isolate supervisor capability created.");
 
   KJ_LOG(WARNING, "Creating isolate supervisor listener.");
