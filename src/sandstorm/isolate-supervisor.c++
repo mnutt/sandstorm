@@ -97,6 +97,8 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String workerdConfigPath;
   kj::String workerdSocketPath;
   kj::String sandstormApiSocketPath;
+  kj::String storageSocketPath;
+  kj::String storageRootPath;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
@@ -544,8 +546,8 @@ bool isWorkerdDirectBinding(IsolateRuntimeConfig::Binding& binding) {
     case IsolateRuntimeConfig::BindingType::DATA:
     case IsolateRuntimeConfig::BindingType::JSON:
     case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
-      return true;
     case IsolateRuntimeConfig::BindingType::STORAGE:
+      return true;
     case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
     case IsolateRuntimeConfig::BindingType::SERVICE:
@@ -582,6 +584,8 @@ void appendWorkerdBinding(
       result.addAll(kj::StringPtr("service = \"sandstorm-api\""));
       break;
     case IsolateRuntimeConfig::BindingType::STORAGE:
+      result.addAll(kj::StringPtr("service = \"sandstorm-storage\""));
+      break;
     case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
     case IsolateRuntimeConfig::BindingType::SERVICE:
@@ -599,6 +603,25 @@ bool hasSandstormApiBinding(IsolateRuntimeConfig& config) {
   }
 
   return false;
+}
+
+bool hasStorageBinding(IsolateRuntimeConfig& config) {
+  for (auto& binding: config.bindings) {
+    if (binding.type == IsolateRuntimeConfig::BindingType::STORAGE) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void appendExternalWorkerdService(
+    kj::Vector<char>& result, kj::StringPtr name, kj::StringPtr socketPath) {
+  result.addAll(kj::StringPtr(",\n    ( name = "));
+  appendCapnpString(result, name);
+  result.addAll(kj::StringPtr(", external = ( address = "));
+  appendCapnpString(result, kj::str("unix:", socketPath));
+  result.addAll(kj::StringPtr(", http = () ) )"));
 }
 
 void appendWorkerdConfig(
@@ -657,22 +680,19 @@ void appendWorkerdConfig(
     needsComma = true;
   }
 
+  result.addAll(kj::StringPtr(
+      "\n        ]\n"
+      "    ) )"));
+
   if (hasSandstormApiBinding(config)) {
-    result.addAll(kj::StringPtr(
-        "\n        ]\n"
-        "    ) ),\n"
-        "    ( name = \"sandstorm-api\", external = ( address = "));
-    appendCapnpString(result, kj::str("unix:", config.sandstormApiSocketPath));
-    result.addAll(kj::StringPtr(", http = () ) )\n"));
-  } else {
-    result.addAll(kj::StringPtr(
-        "\n        ]\n"
-        "    ) )\n"
-    ));
+    appendExternalWorkerdService(result, "sandstorm-api", config.sandstormApiSocketPath);
+  }
+  if (hasStorageBinding(config)) {
+    appendExternalWorkerdService(result, "sandstorm-storage", config.storageSocketPath);
   }
 
   result.addAll(kj::StringPtr(
-      "  ],\n"
+      "\n  ],\n"
       "  sockets = [\n"
       "    ( name = \"sandstorm\", address = "));
   appendCapnpString(result, kj::str("unix:", socketPath));
@@ -688,10 +708,15 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   auto bindingsDir = kj::str(bundleDir, "/bindings");
   auto socketPath = kj::str(bundleDir, "/workerd.sock");
   auto sandstormApiSocketPath = kj::str(bundleDir, "/sandstorm-api.sock");
+  auto storageSocketPath = kj::str(bundleDir, "/sandstorm-storage.sock");
+  auto storageRootPath = kj::str(varPath, "/isolate-storage");
   config.sandstormApiSocketPath = kj::heapString(sandstormApiSocketPath);
+  config.storageSocketPath = kj::heapString(storageSocketPath);
+  config.storageRootPath = kj::heapString(storageRootPath);
   ensureDirectory(bundleDir);
   ensureDirectory(modulesDir);
   ensureDirectory(bindingsDir);
+  ensureDirectory(storageRootPath);
 
   kj::Vector<char> manifest;
   manifest.addAll(kj::StringPtr("{\n  "));
@@ -764,6 +789,7 @@ void chownGeneratedWorkerdBundle(kj::StringPtr bundleDir, IsolateRuntimeConfig& 
   chownPathTo(bundleDir, uid);
   chownPathTo(modulesDir, uid);
   chownPathTo(bindingsDir, uid);
+  chownPathTo(config.storageRootPath, uid);
   chownPathTo(kj::str(bundleDir, "/runtime-manifest.json"), uid);
   chownPathTo(kj::str(bundleDir, "/workerd.capnp"), uid);
 
@@ -1893,6 +1919,12 @@ public:
         return sendJson(response, 200, "OK", renderStatus(methodName, path, bodyBytes.size()));
       } else if (path == "/capabilities") {
         return sendJson(response, 200, "OK", renderCapabilities());
+      } else if (path == "/runtime") {
+        return sendJson(response, 200, "OK", renderRuntime());
+      } else if (path == "/modules") {
+        return sendJson(response, 200, "OK", renderModules());
+      } else if (path == "/bindings") {
+        return sendJson(response, 200, "OK", renderBindings());
       } else {
         return sendJson(response, 404, "Not Found", kj::heapString(
             "{\n  \"ok\": false,\n  \"error\": \"unknown Sandstorm API binding endpoint\"\n}\n"));
@@ -1935,8 +1967,191 @@ private:
         "{\n"
         "  \"ok\": true,\n"
         "  \"binding\": \"sandstormApi\",\n"
-        "  \"capabilities\": [\"status\", \"capabilities\"]\n"
+        "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\"]\n"
         "}\n");
+  }
+
+  kj::String renderRuntime() {
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"binding\": \"sandstormApi\",\n  "));
+    appendJsonField(json, "mainModule", config.mainModule);
+    json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "compatibilityDate", config.compatibilityDate);
+    json.addAll(kj::StringPtr(",\n  \"compatibilityFlags\": ["));
+    for (auto i: kj::indices(config.compatibilityFlags)) {
+      if (i > 0) json.addAll(kj::StringPtr(", "));
+      appendJsonString(json, config.compatibilityFlags[i]);
+    }
+    json.addAll(kj::StringPtr("],\n  \"moduleCount\": "));
+    json.addAll(kj::str(config.modules.size()));
+    json.addAll(kj::StringPtr(",\n  \"bindingCount\": "));
+    json.addAll(kj::str(config.bindings.size()));
+    json.addAll(kj::StringPtr("\n}\n"));
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
+  }
+
+  kj::String renderModules() {
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"modules\": [\n"));
+    for (auto i: kj::indices(config.modules)) {
+      if (i > 0) json.addAll(kj::StringPtr(",\n"));
+      json.addAll(kj::StringPtr("    { "));
+      appendJsonField(json, "name", config.modules[i].name);
+      json.addAll(kj::StringPtr(", "));
+      appendJsonField(json, "type", moduleTypeName(config.modules[i].type));
+      json.addAll(kj::StringPtr(", \"main\": "));
+      json.addAll(config.modules[i].name == config.mainModule
+          ? kj::StringPtr("true") : kj::StringPtr("false"));
+      json.addAll(kj::StringPtr(" }"));
+    }
+    json.addAll(kj::StringPtr("\n  ]\n}\n"));
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
+  }
+
+  kj::String renderBindings() {
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"bindings\": [\n"));
+    for (auto i: kj::indices(config.bindings)) {
+      if (i > 0) json.addAll(kj::StringPtr(",\n"));
+      json.addAll(kj::StringPtr("    { "));
+      appendJsonField(json, "name", config.bindings[i].name);
+      json.addAll(kj::StringPtr(", "));
+      appendJsonField(json, "type", bindingTypeName(config.bindings[i].type));
+      json.addAll(kj::StringPtr(", \"workerdDirect\": "));
+      json.addAll(isWorkerdDirectBinding(config.bindings[i])
+          ? kj::StringPtr("true") : kj::StringPtr("false"));
+      if (config.bindings[i].serviceName.size() > 0) {
+        json.addAll(kj::StringPtr(", "));
+        appendJsonField(json, "serviceName", config.bindings[i].serviceName);
+      }
+      json.addAll(kj::StringPtr(" }"));
+    }
+    json.addAll(kj::StringPtr("\n  ]\n}\n"));
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
+  }
+};
+
+class StorageBindingService final: public kj::HttpService {
+public:
+  StorageBindingService(kj::HttpHeaderTable& headerTable, IsolateRuntimeConfig& config)
+      : headerTable(headerTable), config(config) {}
+
+  kj::Promise<void> request(
+      kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
+      kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
+    (void)headers;
+    auto key = storageKeyFromUrl(url);
+    KJ_LOG(WARNING, "Isolate storage binding received request.", kj::str(method), key);
+
+    if (method == kj::HttpMethod::GET && key.size() == 0) {
+      return sendJson(response, 200, "OK", renderIndex());
+    }
+
+    if (!isValidStorageKey(key)) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"invalid storage key\"\n}\n"));
+    }
+
+    auto path = kj::str(config.storageRootPath, "/", key);
+    switch (method) {
+      case kj::HttpMethod::GET:
+        return get(kj::mv(path), response);
+      case kj::HttpMethod::PUT:
+        return requestBody.readAllBytes(MAX_STORAGE_VALUE_BYTES)
+            .then([this, path = kj::mv(path), &response](kj::Array<byte>&& body) mutable {
+          writeFile(path, body);
+          return sendJson(response, 200, "OK", renderStored(body.size()));
+        });
+      case kj::HttpMethod::DELETE:
+        unlinkIfExists(path);
+        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+      default:
+        return sendJson(response, 405, "Method Not Allowed", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"method not allowed\"\n}\n"));
+    }
+  }
+
+private:
+  static constexpr size_t MAX_STORAGE_VALUE_BYTES = 1024 * 1024;
+
+  kj::HttpHeaderTable& headerTable;
+  IsolateRuntimeConfig& config;
+
+  kj::String storageKeyFromUrl(kj::StringPtr url) {
+    size_t begin = 0;
+    size_t end = url.size();
+    KJ_IF_MAYBE(query, url.findFirst('?')) {
+      end = *query;
+    }
+    while (begin < end && url[begin] == '/') {
+      ++begin;
+    }
+    return kj::str(url.slice(begin, end));
+  }
+
+  bool isValidStorageKey(kj::StringPtr key) {
+    if (key.size() == 0 || key.size() > 128 || key.startsWith(".")) {
+      return false;
+    }
+
+    for (char c: key) {
+      if (!(c >= 'a' && c <= 'z') &&
+          !(c >= 'A' && c <= 'Z') &&
+          !(c >= '0' && c <= '9') &&
+          c != '-' && c != '_' && c != '.') {
+        return false;
+      }
+    }
+
+    for (size_t i = 1; i < key.size(); ++i) {
+      if (key[i - 1] == '.' && key[i] == '.') {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  kj::Promise<void> sendJson(kj::HttpService::Response& response, uint statusCode,
+      kj::StringPtr statusText, kj::String body) {
+    kj::HttpHeaders responseHeaders(headerTable);
+    responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/json; charset=utf-8");
+    auto stream = response.send(statusCode, statusText, responseHeaders, body.size());
+    auto promise = stream->write(body.begin(), body.size());
+    return promise.attach(kj::mv(stream), kj::mv(body));
+  }
+
+  kj::Promise<void> get(kj::String path, kj::HttpService::Response& response) {
+    KJ_IF_MAYBE(fd, raiiOpenIfExists(path, O_RDONLY | O_CLOEXEC)) {
+      auto body = readAllBytes(*fd);
+      kj::HttpHeaders responseHeaders(headerTable);
+      responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream");
+      auto stream = response.send(200, "OK", responseHeaders, body.size());
+      auto promise = stream->write(body.begin(), body.size());
+      return promise.attach(kj::mv(stream), kj::mv(body), kj::mv(path));
+    }
+
+    return sendJson(response, 404, "Not Found", kj::heapString(
+        "{\n  \"ok\": false,\n  \"error\": \"storage key not found\"\n}\n"));
+  }
+
+  kj::String renderStored(size_t bytes) {
+    return kj::str("{\n  \"ok\": true,\n  \"bytes\": ", bytes, "\n}\n");
+  }
+
+  kj::String renderIndex() {
+    auto files = listDirectory(config.storageRootPath);
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"keys\": ["));
+    for (auto i: kj::indices(files)) {
+      if (i > 0) json.addAll(kj::StringPtr(", "));
+      appendJsonString(json, files[i]);
+    }
+    json.addAll(kj::StringPtr("]\n}\n"));
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
   }
 };
 
@@ -2434,6 +2649,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   runtimeConfig->workerdSocketPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.sock");
   unlinkIfExists(runtimeConfig->workerdSocketPath);
   unlinkIfExists(runtimeConfig->sandstormApiSocketPath);
+  unlinkIfExists(runtimeConfig->storageSocketPath);
 
   KJ_IF_MAYBE(u, sandboxUid) {
     chownGeneratedWorkerdBundle(runtimeConfig->workerdBundleDir, *runtimeConfig, *u);
@@ -2450,6 +2666,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
       ioContext.provider->getNetwork(), ioContext.provider->getTimer());
   kj::Maybe<kj::Promise<void>> apiListenTask = nullptr;
+  kj::Maybe<kj::Promise<void>> storageListenTask = nullptr;
   if (hasSandstormApiBinding(*runtimeConfig)) {
     auto apiService = kj::heap<SandstormApiBindingService>(
         runtimeHost->headerTable, *runtimeConfig);
@@ -2464,6 +2681,21 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
         runtimeConfig->sandstormApiSocketPath);
     apiListenTask = apiServer->listenHttp(*apiPort)
         .attach(kj::mv(apiPort), kj::mv(apiServer));
+  }
+  if (hasStorageBinding(*runtimeConfig)) {
+    auto storageService = kj::heap<StorageBindingService>(
+        runtimeHost->headerTable, *runtimeConfig);
+    auto storageServer = kj::heap<kj::HttpServer>(
+        runtimeHost->timer, runtimeHost->headerTable, *storageService);
+    storageServer = storageServer.attach(kj::mv(storageService));
+    auto storageAddress = runtimeHost->network
+        .parseAddress(kj::str("unix:", runtimeConfig->storageSocketPath), 0)
+        .wait(ioContext.waitScope);
+    auto storagePort = storageAddress->listen();
+    KJ_LOG(WARNING, "Isolate storage binding socket is listening.",
+        runtimeConfig->storageSocketPath);
+    storageListenTask = storageServer->listenHttp(*storagePort)
+        .attach(kj::mv(storagePort), kj::mv(storageServer));
   }
 
   auto sidecar = kj::heap<WorkerdSidecarProcess>(
@@ -2504,6 +2736,9 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   auto listenTask = listener->listen(kj::mv(serverPort));
   KJ_IF_MAYBE(apiTask, apiListenTask) {
     listenTask = listenTask.exclusiveJoin(kj::mv(*apiTask));
+  }
+  KJ_IF_MAYBE(storageTask, storageListenTask) {
+    listenTask = listenTask.exclusiveJoin(kj::mv(*storageTask));
   }
   listenTask.wait(ioContext.waitScope);
   return true;
