@@ -181,9 +181,14 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
       argv.add(kj::heapString(arg));
     }
   } else {
-    // Isolate commands are selected by `command.isolate`; process argv is not executed. Keep the
-    // separator so the isolate supervisor can later accept runtime-specific args without option
-    // parsing ambiguity.
+    // Isolate commands are selected by `command.isolate`; argv is treated as the runtime sidecar
+    // command rather than as a process command inside the traditional Linux sandbox.
+    if (command.hasDeprecatedExecutablePath()) {
+      argv.add(kj::heapString(command.getDeprecatedExecutablePath()));
+    }
+    for (auto arg: command.getArgv()) {
+      argv.add(kj::heapString(arg));
+    }
   }
 
   Subprocess::Options options(KJ_MAP(a, argv) -> const kj::StringPtr { return a; });

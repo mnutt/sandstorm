@@ -131,8 +131,9 @@ struct Manifest {
 
     isolate @3 :IsolateConfig;
     # If present, run this command as an isolate grain rather than as a Linux process inside the
-    # traditional Sandstorm sandbox. The isolate runtime ignores `argv` as a process command; it
-    # may use it as runtime-specific arguments in the future.
+    # traditional Sandstorm sandbox. In isolate commands, `argv` names the runtime sidecar command
+    # launched by isolate-supervisor. That sidecar receives the generated runtime bundle and socket
+    # paths through `SANDSTORM_ISOLATE_*` environment variables.
   }
 
   struct IsolateConfig {
