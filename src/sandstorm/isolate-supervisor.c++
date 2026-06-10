@@ -90,6 +90,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String appTitle;
   kj::String apiPath;
   kj::String workerdBundleDir;
+  kj::String workerdConfigPath;
   kj::String workerdSocketPath;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
@@ -475,6 +476,10 @@ void appendJsonField(kj::Vector<char>& result, kj::StringPtr name, kj::StringPtr
   appendJsonString(result, value);
 }
 
+void appendCapnpString(kj::Vector<char>& result, kj::StringPtr text) {
+  appendJsonString(result, text);
+}
+
 kj::String moduleBundleFileName(size_t index, IsolateRuntimeConfig::ModuleType type) {
   return kj::str("module-", index, moduleFileExtension(type));
 }
@@ -483,10 +488,163 @@ kj::String bindingBundleFileName(size_t index) {
   return kj::str("binding-", index, ".bin");
 }
 
+void appendWorkerdModule(
+    kj::Vector<char>& result, IsolateRuntimeConfig::Module& module, kj::StringPtr fileName) {
+  result.addAll(kj::StringPtr("          ( name = "));
+  appendCapnpString(result, module.name);
+  result.addAll(kj::StringPtr(", "));
+
+  switch (module.type) {
+    case IsolateRuntimeConfig::ModuleType::ES_MODULE:
+      result.addAll(kj::StringPtr("esModule"));
+      break;
+    case IsolateRuntimeConfig::ModuleType::COMMON_JS_MODULE:
+      result.addAll(kj::StringPtr("commonJsModule"));
+      break;
+    case IsolateRuntimeConfig::ModuleType::TEXT:
+      result.addAll(kj::StringPtr("text"));
+      break;
+    case IsolateRuntimeConfig::ModuleType::DATA:
+      result.addAll(kj::StringPtr("data"));
+      break;
+    case IsolateRuntimeConfig::ModuleType::WASM:
+      result.addAll(kj::StringPtr("wasm"));
+      break;
+    case IsolateRuntimeConfig::ModuleType::JSON:
+      result.addAll(kj::StringPtr("json"));
+      break;
+  }
+
+  result.addAll(kj::StringPtr(" = embed "));
+  appendCapnpString(result, kj::str("modules/", fileName));
+  result.addAll(kj::StringPtr(" )"));
+}
+
+bool isWorkerdDirectBinding(IsolateRuntimeConfig::Binding& binding) {
+  switch (binding.type) {
+    case IsolateRuntimeConfig::BindingType::TEXT:
+    case IsolateRuntimeConfig::BindingType::DATA:
+    case IsolateRuntimeConfig::BindingType::JSON:
+      return true;
+    case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
+    case IsolateRuntimeConfig::BindingType::STORAGE:
+    case IsolateRuntimeConfig::BindingType::POWERBOX:
+    case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
+    case IsolateRuntimeConfig::BindingType::SERVICE:
+      return false;
+  }
+
+  KJ_UNREACHABLE;
+}
+
+void appendWorkerdBinding(
+    kj::Vector<char>& result, IsolateRuntimeConfig::Binding& binding, kj::StringPtr fileName) {
+  result.addAll(kj::StringPtr("          ( name = "));
+  appendCapnpString(result, binding.name);
+  result.addAll(kj::StringPtr(", "));
+
+  switch (binding.type) {
+    case IsolateRuntimeConfig::BindingType::TEXT: {
+      result.addAll(kj::StringPtr("text = "));
+      auto text = kj::heapString(binding.value.asChars());
+      appendCapnpString(result, text);
+      break;
+    }
+    case IsolateRuntimeConfig::BindingType::DATA:
+      result.addAll(kj::StringPtr("data = embed "));
+      appendCapnpString(result, kj::str("bindings/", fileName));
+      break;
+    case IsolateRuntimeConfig::BindingType::JSON: {
+      result.addAll(kj::StringPtr("json = "));
+      auto text = kj::heapString(binding.value.asChars());
+      appendCapnpString(result, text);
+      break;
+    }
+    case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
+    case IsolateRuntimeConfig::BindingType::STORAGE:
+    case IsolateRuntimeConfig::BindingType::POWERBOX:
+    case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
+    case IsolateRuntimeConfig::BindingType::SERVICE:
+      KJ_UNREACHABLE;
+  }
+
+  result.addAll(kj::StringPtr(" )"));
+}
+
+void appendWorkerdConfig(
+    kj::Vector<char>& result, IsolateRuntimeConfig& config, kj::StringPtr socketPath) {
+  result.addAll(kj::StringPtr(
+      "using Workerd = import \"/workerd/workerd.capnp\";\n"
+      "\n"
+      "const sandstormConfig :Workerd.Config = (\n"
+      "  services = [\n"
+      "    ( name = \"main\", worker = (\n"
+      "        modules = [\n"));
+
+  bool needsComma = false;
+  auto appendModuleByIndex = [&](size_t index) {
+    if (needsComma) {
+      result.addAll(kj::StringPtr(",\n"));
+    }
+    appendWorkerdModule(result, config.modules[index],
+        moduleBundleFileName(index, config.modules[index].type));
+    needsComma = true;
+  };
+
+  for (auto i: kj::indices(config.modules)) {
+    if (config.modules[i].name == config.mainModule) {
+      appendModuleByIndex(i);
+    }
+  }
+  for (auto i: kj::indices(config.modules)) {
+    if (config.modules[i].name != config.mainModule) {
+      appendModuleByIndex(i);
+    }
+  }
+
+  result.addAll(kj::StringPtr("\n        ],\n        compatibilityDate = "));
+  appendCapnpString(result, config.compatibilityDate);
+  result.addAll(kj::StringPtr(",\n        compatibilityFlags = ["));
+  for (auto i: kj::indices(config.compatibilityFlags)) {
+    if (i > 0) {
+      result.addAll(kj::StringPtr(", "));
+    }
+    appendCapnpString(result, config.compatibilityFlags[i]);
+  }
+  result.addAll(kj::StringPtr("],\n        bindings = [\n"));
+
+  needsComma = false;
+  for (auto i: kj::indices(config.bindings)) {
+    auto& binding = config.bindings[i];
+    if (!isWorkerdDirectBinding(binding)) {
+      continue;
+    }
+
+    if (needsComma) {
+      result.addAll(kj::StringPtr(",\n"));
+    }
+    appendWorkerdBinding(result, binding, bindingBundleFileName(i));
+    needsComma = true;
+  }
+
+  result.addAll(kj::StringPtr(
+      "\n        ]\n"
+      "    ) )\n"
+      "  ],\n"
+      "  sockets = [\n"
+      "    ( name = \"sandstorm\", address = "));
+  appendCapnpString(result, socketPath);
+  result.addAll(kj::StringPtr(
+      ", http = (), service = \"main\" )\n"
+      "  ]\n"
+      ");\n"));
+}
+
 kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& config) {
   auto bundleDir = kj::str(varPath, "/isolate-runtime");
   auto modulesDir = kj::str(bundleDir, "/modules");
   auto bindingsDir = kj::str(bundleDir, "/bindings");
+  auto socketPath = kj::str(bundleDir, "/workerd.sock");
   ensureDirectory(bundleDir);
   ensureDirectory(modulesDir);
   ensureDirectory(bindingsDir);
@@ -546,6 +704,12 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   manifest.add('\0');
   auto manifestText = kj::String(manifest.releaseAsArray());
   writeFile(kj::str(bundleDir, "/runtime-manifest.json"), manifestText.asBytes());
+
+  kj::Vector<char> workerdConfig;
+  appendWorkerdConfig(workerdConfig, config, socketPath);
+  workerdConfig.add('\0');
+  auto workerdConfigText = kj::String(workerdConfig.releaseAsArray());
+  writeFile(kj::str(bundleDir, "/workerd.capnp"), workerdConfigText.asBytes());
   return bundleDir;
 }
 
@@ -1031,6 +1195,7 @@ private:
         auto escapedCompatibilityDate = htmlEscape(config->compatibilityDate);
         auto escapedAppTitle = htmlEscape(appTitleOrDefault(*config));
         auto escapedBundleDir = htmlEscape(config->workerdBundleDir);
+        auto escapedWorkerdConfigPath = htmlEscape(config->workerdConfigPath);
         auto escapedSocketPath = htmlEscape(config->workerdSocketPath);
         auto compatibilityFlags = renderCompatibilityFlagsHtml(*config);
         auto modules = renderModuleListHtml(*config);
@@ -1047,6 +1212,7 @@ private:
             "<p>Main module: <code>", escapedMainModule, "</code></p>"
             "<p>Compatibility date: <code>", escapedCompatibilityDate, "</code></p>"
             "<p>Runtime bundle: <code>", escapedBundleDir, "</code></p>"
+            "<p>workerd config: <code>", escapedWorkerdConfigPath, "</code></p>"
             "<p>Runtime socket: <code>", escapedSocketPath, "</code></p>"
             "<h2>Compatibility flags</h2>", compatibilityFlags,
             "<h2>Modules</h2>", modules,
@@ -1395,7 +1561,7 @@ private:
   static kj::Array<kj::String> makeSidecarEnvironment(
       kj::ArrayPtr<const kj::String> environment,
       IsolateRuntimeConfig& runtimeConfig) {
-    kj::Vector<kj::String> result(environment.size() + 6);
+    kj::Vector<kj::String> result(environment.size() + 7);
     for (auto& item: environment) {
       result.add(kj::heapString(item));
     }
@@ -1405,6 +1571,7 @@ private:
     }
 
     result.add(kj::str("SANDSTORM_ISOLATE_RUNTIME_DIR=", runtimeConfig.workerdBundleDir));
+    result.add(kj::str("SANDSTORM_ISOLATE_WORKERD_CONFIG=", runtimeConfig.workerdConfigPath));
     result.add(kj::str("SANDSTORM_ISOLATE_RUNTIME_MANIFEST=",
         runtimeConfig.workerdBundleDir, "/runtime-manifest.json"));
     result.add(kj::str("SANDSTORM_ISOLATE_SOCKET=", runtimeConfig.workerdSocketPath));
@@ -1714,6 +1881,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   }
 
   runtimeConfig->workerdBundleDir = prepareWorkerdBundle(varPath, *runtimeConfig);
+  runtimeConfig->workerdConfigPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.capnp");
   runtimeConfig->workerdSocketPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.sock");
 
   KJ_LOG(WARNING, "Starting isolate supervisor with workerd adapter skeleton.",
