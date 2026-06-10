@@ -1803,7 +1803,118 @@ private:
   kj::Own<WorkerdSidecarProcess> sidecar;
 };
 
+kj::String getenvString(kj::StringPtr name) {
+  char* value = getenv(name.cStr());
+  KJ_REQUIRE(value != nullptr, "Required environment variable is missing.", name);
+  return kj::heapString(value);
+}
+
+kj::String readOptionalTextFile(kj::StringPtr path) {
+  if (path.size() == 0) {
+    return kj::heapString("(not configured)");
+  }
+
+  KJ_IF_MAYBE(fd, raiiOpenIfExists(path, O_RDONLY | O_CLOEXEC)) {
+    return readAll(*fd);
+  } else {
+    return kj::str("(missing: ", path, ")");
+  }
+}
+
+class IsolateDevSidecarService final: public kj::HttpService {
+public:
+  explicit IsolateDevSidecarService(kj::HttpHeaderTable& headerTable)
+      : headerTable(headerTable),
+        socketPath(getenvString("SANDSTORM_ISOLATE_SOCKET")),
+        runtimeDir(getenvString("SANDSTORM_ISOLATE_RUNTIME_DIR")),
+        runtimeManifestPath(getenvString("SANDSTORM_ISOLATE_RUNTIME_MANIFEST")),
+        workerdConfigPath(getenvString("SANDSTORM_ISOLATE_WORKERD_CONFIG")),
+        mainModule(getenvString("SANDSTORM_ISOLATE_MAIN_MODULE")),
+        compatibilityDate(getenvString("SANDSTORM_ISOLATE_COMPATIBILITY_DATE")) {}
+
+  kj::Promise<void> request(
+      kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
+      kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
+    auto methodName = kj::str(method);
+    auto path = kj::heapString(url);
+
+    return requestBody.readAllBytes(1024 * 1024).then(
+        [this, methodName = kj::mv(methodName), path = kj::mv(path), &response]
+        (kj::Array<byte>&& bodyBytes) mutable {
+      kj::HttpHeaders responseHeaders(headerTable);
+      responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "text/html; charset=utf-8");
+
+      auto escapedMethod = htmlEscape(methodName);
+      auto escapedPath = htmlEscape(path);
+      auto escapedSocketPath = htmlEscape(socketPath);
+      auto escapedRuntimeDir = htmlEscape(runtimeDir);
+      auto escapedMainModule = htmlEscape(mainModule);
+      auto escapedCompatibilityDate = htmlEscape(compatibilityDate);
+      auto escapedManifest = htmlEscape(readOptionalTextFile(runtimeManifestPath));
+      auto escapedWorkerdConfig = htmlEscape(readOptionalTextFile(workerdConfigPath));
+
+      auto body = kj::str(
+          "<!doctype html><meta charset=\"utf-8\">"
+          "<title>Isolate dev sidecar</title>"
+          "<h1>Isolate dev sidecar</h1>"
+          "<p>This response came through the isolate sidecar HTTP proxy path.</p>"
+          "<dl>"
+          "<dt>Method</dt><dd><code>", escapedMethod, "</code></dd>"
+          "<dt>Path</dt><dd><code>", escapedPath, "</code></dd>"
+          "<dt>Request body bytes</dt><dd><code>", bodyBytes.size(), "</code></dd>"
+          "<dt>Socket</dt><dd><code>", escapedSocketPath, "</code></dd>"
+          "<dt>Runtime dir</dt><dd><code>", escapedRuntimeDir, "</code></dd>"
+          "<dt>Main module</dt><dd><code>", escapedMainModule, "</code></dd>"
+          "<dt>Compatibility date</dt><dd><code>", escapedCompatibilityDate, "</code></dd>"
+          "</dl>"
+          "<h2>runtime-manifest.json</h2><pre>", escapedManifest, "</pre>"
+          "<h2>workerd.capnp</h2><pre>", escapedWorkerdConfig, "</pre>");
+
+      auto stream = response.send(200, "OK", responseHeaders, body.size());
+      auto promise = stream->write(body.begin(), body.size());
+      return promise.attach(kj::mv(stream), kj::mv(body), kj::mv(bodyBytes));
+    });
+  }
+
+private:
+  kj::HttpHeaderTable& headerTable;
+  kj::String socketPath;
+  kj::String runtimeDir;
+  kj::String runtimeManifestPath;
+  kj::String workerdConfigPath;
+  kj::String mainModule;
+  kj::String compatibilityDate;
+};
+
 }  // namespace
+
+IsolateDevSidecarMain::IsolateDevSidecarMain(kj::ProcessContext& context): context(context) {}
+
+kj::MainFunc IsolateDevSidecarMain::getMain() {
+  return kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
+                         "Runs the built-in isolate development sidecar.")
+      .callAfterParsing(KJ_BIND_METHOD(*this, run))
+      .build();
+}
+
+kj::MainBuilder::Validity IsolateDevSidecarMain::run() {
+  auto socketPath = getenvString("SANDSTORM_ISOLATE_SOCKET");
+  unlinkIfExists(socketPath);
+
+  auto ioContext = kj::setupAsyncIo();
+  kj::HttpHeaderTable headerTable;
+  IsolateDevSidecarService service(headerTable);
+  kj::HttpServer server(ioContext.provider->getTimer(), headerTable, service);
+
+  auto address = ioContext.provider->getNetwork()
+      .parseAddress(kj::str("unix:", socketPath), 0)
+      .wait(ioContext.waitScope);
+  auto port = address->listen();
+
+  KJ_LOG(WARNING, "Isolate development sidecar listening.", socketPath);
+  server.listenHttp(*port).wait(ioContext.waitScope);
+  return true;
+}
 
 IsolateSupervisorMain::IsolateSupervisorMain(kj::ProcessContext& context): context(context) {
   sigset_t sigset;

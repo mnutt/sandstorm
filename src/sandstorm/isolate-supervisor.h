@@ -65,6 +65,23 @@ private:
   kj::String realPath(kj::StringPtr path);
 };
 
+class IsolateDevSidecarMain final: public AbstractMain {
+  // Minimal built-in HTTP sidecar used to validate the isolate-supervisor sidecar/proxy path.
+  //
+  // It is intentionally not a JavaScript runtime. It serves the generated runtime bundle metadata
+  // over the same Unix socket contract that a workerd sidecar uses.
+
+public:
+  explicit IsolateDevSidecarMain(kj::ProcessContext& context);
+
+  kj::MainFunc getMain() override;
+
+private:
+  kj::ProcessContext& context;
+
+  kj::MainBuilder::Validity run();
+};
+
 }  // namespace sandstorm
 
 #endif  // SANDSTORM_ISOLATE_SUPERVISOR_H_
