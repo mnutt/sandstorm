@@ -55,6 +55,49 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Running the Sandstorm test app in development mode"
     VERBATIM)
 
+  set(_isolate_test_app_source "${PROJECT_SOURCE_DIR}/src/sandstorm/test-app")
+  set(_isolate_test_app_stage "${_spk_stage}/sandstorm/isolate-test-app")
+  set(_isolate_test_app_capnp "${_isolate_test_app_source}/isolate-test-app.capnp")
+  set(_isolate_test_app_stage_capnp "${_isolate_test_app_stage}/isolate-test-app.capnp")
+  add_custom_command(
+    OUTPUT "${_isolate_test_app_stage_capnp}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_isolate_test_app_stage}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${_isolate_test_app_capnp}"
+      "${_isolate_test_app_stage_capnp}"
+    DEPENDS "${_isolate_test_app_capnp}"
+    COMMENT "Staging the Sandstorm isolate test app package"
+    VERBATIM)
+
+  set(_isolate_test_app_spk "${_package_dir}/isolate-test-app.spk")
+  add_custom_command(
+    OUTPUT "${_isolate_test_app_spk}"
+    COMMAND "$<TARGET_FILE:spk>" pack
+      -k "${_isolate_test_app_source}/isolate-test-app.key"
+      -I "${PROJECT_SOURCE_DIR}/src"
+      -I "${_spk_stage}"
+      -p "${_isolate_test_app_stage_capnp}:pkgdef"
+      "${_isolate_test_app_spk}"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    DEPENDS
+      spk
+      "${_isolate_test_app_stage_capnp}"
+      "${_isolate_test_app_source}/isolate-test-app.key"
+    COMMENT "Packing isolate-test-app.spk"
+    VERBATIM)
+  add_custom_target(isolate-test-app-spk DEPENDS "${_isolate_test_app_spk}")
+
+  add_custom_target(isolate-test-app-dev
+    COMMAND "$<TARGET_FILE:spk>" dev
+      -I "${PROJECT_SOURCE_DIR}/src"
+      -I "${_spk_stage}"
+      -p "${_isolate_test_app_stage_capnp}:pkgdef"
+    DEPENDS spk "${_isolate_test_app_stage_capnp}"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Running the Sandstorm isolate test app in development mode"
+    VERBATIM)
+
   set(_app_index_source "${PROJECT_SOURCE_DIR}/src/sandstorm/app-index")
   set(_app_index_stage "${_spk_stage}/sandstorm/app-index")
   set(_app_index_stage_stamp "${_package_dir}/app-index-stage.stamp")

@@ -28,6 +28,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	package fast install update test lint typecheck typecheck-ts installer-test \
 	stage-native shell-env shell-build shell-build-debug bundle \
 	test-app.spk test-app-spk test-app-dev app-index.spk app-index-spk app-index-dev \
+	isolate-test-app.spk isolate-test-app-spk isolate-test-app-dev \
 	meteor-testapp-stage meteor-testapp-spk meteor-testapp-dev \
 	tests/assets/meteor-testapp.spk release-gate-upgrade-308
 
@@ -79,6 +80,9 @@ $(eval $(call cmake_target,bundle,bundle))
 $(eval $(call cmake_target,test-app.spk,test-app-spk))
 $(eval $(call cmake_target,test-app-spk,test-app-spk))
 $(eval $(call cmake_target,test-app-dev,test-app-dev))
+$(eval $(call cmake_target,isolate-test-app.spk,isolate-test-app-spk))
+$(eval $(call cmake_target,isolate-test-app-spk,isolate-test-app-spk))
+$(eval $(call cmake_target,isolate-test-app-dev,isolate-test-app-dev))
 $(eval $(call cmake_target,app-index.spk,app-index-spk))
 $(eval $(call cmake_target,app-index-spk,app-index-spk))
 $(eval $(call cmake_target,app-index-dev,app-index-dev))

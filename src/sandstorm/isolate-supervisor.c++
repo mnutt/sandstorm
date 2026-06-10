@@ -33,6 +33,7 @@
 #include <sandstorm/api-session.capnp.h>
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
+#include <sandstorm/isolate-supervisor-internal.capnp.h>
 #include <sandstorm/package.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
 #include <sandstorm/util.capnp.h>
@@ -40,6 +41,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/inotify.h>
 #include <unistd.h>
 #include <time.h>
 #include <fcntl.h>
@@ -47,6 +49,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 namespace sandstorm {
 
@@ -435,6 +438,10 @@ void ensureDirectory(kj::StringPtr path) {
   }
 }
 
+void chownPathTo(kj::StringPtr path, uid_t uid) {
+  KJ_SYSCALL(chown(path.cStr(), uid, static_cast<gid_t>(-1)), path);
+}
+
 void writeAllToFd(int fd, kj::ArrayPtr<const byte> content) {
   while (content.size() > 0) {
     ssize_t n;
@@ -723,6 +730,27 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   return bundleDir;
 }
 
+void chownGeneratedWorkerdBundle(kj::StringPtr bundleDir, IsolateRuntimeConfig& config, uid_t uid) {
+  auto modulesDir = kj::str(bundleDir, "/modules");
+  auto bindingsDir = kj::str(bundleDir, "/bindings");
+
+  chownPathTo(bundleDir, uid);
+  chownPathTo(modulesDir, uid);
+  chownPathTo(bindingsDir, uid);
+  chownPathTo(kj::str(bundleDir, "/runtime-manifest.json"), uid);
+  chownPathTo(kj::str(bundleDir, "/workerd.capnp"), uid);
+
+  for (auto i: kj::indices(config.modules)) {
+    chownPathTo(kj::str(modulesDir, "/", moduleBundleFileName(i, config.modules[i].type)), uid);
+  }
+
+  for (auto i: kj::indices(config.bindings)) {
+    if (config.bindings[i].value.size() > 0) {
+      chownPathTo(kj::str(bindingsDir, "/", bindingBundleFileName(i)), uid);
+    }
+  }
+}
+
 enum class FetchMethod {
   GET,
   HEAD,
@@ -746,6 +774,25 @@ kj::HttpMethod toHttpMethod(FetchMethod method) {
       return kj::HttpMethod::DELETE;
     case FetchMethod::PATCH:
       return kj::HttpMethod::PATCH;
+  }
+
+  KJ_UNREACHABLE;
+}
+
+kj::StringPtr fetchMethodName(FetchMethod method) {
+  switch (method) {
+    case FetchMethod::GET:
+      return "GET";
+    case FetchMethod::HEAD:
+      return "HEAD";
+    case FetchMethod::POST:
+      return "POST";
+    case FetchMethod::PUT:
+      return "PUT";
+    case FetchMethod::DELETE_:
+      return "DELETE";
+    case FetchMethod::PATCH:
+      return "PATCH";
   }
 
   KJ_UNREACHABLE;
@@ -914,11 +961,21 @@ void addRequestContextHeaders(FetchRequest& request, WebSession::Context::Reader
   }
 }
 
+kj::String toHttpRequestTarget(kj::StringPtr path) {
+  if (path.size() == 0) {
+    return kj::heapString("/");
+  } else if (path[0] == '/') {
+    return kj::heapString(path);
+  } else {
+    return kj::str("/", path);
+  }
+}
+
 FetchRequest makeFetchRequest(
     FetchMethod method, kj::StringPtr path, WebSession::Context::Reader context) {
   FetchRequest request;
   request.method = method;
-  request.path = kj::heapString(path);
+  request.path = toHttpRequestTarget(path);
   addRequestContextHeaders(request, context);
   return request;
 }
@@ -1122,6 +1179,15 @@ public:
   }
 
 private:
+  struct SidecarHttpState {
+    kj::Own<kj::NetworkAddress> addr;
+    kj::Own<kj::HttpClient> client;
+    kj::Maybe<kj::Own<kj::AsyncInputStream>> responseBody;
+
+    SidecarHttpState(kj::Own<kj::NetworkAddress>&& addr, kj::Own<kj::HttpClient>&& client)
+        : addr(kj::mv(addr)), client(kj::mv(client)) {}
+  };
+
   kj::Own<IsolateRuntimeConfig> config;
   kj::Own<IsolateRuntimeHost> host;
 
@@ -1150,7 +1216,8 @@ private:
     }
   }
 
-  kj::Promise<FetchResponse> readSidecarResponse(kj::HttpClient::Response&& response) {
+  kj::Promise<FetchResponse> readSidecarResponse(
+      kj::HttpClient::Response&& response, kj::Own<SidecarHttpState> state) {
     FetchResponse result;
     result.statusCode = response.statusCode;
 
@@ -1171,26 +1238,31 @@ private:
       return kj::mv(result);
     }
 
-    auto body = kj::mv(response.body);
+    state->responseBody = kj::mv(response.body);
+    auto& body = KJ_ASSERT_NONNULL(state->responseBody);
     return body->readAllBytes(MAX_SIDECAR_RESPONSE_BYTES)
-        .attach(kj::mv(body))
-        .then([result = kj::mv(result)](kj::Array<byte>&& body) mutable {
+        .then([result = kj::mv(result), state = kj::mv(state)](kj::Array<byte>&& body) mutable {
       result.body = kj::mv(body);
+      KJ_LOG(WARNING, "Isolate sidecar response received.",
+          result.statusCode, result.mimeType, result.body.size());
       return kj::mv(result);
     });
   }
 
   kj::Promise<FetchResponse> fetchFromSidecar(FetchRequest&& request) {
+    KJ_LOG(WARNING, "Forwarding isolate request to sidecar.",
+        fetchMethodName(request.method), request.path, request.body.size());
     return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
         .then([this, request = kj::mv(request)](kj::Own<kj::NetworkAddress>&& addr) mutable {
       auto client = kj::newHttpClient(host->timer, host->headerTable, *addr);
+      auto state = kj::heap<SidecarHttpState>(kj::mv(addr), kj::mv(client));
       kj::HttpHeaders headers(host->headerTable);
       copyHeadersToHttp(request, headers);
 
       auto bodySize = static_cast<uint64_t>(request.body.size());
-      auto httpRequest = client->request(toHttpMethod(request.method), request.path, headers,
+      auto httpRequest = state->client->request(toHttpMethod(request.method), request.path, headers,
           bodySize);
-      auto response = httpRequest.response.attach(kj::mv(client), kj::mv(addr));
+      auto response = kj::mv(httpRequest.response);
 
       if (httpRequest.body.get() != nullptr && request.body.size() > 0) {
         auto requestBody = kj::mv(httpRequest.body);
@@ -1199,13 +1271,15 @@ private:
             .attach(kj::mv(requestBody), kj::mv(body))
             .then([response = kj::mv(response)]() mutable {
           return kj::mv(response);
-        }).then([this](kj::HttpClient::Response&& response) mutable {
-          return readSidecarResponse(kj::mv(response));
+        }).then([this, state = kj::mv(state)](
+            kj::HttpClient::Response&& response) mutable {
+          return readSidecarResponse(kj::mv(response), kj::mv(state));
         });
       }
 
-      return response.then([this](kj::HttpClient::Response&& response) mutable {
-        return readSidecarResponse(kj::mv(response));
+      return response.then([this, state = kj::mv(state)](
+          kj::HttpClient::Response&& response) mutable {
+        return readSidecarResponse(kj::mv(response), kj::mv(state));
       });
     });
   }
@@ -1272,6 +1346,10 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
   kj::Maybe<kj::Own<IsolateRuntimeConfig>> found;
   auto considerCommand = [&](spk::Manifest::Command::Reader command) {
     if (command.hasIsolate()) {
+      if (found != nullptr) {
+        return;
+      }
+
       auto isolate = command.getIsolate();
       KJ_IF_MAYBE(mainModule, requestedMainModule) {
         if (isolate.getMainModule() != *mainModule) {
@@ -1279,8 +1357,13 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
         }
       }
 
-      KJ_REQUIRE(found == nullptr,
-          "Manifest has multiple isolate commands matching the selected mainModule.");
+      KJ_IF_MAYBE(compatibilityDate, requestedCompatibilityDate) {
+        if (isolate.hasCompatibilityDate() && isolate.getCompatibilityDate().size() > 0 &&
+            isolate.getCompatibilityDate() != *compatibilityDate) {
+          return;
+        }
+      }
+
       found = copyIsolateConfig(isolate);
     }
   };
@@ -1312,7 +1395,7 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
   }
 }
 
-class IsolateWebSessionImpl final: public WebSession::Server {
+class IsolateWebSessionImpl final: public IsolateWebSession::Server {
 public:
   IsolateWebSessionImpl(
       kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
@@ -1362,6 +1445,11 @@ public:
   }
 
   kj::Promise<void> options(OptionsContext context) override {
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
+    context.getResults().setCap(thisCap().castAs<SystemPersistent>());
     return kj::READY_NOW;
   }
 
@@ -1417,6 +1505,8 @@ private:
 
   kj::Promise<void> fetch(FetchRequest&& request, WebSession::Response::Builder response) {
     addSessionHeaders(request);
+    KJ_LOG(WARNING, "Handling isolate WebSession request.",
+        fetchMethodName(request.method), request.path, sessionKindName(sessionKind));
     return runtime->fetch(kj::mv(request))
         .then([response](FetchResponse&& fetchResponse) mutable {
       writeFetchResponse(kj::mv(fetchResponse), response);
@@ -1521,8 +1611,12 @@ public:
 
     auto stdoutNull = raiiOpen("/dev/null", O_WRONLY | O_CLOEXEC);
     Subprocess::Options options(argv.asPtr());
+    if (argvStrings[0] == "/sandstorm") {
+      options.executable = "/proc/self/exe";
+    }
     options.environment = childEnv.asPtr();
     options.stdout = stdoutNull;
+    options.parentDeathSignal = SIGTERM;
     process = Subprocess(kj::mv(options));
 
     KJ_IF_MAYBE(p, process) {
@@ -1745,10 +1839,10 @@ void waitForSidecarSocket(WorkerdSidecarProcess& sidecar, IsolateRuntimeConfig& 
 class IsolateSupervisorImpl final: public Supervisor::Server {
 public:
   IsolateSupervisorImpl(
-      kj::StringPtr varPath, kj::Own<CapRedirector> coreRedirector,
+      kj::UnixEventPort& eventPort, kj::StringPtr varPath, kj::Own<CapRedirector> coreRedirector,
       kj::Own<IsolateRuntimeConfig> runtimeConfig, kj::Own<IsolateRuntimeHost> runtimeHost,
       kj::Own<WorkerdSidecarProcess> sidecar)
-      : varPath(kj::heapString(varPath)), coreRedirector(kj::mv(coreRedirector)),
+      : eventPort(eventPort), varPath(kj::heapString(varPath)), coreRedirector(kj::mv(coreRedirector)),
         runtimeConfig(kj::mv(runtimeConfig)), runtimeHost(kj::mv(runtimeHost)),
         sidecar(kj::mv(sidecar)) {}
 
@@ -1787,7 +1881,42 @@ public:
   }
 
   kj::Promise<void> watchLog(WatchLogContext context) override {
-    KJ_UNIMPLEMENTED("isolate grain log watching is not implemented yet");
+    auto params = context.getParams();
+    auto logPath = kj::str(varPath, "/log");
+    auto logFile = raiiOpen(logPath, O_RDONLY | O_CLOEXEC);
+
+    struct stat stats;
+    KJ_SYSCALL(fstat(logFile, &stats));
+    uint64_t requestedBacklog = params.getBacklogAmount();
+    uint64_t backlog = kj::min(requestedBacklog, stats.st_size);
+    KJ_SYSCALL(lseek(logFile, stats.st_size - backlog, SEEK_SET));
+
+    kj::Maybe<kj::Promise<void>> firstWrite;
+    if (stats.st_size < requestedBacklog) {
+      KJ_IF_MAYBE(log1, raiiOpenIfExists(kj::str(varPath, "/log.1"), O_RDONLY)) {
+        struct stat stats1;
+        KJ_SYSCALL(fstat(*log1, &stats1));
+        uint64_t requestedBacklog1 = requestedBacklog - stats.st_size;
+        uint64_t backlog1 = kj::min(requestedBacklog1, stats1.st_size);
+        KJ_SYSCALL(lseek(*log1, stats1.st_size - backlog1, SEEK_SET));
+
+        kj::FdInputStream in(log1->get());
+        auto req = params.getStream().writeRequest();
+        auto data = req.initData(backlog1);
+        in.read(data.begin(), backlog1);
+        firstWrite = req.send();
+      }
+    }
+
+    auto watcher = kj::heap<LogWatcher>(eventPort, logPath, kj::mv(logFile), params.getStream());
+
+    KJ_IF_MAYBE(f, firstWrite) {
+      watcher->addTask(kj::mv(*f));
+    }
+
+    context.releaseParams();
+    context.getResults(capnp::MessageSize { 4, 1 }).setHandle(kj::mv(watcher));
+    return kj::READY_NOW;
   }
 
   kj::Promise<void> getWwwFileHack(GetWwwFileHackContext context) override {
@@ -1796,11 +1925,99 @@ public:
   }
 
 private:
+  kj::UnixEventPort& eventPort;
   kj::String varPath;
   kj::Own<CapRedirector> coreRedirector;
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
   kj::Own<WorkerdSidecarProcess> sidecar;
+
+  class LogWatcher final: public Handle::Server, private kj::TaskSet::ErrorHandler {
+  public:
+    explicit LogWatcher(kj::UnixEventPort& eventPort, kj::StringPtr logPath,
+                        kj::AutoCloseFd logFileParam, ByteStream::Client stream)
+        : logFile(kj::mv(logFileParam)),
+          inotify(makeInotifyFd()),
+          inotifyObserver(eventPort, inotify, kj::UnixEventPort::FdObserver::OBSERVE_READ),
+          stream(kj::mv(stream)),
+          tasks(*this),
+          logPath(kj::heapString(logPath)) {
+      KJ_SYSCALL(inotify_add_watch(inotify, logPath.cStr(), IN_MODIFY));
+      tasks.add(watchLoop());
+    }
+
+    void addTask(kj::Promise<void> task) {
+      tasks.add(kj::mv(task));
+    }
+
+  private:
+    kj::AutoCloseFd logFile;
+    kj::AutoCloseFd inotify;
+    kj::UnixEventPort::FdObserver inotifyObserver;
+    ByteStream::Client stream;
+    kj::TaskSet tasks;
+    off_t lastOffset = 0;
+    kj::String logPath;
+
+    void taskFailed(kj::Exception&& exception) override {
+      KJ_LOG(ERROR, exception);
+    }
+
+    kj::Promise<void> copyLog() {
+      auto req = stream.writeRequest();
+      auto orphanage =
+          capnp::Orphanage::getForMessageContaining<ByteStream::WriteParams::Builder>(req);
+      auto orphan = orphanage.newOrphan<capnp::Data>(4096);
+      auto data = orphan.get();
+
+      size_t n = kj::FdInputStream(logFile.get())
+          .tryRead(data.begin(), data.size(), data.size());
+      bool done = n < data.size();
+      if (done) {
+        orphan.truncate(n);
+      }
+      req.adoptData(kj::mv(orphan));
+
+      if (done) {
+        return req.send();
+      } else {
+        return req.send().then([this]() {
+          return copyLog();
+        });
+      }
+    }
+
+    kj::Promise<void> watchLoop() {
+      for (;;) {
+        byte buffer[sizeof(struct inotify_event) + NAME_MAX + 1];
+        ssize_t n;
+        KJ_NONBLOCKING_SYSCALL(n = read(inotify, buffer, sizeof(buffer)));
+        if (n < 0) break;
+        KJ_ASSERT(n > 0);
+      }
+
+      struct stat stats;
+      KJ_SYSCALL(fstat(logFile, &stats));
+      if (lastOffset > stats.st_size) {
+        lastOffset = 0;
+        KJ_SYSCALL(lseek(logFile, 0, SEEK_SET));
+      }
+
+      return copyLog().then([this]() {
+        KJ_SYSCALL(lastOffset = lseek(logFile, 0, SEEK_CUR));
+
+        return inotifyObserver.whenBecomesReadable().then([this]() {
+          return watchLoop();
+        });
+      });
+    }
+
+    static kj::AutoCloseFd makeInotifyFd() {
+      int ifd;
+      KJ_SYSCALL(ifd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC));
+      return kj::AutoCloseFd(ifd);
+    }
+  };
 };
 
 kj::String getenvString(kj::StringPtr name) {
@@ -1837,6 +2054,7 @@ public:
       kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
     auto methodName = kj::str(method);
     auto path = kj::heapString(url);
+    KJ_LOG(WARNING, "Isolate development sidecar received request.", methodName, path);
 
     return requestBody.readAllBytes(1024 * 1024).then(
         [this, methodName = kj::mv(methodName), path = kj::mv(path), &response]
@@ -2066,9 +2284,6 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
     requestedCompatibilityDate = isolateCompatibilityDate;
   }
 
-  auto runtimeConfig = loadIsolateRuntimeConfig(
-      pkgPath, requestedMainModule, requestedCompatibilityDate);
-
   umask(0007);
   if (isNew) {
     if (mkdir(varPath.cStr(), 0770) != 0) {
@@ -2091,22 +2306,34 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
     }
   }
 
+  KJ_IF_MAYBE(u, sandboxUid) {
+    chownPathTo(varPath, *u);
+    chownPathTo(kj::str(varPath, "/sandbox"), *u);
+  }
+
   if (!keepStdio) {
     int log;
     KJ_SYSCALL(log = open(kj::str(varPath, "/log").cStr(),
         O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0660));
+    KJ_IF_MAYBE(u, sandboxUid) {
+      KJ_SYSCALL(fchown(log, *u, static_cast<gid_t>(-1)));
+    }
     KJ_SYSCALL(dup2(log, STDERR_FILENO));
     KJ_SYSCALL(close(log));
   }
 
-  KJ_IF_MAYBE(u, sandboxUid) {
-    KJ_SYSCALL(setuid(*u));
-  }
+  auto runtimeConfig = loadIsolateRuntimeConfig(
+      pkgPath, requestedMainModule, requestedCompatibilityDate);
 
   runtimeConfig->workerdBundleDir = prepareWorkerdBundle(varPath, *runtimeConfig);
   runtimeConfig->workerdConfigPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.capnp");
   runtimeConfig->workerdSocketPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.sock");
   unlinkIfExists(runtimeConfig->workerdSocketPath);
+
+  KJ_IF_MAYBE(u, sandboxUid) {
+    chownGeneratedWorkerdBundle(runtimeConfig->workerdBundleDir, *runtimeConfig, *u);
+    KJ_SYSCALL(setuid(*u));
+  }
 
   KJ_LOG(WARNING, "Starting isolate supervisor with workerd adapter skeleton.",
       grainId, pkgPath, runtimeConfig->mainModule, runtimeConfig->compatibilityDate,
@@ -2120,22 +2347,37 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   auto sidecar = kj::heap<WorkerdSidecarProcess>(
       runtimeArgs.asPtr(), environment.asPtr(), *runtimeConfig);
   waitForSidecarSocket(*sidecar, *runtimeConfig);
+  KJ_LOG(WARNING, "Isolate supervisor sidecar readiness complete.");
+
   auto coreRedirector = kj::refcounted<CapRedirector>();
+  KJ_LOG(WARNING, "Isolate supervisor core redirector created.");
+
+  KJ_LOG(WARNING, "Creating isolate supervisor capability.");
   Supervisor::Client mainCap = kj::heap<IsolateSupervisorImpl>(
-      varPath, kj::addRef(*coreRedirector), kj::mv(runtimeConfig), kj::mv(runtimeHost),
-      kj::mv(sidecar));
+      ioContext.unixEventPort, varPath, kj::addRef(*coreRedirector), kj::mv(runtimeConfig),
+      kj::mv(runtimeHost), kj::mv(sidecar));
+  KJ_LOG(WARNING, "Isolate supervisor capability created.");
+
+  KJ_LOG(WARNING, "Creating isolate supervisor listener.");
   auto listener = kj::heap<TwoPartyServerWithClientBootstrap>(
       kj::mv(mainCap), kj::mv(coreRedirector));
+  KJ_LOG(WARNING, "Isolate supervisor listener created.");
 
   auto socketPath = kj::str(varPath, "/socket");
   unlinkIfExists(socketPath);
 
+  KJ_LOG(WARNING, "Parsing isolate supervisor socket address.", socketPath);
   auto address = ioContext.provider->getNetwork()
       .parseAddress(kj::str("unix:", socketPath), 0)
       .wait(ioContext.waitScope);
+  KJ_LOG(WARNING, "Parsed isolate supervisor socket address.", socketPath);
+
+  KJ_LOG(WARNING, "Listening on isolate supervisor socket.", socketPath);
   auto serverPort = address->listen();
+  KJ_LOG(WARNING, "Listening on isolate supervisor socket succeeded.", socketPath);
 
   KJ_SYSCALL(write(STDOUT_FILENO, "Listening...\n", strlen("Listening...\n")));
+  KJ_LOG(WARNING, "Isolate supervisor socket is listening.", socketPath);
 
   listener->listen(kj::mv(serverPort)).wait(ioContext.waitScope);
   return true;
