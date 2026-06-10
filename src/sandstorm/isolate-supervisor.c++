@@ -451,6 +451,15 @@ void writeFile(kj::StringPtr path, kj::ArrayPtr<const byte> content) {
   writeAllToFd(fd, content);
 }
 
+void unlinkIfExists(kj::StringPtr path) {
+  if (unlink(path.cStr()) != 0) {
+    int error = errno;
+    if (error != ENOENT) {
+      KJ_FAIL_SYSCALL("unlink", error, path);
+    }
+  }
+}
+
 void appendJsonString(kj::Vector<char>& result, kj::StringPtr text) {
   result.add('"');
   for (char c: text) {
@@ -1936,6 +1945,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   runtimeConfig->workerdBundleDir = prepareWorkerdBundle(varPath, *runtimeConfig);
   runtimeConfig->workerdConfigPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.capnp");
   runtimeConfig->workerdSocketPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.sock");
+  unlinkIfExists(runtimeConfig->workerdSocketPath);
 
   KJ_LOG(WARNING, "Starting isolate supervisor with workerd adapter skeleton.",
       grainId, pkgPath, runtimeConfig->mainModule, runtimeConfig->compatibilityDate,
@@ -1957,7 +1967,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
       kj::mv(mainCap), kj::mv(coreRedirector));
 
   auto socketPath = kj::str(varPath, "/socket");
-  unlink(socketPath.cStr());
+  unlinkIfExists(socketPath);
 
   auto address = ioContext.provider->getNetwork()
       .parseAddress(kj::str("unix:", socketPath), 0)
