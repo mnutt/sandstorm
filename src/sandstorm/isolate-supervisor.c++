@@ -423,6 +423,8 @@ kj::StringPtr sessionKindName(SessionKind kind) {
 
 struct SessionMetadata {
   kj::String basePath;
+  kj::String host;
+  kj::String forwardedProto;
   kj::String userAgent;
   kj::String acceptableLanguages;
   kj::String tabId;
@@ -482,6 +484,12 @@ SessionMetadata copySessionMetadata(
     UiView::ViewInfo::Reader viewInfo, capnp::Data::Reader tabId) {
   SessionMetadata result;
   result.basePath = kj::heapString(params.getBasePath());
+  if (result.basePath.size() > 0) {
+    result.host = kj::heapString(extractHostFromUrl(result.basePath));
+    result.forwardedProto = kj::heapString(extractProtocolFromUrl(result.basePath));
+  } else {
+    result.host = kj::heapString("sandbox");
+  }
   result.userAgent = kj::heapString(params.getUserAgent());
   result.acceptableLanguages = kj::strArray(
       KJ_MAP(language, params.getAcceptableLanguages()) {
@@ -495,6 +503,7 @@ SessionMetadata copySessionMetadata(
 SessionMetadata copyApiSessionMetadata(
     UserInfo::Reader userInfo, UiView::ViewInfo::Reader viewInfo, capnp::Data::Reader tabId) {
   SessionMetadata result;
+  result.host = kj::heapString("sandbox");
   result.tabId = kj::encodeHex(tabId);
   copyUserMetadata(result, userInfo, viewInfo);
   return result;
@@ -901,6 +910,12 @@ private:
     }
     if (sessionMetadata.basePath.size() > 0) {
       addHeader(request, "x-sandstorm-base-path", sessionMetadata.basePath);
+    }
+    if (sessionMetadata.host.size() > 0) {
+      addHeader(request, "host", sessionMetadata.host);
+    }
+    if (sessionMetadata.forwardedProto.size() > 0) {
+      addHeader(request, "x-forwarded-proto", sessionMetadata.forwardedProto);
     }
   }
 
