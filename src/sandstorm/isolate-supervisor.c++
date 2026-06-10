@@ -1884,6 +1884,36 @@ public:
     return requestBody.readAllBytes(1024 * 1024).then(
         [this, methodName = kj::mv(methodName), path = kj::mv(path), &response]
         (kj::Array<byte>&& bodyBytes) mutable {
+      if (methodName != "GET") {
+        return sendJson(response, 405, "Method Not Allowed", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"method not allowed\"\n}\n"));
+      }
+
+      if (path == "/" || path == "/status") {
+        return sendJson(response, 200, "OK", renderStatus(methodName, path, bodyBytes.size()));
+      } else if (path == "/capabilities") {
+        return sendJson(response, 200, "OK", renderCapabilities());
+      } else {
+        return sendJson(response, 404, "Not Found", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"unknown Sandstorm API binding endpoint\"\n}\n"));
+      }
+    });
+  }
+
+private:
+  kj::HttpHeaderTable& headerTable;
+  IsolateRuntimeConfig& config;
+
+  kj::Promise<void> sendJson(kj::HttpService::Response& response, uint statusCode,
+      kj::StringPtr statusText, kj::String body) {
+    kj::HttpHeaders responseHeaders(headerTable);
+    responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/json; charset=utf-8");
+    auto stream = response.send(statusCode, statusText, responseHeaders, body.size());
+    auto promise = stream->write(body.begin(), body.size());
+    return promise.attach(kj::mv(stream), kj::mv(body));
+  }
+
+  kj::String renderStatus(kj::StringPtr methodName, kj::StringPtr path, size_t bodySize) {
       kj::Vector<char> json;
       json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"binding\": \"sandstormApi\",\n  "));
       appendJsonField(json, "status", "prototype");
@@ -1892,24 +1922,22 @@ public:
       json.addAll(kj::StringPtr(",\n  "));
       appendJsonField(json, "path", path);
       json.addAll(kj::StringPtr(",\n  \"requestBodyBytes\": "));
-      json.addAll(kj::str(bodyBytes.size()));
+      json.addAll(kj::str(bodySize));
       json.addAll(kj::StringPtr(",\n  "));
       appendJsonField(json, "mainModule", config.mainModule);
       json.addAll(kj::StringPtr("\n}\n"));
       json.add('\0');
-      auto body = kj::String(json.releaseAsArray());
-
-      kj::HttpHeaders responseHeaders(headerTable);
-      responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/json; charset=utf-8");
-      auto stream = response.send(200, "OK", responseHeaders, body.size());
-      auto promise = stream->write(body.begin(), body.size());
-      return promise.attach(kj::mv(stream), kj::mv(body), kj::mv(bodyBytes));
-    });
+      return kj::String(json.releaseAsArray());
   }
 
-private:
-  kj::HttpHeaderTable& headerTable;
-  IsolateRuntimeConfig& config;
+  kj::String renderCapabilities() {
+    return kj::str(
+        "{\n"
+        "  \"ok\": true,\n"
+        "  \"binding\": \"sandstormApi\",\n"
+        "  \"capabilities\": [\"status\", \"capabilities\"]\n"
+        "}\n");
+  }
 };
 
 class IsolateSupervisorImpl final: public Supervisor::Server {
