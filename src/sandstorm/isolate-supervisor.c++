@@ -25,6 +25,7 @@
 #include <capnp/serialize.h>
 #include <kj/async-io.h>
 #include <kj/async-unix.h>
+#include <kj/compat/http.h>
 #include <kj/debug.h>
 #include <kj/encoding.h>
 #include <kj/io.h>
@@ -100,6 +101,7 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
 
   kj::Network& network;
   kj::Timer& timer;
+  kj::HttpHeaderTable headerTable;
 };
 
 IsolateRuntimeConfig::ModuleType getModuleType(
@@ -555,6 +557,25 @@ enum class FetchMethod {
   PATCH,
 };
 
+kj::HttpMethod toHttpMethod(FetchMethod method) {
+  switch (method) {
+    case FetchMethod::GET:
+      return kj::HttpMethod::GET;
+    case FetchMethod::HEAD:
+      return kj::HttpMethod::HEAD;
+    case FetchMethod::POST:
+      return kj::HttpMethod::POST;
+    case FetchMethod::PUT:
+      return kj::HttpMethod::PUT;
+    case FetchMethod::DELETE_:
+      return kj::HttpMethod::DELETE;
+    case FetchMethod::PATCH:
+      return kj::HttpMethod::PATCH;
+  }
+
+  KJ_UNREACHABLE;
+}
+
 enum class SessionKind {
   NORMAL,
   REQUEST,
@@ -683,6 +704,8 @@ struct FetchResponse {
   kj::Vector<FetchHeader> headers;
 };
 
+constexpr uint64_t MAX_SIDECAR_RESPONSE_BYTES = 64 * 1024 * 1024;
+
 void addHeader(FetchRequest& request, kj::StringPtr name, kj::StringPtr value) {
   FetchHeader header;
   header.name = kj::heapString(name);
@@ -765,9 +788,42 @@ WebSession::Response::ClientErrorCode clientErrorCodeForStatus(uint statusCode) 
   }
 }
 
+bool equalsIgnoreCase(kj::StringPtr a, kj::StringPtr b) {
+  if (a.size() != b.size()) {
+    return false;
+  }
+
+  for (auto i: kj::indices(a)) {
+    char ca = a[i];
+    char cb = b[i];
+    if (ca >= 'A' && ca <= 'Z') {
+      ca += 'a' - 'A';
+    }
+    if (cb >= 'A' && cb <= 'Z') {
+      cb += 'a' - 'A';
+    }
+    if (ca != cb) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool isStructuredResponseHeader(kj::StringPtr name) {
-  return name == "content-type" || name == "content-encoding" || name == "content-language" ||
-      name == "content-disposition" || name == "etag" || name == "location";
+  return equalsIgnoreCase(name, "content-type") ||
+      equalsIgnoreCase(name, "content-encoding") ||
+      equalsIgnoreCase(name, "content-language") ||
+      equalsIgnoreCase(name, "content-disposition") ||
+      equalsIgnoreCase(name, "etag") ||
+      equalsIgnoreCase(name, "location") ||
+      equalsIgnoreCase(name, "content-length") ||
+      equalsIgnoreCase(name, "transfer-encoding") ||
+      equalsIgnoreCase(name, "connection") ||
+      equalsIgnoreCase(name, "keep-alive") ||
+      equalsIgnoreCase(name, "te") ||
+      equalsIgnoreCase(name, "trailer") ||
+      equalsIgnoreCase(name, "upgrade");
 }
 
 void addFetchResponseHeaders(WebSession::Response::Builder builder, kj::Vector<FetchHeader>& headers) {
@@ -792,7 +848,7 @@ void addFetchResponseHeaders(WebSession::Response::Builder builder, kj::Vector<F
 kj::Maybe<kj::StringPtr> findFetchResponseHeader(
     kj::Vector<FetchHeader>& headers, kj::StringPtr name) {
   for (auto& header: headers) {
-    if (header.name == name) {
+    if (equalsIgnoreCase(header.name, name)) {
       return kj::StringPtr(header.value);
     }
   }
@@ -873,8 +929,10 @@ public:
       : config(kj::mv(config)), host(kj::mv(host)) {}
 
   kj::Promise<FetchResponse> fetch(FetchRequest&& request) override {
-    if (hasSidecarEndpoint()) {
-      return fetchPlaceholder(kj::mv(request), "sidecar endpoint configured");
+    if (isSidecarSocketAvailable()) {
+      return fetchFromSidecar(kj::mv(request));
+    } else if (hasSidecarEndpoint()) {
+      return fetchPlaceholder(kj::mv(request), "sidecar socket not listening");
     }
 
     return fetchPlaceholder(kj::mv(request), "sidecar endpoint not configured");
@@ -886,6 +944,76 @@ private:
 
   bool hasSidecarEndpoint() {
     return config->workerdSocketPath.size() > 0;
+  }
+
+  bool isSidecarSocketAvailable() {
+    return hasSidecarEndpoint() && access(config->workerdSocketPath.cStr(), F_OK) == 0;
+  }
+
+  void copyHeadersToHttp(FetchRequest& request, kj::HttpHeaders& headers) {
+    for (auto& header: request.headers) {
+      headers.add(header.name, header.value);
+    }
+  }
+
+  kj::Promise<FetchResponse> readSidecarResponse(kj::HttpClient::Response&& response) {
+    FetchResponse result;
+    result.statusCode = response.statusCode;
+
+    if (response.headers != nullptr) {
+      KJ_IF_MAYBE(contentType, response.headers->get(kj::HttpHeaderId::CONTENT_TYPE)) {
+        result.mimeType = kj::heapString(*contentType);
+      }
+
+      response.headers->forEach([&](kj::StringPtr name, kj::StringPtr value) {
+        FetchHeader header;
+        header.name = kj::heapString(name);
+        header.value = kj::heapString(value);
+        result.headers.add(kj::mv(header));
+      });
+    }
+
+    if (response.body.get() == nullptr) {
+      return kj::mv(result);
+    }
+
+    auto body = kj::mv(response.body);
+    return body->readAllBytes(MAX_SIDECAR_RESPONSE_BYTES)
+        .attach(kj::mv(body))
+        .then([result = kj::mv(result)](kj::Array<byte>&& body) mutable {
+      result.body = kj::mv(body);
+      return kj::mv(result);
+    });
+  }
+
+  kj::Promise<FetchResponse> fetchFromSidecar(FetchRequest&& request) {
+    return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
+        .then([this, request = kj::mv(request)](kj::Own<kj::NetworkAddress>&& addr) mutable {
+      auto client = kj::newHttpClient(host->timer, host->headerTable, *addr);
+      kj::HttpHeaders headers(host->headerTable);
+      copyHeadersToHttp(request, headers);
+
+      auto bodySize = static_cast<uint64_t>(request.body.size());
+      auto httpRequest = client->request(toHttpMethod(request.method), request.path, headers,
+          bodySize);
+      auto response = httpRequest.response.attach(kj::mv(client), kj::mv(addr));
+
+      if (httpRequest.body.get() != nullptr && request.body.size() > 0) {
+        auto requestBody = kj::mv(httpRequest.body);
+        auto body = kj::mv(request.body);
+        return requestBody->write(body.begin(), body.size())
+            .attach(kj::mv(requestBody), kj::mv(body))
+            .then([response = kj::mv(response)]() mutable {
+          return kj::mv(response);
+        }).then([this](kj::HttpClient::Response&& response) mutable {
+          return readSidecarResponse(kj::mv(response));
+        });
+      }
+
+      return response.then([this](kj::HttpClient::Response&& response) mutable {
+        return readSidecarResponse(kj::mv(response));
+      });
+    });
   }
 
   kj::Promise<FetchResponse> fetchPlaceholder(
