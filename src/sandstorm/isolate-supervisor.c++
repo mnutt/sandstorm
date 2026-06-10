@@ -882,6 +882,9 @@ struct FetchResponse {
 constexpr uint64_t MAX_SIDECAR_RESPONSE_BYTES = 64 * 1024 * 1024;
 constexpr uint SIDECAR_READY_TIMEOUT_MS = 10000;
 constexpr uint SIDECAR_READY_POLL_MS = 50;
+constexpr uint SIDECAR_SHUTDOWN_TIMEOUT_MS = 2000;
+
+void sleepMillis(uint millis);
 
 void addHeader(FetchRequest& request, kj::StringPtr name, kj::StringPtr value) {
   FetchHeader header;
@@ -1572,8 +1575,21 @@ public:
   void stop() {
     KJ_IF_MAYBE(p, process) {
       if (p->isRunning()) {
-        KJ_LOG(WARNING, "Stopping isolate sidecar process.", p->getPid());
+        auto pid = p->getPid();
+        KJ_LOG(WARNING, "Stopping isolate sidecar process.", pid);
         p->signal(SIGTERM);
+
+        for (uint elapsed = 0; elapsed < SIDECAR_SHUTDOWN_TIMEOUT_MS;
+             elapsed += SIDECAR_READY_POLL_MS) {
+          if (!isRunning()) {
+            process = nullptr;
+            return;
+          }
+          sleepMillis(SIDECAR_READY_POLL_MS);
+        }
+
+        KJ_LOG(WARNING, "Killing isolate sidecar process after shutdown timeout.", pid);
+        p->signal(SIGKILL);
       }
       process = nullptr;
     }
