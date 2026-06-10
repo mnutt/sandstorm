@@ -43,7 +43,7 @@ const isolateCommand :Spk.Manifest.Command = (
     modules = [
       (
         name = "worker.js",
-        esModule = "import message from \"message.txt\"; import metadata from \"metadata.json\"; export default { async fetch(request, env, ctx) { const url = new URL(request.url); const headers = {}; for (const [name, value] of request.headers) { if (name.startsWith(\"x-sandstorm-\") || name === \"host\") headers[name] = value; } const apiResponse = await env.SANDSTORM_API.fetch(\"http://sandstorm/status\"); const sandstormApi = await apiResponse.json(); return Response.json({ ok: true, method: request.method, pathname: url.pathname, message, metadata, textBinding: env.TEXT_BINDING, jsonBinding: env.JSON_BINDING, sandstormApi, headers }); } };"
+        esModule = "import message from \"message.txt\"; import metadata from \"metadata.json\"; export default { async fetch(request, env, ctx) { const url = new URL(request.url); const headers = {}; for (const [name, value] of request.headers) { if (name.startsWith(\"x-sandstorm-\") || name === \"host\") headers[name] = value; } const apiStatus = await (await env.SANDSTORM_API.fetch(\"http://sandstorm/status\")).json(); const apiCapabilities = await (await env.SANDSTORM_API.fetch(\"http://sandstorm/capabilities\")).json(); return Response.json({ ok: true, method: request.method, pathname: url.pathname, message, metadata, textBinding: env.TEXT_BINDING, jsonBinding: env.JSON_BINDING, sandstormApi: { status: apiStatus, capabilities: apiCapabilities }, headers }); } };"
       ),
       (
         name = "message.txt",
