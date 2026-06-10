@@ -123,6 +123,10 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
   kj::Vector<kj::String> argv;
 
   bool useIsolateRuntime = command.hasIsolate();
+  auto commandArgv = command.getArgv();
+  auto commandName = commandArgv.size() > 0 ? commandArgv[0] : kj::StringPtr("");
+  KJ_LOG(WARNING, "Starting grain supervisor.",
+      grainId, packageId, useIsolateRuntime, isNew, commandName);
   argv.add(kj::heapString(useIsolateRuntime ? "isolate-supervisor" : "supervisor"));
 
   KJ_IF_MAYBE(u, sandboxUid) {

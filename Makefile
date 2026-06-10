@@ -153,7 +153,7 @@ clean: ci-clean
 ci-clean:
 	@# Clean only the stuff that we want to clean between CI builds.
 	rm -rf bin tmp node_modules bundle shell-build sandstorm-*.tar.xz
-	rm -rf test-app.spk
+	rm -rf test-app.spk isolate-test-app.spk
 	rm -rf tests/assets/meteor-testapp.spk meteor-testapp/.meteor-spk
 
 install: sandstorm-$(BUILD)-fast.tar.xz install.sh
@@ -432,6 +432,17 @@ test-app-dev: tmp/.ekam-run
 	@cp src/sandstorm/test-app/test-app.capnp tmp/sandstorm/test-app/test-app.capnp
 	@cp src/sandstorm/test-app/*.html tmp/sandstorm/test-app
 	spk dev -Isrc -Itmp -ptmp/sandstorm/test-app/test-app.capnp:pkgdef
+
+isolate-test-app.spk: tmp/.ekam-run
+	@mkdir -p tmp/sandstorm/isolate-test-app
+	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
+	bin/spk pack -ksrc/sandstorm/test-app/isolate-test-app.key -Isrc -Itmp \
+		-ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef isolate-test-app.spk
+
+isolate-test-app-dev: tmp/.ekam-run
+	@mkdir -p tmp/sandstorm/isolate-test-app
+	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
+	spk dev -Isrc -Itmp -ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef
 
 # ====================================================================
 # meteor-testapp.spk
