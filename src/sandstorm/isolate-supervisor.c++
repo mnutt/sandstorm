@@ -1106,7 +1106,10 @@ public:
 
   kj::Promise<FetchResponse> fetch(FetchRequest&& request) override {
     if (isSidecarSocketAvailable()) {
-      return fetchFromSidecar(kj::mv(request));
+      return fetchFromSidecar(kj::mv(request)).catch_(
+          [this](kj::Exception&& exception) mutable {
+        return fetchRuntimeError(kj::mv(exception));
+      });
     } else if (hasSidecarEndpoint()) {
       return fetchPlaceholder(kj::mv(request), "sidecar socket not listening");
     }
@@ -1124,6 +1127,17 @@ private:
 
   bool isSidecarSocketAvailable() {
     return hasSidecarEndpoint() && access(config->workerdSocketPath.cStr(), F_OK) == 0;
+  }
+
+  FetchResponse fetchRuntimeError(kj::Exception&& exception) {
+    KJ_LOG(WARNING, "Isolate sidecar request failed.", exception);
+
+    FetchResponse response;
+    response.statusCode = 502;
+    response.mimeType = kj::heapString("text/plain; charset=utf-8");
+    auto body = kj::str("Isolate runtime request failed: ", exception.getDescription(), "\n");
+    response.body = kj::heapArray<byte>(body.asBytes());
+    return response;
   }
 
   void copyHeadersToHttp(FetchRequest& request, kj::HttpHeaders& headers) {
