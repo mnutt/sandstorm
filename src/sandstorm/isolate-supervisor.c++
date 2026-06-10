@@ -39,6 +39,7 @@
 #include <sandstorm/web-session.capnp.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <time.h>
 #include <fcntl.h>
@@ -1548,7 +1549,16 @@ public:
         return false;
       }
 
-      if (kill(p->getPid(), 0) == 0) {
+      int status;
+      pid_t waitResult;
+      KJ_SYSCALL(waitResult = waitpid(p->getPid(), &status, WNOHANG));
+      if (waitResult == p->getPid()) {
+        logExitStatus(status);
+        p->notifyExited(status);
+        return false;
+      }
+
+      if (waitResult == 0 && kill(p->getPid(), 0) == 0) {
         return true;
       }
 
@@ -1571,6 +1581,16 @@ public:
 
 private:
   kj::Maybe<Subprocess> process;
+
+  static void logExitStatus(int status) {
+    if (WIFEXITED(status)) {
+      KJ_LOG(WARNING, "Isolate sidecar process exited.", WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status)) {
+      KJ_LOG(WARNING, "Isolate sidecar process was killed.", WTERMSIG(status));
+    } else {
+      KJ_LOG(WARNING, "Isolate sidecar process stopped unexpectedly.", status);
+    }
+  }
 
   static bool hasEnvVar(kj::ArrayPtr<const kj::String> environment, kj::StringPtr name) {
     for (auto& item: environment) {
