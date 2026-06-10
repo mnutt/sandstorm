@@ -24,6 +24,8 @@ BUILD=0
 PARALLEL=$(shell nproc)
 LIBS=
 EKAM=ekam
+WORKERD_NPM_VERSION=latest
+WORKERD_BIN=
 
 # You generally should not modify this.
 # TODO(cleanup): -fPIC is unfortunate since most of our code is static binaries
@@ -139,7 +141,7 @@ IMAGES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test installer-test app-index-dev lint
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test installer-test app-index-dev lint workerd
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -149,6 +151,7 @@ clean: ci-clean
 	cd deps/ekam && make clean
 	rm -rf deps/libsodium/build
 	rm -rf deps/boringssl/build
+	rm -rf tmp/workerd-npm
 
 ci-clean:
 	@# Clean only the stuff that we want to clean between CI builds.
@@ -194,7 +197,6 @@ REMOTE_libsodium=https://github.com/jedisct1/libsodium.git stable
 REMOTE_node-capnp=https://github.com/kentonv/node-capnp.git node10
 REMOTE_boringssl=https://boringssl.googlesource.com/boringssl main
 REMOTE_clang=https://chromium.googlesource.com/chromium/src/tools/clang.git main
-
 deps/capnproto/.git:
 	@# Probably user forgot to checkout submodules. Do it for them.
 	@$(call color,"fetching submodules")
@@ -255,6 +257,30 @@ deps/libsodium/build/Makefile: | tmp/.deps deps/llvm-build
 deps/libsodium/build/src/libsodium/.libs/libsodium.a: deps/libsodium/build/Makefile
 	@$(call color,building libsodium)
 	cd deps/libsodium/build && make -j$(PARALLEL)
+
+# ====================================================================
+# fetch/build workerd
+
+tmp/.workerd-npm:
+	@$(call color,installing npm workerd)
+	@mkdir -p tmp/workerd-npm
+	@printf '{"private":true}\n' > tmp/workerd-npm/package.json
+	cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund --no-save workerd@$(WORKERD_NPM_VERSION)
+	@test -e tmp/workerd-npm/node_modules/.bin/workerd
+	@touch $@
+
+ifeq ($(WORKERD_BIN),)
+bin/workerd: tmp/.workerd-npm
+	@mkdir -p bin
+	cp -L "$$(readlink -f tmp/workerd-npm/node_modules/.bin/workerd)" $@
+	chmod +x $@
+else
+bin/workerd:
+	@mkdir -p bin
+	cp "$(WORKERD_BIN)" $@
+endif
+
+workerd: bin/workerd
 
 # ====================================================================
 # Ekam bootstrap and C++ binaries
@@ -381,7 +407,7 @@ shell-build: shell/imports/* shell/imports/*/* shell/imports/*/*/* shell/imports
 # ====================================================================
 # Bundle
 
-bundle: tmp/.ekam-run shell-build make-bundle.sh localedata-C meteor-bundle-main.js
+bundle: tmp/.ekam-run shell-build bin/workerd make-bundle.sh localedata-C meteor-bundle-main.js
 	@$(call color,bundle)
 	@CC=$(CC) ./make-bundle.sh
 

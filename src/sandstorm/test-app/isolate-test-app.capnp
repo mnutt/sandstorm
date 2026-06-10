@@ -28,12 +28,17 @@ const isolateTestViewInfo :Grain.UiView.ViewInfo = (
 );
 
 const isolateCommand :Spk.Manifest.Command = (
-  argv = ["/sandstorm", "isolate-dev-sidecar"],
+  argv = [
+    "workerd",
+    "serve",
+    "${SANDSTORM_ISOLATE_WORKERD_CONFIG}",
+    "sandstormConfig"
+  ],
 
   isolate = (
     mainModule = "worker.js",
     compatibilityDate = "2025-01-01",
-    compatibilityFlags = ["sandstorm_isolate_test"],
+    compatibilityFlags = [],
 
     modules = [
       (

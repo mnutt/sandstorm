@@ -650,7 +650,7 @@ void appendWorkerdConfig(
       "  ],\n"
       "  sockets = [\n"
       "    ( name = \"sandstorm\", address = "));
-  appendCapnpString(result, socketPath);
+  appendCapnpString(result, kj::str("unix:", socketPath));
   result.addAll(kj::StringPtr(
       ", http = (), service = \"main\" )\n"
       "  ]\n"
@@ -1773,7 +1773,12 @@ private:
     }
 
     if (!hasEnvVar(environment, "PATH")) {
-      result.add(kj::heapString("PATH=/bin:/usr/bin"));
+      char* inheritedPath = getenv("PATH");
+      if (inheritedPath != nullptr) {
+        result.add(kj::str("PATH=", inheritedPath));
+      } else {
+        result.add(kj::heapString("PATH=/bin:/usr/bin:/usr/local/bin"));
+      }
     }
 
     result.add(kj::str("SANDSTORM_ISOLATE_RUNTIME_DIR=", runtimeConfig.workerdBundleDir));
