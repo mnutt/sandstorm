@@ -26,7 +26,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 
 .PHONY: all configure toolchain deps update-deps clean ci-clean \
 	package fast install update test lint typecheck typecheck-ts installer-test \
-	stage-native shell-env shell-build shell-build-debug bundle \
+	stage-native workerd shell-env shell-build shell-build-debug bundle \
 	test-app.spk test-app-spk test-app-dev app-index.spk app-index-spk app-index-dev \
 	isolate-test-app.spk isolate-test-app-spk isolate-test-app-dev \
 	meteor-testapp-stage meteor-testapp-spk meteor-testapp-dev \
@@ -73,6 +73,7 @@ $(eval $(call cmake_target,typecheck,typecheck))
 $(eval $(call cmake_target,typecheck-ts,typecheck))
 $(eval $(call cmake_target,installer-test,installer-test))
 $(eval $(call cmake_target,stage-native,stage-native))
+$(eval $(call cmake_target,workerd,workerd))
 $(eval $(call cmake_target,shell-env,shell-env))
 $(eval $(call cmake_target,shell-build,shell-build))
 $(eval $(call cmake_target,shell-build-debug,shell-build-debug))

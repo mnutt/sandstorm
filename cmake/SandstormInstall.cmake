@@ -13,6 +13,37 @@ function(sandstorm_install_native)
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT native)
 
+  set(_workerd_dir "${CMAKE_BINARY_DIR}/workerd-npm")
+  set(_workerd_bin "${CMAKE_BINARY_DIR}/bin/workerd")
+  if(SANDSTORM_WORKERD_BIN)
+    add_custom_command(
+      OUTPUT "${_workerd_bin}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/bin"
+      COMMAND "${CMAKE_COMMAND}" -E copy
+        "${SANDSTORM_WORKERD_BIN}" "${_workerd_bin}"
+      DEPENDS "${SANDSTORM_WORKERD_BIN}"
+      COMMENT "Staging the configured workerd binary"
+      VERBATIM)
+  else()
+    add_custom_command(
+      OUTPUT "${_workerd_bin}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "${_workerd_dir}" "${CMAKE_BINARY_DIR}/bin"
+      COMMAND "${CMAKE_COMMAND}" -E env
+        "PATH=${SANDSTORM_METEOR_DEV_BUNDLE}/bin:$ENV{PATH}"
+        "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/npm" install
+          --no-fund --no-save --prefix "${_workerd_dir}"
+          "workerd@${SANDSTORM_WORKERD_NPM_VERSION}"
+      COMMAND "${CMAKE_COMMAND}" -E copy
+        "${_workerd_dir}/node_modules/.bin/workerd" "${_workerd_bin}"
+      COMMENT "Installing workerd from npm"
+      VERBATIM)
+  endif()
+  add_custom_target(workerd DEPENDS "${_workerd_bin}")
+  install(PROGRAMS "${_workerd_bin}"
+    DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    COMPONENT native)
+
   set(_sandstorm_node_schemas
     activity.capnp
     api-session-impl.capnp
@@ -70,7 +101,7 @@ function(sandstorm_install_native)
       --prefix "${CMAKE_BINARY_DIR}/stage"
       --component native
     COMMAND "${CMAKE_COMMAND}" -E touch "${_native_stage_stamp}"
-    DEPENDS ${_native_targets}
+    DEPENDS ${_native_targets} workerd
     COMMENT "Staging native Sandstorm build outputs"
     VERBATIM)
   add_custom_target(stage-native DEPENDS "${_native_stage_stamp}")
