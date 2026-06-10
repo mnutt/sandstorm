@@ -40,6 +40,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
@@ -705,6 +706,8 @@ struct FetchResponse {
 };
 
 constexpr uint64_t MAX_SIDECAR_RESPONSE_BYTES = 64 * 1024 * 1024;
+constexpr uint SIDECAR_READY_TIMEOUT_MS = 10000;
+constexpr uint SIDECAR_READY_POLL_MS = 50;
 
 void addHeader(FetchRequest& request, kj::StringPtr name, kj::StringPtr value) {
   FetchHeader header;
@@ -1339,6 +1342,31 @@ public:
 
   KJ_DISALLOW_COPY(WorkerdSidecarProcess);
 
+  bool isConfigured() {
+    KJ_IF_MAYBE(p, process) {
+      return true;
+    }
+
+    return false;
+  }
+
+  bool isRunning() {
+    KJ_IF_MAYBE(p, process) {
+      if (!p->isRunning()) {
+        return false;
+      }
+
+      if (kill(p->getPid(), 0) == 0) {
+        return true;
+      }
+
+      int error = errno;
+      return error == EPERM;
+    }
+
+    return false;
+  }
+
   void stop() {
     KJ_IF_MAYBE(p, process) {
       if (p->isRunning()) {
@@ -1386,6 +1414,54 @@ private:
     return result.releaseAsArray();
   }
 };
+
+bool isSocketReady(kj::StringPtr path) {
+  struct stat statbuf;
+  if (stat(path.cStr(), &statbuf) != 0) {
+    int error = errno;
+    if (error == ENOENT || error == ENOTDIR) {
+      return false;
+    }
+
+    KJ_FAIL_SYSCALL("stat", error, path);
+  }
+
+  return S_ISSOCK(statbuf.st_mode);
+}
+
+void sleepMillis(uint millis) {
+  struct timespec request;
+  request.tv_sec = millis / 1000;
+  request.tv_nsec = (millis % 1000) * 1000 * 1000;
+
+  while (nanosleep(&request, &request) != 0) {
+    int error = errno;
+    if (error != EINTR) {
+      KJ_FAIL_SYSCALL("nanosleep", error);
+    }
+  }
+}
+
+void waitForSidecarSocket(WorkerdSidecarProcess& sidecar, IsolateRuntimeConfig& runtimeConfig) {
+  if (!sidecar.isConfigured()) {
+    return;
+  }
+
+  for (uint elapsed = 0; elapsed <= SIDECAR_READY_TIMEOUT_MS;
+       elapsed += SIDECAR_READY_POLL_MS) {
+    if (isSocketReady(runtimeConfig.workerdSocketPath)) {
+      KJ_LOG(WARNING, "Isolate sidecar socket is ready.", runtimeConfig.workerdSocketPath);
+      return;
+    }
+
+    KJ_REQUIRE(sidecar.isRunning(), "Isolate sidecar exited before its socket was ready.",
+        runtimeConfig.workerdSocketPath);
+    sleepMillis(SIDECAR_READY_POLL_MS);
+  }
+
+  KJ_FAIL_REQUIRE("Timed out waiting for isolate sidecar socket.",
+      runtimeConfig.workerdSocketPath);
+}
 
 class IsolateSupervisorImpl final: public Supervisor::Server {
 public:
@@ -1651,6 +1727,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
       ioContext.provider->getNetwork(), ioContext.provider->getTimer());
   auto sidecar = kj::heap<WorkerdSidecarProcess>(
       runtimeArgs.asPtr(), environment.asPtr(), *runtimeConfig);
+  waitForSidecarSocket(*sidecar, *runtimeConfig);
   auto coreRedirector = kj::refcounted<CapRedirector>();
   Supervisor::Client mainCap = kj::heap<IsolateSupervisorImpl>(
       varPath, kj::addRef(*coreRedirector), kj::mv(runtimeConfig), kj::mv(runtimeHost),
