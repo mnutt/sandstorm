@@ -96,6 +96,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String workerdBundleDir;
   kj::String workerdConfigPath;
   kj::String workerdSocketPath;
+  kj::String sandstormApiSocketPath;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
@@ -542,8 +543,8 @@ bool isWorkerdDirectBinding(IsolateRuntimeConfig::Binding& binding) {
     case IsolateRuntimeConfig::BindingType::TEXT:
     case IsolateRuntimeConfig::BindingType::DATA:
     case IsolateRuntimeConfig::BindingType::JSON:
-      return true;
     case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
+      return true;
     case IsolateRuntimeConfig::BindingType::STORAGE:
     case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
@@ -578,6 +579,8 @@ void appendWorkerdBinding(
       break;
     }
     case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
+      result.addAll(kj::StringPtr("service = \"sandstorm-api\""));
+      break;
     case IsolateRuntimeConfig::BindingType::STORAGE:
     case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
@@ -586,6 +589,16 @@ void appendWorkerdBinding(
   }
 
   result.addAll(kj::StringPtr(" )"));
+}
+
+bool hasSandstormApiBinding(IsolateRuntimeConfig& config) {
+  for (auto& binding: config.bindings) {
+    if (binding.type == IsolateRuntimeConfig::BindingType::SANDSTORM_API) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 void appendWorkerdConfig(
@@ -644,9 +657,21 @@ void appendWorkerdConfig(
     needsComma = true;
   }
 
+  if (hasSandstormApiBinding(config)) {
+    result.addAll(kj::StringPtr(
+        "\n        ]\n"
+        "    ) ),\n"
+        "    ( name = \"sandstorm-api\", external = ( address = "));
+    appendCapnpString(result, kj::str("unix:", config.sandstormApiSocketPath));
+    result.addAll(kj::StringPtr(", http = () ) )\n"));
+  } else {
+    result.addAll(kj::StringPtr(
+        "\n        ]\n"
+        "    ) )\n"
+    ));
+  }
+
   result.addAll(kj::StringPtr(
-      "\n        ]\n"
-      "    ) )\n"
       "  ],\n"
       "  sockets = [\n"
       "    ( name = \"sandstorm\", address = "));
@@ -662,6 +687,8 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   auto modulesDir = kj::str(bundleDir, "/modules");
   auto bindingsDir = kj::str(bundleDir, "/bindings");
   auto socketPath = kj::str(bundleDir, "/workerd.sock");
+  auto sandstormApiSocketPath = kj::str(bundleDir, "/sandstorm-api.sock");
+  config.sandstormApiSocketPath = kj::heapString(sandstormApiSocketPath);
   ensureDirectory(bundleDir);
   ensureDirectory(modulesDir);
   ensureDirectory(bindingsDir);
@@ -1841,6 +1868,50 @@ void waitForSidecarSocket(WorkerdSidecarProcess& sidecar, IsolateRuntimeConfig& 
       runtimeConfig.workerdSocketPath);
 }
 
+class SandstormApiBindingService final: public kj::HttpService {
+public:
+  SandstormApiBindingService(kj::HttpHeaderTable& headerTable, IsolateRuntimeConfig& config)
+      : headerTable(headerTable), config(config) {}
+
+  kj::Promise<void> request(
+      kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
+      kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
+    (void)headers;
+    auto methodName = kj::str(method);
+    auto path = kj::heapString(url);
+    KJ_LOG(WARNING, "Isolate Sandstorm API binding received request.", methodName, path);
+
+    return requestBody.readAllBytes(1024 * 1024).then(
+        [this, methodName = kj::mv(methodName), path = kj::mv(path), &response]
+        (kj::Array<byte>&& bodyBytes) mutable {
+      kj::Vector<char> json;
+      json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"binding\": \"sandstormApi\",\n  "));
+      appendJsonField(json, "status", "prototype");
+      json.addAll(kj::StringPtr(",\n  "));
+      appendJsonField(json, "method", methodName);
+      json.addAll(kj::StringPtr(",\n  "));
+      appendJsonField(json, "path", path);
+      json.addAll(kj::StringPtr(",\n  \"requestBodyBytes\": "));
+      json.addAll(kj::str(bodyBytes.size()));
+      json.addAll(kj::StringPtr(",\n  "));
+      appendJsonField(json, "mainModule", config.mainModule);
+      json.addAll(kj::StringPtr("\n}\n"));
+      json.add('\0');
+      auto body = kj::String(json.releaseAsArray());
+
+      kj::HttpHeaders responseHeaders(headerTable);
+      responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/json; charset=utf-8");
+      auto stream = response.send(200, "OK", responseHeaders, body.size());
+      auto promise = stream->write(body.begin(), body.size());
+      return promise.attach(kj::mv(stream), kj::mv(body), kj::mv(bodyBytes));
+    });
+  }
+
+private:
+  kj::HttpHeaderTable& headerTable;
+  IsolateRuntimeConfig& config;
+};
+
 class IsolateSupervisorImpl final: public Supervisor::Server {
 public:
   IsolateSupervisorImpl(
@@ -2334,6 +2405,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   runtimeConfig->workerdConfigPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.capnp");
   runtimeConfig->workerdSocketPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.sock");
   unlinkIfExists(runtimeConfig->workerdSocketPath);
+  unlinkIfExists(runtimeConfig->sandstormApiSocketPath);
 
   KJ_IF_MAYBE(u, sandboxUid) {
     chownGeneratedWorkerdBundle(runtimeConfig->workerdBundleDir, *runtimeConfig, *u);
@@ -2349,6 +2421,23 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   auto ioContext = kj::setupAsyncIo();
   auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
       ioContext.provider->getNetwork(), ioContext.provider->getTimer());
+  kj::Maybe<kj::Promise<void>> apiListenTask = nullptr;
+  if (hasSandstormApiBinding(*runtimeConfig)) {
+    auto apiService = kj::heap<SandstormApiBindingService>(
+        runtimeHost->headerTable, *runtimeConfig);
+    auto apiServer = kj::heap<kj::HttpServer>(
+        runtimeHost->timer, runtimeHost->headerTable, *apiService);
+    apiServer = apiServer.attach(kj::mv(apiService));
+    auto apiAddress = runtimeHost->network
+        .parseAddress(kj::str("unix:", runtimeConfig->sandstormApiSocketPath), 0)
+        .wait(ioContext.waitScope);
+    auto apiPort = apiAddress->listen();
+    KJ_LOG(WARNING, "Isolate Sandstorm API binding socket is listening.",
+        runtimeConfig->sandstormApiSocketPath);
+    apiListenTask = apiServer->listenHttp(*apiPort)
+        .attach(kj::mv(apiPort), kj::mv(apiServer));
+  }
+
   auto sidecar = kj::heap<WorkerdSidecarProcess>(
       runtimeArgs.asPtr(), environment.asPtr(), *runtimeConfig);
   waitForSidecarSocket(*sidecar, *runtimeConfig);
@@ -2384,7 +2473,11 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   KJ_SYSCALL(write(STDOUT_FILENO, "Listening...\n", strlen("Listening...\n")));
   KJ_LOG(WARNING, "Isolate supervisor socket is listening.", socketPath);
 
-  listener->listen(kj::mv(serverPort)).wait(ioContext.waitScope);
+  auto listenTask = listener->listen(kj::mv(serverPort));
+  KJ_IF_MAYBE(apiTask, apiListenTask) {
+    listenTask = listenTask.exclusiveJoin(kj::mv(*apiTask));
+  }
+  listenTask.wait(ioContext.waitScope);
   return true;
 }
 
