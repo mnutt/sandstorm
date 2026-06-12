@@ -1727,7 +1727,8 @@ int runConfinedWorkerdSidecar(
     kj::Array<kj::String> environment,
     kj::String trustedWorkerd,
     kj::String workerdBundleDir,
-    kj::Maybe<uid_t> sandboxUid);
+    kj::Maybe<uid_t> sandboxUid,
+    bool logSeccompViolations);
 
 class WorkerdSidecarProcess final {
 public:
@@ -1735,7 +1736,8 @@ public:
       kj::ArrayPtr<const kj::String> runtimeArgs,
       kj::ArrayPtr<const kj::String> environment,
       IsolateRuntimeConfig& runtimeConfig,
-      kj::Maybe<uid_t> sandboxUid) {
+      kj::Maybe<uid_t> sandboxUid,
+      bool logSeccompViolations) {
     if (runtimeArgs.size() == 0) {
       KJ_LOG(WARNING, "No isolate sidecar command configured; runtime remains in diagnostics mode.",
           runtimeConfig.workerdBundleDir, runtimeConfig.workerdSocketPath);
@@ -1754,10 +1756,11 @@ public:
                           childEnvStrings = kj::mv(childEnvStrings),
                           trustedWorkerd = kj::mv(trustedWorkerd),
                           workerdBundleDir = kj::heapString(runtimeConfig.workerdBundleDir),
-                          sandboxUid]() mutable {
+                          sandboxUid,
+                          logSeccompViolations]() mutable {
       return runConfinedWorkerdSidecar(
           kj::mv(argvStrings), kj::mv(childEnvStrings), kj::mv(trustedWorkerd),
-          kj::mv(workerdBundleDir), sandboxUid);
+          kj::mv(workerdBundleDir), sandboxUid, logSeccompViolations);
     });
 
     KJ_IF_MAYBE(p, process) {
@@ -1967,11 +1970,17 @@ kj::String trustedWorkerdExecutablePath() {
   auto exeDir = dirname(exePath);
 
   auto sibling = kj::str(exeDir, "/workerd");
+  if (exeDir == "/") {
+    sibling = kj::heapString("/workerd");
+  }
   if (access(sibling.cStr(), X_OK) == 0) {
     return sibling;
   }
 
   auto bundled = kj::str(exeDir, "/bin/workerd");
+  if (exeDir == "/") {
+    bundled = kj::heapString("/bin/workerd");
+  }
   if (access(bundled.cStr(), X_OK) == 0) {
     return bundled;
   }
@@ -2184,7 +2193,7 @@ bool trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
   return true;
 }
 
-void setupSidecarSeccomp() {
+void setupSidecarSeccomp(bool logSeccompViolations) {
   scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
   if (ctx == nullptr) {
     KJ_FAIL_SYSCALL("seccomp_init", 0);
@@ -2200,6 +2209,9 @@ void setupSidecarSeccomp() {
 
   CHECK_SECCOMP(seccomp_attr_set(ctx, SCMP_FLTATR_CTL_NNP, 1));
   CHECK_SECCOMP(seccomp_attr_set(ctx, SCMP_FLTATR_ACT_BADARCH, SCMP_ACT_ERRNO(ENOSYS)));
+  if (logSeccompViolations) {
+    CHECK_SECCOMP(seccomp_attr_set(ctx, SCMP_FLTATR_CTL_LOG, 1));
+  }
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
@@ -2283,7 +2295,8 @@ int runConfinedWorkerdSidecar(
     kj::Array<kj::String> environment,
     kj::String trustedWorkerd,
     kj::String workerdBundleDir,
-    kj::Maybe<uid_t> sandboxUid) {
+    kj::Maybe<uid_t> sandboxUid,
+    bool logSeccompViolations) {
   resetSignalHandlersForExec();
   setupSidecarParentDeathSignal();
   setupSidecarStdio();
@@ -2297,7 +2310,7 @@ int runConfinedWorkerdSidecar(
   }
   setupSidecarResourceLimits();
   KJ_SYSCALL(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
-  setupSidecarSeccomp();
+  setupSidecarSeccomp(logSeccompViolations);
 
   KJ_STACK_ARRAY(char*, argv, argvStrings.size() + 1, 16, 64);
   for (auto i: kj::indices(argvStrings)) {
@@ -2986,7 +2999,8 @@ kj::MainFunc IsolateSupervisorMain::getMain() {
                  "Accepted for compatibility with supervisor launch flags.")
       .addOption({"use-experimental-seccomp-filter"}, []() { return true; },
                  "Accepted for compatibility with supervisor launch flags.")
-      .addOption({"log-seccomp-violations"}, []() { return true; },
+      .addOption({"log-seccomp-violations"},
+                 [this]() { logSeccompViolations = true; return true; },
                  "Accepted for compatibility with supervisor launch flags.")
       .addOption({'n', "new"}, [this]() { isNew = true; return true; },
                  "Initialize a new grain.")
@@ -3156,7 +3170,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
       runtimeConfig->workerdSocketPath);
 
   auto sidecar = kj::heap<WorkerdSidecarProcess>(
-      runtimeArgs.asPtr(), environment.asPtr(), *runtimeConfig, sandboxUid);
+      runtimeArgs.asPtr(), environment.asPtr(), *runtimeConfig, sandboxUid, logSeccompViolations);
 
   KJ_IF_MAYBE(u, sandboxUid) {
     KJ_SYSCALL(setuid(*u));

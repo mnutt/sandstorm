@@ -60,6 +60,7 @@ private:
   kj::Vector<kj::String> runtimeArgs;
   bool isNew = false;
   bool keepStdio = false;
+  bool logSeccompViolations = false;
   kj::Maybe<uid_t> sandboxUid;
 
   kj::String realPath(kj::StringPtr path);
