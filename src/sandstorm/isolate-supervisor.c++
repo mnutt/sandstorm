@@ -505,6 +505,22 @@ void unlinkIfExists(kj::StringPtr path) {
   }
 }
 
+void unlinkSocketIfExists(kj::StringPtr path) {
+  struct stat stats;
+  if (lstat(path.cStr(), &stats) != 0) {
+    int error = errno;
+    if (error == ENOENT || error == ENOTDIR) {
+      return;
+    }
+
+    KJ_FAIL_SYSCALL("lstat", error, path);
+  }
+
+  KJ_REQUIRE(S_ISSOCK(stats.st_mode),
+      "Refusing to remove non-socket at generated isolate sidecar socket path.", path);
+  KJ_SYSCALL(unlink(path.cStr()), path);
+}
+
 uint64_t computeDiskUsage(kj::StringPtr path) {
   struct stat stats;
   if (lstat(path.cStr(), &stats) != 0) {
@@ -868,9 +884,9 @@ void prepareRuntimeBundleAndCleanupSockets(kj::StringPtr varPath, IsolateRuntime
   config.workerdBundleDir = prepareWorkerdBundle(varPath, config);
   config.workerdConfigPath = kj::str(config.workerdBundleDir, "/workerd.capnp");
   config.workerdSocketPath = kj::str(config.workerdBundleDir, "/workerd.sock");
-  unlinkIfExists(config.workerdSocketPath);
-  unlinkIfExists(config.sandstormApiSocketPath);
-  unlinkIfExists(config.storageSocketPath);
+  unlinkSocketIfExists(config.workerdSocketPath);
+  unlinkSocketIfExists(config.sandstormApiSocketPath);
+  unlinkSocketIfExists(config.storageSocketPath);
 }
 
 void prepareRuntimeBundleAsSandboxUser(
