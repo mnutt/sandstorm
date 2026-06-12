@@ -1075,6 +1075,11 @@ struct FetchResponse {
   kj::Vector<FetchHeader> headers;
 };
 
+struct ParsedETag {
+  kj::String value;
+  bool weak = false;
+};
+
 constexpr uint64_t MAX_SIDECAR_RESPONSE_BYTES = 64 * 1024 * 1024;
 constexpr uint SIDECAR_READY_TIMEOUT_MS = 10000;
 constexpr uint SIDECAR_READY_POLL_MS = 50;
@@ -1231,6 +1236,89 @@ void addFetchResponseHeaders(WebSession::Response::Builder builder, kj::Vector<F
   }
 }
 
+kj::Maybe<ParsedETag> parseFetchETag(kj::StringPtr input) {
+  auto trimmed = trim(input);
+  input = trimmed;
+
+  ParsedETag result;
+  if (input.startsWith("W/")) {
+    input = input.slice(2);
+    result.weak = true;
+  }
+
+  if (!input.startsWith("\"") || !input.endsWith("\"") || input.size() <= 1) {
+    KJ_LOG(WARNING, "Dropping invalid ETag from isolate response.", input);
+    return nullptr;
+  }
+
+  bool escaped = false;
+  kj::Vector<char> value(input.size() - 2);
+  for (char c: input.slice(1, input.size() - 1)) {
+    if (escaped) {
+      escaped = false;
+    } else {
+      if (c == '"') {
+        KJ_LOG(WARNING, "Dropping invalid ETag from isolate response.", input);
+        return nullptr;
+      }
+      if (c == '\\') {
+        escaped = true;
+        continue;
+      }
+    }
+    value.add(c);
+  }
+
+  result.value = kj::heapString(value.asPtr());
+  return kj::mv(result);
+}
+
+kj::Maybe<kj::String> parseFetchDownloadFilename(kj::StringPtr disposition) {
+  auto parts = split(disposition, ';');
+  if (parts.size() <= 1) {
+    return nullptr;
+  }
+
+  auto type = trim(parts[0]);
+  toLower(type);
+  if (type != "attachment") {
+    return nullptr;
+  }
+
+  for (auto& part: parts.asPtr().slice(1, parts.size())) {
+    for (size_t i: kj::indices(part)) {
+      if (part[i] != '=') {
+        continue;
+      }
+
+      auto name = trim(part.slice(0, i));
+      toLower(name);
+      if (name == "filename") {
+        auto filename = trimArray(part.slice(i + 1, part.size()));
+        if (filename.size() >= 2 && filename[0] == '"' && filename[filename.size() - 1] == '"') {
+          filename = filename.slice(1, filename.size() - 1);
+
+          kj::Vector<char> unescaped(filename.size());
+          for (size_t j = 0; j < filename.size(); ++j) {
+            if (filename[j] == '\\' && ++j >= filename.size()) {
+              break;
+            }
+            unescaped.add(filename[j]);
+          }
+
+          return kj::heapString(unescaped.asPtr());
+        } else {
+          return kj::str(filename);
+        }
+      }
+
+      break;
+    }
+  }
+
+  return nullptr;
+}
+
 kj::Maybe<kj::StringPtr> findFetchResponseHeader(
     kj::Vector<FetchHeader>& headers, kj::StringPtr name) {
   for (auto& header: headers) {
@@ -1248,6 +1336,13 @@ void writeFetchResponse(FetchResponse&& response, WebSession::Response::Builder 
   if (response.statusCode == 204 || response.statusCode == 205) {
     auto noContent = builder.initNoContent();
     noContent.setShouldResetForm(response.statusCode == 205);
+    KJ_IF_MAYBE(etag, findFetchResponseHeader(response.headers, "etag")) {
+      KJ_IF_MAYBE(parsed, parseFetchETag(*etag)) {
+        auto output = noContent.initETag();
+        output.setValue(parsed->value);
+        output.setWeak(parsed->weak);
+      }
+    }
   } else if (response.statusCode == 301 || response.statusCode == 302 ||
              response.statusCode == 303 || response.statusCode == 307 ||
              response.statusCode == 308) {
@@ -1269,6 +1364,18 @@ void writeFetchResponse(FetchResponse&& response, WebSession::Response::Builder 
     }
     KJ_IF_MAYBE(language, findFetchResponseHeader(response.headers, "content-language")) {
       content.setLanguage(*language);
+    }
+    KJ_IF_MAYBE(etag, findFetchResponseHeader(response.headers, "etag")) {
+      KJ_IF_MAYBE(parsed, parseFetchETag(*etag)) {
+        auto output = content.initETag();
+        output.setValue(parsed->value);
+        output.setWeak(parsed->weak);
+      }
+    }
+    KJ_IF_MAYBE(disposition, findFetchResponseHeader(response.headers, "content-disposition")) {
+      KJ_IF_MAYBE(filename, parseFetchDownloadFilename(*disposition)) {
+        content.getDisposition().setDownload(*filename);
+      }
     }
     if (response.body.size() > 0) {
       content.initBody().setBytes(response.body);
