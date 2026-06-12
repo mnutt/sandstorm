@@ -41,6 +41,8 @@
 #include <dirent.h>
 #include <set>
 #include <map>
+#include <string>
+#include <vector>
 #include <sys/xattr.h>
 #include <capnp/schema-parser.h>
 #include <capnp/dynamic.h>
@@ -2041,8 +2043,8 @@ private:
 
   kj::MainBuilder::Validity doDevIsolate() {
     KJ_REQUIRE(devIsolateWorkerPath != nullptr);
-    auto workerSource = readAll(raiiOpen(devIsolateWorkerPath, O_RDONLY | O_CLOEXEC));
-    auto generatedPkgdef = writeDevIsolatePkgdef(workerSource);
+    auto modules = collectDevIsolateModules();
+    auto generatedPkgdef = writeDevIsolatePkgdef(modules.asPtr());
     KJ_DEFER(unlink(generatedPkgdef.cStr()));
 
     auto arg = kj::str(generatedPkgdef, ":pkgdef");
@@ -2053,7 +2055,70 @@ private:
     return doDev();
   }
 
-  kj::String writeDevIsolatePkgdef(kj::StringPtr workerSource) {
+  enum class DevIsolateModuleType {
+    ES_MODULE,
+    COMMON_JS,
+    TEXT,
+    JSON
+  };
+
+  struct DevIsolateModule {
+    kj::String name;
+    kj::String source;
+    DevIsolateModuleType type;
+  };
+
+  kj::Vector<DevIsolateModule> collectDevIsolateModules() {
+    auto rootDir = dirnameForPath(devIsolateWorkerPath);
+    kj::Vector<DevIsolateModule> modules;
+    std::set<std::string> seen;
+    collectDevIsolateModule(devIsolateWorkerPath, rootDir, modules, seen);
+    return modules;
+  }
+
+  void collectDevIsolateModule(kj::StringPtr path, kj::StringPtr rootDir,
+                               kj::Vector<DevIsolateModule>& modules,
+                               std::set<std::string>& seen) {
+    char* resolved = realpath(path.cStr(), nullptr);
+    KJ_REQUIRE(resolved != nullptr, "Could not resolve isolate module path.", path, strerror(errno));
+    KJ_DEFER(free(resolved));
+    auto realPath = kj::heapString(resolved);
+    auto realPathStd = toStdString(realPath);
+    if (!seen.insert(realPathStd).second) {
+      return;
+    }
+
+    KJ_REQUIRE(isPathUnderRoot(realPath, rootDir),
+        "Isolate dev imports must stay under the entrypoint directory.", realPath, rootDir);
+
+    auto source = readAll(raiiOpen(realPath, O_RDONLY | O_CLOEXEC));
+    auto type = devIsolateModuleTypeForPath(realPath);
+
+    if (type == DevIsolateModuleType::ES_MODULE) {
+      auto imports = scanDevIsolateImports(source);
+      modules.add(DevIsolateModule {
+        moduleNameForDevIsolatePath(realPath, rootDir),
+        kj::mv(source),
+        type
+      });
+
+      auto importerDir = dirnameForPath(realPath);
+      for (auto& specifier: imports) {
+        if (isRelativeImport(specifier)) {
+          auto resolvedImport = resolveDevIsolateImport(importerDir, rootDir, specifier);
+          collectDevIsolateModule(resolvedImport, rootDir, modules, seen);
+        }
+      }
+    } else {
+      modules.add(DevIsolateModule {
+        moduleNameForDevIsolatePath(realPath, rootDir),
+        kj::mv(source),
+        type
+      });
+    }
+  }
+
+  kj::String writeDevIsolatePkgdef(kj::ArrayPtr<DevIsolateModule> modules) {
     auto appId = appIdForDevIsolate(devIsolateWorkerPath);
     kj::Vector<char> capnp;
     capnp.addAll(kj::StringPtr(
@@ -2064,15 +2129,34 @@ private:
         "  argv = [ \"workerd\", \"serve\", \"${SANDSTORM_ISOLATE_WORKERD_CONFIG}\", "
         "\"sandstormConfig\" ],\n"
         "  isolate = (\n"
-        "    mainModule = \"worker.js\",\n"
-        "    compatibilityDate = "));
+        "    mainModule = "));
+    KJ_REQUIRE(modules.size() > 0);
+    appendCapnpText(capnp, modules[0].name);
+    capnp.addAll(kj::StringPtr(",\n    compatibilityDate = "));
     appendCapnpText(capnp, devIsolateCompatibilityDate);
     capnp.addAll(kj::StringPtr(",\n    compatibilityFlags = [],\n"));
-    capnp.addAll(kj::StringPtr(
-        "    modules = [\n"
-        "      ( name = \"worker.js\", esModule = "));
-    appendCapnpText(capnp, workerSource);
-    capnp.addAll(kj::StringPtr(" ),\n      ( name = \"sandstorm:api\", esModule = "));
+    capnp.addAll(kj::StringPtr("    modules = [\n"));
+    for (auto& module: modules) {
+      capnp.addAll(kj::StringPtr("      ( name = "));
+      appendCapnpText(capnp, module.name);
+      switch (module.type) {
+        case DevIsolateModuleType::ES_MODULE:
+          capnp.addAll(kj::StringPtr(", esModule = "));
+          break;
+        case DevIsolateModuleType::COMMON_JS:
+          capnp.addAll(kj::StringPtr(", commonJsModule = "));
+          break;
+        case DevIsolateModuleType::TEXT:
+          capnp.addAll(kj::StringPtr(", text = "));
+          break;
+        case DevIsolateModuleType::JSON:
+          capnp.addAll(kj::StringPtr(", json = "));
+          break;
+      }
+      appendCapnpText(capnp, module.source);
+      capnp.addAll(kj::StringPtr(" ),\n"));
+    }
+    capnp.addAll(kj::StringPtr("      ( name = \"sandstorm:api\", esModule = "));
     appendCapnpText(capnp, ISOLATE_API_HELPER_SOURCE);
     capnp.addAll(kj::StringPtr(" )\n    ],\n"));
     capnp.addAll(kj::StringPtr(
@@ -2128,6 +2212,252 @@ private:
         reinterpret_cast<const unsigned char*>(workerPath.begin()), workerPath.size()) == 0);
     KJ_ASSERT(crypto_hash_sha256_final(&state, digest) == 0);
     return appIdString(kj::arrayPtr(digest, crypto_sign_PUBLICKEYBYTES));
+  }
+
+  static std::string toStdString(kj::StringPtr text) {
+    return std::string(text.begin(), text.size());
+  }
+
+  static kj::String dirnameForPath(kj::StringPtr path) {
+    auto pathStd = toStdString(path);
+    auto slash = pathStd.rfind('/');
+    if (slash == std::string::npos) {
+      return kj::heapString(".");
+    } else if (slash == 0) {
+      return kj::heapString("/");
+    } else {
+      return kj::heapString(pathStd.substr(0, slash).c_str());
+    }
+  }
+
+  static bool isPathUnderRoot(kj::StringPtr path, kj::StringPtr rootDir) {
+    auto pathStd = toStdString(path);
+    auto rootStd = toStdString(rootDir);
+    if (rootStd == "/") {
+      return pathStd.size() > 1 && pathStd[0] == '/';
+    }
+    return pathStd.size() > rootStd.size() + 1 &&
+        pathStd.compare(0, rootStd.size(), rootStd) == 0 &&
+        pathStd[rootStd.size()] == '/';
+  }
+
+  static kj::String moduleNameForDevIsolatePath(kj::StringPtr path, kj::StringPtr rootDir) {
+    auto pathStd = toStdString(path);
+    auto rootStd = toStdString(rootDir);
+    KJ_REQUIRE(isPathUnderRoot(path, rootDir), "Module path is outside isolate dev root.",
+        path, rootDir);
+    auto offset = rootStd == "/" ? 1 : rootStd.size() + 1;
+    return kj::heapString(pathStd.substr(offset).c_str());
+  }
+
+  static bool isRelativeImport(kj::StringPtr specifier) {
+    return specifier.startsWith("./") || specifier.startsWith("../");
+  }
+
+  static kj::String resolveDevIsolateImport(
+      kj::StringPtr importerDir, kj::StringPtr rootDir, kj::StringPtr specifier) {
+    KJ_REQUIRE(specifier.findFirst('?') == nullptr && specifier.findFirst('#') == nullptr,
+        "Isolate dev imports do not currently support query strings or fragments.", specifier);
+
+    auto candidate = kj::str(importerDir, '/', specifier);
+    char* resolved = realpath(candidate.cStr(), nullptr);
+    KJ_REQUIRE(resolved != nullptr, "Could not resolve isolate import.", specifier, candidate,
+        strerror(errno));
+    KJ_DEFER(free(resolved));
+    auto resolvedPath = kj::heapString(resolved);
+    KJ_REQUIRE(isPathUnderRoot(resolvedPath, rootDir),
+        "Isolate dev imports must stay under the entrypoint directory.", specifier, resolvedPath);
+    return resolvedPath;
+  }
+
+  static DevIsolateModuleType devIsolateModuleTypeForPath(kj::StringPtr path) {
+    if (path.endsWith(".js") || path.endsWith(".mjs")) {
+      return DevIsolateModuleType::ES_MODULE;
+    } else if (path.endsWith(".cjs")) {
+      return DevIsolateModuleType::COMMON_JS;
+    } else if (path.endsWith(".json")) {
+      return DevIsolateModuleType::JSON;
+    } else if (path.endsWith(".txt") || path.endsWith(".text")) {
+      return DevIsolateModuleType::TEXT;
+    } else {
+      KJ_FAIL_REQUIRE("Unsupported isolate dev module extension. Supported: .js, .mjs, .cjs, "
+          ".json, .txt, .text", path);
+    }
+  }
+
+  static bool isJsIdentifierStart(char c) {
+    return isalpha(static_cast<unsigned char>(c)) || c == '_' || c == '$';
+  }
+
+  static bool isJsIdentifierPart(char c) {
+    return isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '$';
+  }
+
+  static void skipJsString(std::string const& source, size_t& pos) {
+    char quote = source[pos++];
+    while (pos < source.size()) {
+      char c = source[pos++];
+      if (c == '\\' && pos < source.size()) {
+        ++pos;
+      } else if (c == quote) {
+        break;
+      }
+    }
+  }
+
+  static void skipJsLineComment(std::string const& source, size_t& pos) {
+    pos += 2;
+    while (pos < source.size() && source[pos] != '\n') {
+      ++pos;
+    }
+  }
+
+  static void skipJsBlockComment(std::string const& source, size_t& pos) {
+    pos += 2;
+    while (pos + 1 < source.size()) {
+      if (source[pos] == '*' && source[pos + 1] == '/') {
+        pos += 2;
+        return;
+      }
+      ++pos;
+    }
+    pos = source.size();
+  }
+
+  static void skipJsWhitespaceAndComments(std::string const& source, size_t& pos) {
+    for (;;) {
+      while (pos < source.size() && isspace(static_cast<unsigned char>(source[pos]))) {
+        ++pos;
+      }
+      if (pos + 1 < source.size() && source[pos] == '/' && source[pos + 1] == '/') {
+        skipJsLineComment(source, pos);
+      } else if (pos + 1 < source.size() && source[pos] == '/' && source[pos + 1] == '*') {
+        skipJsBlockComment(source, pos);
+      } else {
+        return;
+      }
+    }
+  }
+
+  static kj::Maybe<kj::String> parseJsStringLiteral(std::string const& source, size_t& pos) {
+    if (pos >= source.size() || (source[pos] != '"' && source[pos] != '\'')) {
+      return nullptr;
+    }
+
+    char quote = source[pos++];
+    std::string result;
+    while (pos < source.size()) {
+      char c = source[pos++];
+      if (c == quote) {
+        return kj::heapString(result.c_str());
+      } else if (c == '\\' && pos < source.size()) {
+        result.push_back(source[pos++]);
+      } else {
+        result.push_back(c);
+      }
+    }
+
+    return nullptr;
+  }
+
+  static kj::Maybe<kj::String> scanImportDeclarationSpecifier(
+      std::string const& source, size_t& pos) {
+    skipJsWhitespaceAndComments(source, pos);
+    if (pos < source.size() && source[pos] == '(') {
+      return nullptr;
+    }
+
+    KJ_IF_MAYBE(specifier, parseJsStringLiteral(source, pos)) {
+      return kj::mv(*specifier);
+    }
+
+    while (pos < source.size()) {
+      skipJsWhitespaceAndComments(source, pos);
+      if (pos >= source.size() || source[pos] == ';') {
+        return nullptr;
+      }
+
+      if (source[pos] == '"' || source[pos] == '\'') {
+        skipJsString(source, pos);
+      } else if (source[pos] == '`') {
+        skipJsString(source, pos);
+      } else if (isJsIdentifierStart(source[pos])) {
+        auto start = pos++;
+        while (pos < source.size() && isJsIdentifierPart(source[pos])) {
+          ++pos;
+        }
+        if (source.compare(start, pos - start, "from") == 0) {
+          skipJsWhitespaceAndComments(source, pos);
+          return parseJsStringLiteral(source, pos);
+        }
+      } else {
+        ++pos;
+      }
+    }
+
+    return nullptr;
+  }
+
+  static kj::Maybe<kj::String> scanExportDeclarationSpecifier(
+      std::string const& source, size_t& pos) {
+    while (pos < source.size()) {
+      skipJsWhitespaceAndComments(source, pos);
+      if (pos >= source.size() || source[pos] == ';') {
+        return nullptr;
+      }
+
+      if (source[pos] == '"' || source[pos] == '\'' || source[pos] == '`') {
+        skipJsString(source, pos);
+      } else if (isJsIdentifierStart(source[pos])) {
+        auto start = pos++;
+        while (pos < source.size() && isJsIdentifierPart(source[pos])) {
+          ++pos;
+        }
+        if (source.compare(start, pos - start, "from") == 0) {
+          skipJsWhitespaceAndComments(source, pos);
+          return parseJsStringLiteral(source, pos);
+        }
+      } else {
+        ++pos;
+      }
+    }
+
+    return nullptr;
+  }
+
+  static kj::Vector<kj::String> scanDevIsolateImports(kj::StringPtr moduleSource) {
+    auto source = toStdString(moduleSource);
+    kj::Vector<kj::String> imports;
+    size_t pos = 0;
+    while (pos < source.size()) {
+      skipJsWhitespaceAndComments(source, pos);
+      if (pos >= source.size()) {
+        break;
+      }
+
+      if (source[pos] == '"' || source[pos] == '\'' || source[pos] == '`') {
+        skipJsString(source, pos);
+      } else if (isJsIdentifierStart(source[pos])) {
+        auto start = pos++;
+        while (pos < source.size() && isJsIdentifierPart(source[pos])) {
+          ++pos;
+        }
+
+        if (source.compare(start, pos - start, "import") == 0) {
+          KJ_IF_MAYBE(specifier, scanImportDeclarationSpecifier(source, pos)) {
+            imports.add(kj::mv(*specifier));
+          }
+        } else if (source.compare(start, pos - start, "export") == 0) {
+          KJ_IF_MAYBE(specifier, scanExportDeclarationSpecifier(source, pos)) {
+            imports.add(kj::mv(*specifier));
+          }
+        }
+      } else {
+        ++pos;
+      }
+    }
+
+    return imports;
   }
 
   static void appendCapnpText(kj::Vector<char>& output, kj::StringPtr text) {
