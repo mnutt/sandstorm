@@ -1630,6 +1630,20 @@ private:
           started(start().fork()),
           writeQueue(started.addBranch()) {
       expectedSize = this->request.expectedBodySize;
+      if (this->request.expectedBodySize == nullptr) {
+        auto paf = kj::newPromiseAndFulfiller<void>();
+        donePromise = kj::mv(paf.promise);
+        doneFulfiller = kj::mv(paf.fulfiller);
+      }
+    }
+
+    ~StreamingRequestImpl() noexcept(false) {
+      KJ_IF_MAYBE(fulfiller, doneFulfiller) {
+        if ((*fulfiller)->isWaiting()) {
+          (*fulfiller)->reject(KJ_EXCEPTION(DISCONNECTED,
+              "streaming isolate upload ended before done()"));
+        }
+      }
     }
 
     kj::Promise<void> write(WriteContext context) override {
@@ -1640,10 +1654,15 @@ private:
         KJ_REQUIRE(bytesReceived <= *size, "received more bytes than expected");
       }
 
-      auto promise = writeQueue.then([this, data = kj::mv(data)]() mutable {
-        auto& current = KJ_ASSERT_NONNULL(state);
-        KJ_REQUIRE(current->requestBody.get() != nullptr, "streaming request body is closed");
-        return current->requestBody->write(data.begin(), data.size()).attach(kj::mv(data));
+      auto promise = writeQueue.then([this, data = kj::mv(data)]() mutable -> kj::Promise<void> {
+        KJ_IF_MAYBE(fd, spoolFd) {
+          writeAllToFd(fd->get(), data);
+          return kj::READY_NOW;
+        } else {
+          auto& current = KJ_ASSERT_NONNULL(state);
+          KJ_REQUIRE(current->requestBody.get() != nullptr, "streaming request body is closed");
+          return current->requestBody->write(data.begin(), data.size()).attach(kj::mv(data));
+        }
       });
       auto fork = promise.fork();
       writeQueue = fork.addBranch();
@@ -1659,8 +1678,16 @@ private:
 
       doneCalled = true;
       auto promise = writeQueue.then([this]() {
-        auto& current = KJ_ASSERT_NONNULL(state);
-        current->requestBody = nullptr;
+        KJ_IF_MAYBE(fd, spoolFd) {
+          KJ_SYSCALL(fsync(fd->get()));
+        } else {
+          auto& current = KJ_ASSERT_NONNULL(state);
+          current->requestBody = nullptr;
+        }
+        KJ_IF_MAYBE(fulfiller, doneFulfiller) {
+          (*fulfiller)->fulfill();
+        }
+        doneFulfiller = nullptr;
       });
       auto fork = promise.fork();
       writeQueue = fork.addBranch();
@@ -1682,6 +1709,13 @@ private:
 
       auto results = context.getResults();
       auto stream = kj::mv(responseStream);
+      if (request.expectedBodySize == nullptr) {
+        auto waitForDone = kj::mv(donePromise);
+        return kj::mv(waitForDone).then([this, results, stream = kj::mv(stream)]() mutable {
+          return sendSpooledRequest(results, kj::mv(stream));
+        });
+      }
+
       return started.addBranch().then([this, results, stream = kj::mv(stream)]() mutable {
         auto& current = KJ_ASSERT_NONNULL(state);
         auto response = kj::mv(current->response);
@@ -1704,14 +1738,22 @@ private:
     FetchRequest request;
     ByteStream::Client responseStream;
     kj::Maybe<kj::Own<SidecarHttpState>> state;
+    kj::Maybe<kj::AutoCloseFd> spoolFd;
     kj::ForkedPromise<void> started;
     kj::Promise<void> writeQueue;
+    kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> doneFulfiller;
+    kj::Promise<void> donePromise = nullptr;
     kj::Maybe<uint64_t> expectedSize;
     uint64_t bytesReceived = 0;
     bool doneCalled = false;
     bool responseCalled = false;
 
     kj::Promise<void> start() {
+      if (request.expectedBodySize == nullptr) {
+        spoolFd = openTemporary(kj::str(config->workerdBundleDir, "/upload-spool"));
+        return kj::READY_NOW;
+      }
+
       return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
           .then([this](kj::Own<kj::NetworkAddress>&& addr) mutable {
         auto client = kj::newHttpClient(host->timer, host->headerTable, *addr);
@@ -1726,6 +1768,72 @@ private:
         newState->requestBody = kj::mv(httpRequest.body);
         newState->response = kj::mv(httpRequest.response);
         state = kj::mv(newState);
+      });
+    }
+
+    kj::Promise<void> sendSpooledRequest(
+        WebSession::Response::Builder results, ByteStream::Client responseStream) {
+      auto& fd = KJ_ASSERT_NONNULL(spoolFd);
+      KJ_SYSCALL(lseek(fd.get(), 0, SEEK_SET));
+
+      return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
+          .then([this, results, responseStream = kj::mv(responseStream)](
+              kj::Own<kj::NetworkAddress>&& addr) mutable {
+        auto client = kj::newHttpClient(host->timer, host->headerTable, *addr);
+        auto state = kj::refcounted<SidecarHttpState>(kj::mv(addr), kj::mv(client));
+        kj::HttpHeaders headers(host->headerTable);
+        copyHeadersToHttp(request, headers);
+
+        auto httpRequest = state->client->request(
+            toHttpMethod(request.method), request.path, headers, bytesReceived);
+        auto response = kj::mv(httpRequest.response);
+
+        if (httpRequest.body.get() != nullptr && bytesReceived > 0) {
+          auto requestBody = kj::mv(httpRequest.body);
+          auto& fd = KJ_ASSERT_NONNULL(spoolFd);
+          return writeFdToAsync(fd.get(), *requestBody, bytesReceived)
+              .attach(kj::mv(requestBody))
+              .then([response = kj::mv(response)]() mutable {
+            return kj::mv(response);
+          }).then([results, state = kj::mv(state), responseStream = kj::mv(responseStream)](
+              kj::HttpClient::Response&& response) mutable {
+            return readSidecarResponse(kj::mv(response), kj::mv(state))
+                .then([results, responseStream = kj::mv(responseStream)](
+                    FetchResponse&& fetchResponse) mutable {
+              writeFetchResponse(kj::mv(fetchResponse), results, kj::mv(responseStream));
+            });
+          });
+        }
+
+        return response.then([results, state = kj::mv(state),
+            responseStream = kj::mv(responseStream)](
+            kj::HttpClient::Response&& response) mutable {
+          return readSidecarResponse(kj::mv(response), kj::mv(state))
+              .then([results, responseStream = kj::mv(responseStream)](
+                  FetchResponse&& fetchResponse) mutable {
+            writeFetchResponse(kj::mv(fetchResponse), results, kj::mv(responseStream));
+          });
+        });
+      });
+    }
+
+    static kj::Promise<void> writeFdToAsync(
+        int fd, kj::AsyncOutputStream& output, uint64_t remaining) {
+      if (remaining == 0) {
+        return kj::READY_NOW;
+      }
+
+      auto buffer = kj::heapArray<byte>(
+          static_cast<size_t>(kj::min(remaining, uint64_t(8192))));
+      ssize_t n;
+      KJ_SYSCALL(n = read(fd, buffer.begin(), buffer.size()));
+      KJ_REQUIRE(n > 0, "spooled isolate upload ended before expected byte count");
+      auto written = static_cast<uint64_t>(n);
+
+      return output.write(buffer.begin(), static_cast<size_t>(n))
+          .attach(kj::mv(buffer))
+          .then([fd, &output, remaining, written]() {
+        return writeFdToAsync(fd, output, remaining - written);
       });
     }
   };
