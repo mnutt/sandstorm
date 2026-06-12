@@ -1635,14 +1635,7 @@ private:
     kj::Promise<void> write(WriteContext context) override {
       KJ_REQUIRE(!doneCalled, "write() called after done()");
       auto data = kj::heapArray<byte>(context.getParams().getData());
-      auto previousBytesReceived = bytesReceived;
       bytesReceived += data.size();
-      ++writeCalls;
-      if (writeCalls <= 3 ||
-          previousBytesReceived / (1024 * 1024) != bytesReceived / (1024 * 1024)) {
-        KJ_LOG(WARNING, "Isolate streaming request body write.",
-            fetchMethodName(request.method), request.path, data.size(), bytesReceived);
-      }
       KJ_IF_MAYBE(size, expectedSize) {
         KJ_REQUIRE(bytesReceived <= *size, "received more bytes than expected");
       }
@@ -1665,8 +1658,6 @@ private:
       }
 
       doneCalled = true;
-      KJ_LOG(WARNING, "Isolate streaming request body done.",
-          fetchMethodName(request.method), request.path, bytesReceived);
       auto promise = writeQueue.then([this]() {
         auto& current = KJ_ASSERT_NONNULL(state);
         current->requestBody = nullptr;
@@ -1682,8 +1673,6 @@ private:
         KJ_REQUIRE(*expected == size, "expectSize() disagrees with expected streaming request size");
       }
       expectedSize = size;
-      KJ_LOG(WARNING, "Isolate streaming request body expected size.",
-          fetchMethodName(request.method), request.path, size);
       return kj::READY_NOW;
     }
 
@@ -1691,8 +1680,6 @@ private:
       KJ_REQUIRE(!responseCalled, "getResponse() called more than once");
       responseCalled = true;
 
-      KJ_LOG(WARNING, "Isolate streaming request response requested.",
-          fetchMethodName(request.method), request.path);
       auto results = context.getResults();
       auto stream = kj::mv(responseStream);
       return started.addBranch().then([this, results, stream = kj::mv(stream)]() mutable {
@@ -1721,29 +1708,16 @@ private:
     kj::Promise<void> writeQueue;
     kj::Maybe<uint64_t> expectedSize;
     uint64_t bytesReceived = 0;
-    uint64_t writeCalls = 0;
     bool doneCalled = false;
     bool responseCalled = false;
 
     kj::Promise<void> start() {
-      KJ_LOG(WARNING, "Starting streaming isolate request to sidecar.",
-          fetchMethodName(request.method), request.path);
       return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
           .then([this](kj::Own<kj::NetworkAddress>&& addr) mutable {
         auto client = kj::newHttpClient(host->timer, host->headerTable, *addr);
         auto newState = kj::refcounted<SidecarHttpState>(kj::mv(addr), kj::mv(client));
         kj::HttpHeaders headers(host->headerTable);
         copyHeadersToHttp(request, headers);
-        KJ_LOG(WARNING, "Prepared isolate sidecar streaming request headers.",
-            fetchMethodName(request.method), request.path, request.headers.size());
-
-        KJ_IF_MAYBE(size, request.expectedBodySize) {
-          KJ_LOG(WARNING, "Opening isolate sidecar streaming request with content length.",
-              fetchMethodName(request.method), request.path, *size);
-        } else {
-          KJ_LOG(WARNING, "Opening isolate sidecar streaming request with chunked body.",
-              fetchMethodName(request.method), request.path);
-        }
 
         auto httpRequest = newState->client->request(
             toHttpMethod(request.method), request.path, headers, request.expectedBodySize);
