@@ -1,4 +1,9 @@
 const MAX_RPC_BATCH_CALLS = 64;
+const RPC_TARGET_MARKER = "__sandstormRpcTarget";
+
+const targets = new Map();
+const targetIds = new WeakMap();
+let nextTargetId = 1;
 
 export class RpcTarget {}
 
@@ -42,12 +47,64 @@ function findRpcMethod(target, method) {
   throw new Error(`RPC method not found: ${method}`);
 }
 
+function registerTarget(target) {
+  let id = targetIds.get(target);
+  if (!id) {
+    id = String(nextTargetId++);
+    targetIds.set(target, id);
+    targets.set(id, target);
+  }
+  return id;
+}
+
+function lookupTarget(id) {
+  const target = targets.get(String(id));
+  if (!target) {
+    throw new Error(`RPC target not found: ${id}`);
+  }
+  return target;
+}
+
+function encodeRpcValue(value) {
+  if (value instanceof RpcTarget) {
+    return { [RPC_TARGET_MARKER]: registerTarget(value) };
+  }
+  if (Array.isArray(value)) {
+    return value.map(encodeRpcValue);
+  }
+  if (value && typeof value === "object") {
+    const result = {};
+    for (const [key, item] of Object.entries(value)) {
+      result[key] = encodeRpcValue(item);
+    }
+    return result;
+  }
+  return value;
+}
+
+function decodeRpcValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(decodeRpcValue);
+  }
+  if (value && typeof value === "object") {
+    if (typeof value[RPC_TARGET_MARKER] === "string") {
+      return lookupTarget(value[RPC_TARGET_MARKER]);
+    }
+    const result = {};
+    for (const [key, item] of Object.entries(value)) {
+      result[key] = decodeRpcValue(item);
+    }
+    return result;
+  }
+  return value;
+}
+
 async function callTarget(target, method, args) {
   if (!isSafePropertyName(method)) {
     throw new Error(`invalid RPC method: ${method}`);
   }
 
-  return await findRpcMethod(target, method).apply(target, args);
+  return await findRpcMethod(target, method).apply(target, args.map(decodeRpcValue));
 }
 
 export async function newWorkersRpcResponse(request, target, options = {}) {
@@ -87,9 +144,15 @@ export async function newWorkersRpcResponse(request, target, options = {}) {
   for (const call of calls) {
     const id = call && Object.prototype.hasOwnProperty.call(call, "id") ? call.id : null;
     try {
-      const args = Array.isArray(call.args) ? call.args : [];
-      const value = await callTarget(target, call.method, args);
-      results.push({ id, ok: true, value });
+      if (call.dispose) {
+        targets.delete(String(call.targetId));
+        results.push({ id, ok: true, value: null });
+      } else {
+        const callTargetObject = call && call.targetId ? lookupTarget(call.targetId) : target;
+        const args = Array.isArray(call.args) ? call.args : [];
+        const value = await callTarget(callTargetObject, call.method, args);
+        results.push({ id, ok: true, value: encodeRpcValue(value) });
+      }
     } catch (error) {
       results.push({ id, ok: false, error: encodeError(error) });
     }
@@ -104,6 +167,80 @@ export function newHttpBatchRpcSession(endpoint, fetchImpl = fetch) {
   let nextId = 1;
   let queue = [];
   let scheduled = false;
+  const stubTargetIds = new WeakMap();
+
+  function encodeArg(value) {
+    if (stubTargetIds.has(value)) {
+      return { [RPC_TARGET_MARKER]: stubTargetIds.get(value) };
+    }
+    if (Array.isArray(value)) {
+      return value.map(encodeArg);
+    }
+    if (value && typeof value === "object") {
+      const result = {};
+      for (const [key, item] of Object.entries(value)) {
+        result[key] = encodeArg(item);
+      }
+      return result;
+    }
+    return value;
+  }
+
+  function decodeResult(value) {
+    if (Array.isArray(value)) {
+      return value.map(decodeResult);
+    }
+    if (value && typeof value === "object") {
+      if (typeof value[RPC_TARGET_MARKER] === "string") {
+        return makeStub(value[RPC_TARGET_MARKER]);
+      }
+      const result = {};
+      for (const [key, item] of Object.entries(value)) {
+        result[key] = decodeResult(item);
+      }
+      return result;
+    }
+    return value;
+  }
+
+  function makeStub(targetId = null) {
+    const stub = new Proxy({}, {
+      get(_target, property) {
+        if (property === Symbol.dispose) {
+          return () => {
+            if (targetId !== null) {
+              enqueue({ targetId, dispose: true });
+            }
+          };
+        }
+        if (property === "then") {
+          return undefined;
+        }
+        if (typeof property === "symbol") {
+          return undefined;
+        }
+
+        return (...args) => enqueue({
+          targetId,
+          method: String(property),
+          args: args.map(encodeArg),
+        });
+      },
+    });
+
+    if (targetId !== null) {
+      stubTargetIds.set(stub, targetId);
+    }
+    return stub;
+  }
+
+  function enqueue(call) {
+    return new Promise((resolve, reject) => {
+      const id = nextId++;
+      queue.push({ id, ...call, resolve, reject });
+      scheduleFlush();
+    });
+  }
 
   async function flush() {
     scheduled = false;
@@ -116,7 +253,11 @@ export function newHttpBatchRpcSession(endpoint, fetchImpl = fetch) {
       response = await fetchImpl(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ calls: batch.map(({ id, method, args }) => ({ id, method, args })) }),
+        body: JSON.stringify({
+          calls: batch.map(({ id, targetId, method, args, dispose }) => ({
+            id, targetId, method, args, dispose,
+          })),
+        }),
       });
     } catch (error) {
       for (const call of batch) call.reject(error);
@@ -145,7 +286,7 @@ export function newHttpBatchRpcSession(endpoint, fetchImpl = fetch) {
       } else if (!result.ok) {
         call.reject(new RpcError(result.error));
       } else {
-        call.resolve(result.value);
+        call.resolve(decodeResult(result.value));
       }
     }
   }
@@ -157,26 +298,13 @@ export function newHttpBatchRpcSession(endpoint, fetchImpl = fetch) {
     }
   }
 
-  return new Proxy({}, {
-    get(_target, property) {
-      if (property === Symbol.dispose) {
-        return () => {};
-      }
-      if (typeof property === "symbol") {
-        return undefined;
-      }
-
-      return (...args) => new Promise((resolve, reject) => {
-        const id = nextId++;
-        queue.push({ id, method: String(property), args, resolve, reject });
-        scheduleFlush();
-      });
-    },
-  });
+  return makeStub();
 }
 
 export function browserClientScript() {
   return `
+const RPC_TARGET_MARKER = "__sandstormRpcTarget";
+
 class SandstormRpcError extends Error {
   constructor(error) {
     super(error && error.message || "RPC failed");
@@ -188,6 +316,80 @@ export function newHttpBatchRpcSession(endpoint) {
   let nextId = 1;
   let queue = [];
   let scheduled = false;
+  const stubTargetIds = new WeakMap();
+
+  function encodeArg(value) {
+    if (stubTargetIds.has(value)) {
+      return { [RPC_TARGET_MARKER]: stubTargetIds.get(value) };
+    }
+    if (Array.isArray(value)) {
+      return value.map(encodeArg);
+    }
+    if (value && typeof value === "object") {
+      const result = {};
+      for (const [key, item] of Object.entries(value)) {
+        result[key] = encodeArg(item);
+      }
+      return result;
+    }
+    return value;
+  }
+
+  function decodeResult(value) {
+    if (Array.isArray(value)) {
+      return value.map(decodeResult);
+    }
+    if (value && typeof value === "object") {
+      if (typeof value[RPC_TARGET_MARKER] === "string") {
+        return makeStub(value[RPC_TARGET_MARKER]);
+      }
+      const result = {};
+      for (const [key, item] of Object.entries(value)) {
+        result[key] = decodeResult(item);
+      }
+      return result;
+    }
+    return value;
+  }
+
+  function makeStub(targetId = null) {
+    const stub = new Proxy({}, {
+      get(_target, property) {
+        if (property === Symbol.dispose) {
+          return () => {
+            if (targetId !== null) {
+              enqueue({ targetId, dispose: true });
+            }
+          };
+        }
+        if (property === "then") {
+          return undefined;
+        }
+        if (typeof property === "symbol") {
+          return undefined;
+        }
+
+        return (...args) => enqueue({
+          targetId,
+          method: String(property),
+          args: args.map(encodeArg),
+        });
+      },
+    });
+
+    if (targetId !== null) {
+      stubTargetIds.set(stub, targetId);
+    }
+    return stub;
+  }
+
+  function enqueue(call) {
+    return new Promise((resolve, reject) => {
+      const id = nextId++;
+      queue.push({ id, ...call, resolve, reject });
+      scheduleFlush();
+    });
+  }
 
   async function flush() {
     scheduled = false;
@@ -200,7 +402,11 @@ export function newHttpBatchRpcSession(endpoint) {
       response = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ calls: batch.map(({ id, method, args }) => ({ id, method, args })) }),
+        body: JSON.stringify({
+          calls: batch.map(({ id, targetId, method, args, dispose }) => ({
+            id, targetId, method, args, dispose,
+          })),
+        }),
       });
     } catch (error) {
       for (const call of batch) call.reject(error);
@@ -229,7 +435,7 @@ export function newHttpBatchRpcSession(endpoint) {
       } else if (!result.ok) {
         call.reject(new SandstormRpcError(result.error));
       } else {
-        call.resolve(result.value);
+        call.resolve(decodeResult(result.value));
       }
     }
   }
@@ -241,19 +447,7 @@ export function newHttpBatchRpcSession(endpoint) {
     }
   }
 
-  return new Proxy({}, {
-    get(_target, property) {
-      if (typeof property === "symbol") {
-        return undefined;
-      }
-
-      return (...args) => new Promise((resolve, reject) => {
-        const id = nextId++;
-        queue.push({ id, method: String(property), args, resolve, reject });
-        scheduleFlush();
-      });
-    },
-  });
+  return makeStub();
 }
 `;
 }
