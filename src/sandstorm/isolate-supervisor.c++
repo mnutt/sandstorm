@@ -16,6 +16,7 @@
 
 #include "isolate-supervisor.h"
 
+#include "sandbox.h"
 #include "util.h"
 #include "version.h"
 
@@ -38,10 +39,17 @@
 #include <sandstorm/supervisor.capnp.h>
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
+#include <netinet/in.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/inotify.h>
+#include <sys/mount.h>
+#include <sys/prctl.h>
+#include <sys/ptrace.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/syscall.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <time.h>
@@ -51,6 +59,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <sched.h>
+
+#ifndef __NR_bpf
+#define __NR_bpf 321
+#endif
+#ifndef __NR_userfaultfd
+#define __NR_userfaultfd 323
+#endif
+#include <seccomp.h>
+
+#ifndef PR_SET_NO_NEW_PRIVS
+#define PR_SET_NO_NEW_PRIVS 38
+#endif
 
 namespace sandstorm {
 
@@ -1678,6 +1699,14 @@ private:
   kj::Own<IsolateRuntimeHost> runtimeHost;
 };
 
+kj::String trustedWorkerdExecutablePath();
+void requireAllowedSidecarCommand(
+    kj::ArrayPtr<const kj::String> argvStrings, IsolateRuntimeConfig& runtimeConfig);
+int runConfinedWorkerdSidecar(
+    kj::Array<kj::String> argvStrings,
+    kj::Array<kj::String> environment,
+    kj::String trustedWorkerd);
+
 class WorkerdSidecarProcess final {
 public:
   WorkerdSidecarProcess(
@@ -1693,27 +1722,21 @@ public:
     auto argvStrings = KJ_MAP(arg, runtimeArgs) {
       return expandSidecarPlaceholders(arg, runtimeConfig);
     };
-    auto argv = KJ_MAP(arg, argvStrings) -> kj::StringPtr {
-      return arg;
-    };
+    requireAllowedSidecarCommand(argvStrings.asPtr(), runtimeConfig);
     auto childEnvStrings = makeSidecarEnvironment(environment, runtimeConfig);
-    auto childEnv = KJ_MAP(item, childEnvStrings) -> kj::StringPtr {
-      return item;
-    };
 
-    auto stdoutNull = raiiOpen("/dev/null", O_WRONLY | O_CLOEXEC);
-    Subprocess::Options options(argv.asPtr());
-    if (argvStrings[0] == "/sandstorm") {
-      options.executable = "/proc/self/exe";
-    }
-    options.environment = childEnv.asPtr();
-    options.stdout = stdoutNull;
-    options.parentDeathSignal = SIGTERM;
-    process = Subprocess(kj::mv(options));
+    auto trustedWorkerd = trustedWorkerdExecutablePath();
+    auto trustedWorkerdForLog = kj::str(trustedWorkerd);
+    process = Subprocess([argvStrings = kj::mv(argvStrings),
+                          childEnvStrings = kj::mv(childEnvStrings),
+                          trustedWorkerd = kj::mv(trustedWorkerd)]() mutable {
+      return runConfinedWorkerdSidecar(
+          kj::mv(argvStrings), kj::mv(childEnvStrings), kj::mv(trustedWorkerd));
+    });
 
     KJ_IF_MAYBE(p, process) {
       KJ_LOG(WARNING, "Started isolate sidecar process.",
-          argvStrings[0], p->getPid(), runtimeConfig.workerdBundleDir,
+          trustedWorkerdForLog, p->getPid(), runtimeConfig.workerdBundleDir,
           runtimeConfig.workerdSocketPath);
     }
   }
@@ -1794,18 +1817,6 @@ private:
     }
   }
 
-  static bool hasEnvVar(kj::ArrayPtr<const kj::String> environment, kj::StringPtr name) {
-    for (auto& item: environment) {
-      KJ_IF_MAYBE(separator, item.findFirst('=')) {
-        if (item.slice(0, *separator) == name) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
   static bool appendPlaceholder(
       kj::Vector<char>& result, kj::StringPtr input, size_t& pos, kj::StringPtr token,
       kj::StringPtr value) {
@@ -1859,20 +1870,12 @@ private:
   static kj::Array<kj::String> makeSidecarEnvironment(
       kj::ArrayPtr<const kj::String> environment,
       IsolateRuntimeConfig& runtimeConfig) {
-    kj::Vector<kj::String> result(environment.size() + 7);
-    for (auto& item: environment) {
-      result.add(expandSidecarPlaceholders(item, runtimeConfig));
+    if (environment.size() > 0) {
+      KJ_LOG(WARNING, "Ignoring package-provided isolate sidecar environment.",
+          environment.size());
     }
 
-    if (!hasEnvVar(environment, "PATH")) {
-      char* inheritedPath = getenv("PATH");
-      if (inheritedPath != nullptr) {
-        result.add(kj::str("PATH=", inheritedPath));
-      } else {
-        result.add(kj::heapString("PATH=/bin:/usr/bin:/usr/local/bin"));
-      }
-    }
-
+    kj::Vector<kj::String> result(6);
     result.add(kj::str("SANDSTORM_ISOLATE_RUNTIME_DIR=", runtimeConfig.workerdBundleDir));
     result.add(kj::str("SANDSTORM_ISOLATE_WORKERD_CONFIG=", runtimeConfig.workerdConfigPath));
     result.add(kj::str("SANDSTORM_ISOLATE_RUNTIME_MANIFEST=",
@@ -1910,6 +1913,232 @@ void sleepMillis(uint millis) {
       KJ_FAIL_SYSCALL("nanosleep", error);
     }
   }
+}
+
+kj::String dirname(kj::StringPtr path) {
+  KJ_IF_MAYBE(slash, path.findLast('/')) {
+    if (*slash == 0) {
+      return kj::heapString("/");
+    } else {
+      return kj::heapString(path.slice(0, *slash));
+    }
+  } else {
+    return kj::heapString(".");
+  }
+}
+
+kj::String currentExecutablePath() {
+  char buffer[PATH_MAX + 1];
+  ssize_t n;
+  KJ_SYSCALL(n = readlink("/proc/self/exe", buffer, PATH_MAX), "/proc/self/exe");
+  KJ_REQUIRE(n < PATH_MAX, "/proc/self/exe path too long");
+  buffer[n] = '\0';
+  return kj::heapString(buffer);
+}
+
+kj::String trustedWorkerdExecutablePath() {
+  auto exePath = currentExecutablePath();
+  auto exeDir = dirname(exePath);
+
+  auto sibling = kj::str(exeDir, "/workerd");
+  if (access(sibling.cStr(), X_OK) == 0) {
+    return sibling;
+  }
+
+  auto bundled = kj::str(exeDir, "/bin/workerd");
+  if (access(bundled.cStr(), X_OK) == 0) {
+    return bundled;
+  }
+
+  KJ_FAIL_REQUIRE("Could not find bundled workerd executable next to sandstorm binary.",
+      exePath, sibling, bundled);
+}
+
+void requireAllowedSidecarCommand(
+    kj::ArrayPtr<const kj::String> argvStrings, IsolateRuntimeConfig& runtimeConfig) {
+  KJ_REQUIRE(argvStrings.size() == 4 &&
+      argvStrings[0] == "workerd" &&
+      argvStrings[1] == "serve" &&
+      argvStrings[2] == runtimeConfig.workerdConfigPath &&
+      argvStrings[3] == "sandstormConfig",
+      "Isolate sidecar command is not allowlisted. Use: workerd serve "
+      "${SANDSTORM_ISOLATE_WORKERD_CONFIG} sandstormConfig");
+}
+
+void resetSignalHandlersForExec() {
+  for (uint i = 0; i < NSIG; i++) {
+    ::signal(i, SIG_DFL);
+  }
+
+  sigset_t sigmask;
+  sigemptyset(&sigmask);
+  KJ_SYSCALL(sigprocmask(SIG_SETMASK, &sigmask, nullptr));
+}
+
+void setupSidecarParentDeathSignal() {
+  KJ_SYSCALL(prctl(PR_SET_PDEATHSIG, SIGTERM));
+  if (getppid() == 1) {
+    _exit(1);
+  }
+}
+
+void setupSidecarStdio() {
+  auto devNullIn = raiiOpen("/dev/null", O_RDONLY | O_CLOEXEC);
+  auto devNullOut = raiiOpen("/dev/null", O_WRONLY | O_CLOEXEC);
+  KJ_SYSCALL(dup2(devNullIn, STDIN_FILENO));
+  KJ_SYSCALL(dup2(devNullOut, STDOUT_FILENO));
+}
+
+void setupSidecarResourceLimits() {
+  struct rlimit nofile;
+  memset(&nofile, 0, sizeof(nofile));
+  nofile.rlim_cur = 1024;
+  nofile.rlim_max = 4096;
+  KJ_SYSCALL(setrlimit(RLIMIT_NOFILE, &nofile));
+
+  struct rlimit core;
+  memset(&core, 0, sizeof(core));
+  KJ_SYSCALL(setrlimit(RLIMIT_CORE, &core));
+}
+
+void trySetupSidecarNamespaces() {
+  uid_t realUid = getuid();
+  gid_t realGid = getgid();
+
+  if (unshare(CLONE_NEWUSER | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS) < 0) {
+    int error = errno;
+    KJ_LOG(WARNING, "Could not enter isolate sidecar namespaces; continuing with seccomp only.",
+        error, strerror(error));
+    return;
+  }
+
+  sandbox::hideUserGroupIds(realUid, realGid, false);
+  KJ_SYSCALL(mount("none", "/", nullptr, MS_REC | MS_PRIVATE, nullptr));
+  KJ_SYSCALL(sethostname("sandbox", 7));
+  KJ_SYSCALL(setdomainname("sandbox", 7));
+  KJ_LOG(WARNING, "Isolate sidecar entered private user/network/mount/ipc/uts namespaces.");
+}
+
+void setupSidecarSeccomp() {
+  scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
+  if (ctx == nullptr) {
+    KJ_FAIL_SYSCALL("seccomp_init", 0);
+  }
+  KJ_DEFER(seccomp_release(ctx));
+
+#define CHECK_SECCOMP(call)                   \
+  do {                                        \
+    if (auto result = (call)) {               \
+      KJ_FAIL_SYSCALL(#call, -result);        \
+    }                                         \
+  } while (0)
+
+  CHECK_SECCOMP(seccomp_attr_set(ctx, SCMP_FLTATR_CTL_NNP, 1));
+  CHECK_SECCOMP(seccomp_attr_set(ctx, SCMP_FLTATR_ACT_BADARCH, SCMP_ACT_ERRNO(ENOSYS)));
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(ptrace), 0));
+
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_GE, AF_NETLINK + 1)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_AX25)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_IPX)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_APPLETALK)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_NETROM)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_BRIDGE)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_ATMPVC)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_X25)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_ROSE)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_DECnet)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_NETBEUI)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_SECURITY)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_KEY)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPROTONOSUPPORT), SCMP_SYS(socket), 1,
+      SCMP_A1(SCMP_CMP_MASKED_EQ, 0x0f, SOCK_DCCP)));
+
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(add_key), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(request_key), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(keyctl), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(syslog), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(uselib), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(personality), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(acct), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(modify_ldt), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(set_thread_area), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(unshare), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(mount), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(pivot_root), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(quotactl), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(clone), 1,
+      SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_setup), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_destroy), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_getevents), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_submit), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_cancel), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(remap_file_pages), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(mbind), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(get_mempolicy), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(set_mempolicy), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(migrate_pages), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(move_pages), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(vmsplice), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(set_robust_list), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(get_robust_list), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(perf_event_open), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EINVAL), SCMP_SYS(prctl), 1,
+      SCMP_A0(SCMP_CMP_EQ, PR_SET_SECCOMP)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(seccomp), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(bpf), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(userfaultfd), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_pgetevents), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(rseq), 0));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(pkey_mprotect), 0));
+
+  CHECK_SECCOMP(seccomp_load(ctx));
+#pragma GCC diagnostic pop
+#undef CHECK_SECCOMP
+}
+
+int runConfinedWorkerdSidecar(
+    kj::Array<kj::String> argvStrings,
+    kj::Array<kj::String> environment,
+    kj::String trustedWorkerd) {
+  resetSignalHandlersForExec();
+  setupSidecarParentDeathSignal();
+  setupSidecarStdio();
+  trySetupSidecarNamespaces();
+  setupSidecarResourceLimits();
+  KJ_SYSCALL(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
+  setupSidecarSeccomp();
+
+  KJ_STACK_ARRAY(char*, argv, argvStrings.size() + 1, 16, 64);
+  for (auto i: kj::indices(argvStrings)) {
+    argv[i] = const_cast<char*>(argvStrings[i].cStr());
+  }
+  argv[argvStrings.size()] = nullptr;
+
+  KJ_STACK_ARRAY(char*, envp, environment.size() + 1, 16, 64);
+  for (auto i: kj::indices(environment)) {
+    envp[i] = const_cast<char*>(environment[i].cStr());
+  }
+  envp[environment.size()] = nullptr;
+
+  KJ_SYSCALL(execve(trustedWorkerd.cStr(), argv.begin(), envp.begin()), trustedWorkerd);
+  KJ_UNREACHABLE;
 }
 
 void waitForSidecarSocket(WorkerdSidecarProcess& sidecar, IsolateRuntimeConfig& runtimeConfig) {
