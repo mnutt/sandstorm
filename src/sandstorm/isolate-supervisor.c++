@@ -1247,9 +1247,12 @@ bool isStructuredResponseHeader(kj::StringPtr name) {
 }
 
 void addFetchResponseHeaders(WebSession::Response::Builder builder, kj::Vector<FetchHeader>& headers) {
+  HeaderWhitelist responseHeaderWhitelist(*WebSession::Response::HEADER_WHITELIST);
+
   size_t count = 0;
   for (auto& header: headers) {
-    if (!isStructuredResponseHeader(header.name)) {
+    if (!isStructuredResponseHeader(header.name) &&
+        responseHeaderWhitelist.matches(header.name)) {
       ++count;
     }
   }
@@ -1257,7 +1260,8 @@ void addFetchResponseHeaders(WebSession::Response::Builder builder, kj::Vector<F
   auto outputHeaders = builder.initAdditionalHeaders(count);
   size_t j = 0;
   for (auto i: kj::indices(headers)) {
-    if (!isStructuredResponseHeader(headers[i].name)) {
+    if (!isStructuredResponseHeader(headers[i].name) &&
+        responseHeaderWhitelist.matches(headers[i].name)) {
       outputHeaders[j].setName(headers[i].name);
       outputHeaders[j].setValue(headers[i].value);
       ++j;
