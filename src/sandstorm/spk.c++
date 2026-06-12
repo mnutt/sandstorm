@@ -42,7 +42,6 @@
 #include <set>
 #include <map>
 #include <string>
-#include <vector>
 #include <sys/xattr.h>
 #include <capnp/schema-parser.h>
 #include <capnp/dynamic.h>
@@ -2201,6 +2200,73 @@ private:
     return path;
   }
 
+  kj::Array<capnp::word> buildDevIsolateManifestBytes() {
+    auto modules = collectDevIsolateModules();
+
+    capnp::MallocMessageBuilder message;
+    auto manifest = message.initRoot<spk::Manifest>();
+    manifest.initAppTitle().setDefaultText(devIsolateTitle);
+    manifest.setAppVersion(0);
+    manifest.initAppMarketingVersion().setDefaultText("dev");
+
+    initDevIsolateCommand(manifest.initContinueCommand(), modules.asPtr());
+
+    auto actions = manifest.initActions(1);
+    auto action = actions[0];
+    action.initTitle().setDefaultText("New Ad hoc Isolate App");
+    action.initNounPhrase().setDefaultText("instance");
+    initDevIsolateCommand(action.initCommand(), modules.asPtr());
+
+    return capnp::messageToFlatArray(message);
+  }
+
+  void initDevIsolateCommand(spk::Manifest::Command::Builder command,
+                             kj::ArrayPtr<DevIsolateModule> modules) {
+    KJ_REQUIRE(modules.size() > 0);
+
+    auto argv = command.initArgv(4);
+    argv.set(0, "workerd");
+    argv.set(1, "serve");
+    argv.set(2, "${SANDSTORM_ISOLATE_WORKERD_CONFIG}");
+    argv.set(3, "sandstormConfig");
+
+    auto isolate = command.initIsolate();
+    isolate.setMainModule(modules[0].name);
+    isolate.setCompatibilityDate(devIsolateCompatibilityDate);
+    isolate.initCompatibilityFlags(0);
+
+    auto moduleList = isolate.initModules(modules.size() + 1);
+    for (auto i: kj::indices(modules)) {
+      auto module = moduleList[i];
+      module.setName(modules[i].name);
+      switch (modules[i].type) {
+        case DevIsolateModuleType::ES_MODULE:
+          module.setEsModule(modules[i].source);
+          break;
+        case DevIsolateModuleType::COMMON_JS:
+          module.setCommonJsModule(modules[i].source);
+          break;
+        case DevIsolateModuleType::TEXT:
+          module.setText(modules[i].source);
+          break;
+        case DevIsolateModuleType::JSON:
+          module.setJson(modules[i].source);
+          break;
+      }
+    }
+    auto helperModule = moduleList[modules.size()];
+    helperModule.setName("sandstorm:api");
+    helperModule.setEsModule(ISOLATE_API_HELPER_SOURCE);
+
+    auto bindings = isolate.initBindings(2);
+    bindings[0].setName("SANDSTORM_API");
+    bindings[0].setSandstormApi();
+    bindings[1].setName("STORAGE");
+    bindings[1].setStorage();
+
+    isolate.initBridgeConfig().initViewInfo().initAppTitle().setDefaultText(devIsolateTitle);
+  }
+
   kj::String appIdForDevIsolate(kj::StringPtr workerPath) {
     byte digest[crypto_hash_sha256_BYTES];
     crypto_hash_sha256_state state;
@@ -2584,8 +2650,19 @@ private:
       kj::Function<void(kj::StringPtr)> callback = [&](kj::StringPtr path) {
         usedFiles.insert(kj::heapString(path));
       };
+      kj::Maybe<kj::Function<kj::Array<capnp::word>()>> dynamicManifestContent;
+      if (devIsolateWorkerPath != nullptr) {
+        dynamicManifestContent = [&]() {
+          return buildDevIsolateManifestBytes();
+        };
+      }
+      kj::Function<kj::Array<capnp::word>()>* dynamicManifestContentPtr = nullptr;
+      KJ_IF_MAYBE(content, dynamicManifestContent) {
+        dynamicManifestContentPtr = content;
+      }
       auto rootNode = makeUnionFs(sourceDir, packageDef.getSourceMap(), packageDef.getManifest(),
-                                  packageDef.getBridgeConfig(), getHttpBridgeExe(), callback);
+                                  packageDef.getBridgeConfig(), getHttpBridgeExe(), callback,
+                                  dynamicManifestContentPtr);
 
       FuseOptions options;
 
