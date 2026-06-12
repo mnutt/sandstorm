@@ -1371,7 +1371,9 @@ bool shouldStreamSidecarResponse(uint statusCode, kj::Vector<FetchHeader>& heade
     }
   }
 
-  return false;
+  // If workerd did not provide a usable Content-Length, preserve streaming semantics rather than
+  // buffering an arbitrarily large or intentionally streaming response.
+  return true;
 }
 
 class FetchResponseStreamHandle final: public Handle::Server, private kj::TaskSet::ErrorHandler {
