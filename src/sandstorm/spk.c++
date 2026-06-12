@@ -36,6 +36,7 @@
 #include <errno.h>
 #include <sandstorm/package.capnp.h>
 #include <sandstorm/appid-replacements.capnp.h>
+#include <sandstorm/isolate-api.js.h>
 #include <stdlib.h>
 #include <dirent.h>
 #include <set>
@@ -2072,7 +2073,7 @@ private:
         "      ( name = \"worker.js\", esModule = "));
     appendCapnpText(capnp, workerSource);
     capnp.addAll(kj::StringPtr(" ),\n      ( name = \"sandstorm:api\", esModule = "));
-    appendCapnpText(capnp, devIsolateApiHelperSource());
+    appendCapnpText(capnp, ISOLATE_API_HELPER_SOURCE);
     capnp.addAll(kj::StringPtr(" )\n    ],\n"));
     capnp.addAll(kj::StringPtr(
         "    bindings = [\n"
@@ -2144,109 +2145,6 @@ private:
       }
     }
     output.add('"');
-  }
-
-  static kj::StringPtr devIsolateApiHelperSource() {
-    return
-        "function header(request, name) {\n"
-        "  return request.headers.get(name) || \"\";\n"
-        "}\n"
-        "\n"
-        "function list(value) {\n"
-        "  return value ? value.split(\",\").filter((item) => item.length > 0) : [];\n"
-        "}\n"
-        "\n"
-        "async function callSandstorm(env, path) {\n"
-        "  const response = await env.SANDSTORM_API.fetch(`http://sandstorm/${path}`);\n"
-        "  if (!response.ok) {\n"
-        "    throw new Error(`Sandstorm API ${path} failed with ${response.status}`);\n"
-        "  }\n"
-        "  return response.json();\n"
-        "}\n"
-        "\n"
-        "function storageUrl(key = \"\") {\n"
-        "  if (key.includes(\"/\")) {\n"
-        "    throw new Error(\"storage keys must be single path segments\");\n"
-        "  }\n"
-        "  return `http://storage/${encodeURIComponent(key)}`;\n"
-        "}\n"
-        "\n"
-        "async function readStorageJson(response) {\n"
-        "  if (!response.ok) {\n"
-        "    return { ok: false, status: response.status, body: await response.text() };\n"
-        "  }\n"
-        "  return response.json();\n"
-        "}\n"
-        "\n"
-        "export function storage(env) {\n"
-        "  return {\n"
-        "    async put(key, value) {\n"
-        "      const response = await env.STORAGE.fetch(storageUrl(key), {\n"
-        "        method: \"PUT\",\n"
-        "        body: typeof value === \"string\" || value instanceof Uint8Array ? value : JSON.stringify(value),\n"
-        "      });\n"
-        "      return readStorageJson(response);\n"
-        "    },\n"
-        "    async get(key) {\n"
-        "      const response = await env.STORAGE.fetch(storageUrl(key));\n"
-        "      if (response.status === 404) return undefined;\n"
-        "      if (!response.ok) throw new Error(`storage get ${key} failed with ${response.status}`);\n"
-        "      return response.text();\n"
-        "    },\n"
-        "    async getJson(key) {\n"
-        "      const text = await this.get(key);\n"
-        "      return text === undefined ? undefined : JSON.parse(text);\n"
-        "    },\n"
-        "    async head(key) {\n"
-        "      const response = await env.STORAGE.fetch(storageUrl(key), { method: \"HEAD\" });\n"
-        "      return {\n"
-        "        ok: response.ok,\n"
-        "        status: response.status,\n"
-        "        bytes: response.headers.get(\"x-sandstorm-storage-bytes\"),\n"
-        "      };\n"
-        "    },\n"
-        "    async delete(key) {\n"
-        "      return readStorageJson(await env.STORAGE.fetch(storageUrl(key), { method: \"DELETE\" }));\n"
-        "    },\n"
-        "    async list() {\n"
-        "      return readStorageJson(await env.STORAGE.fetch(storageUrl()));\n"
-        "    },\n"
-        "  };\n"
-        "}\n"
-        "\n"
-        "export function getSession(request) {\n"
-        "  return {\n"
-        "    sessionType: header(request, \"x-sandstorm-session-type\"),\n"
-        "    user: {\n"
-        "      displayName: header(request, \"x-sandstorm-username\"),\n"
-        "      id: header(request, \"x-sandstorm-user-id\"),\n"
-        "      preferredHandle: header(request, \"x-sandstorm-preferred-handle\"),\n"
-        "      pictureUrl: header(request, \"x-sandstorm-user-picture\"),\n"
-        "      pronouns: header(request, \"x-sandstorm-user-pronouns\"),\n"
-        "    },\n"
-        "    permissions: list(header(request, \"x-sandstorm-permissions\")),\n"
-        "    request: {\n"
-        "      tabId: header(request, \"x-sandstorm-tab-id\"),\n"
-        "      basePath: header(request, \"x-sandstorm-base-path\"),\n"
-        "      host: header(request, \"host\"),\n"
-        "      forwardedProto: header(request, \"x-forwarded-proto\"),\n"
-        "      userAgent: header(request, \"user-agent\"),\n"
-        "      acceptableLanguages: list(header(request, \"accept-language\")),\n"
-        "    },\n"
-        "  };\n"
-        "}\n"
-        "\n"
-        "export function sandstorm(request, env) {\n"
-        "  return {\n"
-        "    session: () => getSession(request),\n"
-        "    status: () => callSandstorm(env, \"status\"),\n"
-        "    capabilities: () => callSandstorm(env, \"capabilities\"),\n"
-        "    runtime: () => callSandstorm(env, \"runtime\"),\n"
-        "    modules: () => callSandstorm(env, \"modules\"),\n"
-        "    bindings: () => callSandstorm(env, \"bindings\"),\n"
-        "    storage: () => storage(env),\n"
-        "  };\n"
-        "}\n";
   }
 
   kj::MainBuilder::Validity doDev() {
