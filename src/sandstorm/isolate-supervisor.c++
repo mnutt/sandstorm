@@ -1088,6 +1088,7 @@ struct ParsedETag {
   bool weak = false;
 };
 
+constexpr uint64_t MAX_SIDECAR_REQUEST_BYTES = 64 * 1024 * 1024;
 constexpr uint64_t MAX_SIDECAR_RESPONSE_BYTES = 64 * 1024 * 1024;
 constexpr uint64_t SIDECAR_RESPONSE_STREAM_THRESHOLD_BYTES = 64 * 1024;
 constexpr uint SIDECAR_READY_TIMEOUT_MS = 10000;
@@ -1157,6 +1158,9 @@ void setFetchRequestBodyHeaders(FetchRequest& request, kj::StringPtr mimeType, k
 template <typename ContentReader>
 void setFetchRequestBody(FetchRequest& request, ContentReader content) {
   setFetchRequestBodyHeaders(request, content.getMimeType(), content.getEncoding());
+  KJ_REQUIRE(content.getContent().size() <= MAX_SIDECAR_REQUEST_BYTES,
+      "buffered isolate request body exceeds maximum allowed size",
+      content.getContent().size(), MAX_SIDECAR_REQUEST_BYTES);
   request.body = kj::heapArray<byte>(content.getContent());
 }
 
@@ -1630,6 +1634,11 @@ private:
           started(start().fork()),
           writeQueue(started.addBranch()) {
       expectedSize = this->request.expectedBodySize;
+      KJ_IF_MAYBE(size, expectedSize) {
+        KJ_REQUIRE(*size <= MAX_SIDECAR_REQUEST_BYTES,
+            "streaming isolate request expected size exceeds maximum allowed size",
+            *size, MAX_SIDECAR_REQUEST_BYTES);
+      }
       if (this->request.expectedBodySize == nullptr) {
         auto paf = kj::newPromiseAndFulfiller<void>();
         donePromise = kj::mv(paf.promise);
@@ -1650,6 +1659,9 @@ private:
       KJ_REQUIRE(!doneCalled, "write() called after done()");
       auto data = kj::heapArray<byte>(context.getParams().getData());
       bytesReceived += data.size();
+      KJ_REQUIRE(bytesReceived <= MAX_SIDECAR_REQUEST_BYTES,
+          "streaming isolate request body exceeds maximum allowed size",
+          bytesReceived, MAX_SIDECAR_REQUEST_BYTES);
       KJ_IF_MAYBE(size, expectedSize) {
         KJ_REQUIRE(bytesReceived <= *size, "received more bytes than expected");
       }
@@ -1696,6 +1708,9 @@ private:
 
     kj::Promise<void> expectSize(ExpectSizeContext context) override {
       auto size = bytesReceived + context.getParams().getSize();
+      KJ_REQUIRE(size <= MAX_SIDECAR_REQUEST_BYTES,
+          "streaming isolate request expected size exceeds maximum allowed size",
+          size, MAX_SIDECAR_REQUEST_BYTES);
       KJ_IF_MAYBE(expected, expectedSize) {
         KJ_REQUIRE(*expected == size, "expectSize() disagrees with expected streaming request size");
       }
