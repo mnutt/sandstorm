@@ -2654,6 +2654,12 @@ private:
       KJ_FAIL_SYSCALL("open", error, path);
     }
 
+    struct stat stats;
+    KJ_SYSCALL(fstat(fd, &stats), path);
+    if (!S_ISREG(stats.st_mode)) {
+      return nullptr;
+    }
+
     return kj::AutoCloseFd(fd);
   }
 
@@ -2683,7 +2689,7 @@ private:
     json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"keys\": ["));
     bool first = true;
     for (auto& file: files) {
-      if (file.startsWith(".")) {
+      if (!isValidStorageKey(file)) {
         continue;
       }
 
@@ -2691,9 +2697,6 @@ private:
       KJ_IF_MAYBE(fd, openStorageFileIfExists(path)) {
         struct stat stats;
         KJ_SYSCALL(fstat(*fd, &stats));
-        if (!S_ISREG(stats.st_mode)) {
-          continue;
-        }
 
         if (!first) json.addAll(kj::StringPtr(", "));
         json.addAll(kj::StringPtr("{ "));
