@@ -1364,6 +1364,48 @@ kj::Maybe<kj::StringPtr> findFetchResponseHeader(
   return nullptr;
 }
 
+bool isHtmlMimeType(kj::StringPtr mimeType) {
+  auto trimmed = trim(mimeType);
+  kj::StringPtr type = trimmed;
+  KJ_IF_MAYBE(semi, type.findFirst(';')) {
+    type = kj::StringPtr(type.begin(), *semi);
+  }
+  auto lower = kj::str(trim(type));
+  toLower(lower);
+  return lower == "text/html";
+}
+
+kj::String bytesToString(kj::ArrayPtr<const byte> bytes) {
+  kj::Vector<char> chars(bytes.size() + 1);
+  for (auto b: bytes) {
+    chars.add(static_cast<char>(b));
+  }
+  chars.add('\0');
+  return kj::String(chars.releaseAsArray());
+}
+
+template <typename ErrorBuilder>
+void setFetchErrorBody(ErrorBuilder error, FetchResponse& response) {
+  if (response.body.size() == 0) {
+    return;
+  }
+
+  if (isHtmlMimeType(response.mimeType)) {
+    auto html = bytesToString(response.body);
+    error.setDescriptionHtml(html);
+  } else {
+    auto nonHtml = error.initNonHtmlBody();
+    nonHtml.setMimeType(response.mimeType);
+    KJ_IF_MAYBE(encoding, findFetchResponseHeader(response.headers, "content-encoding")) {
+      nonHtml.setEncoding(*encoding);
+    }
+    KJ_IF_MAYBE(language, findFetchResponseHeader(response.headers, "content-language")) {
+      nonHtml.setLanguage(*language);
+    }
+    nonHtml.setData(response.body);
+  }
+}
+
 bool shouldStreamSidecarResponse(uint statusCode, kj::Vector<FetchHeader>& headers) {
   if (!isFetchContentStatus(statusCode)) {
     return false;
@@ -1479,16 +1521,8 @@ void writeFetchResponse(
   } else if (response.statusCode >= 400 && response.statusCode < 500) {
     auto error = builder.initClientError();
     error.setStatusCode(clientErrorCodeForStatus(response.statusCode));
-    if (!omitBody && response.body.size() > 0) {
-      auto nonHtml = error.initNonHtmlBody();
-      nonHtml.setMimeType(response.mimeType);
-      KJ_IF_MAYBE(encoding, findFetchResponseHeader(response.headers, "content-encoding")) {
-        nonHtml.setEncoding(*encoding);
-      }
-      KJ_IF_MAYBE(language, findFetchResponseHeader(response.headers, "content-language")) {
-        nonHtml.setLanguage(*language);
-      }
-      nonHtml.setData(response.body);
+    if (!omitBody) {
+      setFetchErrorBody(error, response);
     }
   } else {
     if (response.statusCode < 500) {
@@ -1496,16 +1530,8 @@ void writeFetchResponse(
     }
 
     auto error = builder.initServerError();
-    if (!omitBody && response.body.size() > 0) {
-      auto nonHtml = error.initNonHtmlBody();
-      nonHtml.setMimeType(response.mimeType);
-      KJ_IF_MAYBE(encoding, findFetchResponseHeader(response.headers, "content-encoding")) {
-        nonHtml.setEncoding(*encoding);
-      }
-      KJ_IF_MAYBE(language, findFetchResponseHeader(response.headers, "content-language")) {
-        nonHtml.setLanguage(*language);
-      }
-      nonHtml.setData(response.body);
+    if (!omitBody) {
+      setFetchErrorBody(error, response);
     }
   }
 }
