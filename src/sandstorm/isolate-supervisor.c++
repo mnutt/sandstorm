@@ -1814,8 +1814,8 @@ public:
     KJ_IF_MAYBE(p, process) {
       if (p->isRunning()) {
         auto pid = p->getPid();
-        KJ_LOG(WARNING, "Stopping isolate sidecar process.", pid);
-        p->signal(SIGTERM);
+        KJ_LOG(WARNING, "Stopping isolate sidecar process group.", pid);
+        signalProcessGroup(pid, SIGTERM);
 
         for (uint elapsed = 0; elapsed < SIDECAR_SHUTDOWN_TIMEOUT_MS;
              elapsed += SIDECAR_READY_POLL_MS) {
@@ -1826,8 +1826,8 @@ public:
           sleepMillis(SIDECAR_READY_POLL_MS);
         }
 
-        KJ_LOG(WARNING, "Killing isolate sidecar process after shutdown timeout.", pid);
-        p->signal(SIGKILL);
+        KJ_LOG(WARNING, "Killing isolate sidecar process group after shutdown timeout.", pid);
+        signalProcessGroup(pid, SIGKILL);
       }
       process = nullptr;
     }
@@ -1835,6 +1835,17 @@ public:
 
 private:
   kj::Maybe<Subprocess> process;
+
+  static void signalProcessGroup(pid_t pid, int signo) {
+    if (kill(-pid, signo) != 0) {
+      int error = errno;
+      if (error == ESRCH) {
+        return;
+      }
+
+      KJ_SYSCALL(kill(pid, signo), pid, signo);
+    }
+  }
 
   static void logExitStatus(int status) {
     if (WIFEXITED(status)) {
@@ -2015,6 +2026,10 @@ void setupSidecarParentDeathSignal() {
   if (getppid() == 1) {
     _exit(1);
   }
+}
+
+void setupSidecarProcessGroup() {
+  KJ_SYSCALL(setpgid(0, 0));
 }
 
 void setupSidecarStdio() {
@@ -2299,6 +2314,7 @@ int runConfinedWorkerdSidecar(
     bool logSeccompViolations) {
   resetSignalHandlersForExec();
   setupSidecarParentDeathSignal();
+  setupSidecarProcessGroup();
   setupSidecarStdio();
   closeUnexpectedSidecarFds();
   bool hasPrivateNamespaces = trySetupSidecarNamespaces(sandboxUid);
