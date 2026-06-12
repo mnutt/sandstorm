@@ -37,6 +37,7 @@
 #include <sandstorm/package.capnp.h>
 #include <sandstorm/appid-replacements.capnp.h>
 #include <sandstorm/isolate-api.js.h>
+#include <sandstorm/isolate-rpc.js.h>
 #include <stdlib.h>
 #include <dirent.h>
 #include <set>
@@ -2126,6 +2127,8 @@ private:
     }
     capnp.addAll(kj::StringPtr("      ( name = \"sandstorm:api\", esModule = "));
     appendCapnpText(capnp, ISOLATE_API_HELPER_SOURCE);
+    capnp.addAll(kj::StringPtr(" ),\n      ( name = \"sandstorm:rpc\", esModule = "));
+    appendCapnpText(capnp, ISOLATE_RPC_HELPER_SOURCE);
     capnp.addAll(kj::StringPtr(" )\n    ],\n"));
     capnp.addAll(kj::StringPtr(
         "    bindings = [\n"
@@ -2204,7 +2207,7 @@ private:
     isolate.setCompatibilityDate(devIsolateCompatibilityDate);
     isolate.initCompatibilityFlags(0);
 
-    auto moduleList = isolate.initModules(modules.size() + 1);
+    auto moduleList = isolate.initModules(modules.size() + 2);
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2226,6 +2229,9 @@ private:
     auto helperModule = moduleList[modules.size()];
     helperModule.setName("sandstorm:api");
     helperModule.setEsModule(ISOLATE_API_HELPER_SOURCE);
+    auto rpcHelperModule = moduleList[modules.size() + 1];
+    rpcHelperModule.setName("sandstorm:rpc");
+    rpcHelperModule.setEsModule(ISOLATE_RPC_HELPER_SOURCE);
 
     auto bindings = isolate.initBindings(2);
     bindings[0].setName("SANDSTORM_API");
