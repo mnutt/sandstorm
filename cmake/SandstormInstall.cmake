@@ -27,6 +27,7 @@ function(sandstorm_install_native)
   else()
     add_custom_command(
       OUTPUT "${_workerd_bin}"
+      COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_workerd_dir}"
       COMMAND "${CMAKE_COMMAND}" -E make_directory
         "${_workerd_dir}" "${CMAKE_BINARY_DIR}/bin"
       COMMAND "${CMAKE_COMMAND}" -E env
@@ -34,6 +35,8 @@ function(sandstorm_install_native)
         "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/npm" install
           --no-fund --no-save --prefix "${_workerd_dir}"
           "workerd@${SANDSTORM_WORKERD_NPM_VERSION}"
+      COMMAND "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node" -e
+        "const v=require('${_workerd_dir}/node_modules/workerd/package.json').version;if(v!=='${SANDSTORM_WORKERD_NPM_VERSION}')process.exit(1)"
       COMMAND "${CMAKE_COMMAND}" -E copy
         "${_workerd_dir}/node_modules/.bin/workerd" "${_workerd_bin}"
       COMMENT "Installing workerd from npm"
