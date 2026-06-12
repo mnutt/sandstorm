@@ -171,6 +171,9 @@ kj::Promise<void> WebSessionBridge::request(
       auto req = session.postStreamingRequest();
       req.setPath(path);
       initContent(req, headers);
+      KJ_IF_MAYBE(length, requestBody.tryGetLength()) {
+        req.setExpectedSize(*length);
+      }
       auto streamer = initContext(req.initContext(), headers);
 
       // TODO(apibump): Currently we can't pipeline on the stream because we have to handle the
@@ -220,6 +223,9 @@ kj::Promise<void> WebSessionBridge::request(
       auto req = session.putStreamingRequest();
       req.setPath(path);
       initContent(req, headers);
+      KJ_IF_MAYBE(length, requestBody.tryGetLength()) {
+        req.setExpectedSize(*length);
+      }
       auto streamer = initContext(req.initContext(), headers);
 
       // TODO(apibump): Currently we can't pipeline on the stream because we have to handle the

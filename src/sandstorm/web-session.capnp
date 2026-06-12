@@ -66,15 +66,18 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   delete @4 (path :Text, context :Context) -> Response;
   patch @17 (path :Text, content :PostContent, context :Context) -> Response;
 
-  postStreaming @5 (path :Text, mimeType :Text, context :Context, encoding :Text)
+  postStreaming @5 (path :Text, mimeType :Text, context :Context, encoding :Text,
+                    expectedSize :UInt64 = 0)
       -> (stream :RequestStream);
-  putStreaming @6 (path :Text, mimeType :Text, context :Context, encoding :Text)
+  putStreaming @6 (path :Text, mimeType :Text, context :Context, encoding :Text,
+                   expectedSize :UInt64 = 0)
       -> (stream :RequestStream);
   # Streaming post/put requests, useful when the input is large. If these throw `unimplemented`
   # exceptions, the caller should fall back to regular post() / put() on the assumption that the
   # app doesn't implement streaming.
   #
   # The optional `encoding` field represents the Content-Encoding header.
+  # `expectedSize`, when non-zero, is the exact number of bytes that will be written to the stream.
 
   openWebSocket @2 (path :Text, context :Context,
                     protocol :List(Text), clientStream :WebSocketStream)
