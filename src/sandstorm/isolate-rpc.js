@@ -1,3 +1,5 @@
+const MAX_RPC_BATCH_CALLS = 64;
+
 export class RpcTarget {}
 
 function isSafePropertyName(name) {
@@ -23,17 +25,29 @@ class RpcError extends Error {
   }
 }
 
+function findRpcMethod(target, method) {
+  if (!(target instanceof RpcTarget)) {
+    throw new Error("RPC target must extend RpcTarget");
+  }
+
+  for (let proto = Object.getPrototypeOf(target);
+       proto && proto !== RpcTarget.prototype;
+       proto = Object.getPrototypeOf(proto)) {
+    const descriptor = Object.getOwnPropertyDescriptor(proto, method);
+    if (descriptor && typeof descriptor.value === "function") {
+      return descriptor.value;
+    }
+  }
+
+  throw new Error(`RPC method not found: ${method}`);
+}
+
 async function callTarget(target, method, args) {
   if (!isSafePropertyName(method)) {
     throw new Error(`invalid RPC method: ${method}`);
   }
 
-  const value = target[method];
-  if (typeof value !== "function") {
-    throw new Error(`RPC method not found: ${method}`);
-  }
-
-  return await value.apply(target, args);
+  return await findRpcMethod(target, method).apply(target, args);
 }
 
 export async function newWorkersRpcResponse(request, target, options = {}) {
@@ -59,6 +73,16 @@ export async function newWorkersRpcResponse(request, target, options = {}) {
   }
 
   const calls = Array.isArray(payload.calls) ? payload.calls : [payload];
+  if (calls.length > MAX_RPC_BATCH_CALLS) {
+    return Response.json({
+      ok: false,
+      error: {
+        name: "RangeError",
+        message: `RPC batch exceeds ${MAX_RPC_BATCH_CALLS} calls`,
+      },
+    }, { status: 413 });
+  }
+
   const results = [];
   for (const call of calls) {
     const id = call && Object.prototype.hasOwnProperty.call(call, "id") ? call.id : null;
