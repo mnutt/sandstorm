@@ -16,6 +16,13 @@ function encodeError(error) {
   };
 }
 
+class RpcError extends Error {
+  constructor(error) {
+    super(error && error.message || "RPC failed");
+    this.name = error && error.name || "Error";
+  }
+}
+
 async function callTarget(target, method, args) {
   if (!isSafePropertyName(method)) {
     throw new Error(`invalid RPC method: ${method}`);
@@ -71,37 +78,75 @@ export async function newWorkersRpcResponse(request, target, options = {}) {
 
 export function newHttpBatchRpcSession(endpoint, fetchImpl = fetch) {
   let nextId = 1;
+  let queue = [];
+  let scheduled = false;
+
+  async function flush() {
+    scheduled = false;
+    const batch = queue;
+    queue = [];
+    if (batch.length === 0) return;
+
+    let response;
+    try {
+      response = await fetchImpl(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ calls: batch.map(({ id, method, args }) => ({ id, method, args })) }),
+      });
+    } catch (error) {
+      for (const call of batch) call.reject(error);
+      return;
+    }
+
+    if (!response.ok) {
+      const error = new Error(`RPC request failed with HTTP ${response.status}`);
+      for (const call of batch) call.reject(error);
+      return;
+    }
+
+    let payload;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      for (const call of batch) call.reject(error);
+      return;
+    }
+
+    const results = new Map((payload.results || []).map((result) => [result.id, result]));
+    for (const call of batch) {
+      const result = results.get(call.id);
+      if (!result) {
+        call.reject(new Error(`RPC response did not contain result ${call.id}`));
+      } else if (!result.ok) {
+        call.reject(new RpcError(result.error));
+      } else {
+        call.resolve(result.value);
+      }
+    }
+  }
+
+  function scheduleFlush() {
+    if (!scheduled) {
+      scheduled = true;
+      setTimeout(flush, 0);
+    }
+  }
 
   return new Proxy({}, {
     get(_target, property) {
       if (property === Symbol.dispose) {
         return () => {};
       }
+      if (typeof property === "symbol") {
+        return undefined;
+      }
 
-      return async (...args) => {
+      return (...args) => new Promise((resolve, reject) => {
         const id = nextId++;
-        const response = await fetchImpl(endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ calls: [{ id, method: String(property), args }] }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`RPC request failed with HTTP ${response.status}`);
-        }
-
-        const payload = await response.json();
-        const result = payload.results && payload.results[0];
-        if (!result) {
-          throw new Error("RPC response did not contain a result");
-        }
-        if (!result.ok) {
-          const error = new Error(result.error && result.error.message || "RPC failed");
-          error.name = result.error && result.error.name || "Error";
-          throw error;
-        }
-        return result.value;
-      };
+        queue.push({ id, method: String(property), args, resolve, reject });
+        scheduleFlush();
+      });
     },
   });
 }
@@ -117,22 +162,72 @@ class SandstormRpcError extends Error {
 
 export function newHttpBatchRpcSession(endpoint) {
   let nextId = 1;
+  let queue = [];
+  let scheduled = false;
+
+  async function flush() {
+    scheduled = false;
+    const batch = queue;
+    queue = [];
+    if (batch.length === 0) return;
+
+    let response;
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ calls: batch.map(({ id, method, args }) => ({ id, method, args })) }),
+      });
+    } catch (error) {
+      for (const call of batch) call.reject(error);
+      return;
+    }
+
+    if (!response.ok) {
+      const error = new Error(\`RPC request failed with HTTP \${response.status}\`);
+      for (const call of batch) call.reject(error);
+      return;
+    }
+
+    let payload;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      for (const call of batch) call.reject(error);
+      return;
+    }
+
+    const results = new Map((payload.results || []).map((result) => [result.id, result]));
+    for (const call of batch) {
+      const result = results.get(call.id);
+      if (!result) {
+        call.reject(new Error(\`RPC response did not contain result \${call.id}\`));
+      } else if (!result.ok) {
+        call.reject(new SandstormRpcError(result.error));
+      } else {
+        call.resolve(result.value);
+      }
+    }
+  }
+
+  function scheduleFlush() {
+    if (!scheduled) {
+      scheduled = true;
+      setTimeout(flush, 0);
+    }
+  }
+
   return new Proxy({}, {
     get(_target, property) {
-      return async (...args) => {
+      if (typeof property === "symbol") {
+        return undefined;
+      }
+
+      return (...args) => new Promise((resolve, reject) => {
         const id = nextId++;
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ calls: [{ id, method: String(property), args }] }),
-        });
-        if (!response.ok) throw new Error(\`RPC request failed with HTTP \${response.status}\`);
-        const payload = await response.json();
-        const result = payload.results && payload.results[0];
-        if (!result) throw new Error("RPC response did not contain a result");
-        if (!result.ok) throw new SandstormRpcError(result.error);
-        return result.value;
-      };
+        queue.push({ id, method: String(property), args, resolve, reject });
+        scheduleFlush();
+      });
     },
   });
 }
