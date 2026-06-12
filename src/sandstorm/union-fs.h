@@ -21,18 +21,22 @@
 
 #include <sandstorm/fuse.h>
 #include <sandstorm/package.capnp.h>
+#include <capnp/common.h>
 #include <kj/function.h>
 
 namespace sandstorm {
 
 kj::Own<fuse::Node> makeUnionFs(kj::StringPtr sourceDir, spk::SourceMap::Reader sourceMap,
                                spk::Manifest::Reader manifest, spk::BridgeConfig::Reader bridgeConfig,
-                               kj::StringPtr bridgePath, kj::Function<void(kj::StringPtr)>& callback);
+                               kj::StringPtr bridgePath,
+                               kj::Function<void(kj::StringPtr)>& callback,
+                               kj::Function<kj::Array<capnp::word>()>* manifestContent = nullptr);
 // Creates a new filesystem based on `sourceMap`. Whenever a file is opened (for the first time),
 // `callback` will be invoked with the (virtual) path name.
 //
-// `manifest` is used to populate the special file `/sandstorm-manifest`, and `bridgePath` is the
-// file that should be mapped as `/sandstorm-http-bridge`.
+// `manifest` is used to populate the special file `/sandstorm-manifest`, unless
+// `manifestContent` is provided, in which case it is called each time that file is inspected or
+// opened. `bridgePath` is the file that should be mapped as `/sandstorm-http-bridge`.
 //
 // `sourceMap` must remain valid until the returned node is destroyed.
 

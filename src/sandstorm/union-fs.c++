@@ -581,16 +581,89 @@ private:
   kj::Array<capnp::word> data;
 };
 
+class OwnedDataFile final: public fuse::File, public kj::Refcounted {
+public:
+  OwnedDataFile(kj::Array<capnp::word> data)
+      : data(kj::mv(data)),
+        bytes(kj::arrayPtr(reinterpret_cast<const kj::byte*>(this->data.begin()),
+                           this->data.size() * sizeof(capnp::word))) {}
+
+  kj::Own<fuse::File> addRef() override {
+    return kj::addRef(*this);
+  }
+
+protected:
+  kj::Array<uint8_t> read(uint64_t offset0, uint32_t size0) override {
+    auto offset = kj::min(bytes.size(), offset0);
+    auto size = kj::min(bytes.size() - offset, size0);
+    return kj::heapArray(bytes.slice(offset, offset + size));
+  }
+
+private:
+  kj::Array<capnp::word> data;
+  kj::ArrayPtr<const kj::byte> bytes;
+};
+
+class DynamicDataNode final: public fuse::Node, public kj::Refcounted {
+public:
+  DynamicDataNode(kj::Function<kj::Array<capnp::word>()>& contentFunc)
+      : contentFunc(contentFunc) {}
+
+  kj::Own<fuse::Node> addRef() override {
+    return kj::addRef(*this);
+  }
+
+protected:
+  kj::Maybe<LookupResults> lookup(kj::StringPtr name) override {
+    return nullptr;
+  }
+
+  GetAttributesResults getAttributes() override {
+    auto data = contentFunc();
+
+    auto result = GetAttributesResults {};
+    result.ttl = kj::SECONDS / kj::NANOSECONDS;
+    auto& attr = result.attributes;
+    attr.inodeNumber = 0;
+    attr.type = fuse::Node::Type::REGULAR;
+    attr.permissions = 0444;
+    attr.linkCount = 1;
+    attr.size = data.size() * sizeof(capnp::word);
+
+    return result;
+  }
+
+  kj::Maybe<kj::Own<fuse::File>> openAsFile() override {
+    kj::Own<fuse::File> result = kj::refcounted<OwnedDataFile>(contentFunc());
+    return kj::mv(result);
+  }
+
+  kj::Maybe<kj::Own<fuse::Directory>> openAsDirectory() override {
+    return nullptr;
+  }
+
+  kj::String readlink() override {
+    KJ_FAIL_REQUIRE("not a symlink");
+  }
+
+private:
+  kj::Function<kj::Array<capnp::word>()>& contentFunc;
+};
+
 }  // namespace
 
 kj::Own<fuse::Node> makeUnionFs(kj::StringPtr sourceDir, spk::SourceMap::Reader sourceMap,
                                spk::Manifest::Reader manifest,
                                spk::BridgeConfig::Reader bridgeConfig, kj::StringPtr bridgePath,
-                               kj::Function<void(kj::StringPtr)>& callback) {
+                               kj::Function<void(kj::StringPtr)>& callback,
+                               kj::Function<kj::Array<capnp::word>()>* manifestContent) {
   auto searchPath = sourceMap.getSearchPath();
   auto layers = kj::Vector<kj::Own<fuse::Node>>(searchPath.size() + 10);
 
-  {
+  if (manifestContent != nullptr) {
+    layers.add(kj::refcounted<SingletonNode>(
+        kj::refcounted<DynamicDataNode>(*manifestContent), "sandstorm-manifest"));
+  } else {
     capnp::MallocMessageBuilder manifestCopy(manifest.totalSize().wordCount + 4);
     manifestCopy.setRoot(manifest);
     layers.add(kj::refcounted<SingletonNode>(kj::refcounted<SimpleDataNode>(
