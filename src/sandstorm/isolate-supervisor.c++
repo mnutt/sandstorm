@@ -221,6 +221,23 @@ kj::StringPtr bindingTypeName(IsolateRuntimeConfig::BindingType type) {
   KJ_UNREACHABLE;
 }
 
+bool isImplementedBinding(IsolateRuntimeConfig::BindingType type) {
+  switch (type) {
+    case IsolateRuntimeConfig::BindingType::TEXT:
+    case IsolateRuntimeConfig::BindingType::DATA:
+    case IsolateRuntimeConfig::BindingType::JSON:
+    case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
+    case IsolateRuntimeConfig::BindingType::STORAGE:
+      return true;
+    case IsolateRuntimeConfig::BindingType::POWERBOX:
+    case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
+    case IsolateRuntimeConfig::BindingType::SERVICE:
+      return false;
+  }
+
+  KJ_UNREACHABLE;
+}
+
 kj::StringPtr moduleFileExtension(IsolateRuntimeConfig::ModuleType type) {
   switch (type) {
     case IsolateRuntimeConfig::ModuleType::ES_MODULE:
@@ -312,6 +329,9 @@ void validateIsolateRuntimeConfig(IsolateRuntimeConfig& config) {
   for (auto i: kj::indices(config.bindings)) {
     auto& binding = config.bindings[i];
     KJ_REQUIRE(binding.name.size() > 0, "Isolate binding is missing name.");
+    KJ_REQUIRE(isImplementedBinding(binding.type),
+        "Isolate binding type is declared in the manifest schema but is not implemented yet.",
+        binding.name, bindingTypeName(binding.type));
     if (binding.type == IsolateRuntimeConfig::BindingType::SERVICE) {
       KJ_REQUIRE(binding.serviceName.size() > 0, "Isolate service binding is missing service name.",
           binding.name);
