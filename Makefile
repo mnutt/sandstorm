@@ -24,7 +24,7 @@ BUILD=0
 PARALLEL=$(shell nproc)
 LIBS=
 EKAM=ekam
-WORKERD_NPM_VERSION=latest
+WORKERD_NPM_VERSION=1.20260610.1
 WORKERD_BIN=
 
 # You generally should not modify this.
@@ -263,9 +263,11 @@ deps/libsodium/build/src/libsodium/.libs/libsodium.a: deps/libsodium/build/Makef
 
 tmp/.workerd-npm:
 	@$(call color,installing npm workerd)
+	rm -rf tmp/workerd-npm
 	@mkdir -p tmp/workerd-npm
 	@printf '{"private":true}\n' > tmp/workerd-npm/package.json
 	cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund --no-save workerd@$(WORKERD_NPM_VERSION)
+	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./node_modules/workerd/package.json").version')" = "$(WORKERD_NPM_VERSION)"
 	@test -e tmp/workerd-npm/node_modules/.bin/workerd
 	@touch $@
 
