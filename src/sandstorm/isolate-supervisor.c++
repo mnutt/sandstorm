@@ -1726,6 +1726,7 @@ int runConfinedWorkerdSidecar(
     kj::Array<kj::String> argvStrings,
     kj::Array<kj::String> environment,
     kj::String trustedWorkerd,
+    kj::String workerdBundleDir,
     kj::Maybe<uid_t> sandboxUid);
 
 class WorkerdSidecarProcess final {
@@ -1752,9 +1753,11 @@ public:
     process = Subprocess([argvStrings = kj::mv(argvStrings),
                           childEnvStrings = kj::mv(childEnvStrings),
                           trustedWorkerd = kj::mv(trustedWorkerd),
+                          workerdBundleDir = kj::heapString(runtimeConfig.workerdBundleDir),
                           sandboxUid]() mutable {
       return runConfinedWorkerdSidecar(
-          kj::mv(argvStrings), kj::mv(childEnvStrings), kj::mv(trustedWorkerd), sandboxUid);
+          kj::mv(argvStrings), kj::mv(childEnvStrings), kj::mv(trustedWorkerd),
+          kj::mv(workerdBundleDir), sandboxUid);
     });
 
     KJ_IF_MAYBE(p, process) {
@@ -2012,6 +2015,38 @@ void setupSidecarStdio() {
   KJ_SYSCALL(dup2(devNullOut, STDOUT_FILENO));
 }
 
+void closeUnexpectedSidecarFds() {
+  kj::Vector<int> fds;
+  DIR* dir = opendir("/proc/self/fd");
+  if (dir == nullptr) {
+    KJ_FAIL_SYSCALL("opendir(/proc/self/fd)", errno);
+  }
+  KJ_DEFER(KJ_SYSCALL(closedir(dir)) { break; });
+
+  for (;;) {
+    errno = 0;
+    auto entry = readdir(dir);
+    if (entry == nullptr) {
+      if (errno != 0) {
+        KJ_FAIL_SYSCALL("readdir(/proc/self/fd)", errno);
+      }
+      break;
+    }
+
+    if (entry->d_name[0] != '.') {
+      char* end;
+      int fd = strtoul(entry->d_name, &end, 10);
+      if (*end == '\0' && end > entry->d_name && fd > STDERR_FILENO && fd != dirfd(dir)) {
+        fds.add(fd);
+      }
+    }
+  }
+
+  for (auto fd: fds) {
+    close(fd);
+  }
+}
+
 void setupSidecarResourceLimits() {
   struct rlimit nofile;
   memset(&nofile, 0, sizeof(nofile));
@@ -2030,20 +2065,107 @@ void finishSidecarNamespaceSetup() {
   KJ_SYSCALL(setdomainname("sandbox", 7));
 }
 
-void trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
+void sidecarBind(kj::StringPtr src, kj::StringPtr dst, unsigned long flags) {
+  KJ_SYSCALL(mount(src.cStr(), dst.cStr(), nullptr, MS_BIND | MS_REC, nullptr), src, dst);
+  KJ_SYSCALL(mount(src.cStr(), dst.cStr(), nullptr,
+      MS_BIND | MS_REC | MS_REMOUNT | flags, nullptr), src, dst);
+}
+
+kj::String sidecarRootPath(kj::StringPtr absolutePath) {
+  KJ_REQUIRE(absolutePath.startsWith("/"), "Expected absolute sidecar path.", absolutePath);
+  if (absolutePath == "/") {
+    return kj::heapString("/tmp");
+  } else {
+    return kj::str("/tmp", absolutePath);
+  }
+}
+
+void ensureSidecarDirectory(kj::StringPtr path, mode_t mode = 0755) {
+  if (mkdir(path.cStr(), mode) != 0) {
+    int error = errno;
+    if (error != EEXIST) {
+      KJ_FAIL_SYSCALL("mkdir", error, path);
+    }
+  }
+}
+
+void bindSidecarDirectory(kj::StringPtr src, unsigned long flags) {
+  if (access(src.cStr(), F_OK) != 0) {
+    int error = errno;
+    if (error == ENOENT || error == ENOTDIR) {
+      return;
+    }
+    KJ_FAIL_SYSCALL("access", error, src);
+  }
+
+  auto dst = sidecarRootPath(src);
+  recursivelyCreateParent(dst);
+  ensureSidecarDirectory(dst);
+  sidecarBind(src, dst, flags);
+}
+
+void bindSidecarFile(kj::StringPtr src, unsigned long flags) {
+  if (access(src.cStr(), F_OK) != 0) {
+    int error = errno;
+    if (error == ENOENT || error == ENOTDIR) {
+      return;
+    }
+    KJ_FAIL_SYSCALL("access", error, src);
+  }
+
+  auto dst = sidecarRootPath(src);
+  recursivelyCreateParent(dst);
+  KJ_SYSCALL(mknod(dst.cStr(), S_IFREG | 0644, 0), dst);
+  sidecarBind(src, dst, flags);
+}
+
+void setupSidecarMountRoot(kj::StringPtr trustedWorkerd, kj::StringPtr workerdBundleDir) {
+  auto oldUmask = umask(0);
+  KJ_DEFER(umask(oldUmask));
+
+  KJ_SYSCALL(mount("sandstorm-isolate-sidecar-root", "/tmp", "tmpfs",
+      MS_NOSUID | MS_NODEV, "size=64m,nr_inodes=4096,mode=755"));
+
+  ensureSidecarDirectory("/tmp/tmp", 0777);
+  ensureSidecarDirectory("/tmp/dev", 0755);
+  KJ_SYSCALL(mount("sandstorm-isolate-sidecar-dev", "/tmp/dev", "tmpfs",
+      MS_NOATIME | MS_NOSUID | MS_NOEXEC, "size=1m,nr_inodes=16,mode=755"));
+  bindSidecarFile("/dev/null", MS_NOSUID | MS_NOEXEC);
+  bindSidecarFile("/dev/zero", MS_NOSUID | MS_NOEXEC);
+  bindSidecarFile("/dev/random", MS_NOSUID | MS_NOEXEC);
+  bindSidecarFile("/dev/urandom", MS_NOSUID | MS_NOEXEC);
+  KJ_SYSCALL(mount("/tmp/dev", "/tmp/dev", nullptr,
+      MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NOEXEC, nullptr));
+
+  bindSidecarDirectory(workerdBundleDir, MS_NOSUID | MS_NODEV);
+  bindSidecarFile(trustedWorkerd, MS_RDONLY | MS_NOSUID | MS_NODEV);
+
+  bindSidecarDirectory("/lib", MS_RDONLY | MS_NOSUID | MS_NODEV);
+  bindSidecarDirectory("/lib64", MS_RDONLY | MS_NOSUID | MS_NODEV);
+  bindSidecarDirectory("/usr/lib", MS_RDONLY | MS_NOSUID | MS_NODEV);
+  bindSidecarDirectory("/usr/lib64", MS_RDONLY | MS_NOSUID | MS_NODEV);
+  bindSidecarDirectory("/workerd", MS_RDONLY | MS_NOSUID | MS_NODEV);
+  bindSidecarFile("/etc/ld.so.cache", MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV);
+
+  KJ_SYSCALL(chroot("/tmp"));
+  KJ_SYSCALL(chdir("/"));
+  KJ_LOG(WARNING, "Isolate sidecar entered minimal mount root.",
+      trustedWorkerd, workerdBundleDir);
+}
+
+bool trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
   KJ_IF_MAYBE(u, sandboxUid) {
     if (unshare(CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS) < 0) {
       int error = errno;
       KJ_LOG(WARNING,
           "Could not enter privileged isolate sidecar namespaces; continuing with seccomp only.",
           error, strerror(error));
+      return false;
     } else {
       finishSidecarNamespaceSetup();
       KJ_LOG(WARNING, "Isolate sidecar entered private network/mount/ipc/uts namespaces.");
+      return true;
     }
-
-    KJ_SYSCALL(setresuid(*u, *u, *u));
-    return;
   }
 
   uid_t realUid = getuid();
@@ -2053,12 +2175,13 @@ void trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
     int error = errno;
     KJ_LOG(WARNING, "Could not enter isolate sidecar namespaces; continuing with seccomp only.",
         error, strerror(error));
-    return;
+    return false;
   }
 
   sandbox::hideUserGroupIds(realUid, realGid, false);
   finishSidecarNamespaceSetup();
   KJ_LOG(WARNING, "Isolate sidecar entered private user/network/mount/ipc/uts namespaces.");
+  return true;
 }
 
 void setupSidecarSeccomp() {
@@ -2159,11 +2282,19 @@ int runConfinedWorkerdSidecar(
     kj::Array<kj::String> argvStrings,
     kj::Array<kj::String> environment,
     kj::String trustedWorkerd,
+    kj::String workerdBundleDir,
     kj::Maybe<uid_t> sandboxUid) {
   resetSignalHandlersForExec();
   setupSidecarParentDeathSignal();
   setupSidecarStdio();
-  trySetupSidecarNamespaces(sandboxUid);
+  closeUnexpectedSidecarFds();
+  bool hasPrivateNamespaces = trySetupSidecarNamespaces(sandboxUid);
+  if (hasPrivateNamespaces) {
+    setupSidecarMountRoot(trustedWorkerd, workerdBundleDir);
+  }
+  KJ_IF_MAYBE(u, sandboxUid) {
+    KJ_SYSCALL(setresuid(*u, *u, *u));
+  }
   setupSidecarResourceLimits();
   KJ_SYSCALL(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
   setupSidecarSeccomp();
