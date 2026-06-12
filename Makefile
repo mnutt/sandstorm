@@ -262,7 +262,8 @@ deps/libsodium/build/src/libsodium/.libs/libsodium.a: deps/libsodium/build/Makef
 # ====================================================================
 # fetch/build workerd
 
-tmp/.workerd-npm:
+tmp/.workerd-npm: $(WORKERD_NPM_PACKAGE_DIR)/package.json \
+    $(wildcard $(WORKERD_NPM_PACKAGE_DIR)/package-lock.json)
 	@$(call color,installing npm workerd)
 	rm -rf tmp/workerd-npm
 	@mkdir -p tmp/workerd-npm
