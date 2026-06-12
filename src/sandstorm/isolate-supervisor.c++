@@ -1273,6 +1273,11 @@ kj::Maybe<ParsedETag> parseFetchETag(kj::StringPtr input) {
   return kj::mv(result);
 }
 
+void copyFetchETag(ParsedETag& input, WebSession::ETag::Builder output) {
+  output.setValue(input.value);
+  output.setWeak(input.weak);
+}
+
 kj::Maybe<kj::String> parseFetchDownloadFilename(kj::StringPtr disposition) {
   auto parts = split(disposition, ';');
   if (parts.size() <= 1) {
@@ -1338,9 +1343,14 @@ void writeFetchResponse(FetchResponse&& response, WebSession::Response::Builder 
     noContent.setShouldResetForm(response.statusCode == 205);
     KJ_IF_MAYBE(etag, findFetchResponseHeader(response.headers, "etag")) {
       KJ_IF_MAYBE(parsed, parseFetchETag(*etag)) {
-        auto output = noContent.initETag();
-        output.setValue(parsed->value);
-        output.setWeak(parsed->weak);
+        copyFetchETag(*parsed, noContent.initETag());
+      }
+    }
+  } else if (response.statusCode == 304 || response.statusCode == 412) {
+    auto preconditionFailed = builder.initPreconditionFailed();
+    KJ_IF_MAYBE(etag, findFetchResponseHeader(response.headers, "etag")) {
+      KJ_IF_MAYBE(parsed, parseFetchETag(*etag)) {
+        copyFetchETag(*parsed, preconditionFailed.initMatchingETag());
       }
     }
   } else if (response.statusCode == 301 || response.statusCode == 302 ||
@@ -1367,9 +1377,7 @@ void writeFetchResponse(FetchResponse&& response, WebSession::Response::Builder 
     }
     KJ_IF_MAYBE(etag, findFetchResponseHeader(response.headers, "etag")) {
       KJ_IF_MAYBE(parsed, parseFetchETag(*etag)) {
-        auto output = content.initETag();
-        output.setValue(parsed->value);
-        output.setWeak(parsed->weak);
+        copyFetchETag(*parsed, content.initETag());
       }
     }
     KJ_IF_MAYBE(disposition, findFetchResponseHeader(response.headers, "content-disposition")) {
