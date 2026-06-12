@@ -1068,6 +1068,7 @@ struct FetchRequest {
   kj::String path;
   kj::String mimeType;
   kj::String encoding;
+  kj::Maybe<uint64_t> expectedBodySize;
   kj::Array<byte> body;
   kj::Vector<FetchHeader> headers;
 };
@@ -1075,9 +1076,10 @@ struct FetchRequest {
 struct FetchResponse {
   uint statusCode = 200;
   kj::String mimeType = kj::heapString("text/plain; charset=utf-8");
-  kj::Array<byte> body;
-  kj::Maybe<kj::Own<kj::AsyncInputStream>> bodyStream;
+  // Must be declared before bodyStream so the stream is destroyed before the state it depends on.
   kj::Maybe<kj::Own<FetchResponseBodyAnchor>> bodyStreamAnchor;
+  kj::Maybe<kj::Own<kj::AsyncInputStream>> bodyStream;
+  kj::Array<byte> body;
   kj::Vector<FetchHeader> headers;
 };
 
@@ -1087,6 +1089,7 @@ struct ParsedETag {
 };
 
 constexpr uint64_t MAX_SIDECAR_RESPONSE_BYTES = 64 * 1024 * 1024;
+constexpr uint64_t SIDECAR_RESPONSE_STREAM_THRESHOLD_BYTES = 64 * 1024;
 constexpr uint SIDECAR_READY_TIMEOUT_MS = 10000;
 constexpr uint SIDECAR_READY_POLL_MS = 50;
 constexpr uint SIDECAR_SHUTDOWN_TIMEOUT_MS = 2000;
@@ -1140,18 +1143,21 @@ FetchRequest makeFetchRequest(
   return request;
 }
 
-template <typename ContentReader>
-void setFetchRequestBody(FetchRequest& request, ContentReader content) {
-  request.mimeType = kj::heapString(content.getMimeType());
-  request.encoding = kj::heapString(content.getEncoding());
-  request.body = kj::heapArray<byte>(content.getContent());
-
+void setFetchRequestBodyHeaders(FetchRequest& request, kj::StringPtr mimeType, kj::StringPtr encoding) {
+  request.mimeType = kj::heapString(mimeType);
+  request.encoding = kj::heapString(encoding);
   if (request.mimeType.size() > 0) {
     addHeader(request, "content-type", request.mimeType);
   }
   if (request.encoding.size() > 0) {
     addHeader(request, "content-encoding", request.encoding);
   }
+}
+
+template <typename ContentReader>
+void setFetchRequestBody(FetchRequest& request, ContentReader content) {
+  setFetchRequestBodyHeaders(request, content.getMimeType(), content.getEncoding());
+  request.body = kj::heapArray<byte>(content.getContent());
 }
 
 WebSession::Response::SuccessCode successCodeForStatus(uint statusCode) {
@@ -1354,16 +1360,37 @@ kj::Maybe<kj::StringPtr> findFetchResponseHeader(
   return nullptr;
 }
 
+bool shouldStreamSidecarResponse(uint statusCode, kj::Vector<FetchHeader>& headers) {
+  if (!isFetchContentStatus(statusCode)) {
+    return false;
+  }
+
+  KJ_IF_MAYBE(contentLength, findFetchResponseHeader(headers, "content-length")) {
+    KJ_IF_MAYBE(size, parseUInt64(*contentLength, 10)) {
+      return *size > SIDECAR_RESPONSE_STREAM_THRESHOLD_BYTES;
+    }
+  }
+
+  return false;
+}
+
 class FetchResponseStreamHandle final: public Handle::Server, private kj::TaskSet::ErrorHandler {
 public:
   FetchResponseStreamHandle(
-      kj::Own<kj::AsyncInputStream> bodyStream, ByteStream::Client responseStream,
-      kj::Maybe<kj::Own<FetchResponseBodyAnchor>> bodyStreamAnchor)
-      : bodyStream(kj::mv(bodyStream)),
+      kj::Maybe<kj::Own<FetchResponseBodyAnchor>> bodyStreamAnchor,
+      kj::Own<kj::AsyncInputStream> bodyStream, ByteStream::Client responseStream)
+      : bodyStreamAnchor(kj::mv(bodyStreamAnchor)),
+        bodyStream(kj::mv(bodyStream)),
         responseStream(kj::mv(responseStream)),
-        bodyStreamAnchor(kj::mv(bodyStreamAnchor)),
         tasks(*this) {
-    tasks.add(pump(*this->bodyStream, this->responseStream));
+    KJ_LOG(WARNING, "Starting isolate response body stream.");
+    tasks.add(kj::evalLater([this]() {
+      return pump(*this->bodyStream, this->responseStream);
+    }));
+  }
+
+  ~FetchResponseStreamHandle() noexcept(false) {
+    KJ_LOG(WARNING, "Destroying isolate response body stream handle.");
   }
 
   kj::Promise<void> ping(PingContext context) override {
@@ -1371,10 +1398,10 @@ public:
   }
 
 private:
+  // Must be declared before bodyStream so the stream is destroyed before the sidecar HTTP state.
+  kj::Maybe<kj::Own<FetchResponseBodyAnchor>> bodyStreamAnchor;
   kj::Own<kj::AsyncInputStream> bodyStream;
   ByteStream::Client responseStream;
-  // Holds the sidecar HTTP client/address state alive for as long as the response body streams.
-  kj::Maybe<kj::Own<FetchResponseBodyAnchor>> bodyStreamAnchor;
   kj::TaskSet tasks;
 
   void taskFailed(kj::Exception&& exception) override {
@@ -1438,7 +1465,7 @@ void writeFetchResponse(
       KJ_IF_MAYBE(bodyStream, response.bodyStream) {
         auto anchor = kj::mv(response.bodyStreamAnchor);
         content.initBody().setStream(kj::heap<FetchResponseStreamHandle>(
-            kj::mv(*bodyStream), kj::mv(responseStream), kj::mv(anchor)));
+            kj::mv(anchor), kj::mv(*bodyStream), kj::mv(responseStream)));
       } else if (response.body.size() > 0) {
         content.initBody().setBytes(response.body);
       }
@@ -1481,6 +1508,8 @@ class IsolateRuntimeAdapter {
 public:
   virtual ~IsolateRuntimeAdapter() noexcept(false) {}
   virtual kj::Promise<FetchResponse> fetch(FetchRequest&& request) = 0;
+  virtual kj::Own<WebSession::RequestStream::Server> startRequestStream(
+      FetchRequest&& request, ByteStream::Client responseStream) = 0;
 };
 
 class WorkerdRuntimeAdapter final: public IsolateRuntimeAdapter {
@@ -1501,10 +1530,17 @@ public:
     return fetchPlaceholder(kj::mv(request), "sidecar endpoint not configured");
   }
 
+  kj::Own<WebSession::RequestStream::Server> startRequestStream(
+      FetchRequest&& request, ByteStream::Client responseStream) override;
+
 private:
-  struct SidecarHttpState final: public FetchResponseBodyAnchor {
+  class StreamingRequestImpl;
+
+  struct SidecarHttpState final: public FetchResponseBodyAnchor, public kj::Refcounted {
     kj::Own<kj::NetworkAddress> addr;
     kj::Own<kj::HttpClient> client;
+    kj::Own<kj::AsyncOutputStream> requestBody;
+    kj::Promise<kj::HttpClient::Response> response = nullptr;
     kj::Maybe<kj::Own<kj::AsyncInputStream>> responseBody;
 
     SidecarHttpState(kj::Own<kj::NetworkAddress>&& addr, kj::Own<kj::HttpClient>&& client)
@@ -1533,13 +1569,13 @@ private:
     return response;
   }
 
-  void copyHeadersToHttp(FetchRequest& request, kj::HttpHeaders& headers) {
+  static void copyHeadersToHttp(FetchRequest& request, kj::HttpHeaders& headers) {
     for (auto& header: request.headers) {
       headers.add(header.name, header.value);
     }
   }
 
-  kj::Promise<FetchResponse> readSidecarResponse(
+  static kj::Promise<FetchResponse> readSidecarResponse(
       kj::HttpClient::Response&& response, kj::Own<SidecarHttpState> state) {
     FetchResponse result;
     result.statusCode = response.statusCode;
@@ -1561,9 +1597,9 @@ private:
       return kj::mv(result);
     }
 
-    if (isFetchContentStatus(result.statusCode)) {
-      result.bodyStream = kj::mv(response.body);
+    if (shouldStreamSidecarResponse(result.statusCode, result.headers)) {
       result.bodyStreamAnchor = kj::mv(state);
+      result.bodyStream = kj::mv(response.body);
       KJ_LOG(WARNING, "Isolate sidecar streaming response received.",
           result.statusCode, result.mimeType);
       return kj::mv(result);
@@ -1580,13 +1616,151 @@ private:
     });
   }
 
+  class StreamingRequestImpl final: public WebSession::RequestStream::Server {
+  public:
+    StreamingRequestImpl(
+        kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
+        FetchRequest&& request, ByteStream::Client responseStream)
+        : config(kj::mv(config)),
+          host(kj::mv(host)),
+          request(kj::mv(request)),
+          responseStream(kj::mv(responseStream)),
+          started(start().fork()),
+          writeQueue(started.addBranch()) {
+      expectedSize = this->request.expectedBodySize;
+    }
+
+    kj::Promise<void> write(WriteContext context) override {
+      KJ_REQUIRE(!doneCalled, "write() called after done()");
+      auto data = kj::heapArray<byte>(context.getParams().getData());
+      auto previousBytesReceived = bytesReceived;
+      bytesReceived += data.size();
+      ++writeCalls;
+      if (writeCalls <= 3 ||
+          previousBytesReceived / (1024 * 1024) != bytesReceived / (1024 * 1024)) {
+        KJ_LOG(WARNING, "Isolate streaming request body write.",
+            fetchMethodName(request.method), request.path, data.size(), bytesReceived);
+      }
+      KJ_IF_MAYBE(size, expectedSize) {
+        KJ_REQUIRE(bytesReceived <= *size, "received more bytes than expected");
+      }
+
+      auto promise = writeQueue.then([this, data = kj::mv(data)]() mutable {
+        auto& current = KJ_ASSERT_NONNULL(state);
+        KJ_REQUIRE(current->requestBody.get() != nullptr, "streaming request body is closed");
+        return current->requestBody->write(data.begin(), data.size()).attach(kj::mv(data));
+      });
+      auto fork = promise.fork();
+      writeQueue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+    kj::Promise<void> done(DoneContext context) override {
+      KJ_REQUIRE(!doneCalled, "done() called twice");
+      KJ_IF_MAYBE(size, expectedSize) {
+        KJ_REQUIRE(bytesReceived == *size,
+            "done() called before all bytes expected via expectSize() were written");
+      }
+
+      doneCalled = true;
+      KJ_LOG(WARNING, "Isolate streaming request body done.",
+          fetchMethodName(request.method), request.path, bytesReceived);
+      auto promise = writeQueue.then([this]() {
+        auto& current = KJ_ASSERT_NONNULL(state);
+        current->requestBody = nullptr;
+      });
+      auto fork = promise.fork();
+      writeQueue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+    kj::Promise<void> expectSize(ExpectSizeContext context) override {
+      auto size = bytesReceived + context.getParams().getSize();
+      KJ_IF_MAYBE(expected, expectedSize) {
+        KJ_REQUIRE(*expected == size, "expectSize() disagrees with expected streaming request size");
+      }
+      expectedSize = size;
+      KJ_LOG(WARNING, "Isolate streaming request body expected size.",
+          fetchMethodName(request.method), request.path, size);
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<void> getResponse(GetResponseContext context) override {
+      KJ_REQUIRE(!responseCalled, "getResponse() called more than once");
+      responseCalled = true;
+
+      KJ_LOG(WARNING, "Isolate streaming request response requested.",
+          fetchMethodName(request.method), request.path);
+      auto results = context.getResults();
+      auto stream = kj::mv(responseStream);
+      return started.addBranch().then([this, results, stream = kj::mv(stream)]() mutable {
+        auto& current = KJ_ASSERT_NONNULL(state);
+        auto response = kj::mv(current->response);
+        auto responseState = kj::addRef(*current);
+        return response.then([results, responseState = kj::mv(responseState),
+            stream = kj::mv(stream)](
+            kj::HttpClient::Response&& response) mutable {
+          return readSidecarResponse(kj::mv(response), kj::mv(responseState))
+              .then([results, stream = kj::mv(stream)](
+                  FetchResponse&& fetchResponse) mutable {
+            writeFetchResponse(kj::mv(fetchResponse), results, kj::mv(stream));
+          });
+        });
+      });
+    }
+
+  private:
+    kj::Own<IsolateRuntimeConfig> config;
+    kj::Own<IsolateRuntimeHost> host;
+    FetchRequest request;
+    ByteStream::Client responseStream;
+    kj::Maybe<kj::Own<SidecarHttpState>> state;
+    kj::ForkedPromise<void> started;
+    kj::Promise<void> writeQueue;
+    kj::Maybe<uint64_t> expectedSize;
+    uint64_t bytesReceived = 0;
+    uint64_t writeCalls = 0;
+    bool doneCalled = false;
+    bool responseCalled = false;
+
+    kj::Promise<void> start() {
+      KJ_LOG(WARNING, "Starting streaming isolate request to sidecar.",
+          fetchMethodName(request.method), request.path);
+      return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
+          .then([this](kj::Own<kj::NetworkAddress>&& addr) mutable {
+        auto client = kj::newHttpClient(host->timer, host->headerTable, *addr);
+        auto newState = kj::refcounted<SidecarHttpState>(kj::mv(addr), kj::mv(client));
+        kj::HttpHeaders headers(host->headerTable);
+        copyHeadersToHttp(request, headers);
+        KJ_LOG(WARNING, "Prepared isolate sidecar streaming request headers.",
+            fetchMethodName(request.method), request.path, request.headers.size());
+
+        KJ_IF_MAYBE(size, request.expectedBodySize) {
+          KJ_LOG(WARNING, "Opening isolate sidecar streaming request with content length.",
+              fetchMethodName(request.method), request.path, *size);
+        } else {
+          KJ_LOG(WARNING, "Opening isolate sidecar streaming request with chunked body.",
+              fetchMethodName(request.method), request.path);
+        }
+
+        auto httpRequest = newState->client->request(
+            toHttpMethod(request.method), request.path, headers, request.expectedBodySize);
+        KJ_REQUIRE(httpRequest.body.get() != nullptr,
+            "streaming request did not produce a request body stream");
+        newState->requestBody = kj::mv(httpRequest.body);
+        newState->response = kj::mv(httpRequest.response);
+        state = kj::mv(newState);
+      });
+    }
+  };
+
   kj::Promise<FetchResponse> fetchFromSidecar(FetchRequest&& request) {
     KJ_LOG(WARNING, "Forwarding isolate request to sidecar.",
         fetchMethodName(request.method), request.path, request.body.size());
     return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
         .then([this, request = kj::mv(request)](kj::Own<kj::NetworkAddress>&& addr) mutable {
       auto client = kj::newHttpClient(host->timer, host->headerTable, *addr);
-      auto state = kj::heap<SidecarHttpState>(kj::mv(addr), kj::mv(client));
+      auto state = kj::refcounted<SidecarHttpState>(kj::mv(addr), kj::mv(client));
       kj::HttpHeaders headers(host->headerTable);
       copyHeadersToHttp(request, headers);
 
@@ -1602,13 +1776,13 @@ private:
             .attach(kj::mv(requestBody), kj::mv(body))
             .then([response = kj::mv(response)]() mutable {
           return kj::mv(response);
-        }).then([this, state = kj::mv(state)](
+        }).then([state = kj::mv(state)](
             kj::HttpClient::Response&& response) mutable {
           return readSidecarResponse(kj::mv(response), kj::mv(state));
         });
       }
 
-      return response.then([this, state = kj::mv(state)](
+      return response.then([state = kj::mv(state)](
           kj::HttpClient::Response&& response) mutable {
         return readSidecarResponse(kj::mv(response), kj::mv(state));
       });
@@ -1663,6 +1837,13 @@ private:
     return kj::mv(response);
   }
 };
+
+kj::Own<WebSession::RequestStream::Server> WorkerdRuntimeAdapter::startRequestStream(
+    FetchRequest&& request, ByteStream::Client responseStream) {
+  KJ_REQUIRE(isSidecarSocketAvailable(), "isolate sidecar socket is not available");
+  return kj::heap<StreamingRequestImpl>(
+      kj::addRef(*config), kj::addRef(*host), kj::mv(request), kj::mv(responseStream));
+}
 
 kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
     kj::StringPtr pkgPath, kj::Maybe<kj::StringPtr> requestedMainModule,
@@ -1752,12 +1933,40 @@ public:
     return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
+  kj::Promise<void> postStreaming(PostStreamingContext context) override {
+    auto params = context.getParams();
+    auto request = makeFetchRequest(FetchMethod::POST, prefixedPath(params.getPath()),
+        params.getContext());
+    setFetchRequestBodyHeaders(request, params.getMimeType(), params.getEncoding());
+    if (params.getExpectedSize() > 0) {
+      request.expectedBodySize = params.getExpectedSize();
+    }
+    addSessionHeaders(request);
+    context.getResults().setStream(runtime->startRequestStream(
+        kj::mv(request), params.getContext().getResponseStream()));
+    return kj::READY_NOW;
+  }
+
   kj::Promise<void> put(PutContext context) override {
     auto params = context.getParams();
     auto request = makeFetchRequest(FetchMethod::PUT, prefixedPath(params.getPath()),
         params.getContext());
     setFetchRequestBody(request, params.getContent());
     return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
+  }
+
+  kj::Promise<void> putStreaming(PutStreamingContext context) override {
+    auto params = context.getParams();
+    auto request = makeFetchRequest(FetchMethod::PUT, prefixedPath(params.getPath()),
+        params.getContext());
+    setFetchRequestBodyHeaders(request, params.getMimeType(), params.getEncoding());
+    if (params.getExpectedSize() > 0) {
+      request.expectedBodySize = params.getExpectedSize();
+    }
+    addSessionHeaders(request);
+    context.getResults().setStream(runtime->startRequestStream(
+        kj::mv(request), params.getContext().getResponseStream()));
+    return kj::READY_NOW;
   }
 
   kj::Promise<void> delete_(DeleteContext context) override {
