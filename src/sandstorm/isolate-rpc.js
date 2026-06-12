@@ -4,7 +4,6 @@ const RPC_TARGET_MARKER = "__sandstormRpcTarget";
 const targets = new Map();
 const targetIds = new WeakMap();
 const targetRefcounts = new Map();
-let nextTargetId = 1;
 
 export class RpcTarget {}
 
@@ -31,6 +30,20 @@ class RpcError extends Error {
   }
 }
 
+function randomTargetId() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  if (globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  throw new Error("secure random target IDs are unavailable");
+}
+
 function findRpcMethod(target, method) {
   if (!(target instanceof RpcTarget)) {
     throw new Error("RPC target must extend RpcTarget");
@@ -51,7 +64,7 @@ function findRpcMethod(target, method) {
 function registerTarget(target) {
   let id = targetIds.get(target);
   if (!id) {
-    id = String(nextTargetId++);
+    id = randomTargetId();
     targetIds.set(target, id);
     targets.set(id, target);
     targetRefcounts.set(id, 0);
