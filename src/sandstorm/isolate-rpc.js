@@ -3,6 +3,7 @@ const RPC_TARGET_MARKER = "__sandstormRpcTarget";
 
 const targets = new Map();
 const targetIds = new WeakMap();
+const targetRefcounts = new Map();
 let nextTargetId = 1;
 
 export class RpcTarget {}
@@ -53,8 +54,28 @@ function registerTarget(target) {
     id = String(nextTargetId++);
     targetIds.set(target, id);
     targets.set(id, target);
+    targetRefcounts.set(id, 0);
   }
+  targetRefcounts.set(id, (targetRefcounts.get(id) || 0) + 1);
   return id;
+}
+
+function releaseTarget(id) {
+  id = String(id);
+  const target = targets.get(id);
+  if (!target) return;
+
+  const remaining = (targetRefcounts.get(id) || 1) - 1;
+  if (remaining > 0) {
+    targetRefcounts.set(id, remaining);
+    return;
+  }
+
+  targets.delete(id);
+  targetRefcounts.delete(id);
+  if (typeof target[Symbol.dispose] === "function") {
+    target[Symbol.dispose]();
+  }
 }
 
 function lookupTarget(id) {
@@ -145,7 +166,7 @@ export async function newWorkersRpcResponse(request, target, options = {}) {
     const id = call && Object.prototype.hasOwnProperty.call(call, "id") ? call.id : null;
     try {
       if (call.dispose) {
-        targets.delete(String(call.targetId));
+        releaseTarget(call.targetId);
         results.push({ id, ok: true, value: null });
       } else {
         const callTargetObject = call && call.targetId ? lookupTarget(call.targetId) : target;
@@ -204,14 +225,19 @@ export function newHttpBatchRpcSession(endpoint, fetchImpl = fetch) {
   }
 
   function makeStub(targetId = null) {
+    let disposed = false;
     const stub = new Proxy({}, {
       get(_target, property) {
         if (property === Symbol.dispose) {
           return () => {
-            if (targetId !== null) {
+            if (targetId !== null && !disposed) {
+              disposed = true;
               enqueue({ targetId, dispose: true });
             }
           };
+        }
+        if (disposed) {
+          throw new Error("RPC stub is disposed");
         }
         if (property === "then") {
           return undefined;
@@ -353,14 +379,19 @@ export function newHttpBatchRpcSession(endpoint) {
   }
 
   function makeStub(targetId = null) {
+    let disposed = false;
     const stub = new Proxy({}, {
       get(_target, property) {
         if (property === Symbol.dispose) {
           return () => {
-            if (targetId !== null) {
+            if (targetId !== null && !disposed) {
+              disposed = true;
               enqueue({ targetId, dispose: true });
             }
           };
+        }
+        if (disposed) {
+          throw new Error("RPC stub is disposed");
         }
         if (property === "then") {
           return undefined;
