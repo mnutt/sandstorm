@@ -864,6 +864,26 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   return bundleDir;
 }
 
+void prepareRuntimeBundleAndCleanupSockets(kj::StringPtr varPath, IsolateRuntimeConfig& config) {
+  config.workerdBundleDir = prepareWorkerdBundle(varPath, config);
+  config.workerdConfigPath = kj::str(config.workerdBundleDir, "/workerd.capnp");
+  config.workerdSocketPath = kj::str(config.workerdBundleDir, "/workerd.sock");
+  unlinkIfExists(config.workerdSocketPath);
+  unlinkIfExists(config.sandstormApiSocketPath);
+  unlinkIfExists(config.storageSocketPath);
+}
+
+void prepareRuntimeBundleAsSandboxUser(
+    kj::StringPtr varPath, IsolateRuntimeConfig& config, kj::Maybe<uid_t> sandboxUid) {
+  KJ_IF_MAYBE(u, sandboxUid) {
+    KJ_SYSCALL(seteuid(*u));
+    KJ_DEFER(KJ_SYSCALL(seteuid(0)));
+    prepareRuntimeBundleAndCleanupSockets(varPath, config);
+  } else {
+    prepareRuntimeBundleAndCleanupSockets(varPath, config);
+  }
+}
+
 enum class FetchMethod {
   GET,
   HEAD,
@@ -1705,14 +1725,16 @@ void requireAllowedSidecarCommand(
 int runConfinedWorkerdSidecar(
     kj::Array<kj::String> argvStrings,
     kj::Array<kj::String> environment,
-    kj::String trustedWorkerd);
+    kj::String trustedWorkerd,
+    kj::Maybe<uid_t> sandboxUid);
 
 class WorkerdSidecarProcess final {
 public:
   WorkerdSidecarProcess(
       kj::ArrayPtr<const kj::String> runtimeArgs,
       kj::ArrayPtr<const kj::String> environment,
-      IsolateRuntimeConfig& runtimeConfig) {
+      IsolateRuntimeConfig& runtimeConfig,
+      kj::Maybe<uid_t> sandboxUid) {
     if (runtimeArgs.size() == 0) {
       KJ_LOG(WARNING, "No isolate sidecar command configured; runtime remains in diagnostics mode.",
           runtimeConfig.workerdBundleDir, runtimeConfig.workerdSocketPath);
@@ -1729,9 +1751,10 @@ public:
     auto trustedWorkerdForLog = kj::str(trustedWorkerd);
     process = Subprocess([argvStrings = kj::mv(argvStrings),
                           childEnvStrings = kj::mv(childEnvStrings),
-                          trustedWorkerd = kj::mv(trustedWorkerd)]() mutable {
+                          trustedWorkerd = kj::mv(trustedWorkerd),
+                          sandboxUid]() mutable {
       return runConfinedWorkerdSidecar(
-          kj::mv(argvStrings), kj::mv(childEnvStrings), kj::mv(trustedWorkerd));
+          kj::mv(argvStrings), kj::mv(childEnvStrings), kj::mv(trustedWorkerd), sandboxUid);
     });
 
     KJ_IF_MAYBE(p, process) {
@@ -2001,7 +2024,28 @@ void setupSidecarResourceLimits() {
   KJ_SYSCALL(setrlimit(RLIMIT_CORE, &core));
 }
 
-void trySetupSidecarNamespaces() {
+void finishSidecarNamespaceSetup() {
+  KJ_SYSCALL(mount("none", "/", nullptr, MS_REC | MS_PRIVATE, nullptr));
+  KJ_SYSCALL(sethostname("sandbox", 7));
+  KJ_SYSCALL(setdomainname("sandbox", 7));
+}
+
+void trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
+  KJ_IF_MAYBE(u, sandboxUid) {
+    if (unshare(CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS) < 0) {
+      int error = errno;
+      KJ_LOG(WARNING,
+          "Could not enter privileged isolate sidecar namespaces; continuing with seccomp only.",
+          error, strerror(error));
+    } else {
+      finishSidecarNamespaceSetup();
+      KJ_LOG(WARNING, "Isolate sidecar entered private network/mount/ipc/uts namespaces.");
+    }
+
+    KJ_SYSCALL(setresuid(*u, *u, *u));
+    return;
+  }
+
   uid_t realUid = getuid();
   gid_t realGid = getgid();
 
@@ -2013,9 +2057,7 @@ void trySetupSidecarNamespaces() {
   }
 
   sandbox::hideUserGroupIds(realUid, realGid, false);
-  KJ_SYSCALL(mount("none", "/", nullptr, MS_REC | MS_PRIVATE, nullptr));
-  KJ_SYSCALL(sethostname("sandbox", 7));
-  KJ_SYSCALL(setdomainname("sandbox", 7));
+  finishSidecarNamespaceSetup();
   KJ_LOG(WARNING, "Isolate sidecar entered private user/network/mount/ipc/uts namespaces.");
 }
 
@@ -2116,11 +2158,12 @@ void setupSidecarSeccomp() {
 int runConfinedWorkerdSidecar(
     kj::Array<kj::String> argvStrings,
     kj::Array<kj::String> environment,
-    kj::String trustedWorkerd) {
+    kj::String trustedWorkerd,
+    kj::Maybe<uid_t> sandboxUid) {
   resetSignalHandlersForExec();
   setupSidecarParentDeathSignal();
   setupSidecarStdio();
-  trySetupSidecarNamespaces();
+  trySetupSidecarNamespaces(sandboxUid);
   setupSidecarResourceLimits();
   KJ_SYSCALL(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
   setupSidecarSeccomp();
@@ -2973,22 +3016,20 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   auto runtimeConfig = loadIsolateRuntimeConfig(
       pkgPath, requestedMainModule, requestedCompatibilityDate);
 
-  KJ_IF_MAYBE(u, sandboxUid) {
-    KJ_SYSCALL(setuid(*u));
-  }
-
-  runtimeConfig->workerdBundleDir = prepareWorkerdBundle(varPath, *runtimeConfig);
-  runtimeConfig->workerdConfigPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.capnp");
-  runtimeConfig->workerdSocketPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.sock");
-  unlinkIfExists(runtimeConfig->workerdSocketPath);
-  unlinkIfExists(runtimeConfig->sandstormApiSocketPath);
-  unlinkIfExists(runtimeConfig->storageSocketPath);
+  prepareRuntimeBundleAsSandboxUser(varPath, *runtimeConfig, sandboxUid);
 
   KJ_LOG(WARNING, "Starting isolate supervisor with workerd adapter skeleton.",
       grainId, pkgPath, runtimeConfig->mainModule, runtimeConfig->compatibilityDate,
       runtimeConfig->compatibilityFlags.size(), runtimeConfig->modules.size(),
       runtimeConfig->bindings.size(), runtimeConfig->workerdBundleDir,
       runtimeConfig->workerdSocketPath);
+
+  auto sidecar = kj::heap<WorkerdSidecarProcess>(
+      runtimeArgs.asPtr(), environment.asPtr(), *runtimeConfig, sandboxUid);
+
+  KJ_IF_MAYBE(u, sandboxUid) {
+    KJ_SYSCALL(setuid(*u));
+  }
 
   auto ioContext = kj::setupAsyncIo();
   auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
@@ -3026,8 +3067,6 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
         .attach(kj::mv(storagePort), kj::mv(storageServer));
   }
 
-  auto sidecar = kj::heap<WorkerdSidecarProcess>(
-      runtimeArgs.asPtr(), environment.asPtr(), *runtimeConfig);
   waitForSidecarSocket(*sidecar, *runtimeConfig);
   KJ_LOG(WARNING, "Isolate supervisor sidecar readiness complete.");
 
