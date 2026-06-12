@@ -1179,6 +1179,19 @@ WebSession::Response::ClientErrorCode clientErrorCodeForStatus(uint statusCode) 
   }
 }
 
+bool isFetchContentStatus(uint statusCode) {
+  switch (statusCode) {
+    case 200:
+    case 201:
+    case 202:
+    case 206:
+    case 207:
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool equalsIgnoreCase(kj::StringPtr a, kj::StringPtr b) {
   if (a.size() != b.size()) {
     return false;
@@ -1365,7 +1378,7 @@ void writeFetchResponse(FetchResponse&& response, WebSession::Response::Builder 
     } else {
       redirect.setLocation("");
     }
-  } else if (response.statusCode >= 200 && response.statusCode < 400) {
+  } else if (isFetchContentStatus(response.statusCode)) {
     auto content = builder.initContent();
     content.setStatusCode(successCodeForStatus(response.statusCode));
     content.setMimeType(response.mimeType);
@@ -1403,6 +1416,10 @@ void writeFetchResponse(FetchResponse&& response, WebSession::Response::Builder 
       nonHtml.setData(response.body);
     }
   } else {
+    if (response.statusCode < 500) {
+      KJ_LOG(WARNING, "Isolate response used unsupported HTTP status code.", response.statusCode);
+    }
+
     auto error = builder.initServerError();
     if (response.body.size() > 0) {
       auto nonHtml = error.initNonHtmlBody();
