@@ -2614,7 +2614,7 @@ private:
   }
 
   kj::Promise<void> get(kj::String path, kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(fd, raiiOpenIfExists(path, O_RDONLY | O_CLOEXEC)) {
+    KJ_IF_MAYBE(fd, openStorageFileIfExists(path)) {
       auto body = readAllBytes(*fd);
       kj::HttpHeaders responseHeaders(headerTable);
       responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream");
@@ -2628,7 +2628,7 @@ private:
   }
 
   kj::Promise<void> head(kj::String path, kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(fd, raiiOpenIfExists(path, O_RDONLY | O_CLOEXEC)) {
+    KJ_IF_MAYBE(fd, openStorageFileIfExists(path)) {
       struct stat stats;
       KJ_SYSCALL(fstat(*fd, &stats));
       kj::HttpHeaders responseHeaders(headerTable);
@@ -2643,13 +2643,27 @@ private:
     return kj::READY_NOW;
   }
 
+  kj::Maybe<kj::AutoCloseFd> openStorageFileIfExists(kj::StringPtr path) {
+    int fd = open(path.cStr(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd == -1) {
+      int error = errno;
+      if (error == ENOENT || error == ENOTDIR || error == ELOOP) {
+        return nullptr;
+      }
+
+      KJ_FAIL_SYSCALL("open", error, path);
+    }
+
+    return kj::AutoCloseFd(fd);
+  }
+
   void writeStorageFile(kj::StringPtr path, kj::StringPtr key, kj::ArrayPtr<const byte> content) {
     auto tmpPath = kj::str(config.storageRootPath, "/.tmp-", getpid(), "-", key);
     unlinkIfExists(tmpPath);
 
     int fd;
-    KJ_SYSCALL(fd = open(tmpPath.cStr(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0660),
-        tmpPath);
+    KJ_SYSCALL(fd = open(tmpPath.cStr(),
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0660), tmpPath);
     KJ_DEFER(close(fd));
     writeAllToFd(fd, content);
     KJ_SYSCALL(fsync(fd), tmpPath);
@@ -2674,7 +2688,7 @@ private:
       }
 
       auto path = kj::str(config.storageRootPath, "/", file);
-      KJ_IF_MAYBE(fd, raiiOpenIfExists(path, O_RDONLY | O_CLOEXEC)) {
+      KJ_IF_MAYBE(fd, openStorageFileIfExists(path)) {
         struct stat stats;
         KJ_SYSCALL(fstat(*fd, &stats));
         if (!S_ISREG(stats.st_mode)) {
