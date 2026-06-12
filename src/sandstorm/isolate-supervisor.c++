@@ -1059,6 +1059,10 @@ struct FetchHeader {
   kj::String value;
 };
 
+struct FetchResponseBodyAnchor {
+  virtual ~FetchResponseBodyAnchor() noexcept(false) {}
+};
+
 struct FetchRequest {
   FetchMethod method;
   kj::String path;
@@ -1072,6 +1076,8 @@ struct FetchResponse {
   uint statusCode = 200;
   kj::String mimeType = kj::heapString("text/plain; charset=utf-8");
   kj::Array<byte> body;
+  kj::Maybe<kj::Own<kj::AsyncInputStream>> bodyStream;
+  kj::Maybe<kj::Own<FetchResponseBodyAnchor>> bodyStreamAnchor;
   kj::Vector<FetchHeader> headers;
 };
 
@@ -1348,8 +1354,37 @@ kj::Maybe<kj::StringPtr> findFetchResponseHeader(
   return nullptr;
 }
 
+class FetchResponseStreamHandle final: public Handle::Server, private kj::TaskSet::ErrorHandler {
+public:
+  FetchResponseStreamHandle(
+      kj::Own<kj::AsyncInputStream> bodyStream, ByteStream::Client responseStream,
+      kj::Maybe<kj::Own<FetchResponseBodyAnchor>> bodyStreamAnchor)
+      : bodyStream(kj::mv(bodyStream)),
+        responseStream(kj::mv(responseStream)),
+        bodyStreamAnchor(kj::mv(bodyStreamAnchor)),
+        tasks(*this) {
+    tasks.add(pump(*this->bodyStream, this->responseStream));
+  }
+
+  kj::Promise<void> ping(PingContext context) override {
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Own<kj::AsyncInputStream> bodyStream;
+  ByteStream::Client responseStream;
+  // Holds the sidecar HTTP client/address state alive for as long as the response body streams.
+  kj::Maybe<kj::Own<FetchResponseBodyAnchor>> bodyStreamAnchor;
+  kj::TaskSet tasks;
+
+  void taskFailed(kj::Exception&& exception) override {
+    KJ_LOG(WARNING, "Isolate response body stream failed.", exception);
+  }
+};
+
 void writeFetchResponse(
-    FetchResponse&& response, WebSession::Response::Builder builder, bool omitBody = false) {
+    FetchResponse&& response, WebSession::Response::Builder builder,
+    ByteStream::Client responseStream, bool omitBody = false) {
   addFetchResponseHeaders(builder, response.headers);
 
   if (response.statusCode == 204 || response.statusCode == 205) {
@@ -1399,8 +1434,14 @@ void writeFetchResponse(
         content.getDisposition().setDownload(*filename);
       }
     }
-    if (!omitBody && response.body.size() > 0) {
-      content.initBody().setBytes(response.body);
+    if (!omitBody) {
+      KJ_IF_MAYBE(bodyStream, response.bodyStream) {
+        auto anchor = kj::mv(response.bodyStreamAnchor);
+        content.initBody().setStream(kj::heap<FetchResponseStreamHandle>(
+            kj::mv(*bodyStream), kj::mv(responseStream), kj::mv(anchor)));
+      } else if (response.body.size() > 0) {
+        content.initBody().setBytes(response.body);
+      }
     }
   } else if (response.statusCode >= 400 && response.statusCode < 500) {
     auto error = builder.initClientError();
@@ -1461,7 +1502,7 @@ public:
   }
 
 private:
-  struct SidecarHttpState {
+  struct SidecarHttpState final: public FetchResponseBodyAnchor {
     kj::Own<kj::NetworkAddress> addr;
     kj::Own<kj::HttpClient> client;
     kj::Maybe<kj::Own<kj::AsyncInputStream>> responseBody;
@@ -1517,6 +1558,14 @@ private:
     }
 
     if (response.body.get() == nullptr) {
+      return kj::mv(result);
+    }
+
+    if (isFetchContentStatus(result.statusCode)) {
+      result.bodyStream = kj::mv(response.body);
+      result.bodyStreamAnchor = kj::mv(state);
+      KJ_LOG(WARNING, "Isolate sidecar streaming response received.",
+          result.statusCode, result.mimeType);
       return kj::mv(result);
     }
 
@@ -1692,7 +1741,7 @@ public:
     auto params = context.getParams();
     auto method = params.getIgnoreBody() ? FetchMethod::HEAD : FetchMethod::GET;
     auto request = makeFetchRequest(method, prefixedPath(params.getPath()), params.getContext());
-    return fetch(kj::mv(request), context.getResults());
+    return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
   kj::Promise<void> post(PostContext context) override {
@@ -1700,7 +1749,7 @@ public:
     auto request = makeFetchRequest(FetchMethod::POST, prefixedPath(params.getPath()),
         params.getContext());
     setFetchRequestBody(request, params.getContent());
-    return fetch(kj::mv(request), context.getResults());
+    return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
   kj::Promise<void> put(PutContext context) override {
@@ -1708,14 +1757,14 @@ public:
     auto request = makeFetchRequest(FetchMethod::PUT, prefixedPath(params.getPath()),
         params.getContext());
     setFetchRequestBody(request, params.getContent());
-    return fetch(kj::mv(request), context.getResults());
+    return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
   kj::Promise<void> delete_(DeleteContext context) override {
     auto params = context.getParams();
     auto request = makeFetchRequest(FetchMethod::DELETE_, prefixedPath(params.getPath()),
         params.getContext());
-    return fetch(kj::mv(request), context.getResults());
+    return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
   kj::Promise<void> patch(PatchContext context) override {
@@ -1723,7 +1772,7 @@ public:
     auto request = makeFetchRequest(FetchMethod::PATCH, prefixedPath(params.getPath()),
         params.getContext());
     setFetchRequestBody(request, params.getContent());
-    return fetch(kj::mv(request), context.getResults());
+    return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
   kj::Promise<void> options(OptionsContext context) override {
@@ -1785,14 +1834,16 @@ private:
     }
   }
 
-  kj::Promise<void> fetch(FetchRequest&& request, WebSession::Response::Builder response) {
+  kj::Promise<void> fetch(
+      FetchRequest&& request, WebSession::Response::Builder response, ByteStream::Client responseStream) {
     addSessionHeaders(request);
     bool omitBody = request.method == FetchMethod::HEAD;
     KJ_LOG(WARNING, "Handling isolate WebSession request.",
         fetchMethodName(request.method), request.path, sessionKindName(sessionKind));
     return runtime->fetch(kj::mv(request))
-        .then([response, omitBody](FetchResponse&& fetchResponse) mutable {
-      writeFetchResponse(kj::mv(fetchResponse), response, omitBody);
+        .then([response, responseStream = kj::mv(responseStream), omitBody](
+            FetchResponse&& fetchResponse) mutable {
+      writeFetchResponse(kj::mv(fetchResponse), response, kj::mv(responseStream), omitBody);
     });
   }
 };
