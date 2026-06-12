@@ -1348,7 +1348,8 @@ kj::Maybe<kj::StringPtr> findFetchResponseHeader(
   return nullptr;
 }
 
-void writeFetchResponse(FetchResponse&& response, WebSession::Response::Builder builder) {
+void writeFetchResponse(
+    FetchResponse&& response, WebSession::Response::Builder builder, bool omitBody = false) {
   addFetchResponseHeaders(builder, response.headers);
 
   if (response.statusCode == 204 || response.statusCode == 205) {
@@ -1398,13 +1399,13 @@ void writeFetchResponse(FetchResponse&& response, WebSession::Response::Builder 
         content.getDisposition().setDownload(*filename);
       }
     }
-    if (response.body.size() > 0) {
+    if (!omitBody && response.body.size() > 0) {
       content.initBody().setBytes(response.body);
     }
   } else if (response.statusCode >= 400 && response.statusCode < 500) {
     auto error = builder.initClientError();
     error.setStatusCode(clientErrorCodeForStatus(response.statusCode));
-    if (response.body.size() > 0) {
+    if (!omitBody && response.body.size() > 0) {
       auto nonHtml = error.initNonHtmlBody();
       nonHtml.setMimeType(response.mimeType);
       KJ_IF_MAYBE(encoding, findFetchResponseHeader(response.headers, "content-encoding")) {
@@ -1421,7 +1422,7 @@ void writeFetchResponse(FetchResponse&& response, WebSession::Response::Builder 
     }
 
     auto error = builder.initServerError();
-    if (response.body.size() > 0) {
+    if (!omitBody && response.body.size() > 0) {
       auto nonHtml = error.initNonHtmlBody();
       nonHtml.setMimeType(response.mimeType);
       KJ_IF_MAYBE(encoding, findFetchResponseHeader(response.headers, "content-encoding")) {
@@ -1786,11 +1787,12 @@ private:
 
   kj::Promise<void> fetch(FetchRequest&& request, WebSession::Response::Builder response) {
     addSessionHeaders(request);
+    bool omitBody = request.method == FetchMethod::HEAD;
     KJ_LOG(WARNING, "Handling isolate WebSession request.",
         fetchMethodName(request.method), request.path, sessionKindName(sessionKind));
     return runtime->fetch(kj::mv(request))
-        .then([response](FetchResponse&& fetchResponse) mutable {
-      writeFetchResponse(kj::mv(fetchResponse), response);
+        .then([response, omitBody](FetchResponse&& fetchResponse) mutable {
+      writeFetchResponse(kj::mv(fetchResponse), response, omitBody);
     });
   }
 };
