@@ -2552,12 +2552,17 @@ public:
         return requestBody.readAllBytes(MAX_STORAGE_VALUE_BYTES)
             .then([this, key = kj::mv(key), path = kj::mv(path), &response]
                 (kj::Array<byte>&& body) mutable {
+          if (!storagePathIsMissingOrRegular(path)) {
+            return sendJson(response, 409, "Conflict", kj::heapString(
+                "{\n  \"ok\": false,\n"
+                "  \"error\": \"storage key is blocked by a non-regular file\"\n}\n"));
+          }
+
           writeStorageFile(path, key, body);
           return sendJson(response, 200, "OK", renderStored(body.size()));
         });
       case kj::HttpMethod::DELETE:
-        unlinkIfExists(path);
-        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+        return deleteStorageFile(kj::mv(path), response);
       default:
         return sendJson(response, 405, "Method Not Allowed", kj::heapString(
             "{\n  \"ok\": false,\n  \"error\": \"method not allowed\"\n}\n"));
@@ -2566,6 +2571,12 @@ public:
 
 private:
   static constexpr size_t MAX_STORAGE_VALUE_BYTES = 1024 * 1024;
+
+  enum class StoragePathState {
+    MISSING,
+    REGULAR,
+    NON_REGULAR,
+  };
 
   kj::HttpHeaderTable& headerTable;
   IsolateRuntimeConfig& config;
@@ -2663,9 +2674,51 @@ private:
     return kj::AutoCloseFd(fd);
   }
 
+  StoragePathState inspectStoragePath(kj::StringPtr path) {
+    struct stat stats;
+    if (lstat(path.cStr(), &stats) != 0) {
+      int error = errno;
+      if (error == ENOENT || error == ENOTDIR) {
+        return StoragePathState::MISSING;
+      }
+
+      KJ_FAIL_SYSCALL("lstat", error, path);
+    }
+
+    return S_ISREG(stats.st_mode) ? StoragePathState::REGULAR : StoragePathState::NON_REGULAR;
+  }
+
+  bool storagePathIsMissingOrRegular(kj::StringPtr path) {
+    return inspectStoragePath(path) != StoragePathState::NON_REGULAR;
+  }
+
+  kj::Promise<void> deleteStorageFile(kj::String path, kj::HttpService::Response& response) {
+    switch (inspectStoragePath(path)) {
+      case StoragePathState::MISSING:
+        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+      case StoragePathState::REGULAR:
+        KJ_SYSCALL(unlink(path.cStr()), path);
+        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+      case StoragePathState::NON_REGULAR:
+        return sendJson(response, 409, "Conflict", kj::heapString(
+            "{\n  \"ok\": false,\n"
+            "  \"error\": \"storage key is blocked by a non-regular file\"\n}\n"));
+    }
+
+    KJ_UNREACHABLE;
+  }
+
   void writeStorageFile(kj::StringPtr path, kj::StringPtr key, kj::ArrayPtr<const byte> content) {
     auto tmpPath = kj::str(config.storageRootPath, "/.tmp-", getpid(), "-", key);
-    unlinkIfExists(tmpPath);
+    switch (inspectStoragePath(tmpPath)) {
+      case StoragePathState::MISSING:
+        break;
+      case StoragePathState::REGULAR:
+        KJ_SYSCALL(unlink(tmpPath.cStr()), tmpPath);
+        break;
+      case StoragePathState::NON_REGULAR:
+        KJ_FAIL_REQUIRE("refusing to replace non-regular temporary storage file", tmpPath);
+    }
 
     int fd;
     KJ_SYSCALL(fd = open(tmpPath.cStr(),
