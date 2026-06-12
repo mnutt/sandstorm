@@ -217,6 +217,8 @@ public:
                        "Verify signature on an spk and output the app ID (without unpacking).")
         .addSubCommand("dev", KJ_BIND_METHOD(*this, getDevMain),
                        "Run an app in dev mode.")
+        .addSubCommand("dev-isolate", KJ_BIND_METHOD(*this, getDevIsolateMain),
+                       "Run a JavaScript module as an isolate app in dev mode.")
         .addSubCommand("publish", KJ_BIND_METHOD(*this, getPublishMain),
                        "Publish a package to the app market."))
         .build();
@@ -1886,6 +1888,9 @@ private:
   kj::StringPtr mountDir;
   bool fuseCaching = false;
   bool mountProc = false;
+  kj::String devIsolateWorkerPath;
+  kj::String devIsolateTitle = kj::heapString("Ad hoc Isolate App");
+  kj::String devIsolateCompatibilityDate = kj::heapString("2025-01-01");
 
   kj::MainFunc getDevMain() {
     return addCommonOptions(OptionSet::ALL_READONLY,
@@ -1944,6 +1949,168 @@ private:
   kj::MainBuilder::Validity enableMountProc() {
     mountProc = true;
     return true;
+  }
+
+  kj::MainFunc getDevIsolateMain() {
+    return kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
+        "Run a local JavaScript module as an isolate app on a local Sandstorm server. "
+        "This generates a temporary package definition and then uses the normal `spk dev` "
+        "machinery, so the app appears in Sandstorm as a development package.")
+        .addOptionWithArg({'s', "server"}, KJ_BIND_METHOD(*this, setServerDir), "<dir>",
+            "Connect to the Sandstorm server installed in <dir>. Default is to detect based on "
+            "the location of the spk executable or, failing that, the location pointed to by "
+            "the installed init script.")
+        .addOptionWithArg({'m', "mount"}, KJ_BIND_METHOD(*this, setMountDir), "<dir>",
+            "Don't actually connect to the server. Mount the generated package at <dir>, so you "
+            "can inspect it.")
+        .addOption({'c', "cache"}, KJ_BIND_METHOD(*this, enableFuseCaching),
+            "Enable aggressive caching over the FUSE filesystem used to detect dependencies.")
+        .addOption({"proc"}, KJ_BIND_METHOD(*this, enableMountProc),
+            "Mount /proc inside the sandbox.")
+        .addOptionWithArg({'t', "title"}, KJ_BIND_METHOD(*this, setDevIsolateTitle), "<title>",
+            "Set the generated app title. Default: \"Ad hoc Isolate App\".")
+        .addOptionWithArg({"compatibility-date"},
+            KJ_BIND_METHOD(*this, setDevIsolateCompatibilityDate), "<date>",
+            "Set the workerd compatibility date. Default: 2025-01-01.")
+        .expectArg("<worker.js>", KJ_BIND_METHOD(*this, setDevIsolateWorkerPath))
+        .callAfterParsing(KJ_BIND_METHOD(*this, doDevIsolate))
+        .build();
+  }
+
+  kj::MainBuilder::Validity setDevIsolateTitle(kj::StringPtr title) {
+    if (title.size() == 0) {
+      return "title must not be empty";
+    }
+    devIsolateTitle = kj::heapString(title);
+    return true;
+  }
+
+  kj::MainBuilder::Validity setDevIsolateCompatibilityDate(kj::StringPtr date) {
+    if (date.size() == 0) {
+      return "compatibility date must not be empty";
+    }
+    devIsolateCompatibilityDate = kj::heapString(date);
+    return true;
+  }
+
+  kj::MainBuilder::Validity setDevIsolateWorkerPath(kj::StringPtr path) {
+    if (access(path.cStr(), R_OK) != 0) {
+      return "worker module not found or not readable";
+    }
+    char* resolved = realpath(path.cStr(), nullptr);
+    if (resolved == nullptr) {
+      int error = errno;
+      return kj::str("could not resolve worker module path: ", strerror(error));
+    }
+    KJ_DEFER(free(resolved));
+    devIsolateWorkerPath = kj::heapString(resolved);
+    return true;
+  }
+
+  kj::MainBuilder::Validity doDevIsolate() {
+    KJ_REQUIRE(devIsolateWorkerPath != nullptr);
+    auto workerSource = readAll(raiiOpen(devIsolateWorkerPath, O_RDONLY | O_CLOEXEC));
+    auto generatedPkgdef = writeDevIsolatePkgdef(workerSource);
+    KJ_DEFER(unlink(generatedPkgdef.cStr()));
+
+    auto arg = kj::str(generatedPkgdef, ":pkgdef");
+    KJ_IF_MAYBE(error, setPackageDef(arg).getError()) {
+      return kj::str(generatedPkgdef, ": ", *error);
+    }
+
+    return doDev();
+  }
+
+  kj::String writeDevIsolatePkgdef(kj::StringPtr workerSource) {
+    auto appId = appIdForDevIsolate(devIsolateWorkerPath);
+    kj::Vector<char> capnp;
+    capnp.addAll(kj::StringPtr(
+        "@0xf0fa7edd08cd0aa9;\n\n"
+        "using Spk = import \"/sandstorm/package.capnp\";\n\n"));
+    capnp.addAll(kj::StringPtr("const isolateCommand :Spk.Manifest.Command = (\n"));
+    capnp.addAll(kj::StringPtr(
+        "  argv = [ \"workerd\", \"serve\", \"${SANDSTORM_ISOLATE_WORKERD_CONFIG}\", "
+        "\"sandstormConfig\" ],\n"
+        "  isolate = (\n"
+        "    mainModule = \"worker.js\",\n"
+        "    compatibilityDate = "));
+    appendCapnpText(capnp, devIsolateCompatibilityDate);
+    capnp.addAll(kj::StringPtr(",\n    compatibilityFlags = [],\n"));
+    capnp.addAll(kj::StringPtr(
+        "    modules = [\n"
+        "      ( name = \"worker.js\", esModule = "));
+    appendCapnpText(capnp, workerSource);
+    capnp.addAll(kj::StringPtr(" )\n    ],\n"));
+    capnp.addAll(kj::StringPtr(
+        "    bindings = [\n"
+        "      ( name = \"SANDSTORM_API\", sandstormApi = void ),\n"
+        "      ( name = \"STORAGE\", storage = void )\n"
+        "    ],\n"
+        "    bridgeConfig = ( viewInfo = ( appTitle = (defaultText = "));
+    appendCapnpText(capnp, devIsolateTitle);
+    capnp.addAll(kj::StringPtr(
+        ") ) )\n"
+        "  )\n"
+        ");\n\n"
+        "const pkgdef :Spk.PackageDefinition = (\n"
+        "  id = "));
+    appendCapnpText(capnp, appId);
+    capnp.addAll(kj::StringPtr(
+        ",\n"
+        "  manifest = (\n"
+        "    appTitle = (defaultText = "));
+    appendCapnpText(capnp, devIsolateTitle);
+    capnp.addAll(kj::StringPtr(
+        "),\n"
+        "    appVersion = 0,\n"
+        "    appMarketingVersion = (defaultText = \"dev\"),\n"
+        "    actions = [\n"
+        "      ( title = (defaultText = \"New Ad hoc Isolate App\"),\n"
+        "        nounPhrase = (defaultText = \"instance\"),\n"
+        "        command = .isolateCommand )\n"
+        "    ],\n"
+        "    continueCommand = .isolateCommand\n"
+        "  ),\n"
+        "  alwaysInclude = [ \"sandstorm-manifest\" ]\n"
+        ");\n"));
+    capnp.add('\0');
+
+    kj::String path = kj::heapString("/tmp/sandstorm-dev-isolate-XXXXXX");
+    int fd;
+    KJ_SYSCALL(fd = mkstemp(path.begin()), path);
+    kj::AutoCloseFd autoFd(fd);
+    kj::FdOutputStream(autoFd.get()).write(capnp.begin(), capnp.size() - 1);
+    return path;
+  }
+
+  kj::String appIdForDevIsolate(kj::StringPtr workerPath) {
+    byte digest[crypto_hash_sha256_BYTES];
+    crypto_hash_sha256_state state;
+    KJ_ASSERT(crypto_hash_sha256_init(&state) == 0);
+    kj::StringPtr prefix = "sandstorm-dev-isolate:";
+    KJ_ASSERT(crypto_hash_sha256_update(&state,
+        reinterpret_cast<const unsigned char*>(prefix.begin()), prefix.size()) == 0);
+    KJ_ASSERT(crypto_hash_sha256_update(&state,
+        reinterpret_cast<const unsigned char*>(workerPath.begin()), workerPath.size()) == 0);
+    KJ_ASSERT(crypto_hash_sha256_final(&state, digest) == 0);
+    return appIdString(kj::arrayPtr(digest, crypto_sign_PUBLICKEYBYTES));
+  }
+
+  static void appendCapnpText(kj::Vector<char>& output, kj::StringPtr text) {
+    output.add('"');
+    for (char c: text) {
+      switch (c) {
+        case '"': output.addAll(kj::StringPtr("\\\"")); break;
+        case '\\': output.addAll(kj::StringPtr("\\\\")); break;
+        case '\n': output.addAll(kj::StringPtr("\\n")); break;
+        case '\r': output.addAll(kj::StringPtr("\\r")); break;
+        case '\t': output.addAll(kj::StringPtr("\\t")); break;
+        default:
+          output.add(static_cast<unsigned char>(c) < 0x20 ? ' ' : c);
+          break;
+      }
+    }
+    output.add('"');
   }
 
   kj::MainBuilder::Validity doDev() {
