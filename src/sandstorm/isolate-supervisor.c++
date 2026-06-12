@@ -439,11 +439,21 @@ void ensureDirectory(kj::StringPtr path) {
     if (error != EEXIST) {
       KJ_FAIL_SYSCALL("mkdir", error, path);
     }
+
+    struct stat stats;
+    KJ_SYSCALL(lstat(path.cStr(), &stats), path);
+    KJ_REQUIRE(S_ISDIR(stats.st_mode) && !S_ISLNK(stats.st_mode),
+        "Generated isolate runtime path exists but is not a real directory.", path);
   }
+
+  int fd;
+  KJ_SYSCALL(fd = open(path.cStr(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW), path);
+  KJ_DEFER(close(fd));
+  KJ_SYSCALL(fchmod(fd, 0770), path);
 }
 
 void chownPathTo(kj::StringPtr path, uid_t uid) {
-  KJ_SYSCALL(chown(path.cStr(), uid, static_cast<gid_t>(-1)), path);
+  KJ_SYSCALL(lchown(path.cStr(), uid, static_cast<gid_t>(-1)), path);
 }
 
 void writeAllToFd(int fd, kj::ArrayPtr<const byte> content) {
@@ -458,8 +468,10 @@ void writeAllToFd(int fd, kj::ArrayPtr<const byte> content) {
 
 void writeFile(kj::StringPtr path, kj::ArrayPtr<const byte> content) {
   int fd;
-  KJ_SYSCALL(fd = open(path.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0660), path);
+  KJ_SYSCALL(fd = open(path.cStr(),
+      O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0660), path);
   KJ_DEFER(close(fd));
+  KJ_SYSCALL(fchmod(fd, 0660), path);
   writeAllToFd(fd, content);
 }
 
@@ -829,28 +841,6 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   auto workerdConfigText = kj::String(workerdConfig.releaseAsArray());
   writeFile(kj::str(bundleDir, "/workerd.capnp"), workerdConfigText.asBytes());
   return bundleDir;
-}
-
-void chownGeneratedWorkerdBundle(kj::StringPtr bundleDir, IsolateRuntimeConfig& config, uid_t uid) {
-  auto modulesDir = kj::str(bundleDir, "/modules");
-  auto bindingsDir = kj::str(bundleDir, "/bindings");
-
-  chownPathTo(bundleDir, uid);
-  chownPathTo(modulesDir, uid);
-  chownPathTo(bindingsDir, uid);
-  chownPathTo(config.storageRootPath, uid);
-  chownPathTo(kj::str(bundleDir, "/runtime-manifest.json"), uid);
-  chownPathTo(kj::str(bundleDir, "/workerd.capnp"), uid);
-
-  for (auto i: kj::indices(config.modules)) {
-    chownPathTo(kj::str(modulesDir, "/", moduleBundleFileName(i, config.modules[i].type)), uid);
-  }
-
-  for (auto i: kj::indices(config.bindings)) {
-    if (config.bindings[i].value.size() > 0) {
-      chownPathTo(kj::str(bindingsDir, "/", bindingBundleFileName(i)), uid);
-    }
-  }
 }
 
 enum class FetchMethod {
@@ -2754,17 +2744,16 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   auto runtimeConfig = loadIsolateRuntimeConfig(
       pkgPath, requestedMainModule, requestedCompatibilityDate);
 
+  KJ_IF_MAYBE(u, sandboxUid) {
+    KJ_SYSCALL(setuid(*u));
+  }
+
   runtimeConfig->workerdBundleDir = prepareWorkerdBundle(varPath, *runtimeConfig);
   runtimeConfig->workerdConfigPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.capnp");
   runtimeConfig->workerdSocketPath = kj::str(runtimeConfig->workerdBundleDir, "/workerd.sock");
   unlinkIfExists(runtimeConfig->workerdSocketPath);
   unlinkIfExists(runtimeConfig->sandstormApiSocketPath);
   unlinkIfExists(runtimeConfig->storageSocketPath);
-
-  KJ_IF_MAYBE(u, sandboxUid) {
-    chownGeneratedWorkerdBundle(runtimeConfig->workerdBundleDir, *runtimeConfig, *u);
-    KJ_SYSCALL(setuid(*u));
-  }
 
   KJ_LOG(WARNING, "Starting isolate supervisor with workerd adapter skeleton.",
       grainId, pkgPath, runtimeConfig->mainModule, runtimeConfig->compatibilityDate,
