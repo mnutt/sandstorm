@@ -1,5 +1,5 @@
 import capnwebSource from "sandstorm:capnweb-source";
-import { newWorkersRpcResponse } from "capnweb";
+import { RpcTarget, newWorkersRpcResponse } from "capnweb";
 
 function header(request, name) {
   return request.headers.get(name) || "";
@@ -98,6 +98,82 @@ export function getSession(request) {
   };
 }
 
+class StorageRpcTarget extends RpcTarget {
+  #env;
+
+  constructor(env) {
+    super();
+    this.#env = env;
+  }
+
+  put(key, value) {
+    return storage(this.#env).put(key, value);
+  }
+
+  get(key) {
+    return storage(this.#env).get(key);
+  }
+
+  getJson(key) {
+    return storage(this.#env).getJson(key);
+  }
+
+  head(key) {
+    return storage(this.#env).head(key);
+  }
+
+  delete(key) {
+    return storage(this.#env).delete(key);
+  }
+
+  list() {
+    return storage(this.#env).list();
+  }
+}
+
+class SandstormRpcTarget extends RpcTarget {
+  #request;
+  #env;
+
+  constructor(request, env) {
+    super();
+    this.#request = request;
+    this.#env = env;
+  }
+
+  session() {
+    return getSession(this.#request);
+  }
+
+  status() {
+    return callSandstorm(this.#env, "status");
+  }
+
+  capabilities() {
+    return callSandstorm(this.#env, "capabilities");
+  }
+
+  runtime() {
+    return callSandstorm(this.#env, "runtime");
+  }
+
+  modules() {
+    return callSandstorm(this.#env, "modules");
+  }
+
+  bindings() {
+    return callSandstorm(this.#env, "bindings");
+  }
+
+  storage() {
+    return new StorageRpcTarget(this.#env);
+  }
+}
+
+export function apiTarget(request, env) {
+  return new SandstormRpcTarget(request, env);
+}
+
 export function rpcClientScript() {
   return capnwebSource;
 }
@@ -115,6 +191,7 @@ export function sandstorm(request, env) {
     modules: () => callSandstorm(env, "modules"),
     bindings: () => callSandstorm(env, "bindings"),
     storage: () => storage(env),
+    apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),
   };
