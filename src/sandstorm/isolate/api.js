@@ -1,5 +1,5 @@
-import capnwebSource from "sandstorm:capnweb-source";
 import { RpcTarget, newWorkersRpcResponse } from "capnweb";
+import { browserClientScript } from "sandstorm:rpc";
 
 function header(request, name) {
   return request.headers.get(name) || "";
@@ -175,7 +175,7 @@ export function apiTarget(request, env) {
 }
 
 export function rpcClientScript() {
-  return capnwebSource;
+  return browserClientScript();
 }
 
 export function rpcResponse(request, target, options) {

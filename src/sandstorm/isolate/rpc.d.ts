@@ -15,5 +15,9 @@ declare module "sandstorm:rpc" {
     serialize,
   } from "capnweb";
 
+  export function newSandstormRpcSession<Remote = unknown>(
+    url?: string,
+    options?: import("capnweb").RpcSessionOptions,
+  ): import("capnweb").RpcStub<Remote>;
   export function browserClientScript(): string;
 }
