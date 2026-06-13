@@ -21,6 +21,7 @@
 #include <sandstorm/util.h>
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
+#include <sandstorm/isolate-supervisor-internal.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
@@ -115,9 +116,22 @@ private:
   bool doneCalled = false;
 };
 
-class FakeClaimedCapability final: public SystemPersistent::Server {
+class FakeClaimedCapability final: public IsolateWebSession::Server {
 public:
   explicit FakeClaimedCapability(uint& saveCount): saveCount(saveCount) {}
+
+  kj::Promise<void> get(GetContext context) override {
+    auto params = context.getParams();
+    auto response = context.getResults();
+    auto content = response.initContent();
+    content.setStatusCode(WebSession::Response::SuccessCode::OK);
+    content.setMimeType("application/json; charset=utf-8");
+    auto body = kj::str(
+        "{\"ok\":true,\"source\":\"fake-claimed-capability\",\"path\":\"",
+        params.getPath(), "\"}");
+    content.initBody().setBytes(body.asBytes());
+    return kj::READY_NOW;
+  }
 
   kj::Promise<void> save(SaveContext context) override {
     auto params = context.getParams();
@@ -127,6 +141,11 @@ public:
     KJ_REQUIRE(owner.getSaveLabel().getDefaultText() == "WebSession saved capability");
     ++saveCount;
     context.getResults().setSturdyRef(kj::StringPtr("websession-saved-token").asBytes());
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
+    context.getResults().setCap(thisCap().castAs<SystemPersistent>());
     return kj::READY_NOW;
   }
 
@@ -530,7 +549,7 @@ public:
     claimRequest.setPath(
         "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermission=view"
         "&save=true&store=true&restore=true&storageKey=websession-saved-capability"
-        "&dropSaved=true&label=WebSession%20saved%20capability");
+        "&fetch=true&dropSaved=true&label=WebSession%20saved%20capability");
     claimRequest.setIgnoreBody(false);
     auto claimContext = claimRequest.initContext();
     claimContext.setResponseStream(kj::heap<IgnoreByteStream>());
@@ -549,14 +568,27 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"ok\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"type\":\"claimedCapability\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"id\":\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"claimType\":{\"claimedClass\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody,
+        "\"json\":{\"ok\":true,\"type\":\"claimedCapability\",\"id\":\""),
+        claimBody);
     KJ_REQUIRE(contains(claimBody, "\"save\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"type\":\"savedCapability\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"tokenEncoding\":\"base64url\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"typed\":{\"savedClass\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody,
+        "\"restore\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"claimedCapability\""),
+        claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"typed\":{\"restoredClass\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody,
         "\"stored\":{\"key\":\"websession-saved-capability\",\"put\":{\"status\":200"),
         claimBody);
     KJ_REQUIRE(contains(claimBody, "\"token\":\"d2Vic2Vzc2lvbi1zYXZlZC10b2tlbg\""), claimBody);
-    KJ_REQUIRE(contains(claimBody, "\"restore\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody,
+        "\"fetched\":{\"status\":200,\"body\":{\"ok\":true,"
+        "\"source\":\"fake-claimed-capability\","
+        "\"path\":\"capability-echo?source=claim\""),
+        claimBody);
     KJ_REQUIRE(contains(claimBody, "\"dropRestored\":{\"status\":200,\"body\":{\"ok\":true}}"),
         claimBody);
     KJ_REQUIRE(contains(claimBody, "\"drop\":{\"status\":200,\"body\":{\"ok\":true}}"), claimBody);
