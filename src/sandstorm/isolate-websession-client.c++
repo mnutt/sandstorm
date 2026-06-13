@@ -166,10 +166,36 @@ public:
     return kj::READY_NOW;
   }
 
+  kj::Promise<void> offer(OfferContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.hasCap());
+    KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
+    KJ_REQUIRE(params.getRequiredPermissions()[0]);
+    KJ_REQUIRE(params.getDescriptor().getTags().size() == 0);
+    KJ_REQUIRE(params.getDisplayInfo().getTitle().getDefaultText() ==
+        "WebSession offered capability");
+    ++offerCount;
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> fulfillRequest(FulfillRequestContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.hasCap());
+    KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
+    KJ_REQUIRE(params.getRequiredPermissions()[0]);
+    KJ_REQUIRE(params.getDescriptor().getTags().size() == 0);
+    KJ_REQUIRE(params.getDisplayInfo().getTitle().getDefaultText() ==
+        "WebSession fulfilled capability");
+    ++fulfillCount;
+    return kj::READY_NOW;
+  }
+
   uint claimCount = 0;
   uint saveCount = 0;
   uint restoreCount = 0;
   uint tokenDropCount = 0;
+  uint offerCount = 0;
+  uint fulfillCount = 0;
   uint grainSizeReportCount = 0;
   uint64_t lastGrainSizeBytes = 0;
 };
@@ -549,7 +575,7 @@ public:
     claimRequest.setPath(
         "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermission=view"
         "&save=true&store=true&restore=true&storageKey=websession-saved-capability"
-        "&fetch=true&dropSaved=true&label=WebSession%20saved%20capability");
+        "&fetch=true&sessionActions=true&dropSaved=true&label=WebSession%20saved%20capability");
     claimRequest.setIgnoreBody(false);
     auto claimContext = claimRequest.initContext();
     claimContext.setResponseStream(kj::heap<IgnoreByteStream>());
@@ -589,6 +615,8 @@ public:
         "\"source\":\"fake-claimed-capability\","
         "\"path\":\"capability-echo?source=claim\""),
         claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"offer\":{\"ok\":true}"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"fulfill\":{\"ok\":true}"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"dropRestored\":{\"status\":200,\"body\":{\"ok\":true}}"),
         claimBody);
     KJ_REQUIRE(contains(claimBody, "\"drop\":{\"status\":200,\"body\":{\"ok\":true}}"), claimBody);
@@ -598,6 +626,8 @@ public:
     KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
     KJ_REQUIRE(sessionContextRef.restoreCount == 1, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 1, sessionContextRef.tokenDropCount);
+    KJ_REQUIRE(sessionContextRef.offerCount == 1, sessionContextRef.offerCount);
+    KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
 
     auto badClaimRequest = session.getRequest();
     badClaimRequest.setPath(

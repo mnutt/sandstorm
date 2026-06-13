@@ -252,6 +252,19 @@ export default {
           body: await fetchedResponse.json(),
         };
       }
+      let offer = null;
+      let fulfill = null;
+      if (claim.ok && typeof claim.offer === "function" &&
+          url.searchParams.get("sessionActions") === "true") {
+        offer = await claim.offer(request, {
+          title: "WebSession offered capability",
+          requiredPermissions,
+        });
+        fulfill = await claim.fulfillRequest(request, {
+          title: "WebSession fulfilled capability",
+          requiredPermissions,
+        });
+      }
       let drop = null;
       if (claim.ok && claim.id) {
         if (typeof claim.drop === "function") {
@@ -296,6 +309,8 @@ export default {
         stored,
         restore,
         fetched,
+        offer,
+        fulfill,
         dropRestored,
         drop,
         dropSaved,
