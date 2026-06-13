@@ -57,6 +57,17 @@ uint checksum(kj::ArrayPtr<const byte> data) {
   return result;
 }
 
+void expectSupervisorRefFailure(kj::WaitScope& waitScope, kj::Promise<void> promise) {
+  try {
+    promise.wait(waitScope);
+    KJ_FAIL_REQUIRE("expected isolate supervisor persistent-ref call to fail");
+  } catch (kj::Exception& exception) {
+    auto description = exception.getDescription();
+    KJ_REQUIRE(contains(description, "isolate supervisor-owned persistent object type"),
+        description);
+  }
+}
+
 class IgnoreByteStream final: public ByteStream::Server {
 public:
   kj::Promise<void> write(WriteContext context) override {
@@ -218,6 +229,15 @@ public:
     hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
 
     auto supervisor = rpcSystem.bootstrap(hostId).castAs<Supervisor>();
+
+    auto restoreRequest = supervisor.restoreRequest();
+    restoreRequest.getRef().setWakeLockNotification(123);
+    expectSupervisorRefFailure(io.waitScope, restoreRequest.send().ignoreResult());
+
+    auto dropRequest = supervisor.dropRequest();
+    dropRequest.getRef().setWakeLockNotification(123);
+    expectSupervisorRefFailure(io.waitScope, dropRequest.send().ignoreResult());
+
     auto view = supervisor.getMainViewRequest().send().wait(io.waitScope).getView();
 
     auto sessionRequest = view.newSessionRequest();
