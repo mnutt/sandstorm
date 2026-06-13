@@ -36,8 +36,9 @@
 #include <errno.h>
 #include <sandstorm/package.capnp.h>
 #include <sandstorm/appid-replacements.capnp.h>
-#include <sandstorm/isolate-api.js.h>
-#include <sandstorm/isolate-rpc.js.h>
+#include <sandstorm/isolate/api.js.h>
+#include <sandstorm/isolate/capnweb.js.h>
+#include <sandstorm/isolate/rpc.js.h>
 #include <stdlib.h>
 #include <dirent.h>
 #include <set>
@@ -2043,8 +2044,10 @@ private:
 
   kj::MainBuilder::Validity doDevIsolate() {
     KJ_REQUIRE(devIsolateWorkerPath != nullptr);
-    auto modules = collectDevIsolateModules();
-    auto generatedPkgdef = writeDevIsolatePkgdef(modules.asPtr());
+    auto rootDir = dirnameForPath(devIsolateWorkerPath);
+    auto supportDir = writeDevIsolateSupportDir();
+    KJ_DEFER(recursivelyDelete(supportDir));
+    auto generatedPkgdef = writeDevIsolatePkgdef(rootDir, supportDir);
     KJ_DEFER(unlink(generatedPkgdef.cStr()));
 
     auto arg = kj::str(generatedPkgdef, ":pkgdef");
@@ -2064,7 +2067,7 @@ private:
 
   struct DevIsolateModule {
     kj::String name;
-    kj::String source;
+    kj::String sourcePath;
     DevIsolateModuleType type;
   };
 
@@ -2091,14 +2094,16 @@ private:
     KJ_REQUIRE(isPathUnderRoot(realPath, rootDir),
         "Isolate dev imports must stay under the entrypoint directory.", realPath, rootDir);
 
-    auto source = readAll(raiiOpen(realPath, O_RDONLY | O_CLOEXEC));
     auto type = devIsolateModuleTypeForPath(realPath);
+    auto name = moduleNameForDevIsolatePath(realPath, rootDir);
+    auto sourcePath = devIsolateAppPackagePath(name);
 
     if (type == DevIsolateModuleType::ES_MODULE) {
+      auto source = readAll(raiiOpen(realPath, O_RDONLY | O_CLOEXEC));
       auto imports = scanDevIsolateImports(source);
       modules.add(DevIsolateModule {
-        moduleNameForDevIsolatePath(realPath, rootDir),
-        kj::mv(source),
+        kj::mv(name),
+        kj::mv(sourcePath),
         type
       });
 
@@ -2111,56 +2116,34 @@ private:
       }
     } else {
       modules.add(DevIsolateModule {
-        moduleNameForDevIsolatePath(realPath, rootDir),
-        kj::mv(source),
+        kj::mv(name),
+        kj::mv(sourcePath),
         type
       });
     }
   }
 
-  kj::String writeDevIsolatePkgdef(kj::ArrayPtr<DevIsolateModule> modules) {
+  kj::String writeDevIsolatePkgdef(kj::StringPtr rootDir, kj::StringPtr supportDir) {
     auto appId = appIdForDevIsolate(devIsolateWorkerPath);
     kj::Vector<char> capnp;
     capnp.addAll(kj::StringPtr(
         "@0xf0fa7edd08cd0aa9;\n\n"
         "using Spk = import \"/sandstorm/package.capnp\";\n\n"));
-    capnp.addAll(kj::StringPtr("const isolateCommand :Spk.Manifest.Command = (\n"));
+    capnp.addAll(kj::StringPtr("const placeholderCommand :Spk.Manifest.Command = (\n"));
     capnp.addAll(kj::StringPtr(
         "  argv = [ \"workerd\", \"serve\", \"${SANDSTORM_ISOLATE_WORKERD_CONFIG}\", "
         "\"sandstormConfig\" ],\n"
         "  isolate = (\n"
         "    mainModule = "));
-    KJ_REQUIRE(modules.size() > 0);
-    appendCapnpText(capnp, modules[0].name);
+    appendCapnpText(capnp, "__sandstorm_dev_isolate_placeholder__.js");
     capnp.addAll(kj::StringPtr(",\n    compatibilityDate = "));
     appendCapnpText(capnp, devIsolateCompatibilityDate);
-    capnp.addAll(kj::StringPtr(",\n    compatibilityFlags = [],\n"));
-    capnp.addAll(kj::StringPtr("    modules = [\n"));
-    for (auto& module: modules) {
-      capnp.addAll(kj::StringPtr("      ( name = "));
-      appendCapnpText(capnp, module.name);
-      switch (module.type) {
-        case DevIsolateModuleType::ES_MODULE:
-          capnp.addAll(kj::StringPtr(", esModule = "));
-          break;
-        case DevIsolateModuleType::COMMON_JS:
-          capnp.addAll(kj::StringPtr(", commonJsModule = "));
-          break;
-        case DevIsolateModuleType::TEXT:
-          capnp.addAll(kj::StringPtr(", text = "));
-          break;
-        case DevIsolateModuleType::JSON:
-          capnp.addAll(kj::StringPtr(", json = "));
-          break;
-      }
-      appendCapnpText(capnp, module.source);
-      capnp.addAll(kj::StringPtr(" ),\n"));
-    }
-    capnp.addAll(kj::StringPtr("      ( name = \"sandstorm:api\", esModule = "));
-    appendCapnpText(capnp, ISOLATE_API_HELPER_SOURCE);
-    capnp.addAll(kj::StringPtr(" ),\n      ( name = \"sandstorm:rpc\", esModule = "));
-    appendCapnpText(capnp, ISOLATE_RPC_HELPER_SOURCE);
-    capnp.addAll(kj::StringPtr(" )\n    ],\n"));
+    capnp.addAll(kj::StringPtr(
+        ",\n    compatibilityFlags = [],\n"
+        "    modules = [\n"
+        "      ( name = \"__sandstorm_dev_isolate_placeholder__.js\",\n"
+        "        esModulePath = \"__sandstorm_isolate_runtime/placeholder.js\" )\n"
+        "    ],\n"));
     capnp.addAll(kj::StringPtr(
         "    bindings = [\n"
         "      ( name = \"SANDSTORM_API\", sandstormApi = void ),\n"
@@ -2187,11 +2170,22 @@ private:
         "    actions = [\n"
         "      ( title = (defaultText = \"New Ad hoc Isolate App\"),\n"
         "        nounPhrase = (defaultText = \"instance\"),\n"
-        "        command = .isolateCommand )\n"
+        "        command = .placeholderCommand )\n"
         "    ],\n"
-        "    continueCommand = .isolateCommand\n"
+        "    continueCommand = .placeholderCommand\n"
         "  ),\n"
-        "  alwaysInclude = [ \"sandstorm-manifest\" ]\n"
+        "  sourceMap = (\n"
+        "    searchPath = [\n"
+        "      ( packagePath = \"__sandstorm_dev_isolate_app\", sourcePath = "));
+    appendCapnpText(capnp, rootDir);
+    capnp.addAll(kj::StringPtr(" ),\n      ( packagePath = \"__sandstorm_isolate_runtime\", "
+        "sourcePath = "));
+    appendCapnpText(capnp, supportDir);
+    capnp.addAll(kj::StringPtr(
+        " )\n"
+        "    ]\n"
+        "  ),\n"
+        "  alwaysInclude = [ \"sandstorm-manifest\", \"__sandstorm_isolate_runtime\" ]\n"
         ");\n"));
     capnp.add('\0');
 
@@ -2201,6 +2195,24 @@ private:
     kj::AutoCloseFd autoFd(fd);
     kj::FdOutputStream(autoFd.get()).write(capnp.begin(), capnp.size() - 1);
     return path;
+  }
+
+  kj::String writeDevIsolateSupportDir() {
+    kj::String path = kj::heapString("/tmp/sandstorm-dev-isolate-runtime-XXXXXX");
+    KJ_REQUIRE(mkdtemp(path.begin()) != nullptr, "mkdtemp() failed", path, strerror(errno));
+    writeDevIsolateSupportFile(path, "placeholder.js",
+        "export default { fetch() { return new Response(\"dev isolate manifest not mounted\", "
+        "{ status: 500 }); } };\n");
+    writeDevIsolateSupportFile(path, "capnweb.js", CAPNWEB_SOURCE);
+    writeDevIsolateSupportFile(path, "api.js", ISOLATE_API_HELPER_SOURCE);
+    writeDevIsolateSupportFile(path, "rpc.js", ISOLATE_RPC_HELPER_SOURCE);
+    return path;
+  }
+
+  void writeDevIsolateSupportFile(kj::StringPtr dir, kj::StringPtr name, kj::StringPtr content) {
+    auto path = kj::str(dir, "/", name);
+    kj::FdOutputStream(raiiOpen(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600))
+        .write(content.begin(), content.size());
   }
 
   kj::Array<capnp::word> buildDevIsolateManifestBytes() {
@@ -2238,31 +2250,37 @@ private:
     isolate.setCompatibilityDate(devIsolateCompatibilityDate);
     isolate.initCompatibilityFlags(0);
 
-    auto moduleList = isolate.initModules(modules.size() + 2);
+    auto moduleList = isolate.initModules(modules.size() + 4);
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
       switch (modules[i].type) {
         case DevIsolateModuleType::ES_MODULE:
-          module.setEsModule(modules[i].source);
+          module.setEsModulePath(modules[i].sourcePath);
           break;
         case DevIsolateModuleType::COMMON_JS:
-          module.setCommonJsModule(modules[i].source);
+          module.setCommonJsModulePath(modules[i].sourcePath);
           break;
         case DevIsolateModuleType::TEXT:
-          module.setText(modules[i].source);
+          module.setTextPath(modules[i].sourcePath);
           break;
         case DevIsolateModuleType::JSON:
-          module.setJson(modules[i].source);
+          module.setJsonPath(modules[i].sourcePath);
           break;
       }
     }
-    auto helperModule = moduleList[modules.size()];
+    auto capnwebModule = moduleList[modules.size()];
+    capnwebModule.setName("capnweb");
+    capnwebModule.setEsModulePath("__sandstorm_isolate_runtime/capnweb.js");
+    auto capnwebSourceModule = moduleList[modules.size() + 1];
+    capnwebSourceModule.setName("sandstorm:capnweb-source");
+    capnwebSourceModule.setTextPath("__sandstorm_isolate_runtime/capnweb.js");
+    auto helperModule = moduleList[modules.size() + 2];
     helperModule.setName("sandstorm:api");
-    helperModule.setEsModule(ISOLATE_API_HELPER_SOURCE);
-    auto rpcHelperModule = moduleList[modules.size() + 1];
+    helperModule.setEsModulePath("__sandstorm_isolate_runtime/api.js");
+    auto rpcHelperModule = moduleList[modules.size() + 3];
     rpcHelperModule.setName("sandstorm:rpc");
-    rpcHelperModule.setEsModule(ISOLATE_RPC_HELPER_SOURCE);
+    rpcHelperModule.setEsModulePath("__sandstorm_isolate_runtime/rpc.js");
 
     auto bindings = isolate.initBindings(2);
     bindings[0].setName("SANDSTORM_API");
@@ -2320,6 +2338,10 @@ private:
         path, rootDir);
     auto offset = rootStd == "/" ? 1 : rootStd.size() + 1;
     return kj::heapString(pathStd.substr(offset).c_str());
+  }
+
+  static kj::String devIsolateAppPackagePath(kj::StringPtr moduleName) {
+    return kj::str("__sandstorm_dev_isolate_app/", moduleName);
   }
 
   static bool isRelativeImport(kj::StringPtr specifier) {
