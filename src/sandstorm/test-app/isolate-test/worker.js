@@ -131,6 +131,29 @@ export default {
       });
     }
 
+    if (url.pathname === "/offer-session") {
+      const offered = sandstormPowerbox(request, env).offeredCapability();
+      let fetched = null;
+      let drop = null;
+      if (offered) {
+        const fetchedResponse = await offered.fetch("/capability-echo?source=offer-session");
+        fetched = {
+          status: fetchedResponse.status,
+          body: await fetchedResponse.json(),
+        };
+        drop = await offered.drop();
+      }
+      return Response.json({
+        ok: Boolean(offered),
+        sessionType: request.headers.get("x-sandstorm-session-type"),
+        offeredCapabilityId: request.headers.get("x-sandstorm-offered-capability-id"),
+        offeredClass: offered instanceof ClaimedCapability,
+        offered: offered ? JSON.parse(JSON.stringify(offered)) : null,
+        fetched,
+        drop,
+      });
+    }
+
     if (url.pathname === "/claim-powerbox") {
       const sessionId = request.headers.get("x-sandstorm-session-id") || "";
       const token = url.searchParams.get("token") || "";

@@ -1185,6 +1185,7 @@ struct SessionMetadata {
   kj::String userPicture;
   kj::String userPronouns;
   kj::String permissions;
+  kj::String offeredCapabilityId;
 };
 
 kj::String textIdentityId(capnp::Data::Reader id) {
@@ -2411,6 +2412,10 @@ private:
     if (sessionMetadata.sessionId.size() > 0) {
       addHeader(request, "x-sandstorm-session-id", sessionMetadata.sessionId);
     }
+    if (sessionMetadata.offeredCapabilityId.size() > 0) {
+      addHeader(request, "x-sandstorm-offered-capability-id",
+          sessionMetadata.offeredCapabilityId);
+    }
     addHeader(request, "x-sandstorm-username", sessionMetadata.userDisplayName);
     addHeader(request, "x-sandstorm-permissions", sessionMetadata.permissions);
     if (sessionMetadata.userId.size() > 0) {
@@ -2523,6 +2528,8 @@ public:
         params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
         params.getTabId());
     sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
+    sessionMetadata.offeredCapabilityId = runtimeHost->sessions->storeClaimedCapability(
+        params.getOffer());
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::OFFER,
         kj::mv(sessionMetadata)));

@@ -647,6 +647,52 @@ public:
     KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
     KJ_REQUIRE(sessionContextRef.tieCount == 1, sessionContextRef.tieCount);
 
+    auto offerSessionContext = kj::heap<FakeSessionContext>();
+    auto& offerSessionContextRef = *offerSessionContext;
+    auto offerSessionRequest = view.newOfferSessionRequest();
+    auto offerUserInfo = offerSessionRequest.initUserInfo();
+    offerUserInfo.initDisplayName().setDefaultText("Offer Session Test User");
+    offerUserInfo.setPreferredHandle("offer-session-test");
+    offerUserInfo.initPermissions(1).set(0, true);
+    offerSessionRequest.setContext(kj::mv(offerSessionContext));
+    offerSessionRequest.setSessionType(capnp::typeId<WebSession>());
+    auto offerSessionParams = offerSessionRequest.getSessionParams().initAs<WebSession::Params>();
+    offerSessionParams.setBasePath("https://ui-offer-test.invalid");
+    offerSessionParams.setUserAgent("isolate-websession-offer-client");
+    offerSessionRequest.setOffer(kj::heap<FakeClaimedCapability>(offerSessionContextRef.saveCount));
+    offerSessionRequest.initDescriptor().initTags(0);
+    offerSessionRequest.setTabId(kj::StringPtr("offer-session-tab").asBytes());
+
+    auto offerSession = offerSessionRequest.send().wait(io.waitScope)
+        .getSession().castAs<WebSession>();
+    auto offerGetRequest = offerSession.getRequest();
+    offerGetRequest.setPath("/offer-session");
+    offerGetRequest.setIgnoreBody(false);
+    auto offerGetContext = offerGetRequest.initContext();
+    offerGetContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    offerGetContext.initCookies(0);
+    offerGetContext.initAccept(0);
+    offerGetContext.initAcceptEncoding(0);
+    offerGetContext.initAdditionalHeaders(0);
+
+    auto offerResponse = offerGetRequest.send().wait(io.waitScope);
+    auto offerDebugBody = responseDebugBody(offerResponse);
+    KJ_REQUIRE(offerResponse.which() == WebSession::Response::CONTENT, offerDebugBody);
+    auto offerContent = offerResponse.getContent();
+    KJ_REQUIRE(offerContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(offerContent.getBody().which() == WebSession::Response::Content::Body::BYTES);
+    auto offerBody = kj::str(offerContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(offerBody, "\"ok\":true"), offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"sessionType\":\"offer\""), offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"offeredCapabilityId\":\""), offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"offeredClass\":true"), offerBody);
+    KJ_REQUIRE(contains(offerBody,
+        "\"fetched\":{\"status\":200,\"body\":{\"ok\":true,"
+        "\"source\":\"fake-claimed-capability\","
+        "\"path\":\"capability-echo?source=offer-session\""),
+        offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"drop\":{\"ok\":true}"), offerBody);
+
     auto badClaimRequest = session.getRequest();
     badClaimRequest.setPath(
         "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D"
