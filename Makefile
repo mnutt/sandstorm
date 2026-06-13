@@ -26,6 +26,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 
 .PHONY: all configure toolchain deps update-deps clean ci-clean \
 	package fast install update test lint typecheck typecheck-ts installer-test \
+	isolate-supervisor-smoke-test \
 	stage-native workerd shell-env shell-build shell-build-debug bundle \
 	test-app.spk test-app-spk test-app-dev app-index.spk app-index-spk app-index-dev \
 	isolate-test-app.spk isolate-test-app-spk isolate-test-app-dev \
@@ -84,6 +85,7 @@ $(eval $(call cmake_target,test-app-dev,test-app-dev))
 $(eval $(call cmake_target,isolate-test-app.spk,isolate-test-app-spk))
 $(eval $(call cmake_target,isolate-test-app-spk,isolate-test-app-spk))
 $(eval $(call cmake_target,isolate-test-app-dev,isolate-test-app-dev))
+$(eval $(call cmake_target,isolate-supervisor-smoke-test,isolate-supervisor-smoke-test))
 $(eval $(call cmake_target,app-index.spk,app-index-spk))
 $(eval $(call cmake_target,app-index-spk,app-index-spk))
 $(eval $(call cmake_target,app-index-dev,app-index-dev))

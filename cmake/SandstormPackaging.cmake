@@ -59,13 +59,20 @@ function(sandstorm_add_packaging_targets)
   set(_isolate_test_app_stage "${_spk_stage}/sandstorm/isolate-test-app")
   set(_isolate_test_app_capnp "${_isolate_test_app_source}/isolate-test-app.capnp")
   set(_isolate_test_app_stage_capnp "${_isolate_test_app_stage}/isolate-test-app.capnp")
+  file(GLOB_RECURSE _isolate_test_app_files CONFIGURE_DEPENDS
+    "${_isolate_test_app_source}/isolate-test/*")
   add_custom_command(
     OUTPUT "${_isolate_test_app_stage_capnp}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${_isolate_test_app_stage}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
       "${_isolate_test_app_capnp}"
       "${_isolate_test_app_stage_capnp}"
-    DEPENDS "${_isolate_test_app_capnp}"
+    COMMAND "${CMAKE_COMMAND}" -E remove_directory
+      "${_isolate_test_app_stage}/isolate-test"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+      "${_isolate_test_app_source}/isolate-test"
+      "${_isolate_test_app_stage}/isolate-test"
+    DEPENDS "${_isolate_test_app_capnp}" ${_isolate_test_app_files}
     COMMENT "Staging the Sandstorm isolate test app package"
     VERBATIM)
 
@@ -96,6 +103,25 @@ function(sandstorm_add_packaging_targets)
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     USES_TERMINAL
     COMMENT "Running the Sandstorm isolate test app in development mode"
+    VERBATIM)
+
+  add_custom_target(isolate-supervisor-smoke-test
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
+      "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
+      "SPK_BIN=$<TARGET_FILE:spk>"
+      "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
+      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-smoke.test.js"
+    DEPENDS
+      sandstorm
+      spk
+      workerd
+      isolate-test-app-spk
+      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-smoke.test.js"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Running isolate supervisor smoke tests"
     VERBATIM)
 
   set(_app_index_source "${PROJECT_SOURCE_DIR}/src/sandstorm/app-index")
