@@ -49,6 +49,25 @@ public:
   }
 };
 
+class FakeClaimedCapability final: public SystemPersistent::Server {
+public:
+  explicit FakeClaimedCapability(uint& saveCount): saveCount(saveCount) {}
+
+  kj::Promise<void> save(SaveContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.getSealFor().which() == ApiTokenOwner::GRAIN);
+    auto owner = params.getSealFor().getGrain();
+    KJ_REQUIRE(owner.getGrainId().size() > 0);
+    KJ_REQUIRE(owner.getSaveLabel().getDefaultText() == "WebSession saved capability");
+    ++saveCount;
+    context.getResults().setSturdyRef(kj::StringPtr("websession-saved-token").asBytes());
+    return kj::READY_NOW;
+  }
+
+private:
+  uint& saveCount;
+};
+
 class FakeSessionContext final: public SessionContext::Server {
 public:
   kj::Promise<void> claimRequest(ClaimRequestContext context) override {
@@ -58,11 +77,12 @@ public:
     KJ_REQUIRE(requiredPermissions.size() == 1);
     KJ_REQUIRE(requiredPermissions[0]);
     claimCount++;
-    context.getResults().setCap(kj::heap<CapRedirector>());
+    context.getResults().setCap(kj::heap<FakeClaimedCapability>(saveCount));
     return kj::READY_NOW;
   }
 
   uint claimCount = 0;
+  uint saveCount = 0;
 };
 
 kj::String responseDebugBody(WebSession::Response::Reader response) {
@@ -179,7 +199,8 @@ public:
 
     auto claimRequest = session.getRequest();
     claimRequest.setPath(
-        "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermission=view");
+        "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermission=view"
+        "&save=true&label=WebSession%20saved%20capability");
     claimRequest.setIgnoreBody(false);
     auto claimContext = claimRequest.initContext();
     claimContext.setResponseStream(kj::heap<IgnoreByteStream>());
@@ -198,8 +219,12 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"ok\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"type\":\"claimedCapability\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"id\":\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"save\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"type\":\"savedCapability\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"tokenEncoding\":\"base64url\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"drop\":{\"status\":200,\"body\":{\"ok\":true}}"), claimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
 
     auto badClaimRequest = session.getRequest();
     badClaimRequest.setPath(
@@ -221,6 +246,7 @@ public:
     auto badClaimBody = kj::str(badClaim.getNonHtmlBody().getData().asChars());
     KJ_REQUIRE(contains(badClaimBody, "unknown required permission"), badClaimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
 
     return true;
   }

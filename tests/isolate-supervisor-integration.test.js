@@ -511,6 +511,7 @@ test("isolate supervisor integration suite", {
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
     assert.equal(capabilities.statusCode, 200);
     assert.ok(capabilities.json.capabilities.includes("powerbox.claimRequest"));
+    assert.ok(capabilities.json.capabilities.includes("powerbox.save"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.drop"));
 
     const modules = await requestJson(fixture.sandstormApiSocket, "/modules");
@@ -572,6 +573,27 @@ test("isolate supervisor integration suite", {
       { method: "POST" });
     assert.equal(missingDrop.statusCode, 404);
     assert.equal(missingDrop.json.ok, false);
+
+    const missingSave = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/save?id=missing",
+      { method: "POST" });
+    assert.equal(missingSave.statusCode, 404);
+    assert.equal(missingSave.json.ok, false);
+
+    const duplicateSaveId = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/save?id=one&id=two",
+      { method: "POST" });
+    assert.equal(duplicateSaveId.statusCode, 400);
+    assert.equal(duplicateSaveId.json.ok, false);
+
+    const emptySaveLabel = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/save?id=missing&label=",
+      { method: "POST" });
+    assert.equal(emptySaveLabel.statusCode, 400);
+    assert.equal(emptySaveLabel.json.ok, false);
 
     const duplicateDropId = await requestJson(
       fixture.sandstormApiSocket,
