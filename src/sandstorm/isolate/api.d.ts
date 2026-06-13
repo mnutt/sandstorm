@@ -21,6 +21,11 @@ declare module "sandstorm:api" {
     | (() => T | Promise<T>);
 
   export class ValidationError extends Error {}
+  export class UnsupportedCapabilityError extends Error {
+    readonly capability: string;
+    readonly operation: string;
+    constructor(capability: string, operation: string);
+  }
 
   export interface StringValidationOptions {
     minLength?: number;
@@ -105,6 +110,15 @@ declare module "sandstorm:api" {
     list(): Promise<StorageListResult>;
   }
 
+  export interface PowerboxApi {
+    request(query: unknown, options?: unknown): Promise<unknown>;
+    offer(capability: unknown, descriptor: unknown, displayInfo?: unknown): Promise<unknown>;
+    fulfillRequest(capability: unknown, descriptor: unknown): Promise<unknown>;
+    save(capability: unknown, label: unknown): Promise<unknown>;
+    restore(token: Uint8Array | string): Promise<unknown>;
+    drop(token: Uint8Array | string): Promise<void>;
+  }
+
   export interface SandstormApiTarget extends RpcTarget {
     session(): SessionInfo;
     status(): Promise<unknown>;
@@ -113,9 +127,11 @@ declare module "sandstorm:api" {
     modules(): Promise<unknown>;
     bindings(): Promise<unknown>;
     storage(): StorageApiTarget;
+    powerbox(): PowerboxApiTarget;
   }
 
   export interface StorageApiTarget extends RpcTarget, StorageApi {}
+  export interface PowerboxApiTarget extends RpcTarget, PowerboxApi {}
 
   export interface SandstormApi {
     session(): SessionInfo;
@@ -125,6 +141,7 @@ declare module "sandstorm:api" {
     modules(): Promise<unknown>;
     bindings(): Promise<unknown>;
     storage(): StorageApi;
+    powerbox(): PowerboxApi;
     apiTarget(): SandstormApiTarget;
     rpcClientScript(): string;
     rpcResponse(target: RpcTarget, options?: RpcSessionOptions): Response | Promise<Response>;
@@ -135,6 +152,7 @@ declare module "sandstorm:api" {
   }
 
   export function storage(env: SandstormEnv): StorageApi;
+  export function powerbox(): PowerboxApi;
   export function getSession(request: Request): SessionInfo;
   export function apiTarget(request: Request, env: SandstormEnv): SandstormApiTarget;
   export function rpcClientScript(): string;
