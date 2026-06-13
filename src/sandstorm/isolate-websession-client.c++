@@ -220,7 +220,8 @@ public:
     auto claimRequest = session.getRequest();
     claimRequest.setPath(
         "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermission=view"
-        "&save=true&restore=true&label=WebSession%20saved%20capability");
+        "&save=true&store=true&restore=true&storageKey=websession-saved-capability"
+        "&label=WebSession%20saved%20capability");
     claimRequest.setIgnoreBody(false);
     auto claimContext = claimRequest.initContext();
     claimContext.setResponseStream(kj::heap<IgnoreByteStream>());
@@ -242,6 +243,10 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"save\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"type\":\"savedCapability\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"tokenEncoding\":\"base64url\""), claimBody);
+    KJ_REQUIRE(contains(claimBody,
+        "\"stored\":{\"key\":\"websession-saved-capability\",\"put\":{\"status\":200"),
+        claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"token\":\"d2Vic2Vzc2lvbi1zYXZlZC10b2tlbg\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"restore\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"dropRestored\":{\"status\":200,\"body\":{\"ok\":true}}"),
         claimBody);
