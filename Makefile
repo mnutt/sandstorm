@@ -27,6 +27,8 @@ EKAM=ekam
 WORKERD_NPM_VERSION=1.20260610.1
 WORKERD_NPM_PACKAGE_DIR=deps/workerd-npm
 WORKERD_BIN=
+CAPNWEB_NPM_VERSION=0.8.0
+CAPNWEB_NPM_PACKAGE_DIR=deps/capnweb-npm
 
 # You generally should not modify this.
 # TODO(cleanup): -fPIC is unfortunate since most of our code is static binaries
@@ -138,6 +140,8 @@ IMAGES= \
     shell/public/restore-B7B7B7.svg \
     shell/public/restore-5D5D5D.svg
 
+CAPNP_SCHEMAS=$(filter-out src/capnp/test%.capnp,$(wildcard src/capnp/*.capnp))
+
 # ====================================================================
 # Meta rules
 
@@ -153,6 +157,7 @@ clean: ci-clean
 	rm -rf deps/libsodium/build
 	rm -rf deps/boringssl/build
 	rm -rf tmp/workerd-npm
+	rm -rf tmp/capnweb-npm src/sandstorm/isolate/capnweb.js
 
 ci-clean:
 	@# Clean only the stuff that we want to clean between CI builds.
@@ -288,6 +293,26 @@ endif
 workerd: bin/workerd
 
 # ====================================================================
+# fetch capnweb
+
+tmp/.capnweb-npm: $(CAPNWEB_NPM_PACKAGE_DIR)/package.json \
+    $(wildcard $(CAPNWEB_NPM_PACKAGE_DIR)/package-lock.json)
+	@$(call color,installing npm capnweb)
+	rm -rf tmp/capnweb-npm
+	@mkdir -p tmp/capnweb-npm
+	cp $(CAPNWEB_NPM_PACKAGE_DIR)/package.json tmp/capnweb-npm/package.json
+	@if test -e $(CAPNWEB_NPM_PACKAGE_DIR)/package-lock.json; then cp $(CAPNWEB_NPM_PACKAGE_DIR)/package-lock.json tmp/capnweb-npm/package-lock.json; fi
+	cd tmp/capnweb-npm && if test -e package-lock.json; then PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm ci --no-fund; else PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund --no-save; fi
+	@test "$$(cd tmp/capnweb-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./node_modules/capnweb/package.json").version')" = "$(CAPNWEB_NPM_VERSION)"
+	@test -e tmp/capnweb-npm/node_modules/capnweb/dist/index.js
+	@touch $@
+
+src/sandstorm/isolate/capnweb.js: tmp/.capnweb-npm
+	@$(call color,updating capnweb helper)
+	@mkdir -p $(dir $@)
+	cp tmp/capnweb-npm/node_modules/capnweb/dist/index.js $@
+
+# ====================================================================
 # Ekam bootstrap and C++ binaries
 
 tmp/ekam-bin: tmp/.deps
@@ -297,7 +322,7 @@ tmp/ekam-bin: tmp/.deps
 	    (cd deps/ekam && $(MAKE) bin/ekam-bootstrap && \
 	     cd ../.. && ln -s ../deps/ekam/bin/ekam-bootstrap tmp/ekam-bin)
 
-tmp/.ekam-run: tmp/ekam-bin src/sandstorm/* tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/libsodium/.libs/libsodium.a | deps/llvm-build
+tmp/.ekam-run: tmp/ekam-bin src/sandstorm/* src/sandstorm/isolate/* src/sandstorm/isolate/capnweb.js tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/libsodium/.libs/libsodium.a | deps/llvm-build
 	@$(call color,building sandstorm with ekam)
 	@CC="$(CC)" CXX="$(CXX)" CFLAGS="$(CFLAGS2)" CXXFLAGS="$(CXXFLAGS2)" \
 	    LIBS="$(LIBS2)" NODEJS=$(NODEJS) tmp/ekam-bin -j$(PARALLEL)
@@ -313,19 +338,26 @@ continuous: tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/lib
 
 shell-env: tmp/.shell-env
 
-# Note that we need Ekam to build node_modules before we can run Meteor, hence
-# the dependency on tmp/.ekam-run.
-tmp/.shell-env: tmp/.ekam-run $(IMAGES) shell/imports/client/changelog.html shell/client/styles/_icons.scss shell/package.json shell/package-lock.json
+# Meteor needs node-capnp available under node_modules. Depend on the copied
+# files themselves so unrelated Ekam rebuilds do not invalidate the frontend.
+tmp/.shell-env: node_modules/capnp node_modules/capnp.js node_modules/capnp.node $(IMAGES) shell/imports/client/changelog.html shell/client/styles/_icons.scss shell/package.json shell/package-lock.json
 	@$(call color,configuring meteor frontend)
 	@mkdir -p tmp
-	@mkdir -p node_modules/capnp
-	@bash -O extglob -c 'cp src/capnp/!(*test*).capnp node_modules/capnp'
-	@[ deps/node-capnp/src/node-capnp/capnp.js -ef node_modules/capnp.js ] || \
-		cp deps/node-capnp/src/node-capnp/capnp.js node_modules/capnp.js
-	@[ tmp/node-capnp/capnp.node -ef node_modules/capnp.node ] || \
-		cp tmp/node-capnp/capnp.node node_modules/capnp.node
 	@cd shell/ && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund
 	@touch tmp/.shell-env
+
+node_modules/capnp: $(CAPNP_SCHEMAS)
+	@mkdir -p node_modules/capnp
+	@rm -f node_modules/capnp/*.capnp
+	@cp $(CAPNP_SCHEMAS) node_modules/capnp
+
+node_modules/capnp.js: deps/node-capnp/src/node-capnp/capnp.js
+	@mkdir -p node_modules
+	@cp $< $@
+
+node_modules/capnp.node: tmp/node-capnp/capnp.node
+	@mkdir -p node_modules
+	@cp $< $@
 
 icons/node_modules: icons/package.json
 	cd icons && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund

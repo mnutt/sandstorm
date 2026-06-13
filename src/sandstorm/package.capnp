@@ -167,12 +167,12 @@ struct Manifest {
       name @0 :Text;
 
       union {
-        esModule @1 :Text;
-        commonJsModule @2 :Text;
-        text @3 :Text;
-        data @4 :Data;
-        wasm @5 :Data;
-        json @6 :Text;
+        esModulePath @1 :Text;
+        commonJsModulePath @2 :Text;
+        textPath @3 :Text;
+        dataPath @4 :Text;
+        wasmPath @5 :Text;
+        jsonPath @6 :Text;
       }
     }
 

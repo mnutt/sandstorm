@@ -101,6 +101,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   struct Module {
     kj::String name;
     ModuleType type;
+    kj::String sourcePath;
     kj::Array<byte> content;
   };
 
@@ -138,17 +139,17 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
 IsolateRuntimeConfig::ModuleType getModuleType(
     spk::Manifest::IsolateConfig::Module::Reader module) {
   switch (module.which()) {
-    case spk::Manifest::IsolateConfig::Module::ES_MODULE:
+    case spk::Manifest::IsolateConfig::Module::ES_MODULE_PATH:
       return IsolateRuntimeConfig::ModuleType::ES_MODULE;
-    case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE:
+    case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
       return IsolateRuntimeConfig::ModuleType::COMMON_JS_MODULE;
-    case spk::Manifest::IsolateConfig::Module::TEXT:
+    case spk::Manifest::IsolateConfig::Module::TEXT_PATH:
       return IsolateRuntimeConfig::ModuleType::TEXT;
-    case spk::Manifest::IsolateConfig::Module::DATA:
+    case spk::Manifest::IsolateConfig::Module::DATA_PATH:
       return IsolateRuntimeConfig::ModuleType::DATA;
-    case spk::Manifest::IsolateConfig::Module::WASM:
+    case spk::Manifest::IsolateConfig::Module::WASM_PATH:
       return IsolateRuntimeConfig::ModuleType::WASM;
-    case spk::Manifest::IsolateConfig::Module::JSON:
+    case spk::Manifest::IsolateConfig::Module::JSON_PATH:
       return IsolateRuntimeConfig::ModuleType::JSON;
   }
 
@@ -257,23 +258,56 @@ kj::StringPtr moduleFileExtension(IsolateRuntimeConfig::ModuleType type) {
   KJ_UNREACHABLE;
 }
 
-kj::Array<byte> copyModuleContent(spk::Manifest::IsolateConfig::Module::Reader module) {
+kj::String copyModuleSourcePath(spk::Manifest::IsolateConfig::Module::Reader module) {
   switch (module.which()) {
-    case spk::Manifest::IsolateConfig::Module::ES_MODULE:
-      return kj::heapArray<byte>(module.getEsModule().asBytes());
-    case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE:
-      return kj::heapArray<byte>(module.getCommonJsModule().asBytes());
-    case spk::Manifest::IsolateConfig::Module::TEXT:
-      return kj::heapArray<byte>(module.getText().asBytes());
-    case spk::Manifest::IsolateConfig::Module::DATA:
-      return kj::heapArray<byte>(module.getData());
-    case spk::Manifest::IsolateConfig::Module::WASM:
-      return kj::heapArray<byte>(module.getWasm());
-    case spk::Manifest::IsolateConfig::Module::JSON:
-      return kj::heapArray<byte>(module.getJson().asBytes());
+    case spk::Manifest::IsolateConfig::Module::ES_MODULE_PATH:
+      return kj::heapString(module.getEsModulePath());
+    case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
+      return kj::heapString(module.getCommonJsModulePath());
+    case spk::Manifest::IsolateConfig::Module::TEXT_PATH:
+      return kj::heapString(module.getTextPath());
+    case spk::Manifest::IsolateConfig::Module::DATA_PATH:
+      return kj::heapString(module.getDataPath());
+    case spk::Manifest::IsolateConfig::Module::WASM_PATH:
+      return kj::heapString(module.getWasmPath());
+    case spk::Manifest::IsolateConfig::Module::JSON_PATH:
+      return kj::heapString(module.getJsonPath());
   }
 
   KJ_UNREACHABLE;
+}
+
+bool isCanonicalPackagePath(kj::StringPtr path) {
+  if (path.size() == 0 || path.startsWith("/") || path.endsWith("/")) {
+    return false;
+  }
+
+  size_t start = 0;
+  for (size_t i = 0; i <= path.size(); ++i) {
+    if (i == path.size() || path[i] == '/') {
+      auto part = path.slice(start, i);
+      if (part.size() == 0 ||
+          (part.size() == 1 && part[0] == '.') ||
+          (part.size() == 2 && part[0] == '.' && part[1] == '.')) {
+        return false;
+      }
+      start = i + 1;
+    }
+  }
+
+  return true;
+}
+
+kj::Array<byte> readPackageFile(kj::StringPtr pkgPath, kj::StringPtr sourcePath) {
+  KJ_REQUIRE(isCanonicalPackagePath(sourcePath),
+      "Isolate module path must be package-relative and canonical.", sourcePath);
+  auto packageDir = raiiOpen(pkgPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  KJ_IF_MAYBE(file, raiiOpenAtIfExistsContained(
+      packageDir, kj::Path::parse(sourcePath), O_RDONLY | O_CLOEXEC)) {
+    return kj::heapArray<byte>(readAll(*file).asBytes());
+  }
+
+  KJ_FAIL_REQUIRE("Isolate module path does not exist in package.", sourcePath);
 }
 
 kj::Array<byte> copyBindingValue(spk::Manifest::IsolateConfig::Binding::Reader binding) {
@@ -344,7 +378,8 @@ void validateIsolateRuntimeConfig(IsolateRuntimeConfig& config) {
   }
 }
 
-kj::Own<IsolateRuntimeConfig> copyIsolateConfig(spk::Manifest::IsolateConfig::Reader config) {
+kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
+    spk::Manifest::IsolateConfig::Reader config, kj::StringPtr pkgPath) {
   auto result = kj::refcounted<IsolateRuntimeConfig>();
   result->mainModule = kj::heapString(config.getMainModule());
   result->compatibilityDate = kj::heapString(config.getCompatibilityDate());
@@ -373,7 +408,8 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(spk::Manifest::IsolateConfig::Re
     IsolateRuntimeConfig::Module moduleConfig;
     moduleConfig.name = kj::heapString(module.getName());
     moduleConfig.type = getModuleType(module);
-    moduleConfig.content = copyModuleContent(module);
+    moduleConfig.sourcePath = copyModuleSourcePath(module);
+    moduleConfig.content = readPackageFile(pkgPath, moduleConfig.sourcePath);
     result->modules.add(kj::mv(moduleConfig));
   }
 
@@ -2025,7 +2061,7 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
         }
       }
 
-      found = copyIsolateConfig(isolate);
+      found = copyIsolateConfig(isolate, pkgPath);
     }
   };
 
@@ -2036,7 +2072,7 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
     }
   } else {
     if (manifest.getContinueCommand().hasIsolate()) {
-      return copyIsolateConfig(manifest.getContinueCommand().getIsolate());
+      return copyIsolateConfig(manifest.getContinueCommand().getIsolate(), pkgPath);
     }
 
     for (auto action: manifest.getActions()) {

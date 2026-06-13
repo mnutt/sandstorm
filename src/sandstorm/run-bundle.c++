@@ -3559,7 +3559,7 @@ private:
                         kj::StringPtr pkgId, spk::Manifest::Reader manifest) {
     FdBundle fakeBundle(nullptr);
     mongoCommand(config, fakeBundle, kj::str(
-        "db.devpackages.insert({"
+        "void db.devpackages.insert({"
           "_id:\"", pkgId, "\","
           "appId:\"", appId, "\","
           "timestamp:", time(nullptr), ","
@@ -3571,7 +3571,7 @@ private:
   void updateDevPackage(const Config& config, kj::StringPtr pkgId, spk::Manifest::Reader manifest) {
     FdBundle fakeBundle(nullptr);
     mongoCommand(config, fakeBundle, kj::str(
-        "db.devpackages.update({_id:\"", pkgId, "\"}, {$set: {"
+        "void db.devpackages.update({_id:\"", pkgId, "\"}, {$set: {"
           "timestamp:", time(nullptr), ","
           "manifest:", toMongoJson(manifest),
         "}})"));
@@ -3580,12 +3580,12 @@ private:
   void removeDevPackage(const Config& config, kj::StringPtr pkgId) {
     FdBundle fakeBundle(nullptr);
     mongoCommand(config, fakeBundle, kj::str(
-        "db.devpackages.remove({_id:\"", pkgId, "\"})"));
+        "void db.devpackages.remove({_id:\"", pkgId, "\"})"));
   }
 
   void clearDevPackages(const Config& config) {
     FdBundle fakeBundle(nullptr);
-    mongoCommand(config, fakeBundle, kj::str("db.devpackages.remove({})"));
+    mongoCommand(config, fakeBundle, kj::str("void db.devpackages.remove({})"));
   }
 
   void mongoCommand(const Config& config, FdBundle& fdBundle,

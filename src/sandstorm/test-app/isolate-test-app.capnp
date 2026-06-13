@@ -43,15 +43,15 @@ const isolateCommand :Spk.Manifest.Command = (
     modules = [
       (
         name = "worker.js",
-        esModule = "import message from \"message.txt\"; import metadata from \"metadata.json\"; export default { async fetch(request, env, ctx) { const url = new URL(request.url); const headers = {}; for (const [name, value] of request.headers) { if (name.startsWith(\"x-sandstorm-\") || name === \"host\") headers[name] = value; } const apiStatus = await (await env.SANDSTORM_API.fetch(\"http://sandstorm/status\")).json(); const apiCapabilities = await (await env.SANDSTORM_API.fetch(\"http://sandstorm/capabilities\")).json(); const apiRuntime = await (await env.SANDSTORM_API.fetch(\"http://sandstorm/runtime\")).json(); const apiModules = await (await env.SANDSTORM_API.fetch(\"http://sandstorm/modules\")).json(); const apiBindings = await (await env.SANDSTORM_API.fetch(\"http://sandstorm/bindings\")).json(); const storagePut = await (await env.STORAGE.fetch(\"http://storage/fixture\", { method: \"PUT\", body: \"stored from isolate\" })).json(); const storageHead = await env.STORAGE.fetch(\"http://storage/fixture\", { method: \"HEAD\" }); const storageText = await (await env.STORAGE.fetch(\"http://storage/fixture\")).text(); const storageIndex = await (await env.STORAGE.fetch(\"http://storage/\")).json(); const storageDelete = await (await env.STORAGE.fetch(\"http://storage/fixture\", { method: \"DELETE\" })).json(); const storageMissing = await env.STORAGE.fetch(\"http://storage/fixture\"); const storageIndexAfterDelete = await (await env.STORAGE.fetch(\"http://storage/\")).json(); return Response.json({ ok: true, method: request.method, pathname: url.pathname, message, metadata, textBinding: env.TEXT_BINDING, jsonBinding: env.JSON_BINDING, sandstormApi: { status: apiStatus, capabilities: apiCapabilities, runtime: apiRuntime, modules: apiModules, bindings: apiBindings }, storage: { put: storagePut, head: { status: storageHead.status, bytes: storageHead.headers.get(\"x-sandstorm-storage-bytes\") }, text: storageText, index: storageIndex, delete: storageDelete, missingStatus: storageMissing.status, indexAfterDelete: storageIndexAfterDelete }, headers }); } };"
+        esModulePath = "isolate-test/worker.js"
       ),
       (
         name = "message.txt",
-        text = "hello from a text module"
+        textPath = "isolate-test/message.txt"
       ),
       (
         name = "metadata.json",
-        json = "{\"fixture\":\"isolate-test-app\"}"
+        jsonPath = "isolate-test/metadata.json"
       )
     ],
 
@@ -100,5 +100,11 @@ const pkgdef :Spk.PackageDefinition = (
     continueCommand = .isolateCommand
   ),
 
-  alwaysInclude = [ "sandstorm-manifest" ]
+  sourceMap = (
+    searchPath = [
+      ( packagePath = "isolate-test", sourcePath = "isolate-test" )
+    ]
+  ),
+
+  alwaysInclude = [ "sandstorm-manifest", "isolate-test" ]
 );
