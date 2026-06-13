@@ -121,6 +121,11 @@ declare module "sandstorm:api" {
     requiredPermissions?: string[];
   }
 
+  export interface WebSessionCapabilityOptions {
+    pathPrefix?: string;
+    prefix?: string;
+  }
+
   export interface SavedCapability {
     ok: true;
     type: "savedCapability";
@@ -226,6 +231,7 @@ declare module "sandstorm:api" {
     bindings(): Promise<unknown>;
     storage(): StorageApiTarget;
     powerbox(): PowerboxApiTarget;
+    webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
   }
 
   export interface StorageApiTarget extends RpcTarget, StorageApi {}
@@ -240,6 +246,7 @@ declare module "sandstorm:api" {
     bindings(): Promise<unknown>;
     storage(): StorageApi;
     powerbox(): PowerboxApi;
+    webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     apiTarget(): SandstormApiTarget;
     rpcClientScript(): string;
     rpcResponse(target: RpcTarget, options?: RpcSessionOptions): Response | Promise<Response>;

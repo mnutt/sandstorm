@@ -2402,6 +2402,12 @@ private:
   kj::String prefixedPath(kj::StringPtr path) {
     if (pathPrefix.size() == 0) {
       return kj::heapString(path);
+    } else if (path.size() == 0) {
+      return kj::heapString(pathPrefix);
+    } else if (pathPrefix[pathPrefix.size() - 1] == '/' && path[0] == '/') {
+      return kj::str(pathPrefix.slice(0, pathPrefix.size() - 1), path);
+    } else if (pathPrefix[pathPrefix.size() - 1] != '/' && path[0] != '/') {
+      return kj::str(pathPrefix, "/", path);
     } else {
       return kj::str(pathPrefix, path);
     }
@@ -2416,8 +2422,12 @@ private:
       addHeader(request, "x-sandstorm-offered-capability-id",
           sessionMetadata.offeredCapabilityId);
     }
-    addHeader(request, "x-sandstorm-username", sessionMetadata.userDisplayName);
-    addHeader(request, "x-sandstorm-permissions", sessionMetadata.permissions);
+    if (sessionMetadata.userDisplayName.size() > 0) {
+      addHeader(request, "x-sandstorm-username", sessionMetadata.userDisplayName);
+    }
+    if (sessionMetadata.permissions.size() > 0) {
+      addHeader(request, "x-sandstorm-permissions", sessionMetadata.permissions);
+    }
     if (sessionMetadata.userId.size() > 0) {
       addHeader(request, "x-sandstorm-user-id", sessionMetadata.userId);
     }
@@ -2442,12 +2452,12 @@ private:
     if (sessionMetadata.basePath.size() > 0) {
       addHeader(request, "x-sandstorm-base-path", sessionMetadata.basePath);
     }
-    if (sessionMetadata.host.size() > 0) {
-      addHeader(request, "host", sessionMetadata.host);
-    }
-    if (sessionMetadata.forwardedProto.size() > 0) {
-      addHeader(request, "x-forwarded-proto", sessionMetadata.forwardedProto);
-    }
+    addHeader(request, "host",
+        sessionMetadata.host.size() > 0 ? kj::StringPtr(sessionMetadata.host) : "sandbox");
+    addHeader(request, "x-forwarded-proto",
+        sessionMetadata.forwardedProto.size() > 0
+            ? kj::StringPtr(sessionMetadata.forwardedProto)
+            : "http");
   }
 
   kj::Promise<void> fetch(
@@ -3236,6 +3246,8 @@ public:
         return fulfillRequestWithCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/tie-to-user") {
         return tieClaimedCapabilityToUser(path, response);
+      } else if (methodName == "POST" && route == "/capabilities/web-session") {
+        return createWebSessionCapability(path, response);
       }
 
       if (methodName != "GET") {
@@ -3360,7 +3372,8 @@ private:
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
         "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
-        "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\"]\n"
+        "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
+        "\"capabilities.webSession\"]\n"
         "}\n");
   }
 
@@ -3375,6 +3388,35 @@ private:
       ++start;
     }
     return kj::str(path.slice(start, path.size()));
+  }
+
+  kj::String normalizeWebSessionPathPrefix(kj::StringPtr pathPrefix) {
+    KJ_REQUIRE(pathPrefix.size() <= 1024, "web session capability pathPrefix is too long");
+    for (size_t i = 0; i + 2 < pathPrefix.size(); ++i) {
+      KJ_REQUIRE(!(pathPrefix[i] == ':' && pathPrefix[i + 1] == '/' && pathPrefix[i + 2] == '/'),
+          "web session capability pathPrefix must be path-relative");
+    }
+    KJ_REQUIRE(pathPrefix.size() == 0 || pathPrefix[0] == '/',
+        "web session capability pathPrefix must be empty or start with '/'");
+    return kj::heapString(pathPrefix);
+  }
+
+  kj::Promise<void> createWebSessionCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    auto pathPrefixes = findIsolateQueryParams(url, "pathPrefix");
+    if (pathPrefixes.size() > 1) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"expected at most one pathPrefix\"\n}\n"));
+    }
+
+    auto pathPrefix = pathPrefixes.size() == 1
+        ? normalizeWebSessionPathPrefix(pathPrefixes[0])
+        : kj::heapString("");
+    auto cap = kj::heap<IsolateWebSessionImpl>(
+        kj::addRef(config), kj::addRef(host), pathPrefix, SessionKind::NORMAL, SessionMetadata());
+    auto capId = host.sessions->storeClaimedCapability(kj::mv(cap));
+    return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
 
   kj::Promise<void> fetchClaimedCapability(

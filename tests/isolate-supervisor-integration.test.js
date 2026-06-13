@@ -438,6 +438,35 @@ test("isolate supervisor integration suite", {
     assert.equal(apiPathResponse.json.pathname, "/api/health");
   });
 
+  await t.test("exports route-backed WebSession capabilities", async () => {
+    const exported = await requestJson(fixture.workerdSocket, "/export-web-session");
+    assert.equal(exported.statusCode, 200, exported.body + formatOutput(
+      fixture.stdout, fixture.stderr));
+    assert.equal(exported.json.ok, true);
+    assert.equal(exported.json.capabilityClass, true);
+    assert.equal(exported.json.capability.type, "claimedCapability");
+    assert.equal(typeof exported.json.capability.id, "string");
+
+    const capabilityId = exported.json.capability.id;
+    const fetched = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
+      `&method=GET&path=${encodeURIComponent("/capability-echo?source=external")}`,
+      { method: "POST" });
+    assert.equal(fetched.statusCode, 200, fetched.body);
+    assert.equal(fetched.json.ok, true);
+    assert.equal(fetched.json.source, "exported-web-session");
+    assert.equal(fetched.json.pathname, "/exported/capability-echo");
+    assert.equal(fetched.json.search, "?source=external");
+
+    const drop = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/drop?id=${encodeURIComponent(capabilityId)}`,
+      { method: "POST" });
+    assert.equal(drop.statusCode, 200, drop.body);
+    assert.equal(drop.json.ok, true);
+  });
+
   await t.test("forwards request bodies and custom headers through workerd", async () => {
     const body = Buffer.alloc(64 * 1024);
     for (let i = 0; i < body.length; ++i) {
@@ -524,6 +553,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("powerbox.offer"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.fulfillRequest"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.tieToUser"));
+    assert.ok(capabilities.json.capabilities.includes("capabilities.webSession"));
 
     const modules = await requestJson(fixture.sandstormApiSocket, "/modules");
     assert.equal(modules.statusCode, 200);
