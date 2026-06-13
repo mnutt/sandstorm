@@ -499,13 +499,20 @@ test-app-dev: tmp/.ekam-run
 isolate-test-app.spk: tmp/.ekam-run
 	@mkdir -p tmp/sandstorm/isolate-test-app
 	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
+	@rm -rf tmp/sandstorm/isolate-test-app/isolate-test
+	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
 	bin/spk pack -ksrc/sandstorm/test-app/isolate-test-app.key -Isrc -Itmp \
 		-ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef isolate-test-app.spk
 
 isolate-test-app-dev: tmp/.ekam-run
 	@mkdir -p tmp/sandstorm/isolate-test-app
 	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
+	@rm -rf tmp/sandstorm/isolate-test-app/isolate-test
+	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
 	spk dev -Isrc -Itmp -ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef
+
+isolate-supervisor-smoke-test: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-smoke.test.js
+	$(NODEJS) tests/isolate-supervisor-smoke.test.js
 
 # ====================================================================
 # meteor-testapp.spk
