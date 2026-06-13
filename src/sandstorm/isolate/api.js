@@ -24,6 +24,15 @@ export class ValidationError extends Error {
   }
 }
 
+export class UnsupportedCapabilityError extends Error {
+  constructor(capability, operation) {
+    super(`${capability}.${operation}() is not implemented by isolate grains yet`);
+    this.name = "UnsupportedCapabilityError";
+    this.capability = capability;
+    this.operation = operation;
+  }
+}
+
 function failValidation(name, expected, value) {
   const actual = Object.prototype.toString.call(value);
   throw new ValidationError(`${name} must be ${expected}; got ${actual}`);
@@ -135,6 +144,38 @@ export function storage(env) {
   };
 }
 
+function unsupportedPowerbox(operation) {
+  throw new UnsupportedCapabilityError("powerbox", operation);
+}
+
+export function powerbox() {
+  return {
+    async request() {
+      unsupportedPowerbox("request");
+    },
+
+    async offer() {
+      unsupportedPowerbox("offer");
+    },
+
+    async fulfillRequest() {
+      unsupportedPowerbox("fulfillRequest");
+    },
+
+    async save() {
+      unsupportedPowerbox("save");
+    },
+
+    async restore() {
+      unsupportedPowerbox("restore");
+    },
+
+    async drop() {
+      unsupportedPowerbox("drop");
+    },
+  };
+}
+
 export function getSession(request) {
   return {
     sessionType: header(request, "x-sandstorm-session-type"),
@@ -190,6 +231,32 @@ class StorageRpcTarget extends RpcTarget {
   }
 }
 
+class PowerboxRpcTarget extends RpcTarget {
+  async request() {
+    unsupportedPowerbox("request");
+  }
+
+  async offer() {
+    unsupportedPowerbox("offer");
+  }
+
+  async fulfillRequest() {
+    unsupportedPowerbox("fulfillRequest");
+  }
+
+  async save() {
+    unsupportedPowerbox("save");
+  }
+
+  async restore() {
+    unsupportedPowerbox("restore");
+  }
+
+  async drop() {
+    unsupportedPowerbox("drop");
+  }
+}
+
 class SandstormRpcTarget extends RpcTarget {
   #request;
   #env;
@@ -226,6 +293,10 @@ class SandstormRpcTarget extends RpcTarget {
 
   storage() {
     return new StorageRpcTarget(this.#env);
+  }
+
+  powerbox() {
+    return new PowerboxRpcTarget();
   }
 }
 
@@ -275,6 +346,7 @@ export function sandstorm(request, env) {
     modules: () => callSandstorm(env, "modules"),
     bindings: () => callSandstorm(env, "bindings"),
     storage: () => storage(env),
+    powerbox: () => powerbox(),
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),
