@@ -190,12 +190,25 @@ public:
     return kj::READY_NOW;
   }
 
+  kj::Promise<void> tieToUser(TieToUserContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.hasCap());
+    KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
+    KJ_REQUIRE(params.getRequiredPermissions()[0]);
+    KJ_REQUIRE(params.getDisplayInfo().getTitle().getDefaultText() ==
+        "WebSession tied capability");
+    ++tieCount;
+    context.getResults().setTiedCap(kj::heap<FakeClaimedCapability>(saveCount));
+    return kj::READY_NOW;
+  }
+
   uint claimCount = 0;
   uint saveCount = 0;
   uint restoreCount = 0;
   uint tokenDropCount = 0;
   uint offerCount = 0;
   uint fulfillCount = 0;
+  uint tieCount = 0;
   uint grainSizeReportCount = 0;
   uint64_t lastGrainSizeBytes = 0;
 };
@@ -617,6 +630,10 @@ public:
         claimBody);
     KJ_REQUIRE(contains(claimBody, "\"offer\":{\"ok\":true}"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"fulfill\":{\"ok\":true}"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"tie\":{\"ok\":true,\"claimedClass\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody,
+        "\"dropTied\":{\"ok\":true}"),
+        claimBody);
     KJ_REQUIRE(contains(claimBody, "\"dropRestored\":{\"status\":200,\"body\":{\"ok\":true}}"),
         claimBody);
     KJ_REQUIRE(contains(claimBody, "\"drop\":{\"status\":200,\"body\":{\"ok\":true}}"), claimBody);
@@ -628,6 +645,7 @@ public:
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 1, sessionContextRef.tokenDropCount);
     KJ_REQUIRE(sessionContextRef.offerCount == 1, sessionContextRef.offerCount);
     KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
+    KJ_REQUIRE(sessionContextRef.tieCount == 1, sessionContextRef.tieCount);
 
     auto badClaimRequest = session.getRequest();
     badClaimRequest.setPath(
