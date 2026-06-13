@@ -25,7 +25,8 @@ export class ValidationError extends Error {
 }
 
 function failValidation(name, expected, value) {
-  throw new ValidationError(`${name} must be ${expected}; got ${Object.prototype.toString.call(value)}`);
+  const actual = Object.prototype.toString.call(value);
+  throw new ValidationError(`${name} must be ${expected}; got ${actual}`);
 }
 
 export const validate = {
