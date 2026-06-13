@@ -41,12 +41,55 @@ bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
   return false;
 }
 
+kj::Array<byte> makeBytes(size_t size) {
+  auto result = kj::heapArray<byte>(size);
+  for (auto i: kj::indices(result)) {
+    result[i] = static_cast<byte>(i & 0xff);
+  }
+  return result;
+}
+
+uint checksum(kj::ArrayPtr<const byte> data) {
+  uint result = 0;
+  for (auto b: data) {
+    result = (result + b) & 0xffffffffu;
+  }
+  return result;
+}
+
 class IgnoreByteStream final: public ByteStream::Server {
 public:
   kj::Promise<void> write(WriteContext context) override {
     (void)context;
     return kj::READY_NOW;
   }
+};
+
+class CollectByteStream final: public ByteStream::Server {
+public:
+  kj::Promise<void> write(WriteContext context) override {
+    data.addAll(context.getParams().getData());
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> done(DoneContext context) override {
+    doneCalled = true;
+    return kj::READY_NOW;
+  }
+
+  void waitForDone(kj::AsyncIoContext& io) {
+    while (!doneCalled) {
+      io.provider->getTimer().afterDelay(10 * kj::MILLISECONDS).wait(io.waitScope);
+    }
+  }
+
+  kj::ArrayPtr<const byte> getData() {
+    return data.asPtr();
+  }
+
+private:
+  kj::Vector<byte> data;
+  bool doneCalled = false;
 };
 
 class FakeClaimedCapability final: public SystemPersistent::Server {
@@ -231,6 +274,76 @@ public:
     KJ_REQUIRE(contains(body, "\"x-sandstorm-tab-id\":\"77656273657373696f6e2d746162\""), body);
     KJ_REQUIRE(contains(body, "\"if-none-match\":\"\\\"cached-etag\\\", W/\\\"weak-cached-etag\\\"\""),
         body);
+
+    auto downloadStreamServer = kj::heap<CollectByteStream>();
+    auto& downloadStream = *downloadStreamServer;
+    auto downloadRequest = session.getRequest();
+    downloadRequest.setPath("/download?bytes=131072");
+    downloadRequest.setIgnoreBody(false);
+    auto downloadContext = downloadRequest.initContext();
+    downloadContext.setResponseStream(kj::mv(downloadStreamServer));
+    downloadContext.initCookies(0);
+    downloadContext.initAccept(0);
+    downloadContext.initAcceptEncoding(0);
+    downloadContext.initAdditionalHeaders(0);
+
+    auto downloadResponse = downloadRequest.send().wait(io.waitScope);
+    auto downloadDebugBody = responseDebugBody(downloadResponse);
+    KJ_REQUIRE(downloadResponse.which() == WebSession::Response::CONTENT, downloadDebugBody);
+    auto downloadContent = downloadResponse.getContent();
+    KJ_REQUIRE(downloadContent.getMimeType() == "application/octet-stream");
+    KJ_REQUIRE(downloadContent.getBody().which() ==
+        WebSession::Response::Content::Body::STREAM);
+    downloadStream.waitForDone(io);
+    KJ_REQUIRE(downloadStream.getData().size() == 131072, downloadStream.getData().size());
+    KJ_REQUIRE(downloadStream.getData()[0] == 0);
+    KJ_REQUIRE(downloadStream.getData()[255] == 255);
+    KJ_REQUIRE(downloadStream.getData()[256] == 0);
+
+    auto uploadBytes = makeBytes(32768);
+    auto uploadRequest = session.postStreamingRequest();
+    uploadRequest.setPath("/upload");
+    uploadRequest.setMimeType("application/octet-stream");
+    uploadRequest.setEncoding("");
+    uploadRequest.setExpectedSize(uploadBytes.size());
+    auto uploadContext = uploadRequest.initContext();
+    uploadContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    uploadContext.initCookies(0);
+    uploadContext.initAccept(0);
+    uploadContext.initAcceptEncoding(0);
+    uploadContext.initAdditionalHeaders(0);
+
+    auto uploadStream = uploadRequest.send().wait(io.waitScope).getStream();
+    auto uploadResponsePromise = uploadStream.getResponseRequest().send();
+    size_t offset = 0;
+    for (size_t chunkSize: {size_t(777), size_t(8192), size_t(5000), size_t(1887)}) {
+      auto size = kj::min(chunkSize, uploadBytes.size() - offset);
+      if (size == 0) break;
+      auto write = uploadStream.writeRequest();
+      write.setData(uploadBytes.asPtr().slice(offset, offset + size));
+      write.send().wait(io.waitScope);
+      offset += size;
+    }
+    while (offset < uploadBytes.size()) {
+      auto size = kj::min(size_t(4096), uploadBytes.size() - offset);
+      auto write = uploadStream.writeRequest();
+      write.setData(uploadBytes.asPtr().slice(offset, offset + size));
+      write.send().wait(io.waitScope);
+      offset += size;
+    }
+    uploadStream.doneRequest().send().wait(io.waitScope);
+    auto uploadResponse = uploadResponsePromise.wait(io.waitScope);
+    auto uploadDebugBody = responseDebugBody(uploadResponse);
+    KJ_REQUIRE(uploadResponse.which() == WebSession::Response::CONTENT, uploadDebugBody);
+    auto uploadContent = uploadResponse.getContent();
+    KJ_REQUIRE(uploadContent.getMimeType().startsWith("application/json"));
+    KJ_REQUIRE(uploadContent.getBody().which() == WebSession::Response::Content::Body::BYTES);
+    auto uploadBody = kj::str(uploadContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(uploadBody, "\"ok\":true"), uploadBody);
+    KJ_REQUIRE(contains(uploadBody, "\"method\":\"POST\""), uploadBody);
+    KJ_REQUIRE(contains(uploadBody, "\"bodyBytes\":32768"), uploadBody);
+    KJ_REQUIRE(contains(uploadBody, kj::str("\"checksum\":", checksum(uploadBytes))), uploadBody);
+    KJ_REQUIRE(contains(uploadBody, "\"contentType\":\"application/octet-stream\""), uploadBody);
 
     auto headersRequest = session.getRequest();
     headersRequest.setPath("/headers");
