@@ -18,6 +18,7 @@
 #include <kj/async-io.h>
 #include <kj/debug.h>
 #include <kj/main.h>
+#include <sandstorm/util.h>
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
@@ -43,11 +44,24 @@ bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
 class IgnoreByteStream final: public ByteStream::Server {
 public:
   kj::Promise<void> write(WriteContext context) override {
+    (void)context;
     return kj::READY_NOW;
   }
 };
 
-class DummySessionContext final: public SessionContext::Server {};
+class FakeSessionContext final: public SessionContext::Server {
+public:
+  kj::Promise<void> claimRequest(ClaimRequestContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.getRequestToken() == "websession-test-token");
+    KJ_REQUIRE(params.getRequiredPermissions().size() == 0);
+    claimCount++;
+    context.getResults().setCap(kj::heap<CapRedirector>());
+    return kj::READY_NOW;
+  }
+
+  uint claimCount = 0;
+};
 
 class IsolateWebSessionClientMain {
 public:
@@ -94,7 +108,9 @@ public:
     userInfo.initPermissions(1).set(0, true);
     userInfo.setIdentityId(
         kj::StringPtr("0123456789abcdef0123456789abcdef").asBytes());
-    sessionRequest.setContext(kj::heap<DummySessionContext>());
+    auto sessionContext = kj::heap<FakeSessionContext>();
+    auto& sessionContextRef = *sessionContext;
+    sessionRequest.setContext(kj::mv(sessionContext));
     sessionRequest.setSessionType(capnp::typeId<WebSession>());
     auto sessionParams = sessionRequest.getSessionParams().initAs<WebSession::Params>();
     sessionParams.setBasePath("https://ui-test.invalid");
@@ -133,6 +149,27 @@ public:
     KJ_REQUIRE(contains(body, "\"x-sandstorm-username\":\"WebSession Test User\""), body);
     KJ_REQUIRE(contains(body, "\"x-sandstorm-preferred-handle\":\"websession-test\""), body);
     KJ_REQUIRE(contains(body, "\"x-sandstorm-tab-id\":\"77656273657373696f6e2d746162\""), body);
+
+    auto claimRequest = session.getRequest();
+    claimRequest.setPath("/claim-powerbox?token=websession-test-token");
+    claimRequest.setIgnoreBody(false);
+    auto claimContext = claimRequest.initContext();
+    claimContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    claimContext.initCookies(0);
+    claimContext.initAccept(0);
+    claimContext.initAcceptEncoding(0);
+    claimContext.initAdditionalHeaders(0);
+
+    auto claimResponse = claimRequest.send().wait(io.waitScope);
+    KJ_REQUIRE(claimResponse.which() == WebSession::Response::CONTENT);
+    auto claimContent = claimResponse.getContent();
+    KJ_REQUIRE(claimContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(claimContent.getBody().which() == WebSession::Response::Content::Body::BYTES);
+    auto claimBody = kj::str(claimContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(claimBody, "\"ok\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"type\":\"claimedCapability\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"id\":\""), claimBody);
+    KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
 
     return true;
   }
