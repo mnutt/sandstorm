@@ -29,6 +29,8 @@ const REPO_TMP_DIR = path.join(REPO_DIR, "tmp");
 const SANDSTORM_BIN = process.env.SANDSTORM_BIN || path.join(REPO_DIR, "bin/sandstorm");
 const SPK_BIN = process.env.SPK_BIN || path.join(REPO_DIR, "bin/spk");
 const SPK_PATH = process.env.ISOLATE_TEST_SPK || path.join(REPO_DIR, "isolate-test-app.spk");
+const WEBSESSION_CLIENT_BIN = process.env.ISOLATE_WEBSESSION_CLIENT ||
+  path.join(REPO_DIR, "tmp/sandstorm/isolate-websession-client");
 
 function formatOutput(stdout, stderr) {
   const out = stdout.join("");
@@ -400,6 +402,13 @@ test("isolate supervisor integration suite", {
       fixture.stderr, /Isolate sidecar entered .*namespaces\./);
     assert.match(log, /Isolate sidecar entered minimal mount root\./);
     assert.match(log, /Started isolate sidecar process\./);
+  });
+
+  await t.test("serves requests through the supervisor WebSession interface", async () => {
+    await requireExecutable(
+      WEBSESSION_CLIENT_BIN,
+      "Build the project first, e.g. make tmp/.ekam-run.");
+    await runCommand(WEBSESSION_CLIENT_BIN, [fixture.supervisorSocket]);
   });
 
   await t.test("serves worker fetch requests through workerd", async () => {
