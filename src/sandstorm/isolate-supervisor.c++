@@ -3143,8 +3143,8 @@ private:
           auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
           auto permissionDefs = viewInfo.getPermissions();
           auto requiredPermissions = request.initRequiredPermissions(permissionDefs.size());
-          KJ_IF_MAYBE(names, findIsolateQueryParam(url, "requiredPermissions")) {
-            KJ_IF_MAYBE(error, setRequiredPermissions(*names, requiredPermissions, permissionDefs)) {
+          for (auto& name: findIsolateQueryParams(url, "requiredPermission")) {
+            KJ_IF_MAYBE(error, setRequiredPermission(name, requiredPermissions, permissionDefs)) {
               return sendJson(response, 400, "Bad Request", renderError(*error));
             }
           }
@@ -3164,40 +3164,21 @@ private:
         "{\n  \"ok\": false,\n  \"error\": \"missing sessionId or token\"\n}\n"));
   }
 
-  kj::Maybe<kj::String> setRequiredPermissions(
-      kj::StringPtr names, capnp::List<bool>::Builder output,
+  kj::Maybe<kj::String> setRequiredPermission(
+      kj::StringPtr name, capnp::List<bool>::Builder output,
       capnp::List<PermissionDef>::Reader permissionDefs) {
-    size_t start = 0;
-    while (start <= names.size()) {
-      auto remaining = names.slice(start, names.size());
-      size_t end = names.size();
-      KJ_IF_MAYBE(comma, remaining.findFirst(',')) {
-        end = start + *comma;
-      }
-
-      auto name = names.slice(start, end);
-      if (name.size() > 0) {
-        bool found = false;
-        for (auto i: kj::indices(permissionDefs)) {
-          if (permissionDefs[i].getName() == kj::StringPtr(name.begin(), name.size())) {
-            output.set(i, true);
-            found = true;
-            break;
-          }
-        }
-
-        if (!found) {
-          return kj::str("unknown required permission: ", name);
-        }
-      }
-
-      if (end == names.size()) {
-        break;
-      }
-      start = end + 1;
+    if (name.size() == 0) {
+      return nullptr;
     }
 
-    return nullptr;
+    for (auto i: kj::indices(permissionDefs)) {
+      if (permissionDefs[i].getName() == name) {
+        output.set(i, true);
+        return nullptr;
+      }
+    }
+
+    return kj::str("unknown required permission: ", name);
   }
 
   kj::String renderError(kj::StringPtr error) {

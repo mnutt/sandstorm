@@ -210,12 +210,9 @@ export function powerbox(request, env) {
       token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
       const sessionId = encodeURIComponent(sessionIdForPowerbox(request));
       const encodedToken = encodeURIComponent(token);
-      const requiredPermissions = permissionNames(options)
-        .map((name) => encodeURIComponent(name))
-        .join(",");
-      const permissionQuery = requiredPermissions.length === 0
-        ? ""
-        : `&requiredPermissions=${requiredPermissions}`;
+      const permissionQuery = permissionNames(options)
+        .map((name) => `&requiredPermission=${encodeURIComponent(name)}`)
+        .join("");
       return postSandstorm(env,
         `powerbox/claim-request?sessionId=${sessionId}&token=${encodedToken}${permissionQuery}`);
     },

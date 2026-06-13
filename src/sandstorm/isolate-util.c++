@@ -106,7 +106,8 @@ kj::String decodeIsolateQueryComponent(kj::StringPtr value) {
   return kj::String(result.releaseAsArray());
 }
 
-kj::Maybe<kj::String> findIsolateQueryParam(kj::StringPtr url, kj::StringPtr name) {
+kj::Array<kj::String> findIsolateQueryParams(kj::StringPtr url, kj::StringPtr name) {
+  kj::Vector<kj::String> results;
   KJ_IF_MAYBE(query, url.findFirst('?')) {
     size_t start = *query + 1;
     while (start <= url.size()) {
@@ -122,8 +123,8 @@ kj::Maybe<kj::String> findIsolateQueryParam(kj::StringPtr url, kj::StringPtr nam
         auto key = decodeIsolateQueryComponent(kj::StringPtr(keySlice.begin(), keySlice.size()));
         if (key == name) {
           auto valueSlice = part.slice(*eq + 1, part.size());
-          return decodeIsolateQueryComponent(
-              kj::StringPtr(valueSlice.begin(), valueSlice.size()));
+          results.add(decodeIsolateQueryComponent(
+              kj::StringPtr(valueSlice.begin(), valueSlice.size())));
         }
       }
 
@@ -132,6 +133,15 @@ kj::Maybe<kj::String> findIsolateQueryParam(kj::StringPtr url, kj::StringPtr nam
       }
       start = end + 1;
     }
+  }
+
+  return results.releaseAsArray();
+}
+
+kj::Maybe<kj::String> findIsolateQueryParam(kj::StringPtr url, kj::StringPtr name) {
+  auto params = findIsolateQueryParams(url, name);
+  if (params.size() > 0) {
+    return kj::mv(params[0]);
   }
 
   return nullptr;
