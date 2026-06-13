@@ -3168,7 +3168,14 @@ private:
         KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(*sessionId)) {
           auto request = sessionContext->claimRequestRequest();
           request.setRequestToken(*token);
-          request.initRequiredPermissions(0);
+          auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
+          auto permissionDefs = viewInfo.getPermissions();
+          auto requiredPermissions = request.initRequiredPermissions(permissionDefs.size());
+          KJ_IF_MAYBE(names, findQueryParam(url, "requiredPermissions")) {
+            KJ_IF_MAYBE(error, setRequiredPermissions(*names, requiredPermissions, permissionDefs)) {
+              return sendJson(response, 400, "Bad Request", renderError(*error));
+            }
+          }
           return request.send().then(
               [this, &response](auto result) mutable {
             auto capId = host.sessions->storeClaimedCapability(result.getCap());
@@ -3183,6 +3190,51 @@ private:
 
     return sendJson(response, 400, "Bad Request", kj::heapString(
         "{\n  \"ok\": false,\n  \"error\": \"missing sessionId or token\"\n}\n"));
+  }
+
+  kj::Maybe<kj::String> setRequiredPermissions(
+      kj::StringPtr names, capnp::List<bool>::Builder output,
+      capnp::List<PermissionDef>::Reader permissionDefs) {
+    size_t start = 0;
+    while (start <= names.size()) {
+      auto remaining = names.slice(start, names.size());
+      size_t end = names.size();
+      KJ_IF_MAYBE(comma, remaining.findFirst(',')) {
+        end = start + *comma;
+      }
+
+      auto name = names.slice(start, end);
+      if (name.size() > 0) {
+        bool found = false;
+        for (auto i: kj::indices(permissionDefs)) {
+          if (permissionDefs[i].getName() == kj::StringPtr(name.begin(), name.size())) {
+            output.set(i, true);
+            found = true;
+            break;
+          }
+        }
+
+        if (!found) {
+          return kj::str("unknown required permission: ", name);
+        }
+      }
+
+      if (end == names.size()) {
+        break;
+      }
+      start = end + 1;
+    }
+
+    return nullptr;
+  }
+
+  kj::String renderError(kj::StringPtr error) {
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": false,\n  "));
+    appendJsonField(json, "error", error);
+    json.addAll(kj::StringPtr("\n}\n"));
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
   }
 
   kj::String renderClaimedCapability(kj::StringPtr capabilityId) {

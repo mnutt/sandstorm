@@ -54,7 +54,9 @@ public:
   kj::Promise<void> claimRequest(ClaimRequestContext context) override {
     auto params = context.getParams();
     KJ_REQUIRE(params.getRequestToken() == "websession-test-token");
-    KJ_REQUIRE(params.getRequiredPermissions().size() == 0);
+    auto requiredPermissions = params.getRequiredPermissions();
+    KJ_REQUIRE(requiredPermissions.size() == 1);
+    KJ_REQUIRE(requiredPermissions[0]);
     claimCount++;
     context.getResults().setCap(kj::heap<CapRedirector>());
     return kj::READY_NOW;
@@ -151,7 +153,7 @@ public:
     KJ_REQUIRE(contains(body, "\"x-sandstorm-tab-id\":\"77656273657373696f6e2d746162\""), body);
 
     auto claimRequest = session.getRequest();
-    claimRequest.setPath("/claim-powerbox?token=websession-test-token");
+    claimRequest.setPath("/claim-powerbox?token=websession-test-token&requiredPermissions=view");
     claimRequest.setIgnoreBody(false);
     auto claimContext = claimRequest.initContext();
     claimContext.setResponseStream(kj::heap<IgnoreByteStream>());
