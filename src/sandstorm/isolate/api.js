@@ -437,6 +437,11 @@ export function powerbox(request, env) {
       return wrapClaimedCapability(env, capability);
     },
 
+    offeredCapability() {
+      const id = header(request, "x-sandstorm-offered-capability-id");
+      return id ? new ClaimedCapability(env, id) : undefined;
+    },
+
     async offer() {
       if (arguments.length < 1) {
         unsupportedPowerbox("offer");
@@ -492,6 +497,7 @@ export function getSession(request) {
       sessionId: header(request, "x-sandstorm-session-id"),
       tabId: header(request, "x-sandstorm-tab-id"),
       basePath: header(request, "x-sandstorm-base-path"),
+      offeredCapabilityId: header(request, "x-sandstorm-offered-capability-id"),
       host: header(request, "host"),
       forwardedProto: header(request, "x-forwarded-proto"),
       userAgent: header(request, "user-agent"),
@@ -549,6 +555,10 @@ class PowerboxRpcTarget extends RpcTarget {
 
   async claimRequest(token, options) {
     return powerbox(this.#request, this.#env).claimRequest(token, options);
+  }
+
+  offeredCapability() {
+    return powerbox(this.#request, this.#env).offeredCapability();
   }
 
   async offer() {

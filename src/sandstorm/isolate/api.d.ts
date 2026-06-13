@@ -68,6 +68,7 @@ declare module "sandstorm:api" {
       sessionId: string;
       tabId: string;
       basePath: string;
+      offeredCapabilityId: string;
       host: string;
       forwardedProto: string;
       userAgent: string;
@@ -194,6 +195,7 @@ declare module "sandstorm:api" {
   export interface PowerboxApi {
     request(query: unknown, options?: unknown): Promise<unknown>;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
+    offeredCapability(): ClaimedCapability | undefined;
     offer(
       capability: ClaimedCapabilityHandle | string,
       options?: SessionCapabilityOptions,
