@@ -17,11 +17,69 @@ async function callSandstorm(env, path) {
   return response.json();
 }
 
-function storageUrl(key = "") {
-  if (key.includes("/")) {
-    throw new Error("storage keys must be single path segments");
+export class ValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ValidationError";
   }
-  return `http://storage/${encodeURIComponent(key)}`;
+}
+
+function failValidation(name, expected, value) {
+  throw new ValidationError(`${name} must be ${expected}; got ${Object.prototype.toString.call(value)}`);
+}
+
+export const validate = {
+  string(value, name = "value", options = {}) {
+    if (typeof value !== "string") {
+      failValidation(name, "a string", value);
+    }
+    if (options.minLength !== undefined && value.length < options.minLength) {
+      throw new ValidationError(`${name} must be at least ${options.minLength} characters`);
+    }
+    if (options.maxLength !== undefined && value.length > options.maxLength) {
+      throw new ValidationError(`${name} must be at most ${options.maxLength} characters`);
+    }
+    return value;
+  },
+
+  number(value, name = "value", options = {}) {
+    const result = options.coerce ? Number(value) : value;
+    if (typeof result !== "number" || !Number.isFinite(result)) {
+      failValidation(name, "a finite number", value);
+    }
+    if (options.min !== undefined && result < options.min) {
+      throw new ValidationError(`${name} must be at least ${options.min}`);
+    }
+    if (options.max !== undefined && result > options.max) {
+      throw new ValidationError(`${name} must be at most ${options.max}`);
+    }
+    return result;
+  },
+
+  integer(value, name = "value", options = {}) {
+    const result = this.number(value, name, options);
+    if (!Number.isInteger(result)) {
+      throw new ValidationError(`${name} must be an integer`);
+    }
+    return result;
+  },
+
+  optional(value, fallback, validator, name = "value", options = {}) {
+    return value === undefined || value === null ? fallback :
+      validator.call(this, value, name, options);
+  },
+
+  storageKey(value, name = "key") {
+    const key = this.string(value, name, { minLength: 1, maxLength: 128 });
+    if (key.startsWith(".") || key.includes("/") || key.includes("..")) {
+      throw new ValidationError(`${name} is not a valid storage key`);
+    }
+    return key;
+  },
+};
+
+function storageUrl(key = "") {
+  return `http://storage/${encodeURIComponent(key === "" ? "" : validate.storageKey(key))}`;
 }
 
 async function readStorageJson(response) {

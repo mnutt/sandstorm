@@ -20,6 +20,35 @@ declare module "sandstorm:api" {
     | T
     | (() => T | Promise<T>);
 
+  export class ValidationError extends Error {}
+
+  export interface StringValidationOptions {
+    minLength?: number;
+    maxLength?: number;
+  }
+
+  export interface NumberValidationOptions {
+    coerce?: boolean;
+    min?: number;
+    max?: number;
+  }
+
+  export interface Validator {
+    string(value: unknown, name?: string, options?: StringValidationOptions): string;
+    number(value: unknown, name?: string, options?: NumberValidationOptions): number;
+    integer(value: unknown, name?: string, options?: NumberValidationOptions): number;
+    optional<T>(
+      value: unknown,
+      fallback: T,
+      validator: (value: unknown, name?: string, options?: unknown) => T,
+      name?: string,
+      options?: unknown,
+    ): T;
+    storageKey(value: unknown, name?: string): string;
+  }
+
+  export const validate: Validator;
+
   export interface SessionInfo {
     sessionType: string;
     user: {
