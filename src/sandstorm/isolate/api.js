@@ -188,6 +188,7 @@ export function getSession(request) {
     },
     permissions: list(header(request, "x-sandstorm-permissions")),
     request: {
+      sessionId: header(request, "x-sandstorm-session-id"),
       tabId: header(request, "x-sandstorm-tab-id"),
       basePath: header(request, "x-sandstorm-base-path"),
       host: header(request, "host"),
