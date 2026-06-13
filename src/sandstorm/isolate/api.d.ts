@@ -119,12 +119,50 @@ declare module "sandstorm:api" {
     id: string;
     token: string;
     tokenEncoding: "base64url";
+    restore(): Promise<ClaimedCapability>;
+    drop(): Promise<{ ok: true }>;
   }
 
   export interface ClaimedCapability extends ClaimedCapabilityHandle {
+    fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
     [Symbol.dispose](): void;
+  }
+
+  export class ClaimedCapability {
+    readonly ok: true;
+    readonly type: "claimedCapability";
+    readonly id: string;
+    constructor(env: SandstormEnv, id: string);
+    fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
+    save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
+    drop(): Promise<{ ok: true }>;
+    [Symbol.dispose](): void;
+    toJSON(): ClaimedCapabilityHandle;
+  }
+
+  export class SavedCapability {
+    readonly ok: true;
+    readonly type: "savedCapability";
+    readonly id: string;
+    readonly token: string;
+    readonly tokenEncoding: "base64url";
+    constructor(
+      env: SandstormEnv,
+      id: string,
+      token: string | Uint8Array,
+      tokenEncoding?: "base64url",
+    );
+    restore(): Promise<ClaimedCapability>;
+    drop(): Promise<{ ok: true }>;
+    toJSON(): {
+      ok: true;
+      type: "savedCapability";
+      id: string;
+      token: string;
+      tokenEncoding: "base64url";
+    };
   }
 
   export interface ClaimRequestOptions {

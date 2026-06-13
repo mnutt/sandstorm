@@ -1,5 +1,10 @@
 import message from "message.txt";
 import metadata from "metadata.json";
+import {
+  ClaimedCapability,
+  SavedCapability,
+  powerbox as sandstormPowerbox,
+} from "sandstorm:api";
 
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
@@ -133,23 +138,53 @@ export default {
       const permissionQuery = requiredPermissions
         .map((permission) => `&requiredPermission=${encodeURIComponent(permission)}`)
         .join("");
-      const claimResponse = await env.SANDSTORM_API.fetch(
-        `http://sandstorm/powerbox/claim-request?` +
-        `sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token)}` +
-        permissionQuery,
-        { method: "POST" });
-      const claim = await claimResponse.json();
+      let claimResponseOk = false;
+      let claimResponseStatus = 500;
+      let claim;
+      if (url.searchParams.get("fetch") === "true") {
+        claim = await sandstormPowerbox(request, env).claimRequest(token, {
+          requiredPermissions,
+        });
+        claimResponseOk = true;
+        claimResponseStatus = 200;
+      } else {
+        const claimResponse = await env.SANDSTORM_API.fetch(
+          `http://sandstorm/powerbox/claim-request?` +
+          `sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token)}` +
+          permissionQuery,
+          { method: "POST" });
+        claimResponseOk = claimResponse.ok;
+        claimResponseStatus = claimResponse.status;
+        claim = await claimResponse.json();
+      }
+      const claimType = {
+        claimedClass: claim instanceof ClaimedCapability,
+        json: JSON.parse(JSON.stringify(claim)),
+      };
       let save = null;
+      let savedCapability = null;
       if (claim.ok && claim.id && url.searchParams.get("save") === "true") {
         const label = url.searchParams.get("label") || "Isolate test saved capability";
-        const saveResponse = await env.SANDSTORM_API.fetch(
-          `http://sandstorm/powerbox/save?id=${encodeURIComponent(claim.id)}` +
-          `&label=${encodeURIComponent(label)}`,
-          { method: "POST" });
-        save = {
-          status: saveResponse.status,
-          body: await saveResponse.json(),
-        };
+        if (typeof claim.save === "function") {
+          savedCapability = await claim.save({ label });
+          save = {
+            status: 200,
+            body: savedCapability,
+            typed: {
+              savedClass: savedCapability instanceof SavedCapability,
+              json: JSON.parse(JSON.stringify(savedCapability)),
+            },
+          };
+        } else {
+          const saveResponse = await env.SANDSTORM_API.fetch(
+            `http://sandstorm/powerbox/save?id=${encodeURIComponent(claim.id)}` +
+            `&label=${encodeURIComponent(label)}`,
+            { method: "POST" });
+          save = {
+            status: saveResponse.status,
+            body: await saveResponse.json(),
+          };
+        }
       }
       let stored = null;
       if (save?.body?.ok && save.body.token && url.searchParams.get("store") === "true") {
@@ -170,57 +205,101 @@ export default {
       }
       let restore = null;
       let dropRestored = null;
+      let restoredCapability = null;
       const restoreToken = stored?.token || save?.body?.token;
       if (restoreToken && url.searchParams.get("restore") === "true") {
-        const restoreResponse = await env.SANDSTORM_API.fetch(
-          `http://sandstorm/powerbox/restore?token=${encodeURIComponent(restoreToken)}`,
-          { method: "POST" });
-        restore = {
-          status: restoreResponse.status,
-          body: await restoreResponse.json(),
-        };
-        if (restore.body.ok && restore.body.id) {
-          const dropRestoredResponse = await env.SANDSTORM_API.fetch(
-            `http://sandstorm/powerbox/drop?id=${encodeURIComponent(restore.body.id)}`,
+        if (savedCapability && typeof savedCapability.restore === "function") {
+          restoredCapability = await savedCapability.restore();
+          restore = {
+            status: 200,
+            body: restoredCapability,
+            typed: {
+              restoredClass: restoredCapability instanceof ClaimedCapability,
+              json: JSON.parse(JSON.stringify(restoredCapability)),
+            },
+          };
+        } else {
+          const restoreResponse = await env.SANDSTORM_API.fetch(
+            `http://sandstorm/powerbox/restore?token=${encodeURIComponent(restoreToken)}`,
             { method: "POST" });
-          dropRestored = {
-            status: dropRestoredResponse.status,
-            body: await dropRestoredResponse.json(),
+          restore = {
+            status: restoreResponse.status,
+            body: await restoreResponse.json(),
           };
         }
+        if (restore.body.ok && restore.body.id) {
+          if (restoredCapability && typeof restoredCapability.drop === "function") {
+            dropRestored = {
+              status: 200,
+              body: await restoredCapability.drop(),
+            };
+          } else {
+            const dropRestoredResponse = await env.SANDSTORM_API.fetch(
+              `http://sandstorm/powerbox/drop?id=${encodeURIComponent(restore.body.id)}`,
+              { method: "POST" });
+            dropRestored = {
+              status: dropRestoredResponse.status,
+              body: await dropRestoredResponse.json(),
+            };
+          }
+        }
+      }
+      let fetched = null;
+      if (claim.ok && typeof claim.fetch === "function" && url.searchParams.get("fetch") === "true") {
+        const fetchedResponse = await claim.fetch("/capability-echo?source=claim");
+        fetched = {
+          status: fetchedResponse.status,
+          body: await fetchedResponse.json(),
+        };
       }
       let drop = null;
       if (claim.ok && claim.id) {
-        const dropResponse = await env.SANDSTORM_API.fetch(
-          `http://sandstorm/powerbox/drop?id=${encodeURIComponent(claim.id)}`,
-          { method: "POST" });
-        drop = {
-          status: dropResponse.status,
-          body: await dropResponse.json(),
-        };
+        if (typeof claim.drop === "function") {
+          drop = {
+            status: 200,
+            body: await claim.drop(),
+          };
+        } else {
+          const dropResponse = await env.SANDSTORM_API.fetch(
+            `http://sandstorm/powerbox/drop?id=${encodeURIComponent(claim.id)}`,
+            { method: "POST" });
+          drop = {
+            status: dropResponse.status,
+            body: await dropResponse.json(),
+          };
+        }
       }
       let dropSaved = null;
       if (restoreToken && url.searchParams.get("dropSaved") === "true") {
-        const dropSavedResponse = await env.SANDSTORM_API.fetch(
-          `http://sandstorm/powerbox/drop-saved?token=${encodeURIComponent(restoreToken)}`,
-          { method: "POST" });
-        dropSaved = {
-          status: dropSavedResponse.status,
-          body: await dropSavedResponse.json(),
-        };
+        if (savedCapability && typeof savedCapability.drop === "function") {
+          dropSaved = {
+            status: 200,
+            body: await savedCapability.drop(),
+          };
+        } else {
+          const dropSavedResponse = await env.SANDSTORM_API.fetch(
+            `http://sandstorm/powerbox/drop-saved?token=${encodeURIComponent(restoreToken)}`,
+            { method: "POST" });
+          dropSaved = {
+            status: dropSavedResponse.status,
+            body: await dropSavedResponse.json(),
+          };
+        }
       }
       return Response.json({
-        ok: claimResponse.ok,
-        status: claimResponse.status,
+        ok: claimResponseOk,
+        status: claimResponseStatus,
         sessionId,
         claim,
+        claimType,
         save,
         stored,
         restore,
+        fetched,
         dropRestored,
         drop,
         dropSaved,
-      }, { status: claimResponse.status });
+      }, { status: claimResponseStatus });
     }
 
     const apiStatus = await (await env.SANDSTORM_API.fetch("http://sandstorm/status")).json();

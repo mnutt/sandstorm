@@ -21,6 +21,10 @@
 #include "util.h"
 #include "version.h"
 
+#include <sandstorm/isolate/api.js.h>
+#include <sandstorm/isolate/capnweb.js.h>
+#include <sandstorm/isolate/rpc.js.h>
+
 #include <capnp/message.h>
 #include <capnp/compat/json.h>
 #include <capnp/rpc-twoparty.h>
@@ -467,6 +471,42 @@ void validateIsolateRuntimeConfig(IsolateRuntimeConfig& config) {
   }
 }
 
+bool hasIsolateModule(IsolateRuntimeConfig& config, kj::StringPtr name) {
+  for (auto& module: config.modules) {
+    if (module.name == name) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void addGeneratedIsolateModule(
+    IsolateRuntimeConfig& config, kj::StringPtr name, IsolateRuntimeConfig::ModuleType type,
+    kj::StringPtr source) {
+  if (hasIsolateModule(config, name)) {
+    return;
+  }
+
+  IsolateRuntimeConfig::Module moduleConfig;
+  moduleConfig.name = kj::heapString(name);
+  moduleConfig.type = type;
+  moduleConfig.sourcePath = kj::str("<generated:", name, ">");
+  moduleConfig.content = kj::heapArray<byte>(source.asBytes());
+  config.modules.add(kj::mv(moduleConfig));
+}
+
+void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
+  addGeneratedIsolateModule(config, "capnweb", IsolateRuntimeConfig::ModuleType::ES_MODULE,
+      CAPNWEB_SOURCE);
+  addGeneratedIsolateModule(config, "sandstorm:capnweb-source",
+      IsolateRuntimeConfig::ModuleType::TEXT, CAPNWEB_SOURCE);
+  addGeneratedIsolateModule(config, "sandstorm:rpc", IsolateRuntimeConfig::ModuleType::ES_MODULE,
+      ISOLATE_RPC_HELPER_SOURCE);
+  addGeneratedIsolateModule(config, "sandstorm:api", IsolateRuntimeConfig::ModuleType::ES_MODULE,
+      ISOLATE_API_HELPER_SOURCE);
+}
+
 kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
     spk::Manifest::IsolateConfig::Reader config, kj::StringPtr pkgPath) {
   auto result = kj::refcounted<IsolateRuntimeConfig>();
@@ -501,6 +541,7 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
     moduleConfig.content = readPackageFile(pkgPath, moduleConfig.sourcePath);
     result->modules.add(kj::mv(moduleConfig));
   }
+  addGeneratedIsolateHelperModules(*result);
 
   for (auto binding: config.getBindings()) {
     IsolateRuntimeConfig::Binding bindingConfig;
@@ -3155,16 +3196,19 @@ public:
   kj::Promise<void> request(
       kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
       kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
-    (void)headers;
     auto methodName = kj::str(method);
     auto path = kj::heapString(url);
     auto route = kj::heapString(urlPath(url));
+    auto contentType = kj::heapString("application/octet-stream");
+    KJ_IF_MAYBE(value, headers.get(kj::HttpHeaderId::CONTENT_TYPE)) {
+      contentType = kj::str(*value);
+    }
     KJ_LOG(WARNING, "Isolate Sandstorm API binding received request.", methodName, path);
 
     return readAllBytesAtMost(requestBody, 1024 * 1024,
         "isolate Sandstorm API binding request body exceeds maximum allowed size").then(
         [this, methodName = kj::mv(methodName), path = kj::mv(path), route = kj::mv(route),
-            &response]
+            contentType = kj::mv(contentType), &response]
         (kj::Array<byte>&& bodyBytes) mutable {
       if (methodName == "POST" && route == "/powerbox/claim-request") {
         return claimPowerboxRequest(path, response);
@@ -3176,6 +3220,8 @@ public:
         return dropSavedPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop") {
         return dropPowerboxCapability(path, response);
+      } else if (methodName == "POST" && route == "/powerbox/fetch") {
+        return fetchClaimedCapability(path, contentType, kj::mv(bodyBytes), response);
       }
 
       if (methodName != "GET") {
@@ -3205,6 +3251,53 @@ private:
   IsolateRuntimeConfig& config;
   IsolateRuntimeHost& host;
 
+  class BufferedByteStream final: public ByteStream::Server {
+  public:
+    BufferedByteStream() {
+      auto paf = kj::newPromiseAndFulfiller<kj::Array<byte>>();
+      donePromise = kj::mv(paf.promise);
+      doneFulfiller = kj::mv(paf.fulfiller);
+    }
+
+    ~BufferedByteStream() noexcept(false) {
+      KJ_IF_MAYBE(fulfiller, doneFulfiller) {
+        if ((*fulfiller)->isWaiting()) {
+          (*fulfiller)->reject(KJ_EXCEPTION(DISCONNECTED,
+              "claimed capability response stream ended before done()"));
+        }
+      }
+    }
+
+    kj::Promise<void> write(WriteContext context) override {
+      auto data = context.getParams().getData();
+      bytes += data.size();
+      KJ_REQUIRE(bytes <= MAX_SIDECAR_RESPONSE_BYTES,
+          "claimed capability response body exceeds maximum allowed size",
+          bytes, MAX_SIDECAR_RESPONSE_BYTES);
+      body.addAll(data);
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<void> done(DoneContext context) override {
+      (void)context;
+      KJ_IF_MAYBE(fulfiller, doneFulfiller) {
+        (*fulfiller)->fulfill(body.releaseAsArray());
+        doneFulfiller = nullptr;
+      }
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<kj::Array<byte>> consumeDonePromise() {
+      return kj::mv(donePromise);
+    }
+
+  private:
+    kj::Vector<byte> body;
+    uint64_t bytes = 0;
+    kj::Promise<kj::Array<byte>> donePromise = nullptr;
+    kj::Maybe<kj::Own<kj::PromiseFulfiller<kj::Array<byte>>>> doneFulfiller;
+  };
+
   kj::Promise<void> sendJson(kj::HttpService::Response& response, uint statusCode,
       kj::StringPtr statusText, kj::String body) {
     kj::HttpHeaders responseHeaders(headerTable);
@@ -3212,6 +3305,20 @@ private:
     auto stream = response.send(statusCode, statusText, responseHeaders, body.size());
     auto promise = stream->write(body.begin(), body.size());
     return promise.attach(kj::mv(stream), kj::mv(body));
+  }
+
+  kj::Promise<void> sendBytes(kj::HttpService::Response& response, uint statusCode,
+      kj::StringPtr statusText, kj::HttpHeaders headers, kj::Array<byte> body) {
+    auto stream = response.send(statusCode, statusText, headers, body.size());
+    auto promise = stream->write(body.begin(), body.size());
+    return promise.attach(kj::mv(stream), kj::mv(headers), kj::mv(body));
+  }
+
+  kj::Promise<void> sendText(kj::HttpService::Response& response, uint statusCode,
+      kj::StringPtr statusText, kj::HttpHeaders headers, kj::String body) {
+    auto stream = response.send(statusCode, statusText, headers, body.size());
+    auto promise = stream->write(body.begin(), body.size());
+    return promise.attach(kj::mv(stream), kj::mv(headers), kj::mv(body));
   }
 
   kj::String renderStatus(kj::StringPtr methodName, kj::StringPtr path, size_t bodySize) {
@@ -3238,8 +3345,256 @@ private:
         "  \"binding\": \"sandstormApi\",\n"
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
-        "\"powerbox.dropSaved\", \"powerbox.drop\"]\n"
+        "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\"]\n"
         "}\n");
+  }
+
+  kj::String normalizeCapabilityFetchPath(kj::StringPtr path) {
+    KJ_REQUIRE(path.size() <= 8192, "claimed capability fetch path is too long");
+    for (size_t i = 0; i + 2 < path.size(); ++i) {
+      KJ_REQUIRE(!(path[i] == ':' && path[i + 1] == '/' && path[i + 2] == '/'),
+          "claimed capability fetch path must be path-relative");
+    }
+    size_t start = 0;
+    while (start < path.size() && path[start] == '/') {
+      ++start;
+    }
+    return kj::str(path.slice(start, path.size()));
+  }
+
+  kj::Promise<void> fetchClaimedCapability(
+      kj::StringPtr url, kj::StringPtr contentType, kj::Array<byte> bodyBytes,
+      kj::HttpService::Response& response) {
+    auto ids = findIsolateQueryParams(url, "id");
+    auto methods = findIsolateQueryParams(url, "method");
+    auto paths = findIsolateQueryParams(url, "path");
+    if (ids.size() != 1 || ids[0].size() == 0 ||
+        methods.size() != 1 || methods[0].size() == 0 ||
+        paths.size() != 1) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"expected exactly one capability id, method, and path\"\n}\n"));
+    }
+
+    KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
+      auto webSession = cap->castAs<WebSession>();
+      auto responseStreamServer = kj::heap<BufferedByteStream>();
+      auto streamDone = responseStreamServer->consumeDonePromise();
+
+      auto method = kj::heapString(methods[0]);
+      toLower(method);
+      auto path = normalizeCapabilityFetchPath(paths[0]);
+
+      if (method == "get" || method == "head") {
+        auto request = webSession.getRequest();
+        request.setPath(path);
+        request.setIgnoreBody(method == "head");
+        initCapabilityFetchContext(request.initContext(), kj::mv(responseStreamServer));
+        return request.send()
+            .then([this, &response, streamDone = kj::mv(streamDone)]
+                (auto result) mutable {
+          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(streamDone));
+        }).catch_([this, &response](kj::Exception&& exception) mutable {
+          return sendJson(response, 502, "Bad Gateway", renderError(
+              kj::str("claimed capability fetch failed: ", exception.getDescription())));
+        });
+      } else if (method == "post") {
+        auto request = webSession.postRequest();
+        request.setPath(path);
+        initPostContent(request.initContent(), contentType, bodyBytes);
+        initCapabilityFetchContext(request.initContext(), kj::mv(responseStreamServer));
+        return request.send()
+            .then([this, &response, streamDone = kj::mv(streamDone)]
+                (auto result) mutable {
+          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(streamDone));
+        }).catch_([this, &response](kj::Exception&& exception) mutable {
+          return sendJson(response, 502, "Bad Gateway", renderError(
+              kj::str("claimed capability fetch failed: ", exception.getDescription())));
+        });
+      } else if (method == "put") {
+        auto request = webSession.putRequest();
+        request.setPath(path);
+        initPutContent(request.initContent(), contentType, bodyBytes);
+        initCapabilityFetchContext(request.initContext(), kj::mv(responseStreamServer));
+        return request.send()
+            .then([this, &response, streamDone = kj::mv(streamDone)]
+                (auto result) mutable {
+          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(streamDone));
+        }).catch_([this, &response](kj::Exception&& exception) mutable {
+          return sendJson(response, 502, "Bad Gateway", renderError(
+              kj::str("claimed capability fetch failed: ", exception.getDescription())));
+        });
+      } else if (method == "patch") {
+        auto request = webSession.patchRequest();
+        request.setPath(path);
+        initPostContent(request.initContent(), contentType, bodyBytes);
+        initCapabilityFetchContext(request.initContext(), kj::mv(responseStreamServer));
+        return request.send()
+            .then([this, &response, streamDone = kj::mv(streamDone)]
+                (auto result) mutable {
+          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(streamDone));
+        }).catch_([this, &response](kj::Exception&& exception) mutable {
+          return sendJson(response, 502, "Bad Gateway", renderError(
+              kj::str("claimed capability fetch failed: ", exception.getDescription())));
+        });
+      } else if (method == "delete") {
+        auto request = webSession.deleteRequest();
+        request.setPath(path);
+        initCapabilityFetchContext(request.initContext(), kj::mv(responseStreamServer));
+        return request.send()
+            .then([this, &response, streamDone = kj::mv(streamDone)]
+                (auto result) mutable {
+          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(streamDone));
+        }).catch_([this, &response](kj::Exception&& exception) mutable {
+          return sendJson(response, 502, "Bad Gateway", renderError(
+              kj::str("claimed capability fetch failed: ", exception.getDescription())));
+        });
+      } else {
+        return sendJson(response, 405, "Method Not Allowed", kj::heapString(
+            "{\n  \"ok\": false,\n"
+            "  \"error\": \"claimed capability fetch method is not supported\"\n}\n"));
+      }
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+    }
+  }
+
+  void initCapabilityFetchContext(
+      WebSession::Context::Builder context, kj::Own<BufferedByteStream> responseStream) {
+    context.initCookies(0);
+    context.setResponseStream(kj::mv(responseStream));
+    context.initAccept(0);
+    context.initAcceptEncoding(0);
+    context.initAdditionalHeaders(0);
+  }
+
+  void initPostContent(
+      WebSession::PostContent::Builder content, kj::StringPtr contentType,
+      kj::ArrayPtr<const byte> body) {
+    content.setMimeType(contentType);
+    content.setContent(body);
+  }
+
+  void initPutContent(
+      WebSession::PutContent::Builder content, kj::StringPtr contentType,
+      kj::ArrayPtr<const byte> body) {
+    content.setMimeType(contentType);
+    content.setContent(body);
+  }
+
+  uint statusCodeForSuccess(WebSession::Response::SuccessCode code) {
+    switch (code) {
+      case WebSession::Response::SuccessCode::OK: return 200;
+      case WebSession::Response::SuccessCode::CREATED: return 201;
+      case WebSession::Response::SuccessCode::ACCEPTED: return 202;
+      case WebSession::Response::SuccessCode::NO_CONTENT: return 204;
+      case WebSession::Response::SuccessCode::PARTIAL_CONTENT: return 206;
+      case WebSession::Response::SuccessCode::MULTI_STATUS: return 207;
+      case WebSession::Response::SuccessCode::NOT_MODIFIED: return 304;
+    }
+    KJ_UNREACHABLE;
+  }
+
+  uint statusCodeForClientError(WebSession::Response::ClientErrorCode code) {
+    switch (code) {
+      case WebSession::Response::ClientErrorCode::BAD_REQUEST: return 400;
+      case WebSession::Response::ClientErrorCode::FORBIDDEN: return 403;
+      case WebSession::Response::ClientErrorCode::NOT_FOUND: return 404;
+      case WebSession::Response::ClientErrorCode::METHOD_NOT_ALLOWED: return 405;
+      case WebSession::Response::ClientErrorCode::NOT_ACCEPTABLE: return 406;
+      case WebSession::Response::ClientErrorCode::CONFLICT: return 409;
+      case WebSession::Response::ClientErrorCode::GONE: return 410;
+      case WebSession::Response::ClientErrorCode::PRECONDITION_FAILED: return 412;
+      case WebSession::Response::ClientErrorCode::REQUEST_ENTITY_TOO_LARGE: return 413;
+      case WebSession::Response::ClientErrorCode::REQUEST_URI_TOO_LONG: return 414;
+      case WebSession::Response::ClientErrorCode::UNSUPPORTED_MEDIA_TYPE: return 415;
+      case WebSession::Response::ClientErrorCode::IM_A_TEAPOT: return 418;
+      case WebSession::Response::ClientErrorCode::UNPROCESSABLE_ENTITY: return 422;
+    }
+    KJ_UNREACHABLE;
+  }
+
+  kj::HttpHeaders makeHttpHeaders(WebSession::Response::Reader webResponse) {
+    kj::HttpHeaders headers(headerTable);
+    for (auto header: webResponse.getAdditionalHeaders()) {
+      headers.add(header.getName(), header.getValue());
+    }
+    return kj::mv(headers);
+  }
+
+  kj::Promise<void> sendWebSessionHttpResponse(
+      capnp::Response<WebSession::Response>&& webResponse, kj::HttpService::Response& response,
+      kj::Promise<kj::Array<byte>> streamDone) {
+    switch (webResponse.which()) {
+      case WebSession::Response::CONTENT: {
+        auto content = webResponse.getContent();
+        auto headers = makeHttpHeaders(webResponse);
+        headers.set(kj::HttpHeaderId::CONTENT_TYPE, content.getMimeType());
+        auto statusCode = statusCodeForSuccess(content.getStatusCode());
+        auto body = content.getBody();
+        switch (body.which()) {
+          case WebSession::Response::Content::Body::BYTES:
+            return sendBytes(response, statusCode, "OK", kj::mv(headers),
+                kj::heapArray<byte>(body.getBytes()));
+          case WebSession::Response::Content::Body::STREAM:
+            return streamDone.then(
+                [this, &response, statusCode, headers = kj::mv(headers),
+                    webResponse = kj::mv(webResponse)]
+                (kj::Array<byte>&& bytes) mutable {
+              return sendBytes(response, statusCode, "OK", kj::mv(headers), kj::mv(bytes));
+            });
+        }
+        KJ_UNREACHABLE;
+      }
+      case WebSession::Response::NO_CONTENT: {
+        auto headers = makeHttpHeaders(webResponse);
+        response.send(webResponse.getNoContent().getShouldResetForm() ? 205 : 204,
+            "No Content", headers, uint64_t(0));
+        return kj::READY_NOW;
+      }
+      case WebSession::Response::PRECONDITION_FAILED: {
+        auto headers = makeHttpHeaders(webResponse);
+        response.send(412, "Precondition Failed", headers, uint64_t(0));
+        return kj::READY_NOW;
+      }
+      case WebSession::Response::REDIRECT: {
+        auto redirect = webResponse.getRedirect();
+        auto headers = makeHttpHeaders(webResponse);
+        headers.set(kj::HttpHeaderId::LOCATION, redirect.getLocation());
+        uint statusCode = redirect.getIsPermanent()
+            ? (redirect.getSwitchToGet() ? 301 : 308)
+            : (redirect.getSwitchToGet() ? 303 : 307);
+        response.send(statusCode, "Redirect", headers, uint64_t(0));
+        return kj::READY_NOW;
+      }
+      case WebSession::Response::CLIENT_ERROR:
+        return sendWebSessionError(response, statusCodeForClientError(
+            webResponse.getClientError().getStatusCode()), webResponse.getClientError());
+      case WebSession::Response::SERVER_ERROR:
+        return sendWebSessionError(response, 500, webResponse.getServerError());
+    }
+
+    KJ_UNREACHABLE;
+  }
+
+  template <typename ErrorReader>
+  kj::Promise<void> sendWebSessionError(
+      kj::HttpService::Response& response, uint statusCode, ErrorReader error) {
+    kj::HttpHeaders headers(headerTable);
+    if (error.hasNonHtmlBody()) {
+      auto body = error.getNonHtmlBody();
+      headers.set(kj::HttpHeaderId::CONTENT_TYPE, body.getMimeType());
+      return sendBytes(response, statusCode, "Error", kj::mv(headers),
+          kj::heapArray<byte>(body.getData()));
+    } else if (error.hasDescriptionHtml()) {
+      headers.set(kj::HttpHeaderId::CONTENT_TYPE, "text/html; charset=utf-8");
+      return sendText(response, statusCode, "Error", kj::mv(headers),
+          kj::heapString(error.getDescriptionHtml()));
+    } else {
+      response.send(statusCode, "Error", headers, uint64_t(0));
+      return kj::READY_NOW;
+    }
   }
 
   kj::Promise<void> claimPowerboxRequest(

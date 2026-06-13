@@ -382,6 +382,10 @@ test("isolate supervisor integration suite", {
         ["worker.js", "esModule"],
         ["message.txt", "text"],
         ["metadata.json", "json"],
+        ["capnweb", "esModule"],
+        ["sandstorm:capnweb-source", "text"],
+        ["sandstorm:rpc", "esModule"],
+        ["sandstorm:api", "esModule"],
       ]);
     assert.deepEqual(
       manifest.bindings.map((binding) => [binding.name, binding.type]),
@@ -506,7 +510,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.statusCode, 200);
     assert.equal(runtime.json.ok, true);
     assert.equal(runtime.json.mainModule, "worker.js");
-    assert.equal(runtime.json.moduleCount, 3);
+    assert.equal(runtime.json.moduleCount, 7);
     assert.equal(runtime.json.bindingCount, 4);
 
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
@@ -516,6 +520,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("powerbox.restore"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.dropSaved"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.drop"));
+    assert.ok(capabilities.json.capabilities.includes("powerbox.fetch"));
 
     const modules = await requestJson(fixture.sandstormApiSocket, "/modules");
     assert.equal(modules.statusCode, 200);
@@ -525,6 +530,10 @@ test("isolate supervisor integration suite", {
         ["worker.js", "esModule", true],
         ["message.txt", "text", false],
         ["metadata.json", "json", false],
+        ["capnweb", "esModule", false],
+        ["sandstorm:capnweb-source", "text", false],
+        ["sandstorm:rpc", "esModule", false],
+        ["sandstorm:api", "esModule", false],
       ]);
 
     const bindings = await requestJson(fixture.sandstormApiSocket, "/bindings");

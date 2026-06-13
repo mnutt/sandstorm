@@ -179,6 +179,75 @@ function capabilityId(value, name = "capability") {
   throw new ValidationError(`${name} must be a claimed capability handle or id string`);
 }
 
+export class ClaimedCapability {
+  #env;
+
+  constructor(env, id) {
+    this.#env = env;
+    this.ok = true;
+    this.type = "claimedCapability";
+    this.id = validate.string(id, "capability.id", { minLength: 1, maxLength: 4096 });
+  }
+
+  fetch(input, init) {
+    return fetchClaimedCapability(this.#env, this, input, init);
+  }
+
+  save(options = {}) {
+    return saveClaimedCapability(this.#env, this, options);
+  }
+
+  drop() {
+    return postSandstorm(this.#env, `powerbox/drop?id=${encodeURIComponent(this.id)}`);
+  }
+
+  [Symbol.dispose]() {
+    this.drop().catch(() => {});
+  }
+
+  toJSON() {
+    return {
+      ok: true,
+      type: "claimedCapability",
+      id: this.id,
+    };
+  }
+}
+
+export class SavedCapability {
+  #env;
+
+  constructor(env, id, token, tokenEncoding = "base64url") {
+    this.#env = env;
+    this.ok = true;
+    this.type = "savedCapability";
+    this.id = validate.string(id, "savedCapability.id", { minLength: 1, maxLength: 4096 });
+    this.token = savedCapabilityToken(token, "savedCapability.token");
+    this.tokenEncoding = validate.string(tokenEncoding, "savedCapability.tokenEncoding", {
+      minLength: 1,
+      maxLength: 32,
+    });
+  }
+
+  restore() {
+    return restoreSavedCapability(this.#env, this);
+  }
+
+  drop() {
+    return dropSavedCapability(this.#env, this);
+  }
+
+  toJSON() {
+    return {
+      ok: true,
+      type: "savedCapability",
+      id: this.id,
+      token: this.token,
+      tokenEncoding: this.tokenEncoding,
+    };
+  }
+}
+
 function saveLabel(options = {}) {
   let label = options.label ?? options.saveLabel ?? "Claimed Sandstorm capability";
   if (label && typeof label === "object" && typeof label.defaultText === "string") {
@@ -190,7 +259,7 @@ function saveLabel(options = {}) {
 async function saveClaimedCapability(env, capability, options = {}) {
   const id = encodeURIComponent(capabilityId(capability));
   const label = encodeURIComponent(saveLabel(options));
-  return postSandstorm(env, `powerbox/save?id=${id}&label=${label}`);
+  return wrapSavedCapability(env, await postSandstorm(env, `powerbox/save?id=${id}&label=${label}`));
 }
 
 function savedCapabilityToken(value, name = "token") {
@@ -220,7 +289,7 @@ function savedCapabilityToken(value, name = "token") {
 async function restoreSavedCapability(env, token) {
   const encodedToken = encodeURIComponent(savedCapabilityToken(token));
   const capability = await postSandstorm(env, `powerbox/restore?token=${encodedToken}`);
-  return attachClaimedCapabilityMethods(env, capability);
+  return wrapClaimedCapability(env, capability);
 }
 
 async function dropSavedCapability(env, token) {
@@ -228,31 +297,61 @@ async function dropSavedCapability(env, token) {
   return postSandstorm(env, `powerbox/drop-saved?token=${encodedToken}`);
 }
 
-function attachClaimedCapabilityMethods(env, capability) {
+async function fetchClaimedCapability(env, capability, input, init = {}) {
+  const id = encodeURIComponent(capabilityId(capability));
+  let request;
+  if (input instanceof Request) {
+    request = init === undefined ? input : new Request(input, init);
+  } else {
+    const url = new URL(String(input), "http://sandstorm-capability");
+    request = new Request(url, init);
+  }
+
+  const url = new URL(request.url);
+  const path = encodeURIComponent(`${url.pathname}${url.search}`);
+  const method = encodeURIComponent(request.method || "GET");
+  const headers = {};
+  const contentType = request.headers.get("content-type");
+  if (contentType !== null) {
+    headers["content-type"] = contentType;
+  }
+
+  let body;
+  if (request.method !== "GET" && request.method !== "HEAD" && request.body !== null) {
+    body = await request.arrayBuffer();
+  }
+
+  return env.SANDSTORM_API.fetch(
+    `http://sandstorm/powerbox/fetch?id=${id}&method=${method}&path=${path}`,
+    {
+      method: "POST",
+      headers,
+      body,
+    });
+}
+
+function wrapClaimedCapability(env, capability) {
+  if (capability instanceof ClaimedCapability) {
+    return capability;
+  }
   if (!capability || typeof capability !== "object" ||
       capability.type !== "claimedCapability" || typeof capability.id !== "string") {
     return capability;
   }
 
-  Object.defineProperties(capability, {
-    save: {
-      enumerable: false,
-      value: (options = {}) => saveClaimedCapability(env, capability, options),
-    },
-    drop: {
-      enumerable: false,
-      value: () => postSandstorm(
-        env, `powerbox/drop?id=${encodeURIComponent(capabilityId(capability))}`),
-    },
-    [Symbol.dispose]: {
-      enumerable: false,
-      value: () => {
-        postSandstorm(env, `powerbox/drop?id=${encodeURIComponent(capabilityId(capability))}`)
-          .catch(() => {});
-      },
-    },
-  });
-  return capability;
+  return new ClaimedCapability(env, capability.id);
+}
+
+function wrapSavedCapability(env, capability) {
+  if (capability instanceof SavedCapability) {
+    return capability;
+  }
+  if (!capability || typeof capability !== "object" ||
+      capability.type !== "savedCapability" || typeof capability.token !== "string") {
+    return capability;
+  }
+
+  return new SavedCapability(env, capability.id, capability.token, capability.tokenEncoding);
 }
 
 function permissionNames(options = {}) {
@@ -291,7 +390,7 @@ export function powerbox(request, env) {
         .join("");
       const capability = await postSandstorm(env,
         `powerbox/claim-request?sessionId=${sessionId}&token=${encodedToken}${permissionQuery}`);
-      return attachClaimedCapabilityMethods(env, capability);
+      return wrapClaimedCapability(env, capability);
     },
 
     async offer() {
