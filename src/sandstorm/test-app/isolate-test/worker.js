@@ -73,6 +73,24 @@ export default {
       });
     }
 
+    if (url.pathname === "/cache-revalidate") {
+      return new Response("cache revalidate", {
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "private, max-age=0",
+        },
+      });
+    }
+
+    if (url.pathname === "/cache-immutable") {
+      return new Response("cache immutable", {
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "public, max-age=31536000, immutable",
+        },
+      });
+    }
+
     if (url.pathname === "/attachment") {
       return new Response("attachment body", {
         headers: {
