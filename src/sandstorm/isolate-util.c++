@@ -174,6 +174,7 @@ bool isStructuredIsolateResponseHeader(kj::StringPtr name) {
       isolateEqualsIgnoreCase(name, "content-encoding") ||
       isolateEqualsIgnoreCase(name, "content-language") ||
       isolateEqualsIgnoreCase(name, "content-disposition") ||
+      isolateEqualsIgnoreCase(name, "cache-control") ||
       isolateEqualsIgnoreCase(name, "etag") ||
       isolateEqualsIgnoreCase(name, "location") ||
       isolateEqualsIgnoreCase(name, "content-length") ||

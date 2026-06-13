@@ -405,6 +405,49 @@ public:
     KJ_REQUIRE(headersResponse.getAdditionalHeaders()[0].getName() ==
         "x-sandstorm-app-test-response");
     KJ_REQUIRE(headersResponse.getAdditionalHeaders()[0].getValue() == "present");
+    KJ_REQUIRE(!headersResponse.hasCachePolicy());
+
+    auto cacheRevalidateRequest = session.getRequest();
+    cacheRevalidateRequest.setPath("/cache-revalidate");
+    cacheRevalidateRequest.setIgnoreBody(false);
+    auto cacheRevalidateContext = cacheRevalidateRequest.initContext();
+    cacheRevalidateContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    cacheRevalidateContext.initCookies(0);
+    cacheRevalidateContext.initAccept(0);
+    cacheRevalidateContext.initAcceptEncoding(0);
+    cacheRevalidateContext.initAdditionalHeaders(0);
+
+    auto cacheRevalidateResponse = cacheRevalidateRequest.send().wait(io.waitScope);
+    KJ_REQUIRE(cacheRevalidateResponse.which() == WebSession::Response::CONTENT,
+        responseDebugBody(cacheRevalidateResponse));
+    KJ_REQUIRE(cacheRevalidateResponse.hasCachePolicy());
+    KJ_REQUIRE(cacheRevalidateResponse.getCachePolicy().getWithCheck() ==
+        WebSession::CachePolicy::Scope::PER_SESSION);
+    KJ_REQUIRE(cacheRevalidateResponse.getCachePolicy().getPermanent() ==
+        WebSession::CachePolicy::Scope::NONE);
+    KJ_REQUIRE(cacheRevalidateResponse.getAdditionalHeaders().size() == 0,
+        cacheRevalidateResponse.getAdditionalHeaders().size());
+
+    auto cacheImmutableRequest = session.getRequest();
+    cacheImmutableRequest.setPath("/cache-immutable");
+    cacheImmutableRequest.setIgnoreBody(false);
+    auto cacheImmutableContext = cacheImmutableRequest.initContext();
+    cacheImmutableContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    cacheImmutableContext.initCookies(0);
+    cacheImmutableContext.initAccept(0);
+    cacheImmutableContext.initAcceptEncoding(0);
+    cacheImmutableContext.initAdditionalHeaders(0);
+
+    auto cacheImmutableResponse = cacheImmutableRequest.send().wait(io.waitScope);
+    KJ_REQUIRE(cacheImmutableResponse.which() == WebSession::Response::CONTENT,
+        responseDebugBody(cacheImmutableResponse));
+    KJ_REQUIRE(cacheImmutableResponse.hasCachePolicy());
+    KJ_REQUIRE(cacheImmutableResponse.getCachePolicy().getWithCheck() ==
+        WebSession::CachePolicy::Scope::NONE);
+    KJ_REQUIRE(cacheImmutableResponse.getCachePolicy().getPermanent() ==
+        WebSession::CachePolicy::Scope::PER_SESSION);
+    KJ_REQUIRE(cacheImmutableResponse.getAdditionalHeaders().size() == 0,
+        cacheImmutableResponse.getAdditionalHeaders().size());
 
     auto attachmentRequest = session.getRequest();
     attachmentRequest.setPath("/attachment");

@@ -1546,6 +1546,57 @@ kj::Maybe<kj::StringPtr> findFetchResponseHeader(
   return nullptr;
 }
 
+void applyFetchCachePolicy(WebSession::Response::Builder builder,
+    kj::Vector<FetchHeader>& headers) {
+  KJ_IF_MAYBE(cacheControl, findFetchResponseHeader(headers, "cache-control")) {
+    bool noStore = false;
+    bool noCache = false;
+    bool explicitlyCacheable = false;
+    bool immutable = false;
+    bool hasMaxAge = false;
+    uint64_t maxAge = 0;
+
+    for (auto& rawDirective: split(*cacheControl, ',')) {
+      auto directive = trim(rawDirective);
+      toLower(directive);
+
+      kj::StringPtr name = directive;
+      auto value = kj::heapString("");
+      KJ_IF_MAYBE(eq, name.findFirst('=')) {
+        value = trim(name.slice(*eq + 1, name.size()));
+        name = kj::StringPtr(name.begin(), *eq);
+      }
+
+      if (name == "no-store") {
+        noStore = true;
+      } else if (name == "no-cache" || name == "must-revalidate") {
+        noCache = true;
+      } else if (name == "private" || name == "public") {
+        explicitlyCacheable = true;
+      } else if (name == "immutable") {
+        immutable = true;
+      } else if (name == "max-age") {
+        KJ_IF_MAYBE(parsed, parseUInt64(value, 10)) {
+          hasMaxAge = true;
+          maxAge = *parsed;
+        }
+      }
+    }
+
+    if (noStore) {
+      return;
+    }
+
+    if (immutable && hasMaxAge && maxAge > 0 && !noCache) {
+      auto policy = builder.initCachePolicy();
+      policy.setPermanent(WebSession::CachePolicy::Scope::PER_SESSION);
+    } else if (noCache || explicitlyCacheable || hasMaxAge) {
+      auto policy = builder.initCachePolicy();
+      policy.setWithCheck(WebSession::CachePolicy::Scope::PER_SESSION);
+    }
+  }
+}
+
 kj::String bytesToString(kj::ArrayPtr<const byte> bytes) {
   kj::Vector<char> chars(bytes.size() + 1);
   for (auto b: bytes) {
@@ -1631,6 +1682,7 @@ private:
 void writeFetchResponse(
     FetchResponse&& response, WebSession::Response::Builder builder,
     ByteStream::Client responseStream, bool omitBody = false) {
+  applyFetchCachePolicy(builder, response.headers);
   addFetchResponseHeaders(builder, response.headers);
 
   if (response.statusCode == 204 || response.statusCode == 205) {
