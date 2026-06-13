@@ -465,6 +465,26 @@ test("isolate supervisor integration suite", {
     assert.equal(headers.headers["cache-control"], "no-store");
     assert.equal(headers.headers["x-isolate-test"], "present");
 
+    const attachment = await requestUnixSocket(fixture.workerdSocket, "/attachment");
+    assert.equal(attachment.statusCode, 200);
+    assert.equal(attachment.body, "attachment body");
+    assert.equal(attachment.headers["content-disposition"], "attachment; filename=\"fixture.txt\"");
+    assert.equal(attachment.headers.etag, "\"fixture-etag\"");
+
+    const redirect = await requestUnixSocket(fixture.workerdSocket, "/redirect");
+    assert.equal(redirect.statusCode, 303);
+    assert.equal(redirect.headers.location, "https://example.invalid/next");
+
+    const empty = await requestUnixSocket(fixture.workerdSocket, "/empty");
+    assert.equal(empty.statusCode, 204);
+    assert.equal(empty.headers.etag, "W/\"empty-etag\"");
+    assert.equal(empty.bodyBuffer.length, 0);
+
+    const notModified = await requestUnixSocket(fixture.workerdSocket, "/not-modified");
+    assert.equal(notModified.statusCode, 304);
+    assert.equal(notModified.headers.etag, "\"not-modified-etag\"");
+    assert.equal(notModified.bodyBuffer.length, 0);
+
     const error = await requestUnixSocket(fixture.workerdSocket, "/error");
     assert.equal(error.statusCode, 418);
     assert.equal(error.body, "fixture failure");
