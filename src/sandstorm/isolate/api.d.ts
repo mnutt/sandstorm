@@ -11,6 +11,11 @@ declare module "sandstorm:api" {
     [binding: string]: unknown;
   }
 
+  export interface ServeRpcOptions extends RpcSessionOptions {
+    rpcPath?: string;
+    clientScriptPath?: string;
+  }
+
   export interface SessionInfo {
     sessionType: string;
     user: {
@@ -90,6 +95,7 @@ declare module "sandstorm:api" {
     apiTarget(): SandstormApiTarget;
     rpcClientScript(): string;
     rpcResponse(target: RpcTarget, options?: RpcSessionOptions): Response | Promise<Response>;
+    serveRpc(target: RpcTarget, options?: ServeRpcOptions): Response | Promise<Response> | null;
   }
 
   export function storage(env: SandstormEnv): StorageApi;
@@ -101,5 +107,10 @@ declare module "sandstorm:api" {
     target: RpcTarget,
     options?: RpcSessionOptions,
   ): Response | Promise<Response>;
+  export function serveRpc(
+    request: Request,
+    target: RpcTarget,
+    options?: ServeRpcOptions,
+  ): Response | Promise<Response> | null;
   export function sandstorm(request: Request, env: SandstormEnv): SandstormApi;
 }
