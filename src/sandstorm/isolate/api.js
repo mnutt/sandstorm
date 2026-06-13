@@ -1,3 +1,6 @@
+import capnwebSource from "sandstorm:capnweb-source";
+import { newWorkersRpcResponse } from "capnweb";
+
 function header(request, name) {
   return request.headers.get(name) || "";
 }
@@ -95,6 +98,14 @@ export function getSession(request) {
   };
 }
 
+export function rpcClientScript() {
+  return capnwebSource;
+}
+
+export function rpcResponse(request, target, options) {
+  return newWorkersRpcResponse(request, target, options);
+}
+
 export function sandstorm(request, env) {
   return {
     session: () => getSession(request),
@@ -104,5 +115,7 @@ export function sandstorm(request, env) {
     modules: () => callSandstorm(env, "modules"),
     bindings: () => callSandstorm(env, "bindings"),
     storage: () => storage(env),
+    rpcClientScript: () => rpcClientScript(),
+    rpcResponse: (target, options) => rpcResponse(request, target, options),
   };
 }
