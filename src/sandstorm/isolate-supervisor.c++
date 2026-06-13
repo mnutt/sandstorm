@@ -16,6 +16,7 @@
 
 #include "isolate-supervisor.h"
 
+#include "isolate-util.h"
 #include "sandbox.h"
 #include "util.h"
 #include "version.h"
@@ -275,27 +276,6 @@ kj::String copyModuleSourcePath(spk::Manifest::IsolateConfig::Module::Reader mod
   }
 
   KJ_UNREACHABLE;
-}
-
-bool isCanonicalPackagePath(kj::StringPtr path) {
-  if (path.size() == 0 || path.startsWith("/") || path.endsWith("/")) {
-    return false;
-  }
-
-  size_t start = 0;
-  for (size_t i = 0; i <= path.size(); ++i) {
-    if (i == path.size() || path[i] == '/') {
-      auto part = path.slice(start, i);
-      if (part.size() == 0 ||
-          (part.size() == 1 && part[0] == '.') ||
-          (part.size() == 2 && part[0] == '.' && part[1] == '.')) {
-        return false;
-      }
-      start = i + 1;
-    }
-  }
-
-  return true;
 }
 
 kj::Array<byte> readPackageFile(kj::StringPtr pkgPath, kj::StringPtr sourcePath) {
@@ -1265,50 +1245,12 @@ bool isFetchContentStatus(uint statusCode) {
   }
 }
 
-bool equalsIgnoreCase(kj::StringPtr a, kj::StringPtr b) {
-  if (a.size() != b.size()) {
-    return false;
-  }
-
-  for (auto i: kj::indices(a)) {
-    char ca = a[i];
-    char cb = b[i];
-    if (ca >= 'A' && ca <= 'Z') {
-      ca += 'a' - 'A';
-    }
-    if (cb >= 'A' && cb <= 'Z') {
-      cb += 'a' - 'A';
-    }
-    if (ca != cb) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-bool isStructuredResponseHeader(kj::StringPtr name) {
-  return equalsIgnoreCase(name, "content-type") ||
-      equalsIgnoreCase(name, "content-encoding") ||
-      equalsIgnoreCase(name, "content-language") ||
-      equalsIgnoreCase(name, "content-disposition") ||
-      equalsIgnoreCase(name, "etag") ||
-      equalsIgnoreCase(name, "location") ||
-      equalsIgnoreCase(name, "content-length") ||
-      equalsIgnoreCase(name, "transfer-encoding") ||
-      equalsIgnoreCase(name, "connection") ||
-      equalsIgnoreCase(name, "keep-alive") ||
-      equalsIgnoreCase(name, "te") ||
-      equalsIgnoreCase(name, "trailer") ||
-      equalsIgnoreCase(name, "upgrade");
-}
-
 void addFetchResponseHeaders(WebSession::Response::Builder builder, kj::Vector<FetchHeader>& headers) {
   HeaderWhitelist responseHeaderWhitelist(*WebSession::Response::HEADER_WHITELIST);
 
   size_t count = 0;
   for (auto& header: headers) {
-    if (!isStructuredResponseHeader(header.name) &&
+    if (!isStructuredIsolateResponseHeader(header.name) &&
         responseHeaderWhitelist.matches(header.name)) {
       ++count;
     }
@@ -1317,7 +1259,7 @@ void addFetchResponseHeaders(WebSession::Response::Builder builder, kj::Vector<F
   auto outputHeaders = builder.initAdditionalHeaders(count);
   size_t j = 0;
   for (auto i: kj::indices(headers)) {
-    if (!isStructuredResponseHeader(headers[i].name) &&
+    if (!isStructuredIsolateResponseHeader(headers[i].name) &&
         responseHeaderWhitelist.matches(headers[i].name)) {
       outputHeaders[j].setName(headers[i].name);
       outputHeaders[j].setValue(headers[i].value);
@@ -1417,23 +1359,12 @@ kj::Maybe<kj::String> parseFetchDownloadFilename(kj::StringPtr disposition) {
 kj::Maybe<kj::StringPtr> findFetchResponseHeader(
     kj::Vector<FetchHeader>& headers, kj::StringPtr name) {
   for (auto& header: headers) {
-    if (equalsIgnoreCase(header.name, name)) {
+    if (isolateEqualsIgnoreCase(header.name, name)) {
       return kj::StringPtr(header.value);
     }
   }
 
   return nullptr;
-}
-
-bool isHtmlMimeType(kj::StringPtr mimeType) {
-  auto trimmed = trim(mimeType);
-  kj::StringPtr type = trimmed;
-  KJ_IF_MAYBE(semi, type.findFirst(';')) {
-    type = kj::StringPtr(type.begin(), *semi);
-  }
-  auto lower = kj::str(trim(type));
-  toLower(lower);
-  return lower == "text/html";
 }
 
 kj::String bytesToString(kj::ArrayPtr<const byte> bytes) {
@@ -3117,14 +3048,14 @@ public:
       kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
       kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
     (void)headers;
-    auto key = storageKeyFromUrl(url);
+    auto key = isolateStorageKeyFromUrl(url);
     KJ_LOG(WARNING, "Isolate storage binding received request.", kj::str(method), key);
 
     if (method == kj::HttpMethod::GET && key.size() == 0) {
       return sendJson(response, 200, "OK", renderIndex());
     }
 
-    if (!isValidStorageKey(key)) {
+    if (!isValidIsolateStorageKey(key)) {
       return sendJson(response, 400, "Bad Request", kj::heapString(
           "{\n  \"ok\": false,\n  \"error\": \"invalid storage key\"\n}\n"));
     }
@@ -3167,40 +3098,6 @@ private:
 
   kj::HttpHeaderTable& headerTable;
   IsolateRuntimeConfig& config;
-
-  kj::String storageKeyFromUrl(kj::StringPtr url) {
-    size_t begin = 0;
-    size_t end = url.size();
-    KJ_IF_MAYBE(query, url.findFirst('?')) {
-      end = *query;
-    }
-    while (begin < end && url[begin] == '/') {
-      ++begin;
-    }
-    return kj::str(url.slice(begin, end));
-  }
-
-  bool isValidStorageKey(kj::StringPtr key) {
-    if (key.size() == 0 || key.size() > 128 || key.startsWith(".")) {
-      return false;
-    }
-
-    for (char c: key) {
-      if (!(c >= 'a' && c <= 'z') &&
-          !(c >= 'A' && c <= 'Z') &&
-          !(c >= '0' && c <= '9') &&
-          c != '-' && c != '_' && c != '.') {
-        return false;
-      }
-    }
-
-    for (size_t i = 1; i < key.size(); ++i) {
-      if (key[i - 1] == '.' && key[i] == '.') {
-        return false;
-      }
-    }
-    return true;
-  }
 
   kj::Promise<void> sendJson(kj::HttpService::Response& response, uint statusCode,
       kj::StringPtr statusText, kj::String body) {
@@ -3329,7 +3226,7 @@ private:
     json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"keys\": ["));
     bool first = true;
     for (auto& file: files) {
-      if (!isValidStorageKey(file)) {
+      if (!isValidIsolateStorageKey(file)) {
         continue;
       }
 
