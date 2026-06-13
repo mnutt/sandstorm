@@ -232,6 +232,103 @@ public:
     KJ_REQUIRE(contains(body, "\"if-none-match\":\"\\\"cached-etag\\\", W/\\\"weak-cached-etag\\\"\""),
         body);
 
+    auto headersRequest = session.getRequest();
+    headersRequest.setPath("/headers");
+    headersRequest.setIgnoreBody(false);
+    auto headersContext = headersRequest.initContext();
+    headersContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    headersContext.initCookies(0);
+    headersContext.initAccept(0);
+    headersContext.initAcceptEncoding(0);
+    headersContext.initAdditionalHeaders(0);
+
+    auto headersResponse = headersRequest.send().wait(io.waitScope);
+    auto headersDebugBody = responseDebugBody(headersResponse);
+    KJ_REQUIRE(headersResponse.which() == WebSession::Response::CONTENT, headersDebugBody);
+    KJ_REQUIRE(headersResponse.getContent().getMimeType().startsWith("text/plain"));
+    KJ_REQUIRE(headersResponse.getAdditionalHeaders().size() == 1,
+        headersResponse.getAdditionalHeaders().size());
+    KJ_REQUIRE(headersResponse.getAdditionalHeaders()[0].getName() ==
+        "x-sandstorm-app-test-response");
+    KJ_REQUIRE(headersResponse.getAdditionalHeaders()[0].getValue() == "present");
+
+    auto attachmentRequest = session.getRequest();
+    attachmentRequest.setPath("/attachment");
+    attachmentRequest.setIgnoreBody(false);
+    auto attachmentContext = attachmentRequest.initContext();
+    attachmentContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    attachmentContext.initCookies(0);
+    attachmentContext.initAccept(0);
+    attachmentContext.initAcceptEncoding(0);
+    attachmentContext.initAdditionalHeaders(0);
+
+    auto attachmentResponse = attachmentRequest.send().wait(io.waitScope);
+    auto attachmentDebugBody = responseDebugBody(attachmentResponse);
+    KJ_REQUIRE(attachmentResponse.which() == WebSession::Response::CONTENT, attachmentDebugBody);
+    auto attachmentContent = attachmentResponse.getContent();
+    KJ_REQUIRE(attachmentContent.getMimeType().startsWith("text/plain"));
+    KJ_REQUIRE(attachmentContent.hasETag());
+    KJ_REQUIRE(attachmentContent.getETag().getValue() == "fixture-etag");
+    KJ_REQUIRE(!attachmentContent.getETag().getWeak());
+    KJ_REQUIRE(attachmentContent.getDisposition().which() ==
+        WebSession::Response::Content::Disposition::DOWNLOAD);
+    KJ_REQUIRE(attachmentContent.getDisposition().getDownload() == "fixture.txt");
+
+    auto emptyRequest = session.getRequest();
+    emptyRequest.setPath("/empty");
+    emptyRequest.setIgnoreBody(false);
+    auto emptyContext = emptyRequest.initContext();
+    emptyContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    emptyContext.initCookies(0);
+    emptyContext.initAccept(0);
+    emptyContext.initAcceptEncoding(0);
+    emptyContext.initAdditionalHeaders(0);
+
+    auto emptyResponse = emptyRequest.send().wait(io.waitScope);
+    KJ_REQUIRE(emptyResponse.which() == WebSession::Response::NO_CONTENT,
+        responseDebugBody(emptyResponse));
+    KJ_REQUIRE(!emptyResponse.getNoContent().getShouldResetForm());
+    KJ_REQUIRE(emptyResponse.getNoContent().hasETag());
+    KJ_REQUIRE(emptyResponse.getNoContent().getETag().getValue() == "empty-etag");
+    KJ_REQUIRE(emptyResponse.getNoContent().getETag().getWeak());
+
+    auto notModifiedRequest = session.getRequest();
+    notModifiedRequest.setPath("/not-modified");
+    notModifiedRequest.setIgnoreBody(false);
+    auto notModifiedContext = notModifiedRequest.initContext();
+    notModifiedContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    notModifiedContext.initCookies(0);
+    notModifiedContext.initAccept(0);
+    notModifiedContext.initAcceptEncoding(0);
+    notModifiedContext.initAdditionalHeaders(0);
+
+    auto notModifiedResponse = notModifiedRequest.send().wait(io.waitScope);
+    KJ_REQUIRE(notModifiedResponse.which() == WebSession::Response::PRECONDITION_FAILED,
+        responseDebugBody(notModifiedResponse));
+    KJ_REQUIRE(notModifiedResponse.getPreconditionFailed().hasMatchingETag());
+    KJ_REQUIRE(notModifiedResponse.getPreconditionFailed().getMatchingETag().getValue() ==
+        "not-modified-etag");
+    KJ_REQUIRE(!notModifiedResponse.getPreconditionFailed().getMatchingETag().getWeak());
+
+    auto errorRequest = session.getRequest();
+    errorRequest.setPath("/error");
+    errorRequest.setIgnoreBody(false);
+    auto errorContext = errorRequest.initContext();
+    errorContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    errorContext.initCookies(0);
+    errorContext.initAccept(0);
+    errorContext.initAcceptEncoding(0);
+    errorContext.initAdditionalHeaders(0);
+
+    auto errorResponse = errorRequest.send().wait(io.waitScope);
+    KJ_REQUIRE(errorResponse.which() == WebSession::Response::CLIENT_ERROR,
+        responseDebugBody(errorResponse));
+    KJ_REQUIRE(errorResponse.getClientError().getStatusCode() ==
+        WebSession::Response::ClientErrorCode::IM_A_TEAPOT);
+    KJ_REQUIRE(errorResponse.getClientError().hasNonHtmlBody());
+    KJ_REQUIRE(kj::str(errorResponse.getClientError().getNonHtmlBody().getData().asChars()) ==
+        "fixture failure");
+
     auto claimRequest = session.getRequest();
     claimRequest.setPath(
         "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermission=view"
