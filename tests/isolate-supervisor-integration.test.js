@@ -201,25 +201,30 @@ async function startIsolateFixture() {
   let child = null;
   const stdout = [];
   const stderr = [];
-  const childExit = { value: null };
+  let childExit = { value: null };
   let started = false;
 
-  try {
-    await runCommand(SPK_BIN, ["unpack", SPK_PATH, pkgDir]);
-    await fs.symlink(SANDSTORM_BIN, isolateSupervisorBin);
-
-    child = spawn(isolateSupervisorBin, [
+  function spawnSupervisor(isNew) {
+    const args = [
       "--stdio",
       "--pkg", pkgDir,
       "--var", varDir,
-      "--new",
+    ];
+
+    if (isNew) {
+      args.push("--new");
+    }
+
+    args.push(
       "isolate-test-app",
       "isolate-integration",
       "workerd",
       "serve",
       "${SANDSTORM_ISOLATE_WORKERD_CONFIG}",
-      "sandstormConfig",
-    ], {
+      "sandstormConfig");
+
+    childExit = { value: null };
+    child = spawn(isolateSupervisorBin, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -233,13 +238,32 @@ async function startIsolateFixture() {
     child.on("error", (err) => {
       childExit.value = { error: err.message };
     });
+  }
 
+  async function waitForFixtureSockets() {
     await waitForSockets([
       supervisorSocket,
       workerdSocket,
       sandstormApiSocket,
       storageSocket,
     ], childExit, stdout, stderr);
+  }
+
+  async function unlinkSockets() {
+    await Promise.all([
+      supervisorSocket,
+      workerdSocket,
+      sandstormApiSocket,
+      storageSocket,
+    ].map((socketPath) => fs.rm(socketPath, { force: true })));
+  }
+
+  try {
+    await runCommand(SPK_BIN, ["unpack", SPK_PATH, pkgDir]);
+    await fs.symlink(SANDSTORM_BIN, isolateSupervisorBin);
+
+    spawnSupervisor(true);
+    await waitForFixtureSockets();
 
     started = true;
     return {
@@ -254,6 +278,15 @@ async function startIsolateFixture() {
       child,
       stdout,
       stderr,
+      restart: async () => {
+        if (child !== null) {
+          await stopChild(child);
+          child = null;
+        }
+        await unlinkSockets();
+        spawnSupervisor(false);
+        await waitForFixtureSockets();
+      },
       cleanup: async () => {
         if (child !== null) {
           await stopChild(child);
@@ -449,5 +482,25 @@ test("isolate supervisor integration suite", {
     const missing = await requestJson(fixture.storageSocket, "/integration-key");
     assert.equal(missing.statusCode, 404);
     assert.equal(missing.json.ok, false);
+  });
+
+  await t.test("preserves storage across supervisor restart", async () => {
+    const put = await requestJson(fixture.storageSocket, "/persist-key", {
+      method: "PUT",
+      body: "persistent value",
+    });
+    assert.equal(put.statusCode, 200);
+    assert.deepEqual(put.json, { ok: true, bytes: 16 });
+
+    await fixture.restart();
+
+    const get = await requestUnixSocket(fixture.storageSocket, "/persist-key");
+    assert.equal(get.statusCode, 200);
+    assert.equal(get.body, "persistent value");
+
+    const index = await requestJson(fixture.storageSocket, "/");
+    assert.equal(index.statusCode, 200);
+    assert.ok(index.json.keys.some(
+      (entry) => entry.name === "persist-key" && entry.bytes === 16));
   });
 });
