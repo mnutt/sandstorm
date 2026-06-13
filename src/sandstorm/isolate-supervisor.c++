@@ -3731,11 +3731,29 @@ public:
   }
 
   kj::Promise<void> restore(RestoreContext context) override {
-    KJ_UNIMPLEMENTED("isolate grain capability restore is not implemented yet");
+    auto objectId = context.getParams().getRef();
+    switch (objectId.which()) {
+      case SupervisorObjectId<>::APP_REF:
+        KJ_FAIL_REQUIRE(
+            "isolate grain app-defined persistent capabilities are not implemented yet");
+      case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
+        KJ_FAIL_REQUIRE("isolate supervisor-owned persistent object type is not supported yet");
+      default:
+        KJ_FAIL_REQUIRE("unknown isolate supervisor object ID type");
+    }
   }
 
   kj::Promise<void> drop(DropContext context) override {
-    KJ_UNIMPLEMENTED("isolate grain capability drop is not implemented yet");
+    auto objectId = context.getParams().getRef();
+    switch (objectId.which()) {
+      case SupervisorObjectId<>::APP_REF:
+        KJ_FAIL_REQUIRE(
+            "isolate grain app-defined persistent capabilities are not implemented yet");
+      case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
+        KJ_FAIL_REQUIRE("isolate supervisor-owned persistent object type is not supported yet");
+      default:
+        KJ_FAIL_REQUIRE("unknown isolate supervisor object ID type");
+    }
   }
 
   kj::Promise<void> watchLog(WatchLogContext context) override {
