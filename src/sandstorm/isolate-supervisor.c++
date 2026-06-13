@@ -3094,6 +3094,8 @@ public:
         (kj::Array<byte>&& bodyBytes) mutable {
       if (methodName == "POST" && route == "/powerbox/claim-request") {
         return claimPowerboxRequest(path, response);
+      } else if (methodName == "POST" && route == "/powerbox/drop") {
+        return dropPowerboxCapability(path, response);
       }
 
       if (methodName != "GET") {
@@ -3155,7 +3157,7 @@ private:
         "  \"ok\": true,\n"
         "  \"binding\": \"sandstormApi\",\n"
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
-        "\"powerbox.claimRequest\"]\n"
+        "\"powerbox.claimRequest\", \"powerbox.drop\"]\n"
         "}\n");
   }
 
@@ -3190,6 +3192,21 @@ private:
     json.addAll(kj::StringPtr("\n}\n"));
     json.add('\0');
     return kj::String(json.releaseAsArray());
+  }
+
+  kj::Promise<void> dropPowerboxCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    KJ_IF_MAYBE(id, findQueryParam(url, "id")) {
+      if (host.sessions->dropClaimedCapability(*id)) {
+        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+      } else {
+        return sendJson(response, 404, "Not Found", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+      }
+    }
+
+    return sendJson(response, 400, "Bad Request", kj::heapString(
+        "{\n  \"ok\": false,\n  \"error\": \"missing capability id\"\n}\n"));
   }
 
   kj::String renderRuntime() {

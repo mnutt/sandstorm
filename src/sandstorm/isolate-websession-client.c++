@@ -169,6 +169,7 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"ok\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"type\":\"claimedCapability\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"id\":\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"drop\":{\"status\":200,\"body\":{\"ok\":true}}"), claimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
 
     return true;
