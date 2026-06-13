@@ -523,6 +523,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("powerbox.fetch"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.offer"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.fulfillRequest"));
+    assert.ok(capabilities.json.capabilities.includes("powerbox.tieToUser"));
 
     const modules = await requestJson(fixture.sandstormApiSocket, "/modules");
     assert.equal(modules.statusCode, 200);

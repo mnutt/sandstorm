@@ -136,6 +136,7 @@ declare module "sandstorm:api" {
     drop(): Promise<{ ok: true }>;
     offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
     fulfillRequest(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
+    tieToUser(request: Request, options?: SessionCapabilityOptions): Promise<ClaimedCapability>;
     [Symbol.dispose](): void;
   }
 
@@ -149,6 +150,7 @@ declare module "sandstorm:api" {
     drop(): Promise<{ ok: true }>;
     offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
     fulfillRequest(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
+    tieToUser(request: Request, options?: SessionCapabilityOptions): Promise<ClaimedCapability>;
     [Symbol.dispose](): void;
     toJSON(): ClaimedCapabilityHandle;
   }
@@ -200,6 +202,10 @@ declare module "sandstorm:api" {
       capability: ClaimedCapabilityHandle | string,
       options?: SessionCapabilityOptions,
     ): Promise<{ ok: true }>;
+    tieToUser(
+      capability: ClaimedCapabilityHandle | string,
+      options?: SessionCapabilityOptions,
+    ): Promise<ClaimedCapability>;
     save(
       capability: ClaimedCapabilityHandle | string,
       options?: SaveCapabilityOptions,

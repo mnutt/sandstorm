@@ -209,6 +209,10 @@ export class ClaimedCapability {
     return fulfillRequestWithCapability(this.#env, request, this, options);
   }
 
+  tieToUser(request, options = {}) {
+    return tieClaimedCapabilityToUser(this.#env, request, this, options);
+  }
+
   [Symbol.dispose]() {
     this.drop().catch(() => {});
   }
@@ -295,6 +299,11 @@ async function offerClaimedCapability(env, request, capability, options = {}) {
 
 async function fulfillRequestWithCapability(env, request, capability, options = {}) {
   return sessionPowerboxAction(env, request, "fulfill-request", capability, options);
+}
+
+async function tieClaimedCapabilityToUser(env, request, capability, options = {}) {
+  return wrapClaimedCapability(
+    env, await sessionPowerboxAction(env, request, "tie-to-user", capability, options));
 }
 
 function savedCapabilityToken(value, name = "token") {
@@ -442,6 +451,13 @@ export function powerbox(request, env) {
       return fulfillRequestWithCapability(env, request, arguments[0], arguments[1] || {});
     },
 
+    async tieToUser() {
+      if (arguments.length < 1) {
+        unsupportedPowerbox("tieToUser");
+      }
+      return tieClaimedCapabilityToUser(env, request, arguments[0], arguments[1] || {});
+    },
+
     async save(capability, options = {}) {
       return saveClaimedCapability(env, capability, options);
     },
@@ -547,6 +563,13 @@ class PowerboxRpcTarget extends RpcTarget {
       unsupportedPowerbox("fulfillRequest");
     }
     return powerbox(this.#request, this.#env).fulfillRequest(arguments[0], arguments[1] || {});
+  }
+
+  async tieToUser() {
+    if (arguments.length < 1) {
+      unsupportedPowerbox("tieToUser");
+    }
+    return powerbox(this.#request, this.#env).tieToUser(arguments[0], arguments[1] || {});
   }
 
   async save(capability, options = {}) {

@@ -254,6 +254,8 @@ export default {
       }
       let offer = null;
       let fulfill = null;
+      let tie = null;
+      let dropTied = null;
       if (claim.ok && typeof claim.offer === "function" &&
           url.searchParams.get("sessionActions") === "true") {
         offer = await claim.offer(request, {
@@ -264,6 +266,16 @@ export default {
           title: "WebSession fulfilled capability",
           requiredPermissions,
         });
+        const tiedCapability = await claim.tieToUser(request, {
+          title: "WebSession tied capability",
+          requiredPermissions,
+        });
+        tie = {
+          ok: tiedCapability.ok,
+          claimedClass: tiedCapability instanceof ClaimedCapability,
+          json: JSON.parse(JSON.stringify(tiedCapability)),
+        };
+        dropTied = await tiedCapability.drop();
       }
       let drop = null;
       if (claim.ok && claim.id) {
@@ -311,6 +323,8 @@ export default {
         fetched,
         offer,
         fulfill,
+        tie,
+        dropTied,
         dropRestored,
         drop,
         dropSaved,

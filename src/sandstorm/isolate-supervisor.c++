@@ -3227,6 +3227,8 @@ public:
         return offerClaimedCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fulfill-request") {
         return fulfillRequestWithCapability(path, response);
+      } else if (methodName == "POST" && route == "/powerbox/tie-to-user") {
+        return tieClaimedCapabilityToUser(path, response);
       }
 
       if (methodName != "GET") {
@@ -3351,7 +3353,7 @@ private:
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
         "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
-        "\"powerbox.offer\", \"powerbox.fulfillRequest\"]\n"
+        "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\"]\n"
         "}\n");
   }
 
@@ -3743,7 +3745,7 @@ private:
       KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
         auto request = sessionContext->offerRequest();
         request.setCap(*cap);
-        initSessionActionParams(url, titles, request.initRequiredPermissions(
+        initSessionActionParamsWithDescriptor(url, titles, request.initRequiredPermissions(
             config.viewInfoMessage->getRoot<UiView::ViewInfo>().getPermissions().size()),
             request.initDescriptor(), request.initDisplayInfo());
         return request.send().then([this, &response](auto result) mutable {
@@ -3777,7 +3779,7 @@ private:
       KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
         auto request = sessionContext->fulfillRequestRequest();
         request.setCap(*cap);
-        initSessionActionParams(url, titles, request.initRequiredPermissions(
+        initSessionActionParamsWithDescriptor(url, titles, request.initRequiredPermissions(
             config.viewInfoMessage->getRoot<UiView::ViewInfo>().getPermissions().size()),
             request.initDescriptor(), request.initDisplayInfo());
         return request.send().then([this, &response](auto result) mutable {
@@ -3794,9 +3796,44 @@ private:
     }
   }
 
+  kj::Promise<void> tieClaimedCapabilityToUser(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    auto sessionIds = findIsolateQueryParams(url, "sessionId");
+    auto ids = findIsolateQueryParams(url, "id");
+    auto titles = findIsolateQueryParams(url, "title");
+    if (sessionIds.size() != 1 || sessionIds[0].size() == 0 ||
+        ids.size() != 1 || ids[0].size() == 0 ||
+        titles.size() > 1) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"expected exactly one sessionId and capability id\"\n}\n"));
+    }
+
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionIds[0])) {
+      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
+        auto request = sessionContext->tieToUserRequest();
+        request.setCap(*cap);
+        auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
+        initSessionActionParams(url, titles,
+            request.initRequiredPermissions(viewInfo.getPermissions().size()),
+            request.initDisplayInfo());
+        return request.send().then([this, &response](auto result) mutable {
+          auto capId = host.sessions->storeClaimedCapability(result.getTiedCap());
+          return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+        });
+      } else {
+        return sendJson(response, 404, "Not Found", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+      }
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown isolate session\"\n}\n"));
+    }
+  }
+
   void initSessionActionParams(kj::StringPtr url, kj::ArrayPtr<kj::String> titles,
       capnp::List<bool>::Builder requiredPermissions,
-      PowerboxDescriptor::Builder descriptor, PowerboxDisplayInfo::Builder displayInfo) {
+      PowerboxDisplayInfo::Builder displayInfo) {
     auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
     auto permissionDefs = viewInfo.getPermissions();
     auto permissionNames = findIsolateQueryParams(url, "requiredPermission");
@@ -3807,11 +3844,17 @@ private:
       }
     }
 
-    descriptor.initTags(0);
     auto title = titles.size() == 1 && titles[0].size() > 0
         ? titles[0].asPtr()
         : kj::StringPtr("Claimed Sandstorm capability");
     displayInfo.initTitle().setDefaultText(title);
+  }
+
+  void initSessionActionParamsWithDescriptor(kj::StringPtr url, kj::ArrayPtr<kj::String> titles,
+      capnp::List<bool>::Builder requiredPermissions,
+      PowerboxDescriptor::Builder descriptor, PowerboxDisplayInfo::Builder displayInfo) {
+    initSessionActionParams(url, titles, requiredPermissions, displayInfo);
+    descriptor.initTags(0);
   }
 
   kj::Promise<void> savePowerboxCapability(
