@@ -83,6 +83,25 @@ public:
 
   uint claimCount = 0;
   uint saveCount = 0;
+  uint restoreCount = 0;
+};
+
+class FakeSandstormCore final: public SandstormCore::Server {
+public:
+  explicit FakeSandstormCore(FakeSessionContext& sessionContext)
+      : sessionContext(sessionContext) {}
+
+  kj::Promise<void> restore(RestoreContext context) override {
+    auto token = context.getParams().getToken();
+    auto tokenText = kj::heapString(token.asChars());
+    KJ_REQUIRE(tokenText == "websession-saved-token");
+    ++sessionContext.restoreCount;
+    context.getResults().setCap(kj::heap<FakeClaimedCapability>(sessionContext.saveCount));
+    return kj::READY_NOW;
+  }
+
+private:
+  FakeSessionContext& sessionContext;
 };
 
 kj::String responseDebugBody(WebSession::Response::Reader response) {
@@ -135,9 +154,12 @@ public:
         .parseAddress(kj::str("unix:", socketPath), 0)
         .wait(io.waitScope);
     auto stream = address->connect().wait(io.waitScope);
+    auto sessionContext = kj::heap<FakeSessionContext>();
+    auto& sessionContextRef = *sessionContext;
 
     capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
-    auto rpcSystem = capnp::makeRpcClient(network);
+    auto rpcSystem = capnp::makeRpcServer(
+        network, kj::heap<FakeSandstormCore>(sessionContextRef));
 
     capnp::MallocMessageBuilder vatMessage;
     auto hostId = vatMessage.initRoot<capnp::rpc::twoparty::VatId>();
@@ -155,8 +177,6 @@ public:
     userInfo.initPermissions(1).set(0, true);
     userInfo.setIdentityId(
         kj::StringPtr("0123456789abcdef0123456789abcdef").asBytes());
-    auto sessionContext = kj::heap<FakeSessionContext>();
-    auto& sessionContextRef = *sessionContext;
     sessionRequest.setContext(kj::mv(sessionContext));
     sessionRequest.setSessionType(capnp::typeId<WebSession>());
     auto sessionParams = sessionRequest.getSessionParams().initAs<WebSession::Params>();
@@ -200,7 +220,7 @@ public:
     auto claimRequest = session.getRequest();
     claimRequest.setPath(
         "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermission=view"
-        "&save=true&label=WebSession%20saved%20capability");
+        "&save=true&restore=true&label=WebSession%20saved%20capability");
     claimRequest.setIgnoreBody(false);
     auto claimContext = claimRequest.initContext();
     claimContext.setResponseStream(kj::heap<IgnoreByteStream>());
@@ -222,9 +242,13 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"save\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"type\":\"savedCapability\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"tokenEncoding\":\"base64url\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"restore\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"dropRestored\":{\"status\":200,\"body\":{\"ok\":true}}"),
+        claimBody);
     KJ_REQUIRE(contains(claimBody, "\"drop\":{\"status\":200,\"body\":{\"ok\":true}}"), claimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 1, sessionContextRef.restoreCount);
 
     auto badClaimRequest = session.getRequest();
     badClaimRequest.setPath(
@@ -247,6 +271,7 @@ public:
     KJ_REQUIRE(contains(badClaimBody, "unknown required permission"), badClaimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 1, sessionContextRef.restoreCount);
 
     return true;
   }

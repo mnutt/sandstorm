@@ -149,7 +149,7 @@ declare module "sandstorm:api" {
       capability: ClaimedCapabilityHandle | string,
       options?: SaveCapabilityOptions,
     ): Promise<SavedCapability>;
-    restore(token: Uint8Array | string): Promise<unknown>;
+    restore(token: Uint8Array | string | SavedCapability): Promise<ClaimedCapability>;
     drop(capability: ClaimedCapabilityHandle | string): Promise<{ ok: true }>;
   }
 

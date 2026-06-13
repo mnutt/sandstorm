@@ -231,13 +231,17 @@ private:
 };
 
 struct IsolateRuntimeHost final: public kj::Refcounted {
-  IsolateRuntimeHost(kj::Network& network, kj::Timer& timer, kj::StringPtr grainId)
+  IsolateRuntimeHost(
+      kj::Network& network, kj::Timer& timer, kj::StringPtr grainId,
+      SandstormCore::Client sandstormCore)
       : network(network), timer(timer), grainId(kj::heapString(grainId)),
+        sandstormCore(kj::mv(sandstormCore)),
         sessions(kj::refcounted<IsolateSessionRegistry>()) {}
 
   kj::Network& network;
   kj::Timer& timer;
   kj::String grainId;
+  SandstormCore::Client sandstormCore;
   kj::HttpHeaderTable headerTable;
   kj::Own<IsolateSessionRegistry> sessions;
 };
@@ -3078,6 +3082,8 @@ public:
         return claimPowerboxRequest(path, response);
       } else if (methodName == "POST" && route == "/powerbox/save") {
         return savePowerboxCapability(path, response);
+      } else if (methodName == "POST" && route == "/powerbox/restore") {
+        return restorePowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop") {
         return dropPowerboxCapability(path, response);
       }
@@ -3141,7 +3147,7 @@ private:
         "  \"ok\": true,\n"
         "  \"binding\": \"sandstormApi\",\n"
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
-        "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.drop\"]\n"
+        "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", \"powerbox.drop\"]\n"
         "}\n");
   }
 
@@ -3233,6 +3239,41 @@ private:
     return kj::String(json.releaseAsArray());
   }
 
+  kj::Maybe<kj::Array<byte>> decodeSavedCapabilityToken(kj::StringPtr token) {
+    if (token.size() == 0 || token.size() > 4096 || token.size() % 4 == 1) {
+      return nullptr;
+    }
+
+    size_t padding = (4 - token.size() % 4) % 4;
+    auto base64 = kj::heapArray<char>(token.size() + padding);
+    for (auto i: kj::indices(token)) {
+      char c = token[i];
+      if (c >= 'A' && c <= 'Z') {
+        base64[i] = c;
+      } else if (c >= 'a' && c <= 'z') {
+        base64[i] = c;
+      } else if (c >= '0' && c <= '9') {
+        base64[i] = c;
+      } else if (c == '-') {
+        base64[i] = '+';
+      } else if (c == '_') {
+        base64[i] = '/';
+      } else {
+        return nullptr;
+      }
+    }
+    for (size_t i = token.size(); i < base64.size(); ++i) {
+      base64[i] = '=';
+    }
+
+    auto decoded = kj::decodeBase64(base64.asPtr());
+    if (decoded.hadErrors) {
+      return nullptr;
+    }
+
+    return kj::mv(decoded);
+  }
+
   kj::Promise<void> savePowerboxCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
     auto ids = findIsolateQueryParams(url, "id");
@@ -3269,6 +3310,28 @@ private:
     } else {
       return sendJson(response, 404, "Not Found", kj::heapString(
           "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+    }
+  }
+
+  kj::Promise<void> restorePowerboxCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    auto tokens = findIsolateQueryParams(url, "token");
+    if (tokens.size() != 1 || tokens[0].size() == 0) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one saved capability token\"\n}\n"));
+    }
+
+    KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokens[0])) {
+      auto request = host.sandstormCore.restoreRequest();
+      request.setToken(token->asPtr());
+      return request.send().then(
+          [this, &response](auto result) mutable {
+        auto capId = host.sessions->storeClaimedCapability(result.getCap());
+        return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+      });
+    } else {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"invalid saved capability token\"\n}\n"));
     }
   }
 
@@ -4081,8 +4144,13 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   }
 
   auto ioContext = kj::setupAsyncIo();
+  auto coreRedirector = kj::refcounted<CapRedirector>();
+  SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
+      kj::addRef(*coreRedirector)).castAs<SandstormCore>();
+  KJ_LOG(WARNING, "Isolate supervisor core redirector created.");
+
   auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
-      ioContext.provider->getNetwork(), ioContext.provider->getTimer(), grainId);
+      ioContext.provider->getNetwork(), ioContext.provider->getTimer(), grainId, coreCap);
   kj::Maybe<kj::Promise<void>> apiListenTask = nullptr;
   kj::Maybe<kj::Promise<void>> storageListenTask = nullptr;
   if (hasSandstormApiBinding(*runtimeConfig)) {
@@ -4118,11 +4186,6 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
 
   waitForSidecarSocket(*sidecar, *runtimeConfig);
   KJ_LOG(WARNING, "Isolate supervisor sidecar readiness complete.");
-
-  auto coreRedirector = kj::refcounted<CapRedirector>();
-  SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
-      kj::addRef(*coreRedirector)).castAs<SandstormCore>();
-  KJ_LOG(WARNING, "Isolate supervisor core redirector created.");
 
   KJ_LOG(WARNING, "Creating isolate supervisor capability.");
   Supervisor::Client mainCap = kj::heap<IsolateSupervisorImpl>(

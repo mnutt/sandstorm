@@ -193,6 +193,36 @@ async function saveClaimedCapability(env, capability, options = {}) {
   return postSandstorm(env, `powerbox/save?id=${id}&label=${label}`);
 }
 
+function savedCapabilityToken(value, name = "token") {
+  if (typeof value === "string") {
+    const token = validate.string(value, name, { minLength: 1, maxLength: 4096 });
+    if (!/^[A-Za-z0-9_-]+$/.test(token)) {
+      throw new ValidationError(`${name} must be base64url text`);
+    }
+    return token;
+  }
+
+  if (value instanceof Uint8Array) {
+    let binary = "";
+    for (let i = 0; i < value.length; i += 0x8000) {
+      binary += String.fromCharCode(...value.slice(i, i + 0x8000));
+    }
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+
+  if (value && typeof value === "object" && value.type === "savedCapability") {
+    return savedCapabilityToken(value.token, `${name}.token`);
+  }
+
+  throw new ValidationError(`${name} must be a saved capability token`);
+}
+
+async function restoreSavedCapability(env, token) {
+  const encodedToken = encodeURIComponent(savedCapabilityToken(token));
+  const capability = await postSandstorm(env, `powerbox/restore?token=${encodedToken}`);
+  return attachClaimedCapabilityMethods(env, capability);
+}
+
 function attachClaimedCapabilityMethods(env, capability) {
   if (!capability || typeof capability !== "object" ||
       capability.type !== "claimedCapability" || typeof capability.id !== "string") {
@@ -271,8 +301,8 @@ export function powerbox(request, env) {
       return saveClaimedCapability(env, capability, options);
     },
 
-    async restore() {
-      unsupportedPowerbox("restore");
+    async restore(token) {
+      return restoreSavedCapability(env, token);
     },
 
     async drop(capability) {
@@ -368,8 +398,8 @@ class PowerboxRpcTarget extends RpcTarget {
     return powerbox(this.#request, this.#env).save(capability, options);
   }
 
-  async restore() {
-    unsupportedPowerbox("restore");
+  async restore(token) {
+    return powerbox(this.#request, this.#env).restore(token);
   }
 
   async drop(capability) {
