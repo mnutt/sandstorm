@@ -323,6 +323,7 @@ async function startIsolateFixture() {
   try {
     spawnSupervisor(true);
     await waitForFixtureSockets();
+    await fs.appendFile(path.join(varDir, "log"), "isolate integration watchLog fixture\n");
 
     started = true;
     return {
@@ -669,9 +670,43 @@ test("isolate supervisor integration suite", {
     assert.ok(index.json.keys.some(
       (entry) => entry.name === "integration-key" && entry.bytes === 17));
 
-    const invalid = await requestJson(fixture.storageSocket, "/.hidden");
-    assert.equal(invalid.statusCode, 400);
-    assert.equal(invalid.json.ok, false);
+    for (const key of ["/.hidden", "/bad/key", "/a..b", "/bad%20key"]) {
+      const invalid = await requestJson(fixture.storageSocket, key);
+      assert.equal(invalid.statusCode, 400, key);
+      assert.equal(invalid.json.ok, false, key);
+    }
+
+    const unsupported = await requestJson(fixture.storageSocket, "/integration-key", {
+      method: "PATCH",
+      body: "ignored",
+    });
+    assert.equal(unsupported.statusCode, 405);
+    assert.equal(unsupported.json.ok, false);
+
+    const storageRoot = path.join(fixture.varDir, "isolate-storage");
+    const blockedKey = path.join(storageRoot, "blocked-link");
+    await fs.symlink("/etc/passwd", blockedKey);
+
+    const blockedGet = await requestJson(fixture.storageSocket, "/blocked-link");
+    assert.equal(blockedGet.statusCode, 404);
+    assert.equal(blockedGet.json.ok, false);
+
+    const blockedPut = await requestJson(fixture.storageSocket, "/blocked-link", {
+      method: "PUT",
+      body: "replacement",
+    });
+    assert.equal(blockedPut.statusCode, 409);
+    assert.equal(blockedPut.json.ok, false);
+
+    const blockedDelete = await requestJson(fixture.storageSocket, "/blocked-link", {
+      method: "DELETE",
+    });
+    assert.equal(blockedDelete.statusCode, 409);
+    assert.equal(blockedDelete.json.ok, false);
+
+    const indexWithBlockedKey = await requestJson(fixture.storageSocket, "/");
+    assert.equal(indexWithBlockedKey.statusCode, 200);
+    assert.ok(!indexWithBlockedKey.json.keys.some((entry) => entry.name === "blocked-link"));
 
     const deleted = await requestJson(
       fixture.storageSocket, "/integration-key", { method: "DELETE" });

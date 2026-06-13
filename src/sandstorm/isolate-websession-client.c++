@@ -94,6 +94,18 @@ public:
     }
   }
 
+  kj::String waitForText(kj::AsyncIoContext& io, kj::StringPtr needle) {
+    for (uint i = 0; i < 200; ++i) {
+      auto text = kj::str(data.asPtr().asChars());
+      if (contains(text, needle)) {
+        return text;
+      }
+      io.provider->getTimer().afterDelay(10 * kj::MILLISECONDS).wait(io.waitScope);
+    }
+
+    return kj::str(data.asPtr().asChars());
+  }
+
   kj::ArrayPtr<const byte> getData() {
     return data.asPtr();
   }
@@ -540,6 +552,15 @@ public:
     KJ_REQUIRE(sessionContextRef.grainSizeReportCount == 1,
         sessionContextRef.grainSizeReportCount);
     KJ_REQUIRE(sessionContextRef.lastGrainSizeBytes > 0, sessionContextRef.lastGrainSizeBytes);
+
+    auto logStreamServer = kj::heap<CollectByteStream>();
+    auto& logStream = *logStreamServer;
+    auto watchLogRequest = supervisor.watchLogRequest();
+    watchLogRequest.setBacklogAmount(65536);
+    watchLogRequest.setStream(kj::mv(logStreamServer));
+    auto logHandle = watchLogRequest.send().wait(io.waitScope).getHandle();
+    auto logText = logStream.waitForText(io, "isolate integration watchLog fixture");
+    KJ_REQUIRE(contains(logText, "isolate integration watchLog fixture"), logText);
 
     return true;
   }
