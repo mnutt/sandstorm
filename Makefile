@@ -496,7 +496,7 @@ test-app-dev: tmp/.ekam-run
 	@cp src/sandstorm/test-app/*.html tmp/sandstorm/test-app
 	spk dev -Isrc -Itmp -ptmp/sandstorm/test-app/test-app.capnp:pkgdef
 
-isolate-test-app.spk: tmp/.ekam-run
+isolate-test-app.spk: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
 	@mkdir -p tmp/sandstorm/isolate-test-app
 	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
 	@rm -rf tmp/sandstorm/isolate-test-app/isolate-test
@@ -504,15 +504,15 @@ isolate-test-app.spk: tmp/.ekam-run
 	bin/spk pack -ksrc/sandstorm/test-app/isolate-test-app.key -Isrc -Itmp \
 		-ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef isolate-test-app.spk
 
-isolate-test-app-dev: tmp/.ekam-run
+isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
 	@mkdir -p tmp/sandstorm/isolate-test-app
 	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
 	@rm -rf tmp/sandstorm/isolate-test-app/isolate-test
 	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
 	spk dev -Isrc -Itmp -ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef
 
-isolate-supervisor-smoke-test: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-smoke.test.js
-	$(NODEJS) tests/isolate-supervisor-smoke.test.js
+isolate-supervisor-integration-test: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+	$(NODEJS) tests/isolate-supervisor-integration.test.js
 
 # ====================================================================
 # meteor-testapp.spk
