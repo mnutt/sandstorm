@@ -187,6 +187,14 @@ public:
     return false;
   }
 
+  kj::Maybe<capnp::Capability::Client> findClaimedCapability(kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
+      return claimedCapabilities[*index].cap;
+    }
+
+    return nullptr;
+  }
+
 private:
   struct SessionRecord {
     kj::String id;
@@ -223,11 +231,13 @@ private:
 };
 
 struct IsolateRuntimeHost final: public kj::Refcounted {
-  IsolateRuntimeHost(kj::Network& network, kj::Timer& timer)
-      : network(network), timer(timer), sessions(kj::refcounted<IsolateSessionRegistry>()) {}
+  IsolateRuntimeHost(kj::Network& network, kj::Timer& timer, kj::StringPtr grainId)
+      : network(network), timer(timer), grainId(kj::heapString(grainId)),
+        sessions(kj::refcounted<IsolateSessionRegistry>()) {}
 
   kj::Network& network;
   kj::Timer& timer;
+  kj::String grainId;
   kj::HttpHeaderTable headerTable;
   kj::Own<IsolateSessionRegistry> sessions;
 };
@@ -3066,6 +3076,8 @@ public:
         (kj::Array<byte>&& bodyBytes) mutable {
       if (methodName == "POST" && route == "/powerbox/claim-request") {
         return claimPowerboxRequest(path, response);
+      } else if (methodName == "POST" && route == "/powerbox/save") {
+        return savePowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop") {
         return dropPowerboxCapability(path, response);
       }
@@ -3129,7 +3141,7 @@ private:
         "  \"ok\": true,\n"
         "  \"binding\": \"sandstormApi\",\n"
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
-        "\"powerbox.claimRequest\", \"powerbox.drop\"]\n"
+        "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.drop\"]\n"
         "}\n");
   }
 
@@ -3206,6 +3218,58 @@ private:
     json.addAll(kj::StringPtr("\n}\n"));
     json.add('\0');
     return kj::String(json.releaseAsArray());
+  }
+
+  kj::String renderSavedCapability(kj::StringPtr capabilityId, kj::StringPtr token) {
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"type\": \"savedCapability\",\n  "));
+    appendJsonField(json, "id", capabilityId);
+    json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "token", token);
+    json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "tokenEncoding", "base64url");
+    json.addAll(kj::StringPtr("\n}\n"));
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
+  }
+
+  kj::Promise<void> savePowerboxCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    auto ids = findIsolateQueryParams(url, "id");
+    auto labels = findIsolateQueryParams(url, "label");
+    if (ids.size() != 1 || ids[0].size() == 0) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one capability id\"\n}\n"));
+    }
+    if (labels.size() > 1) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"expected at most one save label\"\n}\n"));
+    }
+
+    kj::StringPtr label = "Claimed Sandstorm capability";
+    if (labels.size() == 1) {
+      label = labels[0];
+      if (label.size() == 0 || label.size() > 256) {
+        return sendJson(response, 400, "Bad Request", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"save label must be 1-256 bytes\"\n}\n"));
+      }
+    }
+
+    KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
+      auto request = cap->castAs<SystemPersistent>().saveRequest();
+      auto owner = request.getSealFor().initGrain();
+      owner.setGrainId(host.grainId);
+      owner.getSaveLabel().setDefaultText(label);
+      return request.send().then(
+          [this, &response, capabilityId = kj::heapString(ids[0])]
+          (auto result) mutable {
+        auto token = kj::encodeBase64Url(result.getSturdyRef());
+        return sendJson(response, 200, "OK", renderSavedCapability(capabilityId, token));
+      });
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+    }
   }
 
   kj::Promise<void> dropPowerboxCapability(
@@ -4018,7 +4082,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
 
   auto ioContext = kj::setupAsyncIo();
   auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
-      ioContext.provider->getNetwork(), ioContext.provider->getTimer());
+      ioContext.provider->getNetwork(), ioContext.provider->getTimer(), grainId);
   kj::Maybe<kj::Promise<void>> apiListenTask = nullptr;
   kj::Maybe<kj::Promise<void>> storageListenTask = nullptr;
   if (hasSandstormApiBinding(*runtimeConfig)) {

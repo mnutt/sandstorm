@@ -179,6 +179,47 @@ function capabilityId(value, name = "capability") {
   throw new ValidationError(`${name} must be a claimed capability handle or id string`);
 }
 
+function saveLabel(options = {}) {
+  let label = options.label ?? options.saveLabel ?? "Claimed Sandstorm capability";
+  if (label && typeof label === "object" && typeof label.defaultText === "string") {
+    label = label.defaultText;
+  }
+  return validate.string(label, "label", { minLength: 1, maxLength: 256 });
+}
+
+async function saveClaimedCapability(env, capability, options = {}) {
+  const id = encodeURIComponent(capabilityId(capability));
+  const label = encodeURIComponent(saveLabel(options));
+  return postSandstorm(env, `powerbox/save?id=${id}&label=${label}`);
+}
+
+function attachClaimedCapabilityMethods(env, capability) {
+  if (!capability || typeof capability !== "object" ||
+      capability.type !== "claimedCapability" || typeof capability.id !== "string") {
+    return capability;
+  }
+
+  Object.defineProperties(capability, {
+    save: {
+      enumerable: false,
+      value: (options = {}) => saveClaimedCapability(env, capability, options),
+    },
+    drop: {
+      enumerable: false,
+      value: () => postSandstorm(
+        env, `powerbox/drop?id=${encodeURIComponent(capabilityId(capability))}`),
+    },
+    [Symbol.dispose]: {
+      enumerable: false,
+      value: () => {
+        postSandstorm(env, `powerbox/drop?id=${encodeURIComponent(capabilityId(capability))}`)
+          .catch(() => {});
+      },
+    },
+  });
+  return capability;
+}
+
 function permissionNames(options = {}) {
   if (options.requiredPermissions === undefined || options.requiredPermissions === null) {
     return [];
@@ -213,8 +254,9 @@ export function powerbox(request, env) {
       const permissionQuery = permissionNames(options)
         .map((name) => `&requiredPermission=${encodeURIComponent(name)}`)
         .join("");
-      return postSandstorm(env,
+      const capability = await postSandstorm(env,
         `powerbox/claim-request?sessionId=${sessionId}&token=${encodedToken}${permissionQuery}`);
+      return attachClaimedCapabilityMethods(env, capability);
     },
 
     async offer() {
@@ -225,8 +267,8 @@ export function powerbox(request, env) {
       unsupportedPowerbox("fulfillRequest");
     },
 
-    async save() {
-      unsupportedPowerbox("save");
+    async save(capability, options = {}) {
+      return saveClaimedCapability(env, capability, options);
     },
 
     async restore() {
@@ -322,8 +364,8 @@ class PowerboxRpcTarget extends RpcTarget {
     unsupportedPowerbox("fulfillRequest");
   }
 
-  async save() {
-    unsupportedPowerbox("save");
+  async save(capability, options = {}) {
+    return powerbox(this.#request, this.#env).save(capability, options);
   }
 
   async restore() {

@@ -108,6 +108,25 @@ declare module "sandstorm:api" {
     id: string;
   }
 
+  export interface SaveCapabilityOptions {
+    label?: string | { defaultText: string };
+    saveLabel?: string | { defaultText: string };
+  }
+
+  export interface SavedCapability {
+    ok: true;
+    type: "savedCapability";
+    id: string;
+    token: string;
+    tokenEncoding: "base64url";
+  }
+
+  export interface ClaimedCapability extends ClaimedCapabilityHandle {
+    save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
+    drop(): Promise<{ ok: true }>;
+    [Symbol.dispose](): void;
+  }
+
   export interface ClaimRequestOptions {
     requiredPermissions?: string[];
   }
@@ -123,10 +142,13 @@ declare module "sandstorm:api" {
 
   export interface PowerboxApi {
     request(query: unknown, options?: unknown): Promise<unknown>;
-    claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapabilityHandle>;
+    claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
     offer(capability: unknown, descriptor: unknown, displayInfo?: unknown): Promise<unknown>;
     fulfillRequest(capability: unknown, descriptor: unknown): Promise<unknown>;
-    save(capability: unknown, label: unknown): Promise<unknown>;
+    save(
+      capability: ClaimedCapabilityHandle | string,
+      options?: SaveCapabilityOptions,
+    ): Promise<SavedCapability>;
     restore(token: Uint8Array | string): Promise<unknown>;
     drop(capability: ClaimedCapabilityHandle | string): Promise<{ ok: true }>;
   }
