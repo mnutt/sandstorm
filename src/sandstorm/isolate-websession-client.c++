@@ -128,6 +128,8 @@ public:
     auto body = kj::str(content.getBody().getBytes().asChars());
     KJ_REQUIRE(contains(body, "\"ok\":true"), body);
     KJ_REQUIRE(contains(body, "\"pathname\":\"/\""), body);
+    KJ_REQUIRE(contains(body, "\"x-sandstorm-session-id\":\""), body);
+    KJ_REQUIRE(!contains(body, "\"x-sandstorm-session-id\":\"0\""), body);
     KJ_REQUIRE(contains(body, "\"x-sandstorm-username\":\"WebSession Test User\""), body);
     KJ_REQUIRE(contains(body, "\"x-sandstorm-preferred-handle\":\"websession-test\""), body);
     KJ_REQUIRE(contains(body, "\"x-sandstorm-tab-id\":\"77656273657373696f6e2d746162\""), body);

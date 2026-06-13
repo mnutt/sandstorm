@@ -17,6 +17,17 @@ async function callSandstorm(env, path) {
   return response.json();
 }
 
+async function postSandstorm(env, path) {
+  const response = await env.SANDSTORM_API.fetch(`http://sandstorm/${path}`, {
+    method: "POST",
+  });
+  const body = await response.json();
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || `Sandstorm API ${path} failed with ${response.status}`);
+  }
+  return body;
+}
+
 export class ValidationError extends Error {
   constructor(message) {
     super(message);
@@ -144,14 +155,29 @@ export function storage(env) {
   };
 }
 
-function unsupportedPowerbox(operation) {
+function unsupportedPowerbox(operation, details = "") {
   throw new UnsupportedCapabilityError("powerbox", operation);
 }
 
-export function powerbox() {
+function sessionIdForPowerbox(request) {
+  const sessionId = header(request, "x-sandstorm-session-id");
+  if (!sessionId) {
+    throw new Error("Powerbox operations require a live Sandstorm WebSession");
+  }
+  return sessionId;
+}
+
+export function powerbox(request, env) {
   return {
     async request() {
       unsupportedPowerbox("request");
+    },
+
+    async claimRequest(token) {
+      token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
+      const sessionId = encodeURIComponent(sessionIdForPowerbox(request));
+      const encodedToken = encodeURIComponent(token);
+      return postSandstorm(env, `powerbox/claim-request?sessionId=${sessionId}&token=${encodedToken}`);
     },
 
     async offer() {
@@ -233,8 +259,21 @@ class StorageRpcTarget extends RpcTarget {
 }
 
 class PowerboxRpcTarget extends RpcTarget {
+  #request;
+  #env;
+
+  constructor(request, env) {
+    super();
+    this.#request = request;
+    this.#env = env;
+  }
+
   async request() {
     unsupportedPowerbox("request");
+  }
+
+  async claimRequest(token) {
+    return powerbox(this.#request, this.#env).claimRequest(token);
   }
 
   async offer() {
@@ -297,7 +336,7 @@ class SandstormRpcTarget extends RpcTarget {
   }
 
   powerbox() {
-    return new PowerboxRpcTarget();
+    return new PowerboxRpcTarget(this.#request, this.#env);
   }
 }
 
@@ -347,7 +386,7 @@ export function sandstorm(request, env) {
     modules: () => callSandstorm(env, "modules"),
     bindings: () => callSandstorm(env, "bindings"),
     storage: () => storage(env),
-    powerbox: () => powerbox(),
+    powerbox: () => powerbox(request, env),
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),

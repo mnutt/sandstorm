@@ -19,5 +19,9 @@ declare module "sandstorm:rpc" {
     url?: string,
     options?: import("capnweb").RpcSessionOptions,
   ): import("capnweb").RpcStub<Remote>;
+  export function requestPowerbox(
+    query?: string[],
+    options?: { saveLabel?: { defaultText: string } },
+  ): Promise<{ token: string; descriptor?: string }>;
   export function browserClientScript(): string;
 }
