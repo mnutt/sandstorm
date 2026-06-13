@@ -174,6 +174,26 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"drop\":{\"status\":200,\"body\":{\"ok\":true}}"), claimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
 
+    auto badClaimRequest = session.getRequest();
+    badClaimRequest.setPath(
+        "/claim-powerbox?token=websession-test-token&requiredPermissions=not-a-permission");
+    badClaimRequest.setIgnoreBody(false);
+    auto badClaimContext = badClaimRequest.initContext();
+    badClaimContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    badClaimContext.initCookies(0);
+    badClaimContext.initAccept(0);
+    badClaimContext.initAcceptEncoding(0);
+    badClaimContext.initAdditionalHeaders(0);
+
+    auto badClaimResponse = badClaimRequest.send().wait(io.waitScope);
+    KJ_REQUIRE(badClaimResponse.which() == WebSession::Response::CLIENT_ERROR);
+    auto badClaim = badClaimResponse.getClientError();
+    KJ_REQUIRE(badClaim.getStatusCode() == WebSession::Response::ClientErrorCode::BAD_REQUEST);
+    KJ_REQUIRE(badClaim.hasNonHtmlBody());
+    auto badClaimBody = kj::str(badClaim.getNonHtmlBody().getData().asChars());
+    KJ_REQUIRE(contains(badClaimBody, "unknown required permission"), badClaimBody);
+    KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
+
     return true;
   }
 
