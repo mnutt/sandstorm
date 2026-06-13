@@ -306,6 +306,24 @@ async function tieClaimedCapabilityToUser(env, request, capability, options = {}
     env, await sessionPowerboxAction(env, request, "tie-to-user", capability, options));
 }
 
+function webSessionPathPrefix(options = {}) {
+  const value = options.pathPrefix ?? options.prefix ?? "";
+  const pathPrefix = validate.string(value, "pathPrefix", { maxLength: 1024 });
+  if (pathPrefix.length > 0 && !pathPrefix.startsWith("/")) {
+    throw new ValidationError("pathPrefix must be empty or start with '/'");
+  }
+  if (pathPrefix.includes("://")) {
+    throw new ValidationError("pathPrefix must be path-relative");
+  }
+  return pathPrefix;
+}
+
+async function createWebSessionCapability(env, options = {}) {
+  const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
+  return wrapClaimedCapability(
+    env, await postSandstorm(env, `capabilities/web-session?pathPrefix=${pathPrefix}`));
+}
+
 function savedCapabilityToken(value, name = "token") {
   if (typeof value === "string") {
     const token = validate.string(value, name, { minLength: 1, maxLength: 4096 });
@@ -640,6 +658,10 @@ class SandstormRpcTarget extends RpcTarget {
   powerbox() {
     return new PowerboxRpcTarget(this.#request, this.#env);
   }
+
+  webSession(options = {}) {
+    return createWebSessionCapability(this.#env, options);
+  }
 }
 
 export function apiTarget(request, env) {
@@ -689,6 +711,7 @@ export function sandstorm(request, env) {
     bindings: () => callSandstorm(env, "bindings"),
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
+    webSession: (options = {}) => createWebSessionCapability(env, options),
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),

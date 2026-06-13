@@ -647,6 +647,29 @@ public:
     KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
     KJ_REQUIRE(sessionContextRef.tieCount == 1, sessionContextRef.tieCount);
 
+    auto exportRequest = session.getRequest();
+    exportRequest.setPath("/export-web-session");
+    exportRequest.setIgnoreBody(false);
+    auto exportContext = exportRequest.initContext();
+    exportContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    exportContext.initCookies(0);
+    exportContext.initAccept(0);
+    exportContext.initAcceptEncoding(0);
+    exportContext.initAdditionalHeaders(0);
+
+    auto exportResponse = exportRequest.send().wait(io.waitScope);
+    auto exportDebugBody = responseDebugBody(exportResponse);
+    KJ_REQUIRE(exportResponse.which() == WebSession::Response::CONTENT, exportDebugBody);
+    auto exportContent = exportResponse.getContent();
+    KJ_REQUIRE(exportContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(exportContent.getBody().which() == WebSession::Response::Content::Body::BYTES);
+    auto exportBody = kj::str(exportContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(exportBody, "\"ok\":true"), exportBody);
+    KJ_REQUIRE(contains(exportBody, "\"capabilityClass\":true"), exportBody);
+    KJ_REQUIRE(contains(exportBody,
+        "\"capability\":{\"ok\":true,\"type\":\"claimedCapability\",\"id\":\""),
+        exportBody);
+
     auto offerSessionContext = kj::heap<FakeSessionContext>();
     auto& offerSessionContextRef = *offerSessionContext;
     auto offerSessionRequest = view.newOfferSessionRequest();

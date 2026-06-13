@@ -3,6 +3,7 @@ import metadata from "metadata.json";
 import {
   ClaimedCapability,
   SavedCapability,
+  sandstorm,
   powerbox as sandstormPowerbox,
 } from "sandstorm:api";
 
@@ -151,6 +152,27 @@ export default {
         offered: offered ? JSON.parse(JSON.stringify(offered)) : null,
         fetched,
         drop,
+      });
+    }
+
+    if (url.pathname === "/exported/capability-echo") {
+      return Response.json({
+        ok: true,
+        source: "exported-web-session",
+        pathname: url.pathname,
+        search: url.search,
+        sessionType: request.headers.get("x-sandstorm-session-type"),
+      });
+    }
+
+    if (url.pathname === "/export-web-session") {
+      const capability = await sandstorm(request, env).webSession({
+        pathPrefix: "/exported",
+      });
+      return Response.json({
+        ok: true,
+        capabilityClass: capability instanceof ClaimedCapability,
+        capability: JSON.parse(JSON.stringify(capability)),
       });
     }
 
