@@ -182,16 +182,65 @@ async function stopChild(child) {
   }
 }
 
-async function startIsolateFixture() {
+function spawnCollectingOutput(command, args) {
+  const stdout = [];
+  const stderr = [];
+  const child = spawn(command, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (data) => stdout.push(data));
+  child.stderr.on("data", (data) => stderr.push(data));
+
+  return { child, stdout, stderr };
+}
+
+function waitForExit(child, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("timed out waiting for process exit"));
+    }, timeoutMs);
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("exit", (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal });
+    });
+  });
+}
+
+async function prepareIsolateWorkdir(prefix) {
   await requireExecutable(SANDSTORM_BIN, "Build the project first, e.g. make fast.");
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   await requireFile(SPK_PATH, "Create it with: make isolate-test-app.spk.");
 
   await fs.mkdir(REPO_TMP_DIR, { recursive: true });
-  const workdir = await fs.mkdtemp(path.join(REPO_TMP_DIR, "iso-int-"));
+  const workdir = await fs.mkdtemp(path.join(REPO_TMP_DIR, prefix));
   const pkgDir = path.join(workdir, "pkg");
   const varDir = path.join(workdir, "grain");
   const isolateSupervisorBin = path.join(workdir, "isolate-supervisor");
+  const localSpkPath = path.join(workdir, "pkg.spk");
+
+  try {
+    await fs.symlink(SPK_PATH, localSpkPath);
+    await runCommand(SPK_BIN, ["unpack", "pkg.spk"], { cwd: workdir });
+    await fs.symlink(SANDSTORM_BIN, isolateSupervisorBin);
+    return { workdir, pkgDir, varDir, isolateSupervisorBin };
+  } catch (err) {
+    await fs.rm(workdir, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+async function startIsolateFixture() {
+  const { workdir, pkgDir, varDir, isolateSupervisorBin } =
+    await prepareIsolateWorkdir("iso-int-");
   const supervisorSocket = path.join(varDir, "socket");
   const runtimeDir = path.join(varDir, "isolate-runtime");
   const workerdSocket = path.join(runtimeDir, "workerd.sock");
@@ -259,9 +308,6 @@ async function startIsolateFixture() {
   }
 
   try {
-    await runCommand(SPK_BIN, ["unpack", SPK_PATH, pkgDir]);
-    await fs.symlink(SANDSTORM_BIN, isolateSupervisorBin);
-
     spawnSupervisor(true);
     await waitForFixtureSockets();
 
@@ -502,5 +548,37 @@ test("isolate supervisor integration suite", {
     assert.equal(index.statusCode, 200);
     assert.ok(index.json.keys.some(
       (entry) => entry.name === "persist-key" && entry.bytes === 16));
+  });
+
+  await t.test("rejects non-allowlisted sidecar commands", async () => {
+    const { workdir, pkgDir, varDir, isolateSupervisorBin } =
+      await prepareIsolateWorkdir("iso-bad-cmd-");
+    try {
+      const supervisorSocket = path.join(varDir, "socket");
+      const workerdSocket = path.join(varDir, "isolate-runtime/workerd.sock");
+      const { child, stdout, stderr } = spawnCollectingOutput(isolateSupervisorBin, [
+        "--stdio",
+        "--pkg", pkgDir,
+        "--var", varDir,
+        "--new",
+        "isolate-test-app",
+        "isolate-bad-command",
+        "workerd",
+        "serve",
+        "${SANDSTORM_ISOLATE_RUNTIME_MANIFEST}",
+        "sandstormConfig",
+      ]);
+
+      const exit = await waitForExit(child);
+      assert.notEqual(exit.code, 0, formatOutput(stdout, stderr));
+      assert.match(
+        stderr.join(""),
+        /Isolate sidecar command is not allowlisted/,
+        formatOutput(stdout, stderr));
+      assert.equal(await isSocket(supervisorSocket), false);
+      assert.equal(await isSocket(workerdSocket), false);
+    } finally {
+      await fs.rm(workdir, { recursive: true, force: true });
+    }
   });
 });
