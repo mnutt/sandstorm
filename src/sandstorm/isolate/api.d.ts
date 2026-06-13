@@ -113,6 +113,11 @@ declare module "sandstorm:api" {
 
   export interface PowerboxApi {
     request(query: unknown, options?: unknown): Promise<unknown>;
+    claimRequest(token: string, options?: unknown): Promise<{
+      ok: true;
+      type: "claimedCapability";
+      id: string;
+    }>;
     offer(capability: unknown, descriptor: unknown, displayInfo?: unknown): Promise<unknown>;
     fulfillRequest(capability: unknown, descriptor: unknown): Promise<unknown>;
     save(capability: unknown, label: unknown): Promise<unknown>;
@@ -153,7 +158,7 @@ declare module "sandstorm:api" {
   }
 
   export function storage(env: SandstormEnv): StorageApi;
-  export function powerbox(): PowerboxApi;
+  export function powerbox(request: Request, env: SandstormEnv): PowerboxApi;
   export function getSession(request: Request): SessionInfo;
   export function apiTarget(request: Request, env: SandstormEnv): SandstormApiTarget;
   export function rpcClientScript(): string;

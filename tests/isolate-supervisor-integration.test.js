@@ -508,6 +508,10 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.json.moduleCount, 3);
     assert.equal(runtime.json.bindingCount, 4);
 
+    const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
+    assert.equal(capabilities.statusCode, 200);
+    assert.ok(capabilities.json.capabilities.includes("powerbox.claimRequest"));
+
     const modules = await requestJson(fixture.sandstormApiSocket, "/modules");
     assert.equal(modules.statusCode, 200);
     assert.deepEqual(
@@ -539,6 +543,13 @@ test("isolate supervisor integration suite", {
     });
     assert.equal(wrongMethod.statusCode, 405);
     assert.equal(wrongMethod.json.ok, false);
+
+    const missingSessionClaim = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/claim-request?sessionId=missing&token=missing",
+      { method: "POST" });
+    assert.equal(missingSessionClaim.statusCode, 404);
+    assert.equal(missingSessionClaim.json.ok, false);
   });
 
   await t.test("serves the storage binding socket", async () => {

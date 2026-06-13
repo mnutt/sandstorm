@@ -130,12 +130,106 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::Vector<Binding> bindings;
 };
 
+kj::String makeOpaqueToken() {
+  kj::Array<byte> bytes = kj::heapArray<byte>(18);
+  kj::FdInputStream(raiiOpen("/dev/urandom", O_RDONLY)).read(bytes.begin(), bytes.size());
+  return kj::encodeBase64Url(bytes);
+}
+
+class IsolateSessionRegistry final: public kj::Refcounted {
+public:
+  kj::String registerSession(SessionContext::Client context) {
+    for (;;) {
+      auto id = makeOpaqueToken();
+      if (findSessionIndex(id) == nullptr) {
+        sessions.add(SessionRecord { kj::heapString(id), context });
+        return id;
+      }
+    }
+  }
+
+  void unregisterSession(kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findSessionIndex(id)) {
+      if (*index + 1 < sessions.size()) {
+        sessions[*index] = kj::mv(sessions.back());
+      }
+      sessions.removeLast();
+    }
+  }
+
+  kj::Maybe<SessionContext::Client> findSessionContext(kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findSessionIndex(id)) {
+      return sessions[*index].context;
+    }
+
+    return nullptr;
+  }
+
+  kj::String storeClaimedCapability(capnp::Capability::Client cap) {
+    for (;;) {
+      auto id = makeOpaqueToken();
+      if (findClaimedCapabilityIndex(id) == nullptr) {
+        claimedCapabilities.add(ClaimedCapabilityRecord { kj::heapString(id), cap });
+        return id;
+      }
+    }
+  }
+
+  bool dropClaimedCapability(kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
+      if (*index + 1 < claimedCapabilities.size()) {
+        claimedCapabilities[*index] = kj::mv(claimedCapabilities.back());
+      }
+      claimedCapabilities.removeLast();
+      return true;
+    }
+
+    return false;
+  }
+
+private:
+  struct SessionRecord {
+    kj::String id;
+    SessionContext::Client context;
+  };
+
+  struct ClaimedCapabilityRecord {
+    kj::String id;
+    capnp::Capability::Client cap;
+  };
+
+  kj::Maybe<size_t> findSessionIndex(kj::StringPtr id) {
+    for (auto i: kj::indices(sessions)) {
+      if (sessions[i].id == id) {
+        return i;
+      }
+    }
+
+    return nullptr;
+  }
+
+  kj::Maybe<size_t> findClaimedCapabilityIndex(kj::StringPtr id) {
+    for (auto i: kj::indices(claimedCapabilities)) {
+      if (claimedCapabilities[i].id == id) {
+        return i;
+      }
+    }
+
+    return nullptr;
+  }
+
+  kj::Vector<SessionRecord> sessions;
+  kj::Vector<ClaimedCapabilityRecord> claimedCapabilities;
+};
+
 struct IsolateRuntimeHost final: public kj::Refcounted {
-  IsolateRuntimeHost(kj::Network& network, kj::Timer& timer): network(network), timer(timer) {}
+  IsolateRuntimeHost(kj::Network& network, kj::Timer& timer)
+      : network(network), timer(timer), sessions(kj::refcounted<IsolateSessionRegistry>()) {}
 
   kj::Network& network;
   kj::Timer& timer;
   kj::HttpHeaderTable headerTable;
+  kj::Own<IsolateSessionRegistry> sessions;
 };
 
 IsolateRuntimeConfig::ModuleType getModuleType(
@@ -2069,7 +2163,14 @@ public:
       : pathPrefix(kj::heapString(pathPrefix)),
         sessionKind(sessionKind),
         sessionMetadata(kj::mv(sessionMetadata)),
+        runtimeHost(kj::addRef(*host)),
         runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host))) {}
+
+  ~IsolateWebSessionImpl() noexcept(false) {
+    if (sessionMetadata.sessionId.size() > 0) {
+      runtimeHost->sessions->unregisterSession(sessionMetadata.sessionId);
+    }
+  }
 
   kj::Promise<void> get(GetContext context) override {
     auto params = context.getParams();
@@ -2150,6 +2251,7 @@ private:
   kj::String pathPrefix;
   SessionKind sessionKind;
   SessionMetadata sessionMetadata;
+  kj::Own<IsolateRuntimeHost> runtimeHost;
   kj::Own<IsolateRuntimeAdapter> runtime;
 
   kj::String prefixedPath(kj::StringPtr path) {
@@ -2243,7 +2345,7 @@ public:
         ? copySessionMetadata(params.getSessionParams().getAs<WebSession::Params>(),
             params.getUserInfo(), viewInfo, params.getTabId())
         : copyApiSessionMetadata(params.getUserInfo(), viewInfo, params.getTabId());
-    sessionMetadata.sessionId = kj::str(sessionIdCounter++);
+    sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
     context.getResults().setSession(
         kj::heap<IsolateWebSessionImpl>(
             kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), pathPrefix, SessionKind::NORMAL,
@@ -2260,7 +2362,7 @@ public:
     auto sessionMetadata = copySessionMetadata(
         params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
         params.getTabId());
-    sessionMetadata.sessionId = kj::str(sessionIdCounter++);
+    sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::REQUEST,
         kj::mv(sessionMetadata)));
@@ -2276,7 +2378,7 @@ public:
     auto sessionMetadata = copySessionMetadata(
         params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
         params.getTabId());
-    sessionMetadata.sessionId = kj::str(sessionIdCounter++);
+    sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::OFFER,
         kj::mv(sessionMetadata)));
@@ -2286,7 +2388,6 @@ public:
 private:
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
-  uint sessionIdCounter = 0;
 };
 
 kj::String trustedWorkerdExecutablePath();
@@ -2935,10 +3036,47 @@ void waitForSidecarSocket(WorkerdSidecarProcess& sidecar, IsolateRuntimeConfig& 
       runtimeConfig.workerdSocketPath);
 }
 
+kj::StringPtr urlPath(kj::StringPtr url) {
+  KJ_IF_MAYBE(query, url.findFirst('?')) {
+    return kj::StringPtr(url.begin(), *query);
+  }
+
+  return url;
+}
+
+kj::Maybe<kj::String> findQueryParam(kj::StringPtr url, kj::StringPtr name) {
+  KJ_IF_MAYBE(query, url.findFirst('?')) {
+    size_t start = *query + 1;
+    while (start <= url.size()) {
+      auto remaining = url.slice(start, url.size());
+      size_t end = url.size();
+      KJ_IF_MAYBE(amp, remaining.findFirst('&')) {
+        end = start + *amp;
+      }
+
+      auto part = url.slice(start, end);
+      KJ_IF_MAYBE(eq, part.findFirst('=')) {
+        auto key = kj::heapString(part.slice(0, *eq));
+        if (key == name) {
+          return kj::heapString(part.slice(*eq + 1, part.size()));
+        }
+      }
+
+      if (end == url.size()) {
+        break;
+      }
+      start = end + 1;
+    }
+  }
+
+  return nullptr;
+}
+
 class SandstormApiBindingService final: public kj::HttpService {
 public:
-  SandstormApiBindingService(kj::HttpHeaderTable& headerTable, IsolateRuntimeConfig& config)
-      : headerTable(headerTable), config(config) {}
+  SandstormApiBindingService(
+      kj::HttpHeaderTable& headerTable, IsolateRuntimeConfig& config, IsolateRuntimeHost& host)
+      : headerTable(headerTable), config(config), host(host) {}
 
   kj::Promise<void> request(
       kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
@@ -2946,26 +3084,32 @@ public:
     (void)headers;
     auto methodName = kj::str(method);
     auto path = kj::heapString(url);
+    auto route = kj::heapString(urlPath(url));
     KJ_LOG(WARNING, "Isolate Sandstorm API binding received request.", methodName, path);
 
     return readAllBytesAtMost(requestBody, 1024 * 1024,
         "isolate Sandstorm API binding request body exceeds maximum allowed size").then(
-        [this, methodName = kj::mv(methodName), path = kj::mv(path), &response]
+        [this, methodName = kj::mv(methodName), path = kj::mv(path), route = kj::mv(route),
+            &response]
         (kj::Array<byte>&& bodyBytes) mutable {
+      if (methodName == "POST" && route == "/powerbox/claim-request") {
+        return claimPowerboxRequest(path, response);
+      }
+
       if (methodName != "GET") {
         return sendJson(response, 405, "Method Not Allowed", kj::heapString(
             "{\n  \"ok\": false,\n  \"error\": \"method not allowed\"\n}\n"));
       }
 
-      if (path == "/" || path == "/status") {
+      if (route == "/" || route == "/status") {
         return sendJson(response, 200, "OK", renderStatus(methodName, path, bodyBytes.size()));
-      } else if (path == "/capabilities") {
+      } else if (route == "/capabilities") {
         return sendJson(response, 200, "OK", renderCapabilities());
-      } else if (path == "/runtime") {
+      } else if (route == "/runtime") {
         return sendJson(response, 200, "OK", renderRuntime());
-      } else if (path == "/modules") {
+      } else if (route == "/modules") {
         return sendJson(response, 200, "OK", renderModules());
-      } else if (path == "/bindings") {
+      } else if (route == "/bindings") {
         return sendJson(response, 200, "OK", renderBindings());
       } else {
         return sendJson(response, 404, "Not Found", kj::heapString(
@@ -2977,6 +3121,7 @@ public:
 private:
   kj::HttpHeaderTable& headerTable;
   IsolateRuntimeConfig& config;
+  IsolateRuntimeHost& host;
 
   kj::Promise<void> sendJson(kj::HttpService::Response& response, uint statusCode,
       kj::StringPtr statusText, kj::String body) {
@@ -3009,8 +3154,42 @@ private:
         "{\n"
         "  \"ok\": true,\n"
         "  \"binding\": \"sandstormApi\",\n"
-        "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\"]\n"
+        "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
+        "\"powerbox.claimRequest\"]\n"
         "}\n");
+  }
+
+  kj::Promise<void> claimPowerboxRequest(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    KJ_IF_MAYBE(sessionId, findQueryParam(url, "sessionId")) {
+      KJ_IF_MAYBE(token, findQueryParam(url, "token")) {
+        KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(*sessionId)) {
+          auto request = sessionContext->claimRequestRequest();
+          request.setRequestToken(*token);
+          request.initRequiredPermissions(0);
+          return request.send().then(
+              [this, &response](auto result) mutable {
+            auto capId = host.sessions->storeClaimedCapability(result.getCap());
+            return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+          });
+        } else {
+          return sendJson(response, 404, "Not Found", kj::heapString(
+              "{\n  \"ok\": false,\n  \"error\": \"unknown isolate session\"\n}\n"));
+        }
+      }
+    }
+
+    return sendJson(response, 400, "Bad Request", kj::heapString(
+        "{\n  \"ok\": false,\n  \"error\": \"missing sessionId or token\"\n}\n"));
+  }
+
+  kj::String renderClaimedCapability(kj::StringPtr capabilityId) {
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"type\": \"claimedCapability\",\n  "));
+    appendJsonField(json, "id", capabilityId);
+    json.addAll(kj::StringPtr("\n}\n"));
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
   }
 
   kj::String renderRuntime() {
@@ -3812,7 +3991,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   kj::Maybe<kj::Promise<void>> storageListenTask = nullptr;
   if (hasSandstormApiBinding(*runtimeConfig)) {
     auto apiService = kj::heap<SandstormApiBindingService>(
-        runtimeHost->headerTable, *runtimeConfig);
+        runtimeHost->headerTable, *runtimeConfig, *runtimeHost);
     auto apiServer = kj::heap<kj::HttpServer>(
         runtimeHost->timer, runtimeHost->headerTable, *apiService);
     apiServer = apiServer.attach(kj::mv(apiService));
