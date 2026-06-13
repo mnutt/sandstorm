@@ -121,37 +121,36 @@ function encodeRpcValue(value) {
   return value;
 }
 
-function decodeRpcValue(value, pipelineTargets = new Map()) {
+function decodeRpcValue(value, pipelineResults = new Map()) {
   if (Array.isArray(value)) {
-    return value.map((item) => decodeRpcValue(item, pipelineTargets));
+    return value.map((item) => decodeRpcValue(item, pipelineResults));
   }
   if (value && typeof value === "object") {
     if (typeof value[RPC_TARGET_MARKER] === "string") {
       return lookupTarget(value[RPC_TARGET_MARKER]);
     }
     if (typeof value[RPC_PIPELINE_MARKER] === "number") {
-      const target = pipelineTargets.get(value[RPC_PIPELINE_MARKER]);
-      if (!target) {
-        throw new Error(`RPC pipeline target not found: ${value[RPC_PIPELINE_MARKER]}`);
+      if (!pipelineResults.has(value[RPC_PIPELINE_MARKER])) {
+        throw new Error(`RPC pipeline result not found: ${value[RPC_PIPELINE_MARKER]}`);
       }
-      return target;
+      return pipelineResults.get(value[RPC_PIPELINE_MARKER]);
     }
     const result = {};
     for (const [key, item] of Object.entries(value)) {
-      result[key] = decodeRpcValue(item, pipelineTargets);
+      result[key] = decodeRpcValue(item, pipelineResults);
     }
     return result;
   }
   return value;
 }
 
-async function callTarget(target, method, args, pipelineTargets = new Map()) {
+async function callTarget(target, method, args, pipelineResults = new Map()) {
   if (!isSafePropertyName(method)) {
     throw new Error(`invalid RPC method: ${method}`);
   }
 
   return await findRpcMethod(target, method)
-      .apply(target, args.map((arg) => decodeRpcValue(arg, pipelineTargets)));
+      .apply(target, args.map((arg) => decodeRpcValue(arg, pipelineResults)));
 }
 
 export async function newWorkersRpcResponse(request, target, options = {}) {
@@ -188,7 +187,7 @@ export async function newWorkersRpcResponse(request, target, options = {}) {
   }
 
   const results = [];
-  const pipelineTargets = new Map();
+  const pipelineResults = new Map();
   for (const call of calls) {
     const id = call && Object.prototype.hasOwnProperty.call(call, "id") ? call.id : null;
     try {
@@ -200,16 +199,14 @@ export async function newWorkersRpcResponse(request, target, options = {}) {
         if (call && call.targetId) {
           callTargetObject = lookupTarget(call.targetId);
         } else if (call && Object.prototype.hasOwnProperty.call(call, "targetFrom")) {
-          callTargetObject = pipelineTargets.get(call.targetFrom);
-          if (!callTargetObject) {
+          callTargetObject = pipelineResults.get(call.targetFrom);
+          if (!(callTargetObject instanceof RpcTarget)) {
             throw new Error(`RPC pipeline target not found: ${call.targetFrom}`);
           }
         }
         const args = Array.isArray(call.args) ? call.args : [];
-        const value = await callTarget(callTargetObject, call.method, args, pipelineTargets);
-        if (value instanceof RpcTarget) {
-          pipelineTargets.set(id, value);
-        }
+        const value = await callTarget(callTargetObject, call.method, args, pipelineResults);
+        pipelineResults.set(id, value);
         results.push({ id, ok: true, value: encodeRpcValue(value) });
       }
     } catch (error) {
