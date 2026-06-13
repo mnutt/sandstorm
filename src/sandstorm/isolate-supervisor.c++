@@ -1284,10 +1284,46 @@ void addHeader(FetchRequest& request, kj::StringPtr name, kj::StringPtr value) {
   request.headers.add(kj::mv(header));
 }
 
+kj::String formatRequestETag(WebSession::ETag::Reader eTag) {
+  if (eTag.getWeak()) {
+    return kj::str("W/\"", eTag.getValue(), '"');
+  } else {
+    return kj::str('"', eTag.getValue(), '"');
+  }
+}
+
+void addETagPreconditionHeaders(FetchRequest& request, WebSession::Context::Reader context) {
+  auto eTagPrecondition = context.getETagPrecondition();
+  switch (eTagPrecondition.which()) {
+    case WebSession::Context::ETagPrecondition::NONE:
+      break;
+    case WebSession::Context::ETagPrecondition::EXISTS:
+      addHeader(request, "if-match", "*");
+      break;
+    case WebSession::Context::ETagPrecondition::DOESNT_EXIST:
+      addHeader(request, "if-none-match", "*");
+      break;
+    case WebSession::Context::ETagPrecondition::MATCHES_ONE_OF:
+      addHeader(request, "if-match", kj::strArray(
+          KJ_MAP(e, eTagPrecondition.getMatchesOneOf()) {
+            return formatRequestETag(e);
+          }, ", "));
+      break;
+    case WebSession::Context::ETagPrecondition::MATCHES_NONE_OF:
+      addHeader(request, "if-none-match", kj::strArray(
+          KJ_MAP(e, eTagPrecondition.getMatchesNoneOf()) {
+            return formatRequestETag(e);
+          }, ", "));
+      break;
+  }
+}
+
 void addRequestContextHeaders(FetchRequest& request, WebSession::Context::Reader context) {
   for (auto header: context.getAdditionalHeaders()) {
     addHeader(request, header.getName(), header.getValue());
   }
+
+  addETagPreconditionHeaders(request, context);
 
   auto cookies = context.getCookies();
   if (cookies.size() > 0) {
@@ -3084,6 +3120,8 @@ public:
         return savePowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/restore") {
         return restorePowerboxCapability(path, response);
+      } else if (methodName == "POST" && route == "/powerbox/drop-saved") {
+        return dropSavedPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop") {
         return dropPowerboxCapability(path, response);
       }
@@ -3147,7 +3185,8 @@ private:
         "  \"ok\": true,\n"
         "  \"binding\": \"sandstormApi\",\n"
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
-        "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", \"powerbox.drop\"]\n"
+        "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
+        "\"powerbox.dropSaved\", \"powerbox.drop\"]\n"
         "}\n");
   }
 
@@ -3328,6 +3367,28 @@ private:
           [this, &response](auto result) mutable {
         auto capId = host.sessions->storeClaimedCapability(result.getCap());
         return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+      });
+    } else {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"invalid saved capability token\"\n}\n"));
+    }
+  }
+
+  kj::Promise<void> dropSavedPowerboxCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    auto tokens = findIsolateQueryParams(url, "token");
+    if (tokens.size() != 1 || tokens[0].size() == 0) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one saved capability token\"\n}\n"));
+    }
+
+    KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokens[0])) {
+      auto request = host.sandstormCore.dropRequest();
+      request.setToken(token->asPtr());
+      return request.send().then(
+          [this, &response](auto result) mutable {
+        (void)result;
+        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
       });
     } else {
       return sendJson(response, 400, "Bad Request", kj::heapString(

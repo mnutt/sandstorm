@@ -223,6 +223,11 @@ async function restoreSavedCapability(env, token) {
   return attachClaimedCapabilityMethods(env, capability);
 }
 
+async function dropSavedCapability(env, token) {
+  const encodedToken = encodeURIComponent(savedCapabilityToken(token));
+  return postSandstorm(env, `powerbox/drop-saved?token=${encodedToken}`);
+}
+
 function attachClaimedCapabilityMethods(env, capability) {
   if (!capability || typeof capability !== "object" ||
       capability.type !== "claimedCapability" || typeof capability.id !== "string") {
@@ -303,6 +308,10 @@ export function powerbox(request, env) {
 
     async restore(token) {
       return restoreSavedCapability(env, token);
+    },
+
+    async dropSaved(token) {
+      return dropSavedCapability(env, token);
     },
 
     async drop(capability) {
@@ -400,6 +409,10 @@ class PowerboxRpcTarget extends RpcTarget {
 
   async restore(token) {
     return powerbox(this.#request, this.#env).restore(token);
+  }
+
+  async dropSaved(token) {
+    return powerbox(this.#request, this.#env).dropSaved(token);
   }
 
   async drop(capability) {

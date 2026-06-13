@@ -513,6 +513,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("powerbox.claimRequest"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.save"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.restore"));
+    assert.ok(capabilities.json.capabilities.includes("powerbox.dropSaved"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.drop"));
 
     const modules = await requestJson(fixture.sandstormApiSocket, "/modules");
@@ -616,6 +617,27 @@ test("isolate supervisor integration suite", {
       { method: "POST" });
     assert.equal(invalidRestoreToken.statusCode, 400);
     assert.equal(invalidRestoreToken.json.ok, false);
+
+    const missingDropSaved = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/drop-saved",
+      { method: "POST" });
+    assert.equal(missingDropSaved.statusCode, 400);
+    assert.equal(missingDropSaved.json.ok, false);
+
+    const duplicateDropSavedToken = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/drop-saved?token=one&token=two",
+      { method: "POST" });
+    assert.equal(duplicateDropSavedToken.statusCode, 400);
+    assert.equal(duplicateDropSavedToken.json.ok, false);
+
+    const invalidDropSavedToken = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/drop-saved?token=not%40base64url",
+      { method: "POST" });
+    assert.equal(invalidDropSavedToken.statusCode, 400);
+    assert.equal(invalidDropSavedToken.json.ok, false);
 
     const duplicateDropId = await requestJson(
       fixture.sandstormApiSocket,
