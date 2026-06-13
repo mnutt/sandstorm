@@ -182,6 +182,10 @@ export function rpcResponse(request, target, options) {
   return newWorkersRpcResponse(request, target, options);
 }
 
+function resolveRpcTarget(target) {
+  return typeof target === "function" ? target() : target;
+}
+
 export function serveRpc(request, target, options = {}) {
   const url = new URL(request.url);
   const {
@@ -196,7 +200,8 @@ export function serveRpc(request, target, options = {}) {
   }
 
   if (url.pathname === rpcPath) {
-    return rpcResponse(request, target, rpcOptions);
+    return Promise.resolve(resolveRpcTarget(target))
+      .then((resolvedTarget) => rpcResponse(request, resolvedTarget, rpcOptions));
   }
 
   return null;
