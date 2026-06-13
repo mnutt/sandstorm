@@ -22,6 +22,7 @@
 #include "version.h"
 
 #include <capnp/message.h>
+#include <capnp/compat/json.h>
 #include <capnp/rpc-twoparty.h>
 #include <capnp/schema.h>
 #include <capnp/serialize.h>
@@ -284,7 +285,7 @@ kj::Array<byte> readPackageFile(kj::StringPtr pkgPath, kj::StringPtr sourcePath)
   auto packageDir = raiiOpen(pkgPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   KJ_IF_MAYBE(file, raiiOpenAtIfExistsContained(
       packageDir, kj::Path::parse(sourcePath), O_RDONLY | O_CLOEXEC)) {
-    return kj::heapArray<byte>(readAll(*file).asBytes());
+    return readAllBytes(*file);
   }
 
   KJ_FAIL_REQUIRE("Isolate module path does not exist in package.", sourcePath);
@@ -606,8 +607,23 @@ uint64_t computeDiskUsage(kj::StringPtr path) {
 }
 
 void appendJsonString(kj::Vector<char>& result, kj::StringPtr text) {
+  capnp::MallocMessageBuilder message;
+  auto value = message.initRoot<capnp::JsonValue>();
+  value.setString(text);
+
+  capnp::JsonCodec codec;
+  auto encoded = codec.encodeRaw(value.asReader());
+  result.addAll(encoded);
+}
+
+char hexDigit(uint value) {
+  KJ_ASSERT(value < 16);
+  return value < 10 ? '0' + value : 'A' + value - 10;
+}
+
+void appendCapnpString(kj::Vector<char>& result, kj::StringPtr text) {
   result.add('"');
-  for (char c: text) {
+  for (unsigned char c: text) {
     switch (c) {
       case '"': result.addAll(kj::StringPtr("\\\"")); break;
       case '\\': result.addAll(kj::StringPtr("\\\\")); break;
@@ -616,9 +632,16 @@ void appendJsonString(kj::Vector<char>& result, kj::StringPtr text) {
       case '\n': result.addAll(kj::StringPtr("\\n")); break;
       case '\r': result.addAll(kj::StringPtr("\\r")); break;
       case '\t': result.addAll(kj::StringPtr("\\t")); break;
-      default:
-        result.add(c < 0x20 ? ' ' : c);
+      default: {
+        if (c < 0x20) {
+          result.addAll(kj::StringPtr("\\x"));
+          result.add(hexDigit(c >> 4));
+          result.add(hexDigit(c & 0x0f));
+        } else {
+          result.add(static_cast<char>(c));
+        }
         break;
+      }
     }
   }
   result.add('"');
@@ -628,10 +651,6 @@ void appendJsonField(kj::Vector<char>& result, kj::StringPtr name, kj::StringPtr
   appendJsonString(result, name);
   result.addAll(kj::StringPtr(": "));
   appendJsonString(result, value);
-}
-
-void appendCapnpString(kj::Vector<char>& result, kj::StringPtr text) {
-  appendJsonString(result, text);
 }
 
 kj::String moduleBundleFileName(size_t index, IsolateRuntimeConfig::ModuleType type) {
@@ -1134,6 +1153,22 @@ constexpr uint SIDECAR_SHUTDOWN_TIMEOUT_MS = 2000;
 
 void sleepMillis(uint millis);
 
+kj::Promise<kj::Array<byte>> readAllBytesAtMost(
+    kj::AsyncInputStream& input, uint64_t maxBytes, kj::StringPtr description) {
+  constexpr uint64_t maxReadAllBytesLimit = ~uint64_t(0) - 2;
+  KJ_REQUIRE(maxBytes <= maxReadAllBytesLimit);
+  auto ownedDescription = kj::heapString(description);
+  // KJ's readAllBytes(limit) rejects only after reading exactly `limit` bytes without seeing EOF.
+  // Use two bytes of headroom so exact-limit bodies succeed and one-byte-over bodies report our
+  // domain-specific size error.
+  return input.readAllBytes(maxBytes + 2)
+      .then([maxBytes, description = kj::mv(ownedDescription)](
+          kj::Array<byte>&& body) mutable {
+    KJ_REQUIRE(body.size() <= maxBytes, description, body.size(), maxBytes);
+    return kj::mv(body);
+  });
+}
+
 void addHeader(FetchRequest& request, kj::StringPtr name, kj::StringPtr value) {
   FetchHeader header;
   header.name = kj::heapString(name);
@@ -1631,7 +1666,8 @@ private:
 
     state->responseBody = kj::mv(response.body);
     auto& body = KJ_ASSERT_NONNULL(state->responseBody);
-    return body->readAllBytes(MAX_SIDECAR_RESPONSE_BYTES)
+    return readAllBytesAtMost(*body, MAX_SIDECAR_RESPONSE_BYTES,
+        "buffered isolate response body exceeds maximum allowed size")
         .then([result = kj::mv(result), state = kj::mv(state)](kj::Array<byte>&& body) mutable {
       result.body = kj::mv(body);
       KJ_LOG(WARNING, "Isolate sidecar response received.",
@@ -2912,7 +2948,8 @@ public:
     auto path = kj::heapString(url);
     KJ_LOG(WARNING, "Isolate Sandstorm API binding received request.", methodName, path);
 
-    return requestBody.readAllBytes(1024 * 1024).then(
+    return readAllBytesAtMost(requestBody, 1024 * 1024,
+        "isolate Sandstorm API binding request body exceeds maximum allowed size").then(
         [this, methodName = kj::mv(methodName), path = kj::mv(path), &response]
         (kj::Array<byte>&& bodyBytes) mutable {
       if (methodName != "GET") {
@@ -3067,7 +3104,8 @@ public:
       case kj::HttpMethod::HEAD:
         return head(kj::mv(path), response);
       case kj::HttpMethod::PUT:
-        return requestBody.readAllBytes(MAX_STORAGE_VALUE_BYTES)
+        return readAllBytesAtMost(requestBody, MAX_STORAGE_VALUE_BYTES,
+            "isolate storage value exceeds maximum allowed size")
             .then([this, key = kj::mv(key), path = kj::mv(path), &response]
                 (kj::Array<byte>&& body) mutable {
           if (!storagePathIsMissingOrRegular(path)) {
@@ -3149,13 +3187,14 @@ private:
       KJ_FAIL_SYSCALL("open", error, path);
     }
 
+    kj::AutoCloseFd result(fd);
     struct stat stats;
-    KJ_SYSCALL(fstat(fd, &stats), path);
+    KJ_SYSCALL(fstat(result.get(), &stats), path);
     if (!S_ISREG(stats.st_mode)) {
       return nullptr;
     }
 
-    return kj::AutoCloseFd(fd);
+    return kj::mv(result);
   }
 
   StoragePathState inspectStoragePath(kj::StringPtr path) {
@@ -3477,7 +3516,8 @@ public:
     auto path = kj::heapString(url);
     KJ_LOG(WARNING, "Isolate development sidecar received request.", methodName, path);
 
-    return requestBody.readAllBytes(1024 * 1024).then(
+    return readAllBytesAtMost(requestBody, 1024 * 1024,
+        "isolate development sidecar request body exceeds maximum allowed size").then(
         [this, methodName = kj::mv(methodName), path = kj::mv(path), &response]
         (kj::Array<byte>&& bodyBytes) mutable {
       kj::HttpHeaders responseHeaders(headerTable);
@@ -3677,6 +3717,9 @@ kj::String IsolateSupervisorMain::realPath(kj::StringPtr path) {
       }
     } else {
       char* cwd = getcwd(nullptr, 0);
+      if (cwd == nullptr) {
+        KJ_FAIL_SYSCALL("getcwd", errno);
+      }
       KJ_DEFER(free(cwd));
       if (cwd[0] == '/' && cwd[1] == '\0') {
         return kj::str('/', path);
