@@ -3135,40 +3135,49 @@ private:
 
   kj::Promise<void> claimPowerboxRequest(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(sessionId, findIsolateQueryParam(url, "sessionId")) {
-      KJ_IF_MAYBE(token, findIsolateQueryParam(url, "token")) {
-        KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(*sessionId)) {
-          auto request = sessionContext->claimRequestRequest();
-          request.setRequestToken(*token);
-          auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
-          auto permissionDefs = viewInfo.getPermissions();
-          auto requiredPermissions = request.initRequiredPermissions(permissionDefs.size());
-          for (auto& name: findIsolateQueryParams(url, "requiredPermission")) {
-            KJ_IF_MAYBE(error, setRequiredPermission(name, requiredPermissions, permissionDefs)) {
-              return sendJson(response, 400, "Bad Request", renderError(*error));
-            }
-          }
-          return request.send().then(
-              [this, &response](auto result) mutable {
-            auto capId = host.sessions->storeClaimedCapability(result.getCap());
-            return sendJson(response, 200, "OK", renderClaimedCapability(capId));
-          });
-        } else {
-          return sendJson(response, 404, "Not Found", kj::heapString(
-              "{\n  \"ok\": false,\n  \"error\": \"unknown isolate session\"\n}\n"));
-        }
+    auto sessionIds = findIsolateQueryParams(url, "sessionId");
+    auto tokens = findIsolateQueryParams(url, "token");
+    if (sessionIds.size() != 1 || tokens.size() != 1 ||
+        sessionIds[0].size() == 0 || tokens[0].size() == 0) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one sessionId and token\"\n}\n"));
+    }
+
+    auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
+    auto permissionDefs = viewInfo.getPermissions();
+    auto permissionNames = findIsolateQueryParams(url, "requiredPermission");
+    for (auto& name: permissionNames) {
+      if (name.size() == 0) {
+        return sendJson(response, 400, "Bad Request",
+            renderError("missing required permission name"));
       }
     }
 
-    return sendJson(response, 400, "Bad Request", kj::heapString(
-        "{\n  \"ok\": false,\n  \"error\": \"missing sessionId or token\"\n}\n"));
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionIds[0])) {
+      auto request = sessionContext->claimRequestRequest();
+      request.setRequestToken(tokens[0]);
+      auto requiredPermissions = request.initRequiredPermissions(permissionDefs.size());
+      for (auto& name: permissionNames) {
+        KJ_IF_MAYBE(error, setRequiredPermission(name, requiredPermissions, permissionDefs)) {
+          return sendJson(response, 400, "Bad Request", renderError(*error));
+        }
+      }
+      return request.send().then(
+          [this, &response](auto result) mutable {
+        auto capId = host.sessions->storeClaimedCapability(result.getCap());
+        return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+      });
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown isolate session\"\n}\n"));
+    }
   }
 
   kj::Maybe<kj::String> setRequiredPermission(
       kj::StringPtr name, capnp::List<bool>::Builder output,
       capnp::List<PermissionDef>::Reader permissionDefs) {
     if (name.size() == 0) {
-      return nullptr;
+      return kj::str("missing required permission name");
     }
 
     for (auto i: kj::indices(permissionDefs)) {
@@ -3201,17 +3210,18 @@ private:
 
   kj::Promise<void> dropPowerboxCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(id, findIsolateQueryParam(url, "id")) {
-      if (host.sessions->dropClaimedCapability(*id)) {
-        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
-      } else {
-        return sendJson(response, 404, "Not Found", kj::heapString(
-            "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
-      }
+    auto ids = findIsolateQueryParams(url, "id");
+    if (ids.size() != 1 || ids[0].size() == 0) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one capability id\"\n}\n"));
     }
 
-    return sendJson(response, 400, "Bad Request", kj::heapString(
-        "{\n  \"ok\": false,\n  \"error\": \"missing capability id\"\n}\n"));
+    if (host.sessions->dropClaimedCapability(ids[0])) {
+      return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+    }
   }
 
   kj::String renderRuntime() {
