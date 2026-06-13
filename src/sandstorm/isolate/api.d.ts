@@ -65,6 +65,7 @@ declare module "sandstorm:api" {
     };
     permissions: string[];
     request: {
+      sessionId: string;
       tabId: string;
       basePath: string;
       host: string;

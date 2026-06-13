@@ -1023,6 +1023,7 @@ kj::StringPtr sessionKindName(SessionKind kind) {
 }
 
 struct SessionMetadata {
+  kj::String sessionId;
   kj::String basePath;
   kj::String host;
   kj::String forwardedProto;
@@ -2194,6 +2195,9 @@ private:
 
   void addSessionHeaders(FetchRequest& request) {
     addHeader(request, "x-sandstorm-session-type", sessionKindName(sessionKind));
+    if (sessionMetadata.sessionId.size() > 0) {
+      addHeader(request, "x-sandstorm-session-id", sessionMetadata.sessionId);
+    }
     addHeader(request, "x-sandstorm-username", sessionMetadata.userDisplayName);
     addHeader(request, "x-sandstorm-permissions", sessionMetadata.permissions);
     if (sessionMetadata.userId.size() > 0) {
@@ -2272,6 +2276,7 @@ public:
         ? copySessionMetadata(params.getSessionParams().getAs<WebSession::Params>(),
             params.getUserInfo(), viewInfo, params.getTabId())
         : copyApiSessionMetadata(params.getUserInfo(), viewInfo, params.getTabId());
+    sessionMetadata.sessionId = kj::str(sessionIdCounter++);
     context.getResults().setSession(
         kj::heap<IsolateWebSessionImpl>(
             kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), pathPrefix, SessionKind::NORMAL,
@@ -2288,6 +2293,7 @@ public:
     auto sessionMetadata = copySessionMetadata(
         params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
         params.getTabId());
+    sessionMetadata.sessionId = kj::str(sessionIdCounter++);
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::REQUEST,
         kj::mv(sessionMetadata)));
@@ -2303,6 +2309,7 @@ public:
     auto sessionMetadata = copySessionMetadata(
         params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
         params.getTabId());
+    sessionMetadata.sessionId = kj::str(sessionIdCounter++);
     context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::OFFER,
         kj::mv(sessionMetadata)));
@@ -2312,6 +2319,7 @@ public:
 private:
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
+  uint sessionIdCounter = 0;
 };
 
 kj::String trustedWorkerdExecutablePath();
