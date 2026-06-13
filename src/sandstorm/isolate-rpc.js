@@ -1,4 +1,5 @@
 const MAX_RPC_BATCH_CALLS = 64;
+const MAX_RPC_LIVE_TARGETS = 1024;
 const RPC_TARGET_MARKER = "__sandstormRpcTarget";
 
 const targets = new Map();
@@ -64,6 +65,9 @@ function findRpcMethod(target, method) {
 function registerTarget(target) {
   let id = targetIds.get(target);
   if (!id) {
+    if (targets.size >= MAX_RPC_LIVE_TARGETS) {
+      throw new RangeError(`RPC live target limit exceeded (${MAX_RPC_LIVE_TARGETS})`);
+    }
     id = randomTargetId();
     targetIds.set(target, id);
     targets.set(id, target);
@@ -243,17 +247,18 @@ export function newHttpBatchRpcSession(endpoint, fetchImpl = fetch) {
       get(_target, property) {
         if (property === Symbol.dispose) {
           return () => {
-            if (targetId !== null && !disposed) {
-              disposed = true;
+            if (disposed) return;
+            disposed = true;
+            if (targetId !== null) {
               enqueue({ targetId, dispose: true });
             }
           };
         }
-        if (disposed) {
-          throw new Error("RPC stub is disposed");
-        }
         if (property === "then") {
           return undefined;
+        }
+        if (disposed) {
+          throw new Error("RPC stub is disposed");
         }
         if (typeof property === "symbol") {
           return undefined;
@@ -397,17 +402,18 @@ export function newHttpBatchRpcSession(endpoint) {
       get(_target, property) {
         if (property === Symbol.dispose) {
           return () => {
-            if (targetId !== null && !disposed) {
-              disposed = true;
+            if (disposed) return;
+            disposed = true;
+            if (targetId !== null) {
               enqueue({ targetId, dispose: true });
             }
           };
         }
-        if (disposed) {
-          throw new Error("RPC stub is disposed");
-        }
         if (property === "then") {
           return undefined;
+        }
+        if (disposed) {
+          throw new Error("RPC stub is disposed");
         }
         if (typeof property === "symbol") {
           return undefined;
