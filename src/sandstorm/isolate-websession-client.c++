@@ -53,7 +53,7 @@ class FakeSessionContext final: public SessionContext::Server {
 public:
   kj::Promise<void> claimRequest(ClaimRequestContext context) override {
     auto params = context.getParams();
-    KJ_REQUIRE(params.getRequestToken() == "websession-test-token");
+    KJ_REQUIRE(params.getRequestToken() == "websession/test+token==");
     auto requiredPermissions = params.getRequiredPermissions();
     KJ_REQUIRE(requiredPermissions.size() == 1);
     KJ_REQUIRE(requiredPermissions[0]);
@@ -64,6 +64,31 @@ public:
 
   uint claimCount = 0;
 };
+
+kj::String responseDebugBody(WebSession::Response::Reader response) {
+  switch (response.which()) {
+    case WebSession::Response::CONTENT:
+      if (response.getContent().getBody().which() ==
+          WebSession::Response::Content::Body::BYTES) {
+        return kj::str(response.getContent().getBody().getBytes().asChars());
+      }
+      return kj::str("<streaming content>");
+    case WebSession::Response::CLIENT_ERROR:
+      if (response.getClientError().hasNonHtmlBody()) {
+        return kj::str(response.getClientError().getNonHtmlBody().getData().asChars());
+      } else {
+        return kj::str(response.getClientError().getDescriptionHtml());
+      }
+    case WebSession::Response::SERVER_ERROR:
+      if (response.getServerError().hasNonHtmlBody()) {
+        return kj::str(response.getServerError().getNonHtmlBody().getData().asChars());
+      } else {
+        return kj::str(response.getServerError().getDescriptionHtml());
+      }
+    default:
+      return kj::str("<response kind ", static_cast<uint>(response.which()), ">");
+  }
+}
 
 class IsolateWebSessionClientMain {
 public:
@@ -153,7 +178,8 @@ public:
     KJ_REQUIRE(contains(body, "\"x-sandstorm-tab-id\":\"77656273657373696f6e2d746162\""), body);
 
     auto claimRequest = session.getRequest();
-    claimRequest.setPath("/claim-powerbox?token=websession-test-token&requiredPermissions=view");
+    claimRequest.setPath(
+        "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermissions=view%2C");
     claimRequest.setIgnoreBody(false);
     auto claimContext = claimRequest.initContext();
     claimContext.setResponseStream(kj::heap<IgnoreByteStream>());
@@ -163,7 +189,8 @@ public:
     claimContext.initAdditionalHeaders(0);
 
     auto claimResponse = claimRequest.send().wait(io.waitScope);
-    KJ_REQUIRE(claimResponse.which() == WebSession::Response::CONTENT);
+    auto claimDebugBody = responseDebugBody(claimResponse);
+    KJ_REQUIRE(claimResponse.which() == WebSession::Response::CONTENT, claimDebugBody);
     auto claimContent = claimResponse.getContent();
     KJ_REQUIRE(claimContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
     KJ_REQUIRE(claimContent.getBody().which() == WebSession::Response::Content::Body::BYTES);
@@ -176,7 +203,8 @@ public:
 
     auto badClaimRequest = session.getRequest();
     badClaimRequest.setPath(
-        "/claim-powerbox?token=websession-test-token&requiredPermissions=not-a-permission");
+        "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D"
+        "&requiredPermissions=not-a-permission");
     badClaimRequest.setIgnoreBody(false);
     auto badClaimContext = badClaimRequest.initContext();
     badClaimContext.setResponseStream(kj::heap<IgnoreByteStream>());

@@ -24,6 +24,8 @@ namespace sandstorm {
 bool isCanonicalPackagePath(kj::StringPtr path);
 kj::String isolateStorageKeyFromUrl(kj::StringPtr url);
 bool isValidIsolateStorageKey(kj::StringPtr key);
+kj::String decodeIsolateQueryComponent(kj::StringPtr value);
+kj::Maybe<kj::String> findIsolateQueryParam(kj::StringPtr url, kj::StringPtr name);
 bool isolateEqualsIgnoreCase(kj::StringPtr a, kj::StringPtr b);
 bool isStructuredIsolateResponseHeader(kj::StringPtr name);
 bool isHtmlMimeType(kj::StringPtr mimeType);

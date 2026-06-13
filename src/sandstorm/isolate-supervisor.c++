@@ -3044,34 +3044,6 @@ kj::StringPtr urlPath(kj::StringPtr url) {
   return url;
 }
 
-kj::Maybe<kj::String> findQueryParam(kj::StringPtr url, kj::StringPtr name) {
-  KJ_IF_MAYBE(query, url.findFirst('?')) {
-    size_t start = *query + 1;
-    while (start <= url.size()) {
-      auto remaining = url.slice(start, url.size());
-      size_t end = url.size();
-      KJ_IF_MAYBE(amp, remaining.findFirst('&')) {
-        end = start + *amp;
-      }
-
-      auto part = url.slice(start, end);
-      KJ_IF_MAYBE(eq, part.findFirst('=')) {
-        auto key = kj::heapString(part.slice(0, *eq));
-        if (key == name) {
-          return kj::heapString(part.slice(*eq + 1, part.size()));
-        }
-      }
-
-      if (end == url.size()) {
-        break;
-      }
-      start = end + 1;
-    }
-  }
-
-  return nullptr;
-}
-
 class SandstormApiBindingService final: public kj::HttpService {
 public:
   SandstormApiBindingService(
@@ -3163,15 +3135,15 @@ private:
 
   kj::Promise<void> claimPowerboxRequest(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(sessionId, findQueryParam(url, "sessionId")) {
-      KJ_IF_MAYBE(token, findQueryParam(url, "token")) {
+    KJ_IF_MAYBE(sessionId, findIsolateQueryParam(url, "sessionId")) {
+      KJ_IF_MAYBE(token, findIsolateQueryParam(url, "token")) {
         KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(*sessionId)) {
           auto request = sessionContext->claimRequestRequest();
           request.setRequestToken(*token);
           auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
           auto permissionDefs = viewInfo.getPermissions();
           auto requiredPermissions = request.initRequiredPermissions(permissionDefs.size());
-          KJ_IF_MAYBE(names, findQueryParam(url, "requiredPermissions")) {
+          KJ_IF_MAYBE(names, findIsolateQueryParam(url, "requiredPermissions")) {
             KJ_IF_MAYBE(error, setRequiredPermissions(*names, requiredPermissions, permissionDefs)) {
               return sendJson(response, 400, "Bad Request", renderError(*error));
             }
@@ -3248,7 +3220,7 @@ private:
 
   kj::Promise<void> dropPowerboxCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(id, findQueryParam(url, "id")) {
+    KJ_IF_MAYBE(id, findIsolateQueryParam(url, "id")) {
       if (host.sessions->dropClaimedCapability(*id)) {
         return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
       } else {
