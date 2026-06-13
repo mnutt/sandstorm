@@ -179,7 +179,7 @@ public:
 
     auto claimRequest = session.getRequest();
     claimRequest.setPath(
-        "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermissions=view%2C");
+        "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermission=view");
     claimRequest.setIgnoreBody(false);
     auto claimContext = claimRequest.initContext();
     claimContext.setResponseStream(kj::heap<IgnoreByteStream>());
@@ -204,7 +204,7 @@ public:
     auto badClaimRequest = session.getRequest();
     badClaimRequest.setPath(
         "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D"
-        "&requiredPermissions=not-a-permission");
+        "&requiredPermission=not-a-permission");
     badClaimRequest.setIgnoreBody(false);
     auto badClaimContext = badClaimRequest.initContext();
     badClaimContext.setResponseStream(kj::heap<IgnoreByteStream>());

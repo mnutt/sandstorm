@@ -76,14 +76,21 @@ KJ_TEST("isolate query parameters are percent-decoded") {
     KJ_FAIL_ASSERT("expected token query parameter");
   }
 
-  auto permissions = findIsolateQueryParam(
-      "/powerbox/claim-request?requiredPermissions=view%2Cedit&token=ignored",
-      "requiredPermissions");
-  KJ_IF_MAYBE(value, permissions) {
+  auto encodedValue = findIsolateQueryParam(
+      "/powerbox/claim-request?encoded=view%2Cedit&token=ignored",
+      "encoded");
+  KJ_IF_MAYBE(value, encodedValue) {
     KJ_EXPECT(*value == "view,edit");
   } else {
-    KJ_FAIL_ASSERT("expected requiredPermissions query parameter");
+    KJ_FAIL_ASSERT("expected encoded query parameter");
   }
+
+  auto repeatedPermissions = findIsolateQueryParams(
+      "/powerbox/claim-request?requiredPermission=view&requiredPermission=edit%2Bshare",
+      "requiredPermission");
+  KJ_EXPECT(repeatedPermissions.size() == 2);
+  KJ_EXPECT(repeatedPermissions[0] == "view");
+  KJ_EXPECT(repeatedPermissions[1] == "edit+share");
 
   KJ_EXPECT(findIsolateQueryParam("/powerbox/claim-request?token=present", "missing") == nullptr);
 }
