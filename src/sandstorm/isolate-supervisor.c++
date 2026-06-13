@@ -42,6 +42,7 @@
 #include <sandstorm/identity.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
 #include <sandstorm/package.capnp.h>
+#include <sandstorm/powerbox.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
@@ -3222,6 +3223,10 @@ public:
         return dropPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fetch") {
         return fetchClaimedCapability(path, contentType, kj::mv(bodyBytes), response);
+      } else if (methodName == "POST" && route == "/powerbox/offer") {
+        return offerClaimedCapability(path, response);
+      } else if (methodName == "POST" && route == "/powerbox/fulfill-request") {
+        return fulfillRequestWithCapability(path, response);
       }
 
       if (methodName != "GET") {
@@ -3345,7 +3350,8 @@ private:
         "  \"binding\": \"sandstormApi\",\n"
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
-        "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\"]\n"
+        "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
+        "\"powerbox.offer\", \"powerbox.fulfillRequest\"]\n"
         "}\n");
   }
 
@@ -3718,6 +3724,94 @@ private:
     }
 
     return kj::mv(decoded);
+  }
+
+  kj::Promise<void> offerClaimedCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    auto sessionIds = findIsolateQueryParams(url, "sessionId");
+    auto ids = findIsolateQueryParams(url, "id");
+    auto titles = findIsolateQueryParams(url, "title");
+    if (sessionIds.size() != 1 || sessionIds[0].size() == 0 ||
+        ids.size() != 1 || ids[0].size() == 0 ||
+        titles.size() > 1) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"expected exactly one sessionId and capability id\"\n}\n"));
+    }
+
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionIds[0])) {
+      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
+        auto request = sessionContext->offerRequest();
+        request.setCap(*cap);
+        initSessionActionParams(url, titles, request.initRequiredPermissions(
+            config.viewInfoMessage->getRoot<UiView::ViewInfo>().getPermissions().size()),
+            request.initDescriptor(), request.initDisplayInfo());
+        return request.send().then([this, &response](auto result) mutable {
+          (void)result;
+          return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+        });
+      } else {
+        return sendJson(response, 404, "Not Found", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+      }
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown isolate session\"\n}\n"));
+    }
+  }
+
+  kj::Promise<void> fulfillRequestWithCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    auto sessionIds = findIsolateQueryParams(url, "sessionId");
+    auto ids = findIsolateQueryParams(url, "id");
+    auto titles = findIsolateQueryParams(url, "title");
+    if (sessionIds.size() != 1 || sessionIds[0].size() == 0 ||
+        ids.size() != 1 || ids[0].size() == 0 ||
+        titles.size() > 1) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"expected exactly one sessionId and capability id\"\n}\n"));
+    }
+
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionIds[0])) {
+      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
+        auto request = sessionContext->fulfillRequestRequest();
+        request.setCap(*cap);
+        initSessionActionParams(url, titles, request.initRequiredPermissions(
+            config.viewInfoMessage->getRoot<UiView::ViewInfo>().getPermissions().size()),
+            request.initDescriptor(), request.initDisplayInfo());
+        return request.send().then([this, &response](auto result) mutable {
+          (void)result;
+          return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+        });
+      } else {
+        return sendJson(response, 404, "Not Found", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+      }
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown isolate session\"\n}\n"));
+    }
+  }
+
+  void initSessionActionParams(kj::StringPtr url, kj::ArrayPtr<kj::String> titles,
+      capnp::List<bool>::Builder requiredPermissions,
+      PowerboxDescriptor::Builder descriptor, PowerboxDisplayInfo::Builder displayInfo) {
+    auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
+    auto permissionDefs = viewInfo.getPermissions();
+    auto permissionNames = findIsolateQueryParams(url, "requiredPermission");
+    for (auto& name: permissionNames) {
+      KJ_REQUIRE(name.size() > 0, "missing required permission name");
+      KJ_IF_MAYBE(error, setRequiredPermission(name, requiredPermissions, permissionDefs)) {
+        KJ_FAIL_REQUIRE(*error);
+      }
+    }
+
+    descriptor.initTags(0);
+    auto title = titles.size() == 1 && titles[0].size() > 0
+        ? titles[0].asPtr()
+        : kj::StringPtr("Claimed Sandstorm capability");
+    displayInfo.initTitle().setDefaultText(title);
   }
 
   kj::Promise<void> savePowerboxCapability(

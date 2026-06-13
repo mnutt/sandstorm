@@ -113,6 +113,13 @@ declare module "sandstorm:api" {
     saveLabel?: string | { defaultText: string };
   }
 
+  export interface SessionCapabilityOptions {
+    title?: string | { defaultText: string };
+    displayTitle?: string | { defaultText: string };
+    label?: string | { defaultText: string };
+    requiredPermissions?: string[];
+  }
+
   export interface SavedCapability {
     ok: true;
     type: "savedCapability";
@@ -127,6 +134,8 @@ declare module "sandstorm:api" {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
+    offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
+    fulfillRequest(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
     [Symbol.dispose](): void;
   }
 
@@ -138,6 +147,8 @@ declare module "sandstorm:api" {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
+    offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
+    fulfillRequest(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
     [Symbol.dispose](): void;
     toJSON(): ClaimedCapabilityHandle;
   }
@@ -181,8 +192,14 @@ declare module "sandstorm:api" {
   export interface PowerboxApi {
     request(query: unknown, options?: unknown): Promise<unknown>;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
-    offer(capability: unknown, descriptor: unknown, displayInfo?: unknown): Promise<unknown>;
-    fulfillRequest(capability: unknown, descriptor: unknown): Promise<unknown>;
+    offer(
+      capability: ClaimedCapabilityHandle | string,
+      options?: SessionCapabilityOptions,
+    ): Promise<{ ok: true }>;
+    fulfillRequest(
+      capability: ClaimedCapabilityHandle | string,
+      options?: SessionCapabilityOptions,
+    ): Promise<{ ok: true }>;
     save(
       capability: ClaimedCapabilityHandle | string,
       options?: SaveCapabilityOptions,
