@@ -552,12 +552,33 @@ test("isolate supervisor integration suite", {
     assert.equal(missingSessionClaim.statusCode, 404);
     assert.equal(missingSessionClaim.json.ok, false);
 
+    const duplicateClaimToken = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/claim-request?sessionId=missing&token=one&token=two",
+      { method: "POST" });
+    assert.equal(duplicateClaimToken.statusCode, 400);
+    assert.equal(duplicateClaimToken.json.ok, false);
+
+    const emptyClaimPermission = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/claim-request?sessionId=missing&token=missing&requiredPermission=",
+      { method: "POST" });
+    assert.equal(emptyClaimPermission.statusCode, 400);
+    assert.equal(emptyClaimPermission.json.ok, false);
+
     const missingDrop = await requestJson(
       fixture.sandstormApiSocket,
       "/powerbox/drop?id=missing",
       { method: "POST" });
     assert.equal(missingDrop.statusCode, 404);
     assert.equal(missingDrop.json.ok, false);
+
+    const duplicateDropId = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/drop?id=one&id=two",
+      { method: "POST" });
+    assert.equal(duplicateDropId.statusCode, 400);
+    assert.equal(duplicateDropId.json.ok, false);
   });
 
   await t.test("serves the storage binding socket", async () => {
