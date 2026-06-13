@@ -167,6 +167,18 @@ function sessionIdForPowerbox(request) {
   return sessionId;
 }
 
+function capabilityId(value, name = "capability") {
+  if (typeof value === "string") {
+    return validate.string(value, name, { minLength: 1, maxLength: 4096 });
+  }
+
+  if (value && typeof value === "object" && value.type === "claimedCapability") {
+    return validate.string(value.id, `${name}.id`, { minLength: 1, maxLength: 4096 });
+  }
+
+  throw new ValidationError(`${name} must be a claimed capability handle or id string`);
+}
+
 export function powerbox(request, env) {
   return {
     async request() {
@@ -196,8 +208,9 @@ export function powerbox(request, env) {
       unsupportedPowerbox("restore");
     },
 
-    async drop() {
-      unsupportedPowerbox("drop");
+    async drop(capability) {
+      const id = encodeURIComponent(capabilityId(capability));
+      return postSandstorm(env, `powerbox/drop?id=${id}`);
     },
   };
 }
@@ -292,8 +305,8 @@ class PowerboxRpcTarget extends RpcTarget {
     unsupportedPowerbox("restore");
   }
 
-  async drop() {
-    unsupportedPowerbox("drop");
+  async drop(capability) {
+    return powerbox(this.#request, this.#env).drop(capability);
   }
 }
 

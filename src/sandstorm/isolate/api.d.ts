@@ -102,6 +102,12 @@ declare module "sandstorm:api" {
     error?: string;
   }
 
+  export interface ClaimedCapabilityHandle {
+    ok: true;
+    type: "claimedCapability";
+    id: string;
+  }
+
   export interface StorageApi {
     put(key: string, value: StorageValue): Promise<StorageInfo>;
     get(key: string): Promise<string | undefined>;
@@ -113,16 +119,12 @@ declare module "sandstorm:api" {
 
   export interface PowerboxApi {
     request(query: unknown, options?: unknown): Promise<unknown>;
-    claimRequest(token: string, options?: unknown): Promise<{
-      ok: true;
-      type: "claimedCapability";
-      id: string;
-    }>;
+    claimRequest(token: string, options?: unknown): Promise<ClaimedCapabilityHandle>;
     offer(capability: unknown, descriptor: unknown, displayInfo?: unknown): Promise<unknown>;
     fulfillRequest(capability: unknown, descriptor: unknown): Promise<unknown>;
     save(capability: unknown, label: unknown): Promise<unknown>;
     restore(token: Uint8Array | string): Promise<unknown>;
-    drop(token: Uint8Array | string): Promise<void>;
+    drop(capability: ClaimedCapabilityHandle | string): Promise<{ ok: true }>;
   }
 
   export interface SandstormApiTarget extends RpcTarget {
