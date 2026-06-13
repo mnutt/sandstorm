@@ -139,6 +139,8 @@ public:
   uint saveCount = 0;
   uint restoreCount = 0;
   uint tokenDropCount = 0;
+  uint grainSizeReportCount = 0;
+  uint64_t lastGrainSizeBytes = 0;
 };
 
 class FakeSandstormCore final: public SandstormCore::Server {
@@ -160,6 +162,13 @@ public:
     auto tokenText = kj::heapString(token.asChars());
     KJ_REQUIRE(tokenText == "websession-saved-token");
     ++sessionContext.tokenDropCount;
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> reportGrainSize(ReportGrainSizeContext context) override {
+    ++sessionContext.grainSizeReportCount;
+    sessionContext.lastGrainSizeBytes = context.getParams().getBytes();
+    KJ_REQUIRE(sessionContext.lastGrainSizeBytes > 0);
     return kj::READY_NOW;
   }
 
@@ -526,6 +535,11 @@ public:
     KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
     KJ_REQUIRE(sessionContextRef.restoreCount == 1, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 1, sessionContextRef.tokenDropCount);
+
+    supervisor.syncStorageRequest().send().wait(io.waitScope);
+    KJ_REQUIRE(sessionContextRef.grainSizeReportCount == 1,
+        sessionContextRef.grainSizeReportCount);
+    KJ_REQUIRE(sessionContextRef.lastGrainSizeBytes > 0, sessionContextRef.lastGrainSizeBytes);
 
     return true;
   }
