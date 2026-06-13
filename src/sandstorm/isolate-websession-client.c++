@@ -84,6 +84,7 @@ public:
   uint claimCount = 0;
   uint saveCount = 0;
   uint restoreCount = 0;
+  uint tokenDropCount = 0;
 };
 
 class FakeSandstormCore final: public SandstormCore::Server {
@@ -97,6 +98,14 @@ public:
     KJ_REQUIRE(tokenText == "websession-saved-token");
     ++sessionContext.restoreCount;
     context.getResults().setCap(kj::heap<FakeClaimedCapability>(sessionContext.saveCount));
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> drop(DropContext context) override {
+    auto token = context.getParams().getToken();
+    auto tokenText = kj::heapString(token.asChars());
+    KJ_REQUIRE(tokenText == "websession-saved-token");
+    ++sessionContext.tokenDropCount;
     return kj::READY_NOW;
   }
 
@@ -200,6 +209,10 @@ public:
     getContext.initAdditionalHeaders(1);
     getContext.getAdditionalHeaders()[0].setName("x-sandstorm-app-test-websession");
     getContext.getAdditionalHeaders()[0].setValue("present");
+    auto preconditions = getContext.getETagPrecondition().initMatchesNoneOf(2);
+    preconditions[0].setValue("cached-etag");
+    preconditions[1].setValue("weak-cached-etag");
+    preconditions[1].setWeak(true);
 
     auto response = getRequest.send().wait(io.waitScope);
     KJ_REQUIRE(response.which() == WebSession::Response::CONTENT);
@@ -216,12 +229,14 @@ public:
     KJ_REQUIRE(contains(body, "\"x-sandstorm-username\":\"WebSession Test User\""), body);
     KJ_REQUIRE(contains(body, "\"x-sandstorm-preferred-handle\":\"websession-test\""), body);
     KJ_REQUIRE(contains(body, "\"x-sandstorm-tab-id\":\"77656273657373696f6e2d746162\""), body);
+    KJ_REQUIRE(contains(body, "\"if-none-match\":\"\\\"cached-etag\\\", W/\\\"weak-cached-etag\\\"\""),
+        body);
 
     auto claimRequest = session.getRequest();
     claimRequest.setPath(
         "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D&requiredPermission=view"
         "&save=true&store=true&restore=true&storageKey=websession-saved-capability"
-        "&label=WebSession%20saved%20capability");
+        "&dropSaved=true&label=WebSession%20saved%20capability");
     claimRequest.setIgnoreBody(false);
     auto claimContext = claimRequest.initContext();
     claimContext.setResponseStream(kj::heap<IgnoreByteStream>());
@@ -251,9 +266,12 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"dropRestored\":{\"status\":200,\"body\":{\"ok\":true}}"),
         claimBody);
     KJ_REQUIRE(contains(claimBody, "\"drop\":{\"status\":200,\"body\":{\"ok\":true}}"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"dropSaved\":{\"status\":200,\"body\":{\"ok\":true}}"),
+        claimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
     KJ_REQUIRE(sessionContextRef.restoreCount == 1, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 1, sessionContextRef.tokenDropCount);
 
     auto badClaimRequest = session.getRequest();
     badClaimRequest.setPath(
@@ -277,6 +295,7 @@ public:
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
     KJ_REQUIRE(sessionContextRef.restoreCount == 1, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 1, sessionContextRef.tokenDropCount);
 
     return true;
   }
