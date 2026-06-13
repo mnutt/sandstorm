@@ -108,6 +108,10 @@ declare module "sandstorm:api" {
     id: string;
   }
 
+  export interface ClaimRequestOptions {
+    requiredPermissions?: string[];
+  }
+
   export interface StorageApi {
     put(key: string, value: StorageValue): Promise<StorageInfo>;
     get(key: string): Promise<string | undefined>;
@@ -119,7 +123,7 @@ declare module "sandstorm:api" {
 
   export interface PowerboxApi {
     request(query: unknown, options?: unknown): Promise<unknown>;
-    claimRequest(token: string, options?: unknown): Promise<ClaimedCapabilityHandle>;
+    claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapabilityHandle>;
     offer(capability: unknown, descriptor: unknown, displayInfo?: unknown): Promise<unknown>;
     fulfillRequest(capability: unknown, descriptor: unknown): Promise<unknown>;
     save(capability: unknown, label: unknown): Promise<unknown>;

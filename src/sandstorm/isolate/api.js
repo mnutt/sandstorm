@@ -179,17 +179,45 @@ function capabilityId(value, name = "capability") {
   throw new ValidationError(`${name} must be a claimed capability handle or id string`);
 }
 
+function permissionNames(options = {}) {
+  if (options.requiredPermissions === undefined || options.requiredPermissions === null) {
+    return [];
+  }
+
+  if (!Array.isArray(options.requiredPermissions)) {
+    throw new ValidationError("requiredPermissions must be an array of permission names");
+  }
+
+  return options.requiredPermissions.map((permission, index) => {
+    const name = validate.string(permission, `requiredPermissions[${index}]`, {
+      minLength: 1,
+      maxLength: 128,
+    });
+    if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+      throw new ValidationError(`requiredPermissions[${index}] is not a valid permission name`);
+    }
+    return name;
+  });
+}
+
 export function powerbox(request, env) {
   return {
     async request() {
       unsupportedPowerbox("request");
     },
 
-    async claimRequest(token) {
+    async claimRequest(token, options = {}) {
       token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
       const sessionId = encodeURIComponent(sessionIdForPowerbox(request));
       const encodedToken = encodeURIComponent(token);
-      return postSandstorm(env, `powerbox/claim-request?sessionId=${sessionId}&token=${encodedToken}`);
+      const requiredPermissions = permissionNames(options)
+        .map((name) => encodeURIComponent(name))
+        .join(",");
+      const permissionQuery = requiredPermissions.length === 0
+        ? ""
+        : `&requiredPermissions=${requiredPermissions}`;
+      return postSandstorm(env,
+        `powerbox/claim-request?sessionId=${sessionId}&token=${encodedToken}${permissionQuery}`);
     },
 
     async offer() {
@@ -285,8 +313,8 @@ class PowerboxRpcTarget extends RpcTarget {
     unsupportedPowerbox("request");
   }
 
-  async claimRequest(token) {
-    return powerbox(this.#request, this.#env).claimRequest(token);
+  async claimRequest(token, options) {
+    return powerbox(this.#request, this.#env).claimRequest(token, options);
   }
 
   async offer() {
