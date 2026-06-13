@@ -74,6 +74,69 @@ bool isValidIsolateStorageKey(kj::StringPtr key) {
   return true;
 }
 
+kj::Maybe<uint> isolateHexValue(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return nullptr;
+}
+
+kj::String decodeIsolateQueryComponent(kj::StringPtr value) {
+  kj::Vector<char> result;
+  for (size_t i = 0; i < value.size(); ++i) {
+    if (value[i] == '+') {
+      result.add(' ');
+    } else if (value[i] == '%' && i + 2 < value.size()) {
+      KJ_IF_MAYBE(high, isolateHexValue(value[i + 1])) {
+        KJ_IF_MAYBE(low, isolateHexValue(value[i + 2])) {
+          result.add(static_cast<char>((*high << 4) | *low));
+          i += 2;
+        } else {
+          result.add(value[i]);
+        }
+      } else {
+        result.add(value[i]);
+      }
+    } else {
+      result.add(value[i]);
+    }
+  }
+
+  result.add('\0');
+  return kj::String(result.releaseAsArray());
+}
+
+kj::Maybe<kj::String> findIsolateQueryParam(kj::StringPtr url, kj::StringPtr name) {
+  KJ_IF_MAYBE(query, url.findFirst('?')) {
+    size_t start = *query + 1;
+    while (start <= url.size()) {
+      auto remaining = url.slice(start, url.size());
+      size_t end = url.size();
+      KJ_IF_MAYBE(amp, remaining.findFirst('&')) {
+        end = start + *amp;
+      }
+
+      auto part = url.slice(start, end);
+      KJ_IF_MAYBE(eq, part.findFirst('=')) {
+        auto keySlice = part.slice(0, *eq);
+        auto key = decodeIsolateQueryComponent(kj::StringPtr(keySlice.begin(), keySlice.size()));
+        if (key == name) {
+          auto valueSlice = part.slice(*eq + 1, part.size());
+          return decodeIsolateQueryComponent(
+              kj::StringPtr(valueSlice.begin(), valueSlice.size()));
+        }
+      }
+
+      if (end == url.size()) {
+        break;
+      }
+      start = end + 1;
+    }
+  }
+
+  return nullptr;
+}
+
 bool isolateEqualsIgnoreCase(kj::StringPtr a, kj::StringPtr b) {
   if (a.size() != b.size()) {
     return false;

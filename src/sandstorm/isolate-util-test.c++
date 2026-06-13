@@ -61,6 +61,33 @@ KJ_TEST("isolate storage keys are extracted and validated") {
   KJ_EXPECT(!isValidIsolateStorageKey(longKey));
 }
 
+KJ_TEST("isolate query parameters are percent-decoded") {
+  KJ_EXPECT(decodeIsolateQueryComponent("simple") == "simple");
+  KJ_EXPECT(decodeIsolateQueryComponent("a%20b+c") == "a b c");
+  KJ_EXPECT(decodeIsolateQueryComponent("view%2Cedit") == "view,edit");
+  KJ_EXPECT(decodeIsolateQueryComponent("bad%xxescape") == "bad%xxescape");
+
+  auto token = findIsolateQueryParam(
+      "/powerbox/claim-request?sessionId=session%2Fone&token=req%2Btoken%3D%3D",
+      "token");
+  KJ_IF_MAYBE(value, token) {
+    KJ_EXPECT(*value == "req+token==");
+  } else {
+    KJ_FAIL_ASSERT("expected token query parameter");
+  }
+
+  auto permissions = findIsolateQueryParam(
+      "/powerbox/claim-request?requiredPermissions=view%2Cedit&token=ignored",
+      "requiredPermissions");
+  KJ_IF_MAYBE(value, permissions) {
+    KJ_EXPECT(*value == "view,edit");
+  } else {
+    KJ_FAIL_ASSERT("expected requiredPermissions query parameter");
+  }
+
+  KJ_EXPECT(findIsolateQueryParam("/powerbox/claim-request?token=present", "missing") == nullptr);
+}
+
 KJ_TEST("isolate response helper detects structured headers") {
   KJ_EXPECT(isolateEqualsIgnoreCase("Content-Type", "content-type"));
   KJ_EXPECT(!isolateEqualsIgnoreCase("Content-Type", "content-length"));
