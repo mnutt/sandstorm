@@ -2761,8 +2761,9 @@ private:
       newFileList.commit();
     } else {
       // If alwaysInclude contains "." then the user doesn't care about the used files list, so
-      // don't print in that case.
-      bool includeAll = false;
+      // don't print in that case. Dev-isolate also uses a generated package definition with
+      // implementation-detail source-map prefixes, so there is no useful fileList to suggest.
+      bool includeAll = devIsolateWorkerPath != nullptr;
       for (auto alwaysInclude: packageDef.getAlwaysInclude()) {
         if (alwaysInclude == ".") {
           includeAll = true;
