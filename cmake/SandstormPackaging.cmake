@@ -105,23 +105,23 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Running the Sandstorm isolate test app in development mode"
     VERBATIM)
 
-  add_custom_target(isolate-supervisor-smoke-test
+  add_custom_target(isolate-supervisor-integration-test
     COMMAND "${CMAKE_COMMAND}" -E env
       "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
       "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
       "SPK_BIN=$<TARGET_FILE:spk>"
       "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
       "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
-      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-smoke.test.js"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
     DEPENDS
       sandstorm
       spk
       workerd
       isolate-test-app-spk
-      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-smoke.test.js"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     USES_TERMINAL
-    COMMENT "Running isolate supervisor smoke tests"
+    COMMENT "Running isolate supervisor integration tests"
     VERBATIM)
 
   set(_app_index_source "${PROJECT_SOURCE_DIR}/src/sandstorm/app-index")
