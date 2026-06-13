@@ -215,6 +215,17 @@ function waitForExit(child, timeoutMs = 10000) {
   });
 }
 
+async function waitForLog(stderr, pattern, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const log = stderr.join("");
+    if (pattern.test(log)) return log;
+    await delay(50);
+  }
+
+  throw new Error(`timed out waiting for log pattern ${pattern}\n${stderr.join("")}`);
+}
+
 async function prepareIsolateWorkdir(prefix) {
   await requireExecutable(SANDSTORM_BIN, "Build the project first, e.g. make fast.");
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
@@ -382,6 +393,13 @@ test("isolate supervisor integration suite", {
     assert.match(workerdConfig, /name = "sandstorm"/);
     assert.match(workerdConfig, /service = "sandstorm-api"/);
     assert.match(workerdConfig, /service = "sandstorm-storage"/);
+  });
+
+  await t.test("runs the workerd sidecar in isolated namespaces and mount root", async () => {
+    const log = await waitForLog(
+      fixture.stderr, /Isolate sidecar entered .*namespaces\./);
+    assert.match(log, /Isolate sidecar entered minimal mount root\./);
+    assert.match(log, /Started isolate sidecar process\./);
   });
 
   await t.test("serves worker fetch requests through workerd", async () => {
