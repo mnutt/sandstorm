@@ -512,6 +512,7 @@ test("isolate supervisor integration suite", {
     assert.equal(capabilities.statusCode, 200);
     assert.ok(capabilities.json.capabilities.includes("powerbox.claimRequest"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.save"));
+    assert.ok(capabilities.json.capabilities.includes("powerbox.restore"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.drop"));
 
     const modules = await requestJson(fixture.sandstormApiSocket, "/modules");
@@ -594,6 +595,27 @@ test("isolate supervisor integration suite", {
       { method: "POST" });
     assert.equal(emptySaveLabel.statusCode, 400);
     assert.equal(emptySaveLabel.json.ok, false);
+
+    const missingRestore = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/restore",
+      { method: "POST" });
+    assert.equal(missingRestore.statusCode, 400);
+    assert.equal(missingRestore.json.ok, false);
+
+    const duplicateRestoreToken = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/restore?token=one&token=two",
+      { method: "POST" });
+    assert.equal(duplicateRestoreToken.statusCode, 400);
+    assert.equal(duplicateRestoreToken.json.ok, false);
+
+    const invalidRestoreToken = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/restore?token=not%40base64url",
+      { method: "POST" });
+    assert.equal(invalidRestoreToken.statusCode, 400);
+    assert.equal(invalidRestoreToken.json.ok, false);
 
     const duplicateDropId = await requestJson(
       fixture.sandstormApiSocket,
