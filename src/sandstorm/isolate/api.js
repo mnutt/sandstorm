@@ -182,6 +182,26 @@ export function rpcResponse(request, target, options) {
   return newWorkersRpcResponse(request, target, options);
 }
 
+export function serveRpc(request, target, options = {}) {
+  const url = new URL(request.url);
+  const {
+    clientScriptPath = "/rpc-client.js",
+    rpcPath = "/rpc",
+    ...rpcOptions
+  } = options;
+  if (url.pathname === clientScriptPath) {
+    return new Response(rpcClientScript(), {
+      headers: { "content-type": "text/javascript; charset=utf-8" },
+    });
+  }
+
+  if (url.pathname === rpcPath) {
+    return rpcResponse(request, target, rpcOptions);
+  }
+
+  return null;
+}
+
 export function sandstorm(request, env) {
   return {
     session: () => getSession(request),
@@ -194,5 +214,6 @@ export function sandstorm(request, env) {
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),
+    serveRpc: (target, options) => serveRpc(request, target, options),
   };
 }
