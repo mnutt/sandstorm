@@ -1899,7 +1899,13 @@ private:
     kj::String name;
     kj::String service;
   };
+  struct DevIsolateValueBinding {
+    kj::String name;
+    kj::String value;
+  };
   kj::Vector<DevIsolateServiceBinding> devIsolateServiceBindings;
+  kj::Vector<DevIsolateValueBinding> devIsolateTextBindings;
+  kj::Vector<DevIsolateValueBinding> devIsolateJsonBindings;
 
   kj::MainFunc getDevMain() {
     return addCommonOptions(OptionSet::ALL_READONLY,
@@ -1981,6 +1987,12 @@ private:
         .addOptionWithArg({"compatibility-date"},
             KJ_BIND_METHOD(*this, setDevIsolateCompatibilityDate), "<date>",
             "Set the workerd compatibility date. Default: 2025-01-01.")
+        .addOptionWithArg({"text-binding"}, KJ_BIND_METHOD(*this, addDevIsolateTextBinding),
+            "<name>=<text>",
+            "Add a text binding to the generated isolate manifest.")
+        .addOptionWithArg({"json-binding"}, KJ_BIND_METHOD(*this, addDevIsolateJsonBinding),
+            "<name>=<json>",
+            "Add a JSON binding to the generated isolate manifest.")
         .addOptionWithArg({"service-binding"}, KJ_BIND_METHOD(*this, addDevIsolateServiceBinding),
             "<name>=<service>",
             "Add a workerd service binding to the generated isolate manifest. For example: "
@@ -2006,29 +2018,66 @@ private:
     return true;
   }
 
-  kj::MainBuilder::Validity addDevIsolateServiceBinding(kj::StringPtr spec) {
+  bool devIsolateBindingNameExists(kj::StringPtr name) {
+    if (name == "SANDSTORM_API" || name == "POWERBOX" || name == "STORAGE") {
+      return true;
+    }
+    for (auto& binding: devIsolateTextBindings) {
+      if (binding.name == name) return true;
+    }
+    for (auto& binding: devIsolateJsonBindings) {
+      if (binding.name == name) return true;
+    }
+    for (auto& binding: devIsolateServiceBindings) {
+      if (binding.name == name) return true;
+    }
+    return false;
+  }
+
+  kj::Maybe<DevIsolateValueBinding> parseDevIsolateValueBinding(kj::StringPtr spec) {
     KJ_IF_MAYBE(equals, spec.findFirst('=')) {
       auto name = kj::heapString(spec.slice(0, *equals));
-      auto service = kj::heapString(spec.slice(*equals + 1, spec.size()));
-      if (name.size() == 0 || service.size() == 0) {
-        return "service binding must be NAME=SERVICE with non-empty parts";
+      auto value = kj::heapString(spec.slice(*equals + 1, spec.size()));
+      if (name.size() == 0 || value.size() == 0 || devIsolateBindingNameExists(name)) {
+        return nullptr;
       }
-      for (auto& binding: devIsolateServiceBindings) {
-        if (binding.name == name) {
-          return "duplicate service binding name";
-        }
-      }
-      if (name == "SANDSTORM_API" || name == "POWERBOX" || name == "STORAGE") {
-        return "service binding name conflicts with a built-in dev-isolate binding";
-      }
-      devIsolateServiceBindings.add(DevIsolateServiceBinding {
+      return DevIsolateValueBinding {
         kj::mv(name),
-        kj::mv(service),
+        kj::mv(value),
+      };
+    }
+
+    return nullptr;
+  }
+
+  kj::MainBuilder::Validity addDevIsolateTextBinding(kj::StringPtr spec) {
+    KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
+      devIsolateTextBindings.add(kj::mv(*binding));
+      return true;
+    }
+
+    return "text binding must be NAME=TEXT with a unique non-built-in name and non-empty value";
+  }
+
+  kj::MainBuilder::Validity addDevIsolateJsonBinding(kj::StringPtr spec) {
+    KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
+      devIsolateJsonBindings.add(kj::mv(*binding));
+      return true;
+    }
+
+    return "json binding must be NAME=JSON with a unique non-built-in name and non-empty value";
+  }
+
+  kj::MainBuilder::Validity addDevIsolateServiceBinding(kj::StringPtr spec) {
+    KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
+      devIsolateServiceBindings.add(DevIsolateServiceBinding {
+        kj::mv(binding->name),
+        kj::mv(binding->value),
       });
       return true;
     }
 
-    return "service binding must be NAME=SERVICE";
+    return "service binding must be NAME=SERVICE with a unique non-built-in name and non-empty service";
   }
 
   kj::MainBuilder::Validity setDevIsolateWorkerPath(kj::StringPtr path) {
@@ -2285,15 +2334,28 @@ private:
     rpcHelperModule.setName("sandstorm:rpc");
     rpcHelperModule.setEsModulePath("__sandstorm_isolate_runtime/rpc.js");
 
-    auto bindings = isolate.initBindings(3 + devIsolateServiceBindings.size());
+    auto bindings = isolate.initBindings(
+        3 + devIsolateTextBindings.size() + devIsolateJsonBindings.size() +
+        devIsolateServiceBindings.size());
     bindings[0].setName("SANDSTORM_API");
     bindings[0].setSandstormApi();
     bindings[1].setName("POWERBOX");
     bindings[1].setPowerbox();
     bindings[2].setName("STORAGE");
     bindings[2].setStorage();
+    size_t bindingIndex = 3;
+    for (auto i: kj::indices(devIsolateTextBindings)) {
+      auto binding = bindings[bindingIndex++];
+      binding.setName(devIsolateTextBindings[i].name);
+      binding.setText(devIsolateTextBindings[i].value);
+    }
+    for (auto i: kj::indices(devIsolateJsonBindings)) {
+      auto binding = bindings[bindingIndex++];
+      binding.setName(devIsolateJsonBindings[i].name);
+      binding.setJson(devIsolateJsonBindings[i].value);
+    }
     for (auto i: kj::indices(devIsolateServiceBindings)) {
-      auto binding = bindings[3 + i];
+      auto binding = bindings[bindingIndex++];
       binding.setName(devIsolateServiceBindings[i].name);
       binding.setService(devIsolateServiceBindings[i].service);
     }
