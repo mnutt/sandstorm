@@ -1937,6 +1937,7 @@ private:
   kj::Vector<DevIsolateServiceBinding> devIsolateServiceBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateTextBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateJsonBindings;
+  kj::Vector<DevIsolateValueBinding> devIsolateDataBindings;
 
   kj::MainFunc getDevMain() {
     return addCommonOptions(OptionSet::ALL_READONLY,
@@ -2024,6 +2025,9 @@ private:
         .addOptionWithArg({"json-binding"}, KJ_BIND_METHOD(*this, addDevIsolateJsonBinding),
             "<name>=<json>",
             "Add a JSON binding to the generated isolate manifest.")
+        .addOptionWithArg({"data-binding"}, KJ_BIND_METHOD(*this, addDevIsolateDataBinding),
+            "<name>=<path>",
+            "Add a binary data binding from a file to the generated isolate manifest.")
         .addOptionWithArg({"service-binding"}, KJ_BIND_METHOD(*this, addDevIsolateServiceBinding),
             "<name>=<service>",
             "Add a workerd service binding to the generated isolate manifest. For example: "
@@ -2057,6 +2061,9 @@ private:
       if (binding.name == name) return true;
     }
     for (auto& binding: devIsolateJsonBindings) {
+      if (binding.name == name) return true;
+    }
+    for (auto& binding: devIsolateDataBindings) {
       if (binding.name == name) return true;
     }
     for (auto& binding: devIsolateServiceBindings) {
@@ -2097,6 +2104,25 @@ private:
     }
 
     return "json binding must be NAME=JSON with a unique non-built-in name and non-empty value";
+  }
+
+  kj::MainBuilder::Validity addDevIsolateDataBinding(kj::StringPtr spec) {
+    KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
+      if (access(binding->value.cStr(), R_OK) != 0) {
+        return "data binding file not found or not readable";
+      }
+      char* resolved = realpath(binding->value.cStr(), nullptr);
+      if (resolved == nullptr) {
+        int error = errno;
+        return kj::str("could not resolve data binding file path: ", strerror(error));
+      }
+      KJ_DEFER(free(resolved));
+      binding->value = kj::heapString(resolved);
+      devIsolateDataBindings.add(kj::mv(*binding));
+      return true;
+    }
+
+    return "data binding must be NAME=PATH with a unique non-built-in name and non-empty path";
   }
 
   kj::MainBuilder::Validity addDevIsolateServiceBinding(kj::StringPtr spec) {
@@ -2367,7 +2393,7 @@ private:
 
     auto bindings = isolate.initBindings(
         3 + devIsolateTextBindings.size() + devIsolateJsonBindings.size() +
-        devIsolateServiceBindings.size());
+        devIsolateDataBindings.size() + devIsolateServiceBindings.size());
     bindings[0].setName("SANDSTORM_API");
     bindings[0].setSandstormApi();
     bindings[1].setName("POWERBOX");
@@ -2384,6 +2410,12 @@ private:
       auto binding = bindings[bindingIndex++];
       binding.setName(devIsolateJsonBindings[i].name);
       binding.setJson(devIsolateJsonBindings[i].value);
+    }
+    for (auto i: kj::indices(devIsolateDataBindings)) {
+      auto binding = bindings[bindingIndex++];
+      binding.setName(devIsolateDataBindings[i].name);
+      auto data = readAll(raiiOpen(devIsolateDataBindings[i].value, O_RDONLY | O_CLOEXEC));
+      binding.setData(data.asBytes());
     }
     for (auto i: kj::indices(devIsolateServiceBindings)) {
       auto binding = bindings[bindingIndex++];
