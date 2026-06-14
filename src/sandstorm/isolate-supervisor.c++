@@ -129,6 +129,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String workerdConfigPath;
   kj::String workerdSocketPath;
   kj::String sandstormApiSocketPath;
+  kj::String powerboxSocketPath;
   kj::String storageSocketPath;
   kj::String storageRootPath;
   kj::String savedCapabilityDir;
@@ -347,9 +348,9 @@ bool isImplementedBinding(IsolateRuntimeConfig::BindingType type) {
     case IsolateRuntimeConfig::BindingType::JSON:
     case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
     case IsolateRuntimeConfig::BindingType::STORAGE:
+    case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::SERVICE:
       return true;
-    case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
       return false;
   }
@@ -853,9 +854,9 @@ bool isWorkerdDirectBinding(IsolateRuntimeConfig::Binding& binding) {
     case IsolateRuntimeConfig::BindingType::JSON:
     case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
     case IsolateRuntimeConfig::BindingType::STORAGE:
+    case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::SERVICE:
       return true;
-    case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
       return false;
   }
@@ -892,11 +893,13 @@ void appendWorkerdBinding(
     case IsolateRuntimeConfig::BindingType::STORAGE:
       result.addAll(kj::StringPtr("service = \"sandstorm-storage\""));
       break;
+    case IsolateRuntimeConfig::BindingType::POWERBOX:
+      result.addAll(kj::StringPtr("service = \"sandstorm-powerbox\""));
+      break;
     case IsolateRuntimeConfig::BindingType::SERVICE:
       result.addAll(kj::StringPtr("service = "));
       appendCapnpString(result, binding.serviceName);
       break;
-    case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
       KJ_UNREACHABLE;
   }
@@ -917,6 +920,16 @@ bool hasSandstormApiBinding(IsolateRuntimeConfig& config) {
 bool hasStorageBinding(IsolateRuntimeConfig& config) {
   for (auto& binding: config.bindings) {
     if (binding.type == IsolateRuntimeConfig::BindingType::STORAGE) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool hasPowerboxBinding(IsolateRuntimeConfig& config) {
+  for (auto& binding: config.bindings) {
+    if (binding.type == IsolateRuntimeConfig::BindingType::POWERBOX) {
       return true;
     }
   }
@@ -999,6 +1012,9 @@ void appendWorkerdConfig(
   if (hasStorageBinding(config)) {
     appendExternalWorkerdService(result, "sandstorm-storage", config.storageSocketPath);
   }
+  if (hasPowerboxBinding(config)) {
+    appendExternalWorkerdService(result, "sandstorm-powerbox", config.powerboxSocketPath);
+  }
 
   result.addAll(kj::StringPtr(
       "\n  ],\n"
@@ -1017,10 +1033,12 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   auto bindingsDir = kj::str(bundleDir, "/bindings");
   auto socketPath = kj::str(bundleDir, "/workerd.sock");
   auto sandstormApiSocketPath = kj::str(bundleDir, "/sandstorm-api.sock");
+  auto powerboxSocketPath = kj::str(bundleDir, "/sandstorm-powerbox.sock");
   auto storageSocketPath = kj::str(bundleDir, "/sandstorm-storage.sock");
   auto storageRootPath = kj::str(varPath, "/isolate-storage");
   auto savedCapabilityDir = kj::str(varPath, "/isolate-capabilities");
   config.sandstormApiSocketPath = kj::heapString(sandstormApiSocketPath);
+  config.powerboxSocketPath = kj::heapString(powerboxSocketPath);
   config.storageSocketPath = kj::heapString(storageSocketPath);
   config.storageRootPath = kj::heapString(storageRootPath);
   config.savedCapabilityDir = kj::heapString(savedCapabilityDir);
@@ -1100,6 +1118,7 @@ void prepareRuntimeBundleAndCleanupSockets(kj::StringPtr varPath, IsolateRuntime
   config.workerdSocketPath = kj::str(config.workerdBundleDir, "/workerd.sock");
   unlinkSocketIfExists(config.workerdSocketPath);
   unlinkSocketIfExists(config.sandstormApiSocketPath);
+  unlinkSocketIfExists(config.powerboxSocketPath);
   unlinkSocketIfExists(config.storageSocketPath);
 }
 
@@ -3230,8 +3249,9 @@ kj::StringPtr urlPath(kj::StringPtr url) {
 class SandstormApiBindingService final: public kj::HttpService {
 public:
   SandstormApiBindingService(
-      kj::HttpHeaderTable& headerTable, IsolateRuntimeConfig& config, IsolateRuntimeHost& host)
-      : headerTable(headerTable), config(config), host(host) {}
+      kj::HttpHeaderTable& headerTable, IsolateRuntimeConfig& config, IsolateRuntimeHost& host,
+      bool powerboxOnly = false)
+      : headerTable(headerTable), config(config), host(host), powerboxOnly(powerboxOnly) {}
 
   kj::Promise<void> request(
       kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
@@ -3250,7 +3270,11 @@ public:
         [this, methodName = kj::mv(methodName), path = kj::mv(path), route = kj::mv(route),
             contentType = kj::mv(contentType), &response]
         (kj::Array<byte>&& bodyBytes) mutable {
-      if (methodName == "POST" && route == "/powerbox/claim-request") {
+      if (powerboxOnly && !route.startsWith("/powerbox/")) {
+        return sendJson(response, 404, "Not Found", kj::heapString(
+            "{\n  \"ok\": false,\n"
+            "  \"error\": \"unknown Powerbox binding endpoint\"\n}\n"));
+      } else if (methodName == "POST" && route == "/powerbox/claim-request") {
         return claimPowerboxRequest(path, response);
       } else if (methodName == "POST" && route == "/powerbox/save") {
         return savePowerboxCapability(path, response);
@@ -3298,6 +3322,7 @@ private:
   kj::HttpHeaderTable& headerTable;
   IsolateRuntimeConfig& config;
   IsolateRuntimeHost& host;
+  bool powerboxOnly;
 
   class BufferedByteStream final: public ByteStream::Server {
   public:
@@ -4915,6 +4940,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
       ioContext.provider->getNetwork(), ioContext.provider->getTimer(), grainId, coreCap);
   kj::Maybe<kj::Promise<void>> apiListenTask = nullptr;
+  kj::Maybe<kj::Promise<void>> powerboxListenTask = nullptr;
   kj::Maybe<kj::Promise<void>> storageListenTask = nullptr;
   if (hasSandstormApiBinding(*runtimeConfig)) {
     auto apiService = kj::heap<SandstormApiBindingService>(
@@ -4930,6 +4956,21 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
         runtimeConfig->sandstormApiSocketPath);
     apiListenTask = apiServer->listenHttp(*apiPort)
         .attach(kj::mv(apiPort), kj::mv(apiServer));
+  }
+  if (hasPowerboxBinding(*runtimeConfig)) {
+    auto powerboxService = kj::heap<SandstormApiBindingService>(
+        runtimeHost->headerTable, *runtimeConfig, *runtimeHost, true);
+    auto powerboxServer = kj::heap<kj::HttpServer>(
+        runtimeHost->timer, runtimeHost->headerTable, *powerboxService);
+    powerboxServer = powerboxServer.attach(kj::mv(powerboxService));
+    auto powerboxAddress = runtimeHost->network
+        .parseAddress(kj::str("unix:", runtimeConfig->powerboxSocketPath), 0)
+        .wait(ioContext.waitScope);
+    auto powerboxPort = powerboxAddress->listen();
+    KJ_LOG(WARNING, "Isolate Powerbox binding socket is listening.",
+        runtimeConfig->powerboxSocketPath);
+    powerboxListenTask = powerboxServer->listenHttp(*powerboxPort)
+        .attach(kj::mv(powerboxPort), kj::mv(powerboxServer));
   }
   if (hasStorageBinding(*runtimeConfig)) {
     auto storageService = kj::heap<StorageBindingService>(
@@ -4980,6 +5021,9 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   auto listenTask = listener->listen(kj::mv(serverPort));
   KJ_IF_MAYBE(apiTask, apiListenTask) {
     listenTask = listenTask.exclusiveJoin(kj::mv(*apiTask));
+  }
+  KJ_IF_MAYBE(powerboxTask, powerboxListenTask) {
+    listenTask = listenTask.exclusiveJoin(kj::mv(*powerboxTask));
   }
   KJ_IF_MAYBE(storageTask, storageListenTask) {
     listenTask = listenTask.exclusiveJoin(kj::mv(*storageTask));

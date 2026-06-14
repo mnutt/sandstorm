@@ -69,6 +69,10 @@ const isolateCommand :Spk.Manifest.Command = (
         sandstormApi = void
       ),
       (
+        name = "POWERBOX",
+        powerbox = void
+      ),
+      (
         name = "STORAGE",
         storage = void
       ),

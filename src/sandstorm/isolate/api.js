@@ -34,6 +34,21 @@ async function postSandstorm(env, path) {
   return body;
 }
 
+function powerboxFetcher(env) {
+  return env.POWERBOX || env.SANDSTORM_API;
+}
+
+async function postPowerbox(env, path) {
+  const response = await powerboxFetcher(env).fetch(`http://sandstorm/${path}`, {
+    method: "POST",
+  });
+  const body = await response.json();
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || `Powerbox API ${path} failed with ${response.status}`);
+  }
+  return body;
+}
+
 export class ValidationError extends Error {
   constructor(message) {
     super(message);
@@ -220,7 +235,7 @@ export class ClaimedCapability {
   }
 
   async drop() {
-    const result = await postSandstorm(
+    const result = await postPowerbox(
       this.#env, `powerbox/drop?id=${encodeURIComponent(this.id)}`);
     const disposer = claimedCapabilityDisposers.get(this.id);
     if (disposer) {
@@ -308,7 +323,7 @@ function displayTitle(options = {}) {
 async function saveClaimedCapability(env, capability, options = {}) {
   const id = encodeURIComponent(capabilityId(capability));
   const label = encodeURIComponent(saveLabel(options));
-  return wrapSavedCapability(env, await postSandstorm(env, `powerbox/save?id=${id}&label=${label}`));
+  return wrapSavedCapability(env, await postPowerbox(env, `powerbox/save?id=${id}&label=${label}`));
 }
 
 async function sessionPowerboxAction(env, request, endpoint, capability, options = {}) {
@@ -318,7 +333,7 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
   const permissionQuery = permissionNames(options)
     .map((name) => `&requiredPermission=${encodeURIComponent(name)}`)
     .join("");
-  return postSandstorm(env,
+  return postPowerbox(env,
     `powerbox/${endpoint}?sessionId=${sessionId}&id=${id}&title=${title}${permissionQuery}`);
 }
 
@@ -570,13 +585,13 @@ function savedCapabilityToken(value, name = "token") {
 
 async function restoreSavedCapability(env, token) {
   const encodedToken = encodeURIComponent(savedCapabilityToken(token));
-  const capability = await postSandstorm(env, `powerbox/restore?token=${encodedToken}`);
+  const capability = await postPowerbox(env, `powerbox/restore?token=${encodedToken}`);
   return wrapClaimedCapability(env, capability);
 }
 
 async function dropSavedCapability(env, token) {
   const encodedToken = encodeURIComponent(savedCapabilityToken(token));
-  return postSandstorm(env, `powerbox/drop-saved?token=${encodedToken}`);
+  return postPowerbox(env, `powerbox/drop-saved?token=${encodedToken}`);
 }
 
 async function fetchClaimedCapability(env, capability, input, init = {}) {
@@ -603,7 +618,7 @@ async function fetchClaimedCapability(env, capability, input, init = {}) {
     body = await request.arrayBuffer();
   }
 
-  return env.SANDSTORM_API.fetch(
+  return powerboxFetcher(env).fetch(
     `http://sandstorm/powerbox/fetch?id=${id}&method=${method}&path=${path}`,
     {
       method: "POST",
@@ -670,7 +685,7 @@ export function powerbox(request, env) {
       const permissionQuery = permissionNames(options)
         .map((name) => `&requiredPermission=${encodeURIComponent(name)}`)
         .join("");
-      const capability = await postSandstorm(env,
+      const capability = await postPowerbox(env,
         `powerbox/claim-request?sessionId=${sessionId}&token=${encodedToken}${permissionQuery}`);
       return wrapClaimedCapability(env, capability);
     },
@@ -715,7 +730,7 @@ export function powerbox(request, env) {
 
     async drop(capability) {
       const id = encodeURIComponent(capabilityId(capability));
-      return postSandstorm(env, `powerbox/drop?id=${id}`);
+      return postPowerbox(env, `powerbox/drop?id=${id}`);
     },
   };
 }

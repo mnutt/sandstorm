@@ -265,6 +265,23 @@ export default {
       });
     }
 
+    if (url.pathname === "/powerbox-binding-probe") {
+      const statusResponse = await env.POWERBOX.fetch("http://sandstorm/status");
+      const dropResponse = await env.POWERBOX.fetch(
+        "http://sandstorm/powerbox/drop?id=missing", { method: "POST" });
+      return Response.json({
+        ok: true,
+        statusEndpoint: {
+          status: statusResponse.status,
+          body: await statusResponse.json(),
+        },
+        powerboxEndpoint: {
+          status: dropResponse.status,
+          body: await dropResponse.json(),
+        },
+      });
+    }
+
     if (url.pathname === "/export-object-capability") {
       const capability = await sandstorm(request, env).capability(new CounterCapability());
       return Response.json({
