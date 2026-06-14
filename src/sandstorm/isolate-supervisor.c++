@@ -347,10 +347,10 @@ bool isImplementedBinding(IsolateRuntimeConfig::BindingType type) {
     case IsolateRuntimeConfig::BindingType::JSON:
     case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
     case IsolateRuntimeConfig::BindingType::STORAGE:
+    case IsolateRuntimeConfig::BindingType::SERVICE:
       return true;
     case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
-    case IsolateRuntimeConfig::BindingType::SERVICE:
       return false;
   }
 
@@ -853,10 +853,10 @@ bool isWorkerdDirectBinding(IsolateRuntimeConfig::Binding& binding) {
     case IsolateRuntimeConfig::BindingType::JSON:
     case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
     case IsolateRuntimeConfig::BindingType::STORAGE:
+    case IsolateRuntimeConfig::BindingType::SERVICE:
       return true;
     case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
-    case IsolateRuntimeConfig::BindingType::SERVICE:
       return false;
   }
 
@@ -892,9 +892,12 @@ void appendWorkerdBinding(
     case IsolateRuntimeConfig::BindingType::STORAGE:
       result.addAll(kj::StringPtr("service = \"sandstorm-storage\""));
       break;
+    case IsolateRuntimeConfig::BindingType::SERVICE:
+      result.addAll(kj::StringPtr("service = "));
+      appendCapnpString(result, binding.serviceName);
+      break;
     case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
-    case IsolateRuntimeConfig::BindingType::SERVICE:
       KJ_UNREACHABLE;
   }
 

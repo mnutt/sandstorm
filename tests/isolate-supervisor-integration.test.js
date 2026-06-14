@@ -394,12 +394,14 @@ test("isolate supervisor integration suite", {
         ["JSON_BINDING", "json"],
         ["SANDSTORM_API", "sandstormApi"],
         ["STORAGE", "storage"],
+        ["LOOPBACK_SERVICE", "service"],
       ]);
 
     const workerdConfig = await fs.readFile(path.join(fixture.runtimeDir, "workerd.capnp"), "utf8");
     assert.match(workerdConfig, /name = "sandstorm"/);
     assert.match(workerdConfig, /service = "sandstorm-api"/);
     assert.match(workerdConfig, /service = "sandstorm-storage"/);
+    assert.match(workerdConfig, /name = "LOOPBACK_SERVICE", service = "main"/);
   });
 
   await t.test("runs the workerd sidecar in isolated namespaces and mount root", async () => {
@@ -436,6 +438,18 @@ test("isolate supervisor integration suite", {
     const apiPathResponse = await requestJson(fixture.workerdSocket, "/api/health?ignored=true");
     assert.equal(apiPathResponse.statusCode, 200);
     assert.equal(apiPathResponse.json.pathname, "/api/health");
+
+    const loopback = await requestJson(fixture.workerdSocket, "/service-loopback");
+    assert.equal(loopback.statusCode, 200, loopback.body);
+    assert.equal(loopback.json.ok, true);
+    assert.equal(loopback.json.status, 200);
+    assert.equal(loopback.json.body.ok, true);
+    assert.equal(loopback.json.body.source, "loopback-service-target");
+    assert.equal(loopback.json.body.method, "POST");
+    assert.equal(loopback.json.body.pathname, "/service-target");
+    assert.equal(loopback.json.body.search, "?source=service-binding");
+    assert.equal(loopback.json.body.body, "hello through service binding");
+    assert.equal(loopback.json.body.customHeader, "present");
   });
 
   await t.test("exports route-backed WebSession capabilities", async () => {
@@ -695,7 +709,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.json.ok, true);
     assert.equal(runtime.json.mainModule, "worker.js");
     assert.equal(runtime.json.moduleCount, 7);
-    assert.equal(runtime.json.bindingCount, 4);
+    assert.equal(runtime.json.bindingCount, 5);
 
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
     assert.equal(capabilities.statusCode, 200);
@@ -733,7 +747,9 @@ test("isolate supervisor integration suite", {
         ["JSON_BINDING", "json", true],
         ["SANDSTORM_API", "sandstormApi", true],
         ["STORAGE", "storage", true],
+        ["LOOPBACK_SERVICE", "service", true],
       ]);
+    assert.equal(bindings.json.bindings[4].serviceName, "main");
 
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);
