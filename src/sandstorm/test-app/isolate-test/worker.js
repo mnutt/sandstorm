@@ -132,6 +132,24 @@ export default {
       });
     }
 
+    if (url.pathname === "/range") {
+      const bytes = makeBytes(256);
+      const range = request.headers.get("range");
+      if (range !== "bytes=10-19") {
+        return Response.json({ ok: false, range }, { status: 400 });
+      }
+
+      return new Response(bytes.slice(10, 20), {
+        status: 206,
+        headers: {
+          "content-type": "application/octet-stream",
+          "accept-ranges": "bytes",
+          "content-range": "bytes 10-19/256",
+          "x-sandstorm-app-range-response": "present",
+        },
+      });
+    }
+
     if (url.pathname === "/headers") {
       return new Response("header response", {
         headers: {
