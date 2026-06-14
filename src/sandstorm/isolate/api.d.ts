@@ -80,6 +80,21 @@ declare module "sandstorm:api" {
       userAgent: string;
       acceptableLanguages: string[];
     };
+    offer: OfferedCapabilityInfo;
+  }
+
+  export interface ApiSessionDescriptorInfo {
+    type: "apiSession";
+    canonicalUrl: string;
+    oauthScopes: string[];
+  }
+
+  export type PowerboxDescriptorInfo = ApiSessionDescriptorInfo;
+
+  export interface OfferedCapabilityInfo {
+    id: string;
+    capability?: ClaimedCapability;
+    descriptor?: PowerboxDescriptorInfo;
   }
 
   export type JsonValue =
@@ -132,6 +147,14 @@ declare module "sandstorm:api" {
     displayTitle?: string | { defaultText: string };
     label?: string | { defaultText: string };
     requiredPermissions?: string[];
+    apiSession?: {
+      canonicalUrl: string;
+      oauthScopes?: string[];
+    };
+    apiSessionDescriptor?: {
+      canonicalUrl: string;
+      oauthScopes?: string[];
+    };
   }
 
   export interface WebSessionCapabilityOptions {
@@ -227,6 +250,7 @@ declare module "sandstorm:api" {
     request(query: unknown, options?: unknown): Promise<unknown>;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
     offeredCapability(): ClaimedCapability | undefined;
+    offeredCapabilityInfo(): OfferedCapabilityInfo | undefined;
     offer(
       capability: ClaimedCapabilityHandle | string,
       options?: SessionCapabilityOptions,

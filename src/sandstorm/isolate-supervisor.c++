@@ -1214,6 +1214,7 @@ struct SessionMetadata {
   kj::String userPronouns;
   kj::String permissions;
   kj::String offeredCapabilityId;
+  kj::String offerDescriptorJson;
 };
 
 kj::String textIdentityId(capnp::Data::Reader id) {
@@ -1287,6 +1288,32 @@ SessionMetadata copyApiSessionMetadata(
   result.tabId = kj::encodeHex(tabId);
   copyUserMetadata(result, userInfo, viewInfo);
   return result;
+}
+
+kj::String renderApiSessionDescriptorHeader(ApiSession::PowerboxTag::Reader tag) {
+  kj::Vector<char> json;
+  json.addAll(kj::StringPtr("{"));
+  appendJsonField(json, "type", "apiSession");
+  json.addAll(kj::StringPtr(", "));
+  appendJsonField(json, "canonicalUrl", tag.getCanonicalUrl());
+  json.addAll(kj::StringPtr(", \"oauthScopes\": ["));
+  auto scopes = tag.getOauthScopes();
+  for (auto i: kj::indices(scopes)) {
+    if (i > 0) {
+      json.addAll(kj::StringPtr(", "));
+    }
+    appendJsonString(json, scopes[i].getName());
+  }
+  json.addAll(kj::StringPtr("]}"));
+  return kj::encodeBase64Url(json.asPtr().asBytes());
+}
+
+void copyOfferDescriptor(SessionMetadata& result, PowerboxDescriptor::Reader descriptor) {
+  auto tags = descriptor.getTags();
+  if (tags.size() == 1 && tags[0].getId() == capnp::typeId<ApiSession>()) {
+    result.offerDescriptorJson = renderApiSessionDescriptorHeader(
+        tags[0].getValue().getAs<ApiSession::PowerboxTag>());
+  }
 }
 
 struct FetchHeader {
@@ -2512,6 +2539,9 @@ private:
       addHeader(request, "x-sandstorm-offered-capability-id",
           sessionMetadata.offeredCapabilityId);
     }
+    if (sessionMetadata.offerDescriptorJson.size() > 0) {
+      addHeader(request, "x-sandstorm-offer-descriptor", sessionMetadata.offerDescriptorJson);
+    }
     if (sessionMetadata.userDisplayName.size() > 0) {
       addHeader(request, "x-sandstorm-username", sessionMetadata.userDisplayName);
     }
@@ -2630,6 +2660,7 @@ public:
     sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
     sessionMetadata.offeredCapabilityId = runtimeHost->sessions->storeClaimedCapability(
         params.getOffer());
+    copyOfferDescriptor(sessionMetadata, params.getDescriptor());
     context.getResults().setSession(kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::OFFER,
         kj::mv(sessionMetadata)));
@@ -4293,7 +4324,44 @@ private:
       capnp::List<bool>::Builder requiredPermissions,
       PowerboxDescriptor::Builder descriptor, PowerboxDisplayInfo::Builder displayInfo) {
     initSessionActionParams(url, titles, requiredPermissions, displayInfo);
-    descriptor.initTags(0);
+
+    auto descriptorTypes = findIsolateQueryParams(url, "descriptor");
+    KJ_REQUIRE(descriptorTypes.size() <= 1,
+        "expected at most one powerbox descriptor type");
+    if (descriptorTypes.size() == 0 || descriptorTypes[0].size() == 0) {
+      descriptor.initTags(0);
+      return;
+    }
+
+    if (descriptorTypes[0] == "apiSession") {
+      initApiSessionPowerboxDescriptor(url, descriptor);
+    } else {
+      KJ_FAIL_REQUIRE("unsupported powerbox descriptor type", descriptorTypes[0]);
+    }
+  }
+
+  void initApiSessionPowerboxDescriptor(
+      kj::StringPtr url, PowerboxDescriptor::Builder descriptor) {
+    auto canonicalUrls = findIsolateQueryParams(url, "apiCanonicalUrl");
+    KJ_REQUIRE(canonicalUrls.size() == 1 && canonicalUrls[0].size() > 0,
+        "apiSession descriptor requires exactly one canonicalUrl");
+    KJ_REQUIRE(canonicalUrls[0].size() <= 2048,
+        "apiSession descriptor canonicalUrl is too long");
+    KJ_REQUIRE(!canonicalUrls[0].endsWith("/"),
+        "apiSession descriptor canonicalUrl must not end with '/'");
+
+    auto tag = descriptor.initTags(1)[0];
+    tag.setId(capnp::typeId<ApiSession>());
+    auto value = tag.initValue().initAs<ApiSession::PowerboxTag>();
+    value.setCanonicalUrl(canonicalUrls[0]);
+
+    auto oauthScopes = findIsolateQueryParams(url, "apiOauthScope");
+    auto scopes = value.initOauthScopes(oauthScopes.size());
+    for (auto i: kj::indices(oauthScopes)) {
+      KJ_REQUIRE(oauthScopes[i].size() > 0 && oauthScopes[i].size() <= 256,
+          "apiSession descriptor OAuth scope must be 1-256 bytes");
+      scopes[i].setName(oauthScopes[i]);
+    }
   }
 
   kj::Promise<void> savePowerboxCapability(

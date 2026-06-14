@@ -15,6 +15,20 @@ function list(value) {
   return value ? value.split(",").filter((item) => item.length > 0) : [];
 }
 
+function jsonHeader(request, name) {
+  const value = header(request, name);
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    return JSON.parse(atob(padded));
+  } catch (error) {
+    throw new ValidationError(`${name} contained invalid JSON`);
+  }
+}
+
 async function callSandstorm(env, path) {
   const response = await env.SANDSTORM_API.fetch(`http://sandstorm/${path}`);
   if (!response.ok) {
@@ -342,6 +356,42 @@ function displayTitle(options = {}) {
   return validate.string(title, "title", { minLength: 1, maxLength: 256 });
 }
 
+function apiSessionDescriptorParams(options = {}) {
+  const descriptor = options.apiSession ?? options.apiSessionDescriptor ?? null;
+  if (descriptor === null || descriptor === undefined) {
+    return [];
+  }
+  if (typeof descriptor !== "object") {
+    throw new ValidationError("apiSession descriptor must be an object");
+  }
+
+  const canonicalUrl = validate.string(descriptor.canonicalUrl, "apiSession.canonicalUrl", {
+    minLength: 1,
+    maxLength: 2048,
+  });
+  if (canonicalUrl.endsWith("/")) {
+    throw new ValidationError("apiSession.canonicalUrl must not end with '/'");
+  }
+
+  const result = [
+    ["descriptor", "apiSession"],
+    ["apiCanonicalUrl", canonicalUrl],
+  ];
+
+  const scopes = descriptor.oauthScopes ?? [];
+  if (!Array.isArray(scopes)) {
+    throw new ValidationError("apiSession.oauthScopes must be an array");
+  }
+  for (let i = 0; i < scopes.length; ++i) {
+    result.push(["apiOauthScope", validate.string(scopes[i], `apiSession.oauthScopes[${i}]`, {
+      minLength: 1,
+      maxLength: 256,
+    })]);
+  }
+
+  return result;
+}
+
 async function saveClaimedCapability(env, capability, options = {}) {
   const id = encodeURIComponent(capabilityId(capability));
   const label = encodeURIComponent(saveLabel(options));
@@ -349,14 +399,18 @@ async function saveClaimedCapability(env, capability, options = {}) {
 }
 
 async function sessionPowerboxAction(env, request, endpoint, capability, options = {}) {
-  const sessionId = encodeURIComponent(sessionIdForPowerbox(request));
-  const id = encodeURIComponent(capabilityId(capability));
-  const title = encodeURIComponent(displayTitle(options));
-  const permissionQuery = permissionNames(options)
-    .map((name) => `&requiredPermission=${encodeURIComponent(name)}`)
-    .join("");
-  return postPowerbox(env,
-    `powerbox/${endpoint}?sessionId=${sessionId}&id=${id}&title=${title}${permissionQuery}`);
+  const params = new URLSearchParams({
+    sessionId: sessionIdForPowerbox(request),
+    id: capabilityId(capability),
+    title: displayTitle(options),
+  });
+  for (const name of permissionNames(options)) {
+    params.append("requiredPermission", name);
+  }
+  for (const [name, value] of apiSessionDescriptorParams(options)) {
+    params.append(name, value);
+  }
+  return postPowerbox(env, `powerbox/${endpoint}?${params}`);
 }
 
 async function offerClaimedCapability(env, request, capability, options = {}) {
@@ -811,6 +865,19 @@ export function powerbox(request, env) {
       return id ? new ClaimedCapability(env, id) : undefined;
     },
 
+    offeredCapabilityInfo() {
+      const id = header(request, "x-sandstorm-offered-capability-id");
+      const capability = id ? new ClaimedCapability(env, id) : undefined;
+      if (!capability) {
+        return undefined;
+      }
+      return {
+        capability,
+        id: capability.id,
+        descriptor: jsonHeader(request, "x-sandstorm-offer-descriptor"),
+      };
+    },
+
     async offer() {
       if (arguments.length < 1) {
         unsupportedPowerbox("offer");
@@ -871,6 +938,10 @@ export function getSession(request) {
       forwardedProto: header(request, "x-forwarded-proto"),
       userAgent: header(request, "user-agent"),
       acceptableLanguages: list(header(request, "accept-language")),
+    },
+    offer: {
+      id: header(request, "x-sandstorm-offered-capability-id"),
+      descriptor: jsonHeader(request, "x-sandstorm-offer-descriptor"),
     },
   };
 }
@@ -936,6 +1007,10 @@ class PowerboxRpcTarget extends RpcTarget {
 
   offeredCapability() {
     return powerbox(this.#request, this.#env).offeredCapability();
+  }
+
+  offeredCapabilityInfo() {
+    return powerbox(this.#request, this.#env).offeredCapabilityInfo();
   }
 
   async offer() {
