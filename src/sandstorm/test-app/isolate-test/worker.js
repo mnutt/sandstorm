@@ -205,6 +205,35 @@ export default {
       });
     }
 
+    if (url.pathname === "/web-session-save-restore-self-test") {
+      const capability = await sandstorm(request, env).webSession({
+        pathPrefix: "/exported",
+      });
+      const saved = await capability.save({ label: "Route-backed WebSession fixture" });
+      const dropOriginal = await capability.drop();
+      const restored = await saved.restore();
+      const fetchedResponse = await restored.fetch("/capability-echo?source=js-restore");
+      const fetched = {
+        status: fetchedResponse.status,
+        body: await fetchedResponse.json(),
+      };
+      const dropRestored = await restored.drop();
+      const dropSaved = await saved.drop();
+      return Response.json({
+        ok: true,
+        capabilityClass: capability instanceof ClaimedCapability,
+        savedClass: saved instanceof SavedCapability,
+        restoredClass: restored instanceof ClaimedCapability,
+        capability: JSON.parse(JSON.stringify(capability)),
+        saved: JSON.parse(JSON.stringify(saved)),
+        restored: JSON.parse(JSON.stringify(restored)),
+        dropOriginal,
+        fetched,
+        dropRestored,
+        dropSaved,
+      });
+    }
+
     if (url.pathname === "/export-object-capability") {
       const capability = await sandstorm(request, env).capability(new CounterCapability());
       return Response.json({
