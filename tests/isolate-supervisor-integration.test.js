@@ -259,7 +259,6 @@ async function startIsolateFixture() {
   const workerdSocket = path.join(runtimeDir, "workerd.sock");
   const sandstormApiSocket = path.join(runtimeDir, "sandstorm-api.sock");
   const storageSocket = path.join(runtimeDir, "sandstorm-storage.sock");
-  const publicFetchSocket = path.join(runtimeDir, "sandstorm-public-fetch.sock");
 
   let child = null;
   const stdout = [];
@@ -308,7 +307,6 @@ async function startIsolateFixture() {
       supervisorSocket,
       workerdSocket,
       sandstormApiSocket,
-      publicFetchSocket,
       storageSocket,
     ], childExit, stdout, stderr);
   }
@@ -318,7 +316,6 @@ async function startIsolateFixture() {
       supervisorSocket,
       workerdSocket,
       sandstormApiSocket,
-      publicFetchSocket,
       storageSocket,
     ].map((socketPath) => fs.rm(socketPath, { force: true })));
   }
@@ -337,7 +334,6 @@ async function startIsolateFixture() {
       supervisorSocket,
       workerdSocket,
       sandstormApiSocket,
-      publicFetchSocket,
       storageSocket,
       child,
       stdout,
@@ -399,7 +395,6 @@ test("isolate supervisor integration suite", {
         ["SANDSTORM_API", "sandstormApi"],
         ["POWERBOX", "powerbox"],
         ["STORAGE", "storage"],
-        ["PUBLIC_FETCH", "publicFetch"],
         ["LOOPBACK_SERVICE", "service"],
       ]);
 
@@ -407,10 +402,8 @@ test("isolate supervisor integration suite", {
     assert.match(workerdConfig, /name = "sandstorm"/);
     assert.match(workerdConfig, /service = "sandstorm-api"/);
     assert.match(workerdConfig, /service = "sandstorm-powerbox"/);
-    assert.match(workerdConfig, /name = "sandstorm-public-fetch"/);
     assert.match(workerdConfig, /service = "sandstorm-storage"/);
     assert.match(workerdConfig, /name = "POWERBOX", service = "sandstorm-powerbox"/);
-    assert.match(workerdConfig, /name = "PUBLIC_FETCH", service = "sandstorm-public-fetch"/);
     assert.match(workerdConfig, /name = "LOOPBACK_SERVICE", service = "main"/);
   });
 
@@ -470,19 +463,6 @@ test("isolate supervisor integration suite", {
     assert.equal(powerboxProbe.json.powerboxEndpoint.status, 404);
     assert.equal(powerboxProbe.json.powerboxEndpoint.body.ok, false);
     assert.equal(powerboxProbe.json.powerboxEndpoint.body.error, "unknown claimed capability");
-
-    const publicFetchProbe = await requestJson(
-      fixture.workerdSocket, "/public-fetch-binding-probe");
-    assert.equal(publicFetchProbe.statusCode, 200, publicFetchProbe.body);
-    assert.equal(publicFetchProbe.json.ok, true);
-    assert.equal(publicFetchProbe.json.status, 501);
-    assert.equal(publicFetchProbe.json.body.ok, false);
-    assert.equal(publicFetchProbe.json.body.binding, "publicFetch");
-    assert.match(publicFetchProbe.json.body.error, /not enabled/);
-    assert.equal(publicFetchProbe.json.body.method, "POST");
-    assert.equal(publicFetchProbe.json.body.host, "example.invalid");
-    assert.equal(publicFetchProbe.json.body.path, "/public-fetch-target?source=fixture");
-    assert.equal(publicFetchProbe.json.body.requestBodyBytes, 18);
 
     const storageHelper = await requestJson(fixture.workerdSocket, "/storage-helper-self-test");
     assert.equal(storageHelper.statusCode, 200, storageHelper.body);
@@ -908,7 +888,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.json.ok, true);
     assert.equal(runtime.json.mainModule, "worker.js");
     assert.equal(runtime.json.moduleCount, 7);
-    assert.equal(runtime.json.bindingCount, 7);
+    assert.equal(runtime.json.bindingCount, 6);
 
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
     assert.equal(capabilities.statusCode, 200);
@@ -948,10 +928,9 @@ test("isolate supervisor integration suite", {
         ["SANDSTORM_API", "sandstormApi", true],
         ["POWERBOX", "powerbox", true],
         ["STORAGE", "storage", true],
-        ["PUBLIC_FETCH", "publicFetch", true],
         ["LOOPBACK_SERVICE", "service", true],
       ]);
-    assert.equal(bindings.json.bindings[6].serviceName, "main");
+    assert.equal(bindings.json.bindings[5].serviceName, "main");
 
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);

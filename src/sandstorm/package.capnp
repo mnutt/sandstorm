@@ -186,8 +186,7 @@ struct Manifest {
         sandstormApi @4 :Void;
         storage @5 :Void;
         powerbox @6 :Void;
-        publicFetch @7 :Void;
-        service @8 :Text;
+        service @7 :Text;
       }
     }
   }
