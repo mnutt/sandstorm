@@ -503,6 +503,10 @@ test("isolate supervisor integration suite", {
     assert.equal(fetched.json.source, "exported-web-session");
     assert.equal(fetched.json.pathname, "/exported/capability-echo");
     assert.equal(fetched.json.search, "?source=external");
+    assert.equal(fetched.headers.etag, "\"capability-echo-etag\"");
+    assert.equal(fetched.headers["content-disposition"],
+      "attachment; filename=\"capability-echo.json\"");
+    assert.equal(fetched.headers["x-sandstorm-app-capability-response"], "present");
 
     const saved = await requestJson(
       fixture.sandstormApiSocket,
@@ -543,6 +547,10 @@ test("isolate supervisor integration suite", {
     assert.equal(restoredFetch.json.ok, true);
     assert.equal(restoredFetch.json.pathname, "/exported/capability-echo");
     assert.equal(restoredFetch.json.search, "?source=restored");
+    assert.equal(restoredFetch.headers.etag, "\"capability-echo-etag\"");
+    assert.equal(restoredFetch.headers["content-disposition"],
+      "attachment; filename=\"capability-echo.json\"");
+    assert.equal(restoredFetch.headers["x-sandstorm-app-capability-response"], "present");
 
     const dropRestored = await requestJson(
       fixture.sandstormApiSocket,
@@ -575,6 +583,10 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.restored.type, "claimedCapability");
     assert.equal(selfTest.json.dropOriginal.ok, true);
     assert.equal(selfTest.json.fetched.status, 200);
+    assert.equal(selfTest.json.fetched.headers.etag, "\"capability-echo-etag\"");
+    assert.equal(selfTest.json.fetched.headers.contentDisposition,
+      "attachment; filename=\"capability-echo.json\"");
+    assert.equal(selfTest.json.fetched.headers.appResponseHeader, "present");
     assert.equal(selfTest.json.fetched.body.ok, true);
     assert.equal(selfTest.json.fetched.body.pathname, "/exported/capability-echo");
     assert.equal(selfTest.json.fetched.body.search, "?source=js-restore");

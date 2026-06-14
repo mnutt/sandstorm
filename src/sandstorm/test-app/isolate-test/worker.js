@@ -228,6 +228,12 @@ export default {
         sessionType: request.headers.get("x-sandstorm-session-type"),
         appHeader: request.headers.get("x-sandstorm-app-claimed-fetch"),
         blockedHeader: request.headers.get("x-not-forwarded"),
+      }, {
+        headers: {
+          "content-disposition": "attachment; filename=\"capability-echo.json\"",
+          "etag": "\"capability-echo-etag\"",
+          "x-sandstorm-app-capability-response": "present",
+        },
       });
     }
 
@@ -257,6 +263,11 @@ export default {
       });
       const fetched = {
         status: fetchedResponse.status,
+        headers: {
+          contentDisposition: fetchedResponse.headers.get("content-disposition"),
+          etag: fetchedResponse.headers.get("etag"),
+          appResponseHeader: fetchedResponse.headers.get("x-sandstorm-app-capability-response"),
+        },
         body: await fetchedResponse.json(),
       };
       const dropRestored = await restored.drop();

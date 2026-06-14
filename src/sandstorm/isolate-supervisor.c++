@@ -1363,6 +1363,30 @@ kj::String formatRequestETag(WebSession::ETag::Reader eTag) {
   }
 }
 
+kj::String escapeHttpQuotedString(kj::StringPtr value) {
+  kj::Vector<char> chars(value.size() + 1);
+
+  for (char c: value) {
+    switch (c) {
+      case '\\':
+      case '\"':
+        chars.add('\\');
+        chars.add(c);
+        break;
+      case '\r':
+      case '\n':
+        chars.add('_');
+        break;
+      default:
+        chars.add(c);
+        break;
+    }
+  }
+
+  chars.add('\0');
+  return kj::String(chars.releaseAsArray());
+}
+
 void addETagPreconditionHeaders(FetchRequest& request, WebSession::Context::Reader context) {
   auto eTagPrecondition = context.getETagPrecondition();
   switch (eTagPrecondition.which()) {
@@ -3710,6 +3734,30 @@ private:
     return kj::mv(headers);
   }
 
+  void addContentHeaders(
+      kj::HttpHeaders& headers, WebSession::Response::Content::Reader content) {
+    if (content.hasEncoding()) {
+      headers.add("content-encoding", content.getEncoding());
+    }
+    if (content.hasLanguage()) {
+      headers.add("content-language", content.getLanguage());
+    }
+    if (content.hasETag()) {
+      headers.add("etag", formatRequestETag(content.getETag()));
+    }
+
+    auto disposition = content.getDisposition();
+    switch (disposition.which()) {
+      case WebSession::Response::Content::Disposition::NORMAL:
+        break;
+      case WebSession::Response::Content::Disposition::DOWNLOAD:
+        headers.add("content-disposition",
+            kj::str("attachment; filename=\"",
+                escapeHttpQuotedString(disposition.getDownload()), "\""));
+        break;
+    }
+  }
+
   kj::Promise<void> sendWebSessionHttpResponse(
       capnp::Response<WebSession::Response>&& webResponse, kj::HttpService::Response& response,
       kj::Promise<kj::Array<byte>> streamDone) {
@@ -3718,6 +3766,7 @@ private:
         auto content = webResponse.getContent();
         auto headers = makeHttpHeaders(webResponse);
         headers.set(kj::HttpHeaderId::CONTENT_TYPE, content.getMimeType());
+        addContentHeaders(headers, content);
         auto statusCode = statusCodeForSuccess(content.getStatusCode());
         auto body = content.getBody();
         switch (body.which()) {
@@ -3735,13 +3784,21 @@ private:
         KJ_UNREACHABLE;
       }
       case WebSession::Response::NO_CONTENT: {
+        auto noContent = webResponse.getNoContent();
         auto headers = makeHttpHeaders(webResponse);
-        response.send(webResponse.getNoContent().getShouldResetForm() ? 205 : 204,
-            "No Content", headers, uint64_t(0));
+        if (noContent.hasETag()) {
+          headers.add("etag", formatRequestETag(noContent.getETag()));
+        }
+        response.send(noContent.getShouldResetForm() ? 205 : 204, "No Content",
+            headers, uint64_t(0));
         return kj::READY_NOW;
       }
       case WebSession::Response::PRECONDITION_FAILED: {
+        auto preconditionFailed = webResponse.getPreconditionFailed();
         auto headers = makeHttpHeaders(webResponse);
+        if (preconditionFailed.hasMatchingETag()) {
+          headers.add("etag", formatRequestETag(preconditionFailed.getMatchingETag()));
+        }
         response.send(412, "Precondition Failed", headers, uint64_t(0));
         return kj::READY_NOW;
       }
