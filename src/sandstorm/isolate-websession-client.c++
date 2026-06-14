@@ -469,7 +469,8 @@ public:
     KJ_REQUIRE(rangeBody.size() == 10, rangeBody.size());
     KJ_REQUIRE(rangeBody[0] == 10, rangeBody[0]);
     KJ_REQUIRE(rangeBody[9] == 19, rangeBody[9]);
-    KJ_IF_MAYBE(rangeHeader, findResponseHeader(rangeResponse, "x-sandstorm-app-range-response")) {
+    KJ_IF_MAYBE(rangeHeader, findResponseHeader(
+        rangeResponse, "x-sandstorm-app-range-response")) {
       KJ_REQUIRE(*rangeHeader == "present", *rangeHeader);
     } else {
       KJ_FAIL_REQUIRE("missing range response header");
