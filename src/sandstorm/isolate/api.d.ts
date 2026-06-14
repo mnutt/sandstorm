@@ -318,6 +318,7 @@ declare module "sandstorm:api" {
     apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     capability(target: RpcTarget): Promise<ClaimedCapability>;
     serveObjectCapabilities(): Promise<Response | null>;
+    servePowerboxDescriptors(): Promise<Response | null>;
     apiTarget(): SandstormApiTarget;
     rpcClientScript(): string;
     rpcResponse(target: RpcTarget, options?: RpcSessionOptions): Response | Promise<Response>;
@@ -331,6 +332,10 @@ declare module "sandstorm:api" {
   export function powerbox(request: Request, env: SandstormEnv): PowerboxApi;
   export function getSession(request: Request): SessionInfo;
   export function apiTarget(request: Request, env: SandstormEnv): SandstormApiTarget;
+  export function servePowerboxDescriptors(
+    request: Request,
+    env: SandstormEnv,
+  ): Promise<Response | null>;
   export function rpcClientScript(): string;
   export function rpcResponse(
     request: Request,
