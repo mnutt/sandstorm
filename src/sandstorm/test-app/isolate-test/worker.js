@@ -51,8 +51,12 @@ class CounterCapability extends RpcTarget {
 
 export default {
   async fetch(request, env, ctx) {
-    const objectCapabilityResponse = await sandstorm(request, env).serveObjectCapabilities();
-    if (objectCapabilityResponse) return objectCapabilityResponse;
+    const api = sandstorm(request, env);
+    const internalResponse = api.serveRpc(() => new CounterCapability(), {
+      clientScriptPath: "/__sandstorm/test-rpc-client.js",
+      rpcPath: "/__sandstorm/test-rpc",
+    });
+    if (internalResponse) return internalResponse;
 
     const url = new URL(request.url);
     const headers = {};
