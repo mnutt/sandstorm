@@ -441,6 +441,12 @@ export default {
       const child = await capability.call("child");
       const childFirst = await child.call("increment", 11);
       const readChild = await capability.call("readOther", child);
+      const stub = capability.asRpc();
+      const stubFirst = await stub.increment(2);
+      const stubCurrent = await stub.get();
+      const stubChild = await stub.child();
+      const stubChildFirst = await stubChild.increment(13);
+      const stubReadChild = await stub.readOther(stubChild);
       let sessionActions = null;
       if (url.searchParams.get("sessionActions") === "true") {
         const offer = await capability.offer(request, {
@@ -486,6 +492,13 @@ export default {
         child: JSON.parse(JSON.stringify(child)),
         childFirst,
         readChild,
+        stubFirst,
+        stubCurrent,
+        stubChildClass: stubChild instanceof ClaimedCapability,
+        stubChild: JSON.parse(JSON.stringify(stubChild)),
+        stubChildFirst,
+        stubReadChild,
+        stubThenType: typeof stub.then,
         sessionActions,
         missing,
         drop,

@@ -140,6 +140,12 @@ declare module "sandstorm:api" {
     persistent?: boolean;
   }
 
+  export type CapabilityRpcStub<T extends object = Record<string, (...args: any[]) => unknown>> = {
+    [K in keyof T]: T[K] extends (...args: infer Args) => infer Result
+      ? (...args: Args) => Promise<Awaited<Result>>
+      : never;
+  };
+
   export interface SavedCapability {
     ok: true;
     type: "savedCapability";
@@ -153,6 +159,7 @@ declare module "sandstorm:api" {
   export interface ClaimedCapability extends ClaimedCapabilityHandle {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
+    asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(): CapabilityRpcStub<T>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
     offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
@@ -168,6 +175,7 @@ declare module "sandstorm:api" {
     constructor(env: SandstormEnv, id: string);
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
+    asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(): CapabilityRpcStub<T>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
     offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
