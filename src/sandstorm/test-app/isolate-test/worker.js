@@ -2,6 +2,7 @@ import message from "message.txt";
 import metadata from "metadata.json";
 import {
   ClaimedCapability,
+  RpcTarget,
   SavedCapability,
   sandstorm,
   powerbox as sandstormPowerbox,
@@ -23,8 +24,28 @@ function checksum(bytes) {
   return sum;
 }
 
+class CounterCapability extends RpcTarget {
+  #value = 0;
+
+  increment(amount = 1) {
+    this.#value += Number(amount);
+    return { value: this.#value };
+  }
+
+  get() {
+    return { value: this.#value };
+  }
+
+  fail(message = "counter failure") {
+    throw new Error(String(message));
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
+    const objectCapabilityResponse = await sandstorm(request, env).serveObjectCapabilities();
+    if (objectCapabilityResponse) return objectCapabilityResponse;
+
     const url = new URL(request.url);
     const headers = {};
     for (const [name, value] of request.headers) {
@@ -173,6 +194,41 @@ export default {
         ok: true,
         capabilityClass: capability instanceof ClaimedCapability,
         capability: JSON.parse(JSON.stringify(capability)),
+      });
+    }
+
+    if (url.pathname === "/export-object-capability") {
+      const capability = await sandstorm(request, env).capability(new CounterCapability());
+      return Response.json({
+        ok: true,
+        capabilityClass: capability instanceof ClaimedCapability,
+        capability: JSON.parse(JSON.stringify(capability)),
+      });
+    }
+
+    if (url.pathname === "/object-capability-self-test") {
+      const capability = await sandstorm(request, env).capability(new CounterCapability());
+      const first = await capability.call("increment", 3);
+      const second = await capability.call("increment", 4);
+      const current = await capability.call("get");
+      let missing;
+      try {
+        await capability.call("missingMethod");
+      } catch (error) {
+        missing = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+          status: error?.details?.status,
+        };
+      }
+      const drop = await capability.drop();
+      return Response.json({
+        ok: true,
+        first,
+        second,
+        current,
+        missing,
+        drop,
       });
     }
 

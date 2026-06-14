@@ -1,6 +1,12 @@
 import { RpcTarget, newWorkersRpcResponse } from "capnweb";
 import { browserClientScript } from "sandstorm:rpc";
 
+export { RpcTarget } from "capnweb";
+
+const OBJECT_CAPABILITY_PREFIX = "/__sandstorm/object-capabilities";
+const exportedObjectTargets = new Map();
+const claimedCapabilityDisposers = new Map();
+
 function header(request, name) {
   return request.headers.get(name) || "";
 }
@@ -41,6 +47,14 @@ export class UnsupportedCapabilityError extends Error {
     this.name = "UnsupportedCapabilityError";
     this.capability = capability;
     this.operation = operation;
+  }
+}
+
+export class CapabilityCallError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "CapabilityCallError";
+    this.details = details;
   }
 }
 
@@ -193,12 +207,23 @@ export class ClaimedCapability {
     return fetchClaimedCapability(this.#env, this, input, init);
   }
 
+  call(method, ...args) {
+    return callClaimedCapability(this, method, args);
+  }
+
   save(options = {}) {
     return saveClaimedCapability(this.#env, this, options);
   }
 
-  drop() {
-    return postSandstorm(this.#env, `powerbox/drop?id=${encodeURIComponent(this.id)}`);
+  async drop() {
+    const result = await postSandstorm(
+      this.#env, `powerbox/drop?id=${encodeURIComponent(this.id)}`);
+    const disposer = claimedCapabilityDisposers.get(this.id);
+    if (disposer) {
+      claimedCapabilityDisposers.delete(this.id);
+      disposer();
+    }
+    return result;
   }
 
   offer(request, options = {}) {
@@ -322,6 +347,131 @@ async function createWebSessionCapability(env, options = {}) {
   const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
   return wrapClaimedCapability(
     env, await postSandstorm(env, `capabilities/web-session?pathPrefix=${pathPrefix}`));
+}
+
+function capabilityMethodName(value, name = "method") {
+  const method = validate.string(value, name, { minLength: 1, maxLength: 256 });
+  if (method === "constructor" || method === "prototype" || method === "__proto__") {
+    throw new ValidationError(`${name} is not callable`);
+  }
+  if (method === "then") {
+    throw new ValidationError(`${name} is reserved`);
+  }
+  return method;
+}
+
+function capabilityArgs(value, name = "args") {
+  if (!Array.isArray(value)) {
+    throw new ValidationError(`${name} must be an array`);
+  }
+  return value;
+}
+
+async function createObjectCapability(env, target) {
+  if (!target || typeof target !== "object") {
+    throw new ValidationError("capability target must be an object");
+  }
+
+  const id = typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  exportedObjectTargets.set(id, target);
+
+  try {
+    const capability = await createWebSessionCapability(env, {
+      pathPrefix: `${OBJECT_CAPABILITY_PREFIX}/${encodeURIComponent(id)}`,
+    });
+    claimedCapabilityDisposers.set(capability.id, () => exportedObjectTargets.delete(id));
+    return capability;
+  } catch (error) {
+    exportedObjectTargets.delete(id);
+    throw error;
+  }
+}
+
+async function callClaimedCapability(capability, method, args = []) {
+  method = capabilityMethodName(method);
+  args = capabilityArgs(args);
+  const response = await capability.fetch("/call", {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ method, args }),
+  });
+  const text = await response.text();
+  let body;
+  try {
+    body = text.length > 0 ? JSON.parse(text) : {};
+  } catch (error) {
+    throw new CapabilityCallError(
+      `capability call ${method} returned non-JSON response with status ${response.status}`,
+      { status: response.status, body: text });
+  }
+
+  if (!response.ok || !body.ok) {
+    throw new CapabilityCallError(body.error || `capability call ${method} failed`, {
+      status: response.status,
+      body,
+    });
+  }
+
+  return body.result;
+}
+
+async function serveObjectCapability(request) {
+  const url = new URL(request.url);
+  if (!url.pathname.startsWith(`${OBJECT_CAPABILITY_PREFIX}/`)) {
+    return null;
+  }
+
+  const rest = url.pathname.slice(OBJECT_CAPABILITY_PREFIX.length + 1);
+  const slash = rest.indexOf("/");
+  const id = slash < 0 ? rest : rest.slice(0, slash);
+  const action = slash < 0 ? "" : rest.slice(slash + 1);
+  const target = exportedObjectTargets.get(decodeURIComponent(id));
+  if (!target) {
+    return Response.json({
+      ok: false,
+      error: "unknown exported object capability",
+    }, { status: 404 });
+  }
+
+  if (request.method === "DELETE" && action === "") {
+    exportedObjectTargets.delete(decodeURIComponent(id));
+    return Response.json({ ok: true });
+  }
+
+  if (request.method !== "POST" || action !== "call") {
+    return Response.json({
+      ok: false,
+      error: "unsupported exported object capability request",
+    }, { status: 405 });
+  }
+
+  let call;
+  try {
+    call = await request.json();
+    const method = capabilityMethodName(call.method);
+    const args = capabilityArgs(call.args || []);
+    const func = target[method];
+    if (typeof func !== "function") {
+      return Response.json({
+        ok: false,
+        error: `RPC method not found: ${method}`,
+      }, { status: 404 });
+    }
+
+    return Response.json({
+      ok: true,
+      result: await func.apply(target, args),
+    });
+  } catch (error) {
+    const status = error instanceof ValidationError ? 400 : 500;
+    return Response.json({
+      ok: false,
+      error: String(error?.message || error),
+      name: String(error?.name || "Error"),
+    }, { status });
+  }
 }
 
 function savedCapabilityToken(value, name = "token") {
@@ -662,6 +812,10 @@ class SandstormRpcTarget extends RpcTarget {
   webSession(options = {}) {
     return createWebSessionCapability(this.#env, options);
   }
+
+  capability(target) {
+    return createObjectCapability(this.#env, target);
+  }
 }
 
 export function apiTarget(request, env) {
@@ -712,6 +866,8 @@ export function sandstorm(request, env) {
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, options),
+    capability: (target) => createObjectCapability(env, target),
+    serveObjectCapabilities: () => serveObjectCapability(request),
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),
