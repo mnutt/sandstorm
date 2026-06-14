@@ -220,6 +220,29 @@ export default {
     }
 
     if (url.pathname === "/exported/capability-echo") {
+      const capabilityEchoEtag = "\"capability-echo-etag\"";
+      const ifNoneMatch = request.headers.get("if-none-match");
+      if (ifNoneMatch === "*" || ifNoneMatch === capabilityEchoEtag) {
+        return new Response(null, {
+          status: 304,
+          headers: { "etag": capabilityEchoEtag },
+        });
+      }
+
+      const ifMatch = request.headers.get("if-match");
+      if (ifMatch !== null && ifMatch !== "*" && ifMatch !== capabilityEchoEtag) {
+        return Response.json({
+          ok: false,
+          source: "exported-web-session",
+          pathname: url.pathname,
+          search: url.search,
+          ifMatch,
+        }, {
+          status: 412,
+          headers: { "etag": capabilityEchoEtag },
+        });
+      }
+
       return Response.json({
         ok: true,
         source: "exported-web-session",
@@ -231,7 +254,7 @@ export default {
       }, {
         headers: {
           "content-disposition": "attachment; filename=\"capability-echo.json\"",
-          "etag": "\"capability-echo-etag\"",
+          "etag": capabilityEchoEtag,
           "x-sandstorm-app-capability-response": "present",
         },
       });
@@ -270,6 +293,13 @@ export default {
         },
         body: await fetchedResponse.json(),
       };
+      const notModifiedResponse = await restored.fetch("/capability-echo?source=js-not-modified", {
+        headers: { "if-none-match": "\"capability-echo-etag\"" },
+      });
+      const preconditionFailedResponse = await restored.fetch(
+          "/capability-echo?source=js-precondition", {
+        headers: { "if-match": "\"wrong-etag\"" },
+      });
       const dropRestored = await restored.drop();
       const dropSaved = await saved.drop();
       return Response.json({
@@ -282,6 +312,16 @@ export default {
         restored: JSON.parse(JSON.stringify(restored)),
         dropOriginal,
         fetched,
+        notModified: {
+          status: notModifiedResponse.status,
+          etag: notModifiedResponse.headers.get("etag"),
+          bodyBytes: (await notModifiedResponse.arrayBuffer()).byteLength,
+        },
+        preconditionFailed: {
+          status: preconditionFailedResponse.status,
+          etag: preconditionFailedResponse.headers.get("etag"),
+          bodyBytes: (await preconditionFailedResponse.arrayBuffer()).byteLength,
+        },
         dropRestored,
         dropSaved,
       });

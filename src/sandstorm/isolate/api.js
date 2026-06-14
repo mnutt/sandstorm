@@ -602,6 +602,8 @@ function savedCapabilityToken(value, name = "token") {
 }
 
 const CLAIMED_CAPABILITY_FETCH_HEADER_NAMES = new Set([
+  "if-match",
+  "if-none-match",
   "oc-total-length",
   "oc-chunk-size",
   "x-oc-mtime",

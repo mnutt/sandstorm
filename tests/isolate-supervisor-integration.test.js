@@ -508,6 +508,28 @@ test("isolate supervisor integration suite", {
       "attachment; filename=\"capability-echo.json\"");
     assert.equal(fetched.headers["x-sandstorm-app-capability-response"], "present");
 
+    const notModified = await requestUnixSocket(
+      fixture.sandstormApiSocket,
+      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
+      `&method=GET&path=${encodeURIComponent("/capability-echo?source=not-modified")}` +
+      `&headerName=${encodeURIComponent("if-none-match")}` +
+      `&headerValue=${encodeURIComponent("\"capability-echo-etag\"")}`,
+      { method: "POST" });
+    assert.equal(notModified.statusCode, 304, notModified.body);
+    assert.equal(notModified.headers.etag, "\"capability-echo-etag\"");
+    assert.equal(notModified.bodyBuffer.length, 0);
+
+    const preconditionFailed = await requestUnixSocket(
+      fixture.sandstormApiSocket,
+      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
+      `&method=GET&path=${encodeURIComponent("/capability-echo?source=precondition")}` +
+      `&headerName=${encodeURIComponent("if-match")}` +
+      `&headerValue=${encodeURIComponent("\"wrong-etag\"")}`,
+      { method: "POST" });
+    assert.equal(preconditionFailed.statusCode, 412, preconditionFailed.body);
+    assert.equal(preconditionFailed.headers.etag, "\"capability-echo-etag\"");
+    assert.equal(preconditionFailed.bodyBuffer.length, 0);
+
     const saved = await requestJson(
       fixture.sandstormApiSocket,
       `/powerbox/save?id=${encodeURIComponent(capabilityId)}` +
@@ -592,6 +614,12 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.fetched.body.search, "?source=js-restore");
     assert.equal(selfTest.json.fetched.body.appHeader, "present");
     assert.equal(selfTest.json.fetched.body.blockedHeader, null);
+    assert.equal(selfTest.json.notModified.status, 304);
+    assert.equal(selfTest.json.notModified.etag, "\"capability-echo-etag\"");
+    assert.equal(selfTest.json.notModified.bodyBytes, 0);
+    assert.equal(selfTest.json.preconditionFailed.status, 412);
+    assert.equal(selfTest.json.preconditionFailed.etag, "\"capability-echo-etag\"");
+    assert.equal(selfTest.json.preconditionFailed.bodyBytes, 0);
     assert.equal(selfTest.json.dropRestored.ok, true);
     assert.equal(selfTest.json.dropSaved.ok, true);
   });
