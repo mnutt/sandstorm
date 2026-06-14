@@ -500,6 +500,32 @@ test("isolate supervisor integration suite", {
     assert.equal(current.statusCode, 200, current.body);
     assert.deepEqual(current.json, { ok: true, result: { value: 7 } });
 
+    const child = await callObjectCapability("child");
+    assert.equal(child.statusCode, 200, child.body);
+    assert.equal(child.json.ok, true);
+    assert.equal(child.json.result.type, "claimedCapability");
+    assert.equal(typeof child.json.result.id, "string");
+
+    async function callChild(method, args = []) {
+      return requestJson(
+        fixture.sandstormApiSocket,
+        `/powerbox/fetch?id=${encodeURIComponent(child.json.result.id)}` +
+        `&method=POST&path=${encodeURIComponent("/call")}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ method, args }),
+        });
+    }
+
+    const childIncrement = await callChild("increment", [9]);
+    assert.equal(childIncrement.statusCode, 200, childIncrement.body);
+    assert.deepEqual(childIncrement.json, { ok: true, result: { value: 9 } });
+
+    const parentReadsChild = await callObjectCapability("readOther", [child.json.result]);
+    assert.equal(parentReadsChild.statusCode, 200, parentReadsChild.body);
+    assert.deepEqual(parentReadsChild.json, { ok: true, result: { value: 9 } });
+
     const missing = await callObjectCapability("missingMethod");
     assert.equal(missing.statusCode, 404, missing.body);
     assert.equal(missing.json.ok, false);
@@ -517,6 +543,10 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.first, { value: 3 });
     assert.deepEqual(selfTest.json.second, { value: 7 });
     assert.deepEqual(selfTest.json.current, { value: 7 });
+    assert.equal(selfTest.json.childClass, true);
+    assert.equal(selfTest.json.child.type, "claimedCapability");
+    assert.deepEqual(selfTest.json.childFirst, { value: 11 });
+    assert.deepEqual(selfTest.json.readChild, { value: 11 });
     assert.equal(selfTest.json.missing.name, "CapabilityCallError");
     assert.equal(selfTest.json.missing.status, 404);
     assert.equal(selfTest.json.drop.ok, true);

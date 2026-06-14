@@ -89,6 +89,13 @@ declare module "sandstorm:api" {
     | JsonValue[]
     | { [key: string]: JsonValue };
 
+  export type CapabilityCallValue =
+    | JsonValue
+    | ClaimedCapabilityHandle
+    | SavedCapability
+    | CapabilityCallValue[]
+    | { [key: string]: CapabilityCallValue };
+
   export type StorageValue = string | Uint8Array | JsonValue;
 
   export interface StorageInfo {
@@ -143,7 +150,7 @@ declare module "sandstorm:api" {
 
   export interface ClaimedCapability extends ClaimedCapabilityHandle {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
-    call<T = unknown>(method: string, ...args: JsonValue[]): Promise<T>;
+    call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
     offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
@@ -158,7 +165,7 @@ declare module "sandstorm:api" {
     readonly id: string;
     constructor(env: SandstormEnv, id: string);
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
-    call<T = unknown>(method: string, ...args: JsonValue[]): Promise<T>;
+    call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
     offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
