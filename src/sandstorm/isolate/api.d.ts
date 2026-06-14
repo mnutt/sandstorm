@@ -250,6 +250,7 @@ declare module "sandstorm:api" {
     storage(): StorageApiTarget;
     powerbox(): PowerboxApiTarget;
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
+    apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     capability(target: RpcTarget): Promise<ClaimedCapability>;
   }
 
@@ -266,6 +267,7 @@ declare module "sandstorm:api" {
     storage(): StorageApi;
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
+    apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     capability(target: RpcTarget): Promise<ClaimedCapability>;
     serveObjectCapabilities(): Promise<Response | null>;
     apiTarget(): SandstormApiTarget;
