@@ -286,6 +286,36 @@ export default {
       });
     }
 
+    if (url.pathname === "/storage-helper-self-test") {
+      const store = sandstorm(request, env).storage();
+      const bytes = makeBytes(257);
+      const putBytes = await store.put("helper-bytes", bytes);
+      const readBytes = await store.getBytes("helper-bytes");
+      const putJson = await store.putJson("helper-json", {
+        fixture: "storage-helper",
+        count: 3,
+        nested: { ok: true },
+      });
+      const readJson = await store.getJson("helper-json");
+      const missingBytes = await store.getBytes("helper-missing");
+      const deletedBytes = await store.delete("helper-bytes");
+      const deletedJson = await store.delete("helper-json");
+
+      return Response.json({
+        ok: true,
+        putBytes,
+        readBytes: {
+          bytes: readBytes.byteLength,
+          checksum: checksum(readBytes),
+        },
+        putJson,
+        readJson,
+        missingBytes,
+        deletedBytes,
+        deletedJson,
+      });
+    }
+
     if (url.pathname === "/export-object-capability") {
       const capability = await sandstorm(request, env).capability(new CounterCapability());
       return Response.json({

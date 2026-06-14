@@ -463,6 +463,24 @@ test("isolate supervisor integration suite", {
     assert.equal(powerboxProbe.json.powerboxEndpoint.status, 404);
     assert.equal(powerboxProbe.json.powerboxEndpoint.body.ok, false);
     assert.equal(powerboxProbe.json.powerboxEndpoint.body.error, "unknown claimed capability");
+
+    const storageHelper = await requestJson(fixture.workerdSocket, "/storage-helper-self-test");
+    assert.equal(storageHelper.statusCode, 200, storageHelper.body);
+    assert.equal(storageHelper.json.ok, true);
+    assert.deepEqual(storageHelper.json.putBytes, { ok: true, bytes: 257 });
+    assert.deepEqual(storageHelper.json.readBytes, {
+      bytes: 257,
+      checksum: checksum(Buffer.from(Array.from({ length: 257 }, (_, i) => i & 0xff))),
+    });
+    assert.equal(storageHelper.json.putJson.ok, true);
+    assert.deepEqual(storageHelper.json.readJson, {
+      fixture: "storage-helper",
+      count: 3,
+      nested: { ok: true },
+    });
+    assert.equal(storageHelper.json.missingBytes, undefined);
+    assert.equal(storageHelper.json.deletedBytes.ok, true);
+    assert.equal(storageHelper.json.deletedJson.ok, true);
   });
 
   await t.test("exports route-backed WebSession capabilities", async () => {

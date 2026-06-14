@@ -206,7 +206,9 @@ declare module "sandstorm:api" {
 
   export interface StorageApi {
     put(key: string, value: StorageValue): Promise<StorageInfo>;
+    putJson(key: string, value: JsonValue): Promise<StorageInfo>;
     get(key: string): Promise<string | undefined>;
+    getBytes(key: string): Promise<Uint8Array | undefined>;
     getJson<T = unknown>(key: string): Promise<T | undefined>;
     head(key: string): Promise<{ ok: boolean; status: number; bytes: string | null }>;
     delete(key: string): Promise<StorageInfo>;
@@ -272,7 +274,7 @@ declare module "sandstorm:api" {
     serveRpc(
       target: RpcTargetSource,
       options?: ServeRpcOptions,
-    ): Response | Promise<Response> | null;
+    ): Response | Promise<Response | null> | null;
   }
 
   export function storage(env: SandstormEnv): StorageApi;
@@ -289,6 +291,6 @@ declare module "sandstorm:api" {
     request: Request,
     target: RpcTargetSource,
     options?: ServeRpcOptions,
-  ): Response | Promise<Response> | null;
+  ): Response | Promise<Response | null> | null;
   export function sandstorm(request: Request, env: SandstormEnv): SandstormApi;
 }
