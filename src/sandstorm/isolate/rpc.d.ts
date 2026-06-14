@@ -23,5 +23,19 @@ declare module "sandstorm:rpc" {
     query?: string[],
     options?: { saveLabel?: { defaultText: string } },
   ): Promise<{ token: string; descriptor?: string }>;
+  export function requestApiPowerbox(options: {
+    canonicalUrl: string;
+    oauthScopes?: string[];
+    saveLabel?: { defaultText: string };
+    descriptorUrl?: string;
+  }): Promise<{
+    token: string;
+    descriptor?: string;
+    powerboxDescriptor: {
+      ok: true;
+      type: "packedPowerboxDescriptor";
+      descriptor: string;
+    };
+  }>;
   export function browserClientScript(): string;
 }

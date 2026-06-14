@@ -4,6 +4,7 @@ import { browserClientScript } from "sandstorm:rpc";
 export { RpcTarget } from "capnweb";
 
 const OBJECT_CAPABILITY_PREFIX = "/__sandstorm/object-capabilities";
+const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const exportedObjectTargets = new Map();
 const claimedCapabilityDisposers = new Map();
 
@@ -482,6 +483,37 @@ async function apiSessionPowerboxDescriptor(env, options = {}) {
   }
   const result = await callPowerbox(env, `powerbox/api-session-descriptor?${params}`);
   return result.descriptor;
+}
+
+export async function servePowerboxDescriptors(request, env) {
+  const url = new URL(request.url);
+  if (url.pathname !== `${POWERBOX_DESCRIPTOR_PREFIX}/api-session-descriptor`) {
+    return null;
+  }
+
+  try {
+    const scopes = url.searchParams.getAll("oauthScope");
+    const scopeList = scopes.length > 0
+      ? scopes
+      : String(url.searchParams.get("oauthScopes") || "")
+          .split(/[,\s]+/)
+          .map((scope) => scope.trim())
+          .filter(Boolean);
+    const descriptor = await apiSessionPowerboxDescriptor(env, {
+      canonicalUrl: url.searchParams.get("canonicalUrl") || "",
+      oauthScopes: scopeList,
+    });
+    return Response.json({
+      ok: true,
+      type: "packedPowerboxDescriptor",
+      descriptor,
+    });
+  } catch (error) {
+    return Response.json({
+      ok: false,
+      error: String(error?.message || error),
+    }, { status: 400 });
+  }
 }
 
 function webSessionPathPrefix(options = {}) {
@@ -1221,6 +1253,10 @@ function isObjectCapabilityRequest(request) {
   return new URL(request.url).pathname.startsWith(`${OBJECT_CAPABILITY_PREFIX}/`);
 }
 
+function isPowerboxDescriptorRequest(request) {
+  return new URL(request.url).pathname.startsWith(`${POWERBOX_DESCRIPTOR_PREFIX}/`);
+}
+
 export function sandstorm(request, env) {
   return {
     session: () => getSession(request),
@@ -1235,10 +1271,14 @@ export function sandstorm(request, env) {
     apiSession: (options = {}) => createApiSessionCapability(env, options),
     capability: (target) => createObjectCapability(env, target),
     serveObjectCapabilities: () => serveObjectCapability(request, env),
+    servePowerboxDescriptors: () => servePowerboxDescriptors(request, env),
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),
     serveRpc: (target, options) => {
+      if (isPowerboxDescriptorRequest(request)) {
+        return servePowerboxDescriptors(request, env);
+      }
       if (isObjectCapabilityRequest(request)) {
         return serveObjectCapability(request, env);
       }
