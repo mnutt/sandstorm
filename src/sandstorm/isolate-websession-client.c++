@@ -19,6 +19,7 @@
 #include <kj/debug.h>
 #include <kj/main.h>
 #include <sandstorm/util.h>
+#include <sandstorm/api-session.capnp.h>
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
@@ -171,7 +172,7 @@ public:
     KJ_REQUIRE(params.hasCap());
     KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
     KJ_REQUIRE(params.getRequiredPermissions()[0]);
-    KJ_REQUIRE(params.getDescriptor().getTags().size() == 0);
+    validateDescriptor(params.getDescriptor());
     KJ_REQUIRE(params.getDisplayInfo().getTitle().getDefaultText() ==
         "WebSession offered capability");
     ++offerCount;
@@ -183,7 +184,7 @@ public:
     KJ_REQUIRE(params.hasCap());
     KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
     KJ_REQUIRE(params.getRequiredPermissions()[0]);
-    KJ_REQUIRE(params.getDescriptor().getTags().size() == 0);
+    validateDescriptor(params.getDescriptor());
     KJ_REQUIRE(params.getDisplayInfo().getTitle().getDefaultText() ==
         "WebSession fulfilled capability");
     ++fulfillCount;
@@ -209,8 +210,27 @@ public:
   uint offerCount = 0;
   uint fulfillCount = 0;
   uint tieCount = 0;
+  uint apiDescriptorCount = 0;
   uint grainSizeReportCount = 0;
   uint64_t lastGrainSizeBytes = 0;
+
+private:
+  void validateDescriptor(PowerboxDescriptor::Reader descriptor) {
+    auto tags = descriptor.getTags();
+    if (tags.size() == 0) {
+      return;
+    }
+
+    KJ_REQUIRE(tags.size() == 1);
+    KJ_REQUIRE(tags[0].getId() == capnp::typeId<ApiSession>());
+    auto tag = tags[0].getValue().getAs<ApiSession::PowerboxTag>();
+    KJ_REQUIRE(tag.getCanonicalUrl() == "https://api.example.test/v1");
+    auto scopes = tag.getOauthScopes();
+    KJ_REQUIRE(scopes.size() == 2);
+    KJ_REQUIRE(scopes[0].getName() == "read");
+    KJ_REQUIRE(scopes[1].getName() == "write");
+    ++apiDescriptorCount;
+  }
 };
 
 class FakeSandstormCore final: public SandstormCore::Server {
@@ -702,6 +722,28 @@ public:
     KJ_REQUIRE(sessionContextRef.fulfillCount == 2, sessionContextRef.fulfillCount);
     KJ_REQUIRE(sessionContextRef.tieCount == 2, sessionContextRef.tieCount);
 
+    auto descriptorActionsRequest = session.getRequest();
+    descriptorActionsRequest.setPath(
+        "/object-capability-self-test?sessionActions=true&apiDescriptor=true");
+    descriptorActionsRequest.setIgnoreBody(false);
+    auto descriptorActionsContext = descriptorActionsRequest.initContext();
+    descriptorActionsContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    descriptorActionsContext.initCookies(0);
+    descriptorActionsContext.initAccept(0);
+    descriptorActionsContext.initAcceptEncoding(0);
+    descriptorActionsContext.initAdditionalHeaders(0);
+
+    auto descriptorActionsResponse = descriptorActionsRequest.send().wait(io.waitScope);
+    auto descriptorActionsDebugBody = responseDebugBody(descriptorActionsResponse);
+    KJ_REQUIRE(descriptorActionsResponse.which() == WebSession::Response::CONTENT,
+        descriptorActionsDebugBody);
+    auto descriptorActionsContent = descriptorActionsResponse.getContent();
+    KJ_REQUIRE(descriptorActionsContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(sessionContextRef.offerCount == 3, sessionContextRef.offerCount);
+    KJ_REQUIRE(sessionContextRef.fulfillCount == 3, sessionContextRef.fulfillCount);
+    KJ_REQUIRE(sessionContextRef.tieCount == 3, sessionContextRef.tieCount);
+    KJ_REQUIRE(sessionContextRef.apiDescriptorCount == 2, sessionContextRef.apiDescriptorCount);
+
     auto offerSessionContext = kj::heap<FakeSessionContext>();
     auto& offerSessionContextRef = *offerSessionContext;
     auto offerSessionRequest = view.newOfferSessionRequest();
@@ -715,7 +757,13 @@ public:
     offerSessionParams.setBasePath("https://ui-offer-test.invalid");
     offerSessionParams.setUserAgent("isolate-websession-offer-client");
     offerSessionRequest.setOffer(kj::heap<FakeClaimedCapability>(offerSessionContextRef.saveCount));
-    offerSessionRequest.initDescriptor().initTags(0);
+    auto offerDescriptorTag = offerSessionRequest.initDescriptor().initTags(1)[0];
+    offerDescriptorTag.setId(capnp::typeId<ApiSession>());
+    auto offerApiTag = offerDescriptorTag.initValue().initAs<ApiSession::PowerboxTag>();
+    offerApiTag.setCanonicalUrl("https://api.offer-session.test/v1");
+    offerApiTag.initOauthScopes(2);
+    offerApiTag.getOauthScopes()[0].setName("offer.read");
+    offerApiTag.getOauthScopes()[1].setName("offer.write");
     offerSessionRequest.setTabId(kj::StringPtr("offer-session-tab").asBytes());
 
     auto offerSession = offerSessionRequest.send().wait(io.waitScope)
@@ -741,6 +789,12 @@ public:
     KJ_REQUIRE(contains(offerBody, "\"sessionType\":\"offer\""), offerBody);
     KJ_REQUIRE(contains(offerBody, "\"offeredCapabilityId\":\""), offerBody);
     KJ_REQUIRE(contains(offerBody, "\"offeredClass\":true"), offerBody);
+    KJ_REQUIRE(contains(offerBody,
+        "\"descriptor\":{\"type\":\"apiSession\","
+        "\"canonicalUrl\":\"https://api.offer-session.test/v1\","
+        "\"oauthScopes\":[\"offer.read\",\"offer.write\"]}"),
+        offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"capabilityClass\":true"), offerBody);
     KJ_REQUIRE(contains(offerBody,
         "\"fetched\":{\"status\":200,\"body\":{\"ok\":true,"
         "\"source\":\"fake-claimed-capability\","

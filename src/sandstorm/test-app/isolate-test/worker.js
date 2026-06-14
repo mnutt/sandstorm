@@ -197,7 +197,10 @@ export default {
     }
 
     if (url.pathname === "/offer-session") {
-      const offered = sandstormPowerbox(request, env).offeredCapability();
+      const api = sandstorm(request, env);
+      const powerbox = sandstormPowerbox(request, env);
+      const offered = powerbox.offeredCapability();
+      const offeredInfo = powerbox.offeredCapabilityInfo();
       let fetched = null;
       let drop = null;
       if (offered) {
@@ -213,6 +216,14 @@ export default {
         sessionType: request.headers.get("x-sandstorm-session-type"),
         offeredCapabilityId: request.headers.get("x-sandstorm-offered-capability-id"),
         offeredClass: offered instanceof ClaimedCapability,
+        sessionOffer: api.session().offer,
+        offeredInfo: offeredInfo ? {
+          ...offeredInfo,
+          capabilityClass: offeredInfo.capability instanceof ClaimedCapability,
+          capability: offeredInfo.capability
+              ? JSON.parse(JSON.stringify(offeredInfo.capability))
+              : null,
+        } : null,
         offered: offered ? JSON.parse(JSON.stringify(offered)) : null,
         fetched,
         drop,
@@ -449,13 +460,23 @@ export default {
       const stubReadChild = await stub.readOther(stubChild);
       let sessionActions = null;
       if (url.searchParams.get("sessionActions") === "true") {
+        const descriptorOptions = url.searchParams.get("apiDescriptor") === "true"
+          ? {
+              apiSession: {
+                canonicalUrl: "https://api.example.test/v1",
+                oauthScopes: ["read", "write"],
+              },
+            }
+          : {};
         const offer = await capability.offer(request, {
           title: "WebSession offered capability",
           requiredPermissions: ["view"],
+          ...descriptorOptions,
         });
         const fulfill = await capability.fulfillRequest(request, {
           title: "WebSession fulfilled capability",
           requiredPermissions: ["view"],
+          ...descriptorOptions,
         });
         const tied = await capability.tieToUser(request, {
           title: "WebSession tied capability",
