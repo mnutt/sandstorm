@@ -235,6 +235,34 @@ declare module "sandstorm:api" {
     requiredPermissions?: string[];
   }
 
+  export interface SavedCapabilityStorageOptions extends ClaimRequestOptions, SaveCapabilityOptions {
+    storageKey?: string;
+    key?: string;
+  }
+
+  export interface ClaimAndSaveResult {
+    ok: true;
+    capability: ClaimedCapability;
+    saved: SavedCapability;
+    token: string;
+    storageKey: string;
+  }
+
+  export interface RestoreSavedResult {
+    ok: boolean;
+    storageKey: string;
+    token?: string;
+    capability?: ClaimedCapability;
+  }
+
+  export interface DropSavedFromStorageResult {
+    ok: true;
+    storageKey: string;
+    dropped: boolean;
+    dropSaved?: { ok: true };
+    deleted: StorageInfo;
+  }
+
   export interface ApiSessionPowerboxRequestOptions extends ClaimRequestOptions {
     canonicalUrl: string;
     oauthScopes?: string[];
@@ -265,6 +293,14 @@ declare module "sandstorm:api" {
     requestApi(options: ApiSessionPowerboxOptions): Promise<ClaimedCapability>;
     apiSessionDescriptor(options: ApiSessionPowerboxOptions): Promise<string>;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
+    claimAndSave(
+      token: string,
+      options?: SavedCapabilityStorageOptions,
+    ): Promise<ClaimAndSaveResult>;
+    restoreSaved(options?: SavedCapabilityStorageOptions): Promise<RestoreSavedResult>;
+    dropSavedFromStorage(
+      options?: SavedCapabilityStorageOptions,
+    ): Promise<DropSavedFromStorageResult>;
     offeredCapability(): ClaimedCapability | undefined;
     offeredCapabilityInfo(): OfferedCapabilityInfo | undefined;
     offer(

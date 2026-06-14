@@ -932,6 +932,66 @@ function permissionNames(options = {}) {
   });
 }
 
+function storageKey(options = {}) {
+  return validate.storageKey(options.storageKey ?? options.key ?? "powerbox-token", "storageKey");
+}
+
+async function claimAndSavePowerboxCapability(env, request, token, options = {}) {
+  const capability = await powerbox(request, env).claimRequest(token, options);
+  const saved = await capability.save(options);
+  const key = storageKey(options);
+  await storage(env).put(key, saved.token);
+  return {
+    ok: true,
+    capability,
+    saved,
+    token: saved.token,
+    storageKey: key,
+  };
+}
+
+async function restoreSavedPowerboxCapabilityFromStorage(env, options = {}) {
+  const key = storageKey(options);
+  const token = await storage(env).get(key);
+  if (!token) {
+    return {
+      ok: false,
+      storageKey: key,
+      capability: undefined,
+    };
+  }
+
+  return {
+    ok: true,
+    storageKey: key,
+    token,
+    capability: await restoreSavedCapability(env, token),
+  };
+}
+
+async function dropSavedPowerboxCapabilityFromStorage(env, options = {}) {
+  const key = storageKey(options);
+  const token = await storage(env).get(key);
+  if (!token) {
+    return {
+      ok: true,
+      storageKey: key,
+      dropped: false,
+      deleted: await storage(env).delete(key),
+    };
+  }
+
+  const dropped = await dropSavedCapability(env, token);
+  const deleted = await storage(env).delete(key);
+  return {
+    ok: true,
+    storageKey: key,
+    dropped: true,
+    dropSaved: dropped,
+    deleted,
+  };
+}
+
 export function powerbox(request, env) {
   return {
     async request() {
@@ -956,6 +1016,19 @@ export function powerbox(request, env) {
       const capability = await postPowerbox(env,
         `powerbox/claim-request?sessionId=${sessionId}&token=${encodedToken}${permissionQuery}`);
       return wrapClaimedCapability(env, capability);
+    },
+
+    async claimAndSave(token, options = {}) {
+      token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
+      return claimAndSavePowerboxCapability(env, request, token, options);
+    },
+
+    async restoreSaved(options = {}) {
+      return restoreSavedPowerboxCapabilityFromStorage(env, options);
+    },
+
+    async dropSavedFromStorage(options = {}) {
+      return dropSavedPowerboxCapabilityFromStorage(env, options);
     },
 
     offeredCapability() {
@@ -1109,6 +1182,18 @@ class PowerboxRpcTarget extends RpcTarget {
 
   async claimRequest(token, options) {
     return powerbox(this.#request, this.#env).claimRequest(token, options);
+  }
+
+  async claimAndSave(token, options) {
+    return powerbox(this.#request, this.#env).claimAndSave(token, options || {});
+  }
+
+  async restoreSaved(options) {
+    return powerbox(this.#request, this.#env).restoreSaved(options || {});
+  }
+
+  async dropSavedFromStorage(options) {
+    return powerbox(this.#request, this.#env).dropSavedFromStorage(options || {});
   }
 
   offeredCapability() {
