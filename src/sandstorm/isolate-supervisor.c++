@@ -3354,6 +3354,8 @@ public:
         return dropPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fetch") {
         return fetchClaimedCapability(path, contentType, kj::mv(bodyBytes), response);
+      } else if (methodName == "POST" && route == "/powerbox/request-api") {
+        return requestApiSessionCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/offer") {
         return offerClaimedCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fulfill-request") {
@@ -3495,6 +3497,7 @@ private:
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
         "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
+        "\"powerbox.requestApi\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\"]\n"
         "}\n");
@@ -4047,6 +4050,50 @@ private:
     }
 
     return kj::str("unknown required permission: ", name);
+  }
+
+  kj::Promise<void> requestApiSessionCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    auto sessionIds = findIsolateQueryParams(url, "sessionId");
+    if (sessionIds.size() != 1 || sessionIds[0].size() == 0) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one sessionId\"\n}\n"));
+    }
+
+    auto descriptorTypes = findIsolateQueryParams(url, "descriptor");
+    if (descriptorTypes.size() != 1 || descriptorTypes[0] != "apiSession") {
+      return sendJson(response, 400, "Bad Request", renderError(
+          "request-api requires exactly one apiSession descriptor"));
+    }
+
+    auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
+    auto permissionDefs = viewInfo.getPermissions();
+    auto permissionNames = findIsolateQueryParams(url, "requiredPermission");
+    for (auto& name: permissionNames) {
+      if (name.size() == 0) {
+        return sendJson(response, 400, "Bad Request",
+            renderError("missing required permission name"));
+      }
+    }
+
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionIds[0])) {
+      auto request = sessionContext->requestRequest();
+      initApiSessionPowerboxDescriptor(url, request.initQuery(1)[0]);
+      auto requiredPermissions = request.initRequiredPermissions(permissionDefs.size());
+      for (auto& name: permissionNames) {
+        KJ_IF_MAYBE(error, setRequiredPermission(name, requiredPermissions, permissionDefs)) {
+          return sendJson(response, 400, "Bad Request", renderError(*error));
+        }
+      }
+      return request.send().then(
+          [this, &response](auto result) mutable {
+        auto capId = host.sessions->storeClaimedCapability(result.getCap());
+        return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+      });
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown isolate session\"\n}\n"));
+    }
   }
 
   kj::String renderError(kj::StringPtr error) {

@@ -388,6 +388,27 @@ export default {
       });
     }
 
+    if (url.pathname === "/request-api-session-self-test") {
+      const capability = await sandstorm(request, env).powerbox().requestApi({
+        canonicalUrl: "https://api.example.test/v1",
+        oauthScopes: ["read", "write"],
+        requiredPermissions: ["view"],
+      });
+      const fetchedResponse = await capability.fetch("/capability-echo?source=request-api");
+      const fetched = {
+        status: fetchedResponse.status,
+        body: await fetchedResponse.json(),
+      };
+      const drop = await capability.drop();
+      return Response.json({
+        ok: true,
+        capabilityClass: capability instanceof ClaimedCapability,
+        capability: JSON.parse(JSON.stringify(capability)),
+        fetched,
+        drop,
+      });
+    }
+
     if (url.pathname === "/powerbox-binding-probe") {
       const statusResponse = await env.POWERBOX.fetch("http://sandstorm/status");
       const dropResponse = await env.POWERBOX.fetch(
