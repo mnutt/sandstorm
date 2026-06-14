@@ -3437,6 +3437,63 @@ private:
     return kj::str(path.slice(start, path.size()));
   }
 
+  bool isValidCapabilityFetchHeaderName(kj::StringPtr name) {
+    if (name.size() == 0 || name.size() > 256) {
+      return false;
+    }
+
+    for (auto c: name) {
+      if (!((c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c == '!' || c == '#' || c == '$' || c == '%' || c == '&' ||
+            c == '\'' || c == '*' || c == '+' || c == '-' || c == '.' ||
+            c == '^' || c == '_' || c == '`' || c == '|' || c == '~')) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  bool isValidCapabilityFetchHeaderValue(kj::StringPtr value) {
+    if (value.size() > 8192) {
+      return false;
+    }
+
+    for (auto c: value) {
+      if (c == '\r' || c == '\n' || c == '\0') {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  kj::Vector<FetchHeader> getCapabilityFetchHeaders(kj::StringPtr url) {
+    auto names = findIsolateQueryParams(url, "headerName");
+    auto values = findIsolateQueryParams(url, "headerValue");
+    KJ_REQUIRE(names.size() == values.size(),
+        "claimed capability fetch headers must have matching names and values");
+    KJ_REQUIRE(names.size() <= 32, "claimed capability fetch has too many headers");
+
+    HeaderWhitelist requestHeaderWhitelist(*WebSession::Context::HEADER_WHITELIST);
+    kj::Vector<FetchHeader> result;
+    for (auto i: kj::indices(names)) {
+      KJ_REQUIRE(isValidCapabilityFetchHeaderName(names[i]),
+          "claimed capability fetch header name is invalid", names[i]);
+      KJ_REQUIRE(isValidCapabilityFetchHeaderValue(values[i]),
+          "claimed capability fetch header value is invalid", names[i]);
+      if (requestHeaderWhitelist.matches(names[i])) {
+        auto name = kj::heapString(names[i]);
+        toLower(name);
+        result.add(FetchHeader { kj::mv(name), kj::mv(values[i]) });
+      }
+    }
+
+    return result;
+  }
+
   kj::String normalizeWebSessionPathPrefix(kj::StringPtr pathPrefix) {
     KJ_REQUIRE(pathPrefix.size() <= 1024, "web session capability pathPrefix is too long");
     for (size_t i = 0; i + 2 < pathPrefix.size(); ++i) {
@@ -3487,6 +3544,7 @@ private:
     auto ids = findIsolateQueryParams(url, "id");
     auto methods = findIsolateQueryParams(url, "method");
     auto paths = findIsolateQueryParams(url, "path");
+    auto additionalHeaders = getCapabilityFetchHeaders(url);
     if (ids.size() != 1 || ids[0].size() == 0 ||
         methods.size() != 1 || methods[0].size() == 0 ||
         paths.size() != 1) {
@@ -3508,7 +3566,8 @@ private:
         auto request = webSession.getRequest();
         request.setPath(path);
         request.setIgnoreBody(method == "head");
-        initCapabilityFetchContext(request.initContext(), kj::mv(responseStreamServer));
+        initCapabilityFetchContext(
+            request.initContext(), kj::mv(responseStreamServer), additionalHeaders);
         return request.send()
             .then([this, &response, streamDone = kj::mv(streamDone)]
                 (auto result) mutable {
@@ -3521,7 +3580,8 @@ private:
         auto request = webSession.postRequest();
         request.setPath(path);
         initPostContent(request.initContent(), contentType, bodyBytes);
-        initCapabilityFetchContext(request.initContext(), kj::mv(responseStreamServer));
+        initCapabilityFetchContext(
+            request.initContext(), kj::mv(responseStreamServer), additionalHeaders);
         return request.send()
             .then([this, &response, streamDone = kj::mv(streamDone)]
                 (auto result) mutable {
@@ -3534,7 +3594,8 @@ private:
         auto request = webSession.putRequest();
         request.setPath(path);
         initPutContent(request.initContent(), contentType, bodyBytes);
-        initCapabilityFetchContext(request.initContext(), kj::mv(responseStreamServer));
+        initCapabilityFetchContext(
+            request.initContext(), kj::mv(responseStreamServer), additionalHeaders);
         return request.send()
             .then([this, &response, streamDone = kj::mv(streamDone)]
                 (auto result) mutable {
@@ -3547,7 +3608,8 @@ private:
         auto request = webSession.patchRequest();
         request.setPath(path);
         initPostContent(request.initContent(), contentType, bodyBytes);
-        initCapabilityFetchContext(request.initContext(), kj::mv(responseStreamServer));
+        initCapabilityFetchContext(
+            request.initContext(), kj::mv(responseStreamServer), additionalHeaders);
         return request.send()
             .then([this, &response, streamDone = kj::mv(streamDone)]
                 (auto result) mutable {
@@ -3559,7 +3621,8 @@ private:
       } else if (method == "delete") {
         auto request = webSession.deleteRequest();
         request.setPath(path);
-        initCapabilityFetchContext(request.initContext(), kj::mv(responseStreamServer));
+        initCapabilityFetchContext(
+            request.initContext(), kj::mv(responseStreamServer), additionalHeaders);
         return request.send()
             .then([this, &response, streamDone = kj::mv(streamDone)]
                 (auto result) mutable {
@@ -3580,12 +3643,17 @@ private:
   }
 
   void initCapabilityFetchContext(
-      WebSession::Context::Builder context, kj::Own<BufferedByteStream> responseStream) {
+      WebSession::Context::Builder context, kj::Own<BufferedByteStream> responseStream,
+      kj::ArrayPtr<FetchHeader> additionalHeaders) {
     context.initCookies(0);
     context.setResponseStream(kj::mv(responseStream));
     context.initAccept(0);
     context.initAcceptEncoding(0);
-    context.initAdditionalHeaders(0);
+    auto headers = context.initAdditionalHeaders(additionalHeaders.size());
+    for (auto i: kj::indices(additionalHeaders)) {
+      headers[i].setName(additionalHeaders[i].name);
+      headers[i].setValue(additionalHeaders[i].value);
+    }
   }
 
   void initPostContent(

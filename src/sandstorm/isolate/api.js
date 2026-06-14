@@ -601,6 +601,32 @@ function savedCapabilityToken(value, name = "token") {
   throw new ValidationError(`${name} must be a saved capability token`);
 }
 
+const CLAIMED_CAPABILITY_FETCH_HEADER_NAMES = new Set([
+  "oc-total-length",
+  "oc-chunk-size",
+  "x-oc-mtime",
+  "oc-fileid",
+  "oc-chunked",
+  "oc-checksum",
+  "oc-chunk-offset",
+  "oc-lazyops",
+  "x-requested-with",
+  "x-csrftoken",
+  "x-csrf-token",
+]);
+
+const CLAIMED_CAPABILITY_FETCH_HEADER_PREFIXES = [
+  "x-sandstorm-app-",
+  "x-hgarg-",
+  "x-phabricator-",
+];
+
+function shouldForwardClaimedCapabilityFetchHeader(name) {
+  name = String(name).toLowerCase();
+  return CLAIMED_CAPABILITY_FETCH_HEADER_NAMES.has(name) ||
+    CLAIMED_CAPABILITY_FETCH_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
 async function restoreSavedCapability(env, token) {
   const encodedToken = encodeURIComponent(savedCapabilityToken(token));
   const capability = await postPowerbox(env, `powerbox/restore?token=${encodedToken}`);
@@ -613,7 +639,6 @@ async function dropSavedCapability(env, token) {
 }
 
 async function fetchClaimedCapability(env, capability, input, init = {}) {
-  const id = encodeURIComponent(capabilityId(capability));
   let request;
   if (input instanceof Request) {
     request = init === undefined ? input : new Request(input, init);
@@ -623,12 +648,21 @@ async function fetchClaimedCapability(env, capability, input, init = {}) {
   }
 
   const url = new URL(request.url);
-  const path = encodeURIComponent(`${url.pathname}${url.search}`);
-  const method = encodeURIComponent(request.method || "GET");
+  const params = new URLSearchParams({
+    id: capabilityId(capability),
+    method: request.method || "GET",
+    path: `${url.pathname}${url.search}`,
+  });
   const headers = {};
   const contentType = request.headers.get("content-type");
   if (contentType !== null) {
     headers["content-type"] = contentType;
+  }
+  for (const [name, value] of request.headers) {
+    if (name !== "content-type" && shouldForwardClaimedCapabilityFetchHeader(name)) {
+      params.append("headerName", name);
+      params.append("headerValue", value);
+    }
   }
 
   let body;
@@ -637,7 +671,7 @@ async function fetchClaimedCapability(env, capability, input, init = {}) {
   }
 
   return powerboxFetcher(env).fetch(
-    `http://sandstorm/powerbox/fetch?id=${id}&method=${method}&path=${path}`,
+    `http://sandstorm/powerbox/fetch?${params}`,
     {
       method: "POST",
       headers,

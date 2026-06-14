@@ -226,6 +226,8 @@ export default {
         pathname: url.pathname,
         search: url.search,
         sessionType: request.headers.get("x-sandstorm-session-type"),
+        appHeader: request.headers.get("x-sandstorm-app-claimed-fetch"),
+        blockedHeader: request.headers.get("x-not-forwarded"),
       });
     }
 
@@ -247,7 +249,12 @@ export default {
       const saved = await capability.save({ label: "Route-backed WebSession fixture" });
       const dropOriginal = await capability.drop();
       const restored = await saved.restore();
-      const fetchedResponse = await restored.fetch("/capability-echo?source=js-restore");
+      const fetchedResponse = await restored.fetch("/capability-echo?source=js-restore", {
+        headers: {
+          "x-sandstorm-app-claimed-fetch": "present",
+          "x-not-forwarded": "blocked",
+        },
+      });
       const fetched = {
         status: fetchedResponse.status,
         body: await fetchedResponse.json(),
