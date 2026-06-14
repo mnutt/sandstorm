@@ -940,6 +940,10 @@ export function serveRpc(request, target, options = {}) {
   return null;
 }
 
+function isObjectCapabilityRequest(request) {
+  return new URL(request.url).pathname.startsWith(`${OBJECT_CAPABILITY_PREFIX}/`);
+}
+
 export function sandstorm(request, env) {
   return {
     session: () => getSession(request),
@@ -956,6 +960,11 @@ export function sandstorm(request, env) {
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),
-    serveRpc: (target, options) => serveRpc(request, target, options),
+    serveRpc: (target, options) => {
+      if (isObjectCapabilityRequest(request)) {
+        return serveObjectCapability(request, env);
+      }
+      return serveRpc(request, target, options);
+    },
   };
 }
