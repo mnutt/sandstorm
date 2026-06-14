@@ -670,6 +670,38 @@ public:
         "\"capability\":{\"ok\":true,\"type\":\"claimedCapability\",\"id\":\""),
         exportBody);
 
+    auto objectActionsRequest = session.getRequest();
+    objectActionsRequest.setPath("/object-capability-self-test?sessionActions=true");
+    objectActionsRequest.setIgnoreBody(false);
+    auto objectActionsContext = objectActionsRequest.initContext();
+    objectActionsContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    objectActionsContext.initCookies(0);
+    objectActionsContext.initAccept(0);
+    objectActionsContext.initAcceptEncoding(0);
+    objectActionsContext.initAdditionalHeaders(0);
+
+    auto objectActionsResponse = objectActionsRequest.send().wait(io.waitScope);
+    auto objectActionsDebugBody = responseDebugBody(objectActionsResponse);
+    KJ_REQUIRE(objectActionsResponse.which() == WebSession::Response::CONTENT,
+        objectActionsDebugBody);
+    auto objectActionsContent = objectActionsResponse.getContent();
+    KJ_REQUIRE(objectActionsContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(objectActionsContent.getBody().which() ==
+        WebSession::Response::Content::Body::BYTES);
+    auto objectActionsBody = kj::str(objectActionsContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(objectActionsBody, "\"ok\":true"), objectActionsBody);
+    KJ_REQUIRE(contains(objectActionsBody, "\"childClass\":true"), objectActionsBody);
+    KJ_REQUIRE(contains(objectActionsBody, "\"sessionActions\":{\"offer\":{\"ok\":true}"),
+        objectActionsBody);
+    KJ_REQUIRE(contains(objectActionsBody, "\"fulfill\":{\"ok\":true}"), objectActionsBody);
+    KJ_REQUIRE(contains(objectActionsBody, "\"tie\":{\"ok\":true,\"claimedClass\":true"),
+        objectActionsBody);
+    KJ_REQUIRE(contains(objectActionsBody, "\"dropTied\":{\"ok\":true}"), objectActionsBody);
+    KJ_REQUIRE(contains(objectActionsBody, "\"drop\":{\"ok\":true}"), objectActionsBody);
+    KJ_REQUIRE(sessionContextRef.offerCount == 2, sessionContextRef.offerCount);
+    KJ_REQUIRE(sessionContextRef.fulfillCount == 2, sessionContextRef.fulfillCount);
+    KJ_REQUIRE(sessionContextRef.tieCount == 2, sessionContextRef.tieCount);
+
     auto offerSessionContext = kj::heap<FakeSessionContext>();
     auto& offerSessionContextRef = *offerSessionContext;
     auto offerSessionRequest = view.newOfferSessionRequest();
