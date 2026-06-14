@@ -347,10 +347,22 @@ function webSessionPathPrefix(options = {}) {
   return pathPrefix;
 }
 
+function webSessionPersistent(options = {}) {
+  if (options.persistent === undefined || options.persistent === null) {
+    return true;
+  }
+  if (typeof options.persistent !== "boolean") {
+    throw new ValidationError("persistent must be a boolean");
+  }
+  return options.persistent;
+}
+
 async function createWebSessionCapability(env, options = {}) {
   const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
+  const persistent = webSessionPersistent(options) ? "true" : "false";
   return wrapClaimedCapability(
-    env, await postSandstorm(env, `capabilities/web-session?pathPrefix=${pathPrefix}`));
+    env, await postSandstorm(
+      env, `capabilities/web-session?pathPrefix=${pathPrefix}&persistent=${persistent}`));
 }
 
 function capabilityMethodName(value, name = "method") {
@@ -384,6 +396,7 @@ async function createObjectCapability(env, target) {
   try {
     const capability = await createWebSessionCapability(env, {
       pathPrefix: `${OBJECT_CAPABILITY_PREFIX}/${encodeURIComponent(id)}`,
+      persistent: false,
     });
     claimedCapabilityDisposers.set(capability.id, () => exportedObjectTargets.delete(id));
     return capability;
