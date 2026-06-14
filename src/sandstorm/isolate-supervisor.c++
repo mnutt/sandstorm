@@ -30,6 +30,7 @@
 #include <capnp/rpc-twoparty.h>
 #include <capnp/schema.h>
 #include <capnp/serialize.h>
+#include <capnp/serialize-packed.h>
 #include <kj/async-io.h>
 #include <kj/async-unix.h>
 #include <kj/compat/http.h>
@@ -3375,6 +3376,8 @@ public:
 
       if (route == "/" || route == "/status") {
         return sendJson(response, 200, "OK", renderStatus(methodName, path, bodyBytes.size()));
+      } else if (route == "/powerbox/api-session-descriptor") {
+        return apiSessionPowerboxDescriptor(path, response);
       } else if (route == "/capabilities") {
         return sendJson(response, 200, "OK", renderCapabilities());
       } else if (route == "/runtime") {
@@ -3497,7 +3500,7 @@ private:
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
         "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
-        "\"powerbox.requestApi\", "
+        "\"powerbox.apiSessionDescriptor\", \"powerbox.requestApi\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\"]\n"
         "}\n");
@@ -4094,6 +4097,26 @@ private:
       return sendJson(response, 404, "Not Found", kj::heapString(
           "{\n  \"ok\": false,\n  \"error\": \"unknown isolate session\"\n}\n"));
     }
+  }
+
+  kj::Promise<void> apiSessionPowerboxDescriptor(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    capnp::MallocMessageBuilder message;
+    auto descriptor = message.initRoot<PowerboxDescriptor>();
+    initApiSessionPowerboxDescriptor(url, descriptor);
+
+    kj::VectorOutputStream output;
+    capnp::writePackedMessage(output, message);
+    auto packed = kj::encodeBase64Url(output.getArray());
+
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  "));
+    appendJsonField(json, "type", "packedPowerboxDescriptor");
+    json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "descriptor", packed);
+    json.addAll(kj::StringPtr("\n}\n"));
+    json.add('\0');
+    return sendJson(response, 200, "OK", kj::String(json.releaseAsArray()));
   }
 
   kj::String renderError(kj::StringPtr error) {
