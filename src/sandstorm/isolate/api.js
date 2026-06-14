@@ -151,6 +151,15 @@ export function storage(env) {
       return readStorageJson(response);
     },
 
+    async putJson(key, value) {
+      const response = await env.STORAGE.fetch(storageUrl(key), {
+        method: "PUT",
+        headers: { "content-type": "application/json; charset=utf-8" },
+        body: JSON.stringify(value),
+      });
+      return readStorageJson(response);
+    },
+
     async get(key) {
       const response = await env.STORAGE.fetch(storageUrl(key));
       if (response.status === 404) return undefined;
@@ -158,6 +167,15 @@ export function storage(env) {
         throw new Error(`storage get ${key} failed with ${response.status}`);
       }
       return response.text();
+    },
+
+    async getBytes(key) {
+      const response = await env.STORAGE.fetch(storageUrl(key));
+      if (response.status === 404) return undefined;
+      if (!response.ok) {
+        throw new Error(`storage getBytes ${key} failed with ${response.status}`);
+      }
+      return new Uint8Array(await response.arrayBuffer());
     },
 
     async getJson(key) {
@@ -771,8 +789,16 @@ class StorageRpcTarget extends RpcTarget {
     return storage(this.#env).put(key, value);
   }
 
+  putJson(key, value) {
+    return storage(this.#env).putJson(key, value);
+  }
+
   get(key) {
     return storage(this.#env).get(key);
+  }
+
+  getBytes(key) {
+    return storage(this.#env).getBytes(key);
   }
 
   getJson(key) {
