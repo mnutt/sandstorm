@@ -850,6 +850,16 @@ test("isolate supervisor integration suite", {
     assert.equal(download.bodyBuffer[255], 255);
     assert.equal(download.bodyBuffer[256], 0);
 
+    const range = await requestUnixSocket(fixture.workerdSocket, "/range", {
+      headers: { Range: "bytes=10-19" },
+    });
+    assert.equal(range.statusCode, 206);
+    assert.equal(range.headers["content-range"], "bytes 10-19/256");
+    assert.equal(range.headers["x-sandstorm-app-range-response"], "present");
+    assert.equal(range.bodyBuffer.length, 10);
+    assert.equal(range.bodyBuffer[0], 10);
+    assert.equal(range.bodyBuffer[9], 19);
+
     const headers = await requestUnixSocket(fixture.workerdSocket, "/headers");
     assert.equal(headers.statusCode, 200);
     assert.equal(headers.body, "header response");
