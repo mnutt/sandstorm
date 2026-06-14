@@ -222,6 +222,31 @@ export default {
       const child = await capability.call("child");
       const childFirst = await child.call("increment", 11);
       const readChild = await capability.call("readOther", child);
+      let sessionActions = null;
+      if (url.searchParams.get("sessionActions") === "true") {
+        const offer = await capability.offer(request, {
+          title: "WebSession offered capability",
+          requiredPermissions: ["view"],
+        });
+        const fulfill = await capability.fulfillRequest(request, {
+          title: "WebSession fulfilled capability",
+          requiredPermissions: ["view"],
+        });
+        const tied = await capability.tieToUser(request, {
+          title: "WebSession tied capability",
+          requiredPermissions: ["view"],
+        });
+        sessionActions = {
+          offer,
+          fulfill,
+          tie: {
+            ok: tied.ok,
+            claimedClass: tied instanceof ClaimedCapability,
+            json: JSON.parse(JSON.stringify(tied)),
+          },
+          dropTied: await tied.drop(),
+        };
+      }
       let missing;
       try {
         await capability.call("missingMethod");
@@ -242,6 +267,7 @@ export default {
         child: JSON.parse(JSON.stringify(child)),
         childFirst,
         readChild,
+        sessionActions,
         missing,
         drop,
       });
