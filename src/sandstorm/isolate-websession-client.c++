@@ -682,6 +682,54 @@ public:
     KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
     KJ_REQUIRE(sessionContextRef.tieCount == 1, sessionContextRef.tieCount);
 
+    auto storageHelperRequest = session.getRequest();
+    storageHelperRequest.setPath("/powerbox-storage-helper-self-test");
+    storageHelperRequest.setIgnoreBody(false);
+    auto storageHelperContext = storageHelperRequest.initContext();
+    storageHelperContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    storageHelperContext.initCookies(0);
+    storageHelperContext.initAccept(0);
+    storageHelperContext.initAcceptEncoding(0);
+    storageHelperContext.initAdditionalHeaders(0);
+
+    auto storageHelperResponse = storageHelperRequest.send().wait(io.waitScope);
+    auto storageHelperDebugBody = responseDebugBody(storageHelperResponse);
+    KJ_REQUIRE(storageHelperResponse.which() == WebSession::Response::CONTENT,
+        storageHelperDebugBody);
+    auto storageHelperContent = storageHelperResponse.getContent();
+    KJ_REQUIRE(storageHelperContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(storageHelperContent.getBody().which() ==
+        WebSession::Response::Content::Body::BYTES);
+    auto storageHelperBody = kj::str(storageHelperContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(storageHelperBody, "\"ok\":true"), storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody, "\"capabilityClass\":true"), storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody, "\"savedClass\":true"), storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody, "\"storageKey\":\"powerbox-storage-helper-token\""),
+        storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody, "\"token\":\"d2Vic2Vzc2lvbi1zYXZlZC10b2tlbg\""),
+        storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"source\":\"fake-claimed-capability\","
+        "\"path\":\"capability-echo?source=helper-original\""),
+        storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"source\":\"fake-claimed-capability\","
+        "\"path\":\"capability-echo?source=helper-restored\""),
+        storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody, "\"dropOriginal\":{\"ok\":true}"), storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody, "\"dropRestored\":{\"ok\":true}"), storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"dropSaved\":{\"ok\":true,\"storageKey\":\"powerbox-storage-helper-token\","
+        "\"dropped\":true"),
+        storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"afterDrop\":{\"ok\":false,\"storageKey\":\"powerbox-storage-helper-token\""),
+        storageHelperBody);
+    KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 2, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 2, sessionContextRef.tokenDropCount);
+
     auto exportRequest = session.getRequest();
     exportRequest.setPath("/export-web-session");
     exportRequest.setIgnoreBody(false);
@@ -869,10 +917,10 @@ public:
     KJ_REQUIRE(badClaim.hasNonHtmlBody());
     auto badClaimBody = kj::str(badClaim.getNonHtmlBody().getData().asChars());
     KJ_REQUIRE(contains(badClaimBody, "unknown required permission"), badClaimBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
-    KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 1, sessionContextRef.restoreCount);
-    KJ_REQUIRE(sessionContextRef.tokenDropCount == 1, sessionContextRef.tokenDropCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 2, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 2, sessionContextRef.tokenDropCount);
 
     supervisor.syncStorageRequest().send().wait(io.waitScope);
     KJ_REQUIRE(sessionContextRef.grainSizeReportCount == 1,

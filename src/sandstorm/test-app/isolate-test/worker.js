@@ -747,6 +747,57 @@ export default {
       }, { status: claimResponseStatus });
     }
 
+    if (url.pathname === "/powerbox-storage-helper-self-test") {
+      const helper = sandstormPowerbox(request, env);
+      const storageKey = "powerbox-storage-helper-token";
+      const claimed = await helper.claimAndSave("websession/test+token==", {
+        label: "WebSession saved capability",
+        storageKey,
+        requiredPermissions: ["view"],
+      });
+      const originalFetch = await claimed.capability.fetch("/capability-echo?source=helper-original");
+      const dropOriginal = await claimed.capability.drop();
+      const restored = await helper.restoreSaved({ storageKey });
+      let restoredFetch = null;
+      let dropRestored = null;
+      if (restored.capability) {
+        const restoredResponse =
+          await restored.capability.fetch("/capability-echo?source=helper-restored");
+        restoredFetch = {
+          status: restoredResponse.status,
+          body: await restoredResponse.json(),
+        };
+        dropRestored = await restored.capability.drop();
+      }
+      const dropSaved = await helper.dropSavedFromStorage({ storageKey });
+      const afterDrop = await helper.restoreSaved({ storageKey });
+      return Response.json({
+        ok: true,
+        claimed: {
+          ok: claimed.ok,
+          capabilityClass: claimed.capability instanceof ClaimedCapability,
+          savedClass: claimed.saved instanceof SavedCapability,
+          storageKey: claimed.storageKey,
+          token: claimed.token,
+        },
+        originalFetch: {
+          status: originalFetch.status,
+          body: await originalFetch.json(),
+        },
+        dropOriginal,
+        restored: {
+          ok: restored.ok,
+          capabilityClass: restored.capability instanceof ClaimedCapability,
+          storageKey: restored.storageKey,
+          token: restored.token,
+        },
+        restoredFetch,
+        dropRestored,
+        dropSaved,
+        afterDrop,
+      });
+    }
+
     const apiStatus = await (await env.SANDSTORM_API.fetch("http://sandstorm/status")).json();
     const apiCapabilities =
         await (await env.SANDSTORM_API.fetch("http://sandstorm/capabilities")).json();
