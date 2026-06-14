@@ -467,6 +467,61 @@ test("isolate supervisor integration suite", {
     assert.equal(drop.json.ok, true);
   });
 
+  await t.test("exports JavaScript object capabilities", async () => {
+    const exported = await requestJson(fixture.workerdSocket, "/export-object-capability");
+    assert.equal(exported.statusCode, 200, exported.body + formatOutput(
+      fixture.stdout, fixture.stderr));
+    assert.equal(exported.json.ok, true);
+    assert.equal(exported.json.capabilityClass, true);
+    assert.equal(exported.json.capability.type, "claimedCapability");
+    assert.equal(typeof exported.json.capability.id, "string");
+
+    async function callObjectCapability(method, args = []) {
+      return requestJson(
+        fixture.sandstormApiSocket,
+        `/powerbox/fetch?id=${encodeURIComponent(exported.json.capability.id)}` +
+        `&method=POST&path=${encodeURIComponent("/call")}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ method, args }),
+        });
+    }
+
+    const first = await callObjectCapability("increment", [5]);
+    assert.equal(first.statusCode, 200, first.body);
+    assert.deepEqual(first.json, { ok: true, result: { value: 5 } });
+
+    const second = await callObjectCapability("increment", [2]);
+    assert.equal(second.statusCode, 200, second.body);
+    assert.deepEqual(second.json, { ok: true, result: { value: 7 } });
+
+    const current = await callObjectCapability("get");
+    assert.equal(current.statusCode, 200, current.body);
+    assert.deepEqual(current.json, { ok: true, result: { value: 7 } });
+
+    const missing = await callObjectCapability("missingMethod");
+    assert.equal(missing.statusCode, 404, missing.body);
+    assert.equal(missing.json.ok, false);
+    assert.match(missing.json.error, /RPC method not found/);
+
+    const drop = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/drop?id=${encodeURIComponent(exported.json.capability.id)}`,
+      { method: "POST" });
+    assert.equal(drop.statusCode, 200, drop.body);
+    assert.equal(drop.json.ok, true);
+
+    const selfTest = await requestJson(fixture.workerdSocket, "/object-capability-self-test");
+    assert.equal(selfTest.statusCode, 200, selfTest.body);
+    assert.deepEqual(selfTest.json.first, { value: 3 });
+    assert.deepEqual(selfTest.json.second, { value: 7 });
+    assert.deepEqual(selfTest.json.current, { value: 7 });
+    assert.equal(selfTest.json.missing.name, "CapabilityCallError");
+    assert.equal(selfTest.json.missing.status, 404);
+    assert.equal(selfTest.json.drop.ok, true);
+  });
+
   await t.test("forwards request bodies and custom headers through workerd", async () => {
     const body = Buffer.alloc(64 * 1024);
     for (let i = 0; i < body.length; ++i) {

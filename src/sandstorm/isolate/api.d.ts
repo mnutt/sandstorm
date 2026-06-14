@@ -1,5 +1,6 @@
 declare module "sandstorm:api" {
   import type { RpcTarget, RpcSessionOptions } from "capnweb";
+  export { RpcTarget } from "capnweb";
 
   export interface Fetcher {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
@@ -25,6 +26,10 @@ declare module "sandstorm:api" {
     readonly capability: string;
     readonly operation: string;
     constructor(capability: string, operation: string);
+  }
+  export class CapabilityCallError extends Error {
+    readonly details: unknown;
+    constructor(message: string, details?: unknown);
   }
 
   export interface StringValidationOptions {
@@ -138,6 +143,7 @@ declare module "sandstorm:api" {
 
   export interface ClaimedCapability extends ClaimedCapabilityHandle {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
+    call<T = unknown>(method: string, ...args: JsonValue[]): Promise<T>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
     offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
@@ -152,6 +158,7 @@ declare module "sandstorm:api" {
     readonly id: string;
     constructor(env: SandstormEnv, id: string);
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
+    call<T = unknown>(method: string, ...args: JsonValue[]): Promise<T>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
     offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
@@ -232,6 +239,7 @@ declare module "sandstorm:api" {
     storage(): StorageApiTarget;
     powerbox(): PowerboxApiTarget;
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
+    capability(target: RpcTarget): Promise<ClaimedCapability>;
   }
 
   export interface StorageApiTarget extends RpcTarget, StorageApi {}
@@ -247,6 +255,8 @@ declare module "sandstorm:api" {
     storage(): StorageApi;
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
+    capability(target: RpcTarget): Promise<ClaimedCapability>;
+    serveObjectCapabilities(): Promise<Response | null>;
     apiTarget(): SandstormApiTarget;
     rpcClientScript(): string;
     rpcResponse(target: RpcTarget, options?: RpcSessionOptions): Response | Promise<Response>;
