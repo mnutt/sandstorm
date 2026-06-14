@@ -405,6 +405,23 @@ export default {
       });
     }
 
+    if (url.pathname === "/public-fetch-binding-probe") {
+      const publicFetchResponse = await env.PUBLIC_FETCH.fetch(
+        "http://example.invalid/public-fetch-target?source=fixture",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+          },
+          body: "public fetch probe",
+        });
+      return Response.json({
+        ok: true,
+        status: publicFetchResponse.status,
+        body: await publicFetchResponse.json(),
+      });
+    }
+
     if (url.pathname === "/storage-helper-self-test") {
       const store = sandstorm(request, env).storage();
       const bytes = makeBytes(257);
