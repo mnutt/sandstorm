@@ -159,6 +159,8 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
 
       "x-sandstorm-app-*",     # For new headers introduced by Sandstorm apps.
 
+      "range",                 # Range requests.
+
       "oc-total-length",       # Owncloud client
       "oc-chunk-size",         # Owncloud client
       "x-oc-mtime",            # Owncloud client
@@ -447,6 +449,9 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
 
       "x-sandstorm-app-*",     # For new headers introduced by Sandstorm apps.
 
+      "accept-ranges",         # Range requests.
+      "content-range",         # Range requests.
+
       "x-oc-mtime",            # Owncloud protocol
     ];
 
@@ -548,9 +553,6 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   # * Caching:
   #   * Cache-Control
   #   * If-*
-  # * Range requests:
-  #   * Range
-  #
   # Request headers that could be added later, but don't seem terribly important:
   # * Accept
   # * Accept-Charset
@@ -595,10 +597,6 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   #   * Expires
   #   * Last-Modified
   #   * Vary (but Sandstorm will always add "Authorization")
-  # * Range requests:
-  #   * Accept-Ranges
-  #   * Content-Range
-  #
   # Response headers that could be added later, but don't seem terribly important:
   # * Allow
   # * Content-Location

@@ -43,6 +43,17 @@ bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
   return false;
 }
 
+kj::Maybe<kj::StringPtr> findResponseHeader(
+    WebSession::Response::Reader response, kj::StringPtr name) {
+  for (auto header: response.getAdditionalHeaders()) {
+    if (header.getName() == name) {
+      return header.getValue();
+    }
+  }
+
+  return nullptr;
+}
+
 kj::Array<byte> makeBytes(size_t size) {
   auto result = kj::heapArray<byte>(size);
   for (auto i: kj::indices(result)) {
@@ -433,6 +444,36 @@ public:
     KJ_REQUIRE(downloadStream.getData()[0] == 0);
     KJ_REQUIRE(downloadStream.getData()[255] == 255);
     KJ_REQUIRE(downloadStream.getData()[256] == 0);
+
+    auto rangeRequest = session.getRequest();
+    rangeRequest.setPath("/range");
+    rangeRequest.setIgnoreBody(false);
+    auto rangeContext = rangeRequest.initContext();
+    rangeContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    rangeContext.initCookies(0);
+    rangeContext.initAccept(0);
+    rangeContext.initAcceptEncoding(0);
+    auto rangeHeaders = rangeContext.initAdditionalHeaders(1);
+    rangeHeaders[0].setName("range");
+    rangeHeaders[0].setValue("bytes=10-19");
+
+    auto rangeResponse = rangeRequest.send().wait(io.waitScope);
+    auto rangeDebugBody = responseDebugBody(rangeResponse);
+    KJ_REQUIRE(rangeResponse.which() == WebSession::Response::CONTENT, rangeDebugBody);
+    auto rangeContent = rangeResponse.getContent();
+    KJ_REQUIRE(rangeContent.getStatusCode() ==
+        WebSession::Response::SuccessCode::PARTIAL_CONTENT);
+    KJ_REQUIRE(rangeContent.getMimeType() == "application/octet-stream");
+    KJ_REQUIRE(rangeContent.getBody().which() == WebSession::Response::Content::Body::BYTES);
+    auto rangeBody = rangeContent.getBody().getBytes();
+    KJ_REQUIRE(rangeBody.size() == 10, rangeBody.size());
+    KJ_REQUIRE(rangeBody[0] == 10, rangeBody[0]);
+    KJ_REQUIRE(rangeBody[9] == 19, rangeBody[9]);
+    KJ_IF_MAYBE(rangeHeader, findResponseHeader(rangeResponse, "x-sandstorm-app-range-response")) {
+      KJ_REQUIRE(*rangeHeader == "present", *rangeHeader);
+    } else {
+      KJ_FAIL_REQUIRE("missing range response header");
+    }
 
     auto uploadBytes = makeBytes(32768);
     auto uploadRequest = session.postStreamingRequest();
