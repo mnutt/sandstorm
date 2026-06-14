@@ -898,6 +898,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("powerbox.dropSaved"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.drop"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.fetch"));
+    assert.ok(capabilities.json.capabilities.includes("powerbox.apiSessionDescriptor"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.requestApi"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.offer"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.fulfillRequest"));
@@ -1041,6 +1042,17 @@ test("isolate supervisor integration suite", {
       { method: "POST" });
     assert.equal(duplicateDropId.statusCode, 400);
     assert.equal(duplicateDropId.json.ok, false);
+
+    const apiDescriptor = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/api-session-descriptor" +
+      `?apiCanonicalUrl=${encodeURIComponent("https://api.example.test/v1")}` +
+      `&apiOauthScope=${encodeURIComponent("read")}`);
+    assert.equal(apiDescriptor.statusCode, 200);
+    assert.equal(apiDescriptor.json.ok, true);
+    assert.equal(apiDescriptor.json.type, "packedPowerboxDescriptor");
+    assert.equal(apiDescriptor.json.descriptor,
+      "EBBQAQEAABEBF1EEAQH_x80lxnnjecgAQAMRCeIRFQ8AAP9odHRwczovLwJhcGkuZXhhbXBsZS50ZXN0By92MUEEAREBKg9yZWFk");
   });
 
   await t.test("serves the storage binding socket", async () => {

@@ -68,6 +68,15 @@ function powerboxFetcher(env) {
   return env.POWERBOX || env.SANDSTORM_API;
 }
 
+async function callPowerbox(env, path) {
+  const response = await powerboxFetcher(env).fetch(`http://sandstorm/${path}`);
+  const body = await parseApiResponseBody(response);
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || `Powerbox API ${path} failed with ${response.status}`);
+  }
+  return body;
+}
+
 async function postPowerbox(env, path) {
   const response = await powerboxFetcher(env).fetch(`http://sandstorm/${path}`, {
     method: "POST",
@@ -462,6 +471,17 @@ async function requestApiSessionCapability(env, request, options = {}) {
   }
   return wrapClaimedCapability(
     env, await postPowerbox(env, `powerbox/request-api?${params}`));
+}
+
+async function apiSessionPowerboxDescriptor(env, options = {}) {
+  const params = new URLSearchParams();
+  for (const [name, value] of apiSessionDescriptorParams(apiSessionRequestOptions(options))) {
+    if (name !== "descriptor") {
+      params.append(name, value);
+    }
+  }
+  const result = await callPowerbox(env, `powerbox/api-session-descriptor?${params}`);
+  return result.descriptor;
 }
 
 function webSessionPathPrefix(options = {}) {
@@ -890,6 +910,10 @@ export function powerbox(request, env) {
       return requestApiSessionCapability(env, request, options);
     },
 
+    async apiSessionDescriptor(options = {}) {
+      return apiSessionPowerboxDescriptor(env, options);
+    },
+
     async claimRequest(token, options = {}) {
       token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
       const sessionId = encodeURIComponent(sessionIdForPowerbox(request));
@@ -1045,6 +1069,10 @@ class PowerboxRpcTarget extends RpcTarget {
 
   async requestApi(options) {
     return powerbox(this.#request, this.#env).requestApi(options || {});
+  }
+
+  async apiSessionDescriptor(options) {
+    return powerbox(this.#request, this.#env).apiSessionDescriptor(options || {});
   }
 
   async claimRequest(token, options) {
