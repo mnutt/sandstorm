@@ -37,11 +37,27 @@ async function callSandstorm(env, path) {
   return response.json();
 }
 
+async function parseApiResponseBody(response) {
+  const text = await response.text();
+  if (text.length === 0) {
+    return { ok: response.ok };
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return {
+      ok: false,
+      error: text,
+    };
+  }
+}
+
 async function postSandstorm(env, path) {
   const response = await env.SANDSTORM_API.fetch(`http://sandstorm/${path}`, {
     method: "POST",
   });
-  const body = await response.json();
+  const body = await parseApiResponseBody(response);
   if (!response.ok || !body.ok) {
     throw new Error(body.error || `Sandstorm API ${path} failed with ${response.status}`);
   }
@@ -56,7 +72,7 @@ async function postPowerbox(env, path) {
   const response = await powerboxFetcher(env).fetch(`http://sandstorm/${path}`, {
     method: "POST",
   });
-  const body = await response.json();
+  const body = await parseApiResponseBody(response);
   if (!response.ok || !body.ok) {
     throw new Error(body.error || `Powerbox API ${path} failed with ${response.status}`);
   }
@@ -424,6 +440,28 @@ async function fulfillRequestWithCapability(env, request, capability, options = 
 async function tieClaimedCapabilityToUser(env, request, capability, options = {}) {
   return wrapClaimedCapability(
     env, await sessionPowerboxAction(env, request, "tie-to-user", capability, options));
+}
+
+function apiSessionRequestOptions(options = {}) {
+  if (options.apiSession !== undefined || options.apiSessionDescriptor !== undefined) {
+    return options;
+  }
+
+  return { ...options, apiSession: options };
+}
+
+async function requestApiSessionCapability(env, request, options = {}) {
+  const params = new URLSearchParams({
+    sessionId: sessionIdForPowerbox(request),
+  });
+  for (const name of permissionNames(options)) {
+    params.append("requiredPermission", name);
+  }
+  for (const [name, value] of apiSessionDescriptorParams(apiSessionRequestOptions(options))) {
+    params.append(name, value);
+  }
+  return wrapClaimedCapability(
+    env, await postPowerbox(env, `powerbox/request-api?${params}`));
 }
 
 function webSessionPathPrefix(options = {}) {
@@ -848,6 +886,10 @@ export function powerbox(request, env) {
       unsupportedPowerbox("request");
     },
 
+    async requestApi(options = {}) {
+      return requestApiSessionCapability(env, request, options);
+    },
+
     async claimRequest(token, options = {}) {
       token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
       const sessionId = encodeURIComponent(sessionIdForPowerbox(request));
@@ -999,6 +1041,10 @@ class PowerboxRpcTarget extends RpcTarget {
 
   async request() {
     unsupportedPowerbox("request");
+  }
+
+  async requestApi(options) {
+    return powerbox(this.#request, this.#env).requestApi(options || {});
   }
 
   async claimRequest(token, options) {

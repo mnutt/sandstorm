@@ -179,6 +179,20 @@ public:
     return kj::READY_NOW;
   }
 
+  kj::Promise<void> request(RequestContext context) override {
+    auto params = context.getParams();
+    auto query = params.getQuery();
+    KJ_REQUIRE(query.size() == 1);
+    auto requiredPermissions = params.getRequiredPermissions();
+    KJ_REQUIRE(requiredPermissions.size() == 1);
+    KJ_REQUIRE(requiredPermissions[0]);
+    validateDescriptor(query[0]);
+    ++requestCount;
+    context.getResults().setCap(kj::heap<FakeClaimedCapability>(saveCount));
+    context.getResults().setDescriptor(query[0]);
+    return kj::READY_NOW;
+  }
+
   kj::Promise<void> fulfillRequest(FulfillRequestContext context) override {
     auto params = context.getParams();
     KJ_REQUIRE(params.hasCap());
@@ -208,6 +222,7 @@ public:
   uint restoreCount = 0;
   uint tokenDropCount = 0;
   uint offerCount = 0;
+  uint requestCount = 0;
   uint fulfillCount = 0;
   uint tieCount = 0;
   uint apiDescriptorCount = 0;
@@ -743,6 +758,39 @@ public:
     KJ_REQUIRE(sessionContextRef.fulfillCount == 3, sessionContextRef.fulfillCount);
     KJ_REQUIRE(sessionContextRef.tieCount == 3, sessionContextRef.tieCount);
     KJ_REQUIRE(sessionContextRef.apiDescriptorCount == 2, sessionContextRef.apiDescriptorCount);
+
+    auto requestApiRequest = session.getRequest();
+    requestApiRequest.setPath("/request-api-session-self-test");
+    requestApiRequest.setIgnoreBody(false);
+    auto requestApiContext = requestApiRequest.initContext();
+    requestApiContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    requestApiContext.initCookies(0);
+    requestApiContext.initAccept(0);
+    requestApiContext.initAcceptEncoding(0);
+    requestApiContext.initAdditionalHeaders(0);
+
+    auto requestApiResponse = requestApiRequest.send().wait(io.waitScope);
+    auto requestApiDebugBody = responseDebugBody(requestApiResponse);
+    KJ_REQUIRE(requestApiResponse.which() == WebSession::Response::CONTENT,
+        requestApiDebugBody);
+    auto requestApiContent = requestApiResponse.getContent();
+    KJ_REQUIRE(requestApiContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(requestApiContent.getBody().which() ==
+        WebSession::Response::Content::Body::BYTES);
+    auto requestApiBody = kj::str(requestApiContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(requestApiBody, "\"ok\":true"), requestApiBody);
+    KJ_REQUIRE(contains(requestApiBody, "\"capabilityClass\":true"), requestApiBody);
+    KJ_REQUIRE(contains(requestApiBody,
+        "\"capability\":{\"ok\":true,\"type\":\"claimedCapability\",\"id\":\""),
+        requestApiBody);
+    KJ_REQUIRE(contains(requestApiBody,
+        "\"fetched\":{\"status\":200,\"body\":{\"ok\":true,"
+        "\"source\":\"fake-claimed-capability\","
+        "\"path\":\"capability-echo?source=request-api\""),
+        requestApiBody);
+    KJ_REQUIRE(contains(requestApiBody, "\"drop\":{\"ok\":true}"), requestApiBody);
+    KJ_REQUIRE(sessionContextRef.requestCount == 1, sessionContextRef.requestCount);
+    KJ_REQUIRE(sessionContextRef.apiDescriptorCount == 3, sessionContextRef.apiDescriptorCount);
 
     auto offerSessionContext = kj::heap<FakeSessionContext>();
     auto& offerSessionContextRef = *offerSessionContext;

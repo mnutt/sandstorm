@@ -235,6 +235,20 @@ declare module "sandstorm:api" {
     requiredPermissions?: string[];
   }
 
+  export interface ApiSessionPowerboxRequestOptions extends ClaimRequestOptions {
+    canonicalUrl: string;
+    oauthScopes?: string[];
+  }
+
+  export interface ApiSessionPowerboxRequestWrapperOptions extends ClaimRequestOptions {
+    apiSession?: ApiSessionPowerboxRequestOptions;
+    apiSessionDescriptor?: ApiSessionPowerboxRequestOptions;
+  }
+
+  export type ApiSessionPowerboxOptions =
+    | ApiSessionPowerboxRequestOptions
+    | ApiSessionPowerboxRequestWrapperOptions;
+
   export interface StorageApi {
     put(key: string, value: StorageValue): Promise<StorageInfo>;
     putJson(key: string, value: JsonValue): Promise<StorageInfo>;
@@ -248,6 +262,7 @@ declare module "sandstorm:api" {
 
   export interface PowerboxApi {
     request(query: unknown, options?: unknown): Promise<unknown>;
+    requestApi(options: ApiSessionPowerboxOptions): Promise<ClaimedCapability>;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
     offeredCapability(): ClaimedCapability | undefined;
     offeredCapabilityInfo(): OfferedCapabilityInfo | undefined;
