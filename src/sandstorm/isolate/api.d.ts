@@ -8,6 +8,7 @@ declare module "sandstorm:api" {
 
   export interface SandstormEnv {
     SANDSTORM_API: Fetcher;
+    POWERBOX?: Fetcher;
     STORAGE: Fetcher;
     [binding: string]: unknown;
   }

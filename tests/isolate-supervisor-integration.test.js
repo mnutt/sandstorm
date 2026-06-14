@@ -393,6 +393,7 @@ test("isolate supervisor integration suite", {
         ["TEXT_BINDING", "text"],
         ["JSON_BINDING", "json"],
         ["SANDSTORM_API", "sandstormApi"],
+        ["POWERBOX", "powerbox"],
         ["STORAGE", "storage"],
         ["LOOPBACK_SERVICE", "service"],
       ]);
@@ -400,7 +401,9 @@ test("isolate supervisor integration suite", {
     const workerdConfig = await fs.readFile(path.join(fixture.runtimeDir, "workerd.capnp"), "utf8");
     assert.match(workerdConfig, /name = "sandstorm"/);
     assert.match(workerdConfig, /service = "sandstorm-api"/);
+    assert.match(workerdConfig, /service = "sandstorm-powerbox"/);
     assert.match(workerdConfig, /service = "sandstorm-storage"/);
+    assert.match(workerdConfig, /name = "POWERBOX", service = "sandstorm-powerbox"/);
     assert.match(workerdConfig, /name = "LOOPBACK_SERVICE", service = "main"/);
   });
 
@@ -450,6 +453,16 @@ test("isolate supervisor integration suite", {
     assert.equal(loopback.json.body.search, "?source=service-binding");
     assert.equal(loopback.json.body.body, "hello through service binding");
     assert.equal(loopback.json.body.customHeader, "present");
+
+    const powerboxProbe = await requestJson(fixture.workerdSocket, "/powerbox-binding-probe");
+    assert.equal(powerboxProbe.statusCode, 200, powerboxProbe.body);
+    assert.equal(powerboxProbe.json.ok, true);
+    assert.equal(powerboxProbe.json.statusEndpoint.status, 404);
+    assert.equal(powerboxProbe.json.statusEndpoint.body.ok, false);
+    assert.match(powerboxProbe.json.statusEndpoint.body.error, /Powerbox binding/);
+    assert.equal(powerboxProbe.json.powerboxEndpoint.status, 404);
+    assert.equal(powerboxProbe.json.powerboxEndpoint.body.ok, false);
+    assert.equal(powerboxProbe.json.powerboxEndpoint.body.error, "unknown claimed capability");
   });
 
   await t.test("exports route-backed WebSession capabilities", async () => {
@@ -709,7 +722,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.json.ok, true);
     assert.equal(runtime.json.mainModule, "worker.js");
     assert.equal(runtime.json.moduleCount, 7);
-    assert.equal(runtime.json.bindingCount, 5);
+    assert.equal(runtime.json.bindingCount, 6);
 
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
     assert.equal(capabilities.statusCode, 200);
@@ -746,10 +759,11 @@ test("isolate supervisor integration suite", {
         ["TEXT_BINDING", "text", true],
         ["JSON_BINDING", "json", true],
         ["SANDSTORM_API", "sandstormApi", true],
+        ["POWERBOX", "powerbox", true],
         ["STORAGE", "storage", true],
         ["LOOPBACK_SERVICE", "service", true],
       ]);
-    assert.equal(bindings.json.bindings[4].serviceName, "main");
+    assert.equal(bindings.json.bindings[5].serviceName, "main");
 
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);
