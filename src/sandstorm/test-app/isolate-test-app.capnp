@@ -71,6 +71,10 @@ const isolateCommand :Spk.Manifest.Command = (
       (
         name = "STORAGE",
         storage = void
+      ),
+      (
+        name = "LOOPBACK_SERVICE",
+        service = "main"
       )
     ],
 

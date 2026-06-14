@@ -75,6 +75,37 @@ export default {
       });
     }
 
+    if (url.pathname === "/service-target") {
+      const body = await request.text();
+      return Response.json({
+        ok: true,
+        source: "loopback-service-target",
+        method: request.method,
+        pathname: url.pathname,
+        search: url.search,
+        body,
+        customHeader: request.headers.get("x-isolate-service-test"),
+      });
+    }
+
+    if (url.pathname === "/service-loopback") {
+      const targetResponse = await env.LOOPBACK_SERVICE.fetch(
+        "http://loopback/service-target?source=service-binding",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "x-isolate-service-test": "present",
+          },
+          body: "hello through service binding",
+        });
+      return Response.json({
+        ok: true,
+        status: targetResponse.status,
+        body: await targetResponse.json(),
+      });
+    }
+
     if (url.pathname === "/upload") {
       const body = new Uint8Array(await request.arrayBuffer());
       return Response.json({
