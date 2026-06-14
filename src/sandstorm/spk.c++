@@ -1926,6 +1926,11 @@ private:
   kj::String devIsolateWorkerPath;
   kj::String devIsolateTitle = kj::heapString("Ad hoc Isolate App");
   kj::String devIsolateCompatibilityDate = kj::heapString("2025-01-01");
+  struct DevIsolateServiceBinding {
+    kj::String name;
+    kj::String service;
+  };
+  kj::Vector<DevIsolateServiceBinding> devIsolateServiceBindings;
 
   kj::MainFunc getDevMain() {
     return addCommonOptions(OptionSet::ALL_READONLY,
@@ -2007,6 +2012,10 @@ private:
         .addOptionWithArg({"compatibility-date"},
             KJ_BIND_METHOD(*this, setDevIsolateCompatibilityDate), "<date>",
             "Set the workerd compatibility date. Default: 2025-01-01.")
+        .addOptionWithArg({"service-binding"}, KJ_BIND_METHOD(*this, addDevIsolateServiceBinding),
+            "<name>=<service>",
+            "Add a workerd service binding to the generated isolate manifest. For example: "
+            "--service-binding LOOPBACK=main")
         .expectArg("<worker.js>", KJ_BIND_METHOD(*this, setDevIsolateWorkerPath))
         .callAfterParsing(KJ_BIND_METHOD(*this, doDevIsolate))
         .build();
@@ -2026,6 +2035,31 @@ private:
     }
     devIsolateCompatibilityDate = kj::heapString(date);
     return true;
+  }
+
+  kj::MainBuilder::Validity addDevIsolateServiceBinding(kj::StringPtr spec) {
+    KJ_IF_MAYBE(equals, spec.findFirst('=')) {
+      auto name = kj::heapString(spec.slice(0, *equals));
+      auto service = kj::heapString(spec.slice(*equals + 1, spec.size()));
+      if (name.size() == 0 || service.size() == 0) {
+        return "service binding must be NAME=SERVICE with non-empty parts";
+      }
+      for (auto& binding: devIsolateServiceBindings) {
+        if (binding.name == name) {
+          return "duplicate service binding name";
+        }
+      }
+      if (name == "SANDSTORM_API" || name == "POWERBOX" || name == "STORAGE") {
+        return "service binding name conflicts with a built-in dev-isolate binding";
+      }
+      devIsolateServiceBindings.add(DevIsolateServiceBinding {
+        kj::mv(name),
+        kj::mv(service),
+      });
+      return true;
+    }
+
+    return "service binding must be NAME=SERVICE";
   }
 
   kj::MainBuilder::Validity setDevIsolateWorkerPath(kj::StringPtr path) {
@@ -2282,11 +2316,18 @@ private:
     rpcHelperModule.setName("sandstorm:rpc");
     rpcHelperModule.setEsModulePath("__sandstorm_isolate_runtime/rpc.js");
 
-    auto bindings = isolate.initBindings(2);
+    auto bindings = isolate.initBindings(3 + devIsolateServiceBindings.size());
     bindings[0].setName("SANDSTORM_API");
     bindings[0].setSandstormApi();
-    bindings[1].setName("STORAGE");
-    bindings[1].setStorage();
+    bindings[1].setName("POWERBOX");
+    bindings[1].setPowerbox();
+    bindings[2].setName("STORAGE");
+    bindings[2].setStorage();
+    for (auto i: kj::indices(devIsolateServiceBindings)) {
+      auto binding = bindings[3 + i];
+      binding.setName(devIsolateServiceBindings[i].name);
+      binding.setService(devIsolateServiceBindings[i].service);
+    }
 
     isolate.initBridgeConfig().initViewInfo().initAppTitle().setDefaultText(devIsolateTitle);
   }
