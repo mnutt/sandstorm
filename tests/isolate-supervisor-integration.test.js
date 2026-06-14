@@ -514,6 +514,29 @@ test("isolate supervisor integration suite", {
     assert.equal(dropSaved.json.ok, true);
   });
 
+  await t.test("saves and restores route-backed WebSession capabilities from isolate JS", async () => {
+    const selfTest = await requestJson(
+      fixture.workerdSocket, "/web-session-save-restore-self-test");
+    assert.equal(selfTest.statusCode, 200, selfTest.body + formatOutput(
+      fixture.stdout, fixture.stderr));
+    assert.equal(selfTest.json.ok, true);
+    assert.equal(selfTest.json.capabilityClass, true);
+    assert.equal(selfTest.json.savedClass, true);
+    assert.equal(selfTest.json.restoredClass, true);
+    assert.equal(selfTest.json.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.saved.type, "savedCapability");
+    assert.equal(selfTest.json.saved.tokenEncoding, "base64url");
+    assert.equal(typeof selfTest.json.saved.token, "string");
+    assert.equal(selfTest.json.restored.type, "claimedCapability");
+    assert.equal(selfTest.json.dropOriginal.ok, true);
+    assert.equal(selfTest.json.fetched.status, 200);
+    assert.equal(selfTest.json.fetched.body.ok, true);
+    assert.equal(selfTest.json.fetched.body.pathname, "/exported/capability-echo");
+    assert.equal(selfTest.json.fetched.body.search, "?source=js-restore");
+    assert.equal(selfTest.json.dropRestored.ok, true);
+    assert.equal(selfTest.json.dropSaved.ok, true);
+  });
+
   await t.test("exports JavaScript object capabilities", async () => {
     const exported = await requestJson(fixture.workerdSocket, "/export-object-capability");
     assert.equal(exported.statusCode, 200, exported.body + formatOutput(
