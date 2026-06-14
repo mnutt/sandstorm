@@ -3343,6 +3343,12 @@ public:
   }
 
 private:
+  struct CapabilityFetchContextParams {
+    kj::Vector<FetchHeader> additionalHeaders;
+    kj::Maybe<kj::String> ifMatch;
+    kj::Maybe<kj::String> ifNoneMatch;
+  };
+
   kj::HttpHeaderTable& headerTable;
   IsolateRuntimeConfig& config;
   IsolateRuntimeHost& host;
@@ -3494,7 +3500,7 @@ private:
     return true;
   }
 
-  kj::Vector<FetchHeader> getCapabilityFetchHeaders(kj::StringPtr url) {
+  CapabilityFetchContextParams getCapabilityFetchContextParams(kj::StringPtr url) {
     auto names = findIsolateQueryParams(url, "headerName");
     auto values = findIsolateQueryParams(url, "headerValue");
     KJ_REQUIRE(names.size() == values.size(),
@@ -3502,20 +3508,90 @@ private:
     KJ_REQUIRE(names.size() <= 32, "claimed capability fetch has too many headers");
 
     HeaderWhitelist requestHeaderWhitelist(*WebSession::Context::HEADER_WHITELIST);
-    kj::Vector<FetchHeader> result;
+    CapabilityFetchContextParams result;
     for (auto i: kj::indices(names)) {
       KJ_REQUIRE(isValidCapabilityFetchHeaderName(names[i]),
           "claimed capability fetch header name is invalid", names[i]);
       KJ_REQUIRE(isValidCapabilityFetchHeaderValue(values[i]),
           "claimed capability fetch header value is invalid", names[i]);
-      if (requestHeaderWhitelist.matches(names[i])) {
-        auto name = kj::heapString(names[i]);
-        toLower(name);
-        result.add(FetchHeader { kj::mv(name), kj::mv(values[i]) });
+
+      auto name = kj::heapString(names[i]);
+      toLower(name);
+      if (name == "if-match") {
+        KJ_IF_MAYBE(existing, result.ifMatch) {
+          KJ_FAIL_REQUIRE("claimed capability fetch can only include one If-Match header");
+        }
+        result.ifMatch = kj::mv(values[i]);
+      } else if (name == "if-none-match") {
+        KJ_IF_MAYBE(existing, result.ifNoneMatch) {
+          KJ_FAIL_REQUIRE("claimed capability fetch can only include one If-None-Match header");
+        }
+        result.ifNoneMatch = kj::mv(values[i]);
+      } else if (requestHeaderWhitelist.matches(name)) {
+        result.additionalHeaders.add(FetchHeader { kj::mv(name), kj::mv(values[i]) });
       }
     }
 
     return result;
+  }
+
+  kj::Vector<ParsedETag> parseCapabilityFetchETagList(kj::StringPtr value) {
+    auto parts = split(value, ',');
+    KJ_REQUIRE(parts.size() > 0, "claimed capability fetch ETag precondition is empty");
+
+    kj::Vector<ParsedETag> result;
+    for (auto part: parts) {
+      KJ_IF_MAYBE(parsed, parseFetchETag(kj::StringPtr(part.begin(), part.size()))) {
+        result.add(kj::mv(*parsed));
+      } else {
+        KJ_FAIL_REQUIRE("claimed capability fetch ETag precondition is invalid", value);
+      }
+    }
+    return result;
+  }
+
+  void initCapabilityFetchETagList(
+      capnp::List<WebSession::ETag>::Builder output,
+      kj::Vector<ParsedETag>& input) {
+    for (auto i: kj::indices(input)) {
+      copyFetchETag(input[i], output[i]);
+    }
+  }
+
+  void initCapabilityFetchETagPrecondition(
+      WebSession::Context::Builder context, CapabilityFetchContextParams& params) {
+    KJ_IF_MAYBE(ifMatch, params.ifMatch) {
+      auto value = kj::str(trim(*ifMatch));
+      if (value == "*") {
+        context.getETagPrecondition().setExists();
+      } else {
+        auto parsed = parseCapabilityFetchETagList(value);
+        initCapabilityFetchETagList(
+            context.getETagPrecondition().initMatchesOneOf(parsed.size()), parsed);
+      }
+      return;
+    }
+
+    KJ_IF_MAYBE(ifNoneMatch, params.ifNoneMatch) {
+      auto value = kj::str(trim(*ifNoneMatch));
+      if (value == "*") {
+        context.getETagPrecondition().setDoesntExist();
+      } else {
+        auto parsed = parseCapabilityFetchETagList(value);
+        initCapabilityFetchETagList(
+            context.getETagPrecondition().initMatchesNoneOf(parsed.size()), parsed);
+      }
+    }
+  }
+
+  bool shouldSendNotModifiedForPrecondition(CapabilityFetchContextParams& params) {
+    KJ_IF_MAYBE(ifMatch, params.ifMatch) {
+      return false;
+    }
+    KJ_IF_MAYBE(ifNoneMatch, params.ifNoneMatch) {
+      return true;
+    }
+    return false;
   }
 
   kj::String normalizeWebSessionPathPrefix(kj::StringPtr pathPrefix) {
@@ -3568,7 +3644,7 @@ private:
     auto ids = findIsolateQueryParams(url, "id");
     auto methods = findIsolateQueryParams(url, "method");
     auto paths = findIsolateQueryParams(url, "path");
-    auto additionalHeaders = getCapabilityFetchHeaders(url);
+    auto contextParams = getCapabilityFetchContextParams(url);
     if (ids.size() != 1 || ids[0].size() == 0 ||
         methods.size() != 1 || methods[0].size() == 0 ||
         paths.size() != 1) {
@@ -3591,11 +3667,13 @@ private:
         request.setPath(path);
         request.setIgnoreBody(method == "head");
         initCapabilityFetchContext(
-            request.initContext(), kj::mv(responseStreamServer), additionalHeaders);
+            request.initContext(), kj::mv(responseStreamServer), contextParams);
+        auto sendNotModified = shouldSendNotModifiedForPrecondition(contextParams);
         return request.send()
-            .then([this, &response, streamDone = kj::mv(streamDone)]
+            .then([this, &response, streamDone = kj::mv(streamDone), sendNotModified]
                 (auto result) mutable {
-          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(streamDone));
+          return sendWebSessionHttpResponse(
+              kj::mv(result), response, kj::mv(streamDone), sendNotModified);
         }).catch_([this, &response](kj::Exception&& exception) mutable {
           return sendJson(response, 502, "Bad Gateway", renderError(
               kj::str("claimed capability fetch failed: ", exception.getDescription())));
@@ -3605,11 +3683,13 @@ private:
         request.setPath(path);
         initPostContent(request.initContent(), contentType, bodyBytes);
         initCapabilityFetchContext(
-            request.initContext(), kj::mv(responseStreamServer), additionalHeaders);
+            request.initContext(), kj::mv(responseStreamServer), contextParams);
+        auto sendNotModified = shouldSendNotModifiedForPrecondition(contextParams);
         return request.send()
-            .then([this, &response, streamDone = kj::mv(streamDone)]
+            .then([this, &response, streamDone = kj::mv(streamDone), sendNotModified]
                 (auto result) mutable {
-          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(streamDone));
+          return sendWebSessionHttpResponse(
+              kj::mv(result), response, kj::mv(streamDone), sendNotModified);
         }).catch_([this, &response](kj::Exception&& exception) mutable {
           return sendJson(response, 502, "Bad Gateway", renderError(
               kj::str("claimed capability fetch failed: ", exception.getDescription())));
@@ -3619,11 +3699,13 @@ private:
         request.setPath(path);
         initPutContent(request.initContent(), contentType, bodyBytes);
         initCapabilityFetchContext(
-            request.initContext(), kj::mv(responseStreamServer), additionalHeaders);
+            request.initContext(), kj::mv(responseStreamServer), contextParams);
+        auto sendNotModified = shouldSendNotModifiedForPrecondition(contextParams);
         return request.send()
-            .then([this, &response, streamDone = kj::mv(streamDone)]
+            .then([this, &response, streamDone = kj::mv(streamDone), sendNotModified]
                 (auto result) mutable {
-          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(streamDone));
+          return sendWebSessionHttpResponse(
+              kj::mv(result), response, kj::mv(streamDone), sendNotModified);
         }).catch_([this, &response](kj::Exception&& exception) mutable {
           return sendJson(response, 502, "Bad Gateway", renderError(
               kj::str("claimed capability fetch failed: ", exception.getDescription())));
@@ -3633,11 +3715,13 @@ private:
         request.setPath(path);
         initPostContent(request.initContent(), contentType, bodyBytes);
         initCapabilityFetchContext(
-            request.initContext(), kj::mv(responseStreamServer), additionalHeaders);
+            request.initContext(), kj::mv(responseStreamServer), contextParams);
+        auto sendNotModified = shouldSendNotModifiedForPrecondition(contextParams);
         return request.send()
-            .then([this, &response, streamDone = kj::mv(streamDone)]
+            .then([this, &response, streamDone = kj::mv(streamDone), sendNotModified]
                 (auto result) mutable {
-          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(streamDone));
+          return sendWebSessionHttpResponse(
+              kj::mv(result), response, kj::mv(streamDone), sendNotModified);
         }).catch_([this, &response](kj::Exception&& exception) mutable {
           return sendJson(response, 502, "Bad Gateway", renderError(
               kj::str("claimed capability fetch failed: ", exception.getDescription())));
@@ -3646,11 +3730,13 @@ private:
         auto request = webSession.deleteRequest();
         request.setPath(path);
         initCapabilityFetchContext(
-            request.initContext(), kj::mv(responseStreamServer), additionalHeaders);
+            request.initContext(), kj::mv(responseStreamServer), contextParams);
+        auto sendNotModified = shouldSendNotModifiedForPrecondition(contextParams);
         return request.send()
-            .then([this, &response, streamDone = kj::mv(streamDone)]
+            .then([this, &response, streamDone = kj::mv(streamDone), sendNotModified]
                 (auto result) mutable {
-          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(streamDone));
+          return sendWebSessionHttpResponse(
+              kj::mv(result), response, kj::mv(streamDone), sendNotModified);
         }).catch_([this, &response](kj::Exception&& exception) mutable {
           return sendJson(response, 502, "Bad Gateway", renderError(
               kj::str("claimed capability fetch failed: ", exception.getDescription())));
@@ -3668,11 +3754,13 @@ private:
 
   void initCapabilityFetchContext(
       WebSession::Context::Builder context, kj::Own<BufferedByteStream> responseStream,
-      kj::ArrayPtr<FetchHeader> additionalHeaders) {
+      CapabilityFetchContextParams& contextParams) {
     context.initCookies(0);
     context.setResponseStream(kj::mv(responseStream));
     context.initAccept(0);
     context.initAcceptEncoding(0);
+    initCapabilityFetchETagPrecondition(context, contextParams);
+    auto additionalHeaders = contextParams.additionalHeaders.asPtr();
     auto headers = context.initAdditionalHeaders(additionalHeaders.size());
     for (auto i: kj::indices(additionalHeaders)) {
       headers[i].setName(additionalHeaders[i].name);
@@ -3760,7 +3848,7 @@ private:
 
   kj::Promise<void> sendWebSessionHttpResponse(
       capnp::Response<WebSession::Response>&& webResponse, kj::HttpService::Response& response,
-      kj::Promise<kj::Array<byte>> streamDone) {
+      kj::Promise<kj::Array<byte>> streamDone, bool sendNotModifiedForPrecondition) {
     switch (webResponse.which()) {
       case WebSession::Response::CONTENT: {
         auto content = webResponse.getContent();
@@ -3799,7 +3887,11 @@ private:
         if (preconditionFailed.hasMatchingETag()) {
           headers.add("etag", formatRequestETag(preconditionFailed.getMatchingETag()));
         }
-        response.send(412, "Precondition Failed", headers, uint64_t(0));
+        if (sendNotModifiedForPrecondition) {
+          response.send(304, "Not Modified", headers, uint64_t(0));
+        } else {
+          response.send(412, "Precondition Failed", headers, uint64_t(0));
+        }
         return kj::READY_NOW;
       }
       case WebSession::Response::REDIRECT: {
