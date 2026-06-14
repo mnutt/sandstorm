@@ -136,6 +136,7 @@ declare module "sandstorm:api" {
   export interface WebSessionCapabilityOptions {
     pathPrefix?: string;
     prefix?: string;
+    persistent?: boolean;
   }
 
   export interface SavedCapability {

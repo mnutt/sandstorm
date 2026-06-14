@@ -459,12 +459,59 @@ test("isolate supervisor integration suite", {
     assert.equal(fetched.json.pathname, "/exported/capability-echo");
     assert.equal(fetched.json.search, "?source=external");
 
+    const saved = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/save?id=${encodeURIComponent(capabilityId)}` +
+      `&label=${encodeURIComponent("Route-backed WebSession")}`,
+      { method: "POST" });
+    assert.equal(saved.statusCode, 200, saved.body);
+    assert.equal(saved.json.ok, true);
+    assert.equal(saved.json.type, "savedCapability");
+    assert.equal(saved.json.id, capabilityId);
+    assert.equal(saved.json.tokenEncoding, "base64url");
+    assert.equal(typeof saved.json.token, "string");
+
     const drop = await requestJson(
       fixture.sandstormApiSocket,
       `/powerbox/drop?id=${encodeURIComponent(capabilityId)}`,
       { method: "POST" });
     assert.equal(drop.statusCode, 200, drop.body);
     assert.equal(drop.json.ok, true);
+
+    await fixture.restart();
+
+    const restored = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/restore?token=${encodeURIComponent(saved.json.token)}`,
+      { method: "POST" });
+    assert.equal(restored.statusCode, 200, restored.body);
+    assert.equal(restored.json.ok, true);
+    assert.equal(restored.json.type, "claimedCapability");
+    assert.equal(typeof restored.json.id, "string");
+
+    const restoredFetch = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/fetch?id=${encodeURIComponent(restored.json.id)}` +
+      `&method=GET&path=${encodeURIComponent("/capability-echo?source=restored")}`,
+      { method: "POST" });
+    assert.equal(restoredFetch.statusCode, 200, restoredFetch.body);
+    assert.equal(restoredFetch.json.ok, true);
+    assert.equal(restoredFetch.json.pathname, "/exported/capability-echo");
+    assert.equal(restoredFetch.json.search, "?source=restored");
+
+    const dropRestored = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/drop?id=${encodeURIComponent(restored.json.id)}`,
+      { method: "POST" });
+    assert.equal(dropRestored.statusCode, 200, dropRestored.body);
+    assert.equal(dropRestored.json.ok, true);
+
+    const dropSaved = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/drop-saved?token=${encodeURIComponent(saved.json.token)}`,
+      { method: "POST" });
+    assert.equal(dropSaved.statusCode, 200, dropSaved.body);
+    assert.equal(dropSaved.json.ok, true);
   });
 
   await t.test("exports JavaScript object capabilities", async () => {

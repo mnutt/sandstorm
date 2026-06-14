@@ -84,6 +84,8 @@ namespace sandstorm {
 
 namespace {
 
+constexpr const char* ISOLATE_WEBS_SESSION_TOKEN_PREFIX = "sandstorm-isolate-websession:";
+
 struct IsolateRuntimeConfig final: public kj::Refcounted {
   enum class ModuleType {
     ES_MODULE,
@@ -129,6 +131,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String sandstormApiSocketPath;
   kj::String storageSocketPath;
   kj::String storageRootPath;
+  kj::String savedCapabilityDir;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
@@ -1013,13 +1016,16 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   auto sandstormApiSocketPath = kj::str(bundleDir, "/sandstorm-api.sock");
   auto storageSocketPath = kj::str(bundleDir, "/sandstorm-storage.sock");
   auto storageRootPath = kj::str(varPath, "/isolate-storage");
+  auto savedCapabilityDir = kj::str(varPath, "/isolate-capabilities");
   config.sandstormApiSocketPath = kj::heapString(sandstormApiSocketPath);
   config.storageSocketPath = kj::heapString(storageSocketPath);
   config.storageRootPath = kj::heapString(storageRootPath);
+  config.savedCapabilityDir = kj::heapString(savedCapabilityDir);
   ensureDirectory(bundleDir);
   ensureDirectory(modulesDir);
   ensureDirectory(bindingsDir);
   ensureDirectory(storageRootPath);
+  ensureDirectory(savedCapabilityDir);
 
   kj::Vector<char> manifest;
   manifest.addAll(kj::StringPtr("{\n  "));
@@ -2304,10 +2310,12 @@ public:
   IsolateWebSessionImpl(
       kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
       kj::StringPtr pathPrefix = "", SessionKind sessionKind = SessionKind::NORMAL,
-      SessionMetadata&& sessionMetadata = SessionMetadata())
+      SessionMetadata&& sessionMetadata = SessionMetadata(), bool persistent = true)
       : pathPrefix(kj::heapString(pathPrefix)),
         sessionKind(sessionKind),
         sessionMetadata(kj::mv(sessionMetadata)),
+        persistent(persistent),
+        runtimeConfig(kj::addRef(*config)),
         runtimeHost(kj::addRef(*host)),
         runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host))) {}
 
@@ -2392,10 +2400,21 @@ public:
     return kj::READY_NOW;
   }
 
+  kj::Promise<void> save(SaveContext context) override {
+    KJ_REQUIRE(persistent, "isolate WebSession capability is not persistent");
+    auto token = makeOpaqueToken();
+    writeFile(kj::str(runtimeConfig->savedCapabilityDir, "/", token), pathPrefix.asBytes());
+    auto sturdyRef = kj::str(ISOLATE_WEBS_SESSION_TOKEN_PREFIX, token);
+    context.getResults().setSturdyRef(sturdyRef.asBytes());
+    return kj::READY_NOW;
+  }
+
 private:
   kj::String pathPrefix;
   SessionKind sessionKind;
   SessionMetadata sessionMetadata;
+  bool persistent;
+  kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
   kj::Own<IsolateRuntimeAdapter> runtime;
 
@@ -3404,17 +3423,32 @@ private:
   kj::Promise<void> createWebSessionCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
     auto pathPrefixes = findIsolateQueryParams(url, "pathPrefix");
-    if (pathPrefixes.size() > 1) {
+    auto persistentParams = findIsolateQueryParams(url, "persistent");
+    if (pathPrefixes.size() > 1 || persistentParams.size() > 1) {
       return sendJson(response, 400, "Bad Request", kj::heapString(
           "{\n  \"ok\": false,\n"
-          "  \"error\": \"expected at most one pathPrefix\"\n}\n"));
+          "  \"error\": \"expected at most one pathPrefix and persistent flag\"\n}\n"));
     }
 
     auto pathPrefix = pathPrefixes.size() == 1
         ? normalizeWebSessionPathPrefix(pathPrefixes[0])
         : kj::heapString("");
+    bool persistent = true;
+    if (persistentParams.size() == 1) {
+      auto value = kj::heapString(persistentParams[0]);
+      toLower(value);
+      if (value == "false" || value == "0") {
+        persistent = false;
+      } else if (value == "true" || value == "1") {
+        persistent = true;
+      } else {
+        return sendJson(response, 400, "Bad Request", renderError(
+            "persistent must be true or false"));
+      }
+    }
     auto cap = kj::heap<IsolateWebSessionImpl>(
-        kj::addRef(config), kj::addRef(host), pathPrefix, SessionKind::NORMAL, SessionMetadata());
+        kj::addRef(config), kj::addRef(host), pathPrefix, SessionKind::NORMAL, SessionMetadata(),
+        persistent);
     auto capId = host.sessions->storeClaimedCapability(kj::mv(cap));
     return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
@@ -3777,6 +3811,48 @@ private:
     return kj::mv(decoded);
   }
 
+  bool isOpaqueSavedCapabilityToken(kj::StringPtr token) {
+    if (token.size() == 0 || token.size() > 128) {
+      return false;
+    }
+
+    for (char c: token) {
+      if (!((c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c == '-' || c == '_')) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  kj::Maybe<kj::String> readIsolateWebSessionSavedToken(kj::ArrayPtr<const byte> token) {
+    auto text = kj::StringPtr(token.asChars().begin(), token.size());
+    auto prefix = kj::StringPtr(ISOLATE_WEBS_SESSION_TOKEN_PREFIX);
+    if (!text.startsWith(prefix)) {
+      return nullptr;
+    }
+
+    auto tokenName = kj::StringPtr(text.begin() + prefix.size(), text.size() - prefix.size());
+    KJ_REQUIRE(isOpaqueSavedCapabilityToken(tokenName), "invalid isolate WebSession saved token");
+    return normalizeWebSessionPathPrefix(readAll(kj::str(config.savedCapabilityDir, "/", tokenName)));
+  }
+
+  bool dropIsolateWebSessionSavedToken(kj::ArrayPtr<const byte> token) {
+    auto text = kj::StringPtr(token.asChars().begin(), token.size());
+    auto prefix = kj::StringPtr(ISOLATE_WEBS_SESSION_TOKEN_PREFIX);
+    if (!text.startsWith(prefix)) {
+      return false;
+    }
+
+    auto tokenName = kj::StringPtr(text.begin() + prefix.size(), text.size() - prefix.size());
+    KJ_REQUIRE(isOpaqueSavedCapabilityToken(tokenName), "invalid isolate WebSession saved token");
+    unlinkIfExists(kj::str(config.savedCapabilityDir, "/", tokenName));
+    return true;
+  }
+
   kj::Promise<void> offerClaimedCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
     auto sessionIds = findIsolateQueryParams(url, "sessionId");
@@ -3954,6 +4030,14 @@ private:
     }
 
     KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokens[0])) {
+      KJ_IF_MAYBE(pathPrefix, readIsolateWebSessionSavedToken(token->asPtr())) {
+        auto cap = kj::heap<IsolateWebSessionImpl>(
+            kj::addRef(config), kj::addRef(host), *pathPrefix, SessionKind::NORMAL,
+            SessionMetadata(), true);
+        auto capId = host.sessions->storeClaimedCapability(kj::mv(cap));
+        return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+      }
+
       auto request = host.sandstormCore.restoreRequest();
       request.setToken(token->asPtr());
       return request.send().then(
@@ -3976,6 +4060,10 @@ private:
     }
 
     KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokens[0])) {
+      if (dropIsolateWebSessionSavedToken(token->asPtr())) {
+        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+      }
+
       auto request = host.sandstormCore.dropRequest();
       request.setToken(token->asPtr());
       return request.send().then(
