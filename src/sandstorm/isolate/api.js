@@ -248,6 +248,10 @@ export class ClaimedCapability {
     return callClaimedCapability(this, method, args);
   }
 
+  asRpc() {
+    return createCapabilityRpcStub(this);
+  }
+
   save(options = {}) {
     return saveClaimedCapability(this.#env, this, options);
   }
@@ -473,6 +477,56 @@ async function callClaimedCapability(capability, method, args = []) {
   }
 
   return wrapCapabilityValue(capability.env, body.result);
+}
+
+const CLAIMED_CAPABILITY_RPC_OWN_PROPERTIES = new Set([
+  "ok",
+  "type",
+  "id",
+  "env",
+  "fetch",
+  "call",
+  "asRpc",
+  "save",
+  "drop",
+  "offer",
+  "fulfillRequest",
+  "tieToUser",
+  "toJSON",
+]);
+
+function wrapRpcStubValue(value) {
+  if (value instanceof ClaimedCapability) {
+    return value.asRpc();
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => wrapRpcStubValue(item));
+  }
+  if (!value || typeof value !== "object" || value instanceof SavedCapability) {
+    return value;
+  }
+
+  const result = {};
+  for (const [key, item] of Object.entries(value)) {
+    result[key] = wrapRpcStubValue(item);
+  }
+  return result;
+}
+
+function createCapabilityRpcStub(capability) {
+  return new Proxy(capability, {
+    get(target, prop, receiver) {
+      if (typeof prop !== "string" ||
+          CLAIMED_CAPABILITY_RPC_OWN_PROPERTIES.has(prop) ||
+          prop in target) {
+        return Reflect.get(target, prop, receiver);
+      }
+      if (prop === "then") {
+        return undefined;
+      }
+      return async (...args) => wrapRpcStubValue(await target.call(prop, ...args));
+    },
+  });
 }
 
 function wrapCapabilityValue(env, value) {
