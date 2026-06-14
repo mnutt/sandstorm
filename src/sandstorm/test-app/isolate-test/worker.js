@@ -36,6 +36,14 @@ class CounterCapability extends RpcTarget {
     return { value: this.#value };
   }
 
+  child() {
+    return new CounterCapability();
+  }
+
+  async readOther(other) {
+    return other.call("get");
+  }
+
   fail(message = "counter failure") {
     throw new Error(String(message));
   }
@@ -211,6 +219,9 @@ export default {
       const first = await capability.call("increment", 3);
       const second = await capability.call("increment", 4);
       const current = await capability.call("get");
+      const child = await capability.call("child");
+      const childFirst = await child.call("increment", 11);
+      const readChild = await capability.call("readOther", child);
       let missing;
       try {
         await capability.call("missingMethod");
@@ -227,6 +238,10 @@ export default {
         first,
         second,
         current,
+        childClass: child instanceof ClaimedCapability,
+        child: JSON.parse(JSON.stringify(child)),
+        childFirst,
+        readChild,
         missing,
         drop,
       });

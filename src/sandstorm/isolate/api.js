@@ -203,6 +203,10 @@ export class ClaimedCapability {
     this.id = validate.string(id, "capability.id", { minLength: 1, maxLength: 4096 });
   }
 
+  get env() {
+    return this.#env;
+  }
+
   fetch(input, init) {
     return fetchClaimedCapability(this.#env, this, input, init);
   }
@@ -414,10 +418,61 @@ async function callClaimedCapability(capability, method, args = []) {
     });
   }
 
-  return body.result;
+  return wrapCapabilityValue(capability.env, body.result);
 }
 
-async function serveObjectCapability(request) {
+function wrapCapabilityValue(env, value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => wrapCapabilityValue(env, item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  if (value.type === "claimedCapability") {
+    return wrapClaimedCapability(env, value);
+  }
+  if (value.type === "savedCapability") {
+    return wrapSavedCapability(env, value);
+  }
+
+  const result = {};
+  for (const [key, item] of Object.entries(value)) {
+    result[key] = wrapCapabilityValue(env, item);
+  }
+  return result;
+}
+
+async function serializeCapabilityValue(env, value) {
+  if (value instanceof RpcTarget) {
+    return createObjectCapability(env, value);
+  }
+  if (Array.isArray(value)) {
+    return Promise.all(value.map((item) => serializeCapabilityValue(env, item)));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  if (value instanceof ClaimedCapability || value instanceof SavedCapability) {
+    return value.toJSON();
+  }
+
+  const result = {};
+  for (const [key, item] of Object.entries(value)) {
+    result[key] = await serializeCapabilityValue(env, item);
+  }
+  return result;
+}
+
+function hydrateCapabilityValue(env, value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => hydrateCapabilityValue(env, item));
+  }
+  return wrapCapabilityValue(env, value);
+}
+
+async function serveObjectCapability(request, env) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith(`${OBJECT_CAPABILITY_PREFIX}/`)) {
     return null;
@@ -451,7 +506,8 @@ async function serveObjectCapability(request) {
   try {
     call = await request.json();
     const method = capabilityMethodName(call.method);
-    const args = capabilityArgs(call.args || []);
+    const args = capabilityArgs(call.args || [])
+      .map((arg) => hydrateCapabilityValue(env, arg));
     const func = target[method];
     if (typeof func !== "function") {
       return Response.json({
@@ -460,9 +516,10 @@ async function serveObjectCapability(request) {
       }, { status: 404 });
     }
 
+    const result = await func.apply(target, args);
     return Response.json({
       ok: true,
-      result: await func.apply(target, args),
+      result: await serializeCapabilityValue(env, result),
     });
   } catch (error) {
     const status = error instanceof ValidationError ? 400 : 500;
@@ -867,7 +924,7 @@ export function sandstorm(request, env) {
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, options),
     capability: (target) => createObjectCapability(env, target),
-    serveObjectCapabilities: () => serveObjectCapability(request),
+    serveObjectCapabilities: () => serveObjectCapability(request, env),
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),
