@@ -398,6 +398,14 @@ async function createWebSessionCapability(env, options = {}) {
       env, `capabilities/web-session?pathPrefix=${pathPrefix}&persistent=${persistent}`));
 }
 
+async function createApiSessionCapability(env, options = {}) {
+  const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
+  const persistent = webSessionPersistent(options) ? "true" : "false";
+  return wrapClaimedCapability(
+    env, await postSandstorm(
+      env, `capabilities/api-session?pathPrefix=${pathPrefix}&persistent=${persistent}`));
+}
+
 function capabilityMethodName(value, name = "method") {
   const method = validate.string(value, name, { minLength: 1, maxLength: 256 });
   if (method === "constructor" || method === "prototype" || method === "__proto__") {
@@ -960,6 +968,10 @@ class SandstormRpcTarget extends RpcTarget {
     return createWebSessionCapability(this.#env, options);
   }
 
+  apiSession(options = {}) {
+    return createApiSessionCapability(this.#env, options);
+  }
+
   capability(target) {
     return createObjectCapability(this.#env, target);
   }
@@ -1017,6 +1029,7 @@ export function sandstorm(request, env) {
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, options),
+    apiSession: (options = {}) => createApiSessionCapability(env, options),
     capability: (target) => createObjectCapability(env, target),
     serveObjectCapabilities: () => serveObjectCapability(request, env),
     apiTarget: () => apiTarget(request, env),

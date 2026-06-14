@@ -271,6 +271,27 @@ export default {
       });
     }
 
+    if (url.pathname === "/api-exported/capability-echo") {
+      return Response.json({
+        ok: true,
+        source: "exported-api-session",
+        pathname: url.pathname,
+        search: url.search,
+        sessionType: request.headers.get("x-sandstorm-session-type"),
+      });
+    }
+
+    if (url.pathname === "/export-api-session") {
+      const capability = await sandstorm(request, env).apiSession({
+        pathPrefix: "/api-exported",
+      });
+      return Response.json({
+        ok: true,
+        capabilityClass: capability instanceof ClaimedCapability,
+        capability: JSON.parse(JSON.stringify(capability)),
+      });
+    }
+
     if (url.pathname === "/web-session-save-restore-self-test") {
       const capability = await sandstorm(request, env).webSession({
         pathPrefix: "/exported",
@@ -322,6 +343,35 @@ export default {
           etag: preconditionFailedResponse.headers.get("etag"),
           bodyBytes: (await preconditionFailedResponse.arrayBuffer()).byteLength,
         },
+        dropRestored,
+        dropSaved,
+      });
+    }
+
+    if (url.pathname === "/api-session-save-restore-self-test") {
+      const capability = await sandstorm(request, env).apiSession({
+        pathPrefix: "/api-exported",
+      });
+      const saved = await capability.save({ label: "Route-backed ApiSession fixture" });
+      const dropOriginal = await capability.drop();
+      const restored = await saved.restore();
+      const fetchedResponse = await restored.fetch("/capability-echo?source=api-js-restore");
+      const fetched = {
+        status: fetchedResponse.status,
+        body: await fetchedResponse.json(),
+      };
+      const dropRestored = await restored.drop();
+      const dropSaved = await saved.drop();
+      return Response.json({
+        ok: true,
+        capabilityClass: capability instanceof ClaimedCapability,
+        savedClass: saved instanceof SavedCapability,
+        restoredClass: restored instanceof ClaimedCapability,
+        capability: JSON.parse(JSON.stringify(capability)),
+        saved: JSON.parse(JSON.stringify(saved)),
+        restored: JSON.parse(JSON.stringify(restored)),
+        dropOriginal,
+        fetched,
         dropRestored,
         dropSaved,
       });

@@ -624,6 +624,105 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.dropSaved.ok, true);
   });
 
+  await t.test("exports route-backed ApiSession capabilities", async () => {
+    const exported = await requestJson(fixture.workerdSocket, "/export-api-session");
+    assert.equal(exported.statusCode, 200, exported.body + formatOutput(
+      fixture.stdout, fixture.stderr));
+    assert.equal(exported.json.ok, true);
+    assert.equal(exported.json.capabilityClass, true);
+    assert.equal(exported.json.capability.type, "claimedCapability");
+    assert.equal(typeof exported.json.capability.id, "string");
+
+    const capabilityId = exported.json.capability.id;
+    const fetched = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
+      `&method=GET&path=${encodeURIComponent("/capability-echo?source=api-external")}`,
+      { method: "POST" });
+    assert.equal(fetched.statusCode, 200, fetched.body);
+    assert.equal(fetched.json.ok, true);
+    assert.equal(fetched.json.source, "exported-api-session");
+    assert.equal(fetched.json.pathname, "/api-exported/capability-echo");
+    assert.equal(fetched.json.search, "?source=api-external");
+
+    const saved = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/save?id=${encodeURIComponent(capabilityId)}` +
+      `&label=${encodeURIComponent("Route-backed ApiSession")}`,
+      { method: "POST" });
+    assert.equal(saved.statusCode, 200, saved.body);
+    assert.equal(saved.json.ok, true);
+    assert.equal(saved.json.type, "savedCapability");
+    assert.equal(saved.json.id, capabilityId);
+    assert.equal(saved.json.tokenEncoding, "base64url");
+    assert.equal(typeof saved.json.token, "string");
+
+    const drop = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/drop?id=${encodeURIComponent(capabilityId)}`,
+      { method: "POST" });
+    assert.equal(drop.statusCode, 200, drop.body);
+    assert.equal(drop.json.ok, true);
+
+    const restored = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/restore?token=${encodeURIComponent(saved.json.token)}`,
+      { method: "POST" });
+    assert.equal(restored.statusCode, 200, restored.body);
+    assert.equal(restored.json.ok, true);
+    assert.equal(restored.json.type, "claimedCapability");
+    assert.equal(typeof restored.json.id, "string");
+
+    const restoredFetch = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/fetch?id=${encodeURIComponent(restored.json.id)}` +
+      `&method=GET&path=${encodeURIComponent("/capability-echo?source=api-restored")}`,
+      { method: "POST" });
+    assert.equal(restoredFetch.statusCode, 200, restoredFetch.body);
+    assert.equal(restoredFetch.json.ok, true);
+    assert.equal(restoredFetch.json.source, "exported-api-session");
+    assert.equal(restoredFetch.json.pathname, "/api-exported/capability-echo");
+    assert.equal(restoredFetch.json.search, "?source=api-restored");
+
+    const dropRestored = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/drop?id=${encodeURIComponent(restored.json.id)}`,
+      { method: "POST" });
+    assert.equal(dropRestored.statusCode, 200, dropRestored.body);
+    assert.equal(dropRestored.json.ok, true);
+
+    const dropSaved = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/drop-saved?token=${encodeURIComponent(saved.json.token)}`,
+      { method: "POST" });
+    assert.equal(dropSaved.statusCode, 200, dropSaved.body);
+    assert.equal(dropSaved.json.ok, true);
+  });
+
+  await t.test("saves and restores route-backed ApiSession capabilities from isolate JS", async () => {
+    const selfTest = await requestJson(
+      fixture.workerdSocket, "/api-session-save-restore-self-test");
+    assert.equal(selfTest.statusCode, 200, selfTest.body + formatOutput(
+      fixture.stdout, fixture.stderr));
+    assert.equal(selfTest.json.ok, true);
+    assert.equal(selfTest.json.capabilityClass, true);
+    assert.equal(selfTest.json.savedClass, true);
+    assert.equal(selfTest.json.restoredClass, true);
+    assert.equal(selfTest.json.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.saved.type, "savedCapability");
+    assert.equal(selfTest.json.saved.tokenEncoding, "base64url");
+    assert.equal(typeof selfTest.json.saved.token, "string");
+    assert.equal(selfTest.json.restored.type, "claimedCapability");
+    assert.equal(selfTest.json.dropOriginal.ok, true);
+    assert.equal(selfTest.json.fetched.status, 200);
+    assert.equal(selfTest.json.fetched.body.ok, true);
+    assert.equal(selfTest.json.fetched.body.source, "exported-api-session");
+    assert.equal(selfTest.json.fetched.body.pathname, "/api-exported/capability-echo");
+    assert.equal(selfTest.json.fetched.body.search, "?source=api-js-restore");
+    assert.equal(selfTest.json.dropRestored.ok, true);
+    assert.equal(selfTest.json.dropSaved.ok, true);
+  });
+
   await t.test("exports JavaScript object capabilities", async () => {
     const exported = await requestJson(fixture.workerdSocket, "/export-object-capability");
     assert.equal(exported.statusCode, 200, exported.body + formatOutput(
@@ -796,6 +895,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("powerbox.fulfillRequest"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.tieToUser"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.webSession"));
+    assert.ok(capabilities.json.capabilities.includes("capabilities.apiSession"));
 
     const modules = await requestJson(fixture.sandstormApiSocket, "/modules");
     assert.equal(modules.statusCode, 200);

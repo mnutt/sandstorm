@@ -2351,9 +2351,28 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
   }
 }
 
-class IsolateWebSessionImpl final: public IsolateWebSession::Server {
+enum class RouteBackedSessionType {
+  WEB,
+  API
+};
+
+template <typename InternalSession>
+kj::StringPtr routeBackedSessionTypeToken();
+
+template <>
+kj::StringPtr routeBackedSessionTypeToken<IsolateWebSession>() {
+  return "web";
+}
+
+template <>
+kj::StringPtr routeBackedSessionTypeToken<IsolateApiSession>() {
+  return "api";
+}
+
+template <typename InternalSession>
+class IsolateRouteBackedSessionImpl final: public InternalSession::Server {
 public:
-  IsolateWebSessionImpl(
+  IsolateRouteBackedSessionImpl(
       kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
       kj::StringPtr pathPrefix = "", SessionKind sessionKind = SessionKind::NORMAL,
       SessionMetadata&& sessionMetadata = SessionMetadata(), bool persistent = true)
@@ -2365,20 +2384,20 @@ public:
         runtimeHost(kj::addRef(*host)),
         runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host))) {}
 
-  ~IsolateWebSessionImpl() noexcept(false) {
+  ~IsolateRouteBackedSessionImpl() noexcept(false) {
     if (sessionMetadata.sessionId.size() > 0) {
       runtimeHost->sessions->unregisterSession(sessionMetadata.sessionId);
     }
   }
 
-  kj::Promise<void> get(GetContext context) override {
+  kj::Promise<void> get(typename InternalSession::Server::GetContext context) override {
     auto params = context.getParams();
     auto method = params.getIgnoreBody() ? FetchMethod::HEAD : FetchMethod::GET;
     auto request = makeFetchRequest(method, prefixedPath(params.getPath()), params.getContext());
     return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
-  kj::Promise<void> post(PostContext context) override {
+  kj::Promise<void> post(typename InternalSession::Server::PostContext context) override {
     auto params = context.getParams();
     auto request = makeFetchRequest(FetchMethod::POST, prefixedPath(params.getPath()),
         params.getContext());
@@ -2386,7 +2405,8 @@ public:
     return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
-  kj::Promise<void> postStreaming(PostStreamingContext context) override {
+  kj::Promise<void> postStreaming(
+      typename InternalSession::Server::PostStreamingContext context) override {
     auto params = context.getParams();
     auto request = makeFetchRequest(FetchMethod::POST, prefixedPath(params.getPath()),
         params.getContext());
@@ -2400,7 +2420,7 @@ public:
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> put(PutContext context) override {
+  kj::Promise<void> put(typename InternalSession::Server::PutContext context) override {
     auto params = context.getParams();
     auto request = makeFetchRequest(FetchMethod::PUT, prefixedPath(params.getPath()),
         params.getContext());
@@ -2408,7 +2428,8 @@ public:
     return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
-  kj::Promise<void> putStreaming(PutStreamingContext context) override {
+  kj::Promise<void> putStreaming(
+      typename InternalSession::Server::PutStreamingContext context) override {
     auto params = context.getParams();
     auto request = makeFetchRequest(FetchMethod::PUT, prefixedPath(params.getPath()),
         params.getContext());
@@ -2422,14 +2443,14 @@ public:
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> delete_(DeleteContext context) override {
+  kj::Promise<void> delete_(typename InternalSession::Server::DeleteContext context) override {
     auto params = context.getParams();
     auto request = makeFetchRequest(FetchMethod::DELETE_, prefixedPath(params.getPath()),
         params.getContext());
     return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
-  kj::Promise<void> patch(PatchContext context) override {
+  kj::Promise<void> patch(typename InternalSession::Server::PatchContext context) override {
     auto params = context.getParams();
     auto request = makeFetchRequest(FetchMethod::PATCH, prefixedPath(params.getPath()),
         params.getContext());
@@ -2437,19 +2458,21 @@ public:
     return fetch(kj::mv(request), context.getResults(), params.getContext().getResponseStream());
   }
 
-  kj::Promise<void> options(OptionsContext context) override {
+  kj::Promise<void> options(typename InternalSession::Server::OptionsContext context) override {
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
-    context.getResults().setCap(thisCap().castAs<SystemPersistent>());
+  kj::Promise<void> addRequirements(
+      typename InternalSession::Server::AddRequirementsContext context) override {
+    context.getResults().setCap(this->thisCap().template castAs<SystemPersistent>());
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> save(SaveContext context) override {
-    KJ_REQUIRE(persistent, "isolate WebSession capability is not persistent");
+  kj::Promise<void> save(typename InternalSession::Server::SaveContext context) override {
+    KJ_REQUIRE(persistent, "isolate route-backed capability is not persistent");
     auto token = makeOpaqueToken();
-    writeFile(kj::str(runtimeConfig->savedCapabilityDir, "/", token), pathPrefix.asBytes());
+    writeFile(kj::str(runtimeConfig->savedCapabilityDir, "/", token),
+        kj::str(sessionTypeToken(), "\n", pathPrefix).asBytes());
     auto sturdyRef = kj::str(ISOLATE_WEBS_SESSION_TOKEN_PREFIX, token);
     context.getResults().setSturdyRef(sturdyRef.asBytes());
     return kj::READY_NOW;
@@ -2463,6 +2486,8 @@ private:
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
   kj::Own<IsolateRuntimeAdapter> runtime;
+
+  kj::StringPtr sessionTypeToken() { return routeBackedSessionTypeToken<InternalSession>(); }
 
   kj::String prefixedPath(kj::StringPtr path) {
     if (pathPrefix.size() == 0) {
@@ -2571,7 +2596,7 @@ public:
         : copyApiSessionMetadata(params.getUserInfo(), viewInfo, params.getTabId());
     sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
     context.getResults().setSession(
-        kj::heap<IsolateWebSessionImpl>(
+        kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
             kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), pathPrefix, SessionKind::NORMAL,
             kj::mv(sessionMetadata)));
     return kj::READY_NOW;
@@ -2587,7 +2612,7 @@ public:
         params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
         params.getTabId());
     sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
-    context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
+    context.getResults().setSession(kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::REQUEST,
         kj::mv(sessionMetadata)));
     return kj::READY_NOW;
@@ -2605,7 +2630,7 @@ public:
     sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
     sessionMetadata.offeredCapabilityId = runtimeHost->sessions->storeClaimedCapability(
         params.getOffer());
-    context.getResults().setSession(kj::heap<IsolateWebSessionImpl>(
+    context.getResults().setSession(kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::OFFER,
         kj::mv(sessionMetadata)));
     return kj::READY_NOW;
@@ -3317,7 +3342,9 @@ public:
       } else if (methodName == "POST" && route == "/powerbox/tie-to-user") {
         return tieClaimedCapabilityToUser(path, response);
       } else if (methodName == "POST" && route == "/capabilities/web-session") {
-        return createWebSessionCapability(path, response);
+        return createRouteBackedSessionCapability(path, response, RouteBackedSessionType::WEB);
+      } else if (methodName == "POST" && route == "/capabilities/api-session") {
+        return createRouteBackedSessionCapability(path, response, RouteBackedSessionType::API);
       }
 
       if (methodName != "GET") {
@@ -3450,7 +3477,7 @@ private:
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
         "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
-        "\"capabilities.webSession\"]\n"
+        "\"capabilities.webSession\", \"capabilities.apiSession\"]\n"
         "}\n");
   }
 
@@ -3605,8 +3632,23 @@ private:
     return kj::heapString(pathPrefix);
   }
 
-  kj::Promise<void> createWebSessionCapability(
-      kj::StringPtr url, kj::HttpService::Response& response) {
+  capnp::Capability::Client makeRouteBackedSessionCapability(
+      RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent) {
+    switch (sessionType) {
+      case RouteBackedSessionType::WEB:
+        return kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
+            kj::addRef(config), kj::addRef(host), pathPrefix, SessionKind::NORMAL,
+            SessionMetadata(), persistent);
+      case RouteBackedSessionType::API:
+        return kj::heap<IsolateRouteBackedSessionImpl<IsolateApiSession>>(
+            kj::addRef(config), kj::addRef(host), pathPrefix, SessionKind::NORMAL,
+            SessionMetadata(), persistent);
+    }
+    KJ_UNREACHABLE;
+  }
+
+  kj::Promise<void> createRouteBackedSessionCapability(
+      kj::StringPtr url, kj::HttpService::Response& response, RouteBackedSessionType sessionType) {
     auto pathPrefixes = findIsolateQueryParams(url, "pathPrefix");
     auto persistentParams = findIsolateQueryParams(url, "persistent");
     if (pathPrefixes.size() > 1 || persistentParams.size() > 1) {
@@ -3631,9 +3673,7 @@ private:
             "persistent must be true or false"));
       }
     }
-    auto cap = kj::heap<IsolateWebSessionImpl>(
-        kj::addRef(config), kj::addRef(host), pathPrefix, SessionKind::NORMAL, SessionMetadata(),
-        persistent);
+    auto cap = makeRouteBackedSessionCapability(sessionType, pathPrefix, persistent);
     auto capId = host.sessions->storeClaimedCapability(kj::mv(cap));
     return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
@@ -4073,7 +4113,23 @@ private:
     return true;
   }
 
-  kj::Maybe<kj::String> readIsolateWebSessionSavedToken(kj::ArrayPtr<const byte> token) {
+  struct SavedRouteBackedSession {
+    RouteBackedSessionType type;
+    kj::String pathPrefix;
+  };
+
+  RouteBackedSessionType parseSavedRouteBackedSessionType(kj::StringPtr value) {
+    if (value == "web") {
+      return RouteBackedSessionType::WEB;
+    } else if (value == "api") {
+      return RouteBackedSessionType::API;
+    } else {
+      KJ_FAIL_REQUIRE("invalid isolate route-backed saved capability type", value);
+    }
+  }
+
+  kj::Maybe<SavedRouteBackedSession> readIsolateRouteBackedSavedToken(
+      kj::ArrayPtr<const byte> token) {
     auto text = kj::StringPtr(token.asChars().begin(), token.size());
     auto prefix = kj::StringPtr(ISOLATE_WEBS_SESSION_TOKEN_PREFIX);
     if (!text.startsWith(prefix)) {
@@ -4082,7 +4138,20 @@ private:
 
     auto tokenName = kj::StringPtr(text.begin() + prefix.size(), text.size() - prefix.size());
     KJ_REQUIRE(isOpaqueSavedCapabilityToken(tokenName), "invalid isolate WebSession saved token");
-    return normalizeWebSessionPathPrefix(readAll(kj::str(config.savedCapabilityDir, "/", tokenName)));
+    auto payload = readAll(kj::str(config.savedCapabilityDir, "/", tokenName));
+
+    RouteBackedSessionType type = RouteBackedSessionType::WEB;
+    kj::String pathPrefix;
+    KJ_IF_MAYBE(newline, payload.findFirst('\n')) {
+      auto typeName = kj::StringPtr(payload.begin(), *newline);
+      type = parseSavedRouteBackedSessionType(typeName);
+      pathPrefix = normalizeWebSessionPathPrefix(kj::StringPtr(
+          payload.begin() + *newline + 1, payload.size() - *newline - 1));
+    } else {
+      pathPrefix = normalizeWebSessionPathPrefix(payload);
+    }
+
+    return SavedRouteBackedSession { type, kj::mv(pathPrefix) };
   }
 
   bool dropIsolateWebSessionSavedToken(kj::ArrayPtr<const byte> token) {
@@ -4275,10 +4344,8 @@ private:
     }
 
     KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokens[0])) {
-      KJ_IF_MAYBE(pathPrefix, readIsolateWebSessionSavedToken(token->asPtr())) {
-        auto cap = kj::heap<IsolateWebSessionImpl>(
-            kj::addRef(config), kj::addRef(host), *pathPrefix, SessionKind::NORMAL,
-            SessionMetadata(), true);
+      KJ_IF_MAYBE(savedRoute, readIsolateRouteBackedSavedToken(token->asPtr())) {
+        auto cap = makeRouteBackedSessionCapability(savedRoute->type, savedRoute->pathPrefix, true);
         auto capId = host.sessions->storeClaimedCapability(kj::mv(cap));
         return sendJson(response, 200, "OK", renderClaimedCapability(capId));
       }
