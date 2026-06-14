@@ -578,6 +578,8 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.fetched.body.ok, true);
     assert.equal(selfTest.json.fetched.body.pathname, "/exported/capability-echo");
     assert.equal(selfTest.json.fetched.body.search, "?source=js-restore");
+    assert.equal(selfTest.json.fetched.body.appHeader, "present");
+    assert.equal(selfTest.json.fetched.body.blockedHeader, null);
     assert.equal(selfTest.json.dropRestored.ok, true);
     assert.equal(selfTest.json.dropSaved.ok, true);
   });
