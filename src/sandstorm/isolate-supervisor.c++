@@ -86,6 +86,8 @@ namespace sandstorm {
 namespace {
 
 constexpr const char* ISOLATE_WEBS_SESSION_TOKEN_PREFIX = "sandstorm-isolate-websession:";
+constexpr const char* ISOLATE_ROUTE_BACKED_APP_REF_PREFIX =
+    "sandstorm-isolate-route-backed-v1\n";
 
 struct IsolateRuntimeConfig final: public kj::Refcounted {
   enum class ModuleType {
@@ -2372,17 +2374,78 @@ enum class RouteBackedSessionType {
   API
 };
 
+kj::StringPtr routeBackedSessionTypeToken(RouteBackedSessionType type) {
+  switch (type) {
+    case RouteBackedSessionType::WEB:
+      return "web";
+    case RouteBackedSessionType::API:
+      return "api";
+  }
+  KJ_UNREACHABLE;
+}
+
+RouteBackedSessionType parseRouteBackedSessionType(kj::StringPtr value) {
+  if (value == "web") {
+    return RouteBackedSessionType::WEB;
+  } else if (value == "api") {
+    return RouteBackedSessionType::API;
+  } else {
+    KJ_FAIL_REQUIRE("invalid isolate route-backed capability type", value);
+  }
+}
+
+kj::String normalizeRouteBackedPathPrefix(kj::StringPtr pathPrefix) {
+  KJ_REQUIRE(pathPrefix.size() <= 1024, "route-backed capability pathPrefix is too long");
+  for (size_t i = 0; i + 2 < pathPrefix.size(); ++i) {
+    KJ_REQUIRE(!(pathPrefix[i] == ':' && pathPrefix[i + 1] == '/' && pathPrefix[i + 2] == '/'),
+        "route-backed capability pathPrefix must be path-relative");
+  }
+  KJ_REQUIRE(pathPrefix.size() == 0 || pathPrefix[0] == '/',
+      "route-backed capability pathPrefix must be empty or start with '/'");
+  return kj::heapString(pathPrefix);
+}
+
+struct RouteBackedSessionRef {
+  RouteBackedSessionType type;
+  kj::String pathPrefix;
+};
+
+RouteBackedSessionRef parseRouteBackedSessionRef(kj::StringPtr payload) {
+  KJ_IF_MAYBE(newline, payload.findFirst('\n')) {
+    auto typeName = kj::StringPtr(payload.begin(), *newline);
+    auto pathPrefix = kj::StringPtr(payload.begin() + *newline + 1,
+        payload.size() - *newline - 1);
+    return RouteBackedSessionRef {
+        parseRouteBackedSessionType(typeName),
+        normalizeRouteBackedPathPrefix(pathPrefix)
+    };
+  } else {
+    return RouteBackedSessionRef {
+        RouteBackedSessionType::WEB,
+        normalizeRouteBackedPathPrefix(payload)
+    };
+  }
+}
+
+RouteBackedSessionRef parseRouteBackedSessionAppRef(capnp::Data::Reader appRef) {
+  auto text = kj::StringPtr(appRef.asChars().begin(), appRef.size());
+  auto prefix = kj::StringPtr(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX);
+  KJ_REQUIRE(text.startsWith(prefix), "unknown isolate app-ref format");
+  return parseRouteBackedSessionRef(
+      kj::StringPtr(text.begin() + prefix.size(), text.size() - prefix.size()));
+}
+
 template <typename InternalSession>
 kj::StringPtr routeBackedSessionTypeToken();
 
 template <>
 kj::StringPtr routeBackedSessionTypeToken<IsolateWebSession>() {
-  return "web";
+  return routeBackedSessionTypeToken(RouteBackedSessionType::WEB);
 }
 
 template <>
 kj::StringPtr routeBackedSessionTypeToken<IsolateApiSession>() {
-  return "api";
+  return routeBackedSessionTypeToken(RouteBackedSessionType::API);
 }
 
 template <typename InternalSession>
@@ -2582,6 +2645,22 @@ private:
     });
   }
 };
+
+capnp::Capability::Client makeRouteBackedSessionCapability(
+    kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
+    RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent) {
+  switch (sessionType) {
+    case RouteBackedSessionType::WEB:
+      return kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
+          kj::mv(config), kj::mv(host), pathPrefix, SessionKind::NORMAL,
+          SessionMetadata(), persistent);
+    case RouteBackedSessionType::API:
+      return kj::heap<IsolateRouteBackedSessionImpl<IsolateApiSession>>(
+          kj::mv(config), kj::mv(host), pathPrefix, SessionKind::NORMAL,
+          SessionMetadata(), persistent);
+  }
+  KJ_UNREACHABLE;
+}
 
 class IsolateUiViewImpl final: public UiView::Server {
 public:
@@ -3647,29 +3726,13 @@ private:
   }
 
   kj::String normalizeWebSessionPathPrefix(kj::StringPtr pathPrefix) {
-    KJ_REQUIRE(pathPrefix.size() <= 1024, "web session capability pathPrefix is too long");
-    for (size_t i = 0; i + 2 < pathPrefix.size(); ++i) {
-      KJ_REQUIRE(!(pathPrefix[i] == ':' && pathPrefix[i + 1] == '/' && pathPrefix[i + 2] == '/'),
-          "web session capability pathPrefix must be path-relative");
-    }
-    KJ_REQUIRE(pathPrefix.size() == 0 || pathPrefix[0] == '/',
-        "web session capability pathPrefix must be empty or start with '/'");
-    return kj::heapString(pathPrefix);
+    return normalizeRouteBackedPathPrefix(pathPrefix);
   }
 
   capnp::Capability::Client makeRouteBackedSessionCapability(
       RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent) {
-    switch (sessionType) {
-      case RouteBackedSessionType::WEB:
-        return kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
-            kj::addRef(config), kj::addRef(host), pathPrefix, SessionKind::NORMAL,
-            SessionMetadata(), persistent);
-      case RouteBackedSessionType::API:
-        return kj::heap<IsolateRouteBackedSessionImpl<IsolateApiSession>>(
-            kj::addRef(config), kj::addRef(host), pathPrefix, SessionKind::NORMAL,
-            SessionMetadata(), persistent);
-    }
-    KJ_UNREACHABLE;
+    return sandstorm::makeRouteBackedSessionCapability(
+        kj::addRef(config), kj::addRef(host), sessionType, pathPrefix, persistent);
   }
 
   kj::Promise<void> createRouteBackedSessionCapability(
@@ -4202,22 +4265,7 @@ private:
     return true;
   }
 
-  struct SavedRouteBackedSession {
-    RouteBackedSessionType type;
-    kj::String pathPrefix;
-  };
-
-  RouteBackedSessionType parseSavedRouteBackedSessionType(kj::StringPtr value) {
-    if (value == "web") {
-      return RouteBackedSessionType::WEB;
-    } else if (value == "api") {
-      return RouteBackedSessionType::API;
-    } else {
-      KJ_FAIL_REQUIRE("invalid isolate route-backed saved capability type", value);
-    }
-  }
-
-  kj::Maybe<SavedRouteBackedSession> readIsolateRouteBackedSavedToken(
+  kj::Maybe<RouteBackedSessionRef> readIsolateRouteBackedSavedToken(
       kj::ArrayPtr<const byte> token) {
     auto text = kj::StringPtr(token.asChars().begin(), token.size());
     auto prefix = kj::StringPtr(ISOLATE_WEBS_SESSION_TOKEN_PREFIX);
@@ -4228,19 +4276,7 @@ private:
     auto tokenName = kj::StringPtr(text.begin() + prefix.size(), text.size() - prefix.size());
     KJ_REQUIRE(isOpaqueSavedCapabilityToken(tokenName), "invalid isolate WebSession saved token");
     auto payload = readAll(kj::str(config.savedCapabilityDir, "/", tokenName));
-
-    RouteBackedSessionType type = RouteBackedSessionType::WEB;
-    kj::String pathPrefix;
-    KJ_IF_MAYBE(newline, payload.findFirst('\n')) {
-      auto typeName = kj::StringPtr(payload.begin(), *newline);
-      type = parseSavedRouteBackedSessionType(typeName);
-      pathPrefix = normalizeWebSessionPathPrefix(kj::StringPtr(
-          payload.begin() + *newline + 1, payload.size() - *newline - 1));
-    } else {
-      pathPrefix = normalizeWebSessionPathPrefix(payload);
-    }
-
-    return SavedRouteBackedSession { type, kj::mv(pathPrefix) };
+    return parseRouteBackedSessionRef(payload);
   }
 
   bool dropIsolateWebSessionSavedToken(kj::ArrayPtr<const byte> token) {
@@ -4852,9 +4888,13 @@ public:
   kj::Promise<void> restore(RestoreContext context) override {
     auto objectId = context.getParams().getRef();
     switch (objectId.which()) {
-      case SupervisorObjectId<>::APP_REF:
-        KJ_FAIL_REQUIRE(
-            "isolate grain app-defined persistent capabilities are not implemented yet");
+      case SupervisorObjectId<>::APP_REF: {
+        auto routeRef = parseRouteBackedSessionAppRef(objectId.getAppRef().getAs<capnp::Data>());
+        context.getResults().setCap(makeRouteBackedSessionCapability(
+            kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
+            routeRef.type, routeRef.pathPrefix, true));
+        return kj::READY_NOW;
+      }
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
         KJ_FAIL_REQUIRE("isolate supervisor-owned persistent object type is not supported yet");
       default:
@@ -4866,8 +4906,8 @@ public:
     auto objectId = context.getParams().getRef();
     switch (objectId.which()) {
       case SupervisorObjectId<>::APP_REF:
-        KJ_FAIL_REQUIRE(
-            "isolate grain app-defined persistent capabilities are not implemented yet");
+        parseRouteBackedSessionAppRef(objectId.getAppRef().getAs<capnp::Data>());
+        return kj::READY_NOW;
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
         KJ_FAIL_REQUIRE("isolate supervisor-owned persistent object type is not supported yet");
       default:

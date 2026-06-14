@@ -29,6 +29,9 @@
 
 namespace sandstorm {
 
+constexpr const char* ISOLATE_ROUTE_BACKED_APP_REF_PREFIX =
+    "sandstorm-isolate-route-backed-v1\n";
+
 bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
   if (needle.size() > haystack.size()) {
     return false;
@@ -79,6 +82,10 @@ void expectSupervisorRefFailure(kj::WaitScope& waitScope, kj::Promise<void> prom
     KJ_REQUIRE(contains(description, "isolate supervisor-owned persistent object type"),
         description);
   }
+}
+
+kj::String makeRouteBackedSessionAppRef(kj::StringPtr type, kj::StringPtr pathPrefix) {
+  return kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX, type, "\n", pathPrefix);
 }
 
 class IgnoreByteStream final: public ByteStream::Server {
@@ -362,6 +369,38 @@ public:
     auto dropRequest = supervisor.dropRequest();
     dropRequest.getRef().setWakeLockNotification(123);
     expectSupervisorRefFailure(io.waitScope, dropRequest.send().ignoreResult());
+
+    auto routeAppRef = makeRouteBackedSessionAppRef("web", "/exported");
+    auto routeRestoreRequest = supervisor.restoreRequest();
+    routeRestoreRequest.getRef().initAppRef().setAs<capnp::Data>(routeAppRef.asBytes());
+    auto restoredRouteSession = routeRestoreRequest.send().wait(io.waitScope)
+        .getCap().castAs<WebSession>();
+
+    auto routeRequest = restoredRouteSession.getRequest();
+    routeRequest.setPath("/capability-echo?source=supervisor-app-ref");
+    routeRequest.setIgnoreBody(false);
+    auto routeContext = routeRequest.initContext();
+    routeContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    routeContext.initCookies(0);
+    routeContext.initAccept(0);
+    routeContext.initAcceptEncoding(0);
+    routeContext.initAdditionalHeaders(0);
+
+    auto routeResponse = routeRequest.send().wait(io.waitScope);
+    auto routeDebugBody = responseDebugBody(routeResponse);
+    KJ_REQUIRE(routeResponse.which() == WebSession::Response::CONTENT, routeDebugBody);
+    auto routeContent = routeResponse.getContent();
+    KJ_REQUIRE(routeContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(routeContent.getBody().which() == WebSession::Response::Content::Body::BYTES);
+    auto routeBody = kj::str(routeContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(routeBody, "\"ok\":true"), routeBody);
+    KJ_REQUIRE(contains(routeBody, "\"source\":\"exported-web-session\""), routeBody);
+    KJ_REQUIRE(contains(routeBody, "\"pathname\":\"/exported/capability-echo\""), routeBody);
+    KJ_REQUIRE(contains(routeBody, "\"search\":\"?source=supervisor-app-ref\""), routeBody);
+
+    auto routeDropRequest = supervisor.dropRequest();
+    routeDropRequest.getRef().initAppRef().setAs<capnp::Data>(routeAppRef.asBytes());
+    routeDropRequest.send().wait(io.waitScope);
 
     auto view = supervisor.getMainViewRequest().send().wait(io.waitScope).getView();
 
