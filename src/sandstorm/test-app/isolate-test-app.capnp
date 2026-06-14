@@ -77,10 +77,6 @@ const isolateCommand :Spk.Manifest.Command = (
         storage = void
       ),
       (
-        name = "PUBLIC_FETCH",
-        publicFetch = void
-      ),
-      (
         name = "LOOPBACK_SERVICE",
         service = "main"
       )

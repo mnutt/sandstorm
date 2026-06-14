@@ -103,7 +103,6 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
     SANDSTORM_API,
     STORAGE,
     POWERBOX,
-    PUBLIC_FETCH,
     SERVICE,
   };
 
@@ -130,7 +129,6 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String workerdSocketPath;
   kj::String sandstormApiSocketPath;
   kj::String powerboxSocketPath;
-  kj::String publicFetchSocketPath;
   kj::String storageSocketPath;
   kj::String storageRootPath;
   kj::String savedCapabilityDir;
@@ -310,8 +308,6 @@ IsolateRuntimeConfig::BindingType getBindingType(
       return IsolateRuntimeConfig::BindingType::STORAGE;
     case spk::Manifest::IsolateConfig::Binding::POWERBOX:
       return IsolateRuntimeConfig::BindingType::POWERBOX;
-    case spk::Manifest::IsolateConfig::Binding::PUBLIC_FETCH:
-      return IsolateRuntimeConfig::BindingType::PUBLIC_FETCH;
     case spk::Manifest::IsolateConfig::Binding::SERVICE:
       return IsolateRuntimeConfig::BindingType::SERVICE;
   }
@@ -333,8 +329,6 @@ kj::StringPtr bindingTypeName(IsolateRuntimeConfig::BindingType type) {
       return "storage";
     case IsolateRuntimeConfig::BindingType::POWERBOX:
       return "powerbox";
-    case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
-      return "publicFetch";
     case IsolateRuntimeConfig::BindingType::SERVICE:
       return "service";
   }
@@ -351,7 +345,6 @@ bool isImplementedBinding(IsolateRuntimeConfig::BindingType type) {
     case IsolateRuntimeConfig::BindingType::STORAGE:
     case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::SERVICE:
-    case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
       return true;
   }
 
@@ -419,7 +412,6 @@ kj::Array<byte> copyBindingValue(spk::Manifest::IsolateConfig::Binding::Reader b
     case spk::Manifest::IsolateConfig::Binding::SANDSTORM_API:
     case spk::Manifest::IsolateConfig::Binding::STORAGE:
     case spk::Manifest::IsolateConfig::Binding::POWERBOX:
-    case spk::Manifest::IsolateConfig::Binding::PUBLIC_FETCH:
     case spk::Manifest::IsolateConfig::Binding::SERVICE:
       return nullptr;
   }
@@ -856,7 +848,6 @@ bool isWorkerdDirectBinding(IsolateRuntimeConfig::Binding& binding) {
     case IsolateRuntimeConfig::BindingType::STORAGE:
     case IsolateRuntimeConfig::BindingType::POWERBOX:
     case IsolateRuntimeConfig::BindingType::SERVICE:
-    case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
       return true;
   }
 
@@ -895,9 +886,6 @@ void appendWorkerdBinding(
     case IsolateRuntimeConfig::BindingType::POWERBOX:
       result.addAll(kj::StringPtr("service = \"sandstorm-powerbox\""));
       break;
-    case IsolateRuntimeConfig::BindingType::PUBLIC_FETCH:
-      result.addAll(kj::StringPtr("service = \"sandstorm-public-fetch\""));
-      break;
     case IsolateRuntimeConfig::BindingType::SERVICE:
       result.addAll(kj::StringPtr("service = "));
       appendCapnpString(result, binding.serviceName);
@@ -930,16 +918,6 @@ bool hasStorageBinding(IsolateRuntimeConfig& config) {
 bool hasPowerboxBinding(IsolateRuntimeConfig& config) {
   for (auto& binding: config.bindings) {
     if (binding.type == IsolateRuntimeConfig::BindingType::POWERBOX) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool hasPublicFetchBinding(IsolateRuntimeConfig& config) {
-  for (auto& binding: config.bindings) {
-    if (binding.type == IsolateRuntimeConfig::BindingType::PUBLIC_FETCH) {
       return true;
     }
   }
@@ -1025,9 +1003,6 @@ void appendWorkerdConfig(
   if (hasPowerboxBinding(config)) {
     appendExternalWorkerdService(result, "sandstorm-powerbox", config.powerboxSocketPath);
   }
-  if (hasPublicFetchBinding(config)) {
-    appendExternalWorkerdService(result, "sandstorm-public-fetch", config.publicFetchSocketPath);
-  }
 
   result.addAll(kj::StringPtr(
       "\n  ],\n"
@@ -1047,13 +1022,11 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   auto socketPath = kj::str(bundleDir, "/workerd.sock");
   auto sandstormApiSocketPath = kj::str(bundleDir, "/sandstorm-api.sock");
   auto powerboxSocketPath = kj::str(bundleDir, "/sandstorm-powerbox.sock");
-  auto publicFetchSocketPath = kj::str(bundleDir, "/sandstorm-public-fetch.sock");
   auto storageSocketPath = kj::str(bundleDir, "/sandstorm-storage.sock");
   auto storageRootPath = kj::str(varPath, "/isolate-storage");
   auto savedCapabilityDir = kj::str(varPath, "/isolate-capabilities");
   config.sandstormApiSocketPath = kj::heapString(sandstormApiSocketPath);
   config.powerboxSocketPath = kj::heapString(powerboxSocketPath);
-  config.publicFetchSocketPath = kj::heapString(publicFetchSocketPath);
   config.storageSocketPath = kj::heapString(storageSocketPath);
   config.storageRootPath = kj::heapString(storageRootPath);
   config.savedCapabilityDir = kj::heapString(savedCapabilityDir);
@@ -1134,7 +1107,6 @@ void prepareRuntimeBundleAndCleanupSockets(kj::StringPtr varPath, IsolateRuntime
   unlinkSocketIfExists(config.workerdSocketPath);
   unlinkSocketIfExists(config.sandstormApiSocketPath);
   unlinkSocketIfExists(config.powerboxSocketPath);
-  unlinkSocketIfExists(config.publicFetchSocketPath);
   unlinkSocketIfExists(config.storageSocketPath);
 }
 
@@ -4552,60 +4524,6 @@ private:
   }
 };
 
-class PublicFetchBindingService final: public kj::HttpService {
-public:
-  explicit PublicFetchBindingService(kj::HttpHeaderTable& headerTable)
-      : headerTable(headerTable) {}
-
-  kj::Promise<void> request(
-      kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
-      kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
-    auto methodName = kj::str(method);
-    auto targetHost = kj::heapString(headers.get(kj::HttpHeaderId::HOST).orDefault(""));
-    auto targetPath = kj::heapString(url);
-    KJ_LOG(WARNING, "Isolate publicFetch binding denied request.",
-        methodName, targetHost, targetPath);
-
-    return readAllBytesAtMost(requestBody, 64 * 1024,
-        "isolate publicFetch binding request body exceeds maximum allowed size").then(
-        [this, methodName = kj::mv(methodName), targetHost = kj::mv(targetHost),
-            targetPath = kj::mv(targetPath), &response](kj::Array<byte>&& body) mutable {
-      return sendJson(response, 501, "Not Implemented",
-          renderDenied(kj::mv(methodName), kj::mv(targetHost), kj::mv(targetPath), body.size()));
-    });
-  }
-
-private:
-  kj::HttpHeaderTable& headerTable;
-
-  kj::Promise<void> sendJson(kj::HttpService::Response& response, uint statusCode,
-      kj::StringPtr statusText, kj::String body) {
-    kj::HttpHeaders responseHeaders(headerTable);
-    responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/json; charset=utf-8");
-    auto stream = response.send(statusCode, statusText, responseHeaders, body.size());
-    auto promise = stream->write(body.begin(), body.size());
-    return promise.attach(kj::mv(stream), kj::mv(body));
-  }
-
-  kj::String renderDenied(
-      kj::String methodName, kj::String targetHost, kj::String targetPath, size_t bodyBytes) {
-    kj::Vector<char> json;
-    json.addAll(kj::StringPtr("{\n  \"ok\": false,\n  \"binding\": \"publicFetch\",\n  "));
-    appendJsonField(json, "error", "publicFetch is not enabled by supervisor policy yet");
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "method", methodName);
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "host", targetHost);
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "path", targetPath);
-    json.addAll(kj::StringPtr(",\n  \"requestBodyBytes\": "));
-    json.addAll(kj::str(bodyBytes));
-    json.addAll(kj::StringPtr("\n}\n"));
-    json.add('\0');
-    return kj::String(json.releaseAsArray());
-  }
-};
-
 class StorageBindingService final: public kj::HttpService {
 public:
   StorageBindingService(kj::HttpHeaderTable& headerTable, IsolateRuntimeConfig& config)
@@ -5363,7 +5281,6 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
       ioContext.provider->getNetwork(), ioContext.provider->getTimer(), grainId, coreCap);
   kj::Maybe<kj::Promise<void>> apiListenTask = nullptr;
   kj::Maybe<kj::Promise<void>> powerboxListenTask = nullptr;
-  kj::Maybe<kj::Promise<void>> publicFetchListenTask = nullptr;
   kj::Maybe<kj::Promise<void>> storageListenTask = nullptr;
   if (hasSandstormApiBinding(*runtimeConfig)) {
     auto apiService = kj::heap<SandstormApiBindingService>(
@@ -5394,20 +5311,6 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
         runtimeConfig->powerboxSocketPath);
     powerboxListenTask = powerboxServer->listenHttp(*powerboxPort)
         .attach(kj::mv(powerboxPort), kj::mv(powerboxServer));
-  }
-  if (hasPublicFetchBinding(*runtimeConfig)) {
-    auto publicFetchService = kj::heap<PublicFetchBindingService>(runtimeHost->headerTable);
-    auto publicFetchServer = kj::heap<kj::HttpServer>(
-        runtimeHost->timer, runtimeHost->headerTable, *publicFetchService);
-    publicFetchServer = publicFetchServer.attach(kj::mv(publicFetchService));
-    auto publicFetchAddress = runtimeHost->network
-        .parseAddress(kj::str("unix:", runtimeConfig->publicFetchSocketPath), 0)
-        .wait(ioContext.waitScope);
-    auto publicFetchPort = publicFetchAddress->listen();
-    KJ_LOG(WARNING, "Isolate publicFetch binding socket is listening.",
-        runtimeConfig->publicFetchSocketPath);
-    publicFetchListenTask = publicFetchServer->listenHttp(*publicFetchPort)
-        .attach(kj::mv(publicFetchPort), kj::mv(publicFetchServer));
   }
   if (hasStorageBinding(*runtimeConfig)) {
     auto storageService = kj::heap<StorageBindingService>(
@@ -5461,9 +5364,6 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   }
   KJ_IF_MAYBE(powerboxTask, powerboxListenTask) {
     listenTask = listenTask.exclusiveJoin(kj::mv(*powerboxTask));
-  }
-  KJ_IF_MAYBE(publicFetchTask, publicFetchListenTask) {
-    listenTask = listenTask.exclusiveJoin(kj::mv(*publicFetchTask));
   }
   KJ_IF_MAYBE(storageTask, storageListenTask) {
     listenTask = listenTask.exclusiveJoin(kj::mv(*storageTask));
