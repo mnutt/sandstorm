@@ -93,7 +93,7 @@ export default {
     const headers = {};
     for (const [name, value] of request.headers) {
       if (name.startsWith("x-sandstorm-") || name === "host" ||
-          name === "if-match" || name === "if-none-match") {
+          name === "if-match" || name === "if-none-match" || name === "cookie") {
         headers[name] = value;
       }
     }

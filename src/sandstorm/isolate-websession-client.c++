@@ -599,7 +599,11 @@ public:
     getRequest.setIgnoreBody(false);
     auto getContext = getRequest.initContext();
     getContext.setResponseStream(kj::heap<IgnoreByteStream>());
-    getContext.initCookies(0);
+    auto getCookies = getContext.initCookies(2);
+    getCookies[0].setKey("ambient");
+    getCookies[0].setValue("one");
+    getCookies[1].setKey("theme");
+    getCookies[1].setValue("dark");
     getContext.initAccept(0);
     getContext.initAcceptEncoding(0);
     getContext.initAdditionalHeaders(1);
@@ -627,6 +631,7 @@ public:
     KJ_REQUIRE(contains(body, "\"x-sandstorm-tab-id\":\"77656273657373696f6e2d746162\""), body);
     KJ_REQUIRE(contains(body, "\"if-none-match\":\"\\\"cached-etag\\\", W/\\\"weak-cached-etag\\\"\""),
         body);
+    KJ_REQUIRE(!contains(body, "\"cookie\""), body);
 
     auto downloadStreamServer = kj::heap<CollectByteStream>();
     auto& downloadStream = *downloadStreamServer;
