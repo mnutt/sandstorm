@@ -65,7 +65,8 @@ KJ_TEST("isolate query parameters are percent-decoded") {
   KJ_EXPECT(decodeIsolateQueryComponent("simple") == "simple");
   KJ_EXPECT(decodeIsolateQueryComponent("a%20b+c") == "a b c");
   KJ_EXPECT(decodeIsolateQueryComponent("view%2Cedit") == "view,edit");
-  KJ_EXPECT(decodeIsolateQueryComponent("bad%xxescape") == "bad%xxescape");
+  KJ_EXPECT_THROW_MESSAGE(
+      "malformed isolate query parameter encoding", decodeIsolateQueryComponent("bad%xxescape"));
 
   auto token = findIsolateQueryParam(
       "/powerbox/claim-request?sessionId=session%2Fone&token=req%2Btoken%3D%3D",
@@ -93,6 +94,8 @@ KJ_TEST("isolate query parameters are percent-decoded") {
   KJ_EXPECT(repeatedPermissions[1] == "edit+share");
 
   KJ_EXPECT(findIsolateQueryParam("/powerbox/claim-request?token=present", "missing") == nullptr);
+  KJ_EXPECT_THROW_MESSAGE(
+      "invalid URL", findIsolateQueryParam("/powerbox/claim-request?token=bad%xxescape", "token"));
 }
 
 KJ_TEST("isolate response helper detects structured headers") {

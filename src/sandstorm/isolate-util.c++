@@ -17,7 +17,27 @@
 #include "isolate-util.h"
 #include "util.h"
 
+#include <kj/compat/http.h>
+#include <kj/compat/url.h>
+#include <kj/encoding.h>
+
 namespace sandstorm {
+namespace {
+
+const kj::HttpHeaderTable& getStructuredResponseHeaderTable() {
+  static const kj::Own<kj::HttpHeaderTable> table = []() {
+    kj::HttpHeaderTable::Builder builder;
+    builder.add("Content-Encoding");
+    builder.add("Content-Language");
+    builder.add("Content-Disposition");
+    builder.add("Cache-Control");
+    builder.add("ETag");
+    return builder.build();
+  }();
+  return *table;
+}
+
+}  // namespace
 
 bool isCanonicalPackagePath(kj::StringPtr path) {
   if (path.size() == 0 || path.startsWith("/") || path.endsWith("/")) {
@@ -74,64 +94,17 @@ bool isValidIsolateStorageKey(kj::StringPtr key) {
   return true;
 }
 
-kj::Maybe<uint> isolateHexValue(char c) {
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-  return nullptr;
-}
-
 kj::String decodeIsolateQueryComponent(kj::StringPtr value) {
-  kj::Vector<char> result;
-  for (size_t i = 0; i < value.size(); ++i) {
-    if (value[i] == '+') {
-      result.add(' ');
-    } else if (value[i] == '%' && i + 2 < value.size()) {
-      KJ_IF_MAYBE(high, isolateHexValue(value[i + 1])) {
-        KJ_IF_MAYBE(low, isolateHexValue(value[i + 2])) {
-          result.add(static_cast<char>((*high << 4) | *low));
-          i += 2;
-        } else {
-          result.add(value[i]);
-        }
-      } else {
-        result.add(value[i]);
-      }
-    } else {
-      result.add(value[i]);
-    }
-  }
-
-  result.add('\0');
-  return kj::String(result.releaseAsArray());
+  return KJ_REQUIRE_NONNULL(kj::decodeWwwForm(value),
+      "malformed isolate query parameter encoding", value);
 }
 
 kj::Array<kj::String> findIsolateQueryParams(kj::StringPtr url, kj::StringPtr name) {
   kj::Vector<kj::String> results;
-  KJ_IF_MAYBE(query, url.findFirst('?')) {
-    size_t start = *query + 1;
-    while (start <= url.size()) {
-      auto remaining = url.slice(start, url.size());
-      size_t end = url.size();
-      KJ_IF_MAYBE(amp, remaining.findFirst('&')) {
-        end = start + *amp;
-      }
-
-      auto part = url.slice(start, end);
-      KJ_IF_MAYBE(eq, part.findFirst('=')) {
-        auto keySlice = part.slice(0, *eq);
-        auto key = decodeIsolateQueryComponent(kj::StringPtr(keySlice.begin(), keySlice.size()));
-        if (key == name) {
-          auto valueSlice = part.slice(*eq + 1, part.size());
-          results.add(decodeIsolateQueryComponent(
-              kj::StringPtr(valueSlice.begin(), valueSlice.size())));
-        }
-      }
-
-      if (end == url.size()) {
-        break;
-      }
-      start = end + 1;
+  auto parsed = kj::Url::parse(url, kj::Url::HTTP_REQUEST);
+  for (auto& param: parsed.query) {
+    if (param.name == name && param.value.begin() != nullptr) {
+      results.add(kj::str(param.value));
     }
   }
 
@@ -139,9 +112,11 @@ kj::Array<kj::String> findIsolateQueryParams(kj::StringPtr url, kj::StringPtr na
 }
 
 kj::Maybe<kj::String> findIsolateQueryParam(kj::StringPtr url, kj::StringPtr name) {
-  auto params = findIsolateQueryParams(url, name);
-  if (params.size() > 0) {
-    return kj::mv(params[0]);
+  auto parsed = kj::Url::parse(url, kj::Url::HTTP_REQUEST);
+  for (auto& param: parsed.query) {
+    if (param.name == name && param.value.begin() != nullptr) {
+      return kj::str(param.value);
+    }
   }
 
   return nullptr;
@@ -170,31 +145,17 @@ bool isolateEqualsIgnoreCase(kj::StringPtr a, kj::StringPtr b) {
 }
 
 bool isStructuredIsolateResponseHeader(kj::StringPtr name) {
-  return isolateEqualsIgnoreCase(name, "content-type") ||
-      isolateEqualsIgnoreCase(name, "content-encoding") ||
-      isolateEqualsIgnoreCase(name, "content-language") ||
-      isolateEqualsIgnoreCase(name, "content-disposition") ||
-      isolateEqualsIgnoreCase(name, "cache-control") ||
-      isolateEqualsIgnoreCase(name, "etag") ||
-      isolateEqualsIgnoreCase(name, "location") ||
-      isolateEqualsIgnoreCase(name, "content-length") ||
-      isolateEqualsIgnoreCase(name, "transfer-encoding") ||
-      isolateEqualsIgnoreCase(name, "connection") ||
-      isolateEqualsIgnoreCase(name, "keep-alive") ||
-      isolateEqualsIgnoreCase(name, "te") ||
-      isolateEqualsIgnoreCase(name, "trailer") ||
-      isolateEqualsIgnoreCase(name, "upgrade");
+  return getStructuredResponseHeaderTable().stringToId(name) != nullptr;
 }
 
 bool isHtmlMimeType(kj::StringPtr mimeType) {
-  auto trimmed = trim(mimeType);
-  kj::StringPtr type = trimmed;
-  KJ_IF_MAYBE(semi, type.findFirst(';')) {
-    type = kj::StringPtr(type.begin(), *semi);
+  auto type = trimArray(mimeType);
+  auto typeString = kj::StringPtr(type.begin(), type.size());
+  KJ_IF_MAYBE(semi, typeString.findFirst(';')) {
+    type = type.slice(0, *semi);
   }
-  auto lower = kj::str(trim(type));
-  toLower(lower);
-  return lower == "text/html";
+  type = trimArray(type);
+  return isolateEqualsIgnoreCase(kj::StringPtr(type.begin(), type.size()), "text/html");
 }
 
 }  // namespace sandstorm
