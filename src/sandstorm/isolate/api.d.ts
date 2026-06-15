@@ -146,6 +146,10 @@ declare module "sandstorm:api" {
   export interface SessionCapabilityOptions {
     title?: string | { defaultText: string };
     displayTitle?: string | { defaultText: string };
+    verbPhrase?: string | { defaultText: string };
+    displayVerbPhrase?: string | { defaultText: string };
+    description?: string | { defaultText: string };
+    displayDescription?: string | { defaultText: string };
     label?: string | { defaultText: string };
     requiredPermissions?: string[];
     apiSession?: {

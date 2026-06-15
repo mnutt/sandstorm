@@ -566,16 +566,22 @@ export default {
           : {};
         const offer = await capability.offer(request, {
           title: "WebSession offered capability",
+          verbPhrase: "can use offered capability",
+          description: "Offered capability description",
           requiredPermissions: ["view"],
           ...descriptorOptions,
         });
         const fulfill = await capability.fulfillRequest(request, {
           title: "WebSession fulfilled capability",
+          verbPhrase: "can use fulfilled capability",
+          description: "Fulfilled capability description",
           requiredPermissions: ["view"],
           ...descriptorOptions,
         });
         const tied = await capability.tieToUser(request, {
           title: "WebSession tied capability",
+          verbPhrase: "can use tied capability",
+          description: "Tied capability description",
           requiredPermissions: ["view"],
         });
         sessionActions = {
@@ -967,14 +973,20 @@ export default {
           url.searchParams.get("sessionActions") === "true") {
         offer = await claim.offer(request, {
           title: "WebSession offered capability",
+          verbPhrase: "can use offered capability",
+          description: "Offered capability description",
           requiredPermissions,
         });
         fulfill = await claim.fulfillRequest(request, {
           title: "WebSession fulfilled capability",
+          verbPhrase: "can use fulfilled capability",
+          description: "Fulfilled capability description",
           requiredPermissions,
         });
         const tiedCapability = await claim.tieToUser(request, {
           title: "WebSession tied capability",
+          verbPhrase: "can use tied capability",
+          description: "Tied capability description",
           requiredPermissions,
         });
         tie = {

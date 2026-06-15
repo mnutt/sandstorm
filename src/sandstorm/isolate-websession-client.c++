@@ -215,8 +215,10 @@ public:
     KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
     KJ_REQUIRE(params.getRequiredPermissions()[0]);
     validateDescriptor(params.getDescriptor());
-    KJ_REQUIRE(params.getDisplayInfo().getTitle().getDefaultText() ==
-        "WebSession offered capability");
+    validateDisplayInfo(params.getDisplayInfo(),
+        "WebSession offered capability",
+        "can use offered capability",
+        "Offered capability description");
     ++offerCount;
     return kj::READY_NOW;
   }
@@ -241,8 +243,10 @@ public:
     KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
     KJ_REQUIRE(params.getRequiredPermissions()[0]);
     validateDescriptor(params.getDescriptor());
-    KJ_REQUIRE(params.getDisplayInfo().getTitle().getDefaultText() ==
-        "WebSession fulfilled capability");
+    validateDisplayInfo(params.getDisplayInfo(),
+        "WebSession fulfilled capability",
+        "can use fulfilled capability",
+        "Fulfilled capability description");
     ++fulfillCount;
     return kj::READY_NOW;
   }
@@ -252,8 +256,10 @@ public:
     KJ_REQUIRE(params.hasCap());
     KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
     KJ_REQUIRE(params.getRequiredPermissions()[0]);
-    KJ_REQUIRE(params.getDisplayInfo().getTitle().getDefaultText() ==
-        "WebSession tied capability");
+    validateDisplayInfo(params.getDisplayInfo(),
+        "WebSession tied capability",
+        "can use tied capability",
+        "Tied capability description");
     ++tieCount;
     context.getResults().setTiedCap(kj::heap<FakeClaimedCapability>(saveCount));
     return kj::READY_NOW;
@@ -272,6 +278,16 @@ public:
   uint64_t lastGrainSizeBytes = 0;
 
 private:
+  void validateDisplayInfo(PowerboxDisplayInfo::Reader displayInfo,
+      kj::StringPtr title, kj::StringPtr verbPhrase, kj::StringPtr description) {
+    KJ_REQUIRE(displayInfo.getTitle().getDefaultText() == title,
+        displayInfo.getTitle().getDefaultText(), title);
+    KJ_REQUIRE(displayInfo.getVerbPhrase().getDefaultText() == verbPhrase,
+        displayInfo.getVerbPhrase().getDefaultText(), verbPhrase);
+    KJ_REQUIRE(displayInfo.getDescription().getDefaultText() == description,
+        displayInfo.getDescription().getDefaultText(), description);
+  }
+
   void validateDescriptor(PowerboxDescriptor::Reader descriptor) {
     auto tags = descriptor.getTags();
     if (tags.size() == 0) {
