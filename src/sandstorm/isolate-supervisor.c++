@@ -1518,21 +1518,6 @@ void addRequestContextHeaders(FetchRequest& request, WebSession::Context::Reader
   }
 
   addETagPreconditionHeaders(request, context);
-
-  auto cookies = context.getCookies();
-  if (cookies.size() > 0) {
-    kj::Vector<char> value;
-    for (auto cookie: cookies) {
-      if (value.size() > 0) {
-        value.addAll(kj::StringPtr("; "));
-      }
-      value.addAll(cookie.getKey());
-      value.add('=');
-      value.addAll(cookie.getValue());
-    }
-    value.add('\0');
-    addHeader(request, "cookie", kj::String(value.releaseAsArray()));
-  }
 }
 
 kj::String toHttpRequestTarget(kj::StringPtr path) {
