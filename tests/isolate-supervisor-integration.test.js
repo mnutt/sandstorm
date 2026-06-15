@@ -878,13 +878,22 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.missing.status, 404);
     assert.equal(selfTest.json.saveError.name, "Error");
     assert.match(selfTest.json.saveError.message, /transient and cannot be saved/);
+    assert.equal(typeof selfTest.json.duplicate.id, "string");
+    assert.notEqual(selfTest.json.duplicate.id, selfTest.json.duplicate.sourceId);
+    assert.deepEqual(selfTest.json.duplicate.increment, { value: 14 });
+    assert.equal(selfTest.json.duplicate.dropOriginal.ok, true);
+    assert.equal(selfTest.json.duplicate.disposeAfterOriginalDrop,
+      selfTest.json.duplicate.disposeBeforeDrop);
+    assert.deepEqual(selfTest.json.duplicate.afterOriginalDrop, { value: 14 });
+    assert.equal(selfTest.json.duplicate.dropDuplicate.ok, true);
+    assert.equal(selfTest.json.duplicate.disposeAfterDuplicateDrop,
+      selfTest.json.duplicate.disposeBeforeDrop + 1);
     assert.deepEqual(selfTest.json.stable.first, { value: 17 });
     assert.equal(selfTest.json.stable.duplicateError.name, "ValidationError");
     assert.match(selfTest.json.stable.duplicateError.message, /already registered/);
     assert.equal(selfTest.json.stable.drop.ok, true);
     assert.deepEqual(selfTest.json.stable.recreatedFirst, { value: 19 });
     assert.equal(selfTest.json.stable.recreatedDrop.ok, true);
-    assert.equal(selfTest.json.drop.ok, true);
   });
 
   await t.test("forwards request bodies and custom headers through workerd", async () => {

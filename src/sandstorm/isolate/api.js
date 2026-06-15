@@ -7,7 +7,7 @@ const OBJECT_CAPABILITY_PREFIX = "/__sandstorm/object-capabilities";
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const exportedObjectTargets = new Map();
 const exportedObjectCapabilityIds = new Map();
-const claimedCapabilityDisposers = new Map();
+const objectCapabilityIds = new Map();
 const claimedCapabilityMetadata = new Map();
 
 function header(request, name) {
@@ -298,14 +298,14 @@ export class ClaimedCapability {
     return saveClaimedCapability(this.#env, this, options);
   }
 
+  dup() {
+    return duplicateClaimedCapability(this.#env, this);
+  }
+
   async drop() {
     const result = await postPowerbox(
       this.#env, `powerbox/drop?id=${encodeURIComponent(this.id)}`);
-    const disposer = claimedCapabilityDisposers.get(this.id);
-    if (disposer) {
-      claimedCapabilityDisposers.delete(this.id);
-      disposer();
-    }
+    forgetClaimedCapabilityHandle(this.id);
     return result;
   }
 
@@ -432,6 +432,21 @@ async function saveClaimedCapability(env, capability, options = {}) {
   const id = encodeURIComponent(rawId);
   const label = encodeURIComponent(saveLabel(options));
   return wrapSavedCapability(env, await postPowerbox(env, `powerbox/save?id=${id}&label=${label}`));
+}
+
+async function duplicateClaimedCapability(env, capability) {
+  const sourceId = capabilityId(capability);
+  const duplicated = wrapClaimedCapability(
+    env, await postPowerbox(env, `powerbox/dup?id=${encodeURIComponent(sourceId)}`));
+  const metadata = claimedCapabilityMetadata.get(sourceId);
+  if (metadata) {
+    claimedCapabilityMetadata.set(duplicated.id, { ...metadata });
+  }
+  const objectId = objectCapabilityIds.get(sourceId);
+  if (objectId) {
+    rememberObjectCapabilityHandle(objectId, duplicated.id);
+  }
+  return duplicated;
 }
 
 async function sessionPowerboxAction(env, request, endpoint, capability, options = {}) {
@@ -631,13 +646,12 @@ async function createObjectCapability(env, target, options = {}) {
       dropNotifyPath: pathPrefix,
       persistent: false,
     });
-    exportedObjectCapabilityIds.set(id, capability.id);
+    rememberObjectCapabilityHandle(id, capability.id);
     claimedCapabilityMetadata.set(capability.id, { transientObjectCapability: true });
-    claimedCapabilityDisposers.set(capability.id, () => disposeExportedObjectTarget(id));
     return capability;
   } catch (error) {
     exportedObjectTargets.delete(id);
-    exportedObjectCapabilityIds.delete(id);
+    forgetObjectCapabilityHandles(id);
     throw error;
   }
 }
@@ -678,6 +692,7 @@ const CLAIMED_CAPABILITY_RPC_OWN_PROPERTIES = new Set([
   "fetch",
   "call",
   "asRpc",
+  "dup",
   "save",
   "drop",
   "offer",
@@ -778,12 +793,7 @@ function disposeExportedObjectTarget(id) {
   }
 
   exportedObjectTargets.delete(id);
-  const capabilityId = exportedObjectCapabilityIds.get(id);
-  if (capabilityId) {
-    claimedCapabilityDisposers.delete(capabilityId);
-    claimedCapabilityMetadata.delete(capabilityId);
-    exportedObjectCapabilityIds.delete(id);
-  }
+  forgetObjectCapabilityHandles(id);
 
   const disposer = target[Symbol.dispose];
   if (typeof disposer === "function") {
@@ -791,6 +801,46 @@ function disposeExportedObjectTarget(id) {
   }
 
   return true;
+}
+
+function rememberObjectCapabilityHandle(objectId, capabilityId) {
+  let ids = exportedObjectCapabilityIds.get(objectId);
+  if (!ids) {
+    ids = new Set();
+    exportedObjectCapabilityIds.set(objectId, ids);
+  }
+  ids.add(capabilityId);
+  objectCapabilityIds.set(capabilityId, objectId);
+}
+
+function forgetClaimedCapabilityHandle(capabilityId) {
+  claimedCapabilityMetadata.delete(capabilityId);
+  const objectId = objectCapabilityIds.get(capabilityId);
+  if (!objectId) {
+    return;
+  }
+
+  objectCapabilityIds.delete(capabilityId);
+  const ids = exportedObjectCapabilityIds.get(objectId);
+  if (ids) {
+    ids.delete(capabilityId);
+    if (ids.size === 0) {
+      exportedObjectCapabilityIds.delete(objectId);
+    }
+  }
+}
+
+function forgetObjectCapabilityHandles(objectId) {
+  const ids = exportedObjectCapabilityIds.get(objectId);
+  if (!ids) {
+    return;
+  }
+
+  for (const capabilityId of ids) {
+    claimedCapabilityMetadata.delete(capabilityId);
+    objectCapabilityIds.delete(capabilityId);
+  }
+  exportedObjectCapabilityIds.delete(objectId);
 }
 
 async function serveObjectCapability(request, env) {
