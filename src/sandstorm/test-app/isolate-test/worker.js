@@ -663,7 +663,51 @@ export default {
       const persistentRestoredIncrement = await persistentRestored.call("increment", 3);
       const persistentDropOriginal = await persistentCapability.drop();
       const persistentDropRestored = await persistentRestored.drop();
+      const persistentUnregisterOriginal = sandstorm(request, env).unregisterCapability({
+        id: persistentId,
+      });
+      const persistentReplacementTarget = new CounterCapability();
+      persistentReplacementTarget.increment(41);
+      const persistentRegisterReplacement = sandstorm(request, env).registerCapability(
+        persistentReplacementTarget, { id: persistentId });
+      const persistentRegisterAgain = sandstorm(request, env).registerCapability(
+        persistentReplacementTarget, { id: persistentId });
+      let persistentRegisterDuplicateError;
+      try {
+        sandstorm(request, env).registerCapability(new CounterCapability(), {
+          id: persistentId,
+        });
+      } catch (error) {
+        persistentRegisterDuplicateError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+      let persistentTransientMintError;
+      try {
+        await sandstorm(request, env).capability(persistentReplacementTarget, {
+          id: persistentId,
+        });
+      } catch (error) {
+        persistentTransientMintError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+      const persistentMintedAfterRegister = await sandstorm(request, env).capability(
+        persistentReplacementTarget, {
+          id: persistentId,
+          persistent: true,
+        });
+      const persistentMintedAfterRegisterGet = await persistentMintedAfterRegister.call("get");
+      const persistentDropMintedAfterRegister = await persistentMintedAfterRegister.drop();
+      const persistentRestoredAfterRegister = await persistentSaved.restore();
+      const persistentRestoredAfterRegisterGet =
+        await persistentRestoredAfterRegister.call("get");
+      const persistentDropRestoredAfterRegister = await persistentRestoredAfterRegister.drop();
       const persistentDropSaved = await persistentSaved.drop();
+      const persistentUnregisterReplacement = sandstorm(request, env).unregisterCapability(
+        persistentId);
       return Response.json({
         ok: true,
         first,
@@ -729,7 +773,19 @@ export default {
           restoredIncrement: persistentRestoredIncrement,
           dropOriginal: persistentDropOriginal,
           dropRestored: persistentDropRestored,
+          unregisterOriginal: persistentUnregisterOriginal,
+          registerReplacement: persistentRegisterReplacement,
+          registerAgain: persistentRegisterAgain,
+          registerDuplicateError: persistentRegisterDuplicateError,
+          transientMintError: persistentTransientMintError,
+          mintedAfterRegister: JSON.parse(JSON.stringify(persistentMintedAfterRegister)),
+          mintedAfterRegisterGet: persistentMintedAfterRegisterGet,
+          dropMintedAfterRegister: persistentDropMintedAfterRegister,
+          restoredAfterRegister: JSON.parse(JSON.stringify(persistentRestoredAfterRegister)),
+          restoredAfterRegisterGet: persistentRestoredAfterRegisterGet,
+          dropRestoredAfterRegister: persistentDropRestoredAfterRegister,
           dropSaved: persistentDropSaved,
+          unregisterReplacement: persistentUnregisterReplacement,
         },
       });
     }

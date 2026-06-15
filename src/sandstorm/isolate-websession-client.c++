@@ -1169,7 +1169,7 @@ public:
     KJ_REQUIRE(contains(badClaimBody, "unknown required permission"), badClaimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 4, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 6, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
 
     auto standardClaimRequest = session.postRequest();
