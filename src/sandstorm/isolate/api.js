@@ -512,33 +512,54 @@ async function apiSessionPowerboxDescriptor(env, options = {}) {
 
 export async function servePowerboxDescriptors(request, env) {
   const url = new URL(request.url);
-  if (url.pathname !== `${POWERBOX_DESCRIPTOR_PREFIX}/api-session-descriptor`) {
-    return null;
+
+  if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/api-session-descriptor`) {
+    try {
+      const scopes = url.searchParams.getAll("oauthScope");
+      const scopeList = scopes.length > 0
+        ? scopes
+        : String(url.searchParams.get("oauthScopes") || "")
+            .split(/[,\s]+/)
+            .map((scope) => scope.trim())
+            .filter(Boolean);
+      const descriptor = await apiSessionPowerboxDescriptor(env, {
+        canonicalUrl: url.searchParams.get("canonicalUrl") || "",
+        oauthScopes: scopeList,
+      });
+      return Response.json({
+        ok: true,
+        type: "packedPowerboxDescriptor",
+        descriptor,
+      });
+    } catch (error) {
+      return Response.json({
+        ok: false,
+        error: String(error?.message || error),
+      }, { status: 400 });
+    }
   }
 
-  try {
-    const scopes = url.searchParams.getAll("oauthScope");
-    const scopeList = scopes.length > 0
-      ? scopes
-      : String(url.searchParams.get("oauthScopes") || "")
-          .split(/[,\s]+/)
-          .map((scope) => scope.trim())
-          .filter(Boolean);
-    const descriptor = await apiSessionPowerboxDescriptor(env, {
-      canonicalUrl: url.searchParams.get("canonicalUrl") || "",
-      oauthScopes: scopeList,
-    });
-    return Response.json({
-      ok: true,
-      type: "packedPowerboxDescriptor",
-      descriptor,
-    });
-  } catch (error) {
-    return Response.json({
-      ok: false,
-      error: String(error?.message || error),
-    }, { status: 400 });
+  if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/claim` && request.method === "POST") {
+    try {
+      const body = await request.json();
+      const capability = await powerbox(request, env).claimRequest(body.token, {
+        requiredPermissions: Array.isArray(body.requiredPermissions)
+          ? body.requiredPermissions
+          : [],
+      });
+      return Response.json({
+        ok: true,
+        capability: JSON.parse(JSON.stringify(capability)),
+      });
+    } catch (error) {
+      return Response.json({
+        ok: false,
+        error: String(error?.message || error),
+      }, { status: 400 });
+    }
   }
+
+  return null;
 }
 
 function webSessionPathPrefix(options = {}) {

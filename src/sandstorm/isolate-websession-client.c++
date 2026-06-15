@@ -1172,6 +1172,34 @@ public:
     KJ_REQUIRE(sessionContextRef.restoreCount == 2, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 2, sessionContextRef.tokenDropCount);
 
+    auto standardClaimRequest = session.postRequest();
+    standardClaimRequest.setPath("/__sandstorm/powerbox/claim");
+    auto standardClaimContentRequest = standardClaimRequest.initContent();
+    standardClaimContentRequest.setMimeType("application/json; charset=utf-8");
+    standardClaimContentRequest.setEncoding("");
+    standardClaimContentRequest.setContent(kj::StringPtr(
+        "{\"token\":\"websession/test+token==\",\"requiredPermissions\":[\"view\"]}").asBytes());
+    auto standardClaimContext = standardClaimRequest.initContext();
+    standardClaimContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    standardClaimContext.initCookies(0);
+    standardClaimContext.initAccept(0);
+    standardClaimContext.initAcceptEncoding(0);
+    standardClaimContext.initAdditionalHeaders(0);
+
+    auto standardClaimResponse = standardClaimRequest.send().wait(io.waitScope);
+    auto standardClaimDebugBody = responseDebugBody(standardClaimResponse);
+    KJ_REQUIRE(standardClaimResponse.which() == WebSession::Response::CONTENT,
+        standardClaimDebugBody);
+    auto standardClaimContent = standardClaimResponse.getContent();
+    KJ_REQUIRE(standardClaimContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(standardClaimContent.getBody().which() ==
+        WebSession::Response::Content::Body::BYTES);
+    auto standardClaimBody = kj::str(standardClaimContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(standardClaimBody, "\"ok\":true"), standardClaimBody);
+    KJ_REQUIRE(contains(standardClaimBody, "\"capability\":{\"ok\":true"), standardClaimBody);
+    KJ_REQUIRE(contains(standardClaimBody, "\"type\":\"claimedCapability\""), standardClaimBody);
+    KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
+
     supervisor.syncStorageRequest().send().wait(io.waitScope);
     KJ_REQUIRE(sessionContextRef.grainSizeReportCount == 1,
         sessionContextRef.grainSizeReportCount);
