@@ -1015,6 +1015,7 @@ test("isolate supervisor integration suite", {
     });
     assert.equal(range.statusCode, 206);
     assert.equal(range.headers["content-range"], "bytes 10-19/256");
+    assert.equal(range.headers["accept-ranges"], "bytes");
     assert.equal(range.headers["x-sandstorm-app-range-response"], "present");
     assert.equal(range.bodyBuffer.length, 10);
     assert.equal(range.bodyBuffer[0], 10);

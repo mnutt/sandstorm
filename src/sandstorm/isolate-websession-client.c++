@@ -683,6 +683,16 @@ public:
     } else {
       KJ_FAIL_REQUIRE("missing range response header");
     }
+    KJ_IF_MAYBE(contentRange, findResponseHeader(rangeResponse, "content-range")) {
+      KJ_REQUIRE(*contentRange == "bytes 10-19/256", *contentRange);
+    } else {
+      KJ_FAIL_REQUIRE("missing content-range response header");
+    }
+    KJ_IF_MAYBE(acceptRanges, findResponseHeader(rangeResponse, "accept-ranges")) {
+      KJ_REQUIRE(*acceptRanges == "bytes", *acceptRanges);
+    } else {
+      KJ_FAIL_REQUIRE("missing accept-ranges response header");
+    }
 
     auto uploadBytes = makeBytes(32768);
     auto uploadRequest = session.postStreamingRequest();
