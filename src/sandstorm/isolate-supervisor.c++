@@ -3575,52 +3575,117 @@ private:
   IsolateRuntimeHost& host;
   bool powerboxOnly;
 
-  class BufferedByteStream final: public ByteStream::Server {
+  class NoStreamingByteStream final: public ByteStream::Server {
   public:
-    BufferedByteStream() {
-      auto paf = kj::newPromiseAndFulfiller<kj::Array<byte>>();
-      donePromise = kj::mv(paf.promise);
-      doneFulfiller = kj::mv(paf.fulfiller);
+    kj::Promise<void> write(WriteContext context) override {
+      KJ_FAIL_REQUIRE("claimed capability response stream was not expected");
     }
 
-    ~BufferedByteStream() noexcept(false) {
+    kj::Promise<void> done(DoneContext context) override {
+      KJ_FAIL_REQUIRE("claimed capability response stream was not expected");
+    }
+
+    kj::Promise<void> expectSize(ExpectSizeContext context) override {
+      KJ_FAIL_REQUIRE("claimed capability response stream was not expected");
+    }
+  };
+
+  class HttpResponseByteStream final: public ByteStream::Server {
+  public:
+    HttpResponseByteStream(uint statusCode, kj::StringPtr statusText,
+        kj::HttpHeaders&& headers, kj::HttpService::Response& response) {
+      state.init<NotStarted>(NotStarted { statusCode, statusText, kj::mv(headers), response });
+    }
+
+    ~HttpResponseByteStream() noexcept(false) {
       KJ_IF_MAYBE(fulfiller, doneFulfiller) {
         if ((*fulfiller)->isWaiting()) {
-          (*fulfiller)->reject(KJ_EXCEPTION(DISCONNECTED,
-              "claimed capability response stream ended before done()"));
+          (*fulfiller)->reject(KJ_EXCEPTION(FAILED,
+              "claimed capability did not finish writing response stream"));
         }
       }
     }
 
     kj::Promise<void> write(WriteContext context) override {
-      auto data = context.getParams().getData();
-      bytes += data.size();
-      KJ_REQUIRE(bytes <= MAX_SIDECAR_RESPONSE_BYTES,
-          "claimed capability response body exceeds maximum allowed size",
-          bytes, MAX_SIDECAR_RESPONSE_BYTES);
-      body.addAll(data);
-      return kj::READY_NOW;
+      auto data = kj::heapArray<byte>(context.getParams().getData());
+      auto fork = queue.then([this, data = kj::mv(data)]() mutable {
+        auto& stream = ensureStarted(nullptr);
+        auto promise = stream.write(data.begin(), data.size());
+        return promise.attach(kj::mv(data));
+      }).fork();
+      queue = fork.addBranch();
+      return fork.addBranch();
     }
 
     kj::Promise<void> done(DoneContext context) override {
       (void)context;
-      KJ_IF_MAYBE(fulfiller, doneFulfiller) {
-        (*fulfiller)->fulfill(body.releaseAsArray());
-        doneFulfiller = nullptr;
-      }
+      auto fork = queue.then([this]() {
+        ensureStarted(uint64_t(0));
+        state.init<Done>();
+        KJ_IF_MAYBE(fulfiller, doneFulfiller) {
+          (*fulfiller)->fulfill();
+          doneFulfiller = nullptr;
+        }
+      }).fork();
+      queue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+    kj::Promise<void> expectSize(ExpectSizeContext context) override {
+      ensureStarted(context.getParams().getSize());
       return kj::READY_NOW;
     }
 
-    kj::Promise<kj::Array<byte>> consumeDonePromise() {
-      return kj::mv(donePromise);
+    kj::Promise<void> whenDone() {
+      auto paf = kj::newPromiseAndFulfiller<void>();
+      doneFulfiller = kj::mv(paf.fulfiller);
+      return kj::mv(paf.promise);
     }
 
   private:
-    kj::Vector<byte> body;
-    uint64_t bytes = 0;
-    kj::Promise<kj::Array<byte>> donePromise = nullptr;
-    kj::Maybe<kj::Own<kj::PromiseFulfiller<kj::Array<byte>>>> doneFulfiller;
+    struct NotStarted {
+      uint statusCode;
+      kj::StringPtr statusText;
+      kj::HttpHeaders headers;
+      kj::HttpService::Response& response;
+    };
+
+    struct Started {
+      kj::Own<kj::AsyncOutputStream> output;
+    };
+
+    struct Done {};
+
+    kj::OneOf<NotStarted, Started, Done> state;
+    kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> doneFulfiller;
+    kj::Promise<void> queue = kj::READY_NOW;
+
+    kj::AsyncOutputStream& ensureStarted(kj::Maybe<uint64_t> size) {
+      if (state.is<NotStarted>()) {
+        auto& pending = state.get<NotStarted>();
+        auto stream = pending.response.send(
+            pending.statusCode, pending.statusText, pending.headers, size);
+        kj::AsyncOutputStream& ref = *stream;
+        state.init<Started>(Started { kj::mv(stream) });
+        return ref;
+      }
+
+      KJ_REQUIRE(!state.is<Done>(), "already called done()");
+      return *state.get<Started>().output;
+    }
   };
+
+  struct CapabilityFetchContext {
+    kj::Maybe<kj::Own<kj::PromiseFulfiller<ByteStream::Client>>> responseStreamFulfiller;
+    bool sendNotModifiedForPrecondition = false;
+  };
+
+  void fulfillNoStreaming(CapabilityFetchContext& context) {
+    KJ_IF_MAYBE(fulfiller, context.responseStreamFulfiller) {
+      (*fulfiller)->fulfill(kj::heap<NoStreamingByteStream>());
+      context.responseStreamFulfiller = nullptr;
+    }
+  }
 
   kj::Promise<void> sendJson(kj::HttpService::Response& response, uint statusCode,
       kj::StringPtr statusText, kj::String body) {
@@ -3886,8 +3951,6 @@ private:
 
     KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
       auto webSession = cap->castAs<WebSession>();
-      auto responseStreamServer = kj::heap<BufferedByteStream>();
-      auto streamDone = responseStreamServer->consumeDonePromise();
 
       auto method = kj::heapString(methods[0]);
       toLower(method);
@@ -3897,14 +3960,11 @@ private:
         auto request = webSession.getRequest();
         request.setPath(path);
         request.setIgnoreBody(method == "head");
-        initCapabilityFetchContext(
-            request.initContext(), kj::mv(responseStreamServer), contextParams);
-        auto sendNotModified = shouldSendNotModifiedForPrecondition(contextParams);
+        auto fetchContext = initCapabilityFetchContext(request.initContext(), contextParams);
         return request.send()
-            .then([this, &response, streamDone = kj::mv(streamDone), sendNotModified]
+            .then([this, &response, fetchContext = kj::mv(fetchContext)]
                 (auto result) mutable {
-          return sendWebSessionHttpResponse(
-              kj::mv(result), response, kj::mv(streamDone), sendNotModified);
+          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(fetchContext));
         }).catch_([this, &response](kj::Exception&& exception) mutable {
           return sendJson(response, 502, "Bad Gateway", renderError(
               kj::str("claimed capability fetch failed: ", exception.getDescription())));
@@ -3913,14 +3973,11 @@ private:
         auto request = webSession.postRequest();
         request.setPath(path);
         initPostContent(request.initContent(), contentType, bodyBytes);
-        initCapabilityFetchContext(
-            request.initContext(), kj::mv(responseStreamServer), contextParams);
-        auto sendNotModified = shouldSendNotModifiedForPrecondition(contextParams);
+        auto fetchContext = initCapabilityFetchContext(request.initContext(), contextParams);
         return request.send()
-            .then([this, &response, streamDone = kj::mv(streamDone), sendNotModified]
+            .then([this, &response, fetchContext = kj::mv(fetchContext)]
                 (auto result) mutable {
-          return sendWebSessionHttpResponse(
-              kj::mv(result), response, kj::mv(streamDone), sendNotModified);
+          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(fetchContext));
         }).catch_([this, &response](kj::Exception&& exception) mutable {
           return sendJson(response, 502, "Bad Gateway", renderError(
               kj::str("claimed capability fetch failed: ", exception.getDescription())));
@@ -3929,14 +3986,11 @@ private:
         auto request = webSession.putRequest();
         request.setPath(path);
         initPutContent(request.initContent(), contentType, bodyBytes);
-        initCapabilityFetchContext(
-            request.initContext(), kj::mv(responseStreamServer), contextParams);
-        auto sendNotModified = shouldSendNotModifiedForPrecondition(contextParams);
+        auto fetchContext = initCapabilityFetchContext(request.initContext(), contextParams);
         return request.send()
-            .then([this, &response, streamDone = kj::mv(streamDone), sendNotModified]
+            .then([this, &response, fetchContext = kj::mv(fetchContext)]
                 (auto result) mutable {
-          return sendWebSessionHttpResponse(
-              kj::mv(result), response, kj::mv(streamDone), sendNotModified);
+          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(fetchContext));
         }).catch_([this, &response](kj::Exception&& exception) mutable {
           return sendJson(response, 502, "Bad Gateway", renderError(
               kj::str("claimed capability fetch failed: ", exception.getDescription())));
@@ -3945,14 +3999,11 @@ private:
         auto request = webSession.patchRequest();
         request.setPath(path);
         initPostContent(request.initContent(), contentType, bodyBytes);
-        initCapabilityFetchContext(
-            request.initContext(), kj::mv(responseStreamServer), contextParams);
-        auto sendNotModified = shouldSendNotModifiedForPrecondition(contextParams);
+        auto fetchContext = initCapabilityFetchContext(request.initContext(), contextParams);
         return request.send()
-            .then([this, &response, streamDone = kj::mv(streamDone), sendNotModified]
+            .then([this, &response, fetchContext = kj::mv(fetchContext)]
                 (auto result) mutable {
-          return sendWebSessionHttpResponse(
-              kj::mv(result), response, kj::mv(streamDone), sendNotModified);
+          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(fetchContext));
         }).catch_([this, &response](kj::Exception&& exception) mutable {
           return sendJson(response, 502, "Bad Gateway", renderError(
               kj::str("claimed capability fetch failed: ", exception.getDescription())));
@@ -3960,14 +4011,11 @@ private:
       } else if (method == "delete") {
         auto request = webSession.deleteRequest();
         request.setPath(path);
-        initCapabilityFetchContext(
-            request.initContext(), kj::mv(responseStreamServer), contextParams);
-        auto sendNotModified = shouldSendNotModifiedForPrecondition(contextParams);
+        auto fetchContext = initCapabilityFetchContext(request.initContext(), contextParams);
         return request.send()
-            .then([this, &response, streamDone = kj::mv(streamDone), sendNotModified]
+            .then([this, &response, fetchContext = kj::mv(fetchContext)]
                 (auto result) mutable {
-          return sendWebSessionHttpResponse(
-              kj::mv(result), response, kj::mv(streamDone), sendNotModified);
+          return sendWebSessionHttpResponse(kj::mv(result), response, kj::mv(fetchContext));
         }).catch_([this, &response](kj::Exception&& exception) mutable {
           return sendJson(response, 502, "Bad Gateway", renderError(
               kj::str("claimed capability fetch failed: ", exception.getDescription())));
@@ -3983,11 +4031,11 @@ private:
     }
   }
 
-  void initCapabilityFetchContext(
-      WebSession::Context::Builder context, kj::Own<BufferedByteStream> responseStream,
-      CapabilityFetchContextParams& contextParams) {
+  CapabilityFetchContext initCapabilityFetchContext(
+      WebSession::Context::Builder context, CapabilityFetchContextParams& contextParams) {
+    auto paf = kj::newPromiseAndFulfiller<ByteStream::Client>();
     context.initCookies(0);
-    context.setResponseStream(kj::mv(responseStream));
+    context.setResponseStream(kj::mv(paf.promise));
     context.initAccept(0);
     context.initAcceptEncoding(0);
     initCapabilityFetchETagPrecondition(context, contextParams);
@@ -3997,6 +4045,11 @@ private:
       headers[i].setName(additionalHeaders[i].name);
       headers[i].setValue(additionalHeaders[i].value);
     }
+
+    return CapabilityFetchContext {
+      kj::mv(paf.fulfiller),
+      shouldSendNotModifiedForPrecondition(contextParams)
+    };
   }
 
   void initPostContent(
@@ -4079,7 +4132,9 @@ private:
 
   kj::Promise<void> sendWebSessionHttpResponse(
       capnp::Response<WebSession::Response>&& webResponse, kj::HttpService::Response& response,
-      kj::Promise<kj::Array<byte>> streamDone, bool sendNotModifiedForPrecondition) {
+      CapabilityFetchContext&& fetchContext) {
+    KJ_DEFER(fulfillNoStreaming(fetchContext));
+
     switch (webResponse.which()) {
       case WebSession::Response::CONTENT: {
         auto content = webResponse.getContent();
@@ -4092,13 +4147,15 @@ private:
           case WebSession::Response::Content::Body::BYTES:
             return sendBytes(response, statusCode, "OK", kj::mv(headers),
                 kj::heapArray<byte>(body.getBytes()));
-          case WebSession::Response::Content::Body::STREAM:
-            return streamDone.then(
-                [this, &response, statusCode, headers = kj::mv(headers),
-                    webResponse = kj::mv(webResponse)]
-                (kj::Array<byte>&& bytes) mutable {
-              return sendBytes(response, statusCode, "OK", kj::mv(headers), kj::mv(bytes));
-            });
+          case WebSession::Response::Content::Body::STREAM: {
+            auto streamServer = kj::heap<HttpResponseByteStream>(
+                statusCode, "OK", kj::mv(headers), response);
+            auto done = streamServer->whenDone();
+            KJ_ASSERT_NONNULL(fetchContext.responseStreamFulfiller)
+                ->fulfill(kj::mv(streamServer));
+            fetchContext.responseStreamFulfiller = nullptr;
+            return done.attach(kj::mv(webResponse));
+          }
         }
         KJ_UNREACHABLE;
       }
@@ -4118,7 +4175,7 @@ private:
         if (preconditionFailed.hasMatchingETag()) {
           headers.add("etag", formatRequestETag(preconditionFailed.getMatchingETag()));
         }
-        if (sendNotModifiedForPrecondition) {
+        if (fetchContext.sendNotModifiedForPrecondition) {
           response.send(304, "Not Modified", headers, uint64_t(0));
         } else {
           response.send(412, "Precondition Failed", headers, uint64_t(0));
