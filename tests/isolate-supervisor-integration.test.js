@@ -261,6 +261,7 @@ async function startIsolateFixture() {
   const storageSocket = path.join(runtimeDir, "sandstorm-storage.sock");
 
   let child = null;
+  let coreChild = null;
   const stdout = [];
   const stderr = [];
   let childExit = { value: null };
@@ -302,6 +303,36 @@ async function startIsolateFixture() {
     });
   }
 
+  async function startCoreServer() {
+    await requireExecutable(
+      WEBSESSION_CLIENT_BIN,
+      "Build the project first, e.g. make tmp/.ekam-run.");
+
+    const core = spawnCollectingOutput(
+      WEBSESSION_CLIENT_BIN, ["--core-server", supervisorSocket]);
+    coreChild = core.child;
+    core.child.on("exit", (code, signal) => {
+      if (code !== 0 && signal !== "SIGTERM") {
+        stderr.push(`fake core exited with ${signal || `exit code ${code}`}\n`);
+      }
+    });
+    core.child.stdout.on("data", (data) => stdout.push(data));
+    core.child.stderr.on("data", (data) => stderr.push(data));
+    await waitForLog(core.stderr, /Core ready\./);
+  }
+
+  async function stopCoreServer() {
+    if (coreChild !== null) {
+      await stopChild(coreChild);
+      coreChild = null;
+    }
+  }
+
+  async function restartCoreServer() {
+    await stopCoreServer();
+    await startCoreServer();
+  }
+
   async function waitForFixtureSockets() {
     await waitForSockets([
       supervisorSocket,
@@ -324,6 +355,7 @@ async function startIsolateFixture() {
     spawnSupervisor(true);
     await waitForFixtureSockets();
     await fs.appendFile(path.join(varDir, "log"), "isolate integration watchLog fixture\n");
+    await startCoreServer();
 
     started = true;
     return {
@@ -338,7 +370,9 @@ async function startIsolateFixture() {
       child,
       stdout,
       stderr,
+      restartCore: restartCoreServer,
       restart: async () => {
+        await stopCoreServer();
         if (child !== null) {
           await stopChild(child);
           child = null;
@@ -346,8 +380,10 @@ async function startIsolateFixture() {
         await unlinkSockets();
         spawnSupervisor(false);
         await waitForFixtureSockets();
+        await startCoreServer();
       },
       cleanup: async () => {
+        await stopCoreServer();
         if (child !== null) {
           await stopChild(child);
           child = null;
@@ -356,6 +392,9 @@ async function startIsolateFixture() {
       },
     };
   } finally {
+    if (!started) {
+      await stopCoreServer();
+    }
     if (!started && child !== null) {
       await stopChild(child);
     }
@@ -419,6 +458,7 @@ test("isolate supervisor integration suite", {
       WEBSESSION_CLIENT_BIN,
       "Build the project first, e.g. make tmp/.ekam-run.");
     await runCommand(WEBSESSION_CLIENT_BIN, [fixture.supervisorSocket]);
+    await fixture.restartCore();
   });
 
   await t.test("serves worker fetch requests through workerd", async () => {
