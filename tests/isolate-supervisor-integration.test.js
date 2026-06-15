@@ -927,6 +927,17 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.stable.drop.ok, true);
     assert.deepEqual(selfTest.json.stable.recreatedFirst, { value: 19 });
     assert.equal(selfTest.json.stable.recreatedDrop.ok, true);
+    assert.equal(selfTest.json.persistent.withoutIdError.name, "ValidationError");
+    assert.match(selfTest.json.persistent.withoutIdError.message, /explicit id/);
+    assert.deepEqual(selfTest.json.persistent.first, { value: 29 });
+    assert.equal(selfTest.json.persistent.saved.type, "savedCapability");
+    assert.equal(selfTest.json.persistent.saved.tokenEncoding, "base64url");
+    assert.equal(selfTest.json.persistent.restored.type, "claimedCapability");
+    assert.deepEqual(selfTest.json.persistent.restoredGet, { value: 29 });
+    assert.deepEqual(selfTest.json.persistent.restoredIncrement, { value: 32 });
+    assert.equal(selfTest.json.persistent.dropOriginal.ok, true);
+    assert.equal(selfTest.json.persistent.dropRestored.ok, true);
+    assert.equal(selfTest.json.persistent.dropSaved.ok, true);
   });
 
   await t.test("forwards request bodies and custom headers through workerd", async () => {

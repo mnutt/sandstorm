@@ -637,6 +637,33 @@ export default {
       });
       const stableRecreatedFirst = await stableRecreated.call("increment", 19);
       const stableRecreatedDrop = await stableRecreated.drop();
+      let persistentWithoutIdError;
+      try {
+        await sandstorm(request, env).capability(new CounterCapability(), {
+          persistent: true,
+        });
+      } catch (error) {
+        persistentWithoutIdError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+      const persistentId = `persistent-counter-${crypto.randomUUID()}`;
+      const persistentCapability = await sandstorm(request, env).capability(
+        new CounterCapability(), {
+          id: persistentId,
+          persistent: true,
+        });
+      const persistentFirst = await persistentCapability.call("increment", 29);
+      const persistentSaved = await persistentCapability.save({
+        label: "Persistent object capability fixture",
+      });
+      const persistentRestored = await persistentSaved.restore();
+      const persistentRestoredGet = await persistentRestored.call("get");
+      const persistentRestoredIncrement = await persistentRestored.call("increment", 3);
+      const persistentDropOriginal = await persistentCapability.drop();
+      const persistentDropRestored = await persistentRestored.drop();
+      const persistentDropSaved = await persistentSaved.drop();
       return Response.json({
         ok: true,
         first,
@@ -691,6 +718,18 @@ export default {
           drop: stableDrop,
           recreatedFirst: stableRecreatedFirst,
           recreatedDrop: stableRecreatedDrop,
+        },
+        persistent: {
+          id: persistentId,
+          withoutIdError: persistentWithoutIdError,
+          first: persistentFirst,
+          saved: JSON.parse(JSON.stringify(persistentSaved)),
+          restored: JSON.parse(JSON.stringify(persistentRestored)),
+          restoredGet: persistentRestoredGet,
+          restoredIncrement: persistentRestoredIncrement,
+          dropOriginal: persistentDropOriginal,
+          dropRestored: persistentDropRestored,
+          dropSaved: persistentDropSaved,
         },
       });
     }

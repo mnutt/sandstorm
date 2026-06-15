@@ -649,11 +649,25 @@ function objectCapabilityId(options = {}) {
   return id;
 }
 
+function objectCapabilityPersistent(options = {}) {
+  if (options.persistent === undefined || options.persistent === null) {
+    return false;
+  }
+  if (typeof options.persistent !== "boolean") {
+    throw new ValidationError("persistent must be a boolean");
+  }
+  if (options.persistent && (options.id === undefined || options.id === null)) {
+    throw new ValidationError("persistent object capabilities require an explicit id");
+  }
+  return options.persistent;
+}
+
 async function createObjectCapability(env, target, options = {}) {
   if (!target || typeof target !== "object") {
     throw new ValidationError("capability target must be an object");
   }
 
+  const persistent = objectCapabilityPersistent(options);
   const id = objectCapabilityId(options);
   if (exportedObjectTargets.has(id)) {
     throw new ValidationError(`object capability id is already registered: ${id}`);
@@ -664,11 +678,13 @@ async function createObjectCapability(env, target, options = {}) {
     const pathPrefix = `${OBJECT_CAPABILITY_PREFIX}/${encodeURIComponent(id)}`;
     const capability = await createWebSessionCapability(env, {
       pathPrefix,
-      dropNotifyPath: pathPrefix,
-      persistent: false,
+      ...(persistent ? {} : { dropNotifyPath: pathPrefix }),
+      persistent,
     });
     rememberObjectCapabilityHandle(id, capability.id);
-    claimedCapabilityMetadata.set(capability.id, { transientObjectCapability: true });
+    if (!persistent) {
+      claimedCapabilityMetadata.set(capability.id, { transientObjectCapability: true });
+    }
     return capability;
   } catch (error) {
     exportedObjectTargets.delete(id);
