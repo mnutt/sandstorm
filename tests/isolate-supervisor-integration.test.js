@@ -827,12 +827,36 @@ test("isolate supervisor integration suite", {
     assert.equal(missing.json.ok, false);
     assert.match(missing.json.error, /RPC method not found/);
 
+    const disposeBefore = await requestJson(
+      fixture.workerdSocket, "/object-capability-dispose-count");
+    assert.equal(disposeBefore.statusCode, 200, disposeBefore.body);
+    assert.equal(disposeBefore.json.ok, true);
+
+    const dropChild = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/drop?id=${encodeURIComponent(child.json.result.id)}`,
+      { method: "POST" });
+    assert.equal(dropChild.statusCode, 200, dropChild.body);
+    assert.equal(dropChild.json.ok, true);
+
+    const disposeAfterChild = await requestJson(
+      fixture.workerdSocket, "/object-capability-dispose-count");
+    assert.equal(disposeAfterChild.statusCode, 200, disposeAfterChild.body);
+    assert.equal(disposeAfterChild.json.disposed, disposeBefore.json.disposed + 1,
+      formatOutput(fixture.stdout, fixture.stderr));
+
     const drop = await requestJson(
       fixture.sandstormApiSocket,
       `/powerbox/drop?id=${encodeURIComponent(exported.json.capability.id)}`,
       { method: "POST" });
     assert.equal(drop.statusCode, 200, drop.body);
     assert.equal(drop.json.ok, true);
+
+    const disposeAfterParent = await requestJson(
+      fixture.workerdSocket, "/object-capability-dispose-count");
+    assert.equal(disposeAfterParent.statusCode, 200, disposeAfterParent.body);
+    assert.equal(disposeAfterParent.json.disposed, disposeBefore.json.disposed + 2,
+      formatOutput(fixture.stdout, fixture.stderr));
 
     const selfTest = await requestJson(fixture.workerdSocket, "/object-capability-self-test");
     assert.equal(selfTest.statusCode, 200, selfTest.body);
