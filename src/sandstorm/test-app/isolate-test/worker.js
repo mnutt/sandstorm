@@ -510,6 +510,16 @@ export default {
       const stubChild = await stub.child();
       const stubChildFirst = await stubChild.increment(13);
       const stubReadChild = await stub.readOther(stubChild);
+      const argumentTarget = new CounterCapability();
+      argumentTarget.increment(21);
+      const disposeBeforeArgumentTarget = disposedCounterCapabilities;
+      const readArgumentTarget = await capability.call("readOther", argumentTarget);
+      const disposeAfterArgumentTarget = disposedCounterCapabilities;
+      const stubArgumentTarget = new CounterCapability();
+      stubArgumentTarget.increment(23);
+      const disposeBeforeStubArgumentTarget = disposedCounterCapabilities;
+      const stubReadArgumentTarget = await stub.readOther(stubArgumentTarget);
+      const disposeAfterStubArgumentTarget = disposedCounterCapabilities;
       let sessionActions = null;
       if (url.searchParams.get("sessionActions") === "true") {
         const descriptorOptions = url.searchParams.get("apiDescriptor") === "true"
@@ -608,6 +618,16 @@ export default {
         stubChild: JSON.parse(JSON.stringify(stubChild)),
         stubChildFirst,
         stubReadChild,
+        argumentTarget: {
+          read: readArgumentTarget,
+          disposeBefore: disposeBeforeArgumentTarget,
+          disposeAfter: disposeAfterArgumentTarget,
+        },
+        stubArgumentTarget: {
+          read: stubReadArgumentTarget,
+          disposeBefore: disposeBeforeStubArgumentTarget,
+          disposeAfter: disposeAfterStubArgumentTarget,
+        },
         stubThenType: typeof stub.then,
         sessionActions,
         missing,

@@ -659,29 +659,37 @@ async function createObjectCapability(env, target, options = {}) {
 async function callClaimedCapability(capability, method, args = []) {
   method = capabilityMethodName(method);
   args = capabilityArgs(args);
-  const response = await capability.fetch("/call", {
-    method: "POST",
-    headers: { "content-type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ method, args }),
-  });
-  const text = await response.text();
-  let body;
+  const temporaryCapabilities = [];
   try {
-    body = text.length > 0 ? JSON.parse(text) : {};
-  } catch (error) {
-    throw new CapabilityCallError(
-      `capability call ${method} returned non-JSON response with status ${response.status}`,
-      { status: response.status, body: text });
-  }
-
-  if (!response.ok || !body.ok) {
-    throw new CapabilityCallError(body.error || `capability call ${method} failed`, {
-      status: response.status,
-      body,
+    const serializedArgs = await serializeCapabilityValue(capability.env, args, {
+      temporaryCapabilities,
     });
-  }
+    const response = await capability.fetch("/call", {
+      method: "POST",
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ method, args: serializedArgs }),
+    });
+    const text = await response.text();
+    let body;
+    try {
+      body = text.length > 0 ? JSON.parse(text) : {};
+    } catch (error) {
+      throw new CapabilityCallError(
+        `capability call ${method} returned non-JSON response with status ${response.status}`,
+        { status: response.status, body: text });
+    }
 
-  return wrapCapabilityValue(capability.env, body.result);
+    if (!response.ok || !body.ok) {
+      throw new CapabilityCallError(body.error || `capability call ${method} failed`, {
+        status: response.status,
+        body,
+      });
+    }
+
+    return wrapCapabilityValue(capability.env, body.result);
+  } finally {
+    await Promise.all(temporaryCapabilities.map((cap) => cap.drop().catch(() => {})));
+  }
 }
 
 const CLAIMED_CAPABILITY_RPC_OWN_PROPERTIES = new Set([
@@ -758,12 +766,14 @@ function wrapCapabilityValue(env, value) {
   return result;
 }
 
-async function serializeCapabilityValue(env, value) {
+async function serializeCapabilityValue(env, value, options = {}) {
   if (value instanceof RpcTarget) {
-    return createObjectCapability(env, value);
+    const capability = await createObjectCapability(env, value);
+    options.temporaryCapabilities?.push(capability);
+    return capability;
   }
   if (Array.isArray(value)) {
-    return Promise.all(value.map((item) => serializeCapabilityValue(env, item)));
+    return Promise.all(value.map((item) => serializeCapabilityValue(env, item, options)));
   }
   if (!value || typeof value !== "object") {
     return value;
@@ -774,7 +784,7 @@ async function serializeCapabilityValue(env, value) {
 
   const result = {};
   for (const [key, item] of Object.entries(value)) {
-    result[key] = await serializeCapabilityValue(env, item);
+    result[key] = await serializeCapabilityValue(env, item, options);
   }
   return result;
 }
