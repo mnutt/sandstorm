@@ -6,6 +6,7 @@ export { RpcTarget } from "capnweb";
 const OBJECT_CAPABILITY_PREFIX = "/__sandstorm/object-capabilities";
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const exportedObjectTargets = new Map();
+const exportedObjectCapabilityIds = new Map();
 const claimedCapabilityDisposers = new Map();
 
 function header(request, name) {
@@ -538,12 +539,25 @@ function webSessionPersistent(options = {}) {
   return options.persistent;
 }
 
+function webSessionDropNotifyPath(options = {}) {
+  if (options.dropNotifyPath === undefined || options.dropNotifyPath === null) {
+    return undefined;
+  }
+
+  return webSessionPathPrefix({ pathPrefix: options.dropNotifyPath });
+}
+
 async function createWebSessionCapability(env, options = {}) {
   const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
   const persistent = webSessionPersistent(options) ? "true" : "false";
+  const dropNotifyPath = webSessionDropNotifyPath(options);
+  const notifyQuery = dropNotifyPath === undefined
+    ? ""
+    : `&dropNotifyPath=${encodeURIComponent(dropNotifyPath)}`;
   return wrapClaimedCapability(
     env, await postSandstorm(
-      env, `capabilities/web-session?pathPrefix=${pathPrefix}&persistent=${persistent}`));
+      env, `capabilities/web-session?pathPrefix=${pathPrefix}&persistent=${persistent}` +
+        notifyQuery));
 }
 
 async function createApiSessionCapability(env, options = {}) {
@@ -583,14 +597,18 @@ async function createObjectCapability(env, target) {
   exportedObjectTargets.set(id, target);
 
   try {
+    const pathPrefix = `${OBJECT_CAPABILITY_PREFIX}/${encodeURIComponent(id)}`;
     const capability = await createWebSessionCapability(env, {
-      pathPrefix: `${OBJECT_CAPABILITY_PREFIX}/${encodeURIComponent(id)}`,
+      pathPrefix,
+      dropNotifyPath: pathPrefix,
       persistent: false,
     });
-    claimedCapabilityDisposers.set(capability.id, () => exportedObjectTargets.delete(id));
+    exportedObjectCapabilityIds.set(id, capability.id);
+    claimedCapabilityDisposers.set(capability.id, () => disposeExportedObjectTarget(id));
     return capability;
   } catch (error) {
     exportedObjectTargets.delete(id);
+    exportedObjectCapabilityIds.delete(id);
     throw error;
   }
 }
@@ -724,6 +742,27 @@ function hydrateCapabilityValue(env, value) {
   return wrapCapabilityValue(env, value);
 }
 
+function disposeExportedObjectTarget(id) {
+  const target = exportedObjectTargets.get(id);
+  if (!target) {
+    return false;
+  }
+
+  exportedObjectTargets.delete(id);
+  const capabilityId = exportedObjectCapabilityIds.get(id);
+  if (capabilityId) {
+    claimedCapabilityDisposers.delete(capabilityId);
+    exportedObjectCapabilityIds.delete(id);
+  }
+
+  const disposer = target[Symbol.dispose];
+  if (typeof disposer === "function") {
+    disposer.call(target);
+  }
+
+  return true;
+}
+
 async function serveObjectCapability(request, env) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith(`${OBJECT_CAPABILITY_PREFIX}/`)) {
@@ -742,9 +781,9 @@ async function serveObjectCapability(request, env) {
     }, { status: 404 });
   }
 
-  if (request.method === "DELETE" && action === "") {
-    exportedObjectTargets.delete(decodeURIComponent(id));
-    return Response.json({ ok: true });
+  if (request.method === "POST" && action === "__sandstorm_dispose") {
+    const disposed = disposeExportedObjectTarget(decodeURIComponent(id));
+    return Response.json({ ok: true, disposed });
   }
 
   if (request.method !== "POST" || action !== "call") {

@@ -175,25 +175,28 @@ public:
   }
 
   kj::String storeClaimedCapability(capnp::Capability::Client cap) {
-    for (;;) {
-      auto id = makeOpaqueToken();
-      if (findClaimedCapabilityIndex(id) == nullptr) {
-        claimedCapabilities.add(ClaimedCapabilityRecord { kj::heapString(id), cap });
-        return id;
-      }
-    }
+    return storeClaimedCapabilityInternal(kj::mv(cap), nullptr);
   }
 
-  bool dropClaimedCapability(kj::StringPtr id) {
+  kj::String storeClaimedCapability(capnp::Capability::Client cap, kj::String dropNotifyPath) {
+    return storeClaimedCapabilityInternal(kj::mv(cap), kj::mv(dropNotifyPath));
+  }
+
+  struct DroppedClaimedCapability {
+    kj::Maybe<kj::String> dropNotifyPath;
+  };
+
+  kj::Maybe<DroppedClaimedCapability> dropClaimedCapability(kj::StringPtr id) {
     KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
+      DroppedClaimedCapability result { kj::mv(claimedCapabilities[*index].dropNotifyPath) };
       if (*index + 1 < claimedCapabilities.size()) {
         claimedCapabilities[*index] = kj::mv(claimedCapabilities.back());
       }
       claimedCapabilities.removeLast();
-      return true;
+      return kj::mv(result);
     }
 
-    return false;
+    return nullptr;
   }
 
   kj::Maybe<capnp::Capability::Client> findClaimedCapability(kj::StringPtr id) {
@@ -205,6 +208,18 @@ public:
   }
 
 private:
+  kj::String storeClaimedCapabilityInternal(capnp::Capability::Client cap,
+      kj::Maybe<kj::String> dropNotifyPath) {
+    for (;;) {
+      auto id = makeOpaqueToken();
+      if (findClaimedCapabilityIndex(id) == nullptr) {
+        claimedCapabilities.add(ClaimedCapabilityRecord {
+            kj::heapString(id), cap, kj::mv(dropNotifyPath) });
+        return id;
+      }
+    }
+  }
+
   struct SessionRecord {
     kj::String id;
     SessionContext::Client context;
@@ -213,6 +228,7 @@ private:
   struct ClaimedCapabilityRecord {
     kj::String id;
     capnp::Capability::Client cap;
+    kj::Maybe<kj::String> dropNotifyPath;
   };
 
   kj::Maybe<size_t> findSessionIndex(kj::StringPtr id) {
@@ -3742,15 +3758,25 @@ private:
       kj::StringPtr url, kj::HttpService::Response& response, RouteBackedSessionType sessionType) {
     auto pathPrefixes = findIsolateQueryParams(url, "pathPrefix");
     auto persistentParams = findIsolateQueryParams(url, "persistent");
-    if (pathPrefixes.size() > 1 || persistentParams.size() > 1) {
+    auto dropNotifyPaths = findIsolateQueryParams(url, "dropNotifyPath");
+    if (pathPrefixes.size() > 1 || persistentParams.size() > 1 || dropNotifyPaths.size() > 1) {
       return sendJson(response, 400, "Bad Request", kj::heapString(
           "{\n  \"ok\": false,\n"
-          "  \"error\": \"expected at most one pathPrefix and persistent flag\"\n}\n"));
+          "  \"error\": \"expected at most one pathPrefix, persistent flag, and dropNotifyPath\"\n}\n"));
     }
 
     auto pathPrefix = pathPrefixes.size() == 1
         ? normalizeWebSessionPathPrefix(pathPrefixes[0])
         : kj::heapString("");
+    kj::Maybe<kj::String> dropNotifyPath = nullptr;
+    if (dropNotifyPaths.size() == 1 && dropNotifyPaths[0].size() > 0) {
+      auto notifyPath = normalizeWebSessionPathPrefix(dropNotifyPaths[0]);
+      if (pathPrefix.size() > 0 && !notifyPath.startsWith(pathPrefix)) {
+        return sendJson(response, 400, "Bad Request", renderError(
+            "dropNotifyPath must be within pathPrefix"));
+      }
+      dropNotifyPath = kj::mv(notifyPath);
+    }
     bool persistent = true;
     if (persistentParams.size() == 1) {
       auto value = kj::heapString(persistentParams[0]);
@@ -3765,7 +3791,9 @@ private:
       }
     }
     auto cap = makeRouteBackedSessionCapability(sessionType, pathPrefix, persistent);
-    auto capId = host.sessions->storeClaimedCapability(kj::mv(cap));
+    auto capId = dropNotifyPath == nullptr
+        ? host.sessions->storeClaimedCapability(kj::mv(cap))
+        : host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(KJ_ASSERT_NONNULL(dropNotifyPath)));
     return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
 
@@ -4500,6 +4528,26 @@ private:
     }
   }
 
+  kj::Promise<void> notifyDroppedClaimedCapability(kj::String dropNotifyPath) {
+    FetchRequest request;
+    request.method = FetchMethod::POST;
+    request.path = toHttpRequestTarget(kj::str(dropNotifyPath, "/__sandstorm_dispose"));
+    addHeader(request, "host", "sandbox");
+    addHeader(request, "content-type", "application/json; charset=utf-8");
+    auto body = kj::StringPtr("{}");
+    request.body = kj::heapArray<byte>(body.asBytes());
+
+    auto runtime = kj::heap<WorkerdRuntimeAdapter>(kj::addRef(config), kj::addRef(host));
+    return runtime->fetch(kj::mv(request))
+        .then([runtime = kj::mv(runtime), dropNotifyPath = kj::mv(dropNotifyPath)](
+            FetchResponse&& result) mutable {
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        KJ_LOG(WARNING, "Isolate claimed capability drop notification failed.",
+            dropNotifyPath, result.statusCode);
+      }
+    });
+  }
+
   kj::Promise<void> dropPowerboxCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
     auto ids = findIsolateQueryParams(url, "id");
@@ -4508,8 +4556,17 @@ private:
           "{\n  \"ok\": false,\n  \"error\": \"expected exactly one capability id\"\n}\n"));
     }
 
-    if (host.sessions->dropClaimedCapability(ids[0])) {
-      return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+    KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(ids[0])) {
+      KJ_IF_MAYBE(dropNotifyPath, dropped->dropNotifyPath) {
+        return notifyDroppedClaimedCapability(kj::mv(*dropNotifyPath))
+            .catch_([](kj::Exception&& exception) {
+          KJ_LOG(WARNING, "Isolate claimed capability drop notification threw.", exception);
+        }).then([this, &response]() mutable {
+          return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+        });
+      } else {
+        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+      }
     } else {
       return sendJson(response, 404, "Not Found", kj::heapString(
           "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));

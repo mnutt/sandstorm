@@ -8,6 +8,8 @@ import {
   powerbox as sandstormPowerbox,
 } from "sandstorm:api";
 
+let disposedCounterCapabilities = 0;
+
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
   for (let i = 0; i < bytes.length; ++i) {
@@ -46,6 +48,10 @@ class CounterCapability extends RpcTarget {
 
   fail(message = "counter failure") {
     throw new Error(String(message));
+  }
+
+  [Symbol.dispose]() {
+    disposedCounterCapabilities += 1;
   }
 }
 
@@ -480,6 +486,13 @@ export default {
         ok: true,
         capabilityClass: capability instanceof ClaimedCapability,
         capability: JSON.parse(JSON.stringify(capability)),
+      });
+    }
+
+    if (url.pathname === "/object-capability-dispose-count") {
+      return Response.json({
+        ok: true,
+        disposed: disposedCounterCapabilities,
       });
     }
 
