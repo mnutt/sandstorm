@@ -193,6 +193,16 @@ export default {
       });
     }
 
+    if (url.pathname === "/set-cookie") {
+      return new Response("set-cookie response", {
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+          "set-cookie": "isolate=blocked; Path=/; HttpOnly",
+          "x-sandstorm-app-cookie-test": "present",
+        },
+      });
+    }
+
     if (url.pathname === "/cache-revalidate") {
       return new Response("cache revalidate", {
         headers: {
