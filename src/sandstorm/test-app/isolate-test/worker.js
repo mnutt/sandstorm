@@ -555,6 +555,15 @@ export default {
           status: error?.details?.status,
         };
       }
+      let saveError;
+      try {
+        await capability.save({ label: "Transient object capability" });
+      } catch (error) {
+        saveError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
       const drop = await capability.drop();
       return Response.json({
         ok: true,
@@ -574,6 +583,7 @@ export default {
         stubThenType: typeof stub.then,
         sessionActions,
         missing,
+        saveError,
         drop,
       });
     }
