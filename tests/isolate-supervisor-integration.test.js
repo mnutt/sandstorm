@@ -879,6 +879,13 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.stubArgumentTarget.read, { value: 23 });
     assert.equal(selfTest.json.stubArgumentTarget.disposeAfter,
       selfTest.json.stubArgumentTarget.disposeBefore + 1);
+    assert.deepEqual(selfTest.json.retainedArgumentTarget.retain, { value: 31 });
+    assert.equal(selfTest.json.retainedArgumentTarget.disposeAfterRetainCall,
+      selfTest.json.retainedArgumentTarget.disposeBefore);
+    assert.deepEqual(selfTest.json.retainedArgumentTarget.read, { value: 31 });
+    assert.equal(selfTest.json.retainedArgumentTarget.drop.ok, true);
+    assert.equal(selfTest.json.retainedArgumentTarget.disposeAfterDrop,
+      selfTest.json.retainedArgumentTarget.disposeBefore + 1);
     assert.equal(selfTest.json.stubThenType, "undefined");
     assert.equal(selfTest.json.missing.name, "CapabilityCallError");
     assert.equal(selfTest.json.missing.status, 404);

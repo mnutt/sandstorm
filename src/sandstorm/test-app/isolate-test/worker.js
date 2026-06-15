@@ -28,6 +28,7 @@ function checksum(bytes) {
 
 class CounterCapability extends RpcTarget {
   #value = 0;
+  #retained = null;
 
   increment(amount = 1) {
     this.#value += Number(amount);
@@ -44,6 +45,30 @@ class CounterCapability extends RpcTarget {
 
   async readOther(other) {
     return other.call("get");
+  }
+
+  async retainOther(other) {
+    if (this.#retained) {
+      await this.#retained.drop();
+    }
+    this.#retained = await other.dup();
+    return this.#retained.call("get");
+  }
+
+  async readRetained() {
+    if (!this.#retained) {
+      throw new Error("no retained capability");
+    }
+    return this.#retained.call("get");
+  }
+
+  async dropRetained() {
+    if (!this.#retained) {
+      return { ok: true, dropped: false };
+    }
+    const dropped = await this.#retained.drop();
+    this.#retained = null;
+    return dropped;
   }
 
   fail(message = "counter failure") {
@@ -520,6 +545,14 @@ export default {
       const disposeBeforeStubArgumentTarget = disposedCounterCapabilities;
       const stubReadArgumentTarget = await stub.readOther(stubArgumentTarget);
       const disposeAfterStubArgumentTarget = disposedCounterCapabilities;
+      const retainedArgumentTarget = new CounterCapability();
+      retainedArgumentTarget.increment(31);
+      const disposeBeforeRetainedArgumentTarget = disposedCounterCapabilities;
+      const retainArgumentTarget = await capability.call("retainOther", retainedArgumentTarget);
+      const disposeAfterRetainCall = disposedCounterCapabilities;
+      const readRetainedArgumentTarget = await capability.call("readRetained");
+      const dropRetainedArgumentTarget = await capability.call("dropRetained");
+      const disposeAfterDropRetainedArgumentTarget = disposedCounterCapabilities;
       let sessionActions = null;
       if (url.searchParams.get("sessionActions") === "true") {
         const descriptorOptions = url.searchParams.get("apiDescriptor") === "true"
@@ -627,6 +660,14 @@ export default {
           read: stubReadArgumentTarget,
           disposeBefore: disposeBeforeStubArgumentTarget,
           disposeAfter: disposeAfterStubArgumentTarget,
+        },
+        retainedArgumentTarget: {
+          retain: retainArgumentTarget,
+          disposeBefore: disposeBeforeRetainedArgumentTarget,
+          disposeAfterRetainCall,
+          read: readRetainedArgumentTarget,
+          drop: dropRetainedArgumentTarget,
+          disposeAfterDrop: disposeAfterDropRetainedArgumentTarget,
         },
         stubThenType: typeof stub.then,
         sessionActions,
