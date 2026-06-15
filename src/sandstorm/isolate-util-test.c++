@@ -103,10 +103,13 @@ KJ_TEST("isolate response helper detects structured headers") {
   KJ_EXPECT(!isolateEqualsIgnoreCase("Content-Type", "content-length"));
 
   KJ_EXPECT(isStructuredIsolateResponseHeader("Content-Type"));
+  KJ_EXPECT(isStructuredIsolateResponseHeader("Content-Encoding"));
+  KJ_EXPECT(isStructuredIsolateResponseHeader("Content-Disposition"));
   KJ_EXPECT(isStructuredIsolateResponseHeader("content-length"));
   KJ_EXPECT(isStructuredIsolateResponseHeader("Transfer-Encoding"));
   KJ_EXPECT(isStructuredIsolateResponseHeader("Connection"));
   KJ_EXPECT(isStructuredIsolateResponseHeader("Cache-Control"));
+  KJ_EXPECT(isStructuredIsolateResponseHeader("ETag"));
   KJ_EXPECT(!isStructuredIsolateResponseHeader("X-Frame-Options"));
 }
 

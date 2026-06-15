@@ -371,8 +371,12 @@ public:
     expectSupervisorRefFailure(io.waitScope, dropRequest.send().ignoreResult());
 
     auto routeAppRef = makeRouteBackedSessionAppRef("web", "/exported");
+    capnp::MallocMessageBuilder appRefMessage;
+    auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
+    appRef.setAs<capnp::Data>(routeAppRef.asBytes());
+
     auto routeRestoreRequest = supervisor.restoreRequest();
-    routeRestoreRequest.getRef().initAppRef().setAs<capnp::Data>(routeAppRef.asBytes());
+    routeRestoreRequest.getRef().setAppRef(appRef.asReader());
     auto restoredRouteSession = routeRestoreRequest.send().wait(io.waitScope)
         .getCap().castAs<WebSession>();
 
@@ -399,7 +403,7 @@ public:
     KJ_REQUIRE(contains(routeBody, "\"search\":\"?source=supervisor-app-ref\""), routeBody);
 
     auto routeDropRequest = supervisor.dropRequest();
-    routeDropRequest.getRef().initAppRef().setAs<capnp::Data>(routeAppRef.asBytes());
+    routeDropRequest.getRef().setAppRef(appRef.asReader());
     routeDropRequest.send().wait(io.waitScope);
 
     auto view = supervisor.getMainViewRequest().send().wait(io.waitScope).getView();
