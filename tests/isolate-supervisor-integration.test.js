@@ -878,6 +878,12 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.missing.status, 404);
     assert.equal(selfTest.json.saveError.name, "Error");
     assert.match(selfTest.json.saveError.message, /transient and cannot be saved/);
+    assert.deepEqual(selfTest.json.stable.first, { value: 17 });
+    assert.equal(selfTest.json.stable.duplicateError.name, "ValidationError");
+    assert.match(selfTest.json.stable.duplicateError.message, /already registered/);
+    assert.equal(selfTest.json.stable.drop.ok, true);
+    assert.deepEqual(selfTest.json.stable.recreatedFirst, { value: 19 });
+    assert.equal(selfTest.json.stable.recreatedDrop.ok, true);
     assert.equal(selfTest.json.drop.ok, true);
   });
 

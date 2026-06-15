@@ -564,6 +564,27 @@ export default {
           message: String(error?.message || error),
         };
       }
+      const stableCapability = await sandstorm(request, env).capability(new CounterCapability(), {
+        id: "stable-counter",
+      });
+      const stableFirst = await stableCapability.call("increment", 17);
+      let stableDuplicateError;
+      try {
+        await sandstorm(request, env).capability(new CounterCapability(), {
+          id: "stable-counter",
+        });
+      } catch (error) {
+        stableDuplicateError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+      const stableDrop = await stableCapability.drop();
+      const stableRecreated = await sandstorm(request, env).capability(new CounterCapability(), {
+        id: "stable-counter",
+      });
+      const stableRecreatedFirst = await stableRecreated.call("increment", 19);
+      const stableRecreatedDrop = await stableRecreated.drop();
       const drop = await capability.drop();
       return Response.json({
         ok: true,
@@ -584,6 +605,13 @@ export default {
         sessionActions,
         missing,
         saveError,
+        stable: {
+          first: stableFirst,
+          duplicateError: stableDuplicateError,
+          drop: stableDrop,
+          recreatedFirst: stableRecreatedFirst,
+          recreatedDrop: stableRecreatedDrop,
+        },
         drop,
       });
     }
