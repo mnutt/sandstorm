@@ -17,6 +17,7 @@
 #include <capnp/rpc-twoparty.h>
 #include <kj/async-io.h>
 #include <kj/debug.h>
+#include <kj/encoding.h>
 #include <kj/main.h>
 #include <sandstorm/util.h>
 #include <sandstorm/api-session.capnp.h>
@@ -26,6 +27,9 @@
 #include <sandstorm/supervisor.capnp.h>
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace sandstorm {
 
@@ -86,6 +90,26 @@ void expectSupervisorRefFailure(kj::WaitScope& waitScope, kj::Promise<void> prom
 
 kj::String makeRouteBackedSessionAppRef(kj::StringPtr type, kj::StringPtr pathPrefix) {
   return kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX, type, "\n", pathPrefix);
+}
+
+kj::String fakeCoreTokenStorePath(kj::StringPtr socketPath) {
+  auto slash = KJ_ASSERT_NONNULL(socketPath.findLast('/'));
+  return kj::str(socketPath.slice(0, slash), "/fake-core-tokens");
+}
+
+void writeTestFile(kj::StringPtr path, kj::ArrayPtr<const char> content) {
+  auto pathString = kj::heapString(path);
+  int fd;
+  KJ_SYSCALL(fd = open(pathString.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600),
+      pathString);
+  KJ_DEFER(close(fd));
+
+  auto remaining = content;
+  while (remaining.size() > 0) {
+    ssize_t n;
+    KJ_SYSCALL(n = write(fd, remaining.begin(), remaining.size()));
+    remaining = remaining.slice(n, remaining.size());
+  }
 }
 
 class IgnoreByteStream final: public ByteStream::Server {
@@ -271,20 +295,90 @@ public:
   explicit FakeSandstormCore(FakeSessionContext& sessionContext)
       : sessionContext(sessionContext) {}
 
+  FakeSandstormCore(FakeSessionContext& sessionContext, kj::StringPtr tokenStorePath)
+      : sessionContext(sessionContext),
+        tokenStorePath(kj::heapString(tokenStorePath)) {
+    loadRouteBackedTokens();
+  }
+
+  void setSupervisor(Supervisor::Client supervisor) {
+    this->supervisor = kj::mv(supervisor);
+  }
+
   kj::Promise<void> restore(RestoreContext context) override {
     auto token = context.getParams().getToken();
     auto tokenText = kj::heapString(token.asChars());
-    KJ_REQUIRE(tokenText == "websession-saved-token");
-    ++sessionContext.restoreCount;
-    context.getResults().setCap(kj::heap<FakeClaimedCapability>(sessionContext.saveCount));
-    return kj::READY_NOW;
+    if (tokenText == "websession-saved-token") {
+      ++sessionContext.restoreCount;
+      context.getResults().setCap(kj::heap<FakeClaimedCapability>(sessionContext.saveCount));
+      return kj::READY_NOW;
+    }
+
+    KJ_IF_MAYBE(saved, findRouteBackedToken(tokenText)) {
+      ++sessionContext.restoreCount;
+      KJ_IF_MAYBE(supervisor, this->supervisor) {
+        capnp::MallocMessageBuilder appRefMessage;
+        auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
+        appRef.setAs<capnp::Data>(saved->appRef.asPtr());
+
+        auto request = supervisor->restoreRequest();
+        request.getRef().setAppRef(appRef.asReader());
+        return request.send().then([context](auto result) mutable {
+          context.getResults().setCap(result.getCap());
+        });
+      } else {
+        KJ_FAIL_REQUIRE("fake SandstormCore has no supervisor for route-backed restore");
+      }
+    } else {
+      KJ_FAIL_REQUIRE("unknown fake SandstormCore token", tokenText);
+    }
   }
 
   kj::Promise<void> drop(DropContext context) override {
     auto token = context.getParams().getToken();
     auto tokenText = kj::heapString(token.asChars());
-    KJ_REQUIRE(tokenText == "websession-saved-token");
-    ++sessionContext.tokenDropCount;
+    if (tokenText == "websession-saved-token") {
+      ++sessionContext.tokenDropCount;
+      return kj::READY_NOW;
+    }
+
+    for (auto i: kj::indices(routeBackedTokens)) {
+      if (routeBackedTokens[i].token == tokenText) {
+        if (i + 1 < routeBackedTokens.size()) {
+          routeBackedTokens[i] = kj::mv(routeBackedTokens.back());
+        }
+        routeBackedTokens.removeLast();
+        saveRouteBackedTokens();
+        ++sessionContext.tokenDropCount;
+        return kj::READY_NOW;
+      }
+    }
+
+    KJ_FAIL_REQUIRE("unknown fake SandstormCore token", tokenText);
+  }
+
+  kj::Promise<void> makeToken(MakeTokenContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.getRef().which() == SupervisorObjectId<>::APP_REF,
+        "fake SandstormCore only supports isolate app refs");
+    auto owner = params.getOwner();
+    KJ_REQUIRE(owner.which() == ApiTokenOwner::GRAIN);
+    KJ_REQUIRE(owner.getGrain().getGrainId().size() > 0);
+
+    auto appRef = params.getRef().getAppRef().getAs<capnp::Data>();
+    auto token = kj::str("route-backed-token-", ++routeBackedTokenCounter);
+    routeBackedTokens.add(RouteBackedToken {
+        kj::heapString(token),
+        kj::heapArray<byte>(appRef.begin(), appRef.end())
+    });
+    saveRouteBackedTokens();
+    context.getResults().setToken(token.asBytes());
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> makeChildToken(MakeChildTokenContext context) override {
+    auto params = context.getParams();
+    context.getResults().setToken(params.getParent());
     return kj::READY_NOW;
   }
 
@@ -296,7 +390,60 @@ public:
   }
 
 private:
+  struct RouteBackedToken {
+    kj::String token;
+    kj::Array<byte> appRef;
+  };
+
+  kj::Maybe<RouteBackedToken&> findRouteBackedToken(kj::StringPtr token) {
+    for (auto& saved: routeBackedTokens) {
+      if (saved.token == token) {
+        return saved;
+      }
+    }
+    return nullptr;
+  }
+
   FakeSessionContext& sessionContext;
+  kj::Maybe<Supervisor::Client> supervisor;
+  kj::Maybe<kj::String> tokenStorePath;
+  uint routeBackedTokenCounter = 0;
+  kj::Vector<RouteBackedToken> routeBackedTokens;
+
+  void loadRouteBackedTokens() {
+    KJ_IF_MAYBE(path, tokenStorePath) {
+      KJ_IF_MAYBE(file, raiiOpenIfExists(*path, O_RDONLY | O_CLOEXEC)) {
+        for (auto& line: splitLines(readAll(*file))) {
+          if (line.size() == 0) continue;
+
+          KJ_IF_MAYBE(tab, line.findFirst('\t')) {
+            auto token = kj::heapString(kj::StringPtr(line.begin(), *tab));
+            auto encodedAppRef = kj::StringPtr(line.begin() + *tab + 1, line.size() - *tab - 1);
+            auto decoded = kj::decodeBase64(encodedAppRef);
+            KJ_REQUIRE(!decoded.hadErrors, "invalid fake core token store app-ref");
+            routeBackedTokens.add(RouteBackedToken { kj::mv(token), kj::mv(decoded) });
+          } else {
+            KJ_FAIL_REQUIRE("invalid fake core token store line", line);
+          }
+        }
+        routeBackedTokenCounter = routeBackedTokens.size();
+      }
+    }
+  }
+
+  void saveRouteBackedTokens() {
+    KJ_IF_MAYBE(path, tokenStorePath) {
+      kj::Vector<char> content;
+      for (auto& token: routeBackedTokens) {
+        content.addAll(token.token);
+        content.add('\t');
+        auto encodedAppRef = kj::encodeBase64Url(token.appRef.asPtr());
+        content.addAll(encodedAppRef);
+        content.add('\n');
+      }
+      writeTestFile(*path, content.asPtr());
+    }
+  }
 };
 
 kj::String responseDebugBody(WebSession::Response::Reader response) {
@@ -332,9 +479,16 @@ public:
   kj::MainFunc getMain() {
     return kj::MainBuilder(context, "Sandstorm isolate WebSession integration client",
         "Connects to an isolate supervisor socket and validates the WebSession path.")
+        .addOption({"core-server"}, KJ_BIND_METHOD(*this, setCoreServerMode),
+            "Keep a fake SandstormCore connected until terminated.")
         .expectArg("<supervisor-socket>", KJ_BIND_METHOD(*this, setSocketPath))
         .callAfterParsing(KJ_BIND_METHOD(*this, run))
         .build();
+  }
+
+  kj::MainBuilder::Validity setCoreServerMode() {
+    coreServerMode = true;
+    return true;
   }
 
   kj::MainBuilder::Validity setSocketPath(kj::StringPtr path) {
@@ -352,15 +506,26 @@ public:
     auto sessionContext = kj::heap<FakeSessionContext>();
     auto& sessionContextRef = *sessionContext;
 
+    auto tokenStorePath = fakeCoreTokenStorePath(socketPath);
+    auto fakeCore = coreServerMode
+        ? kj::heap<FakeSandstormCore>(sessionContextRef, tokenStorePath)
+        : kj::heap<FakeSandstormCore>(sessionContextRef);
+    auto& fakeCoreRef = *fakeCore;
     capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
-    auto rpcSystem = capnp::makeRpcServer(
-        network, kj::heap<FakeSandstormCore>(sessionContextRef));
+    auto rpcSystem = capnp::makeRpcServer(network, kj::mv(fakeCore));
 
     capnp::MallocMessageBuilder vatMessage;
     auto hostId = vatMessage.initRoot<capnp::rpc::twoparty::VatId>();
     hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
 
     auto supervisor = rpcSystem.bootstrap(hostId).castAs<Supervisor>();
+    fakeCoreRef.setSupervisor(supervisor);
+
+    if (coreServerMode) {
+      context.warning("Core ready.");
+      network.onDisconnect().wait(io.waitScope);
+      return true;
+    }
 
     auto restoreRequest = supervisor.restoreRequest();
     restoreRequest.getRef().setWakeLockNotification(123);
@@ -1028,6 +1193,7 @@ private:
   kj::ProcessContext& context;
   kj::AsyncIoContext io;
   kj::String socketPath;
+  bool coreServerMode = false;
 };
 
 }  // namespace sandstorm

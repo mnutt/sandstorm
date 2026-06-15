@@ -2549,12 +2549,20 @@ public:
 
   kj::Promise<void> save(typename InternalSession::Server::SaveContext context) override {
     KJ_REQUIRE(persistent, "isolate route-backed capability is not persistent");
-    auto token = makeOpaqueToken();
-    writeFile(kj::str(runtimeConfig->savedCapabilityDir, "/", token),
-        kj::str(sessionTypeToken(), "\n", pathPrefix).asBytes());
-    auto sturdyRef = kj::str(ISOLATE_WEBS_SESSION_TOKEN_PREFIX, token);
-    context.getResults().setSturdyRef(sturdyRef.asBytes());
-    return kj::READY_NOW;
+    auto params = context.getParams();
+    auto payload = kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX, sessionTypeToken(), "\n",
+        pathPrefix);
+
+    capnp::MallocMessageBuilder appRefMessage;
+    auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
+    appRef.setAs<capnp::Data>(payload.asBytes());
+
+    auto request = runtimeHost->sandstormCore.makeTokenRequest();
+    request.getRef().setAppRef(appRef.asReader());
+    request.setOwner(params.getSealFor());
+    return request.send().then([context](auto result) mutable {
+      context.getResults().setSturdyRef(result.getToken());
+    });
   }
 
 private:
