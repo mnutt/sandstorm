@@ -876,6 +876,8 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.stubThenType, "undefined");
     assert.equal(selfTest.json.missing.name, "CapabilityCallError");
     assert.equal(selfTest.json.missing.status, 404);
+    assert.equal(selfTest.json.saveError.name, "Error");
+    assert.match(selfTest.json.saveError.message, /transient and cannot be saved/);
     assert.equal(selfTest.json.drop.ok, true);
   });
 

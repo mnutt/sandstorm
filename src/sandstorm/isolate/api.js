@@ -8,6 +8,7 @@ const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const exportedObjectTargets = new Map();
 const exportedObjectCapabilityIds = new Map();
 const claimedCapabilityDisposers = new Map();
+const claimedCapabilityMetadata = new Map();
 
 function header(request, name) {
   return request.headers.get(name) || "";
@@ -420,7 +421,15 @@ function apiSessionDescriptorParams(options = {}) {
 }
 
 async function saveClaimedCapability(env, capability, options = {}) {
-  const id = encodeURIComponent(capabilityId(capability));
+  const rawId = capabilityId(capability);
+  const metadata = claimedCapabilityMetadata.get(rawId);
+  if (metadata?.transientObjectCapability) {
+    throw new Error(
+      "JavaScript object capabilities are transient and cannot be saved yet. " +
+      "Export a route-backed WebSession or ApiSession capability for persistence.");
+  }
+
+  const id = encodeURIComponent(rawId);
   const label = encodeURIComponent(saveLabel(options));
   return wrapSavedCapability(env, await postPowerbox(env, `powerbox/save?id=${id}&label=${label}`));
 }
@@ -604,6 +613,7 @@ async function createObjectCapability(env, target) {
       persistent: false,
     });
     exportedObjectCapabilityIds.set(id, capability.id);
+    claimedCapabilityMetadata.set(capability.id, { transientObjectCapability: true });
     claimedCapabilityDisposers.set(capability.id, () => disposeExportedObjectTarget(id));
     return capability;
   } catch (error) {
@@ -752,6 +762,7 @@ function disposeExportedObjectTarget(id) {
   const capabilityId = exportedObjectCapabilityIds.get(id);
   if (capabilityId) {
     claimedCapabilityDisposers.delete(capabilityId);
+    claimedCapabilityMetadata.delete(capabilityId);
     exportedObjectCapabilityIds.delete(id);
   }
 
