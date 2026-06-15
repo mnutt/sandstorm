@@ -638,7 +638,11 @@ function objectCapabilityId(options = {}) {
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   }
 
-  const id = validate.string(options.id, "object capability id", {
+  return explicitObjectCapabilityId(options.id);
+}
+
+function explicitObjectCapabilityId(value, name = "object capability id") {
+  const id = validate.string(value, name, {
     minLength: 1,
     maxLength: 256,
   });
@@ -647,6 +651,13 @@ function objectCapabilityId(options = {}) {
       "object capability id may only contain URL-safe letters, digits, '.', '_', '~', and '-'");
   }
   return id;
+}
+
+function requiredObjectCapabilityId(options = {}) {
+  if (options.id === undefined || options.id === null) {
+    throw new ValidationError("registered object capabilities require an explicit id");
+  }
+  return explicitObjectCapabilityId(options.id);
 }
 
 function objectCapabilityPersistent(options = {}) {
@@ -662,6 +673,49 @@ function objectCapabilityPersistent(options = {}) {
   return options.persistent;
 }
 
+function objectCapabilityPathPrefix(id) {
+  return `${OBJECT_CAPABILITY_PREFIX}/${encodeURIComponent(id)}`;
+}
+
+function registerObjectCapabilityTarget(target, options = {}) {
+  if (!target || typeof target !== "object") {
+    throw new ValidationError("capability target must be an object");
+  }
+
+  const id = requiredObjectCapabilityId(options);
+  const existing = exportedObjectTargets.get(id);
+  if (existing === target) {
+    return {
+      ok: true,
+      id,
+      pathPrefix: objectCapabilityPathPrefix(id),
+      registered: false,
+    };
+  }
+  if (existing) {
+    throw new ValidationError(`object capability id is already registered: ${id}`);
+  }
+
+  exportedObjectTargets.set(id, target);
+  return {
+    ok: true,
+    id,
+    pathPrefix: objectCapabilityPathPrefix(id),
+    registered: true,
+  };
+}
+
+function unregisterObjectCapabilityTarget(options = {}) {
+  const id = typeof options === "string"
+    ? explicitObjectCapabilityId(options)
+    : requiredObjectCapabilityId(options);
+  return {
+    ok: true,
+    id,
+    disposed: disposeExportedObjectTarget(id),
+  };
+}
+
 async function createObjectCapability(env, target, options = {}) {
   if (!target || typeof target !== "object") {
     throw new ValidationError("capability target must be an object");
@@ -669,13 +723,14 @@ async function createObjectCapability(env, target, options = {}) {
 
   const persistent = objectCapabilityPersistent(options);
   const id = objectCapabilityId(options);
-  if (exportedObjectTargets.has(id)) {
-    throw new ValidationError(`object capability id is already registered: ${id}`);
+  const registration = registerObjectCapabilityTarget(target, { id });
+  if (!persistent && !registration.registered) {
+    throw new ValidationError(
+      "already registered object capability IDs can only be minted with persistent: true");
   }
-  exportedObjectTargets.set(id, target);
 
   try {
-    const pathPrefix = `${OBJECT_CAPABILITY_PREFIX}/${encodeURIComponent(id)}`;
+    const pathPrefix = objectCapabilityPathPrefix(id);
     const capability = await createWebSessionCapability(env, {
       pathPrefix,
       ...(persistent ? {} : { dropNotifyPath: pathPrefix }),
@@ -687,8 +742,10 @@ async function createObjectCapability(env, target, options = {}) {
     }
     return capability;
   } catch (error) {
-    exportedObjectTargets.delete(id);
-    forgetObjectCapabilityHandles(id);
+    if (registration.registered) {
+      exportedObjectTargets.delete(id);
+      forgetObjectCapabilityHandles(id);
+    }
     throw error;
   }
 }
@@ -1461,6 +1518,14 @@ class SandstormRpcTarget extends RpcTarget {
   capability(target, options = {}) {
     return createObjectCapability(this.#env, target, options);
   }
+
+  registerCapability(target, options = {}) {
+    return registerObjectCapabilityTarget(target, options);
+  }
+
+  unregisterCapability(options = {}) {
+    return unregisterObjectCapabilityTarget(options);
+  }
 }
 
 export function apiTarget(request, env) {
@@ -1521,6 +1586,8 @@ export function sandstorm(request, env) {
     webSession: (options = {}) => createWebSessionCapability(env, options),
     apiSession: (options = {}) => createApiSessionCapability(env, options),
     capability: (target, options = {}) => createObjectCapability(env, target, options),
+    registerCapability: (target, options = {}) => registerObjectCapabilityTarget(target, options),
+    unregisterCapability: (options = {}) => unregisterObjectCapabilityTarget(options),
     serveObjectCapabilities: () => serveObjectCapability(request, env),
     servePowerboxDescriptors: () => servePowerboxDescriptors(request, env),
     apiTarget: () => apiTarget(request, env),

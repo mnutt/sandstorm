@@ -937,7 +937,25 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.persistent.restoredIncrement, { value: 32 });
     assert.equal(selfTest.json.persistent.dropOriginal.ok, true);
     assert.equal(selfTest.json.persistent.dropRestored.ok, true);
+    assert.equal(selfTest.json.persistent.unregisterOriginal.ok, true);
+    assert.equal(selfTest.json.persistent.unregisterOriginal.disposed, true);
+    assert.equal(selfTest.json.persistent.registerReplacement.ok, true);
+    assert.equal(selfTest.json.persistent.registerReplacement.registered, true);
+    assert.equal(selfTest.json.persistent.registerAgain.ok, true);
+    assert.equal(selfTest.json.persistent.registerAgain.registered, false);
+    assert.equal(selfTest.json.persistent.registerDuplicateError.name, "ValidationError");
+    assert.match(selfTest.json.persistent.registerDuplicateError.message, /already registered/);
+    assert.equal(selfTest.json.persistent.transientMintError.name, "ValidationError");
+    assert.match(selfTest.json.persistent.transientMintError.message, /persistent: true/);
+    assert.equal(selfTest.json.persistent.mintedAfterRegister.type, "claimedCapability");
+    assert.deepEqual(selfTest.json.persistent.mintedAfterRegisterGet, { value: 41 });
+    assert.equal(selfTest.json.persistent.dropMintedAfterRegister.ok, true);
+    assert.equal(selfTest.json.persistent.restoredAfterRegister.type, "claimedCapability");
+    assert.deepEqual(selfTest.json.persistent.restoredAfterRegisterGet, { value: 41 });
+    assert.equal(selfTest.json.persistent.dropRestoredAfterRegister.ok, true);
     assert.equal(selfTest.json.persistent.dropSaved.ok, true);
+    assert.equal(selfTest.json.persistent.unregisterReplacement.ok, true);
+    assert.equal(selfTest.json.persistent.unregisterReplacement.disposed, true);
   });
 
   await t.test("forwards request bodies and custom headers through workerd", async () => {

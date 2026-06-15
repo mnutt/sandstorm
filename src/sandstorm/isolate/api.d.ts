@@ -169,6 +169,19 @@ declare module "sandstorm:api" {
     persistent?: boolean;
   }
 
+  export interface ObjectCapabilityRegistration {
+    ok: true;
+    id: string;
+    pathPrefix: string;
+    registered: boolean;
+  }
+
+  export interface ObjectCapabilityUnregistration {
+    ok: true;
+    id: string;
+    disposed: boolean;
+  }
+
   export type CapabilityRpcStub<T extends object = Record<string, (...args: any[]) => unknown>> = {
     [K in keyof T]: T[K] extends (...args: infer Args) => infer Result
       ? (...args: Args) => Promise<Awaited<Result>>
@@ -344,6 +357,13 @@ declare module "sandstorm:api" {
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     capability(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
+    registerCapability(
+      target: RpcTarget,
+      options: Required<Pick<ObjectCapabilityOptions, "id">>,
+    ): ObjectCapabilityRegistration;
+    unregisterCapability(
+      idOrOptions: string | Required<Pick<ObjectCapabilityOptions, "id">>,
+    ): ObjectCapabilityUnregistration;
   }
 
   export interface StorageApiTarget extends RpcTarget, StorageApi {}
@@ -361,6 +381,13 @@ declare module "sandstorm:api" {
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     capability(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
+    registerCapability(
+      target: RpcTarget,
+      options: Required<Pick<ObjectCapabilityOptions, "id">>,
+    ): ObjectCapabilityRegistration;
+    unregisterCapability(
+      idOrOptions: string | Required<Pick<ObjectCapabilityOptions, "id">>,
+    ): ObjectCapabilityUnregistration;
     serveObjectCapabilities(): Promise<Response | null>;
     servePowerboxDescriptors(): Promise<Response | null>;
     apiTarget(): SandstormApiTarget;
