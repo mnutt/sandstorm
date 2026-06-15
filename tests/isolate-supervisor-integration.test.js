@@ -95,6 +95,14 @@ function checksum(buffer) {
   return sum;
 }
 
+function deterministicBytes(size) {
+  const result = Buffer.alloc(size);
+  for (let i = 0; i < size; ++i) {
+    result[i] = i & 0xff;
+  }
+  return result;
+}
+
 async function isSocket(socketPath) {
   try {
     const stat = await fs.stat(socketPath);
@@ -547,6 +555,18 @@ test("isolate supervisor integration suite", {
     assert.equal(fetched.headers["content-disposition"],
       "attachment; filename=\"capability-echo.json\"");
     assert.equal(fetched.headers["x-sandstorm-app-capability-response"], "present");
+
+    const streamed = await requestUnixSocket(
+      fixture.sandstormApiSocket,
+      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
+      `&method=GET&path=${encodeURIComponent("/download?bytes=131072")}`,
+      { method: "POST" });
+    assert.equal(streamed.statusCode, 200, streamed.body);
+    assert.equal(streamed.headers["content-type"], "application/octet-stream");
+    assert.equal(streamed.headers["x-sandstorm-app-download-bytes"], "131072");
+    assert.equal(streamed.bodyBuffer.length, 131072);
+    assert.equal(streamed.headers["x-isolate-test-checksum"], undefined);
+    assert.equal(checksum(streamed.bodyBuffer), checksum(deterministicBytes(131072)));
 
     const notModified = await requestUnixSocket(
       fixture.sandstormApiSocket,

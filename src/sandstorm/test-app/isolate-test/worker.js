@@ -152,13 +152,14 @@ export default {
       });
     }
 
-    if (url.pathname === "/download") {
+    if (url.pathname === "/download" || url.pathname === "/exported/download") {
       const size = Math.min(Number(url.searchParams.get("bytes") || "0"), 1024 * 1024);
       return new Response(makeBytes(size), {
         headers: {
           "content-type": "application/octet-stream",
           "x-isolate-test-bytes": String(size),
           "x-isolate-test-checksum": String(checksum(makeBytes(size))),
+          "x-sandstorm-app-download-bytes": String(size),
         },
       });
     }
