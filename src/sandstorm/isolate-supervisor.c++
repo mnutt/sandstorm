@@ -85,7 +85,6 @@ namespace sandstorm {
 
 namespace {
 
-constexpr const char* ISOLATE_WEBS_SESSION_TOKEN_PREFIX = "sandstorm-isolate-websession:";
 constexpr const char* ISOLATE_ROUTE_BACKED_APP_REF_PREFIX =
     "sandstorm-isolate-route-backed-v1\n";
 
@@ -134,7 +133,6 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String powerboxSocketPath;
   kj::String storageSocketPath;
   kj::String storageRootPath;
-  kj::String savedCapabilityDir;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
@@ -1027,17 +1025,14 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   auto powerboxSocketPath = kj::str(bundleDir, "/sandstorm-powerbox.sock");
   auto storageSocketPath = kj::str(bundleDir, "/sandstorm-storage.sock");
   auto storageRootPath = kj::str(varPath, "/isolate-storage");
-  auto savedCapabilityDir = kj::str(varPath, "/isolate-capabilities");
   config.sandstormApiSocketPath = kj::heapString(sandstormApiSocketPath);
   config.powerboxSocketPath = kj::heapString(powerboxSocketPath);
   config.storageSocketPath = kj::heapString(storageSocketPath);
   config.storageRootPath = kj::heapString(storageRootPath);
-  config.savedCapabilityDir = kj::heapString(savedCapabilityDir);
   ensureDirectory(bundleDir);
   ensureDirectory(modulesDir);
   ensureDirectory(bindingsDir);
   ensureDirectory(storageRootPath);
-  ensureDirectory(savedCapabilityDir);
 
   kj::Vector<char> manifest;
   manifest.addAll(kj::StringPtr("{\n  "));
@@ -4256,50 +4251,6 @@ private:
     return kj::mv(decoded);
   }
 
-  bool isOpaqueSavedCapabilityToken(kj::StringPtr token) {
-    if (token.size() == 0 || token.size() > 128) {
-      return false;
-    }
-
-    for (char c: token) {
-      if (!((c >= 'a' && c <= 'z') ||
-            (c >= 'A' && c <= 'Z') ||
-            (c >= '0' && c <= '9') ||
-            c == '-' || c == '_')) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  kj::Maybe<RouteBackedSessionRef> readIsolateRouteBackedSavedToken(
-      kj::ArrayPtr<const byte> token) {
-    auto text = kj::StringPtr(token.asChars().begin(), token.size());
-    auto prefix = kj::StringPtr(ISOLATE_WEBS_SESSION_TOKEN_PREFIX);
-    if (!text.startsWith(prefix)) {
-      return nullptr;
-    }
-
-    auto tokenName = kj::StringPtr(text.begin() + prefix.size(), text.size() - prefix.size());
-    KJ_REQUIRE(isOpaqueSavedCapabilityToken(tokenName), "invalid isolate WebSession saved token");
-    auto payload = readAll(kj::str(config.savedCapabilityDir, "/", tokenName));
-    return parseRouteBackedSessionRef(payload);
-  }
-
-  bool dropIsolateWebSessionSavedToken(kj::ArrayPtr<const byte> token) {
-    auto text = kj::StringPtr(token.asChars().begin(), token.size());
-    auto prefix = kj::StringPtr(ISOLATE_WEBS_SESSION_TOKEN_PREFIX);
-    if (!text.startsWith(prefix)) {
-      return false;
-    }
-
-    auto tokenName = kj::StringPtr(text.begin() + prefix.size(), text.size() - prefix.size());
-    KJ_REQUIRE(isOpaqueSavedCapabilityToken(tokenName), "invalid isolate WebSession saved token");
-    unlinkIfExists(kj::str(config.savedCapabilityDir, "/", tokenName));
-    return true;
-  }
-
   kj::Promise<void> offerClaimedCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
     auto sessionIds = findIsolateQueryParams(url, "sessionId");
@@ -4514,12 +4465,6 @@ private:
     }
 
     KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokens[0])) {
-      KJ_IF_MAYBE(savedRoute, readIsolateRouteBackedSavedToken(token->asPtr())) {
-        auto cap = makeRouteBackedSessionCapability(savedRoute->type, savedRoute->pathPrefix, true);
-        auto capId = host.sessions->storeClaimedCapability(kj::mv(cap));
-        return sendJson(response, 200, "OK", renderClaimedCapability(capId));
-      }
-
       auto request = host.sandstormCore.restoreRequest();
       request.setToken(token->asPtr());
       return request.send().then(
@@ -4542,10 +4487,6 @@ private:
     }
 
     KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokens[0])) {
-      if (dropIsolateWebSessionSavedToken(token->asPtr())) {
-        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
-      }
-
       auto request = host.sandstormCore.dropRequest();
       request.setToken(token->asPtr());
       return request.send().then(
