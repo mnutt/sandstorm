@@ -878,7 +878,8 @@ test("isolate supervisor integration suite", {
     assert.equal(disposeAfterParent.json.disposed, disposeBefore.json.disposed + 2,
       formatOutput(fixture.stdout, fixture.stderr));
 
-    const selfTest = await requestJson(fixture.workerdSocket, "/object-capability-self-test");
+    const selfTest = await requestJson(
+      fixture.workerdSocket, "/object-capability-self-test?persistentHelper=true");
     assert.equal(selfTest.statusCode, 200, selfTest.body);
     assert.deepEqual(selfTest.json.first, { value: 3 });
     assert.deepEqual(selfTest.json.second, { value: 7 });
@@ -956,6 +957,22 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.dropSaved.ok, true);
     assert.equal(selfTest.json.persistent.unregisterReplacement.ok, true);
     assert.equal(selfTest.json.persistent.unregisterReplacement.disposed, true);
+    assert.equal(selfTest.json.persistent.helper.first.restored, false);
+    assert.equal(selfTest.json.persistent.helper.first.registered, true);
+    assert.equal(selfTest.json.persistent.helper.first.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.helper.first.saved.type, "savedCapability");
+    assert.deepEqual(selfTest.json.persistent.helper.first.get, { value: 53 });
+    assert.equal(selfTest.json.persistent.helper.first.drop.ok, true);
+    assert.equal(selfTest.json.persistent.helper.second.restored, true);
+    assert.equal(selfTest.json.persistent.helper.second.registered, false);
+    assert.equal(selfTest.json.persistent.helper.second.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.helper.second.saved.type, "savedCapability");
+    assert.deepEqual(selfTest.json.persistent.helper.second.get, { value: 53 });
+    assert.equal(selfTest.json.persistent.helper.second.drop.ok, true);
+    assert.equal(selfTest.json.persistent.helper.dropSaved.ok, true);
+    assert.equal(selfTest.json.persistent.helper.deleteStorage.ok, true);
+    assert.equal(selfTest.json.persistent.helper.unregister.ok, true);
+    assert.equal(selfTest.json.persistent.helper.unregister.disposed, true);
   });
 
   await t.test("forwards request bodies and custom headers through workerd", async () => {

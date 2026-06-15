@@ -1215,6 +1215,48 @@ async function dropSavedPowerboxCapabilityFromStorage(env, options = {}) {
   };
 }
 
+function persistentCapabilityStorageKey(id, options = {}) {
+  return validate.storageKey(
+    options.storageKey ?? options.key ?? `object-capability-${id}`,
+    "storageKey");
+}
+
+async function persistentObjectCapability(env, target, options = {}) {
+  const id = requiredObjectCapabilityId(options);
+  const registration = registerObjectCapabilityTarget(target, { id });
+  const key = persistentCapabilityStorageKey(id, options);
+  const token = await storage(env).get(key);
+  if (token) {
+    return {
+      ok: true,
+      id,
+      storageKey: key,
+      registered: registration.registered,
+      restored: true,
+      capability: await restoreSavedCapability(env, token),
+      saved: new SavedCapability(env, id, token),
+      token,
+    };
+  }
+
+  const capability = await createObjectCapability(env, target, {
+    id,
+    persistent: true,
+  });
+  const saved = await capability.save(options);
+  await storage(env).put(key, saved.token);
+  return {
+    ok: true,
+    id,
+    storageKey: key,
+    registered: registration.registered,
+    restored: false,
+    capability,
+    saved,
+    token: saved.token,
+  };
+}
+
 export function powerbox(request, env) {
   return {
     async request() {
@@ -1519,6 +1561,10 @@ class SandstormRpcTarget extends RpcTarget {
     return createObjectCapability(this.#env, target, options);
   }
 
+  persistentCapability(target, options = {}) {
+    return persistentObjectCapability(this.#env, target, options);
+  }
+
   registerCapability(target, options = {}) {
     return registerObjectCapabilityTarget(target, options);
   }
@@ -1586,6 +1632,8 @@ export function sandstorm(request, env) {
     webSession: (options = {}) => createWebSessionCapability(env, options),
     apiSession: (options = {}) => createApiSessionCapability(env, options),
     capability: (target, options = {}) => createObjectCapability(env, target, options),
+    persistentCapability: (target, options = {}) =>
+      persistentObjectCapability(env, target, options),
     registerCapability: (target, options = {}) => registerObjectCapabilityTarget(target, options),
     unregisterCapability: (options = {}) => unregisterObjectCapabilityTarget(options),
     serveObjectCapabilities: () => serveObjectCapability(request, env),

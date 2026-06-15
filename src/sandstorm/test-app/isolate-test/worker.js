@@ -708,6 +708,53 @@ export default {
       const persistentDropSaved = await persistentSaved.drop();
       const persistentUnregisterReplacement = sandstorm(request, env).unregisterCapability(
         persistentId);
+      let persistentHelper = null;
+      if (url.searchParams.get("persistentHelper") === "true") {
+        const helperId = `persistent-helper-${crypto.randomUUID()}`;
+        const helperStorageKey = `persistent-helper-${crypto.randomUUID()}`;
+        const helperTarget = new CounterCapability();
+        helperTarget.increment(53);
+        const helperFirst = await sandstorm(request, env).persistentCapability(helperTarget, {
+          id: helperId,
+          storageKey: helperStorageKey,
+          label: "Persistent helper fixture",
+        });
+        const helperFirstGet = await helperFirst.capability.call("get");
+        const helperFirstDrop = await helperFirst.capability.drop();
+        const helperSecond = await sandstorm(request, env).persistentCapability(helperTarget, {
+          id: helperId,
+          storageKey: helperStorageKey,
+          label: "Persistent helper fixture",
+        });
+        const helperSecondGet = await helperSecond.capability.call("get");
+        const helperSecondDrop = await helperSecond.capability.drop();
+        const helperDropSaved = await helperSecond.saved.drop();
+        const helperDeleteStorage = await sandstorm(request, env).storage().delete(helperStorageKey);
+        const helperUnregister = sandstorm(request, env).unregisterCapability(helperId);
+        persistentHelper = {
+          id: helperId,
+          storageKey: helperStorageKey,
+          first: {
+            restored: helperFirst.restored,
+            registered: helperFirst.registered,
+            capability: JSON.parse(JSON.stringify(helperFirst.capability)),
+            saved: JSON.parse(JSON.stringify(helperFirst.saved)),
+            get: helperFirstGet,
+            drop: helperFirstDrop,
+          },
+          second: {
+            restored: helperSecond.restored,
+            registered: helperSecond.registered,
+            capability: JSON.parse(JSON.stringify(helperSecond.capability)),
+            saved: JSON.parse(JSON.stringify(helperSecond.saved)),
+            get: helperSecondGet,
+            drop: helperSecondDrop,
+          },
+          dropSaved: helperDropSaved,
+          deleteStorage: helperDeleteStorage,
+          unregister: helperUnregister,
+        };
+      }
       return Response.json({
         ok: true,
         first,
@@ -786,6 +833,7 @@ export default {
           dropRestoredAfterRegister: persistentDropRestoredAfterRegister,
           dropSaved: persistentDropSaved,
           unregisterReplacement: persistentUnregisterReplacement,
+          helper: persistentHelper,
         },
       });
     }

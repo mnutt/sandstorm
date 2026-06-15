@@ -182,6 +182,23 @@ declare module "sandstorm:api" {
     disposed: boolean;
   }
 
+  export interface PersistentObjectCapabilityOptions
+      extends Required<Pick<ObjectCapabilityOptions, "id">>, SaveCapabilityOptions {
+    storageKey?: string;
+    key?: string;
+  }
+
+  export interface PersistentObjectCapabilityResult {
+    ok: true;
+    id: string;
+    storageKey: string;
+    registered: boolean;
+    restored: boolean;
+    capability: ClaimedCapability;
+    saved: SavedCapability;
+    token: string;
+  }
+
   export type CapabilityRpcStub<T extends object = Record<string, (...args: any[]) => unknown>> = {
     [K in keyof T]: T[K] extends (...args: infer Args) => infer Result
       ? (...args: Args) => Promise<Awaited<Result>>
@@ -357,6 +374,10 @@ declare module "sandstorm:api" {
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     capability(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
+    persistentCapability(
+      target: RpcTarget,
+      options: PersistentObjectCapabilityOptions,
+    ): Promise<PersistentObjectCapabilityResult>;
     registerCapability(
       target: RpcTarget,
       options: Required<Pick<ObjectCapabilityOptions, "id">>,
@@ -381,6 +402,10 @@ declare module "sandstorm:api" {
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     capability(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
+    persistentCapability(
+      target: RpcTarget,
+      options: PersistentObjectCapabilityOptions,
+    ): Promise<PersistentObjectCapabilityResult>;
     registerCapability(
       target: RpcTarget,
       options: Required<Pick<ObjectCapabilityOptions, "id">>,
