@@ -595,14 +595,33 @@ function capabilityArgs(value, name = "args") {
   return value;
 }
 
-async function createObjectCapability(env, target) {
+function objectCapabilityId(options = {}) {
+  if (options.id === undefined || options.id === null) {
+    return typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  const id = validate.string(options.id, "object capability id", {
+    minLength: 1,
+    maxLength: 256,
+  });
+  if (!/^[A-Za-z0-9._~-]+$/.test(id)) {
+    throw new ValidationError(
+      "object capability id may only contain URL-safe letters, digits, '.', '_', '~', and '-'");
+  }
+  return id;
+}
+
+async function createObjectCapability(env, target, options = {}) {
   if (!target || typeof target !== "object") {
     throw new ValidationError("capability target must be an object");
   }
 
-  const id = typeof crypto !== "undefined" && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const id = objectCapabilityId(options);
+  if (exportedObjectTargets.has(id)) {
+    throw new ValidationError(`object capability id is already registered: ${id}`);
+  }
   exportedObjectTargets.set(id, target);
 
   try {
@@ -1342,8 +1361,8 @@ class SandstormRpcTarget extends RpcTarget {
     return createApiSessionCapability(this.#env, options);
   }
 
-  capability(target) {
-    return createObjectCapability(this.#env, target);
+  capability(target, options = {}) {
+    return createObjectCapability(this.#env, target, options);
   }
 }
 
@@ -1404,7 +1423,7 @@ export function sandstorm(request, env) {
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, options),
     apiSession: (options = {}) => createApiSessionCapability(env, options),
-    capability: (target) => createObjectCapability(env, target),
+    capability: (target, options = {}) => createObjectCapability(env, target, options),
     serveObjectCapabilities: () => serveObjectCapability(request, env),
     servePowerboxDescriptors: () => servePowerboxDescriptors(request, env),
     apiTarget: () => apiTarget(request, env),
