@@ -179,7 +179,21 @@ public:
   }
 
   kj::String storeClaimedCapability(capnp::Capability::Client cap, kj::String dropNotifyPath) {
-    return storeClaimedCapabilityInternal(kj::mv(cap), kj::mv(dropNotifyPath));
+    return storeClaimedCapabilityInternal(kj::mv(cap), createDropNotifyGroup(kj::mv(dropNotifyPath)));
+  }
+
+  kj::Maybe<kj::String> duplicateClaimedCapability(kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
+      kj::Maybe<kj::String> dropNotifyGroupId = nullptr;
+      KJ_IF_MAYBE(groupId, claimedCapabilities[*index].dropNotifyGroupId) {
+        retainDropNotifyGroup(*groupId);
+        dropNotifyGroupId = kj::heapString(*groupId);
+      }
+      return storeClaimedCapabilityInternal(
+          claimedCapabilities[*index].cap, kj::mv(dropNotifyGroupId));
+    }
+
+    return nullptr;
   }
 
   struct DroppedClaimedCapability {
@@ -188,7 +202,10 @@ public:
 
   kj::Maybe<DroppedClaimedCapability> dropClaimedCapability(kj::StringPtr id) {
     KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      DroppedClaimedCapability result { kj::mv(claimedCapabilities[*index].dropNotifyPath) };
+      DroppedClaimedCapability result { nullptr };
+      KJ_IF_MAYBE(groupId, claimedCapabilities[*index].dropNotifyGroupId) {
+        result.dropNotifyPath = releaseDropNotifyGroup(*groupId);
+      }
       if (*index + 1 < claimedCapabilities.size()) {
         claimedCapabilities[*index] = kj::mv(claimedCapabilities.back());
       }
@@ -209,14 +226,50 @@ public:
 
 private:
   kj::String storeClaimedCapabilityInternal(capnp::Capability::Client cap,
-      kj::Maybe<kj::String> dropNotifyPath) {
+      kj::Maybe<kj::String> dropNotifyGroupId) {
     for (;;) {
       auto id = makeOpaqueToken();
       if (findClaimedCapabilityIndex(id) == nullptr) {
         claimedCapabilities.add(ClaimedCapabilityRecord {
-            kj::heapString(id), cap, kj::mv(dropNotifyPath) });
+            kj::heapString(id), cap, kj::mv(dropNotifyGroupId) });
         return id;
       }
+    }
+  }
+
+  kj::String createDropNotifyGroup(kj::String dropNotifyPath) {
+    for (;;) {
+      auto id = makeOpaqueToken();
+      if (findDropNotifyGroupIndex(id) == nullptr) {
+        dropNotifyGroups.add(DropNotifyGroup { kj::heapString(id), kj::mv(dropNotifyPath), 1 });
+        return id;
+      }
+    }
+  }
+
+  void retainDropNotifyGroup(kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findDropNotifyGroupIndex(id)) {
+      ++dropNotifyGroups[*index].refcount;
+    } else {
+      KJ_FAIL_REQUIRE("isolate claimed capability drop-notify group is missing");
+    }
+  }
+
+  kj::Maybe<kj::String> releaseDropNotifyGroup(kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findDropNotifyGroupIndex(id)) {
+      KJ_REQUIRE(dropNotifyGroups[*index].refcount > 0);
+      --dropNotifyGroups[*index].refcount;
+      if (dropNotifyGroups[*index].refcount == 0) {
+        auto dropNotifyPath = kj::mv(dropNotifyGroups[*index].dropNotifyPath);
+        if (*index + 1 < dropNotifyGroups.size()) {
+          dropNotifyGroups[*index] = kj::mv(dropNotifyGroups.back());
+        }
+        dropNotifyGroups.removeLast();
+        return kj::mv(dropNotifyPath);
+      }
+      return nullptr;
+    } else {
+      KJ_FAIL_REQUIRE("isolate claimed capability drop-notify group is missing");
     }
   }
 
@@ -228,7 +281,13 @@ private:
   struct ClaimedCapabilityRecord {
     kj::String id;
     capnp::Capability::Client cap;
+    kj::Maybe<kj::String> dropNotifyGroupId;
+  };
+
+  struct DropNotifyGroup {
+    kj::String id;
     kj::Maybe<kj::String> dropNotifyPath;
+    uint refcount;
   };
 
   kj::Maybe<size_t> findSessionIndex(kj::StringPtr id) {
@@ -253,6 +312,17 @@ private:
 
   kj::Vector<SessionRecord> sessions;
   kj::Vector<ClaimedCapabilityRecord> claimedCapabilities;
+  kj::Vector<DropNotifyGroup> dropNotifyGroups;
+
+  kj::Maybe<size_t> findDropNotifyGroupIndex(kj::StringPtr id) {
+    for (auto i: kj::indices(dropNotifyGroups)) {
+      if (dropNotifyGroups[i].id == id) {
+        return i;
+      }
+    }
+
+    return nullptr;
+  }
 };
 
 struct IsolateRuntimeHost final: public kj::Refcounted {
@@ -3447,6 +3517,8 @@ public:
         return savePowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/restore") {
         return restorePowerboxCapability(path, response);
+      } else if (methodName == "POST" && route == "/powerbox/dup") {
+        return duplicatePowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop-saved") {
         return dropSavedPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop") {
@@ -4503,6 +4575,22 @@ private:
     } else {
       return sendJson(response, 400, "Bad Request", kj::heapString(
           "{\n  \"ok\": false,\n  \"error\": \"invalid saved capability token\"\n}\n"));
+    }
+  }
+
+  kj::Promise<void> duplicatePowerboxCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    auto ids = findIsolateQueryParams(url, "id");
+    if (ids.size() != 1 || ids[0].size() == 0) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one capability id\"\n}\n"));
+    }
+
+    KJ_IF_MAYBE(duplicatedId, host.sessions->duplicateClaimedCapability(ids[0])) {
+      return sendJson(response, 200, "OK", renderClaimedCapability(*duplicatedId));
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
     }
   }
 
