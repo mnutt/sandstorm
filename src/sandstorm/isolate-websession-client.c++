@@ -781,6 +781,26 @@ public:
     KJ_REQUIRE(headersResponse.getAdditionalHeaders()[0].getValue() == "present");
     KJ_REQUIRE(!headersResponse.hasCachePolicy());
 
+    auto setCookieRequest = session.getRequest();
+    setCookieRequest.setPath("/set-cookie");
+    setCookieRequest.setIgnoreBody(false);
+    auto setCookieContext = setCookieRequest.initContext();
+    setCookieContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    setCookieContext.initCookies(0);
+    setCookieContext.initAccept(0);
+    setCookieContext.initAcceptEncoding(0);
+    setCookieContext.initAdditionalHeaders(0);
+
+    auto setCookieResponse = setCookieRequest.send().wait(io.waitScope);
+    auto setCookieDebugBody = responseDebugBody(setCookieResponse);
+    KJ_REQUIRE(setCookieResponse.which() == WebSession::Response::CONTENT, setCookieDebugBody);
+    KJ_REQUIRE(setCookieResponse.getSetCookies().size() == 0);
+    KJ_REQUIRE(setCookieResponse.getAdditionalHeaders().size() == 1,
+        setCookieResponse.getAdditionalHeaders().size());
+    KJ_REQUIRE(setCookieResponse.getAdditionalHeaders()[0].getName() ==
+        "x-sandstorm-app-cookie-test");
+    KJ_REQUIRE(setCookieResponse.getAdditionalHeaders()[0].getValue() == "present");
+
     auto cacheRevalidateRequest = session.getRequest();
     cacheRevalidateRequest.setPath("/cache-revalidate");
     cacheRevalidateRequest.setIgnoreBody(false);
