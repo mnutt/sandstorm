@@ -376,12 +376,46 @@ function saveLabel(options = {}) {
   return validate.string(label, "label", { minLength: 1, maxLength: 256 });
 }
 
-function displayTitle(options = {}) {
-  let title = options.title ?? options.displayTitle ?? options.label ?? "Claimed Sandstorm capability";
-  if (title && typeof title === "object" && typeof title.defaultText === "string") {
-    title = title.defaultText;
+function displayText(options, names, fallback, label, maxLength = 1024) {
+  for (const name of names) {
+    let value = options[name];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (value && typeof value === "object" && typeof value.defaultText === "string") {
+      value = value.defaultText;
+    }
+    return validate.string(value, label, { minLength: 1, maxLength });
   }
-  return validate.string(title, "title", { minLength: 1, maxLength: 256 });
+
+  if (fallback === undefined || fallback === null) {
+    return undefined;
+  }
+  return validate.string(fallback, label, { minLength: 1, maxLength });
+}
+
+function displayTitle(options = {}) {
+  return displayText(
+    options,
+    ["title", "displayTitle", "label"],
+    "Claimed Sandstorm capability",
+    "title",
+    256);
+}
+
+function sessionDisplayInfoParams(options = {}) {
+  const result = [["title", displayTitle(options)]];
+  const verbPhrase = displayText(
+    options, ["verbPhrase", "displayVerbPhrase"], undefined, "verbPhrase");
+  if (verbPhrase !== undefined) {
+    result.push(["verbPhrase", verbPhrase]);
+  }
+  const description = displayText(
+    options, ["description", "displayDescription"], undefined, "description");
+  if (description !== undefined) {
+    result.push(["description", description]);
+  }
+  return result;
 }
 
 function apiSessionDescriptorParams(options = {}) {
@@ -453,8 +487,10 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
   const params = new URLSearchParams({
     sessionId: sessionIdForPowerbox(request),
     id: capabilityId(capability),
-    title: displayTitle(options),
   });
+  for (const [name, value] of sessionDisplayInfoParams(options)) {
+    params.append(name, value);
+  }
   for (const name of permissionNames(options)) {
     params.append("requiredPermission", name);
   }

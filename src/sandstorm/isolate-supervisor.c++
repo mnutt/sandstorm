@@ -4517,6 +4517,20 @@ private:
         ? titles[0].asPtr()
         : kj::StringPtr("Claimed Sandstorm capability");
     displayInfo.initTitle().setDefaultText(title);
+
+    auto verbPhrases = findIsolateQueryParams(url, "verbPhrase");
+    KJ_REQUIRE(verbPhrases.size() <= 1, "expected at most one verbPhrase");
+    if (verbPhrases.size() == 1 && verbPhrases[0].size() > 0) {
+      KJ_REQUIRE(verbPhrases[0].size() <= 1024, "verbPhrase is too long");
+      displayInfo.initVerbPhrase().setDefaultText(verbPhrases[0]);
+    }
+
+    auto descriptions = findIsolateQueryParams(url, "description");
+    KJ_REQUIRE(descriptions.size() <= 1, "expected at most one description");
+    if (descriptions.size() == 1 && descriptions[0].size() > 0) {
+      KJ_REQUIRE(descriptions[0].size() <= 1024, "description is too long");
+      displayInfo.initDescription().setDefaultText(descriptions[0]);
+    }
   }
 
   void initSessionActionParamsWithDescriptor(kj::StringPtr url, kj::ArrayPtr<kj::String> titles,
