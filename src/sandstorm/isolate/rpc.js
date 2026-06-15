@@ -74,6 +74,32 @@ export function requestPowerbox(query = [], options = {}) {
   });
 }
 
+export async function claimPowerboxToken(token, options = {}) {
+  const {
+    claimUrl = "/__sandstorm/powerbox/claim",
+    requiredPermissions = [],
+  } = options;
+  const response = await fetch(new URL(claimUrl, window.location.href), {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ token, requiredPermissions }),
+  });
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || `Powerbox claim failed with ${response.status}`);
+  }
+  return result.capability;
+}
+
+export async function requestAndClaimPowerbox(query = [], options = {}) {
+  const requested = await requestPowerbox(query, options);
+  const capability = await claimPowerboxToken(requested.token, options);
+  return {
+    ...requested,
+    capability,
+  };
+}
+
 export async function requestApiPowerbox(options = {}) {
   const {
     canonicalUrl,
@@ -101,6 +127,15 @@ export async function requestApiPowerbox(options = {}) {
   return {
     ...requested,
     powerboxDescriptor: result,
+  };
+}
+
+export async function requestApiCapability(options = {}) {
+  const requested = await requestApiPowerbox(options);
+  const capability = await claimPowerboxToken(requested.token, options);
+  return {
+    ...requested,
+    capability,
   };
 }
 
@@ -165,6 +200,32 @@ export function requestPowerbox(query = [], options = {}) {
   });
 }
 
+export async function claimPowerboxToken(token, options = {}) {
+  const {
+    claimUrl = "/__sandstorm/powerbox/claim",
+    requiredPermissions = [],
+  } = options;
+  const response = await fetch(new URL(claimUrl, window.location.href), {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify({ token, requiredPermissions }),
+  });
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || \`Powerbox claim failed with \${response.status}\`);
+  }
+  return result.capability;
+}
+
+export async function requestAndClaimPowerbox(query = [], options = {}) {
+  const requested = await requestPowerbox(query, options);
+  const capability = await claimPowerboxToken(requested.token, options);
+  return {
+    ...requested,
+    capability,
+  };
+}
+
 export async function requestApiPowerbox(options = {}) {
   const {
     canonicalUrl,
@@ -192,6 +253,15 @@ export async function requestApiPowerbox(options = {}) {
   return {
     ...requested,
     powerboxDescriptor: result,
+  };
+}
+
+export async function requestApiCapability(options = {}) {
+  const requested = await requestApiPowerbox(options);
+  const capability = await claimPowerboxToken(requested.token, options);
+  return {
+    ...requested,
+    capability,
   };
 }
 `;
