@@ -1623,8 +1623,10 @@ void addFetchResponseHeaders(WebSession::Response::Builder builder, kj::Vector<F
 
   size_t count = 0;
   for (auto& header: headers) {
-    if (!isStructuredIsolateResponseHeader(header.name) &&
-        responseHeaderWhitelist.matches(header.name)) {
+    auto name = kj::str(header.name);
+    toLower(name);
+    if (!isStructuredIsolateResponseHeader(name) &&
+        responseHeaderWhitelist.matches(name)) {
       ++count;
     }
   }
@@ -1632,9 +1634,11 @@ void addFetchResponseHeaders(WebSession::Response::Builder builder, kj::Vector<F
   auto outputHeaders = builder.initAdditionalHeaders(count);
   size_t j = 0;
   for (auto i: kj::indices(headers)) {
-    if (!isStructuredIsolateResponseHeader(headers[i].name) &&
-        responseHeaderWhitelist.matches(headers[i].name)) {
-      outputHeaders[j].setName(headers[i].name);
+    auto name = kj::str(headers[i].name);
+    toLower(name);
+    if (!isStructuredIsolateResponseHeader(name) &&
+        responseHeaderWhitelist.matches(name)) {
+      outputHeaders[j].setName(name);
       outputHeaders[j].setValue(headers[i].value);
       ++j;
     }
