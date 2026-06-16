@@ -223,6 +223,58 @@ injected by Sandstorm. The `capnweb` import should still be treated as the
 Cap'n Web API surface, with Sandstorm deciding which package version is
 available for a given isolate runtime.
 
+## Current public helper surface
+
+The preferred app-author entry point is:
+
+```js
+import { RpcTarget, sandstorm, validate } from "sandstorm:api";
+```
+
+Create `const api = sandstorm(request, env)` once per request and prefer these
+methods in application code:
+
+- `api.session()` for Sandstorm session and user metadata
+- `api.storage()` for isolate storage
+- `api.powerbox()` for Powerbox claim, save, restore, offer, and drop helpers
+- `api.webSession()` and `api.apiSession()` for route-backed capabilities
+- `api.capability()`, `api.registerCapability()`, `api.unregisterCapability()`,
+  and `api.persistentCapability()` for JavaScript object capabilities
+- `api.serveSystemRoutes()` before normal app routes
+- `api.serveRpc()` for Cap'n Web RPC endpoints
+
+The preferred Powerbox lifecycle names are:
+
+- `claimRequest(token)` for claiming a browser-returned Powerbox token
+- `claimAndStore(token, options)` and `claimAndStoreRequest(result, options)`
+  for the common claim, save, and store pattern
+- `restoreSaved(token)` and `dropSaved(token)` for durable Sandstorm tokens the
+  app already has
+- `restoreStored(options)`, `fetchStored(options, input, init)`, and
+  `dropStored(options)` for token strings stored in isolate storage
+- `claimedCapability(handle)` for wrapping a browser-returned claimed handle
+- `requestApiSession(options)` for the current browser-mediated API-session
+  request helper
+
+The following exports are public but low-level. Prefer the `sandstorm()`
+facade unless a custom framework or test needs direct access:
+
+- `storage(env)`
+- `powerbox(request, env)`
+- `getSession(request)`
+- `apiTarget(request, env)`
+- `serveSystemRoutes(request, env)`
+- `servePowerboxDescriptors(request, env)`
+- `rpcClientScript()`
+- `rpcResponse(request, target, options)`
+- `serveRpc(request, target, options)`
+- `ClaimedCapability` and `SavedCapability`
+
+Do not construct `ClaimedCapability` directly in application code unless you
+are writing low-level adapter code. Use `api.powerbox().claimedCapability(...)`
+for browser-returned handles and `api.powerbox().restoreSaved(...)` for saved
+tokens.
+
 ## Saved capability token ownership
 
 Isolate apps can receive Sandstorm capabilities through Powerbox or by minting
