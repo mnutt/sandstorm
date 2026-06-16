@@ -2068,6 +2068,14 @@ private:
 
   kj::MainBuilder::Validity addDevIsolateJsonBinding(kj::StringPtr spec) {
     KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
+      capnp::MallocMessageBuilder message;
+      auto jsonValue = message.initRoot<capnp::JsonValue>();
+      capnp::JsonCodec json;
+      try {
+        json.decode(binding->value, jsonValue);
+      } catch (kj::Exception& exception) {
+        return kj::str("json binding value is not valid JSON: ", exception.getDescription());
+      }
       devIsolateJsonBindings.add(kj::mv(*binding));
       return true;
     }
