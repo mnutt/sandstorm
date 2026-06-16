@@ -158,6 +158,40 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Running isolate supervisor integration tests"
     VERBATIM)
 
+  find_program(SANDSTORM_STRACE_EXECUTABLE NAMES strace)
+  if(SANDSTORM_STRACE_EXECUTABLE)
+    set(_isolate_trace_dir "${CMAKE_BINARY_DIR}/isolate-syscall-trace")
+    add_custom_target(isolate-supervisor-syscall-trace
+      COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_isolate_trace_dir}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${_isolate_trace_dir}"
+      COMMAND "${CMAKE_COMMAND}" -E env
+        "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
+        "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
+        "SPK_BIN=$<TARGET_FILE:spk>"
+        "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
+        "ISOLATE_SYSCALL_TRACE_DIR=${_isolate_trace_dir}"
+        "ISOLATE_SYSCALL_TRACE_PROFILE=representative"
+        "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+        "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
+      COMMAND "${CMAKE_COMMAND}" -E echo
+        "Wrote syscall traces to ${_isolate_trace_dir}"
+      DEPENDS
+        sandstorm
+        spk
+        workerd
+        isolate-test-app-spk
+        "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
+      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+      USES_TERMINAL
+      COMMENT "Tracing isolate supervisor syscalls"
+      VERBATIM)
+  else()
+    add_custom_target(isolate-supervisor-syscall-trace
+      COMMAND "${CMAKE_COMMAND}" -E echo "strace is required for this target"
+      COMMAND "${CMAKE_COMMAND}" -E false
+      VERBATIM)
+  endif()
+
   set(_api_powerbox_source "${PROJECT_SOURCE_DIR}/src/sandstorm/test-app")
   set(_api_powerbox_stage "${_spk_stage}/sandstorm/isolate-api-powerbox-test-app")
   set(_api_powerbox_capnp "${_api_powerbox_source}/isolate-api-powerbox-app.capnp")
