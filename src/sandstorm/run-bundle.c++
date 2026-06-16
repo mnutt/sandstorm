@@ -60,6 +60,7 @@
 
 #include "version.h"
 #include "send-fd.h"
+#include "isolate-supervisor.h"
 #include "supervisor.h"
 #include "util.h"
 #include "spk.h"
@@ -360,7 +361,10 @@ public:
 
     {
       auto programName = context.getProgramName();
-      if (programName.endsWith("supervisor")) {  // historically "sandstorm-supervisor"
+      if (programName.endsWith("isolate-supervisor")) {
+        alternateMain = kj::heap<IsolateSupervisorMain>(context);
+        return alternateMain->getMain();
+      } else if (programName.endsWith("supervisor")) {  // historically "sandstorm-supervisor"
         alternateMain = kj::heap<SupervisorMain>(context);
         return alternateMain->getMain();
       } else if (programName == "spk" || programName.endsWith("/spk")) {
@@ -432,6 +436,12 @@ public:
               return alternateMain->getMain();
             },
             "Manipulate spk files.")
+        .addSubCommand("isolate-dev-sidecar",
+            [this]() {
+              alternateMain = kj::heap<IsolateDevSidecarMain>(context);
+              return alternateMain->getMain();
+            },
+            "Run the built-in isolate development sidecar.")
         .addSubCommand("continue",
             [this]() {
               return kj::MainBuilder(context, VERSION,
@@ -3466,6 +3476,12 @@ private:
       if (runningAsRoot) { KJ_SYSCALL(chown(dir, config.uids.uid, config.uids.gid)); }
 
       char* pkgId = strrchr(dir, '/') + 1;
+      context.warning(kj::str(
+          "Dev package identity:\n"
+          "    appId: ", appId, "\n"
+          "    packageId: ", pkgId, "\n\n"
+          "If an existing grain has this appId, Sandstorm will run it against this active dev\n"
+          "package while the dev session is connected."));
 
       // We dont use fusermount(1) because it doesn't live in our namespace. For now, this is not
       // a problem because we're root anyway. If in the future we use UID namespaces to avoid being
@@ -3552,7 +3568,7 @@ private:
                         kj::StringPtr pkgId, spk::Manifest::Reader manifest) {
     FdBundle fakeBundle(nullptr);
     mongoCommand(config, fakeBundle, kj::str(
-        "db.devpackages.insert({"
+        "void db.devpackages.insertOne({"
           "_id:\"", pkgId, "\","
           "appId:\"", appId, "\","
           "timestamp:", time(nullptr), ","
@@ -3564,7 +3580,7 @@ private:
   void updateDevPackage(const Config& config, kj::StringPtr pkgId, spk::Manifest::Reader manifest) {
     FdBundle fakeBundle(nullptr);
     mongoCommand(config, fakeBundle, kj::str(
-        "db.devpackages.update({_id:\"", pkgId, "\"}, {$set: {"
+        "void db.devpackages.updateOne({_id:\"", pkgId, "\"}, {$set: {"
           "timestamp:", time(nullptr), ","
           "manifest:", toMongoJson(manifest),
         "}})"));
@@ -3573,12 +3589,12 @@ private:
   void removeDevPackage(const Config& config, kj::StringPtr pkgId) {
     FdBundle fakeBundle(nullptr);
     mongoCommand(config, fakeBundle, kj::str(
-        "db.devpackages.remove({_id:\"", pkgId, "\"})"));
+        "void db.devpackages.deleteOne({_id:\"", pkgId, "\"})"));
   }
 
   void clearDevPackages(const Config& config) {
     FdBundle fakeBundle(nullptr);
-    mongoCommand(config, fakeBundle, kj::str("db.devpackages.remove({})"));
+    mongoCommand(config, fakeBundle, kj::str("void db.devpackages.deleteMany({})"));
   }
 
   void mongoCommand(const Config& config, FdBundle& fdBundle,

@@ -128,6 +128,67 @@ struct Manifest {
     # because you should just specify the program as argv[0]. To be clear, this does not and did
     # never provide a way to make argv[0] contain something other than the executable name, as
     # you can technically do with the `exec` system call.
+
+    isolate @3 :IsolateConfig;
+    # If present, run this command as an isolate grain rather than as a Linux process inside the
+    # traditional Sandstorm sandbox. In isolate commands, `argv` names the runtime sidecar command
+    # launched by isolate-supervisor. That sidecar receives the generated runtime bundle and socket
+    # paths through `SANDSTORM_ISOLATE_*` environment variables. The same variable names may be
+    # referenced in `argv` and `environ` as `${SANDSTORM_ISOLATE_WORKERD_CONFIG}`,
+    # `${SANDSTORM_ISOLATE_SOCKET}`, `${SANDSTORM_ISOLATE_RUNTIME_DIR}`,
+    # `${SANDSTORM_ISOLATE_RUNTIME_MANIFEST}`, `${SANDSTORM_ISOLATE_MAIN_MODULE}`, and
+    # `${SANDSTORM_ISOLATE_COMPATIBILITY_DATE}`.
+  }
+
+  struct IsolateConfig {
+    # Configuration for grains implemented as V8 isolates.
+    #
+    # This intentionally resembles workerd's Worker configuration model: code is supplied as
+    # modules, access to outside resources is supplied as explicit bindings, and compatibility
+    # dates/flags define the runtime API surface.
+
+    mainModule @0 :Text;
+    # Name of the module containing the default Worker-style entrypoint.
+
+    modules @1 :List(Module);
+    # JavaScript, Wasm, and data modules available to the isolate.
+
+    compatibilityDate @2 :Text;
+    compatibilityFlags @3 :List(Text);
+
+    bindings @4 :List(Binding);
+    # Explicit capabilities exposed to the isolate as properties of the `env` object.
+
+    bridgeConfig @5 :BridgeConfig;
+    # View/session metadata for HTTP-style isolate apps. This mirrors the role of BridgeConfig
+    # for sandstorm-http-bridge apps.
+
+    struct Module {
+      name @0 :Text;
+
+      union {
+        esModulePath @1 :Text;
+        commonJsModulePath @2 :Text;
+        textPath @3 :Text;
+        dataPath @4 :Text;
+        wasmPath @5 :Text;
+        jsonPath @6 :Text;
+      }
+    }
+
+    struct Binding {
+      name @0 :Text;
+
+      union {
+        text @1 :Text;
+        data @2 :Data;
+        json @3 :Text;
+        sandstormApi @4 :Void;
+        storage @5 :Void;
+        powerbox @6 :Void;
+        service @7 :Text;
+      }
+    }
   }
 
   struct Action {

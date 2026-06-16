@@ -251,6 +251,3 @@ const send = async function (options) {
 };
 
 export { send, rawSend };
-
-// TODO(cleanup): Remove this once globalThis.BlackrockPayments code finds a better way to import it.
-global.SandstormEmail = { send };

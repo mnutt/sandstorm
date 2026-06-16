@@ -3416,7 +3416,8 @@ Meteor.methods({
       signedUpOrDemo = await this.connection.sandstormDb.isAccountSignedUpOrDemoAsync(user);
     } else {
       user = Meteor.user();
-      signedUpOrDemo = isSignedUpOrDemo();
+      const { globalDb } = await import("/imports/db-deprecated");
+      signedUpOrDemo = globalDb.isSignedUpOrDemo();
     }
 
     if (!this.userId || !user || !user.loginCredentials || !signedUpOrDemo) {

@@ -96,6 +96,7 @@ tests/tmp-sandstorm
 app-index.spk
 test-app.spk
 deps/llvm-build
+src/sandstorm/isolate/capnweb.js
 
 # no npm in the root
 /package-lock.json

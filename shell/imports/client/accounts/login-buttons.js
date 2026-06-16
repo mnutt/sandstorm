@@ -30,13 +30,16 @@ import {
   loginWithEmailToken,
   createAndEmailTokenForUser,
 } from "/imports/client/accounts/email-token/token-login-helpers";
+import { loginDevAccount } from "/imports/client/dev-accounts-client";
 import { GrainViewList } from "/imports/client/grain/grainview-list";
 import { loginWithLDAP } from "/imports/client/accounts/ldap/ldap-client";
 import { loginWithSaml } from "/imports/client/accounts/saml/saml-client";
 import { loginWithOidc } from "/imports/oidc/oidc-client";
 import AccountsUi from "/imports/client/accounts/accounts-ui";
+import { globalGrains, globalTopbar } from "/imports/client/shell-state";
+import { logoutSandstorm } from "/imports/client/shell-client";
 import { SandstormDb } from "/imports/sandstorm-db/db";
-import { globalDb } from "/imports/db-deprecated";
+import { globalDb, isDemoUser } from "/imports/db-deprecated";
 import { coerceTemplateText } from "/imports/shared/template-values";
 
 import "/imports/client/accounts/styles/login-buttons-ui.scss";

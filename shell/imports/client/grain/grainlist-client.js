@@ -8,7 +8,9 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { groupBy, indexBy, sortBy, unique } from "/imports/shared/collection-utils";
 import { TAPi18n } from "/imports/tapi18n";
 
+import { callMeteor } from "/imports/client/globals";
 import { isDevelopmentServer } from "/imports/client/dev-mode";
+import { prettySize, promptRestoreBackup } from "/imports/client/shell-client";
 import { identiconForApp } from "/imports/sandstorm-identicons/helpers";
 import { introJs } from "/imports/client/tours/introjs-client";
 import { SandstormDb } from "/imports/sandstorm-db/db";
@@ -16,8 +18,7 @@ import { makeAndDownloadBackup } from "/imports/client/backups";
 
 import "/imports/client/grain/styles/grainlist-ui.scss";
 
-const SandstormGrainListPage = {};
-globalThis.SandstormGrainListPage = SandstormGrainListPage;
+export const SandstormGrainListPage = {};
 
 SandstormGrainListPage.mapGrainsToTemplateObject = function (grains, db) {
   // Do package lookup all at once, rather than doing N queries for N grains
@@ -236,11 +237,11 @@ SandstormGrainListPage.bulkActionButtons = function (showTrash) {
 
         onClicked: function (ownedGrainIds, sharedGrainIds) {
           ownedGrainIds.forEach((grainId) => {
-            globalThis.callMeteor("deleteGrain", grainId);
+            callMeteor("deleteGrain", grainId);
           });
 
           sharedGrainIds.forEach((grainId) => {
-            globalThis.callMeteor("forgetGrain", grainId);
+            callMeteor("forgetGrain", grainId);
           });
         },
       },
@@ -256,7 +257,7 @@ SandstormGrainListPage.bulkActionButtons = function (showTrash) {
         },
 
         onClicked: function (ownedGrainIds, sharedGrainIds) {
-          globalThis.callMeteor("moveGrainsOutOfTrash", ownedGrainIds.concat(sharedGrainIds));
+          callMeteor("moveGrainsOutOfTrash", ownedGrainIds.concat(sharedGrainIds));
         },
       },
     ];
@@ -275,7 +276,7 @@ SandstormGrainListPage.bulkActionButtons = function (showTrash) {
         },
 
         onClicked: function (ownedGrainIds, sharedGrainIds) {
-          globalThis.callMeteor("moveGrainsToTrash", ownedGrainIds.concat(sharedGrainIds));
+          callMeteor("moveGrainsToTrash", ownedGrainIds.concat(sharedGrainIds));
         },
       },
       {
@@ -498,11 +499,11 @@ Template.sandstormGrainListPage.events({
 
     if (window.confirm(message)) {
       myGrains.forEach((grainId) => {
-        globalThis.callMeteor("deleteGrain", grainId);
+        callMeteor("deleteGrain", grainId);
       });
 
       grainsSharedWithMe.forEach((grainId) => {
-        globalThis.callMeteor("forgetGrain", grainId);
+        callMeteor("forgetGrain", grainId);
       });
     }
   },

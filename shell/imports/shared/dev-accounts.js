@@ -21,6 +21,11 @@ import { globalDb } from "/imports/db-deprecated";
 
 let serverDevAccountsEnabled = !!(Meteor.settings && Meteor.settings.public &&
     Meteor.settings.public.allowDevAccounts);
+let devAccountLoginHandler = null;
+
+export const setDevAccountLoginHandler = function (handler) {
+  devAccountLoginHandler = handler;
+};
 
 if (Meteor.isServer) {
   Meteor.startup(() => {
@@ -55,7 +60,11 @@ Accounts.loginServices.dev = {
   },
 
   initiateLogin: function (loginId) {
-    loginDevAccount(loginId);
+    if (!devAccountLoginHandler) {
+      throw new Error("Dev account login handler is not registered.");
+    }
+
+    devAccountLoginHandler(loginId);
     return { oneClick: true };
   },
 

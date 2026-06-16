@@ -100,7 +100,7 @@ if (run_xfail) {
       //
       // If we try `loginDevAccount(devName1)`, we get stuck on waiting for the applist to appear,
       // because our original user is a demo user without a signup key.
-      .execute(function (name) { window.loginDevAccount(name) }, [devName1])
+      .execute(function (name) { window.__sandstormTest.loginDevAccount(name) }, [devName1])
       .waitForElementVisible(".account>button.show-popup", medium_wait)
       .url(browser.launch_url + "/account")
       .waitForElementVisible("button.link-new-credential", short_wait)

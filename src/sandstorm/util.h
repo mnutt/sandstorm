@@ -302,6 +302,9 @@ public:
     // Values to change the UID and GID to in the child process before exec. Leave null for no
     // change.
 
+    kj::Maybe<int> parentDeathSignal;
+    // Signal that the kernel should deliver to the child if the parent dies before the child.
+
     Options(kj::StringPtr executable): executable(executable), argv(&this->executable, 1) {}
     Options(kj::ArrayPtr<const kj::StringPtr> argv): executable(argv[0]), argv(argv) {}
     Options(kj::Array<const kj::StringPtr>&& argv)

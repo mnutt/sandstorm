@@ -25,7 +25,9 @@ import { simpleParser } from "mailparser";
 
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
+import { getGlobalBackend } from "/imports/server/backend-instance";
 import { PersistentImpl } from "/imports/server/persistent";
+import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
 import { rawSend } from "/imports/server/email";
 import { shouldRestartGrain } from "/imports/server/backend";
 import { inMeteor } from "/imports/server/async-helpers";
@@ -206,7 +208,7 @@ Meteor.startup(function () {
                   { publicId: publicId }, { fields: {} });
               if (grain) {
                 grainId = grain._id;
-                return globalThis.globalBackend.continueGrain(grainId, retryCount > 0);
+                return getGlobalBackend().continueGrain(grainId, retryCount > 0);
               } else {
                 // TODO(someday): We really ought to rig things up so that the 'RCPT TO' SMTP command
                 // fails in this case, by adding an onRcptTo() callback.
@@ -268,7 +270,7 @@ Meteor.startup(function () {
   }
 });
 
-globalThis.hackSendEmail = (session, email) => {
+export const hackSendEmail = (session, email) => {
   return inMeteor((async function () {
     let recipientCount = 0;
     recipientCount += email.to ? email.to.length : 0;
@@ -376,7 +378,8 @@ class EmailVerifierImpl extends PersistentImpl {
   }
 
   verifyEmail(tabId, verification) {
-    return globalThis.unwrapFrontendCap(verification, "verifiedEmail", (verification) => {
+    return import("/imports/server/core").then(({ unwrapFrontendCap }) =>
+        unwrapFrontendCap(verification, "verifiedEmail", (verification) => {
       if (verification.tabId !== tabId.toString("hex")) {
         throw new Error("VerifiedEmail is from a different tab");
       }
@@ -391,7 +394,7 @@ class EmailVerifierImpl extends PersistentImpl {
       }
 
       return verification.address;
-    });
+    }));
   }
 }
 
@@ -442,7 +445,7 @@ async function getVerifiedEmails(db, userId, verifierId) {
 // TODO(cleanup): Meteor.startup() needed because 00-startup.js runs *after* code in subdirectories
 //   (ugh).
 Meteor.startup(() => {
-  globalThis.globalFrontendRefRegistry.register({
+  frontendRefRegistry.register({
     frontendRefField: "emailVerifier",
     typeId: EmailRpc.EmailVerifier.typeId,
 
@@ -495,7 +498,7 @@ Meteor.startup(() => {
     },
   });
 
-  globalThis.globalFrontendRefRegistry.register({
+  frontendRefRegistry.register({
     frontendRefField: "verifiedEmail",
     typeId: EmailRpc.VerifiedEmail.typeId,
 

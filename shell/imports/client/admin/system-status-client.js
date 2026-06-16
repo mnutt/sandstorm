@@ -4,6 +4,7 @@ import { Template } from "meteor/templating";
 import downloadFile from "/imports/client/download-file";
 import getBuildInfo from "/imports/client/build-info";
 import { allowDemo } from "/imports/demo";
+import { AnsiUp } from "/imports/client/vendor/ansi-up";
 
 import "/imports/client/admin/styles/status-ui.scss";
 

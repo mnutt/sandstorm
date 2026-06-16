@@ -30,20 +30,15 @@ import { TAPi18n } from "/imports/tapi18n";
 import getBuildInfo from "/imports/client/build-info";
 import SandstormAccountSettingsUi from "/imports/client/accounts/account-settings-ui";
 import { isStandalone } from "/imports/client/standalone";
+import { globalSubs } from "/imports/client/global-subs";
+import { globalAccountsUi, globalGrains, globalTopbar } from "/imports/client/shell-state";
+import { registerTestApi } from "/imports/client/test-api";
 import { SandstormDb } from "/imports/sandstorm-db/db";
-import { globalDb } from "/imports/db-deprecated";
+import { globalDb, Grains, isDemoUser, isUserOverQuota, makeWildcardHost } from "/imports/db-deprecated";
 import { coerceTemplateText } from "/imports/shared/template-values";
 
-// Subscribe to basic grain information first and foremost, since
-// without it we might e.g. redirect to the wrong place on login.
-const globalSubs = [
-  Meteor.subscribe("grainsMenu"),
-  Meteor.subscribe("userPackages"),
-  Meteor.subscribe("devPackages"),
-  Meteor.subscribe("credentials"),
-  Meteor.subscribe("accountCredentials"),
-];
-globalThis.globalSubs = globalSubs;
+export { globalSubs };
+export { prettySize } from "/imports/client/shell/formatting";
 
 if (Meteor.isClient) {
   Meteor.startup(function () {
@@ -106,7 +101,7 @@ Tracker.autorun(function () {
 
 // export: called by sandstorm-accounts-ui/login_buttons.js
 //               and grain-client.js
-const logoutSandstorm = function () {
+export const logoutSandstorm = function () {
   const logoutHelper = function () {
     sessionStorage.removeItem("linkingIdentityLoginToken");
     Accounts._loginButtonsSession.closeDropdown();
@@ -136,7 +131,6 @@ const logoutSandstorm = function () {
     });
   }
 };
-globalThis.logoutSandstorm = logoutSandstorm;
 
 const makeAccountSettingsUi = function () {
   return new SandstormAccountSettingsUi(globalTopbar, globalDb,
@@ -316,7 +310,7 @@ const isDemoExpired = function () {
 };
 
 // export: this is also used by grain.js
-const makeDateString = function (date) {
+export const makeDateString = function (date) {
   if (!date) {
     return "";
   }
@@ -338,10 +332,9 @@ const makeDateString = function (date) {
 
   return result;
 };
-globalThis.makeDateString = makeDateString;
 
 // export: used in shared/demo.js
-const launchAndEnterGrainByPackageId = function (packageId, options) {
+export const launchAndEnterGrainByPackageId = function (packageId, options) {
   const action = globalDb.collections.userActions.findOne({ packageId: packageId });
   if (!action) {
     alert("Somehow, you seem to have attempted to launch a package you have not installed.");
@@ -350,10 +343,9 @@ const launchAndEnterGrainByPackageId = function (packageId, options) {
     launchAndEnterGrainByActionId(action._id, null, null, options);
   }
 };
-globalThis.launchAndEnterGrainByPackageId = launchAndEnterGrainByPackageId;
 
 // export: used in sandstorm-ui-app-details
-const launchAndEnterGrainByActionId = function (actionId, devPackageId, devIndex, options) {
+export const launchAndEnterGrainByActionId = function (actionId, devPackageId, devIndex, options) {
   // Note that this takes a devPackageId and a devIndex as well. If provided,
   // they override the actionId.
   let packageId;
@@ -415,17 +407,14 @@ const launchAndEnterGrainByActionId = function (actionId, devPackageId, devIndex
     }
   });
 };
-globalThis.launchAndEnterGrainByActionId = launchAndEnterGrainByActionId;
 
 // export global - used in grain.js
-const globalQuotaEnforcer = {
+export const globalQuotaEnforcer = {
   ifQuotaAvailable: ifQuotaAvailable,
   ifPlanAllowsCustomApps: ifPlanAllowsCustomApps,
 };
-globalThis.globalQuotaEnforcer = globalQuotaEnforcer;
 
-const HasUsers = new Mongo.Collection("hasUsers");  // dummy collection defined above
-globalThis.HasUsers = HasUsers;
+export const HasUsers = new Mongo.Collection("hasUsers");  // dummy collection defined above
 
 if (Meteor.settings.public.quotaEnabled) {
   window.testDisableQuotaClientSide = function () {
@@ -439,8 +428,7 @@ Router.onRun(function () {
   this.next();
 });
 
-const credentialsSubscription = Meteor.subscribe("credentials");
-globalThis.credentialsSubscription = credentialsSubscription;
+export const credentialsSubscription = Meteor.subscribe("credentials");
 
 Template.registerHelper("dateString", makeDateString);
 Template.registerHelper("hideNavbar", function () {
@@ -559,8 +547,7 @@ const startUpload = function (file, endpoint, onComplete) {
   Router.go("uploadStatus");
 };
 
-const restoreBackup = function (file) {
-  // This function is global so tests can call it
+export const restoreBackup = function (file) {
   Meteor.call("newRestoreToken", function (err, token) {
     if (err) {
       console.error(err);
@@ -584,15 +571,12 @@ const restoreBackup = function (file) {
     }
   });
 };
-globalThis.restoreBackup = restoreBackup;
 
-const promptRestoreBackup = function (input) {
+export const promptRestoreBackup = function (input) {
   promptForFile(input, restoreBackup);
 };
-globalThis.promptRestoreBackup = promptRestoreBackup;
 
-const uploadApp = function (file) {
-  // This function is global so tests can call it
+export const uploadApp = function (file) {
   Meteor.call("newUploadToken", function (err, token) {
     if (err) {
       console.error(err);
@@ -605,12 +589,33 @@ const uploadApp = function (file) {
     }
   });
 };
-globalThis.uploadApp = uploadApp;
 
-const promptUploadApp = function (input) {
+export const promptUploadApp = function (input) {
   promptForFile(input, uploadApp);
 };
-globalThis.promptUploadApp = promptUploadApp;
+
+registerTestApi({
+  createApiTokenForFirstGrain(roleAssignment, frontendRef, callback) {
+    const grain = Grains.findOne();
+    if (!grain) {
+      callback({ error: { message: "No grain found." } });
+      return;
+    }
+
+    this.createApiTokenForGrain(grain._id, roleAssignment, frontendRef, callback);
+  },
+
+  createApiTokenForGrain(grainId, roleAssignment, frontendRef, callback) {
+    Meteor.call("newApiToken", { accountId: Meteor.userId() },
+                grainId, "petname", roleAssignment, frontendRef,
+                function (error, result) {
+                  callback({ error, result, grainId });
+                });
+  },
+
+  restoreBackup,
+  uploadApp,
+});
 
 Template.uploadTest.events({
   "change #upload-app": function (event, tmpl) {

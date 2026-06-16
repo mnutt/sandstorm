@@ -19,6 +19,7 @@ set(_sandstorm_schema_relative_paths
   hack-session.capnp
   identity-impl.capnp
   identity.capnp
+  isolate-supervisor-internal.capnp
   ip.capnp
   mime.capnp
   package.capnp
@@ -43,6 +44,53 @@ list(TRANSFORM _sandstorm_schema_relative_paths
 
 sandstorm_generate_capnp(_sandstorm_schema_sources _sandstorm_schema_headers
   ${_sandstorm_schemas})
+
+set(_capnweb_package_dir "${PROJECT_SOURCE_DIR}/deps/capnweb-npm")
+set(_capnweb_work_dir "${CMAKE_BINARY_DIR}/capnweb-npm")
+set(_capnweb_js "${_capnweb_work_dir}/node_modules/capnweb/dist/index.js")
+add_custom_command(
+  OUTPUT "${_capnweb_js}"
+  COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_capnweb_work_dir}"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${_capnweb_work_dir}"
+  COMMAND "${CMAKE_COMMAND}" -E copy
+    "${_capnweb_package_dir}/package.json"
+    "${_capnweb_package_dir}/package-lock.json"
+    "${_capnweb_work_dir}"
+  COMMAND "${CMAKE_COMMAND}" -E env
+    "PATH=${SANDSTORM_METEOR_DEV_BUNDLE}/bin:$ENV{PATH}"
+    "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/npm" ci
+      --no-fund --prefix "${_capnweb_work_dir}"
+  COMMAND "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node" -e
+    "const v=require('${_capnweb_work_dir}/node_modules/capnweb/package.json').version;if(v!=='${SANDSTORM_CAPNWEB_NPM_VERSION}')process.exit(1)"
+  DEPENDS
+    "${_capnweb_package_dir}/package.json"
+    "${_capnweb_package_dir}/package-lock.json"
+  COMMENT "Installing the isolate capnweb runtime from npm"
+  VERBATIM)
+
+set(_isolate_generated_headers)
+function(_sandstorm_embed_isolate_js input name variable)
+  set(_output "${CMAKE_BINARY_DIR}/generated/sandstorm/isolate/${name}.js.h")
+  add_custom_command(
+    OUTPUT "${_output}"
+    COMMAND "${CMAKE_COMMAND}"
+      "-DINPUT=${input}"
+      "-DOUTPUT=${_output}"
+      "-DVARIABLE=${variable}"
+      -P "${PROJECT_SOURCE_DIR}/cmake/EmbedJs.cmake"
+    DEPENDS "${input}" "${PROJECT_SOURCE_DIR}/cmake/EmbedJs.cmake"
+    COMMENT "Embedding isolate runtime ${name}.js"
+    VERBATIM)
+  set(_isolate_generated_headers ${_isolate_generated_headers} "${_output}" PARENT_SCOPE)
+endfunction()
+
+_sandstorm_embed_isolate_js(
+  "${CMAKE_CURRENT_SOURCE_DIR}/isolate/api.js" api ISOLATE_API_HELPER_SOURCE)
+_sandstorm_embed_isolate_js(
+  "${_capnweb_js}" capnweb CAPNWEB_SOURCE)
+_sandstorm_embed_isolate_js(
+  "${CMAKE_CURRENT_SOURCE_DIR}/isolate/rpc.js" rpc ISOLATE_RPC_HELPER_SOURCE)
+
 add_library(sandstorm_schemas STATIC
   ${_sandstorm_schema_sources}
   ${_sandstorm_schema_headers})
@@ -54,6 +102,7 @@ target_link_libraries(sandstorm_schemas PUBLIC
   CapnProto::capnp-rpc)
 
 add_library(sandstorm_core STATIC
+  ${_isolate_generated_headers}
   appid-replacements.c++
   backend.c++
   backup.c++
@@ -63,6 +112,7 @@ add_library(sandstorm_core STATIC
   fuse.c++
   gateway.c++
   id-to-text.c++
+  isolate-supervisor.c++
   sandbox.c++
   send-fd.c++
   smtp-proxy.c++
@@ -114,6 +164,8 @@ sandstorm_add_executable(sandstorm run-bundle.c++)
 sandstorm_make_static(sandstorm)
 
 sandstorm_add_executable(spk spk-standalone.c++)
+
+sandstorm_add_executable(isolate-websession-client isolate-websession-client.c++)
 
 sandstorm_add_executable(sandstorm-http-bridge sandstorm-http-bridge.c++)
 sandstorm_make_static(sandstorm-http-bridge)

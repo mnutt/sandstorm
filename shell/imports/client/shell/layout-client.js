@@ -5,7 +5,8 @@ import { Session } from "meteor/session";
 
 import { isDevelopmentServer } from "/imports/client/dev-mode";
 import { isStandalone } from "/imports/client/standalone";
-import { globalDb } from "/imports/db-deprecated";
+import { globalDb, isDemoUser } from "/imports/db-deprecated";
+import { globalAccountsUi, globalGrains, globalTopbar } from "/imports/client/shell-state";
 import {
   billingPromptState,
   credentialsSubscription,
@@ -26,7 +27,7 @@ Template.layout.events({
     // execute, but it will not in the case where the link points to the current page, yet we'd
     // really still like for the menus to close in such cases.
     if (!event.isDefaultPrevented()) {
-      globalThis.globalTopbar.reset();
+      globalTopbar.reset();
     }
   },
 });
@@ -152,11 +153,11 @@ Template.layout.helpers({
   },
 
   globalAccountsUi: function () {
-    return globalThis.globalAccountsUi;
+    return globalAccountsUi;
   },
 
   globalGrains: function () {
-    return globalThis.globalGrains;
+    return globalGrains;
   },
 
   credentialUser: function () {
@@ -165,21 +166,21 @@ Template.layout.helpers({
   },
 
   showAccountButtons: function () {
-    return Meteor.user() && !Meteor.loggingIn() && !globalThis.isDemoUser();
+    return Meteor.user() && !Meteor.loggingIn() && !isDemoUser();
   },
 
   accountButtonsData: function () {
     const showSendFeedback = !globalDb.getSettingWithFallback("whitelabelHideSendFeedback", false);
     return {
       isAdmin: globalDb.isAdmin(),
-      grains: globalThis.globalGrains,
+      grains: globalGrains,
       showSendFeedback,
     };
   },
 
   firstLogin: function () {
     return !isDevelopmentServer() && credentialsSubscription.ready() &&
-        !globalThis.isDemoUser() && !Meteor.loggingIn()
+        !isDemoUser() && !Meteor.loggingIn()
         && Meteor.user() && !Meteor.user().hasCompletedSignup &&
         !isStandalone();
   },

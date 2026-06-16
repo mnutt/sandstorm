@@ -124,7 +124,12 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
   kj::Own<kj::AsyncInputStream> stdoutPipe;
   kj::Vector<kj::String> argv;
 
-  argv.add(kj::heapString("supervisor"));
+  bool useIsolateRuntime = command.hasIsolate();
+  auto commandArgv = command.getArgv();
+  auto commandName = commandArgv.size() > 0 ? commandArgv[0] : kj::StringPtr("");
+  KJ_LOG(WARNING, "Starting grain supervisor.",
+      grainId, packageId, useIsolateRuntime, isNew, commandName);
+  argv.add(kj::heapString(useIsolateRuntime ? "isolate-supervisor" : "supervisor"));
 
   KJ_IF_MAYBE(u, sandboxUid) {
     argv.add(kj::heapString("--uid"));
@@ -156,16 +161,38 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
   }
   argv.add(kj::str("-eSERVER_RUNTIME=", SERVER_RUNTIME));
 
+  if (useIsolateRuntime) {
+    auto isolateConfig = command.getIsolate();
+    argv.add(kj::heapString("--isolate-main-module"));
+    argv.add(kj::heapString(isolateConfig.getMainModule()));
+
+    if (isolateConfig.hasCompatibilityDate()) {
+      argv.add(kj::heapString("--isolate-compatibility-date"));
+      argv.add(kj::heapString(isolateConfig.getCompatibilityDate()));
+    }
+  }
+
   argv.add(kj::heapString(packageId));
   argv.add(kj::heapString(grainId));
 
   argv.add(kj::heapString("--"));
 
-  if (command.hasDeprecatedExecutablePath()) {
-    argv.add(kj::heapString(command.getDeprecatedExecutablePath()));
-  }
-  for (auto arg: command.getArgv()) {
-    argv.add(kj::heapString(arg));
+  if (!useIsolateRuntime) {
+    if (command.hasDeprecatedExecutablePath()) {
+      argv.add(kj::heapString(command.getDeprecatedExecutablePath()));
+    }
+    for (auto arg: command.getArgv()) {
+      argv.add(kj::heapString(arg));
+    }
+  } else {
+    // Isolate commands are selected by `command.isolate`; argv is treated as the runtime sidecar
+    // command rather than as a process command inside the traditional Linux sandbox.
+    if (command.hasDeprecatedExecutablePath()) {
+      argv.add(kj::heapString(command.getDeprecatedExecutablePath()));
+    }
+    for (auto arg: command.getArgv()) {
+      argv.add(kj::heapString(arg));
+    }
   }
 
   Subprocess::Options options(KJ_MAP(a, argv) -> const kj::StringPtr { return a; });
@@ -779,4 +806,3 @@ kj::Promise<void> BackendImpl::getGrainStorageUsage(GetGrainStorageUsageContext 
 }
 
 } // namespace sandstorm
-

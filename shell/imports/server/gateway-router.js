@@ -30,6 +30,9 @@ import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions
 
 import { responseCodes } from "/imports/server/web-session";
 import { makeHackSessionContext } from "/imports/server/hack-session";
+import { getGlobalBackend } from "/imports/server/backend-instance";
+import { makeIdentity } from "/imports/server/identity";
+import { getCurrentTlsKeysCallback, setCurrentTlsKeysCallback } from "/imports/server/tls-keys-callback";
 
 const GatewayRouter = Capnp.importSystem("sandstorm/backend.capnp").GatewayRouter;
 const ApiSession = Capnp.importSystem("sandstorm/api-session.capnp").ApiSession;
@@ -39,8 +42,6 @@ const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
 
 const SESSION_PROXY_TIMEOUT = 60000;
 const DNS_CACHE_TTL_SECONDS = 30;
-
-globalThis.currentTlsKeysCallback = null;
 
 // If this is Blackrock and we started up within one hour of a scheduled maintenance, we want to
 // stagger startup of grains in order to give the back-end time to warm up.
@@ -224,7 +225,7 @@ async function getUiViewAndUserInfo(grainId, vertex, accountId, identityId, sess
       displayName: { defaultText: user.profile.name },
       preferredHandle: user.profile.handle,
       identityId: new Buffer(identityId, "hex"),
-      identity: globalThis.makeIdentity(user._id, [idCapRequirement]),
+      identity: makeIdentity(user._id, [idCapRequirement]),
       pictureUrl: user.profile.pictureUrl,
       pronouns: user.profile.pronoun || undefined,
     };
@@ -243,7 +244,7 @@ async function getUiViewAndUserInfo(grainId, vertex, accountId, identityId, sess
   }
 
   let uiView;
-  const viewInfo = await globalThis.globalBackend.useGrain(grainId, supervisor => {
+  const viewInfo = await getGlobalBackend().useGrain(grainId, supervisor => {
     uiView = supervisor.getMainView().view;
     return uiView.getViewInfo();
   }).catch(error => {
@@ -280,7 +281,7 @@ async function getUiViewAndUserInfo(grainId, vertex, accountId, identityId, sess
     throw new Meteor.Error("access-denied", "access denied");
   }
 
-  globalThis.globalBackend.updateLastActive(grainId, accountId).catch((err) => {
+  getGlobalBackend().updateLastActive(grainId, accountId).catch((err) => {
     console.error("Failed updating lastActive for grain session:", err);
   });
 
@@ -541,7 +542,7 @@ class GatewayRouterImpl {
   }
 
   subscribeTlsKeys(callback) {
-    globalThis.currentTlsKeysCallback = callback;
+    setCurrentTlsKeysCallback(callback);
 
     return new Promise((resolve, reject) => {
       inMeteor(() => {
@@ -554,8 +555,8 @@ class GatewayRouterImpl {
               }).catch((stopErr) => {
                 console.error("Failed to stop TLS keys observer:", stopErr);
               });
-              if (globalThis.currentTlsKeysCallback == callback) {
-                globalThis.currentTlsKeysCallback = null;
+              if (getCurrentTlsKeysCallback() == callback) {
+                setCurrentTlsKeysCallback(null);
               }
             } else {
               console.error("registering new TLS keys failed", err);
@@ -608,7 +609,7 @@ class GatewayRouterImpl {
           { publicId: publicId }, { fields: { _id: 1 } });
       if (grain) {
         await awaitRateLimit("WWW", publicId, grain.userId);
-        return globalThis.globalBackend.useGrain(grain._id, supervisor => {
+        return getGlobalBackend().useGrain(grain._id, supervisor => {
           return supervisor.keepAlive().then(() => { return { supervisor }; });
         });
       } else {
@@ -942,7 +943,7 @@ async function bumpSession(sessionId) {
   if (session) {
     await globalDb.collections.sessions.updateAsync({ _id: sessionId },
         { $set: { timestamp: new Date().getTime() } });
-    globalThis.globalBackend.updateLastActive(session.grainId, session.userId).catch((err) => {
+    getGlobalBackend().updateLastActive(session.grainId, session.userId).catch((err) => {
       console.error("Failed updating last active in bumpSession:", err);
     });
   }

@@ -36,10 +36,14 @@
 #include <errno.h>
 #include <sandstorm/package.capnp.h>
 #include <sandstorm/appid-replacements.capnp.h>
+#include <sandstorm/isolate/api.js.h>
+#include <sandstorm/isolate/capnweb.js.h>
+#include <sandstorm/isolate/rpc.js.h>
 #include <stdlib.h>
 #include <dirent.h>
 #include <set>
 #include <map>
+#include <string>
 #include <sys/xattr.h>
 #include <capnp/schema-parser.h>
 #include <capnp/dynamic.h>
@@ -217,6 +221,8 @@ public:
                        "Verify signature on an spk and output the app ID (without unpacking).")
         .addSubCommand("dev", KJ_BIND_METHOD(*this, getDevMain),
                        "Run an app in dev mode.")
+        .addSubCommand("dev-isolate", KJ_BIND_METHOD(*this, getDevIsolateMain),
+                       "Run a JavaScript module as an isolate app in dev mode.")
         .addSubCommand("publish", KJ_BIND_METHOD(*this, getPublishMain),
                        "Publish a package to the app market."))
         .build();
@@ -1917,6 +1923,21 @@ private:
   kj::StringPtr mountDir;
   bool fuseCaching = false;
   bool mountProc = false;
+  kj::String devIsolateWorkerPath;
+  kj::String devIsolateTitle = kj::heapString("Ad hoc Isolate App");
+  kj::String devIsolateCompatibilityDate = kj::heapString("2025-01-01");
+  struct DevIsolateServiceBinding {
+    kj::String name;
+    kj::String service;
+  };
+  struct DevIsolateValueBinding {
+    kj::String name;
+    kj::String value;
+  };
+  kj::Vector<DevIsolateServiceBinding> devIsolateServiceBindings;
+  kj::Vector<DevIsolateValueBinding> devIsolateTextBindings;
+  kj::Vector<DevIsolateValueBinding> devIsolateJsonBindings;
+  kj::Vector<DevIsolateValueBinding> devIsolateDataBindings;
 
   kj::MainFunc getDevMain() {
     return addCommonOptions(OptionSet::ALL_READONLY,
@@ -1977,8 +1998,734 @@ private:
     return true;
   }
 
+  kj::MainFunc getDevIsolateMain() {
+    return kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
+        "Run a local JavaScript module as an isolate app on a local Sandstorm server. "
+        "This generates a temporary package definition and then uses the normal `spk dev` "
+        "machinery, so the app appears in Sandstorm as a development package.")
+        .addOptionWithArg({'s', "server"}, KJ_BIND_METHOD(*this, setServerDir), "<dir>",
+            "Connect to the Sandstorm server installed in <dir>. Default is to detect based on "
+            "the location of the spk executable or, failing that, the location pointed to by "
+            "the installed init script.")
+        .addOptionWithArg({'m', "mount"}, KJ_BIND_METHOD(*this, setMountDir), "<dir>",
+            "Don't actually connect to the server. Mount the generated package at <dir>, so you "
+            "can inspect it.")
+        .addOption({'c', "cache"}, KJ_BIND_METHOD(*this, enableFuseCaching),
+            "Enable aggressive caching over the FUSE filesystem used to detect dependencies.")
+        .addOption({"proc"}, KJ_BIND_METHOD(*this, enableMountProc),
+            "Mount /proc inside the sandbox.")
+        .addOptionWithArg({'t', "title"}, KJ_BIND_METHOD(*this, setDevIsolateTitle), "<title>",
+            "Set the generated app title. Default: \"Ad hoc Isolate App\".")
+        .addOptionWithArg({"compatibility-date"},
+            KJ_BIND_METHOD(*this, setDevIsolateCompatibilityDate), "<date>",
+            "Set the workerd compatibility date. Default: 2025-01-01.")
+        .addOptionWithArg({"text-binding"}, KJ_BIND_METHOD(*this, addDevIsolateTextBinding),
+            "<name>=<text>",
+            "Add a text binding to the generated isolate manifest.")
+        .addOptionWithArg({"json-binding"}, KJ_BIND_METHOD(*this, addDevIsolateJsonBinding),
+            "<name>=<json>",
+            "Add a JSON binding to the generated isolate manifest.")
+        .addOptionWithArg({"data-binding"}, KJ_BIND_METHOD(*this, addDevIsolateDataBinding),
+            "<name>=<path>",
+            "Add a binary data binding from a file to the generated isolate manifest.")
+        .addOptionWithArg({"service-binding"}, KJ_BIND_METHOD(*this, addDevIsolateServiceBinding),
+            "<name>=<service>",
+            "Add a workerd service binding to the generated isolate manifest. For example: "
+            "--service-binding LOOPBACK=main")
+        .expectArg("<worker.js>", KJ_BIND_METHOD(*this, setDevIsolateWorkerPath))
+        .callAfterParsing(KJ_BIND_METHOD(*this, doDevIsolate))
+        .build();
+  }
+
+  kj::MainBuilder::Validity setDevIsolateTitle(kj::StringPtr title) {
+    if (title.size() == 0) {
+      return "title must not be empty";
+    }
+    devIsolateTitle = kj::heapString(title);
+    return true;
+  }
+
+  kj::MainBuilder::Validity setDevIsolateCompatibilityDate(kj::StringPtr date) {
+    if (date.size() == 0) {
+      return "compatibility date must not be empty";
+    }
+    devIsolateCompatibilityDate = kj::heapString(date);
+    return true;
+  }
+
+  bool devIsolateBindingNameExists(kj::StringPtr name) {
+    if (name == "SANDSTORM_API" || name == "POWERBOX" || name == "STORAGE") {
+      return true;
+    }
+    for (auto& binding: devIsolateTextBindings) {
+      if (binding.name == name) return true;
+    }
+    for (auto& binding: devIsolateJsonBindings) {
+      if (binding.name == name) return true;
+    }
+    for (auto& binding: devIsolateDataBindings) {
+      if (binding.name == name) return true;
+    }
+    for (auto& binding: devIsolateServiceBindings) {
+      if (binding.name == name) return true;
+    }
+    return false;
+  }
+
+  kj::Maybe<DevIsolateValueBinding> parseDevIsolateValueBinding(kj::StringPtr spec) {
+    KJ_IF_MAYBE(equals, spec.findFirst('=')) {
+      auto name = kj::heapString(spec.slice(0, *equals));
+      auto value = kj::heapString(spec.slice(*equals + 1, spec.size()));
+      if (name.size() == 0 || value.size() == 0 || devIsolateBindingNameExists(name)) {
+        return nullptr;
+      }
+      return DevIsolateValueBinding {
+        kj::mv(name),
+        kj::mv(value),
+      };
+    }
+
+    return nullptr;
+  }
+
+  kj::MainBuilder::Validity addDevIsolateTextBinding(kj::StringPtr spec) {
+    KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
+      devIsolateTextBindings.add(kj::mv(*binding));
+      return true;
+    }
+
+    return "text binding must be NAME=TEXT with a unique non-built-in name and non-empty value";
+  }
+
+  kj::MainBuilder::Validity addDevIsolateJsonBinding(kj::StringPtr spec) {
+    KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
+      capnp::MallocMessageBuilder message;
+      auto jsonValue = message.initRoot<capnp::JsonValue>();
+      capnp::JsonCodec json;
+      try {
+        json.decode(binding->value, jsonValue);
+      } catch (kj::Exception& exception) {
+        return kj::str("json binding value is not valid JSON: ", exception.getDescription());
+      }
+      devIsolateJsonBindings.add(kj::mv(*binding));
+      return true;
+    }
+
+    return "json binding must be NAME=JSON with a unique non-built-in name and non-empty value";
+  }
+
+  kj::MainBuilder::Validity addDevIsolateDataBinding(kj::StringPtr spec) {
+    KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
+      if (access(binding->value.cStr(), R_OK) != 0) {
+        return "data binding file not found or not readable";
+      }
+      char* resolved = realpath(binding->value.cStr(), nullptr);
+      if (resolved == nullptr) {
+        int error = errno;
+        return kj::str("could not resolve data binding file path: ", strerror(error));
+      }
+      KJ_DEFER(free(resolved));
+      binding->value = kj::heapString(resolved);
+      devIsolateDataBindings.add(kj::mv(*binding));
+      return true;
+    }
+
+    return "data binding must be NAME=PATH with a unique non-built-in name and non-empty path";
+  }
+
+  kj::MainBuilder::Validity addDevIsolateServiceBinding(kj::StringPtr spec) {
+    KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
+      devIsolateServiceBindings.add(DevIsolateServiceBinding {
+        kj::mv(binding->name),
+        kj::mv(binding->value),
+      });
+      return true;
+    }
+
+    return "service binding must be NAME=SERVICE with a unique non-built-in name and non-empty service";
+  }
+
+  kj::MainBuilder::Validity setDevIsolateWorkerPath(kj::StringPtr path) {
+    if (access(path.cStr(), R_OK) != 0) {
+      return "worker module not found or not readable";
+    }
+    char* resolved = realpath(path.cStr(), nullptr);
+    if (resolved == nullptr) {
+      int error = errno;
+      return kj::str("could not resolve worker module path: ", strerror(error));
+    }
+    KJ_DEFER(free(resolved));
+    devIsolateWorkerPath = kj::heapString(resolved);
+    return true;
+  }
+
+  kj::MainBuilder::Validity doDevIsolate() {
+    KJ_REQUIRE(devIsolateWorkerPath != nullptr);
+    auto rootDir = dirnameForPath(devIsolateWorkerPath);
+    auto supportDir = writeDevIsolateSupportDir();
+    KJ_DEFER(recursivelyDelete(supportDir));
+    auto generatedPkgdef = writeDevIsolatePkgdef(rootDir, supportDir);
+    KJ_DEFER(unlink(generatedPkgdef.cStr()));
+
+    auto arg = kj::str(generatedPkgdef, ":pkgdef");
+    KJ_IF_MAYBE(error, setPackageDef(arg).getError()) {
+      return kj::str(generatedPkgdef, ": ", *error);
+    }
+
+    return doDev();
+  }
+
+  enum class DevIsolateModuleType {
+    ES_MODULE,
+    COMMON_JS,
+    TEXT,
+    JSON
+  };
+
+  struct DevIsolateModule {
+    kj::String name;
+    kj::String sourcePath;
+    DevIsolateModuleType type;
+  };
+
+  kj::Vector<DevIsolateModule> collectDevIsolateModules() {
+    auto rootDir = dirnameForPath(devIsolateWorkerPath);
+    kj::Vector<DevIsolateModule> modules;
+    std::set<std::string> seen;
+    collectDevIsolateModule(devIsolateWorkerPath, rootDir, modules, seen);
+    return modules;
+  }
+
+  void collectDevIsolateModule(kj::StringPtr path, kj::StringPtr rootDir,
+                               kj::Vector<DevIsolateModule>& modules,
+                               std::set<std::string>& seen) {
+    char* resolved = realpath(path.cStr(), nullptr);
+    KJ_REQUIRE(resolved != nullptr, "Could not resolve isolate module path.", path, strerror(errno));
+    KJ_DEFER(free(resolved));
+    auto realPath = kj::heapString(resolved);
+    auto realPathStd = toStdString(realPath);
+    if (!seen.insert(realPathStd).second) {
+      return;
+    }
+
+    KJ_REQUIRE(isPathUnderRoot(realPath, rootDir),
+        "Isolate dev imports must stay under the entrypoint directory.", realPath, rootDir);
+
+    auto type = devIsolateModuleTypeForPath(realPath);
+    auto name = moduleNameForDevIsolatePath(realPath, rootDir);
+    auto sourcePath = devIsolateAppPackagePath(name);
+
+    if (type == DevIsolateModuleType::ES_MODULE) {
+      auto source = readAll(raiiOpen(realPath, O_RDONLY | O_CLOEXEC));
+      auto imports = scanDevIsolateImports(source);
+      modules.add(DevIsolateModule {
+        kj::mv(name),
+        kj::mv(sourcePath),
+        type
+      });
+
+      auto importerDir = dirnameForPath(realPath);
+      for (auto& specifier: imports) {
+        if (isRelativeImport(specifier)) {
+          auto resolvedImport = resolveDevIsolateImport(importerDir, rootDir, specifier);
+          collectDevIsolateModule(resolvedImport, rootDir, modules, seen);
+        }
+      }
+    } else {
+      modules.add(DevIsolateModule {
+        kj::mv(name),
+        kj::mv(sourcePath),
+        type
+      });
+    }
+  }
+
+  kj::String writeDevIsolatePkgdef(kj::StringPtr rootDir, kj::StringPtr supportDir) {
+    auto appId = appIdForDevIsolate(devIsolateWorkerPath);
+    kj::Vector<char> capnp;
+    capnp.addAll(kj::StringPtr(
+        "@0xf0fa7edd08cd0aa9;\n\n"
+        "using Spk = import \"/sandstorm/package.capnp\";\n\n"));
+    capnp.addAll(kj::StringPtr("const placeholderCommand :Spk.Manifest.Command = (\n"));
+    capnp.addAll(kj::StringPtr(
+        "  argv = [ \"workerd\", \"serve\", \"${SANDSTORM_ISOLATE_WORKERD_CONFIG}\", "
+        "\"sandstormConfig\" ],\n"
+        "  isolate = (\n"
+        "    mainModule = "));
+    appendCapnpText(capnp, "__sandstorm_dev_isolate_placeholder__.js");
+    capnp.addAll(kj::StringPtr(",\n    compatibilityDate = "));
+    appendCapnpText(capnp, devIsolateCompatibilityDate);
+    capnp.addAll(kj::StringPtr(
+        ",\n    compatibilityFlags = [],\n"
+        "    modules = [\n"
+        "      ( name = \"__sandstorm_dev_isolate_placeholder__.js\",\n"
+        "        esModulePath = \"__sandstorm_isolate_runtime/placeholder.js\" )\n"
+        "    ],\n"));
+    capnp.addAll(kj::StringPtr(
+        "    bindings = [\n"
+        "      ( name = \"SANDSTORM_API\", sandstormApi = void ),\n"
+        "      ( name = \"STORAGE\", storage = void )\n"
+        "    ],\n"
+        "    bridgeConfig = ( viewInfo = ( appTitle = (defaultText = "));
+    appendCapnpText(capnp, devIsolateTitle);
+    capnp.addAll(kj::StringPtr(
+        ") ) )\n"
+        "  )\n"
+        ");\n\n"
+        "const pkgdef :Spk.PackageDefinition = (\n"
+        "  id = "));
+    appendCapnpText(capnp, appId);
+    capnp.addAll(kj::StringPtr(
+        ",\n"
+        "  manifest = (\n"
+        "    appTitle = (defaultText = "));
+    appendCapnpText(capnp, devIsolateTitle);
+    capnp.addAll(kj::StringPtr(
+        "),\n"
+        "    appVersion = 0,\n"
+        "    appMarketingVersion = (defaultText = \"dev\"),\n"
+        "    actions = [\n"
+        "      ( title = (defaultText = \"New Ad hoc Isolate App\"),\n"
+        "        nounPhrase = (defaultText = \"instance\"),\n"
+        "        command = .placeholderCommand )\n"
+        "    ],\n"
+        "    continueCommand = .placeholderCommand\n"
+        "  ),\n"
+        "  sourceMap = (\n"
+        "    searchPath = [\n"
+        "      ( packagePath = \"__sandstorm_dev_isolate_app\", sourcePath = "));
+    appendCapnpText(capnp, rootDir);
+    capnp.addAll(kj::StringPtr(" ),\n      ( packagePath = \"__sandstorm_isolate_runtime\", "
+        "sourcePath = "));
+    appendCapnpText(capnp, supportDir);
+    capnp.addAll(kj::StringPtr(
+        " )\n"
+        "    ]\n"
+        "  ),\n"
+        "  alwaysInclude = [ \"sandstorm-manifest\", \"__sandstorm_isolate_runtime\" ]\n"
+        ");\n"));
+    capnp.add('\0');
+
+    kj::String path = kj::heapString("/tmp/sandstorm-dev-isolate-XXXXXX");
+    int fd;
+    KJ_SYSCALL(fd = mkstemp(path.begin()), path);
+    kj::AutoCloseFd autoFd(fd);
+    kj::FdOutputStream(autoFd.get()).write(capnp.begin(), capnp.size() - 1);
+    return path;
+  }
+
+  kj::String writeDevIsolateSupportDir() {
+    kj::String path = kj::heapString("/tmp/sandstorm-dev-isolate-runtime-XXXXXX");
+    KJ_REQUIRE(mkdtemp(path.begin()) != nullptr, "mkdtemp() failed", path, strerror(errno));
+    writeDevIsolateSupportFile(path, "placeholder.js",
+        "export default { fetch() { return new Response(\"dev isolate manifest not mounted\", "
+        "{ status: 500 }); } };\n");
+    writeDevIsolateSupportFile(path, "capnweb.js", CAPNWEB_SOURCE);
+    writeDevIsolateSupportFile(path, "api.js", ISOLATE_API_HELPER_SOURCE);
+    writeDevIsolateSupportFile(path, "rpc.js", ISOLATE_RPC_HELPER_SOURCE);
+    return path;
+  }
+
+  void writeDevIsolateSupportFile(kj::StringPtr dir, kj::StringPtr name, kj::StringPtr content) {
+    auto path = kj::str(dir, "/", name);
+    kj::FdOutputStream(raiiOpen(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600))
+        .write(content.begin(), content.size());
+  }
+
+  kj::Array<capnp::word> buildDevIsolateManifestBytes() {
+    auto modules = collectDevIsolateModules();
+
+    capnp::MallocMessageBuilder message;
+    auto manifest = message.initRoot<spk::Manifest>();
+    manifest.initAppTitle().setDefaultText(devIsolateTitle);
+    manifest.setAppVersion(0);
+    manifest.initAppMarketingVersion().setDefaultText("dev");
+
+    initDevIsolateCommand(manifest.initContinueCommand(), modules.asPtr());
+
+    auto actions = manifest.initActions(1);
+    auto action = actions[0];
+    action.initTitle().setDefaultText("New Ad hoc Isolate App");
+    action.initNounPhrase().setDefaultText("instance");
+    initDevIsolateCommand(action.initCommand(), modules.asPtr());
+
+    return capnp::messageToFlatArray(message);
+  }
+
+  void initDevIsolateCommand(spk::Manifest::Command::Builder command,
+                             kj::ArrayPtr<DevIsolateModule> modules) {
+    KJ_REQUIRE(modules.size() > 0);
+
+    auto argv = command.initArgv(4);
+    argv.set(0, "workerd");
+    argv.set(1, "serve");
+    argv.set(2, "${SANDSTORM_ISOLATE_WORKERD_CONFIG}");
+    argv.set(3, "sandstormConfig");
+
+    auto isolate = command.initIsolate();
+    isolate.setMainModule(modules[0].name);
+    isolate.setCompatibilityDate(devIsolateCompatibilityDate);
+    isolate.initCompatibilityFlags(0);
+
+    auto moduleList = isolate.initModules(modules.size() + 4);
+    for (auto i: kj::indices(modules)) {
+      auto module = moduleList[i];
+      module.setName(modules[i].name);
+      switch (modules[i].type) {
+        case DevIsolateModuleType::ES_MODULE:
+          module.setEsModulePath(modules[i].sourcePath);
+          break;
+        case DevIsolateModuleType::COMMON_JS:
+          module.setCommonJsModulePath(modules[i].sourcePath);
+          break;
+        case DevIsolateModuleType::TEXT:
+          module.setTextPath(modules[i].sourcePath);
+          break;
+        case DevIsolateModuleType::JSON:
+          module.setJsonPath(modules[i].sourcePath);
+          break;
+      }
+    }
+    auto capnwebModule = moduleList[modules.size()];
+    capnwebModule.setName("capnweb");
+    capnwebModule.setEsModulePath("__sandstorm_isolate_runtime/capnweb.js");
+    auto capnwebSourceModule = moduleList[modules.size() + 1];
+    capnwebSourceModule.setName("sandstorm:capnweb-source");
+    capnwebSourceModule.setTextPath("__sandstorm_isolate_runtime/capnweb.js");
+    auto helperModule = moduleList[modules.size() + 2];
+    helperModule.setName("sandstorm:api");
+    helperModule.setEsModulePath("__sandstorm_isolate_runtime/api.js");
+    auto rpcHelperModule = moduleList[modules.size() + 3];
+    rpcHelperModule.setName("sandstorm:rpc");
+    rpcHelperModule.setEsModulePath("__sandstorm_isolate_runtime/rpc.js");
+
+    auto bindings = isolate.initBindings(
+        3 + devIsolateTextBindings.size() + devIsolateJsonBindings.size() +
+        devIsolateDataBindings.size() + devIsolateServiceBindings.size());
+    bindings[0].setName("SANDSTORM_API");
+    bindings[0].setSandstormApi();
+    bindings[1].setName("POWERBOX");
+    bindings[1].setPowerbox();
+    bindings[2].setName("STORAGE");
+    bindings[2].setStorage();
+    size_t bindingIndex = 3;
+    for (auto i: kj::indices(devIsolateTextBindings)) {
+      auto binding = bindings[bindingIndex++];
+      binding.setName(devIsolateTextBindings[i].name);
+      binding.setText(devIsolateTextBindings[i].value);
+    }
+    for (auto i: kj::indices(devIsolateJsonBindings)) {
+      auto binding = bindings[bindingIndex++];
+      binding.setName(devIsolateJsonBindings[i].name);
+      binding.setJson(devIsolateJsonBindings[i].value);
+    }
+    for (auto i: kj::indices(devIsolateDataBindings)) {
+      auto binding = bindings[bindingIndex++];
+      binding.setName(devIsolateDataBindings[i].name);
+      auto data = readAll(raiiOpen(devIsolateDataBindings[i].value, O_RDONLY | O_CLOEXEC));
+      binding.setData(data.asBytes());
+    }
+    for (auto i: kj::indices(devIsolateServiceBindings)) {
+      auto binding = bindings[bindingIndex++];
+      binding.setName(devIsolateServiceBindings[i].name);
+      binding.setService(devIsolateServiceBindings[i].service);
+    }
+
+    isolate.initBridgeConfig().initViewInfo().initAppTitle().setDefaultText(devIsolateTitle);
+  }
+
+  kj::String appIdForDevIsolate(kj::StringPtr workerPath) {
+    byte digest[crypto_hash_sha256_BYTES];
+    crypto_hash_sha256_state state;
+    KJ_ASSERT(crypto_hash_sha256_init(&state) == 0);
+    kj::StringPtr prefix = "sandstorm-dev-isolate:";
+    KJ_ASSERT(crypto_hash_sha256_update(&state,
+        reinterpret_cast<const unsigned char*>(prefix.begin()), prefix.size()) == 0);
+    KJ_ASSERT(crypto_hash_sha256_update(&state,
+        reinterpret_cast<const unsigned char*>(workerPath.begin()), workerPath.size()) == 0);
+    KJ_ASSERT(crypto_hash_sha256_final(&state, digest) == 0);
+    return appIdString(kj::arrayPtr(digest, crypto_sign_PUBLICKEYBYTES));
+  }
+
+  static std::string toStdString(kj::StringPtr text) {
+    return std::string(text.begin(), text.size());
+  }
+
+  static kj::String dirnameForPath(kj::StringPtr path) {
+    auto pathStd = toStdString(path);
+    auto slash = pathStd.rfind('/');
+    if (slash == std::string::npos) {
+      return kj::heapString(".");
+    } else if (slash == 0) {
+      return kj::heapString("/");
+    } else {
+      return kj::heapString(pathStd.substr(0, slash).c_str());
+    }
+  }
+
+  static bool isPathUnderRoot(kj::StringPtr path, kj::StringPtr rootDir) {
+    auto pathStd = toStdString(path);
+    auto rootStd = toStdString(rootDir);
+    if (rootStd == "/") {
+      return pathStd.size() > 1 && pathStd[0] == '/';
+    }
+    return pathStd.size() > rootStd.size() + 1 &&
+        pathStd.compare(0, rootStd.size(), rootStd) == 0 &&
+        pathStd[rootStd.size()] == '/';
+  }
+
+  static kj::String moduleNameForDevIsolatePath(kj::StringPtr path, kj::StringPtr rootDir) {
+    auto pathStd = toStdString(path);
+    auto rootStd = toStdString(rootDir);
+    KJ_REQUIRE(isPathUnderRoot(path, rootDir), "Module path is outside isolate dev root.",
+        path, rootDir);
+    auto offset = rootStd == "/" ? 1 : rootStd.size() + 1;
+    return kj::heapString(pathStd.substr(offset).c_str());
+  }
+
+  static kj::String devIsolateAppPackagePath(kj::StringPtr moduleName) {
+    return kj::str("__sandstorm_dev_isolate_app/", moduleName);
+  }
+
+  static bool isRelativeImport(kj::StringPtr specifier) {
+    return specifier.startsWith("./") || specifier.startsWith("../");
+  }
+
+  static kj::String resolveDevIsolateImport(
+      kj::StringPtr importerDir, kj::StringPtr rootDir, kj::StringPtr specifier) {
+    KJ_REQUIRE(specifier.findFirst('?') == nullptr && specifier.findFirst('#') == nullptr,
+        "Isolate dev imports do not currently support query strings or fragments.", specifier);
+
+    auto candidate = kj::str(importerDir, '/', specifier);
+    char* resolved = realpath(candidate.cStr(), nullptr);
+    KJ_REQUIRE(resolved != nullptr, "Could not resolve isolate import.", specifier, candidate,
+        strerror(errno));
+    KJ_DEFER(free(resolved));
+    auto resolvedPath = kj::heapString(resolved);
+    KJ_REQUIRE(isPathUnderRoot(resolvedPath, rootDir),
+        "Isolate dev imports must stay under the entrypoint directory.", specifier, resolvedPath);
+    return resolvedPath;
+  }
+
+  static DevIsolateModuleType devIsolateModuleTypeForPath(kj::StringPtr path) {
+    if (path.endsWith(".js") || path.endsWith(".mjs")) {
+      return DevIsolateModuleType::ES_MODULE;
+    } else if (path.endsWith(".cjs")) {
+      return DevIsolateModuleType::COMMON_JS;
+    } else if (path.endsWith(".json")) {
+      return DevIsolateModuleType::JSON;
+    } else if (path.endsWith(".txt") || path.endsWith(".text")) {
+      return DevIsolateModuleType::TEXT;
+    } else {
+      KJ_FAIL_REQUIRE("Unsupported isolate dev module extension. Supported: .js, .mjs, .cjs, "
+          ".json, .txt, .text", path);
+    }
+  }
+
+  static bool isJsIdentifierStart(char c) {
+    return isalpha(static_cast<unsigned char>(c)) || c == '_' || c == '$';
+  }
+
+  static bool isJsIdentifierPart(char c) {
+    return isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '$';
+  }
+
+  static void skipJsString(std::string const& source, size_t& pos) {
+    char quote = source[pos++];
+    while (pos < source.size()) {
+      char c = source[pos++];
+      if (c == '\\' && pos < source.size()) {
+        ++pos;
+      } else if (c == quote) {
+        break;
+      }
+    }
+  }
+
+  static void skipJsLineComment(std::string const& source, size_t& pos) {
+    pos += 2;
+    while (pos < source.size() && source[pos] != '\n') {
+      ++pos;
+    }
+  }
+
+  static void skipJsBlockComment(std::string const& source, size_t& pos) {
+    pos += 2;
+    while (pos + 1 < source.size()) {
+      if (source[pos] == '*' && source[pos + 1] == '/') {
+        pos += 2;
+        return;
+      }
+      ++pos;
+    }
+    pos = source.size();
+  }
+
+  static void skipJsWhitespaceAndComments(std::string const& source, size_t& pos) {
+    for (;;) {
+      while (pos < source.size() && isspace(static_cast<unsigned char>(source[pos]))) {
+        ++pos;
+      }
+      if (pos + 1 < source.size() && source[pos] == '/' && source[pos + 1] == '/') {
+        skipJsLineComment(source, pos);
+      } else if (pos + 1 < source.size() && source[pos] == '/' && source[pos + 1] == '*') {
+        skipJsBlockComment(source, pos);
+      } else {
+        return;
+      }
+    }
+  }
+
+  static kj::Maybe<kj::String> parseJsStringLiteral(std::string const& source, size_t& pos) {
+    if (pos >= source.size() || (source[pos] != '"' && source[pos] != '\'')) {
+      return nullptr;
+    }
+
+    char quote = source[pos++];
+    std::string result;
+    while (pos < source.size()) {
+      char c = source[pos++];
+      if (c == quote) {
+        return kj::heapString(result.c_str());
+      } else if (c == '\\' && pos < source.size()) {
+        result.push_back(source[pos++]);
+      } else {
+        result.push_back(c);
+      }
+    }
+
+    return nullptr;
+  }
+
+  static kj::Maybe<kj::String> scanImportDeclarationSpecifier(
+      std::string const& source, size_t& pos) {
+    skipJsWhitespaceAndComments(source, pos);
+    if (pos < source.size() && source[pos] == '(') {
+      return nullptr;
+    }
+
+    KJ_IF_MAYBE(specifier, parseJsStringLiteral(source, pos)) {
+      return kj::mv(*specifier);
+    }
+
+    while (pos < source.size()) {
+      skipJsWhitespaceAndComments(source, pos);
+      if (pos >= source.size() || source[pos] == ';') {
+        return nullptr;
+      }
+
+      if (source[pos] == '"' || source[pos] == '\'') {
+        skipJsString(source, pos);
+      } else if (source[pos] == '`') {
+        skipJsString(source, pos);
+      } else if (isJsIdentifierStart(source[pos])) {
+        auto start = pos++;
+        while (pos < source.size() && isJsIdentifierPart(source[pos])) {
+          ++pos;
+        }
+        if (source.compare(start, pos - start, "from") == 0) {
+          skipJsWhitespaceAndComments(source, pos);
+          return parseJsStringLiteral(source, pos);
+        }
+      } else {
+        ++pos;
+      }
+    }
+
+    return nullptr;
+  }
+
+  static kj::Maybe<kj::String> scanExportDeclarationSpecifier(
+      std::string const& source, size_t& pos) {
+    while (pos < source.size()) {
+      skipJsWhitespaceAndComments(source, pos);
+      if (pos >= source.size() || source[pos] == ';') {
+        return nullptr;
+      }
+
+      if (source[pos] == '"' || source[pos] == '\'' || source[pos] == '`') {
+        skipJsString(source, pos);
+      } else if (isJsIdentifierStart(source[pos])) {
+        auto start = pos++;
+        while (pos < source.size() && isJsIdentifierPart(source[pos])) {
+          ++pos;
+        }
+        if (source.compare(start, pos - start, "from") == 0) {
+          skipJsWhitespaceAndComments(source, pos);
+          return parseJsStringLiteral(source, pos);
+        }
+      } else {
+        ++pos;
+      }
+    }
+
+    return nullptr;
+  }
+
+  static kj::Vector<kj::String> scanDevIsolateImports(kj::StringPtr moduleSource) {
+    auto source = toStdString(moduleSource);
+    kj::Vector<kj::String> imports;
+    size_t pos = 0;
+    while (pos < source.size()) {
+      skipJsWhitespaceAndComments(source, pos);
+      if (pos >= source.size()) {
+        break;
+      }
+
+      if (source[pos] == '"' || source[pos] == '\'' || source[pos] == '`') {
+        skipJsString(source, pos);
+      } else if (isJsIdentifierStart(source[pos])) {
+        auto start = pos++;
+        while (pos < source.size() && isJsIdentifierPart(source[pos])) {
+          ++pos;
+        }
+
+        if (source.compare(start, pos - start, "import") == 0) {
+          KJ_IF_MAYBE(specifier, scanImportDeclarationSpecifier(source, pos)) {
+            imports.add(kj::mv(*specifier));
+          }
+        } else if (source.compare(start, pos - start, "export") == 0) {
+          KJ_IF_MAYBE(specifier, scanExportDeclarationSpecifier(source, pos)) {
+            imports.add(kj::mv(*specifier));
+          }
+        }
+      } else {
+        ++pos;
+      }
+    }
+
+    return imports;
+  }
+
+  static void appendCapnpText(kj::Vector<char>& output, kj::StringPtr text) {
+    output.add('"');
+    for (char c: text) {
+      switch (c) {
+        case '"': output.addAll(kj::StringPtr("\\\"")); break;
+        case '\\': output.addAll(kj::StringPtr("\\\\")); break;
+        case '\n': output.addAll(kj::StringPtr("\\n")); break;
+        case '\r': output.addAll(kj::StringPtr("\\r")); break;
+        case '\t': output.addAll(kj::StringPtr("\\t")); break;
+        default:
+          output.add(static_cast<unsigned char>(c) < 0x20 ? ' ' : c);
+          break;
+      }
+    }
+    output.add('"');
+  }
+
   kj::MainBuilder::Validity doDev() {
     ensurePackageDefParsed();
+
+    if (devIsolateWorkerPath != nullptr) {
+      context.warning(kj::str(
+          "Isolate dev app identity:\n"
+          "    appId: ", packageDef.getId(), "\n"
+          "    entrypoint: ", devIsolateWorkerPath, "\n\n"
+          "Existing grains with this appId will run against the active dev package while this\n"
+          "session is connected. To force a separate dev app identity, run dev-isolate from a\n"
+          "different entrypoint path or delete the existing dev grain."));
+    }
 
     if (serverBinary == nullptr) {
       // Try to find the server. First try looking where `spk` is installed.
@@ -2084,8 +2831,19 @@ private:
       kj::Function<void(kj::StringPtr)> callback = [&](kj::StringPtr path) {
         usedFiles.insert(kj::heapString(path));
       };
+      kj::Maybe<kj::Function<kj::Array<capnp::word>()>> dynamicManifestContent;
+      if (devIsolateWorkerPath != nullptr) {
+        dynamicManifestContent = [&]() {
+          return buildDevIsolateManifestBytes();
+        };
+      }
+      kj::Function<kj::Array<capnp::word>()>* dynamicManifestContentPtr = nullptr;
+      KJ_IF_MAYBE(content, dynamicManifestContent) {
+        dynamicManifestContentPtr = content;
+      }
       auto rootNode = makeUnionFs(sourceDir, packageDef.getSourceMap(), packageDef.getManifest(),
-                                  packageDef.getBridgeConfig(), getHttpBridgeExe(), callback);
+                                  packageDef.getBridgeConfig(), getHttpBridgeExe(), callback,
+                                  dynamicManifestContentPtr);
 
       FuseOptions options;
 
@@ -2187,8 +2945,9 @@ private:
       newFileList.commit();
     } else {
       // If alwaysInclude contains "." then the user doesn't care about the used files list, so
-      // don't print in that case.
-      bool includeAll = false;
+      // don't print in that case. Dev-isolate also uses a generated package definition with
+      // implementation-detail source-map prefixes, so there is no useful fileList to suggest.
+      bool includeAll = devIsolateWorkerPath != nullptr;
       for (auto alwaysInclude: packageDef.getAlwaysInclude()) {
         if (alwaysInclude == ".") {
           includeAll = true;

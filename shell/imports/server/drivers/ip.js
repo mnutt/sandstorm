@@ -18,6 +18,7 @@ import { Meteor } from "meteor/meteor";
 import { Match, check } from "meteor/check";
 
 import { PersistentImpl } from "/imports/server/persistent";
+import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
 import Net from "net";
 import Tls from "tls";
 import Dgram from "dgram";
@@ -130,7 +131,7 @@ class IpInterfaceImpl extends PersistentImpl {
 // TODO(cleanup): Meteor.startup() needed because 00-startup.js runs *after* code in subdirectories
 //   (ugh).
 Meteor.startup(() => {
-  globalThis.globalFrontendRefRegistry.register({
+  frontendRefRegistry.register({
     frontendRefField: "ipInterface",
     typeId: IpRpc.IpInterface.typeId,
 
@@ -265,7 +266,7 @@ class IpNetworkImpl extends PersistentImpl {
 // TODO(cleanup): Meteor.startup() needed because 00-startup.js runs *after* code in subdirectories
 //   (ugh).
 Meteor.startup(() => {
-  globalThis.globalFrontendRefRegistry.register({
+  frontendRefRegistry.register({
     frontendRefField: "ipNetwork",
     typeId: IpRpc.IpNetwork.typeId,
 

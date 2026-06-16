@@ -21,8 +21,10 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { Accounts } from "meteor/accounts-base";
 
 import { allowDemo } from "/imports/demo";
+import { callMeteor } from "/imports/client/globals";
+import { globalSubs, launchAndEnterGrainByActionId } from "/imports/client/shell-client";
 import { SandstormDb } from "/imports/sandstorm-db/db";
-import { globalDb } from "/imports/db-deprecated";
+import { globalDb, isSignedUp, isSignedUpOrDemo } from "/imports/db-deprecated";
 
 Meteor.loginWithDemo = function (options, callback) {
   Router.go("demo");
@@ -32,7 +34,7 @@ Meteor.loginWithDemo = function (options, callback) {
 //   don't want it to appear in the sign-in drop-down.
 
 window.testExpireDemo = function () {
-  globalThis.callMeteor("testExpireDemo");
+  callMeteor("testExpireDemo");
 };
 
 Router.map(function () {

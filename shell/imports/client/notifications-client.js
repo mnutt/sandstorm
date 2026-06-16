@@ -18,19 +18,19 @@ import { Meteor } from "meteor/meteor";
 import { Template } from "meteor/templating";
 import { Tracker } from "meteor/tracker";
 
+import { browserTabHidden, callMeteor, currentPath } from "/imports/client/globals";
 import { computeTitleFromTokenOwnerUser } from "/imports/client/model-helpers";
 import { iconSrcForPackage, iconSrcForDenormalizedGrainMetadata } from "/imports/sandstorm-identicons/helpers";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { MAILING_LIST_BONUS } from "/imports/blackrock-payments/constants";
 
-const testNotifications = () => {
+export const testNotifications = () => {
   // Run on console to create some dummy notifications for the purpose of seeing what they look
   // like.
 
-  globalThis.callMeteor("testNotifications");
+  callMeteor("testNotifications");
 };
-globalThis.testNotifications = testNotifications;
 
 const getNotificationPath = (notification) => {
   if (notification.admin) {
@@ -69,7 +69,7 @@ const dismissNotificationFromContext = (context) => {
     return;
   }
 
-  globalThis.callMeteor("dismissNotification", notificationId);
+  callMeteor("dismissNotification", notificationId);
 };
 
 Tracker.autorun(function () {
@@ -93,7 +93,7 @@ Tracker.autorun(function () {
 
 Template.notificationsPopup.helpers({
   notifications: function () {
-    globalThis.callMeteor("readAllNotifications");
+    callMeteor("readAllNotifications");
     return globalDb.collections.notifications.find({ userId: Meteor.userId() }, { sort: { timestamp: -1 } })
         .map(function (row) {
       if (row.initiatingAccount) {

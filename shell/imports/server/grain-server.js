@@ -22,6 +22,7 @@ import { pick, findWhere } from "/imports/shared/collection-utils";
 import { Random } from "meteor/random";
 
 import { send as sendEmail } from "/imports/server/email";
+import { getGlobalBackend } from "/imports/server/backend-instance";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
@@ -41,7 +42,7 @@ Meteor.startup(() => {
     const grains = await globalDb.collections.grains.find(
         { appId: appId }, { fields: { oldUsers: 0 } }).fetchAsync();
     grains.forEach((grain) => {
-      globalThis.globalBackend.shutdownGrain(grain._id, grain.userId).catch((err) => {
+      getGlobalBackend().shutdownGrain(grain._id, grain.userId).catch((err) => {
         console.error("Error shutting down grain:", err);
       });
     });
@@ -316,7 +317,7 @@ Meteor.publish("grainLog", async function (grainId) {
     },
   };
 
-  globalThis.globalBackend.useGrain(grainId, (supervisor) => {
+  getGlobalBackend().useGrain(grainId, (supervisor) => {
     return supervisor.watchLog(8192, receiver);
   }).then((result) => {
     const handle = result.handle;
@@ -342,7 +343,7 @@ SandstormDb.periodicCleanup(86400000, () => {
   globalDb.removeApiTokens({ trashed: { $lt: trashExpiration } }, true).catch((err) => {
     console.error("Error deleting expired trashed apiTokens:", err);
   });
-  globalDb.deleteGrains({ trashed: { $lt: trashExpiration } }, globalThis.globalBackend, "grain")
+  globalDb.deleteGrains({ trashed: { $lt: trashExpiration } }, getGlobalBackend(), "grain")
       .catch((err) => {
         console.error("Error deleting expired trashed grains:", err);
       });
@@ -400,7 +401,7 @@ Meteor.methods({
       size: 0,
     });
 
-    globalThis.globalBackend.startGrainInternal(packageId, grainId, this.userId, command, true,
+    getGlobalBackend().startGrainInternal(packageId, grainId, this.userId, command, true,
                                      isDev, mountProc);
 
     return grainId;
@@ -413,7 +414,7 @@ Meteor.methods({
       throw new Meteor.Error(403, "Unauthorized", "User is not the owner of this grain");
     }
 
-    await globalThis.globalBackend.shutdownGrain(grainId, grain.userId, true);
+    await getGlobalBackend().shutdownGrain(grainId, grain.userId, true);
   },
 
   updateGrainTitle: async function (grainId, newTitle, obsolete) {

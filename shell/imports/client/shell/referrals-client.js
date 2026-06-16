@@ -6,7 +6,6 @@ import { globalDb } from "/imports/db-deprecated";
 import "/imports/client/shell/styles/referrals-ui.scss";
 
 export const ReferralInfo = new Meteor.Collection("referralInfo"); // pseudo-collection
-globalThis.ReferralInfo = ReferralInfo;
 
 Template.referrals.helpers({
   setDocumentTitle: function () {

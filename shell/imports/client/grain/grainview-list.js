@@ -24,6 +24,7 @@ import { SHA256 } from "meteor/sha";
 
 import { GrainView, onceConditionIsTrue } from "./grainview";
 import { isStandalone } from "/imports/client/standalone";
+import { globalSubs } from "/imports/client/global-subs";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
 class GrainViewList {
@@ -92,7 +93,7 @@ class GrainViewList {
         }
 
         if (isStandalone()) {
-          const activeGrain = globalGrains.getActive();
+          const activeGrain = this.getActive();
           if (activeGrain) {
             activeGrain.reset(Meteor.user() && Meteor.user().loginCredentials &&
               Meteor.user().loginCredentials[0]);

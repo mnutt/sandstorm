@@ -19,6 +19,7 @@
 import { Meteor } from "meteor/meteor";
 import { Template } from "meteor/templating";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
+import { callMeteor, getOrigin } from "/imports/client/globals";
 import { DEFAULT_SIGNUP_DIALOG } from "/imports/client/personalization";
 import { globalDb } from "/imports/db-deprecated";
 
@@ -65,7 +66,7 @@ Router.map(function () {
       };
 
       if (result.keyIsValid && !result.keyIsUsed && Meteor.userId()) {
-        globalThis.callMeteor("useSignupKey", this.params.key);
+        callMeteor("useSignupKey", this.params.key);
       }
 
       return result;

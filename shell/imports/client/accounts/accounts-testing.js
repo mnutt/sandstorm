@@ -1,3 +1,5 @@
+import { callMeteor } from "/imports/client/globals";
+
 window.testFirstSignup = function () {
-  globalThis.callMeteor("testFirstSignup");
+  callMeteor("testFirstSignup");
 };

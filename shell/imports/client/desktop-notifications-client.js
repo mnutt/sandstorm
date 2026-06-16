@@ -20,6 +20,7 @@ import { Random } from "meteor/random";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 
 import { computeTitleFromTokenOwnerUser } from "/imports/client/model-helpers";
+import { globalGrains } from "/imports/client/shell-state";
 import { iconSrcForPackage, identiconForApp } from "/imports/sandstorm-identicons/helpers";
 import { globalDb } from "/imports/db-deprecated";
 

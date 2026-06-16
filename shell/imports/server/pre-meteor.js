@@ -21,7 +21,8 @@ import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
 
 import { inMeteor } from "/imports/server/async-helpers";
-import { globalDb } from "/imports/db-deprecated";
+import { globalDb, matchWildcardHost } from "/imports/db-deprecated";
+import { makeConnectHandler } from "/imports/blackrock-payments/server/payments-server";
 import ServerIdenticon from "/imports/sandstorm-identicons/identicon-server";
 import Url from "url";
 import connect from "connect";
@@ -264,7 +265,7 @@ Meteor.startup(() => {
   // Construct the middleware chain for requests to non-DDP, non-shell hosts.
   const nonMeteorRequestHandler = connect();
   if (Meteor.settings.public.stripePublicKey) {
-    nonMeteorRequestHandler.use(globalThis.BlackrockPayments.makeConnectHandler(globalDb));
+    nonMeteorRequestHandler.use(makeConnectHandler(globalDb));
   }
 
   nonMeteorRequestHandler.use(handleNonMeteorRequest);

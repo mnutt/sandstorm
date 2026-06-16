@@ -29,6 +29,12 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 set(SANDSTORM_BUILD 0 CACHE STRING "Sandstorm release build number")
+set(SANDSTORM_WORKERD_NPM_VERSION 1.20260610.1 CACHE STRING
+  "npm workerd version bundled for isolate grains")
+set(SANDSTORM_WORKERD_BIN "" CACHE FILEPATH
+  "Optional prebuilt workerd binary to bundle instead of installing from npm")
+set(SANDSTORM_CAPNWEB_NPM_VERSION 0.8.0 CACHE STRING
+  "npm capnweb version embedded for isolate grains")
 option(SANDSTORM_BUILD_NODE_CAPNP "Build the capnp.node addon" ON)
 option(SANDSTORM_BUILD_FRONTEND "Enable Meteor shell build targets" ON)
 option(SANDSTORM_STATIC_RUNTIME_BINARIES

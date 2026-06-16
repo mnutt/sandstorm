@@ -38,12 +38,14 @@ import { BrowserPolicy } from "meteor/browser-policy";
 
 import { inMeteor } from "/imports/server/async-helpers";
 import { globalDb } from "/imports/db-deprecated";
+import { getGlobalBackend } from "/imports/server/backend-instance";
+import { getWildcardOrigin } from "/imports/server/00-startup";
 
 BrowserPolicy.framing.disallow();  // Disallow framing of the UI.
 Meteor.startup(() => {
   const frameSetter = async () => {
     BrowserPolicy.content.disallowFrame(); // This clears all the old rules
-    BrowserPolicy.content.allowFrameOrigin(globalDb.getWildcardOrigin());
+    BrowserPolicy.content.allowFrameOrigin(getWildcardOrigin());
     const billingPromptSetting = await globalDb.collections.settings.findOneAsync({ _id: "billingPromptUrl" });
     const billingPromptUrl = billingPromptSetting && billingPromptSetting.value;
     if (billingPromptUrl) {
@@ -94,7 +96,7 @@ Meteor.publish("grainsMenu", async function () {
       // TODO(someday): Implement the ability to reactively subscribe to storage usage from the
       //   back-end?
       const userId = this.userId;
-      globalThis.globalBackend.cap().getUserStorageUsage(userId).then(function (results) {
+      getGlobalBackend().cap().getUserStorageUsage(userId).then(function (results) {
         return inMeteor(async function () {
           await Meteor.users.updateAsync(userId, { $set: { storageUsage: parseInt(results.size, 10) } });
         });
