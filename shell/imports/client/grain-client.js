@@ -17,7 +17,6 @@
 // This file implements /grain, i.e. the main view into an app.
 
 import { Meteor } from "meteor/meteor";
-import { Mongo } from "meteor/mongo";
 import { Match, check } from "meteor/check";
 import { Template } from "meteor/templating";
 import { Tracker } from "meteor/tracker";
@@ -35,23 +34,18 @@ import { introJs } from "intro.js";
 import downloadFile from "/imports/client/download-file";
 import { makeAndDownloadBackup } from "/imports/client/backups";
 import { ContactProfiles } from "/imports/client/contacts";
+import { browserTabHidden, callMeteor, currentPathChanged, getOrigin } from "/imports/client/globals";
 import { isDevelopmentServer } from "/imports/client/dev-mode";
 import { isStandalone } from "/imports/client/standalone";
 import { GrainView } from "/imports/client/grain/grainview";
+import { GrantedAccessRequests, GrainLog, TokenInfo } from "/imports/client/grain/grain-pseudo-collections";
+import { globalGrains, globalTopbar } from "/imports/client/shell-state";
+import { globalQuotaEnforcer, globalSubs, logoutSandstorm, prettySize } from "/imports/client/shell-client";
+import { SandstormAppList } from "/imports/client/apps/applist-client";
 import { SandstormDb } from "/imports/sandstorm-db/db";
-import { globalDb } from "/imports/db-deprecated";
+import { globalDb, Sessions } from "/imports/db-deprecated";
 import { SandstormPowerboxRequest } from "/imports/sandstorm-ui-powerbox/powerbox-client";
-
-// Pseudo-collections.
-const TokenInfo = new Mongo.Collection("tokenInfo");
-globalThis.TokenInfo = TokenInfo;
-// TokenInfo is used by grainview.js
-const GrantedAccessRequests = new Mongo.Collection("grantedAccessRequests");
-globalThis.GrantedAccessRequests = GrantedAccessRequests;
-// Pseudo-collection about access requests
-const GrainLog = new Mongo.Collection("grainLog");
-globalThis.GrainLog = GrainLog;
-// Pseudo-collection created by subscribing to "grainLog", implemented in proxy.js.
+import { AnsiUp } from "/imports/client/vendor/ansi-up";
 
 const promptNewTitle = function (grain) {
   if (grain) {
@@ -165,7 +159,7 @@ Template.grainDeleteButton.events({
     const grainId = activeGrain.grainId();
     let confirmationMessage = TAPi18n.__("grains.grainDeletePopup.confirmationMessage");
     if (window.confirm(confirmationMessage)) {
-      globalThis.callMeteor("moveGrainsToTrash", [grainId]);
+      callMeteor("moveGrainsToTrash", [grainId]);
       globalGrains.remove(grainId, true);
     }
   },

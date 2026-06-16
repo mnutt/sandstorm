@@ -3,6 +3,7 @@ import { Template } from "meteor/templating";
 import { ReactiveVar } from "meteor/reactive-var";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 
+import { getOrigin } from "/imports/client/globals";
 import { getClientReturnAddressWithDisplayName } from "/imports/client/admin/client-settings";
 import { globalDb } from "/imports/db-deprecated";
 

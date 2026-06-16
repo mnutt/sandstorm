@@ -20,6 +20,7 @@ import { _ } from "meteor/underscore";
 
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import Capnp from "/imports/server/capnp";
+import { isTesting } from "/imports/shared/testing";
 
 const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
 const Grain = Capnp.importSystem("sandstorm/grain.capnp");
@@ -302,7 +303,21 @@ class PowerboxOption {
   }
 }
 
-function registerUiViewQueryHandler(frontendRefRegistry) {
+function powerboxDescriptorDiagnostics(queryDescriptor, index) {
+  return {
+    index,
+    tagIds: (queryDescriptor.tags || []).map(tag => String(tag.id)),
+    tagCount: (queryDescriptor.tags || []).length,
+    frontendRefMatchCounts: [],
+    grainsWithMatchingTagIds: 0,
+    grainDescriptorsChecked: 0,
+    grainDescriptorMissingTagCount: 0,
+    grainDescriptorValueMismatchCount: 0,
+    hostedObjectMatchCount: 0,
+  };
+}
+
+export function registerUiViewQueryHandler(frontendRefRegistry) {
   // TODO(cleanup): Maybe this belongs in a different file? But where?
 
   frontendRefRegistry.register({
@@ -377,7 +392,7 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
 
   const runQuery = async () => {
     if (descriptorList.length > 0) {
-      const descriptorMatches = await Promise.all(descriptorList.map(async packedDescriptor => {
+      const descriptorMatches = await Promise.all(descriptorList.map(async (packedDescriptor, index) => {
       // Decode the descriptor.
       // TODO(now): Also single-segment? Canonical?
 
@@ -386,9 +401,10 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
           Powerbox.PowerboxDescriptor,
           new Buffer(packedDescriptor, "base64"),
           { packed: true });
+      const diagnostics = powerboxDescriptorDiagnostics(queryDescriptor, index);
 
       if (!queryDescriptor.tags || queryDescriptor.tags.length === 0) {
-        return { descriptor: queryDescriptor, matches: {} };
+        return { descriptor: queryDescriptor, diagnostics, matches: {} };
       }
 
       // Expand each tag into a match map.
@@ -398,6 +414,7 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
           options.forEach(option => {
             result[option._id] = new PowerboxOption(option);
           });
+          diagnostics.frontendRefMatchCounts.push(Object.keys(result).length);
 
           return result;
         }));
@@ -435,11 +452,13 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
                   { $in: queryDescriptor.tags.map(tag => tag.id) },
             }, { fields: { "cachedViewInfo.matchRequests": 1 } })
             .fetchAsync();
+        diagnostics.grainsWithMatchingTagIds = grains.length;
         grains.forEach((grain) => {
           // Filter down to grains that actually have a matching descriptor.
           let alreadyMatched = false;
           grain.cachedViewInfo.matchRequests.forEach(grainDescriptor => {
             if (alreadyMatched) return;
+            diagnostics.grainDescriptorsChecked++;
 
             // Build map of descriptor tags by ID.
             const grainTagsById = {};
@@ -456,15 +475,18 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
                 // Null values match everything, so only pay attention if non-null.
                 if (value && queryTag.value) {
                   if (!Capnp.matchPowerboxQuery(queryTag.value, value)) {
+                    diagnostics.grainDescriptorValueMismatchCount++;
                     allMatched = false;
                   }
                 }
               } else {
+                diagnostics.grainDescriptorMissingTagCount++;
                 allMatched = false;
               }
             });
 
             if (allMatched) {
+              diagnostics.hostedObjectMatchCount++;
               alreadyMatched = true;
               const option = new PowerboxOption({
                 _id: "grain-" + grain._id,
@@ -483,7 +505,7 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
         });
       }
 
-        return { descriptor: queryDescriptor, matches };
+        return { descriptor: queryDescriptor, diagnostics, matches };
       }));
 
     // TODO(someday): The implementation of matchQuality here is not quite right. In theory, we're
@@ -522,6 +544,16 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
         }
       }, {});
 
+      if (Object.keys(matches).length === 0 && (isTesting || await db.allowDevAccountsAsync())) {
+        this.added("powerboxOptions", "diagnostic-" + requestId, {
+          requestId,
+          powerboxDiagnostic: {
+            descriptorCount: descriptorList.length,
+            descriptors: descriptorMatches.map(clause => clause.diagnostics),
+          },
+        });
+      }
+
       for (const id in matches) {
         if (!matches[id].matchQuality) {
           matches[id].matchQuality = "acceptable";
@@ -542,5 +574,3 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
     this.error(err);
   });
 });
-
-globalThis.SandstormPowerbox = { registerUiViewQueryHandler };

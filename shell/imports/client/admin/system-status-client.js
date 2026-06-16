@@ -4,6 +4,7 @@ import { Template } from "meteor/templating";
 import downloadFile from "/imports/client/download-file";
 import getBuildInfo from "/imports/client/build-info";
 import { allowDemo } from "/imports/demo";
+import { AnsiUp } from "/imports/client/vendor/ansi-up";
 
 // Pseudocollection holding number of grains with open sessions and accounts with open sessions.
 const systemStatus = new Mongo.Collection("systemStatus");

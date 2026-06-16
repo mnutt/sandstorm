@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild worker.ts --bundle --format=esm --platform=browser --target=es2022 --external:sandstorm:api --external:sandstorm:rpc --external:capnweb --banner:js=\"// Generated from worker.ts with npm run build.\" --outfile=worker.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.11",
+    "typescript": "^5.9.3"
+  }
+}

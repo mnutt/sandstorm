@@ -116,13 +116,14 @@ cp meteor-bundle-main.js bundle/sandstorm-main.js
 # Ensure node-capnp is present where server startup looks first
 # (process.cwd() starts at /programs/server in the runtime chroot).
 mkdir -p bundle/programs/server/node_modules
-cp node_modules/capnp.js bundle/programs/server/node_modules/capnp.js
-cp node_modules/capnp.node bundle/programs/server/node_modules/capnp.node
+cp deps/node-capnp/src/node-capnp/capnp.js bundle/programs/server/node_modules/capnp.js
+cp tmp/node-capnp/capnp.node bundle/programs/server/node_modules/capnp.node
 
 # Copy over key binaries.
 mkdir -p bundle/bin
 cp bin/sandstorm-http-bridge bundle/bin/sandstorm-http-bridge
 cp bin/sandstorm bundle/sandstorm
+cp bin/workerd bundle/bin/workerd
 cp $METEOR_DEV_BUNDLE/bin/node bundle/bin
 
 # We used to pull mongodb out of the meteor dev bundle, but we need to figure out how to safely
@@ -248,8 +249,12 @@ mkdir -p bundle/usr/include/{capnp,sandstorm}
 cp src/capnp/!(*test*).capnp bundle/usr/include/capnp
 cp src/sandstorm/!(*-internal).capnp bundle/usr/include/sandstorm
 
-# Copy over node_modules.
-cp -r node_modules bundle
+# Copy over node-capnp. Keep this independent from the repo-level node_modules
+# directory, which may contain unrelated locally-installed npm tools.
+mkdir -p bundle/node_modules/capnp
+cp deps/node-capnp/src/node-capnp/capnp.js bundle/node_modules/capnp.js
+cp tmp/node-capnp/capnp.node bundle/node_modules/capnp.node
+cp src/capnp/!(*test*).capnp bundle/node_modules/capnp
 
 # Copy over all necessary shared libraries.
 (ldd bundle/bin/* $(find bundle -name '*.node') || true) | grep -o '[[:space:]]/[^ ]*' | copyDeps

@@ -21,6 +21,7 @@ import { Random } from "meteor/random";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 
 import { inMeteor } from "/imports/server/async-helpers";
+import { getGlobalBackend } from "/imports/server/backend-instance";
 
 import Capnp from "/imports/server/capnp";
 import { SandstormDb } from "/imports/sandstorm-db/db";
@@ -32,7 +33,7 @@ const TOKEN_CLEANUP_TIMER = TOKEN_CLEANUP_MINUTES * 60 * 1000;
 async function cleanupToken(tokenId) {
   check(tokenId, String);
   await globalDb.collections.fileTokens.removeAsync({ _id: tokenId });
-  await globalThis.globalBackend.cap().deleteBackup(tokenId);
+  await getGlobalBackend().cap().deleteBackup(tokenId);
 }
 
 Meteor.startup(() => {
@@ -102,7 +103,7 @@ export const createGrainBackup = async (userId, grainId, async) => {
 
   await globalDb.collections.fileTokens.insertAsync(token);
 
-  const promise = globalThis.globalBackend.cap().backupGrain(token._id, userId, grainId, grainInfo);
+  const promise = getGlobalBackend().cap().backupGrain(token._id, userId, grainId, grainInfo);
 
   if (async) {
     promise.then(() => {
@@ -149,13 +150,13 @@ export const restoreGrainBackup = async (tokenId, user, transferInfo) => {
   const grainId = Random.id(22);
 
   try {
-    const grainInfo = (await globalThis.globalBackend.cap().restoreGrain(
+    const grainInfo = (await getGlobalBackend().cap().restoreGrain(
         tokenId, user._id, grainId).catch((err) => {
           console.error("Unzip failure:", err.message);
           throw new Meteor.Error(500, "Invalid backup file.");
         })).info;
     if (!grainInfo.appId) {
-      globalThis.globalBackend.deleteGrain(grainId, user._id);
+      getGlobalBackend().deleteGrain(grainId, user._id);
       throw new Meteor.Error(500, "Metadata object for uploaded grain has no AppId");
     }
 
@@ -182,14 +183,14 @@ export const restoreGrainBackup = async (tokenId, user, transferInfo) => {
       appVersion = transferInfo.appVersion;
     } else {
       // If the package isn't installed at all, bail out.
-      globalThis.globalBackend.deleteGrain(grainId, user._id);
+      getGlobalBackend().deleteGrain(grainId, user._id);
       throw new Meteor.Error(500,
                               "App id for uploaded grain not installed",
                               "App Id: " + grainInfo.appId);
     }
 
     if (appVersion < grainInfo.appVersion) {
-      globalThis.globalBackend.deleteGrain(grainId, this.userId);
+      getGlobalBackend().deleteGrain(grainId, this.userId);
       throw new Meteor.Error(500,
                               "App version for uploaded grain is newer than any " +
                               "installed version. You need to upgrade your app first",
@@ -320,7 +321,7 @@ const downloadGrainBackup = async (tokenId, response, retryCount = 0) => {
     },
   };
 
-  await globalThis.globalBackend.cap().downloadBackup(tokenId, stream);
+  await getGlobalBackend().cap().downloadBackup(tokenId, stream);
 
   if (!sawEnd) {
     console.error("backend failed to call done() when downloading backup");
@@ -335,7 +336,7 @@ const downloadGrainBackup = async (tokenId, response, retryCount = 0) => {
 }
 
 export const storeGrainBackup = async (tokenId, inputStream) => {
-  const stream = globalThis.globalBackend.cap().uploadBackup(tokenId).stream;
+  const stream = getGlobalBackend().cap().uploadBackup(tokenId).stream;
 
   await new Promise((resolve, reject) => {
     inputStream.on("data", (data) => {

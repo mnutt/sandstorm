@@ -21,6 +21,8 @@ import { Tracker } from "meteor/tracker";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { HTTP } from "meteor/http";
 
+import { isAdmin, makeWildcardHost } from "/imports/db-deprecated";
+
 Meteor.subscribe("publicAdminSettings");
 
 const newAdminRoute = RouteController.extend({

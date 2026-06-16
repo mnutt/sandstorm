@@ -36,6 +36,7 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { httpCallAsync } from "/imports/http-helpers";
 import { MAILING_LIST_BONUS } from "/imports/blackrock-payments/constants";
+import { send as defaultSendEmail } from "/imports/server/email";
 
 const ROOT_URL = process.env.ROOT_URL;
 const HOSTNAME = Url.parse(ROOT_URL).hostname;
@@ -46,14 +47,17 @@ if (!Meteor.settings.stripeKey) {
 }
 export const stripe = StripeModule(stripeKey);
 let paymentsHttpCall = httpCallAsync;
+let paymentsEmailSender = defaultSendEmail;
 
 export function setPaymentsHttpCallForTests(call) {
   paymentsHttpCall = call || httpCallAsync;
 }
 
-globalThis.BlackrockPayments = {};
+export function setPaymentsEmailSenderForTests(sender) {
+  paymentsEmailSender = sender || defaultSendEmail;
+}
 
-globalThis.MailchimpSubscribers = new Mongo.Collection("mailchimpSubscribers");
+export const MailchimpSubscribers = new Mongo.Collection("mailchimpSubscribers");
 // List of mailing list subscribers. We keep a copy of this rather than hit Mailchimp in real time
 // because Mailchimp is sllooowwwww. We keep it up to date with webhooks.
 //
@@ -215,7 +219,7 @@ async function sendEmail(db, user, mailSubject, mailText, mailHtml, config) {
   }
 
   if (email) {
-    const sendPromise = SandstormEmail.send({
+    const sendPromise = paymentsEmailSender({
       to: email,
       from: { name: config.acceptorTitle, address: config.returnAddress },
       subject: mailSubject,
@@ -542,7 +546,7 @@ function processMailchimpWebhook(db, req, res) {
   });
 }
 
-globalThis.BlackrockPayments.makeConnectHandler = function (db) {
+export function makeConnectHandler(db) {
   return function (req, res, next) {
     if (req.headers.host === db.makeWildcardHost("payments")) {
       if (req.url === "/checkout") {
@@ -874,7 +878,7 @@ async function getAllStripeCustomers() {
   return results;
 }
 
-globalThis.BlackrockPayments.getTotalCharges = async function() {
+export async function getTotalCharges() {
   var hasMore = true;
   var results = [];
 
@@ -891,9 +895,19 @@ globalThis.BlackrockPayments.getTotalCharges = async function() {
     return (elem.paid ? elem.amount || 0 : 0) - (elem.refunded ? elem.amount_refunded || 0 : 0) +
       total;
   }, 0) / 100;
-};
+}
 
-globalThis.BlackrockPayments.suspendAccount = async function (db, userId) {
+let suspendAccountForTests = null;
+
+export function setSuspendAccountForTests(fn) {
+  suspendAccountForTests = fn;
+}
+
+export async function suspendAccount(db, userId) {
+  if (suspendAccountForTests) {
+    return await suspendAccountForTests(db, userId);
+  }
+
   const user = await db.collections.users.findOneAsync({ _id: userId });
   var payments = (user || {}).payments;
   if (payments && payments.id) {
@@ -901,9 +915,9 @@ globalThis.BlackrockPayments.suspendAccount = async function (db, userId) {
 
     // TODO(someday): un-cancel plan on un-suspend?
   }
-};
+}
 
-globalThis.BlackrockPayments.deleteAccount = function (db, user) {
+export function deleteAccount(db, user) {
   var payments = user.payments;
   if (payments && payments.id) {
     var customerId = payments.id;
@@ -911,7 +925,7 @@ globalThis.BlackrockPayments.deleteAccount = function (db, user) {
       console.error("Failed deleting Stripe customer:", err);
     });
   }
-};
+}
 
 async function getStripeBonus(user, paymentsBonuses) {
   var bonus = {};

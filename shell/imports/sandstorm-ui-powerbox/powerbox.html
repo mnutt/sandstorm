@@ -43,7 +43,15 @@
             </button>
           </li>
         {{else}}
-          <p>{{_ (con txt "noGrain")}}</p>
+          <li><p>{{_ (con txt "noGrain")}}</p></li>
+          {{#if diagnosticsText}}
+            <li class="powerbox-diagnostics">
+              <details open>
+                <summary>Powerbox diagnostics</summary>
+                <pre>{{diagnosticsText}}</pre>
+              </details>
+            </li>
+          {{/if}}
         {{/each}}
         </ul>
       {{else}}

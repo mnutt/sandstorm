@@ -33,6 +33,7 @@ import { globalDb } from "/imports/db-deprecated";
 import { computeStats } from "/imports/server/stats-server";
 import { httpCallAsync } from "/imports/http-helpers";
 import { createAcmeAccount, renewCertificateNow } from "/imports/server/acme";
+import { getCurrentTlsKeysCallback } from "/imports/server/tls-keys-callback";
 import { Issuer } from "openid-client";
 
 let adminEmailSender = sendEmail;
@@ -420,9 +421,10 @@ Meteor.methods({
       certChain: String
     });
 
-    if (globalThis.currentTlsKeysCallback) {
+    const currentTlsKeysCallback = getCurrentTlsKeysCallback();
+    if (currentTlsKeysCallback) {
       // Validate by calling setKeys() directly.
-      await globalThis.currentTlsKeysCallback.setKeys(keys.key, keys.certChain);
+      await currentTlsKeysCallback.setKeys(keys.key, keys.certChain);
     }
 
     await globalDb.collections.settings.upsertAsync({ _id: "tlsKeys" }, { $set: { value: keys } });

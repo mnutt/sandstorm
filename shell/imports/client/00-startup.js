@@ -14,15 +14,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { Meteor } from "meteor/meteor";
 import { Blaze } from "meteor/blaze";
 import { Template } from "meteor/templating";
-import { Session } from "meteor/session";
 import { Iron, Router } from "meteor/vlasky:galvanized-iron-router";
 
-import { globalDb } from "/imports/db-deprecated";
-import { SandstormTopbar } from "/imports/sandstorm-ui-topbar/topbar";
 import { unwrapTemplateValue as unwrapTemplateValueBase } from "/imports/shared/template-values";
+import { globalAccountsUi, globalTopbar } from "/imports/client/shell-state";
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
@@ -30,58 +27,18 @@ if ('serviceWorker' in navigator) {
   })
 }
 
-import AccountsUi from "/imports/client/accounts/accounts-ui";
-import { GrainViewList } from "/imports/client/grain/grainview-list";
-
-Session.setDefault("shrink-navbar", false);
-// window.globalGrains is used by test code and must remain exported.
-const globalGrains = new GrainViewList(globalDb);
-globalThis.globalGrains = globalGrains;
-
-// If Meteor._localStorage disappears, we'll have to write our own localStorage wrapper, I guess.
-// Using window.localStorage is dangerous because it throws an exception if cookies are disabled.
-Session.set("shrink-navbar", Meteor._localStorage.getItem("shrink-navbar") === "true");
-const globalTopbar = new SandstormTopbar(globalDb,
-  {
-    get() {
-      return Session.get("topbar-expanded");
-    },
-
-    set(value) {
-      Session.set("topbar-expanded", value);
-    },
-  },
-  globalGrains,
-  {
-    get() {
-      return Session.get("shrink-navbar");
-    },
-
-    set(value) {
-      Meteor._localStorage.setItem("shrink-navbar", value);
-      Session.set("shrink-navbar", value);
-    },
-  });
-globalThis.globalTopbar = globalTopbar;
-
-const globalAccountsUi = new AccountsUi(globalDb);
-globalThis.globalAccountsUi = globalAccountsUi;
-
 Template.registerHelper("globalTopbar", () => { return globalTopbar; });
 Template.registerHelper("globalAccountsUi", () => { return globalAccountsUi; });
-
-const forceReplica = function (replica) {
-  // Helper function for blackrock debugging.
-  document.cookie = "force_replica=" + replica + ";path=/;domain=." + window.location.hostname;
-};
-globalThis.forceReplica = forceReplica;
 
 const unwrapTemplateValue = (value) => {
   return unwrapTemplateValueBase(value, { ignoreFunctionErrors: true });
 };
 
+let dynamicTemplateAccessorsPatched = false;
+let routerTemplateHelpersInstalled = false;
+
 const patchDynamicTemplateAccessors = () => {
-  if (globalThis.__sandstormDynamicTemplateUnwrapPatchInstalled) return true;
+  if (dynamicTemplateAccessorsPatched) return true;
   if (!Iron || !Iron.DynamicTemplate) return false;
 
   const dt = Iron.DynamicTemplate;
@@ -97,12 +54,12 @@ const patchDynamicTemplateAccessors = () => {
     dt[method] = wrapped;
   });
 
-  globalThis.__sandstormDynamicTemplateUnwrapPatchInstalled = true;
+  dynamicTemplateAccessorsPatched = true;
   return true;
 };
 
 const installRouterTemplateHelpers = () => {
-  if (globalThis.__sandstormRouterHelperPatchInstalled) return true;
+  if (routerTemplateHelpersInstalled) return true;
   if (!Iron || !Iron.DynamicTemplate || !Router || typeof UI === "undefined" ||
       typeof HTML === "undefined") {
     return false;
@@ -219,7 +176,7 @@ const installRouterTemplateHelpers = () => {
     return HTML.A(attrs, this.templateContentBlock);
   }));
 
-  globalThis.__sandstormRouterHelperPatchInstalled = true;
+  routerTemplateHelpersInstalled = true;
   return true;
 };
 

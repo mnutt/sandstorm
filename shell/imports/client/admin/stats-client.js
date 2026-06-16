@@ -4,6 +4,7 @@ import { Template } from "meteor/templating";
 import { ReactiveVar } from "meteor/reactive-var";
 import { _ } from "meteor/underscore";
 
+import { getOrigin } from "/imports/client/globals";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 

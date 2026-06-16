@@ -66,15 +66,18 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   delete @4 (path :Text, context :Context) -> Response;
   patch @17 (path :Text, content :PostContent, context :Context) -> Response;
 
-  postStreaming @5 (path :Text, mimeType :Text, context :Context, encoding :Text)
+  postStreaming @5 (path :Text, mimeType :Text, context :Context, encoding :Text,
+                    expectedSize :UInt64 = 0)
       -> (stream :RequestStream);
-  putStreaming @6 (path :Text, mimeType :Text, context :Context, encoding :Text)
+  putStreaming @6 (path :Text, mimeType :Text, context :Context, encoding :Text,
+                   expectedSize :UInt64 = 0)
       -> (stream :RequestStream);
   # Streaming post/put requests, useful when the input is large. If these throw `unimplemented`
   # exceptions, the caller should fall back to regular post() / put() on the assumption that the
   # app doesn't implement streaming.
   #
   # The optional `encoding` field represents the Content-Encoding header.
+  # `expectedSize`, when non-zero, is the exact number of bytes that will be written to the stream.
 
   openWebSocket @2 (path :Text, context :Context,
                     protocol :List(Text), clientStream :WebSocketStream)
@@ -155,6 +158,8 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
       # Values in this list that end with '*' whitelist a prefix.
 
       "x-sandstorm-app-*",     # For new headers introduced by Sandstorm apps.
+
+      "range",                 # Range requests.
 
       "oc-total-length",       # Owncloud client
       "oc-chunk-size",         # Owncloud client
@@ -444,6 +449,9 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
 
       "x-sandstorm-app-*",     # For new headers introduced by Sandstorm apps.
 
+      "accept-ranges",         # Range requests.
+      "content-range",         # Range requests.
+
       "x-oc-mtime",            # Owncloud protocol
     ];
 
@@ -545,9 +553,6 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   # * Caching:
   #   * Cache-Control
   #   * If-*
-  # * Range requests:
-  #   * Range
-  #
   # Request headers that could be added later, but don't seem terribly important:
   # * Accept
   # * Accept-Charset
@@ -592,10 +597,6 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   #   * Expires
   #   * Last-Modified
   #   * Vary (but Sandstorm will always add "Authorization")
-  # * Range requests:
-  #   * Accept-Ranges
-  #   * Content-Range
-  #
   # Response headers that could be added later, but don't seem terribly important:
   # * Allow
   # * Content-Location

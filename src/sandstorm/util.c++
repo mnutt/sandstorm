@@ -31,6 +31,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/sendfile.h>
+#include <sys/prctl.h>
 
 namespace sandstorm {
 
@@ -613,6 +614,13 @@ Subprocess::Subprocess(Options&& options)
       sigset_t sigmask;
       sigemptyset(&sigmask);
       KJ_SYSCALL(sigprocmask(SIG_SETMASK, &sigmask, nullptr));
+
+      KJ_IF_MAYBE(signal, options.parentDeathSignal) {
+        KJ_SYSCALL(prctl(PR_SET_PDEATHSIG, *signal));
+        if (getppid() == 1) {
+          _exit(1);
+        }
+      }
 
       // Make sure all of the incoming FDs are outside of our map range (except for standard I/O if
       // it is already exactly in the right slot).

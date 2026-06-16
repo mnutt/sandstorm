@@ -223,7 +223,7 @@ module.exports["Sign in at grain URL"] = function (browser) {
             .url(grainUrl.value)
             .waitForElementVisible(".request-access", medium_wait)
             .assert.textContains(".request-access", "Please sign in to request access.")
-            .execute(function (name) { window.loginDevAccount(name) }, [devName.value])
+            .execute(function (name) { window.__sandstormTest.loginDevAccount(name) }, [devName.value])
             .waitForElementVisible("iframe.grain-frame", medium_wait)
             .waitForElementVisible("#grainTitle", medium_wait)
             .assert.textContains("#grainTitle", expectedHackerCMSGrainTitle)
@@ -249,7 +249,7 @@ module.exports["Sign in at grain URL"] = function (browser) {
                     .waitForElementVisible("iframe.grain-frame", medium_wait)
                     .waitForElementVisible("#grainTitle", medium_wait)
                     .assert.textContains("#grainTitle", expectedHackerCMSGrainTitle)
-                    .execute(function (name) { window.loginDevAccount(name) }, [otherName])
+                    .execute(function (name) { window.__sandstormTest.loginDevAccount(name) }, [otherName])
 
                     // It's unclear whether there should be an incognito prompt here.
                     // See https://github.com/sandstorm-io/sandstorm/issues/1076
@@ -276,7 +276,7 @@ module.exports["Sign in at grain URL"] = function (browser) {
                     .waitForElementVisible("iframe.grain-frame", medium_wait)
                     .waitForElementVisible("#grainTitle", medium_wait)
                     .assert.textContains("#grainTitle", expectedHackerCMSGrainTitle)
-                    .execute(function (name) { window.loginDevAccount(name) }, [otherName])
+                    .execute(function (name) { window.__sandstormTest.loginDevAccount(name) }, [otherName])
                     .waitForElementNotPresent(".request-access", medium_wait)
                     // The forget grain button only appears once we've logged in.
                     .waitForElementVisible("#deleteGrain", medium_wait)
@@ -531,7 +531,7 @@ module.exports["Test grain reveal identity interstitial"] = function (browser) {
         .waitForElementVisible('.grain-frame', medium_wait)
         .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
         .execute(function() {
-          return globalGrains.getActive().isIncognito();
+          return window.__sandstormTest.isActiveGrainIncognito();
         }, [], function (response) {
           browser.assert.equal(response.value, true);
         })
@@ -558,7 +558,7 @@ module.exports["Test grain reveal identity interstitial"] = function (browser) {
         .waitForElementVisible('.grain-frame', medium_wait)
         .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
         .execute(function() {
-          return globalGrains.getActive().isIncognito();
+          return window.__sandstormTest.isActiveGrainIncognito();
         }, [], function (response) {
           browser.assert.equal(response.value, false);
         })

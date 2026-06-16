@@ -45,14 +45,13 @@ module.exports["Test powerbox request contact"] = function (browser) {
 
     // First we need to make sure that Bob is in Alice's contacts
     .executeAsync(function (done) {
-      var grainId = Grains.findOne()._id;
-      Meteor.call("newApiToken", { accountId: Meteor.userId() },
-                  grainId, "petname", { allAccess: null },
-                  { webkey: { forSharing: true }, },
-                  function(error, result) {
-                    Meteor.logout();
-                    done({ error: error, result: result, });
-                    });
+      window.__sandstormTest.createApiTokenForFirstGrain(
+          { allAccess: null },
+          { webkey: { forSharing: true }, },
+          function(response) {
+            Meteor.logout();
+            done(response);
+          });
       }, [], function (result) {
         browser.assert.equal(!result.value.error, true)
         browser

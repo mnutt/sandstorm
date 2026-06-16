@@ -24,6 +24,11 @@ BUILD=0
 PARALLEL=$(shell nproc)
 LIBS=
 EKAM=ekam
+WORKERD_NPM_VERSION=1.20260610.1
+WORKERD_NPM_PACKAGE_DIR=deps/workerd-npm
+WORKERD_BIN=
+CAPNWEB_NPM_VERSION=0.8.0
+CAPNWEB_NPM_PACKAGE_DIR=deps/capnweb-npm
 
 # You generally should not modify this.
 # TODO(cleanup): -fPIC is unfortunate since most of our code is static binaries
@@ -135,11 +140,13 @@ IMAGES= \
     shell/public/restore-B7B7B7.svg \
     shell/public/restore-5D5D5D.svg
 
+CAPNP_SCHEMAS=$(filter-out src/capnp/test%.capnp,$(wildcard src/capnp/*.capnp))
+
 # ====================================================================
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test installer-test app-index-dev lint
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test installer-test app-index-dev lint workerd verify-workerd-runtime
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -149,12 +156,18 @@ clean: ci-clean
 	cd deps/ekam && make clean
 	rm -rf deps/libsodium/build
 	rm -rf deps/boringssl/build
+	rm -rf tmp/workerd-npm
+	rm -rf tmp/capnweb-npm src/sandstorm/isolate/capnweb.js
 
 ci-clean:
 	@# Clean only the stuff that we want to clean between CI builds.
 	rm -rf bin tmp node_modules bundle shell-build sandstorm-*.tar.xz
-	rm -rf test-app.spk
-	rm -rf tests/assets/meteor-testapp.spk meteor-testapp/.meteor-spk
+	rm -rf test-app.spk isolate-test-app.spk isolate-api-powerbox-test-app.spk
+	rm -rf isolate-api-provider-test-app.spk
+	rm -rf tests/assets/meteor-testapp.spk tests/assets/isolate-test-app.spk
+	rm -rf tests/assets/isolate-api-powerbox-test-app.spk
+	rm -rf tests/assets/isolate-api-provider-test-app.spk
+	rm -rf meteor-testapp/.meteor-spk
 
 install: sandstorm-$(BUILD)-fast.tar.xz install.sh
 	@$(call color,install)
@@ -166,7 +179,8 @@ update: sandstorm-$(BUILD)-fast.tar.xz
 
 fast: sandstorm-$(BUILD)-fast.tar.xz
 
-test: sandstorm-$(BUILD)-fast.tar.xz test-app.spk tests/assets/meteor-testapp.spk
+test: sandstorm-$(BUILD)-fast.tar.xz test-app.spk tests/assets/meteor-testapp.spk \
+		tests/assets/isolate-test-app.spk
 	tests/run-local.sh sandstorm-$(BUILD)-fast.tar.xz test-app.spk
 lint: shell-env
 	cd shell && meteor npm run lint
@@ -194,7 +208,6 @@ REMOTE_libsodium=https://github.com/jedisct1/libsodium.git stable
 REMOTE_node-capnp=https://github.com/kentonv/node-capnp.git node10
 REMOTE_boringssl=https://boringssl.googlesource.com/boringssl main
 REMOTE_clang=https://chromium.googlesource.com/chromium/src/tools/clang.git main
-
 deps/capnproto/.git:
 	@# Probably user forgot to checkout submodules. Do it for them.
 	@$(call color,"fetching submodules")
@@ -257,6 +270,64 @@ deps/libsodium/build/src/libsodium/.libs/libsodium.a: deps/libsodium/build/Makef
 	cd deps/libsodium/build && make -j$(PARALLEL)
 
 # ====================================================================
+# fetch/build workerd
+
+tmp/.workerd-npm: $(WORKERD_NPM_PACKAGE_DIR)/package.json \
+    $(wildcard $(WORKERD_NPM_PACKAGE_DIR)/package-lock.json)
+	@$(call color,installing npm workerd)
+	rm -rf tmp/workerd-npm
+	@mkdir -p tmp/workerd-npm
+	cp $(WORKERD_NPM_PACKAGE_DIR)/package.json tmp/workerd-npm/package.json
+	@if test -e $(WORKERD_NPM_PACKAGE_DIR)/package-lock.json; then cp $(WORKERD_NPM_PACKAGE_DIR)/package-lock.json tmp/workerd-npm/package-lock.json; fi
+	cd tmp/workerd-npm && if test -e package-lock.json; then PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm ci --no-fund; else PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund --no-save; fi
+	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./node_modules/workerd/package.json").version')" = "$(WORKERD_NPM_VERSION)"
+	@test -e tmp/workerd-npm/node_modules/.bin/workerd
+	@touch $@
+
+ifeq ($(WORKERD_BIN),)
+bin/workerd: tmp/.workerd-npm
+	@mkdir -p bin
+	cp -L "$$(readlink -f tmp/workerd-npm/node_modules/.bin/workerd)" $@
+	chmod +x $@
+else
+bin/workerd:
+	@mkdir -p bin
+	cp "$(WORKERD_BIN)" $@
+endif
+
+workerd: bin/workerd
+
+verify-workerd-runtime: bin/workerd tmp/.workerd-npm
+	@$(call color,verifying npm workerd)
+	@test -z "$(WORKERD_BIN)" || (echo "error: WORKERD_BIN override cannot be used for reproducible bundles" >&2; exit 1)
+	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./package-lock.json").packages[""].dependencies.workerd')" = "$(WORKERD_NPM_VERSION)"
+	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./package-lock.json").packages["node_modules/workerd"].version')" = "$(WORKERD_NPM_VERSION)"
+	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./node_modules/workerd/package.json").version')" = "$(WORKERD_NPM_VERSION)"
+	cmp -s bin/workerd "$$(readlink -f tmp/workerd-npm/node_modules/.bin/workerd)"
+	@expected_version="$$(printf '%s\n' "$(WORKERD_NPM_VERSION)" | sed -E 's/^1\.([0-9]{4})([0-9]{2})([0-9]{2})\..*$$/\1-\2-\3/')" && \
+		test "$$(bin/workerd --version)" = "workerd $$expected_version"
+
+# ====================================================================
+# fetch capnweb
+
+tmp/.capnweb-npm: $(CAPNWEB_NPM_PACKAGE_DIR)/package.json \
+    $(wildcard $(CAPNWEB_NPM_PACKAGE_DIR)/package-lock.json)
+	@$(call color,installing npm capnweb)
+	rm -rf tmp/capnweb-npm
+	@mkdir -p tmp/capnweb-npm
+	cp $(CAPNWEB_NPM_PACKAGE_DIR)/package.json tmp/capnweb-npm/package.json
+	@if test -e $(CAPNWEB_NPM_PACKAGE_DIR)/package-lock.json; then cp $(CAPNWEB_NPM_PACKAGE_DIR)/package-lock.json tmp/capnweb-npm/package-lock.json; fi
+	cd tmp/capnweb-npm && if test -e package-lock.json; then PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm ci --no-fund; else PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund --no-save; fi
+	@test "$$(cd tmp/capnweb-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./node_modules/capnweb/package.json").version')" = "$(CAPNWEB_NPM_VERSION)"
+	@test -e tmp/capnweb-npm/node_modules/capnweb/dist/index.js
+	@touch $@
+
+src/sandstorm/isolate/capnweb.js: tmp/.capnweb-npm
+	@$(call color,updating capnweb helper)
+	@mkdir -p $(dir $@)
+	cp tmp/capnweb-npm/node_modules/capnweb/dist/index.js $@
+
+# ====================================================================
 # Ekam bootstrap and C++ binaries
 
 tmp/ekam-bin: tmp/.deps
@@ -266,7 +337,7 @@ tmp/ekam-bin: tmp/.deps
 	    (cd deps/ekam && $(MAKE) bin/ekam-bootstrap && \
 	     cd ../.. && ln -s ../deps/ekam/bin/ekam-bootstrap tmp/ekam-bin)
 
-tmp/.ekam-run: tmp/ekam-bin src/sandstorm/* tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/libsodium/.libs/libsodium.a | deps/llvm-build
+tmp/.ekam-run: tmp/ekam-bin src/sandstorm/* src/sandstorm/isolate/* src/sandstorm/isolate/capnweb.js tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/libsodium/.libs/libsodium.a | deps/llvm-build
 	@$(call color,building sandstorm with ekam)
 	@CC="$(CC)" CXX="$(CXX)" CFLAGS="$(CFLAGS2)" CXXFLAGS="$(CXXFLAGS2)" \
 	    LIBS="$(LIBS2)" NODEJS=$(NODEJS) tmp/ekam-bin -j$(PARALLEL)
@@ -282,19 +353,26 @@ continuous: tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/lib
 
 shell-env: tmp/.shell-env
 
-# Note that we need Ekam to build node_modules before we can run Meteor, hence
-# the dependency on tmp/.ekam-run.
-tmp/.shell-env: tmp/.ekam-run $(IMAGES) shell/imports/client/changelog.html shell/client/styles/_icons.scss shell/package.json shell/package-lock.json
+# Meteor needs node-capnp available under node_modules. Depend on the copied
+# files themselves so unrelated Ekam rebuilds do not invalidate the frontend.
+tmp/.shell-env: node_modules/capnp node_modules/capnp.js node_modules/capnp.node $(IMAGES) shell/imports/client/changelog.html shell/client/styles/_icons.scss shell/package.json shell/package-lock.json
 	@$(call color,configuring meteor frontend)
 	@mkdir -p tmp
-	@mkdir -p node_modules/capnp
-	@bash -O extglob -c 'cp src/capnp/!(*test*).capnp node_modules/capnp'
-	@[ deps/node-capnp/src/node-capnp/capnp.js -ef node_modules/capnp.js ] || \
-		cp deps/node-capnp/src/node-capnp/capnp.js node_modules/capnp.js
-	@[ tmp/node-capnp/capnp.node -ef node_modules/capnp.node ] || \
-		cp tmp/node-capnp/capnp.node node_modules/capnp.node
 	@cd shell/ && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund
 	@touch tmp/.shell-env
+
+node_modules/capnp: $(CAPNP_SCHEMAS)
+	@mkdir -p node_modules/capnp
+	@rm -f node_modules/capnp/*.capnp
+	@cp $(CAPNP_SCHEMAS) node_modules/capnp
+
+node_modules/capnp.js: deps/node-capnp/src/node-capnp/capnp.js
+	@mkdir -p node_modules
+	@cp $< $@
+
+node_modules/capnp.node: tmp/node-capnp/capnp.node
+	@mkdir -p node_modules
+	@cp $< $@
 
 icons/node_modules: icons/package.json
 	cd icons && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund
@@ -381,9 +459,10 @@ shell-build: shell/imports/* shell/imports/*/* shell/imports/*/*/* shell/imports
 # ====================================================================
 # Bundle
 
-bundle: tmp/.ekam-run shell-build make-bundle.sh localedata-C meteor-bundle-main.js
+bundle: tmp/.ekam-run shell-build verify-workerd-runtime make-bundle.sh localedata-C meteor-bundle-main.js
 	@$(call color,bundle)
 	@CC=$(CC) ./make-bundle.sh
+	cmp -s bundle/bin/workerd bin/workerd
 
 sandstorm-$(BUILD).tar.xz: bundle
 	@$(call color,compress release bundle)
@@ -432,6 +511,71 @@ test-app-dev: tmp/.ekam-run
 	@cp src/sandstorm/test-app/test-app.capnp tmp/sandstorm/test-app/test-app.capnp
 	@cp src/sandstorm/test-app/*.html tmp/sandstorm/test-app
 	spk dev -Isrc -Itmp -ptmp/sandstorm/test-app/test-app.capnp:pkgdef
+
+tests/assets/isolate-test-app.spk: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
+	@mkdir -p tests/assets
+	@mkdir -p tmp/sandstorm/isolate-test-app
+	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
+	@rm -rf tmp/sandstorm/isolate-test-app/isolate-test
+	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
+	bin/spk pack -ksrc/sandstorm/test-app/isolate-test-app.key -Isrc -Itmp \
+		-ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef tests/assets/isolate-test-app.spk
+
+isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
+	@mkdir -p tmp/sandstorm/isolate-test-app
+	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
+	@rm -rf tmp/sandstorm/isolate-test-app/isolate-test
+	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
+	spk dev -Isrc -Itmp -ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef
+
+isolate-supervisor-integration-test: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+	$(NODEJS) tests/isolate-supervisor-integration.test.js
+
+isolate-supervisor-stress-test: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+	ISOLATE_STRESS_64M=1 $(NODEJS) tests/isolate-supervisor-integration.test.js
+
+isolate-supervisor-syscall-trace: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+	@command -v strace >/dev/null || (echo "strace is required for this target" >&2; exit 1)
+	@rm -rf tmp/isolate-syscall-trace
+	@mkdir -p tmp/isolate-syscall-trace
+	ISOLATE_SYSCALL_TRACE_DIR=$(CURDIR)/tmp/isolate-syscall-trace \
+		ISOLATE_SYSCALL_TRACE_PROFILE=representative \
+		$(NODEJS) tests/isolate-supervisor-integration.test.js
+	@echo "wrote syscall traces to tmp/isolate-syscall-trace"
+	@echo "workerd exec traces:"
+	@grep -h 'execve.*workerd' tmp/isolate-syscall-trace/* || true
+
+tests/assets/isolate-api-powerbox-test-app.spk: \
+		tmp/.ekam-run \
+		src/sandstorm/test-app/isolate-api-powerbox-app.capnp \
+		src/sandstorm/test-app/isolate-api-powerbox-app.key \
+		src/sandstorm/test-app/isolate-api-powerbox/worker.js
+	@mkdir -p tests/assets
+	@mkdir -p tmp/sandstorm/isolate-api-powerbox-test-app
+	@cp src/sandstorm/test-app/isolate-api-powerbox-app.capnp \
+		tmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox-app.capnp
+	@rm -rf tmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox
+	@cp -R src/sandstorm/test-app/isolate-api-powerbox \
+		tmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox
+	bin/spk pack -ksrc/sandstorm/test-app/isolate-api-powerbox-app.key -Isrc -Itmp \
+		-ptmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox-app.capnp:pkgdef \
+		tests/assets/isolate-api-powerbox-test-app.spk
+
+tests/assets/isolate-api-provider-test-app.spk: \
+		tmp/.ekam-run \
+		src/sandstorm/test-app/isolate-api-provider-app.capnp \
+		src/sandstorm/test-app/isolate-api-provider-app.key \
+		src/sandstorm/test-app/isolate-api-provider/worker.js
+	@mkdir -p tests/assets
+	@mkdir -p tmp/sandstorm/isolate-api-provider-test-app
+	@cp src/sandstorm/test-app/isolate-api-provider-app.capnp \
+		tmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider-app.capnp
+	@rm -rf tmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider
+	@cp -R src/sandstorm/test-app/isolate-api-provider \
+		tmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider
+	bin/spk pack -ksrc/sandstorm/test-app/isolate-api-provider-app.key -Isrc -Itmp \
+		-ptmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider-app.capnp:pkgdef \
+		tests/assets/isolate-api-provider-test-app.spk
 
 # ====================================================================
 # meteor-testapp.spk

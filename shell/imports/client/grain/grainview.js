@@ -24,9 +24,11 @@ import { Random } from "meteor/random";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { _ } from "meteor/underscore";
 
+import { callMeteor, getOrigin } from "/imports/client/globals";
 import { computeTitleFromTokenOwnerUser } from "/imports/client/model-helpers";
 import { isStandalone } from "/imports/client/standalone";
 import { GrainViewList } from "/imports/client/grain/grainview-list";
+import { makeWildcardHost } from "/imports/db-deprecated";
 import { identiconForApp, iconSrcForPackage } from "/imports/sandstorm-identicons/helpers";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
@@ -909,9 +911,9 @@ class GrainView {
 
   markRead() {
     if (this.isOwner()) {
-      globalThis.callMeteor("markActivityReadByOwner", this._grainId);
+      callMeteor("markActivityReadByOwner", this._grainId);
     } else {
-      globalThis.callMeteor("markActivityRead", this._grainId);
+      callMeteor("markActivityRead", this._grainId);
     }
   }
 

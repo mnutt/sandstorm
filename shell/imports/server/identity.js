@@ -21,6 +21,7 @@ import { _ } from "meteor/underscore";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions }  from "/imports/sandstorm-permissions/permissions";
+import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
 import { PersistentImpl } from "/imports/server/persistent";
 import { StaticAssetImpl, IdenticonStaticAssetImpl } from "/imports/server/static-asset";
 import Capnp from "/imports/server/capnp";
@@ -67,7 +68,7 @@ const MembraneRequirement = Match.OneOf(
     { tokenId: String, grainId: String, permissions: Match.Optional([Boolean]), }, },
   { userIsAdmin: String });
 
-globalThis.makeIdentity = (accountId, requirements) => {
+export const makeIdentity = (accountId, requirements) => {
   const saveTemplate = { frontendRef: { identity: accountId } };
   if (requirements) {
     check(requirements, [MembraneRequirement]);
@@ -78,7 +79,7 @@ globalThis.makeIdentity = (accountId, requirements) => {
                               IdentityRpc.PersistentIdentity);
 };
 
-globalThis.globalFrontendRefRegistry.register({
+frontendRefRegistry.register({
   frontendRefField: "identity",
   typeId: Identity.typeId,
 
