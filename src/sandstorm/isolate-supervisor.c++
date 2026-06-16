@@ -3840,6 +3840,33 @@ private:
   IsolateRuntimeHost& host;
   bool powerboxOnly;
 
+  kj::Maybe<kj::String> readSingleNonEmptyQueryParam(kj::StringPtr url, kj::StringPtr name,
+      kj::StringPtr errorMessage, kj::String& output) {
+    auto values = findIsolateQueryParams(url, name);
+    if (values.size() != 1 || values[0].size() == 0) {
+      return kj::str(errorMessage);
+    }
+
+    output = kj::mv(values[0]);
+    return nullptr;
+  }
+
+  kj::Maybe<kj::String> readAtMostOneQueryParam(kj::StringPtr url, kj::StringPtr name,
+      kj::StringPtr errorMessage, kj::Array<kj::String>& output) {
+    auto values = findIsolateQueryParams(url, name);
+    if (values.size() > 1) {
+      return kj::str(errorMessage);
+    }
+
+    output = kj::mv(values);
+    return nullptr;
+  }
+
+  kj::Promise<void> sendBadRequest(
+      kj::HttpService::Response& response, kj::StringPtr errorMessage) {
+    return sendJson(response, 400, "Bad Request", renderError(errorMessage));
+  }
+
   class NoStreamingByteStream final: public ByteStream::Server {
   public:
     kj::Promise<void> write(WriteContext context) override {
@@ -4510,12 +4537,15 @@ private:
 
   kj::Promise<void> claimPowerboxRequest(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    auto sessionIds = findIsolateQueryParams(url, "sessionId");
-    auto tokens = findIsolateQueryParams(url, "token");
-    if (sessionIds.size() != 1 || tokens.size() != 1 ||
-        sessionIds[0].size() == 0 || tokens[0].size() == 0) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one sessionId and token\"\n}\n"));
+    kj::String sessionId = nullptr;
+    kj::String token = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "sessionId", "expected exactly one sessionId and token", sessionId)) {
+      return sendBadRequest(response, *error);
+    }
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "token", "expected exactly one sessionId and token", token)) {
+      return sendBadRequest(response, *error);
     }
 
     auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
@@ -4528,9 +4558,9 @@ private:
       }
     }
 
-    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionIds[0])) {
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionId)) {
       auto request = sessionContext->claimRequestRequest();
-      request.setRequestToken(tokens[0]);
+      request.setRequestToken(token);
       auto requiredPermissions = request.initRequiredPermissions(permissionDefs.size());
       for (auto& name: permissionNames) {
         KJ_IF_MAYBE(error, setRequiredPermission(name, requiredPermissions, permissionDefs)) {
@@ -4580,10 +4610,10 @@ private:
 
   kj::Promise<void> requestApiSessionCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    auto sessionIds = findIsolateQueryParams(url, "sessionId");
-    if (sessionIds.size() != 1 || sessionIds[0].size() == 0) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one sessionId\"\n}\n"));
+    kj::String sessionId = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "sessionId", "expected exactly one sessionId", sessionId)) {
+      return sendBadRequest(response, *error);
     }
 
     auto descriptorTypes = findIsolateQueryParams(url, "descriptor");
@@ -4602,7 +4632,7 @@ private:
       }
     }
 
-    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionIds[0])) {
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionId)) {
       auto request = sessionContext->requestRequest();
       initApiSessionPowerboxDescriptor(url, request.initQuery(1)[0]);
       auto requiredPermissions = request.initRequiredPermissions(permissionDefs.size());
@@ -4714,19 +4744,24 @@ private:
 
   kj::Promise<void> offerClaimedCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    auto sessionIds = findIsolateQueryParams(url, "sessionId");
-    auto ids = findIsolateQueryParams(url, "id");
-    auto titles = findIsolateQueryParams(url, "title");
-    if (sessionIds.size() != 1 || sessionIds[0].size() == 0 ||
-        ids.size() != 1 || ids[0].size() == 0 ||
-        titles.size() > 1) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n"
-          "  \"error\": \"expected exactly one sessionId and capability id\"\n}\n"));
+    kj::String sessionId = nullptr;
+    kj::String id = nullptr;
+    kj::Array<kj::String> titles = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "sessionId", "expected exactly one sessionId and capability id", sessionId)) {
+      return sendBadRequest(response, *error);
+    }
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "id", "expected exactly one sessionId and capability id", id)) {
+      return sendBadRequest(response, *error);
+    }
+    KJ_IF_MAYBE(error, readAtMostOneQueryParam(
+        url, "title", "expected exactly one sessionId and capability id", titles)) {
+      return sendBadRequest(response, *error);
     }
 
-    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionIds[0])) {
-      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionId)) {
+      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
         auto request = sessionContext->offerRequest();
         request.setCap(*cap);
         initSessionActionParamsWithDescriptor(url, titles, request.initRequiredPermissions(
@@ -4748,19 +4783,24 @@ private:
 
   kj::Promise<void> fulfillRequestWithCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    auto sessionIds = findIsolateQueryParams(url, "sessionId");
-    auto ids = findIsolateQueryParams(url, "id");
-    auto titles = findIsolateQueryParams(url, "title");
-    if (sessionIds.size() != 1 || sessionIds[0].size() == 0 ||
-        ids.size() != 1 || ids[0].size() == 0 ||
-        titles.size() > 1) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n"
-          "  \"error\": \"expected exactly one sessionId and capability id\"\n}\n"));
+    kj::String sessionId = nullptr;
+    kj::String id = nullptr;
+    kj::Array<kj::String> titles = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "sessionId", "expected exactly one sessionId and capability id", sessionId)) {
+      return sendBadRequest(response, *error);
+    }
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "id", "expected exactly one sessionId and capability id", id)) {
+      return sendBadRequest(response, *error);
+    }
+    KJ_IF_MAYBE(error, readAtMostOneQueryParam(
+        url, "title", "expected exactly one sessionId and capability id", titles)) {
+      return sendBadRequest(response, *error);
     }
 
-    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionIds[0])) {
-      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionId)) {
+      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
         auto request = sessionContext->fulfillRequestRequest();
         request.setCap(*cap);
         initSessionActionParamsWithDescriptor(url, titles, request.initRequiredPermissions(
@@ -4782,19 +4822,24 @@ private:
 
   kj::Promise<void> tieClaimedCapabilityToUser(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    auto sessionIds = findIsolateQueryParams(url, "sessionId");
-    auto ids = findIsolateQueryParams(url, "id");
-    auto titles = findIsolateQueryParams(url, "title");
-    if (sessionIds.size() != 1 || sessionIds[0].size() == 0 ||
-        ids.size() != 1 || ids[0].size() == 0 ||
-        titles.size() > 1) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n"
-          "  \"error\": \"expected exactly one sessionId and capability id\"\n}\n"));
+    kj::String sessionId = nullptr;
+    kj::String id = nullptr;
+    kj::Array<kj::String> titles = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "sessionId", "expected exactly one sessionId and capability id", sessionId)) {
+      return sendBadRequest(response, *error);
+    }
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "id", "expected exactly one sessionId and capability id", id)) {
+      return sendBadRequest(response, *error);
+    }
+    KJ_IF_MAYBE(error, readAtMostOneQueryParam(
+        url, "title", "expected exactly one sessionId and capability id", titles)) {
+      return sendBadRequest(response, *error);
     }
 
-    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionIds[0])) {
-      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionId)) {
+      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
         auto request = sessionContext->tieToUserRequest();
         request.setCap(*cap);
         auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
@@ -4894,33 +4939,32 @@ private:
 
   kj::Promise<void> savePowerboxCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    auto ids = findIsolateQueryParams(url, "id");
-    auto labels = findIsolateQueryParams(url, "label");
-    if (ids.size() != 1 || ids[0].size() == 0) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one capability id\"\n}\n"));
+    kj::String id = nullptr;
+    kj::Array<kj::String> labels = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "id", "expected exactly one capability id", id)) {
+      return sendBadRequest(response, *error);
     }
-    if (labels.size() > 1) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"expected at most one save label\"\n}\n"));
+    KJ_IF_MAYBE(error, readAtMostOneQueryParam(
+        url, "label", "expected at most one save label", labels)) {
+      return sendBadRequest(response, *error);
     }
 
     kj::StringPtr label = "Claimed Sandstorm capability";
     if (labels.size() == 1) {
       label = labels[0];
       if (label.size() == 0 || label.size() > 256) {
-        return sendJson(response, 400, "Bad Request", kj::heapString(
-            "{\n  \"ok\": false,\n  \"error\": \"save label must be 1-256 bytes\"\n}\n"));
+        return sendBadRequest(response, "save label must be 1-256 bytes");
       }
     }
 
-    KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
+    KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
       auto request = cap->castAs<SystemPersistent>().saveRequest();
       auto owner = request.getSealFor().initGrain();
       owner.setGrainId(host.grainId);
       owner.getSaveLabel().setDefaultText(label);
       return request.send().then(
-          [this, &response, capabilityId = kj::heapString(ids[0])]
+          [this, &response, capabilityId = kj::mv(id)]
           (auto result) mutable {
         auto token = kj::encodeBase64Url(result.getSturdyRef());
         return sendJson(response, 200, "OK", renderSavedCapability(capabilityId, token));
@@ -4933,13 +4977,13 @@ private:
 
   kj::Promise<void> restorePowerboxCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    auto tokens = findIsolateQueryParams(url, "token");
-    if (tokens.size() != 1 || tokens[0].size() == 0) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one saved capability token\"\n}\n"));
+    kj::String tokenParam = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "token", "expected exactly one saved capability token", tokenParam)) {
+      return sendBadRequest(response, *error);
     }
 
-    KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokens[0])) {
+    KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokenParam)) {
       auto request = host.sandstormCore.restoreRequest();
       request.setToken(token->asPtr());
       return request.send().then(
@@ -4948,20 +4992,19 @@ private:
         return sendJson(response, 200, "OK", renderClaimedCapability(capId));
       });
     } else {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"invalid saved capability token\"\n}\n"));
+      return sendBadRequest(response, "invalid saved capability token");
     }
   }
 
   kj::Promise<void> duplicatePowerboxCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    auto ids = findIsolateQueryParams(url, "id");
-    if (ids.size() != 1 || ids[0].size() == 0) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one capability id\"\n}\n"));
+    kj::String id = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "id", "expected exactly one capability id", id)) {
+      return sendBadRequest(response, *error);
     }
 
-    KJ_IF_MAYBE(duplicatedId, host.sessions->duplicateClaimedCapability(ids[0])) {
+    KJ_IF_MAYBE(duplicatedId, host.sessions->duplicateClaimedCapability(id)) {
       return sendJson(response, 200, "OK", renderClaimedCapability(*duplicatedId));
     } else {
       return sendJson(response, 404, "Not Found", kj::heapString(
@@ -4971,13 +5014,13 @@ private:
 
   kj::Promise<void> dropSavedPowerboxCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    auto tokens = findIsolateQueryParams(url, "token");
-    if (tokens.size() != 1 || tokens[0].size() == 0) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one saved capability token\"\n}\n"));
+    kj::String tokenParam = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "token", "expected exactly one saved capability token", tokenParam)) {
+      return sendBadRequest(response, *error);
     }
 
-    KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokens[0])) {
+    KJ_IF_MAYBE(token, decodeSavedCapabilityToken(tokenParam)) {
       auto request = host.sandstormCore.dropRequest();
       request.setToken(token->asPtr());
       return request.send().then(
@@ -4986,8 +5029,7 @@ private:
         return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
       });
     } else {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"invalid saved capability token\"\n}\n"));
+      return sendBadRequest(response, "invalid saved capability token");
     }
   }
 
@@ -5013,13 +5055,13 @@ private:
 
   kj::Promise<void> dropPowerboxCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
-    auto ids = findIsolateQueryParams(url, "id");
-    if (ids.size() != 1 || ids[0].size() == 0) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"expected exactly one capability id\"\n}\n"));
+    kj::String id = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "id", "expected exactly one capability id", id)) {
+      return sendBadRequest(response, *error);
     }
 
-    KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(ids[0])) {
+    KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(id)) {
       KJ_IF_MAYBE(dropNotifyPath, dropped->dropNotifyPath) {
         return notifyDroppedClaimedCapability(kj::mv(*dropNotifyPath))
             .catch_([](kj::Exception&& exception) {
