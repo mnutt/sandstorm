@@ -3363,7 +3363,7 @@ void bindSidecarDirectory(kj::StringPtr src, unsigned long flags) {
   sidecarBind(src, dst, flags);
 }
 
-void bindSidecarFile(kj::StringPtr src, unsigned long flags) {
+void bindSidecarFile(kj::StringPtr src, unsigned long flags, mode_t mode = 0644) {
   if (access(src.cStr(), F_OK) != 0) {
     int error = errno;
     if (error == ENOENT || error == ENOTDIR) {
@@ -3374,8 +3374,38 @@ void bindSidecarFile(kj::StringPtr src, unsigned long flags) {
 
   auto dst = sidecarRootPath(src);
   recursivelyCreateParent(dst);
-  KJ_SYSCALL(mknod(dst.cStr(), S_IFREG | 0644, 0), dst);
+  KJ_SYSCALL(mknod(dst.cStr(), S_IFREG | mode, 0), dst);
   sidecarBind(src, dst, flags);
+}
+
+void bindSidecarRuntimeLibraryFile(kj::StringPtr src) {
+  bindSidecarFile(src, MS_RDONLY | MS_NOSUID | MS_NODEV, 0755);
+}
+
+void bindSidecarRuntimeLibraryCandidates(kj::StringPtr name) {
+  bindSidecarRuntimeLibraryFile(kj::str("/lib/", name));
+  bindSidecarRuntimeLibraryFile(kj::str("/lib64/", name));
+  bindSidecarRuntimeLibraryFile(kj::str("/usr/lib/", name));
+  bindSidecarRuntimeLibraryFile(kj::str("/usr/lib64/", name));
+  bindSidecarRuntimeLibraryFile(kj::str("/lib/x86_64-linux-gnu/", name));
+  bindSidecarRuntimeLibraryFile(kj::str("/usr/lib/x86_64-linux-gnu/", name));
+}
+
+void bindSidecarRuntimeLibraries() {
+  bindSidecarRuntimeLibraryFile("/lib64/ld-linux-x86-64.so.2");
+  bindSidecarRuntimeLibraryFile("/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2");
+
+  bindSidecarRuntimeLibraryCandidates("libc.so.6");
+  bindSidecarRuntimeLibraryCandidates("libm.so.6");
+
+  // These are not needed by the current npm workerd build on all distros, but
+  // are common C/C++ runtime dependencies. Keep this list file-based rather
+  // than mounting whole library directories.
+  bindSidecarRuntimeLibraryCandidates("libdl.so.2");
+  bindSidecarRuntimeLibraryCandidates("libpthread.so.0");
+  bindSidecarRuntimeLibraryCandidates("librt.so.1");
+  bindSidecarRuntimeLibraryCandidates("libstdc++.so.6");
+  bindSidecarRuntimeLibraryCandidates("libgcc_s.so.1");
 }
 
 void setupSidecarMountRoot(kj::StringPtr trustedWorkerd, kj::StringPtr workerdBundleDir) {
@@ -3397,13 +3427,8 @@ void setupSidecarMountRoot(kj::StringPtr trustedWorkerd, kj::StringPtr workerdBu
       MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NOEXEC, nullptr));
 
   bindSidecarDirectory(workerdBundleDir, MS_NOSUID | MS_NODEV);
-  bindSidecarFile(trustedWorkerd, MS_RDONLY | MS_NOSUID | MS_NODEV);
-
-  bindSidecarDirectory("/lib", MS_RDONLY | MS_NOSUID | MS_NODEV);
-  bindSidecarDirectory("/lib64", MS_RDONLY | MS_NOSUID | MS_NODEV);
-  bindSidecarDirectory("/usr/lib", MS_RDONLY | MS_NOSUID | MS_NODEV);
-  bindSidecarDirectory("/usr/lib64", MS_RDONLY | MS_NOSUID | MS_NODEV);
-  bindSidecarDirectory("/workerd", MS_RDONLY | MS_NOSUID | MS_NODEV);
+  bindSidecarFile(trustedWorkerd, MS_RDONLY | MS_NOSUID | MS_NODEV, 0755);
+  bindSidecarRuntimeLibraries();
   bindSidecarFile("/etc/ld.so.cache", MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV);
 
   KJ_SYSCALL(chroot("/tmp"));
