@@ -3476,6 +3476,12 @@ private:
       if (runningAsRoot) { KJ_SYSCALL(chown(dir, config.uids.uid, config.uids.gid)); }
 
       char* pkgId = strrchr(dir, '/') + 1;
+      context.warning(kj::str(
+          "Dev package identity:\n"
+          "    appId: ", appId, "\n"
+          "    packageId: ", pkgId, "\n\n"
+          "If an existing grain has this appId, Sandstorm will run it against this active dev\n"
+          "package while the dev session is connected."));
 
       // We dont use fusermount(1) because it doesn't live in our namespace. For now, this is not
       // a problem because we're root anyway. If in the future we use UID namespaces to avoid being
