@@ -275,7 +275,11 @@ public:
   uint tieCount = 0;
   uint apiDescriptorCount = 0;
   uint grainSizeReportCount = 0;
+  uint routeBackedTokenCount = 0;
+  uint childTokenCount = 0;
   uint64_t lastGrainSizeBytes = 0;
+  kj::String lastRouteBackedAppRef;
+  kj::String lastChildTokenParent;
 
 private:
   void validateDisplayInfo(PowerboxDisplayInfo::Reader displayInfo,
@@ -387,6 +391,8 @@ public:
         kj::heapString(token),
         kj::heapArray<byte>(appRef.begin(), appRef.end())
     });
+    ++sessionContext.routeBackedTokenCount;
+    sessionContext.lastRouteBackedAppRef = kj::heapString(appRef.asChars());
     saveRouteBackedTokens();
     context.getResults().setToken(token.asBytes());
     return kj::READY_NOW;
@@ -394,6 +400,9 @@ public:
 
   kj::Promise<void> makeChildToken(MakeChildTokenContext context) override {
     auto params = context.getParams();
+    auto parent = params.getParent();
+    ++sessionContext.childTokenCount;
+    sessionContext.lastChildTokenParent = kj::heapString(parent.asChars());
     context.getResults().setToken(params.getParent());
     return kj::READY_NOW;
   }
@@ -558,6 +567,7 @@ public:
 
     auto routeRestoreRequest = supervisor.restoreRequest();
     routeRestoreRequest.getRef().setAppRef(appRef.asReader());
+    routeRestoreRequest.setParentToken(kj::StringPtr("parent-route-token").asBytes());
     auto restoredRouteSession = routeRestoreRequest.send().wait(io.waitScope)
         .getCap().castAs<WebSession>();
 
@@ -588,6 +598,28 @@ public:
     routeDropRequest.send().wait(io.waitScope);
 
     auto view = supervisor.getMainViewRequest().send().wait(io.waitScope).getView();
+
+    auto apiSessionContext = kj::heap<FakeSessionContext>();
+    auto apiSessionRequest = view.newSessionRequest();
+    auto apiUserInfo = apiSessionRequest.initUserInfo();
+    apiUserInfo.initDisplayName().setDefaultText("ApiSession Test User");
+    apiUserInfo.setPreferredHandle("apisession-test");
+    apiUserInfo.initPermissions(1).set(0, true);
+    apiSessionRequest.setContext(kj::mv(apiSessionContext));
+    apiSessionRequest.setSessionType(capnp::typeId<ApiSession>());
+    apiSessionRequest.getSessionParams().initAs<ApiSession::Params>();
+    apiSessionRequest.setTabId(kj::StringPtr("apisession-tab").asBytes());
+
+    auto apiSession = apiSessionRequest.send().wait(io.waitScope)
+        .getSession().castAs<ApiSession>();
+    auto apiSaveRequest = apiSession.castAs<SystemPersistent>().saveRequest();
+    auto apiSaveOwner = apiSaveRequest.getSealFor().initGrain();
+    apiSaveOwner.setGrainId("api-session-grain");
+    apiSaveOwner.getSaveLabel().setDefaultText("ApiSession save fixture");
+    apiSaveRequest.send().wait(io.waitScope);
+    KJ_REQUIRE(contains(sessionContextRef.lastRouteBackedAppRef,
+        "sandstorm-isolate-route-backed-v1\napi\n/api/"),
+        sessionContextRef.lastRouteBackedAppRef);
 
     auto sessionRequest = view.newSessionRequest();
     auto userInfo = sessionRequest.initUserInfo();
