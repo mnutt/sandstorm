@@ -526,6 +526,9 @@ isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capn
 isolate-supervisor-integration-test: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-integration.test.js
 	$(NODEJS) tests/isolate-supervisor-integration.test.js
 
+isolate-supervisor-stress-test: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+	ISOLATE_STRESS_64M=1 $(NODEJS) tests/isolate-supervisor-integration.test.js
+
 isolate-supervisor-syscall-trace: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-integration.test.js
 	@command -v strace >/dev/null || (echo "strace is required for this target" >&2; exit 1)
 	@rm -rf tmp/isolate-syscall-trace

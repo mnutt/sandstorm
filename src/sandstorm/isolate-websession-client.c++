@@ -29,6 +29,7 @@
 #include <sandstorm/web-session.capnp.h>
 
 #include <fcntl.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 namespace sandstorm {
@@ -69,12 +70,36 @@ kj::Array<byte> makeBytes(size_t size) {
   return result;
 }
 
+kj::Array<byte> makeBytesAt(size_t size, uint64_t offset) {
+  auto result = kj::heapArray<byte>(size);
+  for (auto i: kj::indices(result)) {
+    result[i] = static_cast<byte>((offset + i) & 0xff);
+  }
+  return result;
+}
+
 uint checksum(kj::ArrayPtr<const byte> data) {
   uint result = 0;
   for (auto b: data) {
     result = (result + b) & 0xffffffffu;
   }
   return result;
+}
+
+uint checksumPattern(uint64_t size) {
+  constexpr uint64_t cycleSum = 32640;
+  uint64_t cycles = size / 256;
+  uint64_t remainder = size % 256;
+  uint64_t result = cycles * cycleSum;
+  for (uint64_t i = 0; i < remainder; ++i) {
+    result += i;
+  }
+  return static_cast<uint>(result & 0xffffffffu);
+}
+
+bool stress64mEnabled() {
+  char* value = getenv("ISOLATE_STRESS_64M");
+  return value != nullptr && kj::StringPtr(value) == "1";
 }
 
 void expectSupervisorRefFailure(kj::WaitScope& waitScope, kj::Promise<void> promise) {
@@ -167,6 +192,40 @@ public:
 
 private:
   kj::Vector<byte> data;
+  bool doneCalled = false;
+};
+
+class CountingByteStream final: public ByteStream::Server {
+public:
+  kj::Promise<void> write(WriteContext context) override {
+    auto bytes = context.getParams().getData();
+    byteCount += bytes.size();
+    checksumValue = (checksumValue + checksum(bytes)) & 0xffffffffu;
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> done(DoneContext context) override {
+    doneCalled = true;
+    return kj::READY_NOW;
+  }
+
+  void waitForDone(kj::AsyncIoContext& io) {
+    while (!doneCalled) {
+      io.provider->getTimer().afterDelay(10 * kj::MILLISECONDS).wait(io.waitScope);
+    }
+  }
+
+  uint64_t getByteCount() {
+    return byteCount;
+  }
+
+  uint getChecksum() {
+    return checksumValue;
+  }
+
+private:
+  uint64_t byteCount = 0;
+  uint checksumValue = 0;
   bool doneCalled = false;
 };
 
@@ -825,6 +884,112 @@ public:
     KJ_REQUIRE(contains(uploadBody, "\"bodyBytes\":32768"), uploadBody);
     KJ_REQUIRE(contains(uploadBody, kj::str("\"checksum\":", checksum(uploadBytes))), uploadBody);
     KJ_REQUIRE(contains(uploadBody, "\"contentType\":\"application/octet-stream\""), uploadBody);
+
+    if (stress64mEnabled()) {
+      constexpr uint64_t STRESS_BYTES = 64ull * 1024 * 1024;
+
+      auto stressDownloadStreamServer = kj::heap<CountingByteStream>();
+      auto& stressDownloadStream = *stressDownloadStreamServer;
+      auto stressDownloadRequest = session.getRequest();
+      stressDownloadRequest.setPath(kj::str("/download?bytes=", STRESS_BYTES));
+      stressDownloadRequest.setIgnoreBody(false);
+      auto stressDownloadContext = stressDownloadRequest.initContext();
+      stressDownloadContext.setResponseStream(kj::mv(stressDownloadStreamServer));
+      stressDownloadContext.initCookies(0);
+      stressDownloadContext.initAccept(0);
+      stressDownloadContext.initAcceptEncoding(0);
+      stressDownloadContext.initAdditionalHeaders(0);
+
+      auto stressDownloadResponse = stressDownloadRequest.send().wait(io.waitScope);
+      auto stressDownloadDebugBody = responseDebugBody(stressDownloadResponse);
+      KJ_REQUIRE(stressDownloadResponse.which() == WebSession::Response::CONTENT,
+          stressDownloadDebugBody);
+      auto stressDownloadContent = stressDownloadResponse.getContent();
+      KJ_REQUIRE(stressDownloadContent.getMimeType() == "application/octet-stream");
+      KJ_REQUIRE(stressDownloadContent.getBody().which() ==
+          WebSession::Response::Content::Body::STREAM);
+      stressDownloadStream.waitForDone(io);
+      KJ_REQUIRE(stressDownloadStream.getByteCount() == STRESS_BYTES,
+          stressDownloadStream.getByteCount());
+      KJ_REQUIRE(stressDownloadStream.getChecksum() == checksumPattern(STRESS_BYTES),
+          stressDownloadStream.getChecksum(), checksumPattern(STRESS_BYTES));
+
+      auto tooLargeDownloadRequest = session.getRequest();
+      tooLargeDownloadRequest.setPath(kj::str("/download?bytes=", STRESS_BYTES + 1));
+      tooLargeDownloadRequest.setIgnoreBody(false);
+      auto tooLargeDownloadContext = tooLargeDownloadRequest.initContext();
+      tooLargeDownloadContext.setResponseStream(kj::heap<IgnoreByteStream>());
+      tooLargeDownloadContext.initCookies(0);
+      tooLargeDownloadContext.initAccept(0);
+      tooLargeDownloadContext.initAcceptEncoding(0);
+      tooLargeDownloadContext.initAdditionalHeaders(0);
+
+      auto tooLargeDownloadResponse = tooLargeDownloadRequest.send().wait(io.waitScope);
+      auto tooLargeDownloadDebugBody = responseDebugBody(tooLargeDownloadResponse);
+      KJ_REQUIRE(tooLargeDownloadResponse.which() == WebSession::Response::SERVER_ERROR,
+          tooLargeDownloadDebugBody);
+      KJ_REQUIRE(contains(tooLargeDownloadDebugBody,
+          "streaming isolate response declared size exceeds maximum allowed size"),
+          tooLargeDownloadDebugBody);
+
+      auto stressUploadRequest = session.postStreamingRequest();
+      stressUploadRequest.setPath("/upload");
+      stressUploadRequest.setMimeType("application/octet-stream");
+      stressUploadRequest.setEncoding("");
+      stressUploadRequest.setExpectedSize(STRESS_BYTES);
+      auto stressUploadContext = stressUploadRequest.initContext();
+      stressUploadContext.setResponseStream(kj::heap<IgnoreByteStream>());
+      stressUploadContext.initCookies(0);
+      stressUploadContext.initAccept(0);
+      stressUploadContext.initAcceptEncoding(0);
+      stressUploadContext.initAdditionalHeaders(0);
+
+      auto stressUploadStream = stressUploadRequest.send().wait(io.waitScope).getStream();
+      auto stressUploadResponsePromise = stressUploadStream.getResponseRequest().send();
+      uint64_t stressUploadOffset = 0;
+      while (stressUploadOffset < STRESS_BYTES) {
+        auto size = static_cast<size_t>(kj::min(uint64_t(64 * 1024),
+            STRESS_BYTES - stressUploadOffset));
+        auto chunk = makeBytesAt(size, stressUploadOffset);
+        auto write = stressUploadStream.writeRequest();
+        write.setData(chunk);
+        write.send().wait(io.waitScope);
+        stressUploadOffset += size;
+      }
+      stressUploadStream.doneRequest().send().wait(io.waitScope);
+      auto stressUploadResponse = stressUploadResponsePromise.wait(io.waitScope);
+      auto stressUploadDebugBody = responseDebugBody(stressUploadResponse);
+      KJ_REQUIRE(stressUploadResponse.which() == WebSession::Response::CONTENT,
+          stressUploadDebugBody);
+      auto stressUploadContent = stressUploadResponse.getContent();
+      KJ_REQUIRE(stressUploadContent.getBody().which() == WebSession::Response::Content::Body::BYTES);
+      auto stressUploadBody = kj::str(stressUploadContent.getBody().getBytes().asChars());
+      KJ_REQUIRE(contains(stressUploadBody, "\"ok\":true"), stressUploadBody);
+      KJ_REQUIRE(contains(stressUploadBody, "\"bodyBytes\":67108864"), stressUploadBody);
+      KJ_REQUIRE(contains(stressUploadBody,
+          kj::str("\"checksum\":", checksumPattern(STRESS_BYTES))), stressUploadBody);
+
+      auto tooLargeUploadRequest = session.postStreamingRequest();
+      tooLargeUploadRequest.setPath("/upload");
+      tooLargeUploadRequest.setMimeType("application/octet-stream");
+      tooLargeUploadRequest.setEncoding("");
+      tooLargeUploadRequest.setExpectedSize(STRESS_BYTES + 1);
+      auto tooLargeUploadContext = tooLargeUploadRequest.initContext();
+      tooLargeUploadContext.setResponseStream(kj::heap<IgnoreByteStream>());
+      tooLargeUploadContext.initCookies(0);
+      tooLargeUploadContext.initAccept(0);
+      tooLargeUploadContext.initAcceptEncoding(0);
+      tooLargeUploadContext.initAdditionalHeaders(0);
+
+      try {
+        tooLargeUploadRequest.send().wait(io.waitScope);
+        KJ_FAIL_REQUIRE("expected over-limit streaming upload to fail");
+      } catch (kj::Exception& exception) {
+        auto description = exception.getDescription();
+        KJ_REQUIRE(contains(description,
+            "streaming isolate request expected size exceeds maximum allowed size"), description);
+      }
+    }
 
     auto headersRequest = session.getRequest();
     headersRequest.setPath("/headers");
