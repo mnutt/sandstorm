@@ -80,6 +80,9 @@
 #ifndef PR_SET_NO_NEW_PRIVS
 #define PR_SET_NO_NEW_PRIVS 38
 #endif
+#ifndef PR_SET_VMA
+#define PR_SET_VMA 0x53564d41
+#endif
 
 namespace sandstorm {
 
@@ -3467,7 +3470,7 @@ bool trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
 }
 
 void setupSidecarSeccomp(bool logSeccompViolations) {
-  scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
+  scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ERRNO(ENOSYS));
   if (ctx == nullptr) {
     KJ_FAIL_SYSCALL("seccomp_init", 0);
   }
@@ -3488,75 +3491,86 @@ void setupSidecarSeccomp(bool logSeccompViolations) {
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(ptrace), 0));
+  // This allowlist is based on post-exec workerd traces from
+  // `make isolate-supervisor-syscall-trace`. Calls used only while setting up
+  // namespaces, mounts, credential drops, or seccomp itself intentionally stay
+  // unavailable after the filter is loaded.
+  int allowedSyscalls[] = {
+    SCMP_SYS(accept4),
+    SCMP_SYS(access),
+    SCMP_SYS(arch_prctl),
+    SCMP_SYS(bind),
+    SCMP_SYS(brk),
+    SCMP_SYS(clock_nanosleep),
+    SCMP_SYS(close),
+    SCMP_SYS(connect),
+    SCMP_SYS(dup),
+    SCMP_SYS(dup2),
+    SCMP_SYS(epoll_create1),
+    SCMP_SYS(epoll_ctl),
+    SCMP_SYS(epoll_pwait),
+    SCMP_SYS(epoll_wait),
+    SCMP_SYS(eventfd2),
+    SCMP_SYS(execve),
+    SCMP_SYS(exit),
+    SCMP_SYS(exit_group),
+    SCMP_SYS(fcntl),
+    SCMP_SYS(fstat),
+    SCMP_SYS(futex),
+    SCMP_SYS(getcwd),
+    SCMP_SYS(getpid),
+    SCMP_SYS(getrandom),
+    SCMP_SYS(getsockopt),
+    SCMP_SYS(gettid),
+    SCMP_SYS(ioctl),
+    SCMP_SYS(listen),
+    SCMP_SYS(lseek),
+    SCMP_SYS(madvise),
+    SCMP_SYS(mmap),
+    SCMP_SYS(mprotect),
+    SCMP_SYS(munmap),
+    SCMP_SYS(newfstatat),
+    SCMP_SYS(openat),
+    SCMP_SYS(pkey_alloc),
+    SCMP_SYS(poll),
+    SCMP_SYS(pread64),
+    SCMP_SYS(prlimit64),
+    SCMP_SYS(read),
+    SCMP_SYS(readlink),
+    SCMP_SYS(readlinkat),
+    SCMP_SYS(readv),
+    SCMP_SYS(rt_sigaction),
+    SCMP_SYS(rt_sigprocmask),
+    SCMP_SYS(rt_sigreturn),
+    SCMP_SYS(sched_getaffinity),
+    SCMP_SYS(sched_getparam),
+    SCMP_SYS(sched_getscheduler),
+    SCMP_SYS(set_tid_address),
+    SCMP_SYS(setsockopt),
+    SCMP_SYS(sigaltstack),
+    SCMP_SYS(umask),
+    SCMP_SYS(uname),
+    SCMP_SYS(write),
+    SCMP_SYS(writev),
+  };
 
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_GE, AF_NETLINK + 1)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_AX25)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_IPX)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_APPLETALK)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_NETROM)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_BRIDGE)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_ATMPVC)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_X25)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_ROSE)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_DECnet)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_NETBEUI)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_SECURITY)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EAFNOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_KEY)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPROTONOSUPPORT), SCMP_SYS(socket), 1,
-      SCMP_A1(SCMP_CMP_MASKED_EQ, 0x0f, SOCK_DCCP)));
+  for (auto syscall: allowedSyscalls) {
+    CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ALLOW, syscall, 0));
+  }
 
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(add_key), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(request_key), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(keyctl), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(syslog), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(uselib), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(personality), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(acct), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(modify_ldt), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(set_thread_area), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(unshare), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(mount), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(pivot_root), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(quotactl), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(clone), 1,
-      SCMP_A0(SCMP_CMP_MASKED_EQ, CLONE_NEWUSER, CLONE_NEWUSER)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_setup), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_destroy), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_getevents), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_submit), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_cancel), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(remap_file_pages), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(mbind), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(get_mempolicy), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(set_mempolicy), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(migrate_pages), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(move_pages), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(vmsplice), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(set_robust_list), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(get_robust_list), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(perf_event_open), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EINVAL), SCMP_SYS(prctl), 1,
-      SCMP_A0(SCMP_CMP_EQ, PR_SET_SECCOMP)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(seccomp), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(bpf), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(userfaultfd), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(io_pgetevents), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(rseq), 0));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(pkey_mprotect), 0));
+  // Do not allow clone3(): libseccomp cannot inspect the pointed-to clone_args
+  // flags. Returning ENOSYS makes glibc fall back to clone(), where we can at
+  // least reject namespace-creating flags.
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(clone), 1,
+      SCMP_A0(SCMP_CMP_MASKED_EQ,
+          CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWUSER |
+          CLONE_NEWPID | CLONE_NEWNET, 0)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(prctl), 1,
+      SCMP_A0(SCMP_CMP_EQ, PR_SET_NAME)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(prctl), 1,
+      SCMP_A0(SCMP_CMP_EQ, PR_SET_VMA)));
+  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(socket), 1,
+      SCMP_A0(SCMP_CMP_EQ, AF_UNIX)));
 
   CHECK_SECCOMP(seccomp_load(ctx));
 #pragma GCC diagnostic pop
