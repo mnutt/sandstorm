@@ -1388,6 +1388,38 @@ test("isolate supervisor integration suite", {
     assert.equal(index.statusCode, 200);
     assert.ok(index.json.keys.some(
       (entry) => entry.name === "integration-key" && entry.bytes === 17));
+    assert.ok(index.json.totalBytes >= 17);
+
+    const usageEntries = [];
+    let usageTotalBytes = 0;
+    for (let i = 0; i < 32; ++i) {
+      const key = `usage-${String(i).padStart(2, "0")}`;
+      const body = deterministicBytes(257 + i * 31);
+      usageEntries.push({ key, bytes: body.length });
+      usageTotalBytes += body.length;
+      const usagePut = await requestJson(fixture.storageSocket, `/${key}`, {
+        method: "PUT",
+        body,
+      });
+      assert.equal(usagePut.statusCode, 200, key);
+      assert.deepEqual(usagePut.json, { ok: true, bytes: body.length }, key);
+    }
+
+    const usageIndex = await requestJson(fixture.storageSocket, "/");
+    assert.equal(usageIndex.statusCode, 200);
+    const usageMap = new Map(usageIndex.json.keys.map((entry) => [entry.name, entry.bytes]));
+    for (const entry of usageEntries) {
+      assert.equal(usageMap.get(entry.key), entry.bytes, entry.key);
+    }
+    assert.ok(usageIndex.json.totalBytes >= usageTotalBytes + 17);
+
+    for (const entry of usageEntries) {
+      const usageDeleted = await requestJson(fixture.storageSocket, `/${entry.key}`, {
+        method: "DELETE",
+      });
+      assert.equal(usageDeleted.statusCode, 200, entry.key);
+      assert.equal(usageDeleted.json.ok, true, entry.key);
+    }
 
     for (const key of ["/.hidden", "/bad/key", "/a..b", "/bad%20key"]) {
       const invalid = await requestJson(fixture.storageSocket, key);

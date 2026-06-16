@@ -5228,6 +5228,7 @@ private:
     auto files = listDirectory(config.storageRootPath);
     kj::Vector<char> json;
     json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"keys\": ["));
+    uint64_t totalBytes = 0;
     bool first = true;
     for (auto& file: files) {
       if (!isValidIsolateStorageKey(file)) {
@@ -5239,6 +5240,7 @@ private:
         struct stat stats;
         KJ_SYSCALL(fstat(*fd, &stats));
 
+        totalBytes += static_cast<uint64_t>(stats.st_size);
         if (!first) json.addAll(kj::StringPtr(", "));
         json.addAll(kj::StringPtr("{ "));
         appendJsonField(json, "name", file);
@@ -5248,7 +5250,9 @@ private:
         first = false;
       }
     }
-    json.addAll(kj::StringPtr("]\n}\n"));
+    json.addAll(kj::StringPtr("],\n  \"totalBytes\": "));
+    json.addAll(kj::str(totalBytes));
+    json.addAll(kj::StringPtr("\n}\n"));
     json.add('\0');
     return kj::String(json.releaseAsArray());
   }
