@@ -133,6 +133,70 @@ function renderBrowserPowerboxPage() {
 </html>`;
 }
 
+function renderBrowserStoragePage() {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Isolate Browser Storage</title>
+  </head>
+  <body>
+    <button id="health" type="button">health</button>
+    <button id="write" type="button">write storage</button>
+    <button id="read" type="button">read storage</button>
+    <pre id="health-result">not checked</pre>
+    <pre id="write-result">not written</pre>
+    <pre id="read-result">not read</pre>
+
+    <script type="module">
+      const healthResult = document.querySelector("#health-result");
+      const writeResult = document.querySelector("#write-result");
+      const readResult = document.querySelector("#read-result");
+
+      async function jsonFetch(path, options) {
+        const response = await fetch(path, options);
+        const body = await response.json();
+        if (!response.ok || !body.ok) {
+          throw new Error(JSON.stringify(body));
+        }
+        return body;
+      }
+
+      document.querySelector("#health").addEventListener("click", async () => {
+        try {
+          const body = await jsonFetch("/browser-storage-health");
+          healthResult.textContent = "health: " + body.status;
+        } catch (error) {
+          healthResult.textContent = error.message || String(error);
+        }
+      });
+
+      document.querySelector("#write").addEventListener("click", async () => {
+        try {
+          const body = await jsonFetch("/browser-storage-write", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ value: "persisted across restart" }),
+          });
+          writeResult.textContent = "write: " + body.value;
+        } catch (error) {
+          writeResult.textContent = error.message || String(error);
+        }
+      });
+
+      document.querySelector("#read").addEventListener("click", async () => {
+        try {
+          const body = await jsonFetch("/browser-storage-read");
+          readResult.textContent = "read: " + body.value;
+        } catch (error) {
+          readResult.textContent = error.message || String(error);
+        }
+      });
+    </script>
+  </body>
+</html>`;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const api = sandstorm(request, env);
@@ -215,6 +279,50 @@ export default {
         dropRestored,
         dropSaved,
       });
+    }
+
+    if (url.pathname === "/browser-storage-test") {
+      return new Response(renderBrowserStoragePage(), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (url.pathname === "/browser-storage-health") {
+      return Response.json({
+        ok: true,
+        status: "ok",
+        mainModule: metadata.fixture,
+      });
+    }
+
+    if (url.pathname === "/browser-storage-write" && request.method === "POST") {
+      const body = await request.json();
+      const value = String(body.value || "");
+      const put = await env.STORAGE.fetch("http://storage/browser-storage-test", {
+        method: "PUT",
+        body: value,
+      });
+      const putBody = await put.json();
+      return Response.json({
+        ok: put.ok && putBody.ok,
+        value,
+        put: putBody,
+      }, { status: put.ok ? 200 : 500 });
+    }
+
+    if (url.pathname === "/browser-storage-read") {
+      const get = await env.STORAGE.fetch("http://storage/browser-storage-test");
+      if (get.status === 404) {
+        return Response.json({
+          ok: false,
+          error: "missing storage value",
+        }, { status: 404 });
+      }
+      const value = await get.text();
+      return Response.json({
+        ok: get.ok,
+        value,
+      }, { status: get.ok ? 200 : 500 });
     }
 
     if (url.pathname === "/service-target") {
