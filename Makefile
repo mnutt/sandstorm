@@ -162,7 +162,7 @@ clean: ci-clean
 ci-clean:
 	@# Clean only the stuff that we want to clean between CI builds.
 	rm -rf bin tmp node_modules bundle shell-build sandstorm-*.tar.xz
-	rm -rf test-app.spk isolate-test-app.spk
+	rm -rf test-app.spk isolate-test-app.spk isolate-api-powerbox-test-app.spk
 	rm -rf tests/assets/meteor-testapp.spk meteor-testapp/.meteor-spk
 
 install: sandstorm-$(BUILD)-fast.tar.xz install.sh
@@ -513,6 +513,21 @@ isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capn
 
 isolate-supervisor-integration-test: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-integration.test.js
 	$(NODEJS) tests/isolate-supervisor-integration.test.js
+
+isolate-api-powerbox-test-app.spk: \
+		tmp/.ekam-run \
+		src/sandstorm/test-app/isolate-api-powerbox-app.capnp \
+		src/sandstorm/test-app/isolate-api-powerbox-app.key \
+		src/sandstorm/test-app/isolate-api-powerbox/worker.js
+	@mkdir -p tmp/sandstorm/isolate-api-powerbox-test-app
+	@cp src/sandstorm/test-app/isolate-api-powerbox-app.capnp \
+		tmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox-app.capnp
+	@rm -rf tmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox
+	@cp -R src/sandstorm/test-app/isolate-api-powerbox \
+		tmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox
+	bin/spk pack -ksrc/sandstorm/test-app/isolate-api-powerbox-app.key -Isrc -Itmp \
+		-ptmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox-app.capnp:pkgdef \
+		isolate-api-powerbox-test-app.spk
 
 # ====================================================================
 # meteor-testapp.spk
