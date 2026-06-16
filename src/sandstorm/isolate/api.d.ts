@@ -388,9 +388,7 @@ declare module "sandstorm:api" {
   }
 
   export interface PowerboxApi {
-    requestApiSession(options: ApiSessionPowerboxOptions): Promise<ClaimedCapability>;
     apiSessionDescriptor(options: ApiSessionPowerboxOptions): Promise<string>;
-    requestOutboundHttp(options: OutboundHttpPowerboxOptions): Promise<ClaimedCapability>;
     outboundHttpDescriptor(options: OutboundHttpPowerboxOptions): Promise<string>;
     claimedCapability(capability: ClaimedCapabilityHandle | string): ClaimedCapability;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;

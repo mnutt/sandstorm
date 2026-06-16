@@ -611,40 +611,6 @@ function outboundHttpRequestOptions(options = {}) {
   return { ...options, outboundHttp: options };
 }
 
-async function requestApiSessionCapability(env, request, options = {}) {
-  const requiredPermissions = permissionNames(options);
-  await validateRequiredPermissions(env, requiredPermissions);
-
-  const params = new URLSearchParams({
-    sessionId: sessionIdForPowerbox(request),
-  });
-  for (const name of requiredPermissions) {
-    params.append("requiredPermission", name);
-  }
-  for (const [name, value] of apiSessionDescriptorParams(apiSessionRequestOptions(options))) {
-    params.append(name, value);
-  }
-  return wrapClaimedCapability(
-    env, await postPowerbox(env, `powerbox/request-api?${params}`));
-}
-
-async function requestOutboundHttpCapability(env, request, options = {}) {
-  const requiredPermissions = permissionNames(options);
-  await validateRequiredPermissions(env, requiredPermissions);
-
-  const params = new URLSearchParams({
-    sessionId: sessionIdForPowerbox(request),
-  });
-  for (const name of requiredPermissions) {
-    params.append("requiredPermission", name);
-  }
-  for (const [name, value] of outboundHttpDescriptorParams(outboundHttpRequestOptions(options))) {
-    params.append(name, value);
-  }
-  return wrapClaimedCapability(
-    env, await postPowerbox(env, `powerbox/request-outbound-http?${params}`));
-}
-
 async function apiSessionPowerboxDescriptor(env, options = {}) {
   const result = await apiSessionPowerboxDescriptorInfo(env, options);
   return result.descriptor;
@@ -1529,16 +1495,8 @@ async function persistentObjectCapability(env, target, options = {}) {
 
 export function powerbox(request, env) {
   return {
-    async requestApiSession(options = {}) {
-      return requestApiSessionCapability(env, request, options);
-    },
-
     async apiSessionDescriptor(options = {}) {
       return apiSessionPowerboxDescriptor(env, options);
-    },
-
-    async requestOutboundHttp(options = {}) {
-      return requestOutboundHttpCapability(env, request, options);
     },
 
     async outboundHttpDescriptor(options = {}) {
@@ -1721,16 +1679,8 @@ class PowerboxRpcTarget extends RpcTarget {
     this.#env = env;
   }
 
-  async requestApiSession(options) {
-    return powerbox(this.#request, this.#env).requestApiSession(options || {});
-  }
-
   async apiSessionDescriptor(options) {
     return powerbox(this.#request, this.#env).apiSessionDescriptor(options || {});
-  }
-
-  async requestOutboundHttp(options) {
-    return powerbox(this.#request, this.#env).requestOutboundHttp(options || {});
   }
 
   async outboundHttpDescriptor(options) {

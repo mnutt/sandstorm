@@ -23,6 +23,7 @@ import "/imports/oidc/oidc-server";
 import { globalDb } from "/imports/db-deprecated";
 import { httpCallAsync } from "/imports/server/http-helpers";
 import { getGlobalBackend } from "/imports/server/backend-instance";
+import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
 import { checkAuthAsync, clearAdminToken } from "/imports/server/auth";
 import { setAccountSuspensionEmailSenderForTests } from "/imports/server/account-suspension";
 import { setAdminEmailSenderForTests } from "/imports/server/admin-server";
@@ -481,7 +482,7 @@ if(isTesting) {
 
         const port = server.address().port;
         const baseUrl = "http://127.0.0.1:" + port + "/api";
-        const cap = globalThis.globalFrontendRefRegistry.restore(globalDb, {
+        const cap = frontendRefRegistry.restore(globalDb, {
           frontendRef: { outboundHttp: { baseUrl } },
         }, { outboundHttp: { baseUrl } }).castAs(OutboundHttpSession);
 

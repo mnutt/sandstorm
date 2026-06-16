@@ -253,8 +253,8 @@ The preferred Powerbox lifecycle names are:
 - `restoreStored(options)`, `fetchStored(options, input, init)`, and
   `dropStored(options)` for token strings stored in isolate storage
 - `claimedCapability(handle)` for wrapping a browser-returned claimed handle
-- `requestApiSession(options)` and `requestOutboundHttp(options)` for the
-  current browser-mediated API-session and outbound HTTP request helpers
+- `apiSessionDescriptor(options)` and `outboundHttpDescriptor(options)` for
+  generating packed descriptors used by browser-mediated Powerbox requests
 
 The following exports are public but low-level. Prefer the `sandstorm()`
 facade unless a custom framework or test needs direct access:
@@ -413,6 +413,12 @@ Pass `null` or omit the query argument to `requestPowerbox()` and
 `requestAndClaimPowerbox()` when asking the user to paste an offered webkey.
 Pass an array of packed descriptors when asking the shell to show matching
 Powerbox cards.
+
+Worker code cannot directly open the Powerbox picker. Sandstorm's underlying
+`SessionContext.request()` operation is not implemented; use browser
+`postMessage` helpers from `/rpc-client.js`, then send the returned token or
+claimed handle to the worker for `claimRequest()`, `claimAndStoreRequest()`,
+or `claimedCapability()`.
 
 For the common browser-to-worker flow:
 
