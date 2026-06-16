@@ -1168,6 +1168,17 @@ test("isolate supervisor integration suite", {
     assert.equal(error.statusCode, 418);
     assert.equal(error.body, "fixture failure");
     assert.match(String(error.headers["content-type"] || ""), /text\/plain/);
+
+    const htmlError = await requestUnixSocket(fixture.workerdSocket, "/error-html");
+    assert.equal(htmlError.statusCode, 404);
+    assert.equal(htmlError.body, "<p>fixture html failure</p>");
+    assert.match(String(htmlError.headers["content-type"] || ""), /text\/html/);
+
+    const binaryError = await requestUnixSocket(fixture.workerdSocket, "/error-binary");
+    assert.equal(binaryError.statusCode, 500);
+    assert.equal(binaryError.headers["content-type"], "application/octet-stream");
+    assert.equal(binaryError.bodyBuffer.length, 1024);
+    assert.equal(checksum(binaryError.bodyBuffer), checksum(deterministicBytes(1024)));
   });
 
   await t.test("serves the Sandstorm API binding socket", async () => {
