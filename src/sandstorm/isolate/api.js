@@ -80,6 +80,15 @@ async function callPowerbox(env, path) {
   return body;
 }
 
+async function callSandstormApi(env, path) {
+  const response = await env.SANDSTORM_API.fetch(`http://sandstorm/${path}`);
+  const body = await parseApiResponseBody(response);
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || `Sandstorm API ${path} failed with ${response.status}`);
+  }
+  return body;
+}
+
 async function postPowerbox(env, path) {
   const response = await powerboxFetcher(env).fetch(`http://sandstorm/${path}`, {
     method: "POST",
@@ -484,6 +493,9 @@ async function duplicateClaimedCapability(env, capability) {
 }
 
 async function sessionPowerboxAction(env, request, endpoint, capability, options = {}) {
+  const requiredPermissions = permissionNames(options);
+  await validateRequiredPermissions(env, requiredPermissions);
+
   const params = new URLSearchParams({
     sessionId: sessionIdForPowerbox(request),
     id: capabilityId(capability),
@@ -491,7 +503,7 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
   for (const [name, value] of sessionDisplayInfoParams(options)) {
     params.append(name, value);
   }
-  for (const name of permissionNames(options)) {
+  for (const name of requiredPermissions) {
     params.append("requiredPermission", name);
   }
   for (const [name, value] of apiSessionDescriptorParams(options)) {
@@ -522,10 +534,13 @@ function apiSessionRequestOptions(options = {}) {
 }
 
 async function requestApiSessionCapability(env, request, options = {}) {
+  const requiredPermissions = permissionNames(options);
+  await validateRequiredPermissions(env, requiredPermissions);
+
   const params = new URLSearchParams({
     sessionId: sessionIdForPowerbox(request),
   });
-  for (const name of permissionNames(options)) {
+  for (const name of requiredPermissions) {
     params.append("requiredPermission", name);
   }
   for (const [name, value] of apiSessionDescriptorParams(apiSessionRequestOptions(options))) {
@@ -1199,6 +1214,23 @@ function permissionNames(options = {}) {
   });
 }
 
+async function validateRequiredPermissions(env, names) {
+  if (names.length === 0) return;
+
+  const declared = await callSandstormApi(env, "permissions");
+  const declaredNames = Array.isArray(declared.permissions)
+    ? declared.permissions.map((permission) => permission.name).filter((name) => typeof name === "string")
+    : [];
+  const declaredSet = new Set(declaredNames);
+  const unknown = names.filter((name) => !declaredSet.has(name));
+  if (unknown.length > 0) {
+    throw new ValidationError(
+      `unknown required permission: ${unknown[0]}; this app defines permissions: ` +
+      `${declaredNames.length > 0 ? declaredNames.join(", ") : "(none)"}. ` +
+      "requiredPermissions must use names from this app's viewInfo.permissions.");
+  }
+}
+
 function storageKey(options = {}) {
   return validate.storageKey(options.storageKey ?? options.key ?? "powerbox-token", "storageKey");
 }
@@ -1317,9 +1349,11 @@ export function powerbox(request, env) {
 
     async claimRequest(token, options = {}) {
       token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
+      const requiredPermissions = permissionNames(options);
+      await validateRequiredPermissions(env, requiredPermissions);
       const sessionId = encodeURIComponent(sessionIdForPowerbox(request));
       const encodedToken = encodeURIComponent(token);
-      const permissionQuery = permissionNames(options)
+      const permissionQuery = requiredPermissions
         .map((name) => `&requiredPermission=${encodeURIComponent(name)}`)
         .join("");
       const capability = await postPowerbox(env,
