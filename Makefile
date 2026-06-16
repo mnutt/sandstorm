@@ -515,6 +515,17 @@ isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capn
 isolate-supervisor-integration-test: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-integration.test.js
 	$(NODEJS) tests/isolate-supervisor-integration.test.js
 
+isolate-supervisor-syscall-trace: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+	@command -v strace >/dev/null || (echo "strace is required for this target" >&2; exit 1)
+	@rm -rf tmp/isolate-syscall-trace
+	@mkdir -p tmp/isolate-syscall-trace
+	ISOLATE_SYSCALL_TRACE_DIR=$(CURDIR)/tmp/isolate-syscall-trace \
+		ISOLATE_SYSCALL_TRACE_PROFILE=representative \
+		$(NODEJS) tests/isolate-supervisor-integration.test.js
+	@echo "wrote syscall traces to tmp/isolate-syscall-trace"
+	@echo "workerd exec traces:"
+	@grep -h 'execve.*workerd' tmp/isolate-syscall-trace/* || true
+
 isolate-api-powerbox-test-app.spk: \
 		tmp/.ekam-run \
 		src/sandstorm/test-app/isolate-api-powerbox-app.capnp \

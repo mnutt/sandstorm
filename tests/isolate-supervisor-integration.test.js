@@ -31,6 +31,11 @@ const SPK_BIN = process.env.SPK_BIN || path.join(REPO_DIR, "bin/spk");
 const SPK_PATH = process.env.ISOLATE_TEST_SPK || path.join(REPO_DIR, "isolate-test-app.spk");
 const WEBSESSION_CLIENT_BIN = process.env.ISOLATE_WEBSESSION_CLIENT ||
   path.join(REPO_DIR, "tmp/sandstorm/isolate-websession-client");
+const STRACE_BIN = process.env.STRACE_BIN || "strace";
+const SYSCALL_TRACE_DIR = process.env.ISOLATE_SYSCALL_TRACE_DIR || "";
+const SYSCALL_TRACE_PROFILE = process.env.ISOLATE_SYSCALL_TRACE_PROFILE || "";
+const REPRESENTATIVE_SYSCALL_TRACE = SYSCALL_TRACE_PROFILE === "representative";
+const TEST_TIMEOUT_MS = SYSCALL_TRACE_DIR ? 180000 : 30000;
 
 function formatOutput(stdout, stderr) {
   const out = stdout.join("");
@@ -179,15 +184,28 @@ async function requestJson(socketPath, requestPath, options = {}) {
   };
 }
 
-async function stopChild(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
+async function stopChild(child, options = {}) {
+  const killProcessGroup = options.killProcessGroup || false;
+  const target = killProcessGroup ? -child.pid : child.pid;
+  const sendSignal = (signal) => {
+    try {
+      process.kill(target, signal);
+    } catch (err) {
+      if (err.code !== "ESRCH") throw err;
+    }
+  };
+
+  if (child.exitCode !== null || child.signalCode !== null) {
+    if (killProcessGroup) sendSignal("SIGTERM");
+    return;
+  }
 
   const exited = new Promise((resolve) => child.once("exit", resolve));
-  child.kill("SIGTERM");
+  sendSignal("SIGTERM");
 
   const timeout = delay(2000).then(() => "timeout");
   if (await Promise.race([exited, timeout]) === "timeout") {
-    child.kill("SIGKILL");
+    sendSignal("SIGKILL");
     await exited;
   }
 }
@@ -275,6 +293,10 @@ async function startIsolateFixture() {
   let childExit = { value: null };
   let started = false;
 
+  if (SYSCALL_TRACE_DIR) {
+    await fs.mkdir(SYSCALL_TRACE_DIR, { recursive: true });
+  }
+
   function spawnSupervisor(isNew) {
     const args = [
       "--stdio",
@@ -295,8 +317,23 @@ async function startIsolateFixture() {
       "sandstormConfig");
 
     childExit = { value: null };
-    child = spawn(isolateSupervisorBin, args, {
+    const spawnCommand = SYSCALL_TRACE_DIR ? STRACE_BIN : isolateSupervisorBin;
+    const spawnArgs = SYSCALL_TRACE_DIR
+      ? [
+        "-ff",
+        "-yy",
+        "-s", "256",
+        "-o", path.join(
+          SYSCALL_TRACE_DIR,
+          `isolate-supervisor-${isNew ? "new" : "restart"}-${Date.now()}`),
+        isolateSupervisorBin,
+        ...args,
+      ]
+      : args;
+
+    child = spawn(spawnCommand, spawnArgs, {
       stdio: ["ignore", "pipe", "pipe"],
+      detached: SYSCALL_TRACE_DIR !== "",
     });
 
     child.stdout.setEncoding("utf8");
@@ -382,7 +419,7 @@ async function startIsolateFixture() {
       restart: async () => {
         await stopCoreServer();
         if (child !== null) {
-          await stopChild(child);
+          await stopChild(child, { killProcessGroup: SYSCALL_TRACE_DIR !== "" });
           child = null;
         }
         await unlinkSockets();
@@ -393,7 +430,7 @@ async function startIsolateFixture() {
       cleanup: async () => {
         await stopCoreServer();
         if (child !== null) {
-          await stopChild(child);
+          await stopChild(child, { killProcessGroup: SYSCALL_TRACE_DIR !== "" });
           child = null;
         }
         await fs.rm(workdir, { recursive: true, force: true });
@@ -404,7 +441,7 @@ async function startIsolateFixture() {
       await stopCoreServer();
     }
     if (!started && child !== null) {
-      await stopChild(child);
+      await stopChild(child, { killProcessGroup: SYSCALL_TRACE_DIR !== "" });
     }
     if (!started) {
       await fs.rm(workdir, { recursive: true, force: true });
@@ -413,7 +450,7 @@ async function startIsolateFixture() {
 }
 
 test("isolate supervisor integration suite", {
-  timeout: 30000,
+  timeout: TEST_TIMEOUT_MS,
 }, async (t) => {
   const fixture = await startIsolateFixture();
   t.after(() => fixture.cleanup());
@@ -539,6 +576,10 @@ test("isolate supervisor integration suite", {
     assert.equal(storageHelper.json.deletedBytes.ok, true);
     assert.equal(storageHelper.json.deletedJson.ok, true);
   });
+
+  if (REPRESENTATIVE_SYSCALL_TRACE) {
+    return;
+  }
 
   await t.test("exports route-backed WebSession capabilities", async () => {
     const exported = await requestJson(fixture.workerdSocket, "/export-web-session");
