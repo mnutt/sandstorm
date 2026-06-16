@@ -193,7 +193,7 @@ export default {
 
       if (url.pathname === "/claim" && request.method === "POST") {
         const body = await request.json();
-        const claimed = await api.powerbox().claimAndSaveRequest(body, {
+        const claimed = await api.powerbox().claimAndStoreRequest(body, {
           storageKey: TOKEN_KEY,
           label: "Browser Powerbox Lifecycle API",
         });
@@ -208,7 +208,7 @@ export default {
       }
 
       if (url.pathname === "/use" && request.method === "POST") {
-        const response = await api.powerbox().fetchSaved(
+        const response = await api.powerbox().fetchStored(
           { storageKey: TOKEN_KEY },
           "/status",
           { headers: { accept: "application/json" } });
@@ -221,7 +221,7 @@ export default {
       }
 
       if (url.pathname === "/revoke" && request.method === "POST") {
-        const dropped = await api.powerbox().dropSavedFromStorage({ storageKey: TOKEN_KEY });
+        const dropped = await api.powerbox().dropStored({ storageKey: TOKEN_KEY });
         return render(request, env, {
           ok: true,
           step: "dropped saved token",

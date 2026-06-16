@@ -804,7 +804,7 @@ export default {
     }
 
     if (url.pathname === "/request-api-session-self-test") {
-      const capability = await sandstorm(request, env).powerbox().requestApi({
+      const capability = await sandstorm(request, env).powerbox().requestApiSession({
         canonicalUrl: "https://api.example.test/v1",
         oauthScopes: ["read", "write"],
         requiredPermissions: ["view"],
@@ -827,7 +827,7 @@ export default {
     if (url.pathname === "/required-permission-validation-self-test") {
       let error = null;
       try {
-        await sandstorm(request, env).powerbox().requestApi({
+        await sandstorm(request, env).powerbox().requestApiSession({
           canonicalUrl: "https://api.example.test/v1",
           oauthScopes: ["read"],
           requiredPermissions: ["not-a-permission"],
@@ -1436,16 +1436,16 @@ export default {
     if (url.pathname === "/powerbox-storage-helper-self-test") {
       const helper = sandstormPowerbox(request, env);
       const storageKey = "powerbox-storage-helper-token";
-      const claimed = await helper.claimAndSaveRequest("websession/test+token==", {
+      const claimed = await helper.claimAndStoreRequest("websession/test+token==", {
         label: "WebSession saved capability",
         storageKey,
         requiredPermissions: ["view"],
       });
       const originalFetch = await claimed.capability.fetch("/capability-echo?source=helper-original");
       const dropOriginal = await claimed.capability.drop();
-      const fetchSavedResponse =
-        await helper.fetchSaved({ storageKey }, "/capability-echo?source=helper-fetch-saved");
-      const restored = await helper.restoreSaved({ storageKey });
+      const fetchStoredResponse =
+        await helper.fetchStored({ storageKey }, "/capability-echo?source=helper-fetch-saved");
+      const restored = await helper.restoreStored({ storageKey });
       let restoredFetch = null;
       let dropRestored = null;
       if (restored.capability) {
@@ -1462,7 +1462,7 @@ export default {
       const handleSource = await sandstorm(request, env).webSession({
         pathPrefix: "/exported",
       });
-      const handleClaimed = await helper.claimAndSaveRequest({
+      const handleClaimed = await helper.claimAndStoreRequest({
         capability: handleSource,
       }, {
         label: "WebSession saved from claimed handle",
@@ -1470,13 +1470,13 @@ export default {
       });
       const dropHandleClaimed = await handleClaimed.capability.drop();
       const handleFetchSavedResponse =
-        await helper.fetchSaved(
+        await helper.fetchStored(
           { storageKey: handleStorageKey },
           "/capability-echo?source=helper-handle-fetch");
-      const dropHandleSaved = await helper.dropSavedFromStorage({ storageKey: handleStorageKey });
+      const dropHandleSaved = await helper.dropStored({ storageKey: handleStorageKey });
 
-      const dropSaved = await helper.dropSavedFromStorage({ storageKey });
-      const afterDrop = await helper.restoreSaved({ storageKey });
+      const dropSaved = await helper.dropStored({ storageKey });
+      const afterDrop = await helper.restoreStored({ storageKey });
       return Response.json({
         ok: true,
         claimed: {
@@ -1491,9 +1491,9 @@ export default {
           body: await originalFetch.json(),
         },
         dropOriginal,
-        fetchSaved: {
-          status: fetchSavedResponse.status,
-          body: await fetchSavedResponse.json(),
+        fetchStored: {
+          status: fetchStoredResponse.status,
+          body: await fetchStoredResponse.json(),
         },
         restored: {
           ok: restored.ok,

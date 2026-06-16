@@ -4001,7 +4001,7 @@ private:
         "\"bindings\", \"permissions\", "
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
         "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
-        "\"powerbox.apiSessionDescriptor\", \"powerbox.requestApi\", "
+        "\"powerbox.apiSessionDescriptor\", \"powerbox.requestApiSession\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\"]\n"
         "}\n");

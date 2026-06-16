@@ -68,7 +68,7 @@ class DemoApi extends RpcTarget {
   }
 
   restorePowerboxCapability(token) {
-    return sandstorm(this.request, this.env).powerbox().restore(token);
+    return sandstorm(this.request, this.env).powerbox().restoreSaved(token);
   }
 
   dropSavedPowerboxCapability(token) {

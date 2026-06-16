@@ -181,7 +181,7 @@ On a later request, the app reads the token and restores a new live handle:
 
 ```js
 const token = await sandstorm(request, env).storage().get("chosen-document-token");
-const restored = await sandstorm(request, env).powerbox().restore(token);
+const restored = await sandstorm(request, env).powerbox().restoreSaved(token);
 ```
 
 Dropping a live handle with `cap.drop()` only releases that in-memory claimed
@@ -199,15 +199,15 @@ await sandstorm(request, env).powerbox().dropSaved(token);
 
 If the token string is stored in isolate storage, the app should also delete
 that stored copy after revocation. The helper
-`powerbox().dropSavedFromStorage({ storageKey })` performs both steps for the
+`powerbox().dropStored({ storageKey })` performs both steps for the
 common case.
 
-The helper `powerbox().claimAndSaveRequest()` handles the common browser
+The helper `powerbox().claimAndStoreRequest()` handles the common browser
 Powerbox flow: accept the browser result, claim it if needed, save it, store
 the saved token string, and return the live and saved handles.
-`powerbox().fetchSaved()` handles the common later-use path: restore a saved
+`powerbox().fetchStored()` handles the common later-use path: restore a saved
 token from storage, fetch through it, buffer the response, and drop the live
-handle. Use `claimAndSave()` and `restoreSaved()` directly when code needs
+handle. Use `claimAndStore()` and `restoreSaved()` directly when code needs
 lower-level control, multiple calls, or streaming response bodies.
 `persistentCapability()` does the analogous storage-backed setup for
 app-defined stable object capabilities.
@@ -283,7 +283,7 @@ lasting connection, save the returned request result into app-owned storage:
 // Worker route.
 const api = sandstorm(request, env);
 const requested = await request.json();
-const claimed = await api.powerbox().claimAndSaveRequest(requested, {
+const claimed = await api.powerbox().claimAndStoreRequest(requested, {
   storageKey: "chosen-api-token",
   label: "Chosen API",
 });
@@ -292,7 +292,7 @@ const response = await claimed.capability.fetch("/status");
 await claimed.capability.drop();
 ```
 
-`claimAndSaveRequest()` accepts either the full browser result object or a raw
+`claimAndStoreRequest()` accepts either the full browser result object or a raw
 Powerbox request token. If browser code uses `requestApiCapability()` or
 `requestAndClaimPowerbox()`, the helper saves the already-claimed capability
 handle. If browser code uses `requestApiPowerbox()` or `requestPowerbox()`, the
@@ -318,17 +318,17 @@ const claimed = api.powerbox().claimedCapability(handle);
 ```
 
 Later, restore the saved token, use the restored live handle, and drop it
-automatically with `fetchSaved()`:
+automatically with `fetchStored()`:
 
 ```js
 const api = sandstorm(request, env);
-const response = await api.powerbox().fetchSaved(
+const response = await api.powerbox().fetchStored(
   { storageKey: "chosen-api-token" },
   "/status",
 );
 ```
 
-`fetchSaved()` buffers the response before dropping the live handle. Use
+`fetchStored()` buffers the response before dropping the live handle. Use
 `restoreSaved()` when code needs the live handle for more than one call or for
 streaming response bodies.
 
@@ -336,7 +336,7 @@ To revoke the stored grant, drop both the durable token and the app's stored
 copy:
 
 ```js
-await api.powerbox().dropSavedFromStorage({ storageKey: "chosen-api-token" });
+await api.powerbox().dropStored({ storageKey: "chosen-api-token" });
 ```
 
 Use `inspectPowerboxQuery()` while developing if a query does not show the

@@ -11,9 +11,9 @@ isolate grains:
 
 1. Browser code builds and opens the Powerbox request.
 2. The browser sends the returned request token to the worker.
-3. The worker calls `api.powerbox().claimAndSaveRequest(...)`, which claims the
+3. The worker calls `api.powerbox().claimAndStoreRequest(...)`, which claims the
    token, saves the capability, and stores the saved token in isolate storage.
-4. Later requests call `api.powerbox().fetchSaved(...)`, which restores the
+4. Later requests call `api.powerbox().fetchStored(...)`, which restores the
    saved token, uses the restored live capability, and drops the live handle.
 5. The app can revoke the saved token and delete the stored copy.
 
