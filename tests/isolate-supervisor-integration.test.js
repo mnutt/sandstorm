@@ -1202,6 +1202,8 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("powerbox.fetch"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.apiSessionDescriptor"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.requestApiSession"));
+    assert.ok(capabilities.json.capabilities.includes("powerbox.outboundHttpDescriptor"));
+    assert.ok(capabilities.json.capabilities.includes("powerbox.requestOutboundHttp"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.offer"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.fulfillRequest"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.tieToUser"));
@@ -1367,6 +1369,22 @@ test("isolate supervisor integration suite", {
       type: "apiSession",
       canonicalUrl: "https://api.example.test/v1",
       oauthScopes: ["read"],
+    });
+
+    const outboundHttpDescriptor = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/outbound-http-descriptor" +
+      `?outboundHttpBaseUrl=${encodeURIComponent("https://api.example.test/v1")}` +
+      `&outboundHttpMethod=${encodeURIComponent("GET")}` +
+      `&outboundHttpMethod=${encodeURIComponent("POST")}`);
+    assert.equal(outboundHttpDescriptor.statusCode, 200);
+    assert.equal(outboundHttpDescriptor.json.ok, true);
+    assert.equal(outboundHttpDescriptor.json.type, "packedPowerboxDescriptor");
+    assert.equal(typeof outboundHttpDescriptor.json.descriptor, "string");
+    assert.deepEqual(outboundHttpDescriptor.json.decoded, {
+      type: "outboundHttp",
+      baseUrl: "https://api.example.test/v1",
+      methods: ["GET", "POST"],
     });
   });
 
