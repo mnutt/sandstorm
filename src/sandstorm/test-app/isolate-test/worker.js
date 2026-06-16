@@ -47,6 +47,10 @@ class CounterCapability extends RpcTarget {
     return other.call("get");
   }
 
+  async readOtherRpc(other) {
+    return other.get();
+  }
+
   async retainOther(other) {
     if (this.#retained) {
       await this.#retained.drop();
@@ -197,6 +201,54 @@ function renderBrowserStoragePage() {
 </html>`;
 }
 
+function renderBrowserRpcPage() {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Isolate Browser RPC</title>
+  </head>
+  <body>
+    <button id="run-rpc" type="button">run rpc</button>
+    <pre id="rpc-result">not run</pre>
+
+    <script type="module">
+      import { newSandstormRpcSession } from "/__sandstorm/test-rpc-client.js";
+
+      const result = document.querySelector("#rpc-result");
+
+      document.querySelector("#run-rpc").addEventListener("click", async () => {
+        result.textContent = "running";
+        try {
+          const rpc = newSandstormRpcSession("/__sandstorm/test-rpc");
+          const firstPromise = rpc.increment(2);
+          const child = rpc.child();
+          const childValuePromise = child.increment(5);
+          const parentValuePromise = rpc.readOtherRpc(child);
+          const currentPromise = rpc.get();
+          const [first, childValue, parentValue, current] = await Promise.all([
+            firstPromise,
+            childValuePromise,
+            parentValuePromise,
+            currentPromise,
+          ]);
+          rpc[Symbol.dispose]();
+          result.textContent = JSON.stringify({
+            ok: true,
+            first,
+            childValue,
+            parentValue,
+            current,
+          });
+        } catch (error) {
+          result.textContent = (error.message || String(error)) + "\\n" + (error.stack || "");
+        }
+      });
+    </script>
+  </body>
+</html>`;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const api = sandstorm(request, env);
@@ -323,6 +375,12 @@ export default {
         ok: get.ok,
         value,
       }, { status: get.ok ? 200 : 500 });
+    }
+
+    if (url.pathname === "/browser-rpc-test") {
+      return new Response(renderBrowserRpcPage(), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
     }
 
     if (url.pathname === "/service-target") {
