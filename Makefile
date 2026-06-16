@@ -164,7 +164,10 @@ ci-clean:
 	rm -rf bin tmp node_modules bundle shell-build sandstorm-*.tar.xz
 	rm -rf test-app.spk isolate-test-app.spk isolate-api-powerbox-test-app.spk
 	rm -rf isolate-api-provider-test-app.spk
-	rm -rf tests/assets/meteor-testapp.spk meteor-testapp/.meteor-spk
+	rm -rf tests/assets/meteor-testapp.spk tests/assets/isolate-test-app.spk
+	rm -rf tests/assets/isolate-api-powerbox-test-app.spk
+	rm -rf tests/assets/isolate-api-provider-test-app.spk
+	rm -rf meteor-testapp/.meteor-spk
 
 install: sandstorm-$(BUILD)-fast.tar.xz install.sh
 	@$(call color,install)
@@ -176,7 +179,8 @@ update: sandstorm-$(BUILD)-fast.tar.xz
 
 fast: sandstorm-$(BUILD)-fast.tar.xz
 
-test: sandstorm-$(BUILD)-fast.tar.xz test-app.spk tests/assets/meteor-testapp.spk
+test: sandstorm-$(BUILD)-fast.tar.xz test-app.spk tests/assets/meteor-testapp.spk \
+		tests/assets/isolate-test-app.spk
 	tests/run-local.sh sandstorm-$(BUILD)-fast.tar.xz test-app.spk
 lint: shell-env
 	cd shell && meteor npm run lint
@@ -508,13 +512,14 @@ test-app-dev: tmp/.ekam-run
 	@cp src/sandstorm/test-app/*.html tmp/sandstorm/test-app
 	spk dev -Isrc -Itmp -ptmp/sandstorm/test-app/test-app.capnp:pkgdef
 
-isolate-test-app.spk: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
+tests/assets/isolate-test-app.spk: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
+	@mkdir -p tests/assets
 	@mkdir -p tmp/sandstorm/isolate-test-app
 	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
 	@rm -rf tmp/sandstorm/isolate-test-app/isolate-test
 	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
 	bin/spk pack -ksrc/sandstorm/test-app/isolate-test-app.key -Isrc -Itmp \
-		-ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef isolate-test-app.spk
+		-ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef tests/assets/isolate-test-app.spk
 
 isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
 	@mkdir -p tmp/sandstorm/isolate-test-app
@@ -523,13 +528,13 @@ isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capn
 	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
 	spk dev -Isrc -Itmp -ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef
 
-isolate-supervisor-integration-test: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+isolate-supervisor-integration-test: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
 	$(NODEJS) tests/isolate-supervisor-integration.test.js
 
-isolate-supervisor-stress-test: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+isolate-supervisor-stress-test: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
 	ISOLATE_STRESS_64M=1 $(NODEJS) tests/isolate-supervisor-integration.test.js
 
-isolate-supervisor-syscall-trace: tmp/.ekam-run isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+isolate-supervisor-syscall-trace: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
 	@command -v strace >/dev/null || (echo "strace is required for this target" >&2; exit 1)
 	@rm -rf tmp/isolate-syscall-trace
 	@mkdir -p tmp/isolate-syscall-trace
@@ -540,11 +545,12 @@ isolate-supervisor-syscall-trace: tmp/.ekam-run isolate-test-app.spk tests/isola
 	@echo "workerd exec traces:"
 	@grep -h 'execve.*workerd' tmp/isolate-syscall-trace/* || true
 
-isolate-api-powerbox-test-app.spk: \
+tests/assets/isolate-api-powerbox-test-app.spk: \
 		tmp/.ekam-run \
 		src/sandstorm/test-app/isolate-api-powerbox-app.capnp \
 		src/sandstorm/test-app/isolate-api-powerbox-app.key \
 		src/sandstorm/test-app/isolate-api-powerbox/worker.js
+	@mkdir -p tests/assets
 	@mkdir -p tmp/sandstorm/isolate-api-powerbox-test-app
 	@cp src/sandstorm/test-app/isolate-api-powerbox-app.capnp \
 		tmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox-app.capnp
@@ -553,13 +559,14 @@ isolate-api-powerbox-test-app.spk: \
 		tmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox
 	bin/spk pack -ksrc/sandstorm/test-app/isolate-api-powerbox-app.key -Isrc -Itmp \
 		-ptmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox-app.capnp:pkgdef \
-		isolate-api-powerbox-test-app.spk
+		tests/assets/isolate-api-powerbox-test-app.spk
 
-isolate-api-provider-test-app.spk: \
+tests/assets/isolate-api-provider-test-app.spk: \
 		tmp/.ekam-run \
 		src/sandstorm/test-app/isolate-api-provider-app.capnp \
 		src/sandstorm/test-app/isolate-api-provider-app.key \
 		src/sandstorm/test-app/isolate-api-provider/worker.js
+	@mkdir -p tests/assets
 	@mkdir -p tmp/sandstorm/isolate-api-provider-test-app
 	@cp src/sandstorm/test-app/isolate-api-provider-app.capnp \
 		tmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider-app.capnp
@@ -568,7 +575,7 @@ isolate-api-provider-test-app.spk: \
 		tmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider
 	bin/spk pack -ksrc/sandstorm/test-app/isolate-api-provider-app.key -Isrc -Itmp \
 		-ptmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider-app.capnp:pkgdef \
-		isolate-api-provider-test-app.spk
+		tests/assets/isolate-api-provider-test-app.spk
 
 # ====================================================================
 # meteor-testapp.spk

@@ -28,7 +28,8 @@ const REPO_DIR = path.resolve(__dirname, "..");
 const REPO_TMP_DIR = path.join(REPO_DIR, "tmp");
 const SANDSTORM_BIN = process.env.SANDSTORM_BIN || path.join(REPO_DIR, "bin/sandstorm");
 const SPK_BIN = process.env.SPK_BIN || path.join(REPO_DIR, "bin/spk");
-const SPK_PATH = process.env.ISOLATE_TEST_SPK || path.join(REPO_DIR, "isolate-test-app.spk");
+const SPK_PATH = process.env.ISOLATE_TEST_SPK ||
+    path.join(REPO_DIR, "tests/assets/isolate-test-app.spk");
 const WEBSESSION_CLIENT_BIN = process.env.ISOLATE_WEBSESSION_CLIENT ||
   path.join(REPO_DIR, "tmp/sandstorm/isolate-websession-client");
 const STRACE_BIN = process.env.STRACE_BIN || "strace";
@@ -258,7 +259,7 @@ async function waitForLog(stderr, pattern, timeoutMs = 10000) {
 async function prepareIsolateWorkdir(prefix) {
   await requireExecutable(SANDSTORM_BIN, "Build the project first, e.g. make fast.");
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
-  await requireFile(SPK_PATH, "Create it with: make isolate-test-app.spk.");
+  await requireFile(SPK_PATH, "Create it with: make tests/assets/isolate-test-app.spk.");
 
   await fs.mkdir(REPO_TMP_DIR, { recursive: true });
   const workdir = await fs.mkdtemp(path.join(REPO_TMP_DIR, prefix));

@@ -26,7 +26,7 @@ var utils = require("../utils"),
 
 var isolateTestAppId = "d2jw0rpnkydeupwend6dk0ugfkz3xfkygg21awx478pzz29gdtp0";
 var isolateTestAppPath = process.env.ISOLATE_TEST_SPK ||
-    path.resolve(__dirname, "../../isolate-test-app.spk");
+    path.resolve(__dirname, "../assets/isolate-test-app.spk");
 
 function installAndOpenIsolateTestApp(browser) {
   return browser
