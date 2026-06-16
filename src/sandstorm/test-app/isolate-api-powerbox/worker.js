@@ -3,6 +3,7 @@ import { ClaimedCapability, SavedCapability, sandstorm } from "sandstorm:api";
 const TOKEN_KEY = "api-powerbox-token";
 const API_CANONICAL_URL = "https://api.example.test/v1";
 const API_OAUTH_SCOPES = ["read"];
+const PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
 
 function htmlEscape(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
@@ -84,6 +85,7 @@ function renderPage(state) {
       Requests <code>${htmlEscape(state.canonicalUrl)}</code>
       with OAuth scope <code>${htmlEscape(state.oauthScopes)}</code>.
     </p>
+    ${state.providerFlow ? "<p id=\"provider-flow-mode\">Provider descriptor mode</p>" : ""}
 
     <label>
       Canonical API URL
@@ -106,7 +108,7 @@ function renderPage(state) {
     <pre>${pretty}</pre>
 
     <script type="module">
-      import { requestApiCapability } from "./rpc-client.js";
+      import { requestAndClaimPowerbox, requestApiCapability } from "./rpc-client.js";
 
       const button = document.querySelector("#connect-api");
       const output = document.querySelector("pre");
@@ -117,14 +119,19 @@ function renderPage(state) {
         button.disabled = true;
         try {
           output.textContent = "Opening Powerbox...";
-          const requested = await requestApiCapability({
-            canonicalUrl: canonicalUrl.value,
-            oauthScopes: oauthScopes.value
-              .split(/[,\\s]+/)
-              .map((scope) => scope.trim())
-              .filter(Boolean),
-            saveLabel: { defaultText: "Isolate API Powerbox connection" },
-          });
+          const providerFlow = new URLSearchParams(location.search).has("providerFlow");
+          const requested = providerFlow
+            ? await requestAndClaimPowerbox(["${PROVIDER_DESCRIPTOR}"], {
+                saveLabel: { defaultText: "Isolate provider connection" },
+              })
+            : await requestApiCapability({
+                canonicalUrl: canonicalUrl.value,
+                oauthScopes: oauthScopes.value
+                  .split(/[,\\s]+/)
+                  .map((scope) => scope.trim())
+                  .filter(Boolean),
+                saveLabel: { defaultText: "Isolate API Powerbox connection" },
+              });
           output.textContent = "Saving claimed capability...";
           const response = await fetch("/claim", {
             method: "POST",
@@ -182,9 +189,11 @@ async function callApi(capability) {
 async function readState(request, env, result = null, error = null) {
   const store = sandstorm(request, env).storage();
   const savedToken = await store.get(TOKEN_KEY);
+  const url = new URL(request.url);
   return {
     canonicalUrl: API_CANONICAL_URL,
     oauthScopes: API_OAUTH_SCOPES.join(" "),
+    providerFlow: url.searchParams.has("providerFlow"),
     saved: Boolean(savedToken),
     result,
     error,

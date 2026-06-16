@@ -28,11 +28,18 @@ var utils = require("../utils"),
 var repoRoot = path.resolve(__dirname, "../..");
 var apiPowerboxAppId = "8djwvme6h49v5p2zj57gatq698pyx4nkdnwgjpzfctgunfrzh4p0";
 var apiPowerboxSpk = path.join(repoRoot, "isolate-api-powerbox-test-app.spk");
+var apiProviderAppId = "mkhmn9rg2phfv3dvcnd71ud45jp70139h0e3sgqkh6rg2ydk3z00";
+var apiProviderSpk = path.join(repoRoot, "isolate-api-provider-test-app.spk");
 
 function ensureApiPowerboxSpk() {
-  childProcess.execFileSync("make", [
-    "isolate-api-powerbox-test-app.spk",
-  ], {
+  childProcess.execFileSync("make", ["isolate-api-powerbox-test-app.spk"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+  });
+}
+
+function ensureApiProviderSpk() {
+  childProcess.execFileSync("make", ["isolate-api-provider-test-app.spk"], {
     cwd: repoRoot,
     stdio: "inherit",
   });
@@ -42,6 +49,21 @@ function installAndOpenExample(browser, appId, spkPath) {
   return browser
     .init()
     .loginDevAccount()
+    .url(browser.launch_url + "/upload-test")
+    .waitForElementVisible("#upload-app", short_wait)
+    .setValue("#upload-app", spkPath)
+    .waitForElementVisible("#step-confirm", long_wait)
+    .click("#confirmInstall")
+    .waitForElementNotPresent("#confirmInstall", long_wait)
+    .disableGuidedTour()
+    .url(browser.launch_url + "/apps/" + appId)
+    .waitForElementVisible(actionSelector, long_wait)
+    .click(actionSelector)
+    .waitForElementVisible("#grainTitle", medium_wait);
+}
+
+function uploadAndOpenExample(browser, appId, spkPath) {
+  return browser
     .url(browser.launch_url + "/upload-test")
     .waitForElementVisible("#upload-app", short_wait)
     .setValue("#upload-app", spkPath)
@@ -77,4 +99,43 @@ module.exports["Test isolate API Powerbox example consumer flow"] = function (br
     .assert.textContains("pre", "\"capabilityClass\": true")
     .assert.textContains("pre", "\"savedClass\": true")
     .assert.textContains("pre", "\"skipped\": true");
+};
+
+module.exports["Test isolate API Powerbox provider flow"] = function (browser) {
+  ensureApiPowerboxSpk();
+  ensureApiProviderSpk();
+
+  installAndOpenExample(browser, apiProviderAppId, apiProviderSpk)
+    .grainFrame()
+    .waitForElementVisible("#fulfill-api", medium_wait)
+    .frameParent()
+    .url(function (providerGrainUrl) {
+      var providerGrainId = providerGrainUrl.value.split("/").pop();
+      var providerCardSelector =
+          ".powerbox-card button[data-card-id=\"grain-" + providerGrainId + "\"]";
+
+      uploadAndOpenExample(browser, apiPowerboxAppId, apiPowerboxSpk)
+        .grainFrame()
+        .execute(function () {
+          window.location.href = "/?providerFlow=1";
+        })
+        .waitForElementVisible("#provider-flow-mode", medium_wait)
+        .waitForElementVisible("#connect-api", medium_wait)
+        .click("#connect-api")
+        .frameParent()
+        .waitForElementVisible(providerCardSelector, medium_wait)
+        .click(providerCardSelector)
+        .waitForElementVisible(".powerbox-iframe-mount iframe", medium_wait)
+        .frameSelector(".powerbox-iframe-mount iframe")
+        .waitForElementVisible("#fulfill-api", medium_wait)
+        .click("#fulfill-api")
+        .frameParent()
+        .grainFrame()
+        .waitForElementVisible("pre", medium_wait)
+        .assert.textContains("body", "Saved API capability token present")
+        .assert.textContains("pre", "\"ok\": true")
+        .assert.textContains("pre", "\"capabilityClass\": true")
+        .assert.textContains("pre", "\"savedClass\": true")
+        .assert.textContains("pre", "\"source\": \"isolate-capability-provider\"");
+    });
 };

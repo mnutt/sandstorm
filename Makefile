@@ -163,6 +163,7 @@ ci-clean:
 	@# Clean only the stuff that we want to clean between CI builds.
 	rm -rf bin tmp node_modules bundle shell-build sandstorm-*.tar.xz
 	rm -rf test-app.spk isolate-test-app.spk isolate-api-powerbox-test-app.spk
+	rm -rf isolate-api-provider-test-app.spk
 	rm -rf tests/assets/meteor-testapp.spk meteor-testapp/.meteor-spk
 
 install: sandstorm-$(BUILD)-fast.tar.xz install.sh
@@ -528,6 +529,21 @@ isolate-api-powerbox-test-app.spk: \
 	bin/spk pack -ksrc/sandstorm/test-app/isolate-api-powerbox-app.key -Isrc -Itmp \
 		-ptmp/sandstorm/isolate-api-powerbox-test-app/isolate-api-powerbox-app.capnp:pkgdef \
 		isolate-api-powerbox-test-app.spk
+
+isolate-api-provider-test-app.spk: \
+		tmp/.ekam-run \
+		src/sandstorm/test-app/isolate-api-provider-app.capnp \
+		src/sandstorm/test-app/isolate-api-provider-app.key \
+		src/sandstorm/test-app/isolate-api-provider/worker.js
+	@mkdir -p tmp/sandstorm/isolate-api-provider-test-app
+	@cp src/sandstorm/test-app/isolate-api-provider-app.capnp \
+		tmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider-app.capnp
+	@rm -rf tmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider
+	@cp -R src/sandstorm/test-app/isolate-api-provider \
+		tmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider
+	bin/spk pack -ksrc/sandstorm/test-app/isolate-api-provider-app.key -Isrc -Itmp \
+		-ptmp/sandstorm/isolate-api-provider-test-app/isolate-api-provider-app.capnp:pkgdef \
+		isolate-api-provider-test-app.spk
 
 # ====================================================================
 # meteor-testapp.spk
