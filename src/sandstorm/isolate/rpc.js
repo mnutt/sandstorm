@@ -104,18 +104,64 @@ export async function requestAndClaimPowerbox(query, options = {}) {
   };
 }
 
+function validatePackedDescriptor(descriptor, name = "descriptor") {
+  if (typeof descriptor !== "string" || descriptor.length === 0) {
+    throw new Error(`${name} must be a non-empty packed Powerbox descriptor string`);
+  }
+  return descriptor;
+}
+
+async function fetchApiSessionPowerboxDescriptor(options = {}) {
+  const {
+    canonicalUrl,
+    oauthScopes = [],
+    descriptorUrl = "/__sandstorm/powerbox/api-session-descriptor",
+  } = options;
+  if (!canonicalUrl) {
+    throw new Error("apiSession Powerbox descriptor requires canonicalUrl");
+  }
+
+  const url = new URL(descriptorUrl, window.location.href);
+  url.searchParams.set("canonicalUrl", canonicalUrl);
+  for (const scope of oauthScopes) {
+    url.searchParams.append("oauthScope", scope);
+  }
+
+  const response = await fetch(url);
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || `Powerbox descriptor request failed with ${response.status}`);
+  }
+  return result;
+}
+
+export async function apiSessionPowerboxDescriptor(options = {}) {
+  const result = await fetchApiSessionPowerboxDescriptor(options);
+  return validatePackedDescriptor(result.descriptor, "apiSession descriptor");
+}
+
+export function providerTagPowerboxDescriptor(options = {}) {
+  return validatePackedDescriptor(options.descriptor, "provider tag descriptor");
+}
+
+export const powerboxDescriptors = {
+  apiSession: apiSessionPowerboxDescriptor,
+  providerTag: providerTagPowerboxDescriptor,
+};
+
 function providerQueryFromOptions(options) {
   const query = options.descriptors ?? options.descriptor;
   if (query === undefined || query === null) {
     throw new Error("requestProviderPowerbox() requires descriptor or descriptors");
   }
   if (typeof query === "string") {
-    return [query];
+    return [providerTagPowerboxDescriptor({ descriptor: query })];
   }
   if (!Array.isArray(query) || !query.every((descriptor) => typeof descriptor === "string")) {
     throw new Error("Powerbox provider descriptors must be a string or an array of strings");
   }
-  return query;
+  return query.map((descriptor, index) =>
+    validatePackedDescriptor(descriptor, `provider descriptor ${index}`));
 }
 
 export async function requestProviderPowerbox(options = {}) {
@@ -134,28 +180,12 @@ export async function requestProviderCapability(options = {}) {
 
 export async function requestApiPowerbox(options = {}) {
   const {
-    canonicalUrl,
-    oauthScopes = [],
     saveLabel,
-    descriptorUrl = "/__sandstorm/powerbox/api-session-descriptor",
   } = options;
-  if (!canonicalUrl) {
-    throw new Error("requestApiPowerbox() requires canonicalUrl");
-  }
+  const result = await fetchApiSessionPowerboxDescriptor(options);
+  const descriptor = validatePackedDescriptor(result.descriptor, "apiSession descriptor");
 
-  const url = new URL(descriptorUrl, window.location.href);
-  url.searchParams.set("canonicalUrl", canonicalUrl);
-  for (const scope of oauthScopes) {
-    url.searchParams.append("oauthScope", scope);
-  }
-
-  const response = await fetch(url);
-  const result = await readJsonResponse(response);
-  if (!response.ok || !result.ok) {
-    throw new Error(result.error || `Powerbox descriptor request failed with ${response.status}`);
-  }
-
-  const requested = await requestPowerbox([result.descriptor], { saveLabel });
+  const requested = await requestPowerbox([descriptor], { saveLabel });
   return {
     ...requested,
     powerboxDescriptor: result,
@@ -262,18 +292,64 @@ export async function requestAndClaimPowerbox(query, options = {}) {
   };
 }
 
+function validatePackedDescriptor(descriptor, name = "descriptor") {
+  if (typeof descriptor !== "string" || descriptor.length === 0) {
+    throw new Error(\`\${name} must be a non-empty packed Powerbox descriptor string\`);
+  }
+  return descriptor;
+}
+
+async function fetchApiSessionPowerboxDescriptor(options = {}) {
+  const {
+    canonicalUrl,
+    oauthScopes = [],
+    descriptorUrl = "/__sandstorm/powerbox/api-session-descriptor",
+  } = options;
+  if (!canonicalUrl) {
+    throw new Error("apiSession Powerbox descriptor requires canonicalUrl");
+  }
+
+  const url = new URL(descriptorUrl, window.location.href);
+  url.searchParams.set("canonicalUrl", canonicalUrl);
+  for (const scope of oauthScopes) {
+    url.searchParams.append("oauthScope", scope);
+  }
+
+  const response = await fetch(url);
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || \`Powerbox descriptor request failed with \${response.status}\`);
+  }
+  return result;
+}
+
+export async function apiSessionPowerboxDescriptor(options = {}) {
+  const result = await fetchApiSessionPowerboxDescriptor(options);
+  return validatePackedDescriptor(result.descriptor, "apiSession descriptor");
+}
+
+export function providerTagPowerboxDescriptor(options = {}) {
+  return validatePackedDescriptor(options.descriptor, "provider tag descriptor");
+}
+
+export const powerboxDescriptors = {
+  apiSession: apiSessionPowerboxDescriptor,
+  providerTag: providerTagPowerboxDescriptor,
+};
+
 function providerQueryFromOptions(options) {
   const query = options.descriptors ?? options.descriptor;
   if (query === undefined || query === null) {
     throw new Error("requestProviderPowerbox() requires descriptor or descriptors");
   }
   if (typeof query === "string") {
-    return [query];
+    return [providerTagPowerboxDescriptor({ descriptor: query })];
   }
   if (!Array.isArray(query) || !query.every((descriptor) => typeof descriptor === "string")) {
     throw new Error("Powerbox provider descriptors must be a string or an array of strings");
   }
-  return query;
+  return query.map((descriptor, index) =>
+    validatePackedDescriptor(descriptor, \`provider descriptor \${index}\`));
 }
 
 export async function requestProviderPowerbox(options = {}) {
@@ -292,28 +368,12 @@ export async function requestProviderCapability(options = {}) {
 
 export async function requestApiPowerbox(options = {}) {
   const {
-    canonicalUrl,
-    oauthScopes = [],
     saveLabel,
-    descriptorUrl = "/__sandstorm/powerbox/api-session-descriptor",
   } = options;
-  if (!canonicalUrl) {
-    throw new Error("requestApiPowerbox() requires canonicalUrl");
-  }
+  const result = await fetchApiSessionPowerboxDescriptor(options);
+  const descriptor = validatePackedDescriptor(result.descriptor, "apiSession descriptor");
 
-  const url = new URL(descriptorUrl, window.location.href);
-  url.searchParams.set("canonicalUrl", canonicalUrl);
-  for (const scope of oauthScopes) {
-    url.searchParams.append("oauthScope", scope);
-  }
-
-  const response = await fetch(url);
-  const result = await readJsonResponse(response);
-  if (!response.ok || !result.ok) {
-    throw new Error(result.error || \`Powerbox descriptor request failed with \${response.status}\`);
-  }
-
-  const requested = await requestPowerbox([result.descriptor], { saveLabel });
+  const requested = await requestPowerbox([descriptor], { saveLabel });
   return {
     ...requested,
     powerboxDescriptor: result,
