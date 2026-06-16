@@ -568,7 +568,9 @@ export default {
     }
 
     if (url.pathname === "/exported/capability-echo") {
-      const body = await request.text();
+      const requestBytes = new Uint8Array(await request.arrayBuffer());
+      const includeBody = url.searchParams.get("source") !== "js-large-post";
+      const body = includeBody ? new TextDecoder().decode(requestBytes) : undefined;
       const capabilityEchoEtag = "\"capability-echo-etag\"";
       const ifNoneMatch = request.headers.get("if-none-match");
       if (ifNoneMatch === "*" || ifNoneMatch === capabilityEchoEtag) {
@@ -598,8 +600,9 @@ export default {
         method: request.method,
         pathname: url.pathname,
         search: url.search,
-        body,
-        bodyBytes: body.length,
+        ...(includeBody ? { body } : {}),
+        bodyBytes: requestBytes.length,
+        checksum: checksum(requestBytes),
         contentType: request.headers.get("content-type"),
         sessionType: request.headers.get("x-sandstorm-session-type"),
         appHeader: request.headers.get("x-sandstorm-app-claimed-fetch"),
@@ -709,6 +712,16 @@ export default {
         status: postedResponse.status,
         body: await postedResponse.json(),
       };
+      const largeBody = makeBytes(2 * 1024 * 1024);
+      const largePostResponse = await restored.fetch("/capability-echo?source=js-large-post", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: largeBody,
+      });
+      const largePost = {
+        status: largePostResponse.status,
+        body: await largePostResponse.json(),
+      };
       const notModifiedResponse = await restored.fetch("/capability-echo?source=js-not-modified", {
         headers: { "if-none-match": "\"capability-echo-etag\"" },
       });
@@ -729,6 +742,7 @@ export default {
         dropOriginal,
         fetched,
         posted,
+        largePost,
         notModified: {
           status: notModifiedResponse.status,
           etag: notModifiedResponse.headers.get("etag"),

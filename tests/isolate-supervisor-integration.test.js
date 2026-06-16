@@ -519,6 +519,16 @@ test("isolate supervisor integration suite", {
     assert.equal(body.metadata.fixture, "isolate-test-app");
     assert.equal(body.textBinding, "hello from a text binding");
     assert.deepEqual(body.jsonBinding, { binding: "json" });
+    assert.deepEqual(body.helperVersions, {
+      api: 0,
+      rpc: 0,
+      capnweb: "0.8.0",
+      aggregate: {
+        api: 0,
+        rpc: 0,
+        capnweb: "0.8.0",
+      },
+    });
     assert.equal(body.sandstormApi.status.ok, true);
     assert.equal(body.sandstormApi.runtime.mainModule, "worker.js");
     assert.equal(body.storage.text, "stored from isolate");
@@ -769,7 +779,18 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.posted.body.body, "hello through claimed capability fetch");
     assert.equal(selfTest.json.posted.body.bodyBytes,
       "hello through claimed capability fetch".length);
+    assert.equal(selfTest.json.posted.body.checksum,
+      checksum(Buffer.from("hello through claimed capability fetch")));
     assert.equal(selfTest.json.posted.body.contentType, "text/plain; charset=utf-8");
+    assert.equal(selfTest.json.largePost.status, 200);
+    assert.equal(selfTest.json.largePost.body.ok, true);
+    assert.equal(selfTest.json.largePost.body.method, "POST");
+    assert.equal(selfTest.json.largePost.body.pathname, "/exported/capability-echo");
+    assert.equal(selfTest.json.largePost.body.search, "?source=js-large-post");
+    assert.equal(selfTest.json.largePost.body.bodyBytes, 2 * 1024 * 1024);
+    assert.equal(selfTest.json.largePost.body.checksum,
+      checksum(deterministicBytes(2 * 1024 * 1024)));
+    assert.equal(selfTest.json.largePost.body.contentType, "application/octet-stream");
     assert.equal(selfTest.json.notModified.status, 304);
     assert.equal(selfTest.json.notModified.etag, "\"capability-echo-etag\"");
     assert.equal(selfTest.json.notModified.bodyBytes, 0);
