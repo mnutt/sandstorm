@@ -536,14 +536,18 @@ async function requestApiSessionCapability(env, request, options = {}) {
 }
 
 async function apiSessionPowerboxDescriptor(env, options = {}) {
+  const result = await apiSessionPowerboxDescriptorInfo(env, options);
+  return result.descriptor;
+}
+
+async function apiSessionPowerboxDescriptorInfo(env, options = {}) {
   const params = new URLSearchParams();
   for (const [name, value] of apiSessionDescriptorParams(apiSessionRequestOptions(options))) {
     if (name !== "descriptor") {
       params.append(name, value);
     }
   }
-  const result = await callPowerbox(env, `powerbox/api-session-descriptor?${params}`);
-  return result.descriptor;
+  return callPowerbox(env, `powerbox/api-session-descriptor?${params}`);
 }
 
 export async function servePowerboxDescriptors(request, env) {
@@ -558,15 +562,11 @@ export async function servePowerboxDescriptors(request, env) {
             .split(/[,\s]+/)
             .map((scope) => scope.trim())
             .filter(Boolean);
-      const descriptor = await apiSessionPowerboxDescriptor(env, {
+      const descriptor = await apiSessionPowerboxDescriptorInfo(env, {
         canonicalUrl: url.searchParams.get("canonicalUrl") || "",
         oauthScopes: scopeList,
       });
-      return Response.json({
-        ok: true,
-        type: "packedPowerboxDescriptor",
-        descriptor,
-      });
+      return Response.json(descriptor);
     } catch (error) {
       return Response.json({
         ok: false,

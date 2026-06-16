@@ -57,13 +57,65 @@ declare module "sandstorm:rpc" {
     oauthScopes?: string[];
     descriptorUrl?: string;
   }): Promise<string>;
+  export function apiSessionPowerboxDescriptorInfo(options: {
+    canonicalUrl: string;
+    oauthScopes?: string[];
+    descriptorUrl?: string;
+  }): Promise<{
+    ok: true;
+    type: "packedPowerboxDescriptor";
+    descriptor: string;
+    decoded?: {
+      type: "apiSession";
+      canonicalUrl: string;
+      oauthScopes: string[];
+    };
+  }>;
   export function providerTagPowerboxDescriptor(options: {
     descriptor: string;
   }): string;
   export const powerboxDescriptors: {
     apiSession: typeof apiSessionPowerboxDescriptor;
+    apiSessionInfo: typeof apiSessionPowerboxDescriptorInfo;
     providerTag: typeof providerTagPowerboxDescriptor;
   };
+  export function inspectPowerboxQuery(
+    query:
+      | string
+      | string[]
+      | { descriptor?: string; descriptors?: string[] }
+      | {
+        canonicalUrl: string;
+        oauthScopes?: string[];
+        descriptorUrl?: string;
+      }
+      | {
+        apiSession?: {
+          canonicalUrl: string;
+          oauthScopes?: string[];
+          descriptorUrl?: string;
+        };
+        apiSessionDescriptor?: {
+          canonicalUrl: string;
+          oauthScopes?: string[];
+          descriptorUrl?: string;
+        };
+      },
+  ): Promise<{
+    ok: true;
+    type: "powerboxQueryInspection";
+    descriptorCount: number;
+    descriptors: Array<{
+      index: number;
+      type: string;
+      descriptor: string;
+      decoded?: {
+        type: string;
+        canonicalUrl?: string;
+        oauthScopes?: string[];
+      };
+    }>;
+  }>;
   export function requestProviderPowerbox(options: {
     descriptor?: string;
     descriptors?: string[];

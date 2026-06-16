@@ -109,6 +109,7 @@ function renderPage(state) {
 
     <script type="module">
       import {
+        inspectPowerboxQuery,
         powerboxDescriptors,
         requestApiCapability,
         requestProviderCapability,
@@ -122,8 +123,23 @@ function renderPage(state) {
         output.textContent = "Building Powerbox descriptor...";
         button.disabled = true;
         try {
-          output.textContent = "Opening Powerbox...";
           const providerFlow = new URLSearchParams(location.search).has("providerFlow");
+          const apiScopes = oauthScopes.value
+            .split(/[,\\s]+/)
+            .map((scope) => scope.trim())
+            .filter(Boolean);
+          const queryInspection = await inspectPowerboxQuery(providerFlow
+            ? {
+                descriptor: powerboxDescriptors.providerTag({
+                  descriptor: "${PROVIDER_DESCRIPTOR}",
+                }),
+              }
+            : {
+                canonicalUrl: canonicalUrl.value,
+                oauthScopes: apiScopes,
+              });
+          output.textContent = "Opening Powerbox with query:\\n" +
+            JSON.stringify(queryInspection, null, 2);
           const requested = providerFlow
             ? await requestProviderCapability({
                 descriptor: powerboxDescriptors.providerTag({
@@ -133,10 +149,7 @@ function renderPage(state) {
               })
             : await requestApiCapability({
                 canonicalUrl: canonicalUrl.value,
-                oauthScopes: oauthScopes.value
-                  .split(/[,\\s]+/)
-                  .map((scope) => scope.trim())
-                  .filter(Boolean),
+                oauthScopes: apiScopes,
                 saveLabel: { defaultText: "Isolate API Powerbox connection" },
               });
           output.textContent = "Saving claimed capability...";

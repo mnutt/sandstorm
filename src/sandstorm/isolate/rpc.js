@@ -140,14 +140,53 @@ export async function apiSessionPowerboxDescriptor(options = {}) {
   return validatePackedDescriptor(result.descriptor, "apiSession descriptor");
 }
 
+export async function apiSessionPowerboxDescriptorInfo(options = {}) {
+  const result = await fetchApiSessionPowerboxDescriptor(options);
+  validatePackedDescriptor(result.descriptor, "apiSession descriptor");
+  return result;
+}
+
 export function providerTagPowerboxDescriptor(options = {}) {
   return validatePackedDescriptor(options.descriptor, "provider tag descriptor");
 }
 
 export const powerboxDescriptors = {
   apiSession: apiSessionPowerboxDescriptor,
+  apiSessionInfo: apiSessionPowerboxDescriptorInfo,
   providerTag: providerTagPowerboxDescriptor,
 };
+
+export async function inspectPowerboxQuery(query) {
+  if (query && typeof query === "object" && !Array.isArray(query) &&
+      !(query instanceof String) &&
+      (query.canonicalUrl || query.apiSession || query.apiSessionDescriptor)) {
+    const descriptorInfo = await apiSessionPowerboxDescriptorInfo(
+      query.apiSession ?? query.apiSessionDescriptor ?? query);
+    return {
+      ok: true,
+      type: "powerboxQueryInspection",
+      descriptorCount: 1,
+      descriptors: [{
+        index: 0,
+        ...descriptorInfo,
+      }],
+    };
+  }
+
+  const descriptors = typeof query === "string" || Array.isArray(query)
+    ? providerQueryFromOptions({ descriptor: query })
+    : providerQueryFromOptions(query || {});
+  return {
+    ok: true,
+    type: "powerboxQueryInspection",
+    descriptorCount: descriptors.length,
+    descriptors: descriptors.map((descriptor, index) => ({
+      index,
+      type: "packedPowerboxDescriptor",
+      descriptor,
+    })),
+  };
+}
 
 function providerQueryFromOptions(options) {
   const query = options.descriptors ?? options.descriptor;
@@ -328,14 +367,53 @@ export async function apiSessionPowerboxDescriptor(options = {}) {
   return validatePackedDescriptor(result.descriptor, "apiSession descriptor");
 }
 
+export async function apiSessionPowerboxDescriptorInfo(options = {}) {
+  const result = await fetchApiSessionPowerboxDescriptor(options);
+  validatePackedDescriptor(result.descriptor, "apiSession descriptor");
+  return result;
+}
+
 export function providerTagPowerboxDescriptor(options = {}) {
   return validatePackedDescriptor(options.descriptor, "provider tag descriptor");
 }
 
 export const powerboxDescriptors = {
   apiSession: apiSessionPowerboxDescriptor,
+  apiSessionInfo: apiSessionPowerboxDescriptorInfo,
   providerTag: providerTagPowerboxDescriptor,
 };
+
+export async function inspectPowerboxQuery(query) {
+  if (query && typeof query === "object" && !Array.isArray(query) &&
+      !(query instanceof String) &&
+      (query.canonicalUrl || query.apiSession || query.apiSessionDescriptor)) {
+    const descriptorInfo = await apiSessionPowerboxDescriptorInfo(
+      query.apiSession ?? query.apiSessionDescriptor ?? query);
+    return {
+      ok: true,
+      type: "powerboxQueryInspection",
+      descriptorCount: 1,
+      descriptors: [{
+        index: 0,
+        ...descriptorInfo,
+      }],
+    };
+  }
+
+  const descriptors = typeof query === "string" || Array.isArray(query)
+    ? providerQueryFromOptions({ descriptor: query })
+    : providerQueryFromOptions(query || {});
+  return {
+    ok: true,
+    type: "powerboxQueryInspection",
+    descriptorCount: descriptors.length,
+    descriptors: descriptors.map((descriptor, index) => ({
+      index,
+      type: "packedPowerboxDescriptor",
+      descriptor,
+    })),
+  };
+}
 
 function providerQueryFromOptions(options) {
   const query = options.descriptors ?? options.descriptor;
