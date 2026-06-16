@@ -50,6 +50,31 @@ function(sandstorm_install_native)
       VERBATIM)
   endif()
   add_custom_target(workerd DEPENDS "${_workerd_bin}")
+  if(SANDSTORM_WORKERD_BIN)
+    add_custom_target(verify-workerd-runtime
+      COMMAND "${CMAKE_COMMAND}" -E echo
+        "SANDSTORM_WORKERD_BIN cannot be used for reproducible bundles"
+      COMMAND "${CMAKE_COMMAND}" -E false
+      DEPENDS workerd
+      VERBATIM)
+  else()
+    string(REGEX REPLACE
+      "^1\\.([0-9][0-9][0-9][0-9])([0-9][0-9])([0-9][0-9])\\..*$"
+      "\\1-\\2-\\3" _workerd_release_date "${SANDSTORM_WORKERD_NPM_VERSION}")
+    add_custom_target(verify-workerd-runtime
+      COMMAND "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node" -e
+        "const l=require('${_workerd_dir}/package-lock.json');const p=require('${_workerd_dir}/node_modules/workerd/package.json');const v='${SANDSTORM_WORKERD_NPM_VERSION}';if(l.packages[''].dependencies.workerd!==v||l.packages['node_modules/workerd'].version!==v||p.version!==v)process.exit(1)"
+      COMMAND "${CMAKE_COMMAND}" -E compare_files
+        "${_workerd_bin}" "${_workerd_dir}/node_modules/.bin/workerd"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCOMMAND=${_workerd_bin}"
+        "-DARGUMENTS=--version"
+        "-DEXPECTED=workerd ${_workerd_release_date}"
+        -P "${PROJECT_SOURCE_DIR}/cmake/VerifyCommandOutput.cmake"
+      DEPENDS workerd "${PROJECT_SOURCE_DIR}/cmake/VerifyCommandOutput.cmake"
+      COMMENT "Verifying the bundled workerd runtime"
+      VERBATIM)
+  endif()
   install(PROGRAMS "${_workerd_bin}"
     DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT native)

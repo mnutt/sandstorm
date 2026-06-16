@@ -28,7 +28,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	package fast install update test lint typecheck typecheck-ts installer-test \
 	isolate-supervisor-integration-test \
 	isolate-supervisor-syscall-trace \
-	stage-native workerd shell-env shell-build shell-build-debug bundle \
+	stage-native workerd verify-workerd-runtime shell-env shell-build shell-build-debug bundle \
 	test-app.spk test-app-spk test-app-dev app-index.spk app-index-spk app-index-dev \
 	isolate-test-app.spk isolate-test-app-spk isolate-test-app-dev \
 	isolate-api-powerbox-test-app.spk \
@@ -78,6 +78,7 @@ $(eval $(call cmake_target,typecheck-ts,typecheck))
 $(eval $(call cmake_target,installer-test,installer-test))
 $(eval $(call cmake_target,stage-native,stage-native))
 $(eval $(call cmake_target,workerd,workerd))
+$(eval $(call cmake_target,verify-workerd-runtime,verify-workerd-runtime))
 $(eval $(call cmake_target,shell-env,shell-env))
 $(eval $(call cmake_target,shell-build,shell-build))
 $(eval $(call cmake_target,shell-build-debug,shell-build-debug))
