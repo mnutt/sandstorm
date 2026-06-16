@@ -329,11 +329,12 @@ const restored = await sandstorm(request, env).powerbox().restoreSaved(token);
 
 Restoration returns a `ClaimedCapability` handle, not a guessed interface
 stub. The app that saved the token owns the context needed to decide how to use
-it: call `restored.fetch()` for HTTP-shaped capabilities, `restored.asRpc<T>()`
-for app-defined object-capability protocols that the app expects, or wrap it in
-an app-level adapter. Future typed restoration can add explicit metadata, but
-tokens alone should not imply that the runtime can safely infer a JavaScript
-type.
+it: call `restored.fetch()` for WebSession-shaped HTTP capabilities,
+`restored.asRpc<T>()` for app-defined object-capability protocols that the app
+expects, or wrap it in a typed adapter such as
+`api.powerbox().outboundHttpCapability(restored)` for OutboundHttpSession
+capabilities. Future typed restoration can add explicit metadata, but tokens
+alone should not imply that the runtime can safely infer a JavaScript type.
 
 Dropping a live handle with `cap.drop()` only releases that in-memory claimed
 handle. It does not revoke saved durable tokens. To revoke a saved token, call:
@@ -467,9 +468,19 @@ const claimed = await api.powerbox().claimAndStoreRequest(requested, {
   label: "Chosen API",
 });
 
-const response = await claimed.capability.fetch("/status");
+const outbound = api.powerbox().outboundHttpCapability(claimed.capability);
+const response = await outbound.fetch("status", {
+  headers: {
+    authorization: `Bearer ${apiToken}`,
+  },
+});
 await claimed.capability.drop();
 ```
+
+`ClaimedCapability.fetch()` is for WebSession-shaped capabilities. Use
+`powerbox().outboundHttpCapability(capability).fetch(...)` for outbound HTTP
+grants so normal API headers such as `Authorization` are preserved and routed
+through Sandstorm's OutboundHttpSession interface.
 
 `claimAndStoreRequest()` accepts either the full browser result object or a raw
 Powerbox request token. If browser code uses `requestApiCapability()` or

@@ -3809,16 +3809,30 @@ public:
     }
     KJ_LOG(WARNING, "Isolate Sandstorm API binding received request.", methodName, path);
 
-    auto maxBodyBytes = methodName == "POST" && route == "/powerbox/fetch"
+    kj::Vector<FetchHeader> outboundHeaderValues;
+    if (methodName == "POST" && route == "/powerbox/outbound-http-fetch") {
+      headers.forEach([&](kj::StringPtr name, kj::StringPtr value) {
+        auto lowerName = kj::str(name);
+        toLower(lowerName);
+        if (lowerName.startsWith("x-sandstorm-outbound-header-")) {
+          outboundHeaderValues.add(FetchHeader { kj::mv(lowerName), kj::heapString(value) });
+        }
+      });
+    }
+
+    auto isLargePowerboxBody = methodName == "POST" &&
+        (route == "/powerbox/fetch" || route == "/powerbox/outbound-http-fetch");
+    auto maxBodyBytes = isLargePowerboxBody
         ? MAX_SIDECAR_REQUEST_BYTES
         : MAX_API_BINDING_REQUEST_BYTES;
-    auto maxBodyDescription = methodName == "POST" && route == "/powerbox/fetch"
+    auto maxBodyDescription = isLargePowerboxBody
         ? "claimed capability fetch request body exceeds maximum allowed size"
         : "isolate Sandstorm API binding request body exceeds maximum allowed size";
 
     return readAllBytesAtMost(requestBody, maxBodyBytes, maxBodyDescription).then(
         [this, methodName = kj::mv(methodName), path = kj::mv(path), route = kj::mv(route),
-            contentType = kj::mv(contentType), &response]
+            contentType = kj::mv(contentType), outboundHeaderValues = outboundHeaderValues.releaseAsArray(),
+            &response]
         (kj::Array<byte>&& bodyBytes) mutable {
       if (powerboxOnly && !route.startsWith("/powerbox/")) {
         return sendJson(response, 404, "Not Found", kj::heapString(
@@ -3838,6 +3852,9 @@ public:
         return dropPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fetch") {
         return fetchClaimedCapability(path, contentType, kj::mv(bodyBytes), response);
+      } else if (methodName == "POST" && route == "/powerbox/outbound-http-fetch") {
+        return fetchOutboundHttpCapability(
+            path, kj::mv(outboundHeaderValues), kj::mv(bodyBytes), response);
       } else if (methodName == "POST" && route == "/powerbox/offer") {
         return offerClaimedCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fulfill-request") {
@@ -4017,6 +4034,80 @@ private:
     }
   };
 
+  class BufferedByteStream final: public ByteStream::Server {
+  public:
+    explicit BufferedByteStream(kj::StringPtr description)
+        : description(kj::heapString(description)) {
+      auto paf = kj::newPromiseAndFulfiller<kj::Array<byte>>();
+      donePromise = kj::mv(paf.promise);
+      doneFulfiller = kj::mv(paf.fulfiller);
+    }
+
+    ~BufferedByteStream() noexcept(false) {
+      KJ_IF_MAYBE(fulfiller, doneFulfiller) {
+        if ((*fulfiller)->isWaiting()) {
+          (*fulfiller)->reject(KJ_EXCEPTION(FAILED, description));
+        }
+      }
+    }
+
+    kj::Promise<void> write(WriteContext context) override {
+      auto data = kj::heapArray<byte>(context.getParams().getData());
+      auto fork = queue.then([this, data = kj::mv(data)]() mutable {
+        KJ_REQUIRE(!isDone, "response body stream is already done");
+        KJ_REQUIRE(data.size() <= MAX_SIDECAR_REQUEST_BYTES - body.size(),
+            description, body.size() + data.size(), MAX_SIDECAR_REQUEST_BYTES);
+        body.addAll(data);
+      }).fork();
+      queue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+    kj::Promise<void> done(DoneContext context) override {
+      (void)context;
+      auto fork = queue.then([this]() mutable {
+        KJ_REQUIRE(!isDone, "response body stream is already done");
+        KJ_IF_MAYBE(size, expectedSize) {
+          KJ_REQUIRE(body.size() == *size, description, body.size(), *size);
+        }
+        isDone = true;
+        auto data = body.releaseAsArray();
+        KJ_ASSERT_NONNULL(doneFulfiller)->fulfill(kj::mv(data));
+        doneFulfiller = nullptr;
+      }).fork();
+      queue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+    kj::Promise<void> expectSize(ExpectSizeContext context) override {
+      auto size = context.getParams().getSize();
+      KJ_REQUIRE(size <= MAX_SIDECAR_REQUEST_BYTES,
+          description, size, MAX_SIDECAR_REQUEST_BYTES);
+      expectedSize = size;
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<kj::Array<byte>> whenDone() {
+      return kj::mv(KJ_ASSERT_NONNULL(donePromise));
+    }
+
+  private:
+    kj::String description;
+    kj::Vector<byte> body;
+    kj::Maybe<uint64_t> expectedSize;
+    kj::Maybe<kj::Promise<kj::Array<byte>>> donePromise;
+    kj::Maybe<kj::Own<kj::PromiseFulfiller<kj::Array<byte>>>> doneFulfiller;
+    kj::Promise<void> queue = kj::READY_NOW;
+    bool isDone = false;
+  };
+
+  struct OutboundHttpFetchParams {
+    kj::String id;
+    OutboundHttpSession::Method method;
+    kj::String path;
+    kj::Vector<FetchHeader> headers;
+  };
+
   struct CapabilityFetchContext {
     kj::Maybe<kj::Own<kj::PromiseFulfiller<ByteStream::Client>>> responseStreamFulfiller;
     bool sendNotModifiedForPrecondition = false;
@@ -4078,6 +4169,7 @@ private:
         "\"bindings\", \"permissions\", "
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
         "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
+        "\"powerbox.outboundHttpFetch\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\"]\n"
@@ -4149,6 +4241,115 @@ private:
     }
 
     return true;
+  }
+
+  kj::String normalizeOutboundHttpFetchPath(kj::StringPtr path) {
+    KJ_REQUIRE(path.size() <= 8192, "outbound HTTP fetch path is too long");
+    KJ_REQUIRE(!path.startsWith("/"),
+        "outbound HTTP fetch path must be relative to the granted base URL");
+    for (size_t i = 0; i + 2 < path.size(); ++i) {
+      KJ_REQUIRE(!(path[i] == ':' && path[i + 1] == '/' && path[i + 2] == '/'),
+          "outbound HTTP fetch path must not be an absolute URL");
+    }
+
+    kj::StringPtr pathOnly = path;
+    KJ_IF_MAYBE(query, path.findFirst('?')) {
+      pathOnly = kj::StringPtr(path.begin(), *query);
+    }
+    KJ_IF_MAYBE(fragment, pathOnly.findFirst('#')) {
+      KJ_FAIL_REQUIRE("outbound HTTP fetch path must not contain a fragment");
+    }
+
+    auto parts = split(pathOnly, '/');
+    for (auto part: parts) {
+      auto segment = kj::StringPtr(part.begin(), part.size());
+      KJ_REQUIRE(segment != kj::StringPtr(".") && segment != kj::StringPtr(".."),
+          "outbound HTTP fetch path must not contain dot segments");
+    }
+
+    for (auto c: path) {
+      KJ_REQUIRE(c != '\r' && c != '\n' && c != '\0',
+          "outbound HTTP fetch path contains invalid characters");
+    }
+
+    return kj::heapString(path);
+  }
+
+  kj::Maybe<kj::StringPtr> findOutboundHeaderValue(
+      kj::ArrayPtr<FetchHeader> outboundHeaderValues, uint index) {
+    auto internalName = kj::str("x-sandstorm-outbound-header-", index);
+    for (auto& header: outboundHeaderValues) {
+      if (header.name == internalName) {
+        return header.value.asPtr();
+      }
+    }
+    return nullptr;
+  }
+
+  OutboundHttpFetchParams getOutboundHttpFetchParams(
+      kj::StringPtr url, kj::ArrayPtr<FetchHeader> outboundHeaderValues) {
+    auto ids = findIsolateQueryParams(url, "id");
+    auto methods = findIsolateQueryParams(url, "method");
+    auto paths = findIsolateRawQueryParams(url, "path");
+    KJ_REQUIRE(ids.size() == 1 && ids[0].size() > 0 &&
+        methods.size() == 1 && methods[0].size() > 0 &&
+        paths.size() == 1,
+        "expected exactly one outbound HTTP capability id, method, and path");
+
+    auto method = KJ_REQUIRE_NONNULL(parseOutboundHttpMethod(methods[0]),
+        "unsupported outbound HTTP method", methods[0]);
+    auto names = findIsolateQueryParams(url, "headerName");
+    KJ_REQUIRE(names.size() <= 64, "outbound HTTP fetch has too many headers");
+
+    OutboundHttpFetchParams result {
+      kj::mv(ids[0]),
+      method,
+      normalizeOutboundHttpFetchPath(paths[0]),
+      kj::Vector<FetchHeader>()
+    };
+
+    for (auto i: kj::indices(names)) {
+      auto& name = names[i];
+      KJ_REQUIRE(isValidCapabilityFetchHeaderName(name),
+          "outbound HTTP fetch header name is invalid", name);
+      auto value = KJ_ASSERT_NONNULL(findOutboundHeaderValue(outboundHeaderValues, i),
+          "outbound HTTP fetch header value is missing", name);
+      KJ_REQUIRE(isValidCapabilityFetchHeaderValue(value),
+          "outbound HTTP fetch header value is invalid", name);
+      auto normalizedName = kj::heapString(name);
+      toLower(normalizedName);
+      result.headers.add(FetchHeader { kj::mv(normalizedName), kj::heapString(value) });
+    }
+
+    return kj::mv(result);
+  }
+
+  bool shouldForwardOutboundHttpResponseHeader(kj::StringPtr name) {
+    if (!isValidCapabilityFetchHeaderName(name)) {
+      return false;
+    }
+
+    auto lower = kj::heapString(name);
+    toLower(lower);
+    return lower != "connection" &&
+        lower != "content-length" &&
+        lower != "keep-alive" &&
+        lower != "te" &&
+        lower != "trailer" &&
+        lower != "transfer-encoding" &&
+        lower != "upgrade";
+  }
+
+  kj::HttpHeaders makeOutboundHttpResponseHeaders(
+      OutboundHttpSession::Response::Reader outboundResponse) {
+    kj::HttpHeaders headers(headerTable);
+    for (auto header: outboundResponse.getHeaders()) {
+      if (shouldForwardOutboundHttpResponseHeader(header.getName()) &&
+          isValidCapabilityFetchHeaderValue(header.getValue())) {
+        headers.add(header.getName(), header.getValue());
+      }
+    }
+    return kj::mv(headers);
   }
 
   CapabilityFetchContextParams getCapabilityFetchContextParams(kj::StringPtr url) {
@@ -4389,6 +4590,50 @@ private:
             "{\n  \"ok\": false,\n"
             "  \"error\": \"claimed capability fetch method is not supported\"\n}\n"));
       }
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+    }
+  }
+
+  kj::Promise<void> fetchOutboundHttpCapability(
+      kj::StringPtr url, kj::Array<FetchHeader> outboundHeaderValues, kj::Array<byte> bodyBytes,
+      kj::HttpService::Response& response) {
+    auto params = getOutboundHttpFetchParams(url, outboundHeaderValues);
+
+    KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(params.id)) {
+      auto outbound = cap->castAs<OutboundHttpSession>();
+      auto request = outbound.requestRequest();
+      request.setMethod(params.method);
+      request.setPath(params.path);
+      auto headers = request.initHeaders(params.headers.size());
+      for (auto i: kj::indices(params.headers)) {
+        headers[i].setName(params.headers[i].name);
+        headers[i].setValue(params.headers[i].value);
+      }
+      request.setBody(bodyBytes);
+
+      auto responseStream = kj::heap<BufferedByteStream>(
+          "outbound HTTP response body exceeds maximum allowed size");
+      auto responseBody = responseStream->whenDone();
+      ByteStream::Client responseStreamClient(kj::mv(responseStream));
+      request.setResponseStream(kj::mv(responseStreamClient));
+
+      return request.send()
+          .then([this, &response, responseBody = kj::mv(responseBody)](auto result) mutable {
+        uint statusCode = result.getStatusCode();
+        auto statusText = kj::heapString(result.getStatusText());
+        auto responseHeaders = makeOutboundHttpResponseHeaders(result);
+        return responseBody.then([this, &response, statusCode, statusText = kj::mv(statusText),
+            responseHeaders = kj::mv(responseHeaders)](kj::Array<byte>&& body) mutable {
+          auto statusTextPtr = statusText.size() == 0 ? kj::StringPtr("OK") : statusText.asPtr();
+          return sendBytes(response, statusCode, statusTextPtr, kj::mv(responseHeaders),
+              kj::mv(body));
+        });
+      }).catch_([this, &response](kj::Exception&& exception) mutable {
+        return sendJson(response, 502, "Bad Gateway", renderError(
+            kj::str("outbound HTTP fetch failed: ", exception.getDescription())));
+      }).attach(kj::mv(outboundHeaderValues), kj::mv(bodyBytes), kj::mv(params));
     } else {
       return sendJson(response, 404, "Not Found", kj::heapString(
           "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
