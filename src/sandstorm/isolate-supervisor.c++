@@ -3280,10 +3280,8 @@ bool trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
   KJ_IF_MAYBE(u, sandboxUid) {
     if (unshare(CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS) < 0) {
       int error = errno;
-      KJ_LOG(WARNING,
-          "Could not enter privileged isolate sidecar namespaces; continuing with seccomp only.",
-          error, strerror(error));
-      return false;
+      KJ_FAIL_SYSCALL("unshare(CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS)",
+          error);
     } else {
       finishSidecarNamespaceSetup();
       KJ_LOG(WARNING, "Isolate sidecar entered private network/mount/ipc/uts namespaces.");
@@ -3296,9 +3294,9 @@ bool trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
 
   if (unshare(CLONE_NEWUSER | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS) < 0) {
     int error = errno;
-    KJ_LOG(WARNING, "Could not enter isolate sidecar namespaces; continuing with seccomp only.",
-        error, strerror(error));
-    return false;
+    KJ_FAIL_SYSCALL(
+        "unshare(CLONE_NEWUSER | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS)",
+        error);
   }
 
   sandbox::hideUserGroupIds(realUid, realGid, false);
