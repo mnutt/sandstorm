@@ -140,6 +140,7 @@ declare module "sandstorm:api" {
       name: string;
       bytes: number;
     }>;
+    totalBytes: number;
     error?: string;
   }
 
