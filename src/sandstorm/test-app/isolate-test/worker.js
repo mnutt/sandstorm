@@ -3,6 +3,10 @@ import metadata from "metadata.json";
 import {
   ClaimedCapability,
   RpcTarget,
+  SANDSTORM_API_VERSION,
+  SANDSTORM_CAPNWEB_VERSION,
+  SANDSTORM_HELPER_VERSIONS,
+  SANDSTORM_RPC_VERSION,
   SavedCapability,
   sandstorm,
   powerbox as sandstormPowerbox,
@@ -1477,6 +1481,12 @@ export default {
       metadata,
       textBinding: env.TEXT_BINDING,
       jsonBinding: env.JSON_BINDING,
+      helperVersions: {
+        api: SANDSTORM_API_VERSION,
+        rpc: SANDSTORM_RPC_VERSION,
+        capnweb: SANDSTORM_CAPNWEB_VERSION,
+        aggregate: SANDSTORM_HELPER_VERSIONS,
+      },
       sandstormApi: {
         status: apiStatus,
         capabilities: apiCapabilities,

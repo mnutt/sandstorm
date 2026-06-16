@@ -1,6 +1,9 @@
 import capnwebSource from "sandstorm:capnweb-source";
 import { newHttpBatchRpcSession } from "capnweb";
 
+export const SANDSTORM_RPC_VERSION = 0;
+export const SANDSTORM_CAPNWEB_VERSION = "0.8.0";
+
 export {
   RpcPromise,
   RpcSession,
@@ -242,6 +245,9 @@ export async function requestApiCapability(options = {}) {
 
 export function browserClientScript() {
   return `${capnwebSource}
+
+export const SANDSTORM_RPC_VERSION = 0;
+export const SANDSTORM_CAPNWEB_VERSION = "0.8.0";
 
 export function newSandstormRpcSession(url = "./rpc", options) {
   return newHttpBatchRpcSession(url, options);
