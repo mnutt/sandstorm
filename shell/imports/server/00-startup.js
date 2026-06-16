@@ -19,7 +19,7 @@ import { Meteor } from "meteor/meteor";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
-import { globalFrontendRefRegistry } from "/imports/server/frontend-ref";
+import { globalFrontendRefRegistry } from "/imports/server/global-frontend-ref-registry";
 import { PersistentImpl } from "/imports/server/persistent";
 import { migrateToLatest, reconcileOidcUsersIndex } from "/imports/server/migrations";
 import { ACCOUNT_DELETION_SUSPENSION_TIME } from "/imports/constants";
