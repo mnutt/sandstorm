@@ -5,6 +5,40 @@ function(sandstorm_add_packaging_targets)
   set(_spk_stage "${_package_dir}/spk-stage")
   file(MAKE_DIRECTORY "${_package_dir}")
 
+  function(_sandstorm_add_isolate_test_package target capnp_file key_file asset_dir)
+    set(_source "${PROJECT_SOURCE_DIR}/src/sandstorm/test-app")
+    set(_stage "${_spk_stage}/sandstorm/${target}")
+    set(_stage_capnp "${_stage}/${capnp_file}")
+    file(GLOB_RECURSE _asset_files CONFIGURE_DEPENDS
+      "${_source}/${asset_dir}/*")
+    add_custom_command(
+      OUTPUT "${_stage_capnp}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${_stage}"
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${_source}/${capnp_file}" "${_stage_capnp}"
+      COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_stage}/${asset_dir}"
+      COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${_source}/${asset_dir}" "${_stage}/${asset_dir}"
+      DEPENDS "${_source}/${capnp_file}" ${_asset_files}
+      COMMENT "Staging ${target}"
+      VERBATIM)
+
+    set(_spk "${PROJECT_SOURCE_DIR}/${target}.spk")
+    add_custom_command(
+      OUTPUT "${_spk}"
+      COMMAND "$<TARGET_FILE:spk>" pack
+        -k "${_source}/${key_file}"
+        -I "${PROJECT_SOURCE_DIR}/src"
+        -I "${_spk_stage}"
+        -p "${_stage_capnp}:pkgdef"
+        "${_spk}"
+      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+      DEPENDS spk "${_stage_capnp}" "${_source}/${key_file}"
+      COMMENT "Packing ${target}.spk"
+      VERBATIM)
+    add_custom_target("${target}-spk" DEPENDS "${_spk}")
+  endfunction()
+
   set(_test_app_source "${PROJECT_SOURCE_DIR}/src/sandstorm/test-app")
   set(_test_app_stage "${_spk_stage}/sandstorm/test-app")
   set(_test_app_stage_stamp "${_package_dir}/test-app-stage.stamp")
@@ -161,6 +195,12 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Packing isolate-api-powerbox-test-app.spk"
     VERBATIM)
   add_custom_target(isolate-api-powerbox-test-app-spk DEPENDS "${_api_powerbox_spk}")
+
+  _sandstorm_add_isolate_test_package(
+    isolate-api-provider-test-app
+    isolate-api-provider-app.capnp
+    isolate-api-provider-app.key
+    isolate-api-provider)
 
   set(_app_index_source "${PROJECT_SOURCE_DIR}/src/sandstorm/app-index")
   set(_app_index_stage "${_spk_stage}/sandstorm/app-index")
