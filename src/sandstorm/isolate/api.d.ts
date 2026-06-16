@@ -346,6 +346,7 @@ declare module "sandstorm:api" {
     request(query: unknown, options?: unknown): Promise<unknown>;
     requestApi(options: ApiSessionPowerboxOptions): Promise<ClaimedCapability>;
     apiSessionDescriptor(options: ApiSessionPowerboxOptions): Promise<string>;
+    claimedCapability(capability: ClaimedCapabilityHandle | string): ClaimedCapability;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
     claimAndSave(
       token: string,
@@ -431,6 +432,7 @@ declare module "sandstorm:api" {
     ): ObjectCapabilityUnregistration;
     serveObjectCapabilities(): Promise<Response | null>;
     servePowerboxDescriptors(): Promise<Response | null>;
+    serveSystemRoutes(): Promise<Response | null>;
     apiTarget(): SandstormApiTarget;
     rpcClientScript(): string;
     rpcResponse(target: RpcTarget, options?: RpcSessionOptions): Response | Promise<Response>;
@@ -445,6 +447,10 @@ declare module "sandstorm:api" {
   export function getSession(request: Request): SessionInfo;
   export function apiTarget(request: Request, env: SandstormEnv): SandstormApiTarget;
   export function servePowerboxDescriptors(
+    request: Request,
+    env: SandstormEnv,
+  ): Promise<Response | null>;
+  export function serveSystemRoutes(
     request: Request,
     env: SandstormEnv,
   ): Promise<Response | null>;
