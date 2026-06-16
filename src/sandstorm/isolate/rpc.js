@@ -32,7 +32,7 @@ async function readJsonResponse(response) {
   }
 }
 
-export function requestPowerbox(query = [], options = {}) {
+export function requestPowerbox(query, options = {}) {
   if (typeof window === "undefined" || !window.parent) {
     return Promise.reject(new Error("requestPowerbox() is only available in a browser session"));
   }
@@ -64,12 +64,16 @@ export function requestPowerbox(query = [], options = {}) {
     }
 
     window.addEventListener("message", onMessage);
+    const powerboxRequest = {
+      rpcId,
+    };
+    if (query !== undefined && query !== null) {
+      powerboxRequest.query = query;
+      powerboxRequest.saveLabel = options.saveLabel;
+    }
+
     window.parent.postMessage({
-      powerboxRequest: {
-        rpcId,
-        query,
-        saveLabel: options.saveLabel,
-      },
+      powerboxRequest,
     }, "*");
   });
 }
@@ -91,7 +95,7 @@ export async function claimPowerboxToken(token, options = {}) {
   return result.capability;
 }
 
-export async function requestAndClaimPowerbox(query = [], options = {}) {
+export async function requestAndClaimPowerbox(query, options = {}) {
   const requested = await requestPowerbox(query, options);
   const capability = await claimPowerboxToken(requested.token, options);
   return {
@@ -158,7 +162,7 @@ async function readJsonResponse(response) {
   }
 }
 
-export function requestPowerbox(query = [], options = {}) {
+export function requestPowerbox(query, options = {}) {
   if (typeof window === "undefined" || !window.parent) {
     return Promise.reject(new Error("requestPowerbox() is only available in a browser session"));
   }
@@ -190,12 +194,16 @@ export function requestPowerbox(query = [], options = {}) {
     }
 
     window.addEventListener("message", onMessage);
+    const powerboxRequest = {
+      rpcId,
+    };
+    if (query !== undefined && query !== null) {
+      powerboxRequest.query = query;
+      powerboxRequest.saveLabel = options.saveLabel;
+    }
+
     window.parent.postMessage({
-      powerboxRequest: {
-        rpcId,
-        query,
-        saveLabel: options.saveLabel,
-      },
+      powerboxRequest,
     }, "*");
   });
 }
@@ -217,7 +225,7 @@ export async function claimPowerboxToken(token, options = {}) {
   return result.capability;
 }
 
-export async function requestAndClaimPowerbox(query = [], options = {}) {
+export async function requestAndClaimPowerbox(query, options = {}) {
   const requested = await requestPowerbox(query, options);
   const capability = await claimPowerboxToken(requested.token, options);
   return {

@@ -20,6 +20,8 @@
 
 "use strict";
 
+var path = require("path");
+
 var utils = require("../utils"),
     actionSelector = utils.actionSelector,
     appSelector = utils.appSelector,
@@ -29,6 +31,10 @@ var utils = require("../utils"),
     very_long_wait = utils.very_long_wait;
 
 module.exports = {};
+
+var isolateTestAppId = "d2jw0rpnkydeupwend6dk0ugfkz3xfkygg21awx478pzz29gdtp0";
+var isolateTestAppPath = process.env.ISOLATE_TEST_SPK ||
+    path.resolve(__dirname, "../../isolate-test-app.spk");
 
 // Source at https://github.com/jparyani/sandstorm-test-app/tree/powerbox
 module.exports["Test Powerbox"] = function (browser) {
@@ -220,5 +226,45 @@ module.exports["Test Powerbox query"] = function (browser) {
           // will be returned.
           tryQuery("#do-powerbox-request-multi-descriptor", {[grainId]: true, [otherGrainId]: true});
         });
+    });
+};
+
+module.exports["Test isolate browser Powerbox claim save restore"] = function (browser) {
+  browser
+    .init()
+    .loginDevAccount()
+    .url(browser.launch_url + "/upload-test")
+    .waitForElementVisible("#upload-app", short_wait)
+    .setValue("#upload-app", isolateTestAppPath)
+    .waitForElementVisible("#step-confirm", long_wait)
+    .click("#confirmInstall")
+    .waitForElementNotPresent("#confirmInstall", long_wait)
+    .disableGuidedTour()
+    .url(browser.launch_url + "/apps/" + isolateTestAppId)
+    .waitForElementVisible(actionSelector, long_wait)
+    .click(actionSelector)
+    .waitForElementVisible("#grainTitle", medium_wait)
+    .grainFrame()
+    .execute(function () {
+      window.location.href = "/browser-powerbox";
+    })
+    .waitForElementVisible("#offer", medium_wait)
+    .click("#offer")
+    .waitForElementVisible("#offer-result", medium_wait)
+    .assert.textContains("#offer-result", "offer: success")
+    .frameParent()
+    .waitForElementVisible("#powerbox-offer-url", medium_wait)
+    .getText("#powerbox-offer-url", function (result) {
+      browser
+        .click(".popup.offer .frame button.dismiss")
+        .grainFrame()
+        .click("#request")
+        .frameParent()
+        .waitForElementVisible("#powerbox-request-input", medium_wait)
+        .setValue("#powerbox-request-input", result.value)
+        .click("#powerbox-request-form button")
+        .grainFrame()
+        .waitForElementVisible("#request-result", medium_wait)
+        .assert.textContains("#request-result", "request: success isolate-browser-powerbox");
     });
 };

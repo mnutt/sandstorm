@@ -20,7 +20,7 @@ declare module "sandstorm:rpc" {
     options?: import("capnweb").RpcSessionOptions,
   ): import("capnweb").RpcStub<Remote>;
   export function requestPowerbox(
-    query?: string[],
+    query?: string[] | null,
     options?: {
       saveLabel?: { defaultText: string };
     },
@@ -37,7 +37,7 @@ declare module "sandstorm:rpc" {
     id: string;
   }>;
   export function requestAndClaimPowerbox(
-    query?: string[],
+    query?: string[] | null,
     options?: {
       saveLabel?: { defaultText: string };
       claimUrl?: string;
