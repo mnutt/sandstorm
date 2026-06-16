@@ -35,7 +35,8 @@ const STRACE_BIN = process.env.STRACE_BIN || "strace";
 const SYSCALL_TRACE_DIR = process.env.ISOLATE_SYSCALL_TRACE_DIR || "";
 const SYSCALL_TRACE_PROFILE = process.env.ISOLATE_SYSCALL_TRACE_PROFILE || "";
 const REPRESENTATIVE_SYSCALL_TRACE = SYSCALL_TRACE_PROFILE === "representative";
-const TEST_TIMEOUT_MS = SYSCALL_TRACE_DIR ? 180000 : 30000;
+const STRESS_64M = process.env.ISOLATE_STRESS_64M === "1";
+const TEST_TIMEOUT_MS = SYSCALL_TRACE_DIR || STRESS_64M ? 180000 : 30000;
 
 function formatOutput(stdout, stderr) {
   const out = stdout.join("");

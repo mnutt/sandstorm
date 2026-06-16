@@ -145,17 +145,41 @@ function(sandstorm_add_packaging_targets)
       "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
       "SPK_BIN=$<TARGET_FILE:spk>"
       "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
+      "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
       "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
       "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
     DEPENDS
       sandstorm
       spk
+      isolate-websession-client
       workerd
       isolate-test-app-spk
       "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     USES_TERMINAL
     COMMENT "Running isolate supervisor integration tests"
+    VERBATIM)
+
+  add_custom_target(isolate-supervisor-stress-test
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
+      "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
+      "SPK_BIN=$<TARGET_FILE:spk>"
+      "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
+      "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
+      "ISOLATE_STRESS_64M=1"
+      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
+    DEPENDS
+      sandstorm
+      spk
+      isolate-websession-client
+      workerd
+      isolate-test-app-spk
+      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Running isolate supervisor stress tests"
     VERBATIM)
 
   find_program(SANDSTORM_STRACE_EXECUTABLE NAMES strace)
@@ -169,6 +193,7 @@ function(sandstorm_add_packaging_targets)
         "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
         "SPK_BIN=$<TARGET_FILE:spk>"
         "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
+        "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
         "ISOLATE_SYSCALL_TRACE_DIR=${_isolate_trace_dir}"
         "ISOLATE_SYSCALL_TRACE_PROFILE=representative"
         "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
@@ -178,6 +203,7 @@ function(sandstorm_add_packaging_targets)
       DEPENDS
         sandstorm
         spk
+        isolate-websession-client
         workerd
         isolate-test-app-spk
         "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"

@@ -1455,6 +1455,48 @@ kj::Promise<kj::Array<byte>> readAllBytesAtMost(
   });
 }
 
+kj::Promise<void> pumpAtMost(kj::AsyncInputStream& input, ByteStream::Client stream,
+    uint64_t maxBytes, kj::StringPtr description, uint64_t bytesPumped = 0) {
+  if (bytesPumped == maxBytes) {
+    auto req = stream.writeRequest(capnp::MessageSize { 2100, 0 });
+    auto orphanage = capnp::Orphanage::getForMessageContaining(
+        kj::implicitCast<ByteStream::WriteParams::Builder>(req));
+    auto orphan = orphanage.newOrphan<capnp::Data>(1);
+    auto buffer = orphan.get();
+
+    return input.tryRead(buffer.begin(), 1, buffer.size())
+        .then([KJ_MVCAP(stream), maxBytes, description](size_t n) mutable -> kj::Promise<void> {
+      KJ_REQUIRE(n == 0, description, maxBytes + 1, maxBytes);
+      return stream.doneRequest(capnp::MessageSize {4, 0}).send().then([](auto&&) {});
+    });
+  }
+
+  auto req = stream.writeRequest(capnp::MessageSize { 2100, 0 });
+  auto orphanage = capnp::Orphanage::getForMessageContaining(
+      kj::implicitCast<ByteStream::WriteParams::Builder>(req));
+  auto chunkSize = static_cast<size_t>(kj::min(uint64_t(8192), maxBytes - bytesPumped));
+  auto orphan = orphanage.newOrphan<capnp::Data>(chunkSize);
+  auto buffer = orphan.get();
+
+  return input.tryRead(buffer.begin(), 1, buffer.size())
+      .then([&input, KJ_MVCAP(stream), KJ_MVCAP(req), KJ_MVCAP(orphan),
+          maxBytes, description, bytesPumped](size_t n) mutable -> kj::Promise<void> {
+    if (n == 0) {
+      return stream.doneRequest(capnp::MessageSize {4, 0}).send().then([](auto&&) {});
+    }
+
+    auto newBytesPumped = bytesPumped + n;
+    KJ_REQUIRE(newBytesPumped <= maxBytes, description, newBytesPumped, maxBytes);
+    orphan.truncate(n);
+    req.adoptData(kj::mv(orphan));
+
+    return req.send().then([&input, KJ_MVCAP(stream), maxBytes, description,
+        newBytesPumped]() mutable {
+      return pumpAtMost(input, kj::mv(stream), maxBytes, description, newBytesPumped);
+    });
+  });
+}
+
 void addHeader(FetchRequest& request, kj::StringPtr name, kj::StringPtr value) {
   FetchHeader header;
   header.name = kj::heapString(name);
@@ -1835,6 +1877,16 @@ bool shouldStreamSidecarResponse(uint statusCode, kj::Vector<FetchHeader>& heade
   return true;
 }
 
+kj::Maybe<uint64_t> getSidecarResponseContentLength(kj::Vector<FetchHeader>& headers) {
+  KJ_IF_MAYBE(contentLength, findFetchResponseHeader(headers, "content-length")) {
+    KJ_IF_MAYBE(size, parseUInt64(*contentLength, 10)) {
+      return *size;
+    }
+  }
+
+  return nullptr;
+}
+
 class FetchResponseStreamHandle final: public Handle::Server, private kj::TaskSet::ErrorHandler {
 public:
   FetchResponseStreamHandle(
@@ -1846,7 +1898,8 @@ public:
         tasks(*this) {
     KJ_LOG(WARNING, "Starting isolate response body stream.");
     tasks.add(kj::evalLater([this]() {
-      return pump(*this->bodyStream, this->responseStream);
+      return pumpAtMost(*this->bodyStream, this->responseStream, MAX_SIDECAR_RESPONSE_BYTES,
+          "streaming isolate response body exceeds maximum allowed size");
     }));
   }
 
@@ -2044,6 +2097,11 @@ private:
     }
 
     if (shouldStreamSidecarResponse(result.statusCode, result.headers)) {
+      KJ_IF_MAYBE(size, getSidecarResponseContentLength(result.headers)) {
+        KJ_REQUIRE(*size <= MAX_SIDECAR_RESPONSE_BYTES,
+            "streaming isolate response declared size exceeds maximum allowed size",
+            *size, MAX_SIDECAR_RESPONSE_BYTES);
+      }
       result.bodyStreamAnchor = kj::mv(state);
       result.bodyStream = kj::mv(response.body);
       KJ_LOG(WARNING, "Isolate sidecar streaming response received.",
