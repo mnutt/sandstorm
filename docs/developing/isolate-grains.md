@@ -352,6 +352,10 @@ the saved token string, and return the live and saved handles.
 token from storage, fetch through it, buffer the response, and drop the live
 handle. Use `claimAndStore()` and `restoreSaved()` directly when code needs
 lower-level control, multiple calls, or streaming response bodies.
+Storage-backed helpers use non-throwing result shapes for expected absence:
+`restoreStored()` returns `{ ok: true, found: false, ... }` when no token is
+stored, and `dropStored()` returns `{ ok: true, dropped: false, ... }` when
+there is nothing to revoke.
 `persistentCapability()` does the analogous storage-backed setup for
 app-defined stable object capabilities.
 

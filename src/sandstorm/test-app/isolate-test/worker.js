@@ -1497,6 +1497,7 @@ export default {
         },
         restored: {
           ok: restored.ok,
+          found: restored.found,
           capabilityClass: restored.capability instanceof ClaimedCapability,
           storageKey: restored.storageKey,
           token: restored.token,
