@@ -1,0 +1,1 @@
+This page is rendered from a multi-file isolate app and persists its counter through the STORAGE binding!
