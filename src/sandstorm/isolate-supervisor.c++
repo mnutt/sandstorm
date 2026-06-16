@@ -1431,6 +1431,7 @@ struct ParsedETag {
 
 constexpr uint64_t MAX_SIDECAR_REQUEST_BYTES = 64 * 1024 * 1024;
 constexpr uint64_t MAX_SIDECAR_RESPONSE_BYTES = 64 * 1024 * 1024;
+constexpr uint64_t MAX_API_BINDING_REQUEST_BYTES = 1024 * 1024;
 constexpr uint64_t SIDECAR_RESPONSE_STREAM_THRESHOLD_BYTES = 64 * 1024;
 constexpr uint SIDECAR_READY_TIMEOUT_MS = 10000;
 constexpr uint SIDECAR_READY_POLL_MS = 50;
@@ -3700,8 +3701,14 @@ public:
     }
     KJ_LOG(WARNING, "Isolate Sandstorm API binding received request.", methodName, path);
 
-    return readAllBytesAtMost(requestBody, 1024 * 1024,
-        "isolate Sandstorm API binding request body exceeds maximum allowed size").then(
+    auto maxBodyBytes = methodName == "POST" && route == "/powerbox/fetch"
+        ? MAX_SIDECAR_REQUEST_BYTES
+        : MAX_API_BINDING_REQUEST_BYTES;
+    auto maxBodyDescription = methodName == "POST" && route == "/powerbox/fetch"
+        ? "claimed capability fetch request body exceeds maximum allowed size"
+        : "isolate Sandstorm API binding request body exceeds maximum allowed size";
+
+    return readAllBytesAtMost(requestBody, maxBodyBytes, maxBodyDescription).then(
         [this, methodName = kj::mv(methodName), path = kj::mv(path), route = kj::mv(route),
             contentType = kj::mv(contentType), &response]
         (kj::Array<byte>&& bodyBytes) mutable {
