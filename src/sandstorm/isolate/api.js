@@ -1407,10 +1407,6 @@ async function persistentObjectCapability(env, target, options = {}) {
 
 export function powerbox(request, env) {
   return {
-    async request() {
-      unsupportedPowerbox("request");
-    },
-
     async requestApiSession(options = {}) {
       return requestApiSessionCapability(env, request, options);
     },
@@ -1593,10 +1589,6 @@ class PowerboxRpcTarget extends RpcTarget {
     super();
     this.#request = request;
     this.#env = env;
-  }
-
-  async request() {
-    unsupportedPowerbox("request");
   }
 
   async requestApiSession(options) {
