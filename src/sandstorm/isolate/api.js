@@ -1266,6 +1266,40 @@ async function claimAndSavePowerboxCapability(env, request, token, options = {})
   };
 }
 
+async function saveClaimedPowerboxCapability(env, capabilityHandle, options = {}) {
+  const capability = new ClaimedCapability(env, capabilityId(capabilityHandle));
+  const saved = await capability.save(options);
+  const key = storageKey(options);
+  await storage(env).put(key, saved.token);
+  return {
+    ok: true,
+    capability,
+    saved,
+    token: saved.token,
+    storageKey: key,
+  };
+}
+
+async function claimAndSavePowerboxRequest(env, request, result, options = {}) {
+  if (typeof result === "string") {
+    return claimAndSavePowerboxCapability(env, request, result, options);
+  }
+
+  if (!result || typeof result !== "object") {
+    throw new ValidationError("Powerbox request result must be a token string or result object");
+  }
+
+  if (result.capability) {
+    return saveClaimedPowerboxCapability(env, result.capability, options);
+  }
+
+  if (typeof result.token === "string") {
+    return claimAndSavePowerboxCapability(env, request, result.token, options);
+  }
+
+  throw new ValidationError("Powerbox request result must contain token or capability");
+}
+
 async function restoreSavedPowerboxCapabilityFromStorage(env, options = {}) {
   const key = storageKey(options);
   const token = await storage(env).get(key);
@@ -1283,6 +1317,27 @@ async function restoreSavedPowerboxCapabilityFromStorage(env, options = {}) {
     token,
     capability: await restoreSavedCapability(env, token),
   };
+}
+
+async function fetchSavedPowerboxCapability(env, options = {}, input = "/", init = {}) {
+  const restored = await restoreSavedPowerboxCapabilityFromStorage(env, options);
+  if (!restored.ok || !restored.capability) {
+    throw new ValidationError(`No saved Powerbox token is available at ${restored.storageKey}`);
+  }
+
+  try {
+    const response = await restored.capability.fetch(input, init);
+    const body = response.body === null || [204, 205, 304].includes(response.status)
+      ? null
+      : await response.arrayBuffer();
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  } finally {
+    await restored.capability.drop();
+  }
 }
 
 async function dropSavedPowerboxCapabilityFromStorage(env, options = {}) {
@@ -1387,8 +1442,16 @@ export function powerbox(request, env) {
       return claimAndSavePowerboxCapability(env, request, token, options);
     },
 
+    async claimAndSaveRequest(result, options = {}) {
+      return claimAndSavePowerboxRequest(env, request, result, options);
+    },
+
     async restoreSaved(options = {}) {
       return restoreSavedPowerboxCapabilityFromStorage(env, options);
+    },
+
+    async fetchSaved(options = {}, input = "/", init = {}) {
+      return fetchSavedPowerboxCapability(env, options, input, init);
     },
 
     async dropSavedFromStorage(options = {}) {
@@ -1556,8 +1619,16 @@ class PowerboxRpcTarget extends RpcTarget {
     return powerbox(this.#request, this.#env).claimAndSave(token, options || {});
   }
 
+  async claimAndSaveRequest(result, options) {
+    return powerbox(this.#request, this.#env).claimAndSaveRequest(result, options || {});
+  }
+
   async restoreSaved(options) {
     return powerbox(this.#request, this.#env).restoreSaved(options || {});
+  }
+
+  async fetchSaved(options, input, init) {
+    return powerbox(this.#request, this.#env).fetchSaved(options || {}, input || "/", init || {});
   }
 
   async dropSavedFromStorage(options) {

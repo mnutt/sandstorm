@@ -165,6 +165,10 @@ async function callApi(capability) {
   const response = await capability.fetch("/status", {
     headers: { accept: "application/json" },
   });
+  return readApiResponse(response);
+}
+
+async function readApiResponse(response) {
   const text = await response.text();
   let body = text;
   try {
@@ -212,12 +216,11 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const api = sandstorm(request, env);
-    const store = api.storage();
 
     try {
-      const descriptorResponse = await api.servePowerboxDescriptors();
-      if (descriptorResponse) {
-        return descriptorResponse;
+      const systemRoute = await api.serveSystemRoutes();
+      if (systemRoute) {
+        return systemRoute;
       }
 
       if (url.pathname === "/rpc-client.js") {
@@ -228,25 +231,12 @@ export default {
 
       if (request.method === "POST" && url.pathname === "/claim") {
         const body = await readJsonBody(request);
-        const token = String(body.token || "");
         const canonicalUrl = String(body.canonicalUrl || API_CANONICAL_URL);
-        let capability;
-        let saved;
-        if (body.capability?.type === "claimedCapability" && body.capability.id) {
-          capability = api.powerbox().claimedCapability(body.capability);
-          saved = await capability.save({ label: `API: ${canonicalUrl}` });
-          await store.put(TOKEN_KEY, saved.token);
-        } else {
-          if (!token) {
-            throw new Error("Powerbox did not return a request token or claimed capability.");
-          }
-          const claimed = await api.powerbox().claimAndSave(token, {
-            label: `API: ${canonicalUrl}`,
-            storageKey: TOKEN_KEY,
-          });
-          capability = claimed.capability;
-          saved = claimed.saved;
-        }
+        const claimed = await api.powerbox().claimAndSaveRequest(body, {
+          label: `API: ${canonicalUrl}`,
+          storageKey: TOKEN_KEY,
+        });
+        const { capability, saved } = claimed;
         const call = await callApi(body.skipApiCall ? null : capability);
         await capability.drop();
 
@@ -264,18 +254,14 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/restore") {
-        const restored = await api.powerbox().restoreSaved({ storageKey: TOKEN_KEY });
-        if (!restored.ok || !restored.capability) {
-          throw new Error("No saved API token is available.");
-        }
-        const capability = restored.capability;
-        const call = await callApi(capability);
-        await capability.drop();
+        const response = await api.powerbox().fetchSaved(
+          { storageKey: TOKEN_KEY },
+          "/status",
+          { headers: { accept: "application/json" } });
+        const call = await readApiResponse(response);
         return new Response(renderPage(await readState(request, env, {
           ok: true,
-          restoredClass: capability instanceof ClaimedCapability,
-          restored: JSON.parse(JSON.stringify(capability)),
-          storageKey: restored.storageKey,
+          storageKey: TOKEN_KEY,
           call,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },

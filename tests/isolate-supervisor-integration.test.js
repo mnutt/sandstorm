@@ -587,6 +587,7 @@ test("isolate supervisor integration suite", {
     assert.equal(storageHelper.json.missingBytes, undefined);
     assert.equal(storageHelper.json.deletedBytes.ok, true);
     assert.equal(storageHelper.json.deletedJson.ok, true);
+
   });
 
   if (REPRESENTATIVE_SYSCALL_TRACE) {
