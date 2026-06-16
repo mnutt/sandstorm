@@ -1283,7 +1283,12 @@ public:
     KJ_REQUIRE(badClaim.getStatusCode() == WebSession::Response::ClientErrorCode::BAD_REQUEST);
     KJ_REQUIRE(badClaim.hasNonHtmlBody());
     auto badClaimBody = kj::str(badClaim.getNonHtmlBody().getData().asChars());
-    KJ_REQUIRE(contains(badClaimBody, "unknown required permission"), badClaimBody);
+    KJ_REQUIRE(contains(badClaimBody,
+        "unknown required permission: not-a-permission; this app defines permissions: view"),
+        badClaimBody);
+    KJ_REQUIRE(contains(badClaimBody,
+        "requiredPermissions must use names from this app's viewInfo.permissions"),
+        badClaimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
     KJ_REQUIRE(sessionContextRef.restoreCount == 6, sessionContextRef.restoreCount);

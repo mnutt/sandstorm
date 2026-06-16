@@ -775,6 +775,24 @@ export default {
       });
     }
 
+    if (url.pathname === "/required-permission-validation-self-test") {
+      let error = null;
+      try {
+        await sandstorm(request, env).powerbox().requestApi({
+          canonicalUrl: "https://api.example.test/v1",
+          oauthScopes: ["read"],
+          requiredPermissions: ["not-a-permission"],
+        });
+      } catch (err) {
+        error = String(err?.message || err);
+      }
+
+      return Response.json({
+        ok: Boolean(error),
+        error,
+      });
+    }
+
     if (url.pathname === "/powerbox-binding-probe") {
       const statusResponse = await env.POWERBOX.fetch("http://sandstorm/status");
       const dropResponse = await env.POWERBOX.fetch(

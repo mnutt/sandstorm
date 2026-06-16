@@ -512,6 +512,15 @@ test("isolate supervisor integration suite", {
     assert.equal(powerboxProbe.json.powerboxEndpoint.body.ok, false);
     assert.equal(powerboxProbe.json.powerboxEndpoint.body.error, "unknown claimed capability");
 
+    const permissionValidation = await requestJson(
+      fixture.workerdSocket, "/required-permission-validation-self-test");
+    assert.equal(permissionValidation.statusCode, 200, permissionValidation.body);
+    assert.equal(permissionValidation.json.ok, true);
+    assert.match(permissionValidation.json.error,
+      /unknown required permission: not-a-permission; this app defines permissions: view/);
+    assert.match(permissionValidation.json.error,
+      /requiredPermissions must use names from this app's viewInfo.permissions/);
+
     const storageHelper = await requestJson(fixture.workerdSocket, "/storage-helper-self-test");
     assert.equal(storageHelper.statusCode, 200, storageHelper.body);
     assert.equal(storageHelper.json.ok, true);
@@ -1087,8 +1096,16 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("powerbox.offer"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.fulfillRequest"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.tieToUser"));
+    assert.ok(capabilities.json.capabilities.includes("permissions"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.webSession"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.apiSession"));
+
+    const permissions = await requestJson(fixture.sandstormApiSocket, "/permissions");
+    assert.equal(permissions.statusCode, 200);
+    assert.equal(permissions.json.ok, true);
+    assert.deepEqual(permissions.json.permissions.map((permission) => permission.name), ["view"]);
+    assert.equal(permissions.json.permissions[0].title, "view");
+    assert.equal(permissions.json.permissions[0].description, "allows opening the isolate test app");
 
     const modules = await requestJson(fixture.sandstormApiSocket, "/modules");
     assert.equal(modules.statusCode, 200);

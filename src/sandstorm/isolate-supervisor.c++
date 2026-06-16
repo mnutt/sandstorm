@@ -3715,6 +3715,8 @@ public:
         return sendJson(response, 200, "OK", renderModules());
       } else if (route == "/bindings") {
         return sendJson(response, 200, "OK", renderBindings());
+      } else if (route == "/permissions") {
+        return sendJson(response, 200, "OK", renderPermissions());
       } else {
         return sendJson(response, 404, "Not Found", kj::heapString(
             "{\n  \"ok\": false,\n  \"error\": \"unknown Sandstorm API binding endpoint\"\n}\n"));
@@ -3891,13 +3893,37 @@ private:
         "{\n"
         "  \"ok\": true,\n"
         "  \"binding\": \"sandstormApi\",\n"
-        "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", \"bindings\", "
+        "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", "
+        "\"bindings\", \"permissions\", "
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
         "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.requestApi\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\"]\n"
         "}\n");
+  }
+
+  kj::String renderPermissions() {
+    auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
+    auto permissionDefs = viewInfo.getPermissions();
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"permissions\": ["));
+    for (auto i: kj::indices(permissionDefs)) {
+      if (i > 0) {
+        json.addAll(kj::StringPtr(", "));
+      }
+
+      json.addAll(kj::StringPtr("{\"name\": "));
+      appendJsonString(json, permissionDefs[i].getName());
+      json.addAll(kj::StringPtr(", \"title\": "));
+      appendJsonString(json, permissionDefs[i].getTitle().getDefaultText());
+      json.addAll(kj::StringPtr(", \"description\": "));
+      appendJsonString(json, permissionDefs[i].getDescription().getDefaultText());
+      json.addAll(kj::StringPtr("}"));
+    }
+    json.addAll(kj::StringPtr("]\n}\n"));
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
   }
 
   kj::String normalizeCapabilityFetchPath(kj::StringPtr path) {
@@ -4432,7 +4458,20 @@ private:
       }
     }
 
-    return kj::str("unknown required permission: ", name);
+    kj::Vector<char> known;
+    for (auto i: kj::indices(permissionDefs)) {
+      if (i > 0) {
+        known.addAll(kj::StringPtr(", "));
+      }
+      known.addAll(permissionDefs[i].getName());
+    }
+    if (permissionDefs.size() == 0) {
+      known.addAll(kj::StringPtr("(none)"));
+    }
+
+    return kj::str("unknown required permission: ", name,
+        "; this app defines permissions: ", known.asPtr(),
+        ". requiredPermissions must use names from this app's viewInfo.permissions.");
   }
 
   kj::Promise<void> requestApiSessionCapability(
