@@ -819,6 +819,33 @@ export default {
       });
     }
 
+    if (url.pathname === "/outbound-http-helper-self-test") {
+      const api = sandstorm(request, env);
+      const capability = await api.powerbox().claimRequest("outbound-http/test-token", {
+        requiredPermissions: ["view"],
+      });
+      const outbound = api.powerbox().outboundHttpCapability(capability);
+      const response = await outbound.fetch("v1/chat/completions?model=test", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer isolate-test",
+          "content-type": "text/plain; charset=utf-8",
+        },
+        body: "hello",
+      });
+
+      return Response.json({
+        ok: true,
+        outboundClass: outbound.constructor.name === "OutboundHttpCapability",
+        status: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get("content-type"),
+        outboundHeader: response.headers.get("x-outbound-test"),
+        body: await response.json(),
+        drop: await capability.drop(),
+      });
+    }
+
     if (url.pathname === "/powerbox-binding-probe") {
       const statusResponse = await env.POWERBOX.fetch("http://sandstorm/status");
       const dropResponse = await env.POWERBOX.fetch(

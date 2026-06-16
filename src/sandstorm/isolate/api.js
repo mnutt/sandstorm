@@ -315,6 +315,10 @@ export class ClaimedCapability {
     return createCapabilityRpcStub(this);
   }
 
+  asOutboundHttp() {
+    return new OutboundHttpCapability(this);
+  }
+
   save(options = {}) {
     return saveClaimedCapability(this.#env, this, options);
   }
@@ -351,6 +355,28 @@ export class ClaimedCapability {
       ok: true,
       type: "claimedCapability",
       id: this.id,
+    };
+  }
+}
+
+export class OutboundHttpCapability {
+  constructor(capability) {
+    this.ok = true;
+    this.type = "outboundHttpCapability";
+    this.capability = wrapClaimedCapability(capability.env, capability);
+    this.id = this.capability.id;
+  }
+
+  fetch(input, init) {
+    return fetchOutboundHttpCapability(this.capability, input, init);
+  }
+
+  toJSON() {
+    return {
+      ok: true,
+      type: "outboundHttpCapability",
+      id: this.id,
+      capability: this.capability.toJSON(),
     };
   }
 }
@@ -956,6 +982,7 @@ const CLAIMED_CAPABILITY_RPC_OWN_PROPERTIES = new Set([
   "fetch",
   "call",
   "asRpc",
+  "asOutboundHttp",
   "dup",
   "save",
   "drop",
@@ -1272,6 +1299,55 @@ async function fetchClaimedCapability(env, capability, input, init = {}) {
     });
 }
 
+function outboundHttpRequest(input, init = {}) {
+  let request;
+  if (input instanceof Request) {
+    request = init === undefined ? input : new Request(input, init);
+  } else {
+    const url = new URL(String(input), "http://sandstorm-outbound/");
+    request = new Request(url, init);
+  }
+
+  const url = new URL(request.url);
+  if (url.origin !== "http://sandstorm-outbound") {
+    throw new ValidationError("outbound HTTP fetch input must be a relative path");
+  }
+
+  let path = url.pathname;
+  while (path.startsWith("/")) {
+    path = path.slice(1);
+  }
+  return { request, path: `${path}${url.search}` };
+}
+
+async function fetchOutboundHttpCapability(capability, input, init = {}) {
+  const { request, path } = outboundHttpRequest(input, init);
+  const params = new URLSearchParams({
+    id: capabilityId(capability),
+    method: request.method || "GET",
+    path,
+  });
+  const headers = {};
+  let headerIndex = 0;
+  for (const [name, value] of request.headers) {
+    params.append("headerName", name);
+    headers[`x-sandstorm-outbound-header-${headerIndex++}`] = value;
+  }
+
+  let body;
+  if (request.method !== "GET" && request.method !== "HEAD" && request.body !== null) {
+    body = await request.arrayBuffer();
+  }
+
+  return powerboxFetcher(capability.env).fetch(
+    `http://sandstorm/powerbox/outbound-http-fetch?${params}`,
+    {
+      method: "POST",
+      headers,
+      body,
+    });
+}
+
 function wrapClaimedCapability(env, capability) {
   if (capability instanceof ClaimedCapability) {
     return capability;
@@ -1507,6 +1583,10 @@ export function powerbox(request, env) {
       return new ClaimedCapability(env, capabilityId(capability));
     },
 
+    outboundHttpCapability(capability) {
+      return new ClaimedCapability(env, capabilityId(capability)).asOutboundHttp();
+    },
+
     async claimRequest(token, options = {}) {
       token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
       const requiredPermissions = permissionNames(options);
@@ -1689,6 +1769,10 @@ class PowerboxRpcTarget extends RpcTarget {
 
   claimedCapability(capability) {
     return powerbox(this.#request, this.#env).claimedCapability(capability);
+  }
+
+  outboundHttpCapability(capability) {
+    return powerbox(this.#request, this.#env).outboundHttpCapability(capability);
   }
 
   async claimRequest(token, options) {

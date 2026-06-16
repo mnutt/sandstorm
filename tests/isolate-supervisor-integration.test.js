@@ -1200,6 +1200,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("powerbox.dropSaved"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.drop"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.fetch"));
+    assert.ok(capabilities.json.capabilities.includes("powerbox.outboundHttpFetch"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.apiSessionDescriptor"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.outboundHttpDescriptor"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.offer"));

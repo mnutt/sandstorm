@@ -24,6 +24,7 @@
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
+#include <sandstorm/outbound-http-session.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
@@ -266,16 +267,70 @@ private:
   uint& saveCount;
 };
 
+class FakeOutboundHttpSession final: public OutboundHttpSession::Server {
+public:
+  kj::Promise<void> request(RequestContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.getMethod() == OutboundHttpSession::Method::POST);
+    KJ_REQUIRE(params.getPath() == "v1/chat/completions?model=test", params.getPath());
+
+    kj::StringPtr authorization = "";
+    kj::StringPtr contentType = "";
+    for (auto header: params.getHeaders()) {
+      if (header.getName() == "authorization") {
+        authorization = header.getValue();
+      } else if (header.getName() == "content-type") {
+        contentType = header.getValue();
+      }
+    }
+    KJ_REQUIRE(authorization == "Bearer isolate-test", authorization);
+    KJ_REQUIRE(contentType == "text/plain;charset=UTF-8" ||
+        contentType == "text/plain;charset=utf-8" ||
+        contentType == "text/plain; charset=utf-8" ||
+        contentType == "text/plain", contentType);
+    KJ_REQUIRE(kj::str(params.getBody().asChars()) == "hello");
+
+    auto response = context.getResults();
+    response.setStatusCode(201);
+    response.setStatusText("Created");
+    auto headers = response.initHeaders(2);
+    headers[0].setName("content-type");
+    headers[0].setValue("application/json; charset=utf-8");
+    headers[1].setName("x-outbound-test");
+    headers[1].setValue("yes");
+
+    auto body = kj::str(
+        "{\"ok\":true,\"source\":\"fake-outbound-http\","
+        "\"method\":\"POST\","
+        "\"path\":\"", params.getPath(), "\","
+        "\"authorization\":\"", authorization, "\","
+        "\"body\":\"", params.getBody().asChars(), "\"}");
+    auto stream = params.getResponseStream();
+    auto write = stream.writeRequest();
+    write.setData(body.asBytes());
+    return write.send()
+        .then([stream = kj::mv(stream), body = kj::mv(body)]() mutable {
+      return stream.doneRequest().send().then([](auto) {});
+    });
+  }
+};
+
 class FakeSessionContext final: public SessionContext::Server {
 public:
   kj::Promise<void> claimRequest(ClaimRequestContext context) override {
     auto params = context.getParams();
-    KJ_REQUIRE(params.getRequestToken() == "websession/test+token==");
     auto requiredPermissions = params.getRequiredPermissions();
     KJ_REQUIRE(requiredPermissions.size() == 1);
     KJ_REQUIRE(requiredPermissions[0]);
     claimCount++;
-    context.getResults().setCap(kj::heap<FakeClaimedCapability>(saveCount));
+
+    if (params.getRequestToken() == "websession/test+token==") {
+      context.getResults().setCap(kj::heap<FakeClaimedCapability>(saveCount));
+    } else if (params.getRequestToken() == "outbound-http/test-token") {
+      context.getResults().setCap(kj::heap<FakeOutboundHttpSession>());
+    } else {
+      KJ_FAIL_REQUIRE("unexpected fake powerbox request token", params.getRequestToken());
+    }
     return kj::READY_NOW;
   }
 
@@ -1214,6 +1269,40 @@ public:
     KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
     KJ_REQUIRE(sessionContextRef.tieCount == 1, sessionContextRef.tieCount);
 
+    auto outboundRequest = session.getRequest();
+    outboundRequest.setPath("/outbound-http-helper-self-test");
+    outboundRequest.setIgnoreBody(false);
+    auto outboundContext = outboundRequest.initContext();
+    outboundContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    outboundContext.initCookies(0);
+    outboundContext.initAccept(0);
+    outboundContext.initAcceptEncoding(0);
+    outboundContext.initAdditionalHeaders(0);
+
+    auto outboundResponse = outboundRequest.send().wait(io.waitScope);
+    auto outboundDebugBody = responseDebugBody(outboundResponse);
+    KJ_REQUIRE(outboundResponse.which() == WebSession::Response::CONTENT,
+        outboundDebugBody);
+    auto outboundContent = outboundResponse.getContent();
+    KJ_REQUIRE(outboundContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(outboundContent.getBody().which() ==
+        WebSession::Response::Content::Body::BYTES);
+    auto outboundBody = kj::str(outboundContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(outboundBody, "\"ok\":true"), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"outboundClass\":true"), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"status\":201"), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"statusText\":\"Created\""), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"contentType\":\"application/json; charset=utf-8\""),
+        outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"outboundHeader\":\"yes\""), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"source\":\"fake-outbound-http\""), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"path\":\"v1/chat/completions?model=test\""),
+        outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"authorization\":\"Bearer isolate-test\""), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"body\":\"hello\""), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"drop\":{\"ok\":true}"), outboundBody);
+    KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
+
     auto storageHelperRequest = session.getRequest();
     storageHelperRequest.setPath("/powerbox-storage-helper-self-test");
     storageHelperRequest.setIgnoreBody(false);
@@ -1282,7 +1371,7 @@ public:
         "\"afterDrop\":{\"ok\":true,\"storageKey\":\"powerbox-storage-helper-token\","
         "\"found\":false"),
         storageHelperBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
     KJ_REQUIRE(sessionContextRef.restoreCount == 4, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 3, sessionContextRef.tokenDropCount);
@@ -1446,7 +1535,7 @@ public:
     KJ_REQUIRE(contains(badClaimBody,
         "requiredPermissions must use names from this app's viewInfo.permissions"),
         badClaimBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
     KJ_REQUIRE(sessionContextRef.restoreCount == 8, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 5, sessionContextRef.tokenDropCount);
@@ -1477,7 +1566,7 @@ public:
     KJ_REQUIRE(contains(standardClaimBody, "\"ok\":true"), standardClaimBody);
     KJ_REQUIRE(contains(standardClaimBody, "\"capability\":{\"ok\":true"), standardClaimBody);
     KJ_REQUIRE(contains(standardClaimBody, "\"type\":\"claimedCapability\""), standardClaimBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 4, sessionContextRef.claimCount);
 
     supervisor.syncStorageRequest().send().wait(io.waitScope);
     KJ_REQUIRE(sessionContextRef.grainSizeReportCount == 1,

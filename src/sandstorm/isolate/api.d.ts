@@ -258,6 +258,7 @@ declare module "sandstorm:api" {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
     asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(): CapabilityRpcStub<T>;
+    asOutboundHttp(): OutboundHttpCapability;
     dup(): Promise<ClaimedCapability>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
@@ -275,6 +276,7 @@ declare module "sandstorm:api" {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
     asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(): CapabilityRpcStub<T>;
+    asOutboundHttp(): OutboundHttpCapability;
     dup(): Promise<ClaimedCapability>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
@@ -283,6 +285,23 @@ declare module "sandstorm:api" {
     tieToUser(request: Request, options?: SessionCapabilityOptions): Promise<ClaimedCapability>;
     [Symbol.dispose](): void;
     toJSON(): ClaimedCapabilityHandle;
+  }
+
+  export interface OutboundHttpCapabilityHandle {
+    ok: true;
+    type: "outboundHttpCapability";
+    id: string;
+    capability: ClaimedCapabilityHandle;
+  }
+
+  export class OutboundHttpCapability {
+    readonly ok: true;
+    readonly type: "outboundHttpCapability";
+    readonly id: string;
+    readonly capability: ClaimedCapability;
+    constructor(capability: ClaimedCapability);
+    fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
+    toJSON(): OutboundHttpCapabilityHandle;
   }
 
   export class SavedCapability {
@@ -391,6 +410,7 @@ declare module "sandstorm:api" {
     apiSessionDescriptor(options: ApiSessionPowerboxOptions): Promise<string>;
     outboundHttpDescriptor(options: OutboundHttpPowerboxOptions): Promise<string>;
     claimedCapability(capability: ClaimedCapabilityHandle | string): ClaimedCapability;
+    outboundHttpCapability(capability: ClaimedCapabilityHandle | string): OutboundHttpCapability;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
     claimAndStore(
       token: string,
