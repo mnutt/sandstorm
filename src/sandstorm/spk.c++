@@ -2678,6 +2678,16 @@ private:
   kj::MainBuilder::Validity doDev() {
     ensurePackageDefParsed();
 
+    if (devIsolateWorkerPath != nullptr) {
+      context.warning(kj::str(
+          "Isolate dev app identity:\n"
+          "    appId: ", packageDef.getId(), "\n"
+          "    entrypoint: ", devIsolateWorkerPath, "\n\n"
+          "Existing grains with this appId will run against the active dev package while this\n"
+          "session is connected. To force a separate dev app identity, run dev-isolate from a\n"
+          "different entrypoint path or delete the existing dev grain."));
+    }
+
     if (serverBinary == nullptr) {
       // Try to find the server. First try looking where `spk` is installed.
       KJ_IF_MAYBE(i, installHome) {
