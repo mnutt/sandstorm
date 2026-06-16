@@ -294,7 +294,7 @@ declare module "sandstorm:api" {
     key?: string;
   }
 
-  export interface ClaimAndSaveResult {
+  export interface ClaimAndStoreResult {
     ok: true;
     capability: ClaimedCapability;
     saved: SavedCapability;
@@ -309,14 +309,14 @@ declare module "sandstorm:api" {
       capability?: ClaimedCapabilityHandle;
     };
 
-  export interface RestoreSavedResult {
+  export interface RestoreStoredResult {
     ok: boolean;
     storageKey: string;
     token?: string;
     capability?: ClaimedCapability;
   }
 
-  export interface DropSavedFromStorageResult {
+  export interface DropStoredResult {
     ok: true;
     storageKey: string;
     dropped: boolean;
@@ -351,27 +351,27 @@ declare module "sandstorm:api" {
 
   export interface PowerboxApi {
     request(query: unknown, options?: unknown): Promise<unknown>;
-    requestApi(options: ApiSessionPowerboxOptions): Promise<ClaimedCapability>;
+    requestApiSession(options: ApiSessionPowerboxOptions): Promise<ClaimedCapability>;
     apiSessionDescriptor(options: ApiSessionPowerboxOptions): Promise<string>;
     claimedCapability(capability: ClaimedCapabilityHandle | string): ClaimedCapability;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
-    claimAndSave(
+    claimAndStore(
       token: string,
       options?: SavedCapabilityStorageOptions,
-    ): Promise<ClaimAndSaveResult>;
-    claimAndSaveRequest(
+    ): Promise<ClaimAndStoreResult>;
+    claimAndStoreRequest(
       result: PowerboxRequestResult,
       options?: SavedCapabilityStorageOptions,
-    ): Promise<ClaimAndSaveResult>;
-    restoreSaved(options?: SavedCapabilityStorageOptions): Promise<RestoreSavedResult>;
-    fetchSaved(
+    ): Promise<ClaimAndStoreResult>;
+    restoreStored(options?: SavedCapabilityStorageOptions): Promise<RestoreStoredResult>;
+    fetchStored(
       options: SavedCapabilityStorageOptions,
       input?: string | URL | Request,
       init?: RequestInit,
     ): Promise<Response>;
-    dropSavedFromStorage(
+    dropStored(
       options?: SavedCapabilityStorageOptions,
-    ): Promise<DropSavedFromStorageResult>;
+    ): Promise<DropStoredResult>;
     offeredCapability(): ClaimedCapability | undefined;
     offeredCapabilityInfo(): OfferedCapabilityInfo | undefined;
     offer(
@@ -390,7 +390,7 @@ declare module "sandstorm:api" {
       capability: ClaimedCapabilityHandle | string,
       options?: SaveCapabilityOptions,
     ): Promise<SavedCapability>;
-    restore(token: Uint8Array | string | SavedCapability): Promise<ClaimedCapability>;
+    restoreSaved(token: Uint8Array | string | SavedCapability): Promise<ClaimedCapability>;
     dropSaved(token: Uint8Array | string | SavedCapability): Promise<{ ok: true }>;
     drop(capability: ClaimedCapabilityHandle | string): Promise<{ ok: true }>;
   }

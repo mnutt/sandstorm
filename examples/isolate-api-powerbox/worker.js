@@ -232,7 +232,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/claim") {
         const body = await readJsonBody(request);
         const canonicalUrl = String(body.canonicalUrl || API_CANONICAL_URL);
-        const claimed = await api.powerbox().claimAndSaveRequest(body, {
+        const claimed = await api.powerbox().claimAndStoreRequest(body, {
           label: `API: ${canonicalUrl}`,
           storageKey: TOKEN_KEY,
         });
@@ -254,7 +254,7 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/restore") {
-        const response = await api.powerbox().fetchSaved(
+        const response = await api.powerbox().fetchStored(
           { storageKey: TOKEN_KEY },
           "/status",
           { headers: { accept: "application/json" } });
@@ -269,7 +269,7 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/disconnect") {
-        const dropSaved = await api.powerbox().dropSavedFromStorage({ storageKey: TOKEN_KEY });
+        const dropSaved = await api.powerbox().dropStored({ storageKey: TOKEN_KEY });
         return new Response(renderPage(await readState(request, env, {
           ok: true,
           dropSaved,

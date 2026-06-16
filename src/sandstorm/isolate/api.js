@@ -1252,7 +1252,7 @@ function storageKey(options = {}) {
   return validate.storageKey(options.storageKey ?? options.key ?? "powerbox-token", "storageKey");
 }
 
-async function claimAndSavePowerboxCapability(env, request, token, options = {}) {
+async function claimAndStorePowerboxCapability(env, request, token, options = {}) {
   const capability = await powerbox(request, env).claimRequest(token, options);
   const saved = await capability.save(options);
   const key = storageKey(options);
@@ -1266,7 +1266,7 @@ async function claimAndSavePowerboxCapability(env, request, token, options = {})
   };
 }
 
-async function saveClaimedPowerboxCapability(env, capabilityHandle, options = {}) {
+async function storeClaimedPowerboxCapability(env, capabilityHandle, options = {}) {
   const capability = new ClaimedCapability(env, capabilityId(capabilityHandle));
   const saved = await capability.save(options);
   const key = storageKey(options);
@@ -1280,9 +1280,9 @@ async function saveClaimedPowerboxCapability(env, capabilityHandle, options = {}
   };
 }
 
-async function claimAndSavePowerboxRequest(env, request, result, options = {}) {
+async function claimAndStorePowerboxRequest(env, request, result, options = {}) {
   if (typeof result === "string") {
-    return claimAndSavePowerboxCapability(env, request, result, options);
+    return claimAndStorePowerboxCapability(env, request, result, options);
   }
 
   if (!result || typeof result !== "object") {
@@ -1290,17 +1290,17 @@ async function claimAndSavePowerboxRequest(env, request, result, options = {}) {
   }
 
   if (result.capability) {
-    return saveClaimedPowerboxCapability(env, result.capability, options);
+    return storeClaimedPowerboxCapability(env, result.capability, options);
   }
 
   if (typeof result.token === "string") {
-    return claimAndSavePowerboxCapability(env, request, result.token, options);
+    return claimAndStorePowerboxCapability(env, request, result.token, options);
   }
 
   throw new ValidationError("Powerbox request result must contain token or capability");
 }
 
-async function restoreSavedPowerboxCapabilityFromStorage(env, options = {}) {
+async function restoreStoredPowerboxCapability(env, options = {}) {
   const key = storageKey(options);
   const token = await storage(env).get(key);
   if (!token) {
@@ -1319,8 +1319,8 @@ async function restoreSavedPowerboxCapabilityFromStorage(env, options = {}) {
   };
 }
 
-async function fetchSavedPowerboxCapability(env, options = {}, input = "/", init = {}) {
-  const restored = await restoreSavedPowerboxCapabilityFromStorage(env, options);
+async function fetchStoredPowerboxCapability(env, options = {}, input = "/", init = {}) {
+  const restored = await restoreStoredPowerboxCapability(env, options);
   if (!restored.ok || !restored.capability) {
     throw new ValidationError(`No saved Powerbox token is available at ${restored.storageKey}`);
   }
@@ -1340,7 +1340,7 @@ async function fetchSavedPowerboxCapability(env, options = {}, input = "/", init
   }
 }
 
-async function dropSavedPowerboxCapabilityFromStorage(env, options = {}) {
+async function dropStoredPowerboxCapability(env, options = {}) {
   const key = storageKey(options);
   const token = await storage(env).get(key);
   if (!token) {
@@ -1411,7 +1411,7 @@ export function powerbox(request, env) {
       unsupportedPowerbox("request");
     },
 
-    async requestApi(options = {}) {
+    async requestApiSession(options = {}) {
       return requestApiSessionCapability(env, request, options);
     },
 
@@ -1437,25 +1437,25 @@ export function powerbox(request, env) {
       return wrapClaimedCapability(env, capability);
     },
 
-    async claimAndSave(token, options = {}) {
+    async claimAndStore(token, options = {}) {
       token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
-      return claimAndSavePowerboxCapability(env, request, token, options);
+      return claimAndStorePowerboxCapability(env, request, token, options);
     },
 
-    async claimAndSaveRequest(result, options = {}) {
-      return claimAndSavePowerboxRequest(env, request, result, options);
+    async claimAndStoreRequest(result, options = {}) {
+      return claimAndStorePowerboxRequest(env, request, result, options);
     },
 
-    async restoreSaved(options = {}) {
-      return restoreSavedPowerboxCapabilityFromStorage(env, options);
+    async restoreStored(options = {}) {
+      return restoreStoredPowerboxCapability(env, options);
     },
 
-    async fetchSaved(options = {}, input = "/", init = {}) {
-      return fetchSavedPowerboxCapability(env, options, input, init);
+    async fetchStored(options = {}, input = "/", init = {}) {
+      return fetchStoredPowerboxCapability(env, options, input, init);
     },
 
-    async dropSavedFromStorage(options = {}) {
-      return dropSavedPowerboxCapabilityFromStorage(env, options);
+    async dropStored(options = {}) {
+      return dropStoredPowerboxCapability(env, options);
     },
 
     offeredCapability() {
@@ -1501,7 +1501,7 @@ export function powerbox(request, env) {
       return saveClaimedCapability(env, capability, options);
     },
 
-    async restore(token) {
+    async restoreSaved(token) {
       return restoreSavedCapability(env, token);
     },
 
@@ -1599,8 +1599,8 @@ class PowerboxRpcTarget extends RpcTarget {
     unsupportedPowerbox("request");
   }
 
-  async requestApi(options) {
-    return powerbox(this.#request, this.#env).requestApi(options || {});
+  async requestApiSession(options) {
+    return powerbox(this.#request, this.#env).requestApiSession(options || {});
   }
 
   async apiSessionDescriptor(options) {
@@ -1615,24 +1615,24 @@ class PowerboxRpcTarget extends RpcTarget {
     return powerbox(this.#request, this.#env).claimRequest(token, options);
   }
 
-  async claimAndSave(token, options) {
-    return powerbox(this.#request, this.#env).claimAndSave(token, options || {});
+  async claimAndStore(token, options) {
+    return powerbox(this.#request, this.#env).claimAndStore(token, options || {});
   }
 
-  async claimAndSaveRequest(result, options) {
-    return powerbox(this.#request, this.#env).claimAndSaveRequest(result, options || {});
+  async claimAndStoreRequest(result, options) {
+    return powerbox(this.#request, this.#env).claimAndStoreRequest(result, options || {});
   }
 
-  async restoreSaved(options) {
-    return powerbox(this.#request, this.#env).restoreSaved(options || {});
+  async restoreStored(options) {
+    return powerbox(this.#request, this.#env).restoreStored(options || {});
   }
 
-  async fetchSaved(options, input, init) {
-    return powerbox(this.#request, this.#env).fetchSaved(options || {}, input || "/", init || {});
+  async fetchStored(options, input, init) {
+    return powerbox(this.#request, this.#env).fetchStored(options || {}, input || "/", init || {});
   }
 
-  async dropSavedFromStorage(options) {
-    return powerbox(this.#request, this.#env).dropSavedFromStorage(options || {});
+  async dropStored(options) {
+    return powerbox(this.#request, this.#env).dropStored(options || {});
   }
 
   offeredCapability() {
@@ -1668,8 +1668,8 @@ class PowerboxRpcTarget extends RpcTarget {
     return powerbox(this.#request, this.#env).save(capability, options);
   }
 
-  async restore(token) {
-    return powerbox(this.#request, this.#env).restore(token);
+  async restoreSaved(token) {
+    return powerbox(this.#request, this.#env).restoreSaved(token);
   }
 
   async dropSaved(token) {
