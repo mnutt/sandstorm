@@ -34,7 +34,7 @@ module.exports = {};
 
 var isolateTestAppId = "d2jw0rpnkydeupwend6dk0ugfkz3xfkygg21awx478pzz29gdtp0";
 var isolateTestAppPath = process.env.ISOLATE_TEST_SPK ||
-    path.resolve(__dirname, "../../isolate-test-app.spk");
+    path.resolve(__dirname, "../assets/isolate-test-app.spk");
 
 // Source at https://github.com/jparyani/sandstorm-test-app/tree/powerbox
 module.exports["Test Powerbox"] = function (browser) {

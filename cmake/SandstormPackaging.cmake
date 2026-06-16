@@ -23,7 +23,7 @@ function(sandstorm_add_packaging_targets)
       COMMENT "Staging ${target}"
       VERBATIM)
 
-    set(_spk "${PROJECT_SOURCE_DIR}/${target}.spk")
+    set(_spk "${PROJECT_SOURCE_DIR}/tests/assets/${target}.spk")
     add_custom_command(
       OUTPUT "${_spk}"
       COMMAND "$<TARGET_FILE:spk>" pack
@@ -110,7 +110,7 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Staging the Sandstorm isolate test app package"
     VERBATIM)
 
-  set(_isolate_test_app_spk "${_package_dir}/isolate-test-app.spk")
+  set(_isolate_test_app_spk "${PROJECT_SOURCE_DIR}/tests/assets/isolate-test-app.spk")
   add_custom_command(
     OUTPUT "${_isolate_test_app_spk}"
     COMMAND "$<TARGET_FILE:spk>" pack
@@ -238,7 +238,7 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Staging the isolate API Powerbox test app"
     VERBATIM)
 
-  set(_api_powerbox_spk "${PROJECT_SOURCE_DIR}/isolate-api-powerbox-test-app.spk")
+  set(_api_powerbox_spk "${PROJECT_SOURCE_DIR}/tests/assets/isolate-api-powerbox-test-app.spk")
   add_custom_command(
     OUTPUT "${_api_powerbox_spk}"
     COMMAND "$<TARGET_FILE:spk>" pack
@@ -458,10 +458,11 @@ function(sandstorm_add_packaging_targets)
   add_custom_target(system-test
     COMMAND "${CMAKE_COMMAND}" -E env
       "SANDSTORM_METEOR_TESTAPP_PATH=${_meteor_testapp_spk}"
+      "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
       "${PROJECT_SOURCE_DIR}/tests/run-local.sh"
       "${_package_dir}/sandstorm-${SANDSTORM_BUILD}-fast.tar.xz"
       "${_test_app_spk}"
-    DEPENDS package-fast test-app-spk meteor-testapp-spk
+    DEPENDS package-fast test-app-spk meteor-testapp-spk isolate-test-app-spk
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     USES_TERMINAL
     COMMENT "Running Sandstorm system tests"
