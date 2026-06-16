@@ -146,7 +146,7 @@ CAPNP_SCHEMAS=$(filter-out src/capnp/test%.capnp,$(wildcard src/capnp/*.capnp))
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test installer-test app-index-dev lint workerd
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test installer-test app-index-dev lint workerd verify-workerd-runtime
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -292,6 +292,16 @@ bin/workerd:
 endif
 
 workerd: bin/workerd
+
+verify-workerd-runtime: bin/workerd tmp/.workerd-npm
+	@$(call color,verifying npm workerd)
+	@test -z "$(WORKERD_BIN)" || (echo "error: WORKERD_BIN override cannot be used for reproducible bundles" >&2; exit 1)
+	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./package-lock.json").packages[""].dependencies.workerd')" = "$(WORKERD_NPM_VERSION)"
+	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./package-lock.json").packages["node_modules/workerd"].version')" = "$(WORKERD_NPM_VERSION)"
+	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./node_modules/workerd/package.json").version')" = "$(WORKERD_NPM_VERSION)"
+	cmp -s bin/workerd "$$(readlink -f tmp/workerd-npm/node_modules/.bin/workerd)"
+	@expected_version="$$(printf '%s\n' "$(WORKERD_NPM_VERSION)" | sed -E 's/^1\.([0-9]{4})([0-9]{2})([0-9]{2})\..*$$/\1-\2-\3/')" && \
+		test "$$(bin/workerd --version)" = "workerd $$expected_version"
 
 # ====================================================================
 # fetch capnweb
@@ -445,9 +455,10 @@ shell-build: shell/imports/* shell/imports/*/* shell/imports/*/*/* shell/imports
 # ====================================================================
 # Bundle
 
-bundle: tmp/.ekam-run shell-build bin/workerd make-bundle.sh localedata-C meteor-bundle-main.js
+bundle: tmp/.ekam-run shell-build verify-workerd-runtime make-bundle.sh localedata-C meteor-bundle-main.js
 	@$(call color,bundle)
 	@CC=$(CC) ./make-bundle.sh
+	cmp -s bundle/bin/workerd bin/workerd
 
 sandstorm-$(BUILD).tar.xz: bundle
 	@$(call color,compress release bundle)
