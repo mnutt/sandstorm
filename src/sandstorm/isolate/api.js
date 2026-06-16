@@ -1305,8 +1305,9 @@ async function restoreStoredPowerboxCapability(env, options = {}) {
   const token = await storage(env).get(key);
   if (!token) {
     return {
-      ok: false,
+      ok: true,
       storageKey: key,
+      found: false,
       capability: undefined,
     };
   }
@@ -1314,6 +1315,7 @@ async function restoreStoredPowerboxCapability(env, options = {}) {
   return {
     ok: true,
     storageKey: key,
+    found: true,
     token,
     capability: await restoreSavedCapability(env, token),
   };

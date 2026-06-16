@@ -310,8 +310,9 @@ declare module "sandstorm:api" {
     };
 
   export interface RestoreStoredResult {
-    ok: boolean;
+    ok: true;
     storageKey: string;
+    found: boolean;
     token?: string;
     capability?: ClaimedCapability;
   }

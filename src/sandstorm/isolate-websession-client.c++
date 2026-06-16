@@ -1256,6 +1256,10 @@ public:
         "\"storageKey\":\"powerbox-storage-helper-handle-token\""),
         storageHelperBody);
     KJ_REQUIRE(contains(storageHelperBody,
+        "\"restored\":{\"ok\":true,\"found\":true,"
+        "\"capabilityClass\":true"),
+        storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
         "\"source\":\"exported-web-session\","
         "\"method\":\"GET\","
         "\"pathname\":\"/exported/capability-echo\","
@@ -1275,7 +1279,8 @@ public:
         "\"dropped\":true"),
         storageHelperBody);
     KJ_REQUIRE(contains(storageHelperBody,
-        "\"afterDrop\":{\"ok\":false,\"storageKey\":\"powerbox-storage-helper-token\""),
+        "\"afterDrop\":{\"ok\":true,\"storageKey\":\"powerbox-storage-helper-token\","
+        "\"found\":false"),
         storageHelperBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
