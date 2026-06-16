@@ -625,6 +625,11 @@ export async function servePowerboxDescriptors(request, env) {
   return null;
 }
 
+export async function serveSystemRoutes(request, env) {
+  return await servePowerboxDescriptors(request, env) ||
+    await serveObjectCapability(request, env);
+}
+
 function webSessionPathPrefix(options = {}) {
   const value = options.pathPrefix ?? options.prefix ?? "";
   const pathPrefix = validate.string(value, "pathPrefix", { maxLength: 1024 });
@@ -1359,6 +1364,10 @@ export function powerbox(request, env) {
       return apiSessionPowerboxDescriptor(env, options);
     },
 
+    claimedCapability(capability) {
+      return new ClaimedCapability(env, capabilityId(capability));
+    },
+
     async claimRequest(token, options = {}) {
       token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
       const requiredPermissions = permissionNames(options);
@@ -1533,6 +1542,10 @@ class PowerboxRpcTarget extends RpcTarget {
 
   async apiSessionDescriptor(options) {
     return powerbox(this.#request, this.#env).apiSessionDescriptor(options || {});
+  }
+
+  claimedCapability(capability) {
+    return powerbox(this.#request, this.#env).claimedCapability(capability);
   }
 
   async claimRequest(token, options) {
@@ -1728,15 +1741,13 @@ export function sandstorm(request, env) {
     unregisterCapability: (options = {}) => unregisterObjectCapabilityTarget(options),
     serveObjectCapabilities: () => serveObjectCapability(request, env),
     servePowerboxDescriptors: () => servePowerboxDescriptors(request, env),
+    serveSystemRoutes: () => serveSystemRoutes(request, env),
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),
     serveRpc: (target, options) => {
-      if (isPowerboxDescriptorRequest(request)) {
-        return servePowerboxDescriptors(request, env);
-      }
-      if (isObjectCapabilityRequest(request)) {
-        return serveObjectCapability(request, env);
+      if (isPowerboxDescriptorRequest(request) || isObjectCapabilityRequest(request)) {
+        return serveSystemRoutes(request, env);
       }
       return serveRpc(request, target, options);
     },
