@@ -1248,8 +1248,28 @@ public:
         "\"source\":\"fake-claimed-capability\","
         "\"path\":\"capability-echo?source=helper-restored\""),
         storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"source\":\"fake-claimed-capability\","
+        "\"path\":\"capability-echo?source=helper-fetch-saved\""),
+        storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"storageKey\":\"powerbox-storage-helper-handle-token\""),
+        storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"source\":\"exported-web-session\","
+        "\"method\":\"GET\","
+        "\"pathname\":\"/exported/capability-echo\","
+        "\"search\":\"?source=helper-handle-fetch\""),
+        storageHelperBody);
     KJ_REQUIRE(contains(storageHelperBody, "\"dropOriginal\":{\"ok\":true}"), storageHelperBody);
     KJ_REQUIRE(contains(storageHelperBody, "\"dropRestored\":{\"ok\":true}"), storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody, "\"dropHandleClaimed\":{\"ok\":true}"),
+        storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"dropHandleSaved\":{\"ok\":true,"
+        "\"storageKey\":\"powerbox-storage-helper-handle-token\","
+        "\"dropped\":true"),
+        storageHelperBody);
     KJ_REQUIRE(contains(storageHelperBody,
         "\"dropSaved\":{\"ok\":true,\"storageKey\":\"powerbox-storage-helper-token\","
         "\"dropped\":true"),
@@ -1259,8 +1279,8 @@ public:
         storageHelperBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 2, sessionContextRef.restoreCount);
-    KJ_REQUIRE(sessionContextRef.tokenDropCount == 2, sessionContextRef.tokenDropCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 4, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 3, sessionContextRef.tokenDropCount);
 
     auto exportRequest = session.getRequest();
     exportRequest.setPath("/export-web-session");
@@ -1456,8 +1476,8 @@ public:
         badClaimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 6, sessionContextRef.restoreCount);
-    KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 8, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 5, sessionContextRef.tokenDropCount);
 
     auto standardClaimRequest = session.postRequest();
     standardClaimRequest.setPath("/__sandstorm/powerbox/claim");

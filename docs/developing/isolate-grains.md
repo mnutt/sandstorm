@@ -202,10 +202,15 @@ that stored copy after revocation. The helper
 `powerbox().dropSavedFromStorage({ storageKey })` performs both steps for the
 common case.
 
-The helper `powerbox().claimAndSave()` handles the common Powerbox flow:
-claim a browser-returned token, save it, store the saved token string, and
-return the live and saved handles. `persistentCapability()` does the analogous
-thing for app-defined stable object capabilities.
+The helper `powerbox().claimAndSaveRequest()` handles the common browser
+Powerbox flow: accept the browser result, claim it if needed, save it, store
+the saved token string, and return the live and saved handles.
+`powerbox().fetchSaved()` handles the common later-use path: restore a saved
+token from storage, fetch through it, buffer the response, and drop the live
+handle. Use `claimAndSave()` and `restoreSaved()` directly when code needs
+lower-level control, multiple calls, or streaming response bodies.
+`persistentCapability()` does the analogous storage-backed setup for
+app-defined stable object capabilities.
 
 ## Service bindings
 
@@ -253,13 +258,13 @@ Pass `null` or omit the query argument to `requestPowerbox()` and
 Pass an array of packed descriptors when asking the shell to show matching
 Powerbox cards.
 
-For example:
+For the common browser-to-worker flow:
 
 ```js
 // Browser module.
-import { requestApiPowerbox } from "./rpc-client.js";
+import { requestApiCapability } from "./rpc-client.js";
 
-const requested = await requestApiPowerbox({
+const requested = await requestApiCapability({
   canonicalUrl: "https://api.example.test/v1",
   oauthScopes: ["read"],
 });
@@ -272,40 +277,60 @@ await fetch("/claim", {
 ```
 
 The worker route that receives this request should decide ownership. For a
-short-lived action, it can claim and immediately use the returned token. For a
-lasting connection, it should save the capability and store the saved token:
+lasting connection, save the returned request result into app-owned storage:
 
 ```js
 // Worker route.
 const api = sandstorm(request, env);
+const requested = await request.json();
+const claimed = await api.powerbox().claimAndSaveRequest(requested, {
+  storageKey: "chosen-api-token",
+  label: "Chosen API",
+});
+
+const response = await claimed.capability.fetch("/status");
+await claimed.capability.drop();
+```
+
+`claimAndSaveRequest()` accepts either the full browser result object or a raw
+Powerbox request token. If browser code uses `requestApiCapability()` or
+`requestAndClaimPowerbox()`, the helper saves the already-claimed capability
+handle. If browser code uses `requestApiPowerbox()` or `requestPowerbox()`, the
+helper claims the request token first.
+
+For a short-lived action that should not be saved, claim and use the token
+directly:
+
+```js
 const { token } = await request.json();
 const claimed = await api.powerbox().claimRequest(token);
-const saved = await claimed.save({ label: "Chosen API" });
-await api.storage().put("chosen-api-token", saved.token);
-
 const response = await claimed.fetch("/status");
 await claimed.drop();
 ```
 
-If browser code uses `requestApiCapability()` or `requestAndClaimPowerbox()`,
-the returned object includes a claimed-capability handle. Worker code that
-receives that handle should wrap it with the request-local helper instead of
-constructing a capability directly:
+If worker code receives an already-claimed handle and wants to use it without
+saving it, wrap it with the request-local helper instead of constructing a
+capability directly:
 
 ```js
 const { capability: handle } = await request.json();
 const claimed = api.powerbox().claimedCapability(handle);
 ```
 
-Later, restore the saved token and use the restored live handle:
+Later, restore the saved token, use the restored live handle, and drop it
+automatically with `fetchSaved()`:
 
 ```js
 const api = sandstorm(request, env);
-const token = await api.storage().get("chosen-api-token");
-const restored = await api.powerbox().restore(token);
-const response = await restored.fetch("/status");
-await restored.drop();
+const response = await api.powerbox().fetchSaved(
+  { storageKey: "chosen-api-token" },
+  "/status",
+);
 ```
+
+`fetchSaved()` buffers the response before dropping the live handle. Use
+`restoreSaved()` when code needs the live handle for more than one call or for
+streaming response bodies.
 
 To revoke the stored grant, drop both the durable token and the app's stored
 copy:

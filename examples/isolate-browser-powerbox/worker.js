@@ -22,6 +22,10 @@ async function apiCall(capability) {
   const response = await capability.fetch("/status", {
     headers: { accept: "application/json" },
   });
+  return readApiResponse(response);
+}
+
+async function readApiResponse(response) {
   const text = await response.text();
   let body = text;
   try {
@@ -179,8 +183,8 @@ export default {
     const api = sandstorm(request, env);
     const url = new URL(request.url);
 
-    const powerboxRoute = await api.servePowerboxDescriptors();
-    if (powerboxRoute) return powerboxRoute;
+    const systemRoute = await api.serveSystemRoutes();
+    if (systemRoute) return systemRoute;
 
     try {
       if (url.pathname === "/" && request.method === "GET") {
@@ -189,7 +193,7 @@ export default {
 
       if (url.pathname === "/claim" && request.method === "POST") {
         const body = await request.json();
-        const claimed = await api.powerbox().claimAndSave(body.token, {
+        const claimed = await api.powerbox().claimAndSaveRequest(body, {
           storageKey: TOKEN_KEY,
           label: "Browser Powerbox Lifecycle API",
         });
@@ -204,13 +208,11 @@ export default {
       }
 
       if (url.pathname === "/use" && request.method === "POST") {
-        const restored = await api.powerbox().restoreSaved({ storageKey: TOKEN_KEY });
-        if (!restored.ok) {
-          return render(request, env, restored);
-        }
-
-        const call = await apiCall(restored.capability);
-        await restored.capability.drop();
+        const response = await api.powerbox().fetchSaved(
+          { storageKey: TOKEN_KEY },
+          "/status",
+          { headers: { accept: "application/json" } });
+        const call = await readApiResponse(response);
         return render(request, env, {
           ok: true,
           step: "restored and used",

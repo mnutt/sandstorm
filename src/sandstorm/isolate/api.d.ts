@@ -302,6 +302,13 @@ declare module "sandstorm:api" {
     storageKey: string;
   }
 
+  export type PowerboxRequestResult =
+    | string
+    | {
+      token?: string;
+      capability?: ClaimedCapabilityHandle;
+    };
+
   export interface RestoreSavedResult {
     ok: boolean;
     storageKey: string;
@@ -352,7 +359,16 @@ declare module "sandstorm:api" {
       token: string,
       options?: SavedCapabilityStorageOptions,
     ): Promise<ClaimAndSaveResult>;
+    claimAndSaveRequest(
+      result: PowerboxRequestResult,
+      options?: SavedCapabilityStorageOptions,
+    ): Promise<ClaimAndSaveResult>;
     restoreSaved(options?: SavedCapabilityStorageOptions): Promise<RestoreSavedResult>;
+    fetchSaved(
+      options: SavedCapabilityStorageOptions,
+      input?: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response>;
     dropSavedFromStorage(
       options?: SavedCapabilityStorageOptions,
     ): Promise<DropSavedFromStorageResult>;

@@ -1436,13 +1436,15 @@ export default {
     if (url.pathname === "/powerbox-storage-helper-self-test") {
       const helper = sandstormPowerbox(request, env);
       const storageKey = "powerbox-storage-helper-token";
-      const claimed = await helper.claimAndSave("websession/test+token==", {
+      const claimed = await helper.claimAndSaveRequest("websession/test+token==", {
         label: "WebSession saved capability",
         storageKey,
         requiredPermissions: ["view"],
       });
       const originalFetch = await claimed.capability.fetch("/capability-echo?source=helper-original");
       const dropOriginal = await claimed.capability.drop();
+      const fetchSavedResponse =
+        await helper.fetchSaved({ storageKey }, "/capability-echo?source=helper-fetch-saved");
       const restored = await helper.restoreSaved({ storageKey });
       let restoredFetch = null;
       let dropRestored = null;
@@ -1455,6 +1457,24 @@ export default {
         };
         dropRestored = await restored.capability.drop();
       }
+
+      const handleStorageKey = "powerbox-storage-helper-handle-token";
+      const handleSource = await sandstorm(request, env).webSession({
+        pathPrefix: "/exported",
+      });
+      const handleClaimed = await helper.claimAndSaveRequest({
+        capability: handleSource,
+      }, {
+        label: "WebSession saved from claimed handle",
+        storageKey: handleStorageKey,
+      });
+      const dropHandleClaimed = await handleClaimed.capability.drop();
+      const handleFetchSavedResponse =
+        await helper.fetchSaved(
+          { storageKey: handleStorageKey },
+          "/capability-echo?source=helper-handle-fetch");
+      const dropHandleSaved = await helper.dropSavedFromStorage({ storageKey: handleStorageKey });
+
       const dropSaved = await helper.dropSavedFromStorage({ storageKey });
       const afterDrop = await helper.restoreSaved({ storageKey });
       return Response.json({
@@ -1471,6 +1491,10 @@ export default {
           body: await originalFetch.json(),
         },
         dropOriginal,
+        fetchSaved: {
+          status: fetchSavedResponse.status,
+          body: await fetchSavedResponse.json(),
+        },
         restored: {
           ok: restored.ok,
           capabilityClass: restored.capability instanceof ClaimedCapability,
@@ -1479,6 +1503,19 @@ export default {
         },
         restoredFetch,
         dropRestored,
+        handleClaimed: {
+          ok: handleClaimed.ok,
+          capabilityClass: handleClaimed.capability instanceof ClaimedCapability,
+          savedClass: handleClaimed.saved instanceof SavedCapability,
+          storageKey: handleClaimed.storageKey,
+          token: handleClaimed.token,
+        },
+        dropHandleClaimed,
+        handleFetchSaved: {
+          status: handleFetchSavedResponse.status,
+          body: await handleFetchSavedResponse.json(),
+        },
+        dropHandleSaved,
         dropSaved,
         afterDrop,
       });
