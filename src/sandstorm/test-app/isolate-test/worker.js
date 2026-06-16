@@ -803,33 +803,10 @@ export default {
       });
     }
 
-    if (url.pathname === "/request-api-session-self-test") {
-      const capability = await sandstorm(request, env).powerbox().requestApiSession({
-        canonicalUrl: "https://api.example.test/v1",
-        oauthScopes: ["read", "write"],
-        requiredPermissions: ["view"],
-      });
-      const fetchedResponse = await capability.fetch("/capability-echo?source=request-api");
-      const fetched = {
-        status: fetchedResponse.status,
-        body: await fetchedResponse.json(),
-      };
-      const drop = await capability.drop();
-      return Response.json({
-        ok: true,
-        capabilityClass: capability instanceof ClaimedCapability,
-        capability: JSON.parse(JSON.stringify(capability)),
-        fetched,
-        drop,
-      });
-    }
-
     if (url.pathname === "/required-permission-validation-self-test") {
       let error = null;
       try {
-        await sandstorm(request, env).powerbox().requestApiSession({
-          canonicalUrl: "https://api.example.test/v1",
-          oauthScopes: ["read"],
+        await sandstorm(request, env).powerbox().claimRequest("dummy-token", {
           requiredPermissions: ["not-a-permission"],
         });
       } catch (err) {

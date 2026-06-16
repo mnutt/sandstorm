@@ -22,6 +22,7 @@ import { SHA256 } from "meteor/sha";
 import { ServiceConfiguration } from "meteor/service-configuration";
 import { globalDb } from "/imports/db-deprecated";
 import { getGlobalBackend } from "/imports/server/backend-instance";
+import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
 import { httpCallAsync } from "/imports/http-helpers";
 import { checkAuthAsync, clearAdminToken } from "/imports/server/auth";
 import { setAccountSuspensionEmailSenderForTests } from "/imports/server/account-suspension";
@@ -422,6 +423,9 @@ if(isTesting) {
         const port = server.address().port;
         const baseUrl = "http://127.0.0.1:" + port + "/api";
         const cap = globalThis.globalFrontendRefRegistry.restore(globalDb, {
+          frontendRef: { outboundHttp: { baseUrl } },
+        }, { outboundHttp: { baseUrl } }).castAs(OutboundHttpSession);
+        frontendRefRegistry.restore(globalDb, {
           frontendRef: { outboundHttp: { baseUrl } },
         }, { outboundHttp: { baseUrl } }).castAs(OutboundHttpSession);
 
