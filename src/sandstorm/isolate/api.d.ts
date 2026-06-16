@@ -1,6 +1,17 @@
 declare module "sandstorm:api" {
   import type { RpcTarget, RpcSessionOptions } from "capnweb";
   export { RpcTarget } from "capnweb";
+  export {
+    SANDSTORM_CAPNWEB_VERSION,
+    SANDSTORM_RPC_VERSION,
+  } from "sandstorm:rpc";
+
+  export const SANDSTORM_API_VERSION: 0;
+  export const SANDSTORM_HELPER_VERSIONS: {
+    readonly api: 0;
+    readonly rpc: 0;
+    readonly capnweb: "0.8.0";
+  };
 
   export interface Fetcher {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;

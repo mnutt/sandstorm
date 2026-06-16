@@ -1,7 +1,19 @@
 import { RpcTarget, newWorkersRpcResponse } from "capnweb";
-import { browserClientScript } from "sandstorm:rpc";
+import {
+  SANDSTORM_CAPNWEB_VERSION,
+  SANDSTORM_RPC_VERSION,
+  browserClientScript,
+} from "sandstorm:rpc";
 
 export { RpcTarget } from "capnweb";
+export { SANDSTORM_CAPNWEB_VERSION, SANDSTORM_RPC_VERSION } from "sandstorm:rpc";
+
+export const SANDSTORM_API_VERSION = 0;
+export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
+  api: SANDSTORM_API_VERSION,
+  rpc: SANDSTORM_RPC_VERSION,
+  capnweb: SANDSTORM_CAPNWEB_VERSION,
+});
 
 const OBJECT_CAPABILITY_PREFIX = "/__sandstorm/object-capabilities";
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";

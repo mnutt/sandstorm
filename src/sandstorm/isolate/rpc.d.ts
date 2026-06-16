@@ -1,4 +1,7 @@
 declare module "sandstorm:rpc" {
+  export const SANDSTORM_RPC_VERSION: 0;
+  export const SANDSTORM_CAPNWEB_VERSION: "0.8.0";
+
   export {
     RpcPromise,
     RpcSession,
