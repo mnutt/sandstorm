@@ -65,6 +65,80 @@ handler follows the current recommended order:
 
 Expect this guidance to evolve while isolate grains remain experimental.
 
+## TypeScript authoring
+
+Sandstorm ships TypeScript declarations for the injected isolate helper
+modules:
+
+- `src/sandstorm/isolate/api.d.ts` for `sandstorm:api`
+- `src/sandstorm/isolate/rpc.d.ts` for `sandstorm:rpc`
+- `src/sandstorm/isolate/capnweb.d.ts` for the injected `capnweb`
+
+These declarations describe the runtime APIs that `workerd` receives from
+Sandstorm. They do not imply that Sandstorm transpiles TypeScript source yet.
+For now, TypeScript isolate apps should build to JavaScript before running
+`spk dev-isolate` or packing an app.
+
+The recommended current tool is `esbuild`, with Sandstorm-provided modules
+marked external so imports such as `sandstorm:api` stay in the generated
+worker:
+
+```sh
+npm install --save-dev esbuild typescript
+npx tsc --noEmit
+npx esbuild worker.ts \
+  --bundle \
+  --format=esm \
+  --platform=browser \
+  --target=es2022 \
+  --external:sandstorm:api \
+  --external:sandstorm:rpc \
+  --external:capnweb \
+  --outfile=worker.js
+spk dev-isolate --title "TypeScript isolate" worker.js
+```
+
+For a complete small example, see `examples/isolate-typescript/`.
+
+Use a local declaration shim in the app source tree:
+
+```ts
+/// <reference path="../../src/sandstorm/isolate/capnweb.d.ts" />
+/// <reference path="../../src/sandstorm/isolate/api.d.ts" />
+/// <reference path="../../src/sandstorm/isolate/rpc.d.ts" />
+```
+
+Then import normal values and types from `sandstorm:api`:
+
+```ts
+import { RpcTarget, sandstorm } from "sandstorm:api";
+import type { SandstormEnv, SessionInfo } from "sandstorm:api";
+```
+
+Use `SandstormEnv` as the starting environment type, then extend it with
+app-specific bindings:
+
+```ts
+interface Env extends SandstormEnv {
+  STORAGE: SandstormEnv["STORAGE"];
+}
+```
+
+The `RpcTarget` base class is also exported from `sandstorm:api`, so app code
+does not need to import `capnweb` directly for common RPC targets:
+
+```ts
+class AppApi extends RpcTarget {
+  session(): SessionInfo {
+    return sandstorm(this.request, this.env).session();
+  }
+}
+```
+
+Do not point `spk dev-isolate` at `.ts` files yet. The command currently
+expects JavaScript modules that `workerd` can load directly. A first-class
+TypeScript transpile path for `spk dev-isolate` is still undecided.
+
 ## Compatibility dates and flags
 
 Isolate manifests include a `compatibilityDate` and optional
