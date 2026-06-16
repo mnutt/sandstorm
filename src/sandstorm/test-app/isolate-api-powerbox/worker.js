@@ -108,7 +108,7 @@ function renderPage(state) {
     <pre>${pretty}</pre>
 
     <script type="module">
-      import { requestAndClaimPowerbox, requestApiCapability } from "./rpc-client.js";
+      import { requestApiCapability, requestProviderCapability } from "./rpc-client.js";
 
       const button = document.querySelector("#connect-api");
       const output = document.querySelector("pre");
@@ -121,7 +121,8 @@ function renderPage(state) {
           output.textContent = "Opening Powerbox...";
           const providerFlow = new URLSearchParams(location.search).has("providerFlow");
           const requested = providerFlow
-            ? await requestAndClaimPowerbox(["${PROVIDER_DESCRIPTOR}"], {
+            ? await requestProviderCapability({
+                descriptor: "${PROVIDER_DESCRIPTOR}",
                 saveLabel: { defaultText: "Isolate provider connection" },
               })
             : await requestApiCapability({

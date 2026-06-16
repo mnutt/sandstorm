@@ -104,6 +104,34 @@ export async function requestAndClaimPowerbox(query, options = {}) {
   };
 }
 
+function providerQueryFromOptions(options) {
+  const query = options.descriptors ?? options.descriptor;
+  if (query === undefined || query === null) {
+    throw new Error("requestProviderPowerbox() requires descriptor or descriptors");
+  }
+  if (typeof query === "string") {
+    return [query];
+  }
+  if (!Array.isArray(query) || !query.every((descriptor) => typeof descriptor === "string")) {
+    throw new Error("Powerbox provider descriptors must be a string or an array of strings");
+  }
+  return query;
+}
+
+export async function requestProviderPowerbox(options = {}) {
+  const query = providerQueryFromOptions(options);
+  return requestPowerbox(query, { saveLabel: options.saveLabel });
+}
+
+export async function requestProviderCapability(options = {}) {
+  const requested = await requestProviderPowerbox(options);
+  const capability = await claimPowerboxToken(requested.token, options);
+  return {
+    ...requested,
+    capability,
+  };
+}
+
 export async function requestApiPowerbox(options = {}) {
   const {
     canonicalUrl,
@@ -227,6 +255,34 @@ export async function claimPowerboxToken(token, options = {}) {
 
 export async function requestAndClaimPowerbox(query, options = {}) {
   const requested = await requestPowerbox(query, options);
+  const capability = await claimPowerboxToken(requested.token, options);
+  return {
+    ...requested,
+    capability,
+  };
+}
+
+function providerQueryFromOptions(options) {
+  const query = options.descriptors ?? options.descriptor;
+  if (query === undefined || query === null) {
+    throw new Error("requestProviderPowerbox() requires descriptor or descriptors");
+  }
+  if (typeof query === "string") {
+    return [query];
+  }
+  if (!Array.isArray(query) || !query.every((descriptor) => typeof descriptor === "string")) {
+    throw new Error("Powerbox provider descriptors must be a string or an array of strings");
+  }
+  return query;
+}
+
+export async function requestProviderPowerbox(options = {}) {
+  const query = providerQueryFromOptions(options);
+  return requestPowerbox(query, { saveLabel: options.saveLabel });
+}
+
+export async function requestProviderCapability(options = {}) {
+  const requested = await requestProviderPowerbox(options);
   const capability = await claimPowerboxToken(requested.token, options);
   return {
     ...requested,
