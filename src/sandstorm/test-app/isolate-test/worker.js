@@ -533,6 +533,20 @@ export default {
       });
     }
 
+    if (url.pathname === "/error-html") {
+      return new Response("<p>fixture html failure</p>", {
+        status: 404,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (url.pathname === "/error-binary") {
+      return new Response(makeBytes(1024), {
+        status: 500,
+        headers: { "content-type": "application/octet-stream" },
+      });
+    }
+
     if (url.pathname === "/offer-session") {
       const api = sandstorm(request, env);
       const powerbox = sandstormPowerbox(request, env);
