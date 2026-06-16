@@ -89,17 +89,17 @@ export function renderSkeletonPage() {
 
       document.querySelector("#hello").addEventListener("click", () => run(async () => {
         using rpc = newSandstormRpcSession();
-        return rpc.hello(name.value);
+        return await rpc.hello(name.value);
       }));
 
       document.querySelector("#session").addEventListener("click", () => run(async () => {
         using rpc = newSandstormRpcSession();
-        return rpc.session();
+        return await rpc.session();
       }));
 
       document.querySelector("#increment").addEventListener("click", () => run(async () => {
         using rpc = newSandstormRpcSession();
-        return rpc.increment();
+        return await rpc.increment();
       }));
 
       document.querySelector("#health").addEventListener("click", () => run(async () => {
