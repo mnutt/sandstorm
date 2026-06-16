@@ -20,7 +20,7 @@ import { HTTP } from "meteor/http";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
-import { FrontendRefRegistry } from "/imports/server/frontend-ref";
+import { globalFrontendRefRegistry } from "/imports/server/global-frontend-ref-registry";
 import { PersistentImpl } from "/imports/server/persistent";
 import { migrateToLatest } from "/imports/server/migrations";
 import { ACCOUNT_DELETION_SUSPENSION_TIME } from "/imports/constants";
@@ -39,16 +39,14 @@ process.on('uncaughtException', (err) => {
   console.error("Unhandled exception: ", err);
 });
 
-globalThis.globalFrontendRefRegistry = new FrontendRefRegistry();
-
-globalThis.SandstormPowerbox.registerUiViewQueryHandler(globalThis.globalFrontendRefRegistry);
+globalThis.SandstormPowerbox.registerUiViewQueryHandler(globalFrontendRefRegistry);
 
 if (Meteor.settings.public.stripePublicKey && globalThis.BlackrockPayments.registerPaymentsApi) {
   // TODO(cleanup): Meteor.startup() needed because globalThis.unwrapFrontendCap is not defined yet when this
   //   first runs. Move it into an import.
   Meteor.startup(() => {
     globalThis.BlackrockPayments.registerPaymentsApi(
-        globalThis.globalFrontendRefRegistry, PersistentImpl, globalThis.unwrapFrontendCap);
+        globalFrontendRefRegistry, PersistentImpl, globalThis.unwrapFrontendCap);
   });
 }
 
@@ -58,7 +56,7 @@ Meteor.onConnection((connection) => {
   // TODO(cleanup): This is the best way I've thought of so far to allow methods declared in
   //   packages to actually use the DB, but it's pretty sad.
   connection.sandstormDb = globalDb;
-  connection.frontendRefRegistry = globalThis.globalFrontendRefRegistry;
+  connection.frontendRefRegistry = globalFrontendRefRegistry;
 });
 SandstormDb.periodicCleanup(5 * 60 * 1000, SandstormPermissions.cleanupSelfDestructing(globalDb));
 SandstormDb.periodicCleanup(10 * 60 * 1000,

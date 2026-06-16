@@ -63,6 +63,9 @@ import "../imports/blackrock-payments/server/payments-api-server";
 // oidc
 import "../imports/oidc/oidc-server";
 
+// Used by frontend ref handlers that may register before 00-startup runs.
+import "../imports/server/global-frontend-ref-registry";
+
 // Import everything from server/ in the order that Meteor would have.
 import "../imports/server/accounts/credentials/credentials-server";
 import "../imports/server/accounts/email-token/token-server";
