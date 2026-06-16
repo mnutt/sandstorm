@@ -124,6 +124,44 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Running isolate supervisor integration tests"
     VERBATIM)
 
+  set(_api_powerbox_source "${PROJECT_SOURCE_DIR}/src/sandstorm/test-app")
+  set(_api_powerbox_stage "${_spk_stage}/sandstorm/isolate-api-powerbox-test-app")
+  set(_api_powerbox_capnp "${_api_powerbox_source}/isolate-api-powerbox-app.capnp")
+  set(_api_powerbox_stage_capnp "${_api_powerbox_stage}/isolate-api-powerbox-app.capnp")
+  file(GLOB_RECURSE _api_powerbox_files CONFIGURE_DEPENDS
+    "${_api_powerbox_source}/isolate-api-powerbox/*")
+  add_custom_command(
+    OUTPUT "${_api_powerbox_stage_capnp}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_api_powerbox_stage}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${_api_powerbox_capnp}" "${_api_powerbox_stage_capnp}"
+    COMMAND "${CMAKE_COMMAND}" -E remove_directory
+      "${_api_powerbox_stage}/isolate-api-powerbox"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+      "${_api_powerbox_source}/isolate-api-powerbox"
+      "${_api_powerbox_stage}/isolate-api-powerbox"
+    DEPENDS "${_api_powerbox_capnp}" ${_api_powerbox_files}
+    COMMENT "Staging the isolate API Powerbox test app"
+    VERBATIM)
+
+  set(_api_powerbox_spk "${PROJECT_SOURCE_DIR}/isolate-api-powerbox-test-app.spk")
+  add_custom_command(
+    OUTPUT "${_api_powerbox_spk}"
+    COMMAND "$<TARGET_FILE:spk>" pack
+      -k "${_api_powerbox_source}/isolate-api-powerbox-app.key"
+      -I "${PROJECT_SOURCE_DIR}/src"
+      -I "${_spk_stage}"
+      -p "${_api_powerbox_stage_capnp}:pkgdef"
+      "${_api_powerbox_spk}"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    DEPENDS
+      spk
+      "${_api_powerbox_stage_capnp}"
+      "${_api_powerbox_source}/isolate-api-powerbox-app.key"
+    COMMENT "Packing isolate-api-powerbox-test-app.spk"
+    VERBATIM)
+  add_custom_target(isolate-api-powerbox-test-app-spk DEPENDS "${_api_powerbox_spk}")
+
   set(_app_index_source "${PROJECT_SOURCE_DIR}/src/sandstorm/app-index")
   set(_app_index_stage "${_spk_stage}/sandstorm/app-index")
   set(_app_index_stage_stamp "${_package_dir}/app-index-stage.stamp")

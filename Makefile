@@ -30,6 +30,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	stage-native workerd shell-env shell-build shell-build-debug bundle \
 	test-app.spk test-app-spk test-app-dev app-index.spk app-index-spk app-index-dev \
 	isolate-test-app.spk isolate-test-app-spk isolate-test-app-dev \
+	isolate-api-powerbox-test-app.spk \
 	meteor-testapp-stage meteor-testapp-spk meteor-testapp-dev \
 	tests/assets/meteor-testapp.spk release-gate-upgrade-308
 
@@ -86,6 +87,7 @@ $(eval $(call cmake_target,isolate-test-app.spk,isolate-test-app-spk))
 $(eval $(call cmake_target,isolate-test-app-spk,isolate-test-app-spk))
 $(eval $(call cmake_target,isolate-test-app-dev,isolate-test-app-dev))
 $(eval $(call cmake_target,isolate-supervisor-integration-test,isolate-supervisor-integration-test))
+$(eval $(call cmake_target,isolate-api-powerbox-test-app.spk,isolate-api-powerbox-test-app-spk))
 $(eval $(call cmake_target,app-index.spk,app-index-spk))
 $(eval $(call cmake_target,app-index-spk,app-index-spk))
 $(eval $(call cmake_target,app-index-dev,app-index-dev))
