@@ -135,6 +135,21 @@ class AppApi extends RpcTarget {
 }
 ```
 
+When browser code uses `newSandstormRpcSession()` with JavaScript's `using`
+declaration, await RPC calls before leaving the `using` scope:
+
+```js
+using rpc = newSandstormRpcSession();
+return await rpc.session();
+```
+
+Do not return the raw RPC promise from inside the `using` scope:
+
+```js
+using rpc = newSandstormRpcSession();
+return rpc.session(); // Wrong: the session is disposed before the call resolves.
+```
+
 Do not point `spk dev-isolate` at `.ts` files yet. The command currently
 expects JavaScript modules that `workerd` can load directly. A first-class
 TypeScript transpile path for `spk dev-isolate` is still undecided.
