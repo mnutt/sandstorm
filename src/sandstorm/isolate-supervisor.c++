@@ -2464,15 +2464,64 @@ RouteBackedSessionType parseRouteBackedSessionType(kj::StringPtr value) {
   }
 }
 
+void requireNoRouteBackedDotSegments(kj::StringPtr path, kj::StringPtr description) {
+  size_t end = path.size();
+  KJ_IF_MAYBE(query, path.findFirst('?')) {
+    end = *query;
+  }
+
+  size_t start = 0;
+  for (size_t i = 0; i <= end; ++i) {
+    if (i == end || path[i] == '/') {
+      auto segment = path.slice(start, i);
+      KJ_REQUIRE(!(segment.size() == 1 && segment[0] == '.') &&
+          !(segment.size() == 2 && segment[0] == '.' && segment[1] == '.'),
+          description, path);
+      start = i + 1;
+    }
+  }
+}
+
+void requireRouteBackedPathRelative(kj::StringPtr path, kj::StringPtr description) {
+  for (size_t i = 0; i + 2 < path.size(); ++i) {
+    KJ_REQUIRE(!(path[i] == ':' && path[i + 1] == '/' && path[i + 2] == '/'),
+        description, path);
+  }
+  requireNoRouteBackedDotSegments(path, description);
+}
+
 kj::String normalizeRouteBackedPathPrefix(kj::StringPtr pathPrefix) {
   KJ_REQUIRE(pathPrefix.size() <= 1024, "route-backed capability pathPrefix is too long");
-  for (size_t i = 0; i + 2 < pathPrefix.size(); ++i) {
-    KJ_REQUIRE(!(pathPrefix[i] == ':' && pathPrefix[i + 1] == '/' && pathPrefix[i + 2] == '/'),
-        "route-backed capability pathPrefix must be path-relative");
-  }
+  KJ_REQUIRE(pathPrefix.findFirst('?') == nullptr && pathPrefix.findFirst('#') == nullptr,
+      "route-backed capability pathPrefix must not contain query strings or fragments");
+  requireRouteBackedPathRelative(pathPrefix,
+      "route-backed capability pathPrefix must be path-relative and canonical");
   KJ_REQUIRE(pathPrefix.size() == 0 || pathPrefix[0] == '/',
       "route-backed capability pathPrefix must be empty or start with '/'");
   return kj::heapString(pathPrefix);
+}
+
+kj::String normalizeRouteBackedRequestPath(kj::StringPtr path) {
+  KJ_REQUIRE(path.size() <= 8192, "route-backed capability request path is too long");
+  requireRouteBackedPathRelative(path,
+      "route-backed capability request path must be path-relative and canonical");
+  return kj::heapString(path);
+}
+
+bool routeBackedPathIsWithinPrefix(kj::StringPtr path, kj::StringPtr prefix) {
+  if (prefix.size() == 0) {
+    return true;
+  }
+  if (prefix == "/") {
+    return path.startsWith("/");
+  }
+  if (path == prefix) {
+    return true;
+  }
+  if (prefix.endsWith("/")) {
+    return path.startsWith(prefix);
+  }
+  return path.size() > prefix.size() && path.startsWith(prefix) && path[prefix.size()] == '/';
 }
 
 struct RouteBackedSessionRef {
@@ -2719,16 +2768,17 @@ private:
   }
 
   kj::String prefixedPath(kj::StringPtr path) {
+    auto normalizedPath = normalizeRouteBackedRequestPath(path);
     if (pathPrefix.size() == 0) {
-      return kj::heapString(path);
-    } else if (path.size() == 0) {
+      return kj::mv(normalizedPath);
+    } else if (normalizedPath.size() == 0) {
       return kj::heapString(pathPrefix);
-    } else if (pathPrefix[pathPrefix.size() - 1] == '/' && path[0] == '/') {
-      return kj::str(pathPrefix.slice(0, pathPrefix.size() - 1), path);
-    } else if (pathPrefix[pathPrefix.size() - 1] != '/' && path[0] != '/') {
-      return kj::str(pathPrefix, "/", path);
+    } else if (pathPrefix[pathPrefix.size() - 1] == '/' && normalizedPath[0] == '/') {
+      return kj::str(pathPrefix.slice(0, pathPrefix.size() - 1), normalizedPath);
+    } else if (pathPrefix[pathPrefix.size() - 1] != '/' && normalizedPath[0] != '/') {
+      return kj::str(pathPrefix, "/", normalizedPath);
     } else {
-      return kj::str(pathPrefix, path);
+      return kj::str(pathPrefix, normalizedPath);
     }
   }
 
@@ -3552,6 +3602,42 @@ kj::StringPtr urlPath(kj::StringPtr url) {
   return url;
 }
 
+kj::Array<kj::String> findIsolateRawQueryParams(kj::StringPtr url, kj::StringPtr name) {
+  kj::Vector<kj::String> results;
+  KJ_IF_MAYBE(queryStart, url.findFirst('?')) {
+    auto query = url.slice(*queryStart + 1, url.size());
+    KJ_IF_MAYBE(fragment, query.findFirst('#')) {
+      query = query.slice(0, *fragment);
+    }
+
+    size_t start = 0;
+    while (start <= query.size()) {
+      size_t end = query.size();
+      KJ_IF_MAYBE(amp, query.slice(start, query.size()).findFirst('&')) {
+        end = start + *amp;
+      }
+
+      if (end > start) {
+        auto part = query.slice(start, end);
+        KJ_IF_MAYBE(eq, part.findFirst('=')) {
+          auto paramName = decodeIsolateQueryComponent(kj::StringPtr(part.begin(), *eq));
+          if (paramName == name) {
+            results.add(decodeIsolateQueryComponent(
+                kj::StringPtr(part.begin() + *eq + 1, part.size() - *eq - 1)));
+          }
+        }
+      }
+
+      if (end == query.size()) {
+        break;
+      }
+      start = end + 1;
+    }
+  }
+
+  return results.releaseAsArray();
+}
+
 class SandstormApiBindingService final: public kj::HttpService {
 public:
   SandstormApiBindingService(
@@ -3812,10 +3898,8 @@ private:
 
   kj::String normalizeCapabilityFetchPath(kj::StringPtr path) {
     KJ_REQUIRE(path.size() <= 8192, "claimed capability fetch path is too long");
-    for (size_t i = 0; i + 2 < path.size(); ++i) {
-      KJ_REQUIRE(!(path[i] == ':' && path[i + 1] == '/' && path[i + 2] == '/'),
-          "claimed capability fetch path must be path-relative");
-    }
+    requireRouteBackedPathRelative(path,
+        "claimed capability fetch path must be path-relative and canonical");
     size_t start = 0;
     while (start < path.size() && path[start] == '/') {
       ++start;
@@ -3962,9 +4046,9 @@ private:
 
   kj::Promise<void> createRouteBackedSessionCapability(
       kj::StringPtr url, kj::HttpService::Response& response, RouteBackedSessionType sessionType) {
-    auto pathPrefixes = findIsolateQueryParams(url, "pathPrefix");
+    auto pathPrefixes = findIsolateRawQueryParams(url, "pathPrefix");
     auto persistentParams = findIsolateQueryParams(url, "persistent");
-    auto dropNotifyPaths = findIsolateQueryParams(url, "dropNotifyPath");
+    auto dropNotifyPaths = findIsolateRawQueryParams(url, "dropNotifyPath");
     if (pathPrefixes.size() > 1 || persistentParams.size() > 1 || dropNotifyPaths.size() > 1) {
       return sendJson(response, 400, "Bad Request", kj::heapString(
           "{\n  \"ok\": false,\n"
@@ -3977,7 +4061,7 @@ private:
     kj::Maybe<kj::String> dropNotifyPath = nullptr;
     if (dropNotifyPaths.size() == 1 && dropNotifyPaths[0].size() > 0) {
       auto notifyPath = normalizeWebSessionPathPrefix(dropNotifyPaths[0]);
-      if (pathPrefix.size() > 0 && !notifyPath.startsWith(pathPrefix)) {
+      if (!routeBackedPathIsWithinPrefix(notifyPath, pathPrefix)) {
         return sendJson(response, 400, "Bad Request", renderError(
             "dropNotifyPath must be within pathPrefix"));
       }
@@ -4008,7 +4092,7 @@ private:
       kj::HttpService::Response& response) {
     auto ids = findIsolateQueryParams(url, "id");
     auto methods = findIsolateQueryParams(url, "method");
-    auto paths = findIsolateQueryParams(url, "path");
+    auto paths = findIsolateRawQueryParams(url, "path");
     auto contextParams = getCapabilityFetchContextParams(url);
     if (ids.size() != 1 || ids[0].size() == 0 ||
         methods.size() != 1 || methods[0].size() == 0 ||

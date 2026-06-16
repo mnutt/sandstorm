@@ -556,6 +556,19 @@ test("isolate supervisor integration suite", {
       "attachment; filename=\"capability-echo.json\"");
     assert.equal(fetched.headers["x-sandstorm-app-capability-response"], "present");
 
+    const prefixValidation = await requestJson(
+      fixture.workerdSocket, "/route-prefix-validation-self-test");
+    assert.equal(prefixValidation.statusCode, 200, prefixValidation.body);
+    assert.equal(prefixValidation.json.ok, true);
+    assert.equal(prefixValidation.json.results.dotSegmentPrefix.ok, false);
+    assert.match(
+      prefixValidation.json.results.dotSegmentPrefix.error,
+      /pathPrefix|canonical|500/);
+    assert.equal(prefixValidation.json.results.siblingDropNotifyPath.ok, false);
+    assert.match(
+      prefixValidation.json.results.siblingDropNotifyPath.error,
+      /dropNotifyPath|400/);
+
     const streamed = await requestUnixSocket(
       fixture.sandstormApiSocket,
       `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +

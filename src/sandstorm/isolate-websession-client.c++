@@ -88,6 +88,17 @@ void expectSupervisorRefFailure(kj::WaitScope& waitScope, kj::Promise<void> prom
   }
 }
 
+void expectRoutePathFailure(kj::WaitScope& waitScope, kj::Promise<void> promise) {
+  try {
+    promise.wait(waitScope);
+    KJ_FAIL_REQUIRE("expected route-backed session path call to fail");
+  } catch (kj::Exception& exception) {
+    auto description = exception.getDescription();
+    KJ_REQUIRE(contains(description, "route-backed capability request path"),
+        description);
+  }
+}
+
 kj::String makeRouteBackedSessionAppRef(kj::StringPtr type, kj::StringPtr pathPrefix) {
   return kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX, type, "\n", pathPrefix);
 }
@@ -592,6 +603,29 @@ public:
     KJ_REQUIRE(contains(routeBody, "\"source\":\"exported-web-session\""), routeBody);
     KJ_REQUIRE(contains(routeBody, "\"pathname\":\"/exported/capability-echo\""), routeBody);
     KJ_REQUIRE(contains(routeBody, "\"search\":\"?source=supervisor-app-ref\""), routeBody);
+
+    auto routeSaveRequest = restoredRouteSession.castAs<SystemPersistent>().saveRequest();
+    auto routeSaveOwner = routeSaveRequest.getSealFor().initGrain();
+    routeSaveOwner.setGrainId("route-resave-grain");
+    routeSaveOwner.getSaveLabel().setDefaultText("Route re-save fixture");
+    auto routeSavedToken = routeSaveRequest.send().wait(io.waitScope).getSturdyRef();
+    auto routeSavedTokenText = kj::StringPtr(
+        routeSavedToken.asChars().begin(), routeSavedToken.size());
+    KJ_REQUIRE(routeSavedTokenText == "parent-route-token", routeSavedTokenText);
+    KJ_REQUIRE(sessionContextRef.childTokenCount == 1, sessionContextRef.childTokenCount);
+    KJ_REQUIRE(sessionContextRef.lastChildTokenParent == "parent-route-token",
+        sessionContextRef.lastChildTokenParent);
+
+    auto routeEscapeRequest = restoredRouteSession.getRequest();
+    routeEscapeRequest.setPath("../capability-echo?source=escape");
+    routeEscapeRequest.setIgnoreBody(false);
+    auto routeEscapeContext = routeEscapeRequest.initContext();
+    routeEscapeContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    routeEscapeContext.initCookies(0);
+    routeEscapeContext.initAccept(0);
+    routeEscapeContext.initAcceptEncoding(0);
+    routeEscapeContext.initAdditionalHeaders(0);
+    expectRoutePathFailure(io.waitScope, routeEscapeRequest.send().ignoreResult());
 
     auto routeDropRequest = supervisor.dropRequest();
     routeDropRequest.getRef().setAppRef(appRef.asReader());

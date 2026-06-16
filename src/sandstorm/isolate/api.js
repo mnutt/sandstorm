@@ -607,6 +607,14 @@ function webSessionPathPrefix(options = {}) {
   if (pathPrefix.includes("://")) {
     throw new ValidationError("pathPrefix must be path-relative");
   }
+  if (pathPrefix.includes("?") || pathPrefix.includes("#")) {
+    throw new ValidationError("pathPrefix must not contain query strings or fragments");
+  }
+  for (const segment of pathPrefix.split("/")) {
+    if (segment === "." || segment === "..") {
+      throw new ValidationError("pathPrefix must not contain dot segments");
+    }
+  }
   return pathPrefix;
 }
 
