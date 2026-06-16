@@ -52,6 +52,18 @@ declare module "sandstorm:rpc" {
       id: string;
     };
   }>;
+  export function apiSessionPowerboxDescriptor(options: {
+    canonicalUrl: string;
+    oauthScopes?: string[];
+    descriptorUrl?: string;
+  }): Promise<string>;
+  export function providerTagPowerboxDescriptor(options: {
+    descriptor: string;
+  }): string;
+  export const powerboxDescriptors: {
+    apiSession: typeof apiSessionPowerboxDescriptor;
+    providerTag: typeof providerTagPowerboxDescriptor;
+  };
   export function requestProviderPowerbox(options: {
     descriptor?: string;
     descriptors?: string[];
