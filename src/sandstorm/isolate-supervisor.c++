@@ -1362,8 +1362,7 @@ SessionMetadata copyApiSessionMetadata(
   return result;
 }
 
-kj::String renderApiSessionDescriptorHeader(ApiSession::PowerboxTag::Reader tag) {
-  kj::Vector<char> json;
+void appendApiSessionDescriptorJson(kj::Vector<char>& json, ApiSession::PowerboxTag::Reader tag) {
   json.addAll(kj::StringPtr("{"));
   appendJsonField(json, "type", "apiSession");
   json.addAll(kj::StringPtr(", "));
@@ -1377,6 +1376,11 @@ kj::String renderApiSessionDescriptorHeader(ApiSession::PowerboxTag::Reader tag)
     appendJsonString(json, scopes[i].getName());
   }
   json.addAll(kj::StringPtr("]}"));
+}
+
+kj::String renderApiSessionDescriptorHeader(ApiSession::PowerboxTag::Reader tag) {
+  kj::Vector<char> json;
+  appendApiSessionDescriptorJson(json, tag);
   return kj::encodeBase64Url(json.asPtr().asBytes());
 }
 
@@ -4480,6 +4484,8 @@ private:
     capnp::MallocMessageBuilder message;
     auto descriptor = message.initRoot<PowerboxDescriptor>();
     initApiSessionPowerboxDescriptor(url, descriptor);
+    auto descriptorReader = descriptor.asReader();
+    auto tag = descriptorReader.getTags()[0].getValue().getAs<ApiSession::PowerboxTag>();
 
     kj::VectorOutputStream output;
     capnp::writePackedMessage(output, message);
@@ -4490,6 +4496,8 @@ private:
     appendJsonField(json, "type", "packedPowerboxDescriptor");
     json.addAll(kj::StringPtr(",\n  "));
     appendJsonField(json, "descriptor", packed);
+    json.addAll(kj::StringPtr(",\n  \"decoded\": "));
+    appendApiSessionDescriptorJson(json, tag);
     json.addAll(kj::StringPtr("\n}\n"));
     json.add('\0');
     return sendJson(response, 200, "OK", kj::String(json.releaseAsArray()));

@@ -1237,6 +1237,11 @@ test("isolate supervisor integration suite", {
     assert.equal(apiDescriptor.json.type, "packedPowerboxDescriptor");
     assert.equal(apiDescriptor.json.descriptor,
       "EBBQAQEAABEBF1EEAQH_x80lxnnjecgAQAMRCeIRFQ8AAP9odHRwczovLwJhcGkuZXhhbXBsZS50ZXN0By92MUEEAREBKg9yZWFk");
+    assert.deepEqual(apiDescriptor.json.decoded, {
+      type: "apiSession",
+      canonicalUrl: "https://api.example.test/v1",
+      oauthScopes: ["read"],
+    });
   });
 
   await t.test("serves the storage binding socket", async () => {
