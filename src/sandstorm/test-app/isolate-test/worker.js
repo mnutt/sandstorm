@@ -564,6 +564,7 @@ export default {
     }
 
     if (url.pathname === "/exported/capability-echo") {
+      const body = await request.text();
       const capabilityEchoEtag = "\"capability-echo-etag\"";
       const ifNoneMatch = request.headers.get("if-none-match");
       if (ifNoneMatch === "*" || ifNoneMatch === capabilityEchoEtag) {
@@ -590,8 +591,12 @@ export default {
       return Response.json({
         ok: true,
         source: "exported-web-session",
+        method: request.method,
         pathname: url.pathname,
         search: url.search,
+        body,
+        bodyBytes: body.length,
+        contentType: request.headers.get("content-type"),
         sessionType: request.headers.get("x-sandstorm-session-type"),
         appHeader: request.headers.get("x-sandstorm-app-claimed-fetch"),
         blockedHeader: request.headers.get("x-not-forwarded"),
@@ -691,6 +696,15 @@ export default {
         },
         body: await fetchedResponse.json(),
       };
+      const postedResponse = await restored.fetch("/capability-echo?source=js-post", {
+        method: "POST",
+        headers: { "content-type": "text/plain; charset=utf-8" },
+        body: "hello through claimed capability fetch",
+      });
+      const posted = {
+        status: postedResponse.status,
+        body: await postedResponse.json(),
+      };
       const notModifiedResponse = await restored.fetch("/capability-echo?source=js-not-modified", {
         headers: { "if-none-match": "\"capability-echo-etag\"" },
       });
@@ -710,6 +724,7 @@ export default {
         restored: JSON.parse(JSON.stringify(restored)),
         dropOriginal,
         fetched,
+        posted,
         notModified: {
           status: notModifiedResponse.status,
           etag: notModifiedResponse.headers.get("etag"),
