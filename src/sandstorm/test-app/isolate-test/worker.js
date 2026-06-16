@@ -14,6 +14,7 @@ import {
 
 let disposedCounterCapabilities = 0;
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
+const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
 
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
@@ -943,14 +944,19 @@ export default {
       const disposeAfterDropRetainedArgumentTarget = disposedCounterCapabilities;
       let sessionActions = null;
       if (url.searchParams.get("sessionActions") === "true") {
-        const descriptorOptions = url.searchParams.get("apiDescriptor") === "true"
-          ? {
-              apiSession: {
-                canonicalUrl: "https://api.example.test/v1",
-                oauthScopes: ["read", "write"],
-              },
-            }
-          : {};
+        let descriptorOptions = {};
+        if (url.searchParams.get("apiDescriptor") === "true") {
+          descriptorOptions = {
+            apiSession: {
+              canonicalUrl: "https://api.example.test/v1",
+              oauthScopes: ["read", "write"],
+            },
+          };
+        } else if (url.searchParams.get("providerDescriptor") === "true") {
+          descriptorOptions = {
+            descriptor: TEST_PROVIDER_DESCRIPTOR,
+          };
+        }
         const offer = await capability.offer(request, {
           title: "WebSession offered capability",
           verbPhrase: "can use offered capability",

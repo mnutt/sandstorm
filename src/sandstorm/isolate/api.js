@@ -550,13 +550,47 @@ function outboundHttpDescriptorParams(options = {}) {
   return result;
 }
 
+function validatePackedPowerboxDescriptor(descriptor, label = "descriptor") {
+  const value = validate.string(descriptor, label, {
+    minLength: 1,
+    maxLength: 65536,
+  });
+  if (value.length % 4 === 1 || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new ValidationError(`${label} must be a base64url packed Powerbox descriptor`);
+  }
+  return value;
+}
+
+function packedPowerboxDescriptorParams(options = {}) {
+  const descriptor = options.powerboxDescriptor ?? options.descriptor ?? null;
+  if (descriptor === null || descriptor === undefined) {
+    return [];
+  }
+  return [
+    ["descriptor", "packed"],
+    ["packedPowerboxDescriptor", validatePackedPowerboxDescriptor(
+      descriptor, options.powerboxDescriptor === undefined ? "descriptor" : "powerboxDescriptor")],
+  ];
+}
+
 function powerboxDescriptorParams(options = {}) {
   const apiSession = apiSessionDescriptorParams(options);
   const outboundHttp = outboundHttpDescriptorParams(options);
-  if (apiSession.length > 0 && outboundHttp.length > 0) {
+  const packed = packedPowerboxDescriptorParams(options);
+  const descriptorCount =
+    (apiSession.length > 0 ? 1 : 0) +
+    (outboundHttp.length > 0 ? 1 : 0) +
+    (packed.length > 0 ? 1 : 0);
+  if (descriptorCount > 1) {
     throw new ValidationError("Powerbox options must specify only one descriptor type");
   }
-  return apiSession.length > 0 ? apiSession : outboundHttp;
+  if (apiSession.length > 0) {
+    return apiSession;
+  } else if (outboundHttp.length > 0) {
+    return outboundHttp;
+  } else {
+    return packed;
+  }
 }
 
 async function saveClaimedCapability(env, capability, options = {}) {

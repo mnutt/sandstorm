@@ -4982,8 +4982,8 @@ private:
     return kj::String(json.releaseAsArray());
   }
 
-  kj::Maybe<kj::Array<byte>> decodeSavedCapabilityToken(kj::StringPtr token) {
-    if (token.size() == 0 || token.size() > 4096 || token.size() % 4 == 1) {
+  kj::Maybe<kj::Array<byte>> decodeBase64UrlText(kj::StringPtr token, size_t maxSize) {
+    if (token.size() == 0 || token.size() > maxSize || token.size() % 4 == 1) {
       return nullptr;
     }
 
@@ -5015,6 +5015,10 @@ private:
     }
 
     return kj::mv(decoded);
+  }
+
+  kj::Maybe<kj::Array<byte>> decodeSavedCapabilityToken(kj::StringPtr token) {
+    return decodeBase64UrlText(token, 4096);
   }
 
   kj::Promise<void> offerClaimedCapability(
@@ -5185,8 +5189,25 @@ private:
       initApiSessionPowerboxDescriptor(url, descriptor);
     } else if (descriptorTypes[0] == "outboundHttp") {
       initOutboundHttpPowerboxDescriptor(url, descriptor);
+    } else if (descriptorTypes[0] == "packed") {
+      initPackedPowerboxDescriptor(url, descriptor);
     } else {
       KJ_FAIL_REQUIRE("unsupported powerbox descriptor type", descriptorTypes[0]);
+    }
+  }
+
+  void initPackedPowerboxDescriptor(
+      kj::StringPtr url, PowerboxDescriptor::Builder descriptor) {
+    auto packedDescriptors = findIsolateQueryParams(url, "packedPowerboxDescriptor");
+    KJ_REQUIRE(packedDescriptors.size() == 1 && packedDescriptors[0].size() > 0,
+        "packed descriptor requires exactly one packedPowerboxDescriptor");
+
+    KJ_IF_MAYBE(decoded, decodeBase64UrlText(packedDescriptors[0], 65536)) {
+      kj::ArrayInputStream input(decoded->asPtr());
+      capnp::PackedMessageReader reader(input);
+      descriptor.setTags(reader.getRoot<PowerboxDescriptor>().getTags());
+    } else {
+      KJ_FAIL_REQUIRE("invalid packed Powerbox descriptor");
     }
   }
 

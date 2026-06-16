@@ -37,6 +37,7 @@ namespace sandstorm {
 
 constexpr const char* ISOLATE_ROUTE_BACKED_APP_REF_PREFIX =
     "sandstorm-isolate-route-backed-v1\n";
+constexpr uint64_t TEST_PROVIDER_TAG_ID = 0xdf9518c9479ddfcbull;
 
 bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
   if (needle.size() > haystack.size()) {
@@ -399,6 +400,7 @@ public:
   uint fulfillCount = 0;
   uint tieCount = 0;
   uint apiDescriptorCount = 0;
+  uint providerDescriptorCount = 0;
   uint grainSizeReportCount = 0;
   uint routeBackedTokenCount = 0;
   uint childTokenCount = 0;
@@ -424,6 +426,11 @@ private:
     }
 
     KJ_REQUIRE(tags.size() == 1);
+    if (tags[0].getId() == TEST_PROVIDER_TAG_ID) {
+      ++providerDescriptorCount;
+      return;
+    }
+
     KJ_REQUIRE(tags[0].getId() == capnp::typeId<ApiSession>());
     auto tag = tags[0].getValue().getAs<ApiSession::PowerboxTag>();
     KJ_REQUIRE(tag.getCanonicalUrl() == "https://api.example.test/v1");
@@ -1453,6 +1460,32 @@ public:
     KJ_REQUIRE(sessionContextRef.tieCount == 3, sessionContextRef.tieCount);
     KJ_REQUIRE(sessionContextRef.apiDescriptorCount == 2, sessionContextRef.apiDescriptorCount);
 
+    auto providerDescriptorActionsRequest = session.getRequest();
+    providerDescriptorActionsRequest.setPath(
+        "/object-capability-self-test?sessionActions=true&providerDescriptor=true");
+    providerDescriptorActionsRequest.setIgnoreBody(false);
+    auto providerDescriptorActionsContext = providerDescriptorActionsRequest.initContext();
+    providerDescriptorActionsContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    providerDescriptorActionsContext.initCookies(0);
+    providerDescriptorActionsContext.initAccept(0);
+    providerDescriptorActionsContext.initAcceptEncoding(0);
+    providerDescriptorActionsContext.initAdditionalHeaders(0);
+
+    auto providerDescriptorActionsResponse =
+        providerDescriptorActionsRequest.send().wait(io.waitScope);
+    auto providerDescriptorActionsDebugBody =
+        responseDebugBody(providerDescriptorActionsResponse);
+    KJ_REQUIRE(providerDescriptorActionsResponse.which() == WebSession::Response::CONTENT,
+        providerDescriptorActionsDebugBody);
+    auto providerDescriptorActionsContent = providerDescriptorActionsResponse.getContent();
+    KJ_REQUIRE(providerDescriptorActionsContent.getStatusCode() ==
+        WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(sessionContextRef.offerCount == 4, sessionContextRef.offerCount);
+    KJ_REQUIRE(sessionContextRef.fulfillCount == 4, sessionContextRef.fulfillCount);
+    KJ_REQUIRE(sessionContextRef.tieCount == 4, sessionContextRef.tieCount);
+    KJ_REQUIRE(sessionContextRef.providerDescriptorCount == 2,
+        sessionContextRef.providerDescriptorCount);
+
     auto offerSessionContext = kj::heap<FakeSessionContext>();
     auto& offerSessionContextRef = *offerSessionContext;
     auto offerSessionRequest = view.newOfferSessionRequest();
@@ -1537,8 +1570,8 @@ public:
         badClaimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 8, sessionContextRef.restoreCount);
-    KJ_REQUIRE(sessionContextRef.tokenDropCount == 5, sessionContextRef.tokenDropCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 10, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 6, sessionContextRef.tokenDropCount);
 
     auto standardClaimRequest = session.postRequest();
     standardClaimRequest.setPath("/__sandstorm/powerbox/claim");
