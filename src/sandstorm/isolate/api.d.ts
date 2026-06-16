@@ -195,6 +195,8 @@ declare module "sandstorm:api" {
       baseUrl: string;
       methods?: OutboundHttpMethod[];
     };
+    descriptor?: string;
+    powerboxDescriptor?: string;
   }
 
   export interface WebSessionCapabilityOptions {

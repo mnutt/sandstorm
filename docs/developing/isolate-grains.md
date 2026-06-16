@@ -255,6 +255,9 @@ The preferred Powerbox lifecycle names are:
 - `claimedCapability(handle)` for wrapping a browser-returned claimed handle
 - `apiSessionDescriptor(options)` and `outboundHttpDescriptor(options)` for
   generating packed descriptors used by browser-mediated Powerbox requests
+- `offer()`, `fulfillRequest()`, and `tieToUser()` accept `descriptor` or
+  `powerboxDescriptor` when passing an app-defined packed `PowerboxDescriptor`
+  for custom Powerbox protocols
 
 The following exports are public but low-level. Prefer the `sandstorm()`
 facade unless a custom framework or test needs direct access:
@@ -414,6 +417,12 @@ Pass `null` or omit the query argument to `requestPowerbox()` and
 `requestAndClaimPowerbox()` when asking the user to paste an offered webkey.
 Pass an array of packed descriptors when asking the shell to show matching
 Powerbox cards.
+
+Custom app-to-app protocols should use a real Sandstorm Powerbox descriptor,
+not just a JavaScript or TypeScript interface name. Define the protocol tag in
+Cap'n Proto, pack its `PowerboxDescriptor`, request that packed descriptor from
+browser code, and pass the same packed descriptor as `descriptor` when the
+provider calls `fulfillRequest()` with the capability it wants to return.
 
 Worker code cannot directly open the Powerbox picker. Sandstorm's underlying
 `SessionContext.request()` operation is not implemented; use browser

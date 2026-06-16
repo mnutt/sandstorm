@@ -1,5 +1,7 @@
 import { sandstorm } from "sandstorm:api";
 
+const PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
+
 function htmlEscape(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -68,6 +70,7 @@ export default {
         verbPhrase: "can provide isolate capability responses",
         description: "Provides a route-backed WebSession from an isolate grain.",
         requiredPermissions: ["view"],
+        descriptor: PROVIDER_DESCRIPTOR,
       });
       return Response.json({
         ok: true,
