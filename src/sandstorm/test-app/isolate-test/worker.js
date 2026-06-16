@@ -342,6 +342,39 @@ export default {
       });
     }
 
+    if (url.pathname === "/route-prefix-validation-self-test") {
+      const results = {};
+      try {
+        await sandstorm(request, env).webSession({
+          pathPrefix: "/exported/..",
+        });
+        results.dotSegmentPrefix = { ok: true };
+      } catch (error) {
+        results.dotSegmentPrefix = {
+          ok: false,
+          error: String(error?.message || error),
+        };
+      }
+
+      try {
+        await sandstorm(request, env).webSession({
+          pathPrefix: "/exported",
+          dropNotifyPath: "/exported-sibling",
+        });
+        results.siblingDropNotifyPath = { ok: true };
+      } catch (error) {
+        results.siblingDropNotifyPath = {
+          ok: false,
+          error: String(error?.message || error),
+        };
+      }
+
+      return Response.json({
+        ok: true,
+        results,
+      });
+    }
+
     if (url.pathname === "/api-exported/capability-echo") {
       return Response.json({
         ok: true,
