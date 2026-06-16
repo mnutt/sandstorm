@@ -558,12 +558,34 @@ test("isolate supervisor integration suite", {
     assert.equal(fetched.statusCode, 200, fetched.body);
     assert.equal(fetched.json.ok, true);
     assert.equal(fetched.json.source, "exported-web-session");
+    assert.equal(fetched.json.method, "GET");
     assert.equal(fetched.json.pathname, "/exported/capability-echo");
     assert.equal(fetched.json.search, "?source=external");
+    assert.equal(fetched.json.body, "");
+    assert.equal(fetched.json.bodyBytes, 0);
     assert.equal(fetched.headers.etag, "\"capability-echo-etag\"");
     assert.equal(fetched.headers["content-disposition"],
       "attachment; filename=\"capability-echo.json\"");
     assert.equal(fetched.headers["x-sandstorm-app-capability-response"], "present");
+
+    const posted = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
+      `&method=POST&path=${encodeURIComponent("/capability-echo?source=external-post")}`,
+      {
+        method: "POST",
+        headers: { "content-type": "text/plain; charset=utf-8" },
+        body: "hello through supervisor capability fetch",
+      });
+    assert.equal(posted.statusCode, 200, posted.body);
+    assert.equal(posted.json.ok, true);
+    assert.equal(posted.json.source, "exported-web-session");
+    assert.equal(posted.json.method, "POST");
+    assert.equal(posted.json.pathname, "/exported/capability-echo");
+    assert.equal(posted.json.search, "?source=external-post");
+    assert.equal(posted.json.body, "hello through supervisor capability fetch");
+    assert.equal(posted.json.bodyBytes, "hello through supervisor capability fetch".length);
+    assert.equal(posted.json.contentType, "text/plain; charset=utf-8");
 
     const prefixValidation = await requestJson(
       fixture.workerdSocket, "/route-prefix-validation-self-test");
@@ -694,8 +716,19 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.fetched.body.ok, true);
     assert.equal(selfTest.json.fetched.body.pathname, "/exported/capability-echo");
     assert.equal(selfTest.json.fetched.body.search, "?source=js-restore");
+    assert.equal(selfTest.json.fetched.body.method, "GET");
+    assert.equal(selfTest.json.fetched.body.body, "");
     assert.equal(selfTest.json.fetched.body.appHeader, "present");
     assert.equal(selfTest.json.fetched.body.blockedHeader, null);
+    assert.equal(selfTest.json.posted.status, 200);
+    assert.equal(selfTest.json.posted.body.ok, true);
+    assert.equal(selfTest.json.posted.body.method, "POST");
+    assert.equal(selfTest.json.posted.body.pathname, "/exported/capability-echo");
+    assert.equal(selfTest.json.posted.body.search, "?source=js-post");
+    assert.equal(selfTest.json.posted.body.body, "hello through claimed capability fetch");
+    assert.equal(selfTest.json.posted.body.bodyBytes,
+      "hello through claimed capability fetch".length);
+    assert.equal(selfTest.json.posted.body.contentType, "text/plain; charset=utf-8");
     assert.equal(selfTest.json.notModified.status, 304);
     assert.equal(selfTest.json.notModified.etag, "\"capability-echo-etag\"");
     assert.equal(selfTest.json.notModified.bodyBytes, 0);
