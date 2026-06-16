@@ -327,6 +327,14 @@ const token = await sandstorm(request, env).storage().get("chosen-document-token
 const restored = await sandstorm(request, env).powerbox().restoreSaved(token);
 ```
 
+Restoration returns a `ClaimedCapability` handle, not a guessed interface
+stub. The app that saved the token owns the context needed to decide how to use
+it: call `restored.fetch()` for HTTP-shaped capabilities, `restored.asRpc<T>()`
+for app-defined object-capability protocols that the app expects, or wrap it in
+an app-level adapter. Future typed restoration can add explicit metadata, but
+tokens alone should not imply that the runtime can safely infer a JavaScript
+type.
+
 Dropping a live handle with `cap.drop()` only releases that in-memory claimed
 handle. It does not revoke saved durable tokens. To revoke a saved token, call:
 
