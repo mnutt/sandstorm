@@ -2518,17 +2518,41 @@ kj::StringPtr routeBackedSessionTypeToken<IsolateApiSession>() {
   return routeBackedSessionTypeToken(RouteBackedSessionType::API);
 }
 
+struct RouteBackedRequirementState final: public kj::Refcounted {
+  bool revoked = false;
+  kj::Vector<OwnCapnp<capnp::List<MembraneRequirement>>> requirements;
+  kj::Vector<SystemPersistent::RevocationObserver::Client> observers;
+};
+
+class RouteBackedRevokerHandle final: public Handle::Server {
+public:
+  explicit RouteBackedRevokerHandle(kj::Own<RouteBackedRequirementState> state)
+      : state(kj::mv(state)) {}
+
+  ~RouteBackedRevokerHandle() noexcept(false) {
+    state->revoked = true;
+  }
+
+private:
+  kj::Own<RouteBackedRequirementState> state;
+};
+
 template <typename InternalSession>
 class IsolateRouteBackedSessionImpl final: public InternalSession::Server {
 public:
   IsolateRouteBackedSessionImpl(
       kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
       kj::StringPtr pathPrefix = "", SessionKind sessionKind = SessionKind::NORMAL,
-      SessionMetadata&& sessionMetadata = SessionMetadata(), bool persistent = true)
+      SessionMetadata&& sessionMetadata = SessionMetadata(), bool persistent = true,
+      kj::Own<RouteBackedRequirementState> requirementState =
+          kj::refcounted<RouteBackedRequirementState>(),
+      kj::Maybe<kj::Array<const byte>> parentToken = nullptr)
       : pathPrefix(kj::heapString(pathPrefix)),
         sessionKind(sessionKind),
         sessionMetadata(kj::mv(sessionMetadata)),
         persistent(persistent),
+        requirementState(kj::mv(requirementState)),
+        parentToken(kj::mv(parentToken)),
         runtimeConfig(kj::addRef(*config)),
         runtimeHost(kj::addRef(*host)),
         runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host))) {}
@@ -2613,26 +2637,52 @@ public:
 
   kj::Promise<void> addRequirements(
       typename InternalSession::Server::AddRequirementsContext context) override {
-    context.getResults().setCap(this->thisCap().template castAs<SystemPersistent>());
-    return kj::READY_NOW;
+    auto params = context.getParams();
+    if (params.getRequirements().size() > 0) {
+      requirementState->requirements.add(newOwnCapnp(params.getRequirements()));
+    }
+
+    auto observer = params.getObserver();
+    auto req = observer.dropWhenRevokedRequest();
+    req.setHandle(kj::heap<RouteBackedRevokerHandle>(kj::addRef(*requirementState)));
+    requirementState->observers.add(kj::mv(observer));
+
+    return req.send().ignoreResult().then([this, context]() mutable {
+      context.getResults().setCap(this->thisCap().template castAs<SystemPersistent>());
+    });
   }
 
   kj::Promise<void> save(typename InternalSession::Server::SaveContext context) override {
     KJ_REQUIRE(persistent, "isolate route-backed capability is not persistent");
+    KJ_REQUIRE(!requirementState->revoked,
+        "isolate route-backed capability requirements have been revoked");
     auto params = context.getParams();
-    auto payload = kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX, sessionTypeToken(), "\n",
-        pathPrefix);
+    KJ_IF_MAYBE(parent, parentToken) {
+      auto request = runtimeHost->sandstormCore.makeChildTokenRequest();
+      request.setParent(*parent);
+      request.setOwner(params.getSealFor());
+      request.adoptRequirements(collectRequirements(capnp::Orphanage::getForMessageContaining(
+          SandstormCore::MakeChildTokenParams::Builder(request))));
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setSturdyRef(result.getToken());
+      });
+    } else {
+      auto payload = kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX, sessionTypeToken(), "\n",
+          pathPrefix);
 
-    capnp::MallocMessageBuilder appRefMessage;
-    auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
-    appRef.setAs<capnp::Data>(payload.asBytes());
+      capnp::MallocMessageBuilder appRefMessage;
+      auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
+      appRef.setAs<capnp::Data>(payload.asBytes());
 
-    auto request = runtimeHost->sandstormCore.makeTokenRequest();
-    request.getRef().setAppRef(appRef.asReader());
-    request.setOwner(params.getSealFor());
-    return request.send().then([context](auto result) mutable {
-      context.getResults().setSturdyRef(result.getToken());
-    });
+      auto request = runtimeHost->sandstormCore.makeTokenRequest();
+      request.getRef().setAppRef(appRef.asReader());
+      request.setOwner(params.getSealFor());
+      request.adoptRequirements(collectRequirements(capnp::Orphanage::getForMessageContaining(
+          SandstormCore::MakeTokenParams::Builder(request))));
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setSturdyRef(result.getToken());
+      });
+    }
   }
 
 private:
@@ -2640,11 +2690,33 @@ private:
   SessionKind sessionKind;
   SessionMetadata sessionMetadata;
   bool persistent;
+  kj::Own<RouteBackedRequirementState> requirementState;
+  kj::Maybe<kj::Array<const byte>> parentToken;
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
   kj::Own<IsolateRuntimeAdapter> runtime;
 
   kj::StringPtr sessionTypeToken() { return routeBackedSessionTypeToken<InternalSession>(); }
+
+  capnp::Orphan<capnp::List<MembraneRequirement>> collectRequirements(
+      capnp::Orphanage orphanage) {
+    if (requirementState->requirements.size() == 0) {
+      return {};
+    }
+
+    kj::Vector<capnp::List<MembraneRequirement>::Reader> parts(
+        requirementState->requirements.size());
+    for (auto& requirement: requirementState->requirements) {
+      if (requirement.size() > 0) {
+        parts.add(requirement);
+      }
+    }
+
+    if (parts.size() > 0) {
+      return orphanage.newOrphanConcat(parts.asPtr());
+    }
+    return {};
+  }
 
   kj::String prefixedPath(kj::StringPtr path) {
     if (pathPrefix.size() == 0) {
@@ -2726,16 +2798,19 @@ private:
 
 capnp::Capability::Client makeRouteBackedSessionCapability(
     kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
-    RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent) {
+    RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent,
+    kj::Maybe<kj::Array<const byte>> parentToken = nullptr) {
   switch (sessionType) {
     case RouteBackedSessionType::WEB:
       return kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
           kj::mv(config), kj::mv(host), pathPrefix, SessionKind::NORMAL,
-          SessionMetadata(), persistent);
+          SessionMetadata(), persistent, kj::refcounted<RouteBackedRequirementState>(),
+          kj::mv(parentToken));
     case RouteBackedSessionType::API:
       return kj::heap<IsolateRouteBackedSessionImpl<IsolateApiSession>>(
           kj::mv(config), kj::mv(host), pathPrefix, SessionKind::NORMAL,
-          SessionMetadata(), persistent);
+          SessionMetadata(), persistent, kj::refcounted<RouteBackedRequirementState>(),
+          kj::mv(parentToken));
   }
   KJ_UNREACHABLE;
 }
@@ -2771,10 +2846,17 @@ public:
             params.getUserInfo(), viewInfo, params.getTabId())
         : copyApiSessionMetadata(params.getUserInfo(), viewInfo, params.getTabId());
     sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
-    context.getResults().setSession(
-        kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
-            kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), pathPrefix, SessionKind::NORMAL,
-            kj::mv(sessionMetadata)));
+    if (isApiSession) {
+      context.getResults().setSession(
+          kj::heap<IsolateRouteBackedSessionImpl<IsolateApiSession>>(
+              kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), pathPrefix,
+              SessionKind::NORMAL, kj::mv(sessionMetadata)));
+    } else {
+      context.getResults().setSession(
+          kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
+              kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), pathPrefix,
+              SessionKind::NORMAL, kj::mv(sessionMetadata)));
+    }
     return kj::READY_NOW;
   }
 
@@ -5041,10 +5123,15 @@ public:
     auto objectId = context.getParams().getRef();
     switch (objectId.which()) {
       case SupervisorObjectId<>::APP_REF: {
+        auto params = context.getParams();
         auto routeRef = parseRouteBackedSessionAppRef(objectId.getAppRef().getAs<capnp::Data>());
+        kj::Maybe<kj::Array<const byte>> parentToken = nullptr;
+        if (params.getParentToken().size() > 0) {
+          parentToken = kj::heapArray<const byte>(params.getParentToken());
+        }
         context.getResults().setCap(makeRouteBackedSessionCapability(
             kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
-            routeRef.type, routeRef.pathPrefix, true));
+            routeRef.type, routeRef.pathPrefix, true, kj::mv(parentToken)));
         return kj::READY_NOW;
       }
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
