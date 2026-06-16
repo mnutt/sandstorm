@@ -144,6 +144,8 @@ export class SandstormPowerboxRequest {
     // configureTemplate: The Template object named by option.configureTemplate.
 
     const cards = PowerboxOptions.find({ requestId: this._requestId }).map(option => {
+      if (option.powerboxDiagnostic) return null;
+
       const result = {
         db: this._db,
         powerboxRequest: this,
@@ -161,9 +163,19 @@ export class SandstormPowerboxRequest {
 
     const now = new Date();
     return _.chain(cards)
+        .compact()
         .filter(compileMatchFilter(this._filter.get()))
         .sortBy(card => -((card.grainInfo || {}).lastUsed || now).getTime())
         .value();
+  }
+
+  diagnosticsText() {
+    const option = PowerboxOptions.findOne({
+      requestId: this._requestId,
+      powerboxDiagnostic: { $exists: true },
+    });
+
+    return option && JSON.stringify(option.powerboxDiagnostic, null, 2);
   }
 
   collectGrainInfo(grainId) {
@@ -317,6 +329,11 @@ Template.powerboxRequest.helpers({
   error() {
     const ref = Template.instance().data.get();
     return ref && ref._error.get();
+  },
+
+  diagnosticsText() {
+    const ref = Template.instance().data.get();
+    return ref && ref.diagnosticsText();
   },
 
   iconSrc() {

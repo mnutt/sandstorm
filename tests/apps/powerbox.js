@@ -198,7 +198,7 @@ module.exports["Test Powerbox query"] = function (browser) {
         .url(function (grainUrl) {
           var grainId = grainUrl.value.split("/").pop();
 
-          function tryQuery(buttonId, expectedMatches) {
+          function tryQuery(buttonId, expectedMatches, expectDiagnostics) {
             browser
                 .grainFrame(grainId)
                 .waitForElementPresent(buttonId, medium_wait)
@@ -215,11 +215,19 @@ module.exports["Test Powerbox query"] = function (browser) {
               }
             }
 
+            if (expectDiagnostics) {
+              browser
+                .waitForElementVisible(".powerbox-diagnostics", short_wait)
+                .assert.textContains(".powerbox-diagnostics", "descriptorCount")
+                .assert.textContains(".powerbox-diagnostics", "grainDescriptorValueMismatchCount");
+            }
+
             browser.click("button.close-popup");
           }
 
           tryQuery("#do-powerbox-request", {[grainId]: true, [otherGrainId]: false});
-          tryQuery("#do-powerbox-request-no-match", {[grainId]: false, [otherGrainId]: false});
+          tryQuery("#do-powerbox-request-no-match",
+                   {[grainId]: false, [otherGrainId]: false}, true);
           tryQuery("#do-powerbox-request-wildcard", {[grainId]: true, [otherGrainId]: false});
 
           // multi-descriptor adds a UiView descriptor into the mix, so our grain of another app
