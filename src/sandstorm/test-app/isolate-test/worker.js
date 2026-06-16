@@ -80,6 +80,59 @@ class CounterCapability extends RpcTarget {
   }
 }
 
+function renderBrowserPowerboxPage() {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Isolate Browser Powerbox</title>
+  </head>
+  <body>
+    <button id="offer" type="button">offer capability</button>
+    <button id="request" type="button">request capability</button>
+    <pre id="offer-result">not offered</pre>
+    <pre id="request-result">not requested</pre>
+
+    <script type="module">
+      import { requestAndClaimPowerbox } from "/__sandstorm/test-rpc-client.js";
+
+      const offerResult = document.querySelector("#offer-result");
+      const requestResult = document.querySelector("#request-result");
+
+      document.querySelector("#offer").addEventListener("click", async () => {
+        offerResult.textContent = "offering";
+        try {
+          const response = await fetch("/browser-powerbox-offer", { method: "POST" });
+          const body = await response.json();
+          offerResult.textContent = body.ok ? "offer: success" : JSON.stringify(body);
+        } catch (error) {
+          offerResult.textContent = (error.message || String(error)) + "\\n" + (error.stack || "");
+        }
+      });
+
+      document.querySelector("#request").addEventListener("click", async () => {
+        requestResult.textContent = "requesting";
+        try {
+          const requested = await requestAndClaimPowerbox(null, {
+            requiredPermissions: ["view"],
+          });
+          const response = await fetch("/browser-powerbox-finish", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(requested),
+          });
+          const body = await response.json();
+          requestResult.textContent = body.ok ? "request: success " + body.restored.body.source :
+            JSON.stringify(body);
+        } catch (error) {
+          requestResult.textContent = (error.message || String(error)) + "\\n" + (error.stack || "");
+        }
+      });
+    </script>
+  </body>
+</html>`;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const api = sandstorm(request, env);
@@ -90,6 +143,9 @@ export default {
     if (internalResponse) return internalResponse;
 
     const url = new URL(request.url);
+    const powerboxResponse = await api.servePowerboxDescriptors();
+    if (powerboxResponse) return powerboxResponse;
+
     const headers = {};
     for (const [name, value] of request.headers) {
       if (name.startsWith("x-sandstorm-") || name === "host" ||
@@ -107,6 +163,57 @@ export default {
         checksum: checksum(body),
         contentType: request.headers.get("content-type"),
         customHeader: request.headers.get("x-isolate-test"),
+      });
+    }
+
+    if (url.pathname === "/browser-powerbox") {
+      return new Response(renderBrowserPowerboxPage(), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (url.pathname === "/browser-powerbox-shared/value") {
+      return Response.json({
+        ok: true,
+        source: "isolate-browser-powerbox",
+        pathname: url.pathname,
+        search: url.search,
+      });
+    }
+
+    if (url.pathname === "/browser-powerbox-offer" && request.method === "POST") {
+      const capability = await api.webSession({
+        pathPrefix: "/browser-powerbox-shared",
+      });
+      const offer = await capability.offer(request, {
+        title: "Isolate browser Powerbox capability",
+        verbPhrase: "can use isolate browser Powerbox capability",
+        description: "Capability offered by the isolate browser Powerbox test route",
+        requiredPermissions: ["view"],
+      });
+      return Response.json({ ok: true, offer });
+    }
+
+    if (url.pathname === "/browser-powerbox-finish" && request.method === "POST") {
+      const body = await request.json();
+      const capability = new ClaimedCapability(env, body.capability?.id || "");
+      const saved = await capability.save({ label: "Isolate browser Powerbox test" });
+      const dropOriginal = await capability.drop();
+      const restored = await saved.restore();
+      const restoredResponse = await restored.fetch("/value?source=browser-powerbox");
+      const restoredBody = await restoredResponse.json();
+      const dropRestored = await restored.drop();
+      const dropSaved = await saved.drop();
+      return Response.json({
+        ok: true,
+        saved: JSON.parse(JSON.stringify(saved)),
+        dropOriginal,
+        restored: {
+          status: restoredResponse.status,
+          body: restoredBody,
+        },
+        dropRestored,
+        dropSaved,
       });
     }
 
