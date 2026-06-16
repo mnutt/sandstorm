@@ -138,6 +138,54 @@ async function fetchApiSessionPowerboxDescriptor(options = {}) {
   return result;
 }
 
+const OUTBOUND_HTTP_METHODS = new Set([
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+]);
+
+function outboundHttpMethod(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty HTTP method string`);
+  }
+  const method = value.toUpperCase();
+  if (!OUTBOUND_HTTP_METHODS.has(method)) {
+    throw new Error(`${label} must be one of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS`);
+  }
+  return method;
+}
+
+async function fetchOutboundHttpPowerboxDescriptor(options = {}) {
+  const {
+    baseUrl,
+    methods = [],
+    descriptorUrl = "/__sandstorm/powerbox/outbound-http-descriptor",
+  } = options;
+  if (!baseUrl) {
+    throw new Error("outboundHttp Powerbox descriptor requires baseUrl");
+  }
+  if (!Array.isArray(methods)) {
+    throw new Error("outboundHttp Powerbox descriptor methods must be an array");
+  }
+
+  const url = new URL(descriptorUrl, window.location.href);
+  url.searchParams.set("baseUrl", baseUrl);
+  for (let i = 0; i < methods.length; ++i) {
+    url.searchParams.append("method", outboundHttpMethod(methods[i], `methods[${i}]`));
+  }
+
+  const response = await fetch(url);
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || `Powerbox descriptor request failed with ${response.status}`);
+  }
+  return result;
+}
+
 export async function apiSessionPowerboxDescriptor(options = {}) {
   const result = await fetchApiSessionPowerboxDescriptor(options);
   return validatePackedDescriptor(result.descriptor, "apiSession descriptor");
@@ -149,6 +197,17 @@ export async function apiSessionPowerboxDescriptorInfo(options = {}) {
   return result;
 }
 
+export async function outboundHttpPowerboxDescriptor(options = {}) {
+  const result = await fetchOutboundHttpPowerboxDescriptor(options);
+  return validatePackedDescriptor(result.descriptor, "outboundHttp descriptor");
+}
+
+export async function outboundHttpPowerboxDescriptorInfo(options = {}) {
+  const result = await fetchOutboundHttpPowerboxDescriptor(options);
+  validatePackedDescriptor(result.descriptor, "outboundHttp descriptor");
+  return result;
+}
+
 export function providerTagPowerboxDescriptor(options = {}) {
   return validatePackedDescriptor(options.descriptor, "provider tag descriptor");
 }
@@ -156,10 +215,28 @@ export function providerTagPowerboxDescriptor(options = {}) {
 export const powerboxDescriptors = {
   apiSession: apiSessionPowerboxDescriptor,
   apiSessionInfo: apiSessionPowerboxDescriptorInfo,
+  outboundHttp: outboundHttpPowerboxDescriptor,
+  outboundHttpInfo: outboundHttpPowerboxDescriptorInfo,
   providerTag: providerTagPowerboxDescriptor,
 };
 
 export async function inspectPowerboxQuery(query) {
+  if (query && typeof query === "object" && !Array.isArray(query) &&
+      !(query instanceof String) &&
+      (query.baseUrl || query.outboundHttp || query.outboundHttpDescriptor)) {
+    const descriptorInfo = await outboundHttpPowerboxDescriptorInfo(
+      query.outboundHttp ?? query.outboundHttpDescriptor ?? query);
+    return {
+      ok: true,
+      type: "powerboxQueryInspection",
+      descriptorCount: 1,
+      descriptors: [{
+        index: 0,
+        ...descriptorInfo,
+      }],
+    };
+  }
+
   if (query && typeof query === "object" && !Array.isArray(query) &&
       !(query instanceof String) &&
       (query.canonicalUrl || query.apiSession || query.apiSessionDescriptor)) {
@@ -236,6 +313,29 @@ export async function requestApiPowerbox(options = {}) {
 
 export async function requestApiCapability(options = {}) {
   const requested = await requestApiPowerbox(options);
+  const capability = await claimPowerboxToken(requested.token, options);
+  return {
+    ...requested,
+    capability,
+  };
+}
+
+export async function requestOutboundHttpPowerbox(options = {}) {
+  const {
+    saveLabel,
+  } = options;
+  const result = await fetchOutboundHttpPowerboxDescriptor(options);
+  const descriptor = validatePackedDescriptor(result.descriptor, "outboundHttp descriptor");
+
+  const requested = await requestPowerbox([descriptor], { saveLabel });
+  return {
+    ...requested,
+    powerboxDescriptor: result,
+  };
+}
+
+export async function requestOutboundHttpCapability(options = {}) {
+  const requested = await requestOutboundHttpPowerbox(options);
   const capability = await claimPowerboxToken(requested.token, options);
   return {
     ...requested,
@@ -368,6 +468,54 @@ async function fetchApiSessionPowerboxDescriptor(options = {}) {
   return result;
 }
 
+const OUTBOUND_HTTP_METHODS = new Set([
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+]);
+
+function outboundHttpMethod(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(\`\${label} must be a non-empty HTTP method string\`);
+  }
+  const method = value.toUpperCase();
+  if (!OUTBOUND_HTTP_METHODS.has(method)) {
+    throw new Error(\`\${label} must be one of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS\`);
+  }
+  return method;
+}
+
+async function fetchOutboundHttpPowerboxDescriptor(options = {}) {
+  const {
+    baseUrl,
+    methods = [],
+    descriptorUrl = "/__sandstorm/powerbox/outbound-http-descriptor",
+  } = options;
+  if (!baseUrl) {
+    throw new Error("outboundHttp Powerbox descriptor requires baseUrl");
+  }
+  if (!Array.isArray(methods)) {
+    throw new Error("outboundHttp Powerbox descriptor methods must be an array");
+  }
+
+  const url = new URL(descriptorUrl, window.location.href);
+  url.searchParams.set("baseUrl", baseUrl);
+  for (let i = 0; i < methods.length; ++i) {
+    url.searchParams.append("method", outboundHttpMethod(methods[i], \`methods[\${i}]\`));
+  }
+
+  const response = await fetch(url);
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || \`Powerbox descriptor request failed with \${response.status}\`);
+  }
+  return result;
+}
+
 export async function apiSessionPowerboxDescriptor(options = {}) {
   const result = await fetchApiSessionPowerboxDescriptor(options);
   return validatePackedDescriptor(result.descriptor, "apiSession descriptor");
@@ -379,6 +527,17 @@ export async function apiSessionPowerboxDescriptorInfo(options = {}) {
   return result;
 }
 
+export async function outboundHttpPowerboxDescriptor(options = {}) {
+  const result = await fetchOutboundHttpPowerboxDescriptor(options);
+  return validatePackedDescriptor(result.descriptor, "outboundHttp descriptor");
+}
+
+export async function outboundHttpPowerboxDescriptorInfo(options = {}) {
+  const result = await fetchOutboundHttpPowerboxDescriptor(options);
+  validatePackedDescriptor(result.descriptor, "outboundHttp descriptor");
+  return result;
+}
+
 export function providerTagPowerboxDescriptor(options = {}) {
   return validatePackedDescriptor(options.descriptor, "provider tag descriptor");
 }
@@ -386,10 +545,28 @@ export function providerTagPowerboxDescriptor(options = {}) {
 export const powerboxDescriptors = {
   apiSession: apiSessionPowerboxDescriptor,
   apiSessionInfo: apiSessionPowerboxDescriptorInfo,
+  outboundHttp: outboundHttpPowerboxDescriptor,
+  outboundHttpInfo: outboundHttpPowerboxDescriptorInfo,
   providerTag: providerTagPowerboxDescriptor,
 };
 
 export async function inspectPowerboxQuery(query) {
+  if (query && typeof query === "object" && !Array.isArray(query) &&
+      !(query instanceof String) &&
+      (query.baseUrl || query.outboundHttp || query.outboundHttpDescriptor)) {
+    const descriptorInfo = await outboundHttpPowerboxDescriptorInfo(
+      query.outboundHttp ?? query.outboundHttpDescriptor ?? query);
+    return {
+      ok: true,
+      type: "powerboxQueryInspection",
+      descriptorCount: 1,
+      descriptors: [{
+        index: 0,
+        ...descriptorInfo,
+      }],
+    };
+  }
+
   if (query && typeof query === "object" && !Array.isArray(query) &&
       !(query instanceof String) &&
       (query.canonicalUrl || query.apiSession || query.apiSessionDescriptor)) {
@@ -466,6 +643,29 @@ export async function requestApiPowerbox(options = {}) {
 
 export async function requestApiCapability(options = {}) {
   const requested = await requestApiPowerbox(options);
+  const capability = await claimPowerboxToken(requested.token, options);
+  return {
+    ...requested,
+    capability,
+  };
+}
+
+export async function requestOutboundHttpPowerbox(options = {}) {
+  const {
+    saveLabel,
+  } = options;
+  const result = await fetchOutboundHttpPowerboxDescriptor(options);
+  const descriptor = validatePackedDescriptor(result.descriptor, "outboundHttp descriptor");
+
+  const requested = await requestPowerbox([descriptor], { saveLabel });
+  return {
+    ...requested,
+    powerboxDescriptor: result,
+  };
+}
+
+export async function requestOutboundHttpCapability(options = {}) {
+  const requested = await requestOutboundHttpPowerbox(options);
   const capability = await claimPowerboxToken(requested.token, options);
   return {
     ...requested,

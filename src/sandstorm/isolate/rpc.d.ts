@@ -55,6 +55,14 @@ declare module "sandstorm:rpc" {
       id: string;
     };
   }>;
+  export type OutboundHttpMethod =
+    | "GET"
+    | "POST"
+    | "PUT"
+    | "PATCH"
+    | "DELETE"
+    | "HEAD"
+    | "OPTIONS";
   export function apiSessionPowerboxDescriptor(options: {
     canonicalUrl: string;
     oauthScopes?: string[];
@@ -74,12 +82,33 @@ declare module "sandstorm:rpc" {
       oauthScopes: string[];
     };
   }>;
+  export function outboundHttpPowerboxDescriptor(options: {
+    baseUrl: string;
+    methods?: OutboundHttpMethod[];
+    descriptorUrl?: string;
+  }): Promise<string>;
+  export function outboundHttpPowerboxDescriptorInfo(options: {
+    baseUrl: string;
+    methods?: OutboundHttpMethod[];
+    descriptorUrl?: string;
+  }): Promise<{
+    ok: true;
+    type: "packedPowerboxDescriptor";
+    descriptor: string;
+    decoded?: {
+      type: "outboundHttp";
+      baseUrl: string;
+      methods: OutboundHttpMethod[];
+    };
+  }>;
   export function providerTagPowerboxDescriptor(options: {
     descriptor: string;
   }): string;
   export const powerboxDescriptors: {
     apiSession: typeof apiSessionPowerboxDescriptor;
     apiSessionInfo: typeof apiSessionPowerboxDescriptorInfo;
+    outboundHttp: typeof outboundHttpPowerboxDescriptor;
+    outboundHttpInfo: typeof outboundHttpPowerboxDescriptorInfo;
     providerTag: typeof providerTagPowerboxDescriptor;
   };
   export function inspectPowerboxQuery(
@@ -103,6 +132,16 @@ declare module "sandstorm:rpc" {
           oauthScopes?: string[];
           descriptorUrl?: string;
         };
+        outboundHttp?: {
+          baseUrl: string;
+          methods?: OutboundHttpMethod[];
+          descriptorUrl?: string;
+        };
+        outboundHttpDescriptor?: {
+          baseUrl: string;
+          methods?: OutboundHttpMethod[];
+          descriptorUrl?: string;
+        };
       },
   ): Promise<{
     ok: true;
@@ -116,6 +155,8 @@ declare module "sandstorm:rpc" {
         type: string;
         canonicalUrl?: string;
         oauthScopes?: string[];
+        baseUrl?: string;
+        methods?: OutboundHttpMethod[];
       };
     }>;
   }>;
@@ -159,6 +200,41 @@ declare module "sandstorm:rpc" {
   export function requestApiCapability(options: {
     canonicalUrl: string;
     oauthScopes?: string[];
+    saveLabel?: { defaultText: string };
+    descriptorUrl?: string;
+    claimUrl?: string;
+    requiredPermissions?: string[];
+  }): Promise<{
+    token: string;
+    descriptor?: string;
+    powerboxDescriptor: {
+      ok: true;
+      type: "packedPowerboxDescriptor";
+      descriptor: string;
+    };
+    capability: {
+      ok: true;
+      type: "claimedCapability";
+      id: string;
+    };
+  }>;
+  export function requestOutboundHttpPowerbox(options: {
+    baseUrl: string;
+    methods?: OutboundHttpMethod[];
+    saveLabel?: { defaultText: string };
+    descriptorUrl?: string;
+  }): Promise<{
+    token: string;
+    descriptor?: string;
+    powerboxDescriptor: {
+      ok: true;
+      type: "packedPowerboxDescriptor";
+      descriptor: string;
+    };
+  }>;
+  export function requestOutboundHttpCapability(options: {
+    baseUrl: string;
+    methods?: OutboundHttpMethod[];
     saveLabel?: { defaultText: string };
     descriptorUrl?: string;
     claimUrl?: string;

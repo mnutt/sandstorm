@@ -42,6 +42,7 @@
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
+#include <sandstorm/outbound-http-session.capnp.h>
 #include <sandstorm/package.capnp.h>
 #include <sandstorm/powerbox.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
@@ -1377,6 +1378,55 @@ void appendApiSessionDescriptorJson(kj::Vector<char>& json, ApiSession::Powerbox
       json.addAll(kj::StringPtr(", "));
     }
     appendJsonString(json, scopes[i].getName());
+  }
+  json.addAll(kj::StringPtr("]}"));
+}
+
+kj::StringPtr outboundHttpMethodName(OutboundHttpSession::Method method) {
+  switch (method) {
+    case OutboundHttpSession::Method::GET:
+      return "GET";
+    case OutboundHttpSession::Method::POST:
+      return "POST";
+    case OutboundHttpSession::Method::PUT:
+      return "PUT";
+    case OutboundHttpSession::Method::PATCH:
+      return "PATCH";
+    case OutboundHttpSession::Method::DELETE:
+      return "DELETE";
+    case OutboundHttpSession::Method::HEAD:
+      return "HEAD";
+    case OutboundHttpSession::Method::OPTIONS:
+      return "OPTIONS";
+  }
+
+  KJ_UNREACHABLE;
+}
+
+kj::Maybe<OutboundHttpSession::Method> parseOutboundHttpMethod(kj::StringPtr method) {
+  if (isolateEqualsIgnoreCase(method, "GET")) return OutboundHttpSession::Method::GET;
+  if (isolateEqualsIgnoreCase(method, "POST")) return OutboundHttpSession::Method::POST;
+  if (isolateEqualsIgnoreCase(method, "PUT")) return OutboundHttpSession::Method::PUT;
+  if (isolateEqualsIgnoreCase(method, "PATCH")) return OutboundHttpSession::Method::PATCH;
+  if (isolateEqualsIgnoreCase(method, "DELETE")) return OutboundHttpSession::Method::DELETE;
+  if (isolateEqualsIgnoreCase(method, "HEAD")) return OutboundHttpSession::Method::HEAD;
+  if (isolateEqualsIgnoreCase(method, "OPTIONS")) return OutboundHttpSession::Method::OPTIONS;
+  return nullptr;
+}
+
+void appendOutboundHttpDescriptorJson(
+    kj::Vector<char>& json, OutboundHttpSession::PowerboxTag::Reader tag) {
+  json.addAll(kj::StringPtr("{"));
+  appendJsonField(json, "type", "outboundHttp");
+  json.addAll(kj::StringPtr(", "));
+  appendJsonField(json, "baseUrl", tag.getBaseUrl());
+  json.addAll(kj::StringPtr(", \"methods\": ["));
+  auto methods = tag.getMethods();
+  for (auto i: kj::indices(methods)) {
+    if (i > 0) {
+      json.addAll(kj::StringPtr(", "));
+    }
+    appendJsonString(json, outboundHttpMethodName(methods[i]));
   }
   json.addAll(kj::StringPtr("]}"));
 }
@@ -3790,6 +3840,8 @@ public:
         return fetchClaimedCapability(path, contentType, kj::mv(bodyBytes), response);
       } else if (methodName == "POST" && route == "/powerbox/request-api") {
         return requestApiSessionCapability(path, response);
+      } else if (methodName == "POST" && route == "/powerbox/request-outbound-http") {
+        return requestOutboundHttpCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/offer") {
         return offerClaimedCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fulfill-request") {
@@ -3811,6 +3863,8 @@ public:
         return sendJson(response, 200, "OK", renderStatus(methodName, path, bodyBytes.size()));
       } else if (route == "/powerbox/api-session-descriptor") {
         return apiSessionPowerboxDescriptor(path, response);
+      } else if (route == "/powerbox/outbound-http-descriptor") {
+        return outboundHttpPowerboxDescriptor(path, response);
       } else if (route == "/capabilities") {
         return sendJson(response, 200, "OK", renderCapabilities());
       } else if (route == "/runtime") {
@@ -4029,6 +4083,7 @@ private:
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
         "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.requestApiSession\", "
+        "\"powerbox.outboundHttpDescriptor\", \"powerbox.requestOutboundHttp\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\"]\n"
         "}\n");
@@ -4652,6 +4707,50 @@ private:
     }
   }
 
+  kj::Promise<void> requestOutboundHttpCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    kj::String sessionId = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "sessionId", "expected exactly one sessionId", sessionId)) {
+      return sendBadRequest(response, *error);
+    }
+
+    auto descriptorTypes = findIsolateQueryParams(url, "descriptor");
+    if (descriptorTypes.size() != 1 || descriptorTypes[0] != "outboundHttp") {
+      return sendJson(response, 400, "Bad Request", renderError(
+          "request-outbound-http requires exactly one outboundHttp descriptor"));
+    }
+
+    auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
+    auto permissionDefs = viewInfo.getPermissions();
+    auto permissionNames = findIsolateQueryParams(url, "requiredPermission");
+    for (auto& name: permissionNames) {
+      if (name.size() == 0) {
+        return sendJson(response, 400, "Bad Request",
+            renderError("missing required permission name"));
+      }
+    }
+
+    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionId)) {
+      auto request = sessionContext->requestRequest();
+      initOutboundHttpPowerboxDescriptor(url, request.initQuery(1)[0]);
+      auto requiredPermissions = request.initRequiredPermissions(permissionDefs.size());
+      for (auto& name: permissionNames) {
+        KJ_IF_MAYBE(error, setRequiredPermission(name, requiredPermissions, permissionDefs)) {
+          return sendJson(response, 400, "Bad Request", renderError(*error));
+        }
+      }
+      return request.send().then(
+          [this, &response](auto result) mutable {
+        auto capId = host.sessions->storeClaimedCapability(result.getCap());
+        return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+      });
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown isolate session\"\n}\n"));
+    }
+  }
+
   kj::Promise<void> apiSessionPowerboxDescriptor(
       kj::StringPtr url, kj::HttpService::Response& response) {
     capnp::MallocMessageBuilder message;
@@ -4671,6 +4770,30 @@ private:
     appendJsonField(json, "descriptor", packed);
     json.addAll(kj::StringPtr(",\n  \"decoded\": "));
     appendApiSessionDescriptorJson(json, tag);
+    json.addAll(kj::StringPtr("\n}\n"));
+    json.add('\0');
+    return sendJson(response, 200, "OK", kj::String(json.releaseAsArray()));
+  }
+
+  kj::Promise<void> outboundHttpPowerboxDescriptor(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    capnp::MallocMessageBuilder message;
+    auto descriptor = message.initRoot<PowerboxDescriptor>();
+    initOutboundHttpPowerboxDescriptor(url, descriptor);
+    auto descriptorReader = descriptor.asReader();
+    auto tag = descriptorReader.getTags()[0].getValue().getAs<OutboundHttpSession::PowerboxTag>();
+
+    kj::VectorOutputStream output;
+    capnp::writePackedMessage(output, message);
+    auto packed = kj::encodeBase64Url(output.getArray());
+
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  "));
+    appendJsonField(json, "type", "packedPowerboxDescriptor");
+    json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "descriptor", packed);
+    json.addAll(kj::StringPtr(",\n  \"decoded\": "));
+    appendOutboundHttpDescriptorJson(json, tag);
     json.addAll(kj::StringPtr("\n}\n"));
     json.add('\0');
     return sendJson(response, 200, "OK", kj::String(json.releaseAsArray()));
@@ -4908,6 +5031,8 @@ private:
 
     if (descriptorTypes[0] == "apiSession") {
       initApiSessionPowerboxDescriptor(url, descriptor);
+    } else if (descriptorTypes[0] == "outboundHttp") {
+      initOutboundHttpPowerboxDescriptor(url, descriptor);
     } else {
       KJ_FAIL_REQUIRE("unsupported powerbox descriptor type", descriptorTypes[0]);
     }
@@ -4934,6 +5059,32 @@ private:
       KJ_REQUIRE(oauthScopes[i].size() > 0 && oauthScopes[i].size() <= 256,
           "apiSession descriptor OAuth scope must be 1-256 bytes");
       scopes[i].setName(oauthScopes[i]);
+    }
+  }
+
+  void initOutboundHttpPowerboxDescriptor(
+      kj::StringPtr url, PowerboxDescriptor::Builder descriptor) {
+    auto baseUrls = findIsolateQueryParams(url, "outboundHttpBaseUrl");
+    KJ_REQUIRE(baseUrls.size() == 1 && baseUrls[0].size() > 0,
+        "outboundHttp descriptor requires exactly one baseUrl");
+    KJ_REQUIRE(baseUrls[0].size() <= 2048,
+        "outboundHttp descriptor baseUrl is too long");
+
+    auto tag = descriptor.initTags(1)[0];
+    tag.setId(capnp::typeId<OutboundHttpSession>());
+    auto value = tag.initValue().initAs<OutboundHttpSession::PowerboxTag>();
+    value.setBaseUrl(baseUrls[0]);
+
+    auto methodNames = findIsolateQueryParams(url, "outboundHttpMethod");
+    auto methods = value.initMethods(methodNames.size());
+    for (auto i: kj::indices(methodNames)) {
+      KJ_REQUIRE(methodNames[i].size() > 0,
+          "outboundHttp descriptor method must not be empty");
+      KJ_IF_MAYBE(method, parseOutboundHttpMethod(methodNames[i])) {
+        methods.set(i, *method);
+      } else {
+        KJ_FAIL_REQUIRE("unsupported outboundHttp method", methodNames[i]);
+      }
     }
   }
 

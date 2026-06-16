@@ -253,8 +253,8 @@ The preferred Powerbox lifecycle names are:
 - `restoreStored(options)`, `fetchStored(options, input, init)`, and
   `dropStored(options)` for token strings stored in isolate storage
 - `claimedCapability(handle)` for wrapping a browser-returned claimed handle
-- `requestApiSession(options)` for the current browser-mediated API-session
-  request helper
+- `requestApiSession(options)` and `requestOutboundHttp(options)` for the
+  current browser-mediated API-session and outbound HTTP request helpers
 
 The following exports are public but low-level. Prefer the `sandstorm()`
 facade unless a custom framework or test needs direct access:
@@ -395,7 +395,8 @@ The recommended flow is:
 1. The worker serves the conventional helper endpoints with
    `api.serveSystemRoutes()`.
 2. Browser code imports `requestPowerbox()`, `requestApiPowerbox()`,
-   `requestAndClaimPowerbox()`, or `requestApiCapability()` from
+   `requestOutboundHttpPowerbox()`, `requestAndClaimPowerbox()`,
+   `requestApiCapability()`, or `requestOutboundHttpCapability()` from
    `/rpc-client.js`.
 3. The browser helper uses Sandstorm's existing `postMessage` Powerbox flow, so
    the shell can show the normal picker UI.
@@ -430,6 +431,23 @@ await fetch("/claim", {
   body: JSON.stringify(requested),
 });
 ```
+
+To request outbound HTTPS authority, use the outbound HTTP helper instead of
+constructing a provider descriptor manually:
+
+```js
+// Browser module.
+import { requestOutboundHttpCapability } from "./rpc-client.js";
+
+const requested = await requestOutboundHttpCapability({
+  baseUrl: "https://api.example.test/",
+  methods: ["GET", "POST"],
+});
+```
+
+The browser receives the same request result shape as other Powerbox helpers.
+Send it to the worker and use `claimAndStoreRequest()`, `claimRequest()`, or
+`claimedCapability()` exactly as in the API-session flow.
 
 The worker route that receives this request should decide ownership. For a
 lasting connection, save the returned request result into app-owned storage:

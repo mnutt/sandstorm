@@ -475,6 +475,64 @@ function apiSessionDescriptorParams(options = {}) {
   return result;
 }
 
+const OUTBOUND_HTTP_METHODS = new Set([
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+]);
+
+function outboundHttpMethod(value, label) {
+  const method = validate.string(value, label, { minLength: 1, maxLength: 16 }).toUpperCase();
+  if (!OUTBOUND_HTTP_METHODS.has(method)) {
+    throw new ValidationError(`${label} must be one of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS`);
+  }
+  return method;
+}
+
+function outboundHttpDescriptorParams(options = {}) {
+  const descriptor = options.outboundHttp ?? options.outboundHttpDescriptor ?? null;
+  if (descriptor === null || descriptor === undefined) {
+    return [];
+  }
+  if (typeof descriptor !== "object") {
+    throw new ValidationError("outboundHttp descriptor must be an object");
+  }
+
+  const baseUrl = validate.string(descriptor.baseUrl, "outboundHttp.baseUrl", {
+    minLength: 1,
+    maxLength: 2048,
+  });
+
+  const result = [
+    ["descriptor", "outboundHttp"],
+    ["outboundHttpBaseUrl", baseUrl],
+  ];
+
+  const methods = descriptor.methods ?? [];
+  if (!Array.isArray(methods)) {
+    throw new ValidationError("outboundHttp.methods must be an array");
+  }
+  for (let i = 0; i < methods.length; ++i) {
+    result.push(["outboundHttpMethod", outboundHttpMethod(
+      methods[i], `outboundHttp.methods[${i}]`)]);
+  }
+
+  return result;
+}
+
+function powerboxDescriptorParams(options = {}) {
+  const apiSession = apiSessionDescriptorParams(options);
+  const outboundHttp = outboundHttpDescriptorParams(options);
+  if (apiSession.length > 0 && outboundHttp.length > 0) {
+    throw new ValidationError("Powerbox options must specify only one descriptor type");
+  }
+  return apiSession.length > 0 ? apiSession : outboundHttp;
+}
+
 async function saveClaimedCapability(env, capability, options = {}) {
   const rawId = capabilityId(capability);
   const metadata = claimedCapabilityMetadata.get(rawId);
@@ -518,7 +576,7 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
   for (const name of requiredPermissions) {
     params.append("requiredPermission", name);
   }
-  for (const [name, value] of apiSessionDescriptorParams(options)) {
+  for (const [name, value] of powerboxDescriptorParams(options)) {
     params.append(name, value);
   }
   return postPowerbox(env, `powerbox/${endpoint}?${params}`);
@@ -545,6 +603,14 @@ function apiSessionRequestOptions(options = {}) {
   return { ...options, apiSession: options };
 }
 
+function outboundHttpRequestOptions(options = {}) {
+  if (options.outboundHttp !== undefined || options.outboundHttpDescriptor !== undefined) {
+    return options;
+  }
+
+  return { ...options, outboundHttp: options };
+}
+
 async function requestApiSessionCapability(env, request, options = {}) {
   const requiredPermissions = permissionNames(options);
   await validateRequiredPermissions(env, requiredPermissions);
@@ -562,6 +628,23 @@ async function requestApiSessionCapability(env, request, options = {}) {
     env, await postPowerbox(env, `powerbox/request-api?${params}`));
 }
 
+async function requestOutboundHttpCapability(env, request, options = {}) {
+  const requiredPermissions = permissionNames(options);
+  await validateRequiredPermissions(env, requiredPermissions);
+
+  const params = new URLSearchParams({
+    sessionId: sessionIdForPowerbox(request),
+  });
+  for (const name of requiredPermissions) {
+    params.append("requiredPermission", name);
+  }
+  for (const [name, value] of outboundHttpDescriptorParams(outboundHttpRequestOptions(options))) {
+    params.append(name, value);
+  }
+  return wrapClaimedCapability(
+    env, await postPowerbox(env, `powerbox/request-outbound-http?${params}`));
+}
+
 async function apiSessionPowerboxDescriptor(env, options = {}) {
   const result = await apiSessionPowerboxDescriptorInfo(env, options);
   return result.descriptor;
@@ -575,6 +658,21 @@ async function apiSessionPowerboxDescriptorInfo(env, options = {}) {
     }
   }
   return callPowerbox(env, `powerbox/api-session-descriptor?${params}`);
+}
+
+async function outboundHttpPowerboxDescriptor(env, options = {}) {
+  const result = await outboundHttpPowerboxDescriptorInfo(env, options);
+  return result.descriptor;
+}
+
+async function outboundHttpPowerboxDescriptorInfo(env, options = {}) {
+  const params = new URLSearchParams();
+  for (const [name, value] of outboundHttpDescriptorParams(outboundHttpRequestOptions(options))) {
+    if (name !== "descriptor") {
+      params.append(name, value);
+    }
+  }
+  return callPowerbox(env, `powerbox/outbound-http-descriptor?${params}`);
 }
 
 export async function servePowerboxDescriptors(request, env) {
@@ -592,6 +690,28 @@ export async function servePowerboxDescriptors(request, env) {
       const descriptor = await apiSessionPowerboxDescriptorInfo(env, {
         canonicalUrl: url.searchParams.get("canonicalUrl") || "",
         oauthScopes: scopeList,
+      });
+      return Response.json(descriptor);
+    } catch (error) {
+      return Response.json({
+        ok: false,
+        error: String(error?.message || error),
+      }, { status: 400 });
+    }
+  }
+
+  if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/outbound-http-descriptor`) {
+    try {
+      const methods = url.searchParams.getAll("method");
+      const methodList = methods.length > 0
+        ? methods
+        : String(url.searchParams.get("methods") || "")
+            .split(/[,\s]+/)
+            .map((method) => method.trim())
+            .filter(Boolean);
+      const descriptor = await outboundHttpPowerboxDescriptorInfo(env, {
+        baseUrl: url.searchParams.get("baseUrl") || "",
+        methods: methodList,
       });
       return Response.json(descriptor);
     } catch (error) {
@@ -1417,6 +1537,14 @@ export function powerbox(request, env) {
       return apiSessionPowerboxDescriptor(env, options);
     },
 
+    async requestOutboundHttp(options = {}) {
+      return requestOutboundHttpCapability(env, request, options);
+    },
+
+    async outboundHttpDescriptor(options = {}) {
+      return outboundHttpPowerboxDescriptor(env, options);
+    },
+
     claimedCapability(capability) {
       return new ClaimedCapability(env, capabilityId(capability));
     },
@@ -1599,6 +1727,14 @@ class PowerboxRpcTarget extends RpcTarget {
 
   async apiSessionDescriptor(options) {
     return powerbox(this.#request, this.#env).apiSessionDescriptor(options || {});
+  }
+
+  async requestOutboundHttp(options) {
+    return powerbox(this.#request, this.#env).requestOutboundHttp(options || {});
+  }
+
+  async outboundHttpDescriptor(options) {
+    return powerbox(this.#request, this.#env).outboundHttpDescriptor(options || {});
   }
 
   claimedCapability(capability) {

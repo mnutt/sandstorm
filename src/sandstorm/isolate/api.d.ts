@@ -100,7 +100,22 @@ declare module "sandstorm:api" {
     oauthScopes: string[];
   }
 
-  export type PowerboxDescriptorInfo = ApiSessionDescriptorInfo;
+  export type OutboundHttpMethod =
+    | "GET"
+    | "POST"
+    | "PUT"
+    | "PATCH"
+    | "DELETE"
+    | "HEAD"
+    | "OPTIONS";
+
+  export interface OutboundHttpDescriptorInfo {
+    type: "outboundHttp";
+    baseUrl: string;
+    methods: OutboundHttpMethod[];
+  }
+
+  export type PowerboxDescriptorInfo = ApiSessionDescriptorInfo | OutboundHttpDescriptorInfo;
 
   export interface OfferedCapabilityInfo {
     id: string;
@@ -171,6 +186,14 @@ declare module "sandstorm:api" {
     apiSessionDescriptor?: {
       canonicalUrl: string;
       oauthScopes?: string[];
+    };
+    outboundHttp?: {
+      baseUrl: string;
+      methods?: OutboundHttpMethod[];
+    };
+    outboundHttpDescriptor?: {
+      baseUrl: string;
+      methods?: OutboundHttpMethod[];
     };
   }
 
@@ -339,6 +362,20 @@ declare module "sandstorm:api" {
     | ApiSessionPowerboxRequestOptions
     | ApiSessionPowerboxRequestWrapperOptions;
 
+  export interface OutboundHttpPowerboxRequestOptions extends ClaimRequestOptions {
+    baseUrl: string;
+    methods?: OutboundHttpMethod[];
+  }
+
+  export interface OutboundHttpPowerboxRequestWrapperOptions extends ClaimRequestOptions {
+    outboundHttp?: OutboundHttpPowerboxRequestOptions;
+    outboundHttpDescriptor?: OutboundHttpPowerboxRequestOptions;
+  }
+
+  export type OutboundHttpPowerboxOptions =
+    | OutboundHttpPowerboxRequestOptions
+    | OutboundHttpPowerboxRequestWrapperOptions;
+
   export interface StorageApi {
     put(key: string, value: StorageValue): Promise<StorageInfo>;
     putJson(key: string, value: JsonValue): Promise<StorageInfo>;
@@ -353,6 +390,8 @@ declare module "sandstorm:api" {
   export interface PowerboxApi {
     requestApiSession(options: ApiSessionPowerboxOptions): Promise<ClaimedCapability>;
     apiSessionDescriptor(options: ApiSessionPowerboxOptions): Promise<string>;
+    requestOutboundHttp(options: OutboundHttpPowerboxOptions): Promise<ClaimedCapability>;
+    outboundHttpDescriptor(options: OutboundHttpPowerboxOptions): Promise<string>;
     claimedCapability(capability: ClaimedCapabilityHandle | string): ClaimedCapability;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
     claimAndStore(
