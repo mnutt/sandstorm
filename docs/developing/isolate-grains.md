@@ -150,9 +150,11 @@ using rpc = newSandstormRpcSession();
 return rpc.session(); // Wrong: the session is disposed before the call resolves.
 ```
 
-Do not point `spk dev-isolate` at `.ts` files yet. The command currently
-expects JavaScript modules that `workerd` can load directly. A first-class
-TypeScript transpile path for `spk dev-isolate` is still undecided.
+Do not point `spk dev-isolate` at `.ts` files. The command expects JavaScript
+modules that `workerd` can load directly. For the first isolate runtime
+iteration, TypeScript transpilation is intentionally outside `spk
+dev-isolate`; use an app-local build step such as the `esbuild` example above
+and pass the generated `.js` file to `spk`.
 
 ## Compatibility dates and flags
 
