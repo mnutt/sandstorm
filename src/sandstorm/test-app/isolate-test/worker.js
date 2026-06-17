@@ -1007,6 +1007,30 @@ export default {
           message: String(error?.message || error),
         };
       }
+      const remoteTarget = sandstorm(request, env).powerbox().claimedCapability({
+        type: "claimedCapability",
+        id: "remote-like-capability",
+      });
+      const remoteArgumentTarget = new CounterCapability();
+      remoteArgumentTarget.increment(37);
+      let remoteRpcTargetArgumentError;
+      try {
+        await remoteTarget.call("readOther", remoteArgumentTarget);
+      } catch (error) {
+        remoteRpcTargetArgumentError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+      let remoteClaimedCapabilityArgumentError;
+      try {
+        await remoteTarget.call("readOther", child);
+      } catch (error) {
+        remoteClaimedCapabilityArgumentError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
       const duplicate = await capability.dup();
       const duplicateIncrement = await duplicate.call("increment", 5);
       const disposeBeforeDuplicateDrop = disposedCounterCapabilities;
@@ -1191,6 +1215,10 @@ export default {
         sessionActions,
         missing,
         saveError,
+        remoteArguments: {
+          rpcTargetError: remoteRpcTargetArgumentError,
+          claimedCapabilityError: remoteClaimedCapabilityArgumentError,
+        },
         duplicate: {
           sourceId: capability.id,
           id: duplicate.id,

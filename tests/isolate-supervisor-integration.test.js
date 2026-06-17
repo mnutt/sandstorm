@@ -1032,6 +1032,12 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.missing.status, 404);
     assert.equal(selfTest.json.saveError.name, "Error");
     assert.match(selfTest.json.saveError.message, /transient and cannot be saved/);
+    assert.equal(selfTest.json.remoteArguments.rpcTargetError.name, "ValidationError");
+    assert.match(selfTest.json.remoteArguments.rpcTargetError.message,
+      /RpcTarget callback arguments cannot be passed to remote app-defined RPC calls/);
+    assert.equal(selfTest.json.remoteArguments.claimedCapabilityError.name, "ValidationError");
+    assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
+      /ClaimedCapability handles cannot be passed to remote app-defined RPC calls/);
     assert.equal(typeof selfTest.json.duplicate.id, "string");
     assert.notEqual(selfTest.json.duplicate.id, selfTest.json.duplicate.sourceId);
     assert.deepEqual(selfTest.json.duplicate.increment, { value: 14 });
