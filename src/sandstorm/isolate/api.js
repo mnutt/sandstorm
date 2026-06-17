@@ -978,6 +978,7 @@ async function callClaimedCapability(capability, method, args = []) {
   const temporaryCapabilities = [];
   try {
     const serializedArgs = await serializeCapabilityValue(capability.env, args, {
+      allowLocalCapabilityHandles: objectCapabilityIds.has(capability.id),
       temporaryCapabilities,
     });
     const response = await capability.fetch("/call", {
@@ -1085,6 +1086,11 @@ function wrapCapabilityValue(env, value) {
 
 async function serializeCapabilityValue(env, value, options = {}) {
   if (value instanceof RpcTarget) {
+    if (!options.allowLocalCapabilityHandles) {
+      throw new ValidationError(
+        "RpcTarget callback arguments cannot be passed to remote app-defined RPC calls yet; " +
+        "export a persistent object capability, save it, and pass the saved token instead");
+    }
     const capability = await createObjectCapability(env, value);
     options.temporaryCapabilities?.push(capability);
     return capability;
@@ -1095,8 +1101,27 @@ async function serializeCapabilityValue(env, value, options = {}) {
   if (!value || typeof value !== "object") {
     return value;
   }
-  if (value instanceof ClaimedCapability || value instanceof SavedCapability) {
+  if (value instanceof ClaimedCapability) {
+    if (!options.allowLocalCapabilityHandles) {
+      throw new ValidationError(
+        "ClaimedCapability handles cannot be passed to remote app-defined RPC calls; " +
+        "pass a SavedCapability token or saved token string and have the receiver restore it");
+    }
     return value.toJSON();
+  }
+  if (value instanceof SavedCapability) {
+    return value.toJSON();
+  }
+  if (value.type === "claimedCapability" && typeof value.id === "string") {
+    if (!options.allowLocalCapabilityHandles) {
+      throw new ValidationError(
+        "claimed capability handles cannot be passed to remote app-defined RPC calls; " +
+        "pass a saved capability token instead");
+    }
+    return {
+      type: "claimedCapability",
+      id: value.id,
+    };
   }
 
   const result = {};

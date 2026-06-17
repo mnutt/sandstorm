@@ -387,6 +387,15 @@ Development-only mocks can still use local service bindings, but production
 cross-grain wiring should be represented as saved capabilities or explicit
 future capability bindings, not as unresolved global service names.
 
+When using app-defined RPC over a restored cross-grain capability, do not pass
+live `ClaimedCapability` handles or raw `RpcTarget` callback objects as method
+arguments. Those handles are local to the sending grain's isolate supervisor.
+The helper rejects them for remote app-defined RPC calls instead of serializing
+an ID that the receiver cannot use. For cross-grain callbacks, export a
+persistent object capability, save it, pass the saved token string or
+`SavedCapability`, and have the receiver restore that saved capability before
+calling back.
+
 ## Browser-first Powerbox requests
 
 For now, isolate apps should open new Powerbox requests from the browser, then
