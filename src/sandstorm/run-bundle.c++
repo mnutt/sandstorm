@@ -3556,11 +3556,39 @@ private:
     }
   };
 
+  class MongoJsonAnyPointerHandler: public capnp::JsonCodec::Handler<capnp::DynamicValue> {
+  public:
+    void encode(const capnp::JsonCodec& codec, capnp::DynamicValue::Reader input,
+                capnp::JsonValue::Builder output) const override {
+      auto anyPointer = input.as<capnp::AnyPointer>();
+      capnp::MallocMessageBuilder message(anyPointer.targetSize().wordCount + 1);
+      message.setRoot(anyPointer);
+      auto flat = capnp::messageToFlatArray(message);
+      auto bytes = flat.asBytes();
+
+      auto call = output.initCall();
+      call.setFunction("BinData");
+      auto params = call.initParams(2);
+      params[0].setNumber(0);
+      params[1].setString(kj::encodeBase64(bytes, false));
+    }
+
+    capnp::Orphan<capnp::DynamicValue> decode(
+        const capnp::JsonCodec& codec, capnp::JsonValue::Reader input,
+        capnp::Orphanage orphanage) const override {
+      KJ_UNIMPLEMENTED("MongoJsonAnyPointerHandler::decode");
+    }
+  };
+
   template <typename T>
   kj::StringTree toMongoJson(T&& value) {
     capnp::JsonCodec json;
     MongoJsonBinaryHandler binHandler;
+    MongoJsonAnyPointerHandler anyPointerHandler;
     json.addTypeHandler(binHandler);
+    json.addTypeHandler(
+        capnp::Type(capnp::schema::Type::AnyPointer::Unconstrained::ANY_KIND),
+        anyPointerHandler);
     return json.encode(kj::fwd<T>(value));
   }
 
