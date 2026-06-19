@@ -1043,6 +1043,14 @@ test("isolate supervisor integration suite", {
       statsBeforeExport.json.claimedCapabilityCount + 1);
     assert.equal(statsAfterParentExport.json.dropNotifyGroupCount,
       statsBeforeExport.json.dropNotifyGroupCount + 1);
+    assert.equal(statsAfterParentExport.json.localExportCount,
+      statsBeforeExport.json.localExportCount + 1);
+    assert.equal(statsAfterParentExport.json.webSessionNativeCount,
+      statsBeforeExport.json.webSessionNativeCount + 1);
+    assert.equal(statsAfterParentExport.json.routeBackedWebSessionCount,
+      statsBeforeExport.json.routeBackedWebSessionCount + 1);
+    assert.equal(statsAfterParentExport.json.importedCount,
+      statsBeforeExport.json.importedCount);
 
     const capabilityInfo = await requestJson(
       fixture.sandstormApiSocket,
@@ -1101,6 +1109,14 @@ test("isolate supervisor integration suite", {
       statsAfterParentExport.json.claimedCapabilityCount + 1);
     assert.equal(statsAfterChildExport.json.dropNotifyGroupCount,
       statsAfterParentExport.json.dropNotifyGroupCount + 1);
+    assert.equal(statsAfterChildExport.json.localExportCount,
+      statsAfterParentExport.json.localExportCount + 1);
+    assert.equal(statsAfterChildExport.json.webSessionNativeCount,
+      statsAfterParentExport.json.webSessionNativeCount + 1);
+    assert.equal(statsAfterChildExport.json.routeBackedWebSessionCount,
+      statsAfterParentExport.json.routeBackedWebSessionCount + 1);
+    assert.equal(statsAfterChildExport.json.importedCount,
+      statsAfterParentExport.json.importedCount);
 
     async function callChild(method, args = []) {
       return requestJson(
@@ -1146,6 +1162,14 @@ test("isolate supervisor integration suite", {
       statsAfterParentExport.json.claimedCapabilityCount);
     assert.equal(statsAfterChildDrop.json.dropNotifyGroupCount,
       statsAfterParentExport.json.dropNotifyGroupCount);
+    assert.equal(statsAfterChildDrop.json.localExportCount,
+      statsAfterParentExport.json.localExportCount);
+    assert.equal(statsAfterChildDrop.json.webSessionNativeCount,
+      statsAfterParentExport.json.webSessionNativeCount);
+    assert.equal(statsAfterChildDrop.json.routeBackedWebSessionCount,
+      statsAfterParentExport.json.routeBackedWebSessionCount);
+    assert.equal(statsAfterChildDrop.json.importedCount,
+      statsAfterParentExport.json.importedCount);
 
     const disposeAfterChild = await requestJson(
       fixture.workerdSocket, "/object-capability-dispose-count");
@@ -1167,6 +1191,14 @@ test("isolate supervisor integration suite", {
       statsBeforeExport.json.claimedCapabilityCount);
     assert.equal(statsAfterParentDrop.json.dropNotifyGroupCount,
       statsBeforeExport.json.dropNotifyGroupCount);
+    assert.equal(statsAfterParentDrop.json.localExportCount,
+      statsBeforeExport.json.localExportCount);
+    assert.equal(statsAfterParentDrop.json.webSessionNativeCount,
+      statsBeforeExport.json.webSessionNativeCount);
+    assert.equal(statsAfterParentDrop.json.routeBackedWebSessionCount,
+      statsBeforeExport.json.routeBackedWebSessionCount);
+    assert.equal(statsAfterParentDrop.json.importedCount,
+      statsBeforeExport.json.importedCount);
 
     const disposeAfterParent = await requestJson(
       fixture.workerdSocket, "/object-capability-dispose-count");
@@ -1450,6 +1482,18 @@ test("isolate supervisor integration suite", {
     assert.equal(claimedStats.json.type, "claimedCapabilityStats");
     assert.equal(typeof claimedStats.json.claimedCapabilityCount, "number");
     assert.equal(typeof claimedStats.json.dropNotifyGroupCount, "number");
+    assert.equal(typeof claimedStats.json.localExportCount, "number");
+    assert.equal(typeof claimedStats.json.importedCount, "number");
+    assert.equal(typeof claimedStats.json.webSessionNativeCount, "number");
+    assert.equal(typeof claimedStats.json.apiSessionNativeCount, "number");
+    assert.equal(typeof claimedStats.json.outboundHttpNativeCount, "number");
+    assert.equal(typeof claimedStats.json.unknownNativeCount, "number");
+    assert.equal(typeof claimedStats.json.routeBackedWebSessionCount, "number");
+    assert.equal(typeof claimedStats.json.routeBackedApiSessionCount, "number");
+    assert.equal(typeof claimedStats.json.powerboxClaimCount, "number");
+    assert.equal(typeof claimedStats.json.powerboxOfferCount, "number");
+    assert.equal(typeof claimedStats.json.restoredCount, "number");
+    assert.equal(typeof claimedStats.json.tiedCount, "number");
 
     const permissions = await requestJson(fixture.sandstormApiSocket, "/permissions");
     assert.equal(permissions.statusCode, 200);
