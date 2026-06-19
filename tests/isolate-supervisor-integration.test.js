@@ -1725,6 +1725,47 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(nativeAppRpcCodec.json.stubMissingError.details, {
       name: "NoSuchMethod",
     });
+    assert.deepEqual(nativeAppRpcCodec.json.resolved.valueCallbackSlot,
+      nativeAppRpcCodec.json.stubSlot);
+    assert.deepEqual(nativeAppRpcCodec.json.resolved.callCallbackSlot,
+      nativeAppRpcCodec.json.stubSlot);
+    assert.deepEqual(nativeAppRpcCodec.json.resolved.resultReceiptSlot,
+      nativeAppRpcCodec.json.stubSlot);
+    assert.deepEqual(nativeAppRpcCodec.json.resolved.callbackValue, {
+      subject: "resolved-subject",
+      callback: nativeAppRpcCodec.json.stubSlot,
+      urgent: true,
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.resolved.transportCalls, [
+      {
+        slot: nativeAppRpcCodec.json.stubSlot,
+        call: {
+          method: "deliver",
+          args: [
+            { type: "text", value: "resolved-subject" },
+            { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
+            {
+              type: "object",
+              value: [{ name: "urgent", value: { type: "bool", value: true } }],
+            },
+          ],
+        },
+      },
+    ]);
+    assert.deepEqual(nativeAppRpcCodec.json.resolved.resolverCalls, [
+      {
+        slot: nativeAppRpcCodec.json.stubSlot,
+        name: "value.callback",
+      },
+      {
+        slot: nativeAppRpcCodec.json.stubSlot,
+        name: "call.args[1]",
+      },
+      {
+        slot: nativeAppRpcCodec.json.stubSlot,
+        name: "result.value.receipt",
+      },
+    ]);
     assert.equal(nativeAppRpcCodec.json.slotFrozen, true);
     assert.equal(nativeAppRpcCodec.json.rawTargetError.name, "ValidationError");
     assert.match(nativeAppRpcCodec.json.rawTargetError.message, /native capability slot/);
