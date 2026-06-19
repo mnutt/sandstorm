@@ -671,64 +671,6 @@ public:
   }
 
 private:
-  static void copyIsolateObjectCallValue(
-      IsolateObjectCallValue::Reader source, IsolateObjectCallValue::Builder target) {
-    switch (source.which()) {
-      case IsolateObjectCallValue::NULL_:
-        target.setNull();
-        break;
-      case IsolateObjectCallValue::BOOL:
-        target.setBool(source.getBool());
-        break;
-      case IsolateObjectCallValue::NUMBER:
-        target.setNumber(source.getNumber());
-        break;
-      case IsolateObjectCallValue::TEXT:
-        target.setText(source.getText());
-        break;
-      case IsolateObjectCallValue::DATA:
-        target.setData(source.getData());
-        break;
-      case IsolateObjectCallValue::LIST: {
-        auto sourceList = source.getList();
-        auto targetList = target.initList(sourceList.size());
-        for (auto i: kj::indices(sourceList)) {
-          copyIsolateObjectCallValue(sourceList[i], targetList[i]);
-        }
-        break;
-      }
-      case IsolateObjectCallValue::OBJECT: {
-        auto sourceFields = source.getObject();
-        auto targetFields = target.initObject(sourceFields.size());
-        for (auto i: kj::indices(sourceFields)) {
-          targetFields[i].setName(sourceFields[i].getName());
-          copyIsolateObjectCallValue(sourceFields[i].getValue(), targetFields[i].initValue());
-        }
-        break;
-      }
-      case IsolateObjectCallValue::CAPABILITY:
-        target.setCapability(source.getCapability());
-        break;
-    }
-  }
-
-  static void copyIsolateObjectCallResult(
-      IsolateObjectCallResult::Reader source, IsolateObjectCallResult::Builder target) {
-    switch (source.which()) {
-      case IsolateObjectCallResult::VALUE:
-        copyIsolateObjectCallValue(source.getValue(), target.initValue());
-        break;
-      case IsolateObjectCallResult::EXCEPTION: {
-        auto sourceException = source.getException();
-        auto targetException = target.initException();
-        targetException.setName(sourceException.getName());
-        targetException.setMessage(sourceException.getMessage());
-        targetException.setStack(sourceException.getStack());
-        break;
-      }
-    }
-  }
-
   kj::String label;
   uint& dropCount;
 };
@@ -750,6 +692,38 @@ void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
   KJ_REQUIRE(echoResult.which() == IsolateObjectCallResult::VALUE);
   KJ_REQUIRE(echoResult.getValue().which() == IsolateObjectCallValue::TEXT);
   KJ_REQUIRE(echoResult.getValue().getText() == "hello native object");
+
+  auto nestedEcho = root.callRequest();
+  nestedEcho.setMethod("echo");
+  auto nestedEchoArgs = nestedEcho.initArgs(1);
+  auto nestedArg = nestedEchoArgs[0].initObject(4);
+  nestedArg[0].setName("nothing");
+  nestedArg[0].initValue().setNull();
+  nestedArg[1].setName("flag");
+  nestedArg[1].initValue().setBool(true);
+  nestedArg[2].setName("bytes");
+  nestedArg[2].initValue().setData(kj::StringPtr("abc").asBytes());
+  nestedArg[3].setName("items");
+  auto nestedItems = nestedArg[3].initValue().initList(2);
+  nestedItems[0].setText("first");
+  nestedItems[1].setNumber(2);
+  auto nestedEchoResponse = nestedEcho.send().wait(waitScope);
+  auto nestedEchoResult = nestedEchoResponse.getResult();
+  KJ_REQUIRE(nestedEchoResult.which() == IsolateObjectCallResult::VALUE);
+  KJ_REQUIRE(nestedEchoResult.getValue().which() == IsolateObjectCallValue::OBJECT);
+  auto nestedFields = nestedEchoResult.getValue().getObject();
+  KJ_REQUIRE(nestedFields.size() == 4);
+  KJ_REQUIRE(nestedFields[0].getName() == "nothing");
+  KJ_REQUIRE(nestedFields[0].getValue().which() == IsolateObjectCallValue::NULL_);
+  KJ_REQUIRE(nestedFields[1].getName() == "flag");
+  KJ_REQUIRE(nestedFields[1].getValue().getBool());
+  KJ_REQUIRE(nestedFields[2].getName() == "bytes");
+  KJ_REQUIRE(kj::str(nestedFields[2].getValue().getData().asChars()) == "abc");
+  KJ_REQUIRE(nestedFields[3].getName() == "items");
+  auto echoedItems = nestedFields[3].getValue().getList();
+  KJ_REQUIRE(echoedItems.size() == 2);
+  KJ_REQUIRE(echoedItems[0].getText() == "first");
+  KJ_REQUIRE(echoedItems[1].getNumber() == 2);
 
   auto sum = root.callRequest();
   sum.setMethod("sum");
