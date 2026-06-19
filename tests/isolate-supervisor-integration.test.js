@@ -623,6 +623,7 @@ test("isolate supervisor integration suite", {
       pathPrefix: "/exported",
       persistent: true,
       hasDropNotify: false,
+      dropNotifyRefCount: 0,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -754,6 +755,7 @@ test("isolate supervisor integration suite", {
       pathPrefix: "",
       persistent: true,
       hasDropNotify: false,
+      dropNotifyRefCount: 0,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -867,6 +869,7 @@ test("isolate supervisor integration suite", {
       pathPrefix: "/api-exported",
       persistent: true,
       hasDropNotify: false,
+      dropNotifyRefCount: 0,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -923,6 +926,7 @@ test("isolate supervisor integration suite", {
       pathPrefix: "",
       persistent: true,
       hasDropNotify: false,
+      dropNotifyRefCount: 0,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -998,6 +1002,7 @@ test("isolate supervisor integration suite", {
     assert.match(capabilityInfo.json.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
     assert.equal(capabilityInfo.json.persistent, false);
     assert.equal(capabilityInfo.json.hasDropNotify, true);
+    assert.equal(capabilityInfo.json.dropNotifyRefCount, 1);
     assert.equal(capabilityInfo.json.hasNativeCapability, true);
     assert.equal(capabilityInfo.json.liveForwardable, true);
 
@@ -1104,6 +1109,7 @@ test("isolate supervisor integration suite", {
       selfTest.json.capabilityInfo.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
     assert.equal(selfTest.json.capabilityInfo.persistent, false);
     assert.equal(selfTest.json.capabilityInfo.hasDropNotify, true);
+    assert.equal(selfTest.json.capabilityInfo.dropNotifyRefCount, 1);
     assert.equal(selfTest.json.capabilityInfo.hasNativeCapability, true);
     assert.equal(selfTest.json.capabilityInfo.liveForwardable, true);
     assert.equal(typeof selfTest.json.childInfo.id, "string");
@@ -1114,6 +1120,7 @@ test("isolate supervisor integration suite", {
     assert.match(selfTest.json.childInfo.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
     assert.equal(selfTest.json.childInfo.persistent, false);
     assert.equal(selfTest.json.childInfo.hasDropNotify, true);
+    assert.equal(selfTest.json.childInfo.dropNotifyRefCount, 1);
     assert.equal(selfTest.json.childInfo.hasNativeCapability, true);
     assert.equal(selfTest.json.childInfo.liveForwardable, true);
     assert.deepEqual(selfTest.json.childFirst, { value: 11 });
@@ -1156,12 +1163,22 @@ test("isolate supervisor integration suite", {
       /native app-defined RPC transport is not implemented yet/);
     assert.equal(typeof selfTest.json.duplicate.id, "string");
     assert.notEqual(selfTest.json.duplicate.id, selfTest.json.duplicate.sourceId);
+    assert.equal(selfTest.json.duplicate.originalInfoWithDuplicateLive.id,
+      selfTest.json.duplicate.sourceId);
+    assert.equal(selfTest.json.duplicate.originalInfoWithDuplicateLive.dropNotifyRefCount, 2);
+    assert.equal(selfTest.json.duplicate.duplicateInfoBeforeDrop.id,
+      selfTest.json.duplicate.id);
+    assert.equal(selfTest.json.duplicate.duplicateInfoBeforeDrop.dropNotifyRefCount, 2);
     assert.deepEqual(selfTest.json.duplicate.increment, { value: 14 });
     assert.equal(selfTest.json.duplicate.dropOriginal.ok, true);
     assert.equal(selfTest.json.duplicate.disposeAfterOriginalDrop,
       selfTest.json.duplicate.disposeBeforeDrop);
+    assert.equal(selfTest.json.duplicate.duplicateInfoAfterOriginalDrop.id,
+      selfTest.json.duplicate.id);
+    assert.equal(selfTest.json.duplicate.duplicateInfoAfterOriginalDrop.dropNotifyRefCount, 1);
     assert.deepEqual(selfTest.json.duplicate.afterOriginalDrop, { value: 14 });
     assert.equal(selfTest.json.duplicate.dropDuplicate.ok, true);
+    assert.equal(selfTest.json.duplicate.duplicateInfoAfterDrop, null);
     assert.equal(selfTest.json.duplicate.disposeAfterDuplicateDrop,
       selfTest.json.duplicate.disposeBeforeDrop + 1);
     assert.deepEqual(selfTest.json.stable.first, { value: 17 });

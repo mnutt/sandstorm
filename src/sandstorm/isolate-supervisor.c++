@@ -220,6 +220,11 @@ ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
   };
 }
 
+struct ClaimedCapabilityInfo {
+  ClaimedCapabilityMetadata metadata;
+  uint dropNotifyRefCount = 0;
+};
+
 class IsolateSessionRegistry final: public kj::Refcounted {
 public:
   kj::String registerSession(SessionContext::Client context) {
@@ -305,9 +310,20 @@ public:
     return nullptr;
   }
 
-  kj::Maybe<ClaimedCapabilityMetadata> findClaimedCapabilityMetadata(kj::StringPtr id) {
+  kj::Maybe<ClaimedCapabilityInfo> findClaimedCapabilityInfo(kj::StringPtr id) {
     KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      return copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata);
+      uint dropNotifyRefCount = 0;
+      KJ_IF_MAYBE(groupId, claimedCapabilities[*index].dropNotifyGroupId) {
+        KJ_IF_MAYBE(groupIndex, findDropNotifyGroupIndex(*groupId)) {
+          dropNotifyRefCount = dropNotifyGroups[*groupIndex].refcount;
+        } else {
+          KJ_FAIL_REQUIRE("isolate claimed capability drop-notify group is missing");
+        }
+      }
+      return ClaimedCapabilityInfo {
+        copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata),
+        dropNotifyRefCount,
+      };
     }
 
     return nullptr;
@@ -4274,7 +4290,8 @@ private:
   }
 
   kj::String renderClaimedCapabilityInfo(kj::StringPtr id,
-      const ClaimedCapabilityMetadata& metadata) {
+      const ClaimedCapabilityInfo& info) {
+    auto& metadata = info.metadata;
     kj::Vector<char> json;
     json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  "));
     appendJsonField(json, "type", "claimedCapabilityInfo");
@@ -4290,6 +4307,8 @@ private:
     json.addAll(metadata.persistent ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"hasDropNotify\": "));
     json.addAll(metadata.hasDropNotify ? kj::StringPtr("true") : kj::StringPtr("false"));
+    json.addAll(kj::StringPtr(",\n  \"dropNotifyRefCount\": "));
+    json.addAll(kj::str(info.dropNotifyRefCount));
     json.addAll(kj::StringPtr(",\n  \"hasNativeCapability\": "));
     json.addAll(metadata.hasNativeCapability ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"liveForwardable\": "));
@@ -4307,8 +4326,8 @@ private:
       return sendBadRequest(response, *error);
     }
 
-    KJ_IF_MAYBE(metadata, host.sessions->findClaimedCapabilityMetadata(id)) {
-      return sendJson(response, 200, "OK", renderClaimedCapabilityInfo(id, *metadata));
+    KJ_IF_MAYBE(info, host.sessions->findClaimedCapabilityInfo(id)) {
+      return sendJson(response, 200, "OK", renderClaimedCapabilityInfo(id, *info));
     } else {
       return sendJson(response, 404, "Not Found", kj::heapString(
           "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
