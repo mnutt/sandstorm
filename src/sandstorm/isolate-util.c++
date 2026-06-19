@@ -39,6 +39,10 @@ const kj::HttpHeaderTable& getStructuredResponseHeaderTable() {
 
 }  // namespace
 
+IsolateObjectCallResult::Reader OwnedIsolateObjectCallResult::getResult() {
+  return message->getRoot<IsolateObjectCallResult>().asReader();
+}
+
 void copyIsolateObjectCallValue(
     IsolateObjectCallValue::Reader source, IsolateObjectCallValue::Builder target) {
   switch (source.which()) {
@@ -95,6 +99,23 @@ void copyIsolateObjectCallResult(
       break;
     }
   }
+}
+
+kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
+    IsolateObjectCapability::Client capability, kj::StringPtr method,
+    capnp::List<IsolateObjectCallValue>::Reader args) {
+  auto request = capability.callRequest();
+  request.setMethod(method);
+  auto requestArgs = request.initArgs(args.size());
+  for (auto i: kj::indices(args)) {
+    copyIsolateObjectCallValue(args[i], requestArgs[i]);
+  }
+
+  return request.send().then([](auto response) mutable {
+    auto message = kj::heap<capnp::MallocMessageBuilder>();
+    copyIsolateObjectCallResult(response.getResult(), message->initRoot<IsolateObjectCallResult>());
+    return OwnedIsolateObjectCallResult { kj::mv(message) };
+  });
 }
 
 bool isCanonicalPackagePath(kj::StringPtr path) {

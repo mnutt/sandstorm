@@ -683,19 +683,17 @@ void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
   IsolateObjectCapability::Client child =
       kj::heap<FakeIsolateObjectCapability>(kj::heapString("child"), childDropCount);
 
-  auto echo = root.callRequest();
-  echo.setMethod("echo");
-  auto echoArgs = echo.initArgs(1);
+  capnp::MallocMessageBuilder echoMessage;
+  auto echoArgs = echoMessage.initRoot<capnp::List<IsolateObjectCallValue>>(1);
   echoArgs[0].setText("hello native object");
-  auto echoResponse = echo.send().wait(waitScope);
-  auto echoResult = echoResponse.getResult();
+  auto echoOwned = callIsolateObjectCapability(root, "echo", echoArgs.asReader()).wait(waitScope);
+  auto echoResult = echoOwned.getResult();
   KJ_REQUIRE(echoResult.which() == IsolateObjectCallResult::VALUE);
   KJ_REQUIRE(echoResult.getValue().which() == IsolateObjectCallValue::TEXT);
   KJ_REQUIRE(echoResult.getValue().getText() == "hello native object");
 
-  auto nestedEcho = root.callRequest();
-  nestedEcho.setMethod("echo");
-  auto nestedEchoArgs = nestedEcho.initArgs(1);
+  capnp::MallocMessageBuilder nestedEchoMessage;
+  auto nestedEchoArgs = nestedEchoMessage.initRoot<capnp::List<IsolateObjectCallValue>>(1);
   auto nestedArg = nestedEchoArgs[0].initObject(4);
   nestedArg[0].setName("nothing");
   nestedArg[0].initValue().setNull();
@@ -707,8 +705,9 @@ void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
   auto nestedItems = nestedArg[3].initValue().initList(2);
   nestedItems[0].setText("first");
   nestedItems[1].setNumber(2);
-  auto nestedEchoResponse = nestedEcho.send().wait(waitScope);
-  auto nestedEchoResult = nestedEchoResponse.getResult();
+  auto nestedEchoOwned =
+      callIsolateObjectCapability(root, "echo", nestedEchoArgs.asReader()).wait(waitScope);
+  auto nestedEchoResult = nestedEchoOwned.getResult();
   KJ_REQUIRE(nestedEchoResult.which() == IsolateObjectCallResult::VALUE);
   KJ_REQUIRE(nestedEchoResult.getValue().which() == IsolateObjectCallValue::OBJECT);
   auto nestedFields = nestedEchoResult.getValue().getObject();
@@ -751,12 +750,12 @@ void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
   KJ_REQUIRE(fields[1].getName() == "argCount");
   KJ_REQUIRE(fields[1].getValue().getNumber() == 2);
 
-  auto callCap = root.callRequest();
-  callCap.setMethod("callCap");
-  auto callCapArgs = callCap.initArgs(1);
+  capnp::MallocMessageBuilder callCapMessage;
+  auto callCapArgs = callCapMessage.initRoot<capnp::List<IsolateObjectCallValue>>(1);
   callCapArgs[0].setCapability(child);
-  auto callCapResponse = callCap.send().wait(waitScope);
-  auto callCapResult = callCapResponse.getResult();
+  auto callCapOwned =
+      callIsolateObjectCapability(root, "callCap", callCapArgs.asReader()).wait(waitScope);
+  auto callCapResult = callCapOwned.getResult();
   KJ_REQUIRE(callCapResult.which() == IsolateObjectCallResult::VALUE);
   KJ_REQUIRE(callCapResult.getValue().which() == IsolateObjectCallValue::TEXT);
   KJ_REQUIRE(callCapResult.getValue().getText() == "from-capability");
