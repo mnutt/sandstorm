@@ -621,6 +621,12 @@ export function createNativeAppRpcFetchTransport(fetcher, route) {
         { status: response.status, body: result });
     }
 
+    if (!response.ok) {
+      throw new CapabilityCallError(
+        `native app RPC transport failed with status ${response.status}`,
+        { status: response.status, body: result });
+    }
+
     return result;
   };
 }
