@@ -1127,6 +1127,12 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.remoteArguments.claimedCapabilityError.name, "ValidationError");
     assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
       /ClaimedCapability handles cannot be passed to remote app-defined RPC calls/);
+    assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
+      /hasNativeCapability=true/);
+    assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
+      /liveForwardable=true/);
+    assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
+      /native app-defined RPC transport is not implemented yet/);
     assert.equal(typeof selfTest.json.duplicate.id, "string");
     assert.notEqual(selfTest.json.duplicate.id, selfTest.json.duplicate.sourceId);
     assert.deepEqual(selfTest.json.duplicate.increment, { value: 14 });
