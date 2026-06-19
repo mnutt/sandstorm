@@ -39,8 +39,50 @@ const kj::HttpHeaderTable& getStructuredResponseHeaderTable() {
 
 }  // namespace
 
+class IsolateObjectCapabilityServer final: public IsolateObjectCapability::Server {
+public:
+  explicit IsolateObjectCapabilityServer(kj::Own<IsolateObjectCallTarget> target)
+      : target(kj::mv(target)) {}
+
+  kj::Promise<void> call(CallContext context) override {
+    auto params = context.getParams();
+    auto method = kj::str(params.getMethod());
+    auto args = copyIsolateObjectCallArgs(params.getArgs());
+    return target->call(kj::mv(method), kj::mv(args))
+        .then([context](OwnedIsolateObjectCallResult&& result) mutable {
+      copyIsolateObjectCallResult(result.getResult(), context.getResults().initResult());
+    });
+  }
+
+  kj::Promise<void> drop(DropContext context) override {
+    (void)context;
+    return target->drop();
+  }
+
+private:
+  kj::Own<IsolateObjectCallTarget> target;
+};
+
+capnp::List<IsolateObjectCallValue>::Reader OwnedIsolateObjectCallArgs::getArgs() {
+  return message->getRoot<capnp::List<IsolateObjectCallValue>>().asReader();
+}
+
 IsolateObjectCallResult::Reader OwnedIsolateObjectCallResult::getResult() {
   return message->getRoot<IsolateObjectCallResult>().asReader();
+}
+
+kj::Promise<void> IsolateObjectCallTarget::drop() {
+  return kj::READY_NOW;
+}
+
+OwnedIsolateObjectCallArgs copyIsolateObjectCallArgs(
+    capnp::List<IsolateObjectCallValue>::Reader source) {
+  auto message = kj::heap<capnp::MallocMessageBuilder>();
+  auto args = message->initRoot<capnp::List<IsolateObjectCallValue>>(source.size());
+  for (auto i: kj::indices(source)) {
+    copyIsolateObjectCallValue(source[i], args[i]);
+  }
+  return OwnedIsolateObjectCallArgs { kj::mv(message) };
 }
 
 void copyIsolateObjectCallValue(
@@ -99,6 +141,11 @@ void copyIsolateObjectCallResult(
       break;
     }
   }
+}
+
+IsolateObjectCapability::Client makeIsolateObjectCapability(
+    kj::Own<IsolateObjectCallTarget> target) {
+  return kj::heap<IsolateObjectCapabilityServer>(kj::mv(target));
 }
 
 kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
