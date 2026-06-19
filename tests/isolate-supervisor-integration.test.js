@@ -1883,6 +1883,35 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(nativeAppRpcRoute.json.routeStub.missingError.details, {
       name: "NoSuchMethod",
     });
+    assert.equal(nativeAppRpcRoute.json.routeStub.transportErrors.nonJson.name,
+      "CapabilityCallError");
+    assert.equal(nativeAppRpcRoute.json.routeStub.transportErrors.nonJson.message,
+      "native app RPC transport returned non-JSON response with status 502");
+    assert.deepEqual(nativeAppRpcRoute.json.routeStub.transportErrors.nonJson.details, {
+      status: 502,
+      body: "not-json",
+    });
+    assert.equal(nativeAppRpcRoute.json.routeStub.transportErrors.invalidEnvelope.name,
+      "CapabilityCallError");
+    assert.equal(nativeAppRpcRoute.json.routeStub.transportErrors.invalidEnvelope.message,
+      "native app RPC transport returned invalid response with status 200");
+    assert.deepEqual(nativeAppRpcRoute.json.routeStub.transportErrors.invalidEnvelope.details, {
+      status: 200,
+      body: { ok: false },
+    });
+    assert.equal(nativeAppRpcRoute.json.routeStub.transportErrors.failedStatus.name,
+      "CapabilityCallError");
+    assert.equal(nativeAppRpcRoute.json.routeStub.transportErrors.failedStatus.message,
+      "native app RPC transport failed with status 503");
+    assert.deepEqual(nativeAppRpcRoute.json.routeStub.transportErrors.failedStatus.details, {
+      status: 503,
+      body: {
+        type: "exception",
+        name: "RouteFailure",
+        message: "route failed before dispatch",
+        stack: "",
+      },
+    });
 
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);

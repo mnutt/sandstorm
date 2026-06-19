@@ -1293,6 +1293,37 @@ export default {
           };
         }
 
+        const transportErrorCases = {};
+        async function captureTransportError(name, response) {
+          const testStub = createNativeAppRpcStub(
+            nativeCapabilitySlot(`transport-${name}`, { nativeInterface: "appObject" }),
+            createNativeAppRpcFetchTransport({
+              async fetch() {
+                return response;
+              },
+            }, "http://worker/native-app-rpc-transport-test"));
+          try {
+            await testStub.call("deliver");
+          } catch (error) {
+            transportErrorCases[name] = {
+              name: String(error?.name || "Error"),
+              message: String(error?.message || error),
+              details: {
+                status: error?.details?.status,
+                body: error?.details?.body,
+              },
+            };
+          }
+        }
+        await captureTransportError("nonJson", new Response("not-json", { status: 502 }));
+        await captureTransportError("invalidEnvelope", Response.json({ ok: false }));
+        await captureTransportError("failedStatus", Response.json({
+          type: "exception",
+          name: "RouteFailure",
+          message: "route failed before dispatch",
+          stack: "",
+        }, { status: 503 }));
+
         return Response.json({
           ok: true,
           value: {
@@ -1317,6 +1348,7 @@ export default {
             value: routeStubValue,
             rpcValue: routeStubRpcValue,
             missingError: routeStubMissingError,
+            transportErrors: transportErrorCases,
           },
         });
       } finally {
