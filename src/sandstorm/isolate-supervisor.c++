@@ -251,6 +251,7 @@ struct ClaimedCapabilityMetadata {
   kj::String pathPrefix = kj::heapString("");
   bool persistent = true;
   bool hasDropNotify = false;
+  bool supportsNativeAppRpcTransport = false;
   bool hasNativeCapability = true;
   bool liveForwardable = true;
 };
@@ -264,6 +265,7 @@ ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
     kj::heapString(metadata.pathPrefix),
     metadata.persistent,
     metadata.hasDropNotify,
+    metadata.supportsNativeAppRpcTransport,
     metadata.hasNativeCapability,
     metadata.liveForwardable,
   };
@@ -3220,6 +3222,7 @@ public:
           kj::heapString(""),
           true,
           false,
+          false,
           true,
           true,
         });
@@ -4377,6 +4380,9 @@ private:
     json.addAll(kj::StringPtr(",\n  \"supportsOutboundHttpFetch\": "));
     json.addAll(claimedCapabilitySupportsOutboundHttpFetch(metadata.nativeInterface)
         ? kj::StringPtr("true") : kj::StringPtr("false"));
+    json.addAll(kj::StringPtr(",\n  \"supportsNativeAppRpcTransport\": "));
+    json.addAll(metadata.supportsNativeAppRpcTransport
+        ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"hasNativeCapability\": "));
     json.addAll(metadata.hasNativeCapability ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"liveForwardable\": "));
@@ -4704,6 +4710,7 @@ private:
           : ClaimedCapabilityNativeInterface::API_SESSION,
       kj::heapString(pathPrefix),
       persistent,
+      false,
       false,
       true,
       true,
@@ -5147,6 +5154,7 @@ private:
               kj::heapString(""),
               true,
               false,
+              false,
               true,
               true,
             });
@@ -5419,6 +5427,7 @@ private:
                 kj::heapString(""),
                 true,
                 false,
+                false,
                 true,
                 true,
               });
@@ -5614,6 +5623,7 @@ private:
               ClaimedCapabilityNativeInterface::UNKNOWN,
               kj::heapString(""),
               true,
+              false,
               false,
               true,
               true,
