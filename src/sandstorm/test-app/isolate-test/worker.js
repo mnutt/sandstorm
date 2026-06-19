@@ -916,6 +916,8 @@ export default {
       const second = await capability.call("increment", 4);
       const current = await capability.call("get");
       const child = await capability.call("child");
+      const capabilityInfo = await capability.info();
+      const childInfo = await child.info();
       const childFirst = await child.call("increment", 11);
       const readChild = await capability.call("readOther", child);
       const stub = capability.asRpc();
@@ -1185,6 +1187,8 @@ export default {
         current,
         childClass: child instanceof ClaimedCapability,
         child: JSON.parse(JSON.stringify(child)),
+        capabilityInfo,
+        childInfo,
         childFirst,
         readChild,
         stubFirst,

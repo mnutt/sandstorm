@@ -86,7 +86,20 @@ async function queryClaimedCapabilityInfo(env, id) {
   if (!response.ok || !body.ok) {
     return null;
   }
+  const metadata = claimedCapabilityMetadata.get(id) || {};
+  claimedCapabilityMetadata.set(id, { ...metadata, ...body });
   return body;
+}
+
+async function claimedCapabilityInfo(env, capability, options = {}) {
+  const id = capabilityId(capability);
+  if (!options.refresh) {
+    const cached = claimedCapabilityMetadata.get(id);
+    if (cached?.type === "claimedCapabilityInfo") {
+      return cached;
+    }
+  }
+  return queryClaimedCapabilityInfo(env, id);
 }
 
 function powerboxFetcher(env) {
@@ -327,6 +340,10 @@ export class ClaimedCapability {
 
   asOutboundHttp() {
     return new OutboundHttpCapability(this);
+  }
+
+  info(options = {}) {
+    return claimedCapabilityInfo(this.#env, this, options);
   }
 
   save(options = {}) {
@@ -1028,6 +1045,7 @@ const CLAIMED_CAPABILITY_RPC_OWN_PROPERTIES = new Set([
   "call",
   "asRpc",
   "asOutboundHttp",
+  "info",
   "dup",
   "save",
   "drop",
@@ -1113,7 +1131,7 @@ async function serializeCapabilityValue(env, value, options = {}) {
   }
   if (value instanceof ClaimedCapability) {
     if (!options.allowLocalCapabilityHandles) {
-      const info = await queryClaimedCapabilityInfo(env, value.id);
+      const info = await claimedCapabilityInfo(env, value);
       const nativeState = info
         ? ` supervisor reports hasNativeCapability=${info.hasNativeCapability}, ` +
           `liveForwardable=${info.liveForwardable};`
@@ -1131,7 +1149,7 @@ async function serializeCapabilityValue(env, value, options = {}) {
   }
   if (value.type === "claimedCapability" && typeof value.id === "string") {
     if (!options.allowLocalCapabilityHandles) {
-      const info = await queryClaimedCapabilityInfo(env, value.id);
+      const info = await claimedCapabilityInfo(env, value);
       const nativeState = info
         ? ` supervisor reports hasNativeCapability=${info.hasNativeCapability}, ` +
           `liveForwardable=${info.liveForwardable};`
