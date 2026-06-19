@@ -259,6 +259,14 @@ export function nativeCapabilitySlot(id, options = {}) {
   return Object.freeze(slot);
 }
 
+function nativeAppRpcObjectFieldName(value, name = "field name") {
+  const fieldName = validate.string(value, name, { maxLength: 1024 });
+  if (fieldName === "__proto__" || fieldName === "constructor" || fieldName === "prototype") {
+    throw new ValidationError(`${name} is reserved`);
+  }
+  return fieldName;
+}
+
 export function serializeNativeAppRpcValue(value, name = "value") {
   if (value === null || value === undefined) {
     return { type: "null" };
@@ -307,9 +315,10 @@ export function serializeNativeAppRpcValue(value, name = "value") {
 
   const fields = [];
   for (const [key, item] of Object.entries(value)) {
+    const fieldName = nativeAppRpcObjectFieldName(key, `${name} field name`);
     fields.push({
-      name: key,
-      value: serializeNativeAppRpcValue(item, `${name}.${key}`),
+      name: fieldName,
+      value: serializeNativeAppRpcValue(item, `${name}.${fieldName}`),
     });
   }
   return { type: "object", value: fields };
@@ -345,11 +354,16 @@ export function hydrateNativeAppRpcValue(value, name = "value") {
         failValidation(`${name}.value`, "an array of fields", value.value);
       }
       const result = {};
+      const seen = new Set();
       for (const [index, field] of value.value.entries()) {
         if (!field || typeof field !== "object") {
           failValidation(`${name}.value[${index}]`, "a field object", field);
         }
-        const key = validate.string(field.name, `${name}.value[${index}].name`);
+        const key = nativeAppRpcObjectFieldName(field.name, `${name}.value[${index}].name`);
+        if (seen.has(key)) {
+          throw new ValidationError(`${name}.value contains duplicate field: ${key}`);
+        }
+        seen.add(key);
         result[key] = hydrateNativeAppRpcValue(field.value, `${name}.${key}`);
       }
       return result;

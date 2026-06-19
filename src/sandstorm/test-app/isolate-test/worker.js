@@ -1047,6 +1047,52 @@ export default {
         };
       }
 
+      let duplicateFieldError = null;
+      try {
+        hydrateNativeAppRpcValue({
+          type: "object",
+          value: [
+            { name: "same", value: { type: "number", value: 1 } },
+            { name: "same", value: { type: "number", value: 2 } },
+          ],
+        });
+      } catch (error) {
+        duplicateFieldError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+
+      let reservedFieldError = null;
+      try {
+        hydrateNativeAppRpcValue({
+          type: "object",
+          value: [
+            { name: "__proto__", value: { type: "text", value: "polluted" } },
+          ],
+        });
+      } catch (error) {
+        reservedFieldError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+
+      let reservedSerializeFieldError = null;
+      try {
+        serializeNativeAppRpcValue(Object.create(null, {
+          constructor: {
+            value: "reserved",
+            enumerable: true,
+          },
+        }));
+      } catch (error) {
+        reservedSerializeFieldError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+
       let exceptionError = null;
       try {
         hydrateNativeAppRpcResult(exceptionEnvelope);
@@ -1082,6 +1128,9 @@ export default {
         rawTargetError,
         invalidCapabilityError,
         reservedMethodError,
+        duplicateFieldError,
+        reservedFieldError,
+        reservedSerializeFieldError,
       });
     }
 
