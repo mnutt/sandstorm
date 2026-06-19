@@ -353,6 +353,15 @@ public:
     return nullptr;
   }
 
+  kj::Maybe<ClaimedCapabilityNativeInterface> findClaimedCapabilityNativeInterface(
+      kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
+      return claimedCapabilities[*index].metadata.nativeInterface;
+    }
+
+    return nullptr;
+  }
+
 private:
   kj::String storeClaimedCapabilityInternal(capnp::Capability::Client cap,
       ClaimedCapabilityMetadata metadata, kj::Maybe<kj::String> dropNotifyGroupId) {
@@ -4730,6 +4739,15 @@ private:
           "  \"error\": \"expected exactly one capability id, method, and path\"\n}\n"));
     }
 
+    KJ_IF_MAYBE(nativeInterface, host.sessions->findClaimedCapabilityNativeInterface(ids[0])) {
+      if (*nativeInterface == ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION) {
+        return sendJson(response, 400, "Bad Request", renderError(kj::str(
+            "claimed capability native interface ",
+            claimedCapabilityNativeInterfaceName(*nativeInterface),
+            " cannot be used with powerbox.fetch")));
+      }
+    }
+
     KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
       auto webSession = cap->castAs<WebSession>();
 
@@ -4816,6 +4834,16 @@ private:
       kj::StringPtr url, kj::Array<FetchHeader> outboundHeaderValues, kj::Array<byte> bodyBytes,
       kj::HttpService::Response& response) {
     auto params = getOutboundHttpFetchParams(url, outboundHeaderValues);
+
+    KJ_IF_MAYBE(nativeInterface, host.sessions->findClaimedCapabilityNativeInterface(params.id)) {
+      if (*nativeInterface != ClaimedCapabilityNativeInterface::UNKNOWN &&
+          *nativeInterface != ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION) {
+        return sendJson(response, 400, "Bad Request", renderError(kj::str(
+            "claimed capability native interface ",
+            claimedCapabilityNativeInterfaceName(*nativeInterface),
+            " cannot be used with powerbox.outboundHttpFetch")));
+      }
+    }
 
     KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(params.id)) {
       auto outbound = cap->castAs<OutboundHttpSession>();

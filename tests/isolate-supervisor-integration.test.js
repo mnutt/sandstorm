@@ -629,6 +629,16 @@ test("isolate supervisor integration suite", {
       liveForwardable: true,
     });
 
+    const wrongNativeFetch = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/outbound-http-fetch?id=${encodeURIComponent(capabilityId)}` +
+      `&method=GET&path=${encodeURIComponent("v1/test")}`,
+      { method: "POST" });
+    assert.equal(wrongNativeFetch.statusCode, 400, wrongNativeFetch.body);
+    assert.equal(wrongNativeFetch.json.ok, false);
+    assert.match(wrongNativeFetch.json.error, /native interface webSession/);
+    assert.match(wrongNativeFetch.json.error, /powerbox\.outboundHttpFetch/);
+
     const fetched = await requestJson(
       fixture.sandstormApiSocket,
       `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
@@ -876,6 +886,16 @@ test("isolate supervisor integration suite", {
       hasNativeCapability: true,
       liveForwardable: true,
     });
+
+    const wrongNativeFetch = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/outbound-http-fetch?id=${encodeURIComponent(capabilityId)}` +
+      `&method=GET&path=${encodeURIComponent("v1/test")}`,
+      { method: "POST" });
+    assert.equal(wrongNativeFetch.statusCode, 400, wrongNativeFetch.body);
+    assert.equal(wrongNativeFetch.json.ok, false);
+    assert.match(wrongNativeFetch.json.error, /native interface apiSession/);
+    assert.match(wrongNativeFetch.json.error, /powerbox\.outboundHttpFetch/);
 
     const fetched = await requestJson(
       fixture.sandstormApiSocket,
