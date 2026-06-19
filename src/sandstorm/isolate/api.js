@@ -1369,6 +1369,13 @@ async function dropSavedCapability(env, token) {
 }
 
 async function fetchClaimedCapability(env, capability, input, init = {}) {
+  const info = await claimedCapabilityInfo(env, capability);
+  if (info?.nativeInterface === "outboundHttpSession") {
+    throw new ValidationError(
+      "ClaimedCapability nativeInterface outboundHttpSession cannot be used with fetch(); " +
+      "use asOutboundHttp().fetch() instead");
+  }
+
   let request;
   if (input instanceof Request) {
     request = init === undefined ? input : new Request(input, init);
