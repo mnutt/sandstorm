@@ -17,15 +17,26 @@
 #ifndef SANDSTORM_ISOLATE_UTIL_H_
 #define SANDSTORM_ISOLATE_UTIL_H_
 
+#include <capnp/message.h>
+#include <kj/async.h>
 #include <kj/string.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
 
 namespace sandstorm {
 
+struct OwnedIsolateObjectCallResult {
+  kj::Own<capnp::MallocMessageBuilder> message;
+
+  IsolateObjectCallResult::Reader getResult();
+};
+
 void copyIsolateObjectCallValue(
     IsolateObjectCallValue::Reader source, IsolateObjectCallValue::Builder target);
 void copyIsolateObjectCallResult(
     IsolateObjectCallResult::Reader source, IsolateObjectCallResult::Builder target);
+kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
+    IsolateObjectCapability::Client capability, kj::StringPtr method,
+    capnp::List<IsolateObjectCallValue>::Reader args);
 bool isCanonicalPackagePath(kj::StringPtr path);
 kj::String isolateStorageKeyFromUrl(kj::StringPtr url);
 bool isValidIsolateStorageKey(kj::StringPtr key);
