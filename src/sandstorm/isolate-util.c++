@@ -63,6 +63,25 @@ private:
   kj::Own<IsolateObjectCallTarget> target;
 };
 
+class ImportedIsolateObjectCallTarget final: public IsolateObjectCallTarget {
+public:
+  explicit ImportedIsolateObjectCallTarget(IsolateObjectCapability::Client capability)
+      : capability(kj::mv(capability)) {}
+
+  kj::Promise<OwnedIsolateObjectCallResult> call(
+      kj::String method, OwnedIsolateObjectCallArgs args) override {
+    auto argReader = args.getArgs();
+    return callIsolateObjectCapability(capability, method, argReader);
+  }
+
+  kj::Promise<void> drop() override {
+    return capability.dropRequest().send().ignoreResult();
+  }
+
+private:
+  IsolateObjectCapability::Client capability;
+};
+
 capnp::List<IsolateObjectCallValue>::Reader OwnedIsolateObjectCallArgs::getArgs() {
   return message->getRoot<capnp::List<IsolateObjectCallValue>>().asReader();
 }
@@ -146,6 +165,11 @@ void copyIsolateObjectCallResult(
 IsolateObjectCapability::Client makeIsolateObjectCapability(
     kj::Own<IsolateObjectCallTarget> target) {
   return kj::heap<IsolateObjectCapabilityServer>(kj::mv(target));
+}
+
+kj::Own<IsolateObjectCallTarget> makeImportedIsolateObjectCallTarget(
+    IsolateObjectCapability::Client capability) {
+  return kj::heap<ImportedIsolateObjectCallTarget>(kj::mv(capability));
 }
 
 kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(

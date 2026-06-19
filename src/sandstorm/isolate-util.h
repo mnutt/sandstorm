@@ -53,6 +53,8 @@ void copyIsolateObjectCallResult(
     IsolateObjectCallResult::Reader source, IsolateObjectCallResult::Builder target);
 IsolateObjectCapability::Client makeIsolateObjectCapability(
     kj::Own<IsolateObjectCallTarget> target);
+kj::Own<IsolateObjectCallTarget> makeImportedIsolateObjectCallTarget(
+    IsolateObjectCapability::Client capability);
 kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
     IsolateObjectCapability::Client capability, kj::StringPtr method,
     capnp::List<IsolateObjectCallValue>::Reader args);
