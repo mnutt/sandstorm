@@ -8,6 +8,7 @@ import {
   SANDSTORM_HELPER_VERSIONS,
   SANDSTORM_RPC_VERSION,
   SavedCapability,
+  dispatchNativeAppRpcCall,
   hydrateNativeAppRpcCall,
   hydrateNativeAppRpcResult,
   hydrateNativeAppRpcValue,
@@ -995,6 +996,25 @@ export default {
         message: "remote failure",
         stack: "remote stack",
       });
+      const dispatchTarget = {
+        async deliver(subject, callback, options) {
+          return {
+            subject,
+            callback,
+            urgent: options.urgent,
+          };
+        },
+
+        fail() {
+          throw new TypeError("native dispatch failure");
+        },
+      };
+      const dispatchResult = await dispatchNativeAppRpcCall(dispatchTarget, callEnvelope);
+      const dispatchValue = hydrateNativeAppRpcResult(dispatchResult);
+      const missingDispatchResult = await dispatchNativeAppRpcCall(
+        dispatchTarget, serializeNativeAppRpcCall("missing", []));
+      const failedDispatchResult = await dispatchNativeAppRpcCall(
+        dispatchTarget, serializeNativeAppRpcCall("fail", []));
 
       let rawTargetError = null;
       try {
@@ -1053,6 +1073,10 @@ export default {
         resultValue,
         exceptionEnvelope,
         exceptionError,
+        dispatchResult,
+        dispatchValue,
+        missingDispatchResult,
+        failedDispatchResult,
         slotFrozen: Object.isFrozen(slot),
         rawTargetError,
         invalidCapabilityError,
