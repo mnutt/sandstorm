@@ -1593,11 +1593,61 @@ test("isolate supervisor integration suite", {
       items: ["first", 2, false],
       callback: { type: "nativeCapabilitySlot", id: "slot-1", nativeInterface: "appObject" },
     });
+    assert.deepEqual(nativeAppRpcCodec.json.callEnvelope, {
+      method: "deliver",
+      args: [
+        { type: "text", value: "subject" },
+        { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
+        {
+          type: "object",
+          value: [{ name: "urgent", value: { type: "bool", value: true } }],
+        },
+      ],
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.hydratedCall, {
+      method: "deliver",
+      args: [
+        "subject",
+        { type: "nativeCapabilitySlot", id: "slot-1", nativeInterface: "appObject" },
+        { urgent: true },
+      ],
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.resultEnvelope, {
+      type: "value",
+      value: {
+        type: "object",
+        value: [
+          { name: "accepted", value: { type: "bool", value: true } },
+          {
+            name: "receipt",
+            value: { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
+          },
+        ],
+      },
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.resultValue, {
+      accepted: true,
+      receipt: { type: "nativeCapabilitySlot", id: "slot-1", nativeInterface: "appObject" },
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.exceptionEnvelope, {
+      type: "exception",
+      name: "RemoteAppError",
+      message: "remote failure",
+      stack: "remote stack",
+    });
+    assert.equal(nativeAppRpcCodec.json.exceptionError.name, "CapabilityCallError");
+    assert.equal(nativeAppRpcCodec.json.exceptionError.message, "remote failure");
+    assert.deepEqual(nativeAppRpcCodec.json.exceptionError.details, {
+      name: "RemoteAppError",
+      stack: "remote stack",
+    });
     assert.equal(nativeAppRpcCodec.json.slotFrozen, true);
     assert.equal(nativeAppRpcCodec.json.rawTargetError.name, "ValidationError");
     assert.match(nativeAppRpcCodec.json.rawTargetError.message, /native capability slot/);
     assert.equal(nativeAppRpcCodec.json.invalidCapabilityError.name, "ValidationError");
     assert.match(nativeAppRpcCodec.json.invalidCapabilityError.message, /at least 1 characters/);
+    assert.equal(nativeAppRpcCodec.json.reservedMethodError.name, "ValidationError");
+    assert.match(nativeAppRpcCodec.json.reservedMethodError.message, /reserved/);
 
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);
