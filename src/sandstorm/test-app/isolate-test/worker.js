@@ -1043,6 +1043,36 @@ export default {
         };
       }
 
+      const droppableTransportCalls = [];
+      const droppableReleaseCalls = [];
+      const droppableStub = createNativeAppRpcStub(
+        slot,
+        async (transportSlot, call) => {
+          droppableTransportCalls.push({ slot: transportSlot, call });
+          return dispatchNativeAppRpcCall(dispatchTarget, call);
+        },
+        {
+          release(releasedSlot) {
+            droppableReleaseCalls.push(releasedSlot);
+            return { ok: true, released: releasedSlot.id };
+          },
+        });
+      const droppableValue = await droppableStub.call("deliver", "droppable-subject", slot, {
+        urgent: false,
+      });
+      const dropFirst = await droppableStub.drop();
+      const dropSecond = await droppableStub.drop();
+      const dropViaProxy = await droppableStub.asRpc().drop();
+      let callAfterDropError = null;
+      try {
+        await droppableStub.call("deliver", "after-drop", slot, { urgent: true });
+      } catch (error) {
+        callAfterDropError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+
       const resolvedTransportCalls = [];
       const resolverCalls = [];
       const resolveCapabilitySlot = (resolvedSlot, context) => {
@@ -1171,6 +1201,15 @@ export default {
         stubCallValue,
         stubRpcValue,
         stubMissingError,
+        droppable: {
+          value: droppableValue,
+          dropFirst,
+          dropSecond,
+          dropViaProxy,
+          callAfterDropError,
+          transportCalls: droppableTransportCalls,
+          releaseCalls: droppableReleaseCalls,
+        },
         resolved: {
           valueCallbackSlot: resolvedValue.callback.slot,
           callCallbackSlot: resolvedCall.args[1].slot,
