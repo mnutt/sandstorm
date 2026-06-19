@@ -634,13 +634,20 @@ async function saveClaimedCapability(env, capability, options = {}) {
   return wrapSavedCapability(env, await postPowerbox(env, `powerbox/save?id=${id}&label=${label}`));
 }
 
+function duplicateLocalClaimedCapabilityMetadata(metadata) {
+  if (!metadata?.transientObjectCapability) {
+    return undefined;
+  }
+  return { transientObjectCapability: true };
+}
+
 async function duplicateClaimedCapability(env, capability) {
   const sourceId = capabilityId(capability);
   const duplicated = wrapClaimedCapability(
     env, await postPowerbox(env, `powerbox/dup?id=${encodeURIComponent(sourceId)}`));
-  const metadata = claimedCapabilityMetadata.get(sourceId);
+  const metadata = duplicateLocalClaimedCapabilityMetadata(claimedCapabilityMetadata.get(sourceId));
   if (metadata) {
-    claimedCapabilityMetadata.set(duplicated.id, { ...metadata });
+    claimedCapabilityMetadata.set(duplicated.id, metadata);
   }
   const objectId = objectCapabilityIds.get(sourceId);
   if (objectId) {
