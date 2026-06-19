@@ -276,6 +276,11 @@ struct ClaimedCapabilityInfo {
   uint dropNotifyRefCount = 0;
 };
 
+struct ClaimedCapabilityStats {
+  uint claimedCapabilityCount = 0;
+  uint dropNotifyGroupCount = 0;
+};
+
 class IsolateSessionRegistry final: public kj::Refcounted {
 public:
   kj::String registerSession(SessionContext::Client context) {
@@ -387,6 +392,13 @@ public:
     }
 
     return nullptr;
+  }
+
+  ClaimedCapabilityStats getClaimedCapabilityStats() {
+    return ClaimedCapabilityStats {
+      static_cast<uint>(claimedCapabilities.size()),
+      static_cast<uint>(dropNotifyGroups.size()),
+    };
   }
 
 private:
@@ -4054,6 +4066,8 @@ public:
         return sendJson(response, 200, "OK", renderCapabilities());
       } else if (route == "/capabilities/claimed") {
         return claimedCapabilityInfo(path, response);
+      } else if (route == "/capabilities/claimed-stats") {
+        return sendJson(response, 200, "OK", renderClaimedCapabilityStats());
       } else if (route == "/runtime") {
         return sendJson(response, 200, "OK", renderRuntime());
       } else if (route == "/modules") {
@@ -4347,7 +4361,18 @@ private:
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\", "
-        "\"capabilities.claimed\"]\n"
+        "\"capabilities.claimed\", \"capabilities.claimedStats\"]\n"
+        "}\n");
+  }
+
+  kj::String renderClaimedCapabilityStats() {
+    auto stats = host.sessions->getClaimedCapabilityStats();
+    return kj::str(
+        "{\n"
+        "  \"ok\": true,\n"
+        "  \"type\": \"claimedCapabilityStats\",\n"
+        "  \"claimedCapabilityCount\": ", stats.claimedCapabilityCount, ",\n"
+        "  \"dropNotifyGroupCount\": ", stats.dropNotifyGroupCount, "\n"
         "}\n");
   }
 

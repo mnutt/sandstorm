@@ -1024,6 +1024,10 @@ test("isolate supervisor integration suite", {
   });
 
   await t.test("exports JavaScript object capabilities", async () => {
+    const statsBeforeExport = await requestJson(
+      fixture.sandstormApiSocket, "/capabilities/claimed-stats");
+    assert.equal(statsBeforeExport.statusCode, 200, statsBeforeExport.body);
+
     const exported = await requestJson(fixture.workerdSocket, "/export-object-capability");
     assert.equal(exported.statusCode, 200, exported.body + formatOutput(
       fixture.stdout, fixture.stderr));
@@ -1031,6 +1035,14 @@ test("isolate supervisor integration suite", {
     assert.equal(exported.json.capabilityClass, true);
     assert.equal(exported.json.capability.type, "claimedCapability");
     assert.equal(typeof exported.json.capability.id, "string");
+
+    const statsAfterParentExport = await requestJson(
+      fixture.sandstormApiSocket, "/capabilities/claimed-stats");
+    assert.equal(statsAfterParentExport.statusCode, 200, statsAfterParentExport.body);
+    assert.equal(statsAfterParentExport.json.claimedCapabilityCount,
+      statsBeforeExport.json.claimedCapabilityCount + 1);
+    assert.equal(statsAfterParentExport.json.dropNotifyGroupCount,
+      statsBeforeExport.json.dropNotifyGroupCount + 1);
 
     const capabilityInfo = await requestJson(
       fixture.sandstormApiSocket,
@@ -1082,6 +1094,14 @@ test("isolate supervisor integration suite", {
     assert.equal(child.json.result.type, "claimedCapability");
     assert.equal(typeof child.json.result.id, "string");
 
+    const statsAfterChildExport = await requestJson(
+      fixture.sandstormApiSocket, "/capabilities/claimed-stats");
+    assert.equal(statsAfterChildExport.statusCode, 200, statsAfterChildExport.body);
+    assert.equal(statsAfterChildExport.json.claimedCapabilityCount,
+      statsAfterParentExport.json.claimedCapabilityCount + 1);
+    assert.equal(statsAfterChildExport.json.dropNotifyGroupCount,
+      statsAfterParentExport.json.dropNotifyGroupCount + 1);
+
     async function callChild(method, args = []) {
       return requestJson(
         fixture.sandstormApiSocket,
@@ -1119,6 +1139,14 @@ test("isolate supervisor integration suite", {
     assert.equal(dropChild.statusCode, 200, dropChild.body);
     assert.equal(dropChild.json.ok, true);
 
+    const statsAfterChildDrop = await requestJson(
+      fixture.sandstormApiSocket, "/capabilities/claimed-stats");
+    assert.equal(statsAfterChildDrop.statusCode, 200, statsAfterChildDrop.body);
+    assert.equal(statsAfterChildDrop.json.claimedCapabilityCount,
+      statsAfterParentExport.json.claimedCapabilityCount);
+    assert.equal(statsAfterChildDrop.json.dropNotifyGroupCount,
+      statsAfterParentExport.json.dropNotifyGroupCount);
+
     const disposeAfterChild = await requestJson(
       fixture.workerdSocket, "/object-capability-dispose-count");
     assert.equal(disposeAfterChild.statusCode, 200, disposeAfterChild.body);
@@ -1131,6 +1159,14 @@ test("isolate supervisor integration suite", {
       { method: "POST" });
     assert.equal(drop.statusCode, 200, drop.body);
     assert.equal(drop.json.ok, true);
+
+    const statsAfterParentDrop = await requestJson(
+      fixture.sandstormApiSocket, "/capabilities/claimed-stats");
+    assert.equal(statsAfterParentDrop.statusCode, 200, statsAfterParentDrop.body);
+    assert.equal(statsAfterParentDrop.json.claimedCapabilityCount,
+      statsBeforeExport.json.claimedCapabilityCount);
+    assert.equal(statsAfterParentDrop.json.dropNotifyGroupCount,
+      statsBeforeExport.json.dropNotifyGroupCount);
 
     const disposeAfterParent = await requestJson(
       fixture.workerdSocket, "/object-capability-dispose-count");
@@ -1405,6 +1441,15 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("capabilities.webSession"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.apiSession"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimed"));
+    assert.ok(capabilities.json.capabilities.includes("capabilities.claimedStats"));
+
+    const claimedStats = await requestJson(
+      fixture.sandstormApiSocket, "/capabilities/claimed-stats");
+    assert.equal(claimedStats.statusCode, 200, claimedStats.body);
+    assert.equal(claimedStats.json.ok, true);
+    assert.equal(claimedStats.json.type, "claimedCapabilityStats");
+    assert.equal(typeof claimedStats.json.claimedCapabilityCount, "number");
+    assert.equal(typeof claimedStats.json.dropNotifyGroupCount, "number");
 
     const permissions = await requestJson(fixture.sandstormApiSocket, "/permissions");
     assert.equal(permissions.statusCode, 200);
