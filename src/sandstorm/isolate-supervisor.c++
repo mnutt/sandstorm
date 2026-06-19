@@ -170,6 +170,7 @@ enum class ClaimedCapabilityNativeInterface {
   WEB_SESSION,
   API_SESSION,
   OUTBOUND_HTTP_SESSION,
+  APP_OBJECT,
 };
 
 kj::StringPtr claimedCapabilityKindName(ClaimedCapabilityKind kind) {
@@ -215,6 +216,8 @@ kj::StringPtr claimedCapabilityNativeInterfaceName(
       return "apiSession";
     case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
       return "outboundHttpSession";
+    case ClaimedCapabilityNativeInterface::APP_OBJECT:
+      return "appObject";
   }
   KJ_UNREACHABLE;
 }
@@ -226,6 +229,7 @@ bool claimedCapabilitySupportsWebFetch(ClaimedCapabilityNativeInterface nativeIn
     case ClaimedCapabilityNativeInterface::API_SESSION:
       return true;
     case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
+    case ClaimedCapabilityNativeInterface::APP_OBJECT:
       return false;
   }
   KJ_UNREACHABLE;
@@ -239,6 +243,21 @@ bool claimedCapabilitySupportsOutboundHttpFetch(
       return true;
     case ClaimedCapabilityNativeInterface::WEB_SESSION:
     case ClaimedCapabilityNativeInterface::API_SESSION:
+    case ClaimedCapabilityNativeInterface::APP_OBJECT:
+      return false;
+  }
+  KJ_UNREACHABLE;
+}
+
+bool claimedCapabilitySupportsNativeAppRpcTransport(
+    ClaimedCapabilityNativeInterface nativeInterface) {
+  switch (nativeInterface) {
+    case ClaimedCapabilityNativeInterface::APP_OBJECT:
+      return true;
+    case ClaimedCapabilityNativeInterface::UNKNOWN:
+    case ClaimedCapabilityNativeInterface::WEB_SESSION:
+    case ClaimedCapabilityNativeInterface::API_SESSION:
+    case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
       return false;
   }
   KJ_UNREACHABLE;
@@ -300,6 +319,7 @@ struct ClaimedCapabilityStats {
   uint webSessionNativeCount = 0;
   uint apiSessionNativeCount = 0;
   uint outboundHttpNativeCount = 0;
+  uint appObjectNativeCount = 0;
   uint unknownNativeCount = 0;
   uint routeBackedWebSessionCount = 0;
   uint routeBackedApiSessionCount = 0;
@@ -448,6 +468,9 @@ public:
           break;
         case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
           ++stats.outboundHttpNativeCount;
+          break;
+        case ClaimedCapabilityNativeInterface::APP_OBJECT:
+          ++stats.appObjectNativeCount;
           break;
         case ClaimedCapabilityNativeInterface::UNKNOWN:
           ++stats.unknownNativeCount;
@@ -4477,6 +4500,7 @@ private:
         "  \"webSessionNativeCount\": ", stats.webSessionNativeCount, ",\n"
         "  \"apiSessionNativeCount\": ", stats.apiSessionNativeCount, ",\n"
         "  \"outboundHttpNativeCount\": ", stats.outboundHttpNativeCount, ",\n"
+        "  \"appObjectNativeCount\": ", stats.appObjectNativeCount, ",\n"
         "  \"unknownNativeCount\": ", stats.unknownNativeCount, ",\n"
         "  \"routeBackedWebSessionCount\": ", stats.routeBackedWebSessionCount, ",\n"
         "  \"routeBackedApiSessionCount\": ", stats.routeBackedApiSessionCount, ",\n"
@@ -4517,7 +4541,8 @@ private:
     json.addAll(claimedCapabilitySupportsOutboundHttpFetch(metadata.nativeInterface)
         ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"supportsNativeAppRpcTransport\": "));
-    json.addAll(metadata.supportsNativeAppRpcTransport
+    json.addAll((metadata.supportsNativeAppRpcTransport ||
+        claimedCapabilitySupportsNativeAppRpcTransport(metadata.nativeInterface))
         ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"hasNativeCapability\": "));
     json.addAll(metadata.hasNativeCapability ? kj::StringPtr("true") : kj::StringPtr("false"));
@@ -4914,7 +4939,7 @@ private:
     }
 
     KJ_IF_MAYBE(nativeInterface, host.sessions->findClaimedCapabilityNativeInterface(ids[0])) {
-      if (*nativeInterface == ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION) {
+      if (!claimedCapabilitySupportsWebFetch(*nativeInterface)) {
         return sendJson(response, 400, "Bad Request", renderError(kj::str(
             "claimed capability native interface ",
             claimedCapabilityNativeInterfaceName(*nativeInterface),

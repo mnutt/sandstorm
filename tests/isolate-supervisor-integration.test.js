@@ -1487,6 +1487,7 @@ test("isolate supervisor integration suite", {
     assert.equal(typeof claimedStats.json.webSessionNativeCount, "number");
     assert.equal(typeof claimedStats.json.apiSessionNativeCount, "number");
     assert.equal(typeof claimedStats.json.outboundHttpNativeCount, "number");
+    assert.equal(typeof claimedStats.json.appObjectNativeCount, "number");
     assert.equal(typeof claimedStats.json.unknownNativeCount, "number");
     assert.equal(typeof claimedStats.json.routeBackedWebSessionCount, "number");
     assert.equal(typeof claimedStats.json.routeBackedApiSessionCount, "number");
@@ -1536,11 +1537,20 @@ test("isolate supervisor integration suite", {
     assert.equal(nativeInterfaceValidation.json.ok, true);
     assert.deepEqual(nativeInterfaceValidation.json.calls, [
       "http://sandstorm/capabilities/claimed?id=mock-outbound",
+      "http://sandstorm/capabilities/claimed?id=mock-app-object",
     ]);
     assert.equal(nativeInterfaceValidation.json.fetchError.name, "ValidationError");
     assert.match(nativeInterfaceValidation.json.fetchError.message,
       /nativeInterface outboundHttpSession/);
     assert.match(nativeInterfaceValidation.json.fetchError.message, /asOutboundHttp\(\)\.fetch/);
+    assert.equal(nativeInterfaceValidation.json.appObjectFetchError.name, "ValidationError");
+    assert.match(nativeInterfaceValidation.json.appObjectFetchError.message,
+      /nativeInterface appObject/);
+    assert.match(nativeInterfaceValidation.json.appObjectFetchError.message,
+      /app-defined RPC transport/);
+    assert.equal(nativeInterfaceValidation.json.appObjectOutboundError.name, "ValidationError");
+    assert.match(nativeInterfaceValidation.json.appObjectOutboundError.message,
+      /nativeInterface appObject/);
 
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);
