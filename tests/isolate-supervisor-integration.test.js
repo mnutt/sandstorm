@@ -504,7 +504,13 @@ test("isolate supervisor integration suite", {
     await requireExecutable(
       WEBSESSION_CLIENT_BIN,
       "Build the project first, e.g. make tmp/.ekam-run.");
-    await runCommand(WEBSESSION_CLIENT_BIN, [fixture.supervisorSocket]);
+    try {
+      await runCommand(WEBSESSION_CLIENT_BIN, [fixture.supervisorSocket]);
+    } catch (err) {
+      throw new Error(`${err.message}${formatOutput(fixture.stdout, fixture.stderr)}`, {
+        cause: err,
+      });
+    }
     await fixture.restartCore();
   });
 
@@ -604,6 +610,20 @@ test("isolate supervisor integration suite", {
     assert.equal(typeof exported.json.capability.id, "string");
 
     const capabilityId = exported.json.capability.id;
+    const capabilityInfo = await requestJson(
+      fixture.sandstormApiSocket,
+      `/capabilities/claimed?id=${encodeURIComponent(capabilityId)}`);
+    assert.equal(capabilityInfo.statusCode, 200, capabilityInfo.body);
+    assert.deepEqual(capabilityInfo.json, {
+      ok: true,
+      type: "claimedCapabilityInfo",
+      id: capabilityId,
+      kind: "routeBackedWebSession",
+      pathPrefix: "/exported",
+      persistent: true,
+      hasDropNotify: false,
+    });
+
     const fetched = await requestJson(
       fixture.sandstormApiSocket,
       `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
@@ -718,6 +738,20 @@ test("isolate supervisor integration suite", {
     assert.equal(restored.json.type, "claimedCapability");
     assert.equal(typeof restored.json.id, "string");
 
+    const restoredInfo = await requestJson(
+      fixture.sandstormApiSocket,
+      `/capabilities/claimed?id=${encodeURIComponent(restored.json.id)}`);
+    assert.equal(restoredInfo.statusCode, 200, restoredInfo.body);
+    assert.deepEqual(restoredInfo.json, {
+      ok: true,
+      type: "claimedCapabilityInfo",
+      id: restored.json.id,
+      kind: "restored",
+      pathPrefix: "",
+      persistent: true,
+      hasDropNotify: false,
+    });
+
     const restoredFetch = await requestJson(
       fixture.sandstormApiSocket,
       `/powerbox/fetch?id=${encodeURIComponent(restored.json.id)}` +
@@ -814,6 +848,20 @@ test("isolate supervisor integration suite", {
     assert.equal(typeof exported.json.capability.id, "string");
 
     const capabilityId = exported.json.capability.id;
+    const capabilityInfo = await requestJson(
+      fixture.sandstormApiSocket,
+      `/capabilities/claimed?id=${encodeURIComponent(capabilityId)}`);
+    assert.equal(capabilityInfo.statusCode, 200, capabilityInfo.body);
+    assert.deepEqual(capabilityInfo.json, {
+      ok: true,
+      type: "claimedCapabilityInfo",
+      id: capabilityId,
+      kind: "routeBackedApiSession",
+      pathPrefix: "/api-exported",
+      persistent: true,
+      hasDropNotify: false,
+    });
+
     const fetched = await requestJson(
       fixture.sandstormApiSocket,
       `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
@@ -852,6 +900,20 @@ test("isolate supervisor integration suite", {
     assert.equal(restored.json.ok, true);
     assert.equal(restored.json.type, "claimedCapability");
     assert.equal(typeof restored.json.id, "string");
+
+    const restoredInfo = await requestJson(
+      fixture.sandstormApiSocket,
+      `/capabilities/claimed?id=${encodeURIComponent(restored.json.id)}`);
+    assert.equal(restoredInfo.statusCode, 200, restoredInfo.body);
+    assert.deepEqual(restoredInfo.json, {
+      ok: true,
+      type: "claimedCapabilityInfo",
+      id: restored.json.id,
+      kind: "restored",
+      pathPrefix: "",
+      persistent: true,
+      hasDropNotify: false,
+    });
 
     const restoredFetch = await requestJson(
       fixture.sandstormApiSocket,
@@ -911,6 +973,18 @@ test("isolate supervisor integration suite", {
     assert.equal(exported.json.capabilityClass, true);
     assert.equal(exported.json.capability.type, "claimedCapability");
     assert.equal(typeof exported.json.capability.id, "string");
+
+    const capabilityInfo = await requestJson(
+      fixture.sandstormApiSocket,
+      `/capabilities/claimed?id=${encodeURIComponent(exported.json.capability.id)}`);
+    assert.equal(capabilityInfo.statusCode, 200, capabilityInfo.body);
+    assert.equal(capabilityInfo.json.ok, true);
+    assert.equal(capabilityInfo.json.type, "claimedCapabilityInfo");
+    assert.equal(capabilityInfo.json.id, exported.json.capability.id);
+    assert.equal(capabilityInfo.json.kind, "routeBackedWebSession");
+    assert.match(capabilityInfo.json.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
+    assert.equal(capabilityInfo.json.persistent, false);
+    assert.equal(capabilityInfo.json.hasDropNotify, true);
 
     async function callObjectCapability(method, args = []) {
       return requestJson(
