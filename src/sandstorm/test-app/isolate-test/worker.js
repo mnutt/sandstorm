@@ -888,6 +888,8 @@ export default {
                 persistent: true,
                 hasDropNotify: false,
                 dropNotifyRefCount: 0,
+                supportsWebFetch: false,
+                supportsOutboundHttpFetch: true,
                 hasNativeCapability: true,
                 liveForwardable: true,
               });

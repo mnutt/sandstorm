@@ -1370,7 +1370,9 @@ async function dropSavedCapability(env, token) {
 
 async function fetchClaimedCapability(env, capability, input, init = {}) {
   const info = await claimedCapabilityInfo(env, capability);
-  if (info?.nativeInterface === "outboundHttpSession") {
+  if (info?.supportsWebFetch === false || (
+      info?.supportsWebFetch === undefined &&
+      info?.nativeInterface === "outboundHttpSession")) {
     throw new ValidationError(
       "ClaimedCapability nativeInterface outboundHttpSession cannot be used with fetch(); " +
       "use asOutboundHttp().fetch() instead");
@@ -1439,9 +1441,11 @@ function outboundHttpRequest(input, init = {}) {
 
 async function fetchOutboundHttpCapability(capability, input, init = {}) {
   const info = await claimedCapabilityInfo(capability.env, capability);
-  if (info?.nativeInterface !== undefined &&
+  if (info?.supportsOutboundHttpFetch === false || (
+      info?.supportsOutboundHttpFetch === undefined &&
+      info?.nativeInterface !== undefined &&
       info.nativeInterface !== "unknown" &&
-      info.nativeInterface !== "outboundHttpSession") {
+      info.nativeInterface !== "outboundHttpSession")) {
     throw new ValidationError(
       `ClaimedCapability nativeInterface ${info.nativeInterface} cannot be used as outbound HTTP`);
   }
