@@ -677,10 +677,16 @@ private:
 void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
   uint rootDropCount = 0;
   uint childDropCount = 0;
+  uint remoteDropCount = 0;
+  uint callbackDropCount = 0;
   IsolateObjectCapability::Client root = makeIsolateObjectCapability(
       kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("root"), rootDropCount));
   IsolateObjectCapability::Client child = makeIsolateObjectCapability(
       kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("child"), childDropCount));
+  IsolateObjectCapability::Client remote = makeIsolateObjectCapability(
+      kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("remote"), remoteDropCount));
+  IsolateObjectCapability::Client callback = makeIsolateObjectCapability(
+      kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("callback"), callbackDropCount));
 
   capnp::MallocMessageBuilder echoMessage;
   auto echoArgs = echoMessage.initRoot<capnp::List<IsolateObjectCallValue>>(1);
@@ -759,6 +765,45 @@ void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
   KJ_REQUIRE(callCapResult.getValue().which() == IsolateObjectCallValue::TEXT);
   KJ_REQUIRE(callCapResult.getValue().getText() == "from-capability");
 
+  auto importedRemote = makeIsolateObjectCapability(
+      makeImportedIsolateObjectCallTarget(remote));
+
+  capnp::MallocMessageBuilder importedDescribeMessage;
+  auto importedDescribeArgs =
+      importedDescribeMessage.initRoot<capnp::List<IsolateObjectCallValue>>(2);
+  importedDescribeArgs[0].setText("first");
+  importedDescribeArgs[1].setBool(true);
+  auto importedDescribeOwned = callIsolateObjectCapability(
+      importedRemote, "describe", importedDescribeArgs.asReader()).wait(waitScope);
+  auto importedDescribeResult = importedDescribeOwned.getResult();
+  KJ_REQUIRE(importedDescribeResult.which() == IsolateObjectCallResult::VALUE);
+  KJ_REQUIRE(importedDescribeResult.getValue().which() == IsolateObjectCallValue::OBJECT);
+  auto importedDescribeFields = importedDescribeResult.getValue().getObject();
+  KJ_REQUIRE(importedDescribeFields.size() == 2);
+  KJ_REQUIRE(importedDescribeFields[0].getName() == "label");
+  KJ_REQUIRE(importedDescribeFields[0].getValue().getText() == "remote");
+  KJ_REQUIRE(importedDescribeFields[1].getName() == "argCount");
+  KJ_REQUIRE(importedDescribeFields[1].getValue().getNumber() == 2);
+
+  capnp::MallocMessageBuilder importedCallCapMessage;
+  auto importedCallCapArgs =
+      importedCallCapMessage.initRoot<capnp::List<IsolateObjectCallValue>>(1);
+  importedCallCapArgs[0].setCapability(callback);
+  auto importedCallCapOwned = callIsolateObjectCapability(
+      importedRemote, "callCap", importedCallCapArgs.asReader()).wait(waitScope);
+  auto importedCallCapResult = importedCallCapOwned.getResult();
+  KJ_REQUIRE(importedCallCapResult.which() == IsolateObjectCallResult::VALUE);
+  KJ_REQUIRE(importedCallCapResult.getValue().which() == IsolateObjectCallValue::TEXT);
+  KJ_REQUIRE(importedCallCapResult.getValue().getText() == "from-capability");
+
+  auto importedFail = importedRemote.callRequest();
+  importedFail.setMethod("fail");
+  importedFail.initArgs(0);
+  auto importedFailResponse = importedFail.send().wait(waitScope);
+  auto importedFailResult = importedFailResponse.getResult();
+  KJ_REQUIRE(importedFailResult.which() == IsolateObjectCallResult::EXCEPTION);
+  KJ_REQUIRE(importedFailResult.getException().getName() == "NativeObjectError");
+
   auto fail = root.callRequest();
   fail.setMethod("fail");
   fail.initArgs(0);
@@ -770,8 +815,12 @@ void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
 
   root.dropRequest().send().wait(waitScope);
   child.dropRequest().send().wait(waitScope);
+  importedRemote.dropRequest().send().wait(waitScope);
+  callback.dropRequest().send().wait(waitScope);
   KJ_REQUIRE(rootDropCount == 1, rootDropCount);
   KJ_REQUIRE(childDropCount == 1, childDropCount);
+  KJ_REQUIRE(remoteDropCount == 1, remoteDropCount);
+  KJ_REQUIRE(callbackDropCount == 1, callbackDropCount);
 }
 
 kj::String responseDebugBody(WebSession::Response::Reader response) {
