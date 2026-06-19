@@ -1678,6 +1678,38 @@ test("isolate supervisor integration suite", {
     assert.equal(nativeAppRpcCodec.json.reservedMethodError.name, "ValidationError");
     assert.match(nativeAppRpcCodec.json.reservedMethodError.message, /reserved/);
 
+    const nativeAppRpcRoute = await requestJson(
+      fixture.workerdSocket, "/native-app-rpc-route-self-test");
+    assert.equal(nativeAppRpcRoute.statusCode, 200, nativeAppRpcRoute.body);
+    assert.equal(nativeAppRpcRoute.json.ok, true);
+    assert.equal(nativeAppRpcRoute.json.value.status, 200);
+    assert.deepEqual(nativeAppRpcRoute.json.value.body, {
+      type: "value",
+      value: {
+        type: "object",
+        value: [
+          { name: "subject", value: { type: "text", value: "route-subject" } },
+          { name: "urgent", value: { type: "bool", value: true } },
+        ],
+      },
+    });
+    assert.equal(nativeAppRpcRoute.json.missing.status, 200);
+    assert.deepEqual(nativeAppRpcRoute.json.missing.body, {
+      type: "exception",
+      name: "NoSuchMethod",
+      message: "RPC method not found: missing",
+      stack: "",
+    });
+    assert.equal(nativeAppRpcRoute.json.failed.status, 200);
+    assert.equal(nativeAppRpcRoute.json.failed.body.type, "exception");
+    assert.equal(nativeAppRpcRoute.json.failed.body.name, "RangeError");
+    assert.equal(nativeAppRpcRoute.json.failed.body.message, "route dispatch failure");
+    assert.match(nativeAppRpcRoute.json.failed.body.stack, /route dispatch failure/);
+    assert.equal(nativeAppRpcRoute.json.invalid.status, 400);
+    assert.equal(nativeAppRpcRoute.json.invalid.body.type, "exception");
+    assert.equal(nativeAppRpcRoute.json.invalid.body.name, "ValidationError");
+    assert.match(nativeAppRpcRoute.json.invalid.body.message, /reserved/);
+
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);
     assert.equal(missing.json.ok, false);

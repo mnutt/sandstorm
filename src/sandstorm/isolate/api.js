@@ -1501,6 +1501,15 @@ async function serveObjectCapability(request, env) {
     return Response.json({ ok: true, disposed });
   }
 
+  if (request.method === "POST" && action === "native-app-rpc-call") {
+    try {
+      return Response.json(await dispatchNativeAppRpcCall(target, await request.json()));
+    } catch (error) {
+      const status = error instanceof ValidationError ? 400 : 500;
+      return Response.json(serializeNativeAppRpcException(error), { status });
+    }
+  }
+
   if (request.method !== "POST" || action !== "call") {
     return Response.json({
       ok: false,
