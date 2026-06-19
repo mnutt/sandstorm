@@ -159,6 +159,12 @@ enum class ClaimedCapabilityKind {
   ROUTE_BACKED_API_SESSION,
 };
 
+enum class ClaimedCapabilityResidence {
+  UNKNOWN,
+  LOCAL_EXPORT,
+  IMPORTED,
+};
+
 kj::StringPtr claimedCapabilityKindName(ClaimedCapabilityKind kind) {
   switch (kind) {
     case ClaimedCapabilityKind::UNKNOWN:
@@ -179,8 +185,21 @@ kj::StringPtr claimedCapabilityKindName(ClaimedCapabilityKind kind) {
   KJ_UNREACHABLE;
 }
 
+kj::StringPtr claimedCapabilityResidenceName(ClaimedCapabilityResidence residence) {
+  switch (residence) {
+    case ClaimedCapabilityResidence::UNKNOWN:
+      return "unknown";
+    case ClaimedCapabilityResidence::LOCAL_EXPORT:
+      return "localExport";
+    case ClaimedCapabilityResidence::IMPORTED:
+      return "imported";
+  }
+  KJ_UNREACHABLE;
+}
+
 struct ClaimedCapabilityMetadata {
   ClaimedCapabilityKind kind = ClaimedCapabilityKind::UNKNOWN;
+  ClaimedCapabilityResidence residence = ClaimedCapabilityResidence::UNKNOWN;
   kj::String pathPrefix = kj::heapString("");
   bool persistent = true;
   bool hasDropNotify = false;
@@ -190,6 +209,7 @@ ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
     const ClaimedCapabilityMetadata& metadata) {
   return ClaimedCapabilityMetadata {
     metadata.kind,
+    metadata.residence,
     kj::heapString(metadata.pathPrefix),
     metadata.persistent,
     metadata.hasDropNotify,
@@ -3117,6 +3137,7 @@ public:
     sessionMetadata.offeredCapabilityId = runtimeHost->sessions->storeClaimedCapability(
         params.getOffer(), ClaimedCapabilityMetadata {
           ClaimedCapabilityKind::POWERBOX_OFFER,
+          ClaimedCapabilityResidence::IMPORTED,
           kj::heapString(""),
           true,
           false,
@@ -4256,6 +4277,8 @@ private:
     json.addAll(kj::StringPtr(",\n  "));
     appendJsonField(json, "kind", claimedCapabilityKindName(metadata.kind));
     json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "residence", claimedCapabilityResidenceName(metadata.residence));
+    json.addAll(kj::StringPtr(",\n  "));
     appendJsonField(json, "pathPrefix", metadata.pathPrefix);
     json.addAll(kj::StringPtr(",\n  \"persistent\": "));
     json.addAll(metadata.persistent ? kj::StringPtr("true") : kj::StringPtr("false"));
@@ -4578,6 +4601,7 @@ private:
 
     return ClaimedCapabilityMetadata {
       kind,
+      ClaimedCapabilityResidence::LOCAL_EXPORT,
       kj::heapString(pathPrefix),
       persistent,
       false,
@@ -4997,6 +5021,7 @@ private:
         auto capId = host.sessions->storeClaimedCapability(
             result.getCap(), ClaimedCapabilityMetadata {
               ClaimedCapabilityKind::POWERBOX_CLAIM,
+              ClaimedCapabilityResidence::IMPORTED,
               kj::heapString(""),
               true,
               false,
@@ -5265,6 +5290,7 @@ private:
           auto capId = host.sessions->storeClaimedCapability(
               result.getTiedCap(), ClaimedCapabilityMetadata {
                 ClaimedCapabilityKind::TIED,
+                ClaimedCapabilityResidence::IMPORTED,
                 kj::heapString(""),
                 true,
                 false,
@@ -5457,6 +5483,7 @@ private:
         auto capId = host.sessions->storeClaimedCapability(
             result.getCap(), ClaimedCapabilityMetadata {
               ClaimedCapabilityKind::RESTORED,
+              ClaimedCapabilityResidence::IMPORTED,
               kj::heapString(""),
               true,
               false,

@@ -619,6 +619,7 @@ test("isolate supervisor integration suite", {
       type: "claimedCapabilityInfo",
       id: capabilityId,
       kind: "routeBackedWebSession",
+      residence: "localExport",
       pathPrefix: "/exported",
       persistent: true,
       hasDropNotify: false,
@@ -747,6 +748,7 @@ test("isolate supervisor integration suite", {
       type: "claimedCapabilityInfo",
       id: restored.json.id,
       kind: "restored",
+      residence: "imported",
       pathPrefix: "",
       persistent: true,
       hasDropNotify: false,
@@ -857,6 +859,7 @@ test("isolate supervisor integration suite", {
       type: "claimedCapabilityInfo",
       id: capabilityId,
       kind: "routeBackedApiSession",
+      residence: "localExport",
       pathPrefix: "/api-exported",
       persistent: true,
       hasDropNotify: false,
@@ -910,6 +913,7 @@ test("isolate supervisor integration suite", {
       type: "claimedCapabilityInfo",
       id: restored.json.id,
       kind: "restored",
+      residence: "imported",
       pathPrefix: "",
       persistent: true,
       hasDropNotify: false,
@@ -982,6 +986,7 @@ test("isolate supervisor integration suite", {
     assert.equal(capabilityInfo.json.type, "claimedCapabilityInfo");
     assert.equal(capabilityInfo.json.id, exported.json.capability.id);
     assert.equal(capabilityInfo.json.kind, "routeBackedWebSession");
+    assert.equal(capabilityInfo.json.residence, "localExport");
     assert.match(capabilityInfo.json.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
     assert.equal(capabilityInfo.json.persistent, false);
     assert.equal(capabilityInfo.json.hasDropNotify, true);
@@ -1289,6 +1294,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("permissions"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.webSession"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.apiSession"));
+    assert.ok(capabilities.json.capabilities.includes("capabilities.claimed"));
 
     const permissions = await requestJson(fixture.sandstormApiSocket, "/permissions");
     assert.equal(permissions.statusCode, 200);
