@@ -1552,6 +1552,53 @@ test("isolate supervisor integration suite", {
     assert.match(nativeInterfaceValidation.json.appObjectOutboundError.message,
       /nativeInterface appObject/);
 
+    const nativeAppRpcCodec = await requestJson(
+      fixture.workerdSocket, "/native-app-rpc-codec-self-test");
+    assert.equal(nativeAppRpcCodec.statusCode, 200, nativeAppRpcCodec.body);
+    assert.equal(nativeAppRpcCodec.json.ok, true);
+    assert.deepEqual(nativeAppRpcCodec.json.serialized, {
+      type: "object",
+      value: [
+        { name: "none", value: { type: "null" } },
+        { name: "truthy", value: { type: "bool", value: true } },
+        { name: "count", value: { type: "number", value: 42.5 } },
+        { name: "text", value: { type: "text", value: "hello" } },
+        { name: "bytes", value: { type: "data", value: "AAECAwQ" } },
+        {
+          name: "items",
+          value: {
+            type: "list",
+            value: [
+              { type: "text", value: "first" },
+              { type: "number", value: 2 },
+              { type: "bool", value: false },
+            ],
+          },
+        },
+        {
+          name: "callback",
+          value: {
+            type: "capability",
+            value: { id: "slot-1", nativeInterface: "appObject" },
+          },
+        },
+      ],
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.hydrated, {
+      none: null,
+      truthy: true,
+      count: 42.5,
+      text: "hello",
+      bytes: [0, 1, 2, 3, 4],
+      items: ["first", 2, false],
+      callback: { type: "nativeCapabilitySlot", id: "slot-1", nativeInterface: "appObject" },
+    });
+    assert.equal(nativeAppRpcCodec.json.slotFrozen, true);
+    assert.equal(nativeAppRpcCodec.json.rawTargetError.name, "ValidationError");
+    assert.match(nativeAppRpcCodec.json.rawTargetError.message, /native capability slot/);
+    assert.equal(nativeAppRpcCodec.json.invalidCapabilityError.name, "ValidationError");
+    assert.match(nativeAppRpcCodec.json.invalidCapabilityError.message, /at least 1 characters/);
+
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);
     assert.equal(missing.json.ok, false);

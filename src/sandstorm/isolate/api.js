@@ -214,6 +214,159 @@ export const validate = {
   },
 };
 
+function isPlainObject(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.slice(i, i + 0x8000));
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlToBytes(value, name = "data") {
+  const text = validate.string(value, name, { minLength: 0 });
+  if (!/^[A-Za-z0-9_-]*$/.test(text)) {
+    throw new ValidationError(`${name} must be base64url text`);
+  }
+
+  const normalized = text.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; ++i) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+export function nativeCapabilitySlot(id, options = {}) {
+  const slot = {
+    type: "nativeCapabilitySlot",
+    id: validate.string(id, "native capability slot id", { minLength: 1, maxLength: 256 }),
+  };
+  if (options.nativeInterface !== undefined && options.nativeInterface !== null) {
+    slot.nativeInterface = validate.string(
+      options.nativeInterface, "native capability slot nativeInterface", { minLength: 1 });
+  }
+  return Object.freeze(slot);
+}
+
+export function serializeNativeAppRpcValue(value, name = "value") {
+  if (value === null || value === undefined) {
+    return { type: "null" };
+  }
+  if (typeof value === "boolean") {
+    return { type: "bool", value };
+  }
+  if (typeof value === "number") {
+    return { type: "number", value: validate.number(value, name) };
+  }
+  if (typeof value === "string") {
+    return { type: "text", value };
+  }
+  if (value instanceof ArrayBuffer) {
+    return { type: "data", value: bytesToBase64Url(new Uint8Array(value)) };
+  }
+  if (ArrayBuffer.isView(value)) {
+    return {
+      type: "data",
+      value: bytesToBase64Url(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)),
+    };
+  }
+  if (Array.isArray(value)) {
+    return {
+      type: "list",
+      value: value.map((item, index) => serializeNativeAppRpcValue(item, `${name}[${index}]`)),
+    };
+  }
+  if (value && typeof value === "object" && value.type === "nativeCapabilitySlot") {
+    const slot = {
+      id: validate.string(value.id, `${name}.id`, { minLength: 1, maxLength: 256 }),
+    };
+    if (value.nativeInterface !== undefined && value.nativeInterface !== null) {
+      slot.nativeInterface = validate.string(
+        value.nativeInterface, `${name}.nativeInterface`, { minLength: 1 });
+    }
+    return { type: "capability", value: slot };
+  }
+  if (value instanceof RpcTarget || value instanceof ClaimedCapability) {
+    throw new ValidationError(
+      `${name} must be exported to a native capability slot before native app RPC serialization`);
+  }
+  if (!isPlainObject(value)) {
+    failValidation(name, "a native app RPC value", value);
+  }
+
+  const fields = [];
+  for (const [key, item] of Object.entries(value)) {
+    fields.push({
+      name: key,
+      value: serializeNativeAppRpcValue(item, `${name}.${key}`),
+    });
+  }
+  return { type: "object", value: fields };
+}
+
+export function hydrateNativeAppRpcValue(value, name = "value") {
+  if (!value || typeof value !== "object" || typeof value.type !== "string") {
+    throw new ValidationError(`${name} must be a native app RPC value envelope`);
+  }
+
+  switch (value.type) {
+    case "null":
+      return null;
+    case "bool":
+      if (typeof value.value !== "boolean") {
+        failValidation(`${name}.value`, "a boolean", value.value);
+      }
+      return value.value;
+    case "number":
+      return validate.number(value.value, `${name}.value`);
+    case "text":
+      return validate.string(value.value, `${name}.value`);
+    case "data":
+      return base64UrlToBytes(value.value, `${name}.value`);
+    case "list": {
+      if (!Array.isArray(value.value)) {
+        failValidation(`${name}.value`, "an array", value.value);
+      }
+      return value.value.map((item, index) => hydrateNativeAppRpcValue(item, `${name}[${index}]`));
+    }
+    case "object": {
+      if (!Array.isArray(value.value)) {
+        failValidation(`${name}.value`, "an array of fields", value.value);
+      }
+      const result = {};
+      for (const [index, field] of value.value.entries()) {
+        if (!field || typeof field !== "object") {
+          failValidation(`${name}.value[${index}]`, "a field object", field);
+        }
+        const key = validate.string(field.name, `${name}.value[${index}].name`);
+        result[key] = hydrateNativeAppRpcValue(field.value, `${name}.${key}`);
+      }
+      return result;
+    }
+    case "capability": {
+      if (!value.value || typeof value.value !== "object") {
+        failValidation(`${name}.value`, "a native capability slot", value.value);
+      }
+      return nativeCapabilitySlot(value.value.id, {
+        nativeInterface: value.value.nativeInterface,
+      });
+    }
+    default:
+      throw new ValidationError(`${name}.type is unsupported: ${value.type}`);
+  }
+}
+
 function storageUrl(key = "") {
   return `http://storage/${encodeURIComponent(key === "" ? "" : validate.storageKey(key))}`;
 }
