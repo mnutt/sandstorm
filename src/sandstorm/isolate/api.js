@@ -324,7 +324,42 @@ export function serializeNativeAppRpcValue(value, name = "value") {
   return { type: "object", value: fields };
 }
 
-export function hydrateNativeAppRpcValue(value, name = "value") {
+function nativeAppRpcHydrationContext(options = "value", defaultName = "value") {
+  if (typeof options === "string") {
+    return { name: options };
+  }
+  if (options === undefined || options === null) {
+    return { name: defaultName };
+  }
+  if (!isPlainObject(options)) {
+    failValidation("native app RPC hydration options", "an object", options);
+  }
+  const context = {
+    name: options.name === undefined
+      ? defaultName
+      : validate.string(options.name, "native app RPC hydration options name"),
+  };
+  if (options.resolveCapabilitySlot !== undefined && options.resolveCapabilitySlot !== null) {
+    if (typeof options.resolveCapabilitySlot !== "function") {
+      failValidation(
+        "native app RPC hydration options resolveCapabilitySlot", "a function",
+        options.resolveCapabilitySlot);
+    }
+    context.resolveCapabilitySlot = options.resolveCapabilitySlot;
+  }
+  return context;
+}
+
+function nativeAppRpcHydrationChild(context, name) {
+  return {
+    name,
+    resolveCapabilitySlot: context.resolveCapabilitySlot,
+  };
+}
+
+export function hydrateNativeAppRpcValue(value, options = "value") {
+  const context = nativeAppRpcHydrationContext(options);
+  const name = context.name;
   if (!value || typeof value !== "object" || typeof value.type !== "string") {
     throw new ValidationError(`${name} must be a native app RPC value envelope`);
   }
@@ -347,7 +382,8 @@ export function hydrateNativeAppRpcValue(value, name = "value") {
       if (!Array.isArray(value.value)) {
         failValidation(`${name}.value`, "an array", value.value);
       }
-      return value.value.map((item, index) => hydrateNativeAppRpcValue(item, `${name}[${index}]`));
+      return value.value.map((item, index) =>
+        hydrateNativeAppRpcValue(item, nativeAppRpcHydrationChild(context, `${name}[${index}]`)));
     }
     case "object": {
       if (!Array.isArray(value.value)) {
@@ -364,7 +400,8 @@ export function hydrateNativeAppRpcValue(value, name = "value") {
           throw new ValidationError(`${name}.value contains duplicate field: ${key}`);
         }
         seen.add(key);
-        result[key] = hydrateNativeAppRpcValue(field.value, `${name}.${key}`);
+        result[key] = hydrateNativeAppRpcValue(
+          field.value, nativeAppRpcHydrationChild(context, `${name}.${key}`));
       }
       return result;
     }
@@ -372,9 +409,13 @@ export function hydrateNativeAppRpcValue(value, name = "value") {
       if (!value.value || typeof value.value !== "object") {
         failValidation(`${name}.value`, "a native capability slot", value.value);
       }
-      return nativeCapabilitySlot(value.value.id, {
+      const slot = nativeCapabilitySlot(value.value.id, {
         nativeInterface: value.value.nativeInterface,
       });
+      if (context.resolveCapabilitySlot) {
+        return context.resolveCapabilitySlot(slot, { name });
+      }
+      return slot;
     }
     default:
       throw new ValidationError(`${name}.type is unsupported: ${value.type}`);
@@ -388,7 +429,9 @@ export function serializeNativeAppRpcCall(method, args = []) {
   return { method, args };
 }
 
-export function hydrateNativeAppRpcCall(call, name = "call") {
+export function hydrateNativeAppRpcCall(call, options = "call") {
+  const context = nativeAppRpcHydrationContext(options, "call");
+  const name = context.name;
   if (!call || typeof call !== "object") {
     failValidation(name, "a native app RPC call envelope", call);
   }
@@ -396,7 +439,8 @@ export function hydrateNativeAppRpcCall(call, name = "call") {
   return {
     method: capabilityMethodName(call.method, `${name}.method`),
     args: capabilityArgs(call.args || [], `${name}.args`)
-      .map((arg, index) => hydrateNativeAppRpcValue(arg, `${name}.args[${index}]`)),
+      .map((arg, index) => hydrateNativeAppRpcValue(
+        arg, nativeAppRpcHydrationChild(context, `${name}.args[${index}]`))),
   };
 }
 
@@ -416,14 +460,17 @@ export function serializeNativeAppRpcException(error) {
   };
 }
 
-export function hydrateNativeAppRpcResult(result, name = "result") {
+export function hydrateNativeAppRpcResult(result, options = "result") {
+  const context = nativeAppRpcHydrationContext(options, "result");
+  const name = context.name;
   if (!result || typeof result !== "object" || typeof result.type !== "string") {
     throw new ValidationError(`${name} must be a native app RPC result envelope`);
   }
 
   switch (result.type) {
     case "value":
-      return hydrateNativeAppRpcValue(result.value, `${name}.value`);
+      return hydrateNativeAppRpcValue(
+        result.value, nativeAppRpcHydrationChild(context, `${name}.value`));
     case "exception": {
       const errorName = validate.string(result.name || "Error", `${name}.name`);
       const message = validate.string(result.message || "", `${name}.message`);
@@ -439,12 +486,12 @@ export function hydrateNativeAppRpcResult(result, name = "result") {
   }
 }
 
-export async function dispatchNativeAppRpcCall(target, call) {
+export async function dispatchNativeAppRpcCall(target, call, options = {}) {
   if (!target || typeof target !== "object") {
     throw new ValidationError("native app RPC target must be an object");
   }
 
-  const { method, args } = hydrateNativeAppRpcCall(call);
+  const { method, args } = hydrateNativeAppRpcCall(call, options);
   const func = target[method];
   if (typeof func !== "function") {
     return serializeNativeAppRpcException({
@@ -470,8 +517,9 @@ const NATIVE_APP_RPC_STUB_OWN_PROPERTIES = new Set([
 export class NativeAppRpcStub {
   #slot;
   #transport;
+  #hydrationOptions;
 
-  constructor(slot, transport) {
+  constructor(slot, transport, options = {}) {
     if (typeof transport !== "function") {
       throw new ValidationError("native app RPC transport must be a function");
     }
@@ -480,6 +528,7 @@ export class NativeAppRpcStub {
       nativeInterface: slot?.nativeInterface,
     });
     this.#transport = transport;
+    this.#hydrationOptions = nativeAppRpcHydrationContext(options, "result");
   }
 
   get slot() {
@@ -488,7 +537,7 @@ export class NativeAppRpcStub {
 
   async call(method, ...args) {
     const result = await this.#transport(this.#slot, serializeNativeAppRpcCall(method, args));
-    return hydrateNativeAppRpcResult(result);
+    return hydrateNativeAppRpcResult(result, this.#hydrationOptions);
   }
 
   asRpc() {
@@ -516,8 +565,8 @@ function createNativeAppRpcProxy(stub) {
   });
 }
 
-export function createNativeAppRpcStub(slot, transport) {
-  return new NativeAppRpcStub(slot, transport);
+export function createNativeAppRpcStub(slot, transport, options) {
+  return new NativeAppRpcStub(slot, transport, options);
 }
 
 export function createNativeAppRpcFetchTransport(fetcher, route) {

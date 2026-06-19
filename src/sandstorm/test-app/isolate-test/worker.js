@@ -1043,6 +1043,21 @@ export default {
         };
       }
 
+      const resolvedTransportCalls = [];
+      const resolverCalls = [];
+      const resolveCapabilitySlot = (resolvedSlot, context) => {
+        resolverCalls.push({ slot: resolvedSlot, name: context.name });
+        return createNativeAppRpcStub(resolvedSlot, async (transportSlot, call) => {
+          resolvedTransportCalls.push({ slot: transportSlot, call });
+          return dispatchNativeAppRpcCall(dispatchTarget, call);
+        });
+      };
+      const resolvedValue = hydrateNativeAppRpcValue(serialized, { resolveCapabilitySlot });
+      const resolvedCall = hydrateNativeAppRpcCall(callEnvelope, { resolveCapabilitySlot });
+      const resolvedResult = hydrateNativeAppRpcResult(resultEnvelope, { resolveCapabilitySlot });
+      const resolvedCallbackValue = await resolvedValue.callback.call(
+        "deliver", "resolved-subject", slot, { urgent: true });
+
       let rawTargetError = null;
       try {
         serializeNativeAppRpcValue(new CounterCapability(), "callback");
@@ -1156,6 +1171,14 @@ export default {
         stubCallValue,
         stubRpcValue,
         stubMissingError,
+        resolved: {
+          valueCallbackSlot: resolvedValue.callback.slot,
+          callCallbackSlot: resolvedCall.args[1].slot,
+          resultReceiptSlot: resolvedResult.receipt.slot,
+          callbackValue: resolvedCallbackValue,
+          transportCalls: resolvedTransportCalls,
+          resolverCalls,
+        },
         slotFrozen: Object.isFrozen(slot),
         rawTargetError,
         invalidCapabilityError,
