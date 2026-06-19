@@ -1095,6 +1095,27 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.current, { value: 7 });
     assert.equal(selfTest.json.childClass, true);
     assert.equal(selfTest.json.child.type, "claimedCapability");
+    assert.equal(selfTest.json.capabilityInfo.ok, true);
+    assert.equal(selfTest.json.capabilityInfo.type, "claimedCapabilityInfo");
+    assert.equal(selfTest.json.capabilityInfo.id, selfTest.json.duplicate.sourceId);
+    assert.equal(selfTest.json.capabilityInfo.kind, "routeBackedWebSession");
+    assert.equal(selfTest.json.capabilityInfo.residence, "localExport");
+    assert.match(
+      selfTest.json.capabilityInfo.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
+    assert.equal(selfTest.json.capabilityInfo.persistent, false);
+    assert.equal(selfTest.json.capabilityInfo.hasDropNotify, true);
+    assert.equal(selfTest.json.capabilityInfo.hasNativeCapability, true);
+    assert.equal(selfTest.json.capabilityInfo.liveForwardable, true);
+    assert.equal(typeof selfTest.json.childInfo.id, "string");
+    assert.equal(selfTest.json.childInfo.ok, true);
+    assert.equal(selfTest.json.childInfo.type, "claimedCapabilityInfo");
+    assert.equal(selfTest.json.childInfo.kind, "routeBackedWebSession");
+    assert.equal(selfTest.json.childInfo.residence, "localExport");
+    assert.match(selfTest.json.childInfo.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
+    assert.equal(selfTest.json.childInfo.persistent, false);
+    assert.equal(selfTest.json.childInfo.hasDropNotify, true);
+    assert.equal(selfTest.json.childInfo.hasNativeCapability, true);
+    assert.equal(selfTest.json.childInfo.liveForwardable, true);
     assert.deepEqual(selfTest.json.childFirst, { value: 11 });
     assert.deepEqual(selfTest.json.readChild, { value: 11 });
     assert.deepEqual(selfTest.json.stubFirst, { value: 9 });
