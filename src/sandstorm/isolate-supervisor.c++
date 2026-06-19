@@ -219,6 +219,31 @@ kj::StringPtr claimedCapabilityNativeInterfaceName(
   KJ_UNREACHABLE;
 }
 
+bool claimedCapabilitySupportsWebFetch(ClaimedCapabilityNativeInterface nativeInterface) {
+  switch (nativeInterface) {
+    case ClaimedCapabilityNativeInterface::UNKNOWN:
+    case ClaimedCapabilityNativeInterface::WEB_SESSION:
+    case ClaimedCapabilityNativeInterface::API_SESSION:
+      return true;
+    case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
+      return false;
+  }
+  KJ_UNREACHABLE;
+}
+
+bool claimedCapabilitySupportsOutboundHttpFetch(
+    ClaimedCapabilityNativeInterface nativeInterface) {
+  switch (nativeInterface) {
+    case ClaimedCapabilityNativeInterface::UNKNOWN:
+    case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
+      return true;
+    case ClaimedCapabilityNativeInterface::WEB_SESSION:
+    case ClaimedCapabilityNativeInterface::API_SESSION:
+      return false;
+  }
+  KJ_UNREACHABLE;
+}
+
 struct ClaimedCapabilityMetadata {
   ClaimedCapabilityKind kind = ClaimedCapabilityKind::UNKNOWN;
   ClaimedCapabilityResidence residence = ClaimedCapabilityResidence::UNKNOWN;
@@ -4346,6 +4371,12 @@ private:
     json.addAll(metadata.hasDropNotify ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"dropNotifyRefCount\": "));
     json.addAll(kj::str(info.dropNotifyRefCount));
+    json.addAll(kj::StringPtr(",\n  \"supportsWebFetch\": "));
+    json.addAll(claimedCapabilitySupportsWebFetch(metadata.nativeInterface)
+        ? kj::StringPtr("true") : kj::StringPtr("false"));
+    json.addAll(kj::StringPtr(",\n  \"supportsOutboundHttpFetch\": "));
+    json.addAll(claimedCapabilitySupportsOutboundHttpFetch(metadata.nativeInterface)
+        ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"hasNativeCapability\": "));
     json.addAll(metadata.hasNativeCapability ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"liveForwardable\": "));

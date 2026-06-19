@@ -625,6 +625,8 @@ test("isolate supervisor integration suite", {
       persistent: true,
       hasDropNotify: false,
       dropNotifyRefCount: 0,
+      supportsWebFetch: true,
+      supportsOutboundHttpFetch: false,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -768,6 +770,8 @@ test("isolate supervisor integration suite", {
       persistent: true,
       hasDropNotify: false,
       dropNotifyRefCount: 0,
+      supportsWebFetch: true,
+      supportsOutboundHttpFetch: true,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -886,6 +890,8 @@ test("isolate supervisor integration suite", {
       persistent: true,
       hasDropNotify: false,
       dropNotifyRefCount: 0,
+      supportsWebFetch: true,
+      supportsOutboundHttpFetch: false,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -954,6 +960,8 @@ test("isolate supervisor integration suite", {
       persistent: true,
       hasDropNotify: false,
       dropNotifyRefCount: 0,
+      supportsWebFetch: true,
+      supportsOutboundHttpFetch: true,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -1034,6 +1042,8 @@ test("isolate supervisor integration suite", {
     assert.equal(capabilityInfo.json.persistent, false);
     assert.equal(capabilityInfo.json.hasDropNotify, true);
     assert.equal(capabilityInfo.json.dropNotifyRefCount, 1);
+    assert.equal(capabilityInfo.json.supportsWebFetch, true);
+    assert.equal(capabilityInfo.json.supportsOutboundHttpFetch, false);
     assert.equal(capabilityInfo.json.hasNativeCapability, true);
     assert.equal(capabilityInfo.json.liveForwardable, true);
 
@@ -1142,6 +1152,8 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.capabilityInfo.persistent, false);
     assert.equal(selfTest.json.capabilityInfo.hasDropNotify, true);
     assert.equal(selfTest.json.capabilityInfo.dropNotifyRefCount, 1);
+    assert.equal(selfTest.json.capabilityInfo.supportsWebFetch, true);
+    assert.equal(selfTest.json.capabilityInfo.supportsOutboundHttpFetch, false);
     assert.equal(selfTest.json.capabilityInfo.hasNativeCapability, true);
     assert.equal(selfTest.json.capabilityInfo.liveForwardable, true);
     assert.equal(typeof selfTest.json.childInfo.id, "string");
@@ -1154,6 +1166,8 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.childInfo.persistent, false);
     assert.equal(selfTest.json.childInfo.hasDropNotify, true);
     assert.equal(selfTest.json.childInfo.dropNotifyRefCount, 1);
+    assert.equal(selfTest.json.childInfo.supportsWebFetch, true);
+    assert.equal(selfTest.json.childInfo.supportsOutboundHttpFetch, false);
     assert.equal(selfTest.json.childInfo.hasNativeCapability, true);
     assert.equal(selfTest.json.childInfo.liveForwardable, true);
     assert.deepEqual(selfTest.json.childFirst, { value: 11 });
