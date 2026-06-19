@@ -149,6 +149,53 @@ kj::String makeOpaqueToken() {
   return kj::encodeBase64Url(bytes);
 }
 
+enum class ClaimedCapabilityKind {
+  UNKNOWN,
+  POWERBOX_CLAIM,
+  POWERBOX_OFFER,
+  RESTORED,
+  TIED,
+  ROUTE_BACKED_WEB_SESSION,
+  ROUTE_BACKED_API_SESSION,
+};
+
+kj::StringPtr claimedCapabilityKindName(ClaimedCapabilityKind kind) {
+  switch (kind) {
+    case ClaimedCapabilityKind::UNKNOWN:
+      return "unknown";
+    case ClaimedCapabilityKind::POWERBOX_CLAIM:
+      return "powerboxClaim";
+    case ClaimedCapabilityKind::POWERBOX_OFFER:
+      return "powerboxOffer";
+    case ClaimedCapabilityKind::RESTORED:
+      return "restored";
+    case ClaimedCapabilityKind::TIED:
+      return "tied";
+    case ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION:
+      return "routeBackedWebSession";
+    case ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION:
+      return "routeBackedApiSession";
+  }
+  KJ_UNREACHABLE;
+}
+
+struct ClaimedCapabilityMetadata {
+  ClaimedCapabilityKind kind = ClaimedCapabilityKind::UNKNOWN;
+  kj::String pathPrefix = kj::heapString("");
+  bool persistent = true;
+  bool hasDropNotify = false;
+};
+
+ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
+    const ClaimedCapabilityMetadata& metadata) {
+  return ClaimedCapabilityMetadata {
+    metadata.kind,
+    kj::heapString(metadata.pathPrefix),
+    metadata.persistent,
+    metadata.hasDropNotify,
+  };
+}
+
 class IsolateSessionRegistry final: public kj::Refcounted {
 public:
   kj::String registerSession(SessionContext::Client context) {
@@ -178,12 +225,16 @@ public:
     return nullptr;
   }
 
-  kj::String storeClaimedCapability(capnp::Capability::Client cap) {
-    return storeClaimedCapabilityInternal(kj::mv(cap), nullptr);
+  kj::String storeClaimedCapability(capnp::Capability::Client cap,
+      ClaimedCapabilityMetadata metadata = ClaimedCapabilityMetadata()) {
+    return storeClaimedCapabilityInternal(kj::mv(cap), kj::mv(metadata), nullptr);
   }
 
-  kj::String storeClaimedCapability(capnp::Capability::Client cap, kj::String dropNotifyPath) {
-    return storeClaimedCapabilityInternal(kj::mv(cap), createDropNotifyGroup(kj::mv(dropNotifyPath)));
+  kj::String storeClaimedCapability(capnp::Capability::Client cap,
+      ClaimedCapabilityMetadata metadata, kj::String dropNotifyPath) {
+    metadata.hasDropNotify = true;
+    return storeClaimedCapabilityInternal(kj::mv(cap), kj::mv(metadata),
+        createDropNotifyGroup(kj::mv(dropNotifyPath)));
   }
 
   kj::Maybe<kj::String> duplicateClaimedCapability(kj::StringPtr id) {
@@ -194,7 +245,9 @@ public:
         dropNotifyGroupId = kj::heapString(*groupId);
       }
       return storeClaimedCapabilityInternal(
-          claimedCapabilities[*index].cap, kj::mv(dropNotifyGroupId));
+          claimedCapabilities[*index].cap,
+          copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata),
+          kj::mv(dropNotifyGroupId));
     }
 
     return nullptr;
@@ -228,14 +281,22 @@ public:
     return nullptr;
   }
 
+  kj::Maybe<ClaimedCapabilityMetadata> findClaimedCapabilityMetadata(kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
+      return copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata);
+    }
+
+    return nullptr;
+  }
+
 private:
   kj::String storeClaimedCapabilityInternal(capnp::Capability::Client cap,
-      kj::Maybe<kj::String> dropNotifyGroupId) {
+      ClaimedCapabilityMetadata metadata, kj::Maybe<kj::String> dropNotifyGroupId) {
     for (;;) {
       auto id = makeOpaqueToken();
       if (findClaimedCapabilityIndex(id) == nullptr) {
         claimedCapabilities.add(ClaimedCapabilityRecord {
-            kj::heapString(id), cap, kj::mv(dropNotifyGroupId) });
+            kj::heapString(id), cap, kj::mv(metadata), kj::mv(dropNotifyGroupId) });
         return id;
       }
     }
@@ -285,6 +346,7 @@ private:
   struct ClaimedCapabilityRecord {
     kj::String id;
     capnp::Capability::Client cap;
+    ClaimedCapabilityMetadata metadata;
     kj::Maybe<kj::String> dropNotifyGroupId;
   };
 
@@ -3053,7 +3115,12 @@ public:
         params.getTabId());
     sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
     sessionMetadata.offeredCapabilityId = runtimeHost->sessions->storeClaimedCapability(
-        params.getOffer());
+        params.getOffer(), ClaimedCapabilityMetadata {
+          ClaimedCapabilityKind::POWERBOX_OFFER,
+          kj::heapString(""),
+          true,
+          false,
+        });
     copyOfferDescriptor(sessionMetadata, params.getDescriptor());
     context.getResults().setSession(kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::OFFER,
@@ -3880,6 +3947,8 @@ public:
         return outboundHttpPowerboxDescriptor(path, response);
       } else if (route == "/capabilities") {
         return sendJson(response, 200, "OK", renderCapabilities());
+      } else if (route == "/capabilities/claimed") {
+        return claimedCapabilityInfo(path, response);
       } else if (route == "/runtime") {
         return sendJson(response, 200, "OK", renderRuntime());
       } else if (route == "/modules") {
@@ -4172,8 +4241,45 @@ private:
         "\"powerbox.outboundHttpFetch\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
-        "\"capabilities.webSession\", \"capabilities.apiSession\"]\n"
+        "\"capabilities.webSession\", \"capabilities.apiSession\", "
+        "\"capabilities.claimed\"]\n"
         "}\n");
+  }
+
+  kj::String renderClaimedCapabilityInfo(kj::StringPtr id,
+      const ClaimedCapabilityMetadata& metadata) {
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  "));
+    appendJsonField(json, "type", "claimedCapabilityInfo");
+    json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "id", id);
+    json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "kind", claimedCapabilityKindName(metadata.kind));
+    json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "pathPrefix", metadata.pathPrefix);
+    json.addAll(kj::StringPtr(",\n  \"persistent\": "));
+    json.addAll(metadata.persistent ? kj::StringPtr("true") : kj::StringPtr("false"));
+    json.addAll(kj::StringPtr(",\n  \"hasDropNotify\": "));
+    json.addAll(metadata.hasDropNotify ? kj::StringPtr("true") : kj::StringPtr("false"));
+    json.addAll(kj::StringPtr("\n}\n"));
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
+  }
+
+  kj::Promise<void> claimedCapabilityInfo(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    kj::String id = nullptr;
+    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
+        url, "id", "expected exactly one capability id", id)) {
+      return sendBadRequest(response, *error);
+    }
+
+    KJ_IF_MAYBE(metadata, host.sessions->findClaimedCapabilityMetadata(id)) {
+      return sendJson(response, 200, "OK", renderClaimedCapabilityInfo(id, *metadata));
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+    }
   }
 
   kj::String renderPermissions() {
@@ -4456,6 +4562,28 @@ private:
         kj::addRef(config), kj::addRef(host), sessionType, pathPrefix, persistent);
   }
 
+  ClaimedCapabilityMetadata makeRouteBackedClaimedCapabilityMetadata(
+      RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent) {
+    ClaimedCapabilityKind kind;
+    switch (sessionType) {
+      case RouteBackedSessionType::WEB:
+        kind = ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION;
+        break;
+      case RouteBackedSessionType::API:
+        kind = ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION;
+        break;
+      default:
+        KJ_UNREACHABLE;
+    }
+
+    return ClaimedCapabilityMetadata {
+      kind,
+      kj::heapString(pathPrefix),
+      persistent,
+      false,
+    };
+  }
+
   kj::Promise<void> createRouteBackedSessionCapability(
       kj::StringPtr url, kj::HttpService::Response& response, RouteBackedSessionType sessionType) {
     auto pathPrefixes = findIsolateRawQueryParams(url, "pathPrefix");
@@ -4493,9 +4621,11 @@ private:
       }
     }
     auto cap = makeRouteBackedSessionCapability(sessionType, pathPrefix, persistent);
+    auto metadata = makeRouteBackedClaimedCapabilityMetadata(sessionType, pathPrefix, persistent);
     auto capId = dropNotifyPath == nullptr
-        ? host.sessions->storeClaimedCapability(kj::mv(cap))
-        : host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(KJ_ASSERT_NONNULL(dropNotifyPath)));
+        ? host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata))
+        : host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata),
+            kj::mv(KJ_ASSERT_NONNULL(dropNotifyPath)));
     return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
 
@@ -4864,7 +4994,13 @@ private:
       }
       return request.send().then(
           [this, &response](auto result) mutable {
-        auto capId = host.sessions->storeClaimedCapability(result.getCap());
+        auto capId = host.sessions->storeClaimedCapability(
+            result.getCap(), ClaimedCapabilityMetadata {
+              ClaimedCapabilityKind::POWERBOX_CLAIM,
+              kj::heapString(""),
+              true,
+              false,
+            });
         return sendJson(response, 200, "OK", renderClaimedCapability(capId));
       });
     } else {
@@ -5126,7 +5262,13 @@ private:
             request.initRequiredPermissions(viewInfo.getPermissions().size()),
             request.initDisplayInfo());
         return request.send().then([this, &response](auto result) mutable {
-          auto capId = host.sessions->storeClaimedCapability(result.getTiedCap());
+          auto capId = host.sessions->storeClaimedCapability(
+              result.getTiedCap(), ClaimedCapabilityMetadata {
+                ClaimedCapabilityKind::TIED,
+                kj::heapString(""),
+                true,
+                false,
+              });
           return sendJson(response, 200, "OK", renderClaimedCapability(capId));
         });
       } else {
@@ -5312,7 +5454,13 @@ private:
       request.setToken(token->asPtr());
       return request.send().then(
           [this, &response](auto result) mutable {
-        auto capId = host.sessions->storeClaimedCapability(result.getCap());
+        auto capId = host.sessions->storeClaimedCapability(
+            result.getCap(), ClaimedCapabilityMetadata {
+              ClaimedCapabilityKind::RESTORED,
+              kj::heapString(""),
+              true,
+              false,
+            });
         return sendJson(response, 200, "OK", renderClaimedCapability(capId));
       });
     } else {

@@ -1242,7 +1242,9 @@ async function serveObjectCapability(request, env) {
     const result = await func.apply(target, args);
     return Response.json({
       ok: true,
-      result: await serializeCapabilityValue(env, result),
+      result: await serializeCapabilityValue(env, result, {
+        allowLocalCapabilityHandles: true,
+      }),
     });
   } catch (error) {
     const status = error instanceof ValidationError ? 400 : 500;
