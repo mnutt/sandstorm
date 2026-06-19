@@ -79,6 +79,16 @@ async function postSandstorm(env, path) {
   return body;
 }
 
+async function queryClaimedCapabilityInfo(env, id) {
+  const response = await env.SANDSTORM_API.fetch(
+    `http://sandstorm/capabilities/claimed?id=${encodeURIComponent(id)}`);
+  const body = await parseApiResponseBody(response);
+  if (!response.ok || !body.ok) {
+    return null;
+  }
+  return body;
+}
+
 function powerboxFetcher(env) {
   return env.POWERBOX || env.SANDSTORM_API;
 }
@@ -1103,9 +1113,16 @@ async function serializeCapabilityValue(env, value, options = {}) {
   }
   if (value instanceof ClaimedCapability) {
     if (!options.allowLocalCapabilityHandles) {
+      const info = await queryClaimedCapabilityInfo(env, value.id);
+      const nativeState = info
+        ? ` supervisor reports hasNativeCapability=${info.hasNativeCapability}, ` +
+          `liveForwardable=${info.liveForwardable};`
+        : " supervisor has no claimed-capability metadata for this handle;";
       throw new ValidationError(
-        "ClaimedCapability handles cannot be passed to remote app-defined RPC calls; " +
-        "pass a SavedCapability token or saved token string and have the receiver restore it");
+        "ClaimedCapability handles cannot be passed to remote app-defined RPC calls yet;" +
+        nativeState +
+        " native app-defined RPC transport is not implemented yet. " +
+        "Pass a SavedCapability token or saved token string and have the receiver restore it.");
     }
     return value.toJSON();
   }
@@ -1114,9 +1131,16 @@ async function serializeCapabilityValue(env, value, options = {}) {
   }
   if (value.type === "claimedCapability" && typeof value.id === "string") {
     if (!options.allowLocalCapabilityHandles) {
+      const info = await queryClaimedCapabilityInfo(env, value.id);
+      const nativeState = info
+        ? ` supervisor reports hasNativeCapability=${info.hasNativeCapability}, ` +
+          `liveForwardable=${info.liveForwardable};`
+        : " supervisor has no claimed-capability metadata for this handle;";
       throw new ValidationError(
-        "claimed capability handles cannot be passed to remote app-defined RPC calls; " +
-        "pass a saved capability token instead");
+        "claimed capability handles cannot be passed to remote app-defined RPC calls yet;" +
+        nativeState +
+        " native app-defined RPC transport is not implemented yet. " +
+        "Pass a saved capability token instead.");
     }
     return {
       type: "claimedCapability",
