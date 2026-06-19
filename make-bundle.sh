@@ -91,7 +91,7 @@ copyDeps() {
 }
 
 # Check for requiremnets.
-for CMD in zip unzip xz gpg; do
+for CMD in zip unzip xz gpg dpkg-deb; do
   if ! which "$CMD" > /dev/null; then
     echo "Please install $CMD" >&2
     fail ${LINENO}
@@ -180,6 +180,31 @@ mkdir -p bundle/bin
 tar xf $MONGO7_PATH ${MONGO7_BASE}/bin/mongod
 cp ${MONGO7_BASE}/bin/mongod bundle/bin/mongod7
 rm -rf ${MONGO7_BASE}
+
+# MongoDB's Ubuntu 20.04 build links against OpenSSL 1.1. Bundle those runtime
+# libraries explicitly so Sandstorm keeps working on hosts that only provide
+# OpenSSL 3, without switching MongoDB to a build that would drop Ubuntu 20.04
+# compatibility.
+OPENSSL11_VERSION=1.1.1f-1ubuntu2.24
+OPENSSL11_FILENAME=libssl1.1_${OPENSSL11_VERSION}_amd64.deb
+OPENSSL11_PATH="hack/$OPENSSL11_FILENAME"
+OPENSSL11_SHA256=7cf39d70a639017d1dd7c8d36daa2258063608688e449fddf40ffdd46f992a78
+if [ ! -e "$OPENSSL11_PATH" ] ; then
+  echo "Fetching OpenSSL 1.1 runtime libraries..."
+  secureCurlDownload "$OPENSSL11_PATH" \
+    "https://security.ubuntu.com/ubuntu/pool/main/o/openssl/$OPENSSL11_FILENAME"
+fi
+
+verifySha256 "$OPENSSL11_PATH" "$OPENSSL11_SHA256" "OpenSSL 1.1 runtime package"
+
+OPENSSL11_BASE=tmp/openssl11
+rm -rf "$OPENSSL11_BASE"
+mkdir -p "$OPENSSL11_BASE" bundle/usr/lib/x86_64-linux-gnu
+dpkg-deb -x "$OPENSSL11_PATH" "$OPENSSL11_BASE"
+cp "$OPENSSL11_BASE"/usr/lib/x86_64-linux-gnu/libcrypto.so.1.1 \
+   "$OPENSSL11_BASE"/usr/lib/x86_64-linux-gnu/libssl.so.1.1 \
+   bundle/usr/lib/x86_64-linux-gnu/
+rm -rf "$OPENSSL11_BASE"
 
 # Download MongoDB Database Tools (mongodump, mongorestore) for MongoDB 7.0.
 # These are distributed separately since MongoDB 4.4+.
