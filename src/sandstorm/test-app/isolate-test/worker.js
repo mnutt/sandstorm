@@ -14,6 +14,7 @@ import {
   hydrateNativeAppRpcValue,
   nativeCapabilitySlot,
   sandstorm,
+  serveSystemRoutes,
   serializeNativeAppRpcCall,
   serializeNativeAppRpcException,
   serializeNativeAppRpcResult,
@@ -1082,6 +1083,67 @@ export default {
         invalidCapabilityError,
         reservedMethodError,
       });
+    }
+
+    if (url.pathname === "/native-app-rpc-route-self-test") {
+      sandstorm(request, env).registerCapability({
+        async deliver(subject, options) {
+          return {
+            subject,
+            urgent: options.urgent,
+          };
+        },
+
+        fail() {
+          throw new RangeError("route dispatch failure");
+        },
+      }, { id: "native-route-target" });
+
+      try {
+        const route = "http://worker/__sandstorm/object-capabilities/" +
+          "native-route-target/native-app-rpc-call";
+        const valueResponse = await serveSystemRoutes(new Request(route, {
+          method: "POST",
+          body: JSON.stringify(serializeNativeAppRpcCall("deliver", [
+            "route-subject",
+            { urgent: true },
+          ])),
+        }), env);
+        const missingResponse = await serveSystemRoutes(new Request(route, {
+          method: "POST",
+          body: JSON.stringify(serializeNativeAppRpcCall("missing", [])),
+        }), env);
+        const failedResponse = await serveSystemRoutes(new Request(route, {
+          method: "POST",
+          body: JSON.stringify(serializeNativeAppRpcCall("fail", [])),
+        }), env);
+        const invalidResponse = await serveSystemRoutes(new Request(route, {
+          method: "POST",
+          body: JSON.stringify({ method: "then", args: [] }),
+        }), env);
+
+        return Response.json({
+          ok: true,
+          value: {
+            status: valueResponse.status,
+            body: await valueResponse.json(),
+          },
+          missing: {
+            status: missingResponse.status,
+            body: await missingResponse.json(),
+          },
+          failed: {
+            status: failedResponse.status,
+            body: await failedResponse.json(),
+          },
+          invalid: {
+            status: invalidResponse.status,
+            body: await invalidResponse.json(),
+          },
+        });
+      } finally {
+        sandstorm(request, env).unregisterCapability({ id: "native-route-target" });
+      }
     }
 
     if (url.pathname === "/powerbox-binding-probe") {
