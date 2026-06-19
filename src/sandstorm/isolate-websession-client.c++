@@ -610,62 +610,59 @@ private:
   }
 };
 
-class FakeIsolateObjectCapability final: public IsolateObjectCapability::Server {
+class FakeIsolateObjectCallTarget final: public IsolateObjectCallTarget {
 public:
-  FakeIsolateObjectCapability(kj::String label, uint& dropCount)
+  FakeIsolateObjectCallTarget(kj::String label, uint& dropCount)
       : label(kj::mv(label)), dropCount(dropCount) {}
 
-  kj::Promise<void> call(CallContext context) override {
-    auto params = context.getParams();
-    auto method = params.getMethod();
-    auto args = params.getArgs();
+  kj::Promise<OwnedIsolateObjectCallResult> call(
+      kj::String method, OwnedIsolateObjectCallArgs ownedArgs) override {
+    auto args = ownedArgs.getArgs();
+    auto result = kj::heap<capnp::MallocMessageBuilder>();
 
     if (method == "echo") {
       KJ_REQUIRE(args.size() == 1, "echo expects one argument");
-      copyIsolateObjectCallValue(args[0], context.getResults().initResult().initValue());
-      return kj::READY_NOW;
+      copyIsolateObjectCallValue(args[0], result->initRoot<IsolateObjectCallResult>().initValue());
+      return OwnedIsolateObjectCallResult { kj::mv(result) };
     } else if (method == "sum") {
       double sum = 0;
       for (auto arg: args) {
         KJ_REQUIRE(arg.which() == IsolateObjectCallValue::NUMBER, "sum expects number args");
         sum += arg.getNumber();
       }
-      context.getResults().initResult().initValue().setNumber(sum);
-      return kj::READY_NOW;
+      result->initRoot<IsolateObjectCallResult>().initValue().setNumber(sum);
+      return OwnedIsolateObjectCallResult { kj::mv(result) };
     } else if (method == "describe") {
-      auto fields = context.getResults().initResult().initValue().initObject(2);
+      auto fields = result->initRoot<IsolateObjectCallResult>().initValue().initObject(2);
       fields[0].setName("label");
       fields[0].initValue().setText(label);
       fields[1].setName("argCount");
       fields[1].initValue().setNumber(args.size());
-      return kj::READY_NOW;
+      return OwnedIsolateObjectCallResult { kj::mv(result) };
     } else if (method == "callCap") {
       KJ_REQUIRE(args.size() == 1, "callCap expects one capability argument");
       KJ_REQUIRE(args[0].which() == IsolateObjectCallValue::CAPABILITY,
           "callCap expects a capability argument");
-      auto request = args[0].getCapability().callRequest();
-      request.setMethod("echo");
-      auto callbackArgs = request.initArgs(1);
+      capnp::MallocMessageBuilder callbackMessage;
+      auto callbackArgs = callbackMessage.initRoot<capnp::List<IsolateObjectCallValue>>(1);
       callbackArgs[0].setText("from-capability");
-      return request.send().then([context](auto response) mutable {
-        copyIsolateObjectCallResult(response.getResult(), context.getResults().initResult());
-      });
+      return callIsolateObjectCapability(
+          args[0].getCapability(), "echo", callbackArgs.asReader());
     } else if (method == "fail") {
-      auto exception = context.getResults().initResult().initException();
+      auto exception = result->initRoot<IsolateObjectCallResult>().initException();
       exception.setName("NativeObjectError");
       exception.setMessage("fake native object failure");
       exception.setStack("FakeIsolateObjectCapability.fail");
-      return kj::READY_NOW;
+      return OwnedIsolateObjectCallResult { kj::mv(result) };
     } else {
-      auto exception = context.getResults().initResult().initException();
+      auto exception = result->initRoot<IsolateObjectCallResult>().initException();
       exception.setName("NoSuchMethod");
       exception.setMessage(kj::str("unknown method: ", method));
-      return kj::READY_NOW;
+      return OwnedIsolateObjectCallResult { kj::mv(result) };
     }
   }
 
-  kj::Promise<void> drop(DropContext context) override {
-    (void)context;
+  kj::Promise<void> drop() override {
     ++dropCount;
     return kj::READY_NOW;
   }
@@ -678,10 +675,10 @@ private:
 void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
   uint rootDropCount = 0;
   uint childDropCount = 0;
-  IsolateObjectCapability::Client root =
-      kj::heap<FakeIsolateObjectCapability>(kj::heapString("root"), rootDropCount);
-  IsolateObjectCapability::Client child =
-      kj::heap<FakeIsolateObjectCapability>(kj::heapString("child"), childDropCount);
+  IsolateObjectCapability::Client root = makeIsolateObjectCapability(
+      kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("root"), rootDropCount));
+  IsolateObjectCapability::Client child = makeIsolateObjectCapability(
+      kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("child"), childDropCount));
 
   capnp::MallocMessageBuilder echoMessage;
   auto echoArgs = echoMessage.initRoot<capnp::List<IsolateObjectCallValue>>(1);

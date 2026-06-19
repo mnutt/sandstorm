@@ -24,16 +24,35 @@
 
 namespace sandstorm {
 
+struct OwnedIsolateObjectCallArgs {
+  kj::Own<capnp::MallocMessageBuilder> message;
+
+  capnp::List<IsolateObjectCallValue>::Reader getArgs();
+};
+
 struct OwnedIsolateObjectCallResult {
   kj::Own<capnp::MallocMessageBuilder> message;
 
   IsolateObjectCallResult::Reader getResult();
 };
 
+class IsolateObjectCallTarget {
+public:
+  virtual ~IsolateObjectCallTarget() noexcept(false) {}
+
+  virtual kj::Promise<OwnedIsolateObjectCallResult> call(
+      kj::String method, OwnedIsolateObjectCallArgs args) = 0;
+  virtual kj::Promise<void> drop();
+};
+
+OwnedIsolateObjectCallArgs copyIsolateObjectCallArgs(
+    capnp::List<IsolateObjectCallValue>::Reader source);
 void copyIsolateObjectCallValue(
     IsolateObjectCallValue::Reader source, IsolateObjectCallValue::Builder target);
 void copyIsolateObjectCallResult(
     IsolateObjectCallResult::Reader source, IsolateObjectCallResult::Builder target);
+IsolateObjectCapability::Client makeIsolateObjectCapability(
+    kj::Own<IsolateObjectCallTarget> target);
 kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
     IsolateObjectCapability::Client capability, kj::StringPtr method,
     capnp::List<IsolateObjectCallValue>::Reader args);
