@@ -39,6 +39,13 @@ constexpr const char* ISOLATE_ROUTE_BACKED_APP_REF_PREFIX =
     "sandstorm-isolate-route-backed-v1\n";
 constexpr uint64_t TEST_PROVIDER_TAG_ID = 0xdf9518c9479ddfcbull;
 
+static_assert(capnp::typeId<IsolateObjectCapability>() == 0xd7a322498a996313,
+    "IsolateObjectCapability schema ID changed");
+static_assert(capnp::typeId<IsolateObjectCallValue>() == 0x976b1fa67593b262,
+    "IsolateObjectCallValue schema ID changed");
+static_assert(capnp::typeId<IsolateObjectCallResult>() == 0xdaea7034fe7730f4,
+    "IsolateObjectCallResult schema ID changed");
+
 bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
   if (needle.size() > haystack.size()) {
     return false;
