@@ -815,6 +815,9 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.saved.tokenEncoding, "base64url");
     assert.equal(typeof selfTest.json.saved.token, "string");
     assert.equal(selfTest.json.restored.type, "claimedCapability");
+    assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
+    assert.match(selfTest.json.wrongOutboundError.message, /nativeInterface webSession/);
+    assert.match(selfTest.json.wrongOutboundError.message, /outbound HTTP/);
     assert.equal(selfTest.json.dropOriginal.ok, true);
     assert.equal(selfTest.json.fetched.status, 200);
     assert.equal(selfTest.json.fetched.headers.etag, "\"capability-echo-etag\"");
@@ -995,6 +998,9 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.saved.tokenEncoding, "base64url");
     assert.equal(typeof selfTest.json.saved.token, "string");
     assert.equal(selfTest.json.restored.type, "claimedCapability");
+    assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
+    assert.match(selfTest.json.wrongOutboundError.message, /nativeInterface apiSession/);
+    assert.match(selfTest.json.wrongOutboundError.message, /outbound HTTP/);
     assert.equal(selfTest.json.dropOriginal.ok, true);
     assert.equal(selfTest.json.fetched.status, 200);
     assert.equal(selfTest.json.fetched.body.ok, true);

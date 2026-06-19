@@ -1431,6 +1431,14 @@ function outboundHttpRequest(input, init = {}) {
 }
 
 async function fetchOutboundHttpCapability(capability, input, init = {}) {
+  const info = await claimedCapabilityInfo(capability.env, capability);
+  if (info?.nativeInterface !== undefined &&
+      info.nativeInterface !== "unknown" &&
+      info.nativeInterface !== "outboundHttpSession") {
+    throw new ValidationError(
+      `ClaimedCapability nativeInterface ${info.nativeInterface} cannot be used as outbound HTTP`);
+  }
+
   const { request, path } = outboundHttpRequest(input, init);
   const params = new URLSearchParams({
     id: capabilityId(capability),
