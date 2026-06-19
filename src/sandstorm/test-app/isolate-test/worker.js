@@ -869,6 +869,51 @@ export default {
       });
     }
 
+    if (url.pathname === "/native-interface-validation-self-test") {
+      const calls = [];
+      const mockEnv = {
+        SANDSTORM_API: {
+          async fetch(input, init) {
+            calls.push(String(input));
+            const parsed = new URL(String(input));
+            if (parsed.pathname === "/capabilities/claimed") {
+              return Response.json({
+                ok: true,
+                type: "claimedCapabilityInfo",
+                id: parsed.searchParams.get("id"),
+                kind: "powerboxClaim",
+                residence: "imported",
+                nativeInterface: "outboundHttpSession",
+                pathPrefix: "",
+                persistent: true,
+                hasDropNotify: false,
+                dropNotifyRefCount: 0,
+                hasNativeCapability: true,
+                liveForwardable: true,
+              });
+            }
+            return Response.json({ ok: false, error: "unexpected mock fetch" }, { status: 500 });
+          },
+        },
+      };
+      const capability = new ClaimedCapability(mockEnv, "mock-outbound");
+      let fetchError = null;
+      try {
+        await capability.fetch("/should-not-fetch");
+      } catch (error) {
+        fetchError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+
+      return Response.json({
+        ok: true,
+        calls,
+        fetchError,
+      });
+    }
+
     if (url.pathname === "/powerbox-binding-probe") {
       const statusResponse = await env.POWERBOX.fetch("http://sandstorm/status");
       const dropResponse = await env.POWERBOX.fetch(

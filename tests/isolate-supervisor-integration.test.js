@@ -1418,6 +1418,18 @@ test("isolate supervisor integration suite", {
       ]);
     assert.equal(bindings.json.bindings[5].serviceName, "main");
 
+    const nativeInterfaceValidation = await requestJson(
+      fixture.workerdSocket, "/native-interface-validation-self-test");
+    assert.equal(nativeInterfaceValidation.statusCode, 200, nativeInterfaceValidation.body);
+    assert.equal(nativeInterfaceValidation.json.ok, true);
+    assert.deepEqual(nativeInterfaceValidation.json.calls, [
+      "http://sandstorm/capabilities/claimed?id=mock-outbound",
+    ]);
+    assert.equal(nativeInterfaceValidation.json.fetchError.name, "ValidationError");
+    assert.match(nativeInterfaceValidation.json.fetchError.message,
+      /nativeInterface outboundHttpSession/);
+    assert.match(nativeInterfaceValidation.json.fetchError.message, /asOutboundHttp\(\)\.fetch/);
+
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);
     assert.equal(missing.json.ok, false);
