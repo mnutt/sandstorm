@@ -8,9 +8,14 @@ import {
   SANDSTORM_HELPER_VERSIONS,
   SANDSTORM_RPC_VERSION,
   SavedCapability,
+  hydrateNativeAppRpcCall,
+  hydrateNativeAppRpcResult,
   hydrateNativeAppRpcValue,
   nativeCapabilitySlot,
   sandstorm,
+  serializeNativeAppRpcCall,
+  serializeNativeAppRpcException,
+  serializeNativeAppRpcResult,
   serializeNativeAppRpcValue,
   powerbox as sandstormPowerbox,
 } from "sandstorm:api";
@@ -974,6 +979,22 @@ export default {
       };
       const serialized = serializeNativeAppRpcValue(value);
       const hydrated = hydrateNativeAppRpcValue(serialized);
+      const callEnvelope = serializeNativeAppRpcCall("deliver", [
+        "subject",
+        slot,
+        { urgent: true },
+      ]);
+      const hydratedCall = hydrateNativeAppRpcCall(callEnvelope);
+      const resultEnvelope = serializeNativeAppRpcResult({
+        accepted: true,
+        receipt: slot,
+      });
+      const resultValue = hydrateNativeAppRpcResult(resultEnvelope);
+      const exceptionEnvelope = serializeNativeAppRpcException({
+        name: "RemoteAppError",
+        message: "remote failure",
+        stack: "remote stack",
+      });
 
       let rawTargetError = null;
       try {
@@ -995,6 +1016,30 @@ export default {
         };
       }
 
+      let reservedMethodError = null;
+      try {
+        serializeNativeAppRpcCall("then", []);
+      } catch (error) {
+        reservedMethodError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+
+      let exceptionError = null;
+      try {
+        hydrateNativeAppRpcResult(exceptionEnvelope);
+      } catch (error) {
+        exceptionError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+          details: {
+            name: String(error?.details?.name || ""),
+            stack: String(error?.details?.stack || ""),
+          },
+        };
+      }
+
       return Response.json({
         ok: true,
         serialized,
@@ -1002,9 +1047,16 @@ export default {
           ...hydrated,
           bytes: Array.from(hydrated.bytes),
         },
+        callEnvelope,
+        hydratedCall,
+        resultEnvelope,
+        resultValue,
+        exceptionEnvelope,
+        exceptionError,
         slotFrozen: Object.isFrozen(slot),
         rawTargetError,
         invalidCapabilityError,
+        reservedMethodError,
       });
     }
 

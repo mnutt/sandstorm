@@ -367,6 +367,64 @@ export function hydrateNativeAppRpcValue(value, name = "value") {
   }
 }
 
+export function serializeNativeAppRpcCall(method, args = []) {
+  method = capabilityMethodName(method);
+  args = capabilityArgs(args).map((arg, index) =>
+    serializeNativeAppRpcValue(arg, `args[${index}]`));
+  return { method, args };
+}
+
+export function hydrateNativeAppRpcCall(call, name = "call") {
+  if (!call || typeof call !== "object") {
+    failValidation(name, "a native app RPC call envelope", call);
+  }
+
+  return {
+    method: capabilityMethodName(call.method, `${name}.method`),
+    args: capabilityArgs(call.args || [], `${name}.args`)
+      .map((arg, index) => hydrateNativeAppRpcValue(arg, `${name}.args[${index}]`)),
+  };
+}
+
+export function serializeNativeAppRpcResult(value) {
+  return {
+    type: "value",
+    value: serializeNativeAppRpcValue(value, "result"),
+  };
+}
+
+export function serializeNativeAppRpcException(error) {
+  return {
+    type: "exception",
+    name: String(error?.name || "Error"),
+    message: String(error?.message || error),
+    stack: String(error?.stack || ""),
+  };
+}
+
+export function hydrateNativeAppRpcResult(result, name = "result") {
+  if (!result || typeof result !== "object" || typeof result.type !== "string") {
+    throw new ValidationError(`${name} must be a native app RPC result envelope`);
+  }
+
+  switch (result.type) {
+    case "value":
+      return hydrateNativeAppRpcValue(result.value, `${name}.value`);
+    case "exception": {
+      const errorName = validate.string(result.name || "Error", `${name}.name`);
+      const message = validate.string(result.message || "", `${name}.message`);
+      const stack = validate.string(result.stack || "", `${name}.stack`);
+      throw new CapabilityCallError(message, {
+        name: errorName,
+        stack,
+        nativeAppRpcResult: result,
+      });
+    }
+    default:
+      throw new ValidationError(`${name}.type is unsupported: ${result.type}`);
+  }
+}
+
 function storageUrl(key = "") {
   return `http://storage/${encodeURIComponent(key === "" ? "" : validate.storageKey(key))}`;
 }
