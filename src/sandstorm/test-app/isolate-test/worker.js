@@ -702,6 +702,15 @@ export default {
       const capability = await sandstorm(request, env).webSession({
         pathPrefix: "/exported",
       });
+      let wrongOutboundError;
+      try {
+        await capability.asOutboundHttp().fetch("v1/test");
+      } catch (error) {
+        wrongOutboundError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
       const saved = await capability.save({ label: "Route-backed WebSession fixture" });
       const dropOriginal = await capability.drop();
       const restored = await saved.restore();
@@ -756,6 +765,7 @@ export default {
         capability: JSON.parse(JSON.stringify(capability)),
         saved: JSON.parse(JSON.stringify(saved)),
         restored: JSON.parse(JSON.stringify(restored)),
+        wrongOutboundError,
         dropOriginal,
         fetched,
         posted,
@@ -779,6 +789,15 @@ export default {
       const capability = await sandstorm(request, env).apiSession({
         pathPrefix: "/api-exported",
       });
+      let wrongOutboundError;
+      try {
+        await capability.asOutboundHttp().fetch("v1/test");
+      } catch (error) {
+        wrongOutboundError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
       const saved = await capability.save({ label: "Route-backed ApiSession fixture" });
       const dropOriginal = await capability.drop();
       const restored = await saved.restore();
@@ -797,6 +816,7 @@ export default {
         capability: JSON.parse(JSON.stringify(capability)),
         saved: JSON.parse(JSON.stringify(saved)),
         restored: JSON.parse(JSON.stringify(restored)),
+        wrongOutboundError,
         dropOriginal,
         fetched,
         dropRestored,
