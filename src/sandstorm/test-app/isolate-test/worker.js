@@ -8,6 +8,7 @@ import {
   SANDSTORM_HELPER_VERSIONS,
   SANDSTORM_RPC_VERSION,
   SavedCapability,
+  createNativeAppRpcFetchTransport,
   createNativeAppRpcStub,
   dispatchNativeAppRpcCall,
   hydrateNativeAppRpcCall,
@@ -1201,6 +1202,34 @@ export default {
           method: "POST",
           body: JSON.stringify({ method: "then", args: [] }),
         }), env);
+        const transportCalls = [];
+        const routeStub = createNativeAppRpcStub(
+          nativeCapabilitySlot("native-route-target", { nativeInterface: "appObject" }),
+          createNativeAppRpcFetchTransport({
+            async fetch(input, init) {
+              transportCalls.push({ input: String(input), method: init?.method || "GET" });
+              return serveSystemRoutes(new Request(input, init), env);
+            },
+          }, (slot) => `http://worker/__sandstorm/object-capabilities/${slot.id}/` +
+            "native-app-rpc-call"));
+        const routeStubValue = await routeStub.call("deliver", "stub-route-subject", {
+          urgent: false,
+        });
+        const routeStubRpcValue = await routeStub.asRpc().deliver("stub-rpc-subject", {
+          urgent: true,
+        });
+        let routeStubMissingError = null;
+        try {
+          await routeStub.call("missing");
+        } catch (error) {
+          routeStubMissingError = {
+            name: String(error?.name || "Error"),
+            message: String(error?.message || error),
+            details: {
+              name: String(error?.details?.name || ""),
+            },
+          };
+        }
 
         return Response.json({
           ok: true,
@@ -1219,6 +1248,13 @@ export default {
           invalid: {
             status: invalidResponse.status,
             body: await invalidResponse.json(),
+          },
+          routeStub: {
+            slot: routeStub.slot,
+            transportCalls,
+            value: routeStubValue,
+            rpcValue: routeStubRpcValue,
+            missingError: routeStubMissingError,
           },
         });
       } finally {

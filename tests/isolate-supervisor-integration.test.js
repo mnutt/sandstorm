@@ -1770,6 +1770,42 @@ test("isolate supervisor integration suite", {
     assert.equal(nativeAppRpcRoute.json.invalid.body.type, "exception");
     assert.equal(nativeAppRpcRoute.json.invalid.body.name, "ValidationError");
     assert.match(nativeAppRpcRoute.json.invalid.body.message, /reserved/);
+    assert.deepEqual(nativeAppRpcRoute.json.routeStub.slot, {
+      type: "nativeCapabilitySlot",
+      id: "native-route-target",
+      nativeInterface: "appObject",
+    });
+    assert.deepEqual(nativeAppRpcRoute.json.routeStub.transportCalls, [
+      {
+        input: "http://worker/__sandstorm/object-capabilities/native-route-target/" +
+          "native-app-rpc-call",
+        method: "POST",
+      },
+      {
+        input: "http://worker/__sandstorm/object-capabilities/native-route-target/" +
+          "native-app-rpc-call",
+        method: "POST",
+      },
+      {
+        input: "http://worker/__sandstorm/object-capabilities/native-route-target/" +
+          "native-app-rpc-call",
+        method: "POST",
+      },
+    ]);
+    assert.deepEqual(nativeAppRpcRoute.json.routeStub.value, {
+      subject: "stub-route-subject",
+      urgent: false,
+    });
+    assert.deepEqual(nativeAppRpcRoute.json.routeStub.rpcValue, {
+      subject: "stub-rpc-subject",
+      urgent: true,
+    });
+    assert.equal(nativeAppRpcRoute.json.routeStub.missingError.name, "CapabilityCallError");
+    assert.equal(nativeAppRpcRoute.json.routeStub.missingError.message,
+      "RPC method not found: missing");
+    assert.deepEqual(nativeAppRpcRoute.json.routeStub.missingError.details, {
+      name: "NoSuchMethod",
+    });
 
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);

@@ -520,6 +520,41 @@ export function createNativeAppRpcStub(slot, transport) {
   return new NativeAppRpcStub(slot, transport);
 }
 
+export function createNativeAppRpcFetchTransport(fetcher, route) {
+  if (!fetcher || typeof fetcher.fetch !== "function") {
+    throw new ValidationError("native app RPC fetch transport requires a fetcher");
+  }
+  if (typeof route !== "string" && typeof route !== "function") {
+    throw new ValidationError("native app RPC fetch transport route must be a string or function");
+  }
+
+  return async (slot, call) => {
+    const url = typeof route === "function" ? route(slot) : route;
+    const response = await fetcher.fetch(validate.string(url, "native app RPC route"), {
+      method: "POST",
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify(call),
+    });
+    const text = await response.text();
+    let result;
+    try {
+      result = text.length > 0 ? JSON.parse(text) : {};
+    } catch (error) {
+      throw new CapabilityCallError(
+        `native app RPC transport returned non-JSON response with status ${response.status}`,
+        { status: response.status, body: text });
+    }
+
+    if (!result || typeof result !== "object" || typeof result.type !== "string") {
+      throw new CapabilityCallError(
+        `native app RPC transport returned invalid response with status ${response.status}`,
+        { status: response.status, body: result });
+    }
+
+    return result;
+  };
+}
+
 function storageUrl(key = "") {
   return `http://storage/${encodeURIComponent(key === "" ? "" : validate.storageKey(key))}`;
 }
