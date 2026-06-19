@@ -627,6 +627,7 @@ test("isolate supervisor integration suite", {
       dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: false,
+      supportsNativeAppRpcTransport: false,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -772,6 +773,7 @@ test("isolate supervisor integration suite", {
       dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: true,
+      supportsNativeAppRpcTransport: false,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -892,6 +894,7 @@ test("isolate supervisor integration suite", {
       dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: false,
+      supportsNativeAppRpcTransport: false,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -962,6 +965,7 @@ test("isolate supervisor integration suite", {
       dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: true,
+      supportsNativeAppRpcTransport: false,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -1044,6 +1048,7 @@ test("isolate supervisor integration suite", {
     assert.equal(capabilityInfo.json.dropNotifyRefCount, 1);
     assert.equal(capabilityInfo.json.supportsWebFetch, true);
     assert.equal(capabilityInfo.json.supportsOutboundHttpFetch, false);
+    assert.equal(capabilityInfo.json.supportsNativeAppRpcTransport, false);
     assert.equal(capabilityInfo.json.hasNativeCapability, true);
     assert.equal(capabilityInfo.json.liveForwardable, true);
 
@@ -1154,6 +1159,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.capabilityInfo.dropNotifyRefCount, 1);
     assert.equal(selfTest.json.capabilityInfo.supportsWebFetch, true);
     assert.equal(selfTest.json.capabilityInfo.supportsOutboundHttpFetch, false);
+    assert.equal(selfTest.json.capabilityInfo.supportsNativeAppRpcTransport, false);
     assert.equal(selfTest.json.capabilityInfo.hasNativeCapability, true);
     assert.equal(selfTest.json.capabilityInfo.liveForwardable, true);
     assert.equal(typeof selfTest.json.childInfo.id, "string");
@@ -1168,6 +1174,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.childInfo.dropNotifyRefCount, 1);
     assert.equal(selfTest.json.childInfo.supportsWebFetch, true);
     assert.equal(selfTest.json.childInfo.supportsOutboundHttpFetch, false);
+    assert.equal(selfTest.json.childInfo.supportsNativeAppRpcTransport, false);
     assert.equal(selfTest.json.childInfo.hasNativeCapability, true);
     assert.equal(selfTest.json.childInfo.liveForwardable, true);
     assert.deepEqual(selfTest.json.childFirst, { value: 11 });
@@ -1206,6 +1213,8 @@ test("isolate supervisor integration suite", {
       /hasNativeCapability=true/);
     assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
       /liveForwardable=true/);
+    assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
+      /supportsNativeAppRpcTransport=false/);
     assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
       /native app-defined RPC transport is not implemented yet/);
     assert.equal(typeof selfTest.json.duplicate.id, "string");

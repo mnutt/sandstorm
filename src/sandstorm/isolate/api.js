@@ -1141,7 +1141,8 @@ async function serializeCapabilityValue(env, value, options = {}) {
       const info = await claimedCapabilityInfo(env, value);
       const nativeState = info
         ? ` supervisor reports hasNativeCapability=${info.hasNativeCapability}, ` +
-          `liveForwardable=${info.liveForwardable};`
+          `liveForwardable=${info.liveForwardable}, ` +
+          `supportsNativeAppRpcTransport=${info.supportsNativeAppRpcTransport};`
         : " supervisor has no claimed-capability metadata for this handle;";
       throw new ValidationError(
         "ClaimedCapability handles cannot be passed to remote app-defined RPC calls yet;" +
@@ -1159,7 +1160,8 @@ async function serializeCapabilityValue(env, value, options = {}) {
       const info = await claimedCapabilityInfo(env, value);
       const nativeState = info
         ? ` supervisor reports hasNativeCapability=${info.hasNativeCapability}, ` +
-          `liveForwardable=${info.liveForwardable};`
+          `liveForwardable=${info.liveForwardable}, ` +
+          `supportsNativeAppRpcTransport=${info.supportsNativeAppRpcTransport};`
         : " supervisor has no claimed-capability metadata for this handle;";
       throw new ValidationError(
         "claimed capability handles cannot be passed to remote app-defined RPC calls yet;" +
