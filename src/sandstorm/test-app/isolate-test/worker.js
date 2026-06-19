@@ -1295,6 +1295,16 @@ export default {
         claimedClass: claim instanceof ClaimedCapability,
         json: JSON.parse(JSON.stringify(claim)),
       };
+      async function claimedInfo(capability) {
+        if (!capability?.ok || !capability?.id) return null;
+        const response = await env.SANDSTORM_API.fetch(
+          `http://sandstorm/capabilities/claimed?id=${encodeURIComponent(capability.id)}`);
+        return {
+          status: response.status,
+          body: await response.json(),
+        };
+      }
+      const claimInfo = await claimedInfo(claim);
       let save = null;
       let savedCapability = null;
       if (claim.ok && claim.id && url.searchParams.get("save") === "true") {
@@ -1362,6 +1372,7 @@ export default {
           };
         }
         if (restore.body.ok && restore.body.id) {
+          restore.info = await claimedInfo(restore.body);
           if (restoredCapability && typeof restoredCapability.drop === "function") {
             dropRestored = {
               status: 200,
@@ -1414,6 +1425,7 @@ export default {
           ok: tiedCapability.ok,
           claimedClass: tiedCapability instanceof ClaimedCapability,
           json: JSON.parse(JSON.stringify(tiedCapability)),
+          info: await claimedInfo(tiedCapability),
         };
         dropTied = await tiedCapability.drop();
       }
@@ -1457,6 +1469,7 @@ export default {
         sessionId,
         claim,
         claimType,
+        claimInfo,
         save,
         stored,
         restore,
