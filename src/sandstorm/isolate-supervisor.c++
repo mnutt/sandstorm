@@ -279,6 +279,18 @@ struct ClaimedCapabilityInfo {
 struct ClaimedCapabilityStats {
   uint claimedCapabilityCount = 0;
   uint dropNotifyGroupCount = 0;
+  uint localExportCount = 0;
+  uint importedCount = 0;
+  uint webSessionNativeCount = 0;
+  uint apiSessionNativeCount = 0;
+  uint outboundHttpNativeCount = 0;
+  uint unknownNativeCount = 0;
+  uint routeBackedWebSessionCount = 0;
+  uint routeBackedApiSessionCount = 0;
+  uint powerboxClaimCount = 0;
+  uint powerboxOfferCount = 0;
+  uint restoredCount = 0;
+  uint tiedCount = 0;
 };
 
 class IsolateSessionRegistry final: public kj::Refcounted {
@@ -395,10 +407,61 @@ public:
   }
 
   ClaimedCapabilityStats getClaimedCapabilityStats() {
-    return ClaimedCapabilityStats {
+    ClaimedCapabilityStats stats {
       static_cast<uint>(claimedCapabilities.size()),
       static_cast<uint>(dropNotifyGroups.size()),
     };
+    for (auto& capability: claimedCapabilities) {
+      switch (capability.metadata.residence) {
+        case ClaimedCapabilityResidence::LOCAL_EXPORT:
+          ++stats.localExportCount;
+          break;
+        case ClaimedCapabilityResidence::IMPORTED:
+          ++stats.importedCount;
+          break;
+        case ClaimedCapabilityResidence::UNKNOWN:
+          break;
+      }
+
+      switch (capability.metadata.nativeInterface) {
+        case ClaimedCapabilityNativeInterface::WEB_SESSION:
+          ++stats.webSessionNativeCount;
+          break;
+        case ClaimedCapabilityNativeInterface::API_SESSION:
+          ++stats.apiSessionNativeCount;
+          break;
+        case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
+          ++stats.outboundHttpNativeCount;
+          break;
+        case ClaimedCapabilityNativeInterface::UNKNOWN:
+          ++stats.unknownNativeCount;
+          break;
+      }
+
+      switch (capability.metadata.kind) {
+        case ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION:
+          ++stats.routeBackedWebSessionCount;
+          break;
+        case ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION:
+          ++stats.routeBackedApiSessionCount;
+          break;
+        case ClaimedCapabilityKind::POWERBOX_CLAIM:
+          ++stats.powerboxClaimCount;
+          break;
+        case ClaimedCapabilityKind::POWERBOX_OFFER:
+          ++stats.powerboxOfferCount;
+          break;
+        case ClaimedCapabilityKind::RESTORED:
+          ++stats.restoredCount;
+          break;
+        case ClaimedCapabilityKind::TIED:
+          ++stats.tiedCount;
+          break;
+        case ClaimedCapabilityKind::UNKNOWN:
+          break;
+      }
+    }
+    return stats;
   }
 
 private:
@@ -4372,7 +4435,19 @@ private:
         "  \"ok\": true,\n"
         "  \"type\": \"claimedCapabilityStats\",\n"
         "  \"claimedCapabilityCount\": ", stats.claimedCapabilityCount, ",\n"
-        "  \"dropNotifyGroupCount\": ", stats.dropNotifyGroupCount, "\n"
+        "  \"dropNotifyGroupCount\": ", stats.dropNotifyGroupCount, ",\n"
+        "  \"localExportCount\": ", stats.localExportCount, ",\n"
+        "  \"importedCount\": ", stats.importedCount, ",\n"
+        "  \"webSessionNativeCount\": ", stats.webSessionNativeCount, ",\n"
+        "  \"apiSessionNativeCount\": ", stats.apiSessionNativeCount, ",\n"
+        "  \"outboundHttpNativeCount\": ", stats.outboundHttpNativeCount, ",\n"
+        "  \"unknownNativeCount\": ", stats.unknownNativeCount, ",\n"
+        "  \"routeBackedWebSessionCount\": ", stats.routeBackedWebSessionCount, ",\n"
+        "  \"routeBackedApiSessionCount\": ", stats.routeBackedApiSessionCount, ",\n"
+        "  \"powerboxClaimCount\": ", stats.powerboxClaimCount, ",\n"
+        "  \"powerboxOfferCount\": ", stats.powerboxOfferCount, ",\n"
+        "  \"restoredCount\": ", stats.restoredCount, ",\n"
+        "  \"tiedCount\": ", stats.tiedCount, "\n"
         "}\n");
   }
 
