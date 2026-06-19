@@ -18,9 +18,14 @@
 #define SANDSTORM_ISOLATE_UTIL_H_
 
 #include <kj/string.h>
+#include <sandstorm/isolate-supervisor-internal.capnp.h>
 
 namespace sandstorm {
 
+void copyIsolateObjectCallValue(
+    IsolateObjectCallValue::Reader source, IsolateObjectCallValue::Builder target);
+void copyIsolateObjectCallResult(
+    IsolateObjectCallResult::Reader source, IsolateObjectCallResult::Builder target);
 bool isCanonicalPackagePath(kj::StringPtr path);
 kj::String isolateStorageKeyFromUrl(kj::StringPtr url);
 bool isValidIsolateStorageKey(kj::StringPtr key);

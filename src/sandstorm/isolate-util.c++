@@ -39,6 +39,64 @@ const kj::HttpHeaderTable& getStructuredResponseHeaderTable() {
 
 }  // namespace
 
+void copyIsolateObjectCallValue(
+    IsolateObjectCallValue::Reader source, IsolateObjectCallValue::Builder target) {
+  switch (source.which()) {
+    case IsolateObjectCallValue::NULL_:
+      target.setNull();
+      break;
+    case IsolateObjectCallValue::BOOL:
+      target.setBool(source.getBool());
+      break;
+    case IsolateObjectCallValue::NUMBER:
+      target.setNumber(source.getNumber());
+      break;
+    case IsolateObjectCallValue::TEXT:
+      target.setText(source.getText());
+      break;
+    case IsolateObjectCallValue::DATA:
+      target.setData(source.getData());
+      break;
+    case IsolateObjectCallValue::LIST: {
+      auto sourceList = source.getList();
+      auto targetList = target.initList(sourceList.size());
+      for (auto i: kj::indices(sourceList)) {
+        copyIsolateObjectCallValue(sourceList[i], targetList[i]);
+      }
+      break;
+    }
+    case IsolateObjectCallValue::OBJECT: {
+      auto sourceFields = source.getObject();
+      auto targetFields = target.initObject(sourceFields.size());
+      for (auto i: kj::indices(sourceFields)) {
+        targetFields[i].setName(sourceFields[i].getName());
+        copyIsolateObjectCallValue(sourceFields[i].getValue(), targetFields[i].initValue());
+      }
+      break;
+    }
+    case IsolateObjectCallValue::CAPABILITY:
+      target.setCapability(source.getCapability());
+      break;
+  }
+}
+
+void copyIsolateObjectCallResult(
+    IsolateObjectCallResult::Reader source, IsolateObjectCallResult::Builder target) {
+  switch (source.which()) {
+    case IsolateObjectCallResult::VALUE:
+      copyIsolateObjectCallValue(source.getValue(), target.initValue());
+      break;
+    case IsolateObjectCallResult::EXCEPTION: {
+      auto sourceException = source.getException();
+      auto targetException = target.initException();
+      targetException.setName(sourceException.getName());
+      targetException.setMessage(sourceException.getMessage());
+      targetException.setStack(sourceException.getStack());
+      break;
+    }
+  }
+}
+
 bool isCanonicalPackagePath(kj::StringPtr path) {
   if (path.size() == 0 || path.startsWith("/") || path.endsWith("/")) {
     return false;
