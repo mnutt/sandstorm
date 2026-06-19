@@ -20,6 +20,7 @@
 #include <capnp/message.h>
 #include <kj/async.h>
 #include <kj/string.h>
+#include <kj/vector.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
 
 namespace sandstorm {
@@ -43,6 +44,58 @@ public:
   virtual kj::Promise<OwnedIsolateObjectCallResult> call(
       kj::String method, OwnedIsolateObjectCallArgs args) = 0;
   virtual kj::Promise<void> drop();
+};
+
+enum class IsolateObjectCapabilityTableEntryKind {
+  EXPORTED,
+  IMPORTED,
+};
+
+struct RegisteredIsolateObjectCapability {
+  kj::String id;
+  IsolateObjectCapability::Client capability;
+};
+
+struct IsolateObjectCapabilityTableStats {
+  uint totalCount = 0;
+  uint exportedCount = 0;
+  uint importedCount = 0;
+};
+
+struct IsolateObjectCapabilityTableEntryInfo {
+  IsolateObjectCapabilityTableEntryKind kind;
+};
+
+class IsolateObjectCapabilityTable {
+public:
+  IsolateObjectCapabilityTable() = default;
+  IsolateObjectCapabilityTable(const IsolateObjectCapabilityTable&) = delete;
+  IsolateObjectCapabilityTable& operator=(const IsolateObjectCapabilityTable&) = delete;
+  IsolateObjectCapabilityTable(IsolateObjectCapabilityTable&&) = delete;
+  IsolateObjectCapabilityTable& operator=(IsolateObjectCapabilityTable&&) = delete;
+
+  RegisteredIsolateObjectCapability exportTarget(kj::Own<IsolateObjectCallTarget> target);
+  RegisteredIsolateObjectCapability importCapability(IsolateObjectCapability::Client capability);
+  kj::Maybe<IsolateObjectCapability::Client> find(kj::StringPtr id);
+  kj::Maybe<IsolateObjectCapabilityTableEntryInfo> findInfo(kj::StringPtr id) const;
+  kj::Promise<bool> drop(kj::StringPtr id);
+  kj::Promise<uint> dropAll();
+  IsolateObjectCapabilityTableStats stats() const;
+
+private:
+  struct Entry {
+    kj::String id;
+    IsolateObjectCapabilityTableEntryKind kind;
+    IsolateObjectCapability::Client capability;
+  };
+
+  kj::String nextId(IsolateObjectCapabilityTableEntryKind kind);
+  kj::Maybe<uint> findIndex(kj::StringPtr id) const;
+  Entry remove(uint index);
+
+  uint nextExportId = 0;
+  uint nextImportId = 0;
+  kj::Vector<Entry> entries;
 };
 
 OwnedIsolateObjectCallArgs copyIsolateObjectCallArgs(
