@@ -1240,6 +1240,14 @@ public:
     KJ_REQUIRE(contains(claimBody,
         "\"json\":{\"ok\":true,\"type\":\"claimedCapability\",\"id\":\""),
         claimBody);
+    KJ_REQUIRE(contains(claimBody,
+        "\"claimInfo\":{\"status\":200,\"body\":{\"ok\":true,"
+        "\"type\":\"claimedCapabilityInfo\""),
+        claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"kind\":\"powerboxClaim\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"residence\":\"imported\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"hasNativeCapability\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"liveForwardable\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"save\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"type\":\"savedCapability\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"tokenEncoding\":\"base64url\""), claimBody);
@@ -1247,6 +1255,10 @@ public:
     KJ_REQUIRE(contains(claimBody,
         "\"restore\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"claimedCapability\""),
         claimBody);
+    KJ_REQUIRE(contains(claimBody,
+        "\"info\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"claimedCapabilityInfo\""),
+        claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"kind\":\"restored\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"typed\":{\"restoredClass\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody,
         "\"stored\":{\"key\":\"websession-saved-capability\",\"put\":{\"status\":200"),
@@ -1260,6 +1272,7 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"offer\":{\"ok\":true}"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"fulfill\":{\"ok\":true}"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"tie\":{\"ok\":true,\"claimedClass\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"kind\":\"tied\""), claimBody);
     KJ_REQUIRE(contains(claimBody,
         "\"dropTied\":{\"ok\":true}"),
         claimBody);

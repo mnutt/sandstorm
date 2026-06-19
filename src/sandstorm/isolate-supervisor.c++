@@ -203,6 +203,8 @@ struct ClaimedCapabilityMetadata {
   kj::String pathPrefix = kj::heapString("");
   bool persistent = true;
   bool hasDropNotify = false;
+  bool hasNativeCapability = true;
+  bool liveForwardable = true;
 };
 
 ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
@@ -213,6 +215,8 @@ ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
     kj::heapString(metadata.pathPrefix),
     metadata.persistent,
     metadata.hasDropNotify,
+    metadata.hasNativeCapability,
+    metadata.liveForwardable,
   };
 }
 
@@ -3141,6 +3145,8 @@ public:
           kj::heapString(""),
           true,
           false,
+          true,
+          true,
         });
     copyOfferDescriptor(sessionMetadata, params.getDescriptor());
     context.getResults().setSession(kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
@@ -4284,6 +4290,10 @@ private:
     json.addAll(metadata.persistent ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"hasDropNotify\": "));
     json.addAll(metadata.hasDropNotify ? kj::StringPtr("true") : kj::StringPtr("false"));
+    json.addAll(kj::StringPtr(",\n  \"hasNativeCapability\": "));
+    json.addAll(metadata.hasNativeCapability ? kj::StringPtr("true") : kj::StringPtr("false"));
+    json.addAll(kj::StringPtr(",\n  \"liveForwardable\": "));
+    json.addAll(metadata.liveForwardable ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr("\n}\n"));
     json.add('\0');
     return kj::String(json.releaseAsArray());
@@ -4605,6 +4615,8 @@ private:
       kj::heapString(pathPrefix),
       persistent,
       false,
+      true,
+      true,
     };
   }
 
@@ -5025,6 +5037,8 @@ private:
               kj::heapString(""),
               true,
               false,
+              true,
+              true,
             });
         return sendJson(response, 200, "OK", renderClaimedCapability(capId));
       });
@@ -5294,6 +5308,8 @@ private:
                 kj::heapString(""),
                 true,
                 false,
+                true,
+                true,
               });
           return sendJson(response, 200, "OK", renderClaimedCapability(capId));
         });
@@ -5487,6 +5503,8 @@ private:
               kj::heapString(""),
               true,
               false,
+              true,
+              true,
             });
         return sendJson(response, 200, "OK", renderClaimedCapability(capId));
       });

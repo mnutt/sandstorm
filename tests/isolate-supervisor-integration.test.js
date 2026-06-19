@@ -623,6 +623,8 @@ test("isolate supervisor integration suite", {
       pathPrefix: "/exported",
       persistent: true,
       hasDropNotify: false,
+      hasNativeCapability: true,
+      liveForwardable: true,
     });
 
     const fetched = await requestJson(
@@ -752,6 +754,8 @@ test("isolate supervisor integration suite", {
       pathPrefix: "",
       persistent: true,
       hasDropNotify: false,
+      hasNativeCapability: true,
+      liveForwardable: true,
     });
 
     const restoredFetch = await requestJson(
@@ -863,6 +867,8 @@ test("isolate supervisor integration suite", {
       pathPrefix: "/api-exported",
       persistent: true,
       hasDropNotify: false,
+      hasNativeCapability: true,
+      liveForwardable: true,
     });
 
     const fetched = await requestJson(
@@ -917,6 +923,8 @@ test("isolate supervisor integration suite", {
       pathPrefix: "",
       persistent: true,
       hasDropNotify: false,
+      hasNativeCapability: true,
+      liveForwardable: true,
     });
 
     const restoredFetch = await requestJson(
@@ -990,6 +998,8 @@ test("isolate supervisor integration suite", {
     assert.match(capabilityInfo.json.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
     assert.equal(capabilityInfo.json.persistent, false);
     assert.equal(capabilityInfo.json.hasDropNotify, true);
+    assert.equal(capabilityInfo.json.hasNativeCapability, true);
+    assert.equal(capabilityInfo.json.liveForwardable, true);
 
     async function callObjectCapability(method, args = []) {
       return requestJson(
