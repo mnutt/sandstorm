@@ -620,6 +620,7 @@ test("isolate supervisor integration suite", {
       id: capabilityId,
       kind: "routeBackedWebSession",
       residence: "localExport",
+      nativeInterface: "webSession",
       pathPrefix: "/exported",
       persistent: true,
       hasDropNotify: false,
@@ -752,6 +753,7 @@ test("isolate supervisor integration suite", {
       id: restored.json.id,
       kind: "restored",
       residence: "imported",
+      nativeInterface: "unknown",
       pathPrefix: "",
       persistent: true,
       hasDropNotify: false,
@@ -866,6 +868,7 @@ test("isolate supervisor integration suite", {
       id: capabilityId,
       kind: "routeBackedApiSession",
       residence: "localExport",
+      nativeInterface: "apiSession",
       pathPrefix: "/api-exported",
       persistent: true,
       hasDropNotify: false,
@@ -923,6 +926,7 @@ test("isolate supervisor integration suite", {
       id: restored.json.id,
       kind: "restored",
       residence: "imported",
+      nativeInterface: "unknown",
       pathPrefix: "",
       persistent: true,
       hasDropNotify: false,
@@ -999,6 +1003,7 @@ test("isolate supervisor integration suite", {
     assert.equal(capabilityInfo.json.id, exported.json.capability.id);
     assert.equal(capabilityInfo.json.kind, "routeBackedWebSession");
     assert.equal(capabilityInfo.json.residence, "localExport");
+    assert.equal(capabilityInfo.json.nativeInterface, "webSession");
     assert.match(capabilityInfo.json.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
     assert.equal(capabilityInfo.json.persistent, false);
     assert.equal(capabilityInfo.json.hasDropNotify, true);
@@ -1105,6 +1110,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.capabilityInfo.id, selfTest.json.duplicate.sourceId);
     assert.equal(selfTest.json.capabilityInfo.kind, "routeBackedWebSession");
     assert.equal(selfTest.json.capabilityInfo.residence, "localExport");
+    assert.equal(selfTest.json.capabilityInfo.nativeInterface, "webSession");
     assert.match(
       selfTest.json.capabilityInfo.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
     assert.equal(selfTest.json.capabilityInfo.persistent, false);
@@ -1117,6 +1123,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.childInfo.type, "claimedCapabilityInfo");
     assert.equal(selfTest.json.childInfo.kind, "routeBackedWebSession");
     assert.equal(selfTest.json.childInfo.residence, "localExport");
+    assert.equal(selfTest.json.childInfo.nativeInterface, "webSession");
     assert.match(selfTest.json.childInfo.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
     assert.equal(selfTest.json.childInfo.persistent, false);
     assert.equal(selfTest.json.childInfo.hasDropNotify, true);

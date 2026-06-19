@@ -165,6 +165,13 @@ enum class ClaimedCapabilityResidence {
   IMPORTED,
 };
 
+enum class ClaimedCapabilityNativeInterface {
+  UNKNOWN,
+  WEB_SESSION,
+  API_SESSION,
+  OUTBOUND_HTTP_SESSION,
+};
+
 kj::StringPtr claimedCapabilityKindName(ClaimedCapabilityKind kind) {
   switch (kind) {
     case ClaimedCapabilityKind::UNKNOWN:
@@ -197,9 +204,25 @@ kj::StringPtr claimedCapabilityResidenceName(ClaimedCapabilityResidence residenc
   KJ_UNREACHABLE;
 }
 
+kj::StringPtr claimedCapabilityNativeInterfaceName(
+    ClaimedCapabilityNativeInterface nativeInterface) {
+  switch (nativeInterface) {
+    case ClaimedCapabilityNativeInterface::UNKNOWN:
+      return "unknown";
+    case ClaimedCapabilityNativeInterface::WEB_SESSION:
+      return "webSession";
+    case ClaimedCapabilityNativeInterface::API_SESSION:
+      return "apiSession";
+    case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
+      return "outboundHttpSession";
+  }
+  KJ_UNREACHABLE;
+}
+
 struct ClaimedCapabilityMetadata {
   ClaimedCapabilityKind kind = ClaimedCapabilityKind::UNKNOWN;
   ClaimedCapabilityResidence residence = ClaimedCapabilityResidence::UNKNOWN;
+  ClaimedCapabilityNativeInterface nativeInterface = ClaimedCapabilityNativeInterface::UNKNOWN;
   kj::String pathPrefix = kj::heapString("");
   bool persistent = true;
   bool hasDropNotify = false;
@@ -212,6 +235,7 @@ ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
   return ClaimedCapabilityMetadata {
     metadata.kind,
     metadata.residence,
+    metadata.nativeInterface,
     kj::heapString(metadata.pathPrefix),
     metadata.persistent,
     metadata.hasDropNotify,
@@ -3158,6 +3182,7 @@ public:
         params.getOffer(), ClaimedCapabilityMetadata {
           ClaimedCapabilityKind::POWERBOX_OFFER,
           ClaimedCapabilityResidence::IMPORTED,
+          ClaimedCapabilityNativeInterface::UNKNOWN,
           kj::heapString(""),
           true,
           false,
@@ -4302,6 +4327,9 @@ private:
     json.addAll(kj::StringPtr(",\n  "));
     appendJsonField(json, "residence", claimedCapabilityResidenceName(metadata.residence));
     json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "nativeInterface",
+        claimedCapabilityNativeInterfaceName(metadata.nativeInterface));
+    json.addAll(kj::StringPtr(",\n  "));
     appendJsonField(json, "pathPrefix", metadata.pathPrefix);
     json.addAll(kj::StringPtr(",\n  \"persistent\": "));
     json.addAll(metadata.persistent ? kj::StringPtr("true") : kj::StringPtr("false"));
@@ -4631,6 +4659,9 @@ private:
     return ClaimedCapabilityMetadata {
       kind,
       ClaimedCapabilityResidence::LOCAL_EXPORT,
+      sessionType == RouteBackedSessionType::WEB
+          ? ClaimedCapabilityNativeInterface::WEB_SESSION
+          : ClaimedCapabilityNativeInterface::API_SESSION,
       kj::heapString(pathPrefix),
       persistent,
       false,
@@ -5053,6 +5084,7 @@ private:
             result.getCap(), ClaimedCapabilityMetadata {
               ClaimedCapabilityKind::POWERBOX_CLAIM,
               ClaimedCapabilityResidence::IMPORTED,
+              ClaimedCapabilityNativeInterface::UNKNOWN,
               kj::heapString(""),
               true,
               false,
@@ -5324,6 +5356,7 @@ private:
               result.getTiedCap(), ClaimedCapabilityMetadata {
                 ClaimedCapabilityKind::TIED,
                 ClaimedCapabilityResidence::IMPORTED,
+                ClaimedCapabilityNativeInterface::UNKNOWN,
                 kj::heapString(""),
                 true,
                 false,
@@ -5519,6 +5552,7 @@ private:
             result.getCap(), ClaimedCapabilityMetadata {
               ClaimedCapabilityKind::RESTORED,
               ClaimedCapabilityResidence::IMPORTED,
+              ClaimedCapabilityNativeInterface::UNKNOWN,
               kj::heapString(""),
               true,
               false,
