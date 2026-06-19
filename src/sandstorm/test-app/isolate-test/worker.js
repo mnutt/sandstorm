@@ -894,20 +894,22 @@ export default {
             calls.push(String(input));
             const parsed = new URL(String(input));
             if (parsed.pathname === "/capabilities/claimed") {
+              const id = parsed.searchParams.get("id");
+              const appObject = id === "mock-app-object";
               return Response.json({
                 ok: true,
                 type: "claimedCapabilityInfo",
-                id: parsed.searchParams.get("id"),
+                id,
                 kind: "powerboxClaim",
                 residence: "imported",
-                nativeInterface: "outboundHttpSession",
+                nativeInterface: appObject ? "appObject" : "outboundHttpSession",
                 pathPrefix: "",
                 persistent: true,
                 hasDropNotify: false,
                 dropNotifyRefCount: 0,
                 supportsWebFetch: false,
-                supportsOutboundHttpFetch: true,
-                supportsNativeAppRpcTransport: false,
+                supportsOutboundHttpFetch: !appObject,
+                supportsNativeAppRpcTransport: appObject,
                 hasNativeCapability: true,
                 liveForwardable: true,
               });
@@ -926,11 +928,32 @@ export default {
           message: String(error?.message || error),
         };
       }
+      const appObjectCapability = new ClaimedCapability(mockEnv, "mock-app-object");
+      let appObjectFetchError = null;
+      try {
+        await appObjectCapability.fetch("/should-not-fetch");
+      } catch (error) {
+        appObjectFetchError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+      let appObjectOutboundError = null;
+      try {
+        await appObjectCapability.asOutboundHttp().fetch("v1/test");
+      } catch (error) {
+        appObjectOutboundError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
 
       return Response.json({
         ok: true,
         calls,
         fetchError,
+        appObjectFetchError,
+        appObjectOutboundError,
       });
     }
 

@@ -1375,9 +1375,12 @@ async function fetchClaimedCapability(env, capability, input, init = {}) {
   if (info?.supportsWebFetch === false || (
       info?.supportsWebFetch === undefined &&
       info?.nativeInterface === "outboundHttpSession")) {
+    const nativeInterface = info?.nativeInterface || "unknown";
+    const hint = nativeInterface === "outboundHttpSession"
+      ? "use asOutboundHttp().fetch() instead"
+      : "use a compatible app-defined RPC transport instead";
     throw new ValidationError(
-      "ClaimedCapability nativeInterface outboundHttpSession cannot be used with fetch(); " +
-      "use asOutboundHttp().fetch() instead");
+      `ClaimedCapability nativeInterface ${nativeInterface} cannot be used with fetch(); ${hint}`);
   }
 
   let request;
