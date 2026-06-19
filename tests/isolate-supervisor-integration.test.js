@@ -1677,6 +1677,12 @@ test("isolate supervisor integration suite", {
     assert.match(nativeAppRpcCodec.json.invalidCapabilityError.message, /at least 1 characters/);
     assert.equal(nativeAppRpcCodec.json.reservedMethodError.name, "ValidationError");
     assert.match(nativeAppRpcCodec.json.reservedMethodError.message, /reserved/);
+    assert.equal(nativeAppRpcCodec.json.duplicateFieldError.name, "ValidationError");
+    assert.match(nativeAppRpcCodec.json.duplicateFieldError.message, /duplicate field: same/);
+    assert.equal(nativeAppRpcCodec.json.reservedFieldError.name, "ValidationError");
+    assert.match(nativeAppRpcCodec.json.reservedFieldError.message, /reserved/);
+    assert.equal(nativeAppRpcCodec.json.reservedSerializeFieldError.name, "ValidationError");
+    assert.match(nativeAppRpcCodec.json.reservedSerializeFieldError.message, /reserved/);
 
     const nativeAppRpcRoute = await requestJson(
       fixture.workerdSocket, "/native-app-rpc-route-self-test");
