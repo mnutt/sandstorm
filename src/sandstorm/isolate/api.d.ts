@@ -331,6 +331,24 @@ declare module "sandstorm:api" {
 
   export interface ClaimRequestOptions {
     requiredPermissions?: string[];
+    apiSession?: {
+      canonicalUrl: string;
+      oauthScopes?: string[];
+    };
+    apiSessionDescriptor?: {
+      canonicalUrl: string;
+      oauthScopes?: string[];
+    };
+    outboundHttp?: {
+      baseUrl: string;
+      methods?: OutboundHttpMethod[];
+    };
+    outboundHttpDescriptor?: {
+      baseUrl: string;
+      methods?: OutboundHttpMethod[];
+    };
+    descriptor?: string;
+    powerboxDescriptor?: string;
   }
 
   export interface SavedCapabilityStorageOptions extends ClaimRequestOptions, SaveCapabilityOptions {
