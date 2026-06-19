@@ -825,6 +825,7 @@ export default {
       const capability = await api.powerbox().claimRequest("outbound-http/test-token", {
         requiredPermissions: ["view"],
       });
+      const capabilityInfo = await capability.info();
       const outbound = api.powerbox().outboundHttpCapability(capability);
       const response = await outbound.fetch("v1/chat/completions?model=test", {
         method: "POST",
@@ -837,6 +838,7 @@ export default {
 
       return Response.json({
         ok: true,
+        capabilityInfo,
         outboundClass: outbound.constructor.name === "OutboundHttpCapability",
         status: response.status,
         statusText: response.statusText,

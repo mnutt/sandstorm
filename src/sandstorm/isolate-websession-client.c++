@@ -1246,6 +1246,7 @@ public:
         claimBody);
     KJ_REQUIRE(contains(claimBody, "\"kind\":\"powerboxClaim\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"residence\":\"imported\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"nativeInterface\":\"unknown\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"hasNativeCapability\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"liveForwardable\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"save\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
@@ -1309,6 +1310,10 @@ public:
         WebSession::Response::Content::Body::BYTES);
     auto outboundBody = kj::str(outboundContent.getBody().getBytes().asChars());
     KJ_REQUIRE(contains(outboundBody, "\"ok\":true"), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"capabilityInfo\":{\"ok\":true"), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"kind\":\"powerboxClaim\""), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"residence\":\"imported\""), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"nativeInterface\":\"unknown\""), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"outboundClass\":true"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"status\":201"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"statusText\":\"Created\""), outboundBody);
