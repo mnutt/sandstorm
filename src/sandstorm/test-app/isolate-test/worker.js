@@ -8,6 +8,7 @@ import {
   SANDSTORM_HELPER_VERSIONS,
   SANDSTORM_RPC_VERSION,
   SavedCapability,
+  createNativeAppRpcStub,
   dispatchNativeAppRpcCall,
   hydrateNativeAppRpcCall,
   hydrateNativeAppRpcResult,
@@ -1016,6 +1017,30 @@ export default {
         dispatchTarget, serializeNativeAppRpcCall("missing", []));
       const failedDispatchResult = await dispatchNativeAppRpcCall(
         dispatchTarget, serializeNativeAppRpcCall("fail", []));
+      const stubTransportCalls = [];
+      const stub = createNativeAppRpcStub(slot, async (transportSlot, call) => {
+        stubTransportCalls.push({ slot: transportSlot, call });
+        return dispatchNativeAppRpcCall(dispatchTarget, call);
+      });
+      const stubCallValue = await stub.call("deliver", "stub-subject", slot, {
+        urgent: false,
+      });
+      const stubRpcValue = await stub.asRpc().deliver("rpc-subject", slot, {
+        urgent: true,
+      });
+
+      let stubMissingError = null;
+      try {
+        await stub.call("missing");
+      } catch (error) {
+        stubMissingError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+          details: {
+            name: String(error?.details?.name || ""),
+          },
+        };
+      }
 
       let rawTargetError = null;
       try {
@@ -1124,6 +1149,12 @@ export default {
         dispatchValue,
         missingDispatchResult,
         failedDispatchResult,
+        stubSlot: stub.slot,
+        stubJson: JSON.parse(JSON.stringify(stub)),
+        stubTransportCalls,
+        stubCallValue,
+        stubRpcValue,
+        stubMissingError,
         slotFrozen: Object.isFrozen(slot),
         rawTargetError,
         invalidCapabilityError,

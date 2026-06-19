@@ -460,6 +460,66 @@ export async function dispatchNativeAppRpcCall(target, call) {
   }
 }
 
+const NATIVE_APP_RPC_STUB_OWN_PROPERTIES = new Set([
+  "slot",
+  "call",
+  "asRpc",
+  "toJSON",
+]);
+
+export class NativeAppRpcStub {
+  #slot;
+  #transport;
+
+  constructor(slot, transport) {
+    if (typeof transport !== "function") {
+      throw new ValidationError("native app RPC transport must be a function");
+    }
+
+    this.#slot = nativeCapabilitySlot(slot?.id, {
+      nativeInterface: slot?.nativeInterface,
+    });
+    this.#transport = transport;
+  }
+
+  get slot() {
+    return this.#slot;
+  }
+
+  async call(method, ...args) {
+    const result = await this.#transport(this.#slot, serializeNativeAppRpcCall(method, args));
+    return hydrateNativeAppRpcResult(result);
+  }
+
+  asRpc() {
+    return createNativeAppRpcProxy(this);
+  }
+
+  toJSON() {
+    return this.#slot;
+  }
+}
+
+function createNativeAppRpcProxy(stub) {
+  return new Proxy(stub, {
+    get(target, prop, receiver) {
+      if (typeof prop !== "string" ||
+          NATIVE_APP_RPC_STUB_OWN_PROPERTIES.has(prop) ||
+          prop in target) {
+        return Reflect.get(target, prop, receiver);
+      }
+      if (prop === "then") {
+        return undefined;
+      }
+      return async (...args) => target.call(prop, ...args);
+    },
+  });
+}
+
+export function createNativeAppRpcStub(slot, transport) {
+  return new NativeAppRpcStub(slot, transport);
+}
+
 function storageUrl(key = "") {
   return `http://storage/${encodeURIComponent(key === "" ? "" : validate.storageKey(key))}`;
 }

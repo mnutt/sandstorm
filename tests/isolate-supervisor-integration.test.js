@@ -1670,6 +1670,61 @@ test("isolate supervisor integration suite", {
     assert.equal(nativeAppRpcCodec.json.failedDispatchResult.name, "TypeError");
     assert.equal(nativeAppRpcCodec.json.failedDispatchResult.message, "native dispatch failure");
     assert.match(nativeAppRpcCodec.json.failedDispatchResult.stack, /native dispatch failure/);
+    assert.deepEqual(nativeAppRpcCodec.json.stubSlot, {
+      type: "nativeCapabilitySlot",
+      id: "slot-1",
+      nativeInterface: "appObject",
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.stubJson, nativeAppRpcCodec.json.stubSlot);
+    assert.deepEqual(nativeAppRpcCodec.json.stubTransportCalls, [
+      {
+        slot: nativeAppRpcCodec.json.stubSlot,
+        call: {
+          method: "deliver",
+          args: [
+            { type: "text", value: "stub-subject" },
+            { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
+            {
+              type: "object",
+              value: [{ name: "urgent", value: { type: "bool", value: false } }],
+            },
+          ],
+        },
+      },
+      {
+        slot: nativeAppRpcCodec.json.stubSlot,
+        call: {
+          method: "deliver",
+          args: [
+            { type: "text", value: "rpc-subject" },
+            { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
+            {
+              type: "object",
+              value: [{ name: "urgent", value: { type: "bool", value: true } }],
+            },
+          ],
+        },
+      },
+      {
+        slot: nativeAppRpcCodec.json.stubSlot,
+        call: { method: "missing", args: [] },
+      },
+    ]);
+    assert.deepEqual(nativeAppRpcCodec.json.stubCallValue, {
+      subject: "stub-subject",
+      callback: nativeAppRpcCodec.json.stubSlot,
+      urgent: false,
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.stubRpcValue, {
+      subject: "rpc-subject",
+      callback: nativeAppRpcCodec.json.stubSlot,
+      urgent: true,
+    });
+    assert.equal(nativeAppRpcCodec.json.stubMissingError.name, "CapabilityCallError");
+    assert.equal(nativeAppRpcCodec.json.stubMissingError.message, "RPC method not found: missing");
+    assert.deepEqual(nativeAppRpcCodec.json.stubMissingError.details, {
+      name: "NoSuchMethod",
+    });
     assert.equal(nativeAppRpcCodec.json.slotFrozen, true);
     assert.equal(nativeAppRpcCodec.json.rawTargetError.name, "ValidationError");
     assert.match(nativeAppRpcCodec.json.rawTargetError.message, /native capability slot/);
