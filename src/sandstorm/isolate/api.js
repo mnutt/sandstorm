@@ -510,6 +510,7 @@ export async function dispatchNativeAppRpcCall(target, call, options = {}) {
 const NATIVE_APP_RPC_STUB_OWN_PROPERTIES = new Set([
   "slot",
   "call",
+  "drop",
   "asRpc",
   "toJSON",
 ]);
@@ -518,6 +519,8 @@ export class NativeAppRpcStub {
   #slot;
   #transport;
   #hydrationOptions;
+  #release;
+  #dropPromise;
 
   constructor(slot, transport, options = {}) {
     if (typeof transport !== "function") {
@@ -529,6 +532,12 @@ export class NativeAppRpcStub {
     });
     this.#transport = transport;
     this.#hydrationOptions = nativeAppRpcHydrationContext(options, "result");
+    if (options?.release !== undefined && options.release !== null) {
+      if (typeof options.release !== "function") {
+        failValidation("native app RPC stub release", "a function", options.release);
+      }
+      this.#release = options.release;
+    }
   }
 
   get slot() {
@@ -536,8 +545,19 @@ export class NativeAppRpcStub {
   }
 
   async call(method, ...args) {
+    if (this.#dropPromise) {
+      throw new CapabilityCallError("native app RPC stub has been dropped");
+    }
     const result = await this.#transport(this.#slot, serializeNativeAppRpcCall(method, args));
     return hydrateNativeAppRpcResult(result, this.#hydrationOptions);
+  }
+
+  drop() {
+    if (!this.#dropPromise) {
+      this.#dropPromise = Promise.resolve(this.#release?.(this.#slot))
+        .then((result) => result ?? { ok: true });
+    }
+    return this.#dropPromise;
   }
 
   asRpc() {
@@ -555,7 +575,8 @@ function createNativeAppRpcProxy(stub) {
       if (typeof prop !== "string" ||
           NATIVE_APP_RPC_STUB_OWN_PROPERTIES.has(prop) ||
           prop in target) {
-        return Reflect.get(target, prop, receiver);
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
       }
       if (prop === "then") {
         return undefined;

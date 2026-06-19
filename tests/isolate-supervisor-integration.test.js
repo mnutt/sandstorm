@@ -1725,6 +1725,42 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(nativeAppRpcCodec.json.stubMissingError.details, {
       name: "NoSuchMethod",
     });
+    assert.deepEqual(nativeAppRpcCodec.json.droppable.value, {
+      subject: "droppable-subject",
+      callback: nativeAppRpcCodec.json.stubSlot,
+      urgent: false,
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.droppable.dropFirst, {
+      ok: true,
+      released: "slot-1",
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.droppable.dropSecond,
+      nativeAppRpcCodec.json.droppable.dropFirst);
+    assert.deepEqual(nativeAppRpcCodec.json.droppable.dropViaProxy,
+      nativeAppRpcCodec.json.droppable.dropFirst);
+    assert.equal(nativeAppRpcCodec.json.droppable.callAfterDropError.name,
+      "CapabilityCallError");
+    assert.equal(nativeAppRpcCodec.json.droppable.callAfterDropError.message,
+      "native app RPC stub has been dropped");
+    assert.deepEqual(nativeAppRpcCodec.json.droppable.transportCalls, [
+      {
+        slot: nativeAppRpcCodec.json.stubSlot,
+        call: {
+          method: "deliver",
+          args: [
+            { type: "text", value: "droppable-subject" },
+            { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
+            {
+              type: "object",
+              value: [{ name: "urgent", value: { type: "bool", value: false } }],
+            },
+          ],
+        },
+      },
+    ]);
+    assert.deepEqual(nativeAppRpcCodec.json.droppable.releaseCalls, [
+      nativeAppRpcCodec.json.stubSlot,
+    ]);
     assert.deepEqual(nativeAppRpcCodec.json.resolved.valueCallbackSlot,
       nativeAppRpcCodec.json.stubSlot);
     assert.deepEqual(nativeAppRpcCodec.json.resolved.callCallbackSlot,
