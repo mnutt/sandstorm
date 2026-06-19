@@ -557,7 +557,9 @@ export default {
       const offeredInfo = powerbox.offeredCapabilityInfo();
       let fetched = null;
       let drop = null;
+      let claimedInfo = null;
       if (offered) {
+        claimedInfo = await offered.info();
         const fetchedResponse = await offered.fetch("/capability-echo?source=offer-session");
         fetched = {
           status: fetchedResponse.status,
@@ -579,6 +581,7 @@ export default {
               : null,
         } : null,
         offered: offered ? JSON.parse(JSON.stringify(offered)) : null,
+        claimedInfo,
         fetched,
         drop,
       });

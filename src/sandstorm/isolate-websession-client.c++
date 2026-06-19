@@ -1567,6 +1567,15 @@ public:
         offerBody);
     KJ_REQUIRE(contains(offerBody, "\"capabilityClass\":true"), offerBody);
     KJ_REQUIRE(contains(offerBody,
+        "\"claimedInfo\":{\"ok\":true,\"type\":\"claimedCapabilityInfo\""),
+        offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"kind\":\"powerboxOffer\""), offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"residence\":\"imported\""), offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"nativeInterface\":\"apiSession\""), offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"supportsWebFetch\":true"), offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"supportsOutboundHttpFetch\":false"), offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"supportsNativeAppRpcTransport\":false"), offerBody);
+    KJ_REQUIRE(contains(offerBody,
         "\"fetched\":{\"status\":200,\"body\":{\"ok\":true,"
         "\"source\":\"fake-claimed-capability\","
         "\"path\":\"capability-echo?source=offer-session\""),
