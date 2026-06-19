@@ -1641,6 +1641,35 @@ test("isolate supervisor integration suite", {
       name: "RemoteAppError",
       stack: "remote stack",
     });
+    assert.deepEqual(nativeAppRpcCodec.json.dispatchResult, {
+      type: "value",
+      value: {
+        type: "object",
+        value: [
+          { name: "subject", value: { type: "text", value: "subject" } },
+          {
+            name: "callback",
+            value: { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
+          },
+          { name: "urgent", value: { type: "bool", value: true } },
+        ],
+      },
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.dispatchValue, {
+      subject: "subject",
+      callback: { type: "nativeCapabilitySlot", id: "slot-1", nativeInterface: "appObject" },
+      urgent: true,
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.missingDispatchResult, {
+      type: "exception",
+      name: "NoSuchMethod",
+      message: "RPC method not found: missing",
+      stack: "",
+    });
+    assert.equal(nativeAppRpcCodec.json.failedDispatchResult.type, "exception");
+    assert.equal(nativeAppRpcCodec.json.failedDispatchResult.name, "TypeError");
+    assert.equal(nativeAppRpcCodec.json.failedDispatchResult.message, "native dispatch failure");
+    assert.match(nativeAppRpcCodec.json.failedDispatchResult.stack, /native dispatch failure/);
     assert.equal(nativeAppRpcCodec.json.slotFrozen, true);
     assert.equal(nativeAppRpcCodec.json.rawTargetError.name, "ValidationError");
     assert.match(nativeAppRpcCodec.json.rawTargetError.message, /native capability slot/);

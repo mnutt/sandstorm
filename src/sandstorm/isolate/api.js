@@ -425,6 +425,27 @@ export function hydrateNativeAppRpcResult(result, name = "result") {
   }
 }
 
+export async function dispatchNativeAppRpcCall(target, call) {
+  if (!target || typeof target !== "object") {
+    throw new ValidationError("native app RPC target must be an object");
+  }
+
+  const { method, args } = hydrateNativeAppRpcCall(call);
+  const func = target[method];
+  if (typeof func !== "function") {
+    return serializeNativeAppRpcException({
+      name: "NoSuchMethod",
+      message: `RPC method not found: ${method}`,
+    });
+  }
+
+  try {
+    return serializeNativeAppRpcResult(await func.apply(target, args));
+  } catch (error) {
+    return serializeNativeAppRpcException(error);
+  }
+}
+
 function storageUrl(key = "") {
   return `http://storage/${encodeURIComponent(key === "" ? "" : validate.storageKey(key))}`;
 }
