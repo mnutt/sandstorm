@@ -1722,13 +1722,18 @@ export function powerbox(request, env) {
       token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
       const requiredPermissions = permissionNames(options);
       await validateRequiredPermissions(env, requiredPermissions);
-      const sessionId = encodeURIComponent(sessionIdForPowerbox(request));
-      const encodedToken = encodeURIComponent(token);
-      const permissionQuery = requiredPermissions
-        .map((name) => `&requiredPermission=${encodeURIComponent(name)}`)
-        .join("");
+      const params = new URLSearchParams({
+        sessionId: sessionIdForPowerbox(request),
+        token,
+      });
+      for (const name of requiredPermissions) {
+        params.append("requiredPermission", name);
+      }
+      for (const [name, value] of powerboxDescriptorParams(options)) {
+        params.append(name, value);
+      }
       const capability = await postPowerbox(env,
-        `powerbox/claim-request?sessionId=${sessionId}&token=${encodedToken}${permissionQuery}`);
+        `powerbox/claim-request?${params}`);
       return wrapClaimedCapability(env, capability);
     },
 

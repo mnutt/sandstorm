@@ -1316,10 +1316,15 @@ public:
     KJ_REQUIRE(contains(outboundBody, "\"capabilityInfo\":{\"ok\":true"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"kind\":\"powerboxClaim\""), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"residence\":\"imported\""), outboundBody);
-    KJ_REQUIRE(contains(outboundBody, "\"nativeInterface\":\"unknown\""), outboundBody);
-    KJ_REQUIRE(contains(outboundBody, "\"supportsWebFetch\":true"), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"nativeInterface\":\"outboundHttpSession\""),
+        outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"supportsWebFetch\":false"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"supportsOutboundHttpFetch\":true"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"supportsNativeAppRpcTransport\":false"), outboundBody);
+    KJ_REQUIRE(contains(outboundBody,
+        "\"message\":\"ClaimedCapability nativeInterface outboundHttpSession cannot be used "
+        "with fetch(); use asOutboundHttp().fetch() instead\""),
+        outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"outboundClass\":true"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"status\":201"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"statusText\":\"Created\""), outboundBody);

@@ -271,6 +271,22 @@ ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
   };
 }
 
+ClaimedCapabilityMetadata makeImportedClaimedCapabilityMetadata(
+    ClaimedCapabilityKind kind,
+    ClaimedCapabilityNativeInterface nativeInterface = ClaimedCapabilityNativeInterface::UNKNOWN) {
+  return ClaimedCapabilityMetadata {
+    kind,
+    ClaimedCapabilityResidence::IMPORTED,
+    nativeInterface,
+    kj::heapString(""),
+    true,
+    false,
+    false,
+    true,
+    true,
+  };
+}
+
 struct ClaimedCapabilityInfo {
   ClaimedCapabilityMetadata metadata;
   uint dropNotifyRefCount = 0;
@@ -1672,6 +1688,34 @@ kj::String renderApiSessionDescriptorHeader(ApiSession::PowerboxTag::Reader tag)
   kj::Vector<char> json;
   appendApiSessionDescriptorJson(json, tag);
   return kj::encodeBase64Url(json.asPtr().asBytes());
+}
+
+ClaimedCapabilityNativeInterface nativeInterfaceFromPowerboxDescriptor(
+    PowerboxDescriptor::Reader descriptor) {
+  kj::Maybe<ClaimedCapabilityNativeInterface> result = nullptr;
+  for (auto tag: descriptor.getTags()) {
+    ClaimedCapabilityNativeInterface candidate;
+    if (tag.getId() == capnp::typeId<ApiSession>()) {
+      candidate = ClaimedCapabilityNativeInterface::API_SESSION;
+    } else if (tag.getId() == capnp::typeId<OutboundHttpSession>()) {
+      candidate = ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION;
+    } else {
+      continue;
+    }
+
+    KJ_IF_MAYBE(existing, result) {
+      if (*existing != candidate) {
+        return ClaimedCapabilityNativeInterface::UNKNOWN;
+      }
+    } else {
+      result = candidate;
+    }
+  }
+
+  KJ_IF_MAYBE(nativeInterface, result) {
+    return *nativeInterface;
+  }
+  return ClaimedCapabilityNativeInterface::UNKNOWN;
 }
 
 void copyOfferDescriptor(SessionMetadata& result, PowerboxDescriptor::Reader descriptor) {
@@ -3290,17 +3334,9 @@ public:
         params.getTabId());
     sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
     sessionMetadata.offeredCapabilityId = runtimeHost->sessions->storeClaimedCapability(
-        params.getOffer(), ClaimedCapabilityMetadata {
+        params.getOffer(), makeImportedClaimedCapabilityMetadata(
           ClaimedCapabilityKind::POWERBOX_OFFER,
-          ClaimedCapabilityResidence::IMPORTED,
-          ClaimedCapabilityNativeInterface::UNKNOWN,
-          kj::heapString(""),
-          true,
-          false,
-          false,
-          true,
-          true,
-        });
+          nativeInterfaceFromPowerboxDescriptor(params.getDescriptor())));
     copyOfferDescriptor(sessionMetadata, params.getDescriptor());
     context.getResults().setSession(kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::OFFER,
@@ -5212,6 +5248,29 @@ private:
     }
   }
 
+  ClaimedCapabilityNativeInterface nativeInterfaceFromPowerboxDescriptorParams(
+      kj::StringPtr url) {
+    auto descriptorTypes = findIsolateQueryParams(url, "descriptor");
+    KJ_REQUIRE(descriptorTypes.size() <= 1, "expected at most one powerbox descriptor type");
+    if (descriptorTypes.size() == 0 || descriptorTypes[0].size() == 0) {
+      return ClaimedCapabilityNativeInterface::UNKNOWN;
+    }
+
+    capnp::MallocMessageBuilder message;
+    auto descriptor = message.initRoot<PowerboxDescriptor>();
+    if (descriptorTypes[0] == "apiSession") {
+      initApiSessionPowerboxDescriptor(url, descriptor);
+    } else if (descriptorTypes[0] == "outboundHttp") {
+      initOutboundHttpPowerboxDescriptor(url, descriptor);
+    } else if (descriptorTypes[0] == "packed") {
+      initPackedPowerboxDescriptor(url, descriptor);
+    } else {
+      KJ_FAIL_REQUIRE("unsupported powerbox descriptor type", descriptorTypes[0]);
+    }
+
+    return nativeInterfaceFromPowerboxDescriptor(descriptor.asReader());
+  }
+
   kj::Promise<void> claimPowerboxRequest(
       kj::StringPtr url, kj::HttpService::Response& response) {
     kj::String sessionId = nullptr;
@@ -5224,6 +5283,7 @@ private:
         url, "token", "expected exactly one sessionId and token", token)) {
       return sendBadRequest(response, *error);
     }
+    auto nativeInterface = nativeInterfaceFromPowerboxDescriptorParams(url);
 
     auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
     auto permissionDefs = viewInfo.getPermissions();
@@ -5245,19 +5305,10 @@ private:
         }
       }
       return request.send().then(
-          [this, &response](auto result) mutable {
+          [this, &response, nativeInterface](auto result) mutable {
         auto capId = host.sessions->storeClaimedCapability(
-            result.getCap(), ClaimedCapabilityMetadata {
-              ClaimedCapabilityKind::POWERBOX_CLAIM,
-              ClaimedCapabilityResidence::IMPORTED,
-              ClaimedCapabilityNativeInterface::UNKNOWN,
-              kj::heapString(""),
-              true,
-              false,
-              false,
-              true,
-              true,
-            });
+            result.getCap(), makeImportedClaimedCapabilityMetadata(
+              ClaimedCapabilityKind::POWERBOX_CLAIM, nativeInterface));
         return sendJson(response, 200, "OK", renderClaimedCapability(capId));
       });
     } else {
@@ -5520,17 +5571,8 @@ private:
             request.initDisplayInfo());
         return request.send().then([this, &response](auto result) mutable {
           auto capId = host.sessions->storeClaimedCapability(
-              result.getTiedCap(), ClaimedCapabilityMetadata {
-                ClaimedCapabilityKind::TIED,
-                ClaimedCapabilityResidence::IMPORTED,
-                ClaimedCapabilityNativeInterface::UNKNOWN,
-                kj::heapString(""),
-                true,
-                false,
-                false,
-                true,
-                true,
-              });
+              result.getTiedCap(), makeImportedClaimedCapabilityMetadata(
+                ClaimedCapabilityKind::TIED));
           return sendJson(response, 200, "OK", renderClaimedCapability(capId));
         });
       } else {
@@ -5717,17 +5759,8 @@ private:
       return request.send().then(
           [this, &response](auto result) mutable {
         auto capId = host.sessions->storeClaimedCapability(
-            result.getCap(), ClaimedCapabilityMetadata {
-              ClaimedCapabilityKind::RESTORED,
-              ClaimedCapabilityResidence::IMPORTED,
-              ClaimedCapabilityNativeInterface::UNKNOWN,
-              kj::heapString(""),
-              true,
-              false,
-              false,
-              true,
-              true,
-            });
+            result.getCap(), makeImportedClaimedCapabilityMetadata(
+              ClaimedCapabilityKind::RESTORED));
         return sendJson(response, 200, "OK", renderClaimedCapability(capId));
       });
     } else {

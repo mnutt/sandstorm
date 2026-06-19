@@ -844,8 +844,21 @@ export default {
       const api = sandstorm(request, env);
       const capability = await api.powerbox().claimRequest("outbound-http/test-token", {
         requiredPermissions: ["view"],
+        outboundHttp: {
+          baseUrl: "https://api.example.test/v1",
+          methods: ["POST"],
+        },
       });
       const capabilityInfo = await capability.info();
+      let fetchError = null;
+      try {
+        await capability.fetch("/should-not-fetch");
+      } catch (error) {
+        fetchError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
       const outbound = api.powerbox().outboundHttpCapability(capability);
       const response = await outbound.fetch("v1/chat/completions?model=test", {
         method: "POST",
@@ -859,6 +872,7 @@ export default {
       return Response.json({
         ok: true,
         capabilityInfo,
+        fetchError,
         outboundClass: outbound.constructor.name === "OutboundHttpCapability",
         status: response.status,
         statusText: response.statusText,
