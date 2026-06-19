@@ -610,6 +610,198 @@ private:
   }
 };
 
+class FakeIsolateObjectCapability final: public IsolateObjectCapability::Server {
+public:
+  FakeIsolateObjectCapability(kj::String label, uint& dropCount)
+      : label(kj::mv(label)), dropCount(dropCount) {}
+
+  kj::Promise<void> call(CallContext context) override {
+    auto params = context.getParams();
+    auto method = params.getMethod();
+    auto args = params.getArgs();
+
+    if (method == "echo") {
+      KJ_REQUIRE(args.size() == 1, "echo expects one argument");
+      copyIsolateObjectCallValue(args[0], context.getResults().initResult().initValue());
+      return kj::READY_NOW;
+    } else if (method == "sum") {
+      double sum = 0;
+      for (auto arg: args) {
+        KJ_REQUIRE(arg.which() == IsolateObjectCallValue::NUMBER, "sum expects number args");
+        sum += arg.getNumber();
+      }
+      context.getResults().initResult().initValue().setNumber(sum);
+      return kj::READY_NOW;
+    } else if (method == "describe") {
+      auto fields = context.getResults().initResult().initValue().initObject(2);
+      fields[0].setName("label");
+      fields[0].initValue().setText(label);
+      fields[1].setName("argCount");
+      fields[1].initValue().setNumber(args.size());
+      return kj::READY_NOW;
+    } else if (method == "callCap") {
+      KJ_REQUIRE(args.size() == 1, "callCap expects one capability argument");
+      KJ_REQUIRE(args[0].which() == IsolateObjectCallValue::CAPABILITY,
+          "callCap expects a capability argument");
+      auto request = args[0].getCapability().callRequest();
+      request.setMethod("echo");
+      auto callbackArgs = request.initArgs(1);
+      callbackArgs[0].setText("from-capability");
+      return request.send().then([context](auto response) mutable {
+        copyIsolateObjectCallResult(response.getResult(), context.getResults().initResult());
+      });
+    } else if (method == "fail") {
+      auto exception = context.getResults().initResult().initException();
+      exception.setName("NativeObjectError");
+      exception.setMessage("fake native object failure");
+      exception.setStack("FakeIsolateObjectCapability.fail");
+      return kj::READY_NOW;
+    } else {
+      auto exception = context.getResults().initResult().initException();
+      exception.setName("NoSuchMethod");
+      exception.setMessage(kj::str("unknown method: ", method));
+      return kj::READY_NOW;
+    }
+  }
+
+  kj::Promise<void> drop(DropContext context) override {
+    (void)context;
+    ++dropCount;
+    return kj::READY_NOW;
+  }
+
+private:
+  static void copyIsolateObjectCallValue(
+      IsolateObjectCallValue::Reader source, IsolateObjectCallValue::Builder target) {
+    switch (source.which()) {
+      case IsolateObjectCallValue::NULL_:
+        target.setNull();
+        break;
+      case IsolateObjectCallValue::BOOL:
+        target.setBool(source.getBool());
+        break;
+      case IsolateObjectCallValue::NUMBER:
+        target.setNumber(source.getNumber());
+        break;
+      case IsolateObjectCallValue::TEXT:
+        target.setText(source.getText());
+        break;
+      case IsolateObjectCallValue::DATA:
+        target.setData(source.getData());
+        break;
+      case IsolateObjectCallValue::LIST: {
+        auto sourceList = source.getList();
+        auto targetList = target.initList(sourceList.size());
+        for (auto i: kj::indices(sourceList)) {
+          copyIsolateObjectCallValue(sourceList[i], targetList[i]);
+        }
+        break;
+      }
+      case IsolateObjectCallValue::OBJECT: {
+        auto sourceFields = source.getObject();
+        auto targetFields = target.initObject(sourceFields.size());
+        for (auto i: kj::indices(sourceFields)) {
+          targetFields[i].setName(sourceFields[i].getName());
+          copyIsolateObjectCallValue(sourceFields[i].getValue(), targetFields[i].initValue());
+        }
+        break;
+      }
+      case IsolateObjectCallValue::CAPABILITY:
+        target.setCapability(source.getCapability());
+        break;
+    }
+  }
+
+  static void copyIsolateObjectCallResult(
+      IsolateObjectCallResult::Reader source, IsolateObjectCallResult::Builder target) {
+    switch (source.which()) {
+      case IsolateObjectCallResult::VALUE:
+        copyIsolateObjectCallValue(source.getValue(), target.initValue());
+        break;
+      case IsolateObjectCallResult::EXCEPTION: {
+        auto sourceException = source.getException();
+        auto targetException = target.initException();
+        targetException.setName(sourceException.getName());
+        targetException.setMessage(sourceException.getMessage());
+        targetException.setStack(sourceException.getStack());
+        break;
+      }
+    }
+  }
+
+  kj::String label;
+  uint& dropCount;
+};
+
+void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
+  uint rootDropCount = 0;
+  uint childDropCount = 0;
+  IsolateObjectCapability::Client root =
+      kj::heap<FakeIsolateObjectCapability>(kj::heapString("root"), rootDropCount);
+  IsolateObjectCapability::Client child =
+      kj::heap<FakeIsolateObjectCapability>(kj::heapString("child"), childDropCount);
+
+  auto echo = root.callRequest();
+  echo.setMethod("echo");
+  auto echoArgs = echo.initArgs(1);
+  echoArgs[0].setText("hello native object");
+  auto echoResponse = echo.send().wait(waitScope);
+  auto echoResult = echoResponse.getResult();
+  KJ_REQUIRE(echoResult.which() == IsolateObjectCallResult::VALUE);
+  KJ_REQUIRE(echoResult.getValue().which() == IsolateObjectCallValue::TEXT);
+  KJ_REQUIRE(echoResult.getValue().getText() == "hello native object");
+
+  auto sum = root.callRequest();
+  sum.setMethod("sum");
+  auto sumArgs = sum.initArgs(3);
+  sumArgs[0].setNumber(4);
+  sumArgs[1].setNumber(5.5);
+  sumArgs[2].setNumber(6);
+  auto sumResponse = sum.send().wait(waitScope);
+  auto sumResult = sumResponse.getResult();
+  KJ_REQUIRE(sumResult.which() == IsolateObjectCallResult::VALUE);
+  KJ_REQUIRE(sumResult.getValue().which() == IsolateObjectCallValue::NUMBER);
+  KJ_REQUIRE(sumResult.getValue().getNumber() == 15.5);
+
+  auto describe = root.callRequest();
+  describe.setMethod("describe");
+  describe.initArgs(2);
+  auto describeResponse = describe.send().wait(waitScope);
+  auto describeResult = describeResponse.getResult();
+  KJ_REQUIRE(describeResult.which() == IsolateObjectCallResult::VALUE);
+  KJ_REQUIRE(describeResult.getValue().which() == IsolateObjectCallValue::OBJECT);
+  auto fields = describeResult.getValue().getObject();
+  KJ_REQUIRE(fields.size() == 2);
+  KJ_REQUIRE(fields[0].getName() == "label");
+  KJ_REQUIRE(fields[0].getValue().getText() == "root");
+  KJ_REQUIRE(fields[1].getName() == "argCount");
+  KJ_REQUIRE(fields[1].getValue().getNumber() == 2);
+
+  auto callCap = root.callRequest();
+  callCap.setMethod("callCap");
+  auto callCapArgs = callCap.initArgs(1);
+  callCapArgs[0].setCapability(child);
+  auto callCapResponse = callCap.send().wait(waitScope);
+  auto callCapResult = callCapResponse.getResult();
+  KJ_REQUIRE(callCapResult.which() == IsolateObjectCallResult::VALUE);
+  KJ_REQUIRE(callCapResult.getValue().which() == IsolateObjectCallValue::TEXT);
+  KJ_REQUIRE(callCapResult.getValue().getText() == "from-capability");
+
+  auto fail = root.callRequest();
+  fail.setMethod("fail");
+  fail.initArgs(0);
+  auto failResponse = fail.send().wait(waitScope);
+  auto failResult = failResponse.getResult();
+  KJ_REQUIRE(failResult.which() == IsolateObjectCallResult::EXCEPTION);
+  KJ_REQUIRE(failResult.getException().getName() == "NativeObjectError");
+  KJ_REQUIRE(failResult.getException().getMessage() == "fake native object failure");
+
+  root.dropRequest().send().wait(waitScope);
+  child.dropRequest().send().wait(waitScope);
+  KJ_REQUIRE(rootDropCount == 1, rootDropCount);
+  KJ_REQUIRE(childDropCount == 1, childDropCount);
+}
+
 kj::String responseDebugBody(WebSession::Response::Reader response) {
   switch (response.which()) {
     case WebSession::Response::CONTENT:
@@ -662,6 +854,7 @@ public:
 
   kj::MainBuilder::Validity run() {
     KJ_REQUIRE(socketPath != nullptr);
+    testNativeObjectCapabilityTransport(io.waitScope);
 
     auto address = io.provider->getNetwork()
         .parseAddress(kj::str("unix:", socketPath), 0)
