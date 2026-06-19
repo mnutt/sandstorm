@@ -8,7 +8,10 @@ import {
   SANDSTORM_HELPER_VERSIONS,
   SANDSTORM_RPC_VERSION,
   SavedCapability,
+  hydrateNativeAppRpcValue,
+  nativeCapabilitySlot,
   sandstorm,
+  serializeNativeAppRpcValue,
   powerbox as sandstormPowerbox,
 } from "sandstorm:api";
 
@@ -954,6 +957,54 @@ export default {
         fetchError,
         appObjectFetchError,
         appObjectOutboundError,
+      });
+    }
+
+    if (url.pathname === "/native-app-rpc-codec-self-test") {
+      const bytes = makeBytes(5);
+      const slot = nativeCapabilitySlot("slot-1", { nativeInterface: "appObject" });
+      const value = {
+        none: null,
+        truthy: true,
+        count: 42.5,
+        text: "hello",
+        bytes,
+        items: ["first", 2, false],
+        callback: slot,
+      };
+      const serialized = serializeNativeAppRpcValue(value);
+      const hydrated = hydrateNativeAppRpcValue(serialized);
+
+      let rawTargetError = null;
+      try {
+        serializeNativeAppRpcValue(new CounterCapability(), "callback");
+      } catch (error) {
+        rawTargetError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+
+      let invalidCapabilityError = null;
+      try {
+        hydrateNativeAppRpcValue({ type: "capability", value: { id: "" } });
+      } catch (error) {
+        invalidCapabilityError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+
+      return Response.json({
+        ok: true,
+        serialized,
+        hydrated: {
+          ...hydrated,
+          bytes: Array.from(hydrated.bytes),
+        },
+        slotFrozen: Object.isFrozen(slot),
+        rawTargetError,
+        invalidCapabilityError,
       });
     }
 

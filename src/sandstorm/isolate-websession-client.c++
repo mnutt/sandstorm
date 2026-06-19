@@ -33,6 +33,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "isolate-util.h"
+
 namespace sandstorm {
 
 constexpr const char* ISOLATE_ROUTE_BACKED_APP_REF_PREFIX =
