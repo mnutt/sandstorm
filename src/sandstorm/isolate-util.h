@@ -47,7 +47,7 @@ public:
 
   virtual kj::Promise<OwnedIsolateObjectCallResult> call(
       kj::String method, OwnedIsolateObjectCallArgs args) = 0;
-  virtual kj::Promise<void> drop();
+  virtual kj::Promise<bool> drop();
 };
 
 class WorkerAppObjectJsonCapabilityAdapter {

@@ -664,9 +664,9 @@ public:
     }
   }
 
-  kj::Promise<void> drop() override {
+  kj::Promise<bool> drop() override {
     ++dropCount;
-    return kj::READY_NOW;
+    return true;
   }
 
 private:
@@ -813,10 +813,14 @@ void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
   KJ_REQUIRE(failResult.getException().getName() == "NativeObjectError");
   KJ_REQUIRE(failResult.getException().getMessage() == "fake native object failure");
 
-  root.dropRequest().send().wait(waitScope);
-  child.dropRequest().send().wait(waitScope);
-  importedRemote.dropRequest().send().wait(waitScope);
-  callback.dropRequest().send().wait(waitScope);
+  auto rootDrop = root.dropRequest().send().wait(waitScope);
+  auto childDrop = child.dropRequest().send().wait(waitScope);
+  auto importedRemoteDrop = importedRemote.dropRequest().send().wait(waitScope);
+  auto callbackDrop = callback.dropRequest().send().wait(waitScope);
+  KJ_REQUIRE(rootDrop.getReleased());
+  KJ_REQUIRE(childDrop.getReleased());
+  KJ_REQUIRE(importedRemoteDrop.getReleased());
+  KJ_REQUIRE(callbackDrop.getReleased());
   KJ_REQUIRE(rootDropCount == 1, rootDropCount);
   KJ_REQUIRE(childDropCount == 1, childDropCount);
   KJ_REQUIRE(remoteDropCount == 1, remoteDropCount);
