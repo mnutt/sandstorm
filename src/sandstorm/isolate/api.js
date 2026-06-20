@@ -762,6 +762,10 @@ export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}
   }
   if (transport === undefined && options.fetcher !== undefined) {
     transport = createNativeAppRpcFetchTransport(options.fetcher, options.route);
+  } else if (transport === undefined && capability.env?.SANDSTORM_API) {
+    transport = createNativeAppRpcFetchTransport(
+      capability.env.SANDSTORM_API,
+      (slot) => `http://sandstorm/powerbox/native-app-rpc-call?id=${encodeURIComponent(slot.id)}`);
   }
 
   const checkedTransport = async (slot, call) => {

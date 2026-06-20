@@ -1538,6 +1538,7 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(nativeInterfaceValidation.json.calls, [
       "http://sandstorm/capabilities/claimed?id=mock-outbound",
       "http://sandstorm/capabilities/claimed?id=mock-app-object",
+      "http://sandstorm/powerbox/native-app-rpc-call?id=mock-app-object",
     ]);
     assert.equal(nativeInterfaceValidation.json.fetchError.name, "ValidationError");
     assert.match(nativeInterfaceValidation.json.fetchError.message,
@@ -1584,15 +1585,17 @@ test("isolate supervisor integration suite", {
       },
       options: { urgent: true },
     });
+    assert.deepEqual(nativeInterfaceValidation.json.defaultNativeRpcValue, {
+      subject: "default-subject",
+      callback: { urgent: false },
+      options: null,
+    });
     assert.deepEqual(nativeInterfaceValidation.json.helperNativeSlot,
       nativeInterfaceValidation.json.appObjectNativeSlot);
     assert.deepEqual(nativeInterfaceValidation.json.helperNativeDrop, {
       ok: true,
       released: "mock-app-object",
     });
-    assert.equal(nativeInterfaceValidation.json.missingTransportError.name, "CapabilityCallError");
-    assert.match(nativeInterfaceValidation.json.missingTransportError.message,
-      /transport for claimed capabilities is not connected/);
     assert.deepEqual(nativeInterfaceValidation.json.wrongNativeRpcTransportCalls, []);
     assert.equal(nativeInterfaceValidation.json.wrongNativeRpcError.name, "ValidationError");
     assert.match(nativeInterfaceValidation.json.wrongNativeRpcError.message,

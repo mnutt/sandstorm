@@ -930,6 +930,10 @@ export default {
                 liveForwardable: true,
               });
             }
+            if (parsed.pathname === "/powerbox/native-app-rpc-call") {
+              return Response.json(await dispatchNativeAppRpcCall(
+                nativeRpcTarget, JSON.parse(String(init?.body || "{}"))));
+            }
             return Response.json({ ok: false, error: "unexpected mock fetch" }, { status: 500 });
           },
         },
@@ -980,6 +984,9 @@ export default {
         "native-subject",
         nativeCapabilitySlot("native-callback", { nativeInterface: "appObject" }),
         { urgent: true });
+      const defaultNativeRpc = appObjectCapability.asNativeRpc();
+      const defaultNativeRpcValue = await defaultNativeRpc.deliver(
+        "default-subject", { urgent: false });
 
       const helperNativeRpcStub = createClaimedCapabilityNativeAppRpcStub(appObjectCapability, {
         checkInfo: false,
@@ -993,16 +1000,6 @@ export default {
       });
       const helperNativeSlot = helperNativeRpcStub.slot;
       const helperNativeDrop = await helperNativeRpcStub.drop();
-
-      let missingTransportError = null;
-      try {
-        await appObjectCapability.asNativeRpc().deliver("missing-transport");
-      } catch (error) {
-        missingTransportError = {
-          name: String(error?.name || "Error"),
-          message: String(error?.message || error),
-        };
-      }
 
       const wrongNativeRpcTransportCalls = [];
       let wrongNativeRpcError = null;
@@ -1029,9 +1026,9 @@ export default {
         nativeRpcTransportCalls,
         appObjectNativeSlot: appObjectNativeRpc.slot,
         appObjectNativeValue,
+        defaultNativeRpcValue,
         helperNativeSlot,
         helperNativeDrop,
-        missingTransportError,
         wrongNativeRpcTransportCalls,
         wrongNativeRpcError,
       });
