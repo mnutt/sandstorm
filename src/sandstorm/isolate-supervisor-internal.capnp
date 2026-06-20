@@ -5,6 +5,7 @@ $import "/capnp/c++.capnp".namespace("sandstorm");
 using WebSession = import "web-session.capnp".WebSession;
 using ApiSession = import "api-session.capnp".ApiSession;
 using SystemPersistent = import "supervisor.capnp".SystemPersistent;
+using Json = import "/capnp/compat/json.capnp";
 
 interface IsolateWebSession @0xa8e9655582dcde6f extends(WebSession, SystemPersistent) {
   # Internal session interface returned by isolate-supervisor.
@@ -38,7 +39,8 @@ interface IsolateObjectCapability @0xd7a322498a996313 {
   # this hook exists for explicit JS disposal/drop semantics.
 }
 
-struct IsolateObjectCallValue @0x976b1fa67593b262 {
+struct IsolateObjectCallValue @0x976b1fa67593b262
+    $Json.discriminator(name = "type", valueName = "value") {
   union {
     null @0 :Void;
     bool @1 :Bool;
@@ -56,7 +58,8 @@ struct IsolateObjectCallValue @0x976b1fa67593b262 {
   }
 }
 
-struct IsolateObjectCallResult @0xdaea7034fe7730f4 {
+struct IsolateObjectCallResult @0xdaea7034fe7730f4
+    $Json.discriminator(name = "type", valueName = "value") {
   union {
     value @0 :IsolateObjectCallValue;
     exception @1 :IsolateObjectCallException;
@@ -67,4 +70,9 @@ struct IsolateObjectCallException @0x87ea2642fe430c6b {
   name @0 :Text;
   message @1 :Text;
   stack @2 :Text;
+}
+
+struct NativeAppRpcCall @0x9455759453b44c9a {
+  method @0 :Text;
+  args @1 :List(IsolateObjectCallValue);
 }

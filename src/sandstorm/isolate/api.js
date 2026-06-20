@@ -556,9 +556,11 @@ export async function serializeNativeAppRpcResultAsync(value, options = {}) {
 export function serializeNativeAppRpcException(error) {
   return {
     type: "exception",
-    name: String(error?.name || "Error"),
-    message: String(error?.message || error),
-    stack: String(error?.stack || ""),
+    value: {
+      name: String(error?.name || "Error"),
+      message: String(error?.message || error),
+      stack: String(error?.stack || ""),
+    },
   };
 }
 
@@ -574,9 +576,10 @@ export function hydrateNativeAppRpcResult(result, options = "result") {
       return hydrateNativeAppRpcValue(
         result.value, nativeAppRpcHydrationChild(context, `${name}.value`));
     case "exception": {
-      const errorName = validate.string(result.name || "Error", `${name}.name`);
-      const message = validate.string(result.message || "", `${name}.message`);
-      const stack = validate.string(result.stack || "", `${name}.stack`);
+      const exception = result.value || {};
+      const errorName = validate.string(exception.name || "Error", `${name}.value.name`);
+      const message = validate.string(exception.message || "", `${name}.value.message`);
+      const stack = validate.string(exception.stack || "", `${name}.value.stack`);
       throw new CapabilityCallError(message, {
         name: errorName,
         stack,
