@@ -38,7 +38,7 @@ const kj::HttpHeaderTable& getStructuredResponseHeaderTable() {
   return *table;
 }
 
-kj::Maybe<kj::Array<byte>> decodeNativeAppRpcBase64Url(
+kj::Maybe<kj::Array<byte>> decodeWorkerAppObjectBase64Url(
     kj::StringPtr text, size_t maxSize) {
   if (text.size() > maxSize * 4 / 3 + 4) {
     return nullptr;
@@ -76,9 +76,9 @@ kj::StringPtr requireJsonString(capnp::JsonValue::Reader value, kj::StringPtr na
   return value.getString();
 }
 
-class NativeAppRpcDataJsonHandler final: public capnp::JsonCodec::Handler<capnp::Data> {
+class WorkerAppObjectDataJsonHandler final: public capnp::JsonCodec::Handler<capnp::Data> {
 public:
-  explicit NativeAppRpcDataJsonHandler(size_t maxDataBytes): maxDataBytes(maxDataBytes) {}
+  explicit WorkerAppObjectDataJsonHandler(size_t maxDataBytes): maxDataBytes(maxDataBytes) {}
 
   void encode(const capnp::JsonCodec& codec, capnp::Data::Reader input,
               capnp::JsonValue::Builder output) const override {
@@ -91,7 +91,7 @@ public:
       capnp::Orphanage orphanage) const override {
     (void)codec;
     auto encoded = requireJsonString(input, "data");
-    KJ_IF_MAYBE(decoded, decodeNativeAppRpcBase64Url(encoded, maxDataBytes)) {
+    KJ_IF_MAYBE(decoded, decodeWorkerAppObjectBase64Url(encoded, maxDataBytes)) {
       return orphanage.newOrphanCopy(capnp::Data::Reader(*decoded));
     } else {
       KJ_FAIL_REQUIRE("native app RPC data value must be base64url text");
@@ -102,10 +102,10 @@ private:
   size_t maxDataBytes;
 };
 
-class NativeAppRpcCapabilityJsonHandler final
+class WorkerAppObjectCapabilityJsonHandler final
     : public capnp::JsonCodec::Handler<IsolateObjectCapability> {
 public:
-  explicit NativeAppRpcCapabilityJsonHandler(NativeAppRpcJsonCapabilityAdapter& adapter)
+  explicit WorkerAppObjectCapabilityJsonHandler(WorkerAppObjectJsonCapabilityAdapter& adapter)
       : adapter(adapter) {}
 
   void encode(const capnp::JsonCodec& codec, IsolateObjectCapability::Client input,
@@ -137,7 +137,7 @@ public:
   }
 
 private:
-  NativeAppRpcJsonCapabilityAdapter& adapter;
+  WorkerAppObjectJsonCapabilityAdapter& adapter;
 };
 
 }  // namespace
@@ -292,11 +292,11 @@ kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
   });
 }
 
-OwnedNativeAppRpcCall parseWorkerAppObjectCallJson(
-    kj::ArrayPtr<const kj::byte> body, NativeAppRpcJsonCapabilityAdapter& adapter,
+OwnedWorkerAppObjectCall parseWorkerAppObjectCallJson(
+    kj::ArrayPtr<const kj::byte> body, WorkerAppObjectJsonCapabilityAdapter& adapter,
     size_t maxDataBytes) {
-  NativeAppRpcDataJsonHandler dataHandler(maxDataBytes);
-  NativeAppRpcCapabilityJsonHandler capabilityHandler(adapter);
+  WorkerAppObjectDataJsonHandler dataHandler(maxDataBytes);
+  WorkerAppObjectCapabilityJsonHandler capabilityHandler(adapter);
   capnp::JsonCodec codec;
   codec.addTypeHandler(dataHandler);
   codec.addTypeHandler(capabilityHandler);
@@ -312,7 +312,7 @@ OwnedNativeAppRpcCall parseWorkerAppObjectCallJson(
   for (auto i: kj::indices(call.getArgs())) {
     copyIsolateObjectCallValue(call.getArgs()[i], args[i]);
   }
-  return OwnedNativeAppRpcCall {
+  return OwnedWorkerAppObjectCall {
     kj::str(call.getMethod()),
     OwnedIsolateObjectCallArgs { kj::mv(argsMessage) },
   };
@@ -320,9 +320,9 @@ OwnedNativeAppRpcCall parseWorkerAppObjectCallJson(
 
 kj::String renderWorkerAppObjectCallJson(
     kj::StringPtr method, capnp::List<IsolateObjectCallValue>::Reader args,
-    NativeAppRpcJsonCapabilityAdapter& adapter) {
-  NativeAppRpcDataJsonHandler dataHandler(kj::maxValue);
-  NativeAppRpcCapabilityJsonHandler capabilityHandler(adapter);
+    WorkerAppObjectJsonCapabilityAdapter& adapter) {
+  WorkerAppObjectDataJsonHandler dataHandler(kj::maxValue);
+  WorkerAppObjectCapabilityJsonHandler capabilityHandler(adapter);
   capnp::JsonCodec codec;
   codec.addTypeHandler(dataHandler);
   codec.addTypeHandler(capabilityHandler);
@@ -340,10 +340,10 @@ kj::String renderWorkerAppObjectCallJson(
 }
 
 OwnedIsolateObjectCallResult parseWorkerAppObjectResultJson(
-    kj::ArrayPtr<const kj::byte> body, NativeAppRpcJsonCapabilityAdapter& adapter,
+    kj::ArrayPtr<const kj::byte> body, WorkerAppObjectJsonCapabilityAdapter& adapter,
     size_t maxDataBytes) {
-  NativeAppRpcDataJsonHandler dataHandler(maxDataBytes);
-  NativeAppRpcCapabilityJsonHandler capabilityHandler(adapter);
+  WorkerAppObjectDataJsonHandler dataHandler(maxDataBytes);
+  WorkerAppObjectCapabilityJsonHandler capabilityHandler(adapter);
   capnp::JsonCodec codec;
   codec.addTypeHandler(dataHandler);
   codec.addTypeHandler(capabilityHandler);
@@ -361,9 +361,9 @@ OwnedIsolateObjectCallResult parseWorkerAppObjectResultJson(
 }
 
 kj::String renderWorkerAppObjectResultJson(
-    IsolateObjectCallResult::Reader result, NativeAppRpcJsonCapabilityAdapter& adapter) {
-  NativeAppRpcDataJsonHandler dataHandler(kj::maxValue);
-  NativeAppRpcCapabilityJsonHandler capabilityHandler(adapter);
+    IsolateObjectCallResult::Reader result, WorkerAppObjectJsonCapabilityAdapter& adapter) {
+  WorkerAppObjectDataJsonHandler dataHandler(kj::maxValue);
+  WorkerAppObjectCapabilityJsonHandler capabilityHandler(adapter);
   capnp::JsonCodec codec;
   codec.addTypeHandler(dataHandler);
   codec.addTypeHandler(capabilityHandler);
