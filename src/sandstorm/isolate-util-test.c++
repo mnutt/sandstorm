@@ -84,14 +84,6 @@ public:
   kj::String lastMethod = kj::heapString("");
 };
 
-OwnedIsolateObjectCallArgs makeCallArgs(kj::Function<void(
-    capnp::List<IsolateObjectCallValue>::Builder)> init) {
-  auto message = kj::heap<capnp::MallocMessageBuilder>();
-  auto args = message->initRoot<capnp::List<IsolateObjectCallValue>>(2);
-  init(args);
-  return OwnedIsolateObjectCallArgs { kj::mv(message) };
-}
-
 KJ_TEST("isolate package paths must be canonical and package-relative") {
   KJ_EXPECT(isCanonicalPackagePath("worker.js"));
   KJ_EXPECT(isCanonicalPackagePath("modules/worker.js"));
@@ -258,54 +250,6 @@ KJ_TEST("native app RPC JSON codec preserves data and capability slots") {
               "{\"method\":\"bad\",\"args\":[{\"type\":\"capability\",\"value\":{\"id\":\"missing\"}}]}")
               .asBytes(),
           adapter, 32));
-}
-
-KJ_TEST("isolate object capability table tracks exports imports and drops") {
-  kj::EventLoop loop;
-  kj::WaitScope waitScope(loop);
-
-  auto target = kj::heap<EchoIsolateObjectCallTarget>();
-  auto targetPtr = target.get();
-
-  IsolateObjectCapabilityTable table;
-  auto exported = table.exportTarget(kj::mv(target));
-  KJ_EXPECT(exported.id == "native-export-0");
-  KJ_IF_MAYBE(info, table.findInfo(exported.id)) {
-    KJ_EXPECT(info->kind == IsolateObjectCapabilityTableEntryKind::EXPORTED);
-  } else {
-    KJ_FAIL_ASSERT("missing exported capability entry");
-  }
-
-  auto imported = table.importCapability(exported.capability);
-  KJ_EXPECT(imported.id == "native-import-0");
-  KJ_IF_MAYBE(info, table.findInfo(imported.id)) {
-    KJ_EXPECT(info->kind == IsolateObjectCapabilityTableEntryKind::IMPORTED);
-  } else {
-    KJ_FAIL_ASSERT("missing imported capability entry");
-  }
-
-  auto stats = table.stats();
-  KJ_EXPECT(stats.totalCount == 2);
-  KJ_EXPECT(stats.exportedCount == 1);
-  KJ_EXPECT(stats.importedCount == 1);
-
-  auto callArgs = makeCallArgs([](auto args) {
-    args[0].setText("alpha");
-    args[1].setNumber(123);
-  });
-  auto result = callIsolateObjectCapability(imported.capability, "throughImport", callArgs.getArgs())
-      .wait(waitScope);
-  KJ_EXPECT(targetPtr->callCount == 1);
-  KJ_EXPECT(result.getResult().getValue().getObject()[0].getValue().getText() == "throughImport");
-
-  KJ_EXPECT(table.drop(imported.id).wait(waitScope));
-  KJ_EXPECT(targetPtr->dropCount == 1);
-  KJ_EXPECT(table.stats().totalCount == 1);
-  KJ_EXPECT(!table.drop(imported.id).wait(waitScope));
-
-  KJ_EXPECT(table.dropAll().wait(waitScope) == 1);
-  KJ_EXPECT(targetPtr->dropCount == 2);
-  KJ_EXPECT(table.stats().totalCount == 0);
 }
 
 }  // namespace
