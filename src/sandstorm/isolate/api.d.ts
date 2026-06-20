@@ -208,7 +208,7 @@ declare module "sandstorm:api" {
     release?: (slot: NativeCapabilitySlot) => unknown | Promise<unknown>;
   }
 
-  export interface ClaimedCapabilityNativeAppRpcOptions<TCapability = NativeCapabilitySlot>
+  export interface ClaimedCapabilityRpcOptions<TCapability = NativeCapabilitySlot>
       extends NativeAppRpcStubOptions<TCapability> {
     checkInfo?: boolean;
     transport?: NativeAppRpcTransport;
@@ -380,8 +380,8 @@ declare module "sandstorm:api" {
   export interface ClaimedCapability extends ClaimedCapabilityHandle {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
-    asNativeRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
-      options?: ClaimedCapabilityNativeAppRpcOptions<ClaimedCapability>,
+    asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
+      options?: ClaimedCapabilityRpcOptions<ClaimedCapability>,
     ): NativeAppRpcProxy<T>;
     asOutboundHttp(): OutboundHttpCapability;
     info(options?: { refresh?: boolean }): Promise<ClaimedCapabilityInfo | null>;
@@ -401,8 +401,8 @@ declare module "sandstorm:api" {
     constructor(env: SandstormEnv, id: string);
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
-    asNativeRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
-      options?: ClaimedCapabilityNativeAppRpcOptions<ClaimedCapability>,
+    asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
+      options?: ClaimedCapabilityRpcOptions<ClaimedCapability>,
     ): NativeAppRpcProxy<T>;
     asOutboundHttp(): OutboundHttpCapability;
     info(options?: { refresh?: boolean }): Promise<ClaimedCapabilityInfo | null>;
@@ -767,7 +767,7 @@ declare module "sandstorm:api" {
     TCapability = ClaimedCapability,
   >(
     capability: ClaimedCapability,
-    options?: ClaimedCapabilityNativeAppRpcOptions<TCapability>,
+    options?: ClaimedCapabilityRpcOptions<TCapability>,
   ): NativeAppRpcStub<T, TCapability>;
   export function sandstorm(request: Request, env: SandstormEnv): SandstormApi;
 }

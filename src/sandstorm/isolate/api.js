@@ -987,7 +987,7 @@ export class ClaimedCapability {
     return callClaimedCapability(this, method, args);
   }
 
-  asNativeRpc(options = {}) {
+  asRpc(options = {}) {
     return createClaimedCapabilityNativeAppRpcStub(this, options).asRpc();
   }
 

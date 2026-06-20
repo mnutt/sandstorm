@@ -974,7 +974,7 @@ export default {
           return { subject, callback, options };
         },
       };
-      const appObjectNativeRpc = appObjectCapability.asNativeRpc({
+      const appObjectNativeRpc = appObjectCapability.asRpc({
         transport: async (transportSlot, call) => {
           nativeRpcTransportCalls.push({ slot: transportSlot, call });
           return dispatchNativeAppRpcCall(nativeRpcTarget, call);
@@ -984,7 +984,7 @@ export default {
         "native-subject",
         nativeCapabilitySlot("native-callback", { nativeInterface: "appObject" }),
         { urgent: true });
-      const defaultNativeRpc = appObjectCapability.asNativeRpc();
+      const defaultNativeRpc = appObjectCapability.asRpc();
       const defaultNativeRpcValue = await defaultNativeRpc.deliver(
         "default-subject", { urgent: false });
       const defaultCallValue = await appObjectCapability.call(
@@ -1006,7 +1006,7 @@ export default {
       const wrongNativeRpcTransportCalls = [];
       let wrongNativeRpcError = null;
       try {
-        await capability.asNativeRpc({
+        await capability.asRpc({
           transport: async (transportSlot, call) => {
             wrongNativeRpcTransportCalls.push({ slot: transportSlot, call });
             return dispatchNativeAppRpcCall(nativeRpcTarget, call);
@@ -1568,11 +1568,11 @@ export default {
       const childInfo = await child.info();
       const childFirst = await child.call("increment", 11);
       const readChild = await capability.call("readOther", child);
-      const stub = capability.asNativeRpc();
+      const stub = capability.asRpc();
       const stubFirst = await stub.increment(2);
       const stubCurrent = await stub.get();
       const stubChild = await stub.child();
-      const stubChildFirst = await stubChild.asNativeRpc().increment(13);
+      const stubChildFirst = await stubChild.asRpc().increment(13);
       const stubReadChild = await stub.readOther(stubChild);
       const argumentTarget = new CounterCapability();
       argumentTarget.increment(21);
