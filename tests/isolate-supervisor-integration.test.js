@@ -1500,6 +1500,75 @@ test("isolate supervisor integration suite", {
     assert.equal(callback.json.disposeAfterSubscribe, callback.json.disposeBefore + 1);
     assert.equal(callback.json.drop.ok, true);
 
+    const retainedId = `retained-callback-${Date.now()}`;
+    const retainedSubscribe = await requestJson(
+      client.workerdSocket,
+      `/cross-grain-retained-callback-subscribe-self-test` +
+      `?token=${encodeURIComponent(saved.json.token)}` +
+      `&id=${encodeURIComponent(retainedId)}`);
+    assert.equal(retainedSubscribe.statusCode, 200, retainedSubscribe.body + formatOutput(
+      client.stdout, client.stderr) + formatOutput(provider.stdout, provider.stderr));
+    assert.equal(retainedSubscribe.json.ok, true);
+    assert.equal(retainedSubscribe.json.receiverCapability.type, "claimedCapability");
+    assert.deepEqual(retainedSubscribe.json.subscription, {
+      ok: true,
+      id: retainedId,
+      receiverType: "claimedCapability",
+    });
+    assert.equal(
+      retainedSubscribe.json.disposeAfterSubscribe,
+      retainedSubscribe.json.disposeBeforeSubscribe);
+    assert.equal(retainedSubscribe.json.dropFeed.ok, true);
+
+    const retainedTrigger = await requestJson(
+      provider.workerdSocket,
+      `/trigger-retained-mail-feed-callback?id=${encodeURIComponent(retainedId)}` +
+      `&subject=${encodeURIComponent("phase-3-retained-callback")}&unread=5`);
+    assert.equal(retainedTrigger.statusCode, 200, retainedTrigger.body + formatOutput(
+      client.stdout, client.stderr) + formatOutput(provider.stdout, provider.stderr));
+    assert.deepEqual(retainedTrigger.json, {
+      ok: true,
+      id: retainedId,
+      result: {
+        ok: true,
+        count: 1,
+        subject: "phase-3-retained-callback",
+      },
+    });
+
+    const retainedEvents = await requestJson(
+      client.workerdSocket,
+      `/retained-callback-events?id=${encodeURIComponent(retainedId)}`);
+    assert.equal(retainedEvents.statusCode, 200, retainedEvents.body);
+    assert.deepEqual(retainedEvents.json.events, [
+      {
+        subject: "phase-3-retained-callback",
+        unread: 5,
+      },
+    ]);
+    assert.equal(
+      retainedEvents.json.disposed,
+      retainedSubscribe.json.disposeBeforeSubscribe);
+
+    const dropRetainedProvider = await requestJson(
+      provider.workerdSocket,
+      `/drop-retained-mail-feed-callback?id=${encodeURIComponent(retainedId)}`);
+    assert.equal(dropRetainedProvider.statusCode, 200, dropRetainedProvider.body);
+    assert.equal(dropRetainedProvider.json.ok, true);
+    assert.equal(dropRetainedProvider.json.dropped, true);
+    assert.equal(dropRetainedProvider.json.drop.ok, true);
+
+    const dropRetainedClient = await requestJson(
+      client.workerdSocket,
+      `/drop-retained-callback-receiver?id=${encodeURIComponent(retainedId)}`);
+    assert.equal(dropRetainedClient.statusCode, 200, dropRetainedClient.body);
+    assert.equal(dropRetainedClient.json.ok, true);
+    assert.equal(dropRetainedClient.json.dropped, true);
+    assert.equal(dropRetainedClient.json.drop.ok, true);
+    assert.equal(
+      dropRetainedClient.json.disposeAfterDrop,
+      dropRetainedClient.json.disposeBeforeDrop + 1);
+
     const dropOriginal = await requestJson(
       provider.sandstormApiSocket,
       `/powerbox/drop?id=${encodeURIComponent(exported.json.capability.id)}`,

@@ -31,6 +31,8 @@ import {
 let disposedCounterCapabilities = 0;
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
 const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
+const retainedMailFeedCallbacks = new Map();
+const retainedEventReceivers = new Map();
 
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
@@ -137,6 +139,22 @@ class MailFeedCapability extends RpcTarget {
       ok: true,
       receiverType: receiver.type,
       result,
+    };
+  }
+
+  async subscribeRetained(id, receiver) {
+    const retainedId = String(id);
+    const existing = retainedMailFeedCallbacks.get(retainedId);
+    if (existing) {
+      await existing.drop();
+    }
+
+    const retained = await receiver.dup();
+    retainedMailFeedCallbacks.set(retainedId, retained);
+    return {
+      ok: true,
+      id: retainedId,
+      receiverType: receiver.type,
     };
   }
 
@@ -1667,6 +1685,121 @@ export default {
           },
         }, { status: 500 });
       }
+    }
+
+    if (url.pathname === "/cross-grain-retained-callback-subscribe-self-test") {
+      const token = url.searchParams.get("token");
+      const id = url.searchParams.get("id");
+      if (!token || !id) {
+        return Response.json({ ok: false, error: "missing token or id" }, { status: 400 });
+      }
+
+      try {
+        const feedCapability = await sandstorm(request, env).powerbox().restoreSaved(token);
+        const feed = feedCapability.asRpc();
+        const receiver = new EventReceiver();
+        const receiverCapability = await sandstorm(request, env).capability(receiver);
+        const disposeBeforeSubscribe = disposedCounterCapabilities;
+        const subscription = await feed.subscribeRetained(id, receiverCapability);
+        const disposeAfterSubscribe = disposedCounterCapabilities;
+        const dropFeed = await feedCapability.drop();
+        retainedEventReceivers.set(id, { receiver, receiverCapability });
+        return Response.json({
+          ok: true,
+          id,
+          receiverCapability: JSON.parse(JSON.stringify(receiverCapability)),
+          subscription,
+          disposeBeforeSubscribe,
+          disposeAfterSubscribe,
+          dropFeed,
+        });
+      } catch (error) {
+        return Response.json({
+          ok: false,
+          error: {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          },
+        }, { status: 500 });
+      }
+    }
+
+    if (url.pathname === "/trigger-retained-mail-feed-callback") {
+      const id = url.searchParams.get("id");
+      const retained = retainedMailFeedCallbacks.get(id);
+      if (!id || !retained) {
+        return Response.json({ ok: false, error: "missing retained callback" }, { status: 404 });
+      }
+
+      try {
+        const result = await retained.call("onMailEvent", {
+          subject: url.searchParams.get("subject") || "phase-3-retained-callback",
+          unread: Number(url.searchParams.get("unread") || 3),
+        });
+        return Response.json({ ok: true, id, result });
+      } catch (error) {
+        return Response.json({
+          ok: false,
+          error: {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          },
+        }, { status: 500 });
+      }
+    }
+
+    if (url.pathname === "/retained-callback-events") {
+      const id = url.searchParams.get("id");
+      const retained = retainedEventReceivers.get(id);
+      if (!id || !retained) {
+        return Response.json({ ok: false, error: "missing retained receiver" }, { status: 404 });
+      }
+
+      return Response.json({
+        ok: true,
+        id,
+        events: retained.receiver.events(),
+        disposed: disposedCounterCapabilities,
+      });
+    }
+
+    if (url.pathname === "/drop-retained-mail-feed-callback") {
+      const id = url.searchParams.get("id");
+      const retained = retainedMailFeedCallbacks.get(id);
+      if (!id || !retained) {
+        return Response.json({ ok: true, id, dropped: false });
+      }
+
+      retainedMailFeedCallbacks.delete(id);
+      return Response.json({
+        ok: true,
+        id,
+        dropped: true,
+        drop: await retained.drop(),
+      });
+    }
+
+    if (url.pathname === "/drop-retained-callback-receiver") {
+      const id = url.searchParams.get("id");
+      const retained = retainedEventReceivers.get(id);
+      if (!id || !retained) {
+        return Response.json({ ok: true, id, dropped: false });
+      }
+
+      retainedEventReceivers.delete(id);
+      const disposeBeforeDrop = disposedCounterCapabilities;
+      const drop = await retained.receiverCapability.drop();
+      const disposeAfterDrop = disposedCounterCapabilities;
+      return Response.json({
+        ok: true,
+        id,
+        dropped: true,
+        drop,
+        disposeBeforeDrop,
+        disposeAfterDrop,
+      });
     }
 
     if (url.pathname === "/object-capability-dispose-count") {
