@@ -21,6 +21,7 @@ import {
   serializeNativeAppRpcCallAsync,
   serializeNativeAppRpcException,
   serializeNativeAppRpcResult,
+  serializeNativeAppRpcResultAsync,
   serializeNativeAppRpcValueAsync,
   serializeNativeAppRpcValue,
   powerbox as sandstormPowerbox,
@@ -1126,6 +1127,29 @@ export default {
         { exportCapabilitySlot });
       const exportingStubValue = await exportingStub.call(
         "deliver", "export-stub-subject", new CounterCapability(), { urgent: false });
+      const exportedResultEnvelope = await serializeNativeAppRpcResultAsync({
+        child: new CounterCapability(),
+        authority: new ClaimedCapability(env, "mock-app-object"),
+      }, { exportCapabilitySlot });
+      const exportDispatchTarget = {
+        makeChild() {
+          return new CounterCapability();
+        },
+
+        forwardAuthority() {
+          return {
+            authority: new ClaimedCapability(env, "mock-app-object"),
+          };
+        },
+      };
+      const exportedDispatchChild = await dispatchNativeAppRpcCall(
+        exportDispatchTarget,
+        serializeNativeAppRpcCall("makeChild", []),
+        { exportCapabilitySlot });
+      const exportedDispatchAuthority = await dispatchNativeAppRpcCall(
+        exportDispatchTarget,
+        serializeNativeAppRpcCall("forwardAuthority", []),
+        { exportCapabilitySlot });
 
       let rawTargetError = null;
       try {
@@ -1263,6 +1287,9 @@ export default {
           callEnvelope: exportedCallEnvelope,
           stubValue: exportingStubValue,
           stubTransportCalls: exportingStubTransportCalls,
+          resultEnvelope: exportedResultEnvelope,
+          dispatchChild: exportedDispatchChild,
+          dispatchAuthority: exportedDispatchAuthority,
           exportCalls: exportCapabilitySlotCalls,
         },
         slotFrozen: Object.isFrozen(slot),
