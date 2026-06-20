@@ -39,6 +39,29 @@ You can also run all test cases in a file:
 
     TESTCASE="tests/grain.js" cmake --build --preset dev --target system-test
 
+## Running isolate example browser tests
+
+The isolate Powerbox examples have a focused target:
+
+    cmake --build --preset dev --target isolate-examples-test
+
+This builds the isolate example apps and runs `tests/apps/isolate-examples.js`
+against a local Sandstorm instance. The test file covers browser-mediated
+Powerbox selection, saved provider tokens, app-object RPC callbacks, durable
+callback tokens, and returned child/session capabilities.
+
+When running `tests/apps/isolate-examples.js` directly, set
+`ISOLATE_API_POWERBOX_TEST_SPK` or `ISOLATE_API_PROVIDER_TEST_SPK` to use
+prebuilt example packages outside `tests/assets/`.
+
+## Displaying the browser's UI during tests
+
+By default the tests run against a mock X server, so the browser windows
+are not displayed. However, it can be helpful to display the browser
+windows when debugging. You can do this by setting `SHOW_BROWSER=true`:
+
+    SHOW_BROWSER=true cmake --build --preset dev --target system-test
+
 ## Dealing with tests which are expected to fail
 
 Some tests are known to fail, either always or intermittently. Obviously
