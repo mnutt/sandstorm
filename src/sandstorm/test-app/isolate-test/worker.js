@@ -1568,11 +1568,11 @@ export default {
       const childInfo = await child.info();
       const childFirst = await child.call("increment", 11);
       const readChild = await capability.call("readOther", child);
-      const stub = capability.asRpc();
+      const stub = capability.asNativeRpc();
       const stubFirst = await stub.increment(2);
       const stubCurrent = await stub.get();
       const stubChild = await stub.child();
-      const stubChildFirst = await stubChild.increment(13);
+      const stubChildFirst = await stubChild.asNativeRpc().increment(13);
       const stubReadChild = await stub.readOther(stubChild);
       const argumentTarget = new CounterCapability();
       argumentTarget.increment(21);
