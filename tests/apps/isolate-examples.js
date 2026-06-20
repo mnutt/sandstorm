@@ -182,3 +182,47 @@ module.exports["Test isolate app-object feed provider flow"] = function (browser
         .assert.textContains("pre", "\"storageKey\": \"isolate-feed-receiver-token\"");
     });
 };
+
+module.exports["Test isolate app-object LLM provider flow"] = function (browser) {
+  ensureApiPowerboxSpk();
+  ensureApiProviderSpk();
+
+  installAndOpenExample(browser, apiProviderAppId, apiProviderSpk)
+    .grainFrame()
+    .waitForElementVisible("#fulfill-llm", medium_wait)
+    .frameParent()
+    .url(function (providerGrainUrl) {
+      var providerGrainId = providerGrainUrl.value.split("/").pop();
+      var providerCardSelector =
+          ".powerbox-card button[data-card-id=\"grain-" + providerGrainId + "\"]";
+
+      uploadAndOpenExample(browser, apiPowerboxAppId, apiPowerboxSpk)
+        .grainFrame()
+        .execute(function () {
+          window.location.href = "/?llmFlow=1";
+        })
+        .waitForElementVisible("#llm-flow-mode", medium_wait)
+        .waitForElementVisible("#connect-api", medium_wait)
+        .click("#connect-api")
+        .frameParent()
+        .waitForElementVisible(providerCardSelector, medium_wait)
+        .click(providerCardSelector)
+        .waitForElementVisible(".powerbox-iframe-mount iframe", medium_wait)
+        .frameSelector(".powerbox-iframe-mount iframe")
+        .waitForElementVisible("#fulfill-llm", medium_wait)
+        .click("#fulfill-llm")
+        .frameParent()
+        .grainFrame()
+        .waitForElementVisible("pre", medium_wait)
+        .assert.textContains("body", "Saved API capability token present")
+        .assert.textContains("pre", "\"ok\": true")
+        .assert.textContains("pre", "\"capabilityClass\": true")
+        .assert.textContains("pre", "\"savedClass\": true")
+        .assert.textContains("pre", "\"session\"")
+        .assert.textContains("pre", "\"nativeInterface\": \"appObject\"")
+        .assert.textContains("pre", "\"reply(phase-7-llm): draft a summary\"")
+        .assert.textContains("pre", "\"reply(phase-7-llm): include next steps\"")
+        .assert.textContains("pre", "\"prompt\": \"draft a summary\"")
+        .assert.textContains("pre", "\"prompt\": \"include next steps\"");
+    });
+};
