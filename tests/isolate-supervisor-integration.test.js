@@ -1616,6 +1616,23 @@ test("isolate supervisor integration suite", {
       fixture.workerdSocket, "/native-app-rpc-codec-self-test");
     assert.equal(nativeAppRpcCodec.statusCode, 200, nativeAppRpcCodec.body);
     assert.equal(nativeAppRpcCodec.json.ok, true);
+    const savedCapabilityHandle = {
+      ok: true,
+      type: "savedCapability",
+      id: "saved-fixture",
+      token: "c2F2ZWQtdG9rZW4",
+      tokenEncoding: "base64url",
+    };
+    const savedCapabilityEnvelope = {
+      type: "object",
+      value: [
+        { name: "ok", value: { type: "bool", value: true } },
+        { name: "type", value: { type: "text", value: "savedCapability" } },
+        { name: "id", value: { type: "text", value: "saved-fixture" } },
+        { name: "token", value: { type: "text", value: "c2F2ZWQtdG9rZW4" } },
+        { name: "tokenEncoding", value: { type: "text", value: "base64url" } },
+      ],
+    };
     assert.deepEqual(nativeAppRpcCodec.json.serialized, {
       type: "object",
       value: [
@@ -1642,6 +1659,10 @@ test("isolate supervisor integration suite", {
             value: { id: "slot-1", nativeInterface: "appObject" },
           },
         },
+        {
+          name: "saved",
+          value: savedCapabilityEnvelope,
+        },
       ],
     });
     assert.deepEqual(nativeAppRpcCodec.json.hydrated, {
@@ -1652,6 +1673,7 @@ test("isolate supervisor integration suite", {
       bytes: [0, 1, 2, 3, 4],
       items: ["first", 2, false],
       callback: { type: "nativeCapabilitySlot", id: "slot-1", nativeInterface: "appObject" },
+      saved: savedCapabilityHandle,
     });
     assert.deepEqual(nativeAppRpcCodec.json.callEnvelope, {
       method: "deliver",
@@ -1660,7 +1682,13 @@ test("isolate supervisor integration suite", {
         { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
         {
           type: "object",
-          value: [{ name: "urgent", value: { type: "bool", value: true } }],
+          value: [
+            { name: "urgent", value: { type: "bool", value: true } },
+            {
+              name: "saved",
+              value: savedCapabilityEnvelope,
+            },
+          ],
         },
       ],
     });
@@ -1669,7 +1697,7 @@ test("isolate supervisor integration suite", {
       args: [
         "subject",
         { type: "nativeCapabilitySlot", id: "slot-1", nativeInterface: "appObject" },
-        { urgent: true },
+        { urgent: true, saved: savedCapabilityHandle },
       ],
     });
     assert.deepEqual(nativeAppRpcCodec.json.resultEnvelope, {
@@ -1682,12 +1710,17 @@ test("isolate supervisor integration suite", {
             name: "receipt",
             value: { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
           },
+          {
+            name: "saved",
+            value: savedCapabilityEnvelope,
+          },
         ],
       },
     });
     assert.deepEqual(nativeAppRpcCodec.json.resultValue, {
       accepted: true,
       receipt: { type: "nativeCapabilitySlot", id: "slot-1", nativeInterface: "appObject" },
+      saved: savedCapabilityHandle,
     });
     assert.deepEqual(nativeAppRpcCodec.json.exceptionEnvelope, {
       type: "exception",
@@ -1714,6 +1747,10 @@ test("isolate supervisor integration suite", {
             value: { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
           },
           { name: "urgent", value: { type: "bool", value: true } },
+          {
+            name: "saved",
+            value: savedCapabilityEnvelope,
+          },
         ],
       },
     });
@@ -1721,6 +1758,7 @@ test("isolate supervisor integration suite", {
       subject: "subject",
       callback: { type: "nativeCapabilitySlot", id: "slot-1", nativeInterface: "appObject" },
       urgent: true,
+      saved: savedCapabilityHandle,
     });
     assert.deepEqual(nativeAppRpcCodec.json.missingDispatchResult, {
       type: "exception",
@@ -1750,7 +1788,13 @@ test("isolate supervisor integration suite", {
             { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
             {
               type: "object",
-              value: [{ name: "urgent", value: { type: "bool", value: false } }],
+              value: [
+                { name: "urgent", value: { type: "bool", value: false } },
+                {
+                  name: "saved",
+                  value: savedCapabilityEnvelope,
+                },
+              ],
             },
           ],
         },
@@ -1764,7 +1808,13 @@ test("isolate supervisor integration suite", {
             { type: "capability", value: { id: "slot-1", nativeInterface: "appObject" } },
             {
               type: "object",
-              value: [{ name: "urgent", value: { type: "bool", value: true } }],
+              value: [
+                { name: "urgent", value: { type: "bool", value: true } },
+                {
+                  name: "saved",
+                  value: savedCapabilityEnvelope,
+                },
+              ],
             },
           ],
         },
@@ -1778,11 +1828,13 @@ test("isolate supervisor integration suite", {
       subject: "stub-subject",
       callback: nativeAppRpcCodec.json.stubSlot,
       urgent: false,
+      saved: savedCapabilityHandle,
     });
     assert.deepEqual(nativeAppRpcCodec.json.stubRpcValue, {
       subject: "rpc-subject",
       callback: nativeAppRpcCodec.json.stubSlot,
       urgent: true,
+      saved: savedCapabilityHandle,
     });
     assert.equal(nativeAppRpcCodec.json.stubMissingError.name, "CapabilityCallError");
     assert.equal(nativeAppRpcCodec.json.stubMissingError.message, "RPC method not found: missing");

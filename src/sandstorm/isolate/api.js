@@ -314,6 +314,9 @@ function validateNativeCapabilitySlotEnvelope(value, name) {
 export function serializeNativeAppRpcValue(value, options = "value") {
   const context = nativeAppRpcSerializationContext(options);
   const name = context.name;
+  if (value instanceof SavedCapability) {
+    value = value.toJSON();
+  }
   if (value === null || value === undefined) {
     return { type: "null" };
   }
@@ -368,6 +371,9 @@ export function serializeNativeAppRpcValue(value, options = "value") {
 export async function serializeNativeAppRpcValueAsync(value, options = "value") {
   const context = nativeAppRpcSerializationContext(options);
   const name = context.name;
+  if (value instanceof SavedCapability) {
+    return serializeNativeAppRpcValue(value, context);
+  }
   if (value instanceof RpcTarget || value instanceof ClaimedCapability) {
     if (!context.exportCapabilitySlot) {
       throw new ValidationError(

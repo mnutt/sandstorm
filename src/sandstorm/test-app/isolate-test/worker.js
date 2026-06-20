@@ -1040,6 +1040,7 @@ export default {
     if (url.pathname === "/native-app-rpc-codec-self-test") {
       const bytes = makeBytes(5);
       const slot = nativeCapabilitySlot("slot-1", { nativeInterface: "appObject" });
+      const savedCapability = new SavedCapability(env, "saved-fixture", "c2F2ZWQtdG9rZW4");
       const value = {
         none: null,
         truthy: true,
@@ -1048,18 +1049,20 @@ export default {
         bytes,
         items: ["first", 2, false],
         callback: slot,
+        saved: savedCapability,
       };
       const serialized = serializeNativeAppRpcValue(value);
       const hydrated = hydrateNativeAppRpcValue(serialized);
       const callEnvelope = serializeNativeAppRpcCall("deliver", [
         "subject",
         slot,
-        { urgent: true },
+        { urgent: true, saved: savedCapability },
       ]);
       const hydratedCall = hydrateNativeAppRpcCall(callEnvelope);
       const resultEnvelope = serializeNativeAppRpcResult({
         accepted: true,
         receipt: slot,
+        saved: savedCapability,
       });
       const resultValue = hydrateNativeAppRpcResult(resultEnvelope);
       const exceptionEnvelope = serializeNativeAppRpcException({
@@ -1069,11 +1072,15 @@ export default {
       });
       const dispatchTarget = {
         async deliver(subject, callback, options) {
-          return {
+          const result = {
             subject,
             callback,
             urgent: options.urgent,
           };
+          if (Object.hasOwn(options, "saved")) {
+            result.saved = options.saved;
+          }
+          return result;
         },
 
         fail() {
@@ -1093,9 +1100,11 @@ export default {
       });
       const stubCallValue = await stub.call("deliver", "stub-subject", slot, {
         urgent: false,
+        saved: savedCapability,
       });
       const stubRpcValue = await stub.asRpc().deliver("rpc-subject", slot, {
         urgent: true,
+        saved: savedCapability,
       });
 
       let stubMissingError = null;
