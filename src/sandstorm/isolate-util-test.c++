@@ -74,9 +74,9 @@ public:
     return OwnedIsolateObjectCallResult { kj::mv(message) };
   }
 
-  kj::Promise<void> drop() override {
+  kj::Promise<bool> drop() override {
     ++dropCount;
-    return kj::READY_NOW;
+    return true;
   }
 
   uint callCount = 0;
@@ -236,6 +236,9 @@ KJ_TEST("native app RPC JSON codec preserves data and capability slots") {
       "{\"name\":\"payload\",\"value\":{\"type\":\"data\",\"value\":\"b2s\"}},"
       "{\"name\":\"callback\",\"value\":{\"type\":\"capability\",\"value\":"
       "{\"id\":\"stored-0\",\"nativeInterface\":\"appObject\"}}}]}}"));
+  auto dropResult = args[1].getCapability().dropRequest().send().wait(waitScope);
+  KJ_EXPECT(dropResult.getReleased());
+  KJ_EXPECT(targetPtr->dropCount == 1);
 
   KJ_EXPECT_THROW_MESSAGE(
       "native app RPC data value must be base64url text",

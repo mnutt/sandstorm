@@ -158,8 +158,9 @@ public:
   }
 
   kj::Promise<void> drop(DropContext context) override {
-    (void)context;
-    return target->drop();
+    return target->drop().then([context](bool released) mutable {
+      context.getResults().setReleased(released);
+    });
   }
 
 private:
@@ -177,8 +178,10 @@ public:
     return callIsolateObjectCapability(capability, method, argReader);
   }
 
-  kj::Promise<void> drop() override {
-    return capability.dropRequest().send().ignoreResult();
+  kj::Promise<bool> drop() override {
+    return capability.dropRequest().send().then([](auto result) {
+      return result.getReleased();
+    });
   }
 
 private:
@@ -193,8 +196,8 @@ IsolateObjectCallResult::Reader OwnedIsolateObjectCallResult::getResult() {
   return message->getRoot<IsolateObjectCallResult>().asReader();
 }
 
-kj::Promise<void> IsolateObjectCallTarget::drop() {
-  return kj::READY_NOW;
+kj::Promise<bool> IsolateObjectCallTarget::drop() {
+  return true;
 }
 
 OwnedIsolateObjectCallArgs copyIsolateObjectCallArgs(
