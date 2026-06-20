@@ -756,7 +756,7 @@ async function requireNativeAppRpcClaimedCapability(capability) {
   const info = await claimedCapabilityInfo(capability.env, capability);
   if (!claimedCapabilitySupportsNativeAppRpc(info)) {
     throw new ValidationError(
-      `ClaimedCapability nativeInterface ${info.nativeInterface} cannot be used as native app RPC`);
+      `ClaimedCapability nativeInterface ${info.nativeInterface} cannot be used with app-defined RPC`);
   }
 }
 
@@ -780,12 +780,12 @@ async function exportClaimedCapabilityNativeAppRpcSlot(
     const info = await claimedCapabilityInfo(env, value);
     if (!claimedCapabilitySupportsNativeAppRpc(info)) {
       throw new ValidationError(
-        `${context.name} nativeInterface ${info?.nativeInterface} cannot be used as native app RPC`);
+        `${context.name} nativeInterface ${info?.nativeInterface} cannot be used with app-defined RPC`);
     }
     return nativeCapabilitySlot(value.id, { nativeInterface: "appObject" });
   }
 
-  failValidation(context.name, "a native app RPC capability", value);
+  failValidation(context.name, "an app-defined RPC capability", value);
 }
 
 function claimedCapabilityNativeAppRpcSlotValue(env, slot) {
@@ -835,7 +835,7 @@ export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}
     }
     if (!transport) {
       throw new CapabilityCallError(
-        "native app RPC transport for claimed capabilities is not connected");
+        "app-defined RPC transport for claimed capabilities is not connected");
     }
     return transport(slot, call);
   };

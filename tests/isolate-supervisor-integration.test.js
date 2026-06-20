@@ -1610,7 +1610,7 @@ test("isolate supervisor integration suite", {
     assert.match(nativeInterfaceValidation.json.wrongNativeRpcError.message,
       /nativeInterface outboundHttpSession/);
     assert.match(nativeInterfaceValidation.json.wrongNativeRpcError.message,
-      /native app RPC/);
+      /app-defined RPC/);
 
     const nativeAppRpcCodec = await requestJson(
       fixture.workerdSocket, "/native-app-rpc-codec-self-test");
