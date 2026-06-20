@@ -146,7 +146,7 @@ CAPNP_SCHEMAS=$(filter-out src/capnp/test%.capnp,$(wildcard src/capnp/*.capnp))
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test installer-test app-index-dev lint workerd verify-workerd-runtime
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -184,6 +184,13 @@ test: sandstorm-$(BUILD)-fast.tar.xz test-app.spk tests/assets/meteor-testapp.sp
 		tests/assets/isolate-api-powerbox-test-app.spk \
 		tests/assets/isolate-api-provider-test-app.spk
 	tests/run-local.sh sandstorm-$(BUILD)-fast.tar.xz test-app.spk
+
+isolate-examples-test: sandstorm-$(BUILD)-fast.tar.xz test-app.spk \
+		tests/assets/isolate-api-powerbox-test-app.spk \
+		tests/assets/isolate-api-provider-test-app.spk
+	TESTCASE=tests/apps/isolate-examples.js \
+		tests/run-local.sh sandstorm-$(BUILD)-fast.tar.xz test-app.spk
+
 lint: shell-env
 	cd shell && meteor npm run lint
 typecheck-ts:
