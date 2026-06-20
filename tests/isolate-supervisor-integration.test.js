@@ -1802,6 +1802,94 @@ test("isolate supervisor integration suite", {
         name: "result.value.receipt",
       },
     ]);
+    assert.deepEqual(nativeAppRpcCodec.json.exported.targetValue, {
+      type: "capability",
+      value: { id: "exported-slot-0", nativeInterface: "appObject" },
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.exported.claimedValue, {
+      type: "capability",
+      value: { id: "exported-slot-1", nativeInterface: "appObject" },
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.exported.callEnvelope, {
+      method: "deliver",
+      args: [
+        { type: "capability", value: { id: "exported-slot-2", nativeInterface: "appObject" } },
+        {
+          type: "object",
+          value: [
+            {
+              name: "authority",
+              value: {
+                type: "capability",
+                value: { id: "exported-slot-3", nativeInterface: "appObject" },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.exported.stubValue, {
+      subject: "export-stub-subject",
+      callback: {
+        type: "nativeCapabilitySlot",
+        id: "exported-slot-4",
+        nativeInterface: "appObject",
+      },
+      urgent: false,
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.exported.stubTransportCalls, [
+      {
+        slot: nativeAppRpcCodec.json.stubSlot,
+        call: {
+          method: "deliver",
+          args: [
+            { type: "text", value: "export-stub-subject" },
+            {
+              type: "capability",
+              value: { id: "exported-slot-4", nativeInterface: "appObject" },
+            },
+            {
+              type: "object",
+              value: [{ name: "urgent", value: { type: "bool", value: false } }],
+            },
+          ],
+        },
+      },
+    ]);
+    assert.deepEqual(nativeAppRpcCodec.json.exported.exportCalls, [
+      {
+        name: "callback",
+        rpcTargetClass: true,
+        claimedClass: false,
+        id: "exported-slot-0",
+      },
+      {
+        name: "authority",
+        rpcTargetClass: false,
+        claimedClass: true,
+        capabilityId: "mock-app-object",
+        id: "exported-slot-1",
+      },
+      {
+        name: "call.args[0]",
+        rpcTargetClass: true,
+        claimedClass: false,
+        id: "exported-slot-2",
+      },
+      {
+        name: "call.args[1].authority",
+        rpcTargetClass: false,
+        claimedClass: true,
+        capabilityId: "mock-app-object",
+        id: "exported-slot-3",
+      },
+      {
+        name: "call.args[1]",
+        rpcTargetClass: true,
+        claimedClass: false,
+        id: "exported-slot-4",
+      },
+    ]);
     assert.equal(nativeAppRpcCodec.json.slotFrozen, true);
     assert.equal(nativeAppRpcCodec.json.rawTargetError.name, "ValidationError");
     assert.match(nativeAppRpcCodec.json.rawTargetError.message, /native capability slot/);

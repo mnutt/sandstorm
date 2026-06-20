@@ -18,8 +18,10 @@ import {
   sandstorm,
   serveSystemRoutes,
   serializeNativeAppRpcCall,
+  serializeNativeAppRpcCallAsync,
   serializeNativeAppRpcException,
   serializeNativeAppRpcResult,
+  serializeNativeAppRpcValueAsync,
   serializeNativeAppRpcValue,
   powerbox as sandstormPowerbox,
 } from "sandstorm:api";
@@ -1088,6 +1090,43 @@ export default {
       const resolvedCallbackValue = await resolvedValue.callback.call(
         "deliver", "resolved-subject", slot, { urgent: true });
 
+      const exportCapabilitySlotCalls = [];
+      const exportCapabilitySlot = async (capability, context) => {
+        const id = `exported-slot-${exportCapabilitySlotCalls.length}`;
+        exportCapabilitySlotCalls.push({
+          name: context.name,
+          rpcTargetClass: capability instanceof RpcTarget,
+          claimedClass: capability instanceof ClaimedCapability,
+          capabilityId: capability instanceof ClaimedCapability ? capability.id : undefined,
+          id,
+        });
+        return nativeCapabilitySlot(id, { nativeInterface: "appObject" });
+      };
+      const exportedTargetValue = await serializeNativeAppRpcValueAsync(new CounterCapability(), {
+        name: "callback",
+        exportCapabilitySlot,
+      });
+      const exportedClaimedValue = await serializeNativeAppRpcValueAsync(
+        new ClaimedCapability(env, "mock-app-object"),
+        {
+          name: "authority",
+          exportCapabilitySlot,
+        });
+      const exportedCallEnvelope = await serializeNativeAppRpcCallAsync("deliver", [
+        new CounterCapability(),
+        { authority: new ClaimedCapability(env, "mock-app-object") },
+      ], { exportCapabilitySlot });
+      const exportingStubTransportCalls = [];
+      const exportingStub = createNativeAppRpcStub(
+        slot,
+        async (transportSlot, call) => {
+          exportingStubTransportCalls.push({ slot: transportSlot, call });
+          return dispatchNativeAppRpcCall(dispatchTarget, call);
+        },
+        { exportCapabilitySlot });
+      const exportingStubValue = await exportingStub.call(
+        "deliver", "export-stub-subject", new CounterCapability(), { urgent: false });
+
       let rawTargetError = null;
       try {
         serializeNativeAppRpcValue(new CounterCapability(), "callback");
@@ -1217,6 +1256,14 @@ export default {
           callbackValue: resolvedCallbackValue,
           transportCalls: resolvedTransportCalls,
           resolverCalls,
+        },
+        exported: {
+          targetValue: exportedTargetValue,
+          claimedValue: exportedClaimedValue,
+          callEnvelope: exportedCallEnvelope,
+          stubValue: exportingStubValue,
+          stubTransportCalls: exportingStubTransportCalls,
+          exportCalls: exportCapabilitySlotCalls,
         },
         slotFrozen: Object.isFrozen(slot),
         rawTargetError,
