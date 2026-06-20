@@ -1295,10 +1295,10 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.stubReadChild, { value: 13 });
     assert.deepEqual(selfTest.json.argumentTarget.read, { value: 21 });
     assert.equal(selfTest.json.argumentTarget.disposeAfter,
-      selfTest.json.argumentTarget.disposeBefore);
+      selfTest.json.argumentTarget.disposeBefore + 1);
     assert.deepEqual(selfTest.json.stubArgumentTarget.read, { value: 23 });
     assert.equal(selfTest.json.stubArgumentTarget.disposeAfter,
-      selfTest.json.stubArgumentTarget.disposeBefore);
+      selfTest.json.stubArgumentTarget.disposeBefore + 1);
     assert.deepEqual(selfTest.json.retainedArgumentTarget.retain, { value: 31 });
     assert.equal(selfTest.json.retainedArgumentTarget.disposeAfterRetainCall,
       selfTest.json.retainedArgumentTarget.disposeBefore);
@@ -1322,7 +1322,7 @@ test("isolate supervisor integration suite", {
       },
     ]);
     assert.equal(selfTest.json.liveCallback.disposeAfter,
-      selfTest.json.liveCallback.disposeBefore);
+      selfTest.json.liveCallback.disposeBefore + 1);
     assert.equal(selfTest.json.liveCallback.sessionClass, true);
     assert.equal(selfTest.json.liveCallback.session.type, "claimedCapability");
     assert.deepEqual(selfTest.json.liveCallback.sessionFirst, { value: 7 });
@@ -1347,16 +1347,19 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.duplicate.originalInfoWithDuplicateLive.dropNotifyRefCount, 2);
     assert.equal(selfTest.json.duplicate.duplicateInfoBeforeDrop.id,
       selfTest.json.duplicate.id);
-    assert.equal(selfTest.json.duplicate.duplicateInfoBeforeDrop.dropNotifyRefCount, 2);
+    assert.equal(selfTest.json.duplicate.duplicateInfoBeforeDrop.residence, "imported");
+    assert.equal(selfTest.json.duplicate.duplicateInfoBeforeDrop.nativeInterface, "appObject");
+    assert.equal(selfTest.json.duplicate.duplicateInfoBeforeDrop.dropNotifyRefCount, 0);
     assert.deepEqual(selfTest.json.duplicate.increment, { value: 14 });
     assert.equal(selfTest.json.duplicate.dropOriginal.ok, true);
     assert.equal(selfTest.json.duplicate.disposeAfterOriginalDrop,
       selfTest.json.duplicate.disposeBeforeDrop);
     assert.equal(selfTest.json.duplicate.duplicateInfoAfterOriginalDrop.id,
       selfTest.json.duplicate.id);
-    assert.equal(selfTest.json.duplicate.duplicateInfoAfterOriginalDrop.dropNotifyRefCount, 1);
+    assert.equal(selfTest.json.duplicate.duplicateInfoAfterOriginalDrop.dropNotifyRefCount, 0);
     assert.deepEqual(selfTest.json.duplicate.afterOriginalDrop, { value: 14 });
     assert.equal(selfTest.json.duplicate.dropDuplicate.ok, true);
+    assert.equal(selfTest.json.duplicate.dropDuplicate.released, true);
     assert.equal(selfTest.json.duplicate.duplicateInfoAfterDrop, null);
     assert.equal(selfTest.json.duplicate.disposeAfterDuplicateDrop,
       selfTest.json.duplicate.disposeBeforeDrop + 1);

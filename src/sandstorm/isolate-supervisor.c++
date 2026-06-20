@@ -3304,9 +3304,26 @@ public:
 
   kj::Promise<void> drop(DropContext context) override {
     auto req = cap.dropRequest();
-    return req.send().ignoreResult()
-        .then([this]() {
+    return req.send()
+        .then([this, context](auto result) mutable {
+      context.getResults().setReleased(result.getReleased());
       sessions->dropClaimedCapability(id);
+    });
+  }
+
+  kj::Promise<void> dup(DupContext context) override {
+    auto req = cap.dupRequest();
+    return req.send().then([this, context](auto result) mutable {
+      auto duplicatedId = sessions->storeClaimedCapability(
+          result.getCapability(),
+          makeImportedClaimedCapabilityMetadata(
+            ClaimedCapabilityKind::UNKNOWN, ClaimedCapabilityNativeInterface::APP_OBJECT));
+      KJ_IF_MAYBE(duplicatedCap, sessions->findClaimedCapability(duplicatedId)) {
+        context.getResults().setCapability(IsolateObjectCapability::Client(
+            kj::heap<ClaimedIsolateObjectCapability>(
+              kj::addRef(*sessions), duplicatedId,
+              duplicatedCap->template castAs<IsolateObjectCapability>())));
+      }
     });
   }
 
@@ -3360,6 +3377,7 @@ public:
       : state(kj::mv(state)),
         persistent(persistent),
         parentToken(kj::mv(parentToken)),
+        runtimeConfig(kj::addRef(*config)),
         runtimeHost(kj::addRef(*host)),
         runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host))) {}
 
@@ -3391,20 +3409,46 @@ public:
     KJ_IF_MAYBE(id, state->claimedId) {
       KJ_IF_MAYBE(dropped, runtimeHost->sessions->dropClaimedCapability(*id)) {
         KJ_IF_MAYBE(dropNotifyPath, dropped->dropNotifyPath) {
+          context.getResults().setReleased(true);
           FetchRequest request;
           request.method = FetchMethod::POST;
-          request.path = kj::str(*dropNotifyPath, "/__sandstorm_dispose");
+          request.path = toHttpRequestTarget(kj::str(*dropNotifyPath, "/__sandstorm_dispose"));
           request.mimeType = kj::heapString("application/json; charset=utf-8");
           request.encoding = kj::heapString("");
-          request.expectedBodySize = static_cast<uint64_t>(0);
+          auto body = kj::StringPtr("{}");
+          request.expectedBodySize = body.size();
+          request.body = kj::heapArray<byte>(body.asBytes());
+          addHeader(request, "content-type", "application/json; charset=utf-8");
           addHeader(request, "host", "sandbox");
           state->claimedId = nullptr;
-          return runtime->fetch(kj::mv(request)).ignoreResult();
+          return runtime->fetch(kj::mv(request)).ignoreResult()
+              .catch_([](kj::Exception&& exception) {
+            KJ_LOG(WARNING, "Isolate route-backed object capability drop notification threw.",
+                exception);
+          });
         }
       }
       state->claimedId = nullptr;
     }
+    context.getResults().setReleased(false);
     return kj::READY_NOW;
+  }
+
+  kj::Promise<void> dup(DupContext context) override {
+    KJ_IF_MAYBE(id, state->claimedId) {
+      KJ_IF_MAYBE(duplicatedId, runtimeHost->sessions->duplicateClaimedCapability(*id)) {
+        auto duplicatedState = kj::refcounted<RouteBackedObjectCapabilityState>();
+        duplicatedState->pathPrefix = kj::heapString(state->pathPrefix);
+        duplicatedState->claimedId = kj::heapString(*duplicatedId);
+        context.getResults().setCapability(IsolateObjectCapability::Client(
+            kj::heap<RouteBackedIsolateObjectCapability>(
+              kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
+              kj::mv(duplicatedState), persistent)));
+        return kj::READY_NOW;
+      }
+    }
+
+    KJ_FAIL_REQUIRE("unknown route-backed isolate object capability");
   }
 
   kj::Promise<void> save(SaveContext context) override {
@@ -3438,6 +3482,7 @@ private:
   kj::Own<RouteBackedObjectCapabilityState> state;
   bool persistent;
   kj::Maybe<kj::Array<const byte>> parentToken;
+  kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
   kj::Own<IsolateRuntimeAdapter> runtime;
 };
@@ -6200,6 +6245,21 @@ private:
       return sendBadRequest(response, *error);
     }
 
+    KJ_IF_MAYBE(metadata, host.sessions->findClaimedCapabilityMetadata(id)) {
+      if (metadata->nativeInterface == ClaimedCapabilityNativeInterface::APP_OBJECT) {
+        KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
+          auto request = cap->castAs<IsolateObjectCapability>().dupRequest();
+          return request.send().then([this, &response](auto result) mutable {
+            auto capId = host.sessions->storeClaimedCapability(
+                result.getCapability(),
+                makeImportedClaimedCapabilityMetadata(
+                  ClaimedCapabilityKind::UNKNOWN, ClaimedCapabilityNativeInterface::APP_OBJECT));
+            return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+          });
+        }
+      }
+    }
+
     KJ_IF_MAYBE(duplicatedId, host.sessions->duplicateClaimedCapability(id)) {
       return sendJson(response, 200, "OK", renderClaimedCapability(*duplicatedId));
     } else {
@@ -6263,17 +6323,28 @@ private:
             .catch_([](kj::Exception&& exception) {
           KJ_LOG(WARNING, "Isolate claimed capability drop notification threw.", exception);
         }).then([this, &response]() mutable {
-          return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+          return sendJson(response, 200, "OK", kj::heapString(
+              "{\n  \"ok\": true,\n  \"released\": true\n}\n"));
         });
+      } else if (dropped->metadata.nativeInterface == ClaimedCapabilityNativeInterface::APP_OBJECT &&
+          dropped->metadata.hasDropNotify) {
+        return sendJson(response, 200, "OK", kj::heapString(
+            "{\n  \"ok\": true,\n  \"released\": false\n}\n"));
       } else if (dropped->metadata.nativeInterface == ClaimedCapabilityNativeInterface::APP_OBJECT) {
         auto req = dropped->cap.castAs<IsolateObjectCapability>().dropRequest();
-        return req.send().ignoreResult().catch_([](kj::Exception&& exception) {
+        return req.send().then([this, &response](auto result) mutable {
+          return sendJson(response, 200, "OK", kj::str(
+              "{\n  \"ok\": true,\n  \"released\": ",
+              result.getReleased() ? "true" : "false",
+              "\n}\n"));
+        }).catch_([this, &response](kj::Exception&& exception) {
           KJ_LOG(WARNING, "Isolate object capability drop threw.", exception);
-        }).then([this, &response]() mutable {
-          return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+          return sendJson(response, 200, "OK", kj::heapString(
+              "{\n  \"ok\": true,\n  \"released\": false\n}\n"));
         });
       } else {
-        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
+        return sendJson(response, 200, "OK", kj::heapString(
+            "{\n  \"ok\": true,\n  \"released\": false\n}\n"));
       }
     } else {
       return sendJson(response, 404, "Not Found", kj::heapString(

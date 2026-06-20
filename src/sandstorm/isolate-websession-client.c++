@@ -1498,11 +1498,13 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"tie\":{\"ok\":true,\"claimedClass\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"kind\":\"tied\""), claimBody);
     KJ_REQUIRE(contains(claimBody,
-        "\"dropTied\":{\"ok\":true}"),
+        "\"dropTied\":{\"ok\":true,\"released\":false}"),
         claimBody);
-    KJ_REQUIRE(contains(claimBody, "\"dropRestored\":{\"status\":200,\"body\":{\"ok\":true}}"),
+    KJ_REQUIRE(contains(claimBody,
+        "\"dropRestored\":{\"status\":200,\"body\":{\"ok\":true,\"released\":false}}"),
         claimBody);
-    KJ_REQUIRE(contains(claimBody, "\"drop\":{\"status\":200,\"body\":{\"ok\":true}}"), claimBody);
+    KJ_REQUIRE(contains(claimBody,
+        "\"drop\":{\"status\":200,\"body\":{\"ok\":true,\"released\":false}}"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"dropSaved\":{\"status\":200,\"body\":{\"ok\":true}}"),
         claimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
@@ -1555,7 +1557,8 @@ public:
         outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"authorization\":\"Bearer isolate-test\""), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"body\":\"hello\""), outboundBody);
-    KJ_REQUIRE(contains(outboundBody, "\"drop\":{\"ok\":true}"), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"drop\":{\"ok\":true,\"released\":false}"),
+        outboundBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
 
     auto storageHelperRequest = session.getRequest();
@@ -1609,10 +1612,12 @@ public:
         "\"pathname\":\"/exported/capability-echo\","
         "\"search\":\"?source=helper-handle-fetch\""),
         storageHelperBody);
-    KJ_REQUIRE(contains(storageHelperBody, "\"dropOriginal\":{\"ok\":true}"), storageHelperBody);
-    KJ_REQUIRE(contains(storageHelperBody, "\"dropRestored\":{\"ok\":true}"), storageHelperBody);
-    KJ_REQUIRE(contains(storageHelperBody, "\"dropHandleClaimed\":{\"ok\":true}"),
-        storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"dropOriginal\":{\"ok\":true,\"released\":false}"), storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"dropRestored\":{\"ok\":true,\"released\":false}"), storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody,
+        "\"dropHandleClaimed\":{\"ok\":true,\"released\":false}"), storageHelperBody);
     KJ_REQUIRE(contains(storageHelperBody,
         "\"dropHandleSaved\":{\"ok\":true,"
         "\"storageKey\":\"powerbox-storage-helper-handle-token\","
@@ -1680,8 +1685,10 @@ public:
     KJ_REQUIRE(contains(objectActionsBody, "\"fulfill\":{\"ok\":true}"), objectActionsBody);
     KJ_REQUIRE(contains(objectActionsBody, "\"tie\":{\"ok\":true,\"claimedClass\":true"),
         objectActionsBody);
-    KJ_REQUIRE(contains(objectActionsBody, "\"dropTied\":{\"ok\":true}"), objectActionsBody);
-    KJ_REQUIRE(contains(objectActionsBody, "\"drop\":{\"ok\":true}"), objectActionsBody);
+    KJ_REQUIRE(contains(objectActionsBody,
+        "\"dropTied\":{\"ok\":true,\"released\":false}"), objectActionsBody);
+    KJ_REQUIRE(contains(objectActionsBody,
+        "\"drop\":{\"ok\":true,\"released\":true}"), objectActionsBody);
     KJ_REQUIRE(sessionContextRef.offerCount == 2, sessionContextRef.offerCount);
     KJ_REQUIRE(sessionContextRef.fulfillCount == 2, sessionContextRef.fulfillCount);
     KJ_REQUIRE(sessionContextRef.tieCount == 2, sessionContextRef.tieCount);
@@ -1798,7 +1805,7 @@ public:
         "\"source\":\"fake-claimed-capability\","
         "\"path\":\"capability-echo?source=offer-session\""),
         offerBody);
-    KJ_REQUIRE(contains(offerBody, "\"drop\":{\"ok\":true}"), offerBody);
+    KJ_REQUIRE(contains(offerBody, "\"drop\":{\"ok\":true,\"released\":false}"), offerBody);
 
     auto badClaimRequest = session.getRequest();
     badClaimRequest.setPath(
