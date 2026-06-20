@@ -4161,6 +4161,8 @@ public:
       } else if (methodName == "POST" && route == "/powerbox/outbound-http-fetch") {
         return fetchOutboundHttpCapability(
             path, kj::mv(outboundHeaderValues), kj::mv(bodyBytes), response);
+      } else if (methodName == "POST" && route == "/powerbox/native-app-rpc-call") {
+        return callNativeAppRpcCapability(path, kj::mv(bodyBytes), response);
       } else if (methodName == "POST" && route == "/powerbox/offer") {
         return offerClaimedCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fulfill-request") {
@@ -4479,7 +4481,7 @@ private:
         "\"bindings\", \"permissions\", "
         "\"powerbox.claimRequest\", \"powerbox.save\", \"powerbox.restore\", "
         "\"powerbox.dropSaved\", \"powerbox.drop\", \"powerbox.fetch\", "
-        "\"powerbox.outboundHttpFetch\", "
+        "\"powerbox.outboundHttpFetch\", \"powerbox.nativeAppRpcCall\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\", "
@@ -4677,6 +4679,183 @@ private:
       }
     }
     return nullptr;
+  }
+
+  kj::Maybe<capnp::JsonValue::Reader> findJsonField(
+      capnp::JsonValue::Reader value, kj::StringPtr name) {
+    KJ_REQUIRE(value.which() == capnp::JsonValue::OBJECT,
+        "native app RPC envelope must be a JSON object");
+    for (auto field: value.getObject()) {
+      if (field.getName() == name) {
+        return field.getValue();
+      }
+    }
+    return nullptr;
+  }
+
+  capnp::JsonValue::Reader requireJsonField(
+      capnp::JsonValue::Reader value, kj::StringPtr name) {
+    KJ_IF_MAYBE(field, findJsonField(value, name)) {
+      return *field;
+    }
+    KJ_FAIL_REQUIRE("native app RPC envelope is missing required field", name);
+  }
+
+  kj::StringPtr requireJsonString(capnp::JsonValue::Reader value, kj::StringPtr name) {
+    KJ_REQUIRE(value.which() == capnp::JsonValue::STRING,
+        "native app RPC JSON field must be a string", name);
+    return value.getString();
+  }
+
+  capnp::List<capnp::JsonValue>::Reader requireJsonArray(
+      capnp::JsonValue::Reader value, kj::StringPtr name) {
+    KJ_REQUIRE(value.which() == capnp::JsonValue::ARRAY,
+        "native app RPC JSON field must be an array", name);
+    return value.getArray();
+  }
+
+  void initNativeAppRpcCallValueFromJson(
+      capnp::JsonValue::Reader source, IsolateObjectCallValue::Builder target) {
+    auto type = requireJsonString(requireJsonField(source, "type"), "type");
+    if (type == "null") {
+      target.setNull();
+    } else if (type == "bool") {
+      auto value = requireJsonField(source, "value");
+      KJ_REQUIRE(value.which() == capnp::JsonValue::BOOLEAN,
+          "native app RPC bool value must be a boolean");
+      target.setBool(value.getBoolean());
+    } else if (type == "number") {
+      auto value = requireJsonField(source, "value");
+      KJ_REQUIRE(value.which() == capnp::JsonValue::NUMBER,
+          "native app RPC number value must be a number");
+      target.setNumber(value.getNumber());
+    } else if (type == "text") {
+      target.setText(requireJsonString(requireJsonField(source, "value"), "value"));
+    } else if (type == "data") {
+      auto encoded = requireJsonString(requireJsonField(source, "value"), "value");
+      KJ_IF_MAYBE(decoded, decodeBase64UrlText(encoded, MAX_API_BINDING_REQUEST_BYTES)) {
+        target.setData(*decoded);
+      } else {
+        KJ_FAIL_REQUIRE("native app RPC data value must be base64url text");
+      }
+    } else if (type == "list") {
+      auto values = requireJsonArray(requireJsonField(source, "value"), "value");
+      auto list = target.initList(values.size());
+      for (auto i: kj::indices(values)) {
+        initNativeAppRpcCallValueFromJson(values[i], list[i]);
+      }
+    } else if (type == "object") {
+      auto values = requireJsonArray(requireJsonField(source, "value"), "value");
+      auto fields = target.initObject(values.size());
+      for (auto i: kj::indices(values)) {
+        auto field = values[i];
+        fields[i].setName(requireJsonString(requireJsonField(field, "name"), "name"));
+        initNativeAppRpcCallValueFromJson(requireJsonField(field, "value"), fields[i].initValue());
+      }
+    } else if (type == "capability") {
+      auto value = requireJsonField(source, "value");
+      auto id = requireJsonString(requireJsonField(value, "id"), "id");
+      KJ_IF_MAYBE(nativeInterface, host.sessions->findClaimedCapabilityNativeInterface(id)) {
+        KJ_REQUIRE(claimedCapabilitySupportsNativeAppRpcTransport(*nativeInterface),
+            "claimed capability cannot be used as native app RPC argument",
+            claimedCapabilityNativeInterfaceName(*nativeInterface));
+      }
+      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
+        target.setCapability(cap->castAs<IsolateObjectCapability>());
+      } else {
+        KJ_FAIL_REQUIRE("unknown claimed capability in native app RPC argument", id);
+      }
+    } else {
+      KJ_FAIL_REQUIRE("unsupported native app RPC value type", type);
+    }
+  }
+
+  void appendNativeAppRpcCallValueJson(
+      kj::Vector<char>& json, IsolateObjectCallValue::Reader value) {
+    switch (value.which()) {
+      case IsolateObjectCallValue::NULL_:
+        json.addAll(kj::StringPtr("{\"type\":\"null\"}"));
+        break;
+      case IsolateObjectCallValue::BOOL:
+        json.addAll(value.getBool()
+            ? kj::StringPtr("{\"type\":\"bool\",\"value\":true}")
+            : kj::StringPtr("{\"type\":\"bool\",\"value\":false}"));
+        break;
+      case IsolateObjectCallValue::NUMBER:
+        json.addAll(kj::StringPtr("{\"type\":\"number\",\"value\":"));
+        json.addAll(kj::str(value.getNumber()));
+        json.add('}');
+        break;
+      case IsolateObjectCallValue::TEXT:
+        json.addAll(kj::StringPtr("{\"type\":\"text\",\"value\":"));
+        appendJsonString(json, value.getText());
+        json.add('}');
+        break;
+      case IsolateObjectCallValue::DATA: {
+        auto encoded = kj::encodeBase64Url(value.getData());
+        json.addAll(kj::StringPtr("{\"type\":\"data\",\"value\":"));
+        appendJsonString(json, encoded);
+        json.add('}');
+        break;
+      }
+      case IsolateObjectCallValue::LIST: {
+        auto values = value.getList();
+        json.addAll(kj::StringPtr("{\"type\":\"list\",\"value\":["));
+        for (auto i: kj::indices(values)) {
+          if (i > 0) json.add(',');
+          appendNativeAppRpcCallValueJson(json, values[i]);
+        }
+        json.addAll(kj::StringPtr("]}"));
+        break;
+      }
+      case IsolateObjectCallValue::OBJECT: {
+        auto fields = value.getObject();
+        json.addAll(kj::StringPtr("{\"type\":\"object\",\"value\":["));
+        for (auto i: kj::indices(fields)) {
+          if (i > 0) json.add(',');
+          json.addAll(kj::StringPtr("{\"name\":"));
+          appendJsonString(json, fields[i].getName());
+          json.addAll(kj::StringPtr(",\"value\":"));
+          appendNativeAppRpcCallValueJson(json, fields[i].getValue());
+          json.add('}');
+        }
+        json.addAll(kj::StringPtr("]}"));
+        break;
+      }
+      case IsolateObjectCallValue::CAPABILITY: {
+        auto metadata = makeImportedClaimedCapabilityMetadata(
+            ClaimedCapabilityKind::UNKNOWN, ClaimedCapabilityNativeInterface::APP_OBJECT);
+        auto id = host.sessions->storeClaimedCapability(value.getCapability(), kj::mv(metadata));
+        json.addAll(kj::StringPtr("{\"type\":\"capability\",\"value\":{\"id\":"));
+        appendJsonString(json, id);
+        json.addAll(kj::StringPtr(",\"nativeInterface\":\"appObject\"}}"));
+        break;
+      }
+    }
+  }
+
+  kj::String renderNativeAppRpcCallResult(IsolateObjectCallResult::Reader result) {
+    kj::Vector<char> json;
+    switch (result.which()) {
+      case IsolateObjectCallResult::VALUE:
+        json.addAll(kj::StringPtr("{\"type\":\"value\",\"value\":"));
+        appendNativeAppRpcCallValueJson(json, result.getValue());
+        json.addAll(kj::StringPtr("}\n"));
+        break;
+      case IsolateObjectCallResult::EXCEPTION: {
+        auto exception = result.getException();
+        json.addAll(kj::StringPtr("{\"type\":\"exception\",\"name\":"));
+        appendJsonString(json, exception.getName());
+        json.addAll(kj::StringPtr(",\"message\":"));
+        appendJsonString(json, exception.getMessage());
+        json.addAll(kj::StringPtr(",\"stack\":"));
+        appendJsonString(json, exception.getStack());
+        json.addAll(kj::StringPtr("}\n"));
+        break;
+      }
+    }
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
   }
 
   OutboundHttpFetchParams getOutboundHttpFetchParams(
@@ -4921,6 +5100,64 @@ private:
         : host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata),
             kj::mv(KJ_ASSERT_NONNULL(dropNotifyPath)));
     return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+  }
+
+  kj::Promise<void> callNativeAppRpcCapability(
+      kj::StringPtr url, kj::Array<byte> bodyBytes, kj::HttpService::Response& response) {
+    auto ids = findIsolateQueryParams(url, "id");
+    if (ids.size() != 1 || ids[0].size() == 0) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"expected exactly one capability id\"\n}\n"));
+    }
+
+    KJ_IF_MAYBE(nativeInterface, host.sessions->findClaimedCapabilityNativeInterface(ids[0])) {
+      if (!claimedCapabilitySupportsNativeAppRpcTransport(*nativeInterface)) {
+        return sendJson(response, 400, "Bad Request", renderError(kj::str(
+            "claimed capability native interface ",
+            claimedCapabilityNativeInterfaceName(*nativeInterface),
+            " cannot be used with powerbox.nativeAppRpcCall")));
+      }
+    }
+
+    KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
+      capnp::MallocMessageBuilder jsonMessage;
+      auto parsed = jsonMessage.initRoot<capnp::JsonValue>();
+      capnp::JsonCodec codec;
+      try {
+        codec.decodeRaw(bodyBytes.asChars(), parsed);
+      } catch (kj::Exception& exception) {
+        return sendJson(response, 400, "Bad Request", renderError(
+            kj::str("invalid native app RPC JSON: ", exception.getDescription())));
+      }
+
+      kj::String method;
+      auto argsMessage = kj::heap<capnp::MallocMessageBuilder>();
+      try {
+        method = kj::heapString(requireJsonString(requireJsonField(parsed, "method"), "method"));
+        auto inputArgs = requireJsonArray(requireJsonField(parsed, "args"), "args");
+        auto args = argsMessage->initRoot<capnp::List<IsolateObjectCallValue>>(inputArgs.size());
+        for (auto i: kj::indices(inputArgs)) {
+          initNativeAppRpcCallValueFromJson(inputArgs[i], args[i]);
+        }
+      } catch (kj::Exception& exception) {
+        return sendJson(response, 400, "Bad Request", renderError(
+            kj::str("invalid native app RPC call envelope: ", exception.getDescription())));
+      }
+
+      auto object = cap->castAs<IsolateObjectCapability>();
+      auto args = argsMessage->getRoot<capnp::List<IsolateObjectCallValue>>();
+      return callIsolateObjectCapability(object, method, args)
+          .then([this, &response](OwnedIsolateObjectCallResult&& result) mutable {
+        return sendJson(response, 200, "OK", renderNativeAppRpcCallResult(result.getResult()));
+      }).catch_([this, &response](kj::Exception&& exception) mutable {
+        return sendJson(response, 502, "Bad Gateway", renderError(
+            kj::str("native app RPC call failed: ", exception.getDescription())));
+      });
+    } else {
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
+    }
   }
 
   kj::Promise<void> fetchClaimedCapability(
