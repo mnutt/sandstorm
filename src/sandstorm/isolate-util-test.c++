@@ -22,7 +22,7 @@
 namespace sandstorm {
 namespace {
 
-class TestNativeAppRpcAdapter final: public NativeAppRpcJsonCapabilityAdapter {
+class TestWorkerAppObjectAdapter final: public WorkerAppObjectJsonCapabilityAdapter {
 public:
   void add(kj::String id, IsolateObjectCapability::Client capability) {
     caps.add(Cap {
@@ -194,7 +194,7 @@ KJ_TEST("native app RPC JSON codec preserves data and capability slots") {
   auto targetPtr = target.get();
   auto capability = makeIsolateObjectCapability(kj::mv(target));
 
-  TestNativeAppRpcAdapter adapter;
+  TestWorkerAppObjectAdapter adapter;
   adapter.add(kj::str("slot-1"), capability);
 
   auto callJson = kj::heapString(

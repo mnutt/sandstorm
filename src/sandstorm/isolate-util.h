@@ -36,7 +36,7 @@ struct OwnedIsolateObjectCallResult {
   IsolateObjectCallResult::Reader getResult();
 };
 
-struct OwnedNativeAppRpcCall {
+struct OwnedWorkerAppObjectCall {
   kj::String method;
   OwnedIsolateObjectCallArgs args;
 };
@@ -50,9 +50,9 @@ public:
   virtual kj::Promise<void> drop();
 };
 
-class NativeAppRpcJsonCapabilityAdapter {
+class WorkerAppObjectJsonCapabilityAdapter {
 public:
-  virtual ~NativeAppRpcJsonCapabilityAdapter() noexcept(false) {}
+  virtual ~WorkerAppObjectJsonCapabilityAdapter() noexcept(false) {}
 
   virtual kj::Maybe<IsolateObjectCapability::Client> findCapability(kj::StringPtr id) = 0;
   virtual kj::String storeCapability(IsolateObjectCapability::Client capability) = 0;
@@ -71,17 +71,17 @@ kj::Own<IsolateObjectCallTarget> makeImportedIsolateObjectCallTarget(
 kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
     IsolateObjectCapability::Client capability, kj::StringPtr method,
     capnp::List<IsolateObjectCallValue>::Reader args);
-OwnedNativeAppRpcCall parseWorkerAppObjectCallJson(
-    kj::ArrayPtr<const kj::byte> body, NativeAppRpcJsonCapabilityAdapter& adapter,
+OwnedWorkerAppObjectCall parseWorkerAppObjectCallJson(
+    kj::ArrayPtr<const kj::byte> body, WorkerAppObjectJsonCapabilityAdapter& adapter,
     size_t maxDataBytes);
 kj::String renderWorkerAppObjectCallJson(
     kj::StringPtr method, capnp::List<IsolateObjectCallValue>::Reader args,
-    NativeAppRpcJsonCapabilityAdapter& adapter);
+    WorkerAppObjectJsonCapabilityAdapter& adapter);
 OwnedIsolateObjectCallResult parseWorkerAppObjectResultJson(
-    kj::ArrayPtr<const kj::byte> body, NativeAppRpcJsonCapabilityAdapter& adapter,
+    kj::ArrayPtr<const kj::byte> body, WorkerAppObjectJsonCapabilityAdapter& adapter,
     size_t maxDataBytes);
 kj::String renderWorkerAppObjectResultJson(
-    IsolateObjectCallResult::Reader result, NativeAppRpcJsonCapabilityAdapter& adapter);
+    IsolateObjectCallResult::Reader result, WorkerAppObjectJsonCapabilityAdapter& adapter);
 bool isCanonicalPackagePath(kj::StringPtr path);
 kj::String isolateStorageKeyFromUrl(kj::StringPtr url);
 bool isValidIsolateStorageKey(kj::StringPtr key);

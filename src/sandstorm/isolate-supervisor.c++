@@ -252,7 +252,7 @@ bool claimedCapabilitySupportsOutboundHttpFetch(
   KJ_UNREACHABLE;
 }
 
-bool claimedCapabilitySupportsNativeAppRpc(ClaimedCapabilityNativeInterface nativeInterface) {
+bool claimedCapabilitySupportsAppObjectCall(ClaimedCapabilityNativeInterface nativeInterface) {
   switch (nativeInterface) {
     case ClaimedCapabilityNativeInterface::APP_OBJECT:
       return true;
@@ -2876,31 +2876,31 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
   }
 }
 
-enum class RouteBackedSessionType {
+enum class RouteBackedCapabilityType {
   WEB,
   API,
   OBJECT,
 };
 
-kj::StringPtr routeBackedSessionTypeToken(RouteBackedSessionType type) {
+kj::StringPtr routeBackedCapabilityTypeToken(RouteBackedCapabilityType type) {
   switch (type) {
-    case RouteBackedSessionType::WEB:
+    case RouteBackedCapabilityType::WEB:
       return "web";
-    case RouteBackedSessionType::API:
+    case RouteBackedCapabilityType::API:
       return "api";
-    case RouteBackedSessionType::OBJECT:
+    case RouteBackedCapabilityType::OBJECT:
       return "object";
   }
   KJ_UNREACHABLE;
 }
 
-RouteBackedSessionType parseRouteBackedSessionType(kj::StringPtr value) {
+RouteBackedCapabilityType parseRouteBackedCapabilityType(kj::StringPtr value) {
   if (value == "web") {
-    return RouteBackedSessionType::WEB;
+    return RouteBackedCapabilityType::WEB;
   } else if (value == "api") {
-    return RouteBackedSessionType::API;
+    return RouteBackedCapabilityType::API;
   } else if (value == "object") {
-    return RouteBackedSessionType::OBJECT;
+    return RouteBackedCapabilityType::OBJECT;
   } else {
     KJ_FAIL_REQUIRE("invalid isolate route-backed capability type", value);
   }
@@ -2970,47 +2970,47 @@ bool routeBackedPathIsObjectCapability(kj::StringPtr pathPrefix) {
   return pathPrefix.startsWith("/__sandstorm/object-capabilities/");
 }
 
-struct RouteBackedSessionRef {
-  RouteBackedSessionType type;
+struct RouteBackedCapabilityRef {
+  RouteBackedCapabilityType type;
   kj::String pathPrefix;
 };
 
-RouteBackedSessionRef parseRouteBackedSessionRef(kj::StringPtr payload) {
+RouteBackedCapabilityRef parseRouteBackedCapabilityRef(kj::StringPtr payload) {
   KJ_IF_MAYBE(newline, payload.findFirst('\n')) {
     auto typeName = kj::StringPtr(payload.begin(), *newline);
     auto pathPrefix = kj::StringPtr(payload.begin() + *newline + 1,
         payload.size() - *newline - 1);
-    return RouteBackedSessionRef {
-        parseRouteBackedSessionType(typeName),
+    return RouteBackedCapabilityRef {
+        parseRouteBackedCapabilityType(typeName),
         normalizeRouteBackedPathPrefix(pathPrefix)
     };
   } else {
-    return RouteBackedSessionRef {
-        RouteBackedSessionType::WEB,
+    return RouteBackedCapabilityRef {
+        RouteBackedCapabilityType::WEB,
         normalizeRouteBackedPathPrefix(payload)
     };
   }
 }
 
-RouteBackedSessionRef parseRouteBackedSessionAppRef(capnp::Data::Reader appRef) {
+RouteBackedCapabilityRef parseRouteBackedCapabilityAppRef(capnp::Data::Reader appRef) {
   auto text = kj::StringPtr(appRef.asChars().begin(), appRef.size());
   auto prefix = kj::StringPtr(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX);
   KJ_REQUIRE(text.startsWith(prefix), "unknown isolate app-ref format");
-  return parseRouteBackedSessionRef(
+  return parseRouteBackedCapabilityRef(
       kj::StringPtr(text.begin() + prefix.size(), text.size() - prefix.size()));
 }
 
 template <typename InternalSession>
-kj::StringPtr routeBackedSessionTypeToken();
+kj::StringPtr routeBackedCapabilityTypeToken();
 
 template <>
-kj::StringPtr routeBackedSessionTypeToken<IsolateWebSession>() {
-  return routeBackedSessionTypeToken(RouteBackedSessionType::WEB);
+kj::StringPtr routeBackedCapabilityTypeToken<IsolateWebSession>() {
+  return routeBackedCapabilityTypeToken(RouteBackedCapabilityType::WEB);
 }
 
 template <>
-kj::StringPtr routeBackedSessionTypeToken<IsolateApiSession>() {
-  return routeBackedSessionTypeToken(RouteBackedSessionType::API);
+kj::StringPtr routeBackedCapabilityTypeToken<IsolateApiSession>() {
+  return routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API);
 }
 
 struct RouteBackedRequirementState final: public kj::Refcounted {
@@ -3162,7 +3162,7 @@ public:
         context.getResults().setSturdyRef(result.getToken());
       });
     } else {
-      auto payload = kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX, sessionTypeToken(), "\n",
+      auto payload = kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX, capabilityTypeToken(), "\n",
           pathPrefix);
 
       capnp::MallocMessageBuilder appRefMessage;
@@ -3191,7 +3191,7 @@ private:
   kj::Own<IsolateRuntimeHost> runtimeHost;
   kj::Own<IsolateRuntimeAdapter> runtime;
 
-  kj::StringPtr sessionTypeToken() { return routeBackedSessionTypeToken<InternalSession>(); }
+  kj::StringPtr capabilityTypeToken() { return routeBackedCapabilityTypeToken<InternalSession>(); }
 
   capnp::Orphan<capnp::List<MembraneRequirement>> collectRequirements(
       capnp::Orphanage orphanage) {
@@ -3320,14 +3320,14 @@ private:
   IsolateObjectCapability::Client cap;
 };
 
-class ClaimedCapabilityNativeAppRpcAdapter final: public NativeAppRpcJsonCapabilityAdapter {
+class ClaimedCapabilityWorkerAppObjectAdapter final: public WorkerAppObjectJsonCapabilityAdapter {
 public:
-  explicit ClaimedCapabilityNativeAppRpcAdapter(IsolateSessionRegistry& sessions)
+  explicit ClaimedCapabilityWorkerAppObjectAdapter(IsolateSessionRegistry& sessions)
       : sessions(sessions) {}
 
   kj::Maybe<IsolateObjectCapability::Client> findCapability(kj::StringPtr id) override {
     KJ_IF_MAYBE(metadata, sessions.findClaimedCapabilityMetadata(id)) {
-      KJ_REQUIRE(claimedCapabilitySupportsNativeAppRpc(metadata->nativeInterface),
+      KJ_REQUIRE(claimedCapabilitySupportsAppObjectCall(metadata->nativeInterface),
           "claimed capability cannot be used as native app RPC argument",
           claimedCapabilityNativeInterfaceName(metadata->nativeInterface));
     }
@@ -3369,7 +3369,7 @@ public:
 
   kj::Promise<void> call(CallContext context) override {
     auto params = context.getParams();
-    auto adapter = kj::heap<ClaimedCapabilityNativeAppRpcAdapter>(*runtimeHost->sessions);
+    auto adapter = kj::heap<ClaimedCapabilityWorkerAppObjectAdapter>(*runtimeHost->sessions);
     auto body = renderWorkerAppObjectCallJson(
         params.getMethod(), params.getArgs(), *adapter);
 
@@ -3423,7 +3423,7 @@ public:
       });
     } else {
       auto payload = kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX,
-          routeBackedSessionTypeToken(RouteBackedSessionType::OBJECT), "\n", state->pathPrefix);
+          routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT), "\n", state->pathPrefix);
 
       capnp::MallocMessageBuilder appRefMessage;
       auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
@@ -3473,20 +3473,20 @@ IsolateObjectCapability::Client makeRouteBackedObjectCapability(
 
 capnp::Capability::Client makeRouteBackedSessionCapability(
     kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
-    RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent,
+    RouteBackedCapabilityType capabilityType, kj::StringPtr pathPrefix, bool persistent,
     kj::Maybe<kj::Array<const byte>> parentToken = nullptr) {
-  switch (sessionType) {
-    case RouteBackedSessionType::WEB:
+  switch (capabilityType) {
+    case RouteBackedCapabilityType::WEB:
       return kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
           kj::mv(config), kj::mv(host), pathPrefix, SessionKind::NORMAL,
           SessionMetadata(), persistent, kj::refcounted<RouteBackedRequirementState>(),
           kj::mv(parentToken));
-    case RouteBackedSessionType::API:
+    case RouteBackedCapabilityType::API:
       return kj::heap<IsolateRouteBackedSessionImpl<IsolateApiSession>>(
           kj::mv(config), kj::mv(host), pathPrefix, SessionKind::NORMAL,
           SessionMetadata(), persistent, kj::refcounted<RouteBackedRequirementState>(),
           kj::mv(parentToken));
-    case RouteBackedSessionType::OBJECT:
+    case RouteBackedCapabilityType::OBJECT:
       KJ_FAIL_REQUIRE("route-backed object capabilities are not session capabilities");
   }
   KJ_UNREACHABLE;
@@ -4369,7 +4369,7 @@ public:
         return fetchOutboundHttpCapability(
             path, kj::mv(outboundHeaderValues), kj::mv(bodyBytes), response);
       } else if (methodName == "POST" && route == "/powerbox/native-app-rpc-call") {
-        return callNativeAppRpcCapability(path, kj::mv(bodyBytes), response);
+        return callWorkerAppObjectCapability(path, kj::mv(bodyBytes), response);
       } else if (methodName == "POST" && route == "/powerbox/offer") {
         return offerClaimedCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fulfill-request") {
@@ -4377,9 +4377,9 @@ public:
       } else if (methodName == "POST" && route == "/powerbox/tie-to-user") {
         return tieClaimedCapabilityToUser(path, response);
       } else if (methodName == "POST" && route == "/capabilities/web-session") {
-        return createRouteBackedSessionCapability(path, response, RouteBackedSessionType::WEB);
+        return createRouteBackedCapability(path, response, RouteBackedCapabilityType::WEB);
       } else if (methodName == "POST" && route == "/capabilities/api-session") {
-        return createRouteBackedSessionCapability(path, response, RouteBackedSessionType::API);
+        return createRouteBackedCapability(path, response, RouteBackedCapabilityType::API);
       }
 
       if (methodName != "GET") {
@@ -5050,27 +5050,27 @@ private:
   }
 
   capnp::Capability::Client makeRouteBackedSessionCapability(
-      RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent) {
+      RouteBackedCapabilityType capabilityType, kj::StringPtr pathPrefix, bool persistent) {
     return sandstorm::makeRouteBackedSessionCapability(
-        kj::addRef(config), kj::addRef(host), sessionType, pathPrefix, persistent);
+        kj::addRef(config), kj::addRef(host), capabilityType, pathPrefix, persistent);
   }
 
   capnp::Capability::Client makeRouteBackedCapability(
-      RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent) {
-    if (sessionType == RouteBackedSessionType::WEB &&
+      RouteBackedCapabilityType capabilityType, kj::StringPtr pathPrefix, bool persistent) {
+    if (capabilityType == RouteBackedCapabilityType::WEB &&
         routeBackedPathIsObjectCapability(pathPrefix)) {
       return makeRouteBackedObjectCapability(
           kj::addRef(config), kj::addRef(host), pathPrefix, persistent);
     }
-    return makeRouteBackedSessionCapability(sessionType, pathPrefix, persistent);
+    return makeRouteBackedSessionCapability(capabilityType, pathPrefix, persistent);
   }
 
   ClaimedCapabilityMetadata makeRouteBackedClaimedCapabilityMetadata(
-      RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent) {
+      RouteBackedCapabilityType capabilityType, kj::StringPtr pathPrefix, bool persistent) {
     ClaimedCapabilityKind kind;
     ClaimedCapabilityNativeInterface nativeInterface;
-    switch (sessionType) {
-      case RouteBackedSessionType::WEB:
+    switch (capabilityType) {
+      case RouteBackedCapabilityType::WEB:
         if (routeBackedPathIsObjectCapability(pathPrefix)) {
           kind = ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT;
           nativeInterface = ClaimedCapabilityNativeInterface::APP_OBJECT;
@@ -5079,11 +5079,11 @@ private:
           nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
         }
         break;
-      case RouteBackedSessionType::API:
+      case RouteBackedCapabilityType::API:
         kind = ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION;
         nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
         break;
-      case RouteBackedSessionType::OBJECT:
+      case RouteBackedCapabilityType::OBJECT:
         kind = ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT;
         nativeInterface = ClaimedCapabilityNativeInterface::APP_OBJECT;
         break;
@@ -5101,8 +5101,9 @@ private:
     };
   }
 
-  kj::Promise<void> createRouteBackedSessionCapability(
-      kj::StringPtr url, kj::HttpService::Response& response, RouteBackedSessionType sessionType) {
+  kj::Promise<void> createRouteBackedCapability(
+      kj::StringPtr url, kj::HttpService::Response& response,
+      RouteBackedCapabilityType capabilityType) {
     auto pathPrefixes = findIsolateRawQueryParams(url, "pathPrefix");
     auto persistentParams = findIsolateQueryParams(url, "persistent");
     auto dropNotifyPaths = findIsolateRawQueryParams(url, "dropNotifyPath");
@@ -5137,9 +5138,9 @@ private:
             "persistent must be true or false"));
       }
     }
-    auto metadata = makeRouteBackedClaimedCapabilityMetadata(sessionType, pathPrefix, persistent);
+    auto metadata = makeRouteBackedClaimedCapabilityMetadata(capabilityType, pathPrefix, persistent);
     kj::String capId;
-    if (sessionType == RouteBackedSessionType::WEB &&
+    if (capabilityType == RouteBackedCapabilityType::WEB &&
         routeBackedPathIsObjectCapability(pathPrefix)) {
       auto object = makeRouteBackedObjectCapabilityWithState(
           kj::addRef(config), kj::addRef(host), pathPrefix, persistent);
@@ -5149,7 +5150,7 @@ private:
               kj::mv(KJ_ASSERT_NONNULL(dropNotifyPath)));
       object.state->claimedId = kj::heapString(capId);
     } else {
-      auto cap = makeRouteBackedCapability(sessionType, pathPrefix, persistent);
+      auto cap = makeRouteBackedCapability(capabilityType, pathPrefix, persistent);
       capId = dropNotifyPath == nullptr
           ? host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata))
           : host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata),
@@ -5158,7 +5159,7 @@ private:
     return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
 
-  kj::Promise<void> callNativeAppRpcCapability(
+  kj::Promise<void> callWorkerAppObjectCapability(
       kj::StringPtr url, kj::Array<byte> bodyBytes, kj::HttpService::Response& response) {
     auto ids = findIsolateQueryParams(url, "id");
     if (ids.size() != 1 || ids[0].size() == 0) {
@@ -5167,20 +5168,18 @@ private:
           "  \"error\": \"expected exactly one capability id\"\n}\n"));
     }
 
-    kj::Maybe<ClaimedCapabilityMetadata> capabilityMetadata = nullptr;
     KJ_IF_MAYBE(metadata, host.sessions->findClaimedCapabilityMetadata(ids[0])) {
-      if (!claimedCapabilitySupportsNativeAppRpc(metadata->nativeInterface)) {
+      if (!claimedCapabilitySupportsAppObjectCall(metadata->nativeInterface)) {
         return sendJson(response, 400, "Bad Request", renderError(kj::str(
             "claimed capability native interface ",
             claimedCapabilityNativeInterfaceName(metadata->nativeInterface),
             " cannot be used with powerbox.nativeAppRpcCall")));
       }
-      capabilityMetadata = kj::mv(*metadata);
     }
 
     KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
-      ClaimedCapabilityNativeAppRpcAdapter adapter(*host.sessions);
-      kj::Maybe<OwnedNativeAppRpcCall> parsedCall;
+      ClaimedCapabilityWorkerAppObjectAdapter adapter(*host.sessions);
+      kj::Maybe<OwnedWorkerAppObjectCall> parsedCall;
       try {
         parsedCall = parseWorkerAppObjectCallJson(
             bodyBytes.asPtr(), adapter, MAX_API_BINDING_REQUEST_BYTES);
@@ -5194,7 +5193,7 @@ private:
       auto args = call.args.getArgs();
       return callIsolateObjectCapability(object, call.method, args)
           .then([this, &response](OwnedIsolateObjectCallResult&& result) mutable {
-        ClaimedCapabilityNativeAppRpcAdapter adapter(*host.sessions);
+        ClaimedCapabilityWorkerAppObjectAdapter adapter(*host.sessions);
         return sendJson(
             response, 200, "OK", renderWorkerAppObjectResultJson(result.getResult(), adapter));
       }).catch_([this, &response](kj::Exception&& exception) mutable {
@@ -5788,17 +5787,17 @@ private:
       switch (info->kind) {
         case ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION:
           hasRouteMetadata = true;
-          type = routeBackedSessionTypeToken(RouteBackedSessionType::WEB);
+          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::WEB);
           pathPrefix = kj::heapString(info->pathPrefix);
           break;
         case ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION:
           hasRouteMetadata = true;
-          type = routeBackedSessionTypeToken(RouteBackedSessionType::API);
+          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API);
           pathPrefix = kj::heapString(info->pathPrefix);
           break;
         case ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT:
           hasRouteMetadata = true;
-          type = routeBackedSessionTypeToken(RouteBackedSessionType::OBJECT);
+          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT);
           pathPrefix = kj::heapString(info->pathPrefix);
           break;
         default:
@@ -5869,11 +5868,11 @@ private:
 
           ClaimedCapabilityNativeInterface nativeInterface =
               ClaimedCapabilityNativeInterface::UNKNOWN;
-          if (type == routeBackedSessionTypeToken(RouteBackedSessionType::WEB)) {
+          if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::WEB)) {
             nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
-          } else if (type == routeBackedSessionTypeToken(RouteBackedSessionType::API)) {
+          } else if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API)) {
             nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
-          } else if (type == routeBackedSessionTypeToken(RouteBackedSessionType::OBJECT)) {
+          } else if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT)) {
             nativeInterface = ClaimedCapabilityNativeInterface::APP_OBJECT;
           } else if (type != "unknown") {
             return nullptr;
@@ -6618,12 +6617,12 @@ public:
     switch (objectId.which()) {
       case SupervisorObjectId<>::APP_REF: {
         auto params = context.getParams();
-        auto routeRef = parseRouteBackedSessionAppRef(objectId.getAppRef().getAs<capnp::Data>());
+        auto routeRef = parseRouteBackedCapabilityAppRef(objectId.getAppRef().getAs<capnp::Data>());
         kj::Maybe<kj::Array<const byte>> parentToken = nullptr;
         if (params.getParentToken().size() > 0) {
           parentToken = kj::heapArray<const byte>(params.getParentToken());
         }
-        if (routeRef.type == RouteBackedSessionType::OBJECT) {
+        if (routeRef.type == RouteBackedCapabilityType::OBJECT) {
           context.getResults().setCap(makeRouteBackedObjectCapability(
               kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
               routeRef.pathPrefix, true, kj::mv(parentToken)));
@@ -6645,7 +6644,7 @@ public:
     auto objectId = context.getParams().getRef();
     switch (objectId.which()) {
       case SupervisorObjectId<>::APP_REF:
-        parseRouteBackedSessionAppRef(objectId.getAppRef().getAs<capnp::Data>());
+        parseRouteBackedCapabilityAppRef(objectId.getAppRef().getAs<capnp::Data>());
         return kj::READY_NOW;
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
         KJ_FAIL_REQUIRE("isolate supervisor-owned persistent object type is not supported yet");
