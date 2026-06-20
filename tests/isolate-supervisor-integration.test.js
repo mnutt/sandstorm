@@ -1856,6 +1856,50 @@ test("isolate supervisor integration suite", {
         },
       },
     ]);
+    assert.deepEqual(nativeAppRpcCodec.json.exported.resultEnvelope, {
+      type: "value",
+      value: {
+        type: "object",
+        value: [
+          {
+            name: "child",
+            value: {
+              type: "capability",
+              value: { id: "exported-slot-5", nativeInterface: "appObject" },
+            },
+          },
+          {
+            name: "authority",
+            value: {
+              type: "capability",
+              value: { id: "exported-slot-6", nativeInterface: "appObject" },
+            },
+          },
+        ],
+      },
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.exported.dispatchChild, {
+      type: "value",
+      value: {
+        type: "capability",
+        value: { id: "exported-slot-7", nativeInterface: "appObject" },
+      },
+    });
+    assert.deepEqual(nativeAppRpcCodec.json.exported.dispatchAuthority, {
+      type: "value",
+      value: {
+        type: "object",
+        value: [
+          {
+            name: "authority",
+            value: {
+              type: "capability",
+              value: { id: "exported-slot-8", nativeInterface: "appObject" },
+            },
+          },
+        ],
+      },
+    });
     assert.deepEqual(nativeAppRpcCodec.json.exported.exportCalls, [
       {
         name: "callback",
@@ -1888,6 +1932,32 @@ test("isolate supervisor integration suite", {
         rpcTargetClass: true,
         claimedClass: false,
         id: "exported-slot-4",
+      },
+      {
+        name: "result.child",
+        rpcTargetClass: true,
+        claimedClass: false,
+        id: "exported-slot-5",
+      },
+      {
+        name: "result.authority",
+        rpcTargetClass: false,
+        claimedClass: true,
+        capabilityId: "mock-app-object",
+        id: "exported-slot-6",
+      },
+      {
+        name: "result",
+        rpcTargetClass: true,
+        claimedClass: false,
+        id: "exported-slot-7",
+      },
+      {
+        name: "result.authority",
+        rpcTargetClass: false,
+        claimedClass: true,
+        capabilityId: "mock-app-object",
+        id: "exported-slot-8",
       },
     ]);
     assert.equal(nativeAppRpcCodec.json.slotFrozen, true);

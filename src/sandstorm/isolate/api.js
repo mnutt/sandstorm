@@ -543,6 +543,16 @@ export function serializeNativeAppRpcResult(value) {
   };
 }
 
+export async function serializeNativeAppRpcResultAsync(value, options = {}) {
+  return {
+    type: "value",
+    value: await serializeNativeAppRpcValueAsync(value, {
+      ...nativeAppRpcSerializationContext(options, "result"),
+      name: "result",
+    }),
+  };
+}
+
 export function serializeNativeAppRpcException(error) {
   return {
     type: "exception",
@@ -593,7 +603,7 @@ export async function dispatchNativeAppRpcCall(target, call, options = {}) {
   }
 
   try {
-    return serializeNativeAppRpcResult(await func.apply(target, args));
+    return serializeNativeAppRpcResultAsync(await func.apply(target, args), options);
   } catch (error) {
     return serializeNativeAppRpcException(error);
   }
