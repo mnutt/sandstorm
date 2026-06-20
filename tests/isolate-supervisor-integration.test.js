@@ -1506,6 +1506,13 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(callback.json.sessionFirst, { value: 7 });
     assert.deepEqual(callback.json.sessionSecond, { value: 11 });
     assert.deepEqual(callback.json.sessionCurrent, { value: 11 });
+    assert.deepEqual(callback.json.sessionFailure, {
+      name: "CapabilityCallError",
+      message: "phase-3 returned capability failure",
+      details: {
+        name: "Error",
+      },
+    });
     assert.equal(callback.json.sessionDrop.ok, true);
     assert.equal(callback.json.drop.ok, true);
 
