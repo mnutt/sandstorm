@@ -1,6 +1,7 @@
 import { ClaimedCapability, RpcTarget, SavedCapability, sandstorm } from "sandstorm:api";
 
 const TOKEN_KEY = "api-powerbox-token";
+const TOKEN_MODE_KEY = "api-powerbox-token-mode";
 const API_CANONICAL_URL = "https://api.example.test/v1";
 const API_OAUTH_SCOPES = ["read"];
 const PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
@@ -277,6 +278,35 @@ async function callLlm(capability) {
   };
 }
 
+function capabilityMode(body) {
+  if (body.feedFlow) return "feed";
+  if (body.llmFlow) return "llm";
+  return "api";
+}
+
+async function callRestoredCapability(api, mode) {
+  if (mode === "feed" || mode === "llm") {
+    const restored = await api.powerbox().restoreStored({ storageKey: TOKEN_KEY });
+    if (!restored.found || !restored.capability) {
+      throw new Error(`No saved Powerbox token is available at ${TOKEN_KEY}`);
+    }
+
+    try {
+      return mode === "feed"
+        ? await callFeed(api, restored.capability)
+        : await callLlm(restored.capability);
+    } finally {
+      await restored.capability.drop();
+    }
+  }
+
+  const response = await api.powerbox().fetchStored(
+    { storageKey: TOKEN_KEY },
+    "/status",
+    { headers: { accept: "application/json" } });
+  return readApiResponse(response);
+}
+
 async function readApiResponse(response) {
   const text = await response.text();
   let body = text;
@@ -295,6 +325,7 @@ async function readApiResponse(response) {
 async function readState(request, env, result = null, error = null) {
   const store = sandstorm(request, env).storage();
   const savedToken = await store.get(TOKEN_KEY);
+  const savedMode = await store.get(TOKEN_MODE_KEY);
   const url = new URL(request.url);
   return {
     canonicalUrl: API_CANONICAL_URL,
@@ -303,6 +334,7 @@ async function readState(request, env, result = null, error = null) {
     feedFlow: url.searchParams.has("feedFlow"),
     llmFlow: url.searchParams.has("llmFlow"),
     saved: Boolean(savedToken),
+    savedMode: savedMode || "api",
     result,
     error,
   };
@@ -345,14 +377,16 @@ export default {
       if (request.method === "POST" && url.pathname === "/claim") {
         const body = await readJsonBody(request);
         const canonicalUrl = String(body.canonicalUrl || API_CANONICAL_URL);
+        const mode = capabilityMode(body);
         const claimed = await api.powerbox().claimAndStoreRequest(body, {
           label: `API: ${canonicalUrl}`,
           storageKey: TOKEN_KEY,
         });
         const { capability, saved } = claimed;
-        const call = body.feedFlow
+        await api.storage().put(TOKEN_MODE_KEY, mode);
+        const call = mode === "feed"
           ? await callFeed(api, capability)
-          : body.llmFlow
+          : mode === "llm"
             ? await callLlm(capability)
             : await callApi(body.skipApiCall ? null : capability);
         await capability.drop();
@@ -364,6 +398,7 @@ export default {
           requested: body,
           saved: JSON.parse(JSON.stringify(saved)),
           storageKey: TOKEN_KEY,
+          mode,
           call,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },
@@ -371,14 +406,12 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/restore") {
-        const response = await api.powerbox().fetchStored(
-          { storageKey: TOKEN_KEY },
-          "/status",
-          { headers: { accept: "application/json" } });
-        const call = await readApiResponse(response);
+        const mode = await api.storage().get(TOKEN_MODE_KEY) || "api";
+        const call = await callRestoredCapability(api, mode);
         return new Response(renderPage(await readState(request, env, {
           ok: true,
           storageKey: TOKEN_KEY,
+          mode,
           call,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },
@@ -387,9 +420,11 @@ export default {
 
       if (request.method === "POST" && url.pathname === "/disconnect") {
         const dropSaved = await api.powerbox().dropStored({ storageKey: TOKEN_KEY });
+        const deleteMode = await api.storage().delete(TOKEN_MODE_KEY);
         return new Response(renderPage(await readState(request, env, {
           ok: true,
           dropSaved,
+          deleteMode,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },
         });

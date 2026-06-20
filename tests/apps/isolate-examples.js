@@ -179,7 +179,12 @@ module.exports["Test isolate app-object feed provider flow"] = function (browser
         .assert.textContains("pre", "\"subject\": \"isolate-feed-live-callback\"")
         .assert.textContains("pre", "\"mode\": \"saved\"")
         .assert.textContains("pre", "\"subject\": \"isolate-feed-saved-callback\"")
-        .assert.textContains("pre", "\"storageKey\": \"isolate-feed-receiver-token\"");
+        .assert.textContains("pre", "\"storageKey\": \"isolate-feed-receiver-token\"")
+        .click("form[action=\"/restore\"] button")
+        .waitForElementVisible("pre", medium_wait)
+        .assert.textContains("pre", "\"mode\": \"feed\"")
+        .assert.textContains("pre", "\"subject\": \"isolate-feed-live-callback\"")
+        .assert.textContains("pre", "\"subject\": \"isolate-feed-saved-callback\"");
     });
 };
 
@@ -223,6 +228,11 @@ module.exports["Test isolate app-object LLM provider flow"] = function (browser)
         .assert.textContains("pre", "\"reply(phase-7-llm): draft a summary\"")
         .assert.textContains("pre", "\"reply(phase-7-llm): include next steps\"")
         .assert.textContains("pre", "\"prompt\": \"draft a summary\"")
-        .assert.textContains("pre", "\"prompt\": \"include next steps\"");
+        .assert.textContains("pre", "\"prompt\": \"include next steps\"")
+        .click("form[action=\"/restore\"] button")
+        .waitForElementVisible("pre", medium_wait)
+        .assert.textContains("pre", "\"mode\": \"llm\"")
+        .assert.textContains("pre", "\"reply(phase-7-llm): draft a summary\"")
+        .assert.textContains("pre", "\"reply(phase-7-llm): include next steps\"");
     });
 };
