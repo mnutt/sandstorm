@@ -1664,6 +1664,12 @@ export default {
         const subscription = await feed.subscribe(receiver);
         const disposeAfterSubscribe = disposedCounterCapabilities;
         const events = receiver.events();
+        const session = await feed.startSession();
+        const sessionInfo = await session.info();
+        const sessionFirst = await session.asRpc().increment(7);
+        const sessionSecond = await session.call("increment", 4);
+        const sessionCurrent = await session.asRpc().get();
+        const sessionDrop = await session.drop();
         const drop = await feedCapability.drop();
         return Response.json({
           ok: true,
@@ -1673,6 +1679,12 @@ export default {
           events,
           disposeBefore,
           disposeAfterSubscribe,
+          session: JSON.parse(JSON.stringify(session)),
+          sessionInfo,
+          sessionFirst,
+          sessionSecond,
+          sessionCurrent,
+          sessionDrop,
           drop,
         });
       } catch (error) {
