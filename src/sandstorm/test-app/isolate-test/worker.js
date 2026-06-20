@@ -1616,6 +1616,59 @@ export default {
       });
     }
 
+    if (url.pathname === "/export-mail-feed-capability") {
+      const persistent = url.searchParams.get("persistent") === "true";
+      const options = persistent ? {
+        id: url.searchParams.get("id") || "mail-feed",
+        persistent: true,
+      } : {};
+      const capability = await sandstorm(request, env).capability(
+        new MailFeedCapability(), options);
+      return Response.json({
+        ok: true,
+        capabilityClass: capability instanceof ClaimedCapability,
+        capability: JSON.parse(JSON.stringify(capability)),
+      });
+    }
+
+    if (url.pathname === "/cross-grain-live-callback-self-test") {
+      const token = url.searchParams.get("token");
+      if (!token) {
+        return Response.json({ ok: false, error: "missing token" }, { status: 400 });
+      }
+
+      try {
+        const feedCapability = await sandstorm(request, env).powerbox().restoreSaved(token);
+        const feedInfo = await feedCapability.info();
+        const feed = feedCapability.asRpc();
+        const receiver = new EventReceiver();
+        const disposeBefore = disposedCounterCapabilities;
+        const subscription = await feed.subscribe(receiver);
+        const disposeAfterSubscribe = disposedCounterCapabilities;
+        const events = receiver.events();
+        const drop = await feedCapability.drop();
+        return Response.json({
+          ok: true,
+          feedCapability: JSON.parse(JSON.stringify(feedCapability)),
+          feedInfo,
+          subscription,
+          events,
+          disposeBefore,
+          disposeAfterSubscribe,
+          drop,
+        });
+      } catch (error) {
+        return Response.json({
+          ok: false,
+          error: {
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          },
+        }, { status: 500 });
+      }
+    }
+
     if (url.pathname === "/object-capability-dispose-count") {
       return Response.json({
         ok: true,

@@ -279,7 +279,7 @@ async function prepareIsolateWorkdir(prefix) {
   }
 }
 
-async function startIsolateFixture() {
+async function startIsolateFixture(options = {}) {
   const { workdir, pkgDir, varDir, isolateSupervisorBin } =
     await prepareIsolateWorkdir("iso-int-");
   const supervisorSocket = path.join(varDir, "socket");
@@ -355,8 +355,13 @@ async function startIsolateFixture() {
       WEBSESSION_CLIENT_BIN,
       "Build the project first, e.g. make tmp/.ekam-run.");
 
-    const core = spawnCollectingOutput(
-      WEBSESSION_CLIENT_BIN, ["--core-server", supervisorSocket]);
+    const coreArgs = ["--core-server"];
+    if (options.tokenStorePath) {
+      coreArgs.push("--token-store", options.tokenStorePath);
+    }
+    coreArgs.push(supervisorSocket);
+
+    const core = spawnCollectingOutput(WEBSESSION_CLIENT_BIN, coreArgs);
     coreChild = core.child;
     core.child.on("exit", (code, signal) => {
       if (code !== 0 && signal !== "SIGTERM") {
@@ -1414,6 +1419,100 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.deleteStorage.ok, true);
     assert.equal(selfTest.json.persistent.helper.unregister.ok, true);
     assert.equal(selfTest.json.persistent.helper.unregister.disposed, true);
+  });
+
+  await t.test("calls saved app-object capabilities across supervisors", async (t) => {
+    const sharedDir = await fs.mkdtemp(path.join(REPO_TMP_DIR, "iso-cross-"));
+    const tokenStorePath = path.join(sharedDir, "fake-core-route-backed-tokens");
+    let provider = null;
+    let client = null;
+
+    t.after(async () => {
+      await Promise.allSettled([
+        provider?.cleanup(),
+        client?.cleanup(),
+      ]);
+      await fs.rm(sharedDir, { recursive: true, force: true });
+    });
+
+    provider = await startIsolateFixture({ tokenStorePath });
+    client = await startIsolateFixture({ tokenStorePath });
+
+    const capabilityName = `cross-grain-feed-${Date.now()}`;
+    const exported = await requestJson(
+      provider.workerdSocket,
+      `/export-mail-feed-capability?persistent=true&id=${encodeURIComponent(capabilityName)}`);
+    assert.equal(exported.statusCode, 200, exported.body + formatOutput(
+      provider.stdout, provider.stderr));
+    assert.equal(exported.json.ok, true);
+    assert.equal(exported.json.capabilityClass, true);
+    assert.equal(exported.json.capability.type, "claimedCapability");
+    assert.equal(typeof exported.json.capability.id, "string");
+
+    const capabilityInfo = await requestJson(
+      provider.sandstormApiSocket,
+      `/capabilities/claimed?id=${encodeURIComponent(exported.json.capability.id)}`);
+    assert.equal(capabilityInfo.statusCode, 200, capabilityInfo.body);
+    assert.equal(capabilityInfo.json.ok, true);
+    assert.equal(capabilityInfo.json.residence, "localExport");
+    assert.equal(capabilityInfo.json.nativeInterface, "appObject");
+    assert.equal(capabilityInfo.json.persistent, true);
+    assert.equal(capabilityInfo.json.liveForwardable, true);
+
+    const saved = await requestJson(
+      provider.sandstormApiSocket,
+      `/powerbox/save?id=${encodeURIComponent(exported.json.capability.id)}` +
+      `&label=${encodeURIComponent("Cross grain mail feed")}`,
+      { method: "POST" });
+    assert.equal(saved.statusCode, 200, saved.body + formatOutput(
+      provider.stdout, provider.stderr));
+    assert.equal(saved.json.ok, true);
+    assert.equal(saved.json.type, "savedCapability");
+    assert.equal(saved.json.tokenEncoding, "base64url");
+    assert.equal(typeof saved.json.token, "string");
+
+    const callback = await requestJson(
+      client.workerdSocket,
+      `/cross-grain-live-callback-self-test?token=${encodeURIComponent(saved.json.token)}`);
+    assert.equal(callback.statusCode, 200, callback.body + formatOutput(
+      client.stdout, client.stderr) + formatOutput(provider.stdout, provider.stderr));
+    assert.equal(callback.json.ok, true);
+    assert.equal(callback.json.feedCapability.type, "claimedCapability");
+    assert.equal(callback.json.feedInfo.kind, "restored");
+    assert.equal(callback.json.feedInfo.residence, "imported");
+    assert.equal(callback.json.feedInfo.nativeInterface, "appObject");
+    assert.equal(callback.json.feedInfo.hasNativeCapability, true);
+    assert.deepEqual(callback.json.subscription, {
+      ok: true,
+      receiverType: "claimedCapability",
+      result: {
+        ok: true,
+        count: 1,
+        subject: "phase-3-live-callback",
+      },
+    });
+    assert.deepEqual(callback.json.events, [
+      {
+        subject: "phase-3-live-callback",
+        unread: 2,
+      },
+    ]);
+    assert.equal(callback.json.disposeAfterSubscribe, callback.json.disposeBefore + 1);
+    assert.equal(callback.json.drop.ok, true);
+
+    const dropOriginal = await requestJson(
+      provider.sandstormApiSocket,
+      `/powerbox/drop?id=${encodeURIComponent(exported.json.capability.id)}`,
+      { method: "POST" });
+    assert.equal(dropOriginal.statusCode, 200, dropOriginal.body);
+    assert.equal(dropOriginal.json.ok, true);
+
+    const dropSaved = await requestJson(
+      client.sandstormApiSocket,
+      `/powerbox/drop-saved?token=${encodeURIComponent(saved.json.token)}`,
+      { method: "POST" });
+    assert.equal(dropSaved.statusCode, 200, dropSaved.body);
+    assert.equal(dropSaved.json.ok, true);
   });
 
   await t.test("forwards request bodies and custom headers through workerd", async () => {
