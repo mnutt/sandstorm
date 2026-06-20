@@ -2966,10 +2966,6 @@ bool routeBackedPathIsWithinPrefix(kj::StringPtr path, kj::StringPtr prefix) {
   return path.size() > prefix.size() && path.startsWith(prefix) && path[prefix.size()] == '/';
 }
 
-bool routeBackedPathIsObjectCapability(kj::StringPtr pathPrefix) {
-  return pathPrefix.startsWith("/__sandstorm/object-capabilities/");
-}
-
 struct RouteBackedCapabilityRef {
   RouteBackedCapabilityType type;
   kj::String pathPrefix;
@@ -4380,6 +4376,8 @@ public:
         return createRouteBackedCapability(path, response, RouteBackedCapabilityType::WEB);
       } else if (methodName == "POST" && route == "/capabilities/api-session") {
         return createRouteBackedCapability(path, response, RouteBackedCapabilityType::API);
+      } else if (methodName == "POST" && route == "/capabilities/app-object") {
+        return createRouteBackedCapability(path, response, RouteBackedCapabilityType::OBJECT);
       }
 
       if (methodName != "GET") {
@@ -5045,7 +5043,7 @@ private:
     return false;
   }
 
-  kj::String normalizeWebSessionPathPrefix(kj::StringPtr pathPrefix) {
+  kj::String normalizeRouteBackedCapabilityPathPrefix(kj::StringPtr pathPrefix) {
     return normalizeRouteBackedPathPrefix(pathPrefix);
   }
 
@@ -5057,8 +5055,7 @@ private:
 
   capnp::Capability::Client makeRouteBackedCapability(
       RouteBackedCapabilityType capabilityType, kj::StringPtr pathPrefix, bool persistent) {
-    if (capabilityType == RouteBackedCapabilityType::WEB &&
-        routeBackedPathIsObjectCapability(pathPrefix)) {
+    if (capabilityType == RouteBackedCapabilityType::OBJECT) {
       return makeRouteBackedObjectCapability(
           kj::addRef(config), kj::addRef(host), pathPrefix, persistent);
     }
@@ -5071,13 +5068,8 @@ private:
     ClaimedCapabilityNativeInterface nativeInterface;
     switch (capabilityType) {
       case RouteBackedCapabilityType::WEB:
-        if (routeBackedPathIsObjectCapability(pathPrefix)) {
-          kind = ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT;
-          nativeInterface = ClaimedCapabilityNativeInterface::APP_OBJECT;
-        } else {
-          kind = ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION;
-          nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
-        }
+        kind = ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION;
+        nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
         break;
       case RouteBackedCapabilityType::API:
         kind = ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION;
@@ -5114,11 +5106,11 @@ private:
     }
 
     auto pathPrefix = pathPrefixes.size() == 1
-        ? normalizeWebSessionPathPrefix(pathPrefixes[0])
+        ? normalizeRouteBackedCapabilityPathPrefix(pathPrefixes[0])
         : kj::heapString("");
     kj::Maybe<kj::String> dropNotifyPath = nullptr;
     if (dropNotifyPaths.size() == 1 && dropNotifyPaths[0].size() > 0) {
-      auto notifyPath = normalizeWebSessionPathPrefix(dropNotifyPaths[0]);
+      auto notifyPath = normalizeRouteBackedCapabilityPathPrefix(dropNotifyPaths[0]);
       if (!routeBackedPathIsWithinPrefix(notifyPath, pathPrefix)) {
         return sendJson(response, 400, "Bad Request", renderError(
             "dropNotifyPath must be within pathPrefix"));
@@ -5140,8 +5132,7 @@ private:
     }
     auto metadata = makeRouteBackedClaimedCapabilityMetadata(capabilityType, pathPrefix, persistent);
     kj::String capId;
-    if (capabilityType == RouteBackedCapabilityType::WEB &&
-        routeBackedPathIsObjectCapability(pathPrefix)) {
+    if (capabilityType == RouteBackedCapabilityType::OBJECT) {
       auto object = makeRouteBackedObjectCapabilityWithState(
           kj::addRef(config), kj::addRef(host), pathPrefix, persistent);
       capId = dropNotifyPath == nullptr

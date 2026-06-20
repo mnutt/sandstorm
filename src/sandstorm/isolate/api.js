@@ -1518,6 +1518,19 @@ async function createApiSessionCapability(env, options = {}) {
       env, `capabilities/api-session?pathPrefix=${pathPrefix}&persistent=${persistent}`));
 }
 
+async function createAppObjectCapability(env, options = {}) {
+  const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
+  const persistent = webSessionPersistent(options) ? "true" : "false";
+  const dropNotifyPath = webSessionDropNotifyPath(options);
+  const notifyQuery = dropNotifyPath === undefined
+    ? ""
+    : `&dropNotifyPath=${encodeURIComponent(dropNotifyPath)}`;
+  return wrapClaimedCapability(
+    env, await postSandstorm(
+      env, `capabilities/app-object?pathPrefix=${pathPrefix}&persistent=${persistent}` +
+        notifyQuery));
+}
+
 function capabilityMethodName(value, name = "method") {
   const method = validate.string(value, name, { minLength: 1, maxLength: 256 });
   if (method === "constructor" || method === "prototype" || method === "__proto__") {
@@ -1636,7 +1649,7 @@ async function createObjectCapability(env, target, options = {}) {
 
   try {
     const pathPrefix = objectCapabilityPathPrefix(id);
-    const capability = await createWebSessionCapability(env, {
+    const capability = await createAppObjectCapability(env, {
       pathPrefix,
       ...(persistent ? {} : { dropNotifyPath: pathPrefix }),
       persistent,

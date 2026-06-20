@@ -631,6 +631,43 @@ test("isolate supervisor integration suite", {
       liveForwardable: true,
     });
 
+    const webSessionWithObjectPath = await requestJson(
+      fixture.sandstormApiSocket,
+      `/capabilities/web-session?pathPrefix=${
+        encodeURIComponent("/__sandstorm/object-capabilities/web-session-stays-web")
+      }&persistent=false`,
+      { method: "POST" });
+    assert.equal(webSessionWithObjectPath.statusCode, 200, webSessionWithObjectPath.body);
+    assert.equal(webSessionWithObjectPath.json.ok, true);
+    assert.equal(webSessionWithObjectPath.json.type, "claimedCapability");
+
+    const webSessionWithObjectPathInfo = await requestJson(
+      fixture.sandstormApiSocket,
+      `/capabilities/claimed?id=${encodeURIComponent(webSessionWithObjectPath.json.id)}`);
+    assert.equal(webSessionWithObjectPathInfo.statusCode, 200, webSessionWithObjectPathInfo.body);
+    assert.equal(webSessionWithObjectPathInfo.json.kind, "routeBackedWebSession");
+    assert.equal(webSessionWithObjectPathInfo.json.nativeInterface, "webSession");
+    assert.equal(webSessionWithObjectPathInfo.json.supportsWebFetch, true);
+
+    const objectCallOnWebSession = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/native-app-rpc-call?id=${encodeURIComponent(webSessionWithObjectPath.json.id)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ method: "value", args: [] }),
+      });
+    assert.equal(objectCallOnWebSession.statusCode, 400, objectCallOnWebSession.body);
+    assert.equal(objectCallOnWebSession.json.ok, false);
+    assert.match(objectCallOnWebSession.json.error, /native interface webSession/);
+
+    const dropWebSessionWithObjectPath = await requestJson(
+      fixture.sandstormApiSocket,
+      `/powerbox/drop?id=${encodeURIComponent(webSessionWithObjectPath.json.id)}`,
+      { method: "POST" });
+    assert.equal(dropWebSessionWithObjectPath.statusCode, 200, dropWebSessionWithObjectPath.body);
+    assert.equal(dropWebSessionWithObjectPath.json.ok, true);
+
     const wrongNativeFetch = await requestJson(
       fixture.sandstormApiSocket,
       `/powerbox/outbound-http-fetch?id=${encodeURIComponent(capabilityId)}` +
