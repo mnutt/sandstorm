@@ -462,7 +462,13 @@ function(sandstorm_add_packaging_targets)
       "${PROJECT_SOURCE_DIR}/tests/run-local.sh"
       "${_package_dir}/sandstorm-${SANDSTORM_BUILD}-fast.tar.xz"
       "${_test_app_spk}"
-    DEPENDS package-fast test-app-spk meteor-testapp-spk isolate-test-app-spk
+    DEPENDS
+      package-fast
+      test-app-spk
+      meteor-testapp-spk
+      isolate-test-app-spk
+      isolate-api-powerbox-test-app-spk
+      isolate-api-provider-test-app-spk
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     USES_TERMINAL
     COMMENT "Running Sandstorm system tests"
