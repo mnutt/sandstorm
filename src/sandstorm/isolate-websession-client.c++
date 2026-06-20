@@ -1470,7 +1470,6 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"nativeInterface\":\"unknown\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"supportsWebFetch\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"supportsOutboundHttpFetch\":true"), claimBody);
-    KJ_REQUIRE(contains(claimBody, "\"supportsNativeAppRpcTransport\":false"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"hasNativeCapability\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"liveForwardable\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"save\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
@@ -1541,7 +1540,6 @@ public:
         outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"supportsWebFetch\":false"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"supportsOutboundHttpFetch\":true"), outboundBody);
-    KJ_REQUIRE(contains(outboundBody, "\"supportsNativeAppRpcTransport\":false"), outboundBody);
     KJ_REQUIRE(contains(outboundBody,
         "\"message\":\"ClaimedCapability nativeInterface outboundHttpSession cannot be used "
         "with fetch(); use asOutboundHttp().fetch() instead\""),
@@ -1795,7 +1793,6 @@ public:
     KJ_REQUIRE(contains(offerBody, "\"nativeInterface\":\"apiSession\""), offerBody);
     KJ_REQUIRE(contains(offerBody, "\"supportsWebFetch\":true"), offerBody);
     KJ_REQUIRE(contains(offerBody, "\"supportsOutboundHttpFetch\":false"), offerBody);
-    KJ_REQUIRE(contains(offerBody, "\"supportsNativeAppRpcTransport\":false"), offerBody);
     KJ_REQUIRE(contains(offerBody,
         "\"fetched\":{\"status\":200,\"body\":{\"ok\":true,"
         "\"source\":\"fake-claimed-capability\","

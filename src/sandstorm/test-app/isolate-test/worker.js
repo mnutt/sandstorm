@@ -964,7 +964,6 @@ export default {
                 dropNotifyRefCount: 0,
                 supportsWebFetch: false,
                 supportsOutboundHttpFetch: !appObject,
-                supportsNativeAppRpcTransport: appObject,
                 hasNativeCapability: true,
                 liveForwardable: true,
               });

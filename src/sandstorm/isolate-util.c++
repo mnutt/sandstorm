@@ -292,7 +292,7 @@ kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
   });
 }
 
-OwnedNativeAppRpcCall parseNativeAppRpcJsonCall(
+OwnedNativeAppRpcCall parseWorkerAppObjectCallJson(
     kj::ArrayPtr<const kj::byte> body, NativeAppRpcJsonCapabilityAdapter& adapter,
     size_t maxDataBytes) {
   NativeAppRpcDataJsonHandler dataHandler(maxDataBytes);
@@ -318,7 +318,49 @@ OwnedNativeAppRpcCall parseNativeAppRpcJsonCall(
   };
 }
 
-kj::String renderNativeAppRpcJsonResult(
+kj::String renderWorkerAppObjectCallJson(
+    kj::StringPtr method, capnp::List<IsolateObjectCallValue>::Reader args,
+    NativeAppRpcJsonCapabilityAdapter& adapter) {
+  NativeAppRpcDataJsonHandler dataHandler(kj::maxValue);
+  NativeAppRpcCapabilityJsonHandler capabilityHandler(adapter);
+  capnp::JsonCodec codec;
+  codec.addTypeHandler(dataHandler);
+  codec.addTypeHandler(capabilityHandler);
+  codec.handleByAnnotation<NativeAppRpcCall>();
+  codec.handleByAnnotation<IsolateObjectCallValue>();
+
+  capnp::MallocMessageBuilder message;
+  auto call = message.initRoot<NativeAppRpcCall>();
+  call.setMethod(method);
+  auto callArgs = call.initArgs(args.size());
+  for (auto i: kj::indices(args)) {
+    copyIsolateObjectCallValue(args[i], callArgs[i]);
+  }
+  return codec.encode(call.asReader());
+}
+
+OwnedIsolateObjectCallResult parseWorkerAppObjectResultJson(
+    kj::ArrayPtr<const kj::byte> body, NativeAppRpcJsonCapabilityAdapter& adapter,
+    size_t maxDataBytes) {
+  NativeAppRpcDataJsonHandler dataHandler(maxDataBytes);
+  NativeAppRpcCapabilityJsonHandler capabilityHandler(adapter);
+  capnp::JsonCodec codec;
+  codec.addTypeHandler(dataHandler);
+  codec.addTypeHandler(capabilityHandler);
+  codec.handleByAnnotation<IsolateObjectCallResult>();
+  codec.handleByAnnotation<IsolateObjectCallValue>();
+
+  auto resultMessage = kj::heap<capnp::MallocMessageBuilder>();
+  auto result = resultMessage->initRoot<IsolateObjectCallResult>();
+  codec.decode(body.asChars(), result);
+
+  auto copiedMessage = kj::heap<capnp::MallocMessageBuilder>();
+  copyIsolateObjectCallResult(result.asReader(),
+      copiedMessage->initRoot<IsolateObjectCallResult>());
+  return OwnedIsolateObjectCallResult { kj::mv(copiedMessage) };
+}
+
+kj::String renderWorkerAppObjectResultJson(
     IsolateObjectCallResult::Reader result, NativeAppRpcJsonCapabilityAdapter& adapter) {
   NativeAppRpcDataJsonHandler dataHandler(kj::maxValue);
   NativeAppRpcCapabilityJsonHandler capabilityHandler(adapter);

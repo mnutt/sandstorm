@@ -627,7 +627,6 @@ test("isolate supervisor integration suite", {
       dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: false,
-      supportsNativeAppRpcTransport: false,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -773,7 +772,6 @@ test("isolate supervisor integration suite", {
       dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: false,
-      supportsNativeAppRpcTransport: false,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -894,7 +892,6 @@ test("isolate supervisor integration suite", {
       dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: false,
-      supportsNativeAppRpcTransport: false,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -965,7 +962,6 @@ test("isolate supervisor integration suite", {
       dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: false,
-      supportsNativeAppRpcTransport: false,
       hasNativeCapability: true,
       liveForwardable: true,
     });
@@ -1045,10 +1041,10 @@ test("isolate supervisor integration suite", {
       statsBeforeExport.json.dropNotifyGroupCount + 1);
     assert.equal(statsAfterParentExport.json.localExportCount,
       statsBeforeExport.json.localExportCount + 1);
-    assert.equal(statsAfterParentExport.json.webSessionNativeCount,
-      statsBeforeExport.json.webSessionNativeCount + 1);
-    assert.equal(statsAfterParentExport.json.routeBackedWebSessionCount,
-      statsBeforeExport.json.routeBackedWebSessionCount + 1);
+    assert.equal(statsAfterParentExport.json.appObjectNativeCount,
+      statsBeforeExport.json.appObjectNativeCount + 1);
+    assert.equal(statsAfterParentExport.json.routeBackedAppObjectCount,
+      statsBeforeExport.json.routeBackedAppObjectCount + 1);
     assert.equal(statsAfterParentExport.json.importedCount,
       statsBeforeExport.json.importedCount);
 
@@ -1059,16 +1055,15 @@ test("isolate supervisor integration suite", {
     assert.equal(capabilityInfo.json.ok, true);
     assert.equal(capabilityInfo.json.type, "claimedCapabilityInfo");
     assert.equal(capabilityInfo.json.id, exported.json.capability.id);
-    assert.equal(capabilityInfo.json.kind, "routeBackedWebSession");
+    assert.equal(capabilityInfo.json.kind, "routeBackedAppObject");
     assert.equal(capabilityInfo.json.residence, "localExport");
-    assert.equal(capabilityInfo.json.nativeInterface, "webSession");
+    assert.equal(capabilityInfo.json.nativeInterface, "appObject");
     assert.match(capabilityInfo.json.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
     assert.equal(capabilityInfo.json.persistent, false);
     assert.equal(capabilityInfo.json.hasDropNotify, true);
     assert.equal(capabilityInfo.json.dropNotifyRefCount, 1);
-    assert.equal(capabilityInfo.json.supportsWebFetch, true);
+    assert.equal(capabilityInfo.json.supportsWebFetch, false);
     assert.equal(capabilityInfo.json.supportsOutboundHttpFetch, false);
-    assert.equal(capabilityInfo.json.supportsNativeAppRpcTransport, true);
     assert.equal(capabilityInfo.json.hasNativeCapability, true);
     assert.equal(capabilityInfo.json.liveForwardable, true);
 
@@ -1127,17 +1122,17 @@ test("isolate supervisor integration suite", {
       fixture.sandstormApiSocket, "/capabilities/claimed-stats");
     assert.equal(statsAfterChildExport.statusCode, 200, statsAfterChildExport.body);
     assert.equal(statsAfterChildExport.json.claimedCapabilityCount,
-      statsAfterParentExport.json.claimedCapabilityCount + 1);
+      statsAfterParentExport.json.claimedCapabilityCount + 2);
     assert.equal(statsAfterChildExport.json.dropNotifyGroupCount,
       statsAfterParentExport.json.dropNotifyGroupCount + 1);
     assert.equal(statsAfterChildExport.json.localExportCount,
       statsAfterParentExport.json.localExportCount + 1);
-    assert.equal(statsAfterChildExport.json.webSessionNativeCount,
-      statsAfterParentExport.json.webSessionNativeCount + 1);
-    assert.equal(statsAfterChildExport.json.routeBackedWebSessionCount,
-      statsAfterParentExport.json.routeBackedWebSessionCount + 1);
+    assert.equal(statsAfterChildExport.json.appObjectNativeCount,
+      statsAfterParentExport.json.appObjectNativeCount + 2);
+    assert.equal(statsAfterChildExport.json.routeBackedAppObjectCount,
+      statsAfterParentExport.json.routeBackedAppObjectCount + 1);
     assert.equal(statsAfterChildExport.json.importedCount,
-      statsAfterParentExport.json.importedCount);
+      statsAfterParentExport.json.importedCount + 1);
 
     const childIncrement = await callObjectCapability(childId, "increment", [nativeNumber(9)]);
     assert.equal(childIncrement.statusCode, 200, childIncrement.body);
@@ -1169,17 +1164,17 @@ test("isolate supervisor integration suite", {
       fixture.sandstormApiSocket, "/capabilities/claimed-stats");
     assert.equal(statsAfterChildDrop.statusCode, 200, statsAfterChildDrop.body);
     assert.equal(statsAfterChildDrop.json.claimedCapabilityCount,
-      statsAfterParentExport.json.claimedCapabilityCount);
+      statsAfterParentExport.json.claimedCapabilityCount + 1);
     assert.equal(statsAfterChildDrop.json.dropNotifyGroupCount,
       statsAfterParentExport.json.dropNotifyGroupCount);
     assert.equal(statsAfterChildDrop.json.localExportCount,
       statsAfterParentExport.json.localExportCount);
-    assert.equal(statsAfterChildDrop.json.webSessionNativeCount,
-      statsAfterParentExport.json.webSessionNativeCount);
-    assert.equal(statsAfterChildDrop.json.routeBackedWebSessionCount,
-      statsAfterParentExport.json.routeBackedWebSessionCount);
+    assert.equal(statsAfterChildDrop.json.appObjectNativeCount,
+      statsAfterParentExport.json.appObjectNativeCount + 1);
+    assert.equal(statsAfterChildDrop.json.routeBackedAppObjectCount,
+      statsAfterParentExport.json.routeBackedAppObjectCount);
     assert.equal(statsAfterChildDrop.json.importedCount,
-      statsAfterParentExport.json.importedCount);
+      statsAfterParentExport.json.importedCount + 1);
 
     const disposeAfterChild = await requestJson(
       fixture.workerdSocket, "/object-capability-dispose-count");
@@ -1198,17 +1193,17 @@ test("isolate supervisor integration suite", {
       fixture.sandstormApiSocket, "/capabilities/claimed-stats");
     assert.equal(statsAfterParentDrop.statusCode, 200, statsAfterParentDrop.body);
     assert.equal(statsAfterParentDrop.json.claimedCapabilityCount,
-      statsBeforeExport.json.claimedCapabilityCount);
+      statsBeforeExport.json.claimedCapabilityCount + 1);
     assert.equal(statsAfterParentDrop.json.dropNotifyGroupCount,
       statsBeforeExport.json.dropNotifyGroupCount);
     assert.equal(statsAfterParentDrop.json.localExportCount,
       statsBeforeExport.json.localExportCount);
-    assert.equal(statsAfterParentDrop.json.webSessionNativeCount,
-      statsBeforeExport.json.webSessionNativeCount);
-    assert.equal(statsAfterParentDrop.json.routeBackedWebSessionCount,
-      statsBeforeExport.json.routeBackedWebSessionCount);
+    assert.equal(statsAfterParentDrop.json.appObjectNativeCount,
+      statsBeforeExport.json.appObjectNativeCount + 1);
+    assert.equal(statsAfterParentDrop.json.routeBackedAppObjectCount,
+      statsBeforeExport.json.routeBackedAppObjectCount);
     assert.equal(statsAfterParentDrop.json.importedCount,
-      statsBeforeExport.json.importedCount);
+      statsBeforeExport.json.importedCount + 1);
 
     const disposeAfterParent = await requestJson(
       fixture.workerdSocket, "/object-capability-dispose-count");
@@ -1227,32 +1222,30 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.capabilityInfo.ok, true);
     assert.equal(selfTest.json.capabilityInfo.type, "claimedCapabilityInfo");
     assert.equal(selfTest.json.capabilityInfo.id, selfTest.json.duplicate.sourceId);
-    assert.equal(selfTest.json.capabilityInfo.kind, "routeBackedWebSession");
+    assert.equal(selfTest.json.capabilityInfo.kind, "routeBackedAppObject");
     assert.equal(selfTest.json.capabilityInfo.residence, "localExport");
-    assert.equal(selfTest.json.capabilityInfo.nativeInterface, "webSession");
+    assert.equal(selfTest.json.capabilityInfo.nativeInterface, "appObject");
     assert.match(
       selfTest.json.capabilityInfo.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
     assert.equal(selfTest.json.capabilityInfo.persistent, false);
     assert.equal(selfTest.json.capabilityInfo.hasDropNotify, true);
     assert.equal(selfTest.json.capabilityInfo.dropNotifyRefCount, 1);
-    assert.equal(selfTest.json.capabilityInfo.supportsWebFetch, true);
+    assert.equal(selfTest.json.capabilityInfo.supportsWebFetch, false);
     assert.equal(selfTest.json.capabilityInfo.supportsOutboundHttpFetch, false);
-    assert.equal(selfTest.json.capabilityInfo.supportsNativeAppRpcTransport, true);
     assert.equal(selfTest.json.capabilityInfo.hasNativeCapability, true);
     assert.equal(selfTest.json.capabilityInfo.liveForwardable, true);
     assert.equal(typeof selfTest.json.childInfo.id, "string");
     assert.equal(selfTest.json.childInfo.ok, true);
     assert.equal(selfTest.json.childInfo.type, "claimedCapabilityInfo");
-    assert.equal(selfTest.json.childInfo.kind, "routeBackedWebSession");
-    assert.equal(selfTest.json.childInfo.residence, "localExport");
-    assert.equal(selfTest.json.childInfo.nativeInterface, "webSession");
-    assert.match(selfTest.json.childInfo.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
-    assert.equal(selfTest.json.childInfo.persistent, false);
-    assert.equal(selfTest.json.childInfo.hasDropNotify, true);
-    assert.equal(selfTest.json.childInfo.dropNotifyRefCount, 1);
-    assert.equal(selfTest.json.childInfo.supportsWebFetch, true);
+    assert.equal(selfTest.json.childInfo.kind, "unknown");
+    assert.equal(selfTest.json.childInfo.residence, "imported");
+    assert.equal(selfTest.json.childInfo.nativeInterface, "appObject");
+    assert.equal(selfTest.json.childInfo.pathPrefix, "");
+    assert.equal(selfTest.json.childInfo.persistent, true);
+    assert.equal(selfTest.json.childInfo.hasDropNotify, false);
+    assert.equal(selfTest.json.childInfo.dropNotifyRefCount, 0);
+    assert.equal(selfTest.json.childInfo.supportsWebFetch, false);
     assert.equal(selfTest.json.childInfo.supportsOutboundHttpFetch, false);
-    assert.equal(selfTest.json.childInfo.supportsNativeAppRpcTransport, true);
     assert.equal(selfTest.json.childInfo.hasNativeCapability, true);
     assert.equal(selfTest.json.childInfo.liveForwardable, true);
     assert.deepEqual(selfTest.json.childFirst, { value: 11 });
@@ -1265,10 +1258,10 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.stubReadChild, { value: 13 });
     assert.deepEqual(selfTest.json.argumentTarget.read, { value: 21 });
     assert.equal(selfTest.json.argumentTarget.disposeAfter,
-      selfTest.json.argumentTarget.disposeBefore + 1);
+      selfTest.json.argumentTarget.disposeBefore);
     assert.deepEqual(selfTest.json.stubArgumentTarget.read, { value: 23 });
     assert.equal(selfTest.json.stubArgumentTarget.disposeAfter,
-      selfTest.json.stubArgumentTarget.disposeBefore + 1);
+      selfTest.json.stubArgumentTarget.disposeBefore);
     assert.deepEqual(selfTest.json.retainedArgumentTarget.retain, { value: 31 });
     assert.equal(selfTest.json.retainedArgumentTarget.disposeAfterRetainCall,
       selfTest.json.retainedArgumentTarget.disposeBefore);
@@ -1292,7 +1285,7 @@ test("isolate supervisor integration suite", {
       },
     ]);
     assert.equal(selfTest.json.liveCallback.disposeAfter,
-      selfTest.json.liveCallback.disposeBefore + 1);
+      selfTest.json.liveCallback.disposeBefore);
     assert.equal(selfTest.json.liveCallback.sessionClass, true);
     assert.equal(selfTest.json.liveCallback.session.type, "claimedCapability");
     assert.deepEqual(selfTest.json.liveCallback.sessionFirst, { value: 7 });
@@ -1516,6 +1509,7 @@ test("isolate supervisor integration suite", {
     assert.equal(typeof claimedStats.json.unknownNativeCount, "number");
     assert.equal(typeof claimedStats.json.routeBackedWebSessionCount, "number");
     assert.equal(typeof claimedStats.json.routeBackedApiSessionCount, "number");
+    assert.equal(typeof claimedStats.json.routeBackedAppObjectCount, "number");
     assert.equal(typeof claimedStats.json.powerboxClaimCount, "number");
     assert.equal(typeof claimedStats.json.powerboxOfferCount, "number");
     assert.equal(typeof claimedStats.json.restoredCount, "number");
