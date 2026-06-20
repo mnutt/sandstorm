@@ -1419,6 +1419,45 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.deleteStorage.ok, true);
     assert.equal(selfTest.json.persistent.helper.unregister.ok, true);
     assert.equal(selfTest.json.persistent.helper.unregister.disposed, true);
+    assert.equal(
+      selfTest.json.persistent.helper.callback.storageKey,
+      selfTest.json.persistent.helper.callback.defaultStorageKey);
+    assert.equal(selfTest.json.persistent.helper.callback.first.restored, false);
+    assert.equal(selfTest.json.persistent.helper.callback.first.registered, true);
+    assert.equal(
+      selfTest.json.persistent.helper.callback.first.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.helper.callback.first.saved.type, "savedCapability");
+    assert.deepEqual(selfTest.json.persistent.helper.callback.first.event, {
+      ok: true,
+      count: 1,
+      subject: "phase-6-durable-callback-first",
+    });
+    assert.equal(selfTest.json.persistent.helper.callback.first.drop.ok, true);
+    assert.equal(selfTest.json.persistent.helper.callback.second.restored, true);
+    assert.equal(selfTest.json.persistent.helper.callback.second.registered, false);
+    assert.equal(
+      selfTest.json.persistent.helper.callback.second.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.helper.callback.second.saved.type, "savedCapability");
+    assert.deepEqual(selfTest.json.persistent.helper.callback.second.event, {
+      ok: true,
+      count: 2,
+      subject: "phase-6-durable-callback-restored",
+    });
+    assert.equal(selfTest.json.persistent.helper.callback.second.drop.ok, true);
+    assert.deepEqual(selfTest.json.persistent.helper.callback.events, [
+      {
+        subject: "phase-6-durable-callback-first",
+        unread: 7,
+      },
+      {
+        subject: "phase-6-durable-callback-restored",
+        unread: 9,
+      },
+    ]);
+    assert.equal(selfTest.json.persistent.helper.callback.dropSaved.ok, true);
+    assert.equal(selfTest.json.persistent.helper.callback.deleteStorage.ok, true);
+    assert.equal(selfTest.json.persistent.helper.callback.unregister.ok, true);
+    assert.equal(selfTest.json.persistent.helper.callback.unregister.disposed, true);
   });
 
   await t.test("calls saved app-object capabilities across supervisors", async (t) => {

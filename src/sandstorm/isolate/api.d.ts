@@ -43,6 +43,10 @@ declare module "sandstorm:api" {
     readonly details: unknown;
     constructor(message: string, details?: unknown);
   }
+  export class DisconnectedCapabilityError extends Error {
+    readonly details: unknown;
+    constructor(message: string, details?: unknown);
+  }
 
   export interface StringValidationOptions {
     minLength?: number;
@@ -360,6 +364,8 @@ declare module "sandstorm:api" {
     key?: string;
   }
 
+  export interface PersistentCallbackOptions extends PersistentObjectCapabilityOptions {}
+
   export interface PersistentObjectCapabilityResult {
     ok: true;
     id: string;
@@ -644,6 +650,10 @@ declare module "sandstorm:api" {
       target: RpcTarget,
       options: PersistentObjectCapabilityOptions,
     ): Promise<PersistentObjectCapabilityResult>;
+    persistentCallback(
+      target: RpcTarget,
+      options: PersistentCallbackOptions,
+    ): Promise<PersistentObjectCapabilityResult>;
     registerCapability(
       target: RpcTarget,
       options: Required<Pick<ObjectCapabilityOptions, "id">>,
@@ -671,6 +681,10 @@ declare module "sandstorm:api" {
     persistentCapability(
       target: RpcTarget,
       options: PersistentObjectCapabilityOptions,
+    ): Promise<PersistentObjectCapabilityResult>;
+    persistentCallback(
+      target: RpcTarget,
+      options: PersistentCallbackOptions,
     ): Promise<PersistentObjectCapabilityResult>;
     registerCapability(
       target: RpcTarget,

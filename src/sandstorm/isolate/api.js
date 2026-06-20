@@ -2206,6 +2206,12 @@ function persistentCapabilityStorageKey(id, options = {}) {
     "storageKey");
 }
 
+function persistentCallbackStorageKey(id, options = {}) {
+  return validate.storageKey(
+    options.storageKey ?? options.key ?? `callback-capability-${id}`,
+    "storageKey");
+}
+
 async function persistentObjectCapability(env, target, options = {}) {
   const id = requiredObjectCapabilityId(options);
   const registration = registerObjectCapabilityTarget(target, { id });
@@ -2240,6 +2246,14 @@ async function persistentObjectCapability(env, target, options = {}) {
     saved,
     token: saved.token,
   };
+}
+
+async function persistentCallbackCapability(env, target, options = {}) {
+  const id = requiredObjectCapabilityId(options);
+  return persistentObjectCapability(env, target, {
+    ...options,
+    storageKey: persistentCallbackStorageKey(id, options),
+  });
 }
 
 export function powerbox(request, env) {
@@ -2581,6 +2595,10 @@ class SandstormRpcTarget extends RpcTarget {
     return persistentObjectCapability(this.#env, target, options);
   }
 
+  persistentCallback(target, options = {}) {
+    return persistentCallbackCapability(this.#env, target, options);
+  }
+
   registerCapability(target, options = {}) {
     return registerObjectCapabilityTarget(target, options);
   }
@@ -2650,6 +2668,8 @@ export function sandstorm(request, env) {
     capability: (target, options = {}) => createObjectCapability(env, target, options),
     persistentCapability: (target, options = {}) =>
       persistentObjectCapability(env, target, options),
+    persistentCallback: (target, options = {}) =>
+      persistentCallbackCapability(env, target, options),
     registerCapability: (target, options = {}) => registerObjectCapabilityTarget(target, options),
     unregisterCapability: (options = {}) => unregisterObjectCapabilityTarget(options),
     serveObjectCapabilities: () => serveObjectCapability(request, env),
