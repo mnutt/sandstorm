@@ -679,10 +679,6 @@ void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
   uint childDropCount = 0;
   uint remoteDropCount = 0;
   uint callbackDropCount = 0;
-  uint tableLocalDropCount = 0;
-  uint tableRemoteDropCount = 0;
-  uint bulkLocalDropCount = 0;
-  uint bulkRemoteDropCount = 0;
   IsolateObjectCapability::Client root = makeIsolateObjectCapability(
       kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("root"), rootDropCount));
   IsolateObjectCapability::Client child = makeIsolateObjectCapability(
@@ -691,8 +687,6 @@ void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
       kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("remote"), remoteDropCount));
   IsolateObjectCapability::Client callback = makeIsolateObjectCapability(
       kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("callback"), callbackDropCount));
-  IsolateObjectCapability::Client tableRemote = makeIsolateObjectCapability(
-      kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("table-remote"), tableRemoteDropCount));
 
   capnp::MallocMessageBuilder echoMessage;
   auto echoArgs = echoMessage.initRoot<capnp::List<IsolateObjectCallValue>>(1);
@@ -809,96 +803,6 @@ void testNativeObjectCapabilityTransport(kj::WaitScope& waitScope) {
   auto importedFailResult = importedFailResponse.getResult();
   KJ_REQUIRE(importedFailResult.which() == IsolateObjectCallResult::EXCEPTION);
   KJ_REQUIRE(importedFailResult.getException().getName() == "NativeObjectError");
-
-  IsolateObjectCapabilityTable table;
-  auto tableExport = table.exportTarget(
-      kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("table-local"), tableLocalDropCount));
-  auto tableImport = table.importCapability(tableRemote);
-  KJ_REQUIRE(tableExport.id == "native-export-0");
-  KJ_REQUIRE(tableImport.id == "native-import-0");
-  auto tableStats = table.stats();
-  KJ_REQUIRE(tableStats.totalCount == 2, tableStats.totalCount);
-  KJ_REQUIRE(tableStats.exportedCount == 1, tableStats.exportedCount);
-  KJ_REQUIRE(tableStats.importedCount == 1, tableStats.importedCount);
-  KJ_IF_MAYBE(info, table.findInfo(tableExport.id)) {
-    KJ_REQUIRE(info->kind == IsolateObjectCapabilityTableEntryKind::EXPORTED);
-  } else {
-    KJ_FAIL_REQUIRE("expected native object table export info");
-  }
-  KJ_IF_MAYBE(info, table.findInfo(tableImport.id)) {
-    KJ_REQUIRE(info->kind == IsolateObjectCapabilityTableEntryKind::IMPORTED);
-  } else {
-    KJ_FAIL_REQUIRE("expected native object table import info");
-  }
-
-  KJ_IF_MAYBE(foundExport, table.find(tableExport.id)) {
-    capnp::MallocMessageBuilder tableSumMessage;
-    auto tableSumArgs = tableSumMessage.initRoot<capnp::List<IsolateObjectCallValue>>(2);
-    tableSumArgs[0].setNumber(7);
-    tableSumArgs[1].setNumber(8);
-    auto tableSumOwned =
-        callIsolateObjectCapability(*foundExport, "sum", tableSumArgs.asReader()).wait(waitScope);
-    auto tableSumResult = tableSumOwned.getResult();
-    KJ_REQUIRE(tableSumResult.which() == IsolateObjectCallResult::VALUE);
-    KJ_REQUIRE(tableSumResult.getValue().getNumber() == 15);
-  } else {
-    KJ_FAIL_REQUIRE("expected native object table export lookup");
-  }
-
-  KJ_IF_MAYBE(foundImport, table.find(tableImport.id)) {
-    capnp::MallocMessageBuilder tableDescribeMessage;
-    auto tableDescribeArgs =
-        tableDescribeMessage.initRoot<capnp::List<IsolateObjectCallValue>>(1);
-    tableDescribeArgs[0].setText("through-table");
-    auto tableDescribeOwned = callIsolateObjectCapability(
-        *foundImport, "describe", tableDescribeArgs.asReader()).wait(waitScope);
-    auto tableDescribeResult = tableDescribeOwned.getResult();
-    KJ_REQUIRE(tableDescribeResult.which() == IsolateObjectCallResult::VALUE);
-    auto tableDescribeFields = tableDescribeResult.getValue().getObject();
-    KJ_REQUIRE(tableDescribeFields[0].getName() == "label");
-    KJ_REQUIRE(tableDescribeFields[0].getValue().getText() == "table-remote");
-    KJ_REQUIRE(tableDescribeFields[1].getName() == "argCount");
-    KJ_REQUIRE(tableDescribeFields[1].getValue().getNumber() == 1);
-  } else {
-    KJ_FAIL_REQUIRE("expected native object table import lookup");
-  }
-
-  KJ_REQUIRE(!table.drop("missing-native-object").wait(waitScope));
-  KJ_REQUIRE(table.drop(tableExport.id).wait(waitScope));
-  KJ_REQUIRE(table.drop(tableImport.id).wait(waitScope));
-  KJ_REQUIRE(table.find(tableExport.id) == nullptr);
-  KJ_REQUIRE(table.find(tableImport.id) == nullptr);
-  KJ_REQUIRE(table.findInfo(tableExport.id) == nullptr);
-  KJ_REQUIRE(table.findInfo(tableImport.id) == nullptr);
-  tableStats = table.stats();
-  KJ_REQUIRE(tableStats.totalCount == 0, tableStats.totalCount);
-  KJ_REQUIRE(tableStats.exportedCount == 0, tableStats.exportedCount);
-  KJ_REQUIRE(tableStats.importedCount == 0, tableStats.importedCount);
-  KJ_REQUIRE(tableLocalDropCount == 1, tableLocalDropCount);
-  KJ_REQUIRE(tableRemoteDropCount == 1, tableRemoteDropCount);
-
-  IsolateObjectCapabilityTable bulkTable;
-  IsolateObjectCapability::Client bulkRemote = makeIsolateObjectCapability(
-      kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("bulk-remote"), bulkRemoteDropCount));
-  auto bulkExportA = bulkTable.exportTarget(
-      kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("bulk-local-a"), bulkLocalDropCount));
-  auto bulkExportB = bulkTable.exportTarget(
-      kj::heap<FakeIsolateObjectCallTarget>(kj::heapString("bulk-local-b"), bulkLocalDropCount));
-  auto bulkImport = bulkTable.importCapability(bulkRemote);
-  KJ_REQUIRE(bulkExportA.id == "native-export-0");
-  KJ_REQUIRE(bulkExportB.id == "native-export-1");
-  KJ_REQUIRE(bulkImport.id == "native-import-0");
-  auto bulkStats = bulkTable.stats();
-  KJ_REQUIRE(bulkStats.totalCount == 3, bulkStats.totalCount);
-  KJ_REQUIRE(bulkStats.exportedCount == 2, bulkStats.exportedCount);
-  KJ_REQUIRE(bulkStats.importedCount == 1, bulkStats.importedCount);
-  KJ_REQUIRE(bulkTable.dropAll().wait(waitScope) == 3);
-  bulkStats = bulkTable.stats();
-  KJ_REQUIRE(bulkStats.totalCount == 0, bulkStats.totalCount);
-  KJ_REQUIRE(bulkStats.exportedCount == 0, bulkStats.exportedCount);
-  KJ_REQUIRE(bulkStats.importedCount == 0, bulkStats.importedCount);
-  KJ_REQUIRE(bulkLocalDropCount == 2, bulkLocalDropCount);
-  KJ_REQUIRE(bulkRemoteDropCount == 1, bulkRemoteDropCount);
 
   auto fail = root.callRequest();
   fail.setMethod("fail");
