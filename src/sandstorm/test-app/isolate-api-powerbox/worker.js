@@ -87,6 +87,7 @@ function renderPage(state) {
     </p>
     ${state.providerFlow ? "<p id=\"provider-flow-mode\">Provider descriptor mode</p>" : ""}
     ${state.feedFlow ? "<p id=\"feed-flow-mode\">Feed RPC mode</p>" : ""}
+    ${state.llmFlow ? "<p id=\"llm-flow-mode\">LLM RPC mode</p>" : ""}
 
     <label>
       Canonical API URL
@@ -126,11 +127,12 @@ function renderPage(state) {
         try {
           const providerFlow = new URLSearchParams(location.search).has("providerFlow");
           const feedFlow = new URLSearchParams(location.search).has("feedFlow");
+          const llmFlow = new URLSearchParams(location.search).has("llmFlow");
           const apiScopes = oauthScopes.value
             .split(/[,\\s]+/)
             .map((scope) => scope.trim())
             .filter(Boolean);
-          const queryInspection = await inspectPowerboxQuery(providerFlow || feedFlow
+          const queryInspection = await inspectPowerboxQuery(providerFlow || feedFlow || llmFlow
             ? {
                 descriptor: powerboxDescriptors.providerTag({
                   descriptor: "${PROVIDER_DESCRIPTOR}",
@@ -142,13 +144,14 @@ function renderPage(state) {
               });
           output.textContent = "Opening Powerbox with query:\\n" +
             JSON.stringify(queryInspection, null, 2);
-          const requested = providerFlow || feedFlow
+          const requested = providerFlow || feedFlow || llmFlow
             ? await requestProviderCapability({
                 descriptor: powerboxDescriptors.providerTag({
                   descriptor: "${PROVIDER_DESCRIPTOR}",
                 }),
                 saveLabel: {
-                  defaultText: feedFlow ? "Isolate feed provider connection" :
+                  defaultText: feedFlow ? "Isolate feed provider connection" : llmFlow ?
+                    "Isolate LLM provider connection" :
                     "Isolate provider connection"
                 },
               })
@@ -167,6 +170,7 @@ function renderPage(state) {
               oauthScopes: oauthScopes.value,
               skipApiCall: new URLSearchParams(location.search).has("skipApiCall"),
               feedFlow,
+              llmFlow,
             }),
           });
           const html = await response.text();
@@ -254,6 +258,25 @@ async function callFeed(api, capability) {
   };
 }
 
+async function callLlm(capability) {
+  const llm = capability.asRpc();
+  const session = await llm.startSession({ topic: "phase-7-llm" });
+  const sessionInfo = await session.info();
+  const first = await session.asRpc().complete("draft a summary");
+  const second = await session.asRpc().complete("include next steps");
+  const history = await session.asRpc().history();
+  const drop = await session.drop();
+  return {
+    ok: true,
+    session: JSON.parse(JSON.stringify(session)),
+    sessionInfo,
+    first,
+    second,
+    history,
+    drop,
+  };
+}
+
 async function readApiResponse(response) {
   const text = await response.text();
   let body = text;
@@ -278,6 +301,7 @@ async function readState(request, env, result = null, error = null) {
     oauthScopes: API_OAUTH_SCOPES.join(" "),
     providerFlow: url.searchParams.has("providerFlow"),
     feedFlow: url.searchParams.has("feedFlow"),
+    llmFlow: url.searchParams.has("llmFlow"),
     saved: Boolean(savedToken),
     result,
     error,
@@ -328,7 +352,9 @@ export default {
         const { capability, saved } = claimed;
         const call = body.feedFlow
           ? await callFeed(api, capability)
-          : await callApi(body.skipApiCall ? null : capability);
+          : body.llmFlow
+            ? await callLlm(capability)
+            : await callApi(body.skipApiCall ? null : capability);
         await capability.drop();
 
         return new Response(renderPage(await readState(request, env, {

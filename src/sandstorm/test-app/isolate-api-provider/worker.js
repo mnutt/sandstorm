@@ -24,6 +24,7 @@ function renderRequestPage(session) {
     <p>Provides route-backed WebSession and native app-object capabilities.</p>
     <button id="fulfill-api" type="button">Use this provider</button>
     <button id="fulfill-feed" type="button">Use feed provider</button>
+    <button id="fulfill-llm" type="button">Use LLM provider</button>
     <pre id="result">${htmlEscape(JSON.stringify(session, null, 2))}</pre>
 
     <script type="module">
@@ -46,6 +47,9 @@ function renderRequestPage(session) {
       });
       document.querySelector("#fulfill-feed").addEventListener("click", (event) => {
         fulfill(event.currentTarget, "/fulfill-feed");
+      });
+      document.querySelector("#fulfill-llm").addEventListener("click", (event) => {
+        fulfill(event.currentTarget, "/fulfill-llm");
       });
     </script>
   </body>
@@ -90,6 +94,40 @@ class MailFeed extends RpcTarget {
   }
 }
 
+class LlmSession extends RpcTarget {
+  #topic;
+  #turns = [];
+
+  constructor(topic) {
+    super();
+    this.#topic = topic;
+  }
+
+  async complete(prompt) {
+    const text = String(prompt);
+    this.#turns.push(text);
+    return {
+      ok: true,
+      topic: this.#topic,
+      turn: this.#turns.length,
+      text: `reply(${this.#topic}): ${text}`,
+    };
+  }
+
+  history() {
+    return this.#turns.map((prompt, index) => ({
+      turn: index + 1,
+      prompt,
+    }));
+  }
+}
+
+class ConversationalLlm extends RpcTarget {
+  startSession(options = {}) {
+    return new LlmSession(String(options.topic || "general"));
+  }
+}
+
 export default {
   async fetch(request, env) {
     const api = sandstorm(request, env);
@@ -130,6 +168,22 @@ export default {
         title: "Isolate Feed Provider",
         verbPhrase: "can provide feed events",
         description: "Provides an app-defined feed object from an isolate grain.",
+        requiredPermissions: ["view"],
+        descriptor: PROVIDER_DESCRIPTOR,
+      });
+      return Response.json({
+        ok: true,
+        fulfill,
+        capability: JSON.parse(JSON.stringify(capability)),
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/fulfill-llm") {
+      const capability = await api.capability(new ConversationalLlm());
+      const fulfill = await capability.fulfillRequest(request, {
+        title: "Isolate LLM Provider",
+        verbPhrase: "can provide conversational sessions",
+        description: "Provides an app-defined LLM object with returned child sessions.",
         requiredPermissions: ["view"],
         descriptor: PROVIDER_DESCRIPTOR,
       });
