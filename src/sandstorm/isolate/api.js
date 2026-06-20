@@ -791,6 +791,11 @@ async function exportClaimedCapabilityNativeAppRpcSlot(
 }
 
 function claimedCapabilityNativeAppRpcSlotValue(env, slot) {
+  if (slot?.nativeInterface !== "appObject") {
+    const nativeInterface = slot?.nativeInterface || "unknown";
+    throw new ValidationError(
+      `native capability slot nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
+  }
   return new ClaimedCapability(env, slot.id);
 }
 

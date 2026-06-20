@@ -129,7 +129,7 @@ class EventReceiver extends RpcTarget {
 
 class MailFeedCapability extends RpcTarget {
   async subscribe(receiver) {
-    const result = await receiver.asRpc().onMailEvent({
+    const result = await receiver.call("onMailEvent", {
       subject: "phase-3-live-callback",
       unread: 2,
     });
@@ -1027,6 +1027,23 @@ export default {
         "default-subject", { urgent: false });
       const defaultCallValue = await appObjectCapability.call(
         "deliver", "call-subject", { urgent: true });
+      let wrongResultSlotError = null;
+      try {
+        await appObjectCapability.asRpc({
+          transport: async () => ({
+            type: "value",
+            value: {
+              type: "capability",
+              value: { id: "web-session-slot", nativeInterface: "webSession" },
+            },
+          }),
+        }).deliver("wrong-result-slot");
+      } catch (error) {
+        wrongResultSlotError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
 
       const helperNativeRpcStub = createClaimedCapabilityNativeAppRpcStub(appObjectCapability, {
         checkInfo: false,
@@ -1068,6 +1085,7 @@ export default {
         appObjectNativeValue,
         defaultNativeRpcValue,
         defaultCallValue,
+        wrongResultSlotError,
         helperNativeSlot,
         helperNativeDrop,
         wrongNativeRpcTransportCalls,
