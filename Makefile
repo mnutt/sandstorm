@@ -180,7 +180,9 @@ update: sandstorm-$(BUILD)-fast.tar.xz
 fast: sandstorm-$(BUILD)-fast.tar.xz
 
 test: sandstorm-$(BUILD)-fast.tar.xz test-app.spk tests/assets/meteor-testapp.spk \
-		tests/assets/isolate-test-app.spk
+		tests/assets/isolate-test-app.spk \
+		tests/assets/isolate-api-powerbox-test-app.spk \
+		tests/assets/isolate-api-provider-test-app.spk
 	tests/run-local.sh sandstorm-$(BUILD)-fast.tar.xz test-app.spk
 lint: shell-env
 	cd shell && meteor npm run lint
