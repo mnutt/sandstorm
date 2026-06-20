@@ -8,6 +8,7 @@ import {
   SANDSTORM_HELPER_VERSIONS,
   SANDSTORM_RPC_VERSION,
   SavedCapability,
+  createClaimedCapabilityNativeAppRpcStub,
   createNativeAppRpcFetchTransport,
   createNativeAppRpcStub,
   dispatchNativeAppRpcCall,
@@ -963,12 +964,76 @@ export default {
         };
       }
 
+      const nativeRpcTransportCalls = [];
+      const nativeRpcTarget = {
+        deliver(subject, callback, options) {
+          return { subject, callback, options };
+        },
+      };
+      const appObjectNativeRpc = appObjectCapability.asNativeRpc({
+        transport: async (transportSlot, call) => {
+          nativeRpcTransportCalls.push({ slot: transportSlot, call });
+          return dispatchNativeAppRpcCall(nativeRpcTarget, call);
+        },
+      });
+      const appObjectNativeValue = await appObjectNativeRpc.deliver(
+        "native-subject",
+        nativeCapabilitySlot("native-callback", { nativeInterface: "appObject" }),
+        { urgent: true });
+
+      const helperNativeRpcStub = createClaimedCapabilityNativeAppRpcStub(appObjectCapability, {
+        checkInfo: false,
+        transport: async (transportSlot, call) => {
+          nativeRpcTransportCalls.push({ slot: transportSlot, call });
+          return dispatchNativeAppRpcCall(nativeRpcTarget, call);
+        },
+        release() {
+          return { ok: true, released: "mock-app-object" };
+        },
+      });
+      const helperNativeSlot = helperNativeRpcStub.slot;
+      const helperNativeDrop = await helperNativeRpcStub.drop();
+
+      let missingTransportError = null;
+      try {
+        await appObjectCapability.asNativeRpc().deliver("missing-transport");
+      } catch (error) {
+        missingTransportError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+
+      const wrongNativeRpcTransportCalls = [];
+      let wrongNativeRpcError = null;
+      try {
+        await capability.asNativeRpc({
+          transport: async (transportSlot, call) => {
+            wrongNativeRpcTransportCalls.push({ slot: transportSlot, call });
+            return dispatchNativeAppRpcCall(nativeRpcTarget, call);
+          },
+        }).deliver("wrong-interface");
+      } catch (error) {
+        wrongNativeRpcError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+
       return Response.json({
         ok: true,
         calls,
         fetchError,
         appObjectFetchError,
         appObjectOutboundError,
+        nativeRpcTransportCalls,
+        appObjectNativeSlot: appObjectNativeRpc.slot,
+        appObjectNativeValue,
+        helperNativeSlot,
+        helperNativeDrop,
+        missingTransportError,
+        wrongNativeRpcTransportCalls,
+        wrongNativeRpcError,
       });
     }
 
