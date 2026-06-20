@@ -37,6 +37,11 @@ struct OwnedIsolateObjectCallResult {
   IsolateObjectCallResult::Reader getResult();
 };
 
+struct OwnedNativeAppRpcCall {
+  kj::String method;
+  OwnedIsolateObjectCallArgs args;
+};
+
 class IsolateObjectCallTarget {
 public:
   virtual ~IsolateObjectCallTarget() noexcept(false) {}
@@ -98,6 +103,14 @@ private:
   kj::Vector<Entry> entries;
 };
 
+class NativeAppRpcJsonCapabilityAdapter {
+public:
+  virtual ~NativeAppRpcJsonCapabilityAdapter() noexcept(false) {}
+
+  virtual kj::Maybe<IsolateObjectCapability::Client> findCapability(kj::StringPtr id) = 0;
+  virtual kj::String storeCapability(IsolateObjectCapability::Client capability) = 0;
+};
+
 OwnedIsolateObjectCallArgs copyIsolateObjectCallArgs(
     capnp::List<IsolateObjectCallValue>::Reader source);
 void copyIsolateObjectCallValue(
@@ -111,6 +124,11 @@ kj::Own<IsolateObjectCallTarget> makeImportedIsolateObjectCallTarget(
 kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
     IsolateObjectCapability::Client capability, kj::StringPtr method,
     capnp::List<IsolateObjectCallValue>::Reader args);
+OwnedNativeAppRpcCall parseNativeAppRpcJsonCall(
+    kj::ArrayPtr<const kj::byte> body, NativeAppRpcJsonCapabilityAdapter& adapter,
+    size_t maxDataBytes);
+kj::String renderNativeAppRpcJsonResult(
+    IsolateObjectCallResult::Reader result, NativeAppRpcJsonCapabilityAdapter& adapter);
 bool isCanonicalPackagePath(kj::StringPtr path);
 kj::String isolateStorageKeyFromUrl(kj::StringPtr url);
 bool isValidIsolateStorageKey(kj::StringPtr key);

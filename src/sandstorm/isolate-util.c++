@@ -17,6 +17,7 @@
 #include "isolate-util.h"
 #include "util.h"
 
+#include <capnp/compat/json.h>
 #include <kj/compat/http.h>
 #include <kj/compat/url.h>
 #include <kj/encoding.h>
@@ -35,6 +36,197 @@ const kj::HttpHeaderTable& getStructuredResponseHeaderTable() {
     return builder.build();
   }();
   return *table;
+}
+
+void appendJsonString(kj::Vector<char>& result, kj::StringPtr text) {
+  capnp::MallocMessageBuilder message;
+  auto value = message.initRoot<capnp::JsonValue>();
+  value.setString(text);
+
+  capnp::JsonCodec codec;
+  auto encoded = codec.encodeRaw(value.asReader());
+  result.addAll(encoded);
+}
+
+kj::Maybe<kj::Array<byte>> decodeNativeAppRpcBase64Url(
+    kj::StringPtr text, size_t maxSize) {
+  if (text.size() > maxSize * 4 / 3 + 4) {
+    return nullptr;
+  }
+
+  size_t padding = (4 - (text.size() % 4)) % 4;
+  auto base64 = kj::heapArray<char>(text.size() + padding);
+  for (auto i: kj::indices(text)) {
+    char c = text[i];
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+        (c >= '0' && c <= '9')) {
+      base64[i] = c;
+    } else if (c == '-') {
+      base64[i] = '+';
+    } else if (c == '_') {
+      base64[i] = '/';
+    } else {
+      return nullptr;
+    }
+  }
+  for (size_t i = text.size(); i < base64.size(); ++i) {
+    base64[i] = '=';
+  }
+
+  auto decoded = kj::decodeBase64(base64.asPtr());
+  if (decoded.hadErrors || decoded.size() > maxSize) {
+    return nullptr;
+  }
+  return kj::mv(decoded);
+}
+
+kj::Maybe<capnp::JsonValue::Reader> findJsonField(
+    capnp::JsonValue::Reader value, kj::StringPtr name) {
+  KJ_REQUIRE(value.which() == capnp::JsonValue::OBJECT,
+      "native app RPC envelope must be a JSON object");
+  for (auto field: value.getObject()) {
+    if (field.getName() == name) {
+      return field.getValue();
+    }
+  }
+  return nullptr;
+}
+
+capnp::JsonValue::Reader requireJsonField(
+    capnp::JsonValue::Reader value, kj::StringPtr name) {
+  KJ_IF_MAYBE(field, findJsonField(value, name)) {
+    return *field;
+  }
+  KJ_FAIL_REQUIRE("native app RPC envelope is missing required field", name);
+}
+
+kj::StringPtr requireJsonString(capnp::JsonValue::Reader value, kj::StringPtr name) {
+  KJ_REQUIRE(value.which() == capnp::JsonValue::STRING,
+      "native app RPC JSON field must be a string", name);
+  return value.getString();
+}
+
+capnp::List<capnp::JsonValue>::Reader requireJsonArray(
+    capnp::JsonValue::Reader value, kj::StringPtr name) {
+  KJ_REQUIRE(value.which() == capnp::JsonValue::ARRAY,
+      "native app RPC JSON field must be an array", name);
+  return value.getArray();
+}
+
+void initNativeAppRpcCallValueFromJson(
+    capnp::JsonValue::Reader source, IsolateObjectCallValue::Builder target,
+    NativeAppRpcJsonCapabilityAdapter& adapter, size_t maxDataBytes) {
+  auto type = requireJsonString(requireJsonField(source, "type"), "type");
+  if (type == "null") {
+    target.setNull();
+  } else if (type == "bool") {
+    auto value = requireJsonField(source, "value");
+    KJ_REQUIRE(value.which() == capnp::JsonValue::BOOLEAN,
+        "native app RPC bool value must be a boolean");
+    target.setBool(value.getBoolean());
+  } else if (type == "number") {
+    auto value = requireJsonField(source, "value");
+    KJ_REQUIRE(value.which() == capnp::JsonValue::NUMBER,
+        "native app RPC number value must be a number");
+    target.setNumber(value.getNumber());
+  } else if (type == "text") {
+    target.setText(requireJsonString(requireJsonField(source, "value"), "value"));
+  } else if (type == "data") {
+    auto encoded = requireJsonString(requireJsonField(source, "value"), "value");
+    KJ_IF_MAYBE(decoded, decodeNativeAppRpcBase64Url(encoded, maxDataBytes)) {
+      target.setData(*decoded);
+    } else {
+      KJ_FAIL_REQUIRE("native app RPC data value must be base64url text");
+    }
+  } else if (type == "list") {
+    auto values = requireJsonArray(requireJsonField(source, "value"), "value");
+    auto list = target.initList(values.size());
+    for (auto i: kj::indices(values)) {
+      initNativeAppRpcCallValueFromJson(values[i], list[i], adapter, maxDataBytes);
+    }
+  } else if (type == "object") {
+    auto values = requireJsonArray(requireJsonField(source, "value"), "value");
+    auto fields = target.initObject(values.size());
+    for (auto i: kj::indices(values)) {
+      auto field = values[i];
+      fields[i].setName(requireJsonString(requireJsonField(field, "name"), "name"));
+      initNativeAppRpcCallValueFromJson(
+          requireJsonField(field, "value"), fields[i].initValue(), adapter, maxDataBytes);
+    }
+  } else if (type == "capability") {
+    auto value = requireJsonField(source, "value");
+    auto id = requireJsonString(requireJsonField(value, "id"), "id");
+    KJ_IF_MAYBE(cap, adapter.findCapability(id)) {
+      target.setCapability(*cap);
+    } else {
+      KJ_FAIL_REQUIRE("unknown claimed capability in native app RPC argument", id);
+    }
+  } else {
+    KJ_FAIL_REQUIRE("unsupported native app RPC value type", type);
+  }
+}
+
+void appendNativeAppRpcCallValueJson(
+    kj::Vector<char>& json, IsolateObjectCallValue::Reader value,
+    NativeAppRpcJsonCapabilityAdapter& adapter) {
+  switch (value.which()) {
+    case IsolateObjectCallValue::NULL_:
+      json.addAll(kj::StringPtr("{\"type\":\"null\"}"));
+      break;
+    case IsolateObjectCallValue::BOOL:
+      json.addAll(value.getBool()
+          ? kj::StringPtr("{\"type\":\"bool\",\"value\":true}")
+          : kj::StringPtr("{\"type\":\"bool\",\"value\":false}"));
+      break;
+    case IsolateObjectCallValue::NUMBER:
+      json.addAll(kj::StringPtr("{\"type\":\"number\",\"value\":"));
+      json.addAll(kj::str(value.getNumber()));
+      json.add('}');
+      break;
+    case IsolateObjectCallValue::TEXT:
+      json.addAll(kj::StringPtr("{\"type\":\"text\",\"value\":"));
+      appendJsonString(json, value.getText());
+      json.add('}');
+      break;
+    case IsolateObjectCallValue::DATA: {
+      auto encoded = kj::encodeBase64Url(value.getData());
+      json.addAll(kj::StringPtr("{\"type\":\"data\",\"value\":"));
+      appendJsonString(json, encoded);
+      json.add('}');
+      break;
+    }
+    case IsolateObjectCallValue::LIST: {
+      auto values = value.getList();
+      json.addAll(kj::StringPtr("{\"type\":\"list\",\"value\":["));
+      for (auto i: kj::indices(values)) {
+        if (i > 0) json.add(',');
+        appendNativeAppRpcCallValueJson(json, values[i], adapter);
+      }
+      json.addAll(kj::StringPtr("]}"));
+      break;
+    }
+    case IsolateObjectCallValue::OBJECT: {
+      auto fields = value.getObject();
+      json.addAll(kj::StringPtr("{\"type\":\"object\",\"value\":["));
+      for (auto i: kj::indices(fields)) {
+        if (i > 0) json.add(',');
+        json.addAll(kj::StringPtr("{\"name\":"));
+        appendJsonString(json, fields[i].getName());
+        json.addAll(kj::StringPtr(",\"value\":"));
+        appendNativeAppRpcCallValueJson(json, fields[i].getValue(), adapter);
+        json.add('}');
+      }
+      json.addAll(kj::StringPtr("]}"));
+      break;
+    }
+    case IsolateObjectCallValue::CAPABILITY: {
+      auto id = adapter.storeCapability(value.getCapability());
+      json.addAll(kj::StringPtr("{\"type\":\"capability\",\"value\":{\"id\":"));
+      appendJsonString(json, id);
+      json.addAll(kj::StringPtr(",\"nativeInterface\":\"appObject\"}}"));
+      break;
+    }
+  }
 }
 
 }  // namespace
@@ -297,6 +489,53 @@ kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
     copyIsolateObjectCallResult(response.getResult(), message->initRoot<IsolateObjectCallResult>());
     return OwnedIsolateObjectCallResult { kj::mv(message) };
   });
+}
+
+OwnedNativeAppRpcCall parseNativeAppRpcJsonCall(
+    kj::ArrayPtr<const kj::byte> body, NativeAppRpcJsonCapabilityAdapter& adapter,
+    size_t maxDataBytes) {
+  capnp::MallocMessageBuilder jsonMessage;
+  auto parsed = jsonMessage.initRoot<capnp::JsonValue>();
+  capnp::JsonCodec codec;
+  codec.decodeRaw(body.asChars(), parsed);
+
+  auto method = kj::heapString(requireJsonString(requireJsonField(parsed, "method"), "method"));
+  auto inputArgs = requireJsonArray(requireJsonField(parsed, "args"), "args");
+  auto argsMessage = kj::heap<capnp::MallocMessageBuilder>();
+  auto args = argsMessage->initRoot<capnp::List<IsolateObjectCallValue>>(inputArgs.size());
+  for (auto i: kj::indices(inputArgs)) {
+    initNativeAppRpcCallValueFromJson(inputArgs[i], args[i], adapter, maxDataBytes);
+  }
+
+  return OwnedNativeAppRpcCall {
+    kj::mv(method),
+    OwnedIsolateObjectCallArgs { kj::mv(argsMessage) },
+  };
+}
+
+kj::String renderNativeAppRpcJsonResult(
+    IsolateObjectCallResult::Reader result, NativeAppRpcJsonCapabilityAdapter& adapter) {
+  kj::Vector<char> json;
+  switch (result.which()) {
+    case IsolateObjectCallResult::VALUE:
+      json.addAll(kj::StringPtr("{\"type\":\"value\",\"value\":"));
+      appendNativeAppRpcCallValueJson(json, result.getValue(), adapter);
+      json.addAll(kj::StringPtr("}\n"));
+      break;
+    case IsolateObjectCallResult::EXCEPTION: {
+      auto exception = result.getException();
+      json.addAll(kj::StringPtr("{\"type\":\"exception\",\"name\":"));
+      appendJsonString(json, exception.getName());
+      json.addAll(kj::StringPtr(",\"message\":"));
+      appendJsonString(json, exception.getMessage());
+      json.addAll(kj::StringPtr(",\"stack\":"));
+      appendJsonString(json, exception.getStack());
+      json.addAll(kj::StringPtr("}\n"));
+      break;
+    }
+  }
+  json.add('\0');
+  return kj::String(json.releaseAsArray());
 }
 
 bool isCanonicalPackagePath(kj::StringPtr path) {
