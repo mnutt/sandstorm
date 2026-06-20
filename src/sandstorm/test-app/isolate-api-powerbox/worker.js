@@ -1,4 +1,4 @@
-import { ClaimedCapability, SavedCapability, sandstorm } from "sandstorm:api";
+import { ClaimedCapability, RpcTarget, SavedCapability, sandstorm } from "sandstorm:api";
 
 const TOKEN_KEY = "api-powerbox-token";
 const API_CANONICAL_URL = "https://api.example.test/v1";
@@ -86,6 +86,7 @@ function renderPage(state) {
       with OAuth scope <code>${htmlEscape(state.oauthScopes)}</code>.
     </p>
     ${state.providerFlow ? "<p id=\"provider-flow-mode\">Provider descriptor mode</p>" : ""}
+    ${state.feedFlow ? "<p id=\"feed-flow-mode\">Feed RPC mode</p>" : ""}
 
     <label>
       Canonical API URL
@@ -124,11 +125,12 @@ function renderPage(state) {
         button.disabled = true;
         try {
           const providerFlow = new URLSearchParams(location.search).has("providerFlow");
+          const feedFlow = new URLSearchParams(location.search).has("feedFlow");
           const apiScopes = oauthScopes.value
             .split(/[,\\s]+/)
             .map((scope) => scope.trim())
             .filter(Boolean);
-          const queryInspection = await inspectPowerboxQuery(providerFlow
+          const queryInspection = await inspectPowerboxQuery(providerFlow || feedFlow
             ? {
                 descriptor: powerboxDescriptors.providerTag({
                   descriptor: "${PROVIDER_DESCRIPTOR}",
@@ -140,12 +142,15 @@ function renderPage(state) {
               });
           output.textContent = "Opening Powerbox with query:\\n" +
             JSON.stringify(queryInspection, null, 2);
-          const requested = providerFlow
+          const requested = providerFlow || feedFlow
             ? await requestProviderCapability({
                 descriptor: powerboxDescriptors.providerTag({
                   descriptor: "${PROVIDER_DESCRIPTOR}",
                 }),
-                saveLabel: { defaultText: "Isolate provider connection" },
+                saveLabel: {
+                  defaultText: feedFlow ? "Isolate feed provider connection" :
+                    "Isolate provider connection"
+                },
               })
             : await requestApiCapability({
                 canonicalUrl: canonicalUrl.value,
@@ -161,6 +166,7 @@ function renderPage(state) {
               canonicalUrl: canonicalUrl.value,
               oauthScopes: oauthScopes.value,
               skipApiCall: new URLSearchParams(location.search).has("skipApiCall"),
+              feedFlow,
             }),
           });
           const html = await response.text();
@@ -175,6 +181,23 @@ function renderPage(state) {
     </script>
   </body>
 </html>`;
+}
+
+class FeedReceiver extends RpcTarget {
+  #events = [];
+
+  onMailEvent(event) {
+    this.#events.push(event);
+    return {
+      ok: true,
+      count: this.#events.length,
+      subject: event.subject,
+    };
+  }
+
+  events() {
+    return this.#events.slice();
+  }
 }
 
 async function callApi(capability) {
@@ -193,6 +216,42 @@ async function callApi(capability) {
     headers: { accept: "application/json" },
   });
   return readApiResponse(response);
+}
+
+async function callFeed(api, capability) {
+  const feed = capability.asRpc();
+  const liveReceiver = new FeedReceiver();
+  const live = await feed.subscribe(liveReceiver);
+  const durableReceiver = new FeedReceiver();
+  const durable = await api.persistentCallback(durableReceiver, {
+    id: "isolate-feed-receiver",
+    storageKey: "isolate-feed-receiver-token",
+    label: "Isolate feed receiver",
+  });
+  const saved = await feed.subscribeSaved(durable.saved.token);
+  const durableDrop = await durable.capability.drop();
+  const durableDropSaved = await durable.saved.drop();
+  const durableDeleteStorage =
+    await api.storage().delete("isolate-feed-receiver-token");
+  const durableUnregister = api.unregisterCapability("isolate-feed-receiver");
+
+  return {
+    ok: true,
+    live,
+    liveEvents: liveReceiver.events(),
+    saved,
+    savedEvents: durableReceiver.events(),
+    durable: {
+      restored: durable.restored,
+      storageKey: durable.storageKey,
+      capabilityClass: durable.capability instanceof ClaimedCapability,
+      savedClass: durable.saved instanceof SavedCapability,
+      drop: durableDrop,
+      dropSaved: durableDropSaved,
+      deleteStorage: durableDeleteStorage,
+      unregister: durableUnregister,
+    },
+  };
 }
 
 async function readApiResponse(response) {
@@ -218,6 +277,7 @@ async function readState(request, env, result = null, error = null) {
     canonicalUrl: API_CANONICAL_URL,
     oauthScopes: API_OAUTH_SCOPES.join(" "),
     providerFlow: url.searchParams.has("providerFlow"),
+    feedFlow: url.searchParams.has("feedFlow"),
     saved: Boolean(savedToken),
     result,
     error,
@@ -266,7 +326,9 @@ export default {
           storageKey: TOKEN_KEY,
         });
         const { capability, saved } = claimed;
-        const call = await callApi(body.skipApiCall ? null : capability);
+        const call = body.feedFlow
+          ? await callFeed(api, capability)
+          : await callApi(body.skipApiCall ? null : capability);
         await capability.drop();
 
         return new Response(renderPage(await readState(request, env, {
