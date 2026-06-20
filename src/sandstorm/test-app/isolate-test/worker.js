@@ -1669,6 +1669,18 @@ export default {
         const sessionFirst = await session.asRpc().increment(7);
         const sessionSecond = await session.call("increment", 4);
         const sessionCurrent = await session.asRpc().get();
+        let sessionFailure = null;
+        try {
+          await session.asRpc().fail("phase-3 returned capability failure");
+        } catch (error) {
+          sessionFailure = {
+            name: String(error?.name || "Error"),
+            message: String(error?.message || error),
+            details: {
+              name: String(error?.details?.name || ""),
+            },
+          };
+        }
         const sessionDrop = await session.drop();
         const drop = await feedCapability.drop();
         return Response.json({
@@ -1684,6 +1696,7 @@ export default {
           sessionFirst,
           sessionSecond,
           sessionCurrent,
+          sessionFailure,
           sessionDrop,
           drop,
         });
