@@ -1682,9 +1682,11 @@ test("isolate supervisor integration suite", {
     });
     assert.deepEqual(nativeAppRpcCodec.json.exceptionEnvelope, {
       type: "exception",
-      name: "RemoteAppError",
-      message: "remote failure",
-      stack: "remote stack",
+      value: {
+        name: "RemoteAppError",
+        message: "remote failure",
+        stack: "remote stack",
+      },
     });
     assert.equal(nativeAppRpcCodec.json.exceptionError.name, "CapabilityCallError");
     assert.equal(nativeAppRpcCodec.json.exceptionError.message, "remote failure");
@@ -1713,14 +1715,16 @@ test("isolate supervisor integration suite", {
     });
     assert.deepEqual(nativeAppRpcCodec.json.missingDispatchResult, {
       type: "exception",
-      name: "NoSuchMethod",
-      message: "RPC method not found: missing",
-      stack: "",
+      value: {
+        name: "NoSuchMethod",
+        message: "RPC method not found: missing",
+        stack: "",
+      },
     });
     assert.equal(nativeAppRpcCodec.json.failedDispatchResult.type, "exception");
-    assert.equal(nativeAppRpcCodec.json.failedDispatchResult.name, "TypeError");
-    assert.equal(nativeAppRpcCodec.json.failedDispatchResult.message, "native dispatch failure");
-    assert.match(nativeAppRpcCodec.json.failedDispatchResult.stack, /native dispatch failure/);
+    assert.equal(nativeAppRpcCodec.json.failedDispatchResult.value.name, "TypeError");
+    assert.equal(nativeAppRpcCodec.json.failedDispatchResult.value.message, "native dispatch failure");
+    assert.match(nativeAppRpcCodec.json.failedDispatchResult.value.stack, /native dispatch failure/);
     assert.deepEqual(nativeAppRpcCodec.json.stubSlot, {
       type: "nativeCapabilitySlot",
       id: "slot-1",
@@ -2043,19 +2047,21 @@ test("isolate supervisor integration suite", {
     assert.equal(nativeAppRpcRoute.json.missing.status, 200);
     assert.deepEqual(nativeAppRpcRoute.json.missing.body, {
       type: "exception",
-      name: "NoSuchMethod",
-      message: "RPC method not found: missing",
-      stack: "",
+      value: {
+        name: "NoSuchMethod",
+        message: "RPC method not found: missing",
+        stack: "",
+      },
     });
     assert.equal(nativeAppRpcRoute.json.failed.status, 200);
     assert.equal(nativeAppRpcRoute.json.failed.body.type, "exception");
-    assert.equal(nativeAppRpcRoute.json.failed.body.name, "RangeError");
-    assert.equal(nativeAppRpcRoute.json.failed.body.message, "route dispatch failure");
-    assert.match(nativeAppRpcRoute.json.failed.body.stack, /route dispatch failure/);
+    assert.equal(nativeAppRpcRoute.json.failed.body.value.name, "RangeError");
+    assert.equal(nativeAppRpcRoute.json.failed.body.value.message, "route dispatch failure");
+    assert.match(nativeAppRpcRoute.json.failed.body.value.stack, /route dispatch failure/);
     assert.equal(nativeAppRpcRoute.json.invalid.status, 400);
     assert.equal(nativeAppRpcRoute.json.invalid.body.type, "exception");
-    assert.equal(nativeAppRpcRoute.json.invalid.body.name, "ValidationError");
-    assert.match(nativeAppRpcRoute.json.invalid.body.message, /reserved/);
+    assert.equal(nativeAppRpcRoute.json.invalid.body.value.name, "ValidationError");
+    assert.match(nativeAppRpcRoute.json.invalid.body.value.message, /reserved/);
     assert.deepEqual(nativeAppRpcRoute.json.routeStub.slot, {
       type: "nativeCapabilitySlot",
       id: "native-route-target",
