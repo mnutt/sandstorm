@@ -2461,6 +2461,14 @@ test("isolate supervisor integration suite", {
         stack: "",
       },
     });
+    assert.equal(nativeAppRpcRoute.json.routeStub.transportErrors.disconnected.name,
+      "DisconnectedCapabilityError");
+    assert.equal(nativeAppRpcRoute.json.routeStub.transportErrors.disconnected.message,
+      "native app RPC transport disconnected");
+    assert.deepEqual(nativeAppRpcRoute.json.routeStub.transportErrors.disconnected.details, {
+      causeName: "TypeError",
+      causeMessage: "simulated bridge disconnect",
+    });
 
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);

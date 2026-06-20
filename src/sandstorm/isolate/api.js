@@ -159,6 +159,14 @@ export class CapabilityCallError extends Error {
   }
 }
 
+export class DisconnectedCapabilityError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "DisconnectedCapabilityError";
+    this.details = details;
+  }
+}
+
 function failValidation(name, expected, value) {
   const actual = Object.prototype.toString.call(value);
   throw new ValidationError(`${name} must be ${expected}; got ${actual}`);
@@ -727,11 +735,18 @@ export function createNativeAppRpcFetchTransport(fetcher, route) {
 
   return async (slot, call) => {
     const url = typeof route === "function" ? route(slot) : route;
-    const response = await fetcher.fetch(validate.string(url, "native app RPC route"), {
-      method: "POST",
-      headers: { "content-type": "application/json; charset=utf-8" },
-      body: JSON.stringify(call),
-    });
+    let response;
+    try {
+      response = await fetcher.fetch(validate.string(url, "native app RPC route"), {
+        method: "POST",
+        headers: { "content-type": "application/json; charset=utf-8" },
+        body: JSON.stringify(call),
+      });
+    } catch (error) {
+      throw new DisconnectedCapabilityError("native app RPC transport disconnected", {
+        cause: error,
+      });
+    }
     const text = await response.text();
     let result;
     try {
