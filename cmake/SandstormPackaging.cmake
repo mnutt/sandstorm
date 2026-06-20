@@ -473,4 +473,20 @@ function(sandstorm_add_packaging_targets)
     USES_TERMINAL
     COMMENT "Running Sandstorm system tests"
     VERBATIM)
+
+  add_custom_target(isolate-examples-test
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "TESTCASE=tests/apps/isolate-examples.js"
+      "${PROJECT_SOURCE_DIR}/tests/run-local.sh"
+      "${_fast_package}"
+      "${_test_app_spk}"
+    DEPENDS
+      package-fast
+      test-app-spk
+      isolate-api-powerbox-test-app-spk
+      isolate-api-provider-test-app-spk
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Running isolate example system tests"
+    VERBATIM)
 endfunction()

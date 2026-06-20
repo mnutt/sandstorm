@@ -25,7 +25,7 @@ CMAKE_CONFIGURE = cmake --preset $(CMAKE_PRESET) -DSANDSTORM_BUILD=$(BUILD)
 CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 
 .PHONY: all configure toolchain deps update-deps clean ci-clean \
-	package fast install update test lint typecheck typecheck-ts installer-test \
+	package fast install update test isolate-examples-test lint typecheck typecheck-ts installer-test \
 	isolate-supervisor-integration-test \
 	isolate-supervisor-stress-test \
 	isolate-supervisor-syscall-trace \
@@ -73,6 +73,7 @@ $(eval $(call cmake_target,fast,package-fast))
 $(eval $(call cmake_target,install,install-local))
 $(eval $(call cmake_target,update,update-local))
 $(eval $(call cmake_target,test,system-test))
+$(eval $(call cmake_target,isolate-examples-test,isolate-examples-test))
 $(eval $(call cmake_target,lint,lint))
 $(eval $(call cmake_target,typecheck,typecheck))
 $(eval $(call cmake_target,typecheck-ts,typecheck))
