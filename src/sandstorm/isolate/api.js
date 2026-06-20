@@ -790,6 +790,23 @@ async function exportClaimedCapabilityNativeAppRpcSlot(
   failValidation(context.name, "an app-defined RPC capability", value);
 }
 
+async function releaseTemporaryNativeAppRpcCapabilities(temporaryCapabilities) {
+  const errors = [];
+  for (const capability of temporaryCapabilities.splice(0).reverse()) {
+    try {
+      await capability.drop();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new CapabilityCallError("failed to release temporary app-defined RPC capabilities", {
+      errors,
+    });
+  }
+}
+
 function claimedCapabilityNativeAppRpcSlotValue(env, slot) {
   if (slot?.nativeInterface !== "appObject") {
     const nativeInterface = slot?.nativeInterface || "unknown";
@@ -800,12 +817,8 @@ function claimedCapabilityNativeAppRpcSlotValue(env, slot) {
 }
 
 async function callClaimedCapabilityWithNativeAppRpc(capability, method, args) {
-  const temporaryCapabilities = [];
   const stub = createClaimedCapabilityNativeAppRpcStub(capability, {
     checkInfo: false,
-    exportCapabilitySlot: (value, context) =>
-      exportClaimedCapabilityNativeAppRpcSlot(
-        capability.env, value, context, temporaryCapabilities),
     resolveCapabilitySlot: (slot) =>
       claimedCapabilityNativeAppRpcSlotValue(capability.env, slot),
   });
@@ -861,7 +874,9 @@ export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}
               ((value, context) => exportClaimedCapabilityNativeAppRpcSlot(
                 capability.env, value, context, temporaryCapabilities)),
           },
-          finish: async () => {},
+          finish: async () => {
+            await releaseTemporaryNativeAppRpcCapabilities(temporaryCapabilities);
+          },
         };
       },
       release: options.release ?? (() => capability.drop()),
@@ -1009,9 +1024,17 @@ export class ClaimedCapability {
   }
 
   async drop() {
+    const metadata = claimedCapabilityMetadata.get(this.id);
+    const objectId = objectCapabilityIds.get(this.id);
     const result = await postPowerbox(
       this.#env, `powerbox/drop?id=${encodeURIComponent(this.id)}`);
     forgetClaimedCapabilityHandle(this.id);
+    if (metadata?.transientObjectCapability && result?.released === true && objectId) {
+      const ids = exportedObjectCapabilityIds.get(objectId);
+      if (!ids || ids.size === 0) {
+        disposeExportedObjectTarget(objectId);
+      }
+    }
     return result;
   }
 

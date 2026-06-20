@@ -34,9 +34,16 @@ interface IsolateObjectCapability @0xd7a322498a996313 {
   call @0 (method :Text, args :List(IsolateObjectCallValue))
       -> (result :IsolateObjectCallResult);
 
-  drop @1 ();
+  drop @1 () -> (released :Bool);
+  # Releases this reference. `released` is true when this drop released the final supervisor-side
+  # reference to the exported object.
   # Signals that the receiver no longer needs this object. Cap'n Proto disconnects still matter;
   # this hook exists for explicit JS disposal/drop semantics.
+
+  dup @2 () -> (capability :IsolateObjectCapability);
+  # Creates another live reference to this object. Receivers use this when app code explicitly
+  # retains a passed callback beyond the current call, so exporters can safely release temporary
+  # argument handles after the call completes.
 }
 
 interface IsolatePersistentObjectCapability @0xc81a6f7df4d0eec2
