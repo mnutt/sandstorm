@@ -267,7 +267,53 @@ function nativeAppRpcObjectFieldName(value, name = "field name") {
   return fieldName;
 }
 
-export function serializeNativeAppRpcValue(value, name = "value") {
+function nativeAppRpcSerializationContext(options = "value", defaultName = "value") {
+  if (typeof options === "string") {
+    return { name: options };
+  }
+  if (options === undefined || options === null) {
+    return { name: defaultName };
+  }
+  if (!isPlainObject(options)) {
+    failValidation("native app RPC serialization options", "an object", options);
+  }
+  const context = {
+    name: options.name === undefined
+      ? defaultName
+      : validate.string(options.name, "native app RPC serialization options name"),
+  };
+  if (options.exportCapabilitySlot !== undefined && options.exportCapabilitySlot !== null) {
+    if (typeof options.exportCapabilitySlot !== "function") {
+      failValidation(
+        "native app RPC serialization options exportCapabilitySlot", "a function",
+        options.exportCapabilitySlot);
+    }
+    context.exportCapabilitySlot = options.exportCapabilitySlot;
+  }
+  return context;
+}
+
+function nativeAppRpcSerializationChild(context, name) {
+  return {
+    name,
+    exportCapabilitySlot: context.exportCapabilitySlot,
+  };
+}
+
+function validateNativeCapabilitySlotEnvelope(value, name) {
+  const slot = {
+    id: validate.string(value.id, `${name}.id`, { minLength: 1, maxLength: 256 }),
+  };
+  if (value.nativeInterface !== undefined && value.nativeInterface !== null) {
+    slot.nativeInterface = validate.string(
+      value.nativeInterface, `${name}.nativeInterface`, { minLength: 1 });
+  }
+  return { type: "capability", value: slot };
+}
+
+export function serializeNativeAppRpcValue(value, options = "value") {
+  const context = nativeAppRpcSerializationContext(options);
+  const name = context.name;
   if (value === null || value === undefined) {
     return { type: "null" };
   }
@@ -292,18 +338,12 @@ export function serializeNativeAppRpcValue(value, name = "value") {
   if (Array.isArray(value)) {
     return {
       type: "list",
-      value: value.map((item, index) => serializeNativeAppRpcValue(item, `${name}[${index}]`)),
+      value: value.map((item, index) =>
+        serializeNativeAppRpcValue(item, nativeAppRpcSerializationChild(context, `${name}[${index}]`))),
     };
   }
   if (value && typeof value === "object" && value.type === "nativeCapabilitySlot") {
-    const slot = {
-      id: validate.string(value.id, `${name}.id`, { minLength: 1, maxLength: 256 }),
-    };
-    if (value.nativeInterface !== undefined && value.nativeInterface !== null) {
-      slot.nativeInterface = validate.string(
-        value.nativeInterface, `${name}.nativeInterface`, { minLength: 1 });
-    }
-    return { type: "capability", value: slot };
+    return validateNativeCapabilitySlotEnvelope(value, name);
   }
   if (value instanceof RpcTarget || value instanceof ClaimedCapability) {
     throw new ValidationError(
@@ -318,10 +358,53 @@ export function serializeNativeAppRpcValue(value, name = "value") {
     const fieldName = nativeAppRpcObjectFieldName(key, `${name} field name`);
     fields.push({
       name: fieldName,
-      value: serializeNativeAppRpcValue(item, `${name}.${fieldName}`),
+      value: serializeNativeAppRpcValue(
+        item, nativeAppRpcSerializationChild(context, `${name}.${fieldName}`)),
     });
   }
   return { type: "object", value: fields };
+}
+
+export async function serializeNativeAppRpcValueAsync(value, options = "value") {
+  const context = nativeAppRpcSerializationContext(options);
+  const name = context.name;
+  if (value instanceof RpcTarget || value instanceof ClaimedCapability) {
+    if (!context.exportCapabilitySlot) {
+      throw new ValidationError(
+        `${name} must be exported to a native capability slot before native app RPC serialization`);
+    }
+    const slot = await context.exportCapabilitySlot(value, { name });
+    return validateNativeCapabilitySlotEnvelope(
+      nativeCapabilitySlot(slot?.id, { nativeInterface: slot?.nativeInterface }), name);
+  }
+  if (Array.isArray(value)) {
+    return {
+      type: "list",
+      value: await Promise.all(value.map((item, index) =>
+        serializeNativeAppRpcValueAsync(
+          item, nativeAppRpcSerializationChild(context, `${name}[${index}]`)))),
+    };
+  }
+  if (value && typeof value === "object" &&
+      value.type !== "nativeCapabilitySlot" &&
+      !(value instanceof ArrayBuffer) &&
+      !ArrayBuffer.isView(value)) {
+    if (!isPlainObject(value)) {
+      return serializeNativeAppRpcValue(value, context);
+    }
+
+    const fields = [];
+    for (const [key, item] of Object.entries(value)) {
+      const fieldName = nativeAppRpcObjectFieldName(key, `${name} field name`);
+      fields.push({
+        name: fieldName,
+        value: await serializeNativeAppRpcValueAsync(
+          item, nativeAppRpcSerializationChild(context, `${name}.${fieldName}`)),
+      });
+    }
+    return { type: "object", value: fields };
+  }
+  return serializeNativeAppRpcValue(value, context);
 }
 
 function nativeAppRpcHydrationContext(options = "value", defaultName = "value") {
@@ -429,6 +512,15 @@ export function serializeNativeAppRpcCall(method, args = []) {
   return { method, args };
 }
 
+export async function serializeNativeAppRpcCallAsync(method, args = [], options = {}) {
+  method = capabilityMethodName(method);
+  const context = nativeAppRpcSerializationContext(options, "call");
+  args = await Promise.all(capabilityArgs(args).map((arg, index) =>
+    serializeNativeAppRpcValueAsync(
+      arg, nativeAppRpcSerializationChild(context, `${context.name}.args[${index}]`))));
+  return { method, args };
+}
+
 export function hydrateNativeAppRpcCall(call, options = "call") {
   const context = nativeAppRpcHydrationContext(options, "call");
   const name = context.name;
@@ -518,6 +610,7 @@ const NATIVE_APP_RPC_STUB_OWN_PROPERTIES = new Set([
 export class NativeAppRpcStub {
   #slot;
   #transport;
+  #serializationOptions;
   #hydrationOptions;
   #release;
   #dropPromise;
@@ -531,6 +624,7 @@ export class NativeAppRpcStub {
       nativeInterface: slot?.nativeInterface,
     });
     this.#transport = transport;
+    this.#serializationOptions = nativeAppRpcSerializationContext(options, "call");
     this.#hydrationOptions = nativeAppRpcHydrationContext(options, "result");
     if (options?.release !== undefined && options.release !== null) {
       if (typeof options.release !== "function") {
@@ -548,7 +642,8 @@ export class NativeAppRpcStub {
     if (this.#dropPromise) {
       throw new CapabilityCallError("native app RPC stub has been dropped");
     }
-    const result = await this.#transport(this.#slot, serializeNativeAppRpcCall(method, args));
+    const call = await serializeNativeAppRpcCallAsync(method, args, this.#serializationOptions);
+    const result = await this.#transport(this.#slot, call);
     return hydrateNativeAppRpcResult(result, this.#hydrationOptions);
   }
 
