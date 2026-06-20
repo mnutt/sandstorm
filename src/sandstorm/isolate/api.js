@@ -626,6 +626,7 @@ export class NativeAppRpcStub {
   #serializationOptions;
   #hydrationOptions;
   #release;
+  #beginCall;
   #dropPromise;
 
   constructor(slot, transport, options = {}) {
@@ -639,6 +640,12 @@ export class NativeAppRpcStub {
     this.#transport = transport;
     this.#serializationOptions = nativeAppRpcSerializationContext(options, "call");
     this.#hydrationOptions = nativeAppRpcHydrationContext(options, "result");
+    if (options?.beginCall !== undefined && options.beginCall !== null) {
+      if (typeof options.beginCall !== "function") {
+        failValidation("native app RPC stub beginCall", "a function", options.beginCall);
+      }
+      this.#beginCall = options.beginCall;
+    }
     if (options?.release !== undefined && options.release !== null) {
       if (typeof options.release !== "function") {
         failValidation("native app RPC stub release", "a function", options.release);
@@ -655,9 +662,15 @@ export class NativeAppRpcStub {
     if (this.#dropPromise) {
       throw new CapabilityCallError("native app RPC stub has been dropped");
     }
-    const call = await serializeNativeAppRpcCallAsync(method, args, this.#serializationOptions);
-    const result = await this.#transport(this.#slot, call);
-    return hydrateNativeAppRpcResult(result, this.#hydrationOptions);
+    const callState = this.#beginCall?.();
+    const serializationOptions = callState?.serializationOptions ?? this.#serializationOptions;
+    try {
+      const call = await serializeNativeAppRpcCallAsync(method, args, serializationOptions);
+      const result = await this.#transport(this.#slot, call);
+      return hydrateNativeAppRpcResult(result, this.#hydrationOptions);
+    } finally {
+      await callState?.finish?.();
+    }
   }
 
   drop() {
@@ -827,11 +840,29 @@ export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}
     return transport(slot, call);
   };
 
+  const resolveCapabilitySlot = options.resolveCapabilitySlot ??
+    ((slot) => claimedCapabilityNativeAppRpcSlotValue(capability.env, slot));
+
   return createNativeAppRpcStub(
     nativeCapabilitySlot(capability.id, { nativeInterface: "appObject" }),
     checkedTransport,
     {
       ...options,
+      resolveCapabilitySlot,
+      beginCall: () => {
+        const temporaryCapabilities = [];
+        return {
+          serializationOptions: {
+            ...options,
+            exportCapabilitySlot: options.exportCapabilitySlot ??
+              ((value, context) => exportClaimedCapabilityNativeAppRpcSlot(
+                capability.env, value, context, temporaryCapabilities)),
+          },
+          finish: async () => {
+            await Promise.all(temporaryCapabilities.map((cap) => cap.drop().catch(() => {})));
+          },
+        };
+      },
       release: options.release ?? (() => capability.drop()),
     });
 }
@@ -954,10 +985,6 @@ export class ClaimedCapability {
 
   call(method, ...args) {
     return callClaimedCapability(this, method, args);
-  }
-
-  asRpc() {
-    return createCapabilityRpcStub(this);
   }
 
   asNativeRpc(options = {}) {
@@ -1643,60 +1670,6 @@ async function callClaimedCapability(capability, method, args = []) {
   const nativeInterface = info?.nativeInterface || "unknown";
   throw new ValidationError(
     `ClaimedCapability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
-}
-
-const CLAIMED_CAPABILITY_RPC_OWN_PROPERTIES = new Set([
-  "ok",
-  "type",
-  "id",
-  "env",
-  "fetch",
-  "call",
-  "asRpc",
-  "asNativeRpc",
-  "asOutboundHttp",
-  "info",
-  "dup",
-  "save",
-  "drop",
-  "offer",
-  "fulfillRequest",
-  "tieToUser",
-  "toJSON",
-]);
-
-function wrapRpcStubValue(value) {
-  if (value instanceof ClaimedCapability) {
-    return value.asRpc();
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => wrapRpcStubValue(item));
-  }
-  if (!value || typeof value !== "object" || value instanceof SavedCapability) {
-    return value;
-  }
-
-  const result = {};
-  for (const [key, item] of Object.entries(value)) {
-    result[key] = wrapRpcStubValue(item);
-  }
-  return result;
-}
-
-function createCapabilityRpcStub(capability) {
-  return new Proxy(capability, {
-    get(target, prop, receiver) {
-      if (typeof prop !== "string" ||
-          CLAIMED_CAPABILITY_RPC_OWN_PROPERTIES.has(prop) ||
-          prop in target) {
-        return Reflect.get(target, prop, receiver);
-      }
-      if (prop === "then") {
-        return undefined;
-      }
-      return async (...args) => wrapRpcStubValue(await target.call(prop, ...args));
-    },
-  });
 }
 
 function wrapCapabilityValue(env, value) {

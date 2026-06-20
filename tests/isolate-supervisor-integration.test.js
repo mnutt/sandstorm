@@ -1583,9 +1583,9 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(nativeInterfaceValidation.json.appObjectNativeValue, {
       subject: "native-subject",
       callback: {
-        type: "nativeCapabilitySlot",
+        ok: true,
+        type: "claimedCapability",
         id: "native-callback",
-        nativeInterface: "appObject",
       },
       options: { urgent: true },
     });
