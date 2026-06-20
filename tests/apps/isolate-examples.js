@@ -139,3 +139,46 @@ module.exports["Test isolate API Powerbox provider flow"] = function (browser) {
         .assert.textContains("pre", "\"source\": \"isolate-capability-provider\"");
     });
 };
+
+module.exports["Test isolate app-object feed provider flow"] = function (browser) {
+  ensureApiPowerboxSpk();
+  ensureApiProviderSpk();
+
+  installAndOpenExample(browser, apiProviderAppId, apiProviderSpk)
+    .grainFrame()
+    .waitForElementVisible("#fulfill-feed", medium_wait)
+    .frameParent()
+    .url(function (providerGrainUrl) {
+      var providerGrainId = providerGrainUrl.value.split("/").pop();
+      var providerCardSelector =
+          ".powerbox-card button[data-card-id=\"grain-" + providerGrainId + "\"]";
+
+      uploadAndOpenExample(browser, apiPowerboxAppId, apiPowerboxSpk)
+        .grainFrame()
+        .execute(function () {
+          window.location.href = "/?feedFlow=1";
+        })
+        .waitForElementVisible("#feed-flow-mode", medium_wait)
+        .waitForElementVisible("#connect-api", medium_wait)
+        .click("#connect-api")
+        .frameParent()
+        .waitForElementVisible(providerCardSelector, medium_wait)
+        .click(providerCardSelector)
+        .waitForElementVisible(".powerbox-iframe-mount iframe", medium_wait)
+        .frameSelector(".powerbox-iframe-mount iframe")
+        .waitForElementVisible("#fulfill-feed", medium_wait)
+        .click("#fulfill-feed")
+        .frameParent()
+        .grainFrame()
+        .waitForElementVisible("pre", medium_wait)
+        .assert.textContains("body", "Saved API capability token present")
+        .assert.textContains("pre", "\"ok\": true")
+        .assert.textContains("pre", "\"capabilityClass\": true")
+        .assert.textContains("pre", "\"savedClass\": true")
+        .assert.textContains("pre", "\"mode\": \"live\"")
+        .assert.textContains("pre", "\"subject\": \"isolate-feed-live-callback\"")
+        .assert.textContains("pre", "\"mode\": \"saved\"")
+        .assert.textContains("pre", "\"subject\": \"isolate-feed-saved-callback\"")
+        .assert.textContains("pre", "\"storageKey\": \"isolate-feed-receiver-token\"");
+    });
+};
