@@ -766,13 +766,13 @@ test("isolate supervisor integration suite", {
       id: restored.json.id,
       kind: "restored",
       residence: "imported",
-      nativeInterface: "unknown",
-      pathPrefix: "",
+      nativeInterface: "webSession",
+      pathPrefix: "/exported",
       persistent: true,
       hasDropNotify: false,
       dropNotifyRefCount: 0,
       supportsWebFetch: true,
-      supportsOutboundHttpFetch: true,
+      supportsOutboundHttpFetch: false,
       supportsNativeAppRpcTransport: false,
       hasNativeCapability: true,
       liveForwardable: true,
@@ -958,13 +958,13 @@ test("isolate supervisor integration suite", {
       id: restored.json.id,
       kind: "restored",
       residence: "imported",
-      nativeInterface: "unknown",
-      pathPrefix: "",
+      nativeInterface: "apiSession",
+      pathPrefix: "/api-exported",
       persistent: true,
       hasDropNotify: false,
       dropNotifyRefCount: 0,
       supportsWebFetch: true,
-      supportsOutboundHttpFetch: true,
+      supportsOutboundHttpFetch: false,
       supportsNativeAppRpcTransport: false,
       hasNativeCapability: true,
       liveForwardable: true,
@@ -1072,11 +1072,28 @@ test("isolate supervisor integration suite", {
     assert.equal(capabilityInfo.json.hasNativeCapability, true);
     assert.equal(capabilityInfo.json.liveForwardable, true);
 
-    async function callObjectCapability(method, args = []) {
+    function nativeNumber(value) {
+      return { type: "number", value };
+    }
+
+    function nativeCapability(id) {
+      return { type: "capability", value: { id, nativeInterface: "appObject" } };
+    }
+
+    function nativeCounterValue(value) {
+      return {
+        type: "value",
+        value: {
+          type: "object",
+          value: [{ name: "value", value: nativeNumber(value) }],
+        },
+      };
+    }
+
+    async function callObjectCapability(id, method, args = []) {
       return requestJson(
         fixture.sandstormApiSocket,
-        `/powerbox/fetch?id=${encodeURIComponent(exported.json.capability.id)}` +
-        `&method=POST&path=${encodeURIComponent("/call")}`,
+        `/powerbox/native-app-rpc-call?id=${encodeURIComponent(id)}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -1084,23 +1101,27 @@ test("isolate supervisor integration suite", {
         });
     }
 
-    const first = await callObjectCapability("increment", [5]);
+    const first = await callObjectCapability(
+      exported.json.capability.id, "increment", [nativeNumber(5)]);
     assert.equal(first.statusCode, 200, first.body);
-    assert.deepEqual(first.json, { ok: true, result: { value: 5 } });
+    assert.deepEqual(first.json, nativeCounterValue(5));
 
-    const second = await callObjectCapability("increment", [2]);
+    const second = await callObjectCapability(
+      exported.json.capability.id, "increment", [nativeNumber(2)]);
     assert.equal(second.statusCode, 200, second.body);
-    assert.deepEqual(second.json, { ok: true, result: { value: 7 } });
+    assert.deepEqual(second.json, nativeCounterValue(7));
 
-    const current = await callObjectCapability("get");
+    const current = await callObjectCapability(exported.json.capability.id, "get");
     assert.equal(current.statusCode, 200, current.body);
-    assert.deepEqual(current.json, { ok: true, result: { value: 7 } });
+    assert.deepEqual(current.json, nativeCounterValue(7));
 
-    const child = await callObjectCapability("child");
+    const child = await callObjectCapability(exported.json.capability.id, "child");
     assert.equal(child.statusCode, 200, child.body);
-    assert.equal(child.json.ok, true);
-    assert.equal(child.json.result.type, "claimedCapability");
-    assert.equal(typeof child.json.result.id, "string");
+    assert.equal(child.json.type, "value");
+    assert.equal(child.json.value.type, "capability");
+    assert.equal(typeof child.json.value.value.id, "string");
+    assert.equal(child.json.value.value.nativeInterface, "appObject");
+    const childId = child.json.value.value.id;
 
     const statsAfterChildExport = await requestJson(
       fixture.sandstormApiSocket, "/capabilities/claimed-stats");
@@ -1118,30 +1139,19 @@ test("isolate supervisor integration suite", {
     assert.equal(statsAfterChildExport.json.importedCount,
       statsAfterParentExport.json.importedCount);
 
-    async function callChild(method, args = []) {
-      return requestJson(
-        fixture.sandstormApiSocket,
-        `/powerbox/fetch?id=${encodeURIComponent(child.json.result.id)}` +
-        `&method=POST&path=${encodeURIComponent("/call")}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json; charset=utf-8" },
-          body: JSON.stringify({ method, args }),
-        });
-    }
-
-    const childIncrement = await callChild("increment", [9]);
+    const childIncrement = await callObjectCapability(childId, "increment", [nativeNumber(9)]);
     assert.equal(childIncrement.statusCode, 200, childIncrement.body);
-    assert.deepEqual(childIncrement.json, { ok: true, result: { value: 9 } });
+    assert.deepEqual(childIncrement.json, nativeCounterValue(9));
 
-    const parentReadsChild = await callObjectCapability("readOther", [child.json.result]);
+    const parentReadsChild = await callObjectCapability(
+      exported.json.capability.id, "readOther", [nativeCapability(childId)]);
     assert.equal(parentReadsChild.statusCode, 200, parentReadsChild.body);
-    assert.deepEqual(parentReadsChild.json, { ok: true, result: { value: 9 } });
+    assert.deepEqual(parentReadsChild.json, nativeCounterValue(9));
 
-    const missing = await callObjectCapability("missingMethod");
-    assert.equal(missing.statusCode, 404, missing.body);
-    assert.equal(missing.json.ok, false);
-    assert.match(missing.json.error, /RPC method not found/);
+    const missing = await callObjectCapability(exported.json.capability.id, "missingMethod");
+    assert.equal(missing.statusCode, 200, missing.body);
+    assert.equal(missing.json.type, "exception");
+    assert.match(missing.json.value.message, /RPC method not found/);
 
     const disposeBefore = await requestJson(
       fixture.workerdSocket, "/object-capability-dispose-count");
@@ -1150,7 +1160,7 @@ test("isolate supervisor integration suite", {
 
     const dropChild = await requestJson(
       fixture.sandstormApiSocket,
-      `/powerbox/drop?id=${encodeURIComponent(child.json.result.id)}`,
+      `/powerbox/drop?id=${encodeURIComponent(childId)}`,
       { method: "POST" });
     assert.equal(dropChild.statusCode, 200, dropChild.body);
     assert.equal(dropChild.json.ok, true);
@@ -1274,18 +1284,10 @@ test("isolate supervisor integration suite", {
     assert.match(selfTest.json.saveError.message, /transient and cannot be saved/);
     assert.equal(selfTest.json.remoteArguments.rpcTargetError.name, "ValidationError");
     assert.match(selfTest.json.remoteArguments.rpcTargetError.message,
-      /RpcTarget callback arguments cannot be passed to remote app-defined RPC calls/);
+      /nativeInterface unknown cannot be used with app-defined RPC/);
     assert.equal(selfTest.json.remoteArguments.claimedCapabilityError.name, "ValidationError");
     assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
-      /ClaimedCapability handles cannot be passed to remote app-defined RPC calls/);
-    assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
-      /hasNativeCapability=true/);
-    assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
-      /liveForwardable=true/);
-    assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
-      /supportsNativeAppRpcTransport=true/);
-    assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
-      /native app-defined RPC transport is not implemented yet/);
+      /nativeInterface unknown cannot be used with app-defined RPC/);
     assert.equal(typeof selfTest.json.duplicate.id, "string");
     assert.notEqual(selfTest.json.duplicate.id, selfTest.json.duplicate.sourceId);
     assert.equal(selfTest.json.duplicate.originalInfoWithDuplicateLive.id,
