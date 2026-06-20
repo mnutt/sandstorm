@@ -748,11 +748,7 @@ async function requireNativeAppRpcClaimedCapability(capability) {
 }
 
 function claimedCapabilitySupportsNativeAppRpc(info) {
-  return info === null || info === undefined ||
-      info?.supportsNativeAppRpcTransport === true || (
-      info?.supportsNativeAppRpcTransport === undefined &&
-      info?.nativeInterface !== undefined &&
-      (info.nativeInterface === "unknown" || info.nativeInterface === "appObject"));
+  return info?.supportsNativeAppRpcTransport === true;
 }
 
 function claimedCapabilityReportsNativeAppRpcTransport(info) {
@@ -1644,38 +1640,9 @@ async function callClaimedCapability(capability, method, args = []) {
     return callClaimedCapabilityWithNativeAppRpc(capability, method, args);
   }
 
-  const temporaryCapabilities = [];
-  try {
-    const serializedArgs = await serializeCapabilityValue(capability.env, args, {
-      allowLocalCapabilityHandles: objectCapabilityIds.has(capability.id),
-      temporaryCapabilities,
-    });
-    const response = await capability.fetch("/call", {
-      method: "POST",
-      headers: { "content-type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ method, args: serializedArgs }),
-    });
-    const text = await response.text();
-    let body;
-    try {
-      body = text.length > 0 ? JSON.parse(text) : {};
-    } catch (error) {
-      throw new CapabilityCallError(
-        `capability call ${method} returned non-JSON response with status ${response.status}`,
-        { status: response.status, body: text });
-    }
-
-    if (!response.ok || !body.ok) {
-      throw new CapabilityCallError(body.error || `capability call ${method} failed`, {
-        status: response.status,
-        body,
-      });
-    }
-
-    return wrapCapabilityValue(capability.env, body.result);
-  } finally {
-    await Promise.all(temporaryCapabilities.map((cap) => cap.drop().catch(() => {})));
-  }
+  const nativeInterface = info?.nativeInterface || "unknown";
+  throw new ValidationError(
+    `ClaimedCapability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
 }
 
 const CLAIMED_CAPABILITY_RPC_OWN_PROPERTIES = new Set([
@@ -1753,76 +1720,6 @@ function wrapCapabilityValue(env, value) {
     result[key] = wrapCapabilityValue(env, item);
   }
   return result;
-}
-
-async function serializeCapabilityValue(env, value, options = {}) {
-  if (value instanceof RpcTarget) {
-    if (!options.allowLocalCapabilityHandles) {
-      throw new ValidationError(
-        "RpcTarget callback arguments cannot be passed to remote app-defined RPC calls yet; " +
-        "export a persistent object capability, save it, and pass the saved token instead");
-    }
-    const capability = await createObjectCapability(env, value);
-    options.temporaryCapabilities?.push(capability);
-    return capability;
-  }
-  if (Array.isArray(value)) {
-    return Promise.all(value.map((item) => serializeCapabilityValue(env, item, options)));
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  if (value instanceof ClaimedCapability) {
-    if (!options.allowLocalCapabilityHandles) {
-      const info = await claimedCapabilityInfo(env, value);
-      const nativeState = info
-        ? ` supervisor reports hasNativeCapability=${info.hasNativeCapability}, ` +
-          `liveForwardable=${info.liveForwardable}, ` +
-          `supportsNativeAppRpcTransport=${info.supportsNativeAppRpcTransport};`
-        : " supervisor has no claimed-capability metadata for this handle;";
-      throw new ValidationError(
-        "ClaimedCapability handles cannot be passed to remote app-defined RPC calls yet;" +
-        nativeState +
-        " native app-defined RPC transport is not implemented yet. " +
-        "Pass a SavedCapability token or saved token string and have the receiver restore it.");
-    }
-    return value.toJSON();
-  }
-  if (value instanceof SavedCapability) {
-    return value.toJSON();
-  }
-  if (value.type === "claimedCapability" && typeof value.id === "string") {
-    if (!options.allowLocalCapabilityHandles) {
-      const info = await claimedCapabilityInfo(env, value);
-      const nativeState = info
-        ? ` supervisor reports hasNativeCapability=${info.hasNativeCapability}, ` +
-          `liveForwardable=${info.liveForwardable}, ` +
-          `supportsNativeAppRpcTransport=${info.supportsNativeAppRpcTransport};`
-        : " supervisor has no claimed-capability metadata for this handle;";
-      throw new ValidationError(
-        "claimed capability handles cannot be passed to remote app-defined RPC calls yet;" +
-        nativeState +
-        " native app-defined RPC transport is not implemented yet. " +
-        "Pass a saved capability token instead.");
-    }
-    return {
-      type: "claimedCapability",
-      id: value.id,
-    };
-  }
-
-  const result = {};
-  for (const [key, item] of Object.entries(value)) {
-    result[key] = await serializeCapabilityValue(env, item, options);
-  }
-  return result;
-}
-
-function hydrateCapabilityValue(env, value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => hydrateCapabilityValue(env, item));
-  }
-  return wrapCapabilityValue(env, value);
 }
 
 function disposeExportedObjectTarget(id) {
@@ -1918,42 +1815,10 @@ async function serveObjectCapability(request, env) {
     }
   }
 
-  if (request.method !== "POST" || action !== "call") {
-    return Response.json({
-      ok: false,
-      error: "unsupported exported object capability request",
-    }, { status: 405 });
-  }
-
-  let call;
-  try {
-    call = await request.json();
-    const method = capabilityMethodName(call.method);
-    const args = capabilityArgs(call.args || [])
-      .map((arg) => hydrateCapabilityValue(env, arg));
-    const func = target[method];
-    if (typeof func !== "function") {
-      return Response.json({
-        ok: false,
-        error: `RPC method not found: ${method}`,
-      }, { status: 404 });
-    }
-
-    const result = await func.apply(target, args);
-    return Response.json({
-      ok: true,
-      result: await serializeCapabilityValue(env, result, {
-        allowLocalCapabilityHandles: true,
-      }),
-    });
-  } catch (error) {
-    const status = error instanceof ValidationError ? 400 : 500;
-    return Response.json({
-      ok: false,
-      error: String(error?.message || error),
-      name: String(error?.name || "Error"),
-    }, { status });
-  }
+  return Response.json({
+    ok: false,
+    error: "unsupported exported object capability request",
+  }, { status: 405 });
 }
 
 function savedCapabilityToken(value, name = "token") {
