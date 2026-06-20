@@ -106,6 +106,45 @@ class CounterCapability extends RpcTarget {
   }
 }
 
+class EventReceiver extends RpcTarget {
+  #events = [];
+
+  onMailEvent(event) {
+    this.#events.push(event);
+    return {
+      ok: true,
+      count: this.#events.length,
+      subject: event.subject,
+    };
+  }
+
+  events() {
+    return this.#events.slice();
+  }
+
+  [Symbol.dispose]() {
+    disposedCounterCapabilities += 1;
+  }
+}
+
+class MailFeedCapability extends RpcTarget {
+  async subscribe(receiver) {
+    const result = await receiver.asRpc().onMailEvent({
+      subject: "phase-3-live-callback",
+      unread: 2,
+    });
+    return {
+      ok: true,
+      receiverType: receiver.type,
+      result,
+    };
+  }
+
+  startSession() {
+    return new CounterCapability();
+  }
+}
+
 function renderBrowserPowerboxPage() {
   return `<!doctype html>
 <html>
@@ -1601,6 +1640,16 @@ export default {
       const readRetainedArgumentTarget = await capability.call("readRetained");
       const dropRetainedArgumentTarget = await capability.call("dropRetained");
       const disposeAfterDropRetainedArgumentTarget = disposedCounterCapabilities;
+      const feedCapability = await sandstorm(request, env).capability(new MailFeedCapability());
+      const feed = feedCapability.asRpc();
+      const receiver = new EventReceiver();
+      const disposeBeforeLiveCallback = disposedCounterCapabilities;
+      const subscription = await feed.subscribe(receiver);
+      const disposeAfterLiveCallback = disposedCounterCapabilities;
+      const session = await feed.startSession();
+      const sessionFirst = await session.asRpc().increment(7);
+      const sessionDrop = await session.drop();
+      const feedDrop = await feedCapability.drop();
       let sessionActions = null;
       if (url.searchParams.get("sessionActions") === "true") {
         let descriptorOptions = {};
@@ -1875,6 +1924,17 @@ export default {
           read: readRetainedArgumentTarget,
           drop: dropRetainedArgumentTarget,
           disposeAfterDrop: disposeAfterDropRetainedArgumentTarget,
+        },
+        liveCallback: {
+          subscription,
+          events: receiver.events(),
+          disposeBefore: disposeBeforeLiveCallback,
+          disposeAfter: disposeAfterLiveCallback,
+          sessionClass: session instanceof ClaimedCapability,
+          session: JSON.parse(JSON.stringify(session)),
+          sessionFirst,
+          sessionDrop,
+          feedDrop,
         },
         stubThenType: typeof stub.then,
         sessionActions,

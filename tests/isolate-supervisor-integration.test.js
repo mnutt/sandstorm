@@ -1276,6 +1276,28 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.retainedArgumentTarget.drop.ok, true);
     assert.equal(selfTest.json.retainedArgumentTarget.disposeAfterDrop,
       selfTest.json.retainedArgumentTarget.disposeBefore + 1);
+    assert.deepEqual(selfTest.json.liveCallback.subscription, {
+      ok: true,
+      receiverType: "claimedCapability",
+      result: {
+        ok: true,
+        count: 1,
+        subject: "phase-3-live-callback",
+      },
+    });
+    assert.deepEqual(selfTest.json.liveCallback.events, [
+      {
+        subject: "phase-3-live-callback",
+        unread: 2,
+      },
+    ]);
+    assert.equal(selfTest.json.liveCallback.disposeAfter,
+      selfTest.json.liveCallback.disposeBefore + 1);
+    assert.equal(selfTest.json.liveCallback.sessionClass, true);
+    assert.equal(selfTest.json.liveCallback.session.type, "claimedCapability");
+    assert.deepEqual(selfTest.json.liveCallback.sessionFirst, { value: 7 });
+    assert.equal(selfTest.json.liveCallback.sessionDrop.ok, true);
+    assert.equal(selfTest.json.liveCallback.feedDrop.ok, true);
     assert.equal(selfTest.json.stubThenType, "undefined");
     assert.equal(selfTest.json.missing.name, "CapabilityCallError");
     assert.match(selfTest.json.missing.message, /RPC method not found: missingMethod/);
