@@ -1498,6 +1498,15 @@ test("isolate supervisor integration suite", {
       },
     ]);
     assert.equal(callback.json.disposeAfterSubscribe, callback.json.disposeBefore + 1);
+    assert.equal(callback.json.session.type, "claimedCapability");
+    assert.equal(callback.json.sessionInfo.kind, "unknown");
+    assert.equal(callback.json.sessionInfo.residence, "imported");
+    assert.equal(callback.json.sessionInfo.nativeInterface, "appObject");
+    assert.equal(callback.json.sessionInfo.hasNativeCapability, true);
+    assert.deepEqual(callback.json.sessionFirst, { value: 7 });
+    assert.deepEqual(callback.json.sessionSecond, { value: 11 });
+    assert.deepEqual(callback.json.sessionCurrent, { value: 11 });
+    assert.equal(callback.json.sessionDrop.ok, true);
     assert.equal(callback.json.drop.ok, true);
 
     const retainedId = `retained-callback-${Date.now()}`;
