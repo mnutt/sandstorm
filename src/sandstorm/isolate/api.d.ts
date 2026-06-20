@@ -139,6 +139,88 @@ declare module "sandstorm:api" {
     | CapabilityCallValue[]
     | { [key: string]: CapabilityCallValue };
 
+  export interface NativeCapabilitySlot {
+    type: "nativeCapabilitySlot";
+    id: string;
+    nativeInterface?: string;
+  }
+
+  export type NativeAppRpcPlainValue =
+    | null
+    | boolean
+    | number
+    | string
+    | ArrayBuffer
+    | ArrayBufferView
+    | NativeCapabilitySlot
+    | NativeAppRpcPlainValue[]
+    | { [key: string]: NativeAppRpcPlainValue };
+
+  export type NativeAppRpcSerializableValue =
+    | NativeAppRpcPlainValue
+    | RpcTarget
+    | ClaimedCapability;
+
+  export type NativeAppRpcValueEnvelope =
+    | { type: "null" }
+    | { type: "bool"; value: boolean }
+    | { type: "number"; value: number }
+    | { type: "text"; value: string }
+    | { type: "data"; value: string }
+    | { type: "list"; value: NativeAppRpcValueEnvelope[] }
+    | { type: "object"; value: Array<{ name: string; value: NativeAppRpcValueEnvelope }> }
+    | { type: "capability"; value: { id: string; nativeInterface?: string } };
+
+  export interface NativeAppRpcCallEnvelope {
+    method: string;
+    args: NativeAppRpcValueEnvelope[];
+  }
+
+  export type NativeAppRpcResultEnvelope =
+    | { type: "value"; value: NativeAppRpcValueEnvelope }
+    | {
+        type: "exception";
+        value: {
+          name: string;
+          message: string;
+          stack: string;
+        };
+      };
+
+  export interface NativeAppRpcSerializationOptions {
+    name?: string;
+    exportCapabilitySlot?: (
+      value: RpcTarget | ClaimedCapability,
+      context: { name: string },
+    ) => NativeCapabilitySlot | Promise<NativeCapabilitySlot>;
+  }
+
+  export interface NativeAppRpcHydrationOptions<TCapability = NativeCapabilitySlot> {
+    name?: string;
+    resolveCapabilitySlot?: (
+      slot: NativeCapabilitySlot,
+      context: { name: string },
+    ) => TCapability;
+  }
+
+  export interface NativeAppRpcStubOptions<TCapability = NativeCapabilitySlot>
+      extends NativeAppRpcSerializationOptions, NativeAppRpcHydrationOptions<TCapability> {
+    release?: (slot: NativeCapabilitySlot) => unknown | Promise<unknown>;
+  }
+
+  export interface ClaimedCapabilityNativeAppRpcOptions<TCapability = NativeCapabilitySlot>
+      extends NativeAppRpcStubOptions<TCapability> {
+    checkInfo?: boolean;
+    transport?: NativeAppRpcTransport;
+    fetcher?: Fetcher;
+    route?: string | ((slot: NativeCapabilitySlot) => string);
+  }
+
+  export type NativeAppRpcTransport = (
+    slot: NativeCapabilitySlot,
+    call: NativeAppRpcCallEnvelope,
+  ) => NativeAppRpcResultEnvelope | Promise<NativeAppRpcResultEnvelope>;
+
   export type StorageValue = string | Uint8Array | JsonValue;
 
   export interface StorageInfo {
@@ -163,6 +245,45 @@ declare module "sandstorm:api" {
     ok: true;
     type: "claimedCapability";
     id: string;
+  }
+
+  export type ClaimedCapabilityKind =
+    | "unknown"
+    | "powerboxClaim"
+    | "powerboxOffer"
+    | "restored"
+    | "tied"
+    | "routeBackedWebSession"
+    | "routeBackedApiSession";
+
+  export type ClaimedCapabilityResidence =
+    | "unknown"
+    | "localExport"
+    | "imported";
+
+  export type ClaimedCapabilityNativeInterface =
+    | "unknown"
+    | "webSession"
+    | "apiSession"
+    | "outboundHttpSession"
+    | "appObject";
+
+  export interface ClaimedCapabilityInfo {
+    ok: true;
+    type: "claimedCapabilityInfo";
+    id: string;
+    kind: ClaimedCapabilityKind;
+    residence: ClaimedCapabilityResidence;
+    nativeInterface: ClaimedCapabilityNativeInterface;
+    pathPrefix: string;
+    persistent: boolean;
+    hasDropNotify: boolean;
+    dropNotifyRefCount: number;
+    supportsWebFetch: boolean;
+    supportsOutboundHttpFetch: boolean;
+    supportsNativeAppRpcTransport: boolean;
+    hasNativeCapability: boolean;
+    liveForwardable: boolean;
   }
 
   export interface SaveCapabilityOptions {
@@ -246,6 +367,9 @@ declare module "sandstorm:api" {
       : never;
   };
 
+  export type NativeAppRpcProxy<T extends object = Record<string, (...args: any[]) => unknown>> =
+    CapabilityRpcStub<T>;
+
   export interface SavedCapability {
     ok: true;
     type: "savedCapability";
@@ -260,7 +384,11 @@ declare module "sandstorm:api" {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
     asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(): CapabilityRpcStub<T>;
+    asNativeRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
+      options?: ClaimedCapabilityNativeAppRpcOptions<ClaimedCapability>,
+    ): NativeAppRpcProxy<T>;
     asOutboundHttp(): OutboundHttpCapability;
+    info(options?: { refresh?: boolean }): Promise<ClaimedCapabilityInfo | null>;
     dup(): Promise<ClaimedCapability>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
@@ -278,7 +406,11 @@ declare module "sandstorm:api" {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
     asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(): CapabilityRpcStub<T>;
+    asNativeRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
+      options?: ClaimedCapabilityNativeAppRpcOptions<ClaimedCapability>,
+    ): NativeAppRpcProxy<T>;
     asOutboundHttp(): OutboundHttpCapability;
+    info(options?: { refresh?: boolean }): Promise<ClaimedCapabilityInfo | null>;
     dup(): Promise<ClaimedCapability>;
     save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
     drop(): Promise<{ ok: true }>;
@@ -304,6 +436,25 @@ declare module "sandstorm:api" {
     constructor(capability: ClaimedCapability);
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     toJSON(): OutboundHttpCapabilityHandle;
+  }
+
+  export class NativeAppRpcStub<
+    T extends object = Record<string, (...args: any[]) => unknown>,
+    TCapability = NativeCapabilitySlot,
+  > {
+    readonly slot: NativeCapabilitySlot;
+    constructor(
+      slot: Pick<NativeCapabilitySlot, "id"> & Partial<Pick<NativeCapabilitySlot, "nativeInterface">>,
+      transport: NativeAppRpcTransport,
+      options?: NativeAppRpcStubOptions<TCapability>,
+    );
+    call<TResult = unknown>(
+      method: string,
+      ...args: NativeAppRpcSerializableValue[]
+    ): Promise<TResult>;
+    drop(): Promise<unknown>;
+    asRpc(): NativeAppRpcProxy<T>;
+    toJSON(): NativeCapabilitySlot;
   }
 
   export class SavedCapability {
@@ -558,5 +709,70 @@ declare module "sandstorm:api" {
     target: RpcTargetSource,
     options?: ServeRpcOptions,
   ): Response | Promise<Response | null> | null;
+  export function nativeCapabilitySlot(
+    id: string,
+    options?: { nativeInterface?: string },
+  ): NativeCapabilitySlot;
+  export function serializeNativeAppRpcValue(
+    value: NativeAppRpcPlainValue,
+    options?: string | NativeAppRpcSerializationOptions,
+  ): NativeAppRpcValueEnvelope;
+  export function serializeNativeAppRpcValueAsync(
+    value: NativeAppRpcSerializableValue,
+    options?: string | NativeAppRpcSerializationOptions,
+  ): Promise<NativeAppRpcValueEnvelope>;
+  export function hydrateNativeAppRpcValue<T = NativeAppRpcPlainValue>(
+    value: NativeAppRpcValueEnvelope,
+    options?: string | NativeAppRpcHydrationOptions,
+  ): T;
+  export function serializeNativeAppRpcCall(
+    method: string,
+    args?: NativeAppRpcPlainValue[],
+  ): NativeAppRpcCallEnvelope;
+  export function serializeNativeAppRpcCallAsync(
+    method: string,
+    args?: NativeAppRpcSerializableValue[],
+    options?: NativeAppRpcSerializationOptions,
+  ): Promise<NativeAppRpcCallEnvelope>;
+  export function hydrateNativeAppRpcCall(
+    call: NativeAppRpcCallEnvelope,
+    options?: string | NativeAppRpcHydrationOptions,
+  ): { method: string; args: NativeAppRpcPlainValue[] };
+  export function serializeNativeAppRpcResult(
+    value: NativeAppRpcPlainValue,
+  ): NativeAppRpcResultEnvelope;
+  export function serializeNativeAppRpcResultAsync(
+    value: NativeAppRpcSerializableValue,
+    options?: NativeAppRpcSerializationOptions,
+  ): Promise<NativeAppRpcResultEnvelope>;
+  export function serializeNativeAppRpcException(error: unknown): NativeAppRpcResultEnvelope;
+  export function hydrateNativeAppRpcResult<T = NativeAppRpcPlainValue>(
+    result: NativeAppRpcResultEnvelope,
+    options?: string | NativeAppRpcHydrationOptions,
+  ): T;
+  export function dispatchNativeAppRpcCall(
+    target: object,
+    call: NativeAppRpcCallEnvelope,
+    options?: NativeAppRpcSerializationOptions & NativeAppRpcHydrationOptions,
+  ): Promise<NativeAppRpcResultEnvelope>;
+  export function createNativeAppRpcStub<
+    T extends object = Record<string, (...args: any[]) => unknown>,
+    TCapability = NativeCapabilitySlot,
+  >(
+    slot: Pick<NativeCapabilitySlot, "id"> & Partial<Pick<NativeCapabilitySlot, "nativeInterface">>,
+    transport: NativeAppRpcTransport,
+    options?: NativeAppRpcStubOptions<TCapability>,
+  ): NativeAppRpcStub<T, TCapability>;
+  export function createNativeAppRpcFetchTransport(
+    fetcher: Fetcher,
+    route: string | ((slot: NativeCapabilitySlot) => string),
+  ): NativeAppRpcTransport;
+  export function createClaimedCapabilityNativeAppRpcStub<
+    T extends object = Record<string, (...args: any[]) => unknown>,
+    TCapability = ClaimedCapability,
+  >(
+    capability: ClaimedCapability,
+    options?: ClaimedCapabilityNativeAppRpcOptions<TCapability>,
+  ): NativeAppRpcStub<T, TCapability>;
   export function sandstorm(request: Request, env: SandstormEnv): SandstormApi;
 }
