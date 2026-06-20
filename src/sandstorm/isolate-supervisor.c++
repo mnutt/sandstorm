@@ -275,6 +275,12 @@ struct ClaimedCapabilityMetadata {
   bool liveForwardable = true;
 };
 
+bool claimedCapabilityMetadataSupportsNativeAppRpcTransport(
+    const ClaimedCapabilityMetadata& metadata) {
+  return metadata.supportsNativeAppRpcTransport ||
+      claimedCapabilitySupportsNativeAppRpcTransport(metadata.nativeInterface);
+}
+
 ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
     const ClaimedCapabilityMetadata& metadata) {
   return ClaimedCapabilityMetadata {
@@ -437,6 +443,14 @@ public:
       kj::StringPtr id) {
     KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
       return claimedCapabilities[*index].metadata.nativeInterface;
+    }
+
+    return nullptr;
+  }
+
+  kj::Maybe<ClaimedCapabilityMetadata> findClaimedCapabilityMetadata(kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
+      return copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata);
     }
 
     return nullptr;
@@ -4543,8 +4557,7 @@ private:
     json.addAll(claimedCapabilitySupportsOutboundHttpFetch(metadata.nativeInterface)
         ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"supportsNativeAppRpcTransport\": "));
-    json.addAll((metadata.supportsNativeAppRpcTransport ||
-        claimedCapabilitySupportsNativeAppRpcTransport(metadata.nativeInterface))
+    json.addAll(claimedCapabilityMetadataSupportsNativeAppRpcTransport(metadata)
         ? kj::StringPtr("true") : kj::StringPtr("false"));
     json.addAll(kj::StringPtr(",\n  \"hasNativeCapability\": "));
     json.addAll(metadata.hasNativeCapability ? kj::StringPtr("true") : kj::StringPtr("false"));
@@ -4845,6 +4858,10 @@ private:
     return normalizeRouteBackedPathPrefix(pathPrefix);
   }
 
+  bool routeBackedPathIsObjectCapability(kj::StringPtr pathPrefix) {
+    return pathPrefix.startsWith("/__sandstorm/object-capabilities/");
+  }
+
   capnp::Capability::Client makeRouteBackedSessionCapability(
       RouteBackedSessionType sessionType, kj::StringPtr pathPrefix, bool persistent) {
     return sandstorm::makeRouteBackedSessionCapability(
@@ -4874,7 +4891,7 @@ private:
       kj::heapString(pathPrefix),
       persistent,
       false,
-      false,
+      routeBackedPathIsObjectCapability(pathPrefix),
       true,
       true,
     };
@@ -4931,10 +4948,10 @@ private:
         : sessions(sessions) {}
 
     kj::Maybe<IsolateObjectCapability::Client> findCapability(kj::StringPtr id) override {
-      KJ_IF_MAYBE(nativeInterface, sessions.findClaimedCapabilityNativeInterface(id)) {
-        KJ_REQUIRE(claimedCapabilitySupportsNativeAppRpcTransport(*nativeInterface),
+      KJ_IF_MAYBE(metadata, sessions.findClaimedCapabilityMetadata(id)) {
+        KJ_REQUIRE(claimedCapabilityMetadataSupportsNativeAppRpcTransport(*metadata),
             "claimed capability cannot be used as native app RPC argument",
-            claimedCapabilityNativeInterfaceName(*nativeInterface));
+            claimedCapabilityNativeInterfaceName(metadata->nativeInterface));
       }
       KJ_IF_MAYBE(cap, sessions.findClaimedCapability(id)) {
         return cap->castAs<IsolateObjectCapability>();
@@ -4962,12 +4979,20 @@ private:
           "  \"error\": \"expected exactly one capability id\"\n}\n"));
     }
 
-    KJ_IF_MAYBE(nativeInterface, host.sessions->findClaimedCapabilityNativeInterface(ids[0])) {
-      if (!claimedCapabilitySupportsNativeAppRpcTransport(*nativeInterface)) {
+    kj::Maybe<ClaimedCapabilityMetadata> capabilityMetadata = nullptr;
+    KJ_IF_MAYBE(metadata, host.sessions->findClaimedCapabilityMetadata(ids[0])) {
+      if (!claimedCapabilityMetadataSupportsNativeAppRpcTransport(*metadata)) {
         return sendJson(response, 400, "Bad Request", renderError(kj::str(
             "claimed capability native interface ",
-            claimedCapabilityNativeInterfaceName(*nativeInterface),
+            claimedCapabilityNativeInterfaceName(metadata->nativeInterface),
             " cannot be used with powerbox.nativeAppRpcCall")));
+      }
+      capabilityMetadata = kj::mv(*metadata);
+    }
+
+    KJ_IF_MAYBE(metadata, capabilityMetadata) {
+      if (routeBackedPathIsObjectCapability(metadata->pathPrefix)) {
+        return callRouteBackedNativeAppRpcCapability(*metadata, kj::mv(bodyBytes), response);
       }
     }
 
@@ -4998,6 +5023,38 @@ private:
       return sendJson(response, 404, "Not Found", kj::heapString(
           "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
     }
+  }
+
+  kj::Promise<void> callRouteBackedNativeAppRpcCapability(
+      ClaimedCapabilityMetadata& metadata, kj::Array<byte> bodyBytes,
+      kj::HttpService::Response& response) {
+    FetchRequest request;
+    request.method = FetchMethod::POST;
+    request.path = kj::str(metadata.pathPrefix, "/native-app-rpc-call");
+    request.mimeType = kj::heapString("application/json; charset=utf-8");
+    request.encoding = kj::heapString("");
+    request.expectedBodySize = bodyBytes.size();
+    request.body = kj::mv(bodyBytes);
+    request.headers.add(FetchHeader {
+      kj::heapString("content-type"),
+      kj::heapString("application/json; charset=utf-8"),
+    });
+    request.headers.add(FetchHeader {
+      kj::heapString("host"),
+      kj::heapString("sandbox"),
+    });
+
+    auto runtime = kj::heap<WorkerdRuntimeAdapter>(kj::addRef(config), kj::addRef(host));
+    return runtime->fetch(kj::mv(request))
+        .then([this, &response, runtime = kj::mv(runtime)](FetchResponse&& result) mutable {
+      kj::HttpHeaders responseHeaders(headerTable);
+      responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/json; charset=utf-8");
+      return sendBytes(response, result.statusCode, "OK", kj::mv(responseHeaders),
+          kj::mv(result.body));
+    }).catch_([this, &response](kj::Exception&& exception) mutable {
+      return sendJson(response, 502, "Bad Gateway", renderError(
+          kj::str("route-backed native app RPC call failed: ", exception.getDescription())));
+    });
   }
 
   kj::Promise<void> fetchClaimedCapability(

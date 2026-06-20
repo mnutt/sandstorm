@@ -987,6 +987,8 @@ export default {
       const defaultNativeRpc = appObjectCapability.asNativeRpc();
       const defaultNativeRpcValue = await defaultNativeRpc.deliver(
         "default-subject", { urgent: false });
+      const defaultCallValue = await appObjectCapability.call(
+        "deliver", "call-subject", { urgent: true });
 
       const helperNativeRpcStub = createClaimedCapabilityNativeAppRpcStub(appObjectCapability, {
         checkInfo: false,
@@ -1027,6 +1029,7 @@ export default {
         appObjectNativeSlot: appObjectNativeRpc.slot,
         appObjectNativeValue,
         defaultNativeRpcValue,
+        defaultCallValue,
         helperNativeSlot,
         helperNativeDrop,
         wrongNativeRpcTransportCalls,
