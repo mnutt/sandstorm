@@ -1558,6 +1558,27 @@ export default {
             };
           }
         }
+        async function captureDisconnectedTransportError() {
+          const testStub = createNativeAppRpcStub(
+            nativeCapabilitySlot("transport-disconnected", { nativeInterface: "appObject" }),
+            createNativeAppRpcFetchTransport({
+              async fetch() {
+                throw new TypeError("simulated bridge disconnect");
+              },
+            }, "http://worker/native-app-rpc-transport-test"));
+          try {
+            await testStub.call("deliver");
+          } catch (error) {
+            transportErrorCases.disconnected = {
+              name: String(error?.name || "Error"),
+              message: String(error?.message || error),
+              details: {
+                causeName: String(error?.details?.cause?.name || ""),
+                causeMessage: String(error?.details?.cause?.message || ""),
+              },
+            };
+          }
+        }
         await captureTransportError("nonJson", new Response("not-json", { status: 502 }));
         await captureTransportError("invalidEnvelope", Response.json({ ok: false }));
         await captureTransportError("failedStatus", Response.json({
@@ -1566,6 +1587,7 @@ export default {
           message: "route failed before dispatch",
           stack: "",
         }, { status: 503 }));
+        await captureDisconnectedTransportError();
 
         return Response.json({
           ok: true,
