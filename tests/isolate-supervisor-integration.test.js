@@ -1652,6 +1652,11 @@ test("isolate supervisor integration suite", {
       callback: { urgent: true },
       options: null,
     });
+    assert.equal(nativeInterfaceValidation.json.wrongResultSlotError.name, "ValidationError");
+    assert.match(nativeInterfaceValidation.json.wrongResultSlotError.message,
+      /nativeInterface webSession/);
+    assert.match(nativeInterfaceValidation.json.wrongResultSlotError.message,
+      /app-defined RPC/);
     assert.deepEqual(nativeInterfaceValidation.json.helperNativeSlot,
       nativeInterfaceValidation.json.appObjectNativeSlot);
     assert.deepEqual(nativeInterfaceValidation.json.helperNativeDrop, {
