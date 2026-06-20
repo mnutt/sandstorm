@@ -162,6 +162,16 @@ declare module "sandstorm:api" {
     | ClaimedCapability
     | SavedCapability;
 
+  export type NativeAppRpcHydratedValue<TCapability = NativeCapabilitySlot> =
+    | null
+    | boolean
+    | number
+    | string
+    | Uint8Array
+    | TCapability
+    | NativeAppRpcHydratedValue<TCapability>[]
+    | { [key: string]: NativeAppRpcHydratedValue<TCapability> };
+
   export type NativeAppRpcValueEnvelope =
     | { type: "null" }
     | { type: "bool"; value: boolean }
@@ -717,10 +727,10 @@ declare module "sandstorm:api" {
     value: NativeAppRpcSerializableValue,
     options?: string | NativeAppRpcSerializationOptions,
   ): Promise<NativeAppRpcValueEnvelope>;
-  export function hydrateNativeAppRpcValue<T = NativeAppRpcPlainValue>(
+  export function hydrateNativeAppRpcValue<TCapability = NativeCapabilitySlot>(
     value: NativeAppRpcValueEnvelope,
-    options?: string | NativeAppRpcHydrationOptions,
-  ): T;
+    options?: string | NativeAppRpcHydrationOptions<TCapability>,
+  ): NativeAppRpcHydratedValue<TCapability>;
   export function serializeNativeAppRpcCall(
     method: string,
     args?: NativeAppRpcPlainValue[],
@@ -733,7 +743,11 @@ declare module "sandstorm:api" {
   export function hydrateNativeAppRpcCall(
     call: NativeAppRpcCallEnvelope,
     options?: string | NativeAppRpcHydrationOptions,
-  ): { method: string; args: NativeAppRpcPlainValue[] };
+  ): { method: string; args: NativeAppRpcHydratedValue[] };
+  export function hydrateNativeAppRpcCall<TCapability>(
+    call: NativeAppRpcCallEnvelope,
+    options: NativeAppRpcHydrationOptions<TCapability>,
+  ): { method: string; args: NativeAppRpcHydratedValue<TCapability>[] };
   export function serializeNativeAppRpcResult(
     value: NativeAppRpcPlainValue | SavedCapability,
   ): NativeAppRpcResultEnvelope;
@@ -742,10 +756,10 @@ declare module "sandstorm:api" {
     options?: NativeAppRpcSerializationOptions,
   ): Promise<NativeAppRpcResultEnvelope>;
   export function serializeNativeAppRpcException(error: unknown): NativeAppRpcResultEnvelope;
-  export function hydrateNativeAppRpcResult<T = NativeAppRpcPlainValue>(
+  export function hydrateNativeAppRpcResult<TCapability = NativeCapabilitySlot>(
     result: NativeAppRpcResultEnvelope,
-    options?: string | NativeAppRpcHydrationOptions,
-  ): T;
+    options?: string | NativeAppRpcHydrationOptions<TCapability>,
+  ): NativeAppRpcHydratedValue<TCapability>;
   export function dispatchNativeAppRpcCall(
     target: object,
     call: NativeAppRpcCallEnvelope,
