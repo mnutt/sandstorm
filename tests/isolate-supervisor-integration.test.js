@@ -1498,6 +1498,23 @@ test("isolate supervisor integration suite", {
       },
     ]);
     assert.equal(callback.json.disposeAfterSubscribe, callback.json.disposeBefore + 1);
+    assert.deepEqual(callback.json.throwingCallbackFailure, {
+      name: "CapabilityCallError",
+      message: "throwing receiver saw phase-3-live-callback",
+      details: {
+        name: "CapabilityCallError",
+      },
+    });
+    assert.equal(
+      callback.json.disposeAfterThrowingCallback,
+      callback.json.disposeBeforeThrowingCallback + 1);
+    assert.deepEqual(callback.json.missingMethodFailure, {
+      name: "CapabilityCallError",
+      message: "RPC method not found: missingPhase3Method",
+      details: {
+        name: "NoSuchMethod",
+      },
+    });
     assert.equal(callback.json.session.type, "claimedCapability");
     assert.equal(callback.json.sessionInfo.kind, "unknown");
     assert.equal(callback.json.sessionInfo.residence, "imported");
@@ -1505,7 +1522,13 @@ test("isolate supervisor integration suite", {
     assert.equal(callback.json.sessionInfo.hasNativeCapability, true);
     assert.deepEqual(callback.json.sessionFirst, { value: 7 });
     assert.deepEqual(callback.json.sessionSecond, { value: 11 });
-    assert.deepEqual(callback.json.sessionCurrent, { value: 11 });
+    assert.deepEqual(callback.json.forwardedSession, {
+      ok: true,
+      counterType: "claimedCapability",
+      incremented: { value: 17 },
+      current: { value: 17 },
+    });
+    assert.deepEqual(callback.json.sessionCurrent, { value: 17 });
     assert.deepEqual(callback.json.sessionFailure, {
       name: "CapabilityCallError",
       message: "phase-3 returned capability failure",
@@ -1513,6 +1536,11 @@ test("isolate supervisor integration suite", {
         name: "Error",
       },
     });
+    assert.equal(callback.json.wrongForwardedCapabilityFailure.name, "ValidationError");
+    assert.match(
+      callback.json.wrongForwardedCapabilityFailure.message,
+      /nativeInterface webSession cannot be used with app-defined RPC/);
+    assert.equal(callback.json.webSessionDrop.ok, true);
     assert.equal(callback.json.sessionDrop.ok, true);
     assert.equal(callback.json.drop.ok, true);
 

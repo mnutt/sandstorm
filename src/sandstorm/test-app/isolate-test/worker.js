@@ -129,6 +129,16 @@ class EventReceiver extends RpcTarget {
   }
 }
 
+class ThrowingEventReceiver extends RpcTarget {
+  onMailEvent(event) {
+    throw new Error(`throwing receiver saw ${event.subject}`);
+  }
+
+  [Symbol.dispose]() {
+    disposedCounterCapabilities += 1;
+  }
+}
+
 class MailFeedCapability extends RpcTarget {
   async subscribe(receiver) {
     const result = await receiver.call("onMailEvent", {
@@ -139,6 +149,17 @@ class MailFeedCapability extends RpcTarget {
       ok: true,
       receiverType: receiver.type,
       result,
+    };
+  }
+
+  async useCounter(counter) {
+    const incremented = await counter.call("increment", 6);
+    const current = await counter.call("get");
+    return {
+      ok: true,
+      counterType: counter.type,
+      incremented,
+      current,
     };
   }
 
@@ -1664,10 +1685,37 @@ export default {
         const subscription = await feed.subscribe(receiver);
         const disposeAfterSubscribe = disposedCounterCapabilities;
         const events = receiver.events();
+        const disposeBeforeThrowingCallback = disposedCounterCapabilities;
+        let throwingCallbackFailure = null;
+        try {
+          await feed.subscribe(new ThrowingEventReceiver());
+        } catch (error) {
+          throwingCallbackFailure = {
+            name: String(error?.name || "Error"),
+            message: String(error?.message || error),
+            details: {
+              name: String(error?.details?.name || ""),
+            },
+          };
+        }
+        const disposeAfterThrowingCallback = disposedCounterCapabilities;
+        let missingMethodFailure = null;
+        try {
+          await feed.missingPhase3Method();
+        } catch (error) {
+          missingMethodFailure = {
+            name: String(error?.name || "Error"),
+            message: String(error?.message || error),
+            details: {
+              name: String(error?.details?.name || ""),
+            },
+          };
+        }
         const session = await feed.startSession();
         const sessionInfo = await session.info();
         const sessionFirst = await session.asRpc().increment(7);
         const sessionSecond = await session.call("increment", 4);
+        const forwardedSession = await feed.useCounter(session);
         const sessionCurrent = await session.asRpc().get();
         let sessionFailure = null;
         try {
@@ -1681,6 +1729,19 @@ export default {
             },
           };
         }
+        const webSessionCapability = await sandstorm(request, env).webSession({
+          pathPrefix: "/exported",
+        });
+        let wrongForwardedCapabilityFailure = null;
+        try {
+          await feed.useCounter(webSessionCapability);
+        } catch (error) {
+          wrongForwardedCapabilityFailure = {
+            name: String(error?.name || "Error"),
+            message: String(error?.message || error),
+          };
+        }
+        const webSessionDrop = await webSessionCapability.drop();
         const sessionDrop = await session.drop();
         const drop = await feedCapability.drop();
         return Response.json({
@@ -1691,12 +1752,19 @@ export default {
           events,
           disposeBefore,
           disposeAfterSubscribe,
+          throwingCallbackFailure,
+          disposeBeforeThrowingCallback,
+          disposeAfterThrowingCallback,
+          missingMethodFailure,
           session: JSON.parse(JSON.stringify(session)),
           sessionInfo,
           sessionFirst,
           sessionSecond,
+          forwardedSession,
           sessionCurrent,
           sessionFailure,
+          wrongForwardedCapabilityFailure,
+          webSessionDrop,
           sessionDrop,
           drop,
         });
