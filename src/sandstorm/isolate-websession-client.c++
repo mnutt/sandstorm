@@ -453,11 +453,18 @@ private:
 
 class FakeSandstormCore final: public SandstormCore::Server {
 public:
-  explicit FakeSandstormCore(FakeSessionContext& sessionContext)
-      : sessionContext(sessionContext) {}
-
-  FakeSandstormCore(FakeSessionContext& sessionContext, kj::StringPtr tokenStorePath)
+  FakeSandstormCore(
+      kj::Network& network, FakeSessionContext& sessionContext, kj::StringPtr supervisorSocketPath)
       : sessionContext(sessionContext),
+        network(network),
+        supervisorSocketPath(kj::heapString(supervisorSocketPath)) {}
+
+  FakeSandstormCore(
+      kj::Network& network, FakeSessionContext& sessionContext, kj::StringPtr supervisorSocketPath,
+      kj::StringPtr tokenStorePath)
+      : sessionContext(sessionContext),
+        network(network),
+        supervisorSocketPath(kj::heapString(supervisorSocketPath)),
         tokenStorePath(kj::heapString(tokenStorePath)) {
     loadRouteBackedTokens();
   }
@@ -475,20 +482,19 @@ public:
       return kj::READY_NOW;
     }
 
+    loadRouteBackedTokens();
     KJ_IF_MAYBE(saved, findRouteBackedToken(tokenText)) {
       ++sessionContext.restoreCount;
-      KJ_IF_MAYBE(supervisor, this->supervisor) {
-        capnp::MallocMessageBuilder appRefMessage;
-        auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
-        appRef.setAs<capnp::Data>(saved->appRef.asPtr());
-
-        auto request = supervisor->restoreRequest();
-        request.getRef().setAppRef(appRef.asReader());
-        return request.send().then([context](auto result) mutable {
-          context.getResults().setCap(result.getCap());
-        });
+      if (saved->supervisorSocketPath == supervisorSocketPath) {
+        KJ_IF_MAYBE(supervisor, this->supervisor) {
+          return restoreRouteBackedToken(*supervisor, saved->appRef.asPtr(), context);
+        } else {
+          KJ_FAIL_REQUIRE("fake SandstormCore has no supervisor for route-backed restore");
+        }
       } else {
-        KJ_FAIL_REQUIRE("fake SandstormCore has no supervisor for route-backed restore");
+        auto appRef = kj::heapArray<byte>(saved->appRef.asPtr());
+        return restoreRouteBackedTokenFromSupervisor(
+            saved->supervisorSocketPath, kj::mv(appRef), context);
       }
     } else {
       KJ_FAIL_REQUIRE("unknown fake SandstormCore token", tokenText);
@@ -503,6 +509,7 @@ public:
       return kj::READY_NOW;
     }
 
+    loadRouteBackedTokens();
     for (auto i: kj::indices(routeBackedTokens)) {
       if (routeBackedTokens[i].token == tokenText) {
         if (i + 1 < routeBackedTokens.size()) {
@@ -526,10 +533,12 @@ public:
     KJ_REQUIRE(owner.which() == ApiTokenOwner::GRAIN);
     KJ_REQUIRE(owner.getGrain().getGrainId().size() > 0);
 
+    loadRouteBackedTokens();
     auto appRef = params.getRef().getAppRef().getAs<capnp::Data>();
     auto token = kj::str("route-backed-token-", ++routeBackedTokenCounter);
     routeBackedTokens.add(RouteBackedToken {
         kj::heapString(token),
+        kj::heapString(supervisorSocketPath),
         kj::heapArray<byte>(appRef.begin(), appRef.end())
     });
     ++sessionContext.routeBackedTokenCount;
@@ -558,7 +567,26 @@ public:
 private:
   struct RouteBackedToken {
     kj::String token;
+    kj::String supervisorSocketPath;
     kj::Array<byte> appRef;
+  };
+
+  struct SupervisorConnection {
+    kj::Own<kj::AsyncIoStream> stream;
+    capnp::TwoPartyVatNetwork network;
+    capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
+
+    explicit SupervisorConnection(kj::Own<kj::AsyncIoStream> stream)
+        : stream(kj::mv(stream)),
+          network(*this->stream, capnp::rpc::twoparty::Side::CLIENT),
+          rpcSystem(capnp::makeRpcClient(network)) {}
+
+    Supervisor::Client bootstrapSupervisor() {
+      capnp::MallocMessageBuilder vatMessage;
+      auto hostId = vatMessage.initRoot<capnp::rpc::twoparty::VatId>();
+      hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
+      return rpcSystem.bootstrap(hostId).castAs<Supervisor>();
+    }
   };
 
   kj::Maybe<RouteBackedToken&> findRouteBackedToken(kj::StringPtr token) {
@@ -571,23 +599,79 @@ private:
   }
 
   FakeSessionContext& sessionContext;
+  kj::Network& network;
+  kj::String supervisorSocketPath;
   kj::Maybe<Supervisor::Client> supervisor;
   kj::Maybe<kj::String> tokenStorePath;
   uint routeBackedTokenCounter = 0;
   kj::Vector<RouteBackedToken> routeBackedTokens;
+  kj::Vector<kj::Own<SupervisorConnection>> supervisorConnections;
+
+  kj::Promise<void> restoreRouteBackedToken(
+      Supervisor::Client supervisor, kj::ArrayPtr<const byte> appRefBytes,
+      RestoreContext context) {
+    capnp::MallocMessageBuilder appRefMessage;
+    auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
+    appRef.setAs<capnp::Data>(appRefBytes);
+
+    auto request = supervisor.restoreRequest();
+    request.getRef().setAppRef(appRef.asReader());
+    return request.send().then([context](auto result) mutable {
+      context.getResults().setCap(result.getCap());
+    });
+  }
+
+  kj::Promise<void> restoreRouteBackedTokenFromSupervisor(
+      kj::StringPtr ownerSupervisorSocketPath, kj::Array<byte> appRefBytes,
+      RestoreContext context) {
+    return network.parseAddress(kj::str("unix:", ownerSupervisorSocketPath), 0)
+        .then([this, appRefBytes = kj::mv(appRefBytes), context](
+            kj::Own<kj::NetworkAddress> address) mutable {
+      return address->connect()
+          .then([this, address = kj::mv(address), appRefBytes = kj::mv(appRefBytes), context](
+              kj::Own<kj::AsyncIoStream> stream) mutable {
+        auto connection = kj::heap<SupervisorConnection>(kj::mv(stream));
+        auto supervisor = connection->bootstrapSupervisor();
+        supervisorConnections.add(kj::mv(connection));
+        capnp::MallocMessageBuilder appRefMessage;
+        auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
+        appRef.setAs<capnp::Data>(appRefBytes.asPtr());
+
+        auto request = supervisor.restoreRequest();
+        request.getRef().setAppRef(appRef.asReader());
+        return request.send().then([context](auto result) mutable {
+          context.getResults().setCap(result.getCap());
+        }).attach(kj::mv(appRefBytes));
+      }).attach(kj::mv(address));
+    });
+  }
 
   void loadRouteBackedTokens() {
     KJ_IF_MAYBE(path, tokenStorePath) {
+      routeBackedTokens = kj::Vector<RouteBackedToken>();
       KJ_IF_MAYBE(file, raiiOpenIfExists(*path, O_RDONLY | O_CLOEXEC)) {
         for (auto& line: splitLines(readAll(*file))) {
           if (line.size() == 0) continue;
 
           KJ_IF_MAYBE(tab, line.findFirst('\t')) {
             auto token = kj::heapString(kj::StringPtr(line.begin(), *tab));
-            auto encodedAppRef = kj::StringPtr(line.begin() + *tab + 1, line.size() - *tab - 1);
-            auto decoded = kj::decodeBase64(encodedAppRef);
-            KJ_REQUIRE(!decoded.hadErrors, "invalid fake core token store app-ref");
-            routeBackedTokens.add(RouteBackedToken { kj::mv(token), kj::mv(decoded) });
+            auto rest = kj::StringPtr(line.begin() + *tab + 1, line.size() - *tab - 1);
+            KJ_IF_MAYBE(secondTab, rest.findFirst('\t')) {
+              auto encodedSupervisorPath = rest.slice(0, *secondTab);
+              auto encodedAppRef = rest.slice(*secondTab + 1);
+              auto decodedSupervisorPath = kj::decodeBase64(encodedSupervisorPath);
+              auto decodedAppRef = kj::decodeBase64(encodedAppRef);
+              KJ_REQUIRE(!decodedSupervisorPath.hadErrors,
+                  "invalid fake core token store supervisor path");
+              KJ_REQUIRE(!decodedAppRef.hadErrors, "invalid fake core token store app-ref");
+              routeBackedTokens.add(RouteBackedToken {
+                  kj::mv(token),
+                  kj::heapString(decodedSupervisorPath.asChars()),
+                  kj::mv(decodedAppRef),
+              });
+            } else {
+              KJ_FAIL_REQUIRE("invalid fake core token store line", line);
+            }
           } else {
             KJ_FAIL_REQUIRE("invalid fake core token store line", line);
           }
@@ -602,6 +686,9 @@ private:
       kj::Vector<char> content;
       for (auto& token: routeBackedTokens) {
         content.addAll(token.token);
+        content.add('\t');
+        auto encodedSupervisorPath = kj::encodeBase64Url(token.supervisorSocketPath.asBytes());
+        content.addAll(encodedSupervisorPath);
         content.add('\t');
         auto encodedAppRef = kj::encodeBase64Url(token.appRef.asPtr());
         content.addAll(encodedAppRef);
@@ -862,6 +949,8 @@ public:
         "Connects to an isolate supervisor socket and validates the WebSession path.")
         .addOption({"core-server"}, KJ_BIND_METHOD(*this, setCoreServerMode),
             "Keep a fake SandstormCore connected until terminated.")
+        .addOptionWithArg({"token-store"}, KJ_BIND_METHOD(*this, setTokenStorePath), "<path>",
+            "Share fake SandstormCore route-backed saved tokens across core-server processes.")
         .expectArg("<supervisor-socket>", KJ_BIND_METHOD(*this, setSocketPath))
         .callAfterParsing(KJ_BIND_METHOD(*this, run))
         .build();
@@ -877,6 +966,11 @@ public:
     return true;
   }
 
+  kj::MainBuilder::Validity setTokenStorePath(kj::StringPtr path) {
+    tokenStorePath = kj::heapString(path);
+    return true;
+  }
+
   kj::MainBuilder::Validity run() {
     KJ_REQUIRE(socketPath != nullptr);
     testNativeObjectCapabilityTransport(io.waitScope);
@@ -888,10 +982,15 @@ public:
     auto sessionContext = kj::heap<FakeSessionContext>();
     auto& sessionContextRef = *sessionContext;
 
-    auto tokenStorePath = fakeCoreTokenStorePath(socketPath);
+    auto defaultTokenStorePath = fakeCoreTokenStorePath(socketPath);
+    auto selectedTokenStorePath = tokenStorePath == nullptr
+        ? defaultTokenStorePath.asPtr()
+        : tokenStorePath.asPtr();
     auto fakeCore = coreServerMode
-        ? kj::heap<FakeSandstormCore>(sessionContextRef, tokenStorePath)
-        : kj::heap<FakeSandstormCore>(sessionContextRef);
+        ? kj::heap<FakeSandstormCore>(
+            io.provider->getNetwork(), sessionContextRef, socketPath, selectedTokenStorePath)
+        : kj::heap<FakeSandstormCore>(
+            io.provider->getNetwork(), sessionContextRef, socketPath);
     auto& fakeCoreRef = *fakeCore;
     capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
     auto rpcSystem = capnp::makeRpcServer(network, kj::mv(fakeCore));
@@ -1889,6 +1988,7 @@ private:
   kj::ProcessContext& context;
   kj::AsyncIoContext io;
   kj::String socketPath;
+  kj::String tokenStorePath;
   bool coreServerMode = false;
 };
 
