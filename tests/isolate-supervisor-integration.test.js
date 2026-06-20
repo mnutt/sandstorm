@@ -1068,7 +1068,7 @@ test("isolate supervisor integration suite", {
     assert.equal(capabilityInfo.json.dropNotifyRefCount, 1);
     assert.equal(capabilityInfo.json.supportsWebFetch, true);
     assert.equal(capabilityInfo.json.supportsOutboundHttpFetch, false);
-    assert.equal(capabilityInfo.json.supportsNativeAppRpcTransport, false);
+    assert.equal(capabilityInfo.json.supportsNativeAppRpcTransport, true);
     assert.equal(capabilityInfo.json.hasNativeCapability, true);
     assert.equal(capabilityInfo.json.liveForwardable, true);
 
@@ -1227,7 +1227,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.capabilityInfo.dropNotifyRefCount, 1);
     assert.equal(selfTest.json.capabilityInfo.supportsWebFetch, true);
     assert.equal(selfTest.json.capabilityInfo.supportsOutboundHttpFetch, false);
-    assert.equal(selfTest.json.capabilityInfo.supportsNativeAppRpcTransport, false);
+    assert.equal(selfTest.json.capabilityInfo.supportsNativeAppRpcTransport, true);
     assert.equal(selfTest.json.capabilityInfo.hasNativeCapability, true);
     assert.equal(selfTest.json.capabilityInfo.liveForwardable, true);
     assert.equal(typeof selfTest.json.childInfo.id, "string");
@@ -1242,7 +1242,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.childInfo.dropNotifyRefCount, 1);
     assert.equal(selfTest.json.childInfo.supportsWebFetch, true);
     assert.equal(selfTest.json.childInfo.supportsOutboundHttpFetch, false);
-    assert.equal(selfTest.json.childInfo.supportsNativeAppRpcTransport, false);
+    assert.equal(selfTest.json.childInfo.supportsNativeAppRpcTransport, true);
     assert.equal(selfTest.json.childInfo.hasNativeCapability, true);
     assert.equal(selfTest.json.childInfo.liveForwardable, true);
     assert.deepEqual(selfTest.json.childFirst, { value: 11 });
@@ -1268,7 +1268,8 @@ test("isolate supervisor integration suite", {
       selfTest.json.retainedArgumentTarget.disposeBefore + 1);
     assert.equal(selfTest.json.stubThenType, "undefined");
     assert.equal(selfTest.json.missing.name, "CapabilityCallError");
-    assert.equal(selfTest.json.missing.status, 404);
+    assert.match(selfTest.json.missing.message, /RPC method not found: missingMethod/);
+    assert.equal(selfTest.json.missing.status, undefined);
     assert.equal(selfTest.json.saveError.name, "Error");
     assert.match(selfTest.json.saveError.message, /transient and cannot be saved/);
     assert.equal(selfTest.json.remoteArguments.rpcTargetError.name, "ValidationError");
@@ -1282,7 +1283,7 @@ test("isolate supervisor integration suite", {
     assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
       /liveForwardable=true/);
     assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
-      /supportsNativeAppRpcTransport=false/);
+      /supportsNativeAppRpcTransport=true/);
     assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
       /native app-defined RPC transport is not implemented yet/);
     assert.equal(typeof selfTest.json.duplicate.id, "string");
@@ -1539,6 +1540,7 @@ test("isolate supervisor integration suite", {
       "http://sandstorm/capabilities/claimed?id=mock-outbound",
       "http://sandstorm/capabilities/claimed?id=mock-app-object",
       "http://sandstorm/powerbox/native-app-rpc-call?id=mock-app-object",
+      "http://sandstorm/powerbox/native-app-rpc-call?id=mock-app-object",
     ]);
     assert.equal(nativeInterfaceValidation.json.fetchError.name, "ValidationError");
     assert.match(nativeInterfaceValidation.json.fetchError.message,
@@ -1588,6 +1590,11 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(nativeInterfaceValidation.json.defaultNativeRpcValue, {
       subject: "default-subject",
       callback: { urgent: false },
+      options: null,
+    });
+    assert.deepEqual(nativeInterfaceValidation.json.defaultCallValue, {
+      subject: "call-subject",
+      callback: { urgent: true },
       options: null,
     });
     assert.deepEqual(nativeInterfaceValidation.json.helperNativeSlot,

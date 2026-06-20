@@ -741,13 +741,62 @@ export function createNativeAppRpcFetchTransport(fetcher, route) {
 
 async function requireNativeAppRpcClaimedCapability(capability) {
   const info = await claimedCapabilityInfo(capability.env, capability);
-  if (info?.supportsNativeAppRpcTransport === false || (
-      info?.supportsNativeAppRpcTransport === undefined &&
-      info?.nativeInterface !== undefined &&
-      info.nativeInterface !== "unknown" &&
-      info.nativeInterface !== "appObject")) {
+  if (!claimedCapabilitySupportsNativeAppRpc(info)) {
     throw new ValidationError(
       `ClaimedCapability nativeInterface ${info.nativeInterface} cannot be used as native app RPC`);
+  }
+}
+
+function claimedCapabilitySupportsNativeAppRpc(info) {
+  return info === null || info === undefined ||
+      info?.supportsNativeAppRpcTransport === true || (
+      info?.supportsNativeAppRpcTransport === undefined &&
+      info?.nativeInterface !== undefined &&
+      (info.nativeInterface === "unknown" || info.nativeInterface === "appObject"));
+}
+
+function claimedCapabilityReportsNativeAppRpcTransport(info) {
+  return info?.supportsNativeAppRpcTransport === true;
+}
+
+async function exportClaimedCapabilityNativeAppRpcSlot(
+    env, value, context, temporaryCapabilities) {
+  if (value instanceof RpcTarget) {
+    const capability = await createObjectCapability(env, value, { persistent: false });
+    temporaryCapabilities?.push(capability);
+    return nativeCapabilitySlot(capability.id, { nativeInterface: "appObject" });
+  }
+
+  if (value instanceof ClaimedCapability) {
+    const info = await claimedCapabilityInfo(env, value);
+    if (!claimedCapabilitySupportsNativeAppRpc(info)) {
+      throw new ValidationError(
+        `${context.name} nativeInterface ${info?.nativeInterface} cannot be used as native app RPC`);
+    }
+    return nativeCapabilitySlot(value.id, { nativeInterface: "appObject" });
+  }
+
+  failValidation(context.name, "a native app RPC capability", value);
+}
+
+function claimedCapabilityNativeAppRpcSlotValue(env, slot) {
+  return new ClaimedCapability(env, slot.id);
+}
+
+async function callClaimedCapabilityWithNativeAppRpc(capability, method, args) {
+  const temporaryCapabilities = [];
+  try {
+    const stub = createClaimedCapabilityNativeAppRpcStub(capability, {
+      checkInfo: false,
+      exportCapabilitySlot: (value, context) =>
+        exportClaimedCapabilityNativeAppRpcSlot(
+          capability.env, value, context, temporaryCapabilities),
+      resolveCapabilitySlot: (slot) =>
+        claimedCapabilityNativeAppRpcSlotValue(capability.env, slot),
+    });
+    return await stub.call(method, ...args);
+  } finally {
+    await Promise.all(temporaryCapabilities.map((cap) => cap.drop().catch(() => {})));
   }
 }
 
@@ -1590,6 +1639,11 @@ async function createObjectCapability(env, target, options = {}) {
 async function callClaimedCapability(capability, method, args = []) {
   method = capabilityMethodName(method);
   args = capabilityArgs(args);
+  const info = await claimedCapabilityInfo(capability.env, capability);
+  if (claimedCapabilityReportsNativeAppRpcTransport(info)) {
+    return callClaimedCapabilityWithNativeAppRpc(capability, method, args);
+  }
+
   const temporaryCapabilities = [];
   try {
     const serializedArgs = await serializeCapabilityValue(capability.env, args, {
@@ -1853,7 +1907,11 @@ async function serveObjectCapability(request, env) {
 
   if (request.method === "POST" && action === "native-app-rpc-call") {
     try {
-      return Response.json(await dispatchNativeAppRpcCall(target, await request.json()));
+      return Response.json(await dispatchNativeAppRpcCall(target, await request.json(), {
+        exportCapabilitySlot: (value, context) =>
+          exportClaimedCapabilityNativeAppRpcSlot(env, value, context),
+        resolveCapabilitySlot: (slot) => new ClaimedCapability(env, slot.id),
+      }));
     } catch (error) {
       const status = error instanceof ValidationError ? 400 : 500;
       return Response.json(serializeNativeAppRpcException(error), { status });
