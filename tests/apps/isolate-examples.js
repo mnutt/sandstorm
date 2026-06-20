@@ -27,11 +27,15 @@ var utils = require("../utils"),
 
 var repoRoot = path.resolve(__dirname, "../..");
 var apiPowerboxAppId = "8djwvme6h49v5p2zj57gatq698pyx4nkdnwgjpzfctgunfrzh4p0";
-var apiPowerboxSpk = path.join(repoRoot, "tests/assets/isolate-api-powerbox-test-app.spk");
+var apiPowerboxSpk = process.env.ISOLATE_API_POWERBOX_TEST_SPK ||
+    path.join(repoRoot, "tests/assets/isolate-api-powerbox-test-app.spk");
 var apiProviderAppId = "mkhmn9rg2phfv3dvcnd71ud45jp70139h0e3sgqkh6rg2ydk3z00";
-var apiProviderSpk = path.join(repoRoot, "tests/assets/isolate-api-provider-test-app.spk");
+var apiProviderSpk = process.env.ISOLATE_API_PROVIDER_TEST_SPK ||
+    path.join(repoRoot, "tests/assets/isolate-api-provider-test-app.spk");
 
 function ensureApiPowerboxSpk() {
+  if (process.env.ISOLATE_API_POWERBOX_TEST_SPK) return;
+
   childProcess.execFileSync("make", ["tests/assets/isolate-api-powerbox-test-app.spk"], {
     cwd: repoRoot,
     stdio: "inherit",
@@ -39,6 +43,8 @@ function ensureApiPowerboxSpk() {
 }
 
 function ensureApiProviderSpk() {
+  if (process.env.ISOLATE_API_PROVIDER_TEST_SPK) return;
+
   childProcess.execFileSync("make", ["tests/assets/isolate-api-provider-test-app.spk"], {
     cwd: repoRoot,
     stdio: "inherit",
