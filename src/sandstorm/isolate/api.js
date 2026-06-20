@@ -736,6 +736,54 @@ export function createNativeAppRpcFetchTransport(fetcher, route) {
   };
 }
 
+async function requireNativeAppRpcClaimedCapability(capability) {
+  const info = await claimedCapabilityInfo(capability.env, capability);
+  if (info?.supportsNativeAppRpcTransport === false || (
+      info?.supportsNativeAppRpcTransport === undefined &&
+      info?.nativeInterface !== undefined &&
+      info.nativeInterface !== "unknown" &&
+      info.nativeInterface !== "appObject")) {
+    throw new ValidationError(
+      `ClaimedCapability nativeInterface ${info.nativeInterface} cannot be used as native app RPC`);
+  }
+}
+
+export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}) {
+  if (!(capability instanceof ClaimedCapability)) {
+    failValidation("native app RPC claimed capability", "a ClaimedCapability", capability);
+  }
+  if (!isPlainObject(options)) {
+    failValidation("native app RPC claimed capability options", "an object", options);
+  }
+
+  let transport = options.transport;
+  if (transport !== undefined && transport !== null && typeof transport !== "function") {
+    failValidation("native app RPC claimed capability transport", "a function", transport);
+  }
+  if (transport === undefined && options.fetcher !== undefined) {
+    transport = createNativeAppRpcFetchTransport(options.fetcher, options.route);
+  }
+
+  const checkedTransport = async (slot, call) => {
+    if (options.checkInfo !== false) {
+      await requireNativeAppRpcClaimedCapability(capability);
+    }
+    if (!transport) {
+      throw new CapabilityCallError(
+        "native app RPC transport for claimed capabilities is not connected");
+    }
+    return transport(slot, call);
+  };
+
+  return createNativeAppRpcStub(
+    nativeCapabilitySlot(capability.id, { nativeInterface: "appObject" }),
+    checkedTransport,
+    {
+      ...options,
+      release: options.release ?? (() => capability.drop()),
+    });
+}
+
 function storageUrl(key = "") {
   return `http://storage/${encodeURIComponent(key === "" ? "" : validate.storageKey(key))}`;
 }
@@ -858,6 +906,10 @@ export class ClaimedCapability {
 
   asRpc() {
     return createCapabilityRpcStub(this);
+  }
+
+  asNativeRpc(options = {}) {
+    return createClaimedCapabilityNativeAppRpcStub(this, options).asRpc();
   }
 
   asOutboundHttp() {
@@ -1573,6 +1625,7 @@ const CLAIMED_CAPABILITY_RPC_OWN_PROPERTIES = new Set([
   "fetch",
   "call",
   "asRpc",
+  "asNativeRpc",
   "asOutboundHttp",
   "info",
   "dup",

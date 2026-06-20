@@ -1551,6 +1551,54 @@ test("isolate supervisor integration suite", {
     assert.equal(nativeInterfaceValidation.json.appObjectOutboundError.name, "ValidationError");
     assert.match(nativeInterfaceValidation.json.appObjectOutboundError.message,
       /nativeInterface appObject/);
+    assert.deepEqual(nativeInterfaceValidation.json.appObjectNativeSlot, {
+      type: "nativeCapabilitySlot",
+      id: "mock-app-object",
+      nativeInterface: "appObject",
+    });
+    assert.deepEqual(nativeInterfaceValidation.json.nativeRpcTransportCalls, [
+      {
+        slot: nativeInterfaceValidation.json.appObjectNativeSlot,
+        call: {
+          method: "deliver",
+          args: [
+            { type: "text", value: "native-subject" },
+            {
+              type: "capability",
+              value: { id: "native-callback", nativeInterface: "appObject" },
+            },
+            {
+              type: "object",
+              value: [{ name: "urgent", value: { type: "bool", value: true } }],
+            },
+          ],
+        },
+      },
+    ]);
+    assert.deepEqual(nativeInterfaceValidation.json.appObjectNativeValue, {
+      subject: "native-subject",
+      callback: {
+        type: "nativeCapabilitySlot",
+        id: "native-callback",
+        nativeInterface: "appObject",
+      },
+      options: { urgent: true },
+    });
+    assert.deepEqual(nativeInterfaceValidation.json.helperNativeSlot,
+      nativeInterfaceValidation.json.appObjectNativeSlot);
+    assert.deepEqual(nativeInterfaceValidation.json.helperNativeDrop, {
+      ok: true,
+      released: "mock-app-object",
+    });
+    assert.equal(nativeInterfaceValidation.json.missingTransportError.name, "CapabilityCallError");
+    assert.match(nativeInterfaceValidation.json.missingTransportError.message,
+      /transport for claimed capabilities is not connected/);
+    assert.deepEqual(nativeInterfaceValidation.json.wrongNativeRpcTransportCalls, []);
+    assert.equal(nativeInterfaceValidation.json.wrongNativeRpcError.name, "ValidationError");
+    assert.match(nativeInterfaceValidation.json.wrongNativeRpcError.message,
+      /nativeInterface outboundHttpSession/);
+    assert.match(nativeInterfaceValidation.json.wrongNativeRpcError.message,
+      /native app RPC/);
 
     const nativeAppRpcCodec = await requestJson(
       fixture.workerdSocket, "/native-app-rpc-codec-self-test");
