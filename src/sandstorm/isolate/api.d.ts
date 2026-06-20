@@ -292,7 +292,6 @@ declare module "sandstorm:api" {
     dropNotifyRefCount: number;
     supportsWebFetch: boolean;
     supportsOutboundHttpFetch: boolean;
-    supportsNativeAppRpcTransport: boolean;
     hasNativeCapability: boolean;
     liveForwardable: boolean;
   }

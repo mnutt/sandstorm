@@ -767,11 +767,11 @@ async function requireNativeAppRpcClaimedCapability(capability) {
 }
 
 function claimedCapabilitySupportsNativeAppRpc(info) {
-  return info?.supportsNativeAppRpcTransport === true;
+  return info?.nativeInterface === "appObject";
 }
 
 function claimedCapabilityReportsNativeAppRpcTransport(info) {
-  return info?.supportsNativeAppRpcTransport === true;
+  return claimedCapabilitySupportsNativeAppRpc(info);
 }
 
 async function exportClaimedCapabilityNativeAppRpcSlot(
@@ -800,19 +800,15 @@ function claimedCapabilityNativeAppRpcSlotValue(env, slot) {
 
 async function callClaimedCapabilityWithNativeAppRpc(capability, method, args) {
   const temporaryCapabilities = [];
-  try {
-    const stub = createClaimedCapabilityNativeAppRpcStub(capability, {
-      checkInfo: false,
-      exportCapabilitySlot: (value, context) =>
-        exportClaimedCapabilityNativeAppRpcSlot(
-          capability.env, value, context, temporaryCapabilities),
-      resolveCapabilitySlot: (slot) =>
-        claimedCapabilityNativeAppRpcSlotValue(capability.env, slot),
-    });
-    return await stub.call(method, ...args);
-  } finally {
-    await Promise.all(temporaryCapabilities.map((cap) => cap.drop().catch(() => {})));
-  }
+  const stub = createClaimedCapabilityNativeAppRpcStub(capability, {
+    checkInfo: false,
+    exportCapabilitySlot: (value, context) =>
+      exportClaimedCapabilityNativeAppRpcSlot(
+        capability.env, value, context, temporaryCapabilities),
+    resolveCapabilitySlot: (slot) =>
+      claimedCapabilityNativeAppRpcSlotValue(capability.env, slot),
+  });
+  return await stub.call(method, ...args);
 }
 
 export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}) {
@@ -864,9 +860,7 @@ export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}
               ((value, context) => exportClaimedCapabilityNativeAppRpcSlot(
                 capability.env, value, context, temporaryCapabilities)),
           },
-          finish: async () => {
-            await Promise.all(temporaryCapabilities.map((cap) => cap.drop().catch(() => {})));
-          },
+          finish: async () => {},
         };
       },
       release: options.release ?? (() => capability.drop()),

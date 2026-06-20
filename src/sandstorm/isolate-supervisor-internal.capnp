@@ -39,6 +39,11 @@ interface IsolateObjectCapability @0xd7a322498a996313 {
   # this hook exists for explicit JS disposal/drop semantics.
 }
 
+interface IsolatePersistentObjectCapability @0xc81a6f7df4d0eec2
+    extends(IsolateObjectCapability, SystemPersistent) {
+  # Route-backed app-defined object capability that can also be saved.
+}
+
 struct IsolateObjectCallValue @0x976b1fa67593b262
     $Json.discriminator(name = "type", valueName = "value") {
   union {

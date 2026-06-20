@@ -71,10 +71,16 @@ kj::Own<IsolateObjectCallTarget> makeImportedIsolateObjectCallTarget(
 kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
     IsolateObjectCapability::Client capability, kj::StringPtr method,
     capnp::List<IsolateObjectCallValue>::Reader args);
-OwnedNativeAppRpcCall parseNativeAppRpcJsonCall(
+OwnedNativeAppRpcCall parseWorkerAppObjectCallJson(
     kj::ArrayPtr<const kj::byte> body, NativeAppRpcJsonCapabilityAdapter& adapter,
     size_t maxDataBytes);
-kj::String renderNativeAppRpcJsonResult(
+kj::String renderWorkerAppObjectCallJson(
+    kj::StringPtr method, capnp::List<IsolateObjectCallValue>::Reader args,
+    NativeAppRpcJsonCapabilityAdapter& adapter);
+OwnedIsolateObjectCallResult parseWorkerAppObjectResultJson(
+    kj::ArrayPtr<const kj::byte> body, NativeAppRpcJsonCapabilityAdapter& adapter,
+    size_t maxDataBytes);
+kj::String renderWorkerAppObjectResultJson(
     IsolateObjectCallResult::Reader result, NativeAppRpcJsonCapabilityAdapter& adapter);
 bool isCanonicalPackagePath(kj::StringPtr path);
 kj::String isolateStorageKeyFromUrl(kj::StringPtr url);

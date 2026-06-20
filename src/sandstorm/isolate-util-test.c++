@@ -202,7 +202,7 @@ KJ_TEST("native app RPC JSON codec preserves data and capability slots") {
       "{\"type\":\"data\",\"value\":\"aGVsbG8\"},"
       "{\"type\":\"capability\",\"value\":{\"id\":\"slot-1\",\"nativeInterface\":\"appObject\"}}"
       "]}");
-  auto call = parseNativeAppRpcJsonCall(callJson.asBytes(), adapter, 32);
+  auto call = parseWorkerAppObjectCallJson(callJson.asBytes(), adapter, 32);
   KJ_EXPECT(call.method == "deliver");
 
   auto args = call.args.getArgs();
@@ -230,7 +230,7 @@ KJ_TEST("native app RPC JSON codec preserves data and capability slots") {
   fields[1].setName("callback");
   fields[1].initValue().setCapability(args[1].getCapability());
 
-  auto resultJson = renderNativeAppRpcJsonResult(result, adapter);
+  auto resultJson = renderWorkerAppObjectResultJson(result, adapter);
   KJ_EXPECT(resultJson == kj::StringPtr(
       "{\"type\":\"value\",\"value\":{\"type\":\"object\",\"value\":["
       "{\"name\":\"payload\",\"value\":{\"type\":\"data\",\"value\":\"b2s\"}},"
@@ -239,13 +239,13 @@ KJ_TEST("native app RPC JSON codec preserves data and capability slots") {
 
   KJ_EXPECT_THROW_MESSAGE(
       "native app RPC data value must be base64url text",
-      parseNativeAppRpcJsonCall(
+      parseWorkerAppObjectCallJson(
           kj::StringPtr("{\"method\":\"bad\",\"args\":[{\"type\":\"data\",\"value\":\"!!!\"}]}")
               .asBytes(),
           adapter, 32));
   KJ_EXPECT_THROW_MESSAGE(
       "unknown claimed capability in native app RPC argument",
-      parseNativeAppRpcJsonCall(
+      parseWorkerAppObjectCallJson(
           kj::StringPtr(
               "{\"method\":\"bad\",\"args\":[{\"type\":\"capability\",\"value\":{\"id\":\"missing\"}}]}")
               .asBytes(),
