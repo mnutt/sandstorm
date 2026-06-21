@@ -1576,9 +1576,8 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"hasNativeCapability\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"liveForwardable\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"save\":{\"status\":200,\"body\":{\"ok\":true"), claimBody);
-    KJ_REQUIRE(contains(claimBody, "\"type\":\"savedCapability\""), claimBody);
-    KJ_REQUIRE(contains(claimBody, "\"tokenEncoding\":\"base64url\""), claimBody);
-    KJ_REQUIRE(contains(claimBody, "\"typed\":{\"savedClass\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"token\":\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"typed\":{\"savedToken\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody,
         "\"restore\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"claimedCapability\""),
         claimBody);

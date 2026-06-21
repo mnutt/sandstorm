@@ -854,12 +854,10 @@ test("isolate supervisor integration suite", {
       fixture.stdout, fixture.stderr));
     assert.equal(selfTest.json.ok, true);
     assert.equal(selfTest.json.capabilityClass, true);
-    assert.equal(selfTest.json.savedClass, true);
+    assert.equal(selfTest.json.savedToken, true);
     assert.equal(selfTest.json.restoredClass, true);
     assert.equal(selfTest.json.capability.type, "claimedCapability");
-    assert.equal(selfTest.json.saved.type, "savedCapability");
-    assert.equal(selfTest.json.saved.tokenEncoding, "base64url");
-    assert.equal(typeof selfTest.json.saved.token, "string");
+    assert.equal(typeof selfTest.json.saved, "string");
     assert.equal(selfTest.json.restored.type, "claimedCapability");
     assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
     assert.match(selfTest.json.wrongOutboundError.message, /nativeInterface webSession/);
@@ -1041,12 +1039,10 @@ test("isolate supervisor integration suite", {
       fixture.stdout, fixture.stderr));
     assert.equal(selfTest.json.ok, true);
     assert.equal(selfTest.json.capabilityClass, true);
-    assert.equal(selfTest.json.savedClass, true);
+    assert.equal(selfTest.json.savedToken, true);
     assert.equal(selfTest.json.restoredClass, true);
     assert.equal(selfTest.json.capability.type, "claimedCapability");
-    assert.equal(selfTest.json.saved.type, "savedCapability");
-    assert.equal(selfTest.json.saved.tokenEncoding, "base64url");
-    assert.equal(typeof selfTest.json.saved.token, "string");
+    assert.equal(typeof selfTest.json.saved, "string");
     assert.equal(selfTest.json.restored.type, "claimedCapability");
     assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
     assert.match(selfTest.json.wrongOutboundError.message, /nativeInterface apiSession/);
@@ -1260,6 +1256,7 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.second, { value: 7 });
     assert.deepEqual(selfTest.json.current, { value: 7 });
     assert.equal(selfTest.json.childClass, true);
+    assert.equal(selfTest.json.childCapabilityAliasClass, true);
     assert.equal(selfTest.json.child.type, "claimedCapability");
     assert.equal(selfTest.json.capabilityInfo.ok, true);
     assert.equal(selfTest.json.capabilityInfo.type, "claimedCapabilityInfo");
@@ -1292,6 +1289,8 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.childInfo.liveForwardable, true);
     assert.deepEqual(selfTest.json.childFirst, { value: 11 });
     assert.deepEqual(selfTest.json.readChild, { value: 11 });
+    assert.equal(selfTest.json.rpcStable, true);
+    assert.deepEqual(selfTest.json.rpcCurrent, { value: 7 });
     assert.deepEqual(selfTest.json.stubFirst, { value: 9 });
     assert.deepEqual(selfTest.json.stubCurrent, { value: 9 });
     assert.equal(selfTest.json.stubChildClass, true);
@@ -1339,6 +1338,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.missing.status, undefined);
     assert.equal(selfTest.json.saveError.name, "Error");
     assert.match(selfTest.json.saveError.message, /transient and cannot be saved/);
+    assert.match(selfTest.json.saveError.message, /exportDurable/);
     assert.equal(selfTest.json.remoteArguments.rpcTargetError.name, "ValidationError");
     assert.match(selfTest.json.remoteArguments.rpcTargetError.message,
       /nativeInterface unknown cannot be used with app-defined RPC/);
@@ -1377,8 +1377,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.withoutIdError.name, "ValidationError");
     assert.match(selfTest.json.persistent.withoutIdError.message, /explicit id/);
     assert.deepEqual(selfTest.json.persistent.first, { value: 29 });
-    assert.equal(selfTest.json.persistent.saved.type, "savedCapability");
-    assert.equal(selfTest.json.persistent.saved.tokenEncoding, "base64url");
+    assert.equal(typeof selfTest.json.persistent.saved, "string");
     assert.equal(selfTest.json.persistent.restored.type, "claimedCapability");
     assert.deepEqual(selfTest.json.persistent.restoredGet, { value: 29 });
     assert.deepEqual(selfTest.json.persistent.restoredIncrement, { value: 32 });
@@ -1400,9 +1399,29 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.restoredAfterRegister.type, "claimedCapability");
     assert.deepEqual(selfTest.json.persistent.restoredAfterRegisterGet, { value: 41 });
     assert.equal(selfTest.json.persistent.dropRestoredAfterRegister.ok, true);
+    assert.equal(selfTest.json.persistent.topLevelRestored.type, "claimedCapability");
+    assert.deepEqual(selfTest.json.persistent.topLevelRestoreGet, { value: 41 });
+    assert.equal(selfTest.json.persistent.dropTopLevelRestored.ok, true);
+    assert.deepEqual(selfTest.json.persistent.useGet, { value: 41 });
     assert.equal(selfTest.json.persistent.dropSaved.ok, true);
     assert.equal(selfTest.json.persistent.unregisterReplacement.ok, true);
     assert.equal(selfTest.json.persistent.unregisterReplacement.disposed, true);
+    assert.equal(selfTest.json.persistent.helper.export.capability.type, "claimedCapability");
+    assert.deepEqual(selfTest.json.persistent.helper.export.increment, { value: 61 });
+    assert.equal(selfTest.json.persistent.helper.export.drop.ok, true);
+    assert.deepEqual(selfTest.json.persistent.helper.withExport.read, { value: 62 });
+    assert.equal(selfTest.json.persistent.helper.durableExport.restored, false);
+    assert.equal(selfTest.json.persistent.helper.durableExport.registered, true);
+    assert.equal(
+      selfTest.json.persistent.helper.durableExport.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.helper.durableExport.tokenType, "string");
+    assert.equal(selfTest.json.persistent.helper.durableExport.savedType, "undefined");
+    assert.deepEqual(selfTest.json.persistent.helper.durableExport.get, { value: 71 });
+    assert.equal(selfTest.json.persistent.helper.durableExport.drop.ok, true);
+    assert.equal(selfTest.json.persistent.helper.durableExport.revoke.ok, true);
+    assert.equal(selfTest.json.persistent.helper.durableExport.deleteStorage.ok, true);
+    assert.equal(selfTest.json.persistent.helper.durableExport.unregister.ok, true);
+    assert.equal(selfTest.json.persistent.helper.durableExport.unregister.disposed, true);
     assert.equal(selfTest.json.persistent.helper.first.restored, false);
     assert.equal(selfTest.json.persistent.helper.first.registered, true);
     assert.equal(selfTest.json.persistent.helper.first.capability.type, "claimedCapability");

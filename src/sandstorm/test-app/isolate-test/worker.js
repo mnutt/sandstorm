@@ -1,6 +1,7 @@
 import message from "message.txt";
 import metadata from "metadata.json";
 import {
+  Capability,
   ClaimedCapability,
   RpcTarget,
   SANDSTORM_API_VERSION,
@@ -415,14 +416,14 @@ export default {
       const capability = new ClaimedCapability(env, body.capability?.id || "");
       const saved = await capability.save({ label: "Isolate browser Powerbox test" });
       const dropOriginal = await capability.drop();
-      const restored = await saved.restore();
+      const restored = await api.restore(saved);
       const restoredResponse = await restored.fetch("/value?source=browser-powerbox");
       const restoredBody = await restoredResponse.json();
       const dropRestored = await restored.drop();
-      const dropSaved = await saved.drop();
+      const dropSaved = await api.revoke(saved);
       return Response.json({
         ok: true,
-        saved: JSON.parse(JSON.stringify(saved)),
+        saved,
         dropOriginal,
         restored: {
           status: restoredResponse.status,
@@ -810,7 +811,7 @@ export default {
       }
       const saved = await capability.save({ label: "Route-backed WebSession fixture" });
       const dropOriginal = await capability.drop();
-      const restored = await saved.restore();
+      const restored = await sandstorm(request, env).restore(saved);
       const fetchedResponse = await restored.fetch("/capability-echo?source=js-restore", {
         headers: {
           "x-sandstorm-app-claimed-fetch": "present",
@@ -853,14 +854,14 @@ export default {
         headers: { "if-match": "\"wrong-etag\"" },
       });
       const dropRestored = await restored.drop();
-      const dropSaved = await saved.drop();
+      const dropSaved = await sandstorm(request, env).revoke(saved);
       return Response.json({
         ok: true,
         capabilityClass: capability instanceof ClaimedCapability,
-        savedClass: saved instanceof SavedCapability,
+        savedToken: typeof saved === "string",
         restoredClass: restored instanceof ClaimedCapability,
         capability: JSON.parse(JSON.stringify(capability)),
-        saved: JSON.parse(JSON.stringify(saved)),
+        saved,
         restored: JSON.parse(JSON.stringify(restored)),
         wrongOutboundError,
         dropOriginal,
@@ -897,21 +898,21 @@ export default {
       }
       const saved = await capability.save({ label: "Route-backed ApiSession fixture" });
       const dropOriginal = await capability.drop();
-      const restored = await saved.restore();
+      const restored = await sandstorm(request, env).restore(saved);
       const fetchedResponse = await restored.fetch("/capability-echo?source=api-js-restore");
       const fetched = {
         status: fetchedResponse.status,
         body: await fetchedResponse.json(),
       };
       const dropRestored = await restored.drop();
-      const dropSaved = await saved.drop();
+      const dropSaved = await sandstorm(request, env).revoke(saved);
       return Response.json({
         ok: true,
         capabilityClass: capability instanceof ClaimedCapability,
-        savedClass: saved instanceof SavedCapability,
+        savedToken: typeof saved === "string",
         restoredClass: restored instanceof ClaimedCapability,
         capability: JSON.parse(JSON.stringify(capability)),
-        saved: JSON.parse(JSON.stringify(saved)),
+        saved,
         restored: JSON.parse(JSON.stringify(restored)),
         wrongOutboundError,
         dropOriginal,
@@ -1935,6 +1936,9 @@ export default {
       const childFirst = await child.call("increment", 11);
       const readChild = await capability.call("readOther", child);
       const stub = capability.asRpc();
+      const rpc = capability.rpc;
+      const rpcStable = capability.rpc === capability.rpc;
+      const rpcCurrent = await rpc.get();
       const stubFirst = await stub.increment(2);
       const stubCurrent = await stub.get();
       const stubChild = await stub.child();
@@ -2111,7 +2115,7 @@ export default {
       const persistentSaved = await persistentCapability.save({
         label: "Persistent object capability fixture",
       });
-      const persistentRestored = await persistentSaved.restore();
+      const persistentRestored = await sandstorm(request, env).restore(persistentSaved);
       const persistentRestoredGet = await persistentRestored.call("get");
       const persistentRestoredIncrement = await persistentRestored.call("increment", 3);
       const persistentDropOriginal = await persistentCapability.drop();
@@ -2154,15 +2158,55 @@ export default {
         });
       const persistentMintedAfterRegisterGet = await persistentMintedAfterRegister.call("get");
       const persistentDropMintedAfterRegister = await persistentMintedAfterRegister.drop();
-      const persistentRestoredAfterRegister = await persistentSaved.restore();
+      const persistentRestoredAfterRegister = await sandstorm(request, env).restore(persistentSaved);
       const persistentRestoredAfterRegisterGet =
         await persistentRestoredAfterRegister.call("get");
       const persistentDropRestoredAfterRegister = await persistentRestoredAfterRegister.drop();
-      const persistentDropSaved = await persistentSaved.drop();
+      let persistentTopLevelRestored = null;
+      let persistentTopLevelRestoreGet = null;
+      let persistentDropTopLevelRestored = null;
+      let persistentUseGet = null;
+      if (url.searchParams.get("persistentHelper") === "true") {
+        persistentTopLevelRestored = await sandstorm(request, env).restore(persistentSaved);
+        persistentTopLevelRestoreGet = await persistentTopLevelRestored.rpc.get();
+        persistentDropTopLevelRestored = await persistentTopLevelRestored.drop();
+        persistentUseGet = await sandstorm(request, env).use(
+          persistentSaved,
+          (restored) => restored.rpc.get());
+      }
+      const persistentDropSaved = await sandstorm(request, env).revoke(persistentSaved);
       const persistentUnregisterReplacement = sandstorm(request, env).unregisterCapability(
         persistentId);
       let persistentHelper = null;
       if (url.searchParams.get("persistentHelper") === "true") {
+        const exportedTarget = new CounterCapability();
+        const exported = await sandstorm(request, env).export(exportedTarget);
+        const exportedIncrement = await exported.rpc.increment(61);
+        const exportedDrop = await exported.drop();
+        const withExportRead = await sandstorm(request, env).withExport(
+          new CounterCapability(),
+          async (other) => {
+            await other.rpc.increment(62);
+            return other.rpc.get();
+          });
+        const durableExportId = `durable-export-${crypto.randomUUID()}`;
+        const durableExportStorageKey = `durable-export-${crypto.randomUUID()}`;
+        const durableExportTarget = new CounterCapability();
+        durableExportTarget.increment(71);
+        const durableExport = await sandstorm(request, env).exportDurable(durableExportTarget, {
+          id: durableExportId,
+          storageKey: durableExportStorageKey,
+          label: "Durable export fixture",
+        });
+        const durableExportGet = await durableExport.capability.rpc.get();
+        const durableExportTokenType = typeof durableExport.token;
+        const durableExportSavedType = typeof durableExport.saved;
+        const durableExportDrop = await durableExport.capability.drop();
+        const durableExportRevoke = await sandstorm(request, env).revoke(durableExport.token);
+        const durableExportDeleteStorage =
+          await sandstorm(request, env).storage().delete(durableExportStorageKey);
+        const durableExportUnregister =
+          sandstorm(request, env).unregisterCapability(durableExportId);
         const helperId = `persistent-helper-${crypto.randomUUID()}`;
         const helperStorageKey = `persistent-helper-${crypto.randomUUID()}`;
         const helperTarget = new CounterCapability();
@@ -2209,6 +2253,27 @@ export default {
           await sandstorm(request, env).storage().delete(callbackSecond.storageKey);
         const callbackUnregister = sandstorm(request, env).unregisterCapability(callbackId);
         persistentHelper = {
+          export: {
+            capability: JSON.parse(JSON.stringify(exported)),
+            increment: exportedIncrement,
+            drop: exportedDrop,
+          },
+          withExport: {
+            read: withExportRead,
+          },
+          durableExport: {
+            id: durableExport.id,
+            restored: durableExport.restored,
+            registered: durableExport.registered,
+            capability: JSON.parse(JSON.stringify(durableExport.capability)),
+            tokenType: durableExportTokenType,
+            savedType: durableExportSavedType,
+            get: durableExportGet,
+            drop: durableExportDrop,
+            revoke: durableExportRevoke,
+            deleteStorage: durableExportDeleteStorage,
+            unregister: durableExportUnregister,
+          },
           id: helperId,
           storageKey: helperStorageKey,
           first: {
@@ -2263,11 +2328,14 @@ export default {
         second,
         current,
         childClass: child instanceof ClaimedCapability,
+        childCapabilityAliasClass: child instanceof Capability,
         child: JSON.parse(JSON.stringify(child)),
         capabilityInfo,
         childInfo,
         childFirst,
         readChild,
+        rpcStable,
+        rpcCurrent,
         stubFirst,
         stubCurrent,
         stubChildClass: stubChild instanceof ClaimedCapability,
@@ -2354,6 +2422,10 @@ export default {
           restoredAfterRegister: JSON.parse(JSON.stringify(persistentRestoredAfterRegister)),
           restoredAfterRegisterGet: persistentRestoredAfterRegisterGet,
           dropRestoredAfterRegister: persistentDropRestoredAfterRegister,
+          topLevelRestored: JSON.parse(JSON.stringify(persistentTopLevelRestored)),
+          topLevelRestoreGet: persistentTopLevelRestoreGet,
+          dropTopLevelRestored: persistentDropTopLevelRestored,
+          useGet: persistentUseGet,
           dropSaved: persistentDropSaved,
           unregisterReplacement: persistentUnregisterReplacement,
           helper: persistentHelper,
@@ -2409,10 +2481,13 @@ export default {
           savedCapability = await claim.save({ label });
           save = {
             status: 200,
-            body: savedCapability,
+            body: {
+              ok: true,
+              token: savedCapability,
+            },
             typed: {
-              savedClass: savedCapability instanceof SavedCapability,
-              json: JSON.parse(JSON.stringify(savedCapability)),
+              savedToken: typeof savedCapability === "string",
+              json: savedCapability,
             },
           };
         } else {
@@ -2450,6 +2525,16 @@ export default {
       if (restoreToken && url.searchParams.get("restore") === "true") {
         if (savedCapability && typeof savedCapability.restore === "function") {
           restoredCapability = await savedCapability.restore();
+          restore = {
+            status: 200,
+            body: restoredCapability,
+            typed: {
+              restoredClass: restoredCapability instanceof ClaimedCapability,
+              json: JSON.parse(JSON.stringify(restoredCapability)),
+            },
+          };
+        } else if (typeof savedCapability === "string") {
+          restoredCapability = await sandstorm(request, env).restore(savedCapability);
           restore = {
             status: 200,
             body: restoredCapability,
@@ -2549,6 +2634,11 @@ export default {
             status: 200,
             body: await savedCapability.drop(),
           };
+        } else if (typeof savedCapability === "string") {
+          dropSaved = {
+            status: 200,
+            body: await sandstorm(request, env).revoke(savedCapability),
+          };
         } else {
           const dropSavedResponse = await env.SANDSTORM_API.fetch(
             `http://sandstorm/powerbox/drop-saved?token=${encodeURIComponent(restoreToken)}`,
@@ -2615,7 +2705,12 @@ export default {
         label: "WebSession saved from claimed handle",
         storageKey: handleStorageKey,
       });
+      const aliasSource = await sandstorm(request, env).webSession({
+        pathPrefix: "/exported",
+      });
+      const claimAlias = await helper.claim({ capability: aliasSource });
       const dropHandleClaimed = await handleClaimed.capability.drop();
+      const dropClaimAlias = await claimAlias.drop();
       const handleFetchSavedResponse =
         await helper.fetchStored(
           { storageKey: handleStorageKey },
@@ -2658,7 +2753,13 @@ export default {
           storageKey: handleClaimed.storageKey,
           token: handleClaimed.token,
         },
+        claimAlias: {
+          capabilityClass: claimAlias instanceof ClaimedCapability,
+          capabilityAliasClass: claimAlias instanceof Capability,
+          id: claimAlias.id,
+        },
         dropHandleClaimed,
+        dropClaimAlias,
         handleFetchSaved: {
           status: handleFetchSavedResponse.status,
           body: await handleFetchSavedResponse.json(),
