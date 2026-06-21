@@ -2159,6 +2159,7 @@ test("isolate supervisor integration suite", {
       urgent: true,
       saved: savedCapabilityToken,
     });
+    assert.equal(nativeAppRpcCodec.json.stubRpcStable, true);
     assert.equal(nativeAppRpcCodec.json.stubMissingError.name, "CapabilityCallError");
     assert.equal(nativeAppRpcCodec.json.stubMissingError.message, "RPC method not found: missing");
     assert.deepEqual(nativeAppRpcCodec.json.stubMissingError.details, {
