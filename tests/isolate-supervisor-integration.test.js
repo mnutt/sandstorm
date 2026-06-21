@@ -599,6 +599,47 @@ test("isolate supervisor integration suite", {
     assert.equal(storageHelper.json.deletedBytes.ok, true);
     assert.equal(storageHelper.json.deletedJson.ok, true);
 
+    const powerboxGrants = await requestJson(
+      fixture.workerdSocket, "/powerbox-grants-helper-self-test");
+    assert.equal(powerboxGrants.statusCode, 200, powerboxGrants.body);
+    assert.equal(powerboxGrants.json.ok, true);
+    assert.equal(powerboxGrants.json.page.status, 200);
+    assert.match(powerboxGrants.json.page.contentType, /text\/html/);
+    assert.equal(powerboxGrants.json.page.hasElement, true);
+    assert.equal(powerboxGrants.json.client.status, 200);
+    assert.match(powerboxGrants.json.client.contentType, /text\/javascript/);
+    assert.equal(powerboxGrants.json.client.hasRequestGrant, true);
+    assert.equal(powerboxGrants.json.rpcClient.status, 200);
+    assert.match(powerboxGrants.json.rpcClient.contentType, /text\/javascript/);
+    assert.equal(powerboxGrants.json.rpcClient.hasRequestPowerbox, true);
+    assert.equal(powerboxGrants.json.configBefore.ok, true);
+    assert.equal(powerboxGrants.json.configBefore.routePrefix, "/grant-ui-test");
+    assert.equal(powerboxGrants.json.configBefore.grants.length, 1);
+    assert.equal(powerboxGrants.json.configBefore.grants[0].id, "shared");
+    assert.equal(powerboxGrants.json.configBefore.grants[0].connected, false);
+    assert.equal(powerboxGrants.json.configBefore.grants[0].saveLabel.defaultText,
+      "Shared test capability");
+    assert.deepEqual(powerboxGrants.json.configBefore.grants[0].requiredPermissions, ["view"]);
+    assert.equal(powerboxGrants.json.statusBefore.ok, true);
+    assert.equal(powerboxGrants.json.statusBefore.status.connected, false);
+    assert.equal(powerboxGrants.json.claim.ok, true);
+    assert.equal(powerboxGrants.json.claim.status.connected, true);
+    assert.equal(powerboxGrants.json.claim.test.status, 200);
+    assert.equal(powerboxGrants.json.claim.test.body.source, "isolate-browser-powerbox");
+    assert.equal(powerboxGrants.json.claim.test.body.search, "?source=grant-test");
+    assert.equal(powerboxGrants.json.tokenType, "string");
+    assert.equal(powerboxGrants.json.used.capabilityClass, true);
+    assert.equal(powerboxGrants.json.used.status, 200);
+    assert.equal(powerboxGrants.json.used.body.source, "isolate-browser-powerbox");
+    assert.equal(powerboxGrants.json.used.body.search, "?source=grant-use");
+    assert.equal(powerboxGrants.json.statusAfterClaim.ok, true);
+    assert.equal(powerboxGrants.json.statusAfterClaim.status.connected, true);
+    assert.equal(powerboxGrants.json.revoke.ok, true);
+    assert.equal(powerboxGrants.json.revoke.revoked, true);
+    assert.equal(powerboxGrants.json.revoke.status.connected, false);
+    assert.equal(powerboxGrants.json.statusAfterRevoke.ok, true);
+    assert.equal(powerboxGrants.json.statusAfterRevoke.status.connected, false);
+
   });
 
   if (REPRESENTATIVE_SYSCALL_TRACE) {
