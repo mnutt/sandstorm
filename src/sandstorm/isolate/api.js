@@ -784,19 +784,19 @@ export function createNativeAppRpcFetchTransport(fetcher, route) {
   };
 }
 
-async function requireNativeAppRpcClaimedCapability(capability) {
+async function requireNativeAppRpcCapability(capability) {
   const info = await claimedCapabilityInfo(capability.env, capability);
-  if (!claimedCapabilitySupportsAppObjectCall(info)) {
+  if (!capabilitySupportsAppObjectCall(info)) {
     throw new ValidationError(
       `Capability nativeInterface ${info.nativeInterface} cannot be used with app-defined RPC`);
   }
 }
 
-function claimedCapabilitySupportsAppObjectCall(info) {
+function capabilitySupportsAppObjectCall(info) {
   return info?.nativeInterface === "appObject";
 }
 
-async function exportClaimedCapabilityNativeAppRpcSlot(
+async function exportCapabilityNativeAppRpcSlot(
     env, value, context, temporaryCapabilities) {
   if (value instanceof RpcTarget) {
     const capability = await createObjectCapability(env, value, { persistent: false });
@@ -806,7 +806,7 @@ async function exportClaimedCapabilityNativeAppRpcSlot(
 
   if (value instanceof Capability) {
     const info = await claimedCapabilityInfo(env, value);
-    if (!claimedCapabilitySupportsAppObjectCall(info)) {
+    if (!capabilitySupportsAppObjectCall(info)) {
       throw new ValidationError(
         `${context.name} nativeInterface ${info?.nativeInterface} cannot be used with app-defined RPC`);
     }
@@ -833,7 +833,7 @@ async function releaseTemporaryNativeAppRpcCapabilities(temporaryCapabilities) {
   }
 }
 
-function claimedCapabilityNativeAppRpcSlotValue(env, slot) {
+function capabilityNativeAppRpcSlotValue(env, slot) {
   if (slot?.nativeInterface !== "appObject") {
     const nativeInterface = slot?.nativeInterface || "unknown";
     throw new ValidationError(
@@ -842,16 +842,16 @@ function claimedCapabilityNativeAppRpcSlotValue(env, slot) {
   return new Capability(env, slot.id);
 }
 
-async function callClaimedCapabilityWithNativeAppRpc(capability, method, args) {
-  const stub = createClaimedCapabilityNativeAppRpcStub(capability, {
+async function callCapabilityWithNativeAppRpc(capability, method, args) {
+  const stub = createCapabilityNativeAppRpcStub(capability, {
     checkInfo: false,
     resolveCapabilitySlot: (slot) =>
-      claimedCapabilityNativeAppRpcSlotValue(capability.env, slot),
+      capabilityNativeAppRpcSlotValue(capability.env, slot),
   });
   return await stub.call(method, ...args);
 }
 
-export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}) {
+export function createCapabilityNativeAppRpcStub(capability, options = {}) {
   if (!(capability instanceof Capability)) {
     failValidation("native app RPC capability", "a Capability", capability);
   }
@@ -873,7 +873,7 @@ export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}
 
   const checkedTransport = async (slot, call) => {
     if (options.checkInfo !== false) {
-      await requireNativeAppRpcClaimedCapability(capability);
+      await requireNativeAppRpcCapability(capability);
     }
     if (!transport) {
       throw new CapabilityCallError(
@@ -883,7 +883,7 @@ export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}
   };
 
   const resolveCapabilitySlot = options.resolveCapabilitySlot ??
-    ((slot) => claimedCapabilityNativeAppRpcSlotValue(capability.env, slot));
+    ((slot) => capabilityNativeAppRpcSlotValue(capability.env, slot));
 
   return createNativeAppRpcStub(
     nativeCapabilitySlot(capability.id, { nativeInterface: "appObject" }),
@@ -898,7 +898,7 @@ export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}
             ...options,
             exportRpcTargets: false,
             exportCapabilitySlot: options.exportCapabilitySlot ??
-              ((value, context) => exportClaimedCapabilityNativeAppRpcSlot(
+              ((value, context) => exportCapabilityNativeAppRpcSlot(
                 capability.env, value, context, temporaryCapabilities)),
           },
           finish: async () => {
@@ -1034,7 +1034,7 @@ export class Capability {
 
   get rpc() {
     if (!this.#rpc) {
-      this.#rpc = createClaimedCapabilityNativeAppRpcStub(this).rpc;
+      this.#rpc = createCapabilityNativeAppRpcStub(this).rpc;
     }
     return this.#rpc;
   }
@@ -1695,8 +1695,8 @@ async function callClaimedCapability(capability, method, args = []) {
   method = capabilityMethodName(method);
   args = capabilityArgs(args);
   const info = await claimedCapabilityInfo(capability.env, capability);
-  if (claimedCapabilitySupportsAppObjectCall(info)) {
-    return callClaimedCapabilityWithNativeAppRpc(capability, method, args);
+  if (capabilitySupportsAppObjectCall(info)) {
+    return callCapabilityWithNativeAppRpc(capability, method, args);
   }
 
   const nativeInterface = info?.nativeInterface || "unknown";
@@ -1811,7 +1811,7 @@ async function serveObjectCapability(request, env) {
     try {
       return Response.json(await dispatchNativeAppRpcCall(target, await request.json(), {
         exportCapabilitySlot: (value, context) =>
-          exportClaimedCapabilityNativeAppRpcSlot(env, value, context),
+          exportCapabilityNativeAppRpcSlot(env, value, context),
         resolveCapabilitySlot: (slot) => new Capability(env, slot.id),
       }));
     } catch (error) {
