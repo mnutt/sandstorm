@@ -37,7 +37,7 @@ declare module "sandstorm:api" {
   export class UnsupportedCapabilityError extends Error {
     readonly capability: string;
     readonly operation: string;
-    constructor(capability: string, operation: string);
+    constructor(capability: string, operation: string, message?: string);
   }
   export class CapabilityCallError extends Error {
     readonly details: unknown;

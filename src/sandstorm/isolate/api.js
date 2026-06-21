@@ -144,8 +144,8 @@ export class ValidationError extends Error {
 }
 
 export class UnsupportedCapabilityError extends Error {
-  constructor(capability, operation) {
-    super(`${capability}.${operation}() is not implemented by isolate grains yet`);
+  constructor(capability, operation, message = undefined) {
+    super(message || `${capability}.${operation}() is not implemented by isolate grains yet`);
     this.name = "UnsupportedCapabilityError";
     this.capability = capability;
     this.operation = operation;
@@ -787,8 +787,11 @@ export function createNativeAppRpcFetchTransport(fetcher, route) {
 async function requireNativeAppRpcCapability(capability) {
   const info = await capabilityInfo(capability.env, capability);
   if (!capabilitySupportsAppObjectCall(info)) {
-    throw new ValidationError(
-      `Capability nativeInterface ${info.nativeInterface} cannot be used with app-defined RPC`);
+    const nativeInterface = info?.nativeInterface || "unknown";
+    throw new UnsupportedCapabilityError(
+      nativeInterface,
+      "rpc",
+      `Capability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
   }
 }
 
@@ -807,8 +810,11 @@ async function exportCapabilityNativeAppRpcSlot(
   if (value instanceof Capability) {
     const info = await capabilityInfo(env, value);
     if (!capabilitySupportsAppObjectCall(info)) {
-      throw new ValidationError(
-        `${context.name} nativeInterface ${info?.nativeInterface} cannot be used with app-defined RPC`);
+      const nativeInterface = info?.nativeInterface || "unknown";
+      throw new UnsupportedCapabilityError(
+        nativeInterface,
+        "rpc",
+        `${context.name} nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
     }
     return nativeCapabilitySlot(value.id, { nativeInterface: "appObject" });
   }
@@ -836,7 +842,9 @@ async function releaseTemporaryNativeAppRpcCapabilities(temporaryCapabilities) {
 function capabilityNativeAppRpcSlotValue(env, slot) {
   if (slot?.nativeInterface !== "appObject") {
     const nativeInterface = slot?.nativeInterface || "unknown";
-    throw new ValidationError(
+    throw new UnsupportedCapabilityError(
+      nativeInterface,
+      "rpc",
       `native capability slot nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
   }
   return new Capability(env, slot.id);
@@ -1699,7 +1707,9 @@ async function callCapability(capability, method, args = []) {
   }
 
   const nativeInterface = info?.nativeInterface || "unknown";
-  throw new ValidationError(
+  throw new UnsupportedCapabilityError(
+    nativeInterface,
+    "rpc",
     `Capability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
 }
 
@@ -1880,7 +1890,9 @@ async function fetchCapability(env, capability, input, init = {}) {
       info?.supportsWebFetch === undefined &&
       info?.nativeInterface === "outboundHttpSession")) {
     const nativeInterface = info?.nativeInterface || "unknown";
-    throw new ValidationError(
+    throw new UnsupportedCapabilityError(
+      nativeInterface,
+      "fetch",
       `cap.fetch() is only for WebSession, ApiSession, and OutboundHttpSession capabilities; ` +
       `nativeInterface ${nativeInterface} cannot be fetched. Use cap.rpc or cap.call() ` +
       `for app-defined RPC capabilities`);
@@ -1966,7 +1978,9 @@ async function fetchOutboundHttpSession(capability, input, init = {}, info = und
       info.nativeInterface !== "unknown" &&
       info.nativeInterface !== "outboundHttpSession")) {
     const nativeInterface = info?.nativeInterface || "unknown";
-    throw new ValidationError(
+    throw new UnsupportedCapabilityError(
+      nativeInterface,
+      "fetch",
       `cap.fetch() on OutboundHttpSession capabilities cannot use nativeInterface ` +
       `${nativeInterface}; use app-defined RPC for appObject capabilities`);
   }
