@@ -379,6 +379,14 @@ declare module "sandstorm:api" {
   };
 
   export interface Capability extends CapabilityHandle {
+    /**
+     * Fetch through a WebSession, ApiSession, or OutboundHttpSession capability.
+     *
+     * WebSession and ApiSession capabilities accept only relative app paths such
+     * as "/path?query". OutboundHttpSession capabilities accept only relative
+     * outbound paths such as "v1/resource" or "/v1/resource"; the powerbox
+     * descriptor supplies the origin.
+     */
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
     readonly rpc: NativeAppRpcProxy<Record<string, (...args: any[]) => unknown>>;
@@ -397,6 +405,14 @@ declare module "sandstorm:api" {
     readonly type: "capability";
     readonly id: string;
     constructor(env: SandstormEnv, id: string);
+    /**
+     * Fetch through a WebSession, ApiSession, or OutboundHttpSession capability.
+     *
+     * WebSession and ApiSession capabilities accept only relative app paths such
+     * as "/path?query". OutboundHttpSession capabilities accept only relative
+     * outbound paths such as "v1/resource" or "/v1/resource"; the powerbox
+     * descriptor supplies the origin.
+     */
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
     readonly rpc: NativeAppRpcProxy<Record<string, (...args: any[]) => unknown>>;
