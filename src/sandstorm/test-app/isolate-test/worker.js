@@ -2,7 +2,6 @@ import message from "message.txt";
 import metadata from "metadata.json";
 import {
   Capability,
-  ClaimedCapability,
   RpcTarget,
   SANDSTORM_API_VERSION,
   SANDSTORM_CAPNWEB_VERSION,
@@ -412,7 +411,7 @@ export default {
 
     if (url.pathname === "/browser-powerbox-finish" && request.method === "POST") {
       const body = await request.json();
-      const capability = new ClaimedCapability(env, body.capability?.id || "");
+      const capability = new Capability(env, body.capability?.id || "");
       const saved = await capability.save({ label: "Isolate browser Powerbox test" });
       const dropOriginal = await capability.drop();
       const restored = await api.restore(saved);
@@ -665,11 +664,11 @@ export default {
         ok: Boolean(offered),
         sessionType: request.headers.get("x-sandstorm-session-type"),
         offeredCapabilityId: request.headers.get("x-sandstorm-offered-capability-id"),
-        offeredClass: offered instanceof ClaimedCapability,
+        offeredClass: offered instanceof Capability,
         sessionOffer: api.session().offer,
         offeredInfo: offeredInfo ? {
           ...offeredInfo,
-          capabilityClass: offeredInfo.capability instanceof ClaimedCapability,
+          capabilityClass: offeredInfo.capability instanceof Capability,
           capability: offeredInfo.capability
               ? JSON.parse(JSON.stringify(offeredInfo.capability))
               : null,
@@ -736,7 +735,7 @@ export default {
       });
       return Response.json({
         ok: true,
-        capabilityClass: capability instanceof ClaimedCapability,
+        capabilityClass: capability instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
       });
     }
@@ -790,7 +789,7 @@ export default {
       });
       return Response.json({
         ok: true,
-        capabilityClass: capability instanceof ClaimedCapability,
+        capabilityClass: capability instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
       });
     }
@@ -829,7 +828,7 @@ export default {
       const postedResponse = await restored.fetch("/capability-echo?source=js-post", {
         method: "POST",
         headers: { "content-type": "text/plain; charset=utf-8" },
-        body: "hello through claimed capability fetch",
+        body: "hello through capability fetch",
       });
       const posted = {
         status: postedResponse.status,
@@ -856,9 +855,9 @@ export default {
       const dropSaved = await sandstorm(request, env).revoke(saved);
       return Response.json({
         ok: true,
-        capabilityClass: capability instanceof ClaimedCapability,
+        capabilityClass: capability instanceof Capability,
         savedToken: typeof saved === "string",
-        restoredClass: restored instanceof ClaimedCapability,
+        restoredClass: restored instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
         saved,
         restored: JSON.parse(JSON.stringify(restored)),
@@ -907,9 +906,9 @@ export default {
       const dropSaved = await sandstorm(request, env).revoke(saved);
       return Response.json({
         ok: true,
-        capabilityClass: capability instanceof ClaimedCapability,
+        capabilityClass: capability instanceof Capability,
         savedToken: typeof saved === "string",
-        restoredClass: restored instanceof ClaimedCapability,
+        restoredClass: restored instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
         saved,
         restored: JSON.parse(JSON.stringify(restored)),
@@ -991,7 +990,7 @@ export default {
               const appObject = id === "mock-app-object";
               return Response.json({
                 ok: true,
-                type: "claimedCapabilityInfo",
+                type: "capabilityInfo",
                 id,
                 kind: "powerboxClaim",
                 residence: "imported",
@@ -1027,7 +1026,7 @@ export default {
           },
         },
       };
-      const capability = new ClaimedCapability(mockEnv, "mock-outbound");
+      const capability = new Capability(mockEnv, "mock-outbound");
       let fetchError = null;
       try {
         await capability.fetch("https://api.example.test/v1/should-not-fetch");
@@ -1043,7 +1042,7 @@ export default {
         header: outboundFetchResponse.headers.get("x-mock-outbound"),
         body: await outboundFetchResponse.json(),
       };
-      const appObjectCapability = new ClaimedCapability(mockEnv, "mock-app-object");
+      const appObjectCapability = new Capability(mockEnv, "mock-app-object");
       let appObjectFetchError = null;
       try {
         await appObjectCapability.fetch("/should-not-fetch");
@@ -1285,8 +1284,8 @@ export default {
         exportCapabilitySlotCalls.push({
           name: context.name,
           rpcTargetClass: capability instanceof RpcTarget,
-          claimedClass: capability instanceof ClaimedCapability,
-          capabilityId: capability instanceof ClaimedCapability ? capability.id : undefined,
+          capabilityClass: capability instanceof Capability,
+          capabilityId: capability instanceof Capability ? capability.id : undefined,
           id,
         });
         return nativeCapabilitySlot(id, { nativeInterface: "appObject" });
@@ -1296,8 +1295,8 @@ export default {
         exportCapabilitySlot,
         exportRpcTargets: true,
       });
-      const exportedClaimedValue = await serializeNativeAppRpcValueAsync(
-        new ClaimedCapability(env, "mock-app-object"),
+      const exportedCapabilityValue = await serializeNativeAppRpcValueAsync(
+        new Capability(env, "mock-app-object"),
         {
           name: "authority",
           exportCapabilitySlot,
@@ -1306,7 +1305,7 @@ export default {
       try {
         await serializeNativeAppRpcCallAsync("deliver", [
           new CounterCapability(),
-          { authority: new ClaimedCapability(env, "mock-app-object") },
+          { authority: new Capability(env, "mock-app-object") },
         ], { exportCapabilitySlot });
       } catch (error) {
         exportedCallRawTargetError = {
@@ -1315,8 +1314,8 @@ export default {
         };
       }
       const exportedCallEnvelope = await serializeNativeAppRpcCallAsync("deliver", [
-        new ClaimedCapability(env, "mock-exported-callback"),
-        { authority: new ClaimedCapability(env, "mock-app-object") },
+        new Capability(env, "mock-exported-callback"),
+        { authority: new Capability(env, "mock-app-object") },
       ], { exportCapabilitySlot });
       const exportingStubTransportCalls = [];
       const exportingStub = createNativeAppRpcStub(
@@ -1338,10 +1337,10 @@ export default {
       }
       const exportingStubValue = await exportingStub.call(
         "deliver", "export-stub-subject",
-        new ClaimedCapability(env, "mock-exported-stub-callback"), { urgent: false });
+        new Capability(env, "mock-exported-stub-callback"), { urgent: false });
       const exportedResultEnvelope = await serializeNativeAppRpcResultAsync({
         child: new CounterCapability(),
-        authority: new ClaimedCapability(env, "mock-app-object"),
+        authority: new Capability(env, "mock-app-object"),
       }, { exportCapabilitySlot });
       const exportDispatchTarget = {
         makeChild() {
@@ -1350,7 +1349,7 @@ export default {
 
         forwardAuthority() {
           return {
-            authority: new ClaimedCapability(env, "mock-app-object"),
+            authority: new Capability(env, "mock-app-object"),
           };
         },
       };
@@ -1495,7 +1494,7 @@ export default {
         },
         exported: {
           targetValue: exportedTargetValue,
-          claimedValue: exportedClaimedValue,
+          capabilityValue: exportedCapabilityValue,
           callEnvelope: exportedCallEnvelope,
           callRawTargetError: exportedCallRawTargetError,
           stubValue: exportingStubValue,
@@ -1717,7 +1716,7 @@ export default {
       const capability = await sandstorm(request, env).export(new CounterCapability());
       return Response.json({
         ok: true,
-        capabilityClass: capability instanceof ClaimedCapability,
+        capabilityClass: capability instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
       });
     }
@@ -1732,7 +1731,7 @@ export default {
         new MailFeedCapability(), options);
       return Response.json({
         ok: true,
-        capabilityClass: capability instanceof ClaimedCapability,
+        capabilityClass: capability instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
       });
     }
@@ -2100,7 +2099,7 @@ export default {
           fulfill,
           tie: {
             ok: tied.ok,
-            claimedClass: tied instanceof ClaimedCapability,
+            capabilityClass: tied instanceof Capability,
             json: JSON.parse(JSON.stringify(tied)),
           },
           dropTied: await tied.drop(),
@@ -2126,7 +2125,7 @@ export default {
         };
       }
       const remoteTarget = sandstorm(request, env).powerbox().claimedCapability({
-        type: "claimedCapability",
+        type: "capability",
         id: "remote-like-capability",
       });
       const remoteArgumentTarget = new CounterCapability();
@@ -2140,11 +2139,11 @@ export default {
           message: String(error?.message || error),
         };
       }
-      let remoteClaimedCapabilityArgumentError;
+      let remoteCapabilityArgumentError;
       try {
         await remoteTarget.call("readOther", child);
       } catch (error) {
-        remoteClaimedCapabilityArgumentError = {
+        remoteCapabilityArgumentError = {
           name: String(error?.name || "Error"),
           message: String(error?.message || error),
         };
@@ -2418,7 +2417,7 @@ export default {
         first,
         second,
         current,
-        childClass: child instanceof ClaimedCapability,
+        childClass: child instanceof Capability,
         childCapabilityAliasClass: child instanceof Capability,
         child: JSON.parse(JSON.stringify(child)),
         capabilityInfo,
@@ -2429,7 +2428,7 @@ export default {
         rpcCurrent,
         stubFirst,
         stubCurrent,
-        stubChildClass: stubChild instanceof ClaimedCapability,
+        stubChildClass: stubChild instanceof Capability,
         stubChild: JSON.parse(JSON.stringify(stubChild)),
         stubChildFirst,
         stubReadChild,
@@ -2460,7 +2459,7 @@ export default {
           events: receiver.events(),
           disposeBefore: disposeBeforeLiveCallback,
           disposeAfter: disposeAfterLiveCallback,
-          sessionClass: session instanceof ClaimedCapability,
+          sessionClass: session instanceof Capability,
           session: JSON.parse(JSON.stringify(session)),
           sessionFirst,
           sessionDrop,
@@ -2472,7 +2471,7 @@ export default {
         saveError,
         remoteArguments: {
           rpcTargetError: remoteRpcTargetArgumentError,
-          claimedCapabilityError: remoteClaimedCapabilityArgumentError,
+          capabilityError: remoteCapabilityArgumentError,
         },
         duplicate: {
           sourceId: capability.id,
@@ -2551,7 +2550,7 @@ export default {
         claim = await claimResponse.json();
       }
       const claimType = {
-        claimedClass: claim instanceof ClaimedCapability,
+        capabilityClass: claim instanceof Capability,
         json: JSON.parse(JSON.stringify(claim)),
       };
       async function claimedInfo(capability) {
@@ -2620,7 +2619,7 @@ export default {
             status: 200,
             body: restoredCapability,
             typed: {
-              restoredClass: restoredCapability instanceof ClaimedCapability,
+              restoredClass: restoredCapability instanceof Capability,
               json: JSON.parse(JSON.stringify(restoredCapability)),
             },
           };
@@ -2630,7 +2629,7 @@ export default {
             status: 200,
             body: restoredCapability,
             typed: {
-              restoredClass: restoredCapability instanceof ClaimedCapability,
+              restoredClass: restoredCapability instanceof Capability,
               json: JSON.parse(JSON.stringify(restoredCapability)),
             },
           };
@@ -2695,7 +2694,7 @@ export default {
         });
         tie = {
           ok: tiedCapability.ok,
-          claimedClass: tiedCapability instanceof ClaimedCapability,
+          capabilityClass: tiedCapability instanceof Capability,
           json: JSON.parse(JSON.stringify(tiedCapability)),
           info: await claimedInfo(tiedCapability),
         };
@@ -2888,7 +2887,7 @@ export default {
         ok: true,
         claimed: {
           ok: claimed.ok,
-          capabilityClass: claimed.capability instanceof ClaimedCapability,
+          capabilityClass: claimed.capability instanceof Capability,
           tokenType: typeof claimed.token,
           storageKey: claimed.storageKey,
           token: claimed.token,
@@ -2902,7 +2901,7 @@ export default {
         restored: {
           ok: restored.ok,
           found: restored.found,
-          capabilityClass: restored.capability instanceof ClaimedCapability,
+          capabilityClass: restored.capability instanceof Capability,
           storageKey: restored.storageKey,
           token: restored.token,
         },
@@ -2910,13 +2909,13 @@ export default {
         dropRestored,
         handleClaimed: {
           ok: handleClaimed.ok,
-          capabilityClass: handleClaimed.capability instanceof ClaimedCapability,
+          capabilityClass: handleClaimed.capability instanceof Capability,
           tokenType: typeof handleClaimed.token,
           storageKey: handleClaimed.storageKey,
           token: handleClaimed.token,
         },
         claimAlias: {
-          capabilityClass: claimAlias instanceof ClaimedCapability,
+          capabilityClass: claimAlias instanceof Capability,
           capabilityAliasClass: claimAlias instanceof Capability,
           id: claimAlias.id,
         },

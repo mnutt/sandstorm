@@ -1558,11 +1558,11 @@ public:
     KJ_REQUIRE(claimContent.getBody().which() == WebSession::Response::Content::Body::BYTES);
     auto claimBody = kj::str(claimContent.getBody().getBytes().asChars());
     KJ_REQUIRE(contains(claimBody, "\"ok\":true"), claimBody);
-    KJ_REQUIRE(contains(claimBody, "\"type\":\"claimedCapability\""), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"type\":\"capability\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"id\":\""), claimBody);
-    KJ_REQUIRE(contains(claimBody, "\"claimType\":{\"claimedClass\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"claimType\":{\"capabilityClass\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody,
-        "\"json\":{\"ok\":true,\"type\":\"claimedCapability\",\"id\":\""),
+        "\"json\":{\"ok\":true,\"type\":\"capability\",\"id\":\""),
         claimBody);
     KJ_REQUIRE(contains(claimBody,
         "\"claimInfo\":{\"status\":200,\"body\":{\"ok\":true,"
@@ -1579,7 +1579,7 @@ public:
     KJ_REQUIRE(contains(claimBody, "\"token\":\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"typed\":{\"savedToken\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody,
-        "\"restore\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"claimedCapability\""),
+        "\"restore\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"capability\""),
         claimBody);
     KJ_REQUIRE(contains(claimBody,
         "\"info\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"claimedCapabilityInfo\""),
@@ -1597,7 +1597,7 @@ public:
         claimBody);
     KJ_REQUIRE(contains(claimBody, "\"offer\":{\"ok\":true}"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"fulfill\":{\"ok\":true}"), claimBody);
-    KJ_REQUIRE(contains(claimBody, "\"tie\":{\"ok\":true,\"claimedClass\":true"), claimBody);
+    KJ_REQUIRE(contains(claimBody, "\"tie\":{\"ok\":true,\"capabilityClass\":true"), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"kind\":\"tied\""), claimBody);
     KJ_REQUIRE(contains(claimBody,
         "\"dropTied\":{\"ok\":true,\"released\":false}"),
@@ -1756,7 +1756,7 @@ public:
     KJ_REQUIRE(contains(exportBody, "\"ok\":true"), exportBody);
     KJ_REQUIRE(contains(exportBody, "\"capabilityClass\":true"), exportBody);
     KJ_REQUIRE(contains(exportBody,
-        "\"capability\":{\"ok\":true,\"type\":\"claimedCapability\",\"id\":\""),
+        "\"capability\":{\"ok\":true,\"type\":\"capability\",\"id\":\""),
         exportBody);
 
     auto objectActionsRequest = session.getRequest();
@@ -1783,7 +1783,7 @@ public:
     KJ_REQUIRE(contains(objectActionsBody, "\"sessionActions\":{\"offer\":{\"ok\":true}"),
         objectActionsBody);
     KJ_REQUIRE(contains(objectActionsBody, "\"fulfill\":{\"ok\":true}"), objectActionsBody);
-    KJ_REQUIRE(contains(objectActionsBody, "\"tie\":{\"ok\":true,\"claimedClass\":true"),
+    KJ_REQUIRE(contains(objectActionsBody, "\"tie\":{\"ok\":true,\"capabilityClass\":true"),
         objectActionsBody);
     KJ_REQUIRE(contains(objectActionsBody,
         "\"dropTied\":{\"ok\":true,\"released\":false}"), objectActionsBody);
@@ -1893,7 +1893,7 @@ public:
         offerBody);
     KJ_REQUIRE(contains(offerBody, "\"capabilityClass\":true"), offerBody);
     KJ_REQUIRE(contains(offerBody,
-        "\"claimedInfo\":{\"ok\":true,\"type\":\"claimedCapabilityInfo\""),
+        "\"claimedInfo\":{\"ok\":true,\"type\":\"capabilityInfo\""),
         offerBody);
     KJ_REQUIRE(contains(offerBody, "\"kind\":\"powerboxOffer\""), offerBody);
     KJ_REQUIRE(contains(offerBody, "\"residence\":\"imported\""), offerBody);
@@ -1961,7 +1961,7 @@ public:
     auto standardClaimBody = kj::str(standardClaimContent.getBody().getBytes().asChars());
     KJ_REQUIRE(contains(standardClaimBody, "\"ok\":true"), standardClaimBody);
     KJ_REQUIRE(contains(standardClaimBody, "\"capability\":{\"ok\":true"), standardClaimBody);
-    KJ_REQUIRE(contains(standardClaimBody, "\"type\":\"claimedCapability\""), standardClaimBody);
+    KJ_REQUIRE(contains(standardClaimBody, "\"type\":\"capability\""), standardClaimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 4, sessionContextRef.claimCount);
 
     supervisor.syncStorageRequest().send().wait(io.waitScope);

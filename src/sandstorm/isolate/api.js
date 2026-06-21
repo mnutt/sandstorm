@@ -86,6 +86,7 @@ async function queryClaimedCapabilityInfo(env, id) {
   if (!response.ok || !body.ok) {
     return null;
   }
+  body.type = "capabilityInfo";
   const metadata = claimedCapabilityMetadata.get(id) || {};
   claimedCapabilityMetadata.set(id, { ...metadata, ...body });
   return body;
@@ -95,7 +96,7 @@ async function claimedCapabilityInfo(env, capability, options = {}) {
   const id = capabilityId(capability);
   if (!options.refresh) {
     const cached = claimedCapabilityMetadata.get(id);
-    if (cached?.type === "claimedCapabilityInfo") {
+    if (cached?.type === "capabilityInfo") {
       return cached;
     }
   }
@@ -355,7 +356,7 @@ export function serializeNativeAppRpcValue(value, options = "value") {
   if (value && typeof value === "object" && value.type === "nativeCapabilitySlot") {
     return validateNativeCapabilitySlotEnvelope(value, name);
   }
-  if (value instanceof RpcTarget || value instanceof ClaimedCapability) {
+  if (value instanceof RpcTarget || value instanceof Capability) {
     throw new ValidationError(
       `${name} must be explicitly exported with api.export() before native app RPC serialization`);
   }
@@ -387,7 +388,7 @@ export async function serializeNativeAppRpcValueAsync(value, options = "value") 
     return validateNativeCapabilitySlotEnvelope(
       nativeCapabilitySlot(slot?.id, { nativeInterface: slot?.nativeInterface }), name);
   }
-  if (value instanceof ClaimedCapability) {
+  if (value instanceof Capability) {
     if (!context.exportCapabilitySlot) {
       throw new ValidationError(
         `${name} must be exported to a native capability slot before native app RPC serialization`);
@@ -783,7 +784,7 @@ async function requireNativeAppRpcClaimedCapability(capability) {
   const info = await claimedCapabilityInfo(capability.env, capability);
   if (!claimedCapabilitySupportsAppObjectCall(info)) {
     throw new ValidationError(
-      `ClaimedCapability nativeInterface ${info.nativeInterface} cannot be used with app-defined RPC`);
+      `Capability nativeInterface ${info.nativeInterface} cannot be used with app-defined RPC`);
   }
 }
 
@@ -799,7 +800,7 @@ async function exportClaimedCapabilityNativeAppRpcSlot(
     return nativeCapabilitySlot(capability.id, { nativeInterface: "appObject" });
   }
 
-  if (value instanceof ClaimedCapability) {
+  if (value instanceof Capability) {
     const info = await claimedCapabilityInfo(env, value);
     if (!claimedCapabilitySupportsAppObjectCall(info)) {
       throw new ValidationError(
@@ -834,7 +835,7 @@ function claimedCapabilityNativeAppRpcSlotValue(env, slot) {
     throw new ValidationError(
       `native capability slot nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
   }
-  return new ClaimedCapability(env, slot.id);
+  return new Capability(env, slot.id);
 }
 
 async function callClaimedCapabilityWithNativeAppRpc(capability, method, args) {
@@ -847,16 +848,16 @@ async function callClaimedCapabilityWithNativeAppRpc(capability, method, args) {
 }
 
 export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}) {
-  if (!(capability instanceof ClaimedCapability)) {
-    failValidation("native app RPC claimed capability", "a ClaimedCapability", capability);
+  if (!(capability instanceof Capability)) {
+    failValidation("native app RPC capability", "a Capability", capability);
   }
   if (!isPlainObject(options)) {
-    failValidation("native app RPC claimed capability options", "an object", options);
+    failValidation("native app RPC capability options", "an object", options);
   }
 
   let transport = options.transport;
   if (transport !== undefined && transport !== null && typeof transport !== "function") {
-    failValidation("native app RPC claimed capability transport", "a function", transport);
+    failValidation("native app RPC capability transport", "a function", transport);
   }
   if (transport === undefined && options.fetcher !== undefined) {
     transport = createNativeAppRpcFetchTransport(options.fetcher, options.route);
@@ -872,7 +873,7 @@ export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}
     }
     if (!transport) {
       throw new CapabilityCallError(
-        "app-defined RPC transport for claimed capabilities is not connected");
+        "app-defined RPC transport for capabilities is not connected");
     }
     return transport(slot, call);
   };
@@ -996,21 +997,22 @@ function capabilityId(value, name = "capability") {
     return validate.string(value, name, { minLength: 1, maxLength: 4096 });
   }
 
-  if (value && typeof value === "object" && value.type === "claimedCapability") {
+  if (value && typeof value === "object" &&
+      (value.type === "capability" || value.type === "claimedCapability")) {
     return validate.string(value.id, `${name}.id`, { minLength: 1, maxLength: 4096 });
   }
 
-  throw new ValidationError(`${name} must be a claimed capability handle or id string`);
+  throw new ValidationError(`${name} must be a capability handle or id string`);
 }
 
-export class ClaimedCapability {
+export class Capability {
   #env;
   #rpc;
 
   constructor(env, id) {
     this.#env = env;
     this.ok = true;
-    this.type = "claimedCapability";
+    this.type = "capability";
     this.id = validate.string(id, "capability.id", { minLength: 1, maxLength: 4096 });
   }
 
@@ -1079,16 +1081,14 @@ export class ClaimedCapability {
   toJSON() {
     return {
       ok: true,
-      type: "claimedCapability",
+      type: "capability",
       id: this.id,
     };
   }
 }
 
-export { ClaimedCapability as Capability };
-
 function saveLabel(options = {}) {
-  let label = options.label ?? options.saveLabel ?? "Claimed Sandstorm capability";
+  let label = options.label ?? options.saveLabel ?? "Sandstorm capability";
   if (label && typeof label === "object" && typeof label.defaultText === "string") {
     label = label.defaultText;
   }
@@ -1697,7 +1697,7 @@ async function callClaimedCapability(capability, method, args = []) {
 
   const nativeInterface = info?.nativeInterface || "unknown";
   throw new ValidationError(
-    `ClaimedCapability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
+    `Capability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
 }
 
 function wrapCapabilityValue(env, value) {
@@ -1709,7 +1709,7 @@ function wrapCapabilityValue(env, value) {
     return value;
   }
 
-  if (value.type === "claimedCapability") {
+  if (value.type === "capability" || value.type === "claimedCapability") {
     return wrapClaimedCapability(env, value);
   }
   if (value.type === "savedCapability") {
@@ -1808,7 +1808,7 @@ async function serveObjectCapability(request, env) {
       return Response.json(await dispatchNativeAppRpcCall(target, await request.json(), {
         exportCapabilitySlot: (value, context) =>
           exportClaimedCapabilityNativeAppRpcSlot(env, value, context),
-        resolveCapabilitySlot: (slot) => new ClaimedCapability(env, slot.id),
+        resolveCapabilitySlot: (slot) => new Capability(env, slot.id),
       }));
     } catch (error) {
       const status = error instanceof ValidationError ? 400 : 500;
@@ -1901,7 +1901,7 @@ async function fetchClaimedCapability(env, capability, input, init = {}) {
       info?.nativeInterface === "outboundHttpSession")) {
     const nativeInterface = info?.nativeInterface || "unknown";
     throw new ValidationError(
-      `ClaimedCapability nativeInterface ${nativeInterface} cannot be used with fetch(); ` +
+      `Capability nativeInterface ${nativeInterface} cannot be used with fetch(); ` +
       "use a compatible app-defined RPC transport instead");
   }
 
@@ -1980,7 +1980,7 @@ async function fetchOutboundHttpCapability(capability, input, init = {}, info = 
       info.nativeInterface !== "unknown" &&
       info.nativeInterface !== "outboundHttpSession")) {
     throw new ValidationError(
-      `ClaimedCapability nativeInterface ${info.nativeInterface} cannot be used as outbound HTTP`);
+      `Capability nativeInterface ${info.nativeInterface} cannot be used as outbound HTTP`);
   }
 
   const { request, path } = outboundHttpRequest(input, init);
@@ -2011,15 +2011,16 @@ async function fetchOutboundHttpCapability(capability, input, init = {}, info = 
 }
 
 function wrapClaimedCapability(env, capability) {
-  if (capability instanceof ClaimedCapability) {
+  if (capability instanceof Capability) {
     return capability;
   }
   if (!capability || typeof capability !== "object" ||
-      capability.type !== "claimedCapability" || typeof capability.id !== "string") {
+      (capability.type !== "capability" && capability.type !== "claimedCapability") ||
+      typeof capability.id !== "string") {
     return capability;
   }
 
-  return new ClaimedCapability(env, capability.id);
+  return new Capability(env, capability.id);
 }
 
 function permissionNames(options = {}) {
@@ -2152,7 +2153,7 @@ export function powerbox(request, env) {
     },
 
     claimedCapability(capability) {
-      return new ClaimedCapability(env, capabilityId(capability));
+      return new Capability(env, capabilityId(capability));
     },
 
     async claim(result, options = {}) {
@@ -2165,7 +2166,7 @@ export function powerbox(request, env) {
       }
 
       if (result.capability) {
-        return new ClaimedCapability(env, capabilityId(result.capability));
+        return new Capability(env, capabilityId(result.capability));
       }
 
       if (typeof result.token === "string") {
@@ -2177,12 +2178,12 @@ export function powerbox(request, env) {
 
     offeredCapability() {
       const id = header(request, "x-sandstorm-offered-capability-id");
-      return id ? new ClaimedCapability(env, id) : undefined;
+      return id ? new Capability(env, id) : undefined;
     },
 
     offeredCapabilityInfo() {
       const id = header(request, "x-sandstorm-offered-capability-id");
-      const capability = id ? new ClaimedCapability(env, id) : undefined;
+      const capability = id ? new Capability(env, id) : undefined;
       if (!capability) {
         return undefined;
       }
