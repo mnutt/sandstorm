@@ -1419,6 +1419,12 @@ test("isolate supervisor integration suite", {
       "ValidationError");
     assert.match(selfTest.json.persistent.helper.durableExport.missingLabelError.message,
       /exportDurable label is required/);
+    assert.equal(selfTest.json.persistent.helper.durableExport.missingRegistryError.name,
+      "ValidationError");
+    assert.match(selfTest.json.persistent.helper.durableExport.missingRegistryError.message,
+      /durable capability id is not registered/);
+    assert.match(selfTest.json.persistent.helper.durableExport.missingRegistryError.message,
+      /Restore the capabilities registry entry, migrate the saved token, or revoke it/);
     assert.deepEqual(selfTest.json.persistent.helper.durableExport.get, { value: 71 });
     assert.equal(selfTest.json.persistent.helper.durableExport.drop.ok, true);
     assert.equal(selfTest.json.persistent.helper.durableExport.revoke.ok, true);
@@ -2458,6 +2464,22 @@ test("isolate supervisor integration suite", {
     assert.equal(nativeAppRpcRoute.json.invalid.body.type, "exception");
     assert.equal(nativeAppRpcRoute.json.invalid.body.value.name, "ValidationError");
     assert.match(nativeAppRpcRoute.json.invalid.body.value.message, /reserved/);
+    assert.equal(nativeAppRpcRoute.json.missingDurable.status, 404);
+    assert.equal(nativeAppRpcRoute.json.missingDurable.body.ok, false);
+    assert.equal(nativeAppRpcRoute.json.missingDurable.body.type, "missingDurableCapability");
+    assert.equal(nativeAppRpcRoute.json.missingDurable.body.id, "missing-durable-route");
+    assert.match(nativeAppRpcRoute.json.missingDurable.body.error,
+      /durable capability id is not registered: missing-durable-route/);
+    assert.match(nativeAppRpcRoute.json.missingDurable.body.error,
+      /Restore the capabilities registry entry, migrate the saved token, or revoke it/);
+    assert.equal(nativeAppRpcRoute.json.missingDurableRpc.status, 404);
+    assert.equal(nativeAppRpcRoute.json.missingDurableRpc.body.type, "exception");
+    assert.equal(nativeAppRpcRoute.json.missingDurableRpc.body.value.name,
+      "MissingDurableCapability");
+    assert.match(nativeAppRpcRoute.json.missingDurableRpc.body.value.message,
+      /durable capability id is not registered: missing-durable-route/);
+    assert.match(nativeAppRpcRoute.json.missingDurableRpc.body.value.message,
+      /Restore the capabilities registry entry, migrate the saved token, or revoke it/);
     assert.deepEqual(nativeAppRpcRoute.json.routeStub.slot, {
       type: "nativeCapabilitySlot",
       id: "native-route-target",

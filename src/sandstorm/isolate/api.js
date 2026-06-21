@@ -1730,6 +1730,18 @@ function disposeExportedObjectTarget(id) {
   return true;
 }
 
+function missingDurableCapabilityMessage(id) {
+  return `durable capability id is not registered: ${id}. ` +
+    "Restore the capabilities registry entry, migrate the saved token, or revoke it.";
+}
+
+function missingDurableCapabilityError(id) {
+  return {
+    name: "MissingDurableCapability",
+    message: missingDurableCapabilityMessage(id),
+  };
+}
+
 function rememberObjectCapabilityHandle(objectId, capabilityId) {
   let ids = exportedObjectCapabilityIds.get(objectId);
   if (!ids) {
@@ -1780,16 +1792,23 @@ async function serveObjectCapability(request, env) {
   const slash = rest.indexOf("/");
   const id = slash < 0 ? rest : rest.slice(0, slash);
   const action = slash < 0 ? "" : rest.slice(slash + 1);
-  const target = exportedObjectTargets.get(decodeURIComponent(id));
+  const objectId = decodeURIComponent(id);
+  const target = exportedObjectTargets.get(objectId);
   if (!target) {
+    const error = missingDurableCapabilityError(objectId);
+    if (request.method === "POST" && action === "native-app-rpc-call") {
+      return Response.json(serializeNativeAppRpcException(error), { status: 404 });
+    }
     return Response.json({
       ok: false,
-      error: "unknown exported object capability",
+      type: "missingDurableCapability",
+      id: objectId,
+      error: error.message,
     }, { status: 404 });
   }
 
   if (request.method === "POST" && action === "__sandstorm_dispose") {
-    const disposed = disposeExportedObjectTarget(decodeURIComponent(id));
+    const disposed = disposeExportedObjectTarget(objectId);
     return Response.json({ ok: true, disposed });
   }
 
@@ -2467,7 +2486,7 @@ export function sandstorm(request, env, options = {}) {
       const id = explicitObjectCapabilityId(targetOrId);
       const target = exportedObjectTargets.get(id);
       if (!target) {
-        throw new ValidationError(`durable capability id is not registered: ${id}`);
+        throw new ValidationError(missingDurableCapabilityMessage(id));
       }
       return exportDurableCapability(env, target, { ...durableOptions, id });
     }
