@@ -305,6 +305,15 @@ declare module "sandstorm:api" {
     saveLabel?: string | { defaultText: string };
   }
 
+  export interface DurableObjectCapabilityOptions extends SaveCapabilityOptions {
+    label: string | { defaultText: string };
+    storageKey?: string;
+    key?: string;
+  }
+
+  export interface DurableObjectCapabilityTargetOptions
+      extends DurableObjectCapabilityOptions, Required<Pick<ObjectCapabilityOptions, "id">> {}
+
   export interface SessionCapabilityOptions {
     title?: string | { defaultText: string };
     displayTitle?: string | { defaultText: string };
@@ -680,7 +689,7 @@ declare module "sandstorm:api" {
     ): Promise<T>;
     exportDurable(
       target: RpcTarget,
-      options: PersistentObjectCapabilityOptions,
+      options: DurableObjectCapabilityTargetOptions,
     ): Promise<DurableObjectCapabilityResult>;
     persistentCapability(
       target: RpcTarget,
@@ -726,10 +735,10 @@ declare module "sandstorm:api" {
       fn: (capability: ClaimedCapability) => T | Promise<T>,
       options?: ObjectCapabilityOptions,
     ): Promise<T>;
-    exportDurable(
-      targetOrId: RpcTarget | string,
-      options: PersistentObjectCapabilityOptions | SaveCapabilityOptions,
-    ): Promise<DurableObjectCapabilityResult>;
+    exportDurable(target: RpcTarget, options: DurableObjectCapabilityTargetOptions):
+      Promise<DurableObjectCapabilityResult>;
+    exportDurable(id: string, options: DurableObjectCapabilityOptions):
+      Promise<DurableObjectCapabilityResult>;
     persistentCapability(
       target: RpcTarget,
       options: PersistentObjectCapabilityOptions,
