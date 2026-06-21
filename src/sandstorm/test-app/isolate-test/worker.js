@@ -1517,7 +1517,7 @@ export default {
     }
 
     if (url.pathname === "/native-app-rpc-route-self-test") {
-      sandstorm(request, env).registerCapability({
+      const routeCapability = await sandstorm(request, env).export({
         async deliver(subject, options) {
           return {
             subject,
@@ -1662,7 +1662,7 @@ export default {
           },
         });
       } finally {
-        sandstorm(request, env).unregisterCapability({ id: "native-route-target" });
+        await routeCapability.drop();
       }
     }
 
@@ -2194,8 +2194,9 @@ export default {
         };
       }
       const persistentId = `persistent-counter-${crypto.randomUUID()}`;
+      const persistentTarget = new CounterCapability();
       const persistentCapability = await sandstorm(request, env).export(
-        new CounterCapability(), {
+        persistentTarget, {
           id: persistentId,
           persistent: true,
         });
@@ -2208,29 +2209,21 @@ export default {
       const persistentRestoredIncrement = await persistentRestored.call("increment", 3);
       const persistentDropOriginal = await persistentCapability.drop();
       const persistentDropRestored = await persistentRestored.drop();
-      const persistentUnregisterOriginal = sandstorm(request, env).unregisterCapability({
-        id: persistentId,
-      });
-      const persistentReplacementTarget = new CounterCapability();
-      persistentReplacementTarget.increment(41);
-      const persistentRegisterReplacement = sandstorm(request, env).registerCapability(
-        persistentReplacementTarget, { id: persistentId });
-      const persistentRegisterAgain = sandstorm(request, env).registerCapability(
-        persistentReplacementTarget, { id: persistentId });
-      let persistentRegisterDuplicateError;
+      let persistentDuplicateExportError;
       try {
-        sandstorm(request, env).registerCapability(new CounterCapability(), {
+        await sandstorm(request, env).export(new CounterCapability(), {
           id: persistentId,
+          persistent: true,
         });
       } catch (error) {
-        persistentRegisterDuplicateError = {
+        persistentDuplicateExportError = {
           name: String(error?.name || "Error"),
           message: String(error?.message || error),
         };
       }
       let persistentTransientMintError;
       try {
-        await sandstorm(request, env).export(persistentReplacementTarget, {
+        await sandstorm(request, env).export(persistentTarget, {
           id: persistentId,
         });
       } catch (error) {
@@ -2240,7 +2233,7 @@ export default {
         };
       }
       const persistentMintedAfterRegister = await sandstorm(request, env).export(
-        persistentReplacementTarget, {
+        persistentTarget, {
           id: persistentId,
           persistent: true,
         });
@@ -2263,8 +2256,6 @@ export default {
           (restored) => restored.rpc.get());
       }
       const persistentDropSaved = await sandstorm(request, env).revoke(persistentSaved);
-      const persistentUnregisterReplacement = sandstorm(request, env).unregisterCapability(
-        persistentId);
       let persistentHelper = null;
       if (url.searchParams.get("persistentHelper") === "true") {
         const exportedTarget = new CounterCapability();
@@ -2304,8 +2295,6 @@ export default {
         const durableExportRevoke = await sandstorm(request, env).revoke(durableExport.token);
         const durableExportDeleteStorage =
           await sandstorm(request, env).storage().delete(durableExportStorageKey);
-        const durableExportUnregister =
-          sandstorm(request, env).unregisterCapability(durableExportId);
         const helperId = `persistent-helper-${crypto.randomUUID()}`;
         const helperStorageKey = `persistent-helper-${crypto.randomUUID()}`;
         const helperTarget = new CounterCapability();
@@ -2328,7 +2317,6 @@ export default {
         const helperSecondDrop = await helperSecond.capability.drop();
         const helperDropSaved = await sandstorm(request, env).revoke(helperSecond.token);
         const helperDeleteStorage = await sandstorm(request, env).storage().delete(helperStorageKey);
-        const helperUnregister = sandstorm(request, env).unregisterCapability(helperId);
         const callbackId = `persistent-callback-${crypto.randomUUID()}`;
         const callbackStorageKey = `callback-capability-${callbackId}`;
         const callbackTarget = new EventReceiver();
@@ -2357,7 +2345,6 @@ export default {
         const callbackDropSaved = await sandstorm(request, env).revoke(callbackSecond.token);
         const callbackDeleteStorage =
           await sandstorm(request, env).storage().delete(callbackSecond.storageKey);
-        const callbackUnregister = sandstorm(request, env).unregisterCapability(callbackId);
         persistentHelper = {
           export: {
             capability: JSON.parse(JSON.stringify(exported)),
@@ -2379,7 +2366,6 @@ export default {
             drop: durableExportDrop,
             revoke: durableExportRevoke,
             deleteStorage: durableExportDeleteStorage,
-            unregister: durableExportUnregister,
           },
           id: helperId,
           storageKey: helperStorageKey,
@@ -2401,7 +2387,6 @@ export default {
           },
           dropSaved: helperDropSaved,
           deleteStorage: helperDeleteStorage,
-          unregister: helperUnregister,
           callback: {
             id: callbackId,
             storageKey: callbackFirst.storageKey,
@@ -2425,7 +2410,6 @@ export default {
             events: callbackTarget.events(),
             dropSaved: callbackDropSaved,
             deleteStorage: callbackDeleteStorage,
-            unregister: callbackUnregister,
           },
         };
       }
@@ -2522,10 +2506,7 @@ export default {
           restoredIncrement: persistentRestoredIncrement,
           dropOriginal: persistentDropOriginal,
           dropRestored: persistentDropRestored,
-          unregisterOriginal: persistentUnregisterOriginal,
-          registerReplacement: persistentRegisterReplacement,
-          registerAgain: persistentRegisterAgain,
-          registerDuplicateError: persistentRegisterDuplicateError,
+          duplicateExportError: persistentDuplicateExportError,
           transientMintError: persistentTransientMintError,
           mintedAfterRegister: JSON.parse(JSON.stringify(persistentMintedAfterRegister)),
           mintedAfterRegisterGet: persistentMintedAfterRegisterGet,
@@ -2538,7 +2519,6 @@ export default {
           dropTopLevelRestored: persistentDropTopLevelRestored,
           useGet: persistentUseGet,
           dropSaved: persistentDropSaved,
-          unregisterReplacement: persistentUnregisterReplacement,
           helper: persistentHelper,
         },
       });

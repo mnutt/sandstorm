@@ -1388,29 +1388,21 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.persistent.restoredIncrement, { value: 32 });
     assert.equal(selfTest.json.persistent.dropOriginal.ok, true);
     assert.equal(selfTest.json.persistent.dropRestored.ok, true);
-    assert.equal(selfTest.json.persistent.unregisterOriginal.ok, true);
-    assert.equal(selfTest.json.persistent.unregisterOriginal.disposed, true);
-    assert.equal(selfTest.json.persistent.registerReplacement.ok, true);
-    assert.equal(selfTest.json.persistent.registerReplacement.registered, true);
-    assert.equal(selfTest.json.persistent.registerAgain.ok, true);
-    assert.equal(selfTest.json.persistent.registerAgain.registered, false);
-    assert.equal(selfTest.json.persistent.registerDuplicateError.name, "ValidationError");
-    assert.match(selfTest.json.persistent.registerDuplicateError.message, /already registered/);
+    assert.equal(selfTest.json.persistent.duplicateExportError.name, "ValidationError");
+    assert.match(selfTest.json.persistent.duplicateExportError.message, /already registered/);
     assert.equal(selfTest.json.persistent.transientMintError.name, "ValidationError");
     assert.match(selfTest.json.persistent.transientMintError.message, /persistent: true/);
     assert.equal(selfTest.json.persistent.mintedAfterRegister.type, "claimedCapability");
-    assert.deepEqual(selfTest.json.persistent.mintedAfterRegisterGet, { value: 41 });
+    assert.deepEqual(selfTest.json.persistent.mintedAfterRegisterGet, { value: 32 });
     assert.equal(selfTest.json.persistent.dropMintedAfterRegister.ok, true);
     assert.equal(selfTest.json.persistent.restoredAfterRegister.type, "claimedCapability");
-    assert.deepEqual(selfTest.json.persistent.restoredAfterRegisterGet, { value: 41 });
+    assert.deepEqual(selfTest.json.persistent.restoredAfterRegisterGet, { value: 32 });
     assert.equal(selfTest.json.persistent.dropRestoredAfterRegister.ok, true);
     assert.equal(selfTest.json.persistent.topLevelRestored.type, "claimedCapability");
-    assert.deepEqual(selfTest.json.persistent.topLevelRestoreGet, { value: 41 });
+    assert.deepEqual(selfTest.json.persistent.topLevelRestoreGet, { value: 32 });
     assert.equal(selfTest.json.persistent.dropTopLevelRestored.ok, true);
-    assert.deepEqual(selfTest.json.persistent.useGet, { value: 41 });
+    assert.deepEqual(selfTest.json.persistent.useGet, { value: 32 });
     assert.equal(selfTest.json.persistent.dropSaved.ok, true);
-    assert.equal(selfTest.json.persistent.unregisterReplacement.ok, true);
-    assert.equal(selfTest.json.persistent.unregisterReplacement.disposed, true);
     assert.equal(selfTest.json.persistent.helper.export.capability.type, "claimedCapability");
     assert.deepEqual(selfTest.json.persistent.helper.export.increment, { value: 61 });
     assert.equal(selfTest.json.persistent.helper.export.drop.ok, true);
@@ -1429,8 +1421,6 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.durableExport.drop.ok, true);
     assert.equal(selfTest.json.persistent.helper.durableExport.revoke.ok, true);
     assert.equal(selfTest.json.persistent.helper.durableExport.deleteStorage.ok, true);
-    assert.equal(selfTest.json.persistent.helper.durableExport.unregister.ok, true);
-    assert.equal(selfTest.json.persistent.helper.durableExport.unregister.disposed, true);
     assert.equal(selfTest.json.persistent.helper.first.restored, false);
     assert.equal(selfTest.json.persistent.helper.first.registered, true);
     assert.equal(selfTest.json.persistent.helper.first.capability.type, "claimedCapability");
@@ -1445,8 +1435,6 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.second.drop.ok, true);
     assert.equal(selfTest.json.persistent.helper.dropSaved.ok, true);
     assert.equal(selfTest.json.persistent.helper.deleteStorage.ok, true);
-    assert.equal(selfTest.json.persistent.helper.unregister.ok, true);
-    assert.equal(selfTest.json.persistent.helper.unregister.disposed, true);
     assert.equal(
       selfTest.json.persistent.helper.callback.storageKey,
       selfTest.json.persistent.helper.callback.expectedStorageKey);
@@ -1484,8 +1472,6 @@ test("isolate supervisor integration suite", {
     ]);
     assert.equal(selfTest.json.persistent.helper.callback.dropSaved.ok, true);
     assert.equal(selfTest.json.persistent.helper.callback.deleteStorage.ok, true);
-    assert.equal(selfTest.json.persistent.helper.callback.unregister.ok, true);
-    assert.equal(selfTest.json.persistent.helper.callback.unregister.disposed, true);
   });
 
   await t.test("calls saved app-object capabilities across supervisors", async (t) => {

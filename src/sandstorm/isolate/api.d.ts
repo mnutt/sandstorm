@@ -353,19 +353,6 @@ declare module "sandstorm:api" {
     persistent?: boolean;
   }
 
-  export interface ObjectCapabilityRegistration {
-    ok: true;
-    id: string;
-    pathPrefix: string;
-    registered: boolean;
-  }
-
-  export interface ObjectCapabilityUnregistration {
-    ok: true;
-    id: string;
-    disposed: boolean;
-  }
-
   export type DurableCapabilityRegistry = Record<
     string,
     RpcTarget | ((request: Request, env: SandstormEnv) => RpcTarget)
@@ -564,13 +551,6 @@ declare module "sandstorm:api" {
       target: RpcTarget,
       options: DurableObjectCapabilityTargetOptions,
     ): Promise<DurableObjectCapabilityResult>;
-    registerCapability(
-      target: RpcTarget,
-      options: Required<Pick<ObjectCapabilityOptions, "id">>,
-    ): ObjectCapabilityRegistration;
-    unregisterCapability(
-      idOrOptions: string | Required<Pick<ObjectCapabilityOptions, "id">>,
-    ): ObjectCapabilityUnregistration;
   }
 
   export interface StorageApiTarget extends RpcTarget, StorageApi {}
@@ -603,13 +583,6 @@ declare module "sandstorm:api" {
       Promise<DurableObjectCapabilityResult>;
     exportDurable(id: string, options: DurableObjectCapabilityOptions):
       Promise<DurableObjectCapabilityResult>;
-    registerCapability(
-      target: RpcTarget,
-      options: Required<Pick<ObjectCapabilityOptions, "id">>,
-    ): ObjectCapabilityRegistration;
-    unregisterCapability(
-      idOrOptions: string | Required<Pick<ObjectCapabilityOptions, "id">>,
-    ): ObjectCapabilityUnregistration;
     serveObjectCapabilities(): Promise<Response | null>;
     servePowerboxDescriptors(): Promise<Response | null>;
     serveSystemRoutes(): Promise<Response | null>;
