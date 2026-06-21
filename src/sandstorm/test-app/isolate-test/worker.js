@@ -802,7 +802,7 @@ export default {
       });
       let wrongOutboundError;
       try {
-        await capability.asOutboundHttp().fetch("v1/test");
+        await capability.fetch("https://api.example.test/v1/test");
       } catch (error) {
         wrongOutboundError = {
           name: String(error?.name || "Error"),
@@ -889,7 +889,7 @@ export default {
       });
       let wrongOutboundError;
       try {
-        await capability.asOutboundHttp().fetch("v1/test");
+        await capability.fetch("https://api.example.test/v1/test");
       } catch (error) {
         wrongOutboundError = {
           name: String(error?.name || "Error"),
@@ -1056,7 +1056,7 @@ export default {
       }
       let appObjectOutboundError = null;
       try {
-        await appObjectCapability.asOutboundHttp().fetch("v1/test");
+        await appObjectCapability.fetch("v1/test");
       } catch (error) {
         appObjectOutboundError = {
           name: String(error?.name || "Error"),

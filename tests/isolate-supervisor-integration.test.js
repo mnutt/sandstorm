@@ -860,8 +860,7 @@ test("isolate supervisor integration suite", {
     assert.equal(typeof selfTest.json.saved, "string");
     assert.equal(selfTest.json.restored.type, "claimedCapability");
     assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
-    assert.match(selfTest.json.wrongOutboundError.message, /nativeInterface webSession/);
-    assert.match(selfTest.json.wrongOutboundError.message, /outbound HTTP/);
+    assert.match(selfTest.json.wrongOutboundError.message, /relative path/);
     assert.equal(selfTest.json.dropOriginal.ok, true);
     assert.equal(selfTest.json.fetched.status, 200);
     assert.equal(selfTest.json.fetched.headers.etag, "\"capability-echo-etag\"");
@@ -1045,8 +1044,7 @@ test("isolate supervisor integration suite", {
     assert.equal(typeof selfTest.json.saved, "string");
     assert.equal(selfTest.json.restored.type, "claimedCapability");
     assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
-    assert.match(selfTest.json.wrongOutboundError.message, /nativeInterface apiSession/);
-    assert.match(selfTest.json.wrongOutboundError.message, /outbound HTTP/);
+    assert.match(selfTest.json.wrongOutboundError.message, /relative path/);
     assert.equal(selfTest.json.dropOriginal.ok, true);
     assert.equal(selfTest.json.fetched.status, 200);
     assert.equal(selfTest.json.fetched.body.ok, true);
@@ -1903,6 +1901,8 @@ test("isolate supervisor integration suite", {
     assert.equal(nativeInterfaceValidation.json.appObjectOutboundError.name, "ValidationError");
     assert.match(nativeInterfaceValidation.json.appObjectOutboundError.message,
       /nativeInterface appObject/);
+    assert.match(nativeInterfaceValidation.json.appObjectOutboundError.message,
+      /app-defined RPC transport/);
     assert.deepEqual(nativeInterfaceValidation.json.appObjectNativeSlot, {
       type: "nativeCapabilitySlot",
       id: "mock-app-object",

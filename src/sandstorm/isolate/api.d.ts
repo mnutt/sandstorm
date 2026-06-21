@@ -422,7 +422,6 @@ declare module "sandstorm:api" {
     asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
       options?: ClaimedCapabilityRpcOptions<ClaimedCapability>,
     ): NativeAppRpcProxy<T>;
-    asOutboundHttp(): OutboundHttpCapability;
     info(options?: { refresh?: boolean }): Promise<ClaimedCapabilityInfo | null>;
     dup(): Promise<ClaimedCapability>;
     save(options?: SaveCapabilityOptions): Promise<string>;
@@ -444,7 +443,6 @@ declare module "sandstorm:api" {
     asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
       options?: ClaimedCapabilityRpcOptions<ClaimedCapability>,
     ): NativeAppRpcProxy<T>;
-    asOutboundHttp(): OutboundHttpCapability;
     info(options?: { refresh?: boolean }): Promise<ClaimedCapabilityInfo | null>;
     dup(): Promise<ClaimedCapability>;
     save(options?: SaveCapabilityOptions): Promise<string>;
@@ -457,23 +455,6 @@ declare module "sandstorm:api" {
   }
 
   export { ClaimedCapability as Capability };
-
-  export interface OutboundHttpCapabilityHandle {
-    ok: true;
-    type: "outboundHttpCapability";
-    id: string;
-    capability: ClaimedCapabilityHandle;
-  }
-
-  export class OutboundHttpCapability {
-    readonly ok: true;
-    readonly type: "outboundHttpCapability";
-    readonly id: string;
-    readonly capability: ClaimedCapability;
-    constructor(capability: ClaimedCapability);
-    fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
-    toJSON(): OutboundHttpCapabilityHandle;
-  }
 
   export class NativeAppRpcStub<
     T extends object = Record<string, (...args: any[]) => unknown>,
@@ -589,7 +570,6 @@ declare module "sandstorm:api" {
     apiSessionDescriptor(options: ApiSessionPowerboxOptions): Promise<string>;
     outboundHttpDescriptor(options: OutboundHttpPowerboxOptions): Promise<string>;
     claimedCapability(capability: ClaimedCapabilityHandle | string): ClaimedCapability;
-    outboundHttpCapability(capability: ClaimedCapabilityHandle | string): OutboundHttpCapability;
     claim(
       result: string | PowerboxRequestResult,
       options?: ClaimRequestOptions,
