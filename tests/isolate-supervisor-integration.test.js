@@ -1346,10 +1346,10 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.saveError.name, "Error");
     assert.match(selfTest.json.saveError.message, /transient and cannot be saved/);
     assert.match(selfTest.json.saveError.message, /exportDurable/);
-    assert.equal(selfTest.json.remoteArguments.rpcTargetError.name, "ValidationError");
+    assert.equal(selfTest.json.remoteArguments.rpcTargetError.name, "UnsupportedCapabilityError");
     assert.match(selfTest.json.remoteArguments.rpcTargetError.message,
       /nativeInterface unknown cannot be used with app-defined RPC/);
-    assert.equal(selfTest.json.remoteArguments.capabilityError.name, "ValidationError");
+    assert.equal(selfTest.json.remoteArguments.capabilityError.name, "UnsupportedCapabilityError");
     assert.match(selfTest.json.remoteArguments.capabilityError.message,
       /nativeInterface unknown cannot be used with app-defined RPC/);
     assert.equal(typeof selfTest.json.duplicate.id, "string");
@@ -1591,7 +1591,7 @@ test("isolate supervisor integration suite", {
         name: "Error",
       },
     });
-    assert.equal(callback.json.wrongForwardedCapabilityFailure.name, "ValidationError");
+    assert.equal(callback.json.wrongForwardedCapabilityFailure.name, "UnsupportedCapabilityError");
     assert.match(
       callback.json.wrongForwardedCapabilityFailure.message,
       /nativeInterface webSession cannot be used with app-defined RPC/);
@@ -1882,12 +1882,13 @@ test("isolate supervisor integration suite", {
         path: "v1/mock-fetch?case=native-interface",
       },
     });
-    assert.equal(nativeInterfaceValidation.json.appObjectFetchError.name, "ValidationError");
+    assert.equal(nativeInterfaceValidation.json.appObjectFetchError.name, "UnsupportedCapabilityError");
     assert.match(nativeInterfaceValidation.json.appObjectFetchError.message,
       /nativeInterface appObject/);
     assert.match(nativeInterfaceValidation.json.appObjectFetchError.message,
       /only for WebSession, ApiSession, and OutboundHttpSession/);
-    assert.equal(nativeInterfaceValidation.json.appObjectOutboundError.name, "ValidationError");
+    assert.equal(nativeInterfaceValidation.json.appObjectOutboundError.name,
+      "UnsupportedCapabilityError");
     assert.match(nativeInterfaceValidation.json.appObjectOutboundError.message,
       /nativeInterface appObject/);
     assert.match(nativeInterfaceValidation.json.appObjectOutboundError.message,
@@ -1935,7 +1936,8 @@ test("isolate supervisor integration suite", {
       callback: { urgent: true },
       options: null,
     });
-    assert.equal(nativeInterfaceValidation.json.wrongResultSlotError.name, "ValidationError");
+    assert.equal(nativeInterfaceValidation.json.wrongResultSlotError.name,
+      "UnsupportedCapabilityError");
     assert.match(nativeInterfaceValidation.json.wrongResultSlotError.message,
       /nativeInterface webSession/);
     assert.match(nativeInterfaceValidation.json.wrongResultSlotError.message,
@@ -1947,7 +1949,8 @@ test("isolate supervisor integration suite", {
       released: "mock-app-object",
     });
     assert.deepEqual(nativeInterfaceValidation.json.wrongNativeRpcTransportCalls, []);
-    assert.equal(nativeInterfaceValidation.json.wrongNativeRpcError.name, "ValidationError");
+    assert.equal(nativeInterfaceValidation.json.wrongNativeRpcError.name,
+      "UnsupportedCapabilityError");
     assert.match(nativeInterfaceValidation.json.wrongNativeRpcError.message,
       /nativeInterface outboundHttpSession/);
     assert.match(nativeInterfaceValidation.json.wrongNativeRpcError.message,
