@@ -1515,7 +1515,7 @@ export async function servePowerboxDescriptors(request, env) {
   if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/claim` && request.method === "POST") {
     try {
       const body = await request.json();
-      const capability = await powerbox(request, env).claimRequest(body.token, {
+      const capability = await powerbox(request, env).claim(body.token, {
         requiredPermissions: Array.isArray(body.requiredPermissions)
           ? body.requiredPermissions
           : [],
@@ -2148,123 +2148,6 @@ async function validateRequiredPermissions(env, names) {
   }
 }
 
-function storageKey(options = {}) {
-  return validate.storageKey(options.storageKey ?? options.key ?? "powerbox-token", "storageKey");
-}
-
-async function claimAndStorePowerboxCapability(env, request, token, options = {}) {
-  const capability = await powerbox(request, env).claimRequest(token, options);
-  const saved = await saveClaimedCapabilityRecord(env, capability, options);
-  const key = storageKey(options);
-  await storage(env).put(key, saved.token);
-  return {
-    ok: true,
-    capability,
-    saved,
-    token: saved.token,
-    storageKey: key,
-  };
-}
-
-async function storeClaimedPowerboxCapability(env, capabilityHandle, options = {}) {
-  const capability = new ClaimedCapability(env, capabilityId(capabilityHandle));
-  const saved = await saveClaimedCapabilityRecord(env, capability, options);
-  const key = storageKey(options);
-  await storage(env).put(key, saved.token);
-  return {
-    ok: true,
-    capability,
-    saved,
-    token: saved.token,
-    storageKey: key,
-  };
-}
-
-async function claimAndStorePowerboxRequest(env, request, result, options = {}) {
-  if (typeof result === "string") {
-    return claimAndStorePowerboxCapability(env, request, result, options);
-  }
-
-  if (!result || typeof result !== "object") {
-    throw new ValidationError("Powerbox request result must be a token string or result object");
-  }
-
-  if (result.capability) {
-    return storeClaimedPowerboxCapability(env, result.capability, options);
-  }
-
-  if (typeof result.token === "string") {
-    return claimAndStorePowerboxCapability(env, request, result.token, options);
-  }
-
-  throw new ValidationError("Powerbox request result must contain token or capability");
-}
-
-async function restoreStoredPowerboxCapability(env, options = {}) {
-  const key = storageKey(options);
-  const token = await storage(env).get(key);
-  if (!token) {
-    return {
-      ok: true,
-      storageKey: key,
-      found: false,
-      capability: undefined,
-    };
-  }
-
-  return {
-    ok: true,
-    storageKey: key,
-    found: true,
-    token,
-    capability: await restoreSavedCapability(env, token),
-  };
-}
-
-async function fetchStoredPowerboxCapability(env, options = {}, input = "/", init = {}) {
-  const restored = await restoreStoredPowerboxCapability(env, options);
-  if (!restored.ok || !restored.capability) {
-    throw new ValidationError(`No saved Powerbox token is available at ${restored.storageKey}`);
-  }
-
-  try {
-    const response = await restored.capability.fetch(input, init);
-    const body = response.body === null || [204, 205, 304].includes(response.status)
-      ? null
-      : await response.arrayBuffer();
-    return new Response(body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-  } finally {
-    await restored.capability.drop();
-  }
-}
-
-async function dropStoredPowerboxCapability(env, options = {}) {
-  const key = storageKey(options);
-  const token = await storage(env).get(key);
-  if (!token) {
-    return {
-      ok: true,
-      storageKey: key,
-      dropped: false,
-      deleted: await storage(env).delete(key),
-    };
-  }
-
-  const dropped = await dropSavedCapability(env, token);
-  const deleted = await storage(env).delete(key);
-  return {
-    ok: true,
-    storageKey: key,
-    dropped: true,
-    dropSaved: dropped,
-    deleted,
-  };
-}
-
 function persistentCapabilityStorageKey(id, options = {}) {
   return validate.storageKey(
     options.storageKey ?? options.key ?? `object-capability-${id}`,
@@ -2345,6 +2228,25 @@ async function withExportedCapability(env, target, fn, options = {}) {
 }
 
 export function powerbox(request, env) {
+  const claimToken = async (token, options = {}) => {
+    token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
+    const requiredPermissions = permissionNames(options);
+    await validateRequiredPermissions(env, requiredPermissions);
+    const params = new URLSearchParams({
+      sessionId: sessionIdForPowerbox(request),
+      token,
+    });
+    for (const name of requiredPermissions) {
+      params.append("requiredPermission", name);
+    }
+    for (const [name, value] of powerboxDescriptorParams(options)) {
+      params.append(name, value);
+    }
+    const capability = await postPowerbox(env,
+      `powerbox/claim-request?${params}`);
+    return wrapClaimedCapability(env, capability);
+  };
+
   return {
     async apiSessionDescriptor(options = {}) {
       return apiSessionPowerboxDescriptor(env, options);
@@ -2362,28 +2264,9 @@ export function powerbox(request, env) {
       return new ClaimedCapability(env, capabilityId(capability)).asOutboundHttp();
     },
 
-    async claimRequest(token, options = {}) {
-      token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
-      const requiredPermissions = permissionNames(options);
-      await validateRequiredPermissions(env, requiredPermissions);
-      const params = new URLSearchParams({
-        sessionId: sessionIdForPowerbox(request),
-        token,
-      });
-      for (const name of requiredPermissions) {
-        params.append("requiredPermission", name);
-      }
-      for (const [name, value] of powerboxDescriptorParams(options)) {
-        params.append(name, value);
-      }
-      const capability = await postPowerbox(env,
-        `powerbox/claim-request?${params}`);
-      return wrapClaimedCapability(env, capability);
-    },
-
     async claim(result, options = {}) {
       if (typeof result === "string") {
-        return this.claimRequest(result, options);
+        return claimToken(result, options);
       }
 
       if (!result || typeof result !== "object") {
@@ -2395,31 +2278,10 @@ export function powerbox(request, env) {
       }
 
       if (typeof result.token === "string") {
-        return this.claimRequest(result.token, options);
+        return claimToken(result.token, options);
       }
 
       throw new ValidationError("Powerbox claim result must contain token or capability");
-    },
-
-    async claimAndStore(token, options = {}) {
-      token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
-      return claimAndStorePowerboxCapability(env, request, token, options);
-    },
-
-    async claimAndStoreRequest(result, options = {}) {
-      return claimAndStorePowerboxRequest(env, request, result, options);
-    },
-
-    async restoreStored(options = {}) {
-      return restoreStoredPowerboxCapability(env, options);
-    },
-
-    async fetchStored(options = {}, input = "/", init = {}) {
-      return fetchStoredPowerboxCapability(env, options, input, init);
-    },
-
-    async dropStored(options = {}) {
-      return dropStoredPowerboxCapability(env, options);
     },
 
     offeredCapability() {
@@ -2461,22 +2323,6 @@ export function powerbox(request, env) {
       return tieClaimedCapabilityToUser(env, request, arguments[0], arguments[1] || {});
     },
 
-    async save(capability, options = {}) {
-      return saveClaimedCapability(env, capability, options);
-    },
-
-    async restoreSaved(token) {
-      return restoreSavedCapability(env, token);
-    },
-
-    async dropSaved(token) {
-      return dropSavedCapability(env, token);
-    },
-
-    async drop(capability) {
-      const id = encodeURIComponent(capabilityId(capability));
-      return postPowerbox(env, `powerbox/drop?id=${id}`);
-    },
   };
 }
 
@@ -2575,32 +2421,8 @@ class PowerboxRpcTarget extends RpcTarget {
     return powerbox(this.#request, this.#env).outboundHttpCapability(capability);
   }
 
-  async claimRequest(token, options) {
-    return powerbox(this.#request, this.#env).claimRequest(token, options);
-  }
-
   async claim(result, options) {
     return powerbox(this.#request, this.#env).claim(result, options || {});
-  }
-
-  async claimAndStore(token, options) {
-    return powerbox(this.#request, this.#env).claimAndStore(token, options || {});
-  }
-
-  async claimAndStoreRequest(result, options) {
-    return powerbox(this.#request, this.#env).claimAndStoreRequest(result, options || {});
-  }
-
-  async restoreStored(options) {
-    return powerbox(this.#request, this.#env).restoreStored(options || {});
-  }
-
-  async fetchStored(options, input, init) {
-    return powerbox(this.#request, this.#env).fetchStored(options || {}, input || "/", init || {});
-  }
-
-  async dropStored(options) {
-    return powerbox(this.#request, this.#env).dropStored(options || {});
   }
 
   offeredCapability() {
@@ -2632,21 +2454,6 @@ class PowerboxRpcTarget extends RpcTarget {
     return powerbox(this.#request, this.#env).tieToUser(arguments[0], arguments[1] || {});
   }
 
-  async save(capability, options = {}) {
-    return powerbox(this.#request, this.#env).save(capability, options);
-  }
-
-  async restoreSaved(token) {
-    return powerbox(this.#request, this.#env).restoreSaved(token);
-  }
-
-  async dropSaved(token) {
-    return powerbox(this.#request, this.#env).dropSaved(token);
-  }
-
-  async drop(capability) {
-    return powerbox(this.#request, this.#env).drop(capability);
-  }
 }
 
 class SandstormRpcTarget extends RpcTarget {

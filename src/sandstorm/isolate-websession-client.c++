@@ -1682,7 +1682,7 @@ public:
     auto storageHelperBody = kj::str(storageHelperContent.getBody().getBytes().asChars());
     KJ_REQUIRE(contains(storageHelperBody, "\"ok\":true"), storageHelperBody);
     KJ_REQUIRE(contains(storageHelperBody, "\"capabilityClass\":true"), storageHelperBody);
-    KJ_REQUIRE(contains(storageHelperBody, "\"savedClass\":true"), storageHelperBody);
+    KJ_REQUIRE(contains(storageHelperBody, "\"tokenType\":\"string\""), storageHelperBody);
     KJ_REQUIRE(contains(storageHelperBody, "\"storageKey\":\"powerbox-storage-helper-token\""),
         storageHelperBody);
     KJ_REQUIRE(contains(storageHelperBody, "\"token\":\"d2Vic2Vzc2lvbi1zYXZlZC10b2tlbg\""),
