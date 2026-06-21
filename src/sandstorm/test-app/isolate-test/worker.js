@@ -1295,6 +1295,7 @@ export default {
       const exportedTargetValue = await serializeNativeAppRpcValueAsync(new CounterCapability(), {
         name: "callback",
         exportCapabilitySlot,
+        exportRpcTargets: true,
       });
       const exportedClaimedValue = await serializeNativeAppRpcValueAsync(
         new ClaimedCapability(env, "mock-app-object"),
@@ -1302,8 +1303,20 @@ export default {
           name: "authority",
           exportCapabilitySlot,
         });
+      let exportedCallRawTargetError = null;
+      try {
+        await serializeNativeAppRpcCallAsync("deliver", [
+          new CounterCapability(),
+          { authority: new ClaimedCapability(env, "mock-app-object") },
+        ], { exportCapabilitySlot });
+      } catch (error) {
+        exportedCallRawTargetError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
       const exportedCallEnvelope = await serializeNativeAppRpcCallAsync("deliver", [
-        new CounterCapability(),
+        new ClaimedCapability(env, "mock-exported-callback"),
         { authority: new ClaimedCapability(env, "mock-app-object") },
       ], { exportCapabilitySlot });
       const exportingStubTransportCalls = [];
@@ -1314,8 +1327,19 @@ export default {
           return dispatchNativeAppRpcCall(dispatchTarget, call);
         },
         { exportCapabilitySlot });
+      let exportingStubRawTargetError = null;
+      try {
+        await exportingStub.call(
+          "deliver", "export-stub-subject", new CounterCapability(), { urgent: false });
+      } catch (error) {
+        exportingStubRawTargetError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
       const exportingStubValue = await exportingStub.call(
-        "deliver", "export-stub-subject", new CounterCapability(), { urgent: false });
+        "deliver", "export-stub-subject",
+        new ClaimedCapability(env, "mock-exported-stub-callback"), { urgent: false });
       const exportedResultEnvelope = await serializeNativeAppRpcResultAsync({
         child: new CounterCapability(),
         authority: new ClaimedCapability(env, "mock-app-object"),
@@ -1474,7 +1498,9 @@ export default {
           targetValue: exportedTargetValue,
           claimedValue: exportedClaimedValue,
           callEnvelope: exportedCallEnvelope,
+          callRawTargetError: exportedCallRawTargetError,
           stubValue: exportingStubValue,
+          stubRawTargetError: exportingStubRawTargetError,
           stubTransportCalls: exportingStubTransportCalls,
           resultEnvelope: exportedResultEnvelope,
           dispatchChild: exportedDispatchChild,
@@ -1724,13 +1750,15 @@ export default {
         const feed = feedCapability.asRpc();
         const receiver = new EventReceiver();
         const disposeBefore = disposedCounterCapabilities;
-        const subscription = await feed.subscribe(receiver);
+        const subscription = await sandstorm(request, env).withExport(
+          receiver, (exported) => feed.subscribe(exported));
         const disposeAfterSubscribe = disposedCounterCapabilities;
         const events = receiver.events();
         const disposeBeforeThrowingCallback = disposedCounterCapabilities;
         let throwingCallbackFailure = null;
         try {
-          await feed.subscribe(new ThrowingEventReceiver());
+          await sandstorm(request, env).withExport(
+            new ThrowingEventReceiver(), (exported) => feed.subscribe(exported));
         } catch (error) {
           throwingCallbackFailure = {
             name: String(error?.name || "Error"),
@@ -1965,19 +1993,60 @@ export default {
       const stubReadChild = await stub.readOther(stubChild);
       const argumentTarget = new CounterCapability();
       argumentTarget.increment(21);
+      let rawArgumentTargetError;
+      try {
+        await capability.call("readOther", argumentTarget);
+      } catch (error) {
+        rawArgumentTargetError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+      const exportedArgumentTarget = await sandstorm(request, env).export(argumentTarget);
       const disposeBeforeArgumentTarget = disposedCounterCapabilities;
-      const readArgumentTarget = await capability.call("readOther", argumentTarget);
+      const readArgumentTarget = await capability.call("readOther", exportedArgumentTarget);
+      const dropArgumentTarget = await exportedArgumentTarget.drop();
       const disposeAfterArgumentTarget = disposedCounterCapabilities;
       const stubArgumentTarget = new CounterCapability();
       stubArgumentTarget.increment(23);
-      const disposeBeforeStubArgumentTarget = disposedCounterCapabilities;
-      const stubReadArgumentTarget = await stub.readOther(stubArgumentTarget);
+      let rawStubArgumentTargetError;
+      try {
+        await stub.readOther(stubArgumentTarget);
+      } catch (error) {
+        rawStubArgumentTargetError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+      const stubReadArgumentTarget = await sandstorm(request, env).withExport(
+        stubArgumentTarget,
+        async (exported) => {
+          const disposeBefore = disposedCounterCapabilities;
+          const read = await stub.readOther(exported);
+          return {
+            read,
+            disposeBefore,
+          };
+        });
       const disposeAfterStubArgumentTarget = disposedCounterCapabilities;
       const retainedArgumentTarget = new CounterCapability();
       retainedArgumentTarget.increment(31);
       const disposeBeforeRetainedArgumentTarget = disposedCounterCapabilities;
-      const retainArgumentTarget = await capability.call("retainOther", retainedArgumentTarget);
-      const disposeAfterRetainCall = disposedCounterCapabilities;
+      let rawRetainedArgumentTargetError;
+      try {
+        await capability.call("retainOther", retainedArgumentTarget);
+      } catch (error) {
+        rawRetainedArgumentTargetError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+      const retainedArgumentExport = await sandstorm(request, env).withExport(
+        retainedArgumentTarget,
+        async (exported) => ({
+          retain: await capability.call("retainOther", exported),
+          disposeAfterRetainCall: disposedCounterCapabilities,
+        }));
       const readRetainedArgumentTarget = await capability.call("readRetained");
       const dropRetainedArgumentTarget = await capability.call("dropRetained");
       const disposeAfterDropRetainedArgumentTarget = disposedCounterCapabilities;
@@ -1985,7 +2054,8 @@ export default {
       const feed = feedCapability.asRpc();
       const receiver = new EventReceiver();
       const disposeBeforeLiveCallback = disposedCounterCapabilities;
-      const subscription = await feed.subscribe(receiver);
+      const subscription = await sandstorm(request, env).withExport(
+        receiver, (exported) => feed.subscribe(exported));
       const disposeAfterLiveCallback = disposedCounterCapabilities;
       const session = await feed.startSession();
       const sessionFirst = await session.asRpc().increment(7);
@@ -2374,19 +2444,23 @@ export default {
         stubChildFirst,
         stubReadChild,
         argumentTarget: {
+          rawError: rawArgumentTargetError,
           read: readArgumentTarget,
+          drop: dropArgumentTarget,
           disposeBefore: disposeBeforeArgumentTarget,
           disposeAfter: disposeAfterArgumentTarget,
         },
         stubArgumentTarget: {
-          read: stubReadArgumentTarget,
-          disposeBefore: disposeBeforeStubArgumentTarget,
+          rawError: rawStubArgumentTargetError,
+          read: stubReadArgumentTarget.read,
+          disposeBefore: stubReadArgumentTarget.disposeBefore,
           disposeAfter: disposeAfterStubArgumentTarget,
         },
         retainedArgumentTarget: {
-          retain: retainArgumentTarget,
+          rawError: rawRetainedArgumentTargetError,
+          retain: retainedArgumentExport.retain,
           disposeBefore: disposeBeforeRetainedArgumentTarget,
-          disposeAfterRetainCall,
+          disposeAfterRetainCall: retainedArgumentExport.disposeAfterRetainCall,
           read: readRetainedArgumentTarget,
           drop: dropRetainedArgumentTarget,
           disposeAfterDrop: disposeAfterDropRetainedArgumentTarget,

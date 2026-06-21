@@ -204,6 +204,7 @@ declare module "sandstorm:api" {
 
   export interface NativeAppRpcSerializationOptions {
     name?: string;
+    exportRpcTargets?: boolean;
     exportCapabilitySlot?: (
       value: RpcTarget | ClaimedCapability,
       context: { name: string },

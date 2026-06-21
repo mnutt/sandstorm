@@ -289,6 +289,7 @@ function nativeAppRpcSerializationContext(options = "value", defaultName = "valu
     name: options.name === undefined
       ? defaultName
       : validate.string(options.name, "native app RPC serialization options name"),
+    exportRpcTargets: options.exportRpcTargets === true,
   };
   if (options.exportCapabilitySlot !== undefined && options.exportCapabilitySlot !== null) {
     if (typeof options.exportCapabilitySlot !== "function") {
@@ -305,6 +306,7 @@ function nativeAppRpcSerializationChild(context, name) {
   return {
     name,
     exportCapabilitySlot: context.exportCapabilitySlot,
+    exportRpcTargets: context.exportRpcTargets,
   };
 }
 
@@ -358,7 +360,7 @@ export function serializeNativeAppRpcValue(value, options = "value") {
   }
   if (value instanceof RpcTarget || value instanceof ClaimedCapability) {
     throw new ValidationError(
-      `${name} must be exported to a native capability slot before native app RPC serialization`);
+      `${name} must be explicitly exported with api.export() before native app RPC serialization`);
   }
   if (!isPlainObject(value)) {
     failValidation(name, "a native app RPC value", value);
@@ -382,7 +384,16 @@ export async function serializeNativeAppRpcValueAsync(value, options = "value") 
   if (value instanceof SavedCapability) {
     return serializeNativeAppRpcValue(value, context);
   }
-  if (value instanceof RpcTarget || value instanceof ClaimedCapability) {
+  if (value instanceof RpcTarget) {
+    if (!context.exportRpcTargets || !context.exportCapabilitySlot) {
+      throw new ValidationError(
+        `${name} must be explicitly exported with api.export() before native app RPC serialization`);
+    }
+    const slot = await context.exportCapabilitySlot(value, { name });
+    return validateNativeCapabilitySlotEnvelope(
+      nativeCapabilitySlot(slot?.id, { nativeInterface: slot?.nativeInterface }), name);
+  }
+  if (value instanceof ClaimedCapability) {
     if (!context.exportCapabilitySlot) {
       throw new ValidationError(
         `${name} must be exported to a native capability slot before native app RPC serialization`);
@@ -563,6 +574,7 @@ export async function serializeNativeAppRpcResultAsync(value, options = {}) {
     value: await serializeNativeAppRpcValueAsync(value, {
       ...nativeAppRpcSerializationContext(options, "result"),
       name: "result",
+      exportRpcTargets: true,
     }),
   };
 }
@@ -885,6 +897,7 @@ export function createClaimedCapabilityNativeAppRpcStub(capability, options = {}
         return {
           serializationOptions: {
             ...options,
+            exportRpcTargets: false,
             exportCapabilitySlot: options.exportCapabilitySlot ??
               ((value, context) => exportClaimedCapabilityNativeAppRpcSlot(
                 capability.env, value, context, temporaryCapabilities)),
