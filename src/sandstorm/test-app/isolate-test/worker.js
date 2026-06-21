@@ -1073,7 +1073,7 @@ export default {
           nativeRpcTransportCalls.push({ slot: transportSlot, call });
           return dispatchNativeAppRpcCall(nativeRpcTarget, call);
         },
-      }).asRpc();
+      }).rpc;
       const appObjectNativeValue = await appObjectNativeRpc.deliver(
         "native-subject",
         nativeCapabilitySlot("native-callback", { nativeInterface: "appObject" }),
@@ -1093,7 +1093,7 @@ export default {
               value: { id: "web-session-slot", nativeInterface: "webSession" },
             },
           }),
-        }).asRpc().deliver("wrong-result-slot");
+        }).rpc.deliver("wrong-result-slot");
       } catch (error) {
         wrongResultSlotError = {
           name: String(error?.name || "Error"),
@@ -1122,7 +1122,7 @@ export default {
             wrongNativeRpcTransportCalls.push({ slot: transportSlot, call });
             return dispatchNativeAppRpcCall(nativeRpcTarget, call);
           },
-        }).asRpc().deliver("wrong-interface");
+        }).rpc.deliver("wrong-interface");
       } catch (error) {
         wrongNativeRpcError = {
           name: String(error?.name || "Error"),
@@ -1215,10 +1215,11 @@ export default {
         urgent: false,
         saved: savedCapability,
       });
-      const stubRpcValue = await stub.asRpc().deliver("rpc-subject", slot, {
+      const stubRpcValue = await stub.rpc.deliver("rpc-subject", slot, {
         urgent: true,
         saved: savedCapability,
       });
+      const stubRpcStable = stub.rpc === stub.rpc;
 
       let stubMissingError = null;
       try {
@@ -1252,7 +1253,7 @@ export default {
       });
       const dropFirst = await droppableStub.drop();
       const dropSecond = await droppableStub.drop();
-      const dropViaProxy = await droppableStub.asRpc().drop();
+      const dropViaProxy = await droppableStub.rpc.drop();
       let callAfterDropError = null;
       try {
         await droppableStub.call("deliver", "after-drop", slot, { urgent: true });
@@ -1474,6 +1475,7 @@ export default {
         stubTransportCalls,
         stubCallValue,
         stubRpcValue,
+        stubRpcStable,
         stubMissingError,
         droppable: {
           value: droppableValue,
@@ -1564,7 +1566,7 @@ export default {
         const routeStubValue = await routeStub.call("deliver", "stub-route-subject", {
           urgent: false,
         });
-        const routeStubRpcValue = await routeStub.asRpc().deliver("stub-rpc-subject", {
+        const routeStubRpcValue = await routeStub.rpc.deliver("stub-rpc-subject", {
           urgent: true,
         });
         let routeStubMissingError = null;

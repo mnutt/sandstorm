@@ -426,7 +426,7 @@ declare module "sandstorm:api" {
       ...args: NativeAppRpcSerializableValue[]
     ): Promise<TResult>;
     drop(): Promise<unknown>;
-    asRpc(): NativeAppRpcProxy<T>;
+    readonly rpc: NativeAppRpcProxy<T>;
     toJSON(): NativeCapabilitySlot;
   }
 

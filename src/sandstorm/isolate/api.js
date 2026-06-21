@@ -637,7 +637,7 @@ const NATIVE_APP_RPC_STUB_OWN_PROPERTIES = new Set([
   "slot",
   "call",
   "drop",
-  "asRpc",
+  "rpc",
   "toJSON",
 ]);
 
@@ -649,6 +649,7 @@ export class NativeAppRpcStub {
   #release;
   #beginCall;
   #dropPromise;
+  #rpc;
 
   constructor(slot, transport, options = {}) {
     if (typeof transport !== "function") {
@@ -702,8 +703,11 @@ export class NativeAppRpcStub {
     return this.#dropPromise;
   }
 
-  asRpc() {
-    return createNativeAppRpcProxy(this);
+  get rpc() {
+    if (!this.#rpc) {
+      this.#rpc = createNativeAppRpcProxy(this);
+    }
+    return this.#rpc;
   }
 
   toJSON() {
@@ -1030,7 +1034,7 @@ export class Capability {
 
   get rpc() {
     if (!this.#rpc) {
-      this.#rpc = createClaimedCapabilityNativeAppRpcStub(this).asRpc();
+      this.#rpc = createClaimedCapabilityNativeAppRpcStub(this).rpc;
     }
     return this.#rpc;
   }
