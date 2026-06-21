@@ -676,7 +676,7 @@ declare module "sandstorm:api" {
     fetcher: Fetcher,
     route: string | ((slot: NativeCapabilitySlot) => string),
   ): NativeAppRpcTransport;
-  export function createClaimedCapabilityNativeAppRpcStub<
+  export function createCapabilityNativeAppRpcStub<
     T extends object = Record<string, (...args: any[]) => unknown>,
     TCapability = Capability,
   >(

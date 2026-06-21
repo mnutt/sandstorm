@@ -7,7 +7,7 @@ import {
   SANDSTORM_CAPNWEB_VERSION,
   SANDSTORM_HELPER_VERSIONS,
   SANDSTORM_RPC_VERSION,
-  createClaimedCapabilityNativeAppRpcStub,
+  createCapabilityNativeAppRpcStub,
   createNativeAppRpcFetchTransport,
   createNativeAppRpcStub,
   dispatchNativeAppRpcCall,
@@ -1068,7 +1068,7 @@ export default {
           return { subject, callback, options };
         },
       };
-      const appObjectNativeRpc = createClaimedCapabilityNativeAppRpcStub(appObjectCapability, {
+      const appObjectNativeRpc = createCapabilityNativeAppRpcStub(appObjectCapability, {
         transport: async (transportSlot, call) => {
           nativeRpcTransportCalls.push({ slot: transportSlot, call });
           return dispatchNativeAppRpcCall(nativeRpcTarget, call);
@@ -1085,7 +1085,7 @@ export default {
         "deliver", "call-subject", { urgent: true });
       let wrongResultSlotError = null;
       try {
-        await createClaimedCapabilityNativeAppRpcStub(appObjectCapability, {
+        await createCapabilityNativeAppRpcStub(appObjectCapability, {
           transport: async () => ({
             type: "value",
             value: {
@@ -1101,7 +1101,7 @@ export default {
         };
       }
 
-      const helperNativeRpcStub = createClaimedCapabilityNativeAppRpcStub(appObjectCapability, {
+      const helperNativeRpcStub = createCapabilityNativeAppRpcStub(appObjectCapability, {
         checkInfo: false,
         transport: async (transportSlot, call) => {
           nativeRpcTransportCalls.push({ slot: transportSlot, call });
@@ -1117,7 +1117,7 @@ export default {
       const wrongNativeRpcTransportCalls = [];
       let wrongNativeRpcError = null;
       try {
-        await createClaimedCapabilityNativeAppRpcStub(capability, {
+        await createCapabilityNativeAppRpcStub(capability, {
           transport: async (transportSlot, call) => {
             wrongNativeRpcTransportCalls.push({ slot: transportSlot, call });
             return dispatchNativeAppRpcCall(nativeRpcTarget, call);
