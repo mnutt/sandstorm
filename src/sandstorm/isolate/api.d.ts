@@ -137,7 +137,6 @@ declare module "sandstorm:api" {
 
   export type CapabilityCallValue =
     | JsonValue
-    | RpcTarget
     | CapabilityHandle
     | CapabilityCallValue[]
     | { [key: string]: CapabilityCallValue };
