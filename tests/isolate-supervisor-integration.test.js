@@ -1429,6 +1429,16 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.durableExport.drop.ok, true);
     assert.equal(selfTest.json.persistent.helper.durableExport.revoke.ok, true);
     assert.equal(selfTest.json.persistent.helper.durableExport.deleteStorage.ok, true);
+    assert.equal(selfTest.json.persistent.helper.unstoredDurableExport.restored, false);
+    assert.equal(selfTest.json.persistent.helper.unstoredDurableExport.registered, true);
+    assert.equal(selfTest.json.persistent.helper.unstoredDurableExport.storageKeyType,
+      "undefined");
+    assert.equal(selfTest.json.persistent.helper.unstoredDurableExport.tokenType, "string");
+    assert.equal(selfTest.json.persistent.helper.unstoredDurableExport.defaultStoredType,
+      "undefined");
+    assert.deepEqual(selfTest.json.persistent.helper.unstoredDurableExport.get, { value: 73 });
+    assert.equal(selfTest.json.persistent.helper.unstoredDurableExport.drop.ok, true);
+    assert.equal(selfTest.json.persistent.helper.unstoredDurableExport.revoke.ok, true);
     assert.equal(selfTest.json.persistent.helper.first.restored, false);
     assert.equal(selfTest.json.persistent.helper.first.registered, true);
     assert.equal(selfTest.json.persistent.helper.first.capability.type, "capability");

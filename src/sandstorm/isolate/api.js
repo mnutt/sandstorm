@@ -2082,27 +2082,28 @@ async function validateRequiredPermissions(env, names) {
   }
 }
 
-function durableObjectCapabilityStorageKey(id, options = {}) {
-  return validate.storageKey(
-    options.storageKey ?? options.key ?? `object-capability-${id}`,
-    "storageKey");
+function durableObjectCapabilityStorageKey(options = {}) {
+  const key = options.storageKey ?? options.key;
+  return key === undefined || key === null ? undefined : validate.storageKey(key, "storageKey");
 }
 
 async function durableObjectCapability(env, target, options = {}) {
   const id = requiredObjectCapabilityId(options);
   const registration = registerObjectCapabilityTarget(target, { id });
-  const key = durableObjectCapabilityStorageKey(id, options);
-  const storedToken = await storage(env).get(key);
-  if (storedToken) {
-    return {
-      ok: true,
-      id,
-      storageKey: key,
-      registered: registration.registered,
-      restored: true,
-      capability: await restoreCapabilityToken(env, storedToken),
-      token: storedToken,
-    };
+  const key = durableObjectCapabilityStorageKey(options);
+  if (key !== undefined) {
+    const storedToken = await storage(env).get(key);
+    if (storedToken) {
+      return {
+        ok: true,
+        id,
+        storageKey: key,
+        registered: registration.registered,
+        restored: true,
+        capability: await restoreCapabilityToken(env, storedToken),
+        token: storedToken,
+      };
+    }
   }
 
   const capability = await createObjectCapability(env, target, {
@@ -2110,11 +2111,22 @@ async function durableObjectCapability(env, target, options = {}) {
     persistent: true,
   });
   const token = await saveCapability(env, capability, options);
-  await storage(env).put(key, token);
+  if (key !== undefined) {
+    await storage(env).put(key, token);
+    return {
+      ok: true,
+      id,
+      storageKey: key,
+      registered: registration.registered,
+      restored: false,
+      capability,
+      token,
+    };
+  }
+
   return {
     ok: true,
     id,
-    storageKey: key,
     registered: registration.registered,
     restored: false,
     capability,

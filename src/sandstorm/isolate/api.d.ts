@@ -363,7 +363,7 @@ declare module "sandstorm:api" {
   export interface DurableObjectCapabilityResult {
     ok: true;
     id: string;
-    storageKey: string;
+    storageKey?: string;
     registered: boolean;
     restored: boolean;
     capability: Capability;

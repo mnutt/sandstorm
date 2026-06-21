@@ -2328,6 +2328,20 @@ export default {
         const durableExportRevoke = await sandstorm(request, env).revoke(durableExport.token);
         const durableExportDeleteStorage =
           await sandstorm(request, env).storage().delete(durableExportStorageKey);
+        const unstoredDurableExportId = `durable-export-unstored-${crypto.randomUUID()}`;
+        const unstoredDurableExportTarget = new CounterCapability();
+        unstoredDurableExportTarget.increment(73);
+        const unstoredDurableExport = await sandstorm(request, env).exportDurable(
+          unstoredDurableExportTarget, {
+            id: unstoredDurableExportId,
+            label: "Unstored durable export fixture",
+          });
+        const unstoredDurableExportGet = await unstoredDurableExport.capability.rpc.get();
+        const unstoredDefaultToken = await sandstorm(request, env).storage().get(
+          `object-capability-${unstoredDurableExportId}`);
+        const unstoredDurableExportDrop = await unstoredDurableExport.capability.drop();
+        const unstoredDurableExportRevoke =
+          await sandstorm(request, env).revoke(unstoredDurableExport.token);
         const helperId = `persistent-helper-${crypto.randomUUID()}`;
         const helperStorageKey = `persistent-helper-${crypto.randomUUID()}`;
         const helperTarget = new CounterCapability();
@@ -2400,6 +2414,17 @@ export default {
             drop: durableExportDrop,
             revoke: durableExportRevoke,
             deleteStorage: durableExportDeleteStorage,
+          },
+          unstoredDurableExport: {
+            id: unstoredDurableExport.id,
+            restored: unstoredDurableExport.restored,
+            registered: unstoredDurableExport.registered,
+            storageKeyType: typeof unstoredDurableExport.storageKey,
+            tokenType: typeof unstoredDurableExport.token,
+            defaultStoredType: typeof unstoredDefaultToken,
+            get: unstoredDurableExportGet,
+            drop: unstoredDurableExportDrop,
+            revoke: unstoredDurableExportRevoke,
           },
           id: helperId,
           storageKey: helperStorageKey,
