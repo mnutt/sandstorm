@@ -2889,7 +2889,7 @@ export default {
         }
       }
 
-      async function restoreStored(storageKey) {
+      async function restoreTokenFromStorage(storageKey) {
         const token = await store.get(storageKey);
         if (!token) {
           return {
@@ -2908,7 +2908,7 @@ export default {
         };
       }
 
-      async function fetchStored(storageKey, input) {
+      async function fetchViaStoredToken(storageKey, input) {
         const token = await store.get(storageKey);
         if (!token) {
           throw new Error(`missing saved token: ${storageKey}`);
@@ -2922,7 +2922,7 @@ export default {
         });
       }
 
-      async function dropStored(storageKey) {
+      async function revokeTokenFromStorage(storageKey) {
         const token = await store.get(storageKey);
         if (!token) {
           return {
@@ -2951,9 +2951,9 @@ export default {
       });
       const originalFetch = await claimed.capability.fetch("/capability-echo?source=helper-original");
       const dropOriginal = await claimed.capability.drop();
-      const fetchStoredResult =
-        await fetchStored(storageKey, "/capability-echo?source=helper-fetch-saved");
-      const restored = await restoreStored(storageKey);
+      const fetchViaStoredTokenResult =
+        await fetchViaStoredToken(storageKey, "/capability-echo?source=helper-fetch-saved");
+      const restored = await restoreTokenFromStorage(storageKey);
       let restoredFetch = null;
       let dropRestored = null;
       if (restored.capability) {
@@ -2983,11 +2983,11 @@ export default {
       const dropHandleClaimed = await handleClaimed.capability.drop();
       const dropClaimAlias = await claimAlias.drop();
       const handleFetchSaved =
-        await fetchStored(handleStorageKey, "/capability-echo?source=helper-handle-fetch");
-      const dropHandleSaved = await dropStored(handleStorageKey);
+        await fetchViaStoredToken(handleStorageKey, "/capability-echo?source=helper-handle-fetch");
+      const dropHandleSaved = await revokeTokenFromStorage(handleStorageKey);
 
-      const dropSaved = await dropStored(storageKey);
-      const afterDrop = await restoreStored(storageKey);
+      const dropSaved = await revokeTokenFromStorage(storageKey);
+      const afterDrop = await restoreTokenFromStorage(storageKey);
       return Response.json({
         ok: true,
         claimed: {
@@ -3002,7 +3002,7 @@ export default {
           body: await originalFetch.json(),
         },
         dropOriginal,
-        fetchStored: fetchStoredResult,
+        fetchViaStoredToken: fetchViaStoredTokenResult,
         restored: {
           ok: restored.ok,
           found: restored.found,
