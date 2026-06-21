@@ -2212,6 +2212,17 @@ export default {
         const durableExportStorageKey = `durable-export-${crypto.randomUUID()}`;
         const durableExportTarget = new CounterCapability();
         durableExportTarget.increment(71);
+        let durableExportMissingLabelError;
+        try {
+          await sandstorm(request, env).exportDurable(new CounterCapability(), {
+            id: `durable-export-missing-label-${crypto.randomUUID()}`,
+          });
+        } catch (error) {
+          durableExportMissingLabelError = {
+            name: String(error?.name || "Error"),
+            message: String(error?.message || error),
+          };
+        }
         const durableExport = await sandstorm(request, env).exportDurable(durableExportTarget, {
           id: durableExportId,
           storageKey: durableExportStorageKey,
@@ -2287,6 +2298,7 @@ export default {
             capability: JSON.parse(JSON.stringify(durableExport.capability)),
             tokenType: durableExportTokenType,
             savedType: durableExportSavedType,
+            missingLabelError: durableExportMissingLabelError,
             get: durableExportGet,
             drop: durableExportDrop,
             revoke: durableExportRevoke,

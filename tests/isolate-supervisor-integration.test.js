@@ -1416,6 +1416,10 @@ test("isolate supervisor integration suite", {
       selfTest.json.persistent.helper.durableExport.capability.type, "claimedCapability");
     assert.equal(selfTest.json.persistent.helper.durableExport.tokenType, "string");
     assert.equal(selfTest.json.persistent.helper.durableExport.savedType, "undefined");
+    assert.equal(selfTest.json.persistent.helper.durableExport.missingLabelError.name,
+      "ValidationError");
+    assert.match(selfTest.json.persistent.helper.durableExport.missingLabelError.message,
+      /exportDurable label is required/);
     assert.deepEqual(selfTest.json.persistent.helper.durableExport.get, { value: 71 });
     assert.equal(selfTest.json.persistent.helper.durableExport.drop.ok, true);
     assert.equal(selfTest.json.persistent.helper.durableExport.revoke.ok, true);

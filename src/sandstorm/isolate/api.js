@@ -1152,6 +1152,17 @@ function saveLabel(options = {}) {
   return validate.string(label, "label", { minLength: 1, maxLength: 256 });
 }
 
+function requiredSaveLabel(options = {}, context = "label") {
+  let label = options.label ?? options.saveLabel;
+  if (label && typeof label === "object" && typeof label.defaultText === "string") {
+    label = label.defaultText;
+  }
+  if (label === undefined || label === null) {
+    throw new ValidationError(`${context} is required`);
+  }
+  return validate.string(label, context, { minLength: 1, maxLength: 256 });
+}
+
 function displayText(options, names, fallback, label, maxLength = 1024) {
   for (const name of names) {
     let value = options[name];
@@ -2303,6 +2314,7 @@ function publicDurableCapabilityResult(result) {
 }
 
 async function exportDurableCapability(env, target, options = {}) {
+  requiredSaveLabel(options, "exportDurable label");
   return publicDurableCapabilityResult(await persistentObjectCapability(env, target, options));
 }
 
