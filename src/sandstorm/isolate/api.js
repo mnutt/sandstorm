@@ -1704,29 +1704,6 @@ async function callCapability(capability, method, args = []) {
     `Capability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
 }
 
-function wrapCapabilityValue(env, value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => wrapCapabilityValue(env, item));
-  }
-
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  if (value.type === "capability" || value.type === "claimedCapability") {
-    return wrapCapability(env, value);
-  }
-  if (value.type === "savedCapability") {
-    return savedCapabilityRecord(value).token;
-  }
-
-  const result = {};
-  for (const [key, item] of Object.entries(value)) {
-    result[key] = wrapCapabilityValue(env, item);
-  }
-  return result;
-}
-
 function disposeExportedObjectTarget(id) {
   const target = exportedObjectTargets.get(id);
   if (!target) {
