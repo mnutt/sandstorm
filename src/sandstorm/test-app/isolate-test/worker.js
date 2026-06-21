@@ -2563,20 +2563,20 @@ export default {
       }
       const claimInfo = await claimedInfo(claim);
       let save = null;
-      let savedCapability = null;
+      let savedToken = null;
       if (claim.ok && claim.id && url.searchParams.get("save") === "true") {
         const label = url.searchParams.get("label") || "Isolate test saved capability";
         if (typeof claim.save === "function") {
-          savedCapability = await claim.save({ label });
+          savedToken = await claim.save({ label });
           save = {
             status: 200,
             body: {
               ok: true,
-              token: savedCapability,
+              token: savedToken,
             },
             typed: {
-              savedToken: typeof savedCapability === "string",
-              json: savedCapability,
+              savedToken: typeof savedToken === "string",
+              json: savedToken,
             },
           };
         } else {
@@ -2612,18 +2612,8 @@ export default {
       let restoredCapability = null;
       const restoreToken = stored?.token || save?.body?.token;
       if (restoreToken && url.searchParams.get("restore") === "true") {
-        if (savedCapability && typeof savedCapability.restore === "function") {
-          restoredCapability = await savedCapability.restore();
-          restore = {
-            status: 200,
-            body: restoredCapability,
-            typed: {
-              restoredClass: restoredCapability instanceof Capability,
-              json: JSON.parse(JSON.stringify(restoredCapability)),
-            },
-          };
-        } else if (typeof savedCapability === "string") {
-          restoredCapability = await sandstorm(request, env).restore(savedCapability);
+        if (savedToken) {
+          restoredCapability = await sandstorm(request, env).restore(restoreToken);
           restore = {
             status: 200,
             body: restoredCapability,
@@ -2643,7 +2633,7 @@ export default {
         }
         if (restore.body.ok && restore.body.id) {
           restore.info = await claimedInfo(restore.body);
-          if (restoredCapability && typeof restoredCapability.drop === "function") {
+          if (restoredCapability) {
             dropRestored = {
               status: 200,
               body: await restoredCapability.drop(),
@@ -2718,15 +2708,10 @@ export default {
       }
       let dropSaved = null;
       if (restoreToken && url.searchParams.get("dropSaved") === "true") {
-        if (savedCapability && typeof savedCapability.drop === "function") {
+        if (savedToken) {
           dropSaved = {
             status: 200,
-            body: await savedCapability.drop(),
-          };
-        } else if (typeof savedCapability === "string") {
-          dropSaved = {
-            status: 200,
-            body: await sandstorm(request, env).revoke(savedCapability),
+            body: await sandstorm(request, env).revoke(restoreToken),
           };
         } else {
           const dropSavedResponse = await env.SANDSTORM_API.fetch(
