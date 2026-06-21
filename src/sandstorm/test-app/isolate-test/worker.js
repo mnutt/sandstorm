@@ -1291,11 +1291,18 @@ export default {
         });
         return nativeCapabilitySlot(id, { nativeInterface: "appObject" });
       };
-      const exportedTargetValue = await serializeNativeAppRpcValueAsync(new CounterCapability(), {
-        name: "callback",
-        exportCapabilitySlot,
-        exportRpcTargets: true,
-      });
+      let exportedTargetValueError = null;
+      try {
+        await serializeNativeAppRpcValueAsync(new CounterCapability(), {
+          name: "callback",
+          exportCapabilitySlot,
+        });
+      } catch (error) {
+        exportedTargetValueError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
       const exportedCapabilityValue = await serializeNativeAppRpcValueAsync(
         new Capability(env, "mock-app-object"),
         {
@@ -1495,7 +1502,7 @@ export default {
           resolverCalls,
         },
         exported: {
-          targetValue: exportedTargetValue,
+          targetValueError: exportedTargetValueError,
           capabilityValue: exportedCapabilityValue,
           callEnvelope: exportedCallEnvelope,
           callRawTargetError: exportedCallRawTargetError,

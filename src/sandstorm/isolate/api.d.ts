@@ -161,7 +161,6 @@ declare module "sandstorm:api" {
 
   export type NativeAppRpcSerializableValue =
     | NativeAppRpcPlainValue
-    | RpcTarget
     | Capability;
 
   export type NativeAppRpcHydratedValue<TCapability = NativeCapabilitySlot> =
@@ -202,7 +201,6 @@ declare module "sandstorm:api" {
 
   export interface NativeAppRpcSerializationOptions {
     name?: string;
-    exportRpcTargets?: boolean;
     exportCapabilitySlot?: (
       value: RpcTarget | Capability,
       context: { name: string },
@@ -667,7 +665,7 @@ declare module "sandstorm:api" {
     value: NativeAppRpcPlainValue,
   ): NativeAppRpcResultEnvelope;
   export function serializeNativeAppRpcResultAsync(
-    value: NativeAppRpcSerializableValue,
+    value: NativeAppRpcSerializableValue | RpcTarget,
     options?: NativeAppRpcSerializationOptions,
   ): Promise<NativeAppRpcResultEnvelope>;
   export function serializeNativeAppRpcException(error: unknown): NativeAppRpcResultEnvelope;
