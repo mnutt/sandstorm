@@ -1634,17 +1634,6 @@ function registerObjectCapabilityTarget(target, options = {}) {
   };
 }
 
-function unregisterObjectCapabilityTarget(options = {}) {
-  const id = typeof options === "string"
-    ? explicitObjectCapabilityId(options)
-    : requiredObjectCapabilityId(options);
-  return {
-    ok: true,
-    id,
-    disposed: disposeExportedObjectTarget(id),
-  };
-}
-
 function registerDurableCapabilityRegistry(request, env, registry = {}) {
   if (registry === undefined || registry === null) {
     return;
@@ -2437,13 +2426,6 @@ class SandstormRpcTarget extends RpcTarget {
     return exportDurableCapability(this.#env, target, options);
   }
 
-  registerCapability(target, options = {}) {
-    return registerObjectCapabilityTarget(target, options);
-  }
-
-  unregisterCapability(options = {}) {
-    return unregisterObjectCapabilityTarget(options);
-  }
 }
 
 export function apiTarget(request, env) {
@@ -2535,8 +2517,6 @@ export function sandstorm(request, env, options = {}) {
     export: (target, options = {}) => createObjectCapability(env, target, options),
     withExport: (target, fn, options = {}) => withExportedCapability(env, target, fn, options),
     exportDurable,
-    registerCapability: (target, options = {}) => registerObjectCapabilityTarget(target, options),
-    unregisterCapability: (options = {}) => unregisterObjectCapabilityTarget(options),
     serveObjectCapabilities: () => serveObjectCapability(request, env),
     servePowerboxDescriptors: () => servePowerboxDescriptors(request, env),
     serveSystemRoutes: () => serveSystemRoutes(request, env),

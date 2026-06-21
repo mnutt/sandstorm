@@ -228,17 +228,18 @@ async function callFeed(api, capability) {
   const liveReceiver = new FeedReceiver();
   const live = await feed.subscribe(liveReceiver);
   const durableReceiver = new FeedReceiver();
+  const durableId = `isolate-feed-receiver-${crypto.randomUUID()}`;
+  const durableStorageKey = `${durableId}-token`;
   const durable = await api.exportDurable(durableReceiver, {
-    id: "isolate-feed-receiver",
-    storageKey: "isolate-feed-receiver-token",
+    id: durableId,
+    storageKey: durableStorageKey,
     label: "Isolate feed receiver",
   });
   const saved = await feed.subscribeSaved(durable.token);
   const durableDrop = await durable.capability.drop();
   const durableDropSaved = await api.revoke(durable.token);
   const durableDeleteStorage =
-    await api.storage().delete("isolate-feed-receiver-token");
-  const durableUnregister = api.unregisterCapability("isolate-feed-receiver");
+    await api.storage().delete(durableStorageKey);
 
   return {
     ok: true,
@@ -254,7 +255,6 @@ async function callFeed(api, capability) {
       drop: durableDrop,
       dropSaved: durableDropSaved,
       deleteStorage: durableDeleteStorage,
-      unregister: durableUnregister,
     },
   };
 }
