@@ -1276,13 +1276,14 @@ test("isolate supervisor integration suite", {
     assert.equal(typeof selfTest.json.childInfo.id, "string");
     assert.equal(selfTest.json.childInfo.ok, true);
     assert.equal(selfTest.json.childInfo.type, "capabilityInfo");
-    assert.equal(selfTest.json.childInfo.kind, "unknown");
-    assert.equal(selfTest.json.childInfo.residence, "imported");
+    assert.equal(selfTest.json.childInfo.kind, "routeBackedAppObject");
+    assert.equal(selfTest.json.childInfo.residence, "localExport");
     assert.equal(selfTest.json.childInfo.nativeInterface, "appObject");
-    assert.equal(selfTest.json.childInfo.pathPrefix, "");
-    assert.equal(selfTest.json.childInfo.persistent, true);
-    assert.equal(selfTest.json.childInfo.hasDropNotify, false);
-    assert.equal(selfTest.json.childInfo.dropNotifyRefCount, 0);
+    assert.match(
+      selfTest.json.childInfo.pathPrefix, /^\/__sandstorm\/object-capabilities\//);
+    assert.equal(selfTest.json.childInfo.persistent, false);
+    assert.equal(selfTest.json.childInfo.hasDropNotify, true);
+    assert.equal(selfTest.json.childInfo.dropNotifyRefCount, 1);
     assert.equal(selfTest.json.childInfo.supportsWebFetch, false);
     assert.equal(selfTest.json.childInfo.supportsOutboundHttpFetch, false);
     assert.equal(selfTest.json.childInfo.hasNativeCapability, true);
@@ -1382,7 +1383,7 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.stable.recreatedFirst, { value: 19 });
     assert.equal(selfTest.json.stable.recreatedDrop.ok, true);
     assert.equal(selfTest.json.persistent.withoutIdError.name, "ValidationError");
-    assert.match(selfTest.json.persistent.withoutIdError.message, /explicit id/);
+    assert.match(selfTest.json.persistent.withoutIdError.message, /api\.exportDurable/);
     assert.deepEqual(selfTest.json.persistent.first, { value: 29 });
     assert.equal(typeof selfTest.json.persistent.saved, "string");
     assert.equal(selfTest.json.persistent.restored.type, "capability");
@@ -1393,7 +1394,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.duplicateExportError.name, "ValidationError");
     assert.match(selfTest.json.persistent.duplicateExportError.message, /already registered/);
     assert.equal(selfTest.json.persistent.transientMintError.name, "ValidationError");
-    assert.match(selfTest.json.persistent.transientMintError.message, /persistent: true/);
+    assert.match(selfTest.json.persistent.transientMintError.message, /api\.exportDurable/);
     assert.equal(selfTest.json.persistent.mintedAfterRegister.type, "capability");
     assert.deepEqual(selfTest.json.persistent.mintedAfterRegisterGet, { value: 32 });
     assert.equal(selfTest.json.persistent.dropMintedAfterRegister.ok, true);

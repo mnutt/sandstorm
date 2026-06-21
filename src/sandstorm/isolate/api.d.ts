@@ -347,7 +347,6 @@ declare module "sandstorm:api" {
 
   export interface ObjectCapabilityOptions {
     id?: string;
-    persistent?: boolean;
   }
 
   export type DurableCapabilityRegistry = Record<

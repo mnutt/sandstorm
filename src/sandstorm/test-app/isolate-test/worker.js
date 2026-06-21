@@ -1748,12 +1748,12 @@ export default {
 
     if (url.pathname === "/export-mail-feed-capability") {
       const persistent = url.searchParams.get("persistent") === "true";
-      const options = persistent ? {
-        id: url.searchParams.get("id") || "mail-feed",
-        persistent: true,
-      } : {};
-      const capability = await sandstorm(request, env).export(
-        new MailFeedCapability(), options);
+      const capability = persistent
+        ? (await sandstorm(request, env).exportDurable(new MailFeedCapability(), {
+            id: url.searchParams.get("id") || "mail-feed",
+            label: "Mail feed fixture",
+          })).capability
+        : await sandstorm(request, env).export(new MailFeedCapability());
       return Response.json({
         ok: true,
         capabilityClass: capability instanceof Capability,
@@ -2216,15 +2216,14 @@ export default {
       }
       const persistentId = `persistent-counter-${crypto.randomUUID()}`;
       const persistentTarget = new CounterCapability();
-      const persistentCapability = await sandstorm(request, env).export(
+      const persistentExport = await sandstorm(request, env).exportDurable(
         persistentTarget, {
           id: persistentId,
-          persistent: true,
+          label: "Persistent object capability fixture",
         });
+      const persistentCapability = persistentExport.capability;
       const persistentFirst = await persistentCapability.call("increment", 29);
-      const persistentSaved = await persistentCapability.save({
-        label: "Persistent object capability fixture",
-      });
+      const persistentSaved = persistentExport.token;
       const persistentRestored = await sandstorm(request, env).restore(persistentSaved);
       const persistentRestoredGet = await persistentRestored.call("get");
       const persistentRestoredIncrement = await persistentRestored.call("increment", 3);
@@ -2232,9 +2231,9 @@ export default {
       const persistentDropRestored = await persistentRestored.drop();
       let persistentDuplicateExportError;
       try {
-        await sandstorm(request, env).export(new CounterCapability(), {
+        await sandstorm(request, env).exportDurable(new CounterCapability(), {
           id: persistentId,
-          persistent: true,
+          label: "Persistent object capability fixture",
         });
       } catch (error) {
         persistentDuplicateExportError = {
@@ -2253,13 +2252,15 @@ export default {
           message: String(error?.message || error),
         };
       }
-      const persistentMintedAfterRegister = await sandstorm(request, env).export(
+      const persistentMintedAfterRegister = await sandstorm(request, env).exportDurable(
         persistentTarget, {
           id: persistentId,
-          persistent: true,
+          label: "Persistent object capability fixture",
         });
-      const persistentMintedAfterRegisterGet = await persistentMintedAfterRegister.call("get");
-      const persistentDropMintedAfterRegister = await persistentMintedAfterRegister.drop();
+      const persistentMintedAfterRegisterGet =
+        await persistentMintedAfterRegister.capability.call("get");
+      const persistentDropMintedAfterRegister =
+        await persistentMintedAfterRegister.capability.drop();
       const persistentRestoredAfterRegister = await sandstorm(request, env).restore(persistentSaved);
       const persistentRestoredAfterRegisterGet =
         await persistentRestoredAfterRegister.call("get");
@@ -2626,7 +2627,7 @@ export default {
           dropRestored: persistentDropRestored,
           duplicateExportError: persistentDuplicateExportError,
           transientMintError: persistentTransientMintError,
-          mintedAfterRegister: JSON.parse(JSON.stringify(persistentMintedAfterRegister)),
+          mintedAfterRegister: JSON.parse(JSON.stringify(persistentMintedAfterRegister.capability)),
           mintedAfterRegisterGet: persistentMintedAfterRegisterGet,
           dropMintedAfterRegister: persistentDropMintedAfterRegister,
           restoredAfterRegister: JSON.parse(JSON.stringify(persistentRestoredAfterRegister)),

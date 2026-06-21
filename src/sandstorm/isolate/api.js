@@ -799,6 +799,38 @@ function capabilitySupportsAppObjectCall(info) {
   return info?.nativeInterface === "appObject";
 }
 
+function localObjectCapabilityId(info) {
+  const prefix = `${OBJECT_CAPABILITY_PREFIX}/`;
+  const pathPrefix = info?.pathPrefix;
+  if (typeof pathPrefix !== "string" || !pathPrefix.startsWith(prefix)) {
+    return undefined;
+  }
+
+  const rest = pathPrefix.slice(prefix.length);
+  if (rest.length === 0 || rest.includes("/")) {
+    return undefined;
+  }
+  return decodeURIComponent(rest);
+}
+
+async function dispatchLocalObjectCapabilityNativeAppRpc(capability, info, call) {
+  const objectId = localObjectCapabilityId(info);
+  if (!objectId) {
+    return undefined;
+  }
+
+  const target = exportedObjectTargets.get(objectId);
+  if (!target) {
+    return undefined;
+  }
+
+  return dispatchNativeAppRpcCall(target, call, {
+    exportCapabilitySlot: (value, context) =>
+      exportCapabilityNativeAppRpcSlot(capability.env, value, context),
+    resolveCapabilitySlot: (slot) => new Capability(capability.env, slot.id),
+  });
+}
+
 async function exportCapabilityNativeAppRpcSlot(
     env, value, context, temporaryCapabilities) {
   if (value instanceof RpcTarget) {
@@ -871,6 +903,7 @@ export function createCapabilityNativeAppRpcStub(capability, options = {}) {
   if (transport !== undefined && transport !== null && typeof transport !== "function") {
     failValidation("native app RPC capability transport", "a function", transport);
   }
+  const useLocalObjectRoute = transport === undefined && options.fetcher === undefined;
   if (transport === undefined && options.fetcher !== undefined) {
     transport = createNativeAppRpcFetchTransport(options.fetcher, options.route);
   } else if (transport === undefined && capability.env?.SANDSTORM_API) {
@@ -880,9 +913,28 @@ export function createCapabilityNativeAppRpcStub(capability, options = {}) {
   }
 
   const checkedTransport = async (slot, call) => {
+    let info;
     if (options.checkInfo !== false) {
-      await requireNativeAppRpcCapability(capability);
+      info = await capabilityInfo(capability.env, capability);
+      if (!capabilitySupportsAppObjectCall(info)) {
+        const nativeInterface = info?.nativeInterface || "unknown";
+        throw new UnsupportedCapabilityError(
+          nativeInterface,
+          "rpc",
+          `Capability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
+      }
+    } else if (useLocalObjectRoute) {
+      info = await capabilityInfo(capability.env, capability);
     }
+
+    if (useLocalObjectRoute) {
+      const localResult =
+        await dispatchLocalObjectCapabilityNativeAppRpc(capability, info, call);
+      if (localResult !== undefined) {
+        return localResult;
+      }
+    }
+
     if (!transport) {
       throw new CapabilityCallError(
         "app-defined RPC transport for capabilities is not connected");
@@ -1691,7 +1743,7 @@ async function createObjectCapability(env, target, options = {}) {
   const registration = registerObjectCapabilityTarget(target, { id });
   if (!persistent && !registration.registered) {
     throw new ValidationError(
-      "already registered object capability IDs can only be minted with persistent: true");
+      "already registered object capability IDs can only be minted with api.exportDurable()");
   }
 
   try {
@@ -1713,6 +1765,20 @@ async function createObjectCapability(env, target, options = {}) {
     }
     throw error;
   }
+}
+
+function publicObjectCapabilityOptions(options = {}) {
+  const normalized = options ?? {};
+  if (normalized.persistent !== undefined && normalized.persistent !== null) {
+    throw new ValidationError(
+      "api.export() always creates transient object capabilities; use api.exportDurable() " +
+      "when an exported object needs a durable token.");
+  }
+  return { ...normalized, persistent: false };
+}
+
+async function exportObjectCapability(env, target, options = {}) {
+  return createObjectCapability(env, target, publicObjectCapabilityOptions(options));
 }
 
 async function callCapability(capability, method, args = []) {
@@ -2165,7 +2231,7 @@ async function withExportedCapability(env, target, fn, options = {}) {
     failValidation("withExport callback", "a function", fn);
   }
 
-  const capability = await createObjectCapability(env, target, options);
+  const capability = await exportObjectCapability(env, target, options);
   try {
     return await fn(capability);
   } finally {
@@ -2449,7 +2515,7 @@ class SandstormRpcTarget extends RpcTarget {
   }
 
   ["export"](target, options = {}) {
-    return createObjectCapability(this.#env, target, options);
+    return exportObjectCapability(this.#env, target, options);
   }
 
   withExport(target, fn, options = {}) {
@@ -2549,7 +2615,7 @@ export function sandstorm(request, env, options = {}) {
         await capability.drop();
       }
     },
-    export: (target, options = {}) => createObjectCapability(env, target, options),
+    export: (target, options = {}) => exportObjectCapability(env, target, options),
     withExport: (target, fn, options = {}) => withExportedCapability(env, target, fn, options),
     exportDurable,
     serveObjectCapabilities: () => serveObjectCapability(request, env, durableRegistry),
