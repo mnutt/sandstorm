@@ -377,6 +377,18 @@ declare module "sandstorm:api" {
     token: string;
   }
 
+  export type DurableCapabilityRegistry = Record<
+    string,
+    RpcTarget | ((request: Request, env: SandstormEnv) => RpcTarget)
+  >;
+
+  export interface SandstormOptions {
+    capabilities?: DurableCapabilityRegistry;
+  }
+
+  export type DurableObjectCapabilityResult =
+    Omit<PersistentObjectCapabilityResult, "saved">;
+
   export type NativeAppRpcProxy<T extends object = Record<string, (...args: any[]) => unknown>> = {
     [K in keyof T]: T[K] extends (...args: infer Args) => infer Result
       ? (...args: Args) => Promise<Awaited<Result>>
@@ -396,13 +408,14 @@ declare module "sandstorm:api" {
   export interface ClaimedCapability extends ClaimedCapabilityHandle {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
+    readonly rpc: NativeAppRpcProxy<Record<string, (...args: any[]) => unknown>>;
     asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
       options?: ClaimedCapabilityRpcOptions<ClaimedCapability>,
     ): NativeAppRpcProxy<T>;
     asOutboundHttp(): OutboundHttpCapability;
     info(options?: { refresh?: boolean }): Promise<ClaimedCapabilityInfo | null>;
     dup(): Promise<ClaimedCapability>;
-    save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
+    save(options?: SaveCapabilityOptions): Promise<string>;
     drop(): Promise<{ ok: true }>;
     offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
     fulfillRequest(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
@@ -417,13 +430,14 @@ declare module "sandstorm:api" {
     constructor(env: SandstormEnv, id: string);
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
+    readonly rpc: NativeAppRpcProxy<Record<string, (...args: any[]) => unknown>>;
     asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
       options?: ClaimedCapabilityRpcOptions<ClaimedCapability>,
     ): NativeAppRpcProxy<T>;
     asOutboundHttp(): OutboundHttpCapability;
     info(options?: { refresh?: boolean }): Promise<ClaimedCapabilityInfo | null>;
     dup(): Promise<ClaimedCapability>;
-    save(options?: SaveCapabilityOptions): Promise<SavedCapability>;
+    save(options?: SaveCapabilityOptions): Promise<string>;
     drop(): Promise<{ ok: true }>;
     offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
     fulfillRequest(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
@@ -431,6 +445,8 @@ declare module "sandstorm:api" {
     [Symbol.dispose](): void;
     toJSON(): ClaimedCapabilityHandle;
   }
+
+  export { ClaimedCapability as Capability };
 
   export interface OutboundHttpCapabilityHandle {
     ok: true;
@@ -594,6 +610,10 @@ declare module "sandstorm:api" {
     claimedCapability(capability: ClaimedCapabilityHandle | string): ClaimedCapability;
     outboundHttpCapability(capability: ClaimedCapabilityHandle | string): OutboundHttpCapability;
     claimRequest(token: string, options?: ClaimRequestOptions): Promise<ClaimedCapability>;
+    claim(
+      result: string | PowerboxRequestResult,
+      options?: ClaimRequestOptions,
+    ): Promise<ClaimedCapability>;
     claimAndStore(
       token: string,
       options?: SavedCapabilityStorageOptions,
@@ -628,7 +648,7 @@ declare module "sandstorm:api" {
     save(
       capability: ClaimedCapabilityHandle | string,
       options?: SaveCapabilityOptions,
-    ): Promise<SavedCapability>;
+    ): Promise<string>;
     restoreSaved(token: Uint8Array | string | SavedCapability): Promise<ClaimedCapability>;
     dropSaved(token: Uint8Array | string | SavedCapability): Promise<{ ok: true }>;
     drop(capability: ClaimedCapabilityHandle | string): Promise<{ ok: true }>;
@@ -645,7 +665,23 @@ declare module "sandstorm:api" {
     powerbox(): PowerboxApiTarget;
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
+    restore(token: Uint8Array | string | SavedCapability): Promise<ClaimedCapability>;
+    revoke(token: Uint8Array | string | SavedCapability): Promise<{ ok: true }>;
+    use<T>(
+      token: Uint8Array | string | SavedCapability,
+      fn: (capability: ClaimedCapability) => T | Promise<T>,
+    ): Promise<T>;
     capability(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
+    "export"(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
+    withExport<T>(
+      target: RpcTarget,
+      fn: (capability: ClaimedCapability) => T | Promise<T>,
+      options?: ObjectCapabilityOptions,
+    ): Promise<T>;
+    exportDurable(
+      target: RpcTarget,
+      options: PersistentObjectCapabilityOptions,
+    ): Promise<DurableObjectCapabilityResult>;
     persistentCapability(
       target: RpcTarget,
       options: PersistentObjectCapabilityOptions,
@@ -677,7 +713,23 @@ declare module "sandstorm:api" {
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
+    restore(token: Uint8Array | string | SavedCapability): Promise<ClaimedCapability>;
+    revoke(token: Uint8Array | string | SavedCapability): Promise<{ ok: true }>;
+    use<T>(
+      token: Uint8Array | string | SavedCapability,
+      fn: (capability: ClaimedCapability) => T | Promise<T>,
+    ): Promise<T>;
     capability(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
+    export(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
+    withExport<T>(
+      target: RpcTarget,
+      fn: (capability: ClaimedCapability) => T | Promise<T>,
+      options?: ObjectCapabilityOptions,
+    ): Promise<T>;
+    exportDurable(
+      targetOrId: RpcTarget | string,
+      options: PersistentObjectCapabilityOptions | SaveCapabilityOptions,
+    ): Promise<DurableObjectCapabilityResult>;
     persistentCapability(
       target: RpcTarget,
       options: PersistentObjectCapabilityOptions,
@@ -797,5 +849,9 @@ declare module "sandstorm:api" {
     capability: ClaimedCapability,
     options?: ClaimedCapabilityRpcOptions<TCapability>,
   ): NativeAppRpcStub<T, TCapability>;
-  export function sandstorm(request: Request, env: SandstormEnv): SandstormApi;
+  export function sandstorm(
+    request: Request,
+    env: SandstormEnv,
+    options?: SandstormOptions,
+  ): SandstormApi;
 }

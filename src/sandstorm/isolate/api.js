@@ -998,6 +998,7 @@ function capabilityId(value, name = "capability") {
 
 export class ClaimedCapability {
   #env;
+  #rpc;
 
   constructor(env, id) {
     this.#env = env;
@@ -1016,6 +1017,13 @@ export class ClaimedCapability {
 
   call(method, ...args) {
     return callClaimedCapability(this, method, args);
+  }
+
+  get rpc() {
+    if (!this.#rpc) {
+      this.#rpc = this.asRpc();
+    }
+    return this.#rpc;
   }
 
   asRpc(options = {}) {
@@ -1077,6 +1085,8 @@ export class ClaimedCapability {
     };
   }
 }
+
+export { ClaimedCapability as Capability };
 
 export class OutboundHttpCapability {
   constructor(capability) {
@@ -1312,18 +1322,22 @@ function powerboxDescriptorParams(options = {}) {
   }
 }
 
-async function saveClaimedCapability(env, capability, options = {}) {
+async function saveClaimedCapabilityRecord(env, capability, options = {}) {
   const rawId = capabilityId(capability);
   const metadata = claimedCapabilityMetadata.get(rawId);
   if (metadata?.transientObjectCapability) {
     throw new Error(
       "JavaScript object capabilities are transient and cannot be saved yet. " +
-      "Export a route-backed WebSession or ApiSession capability for persistence.");
+      "Use api.exportDurable() when an exported object needs a durable token.");
   }
 
   const id = encodeURIComponent(rawId);
   const label = encodeURIComponent(saveLabel(options));
   return wrapSavedCapability(env, await postPowerbox(env, `powerbox/save?id=${id}&label=${label}`));
+}
+
+async function saveClaimedCapability(env, capability, options = {}) {
+  return (await saveClaimedCapabilityRecord(env, capability, options)).token;
 }
 
 function duplicateLocalClaimedCapabilityMetadata(metadata) {
@@ -1675,6 +1689,25 @@ function unregisterObjectCapabilityTarget(options = {}) {
     id,
     disposed: disposeExportedObjectTarget(id),
   };
+}
+
+function registerDurableCapabilityRegistry(request, env, registry = {}) {
+  if (registry === undefined || registry === null) {
+    return;
+  }
+  if (!isPlainObject(registry)) {
+    failValidation("durable capability registry", "an object", registry);
+  }
+
+  for (const [rawId, source] of Object.entries(registry)) {
+    const id = explicitObjectCapabilityId(rawId, "durable capability registry id");
+    if (exportedObjectTargets.has(id)) {
+      continue;
+    }
+
+    const target = typeof source === "function" ? source(request, env) : source;
+    registerObjectCapabilityTarget(target, { id });
+  }
 }
 
 async function createObjectCapability(env, target, options = {}) {
@@ -2089,7 +2122,7 @@ function storageKey(options = {}) {
 
 async function claimAndStorePowerboxCapability(env, request, token, options = {}) {
   const capability = await powerbox(request, env).claimRequest(token, options);
-  const saved = await capability.save(options);
+  const saved = await saveClaimedCapabilityRecord(env, capability, options);
   const key = storageKey(options);
   await storage(env).put(key, saved.token);
   return {
@@ -2103,7 +2136,7 @@ async function claimAndStorePowerboxCapability(env, request, token, options = {}
 
 async function storeClaimedPowerboxCapability(env, capabilityHandle, options = {}) {
   const capability = new ClaimedCapability(env, capabilityId(capabilityHandle));
-  const saved = await capability.save(options);
+  const saved = await saveClaimedCapabilityRecord(env, capability, options);
   const key = storageKey(options);
   await storage(env).put(key, saved.token);
   return {
@@ -2234,7 +2267,7 @@ async function persistentObjectCapability(env, target, options = {}) {
     id,
     persistent: true,
   });
-  const saved = await capability.save(options);
+  const saved = await saveClaimedCapabilityRecord(env, capability, options);
   await storage(env).put(key, saved.token);
   return {
     ok: true,
@@ -2254,6 +2287,28 @@ async function persistentCallbackCapability(env, target, options = {}) {
     ...options,
     storageKey: persistentCallbackStorageKey(id, options),
   });
+}
+
+function publicDurableCapabilityResult(result) {
+  const { saved, ...publicResult } = result;
+  return publicResult;
+}
+
+async function exportDurableCapability(env, target, options = {}) {
+  return publicDurableCapabilityResult(await persistentObjectCapability(env, target, options));
+}
+
+async function withExportedCapability(env, target, fn, options = {}) {
+  if (typeof fn !== "function") {
+    failValidation("withExport callback", "a function", fn);
+  }
+
+  const capability = await createObjectCapability(env, target, options);
+  try {
+    return await fn(capability);
+  } finally {
+    await capability.drop();
+  }
 }
 
 export function powerbox(request, env) {
@@ -2291,6 +2346,26 @@ export function powerbox(request, env) {
       const capability = await postPowerbox(env,
         `powerbox/claim-request?${params}`);
       return wrapClaimedCapability(env, capability);
+    },
+
+    async claim(result, options = {}) {
+      if (typeof result === "string") {
+        return this.claimRequest(result, options);
+      }
+
+      if (!result || typeof result !== "object") {
+        throw new ValidationError("Powerbox claim result must be a token string or result object");
+      }
+
+      if (result.capability) {
+        return new ClaimedCapability(env, capabilityId(result.capability));
+      }
+
+      if (typeof result.token === "string") {
+        return this.claimRequest(result.token, options);
+      }
+
+      throw new ValidationError("Powerbox claim result must contain token or capability");
     },
 
     async claimAndStore(token, options = {}) {
@@ -2471,6 +2546,10 @@ class PowerboxRpcTarget extends RpcTarget {
     return powerbox(this.#request, this.#env).claimRequest(token, options);
   }
 
+  async claim(result, options) {
+    return powerbox(this.#request, this.#env).claim(result, options || {});
+  }
+
   async claimAndStore(token, options) {
     return powerbox(this.#request, this.#env).claimAndStore(token, options || {});
   }
@@ -2587,8 +2666,41 @@ class SandstormRpcTarget extends RpcTarget {
     return createApiSessionCapability(this.#env, options);
   }
 
+  restore(token) {
+    return restoreSavedCapability(this.#env, token);
+  }
+
+  revoke(token) {
+    return dropSavedCapability(this.#env, token);
+  }
+
+  async use(token, fn) {
+    if (typeof fn !== "function") {
+      failValidation("capability use callback", "a function", fn);
+    }
+
+    const capability = await restoreSavedCapability(this.#env, token);
+    try {
+      return await fn(capability);
+    } finally {
+      await capability.drop();
+    }
+  }
+
   capability(target, options = {}) {
     return createObjectCapability(this.#env, target, options);
+  }
+
+  ["export"](target, options = {}) {
+    return createObjectCapability(this.#env, target, options);
+  }
+
+  withExport(target, fn, options = {}) {
+    return withExportedCapability(this.#env, target, fn, options);
+  }
+
+  exportDurable(target, options = {}) {
+    return exportDurableCapability(this.#env, target, options);
   }
 
   persistentCapability(target, options = {}) {
@@ -2653,7 +2765,22 @@ function isPowerboxDescriptorRequest(request) {
   return new URL(request.url).pathname.startsWith(`${POWERBOX_DESCRIPTOR_PREFIX}/`);
 }
 
-export function sandstorm(request, env) {
+export function sandstorm(request, env, options = {}) {
+  registerDurableCapabilityRegistry(request, env, options.capabilities);
+
+  const exportDurable = (targetOrId, durableOptions = {}) => {
+    if (typeof targetOrId === "string") {
+      const id = explicitObjectCapabilityId(targetOrId);
+      const target = exportedObjectTargets.get(id);
+      if (!target) {
+        throw new ValidationError(`durable capability id is not registered: ${id}`);
+      }
+      return exportDurableCapability(env, target, { ...durableOptions, id });
+    }
+
+    return exportDurableCapability(env, targetOrId, durableOptions);
+  };
+
   return {
     session: () => getSession(request),
     status: () => callSandstorm(env, "status"),
@@ -2665,7 +2792,24 @@ export function sandstorm(request, env) {
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, options),
     apiSession: (options = {}) => createApiSessionCapability(env, options),
+    restore: (token) => restoreSavedCapability(env, token),
+    revoke: (token) => dropSavedCapability(env, token),
+    use: async (token, fn) => {
+      if (typeof fn !== "function") {
+        failValidation("capability use callback", "a function", fn);
+      }
+
+      const capability = await restoreSavedCapability(env, token);
+      try {
+        return await fn(capability);
+      } finally {
+        await capability.drop();
+      }
+    },
     capability: (target, options = {}) => createObjectCapability(env, target, options),
+    export: (target, options = {}) => createObjectCapability(env, target, options),
+    withExport: (target, fn, options = {}) => withExportedCapability(env, target, fn, options),
+    exportDurable,
     persistentCapability: (target, options = {}) =>
       persistentObjectCapability(env, target, options),
     persistentCallback: (target, options = {}) =>
