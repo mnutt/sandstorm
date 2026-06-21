@@ -1028,13 +1028,9 @@ export class ClaimedCapability {
 
   get rpc() {
     if (!this.#rpc) {
-      this.#rpc = this.asRpc();
+      this.#rpc = createClaimedCapabilityNativeAppRpcStub(this).asRpc();
     }
     return this.#rpc;
-  }
-
-  asRpc(options = {}) {
-    return createClaimedCapabilityNativeAppRpcStub(this, options).asRpc();
   }
 
   info(options = {}) {
@@ -2429,10 +2425,6 @@ class SandstormRpcTarget extends RpcTarget {
     }
   }
 
-  capability(target, options = {}) {
-    return createObjectCapability(this.#env, target, options);
-  }
-
   ["export"](target, options = {}) {
     return createObjectCapability(this.#env, target, options);
   }
@@ -2540,7 +2532,6 @@ export function sandstorm(request, env, options = {}) {
         await capability.drop();
       }
     },
-    capability: (target, options = {}) => createObjectCapability(env, target, options),
     export: (target, options = {}) => createObjectCapability(env, target, options),
     withExport: (target, fn, options = {}) => withExportedCapability(env, target, fn, options),
     exportDurable,
