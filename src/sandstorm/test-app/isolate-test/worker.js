@@ -1560,6 +1560,14 @@ export default {
           method: "POST",
           body: JSON.stringify({ method: "then", args: [] }),
         }), env);
+        const missingDurableResponse = await serveSystemRoutes(new Request(
+          "http://worker/__sandstorm/object-capabilities/missing-durable-route"), env);
+        const missingDurableRpcResponse = await serveSystemRoutes(new Request(
+          "http://worker/__sandstorm/object-capabilities/missing-durable-route/" +
+          "native-app-rpc-call", {
+            method: "POST",
+            body: JSON.stringify(serializeNativeAppRpcCall("deliver", [])),
+          }), env);
         const transportCalls = [];
         const routeStub = createNativeAppRpcStub(
           nativeCapabilitySlot("native-route-target", { nativeInterface: "appObject" }),
@@ -1659,6 +1667,14 @@ export default {
           invalid: {
             status: invalidResponse.status,
             body: await invalidResponse.json(),
+          },
+          missingDurable: {
+            status: missingDurableResponse.status,
+            body: await missingDurableResponse.json(),
+          },
+          missingDurableRpc: {
+            status: missingDurableRpcResponse.status,
+            body: await missingDurableRpcResponse.json(),
           },
           routeStub: {
             slot: routeStub.slot,
@@ -2278,12 +2294,24 @@ export default {
         const durableExportTarget = new CounterCapability();
         durableExportTarget.increment(71);
         let durableExportMissingLabelError;
+        let durableExportMissingRegistryError;
         try {
           await sandstorm(request, env).exportDurable(new CounterCapability(), {
             id: `durable-export-missing-label-${crypto.randomUUID()}`,
           });
         } catch (error) {
           durableExportMissingLabelError = {
+            name: String(error?.name || "Error"),
+            message: String(error?.message || error),
+          };
+        }
+        try {
+          await sandstorm(request, env).exportDurable(
+            `durable-export-missing-registry-${crypto.randomUUID()}`, {
+              label: "Missing registry durable export fixture",
+            });
+        } catch (error) {
+          durableExportMissingRegistryError = {
             name: String(error?.name || "Error"),
             message: String(error?.message || error),
           };
@@ -2367,6 +2395,7 @@ export default {
             tokenType: durableExportTokenType,
             savedType: durableExportSavedType,
             missingLabelError: durableExportMissingLabelError,
+            missingRegistryError: durableExportMissingRegistryError,
             get: durableExportGet,
             drop: durableExportDrop,
             revoke: durableExportRevoke,
