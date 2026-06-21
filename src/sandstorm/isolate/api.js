@@ -2122,22 +2122,16 @@ async function validateRequiredPermissions(env, names) {
   }
 }
 
-function persistentCapabilityStorageKey(id, options = {}) {
+function durableObjectCapabilityStorageKey(id, options = {}) {
   return validate.storageKey(
     options.storageKey ?? options.key ?? `object-capability-${id}`,
     "storageKey");
 }
 
-function persistentCallbackStorageKey(id, options = {}) {
-  return validate.storageKey(
-    options.storageKey ?? options.key ?? `callback-capability-${id}`,
-    "storageKey");
-}
-
-async function persistentObjectCapability(env, target, options = {}) {
+async function durableObjectCapability(env, target, options = {}) {
   const id = requiredObjectCapabilityId(options);
   const registration = registerObjectCapabilityTarget(target, { id });
-  const key = persistentCapabilityStorageKey(id, options);
+  const key = durableObjectCapabilityStorageKey(id, options);
   const token = await storage(env).get(key);
   if (token) {
     return {
@@ -2170,14 +2164,6 @@ async function persistentObjectCapability(env, target, options = {}) {
   };
 }
 
-async function persistentCallbackCapability(env, target, options = {}) {
-  const id = requiredObjectCapabilityId(options);
-  return persistentObjectCapability(env, target, {
-    ...options,
-    storageKey: persistentCallbackStorageKey(id, options),
-  });
-}
-
 function publicDurableCapabilityResult(result) {
   const { saved, ...publicResult } = result;
   return publicResult;
@@ -2185,7 +2171,7 @@ function publicDurableCapabilityResult(result) {
 
 async function exportDurableCapability(env, target, options = {}) {
   requiredSaveLabel(options, "exportDurable label");
-  return publicDurableCapabilityResult(await persistentObjectCapability(env, target, options));
+  return publicDurableCapabilityResult(await durableObjectCapability(env, target, options));
 }
 
 async function withExportedCapability(env, target, fn, options = {}) {
@@ -2509,14 +2495,6 @@ class SandstormRpcTarget extends RpcTarget {
     return exportDurableCapability(this.#env, target, options);
   }
 
-  persistentCapability(target, options = {}) {
-    return persistentObjectCapability(this.#env, target, options);
-  }
-
-  persistentCallback(target, options = {}) {
-    return persistentCallbackCapability(this.#env, target, options);
-  }
-
   registerCapability(target, options = {}) {
     return registerObjectCapabilityTarget(target, options);
   }
@@ -2616,10 +2594,6 @@ export function sandstorm(request, env, options = {}) {
     export: (target, options = {}) => createObjectCapability(env, target, options),
     withExport: (target, fn, options = {}) => withExportedCapability(env, target, fn, options),
     exportDurable,
-    persistentCapability: (target, options = {}) =>
-      persistentObjectCapability(env, target, options),
-    persistentCallback: (target, options = {}) =>
-      persistentCallbackCapability(env, target, options),
     registerCapability: (target, options = {}) => registerObjectCapabilityTarget(target, options),
     unregisterCapability: (options = {}) => unregisterObjectCapabilityTarget(options),
     serveObjectCapabilities: () => serveObjectCapability(request, env),

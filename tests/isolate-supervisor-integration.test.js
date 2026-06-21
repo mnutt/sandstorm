@@ -1434,13 +1434,13 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.first.restored, false);
     assert.equal(selfTest.json.persistent.helper.first.registered, true);
     assert.equal(selfTest.json.persistent.helper.first.capability.type, "claimedCapability");
-    assert.equal(selfTest.json.persistent.helper.first.saved.type, "savedCapability");
+    assert.equal(selfTest.json.persistent.helper.first.tokenType, "string");
     assert.deepEqual(selfTest.json.persistent.helper.first.get, { value: 53 });
     assert.equal(selfTest.json.persistent.helper.first.drop.ok, true);
     assert.equal(selfTest.json.persistent.helper.second.restored, true);
     assert.equal(selfTest.json.persistent.helper.second.registered, false);
     assert.equal(selfTest.json.persistent.helper.second.capability.type, "claimedCapability");
-    assert.equal(selfTest.json.persistent.helper.second.saved.type, "savedCapability");
+    assert.equal(selfTest.json.persistent.helper.second.tokenType, "string");
     assert.deepEqual(selfTest.json.persistent.helper.second.get, { value: 53 });
     assert.equal(selfTest.json.persistent.helper.second.drop.ok, true);
     assert.equal(selfTest.json.persistent.helper.dropSaved.ok, true);
@@ -1449,12 +1449,12 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.unregister.disposed, true);
     assert.equal(
       selfTest.json.persistent.helper.callback.storageKey,
-      selfTest.json.persistent.helper.callback.defaultStorageKey);
+      selfTest.json.persistent.helper.callback.expectedStorageKey);
     assert.equal(selfTest.json.persistent.helper.callback.first.restored, false);
     assert.equal(selfTest.json.persistent.helper.callback.first.registered, true);
     assert.equal(
       selfTest.json.persistent.helper.callback.first.capability.type, "claimedCapability");
-    assert.equal(selfTest.json.persistent.helper.callback.first.saved.type, "savedCapability");
+    assert.equal(selfTest.json.persistent.helper.callback.first.tokenType, "string");
     assert.deepEqual(selfTest.json.persistent.helper.callback.first.event, {
       ok: true,
       count: 1,
@@ -1465,7 +1465,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.callback.second.registered, false);
     assert.equal(
       selfTest.json.persistent.helper.callback.second.capability.type, "claimedCapability");
-    assert.equal(selfTest.json.persistent.helper.callback.second.saved.type, "savedCapability");
+    assert.equal(selfTest.json.persistent.helper.callback.second.tokenType, "string");
     assert.deepEqual(selfTest.json.persistent.helper.callback.second.event, {
       ok: true,
       count: 2,
