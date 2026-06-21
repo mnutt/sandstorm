@@ -1043,10 +1043,6 @@ export class ClaimedCapability {
     return createClaimedCapabilityNativeAppRpcStub(this, options).asRpc();
   }
 
-  asOutboundHttp() {
-    return new OutboundHttpCapability(this);
-  }
-
   info(options = {}) {
     return claimedCapabilityInfo(this.#env, this, options);
   }
@@ -1100,28 +1096,6 @@ export class ClaimedCapability {
 }
 
 export { ClaimedCapability as Capability };
-
-export class OutboundHttpCapability {
-  constructor(capability) {
-    this.ok = true;
-    this.type = "outboundHttpCapability";
-    this.capability = wrapClaimedCapability(capability.env, capability);
-    this.id = this.capability.id;
-  }
-
-  fetch(input, init) {
-    return fetchOutboundHttpCapability(this.capability, input, init);
-  }
-
-  toJSON() {
-    return {
-      ok: true,
-      type: "outboundHttpCapability",
-      id: this.id,
-      capability: this.capability.toJSON(),
-    };
-  }
-}
 
 export class SavedCapability {
   #env;
@@ -2260,10 +2234,6 @@ export function powerbox(request, env) {
       return new ClaimedCapability(env, capabilityId(capability));
     },
 
-    outboundHttpCapability(capability) {
-      return new ClaimedCapability(env, capabilityId(capability)).asOutboundHttp();
-    },
-
     async claim(result, options = {}) {
       if (typeof result === "string") {
         return claimToken(result, options);
@@ -2415,10 +2385,6 @@ class PowerboxRpcTarget extends RpcTarget {
 
   claimedCapability(capability) {
     return powerbox(this.#request, this.#env).claimedCapability(capability);
-  }
-
-  outboundHttpCapability(capability) {
-    return powerbox(this.#request, this.#env).outboundHttpCapability(capability);
   }
 
   async claim(result, options) {
