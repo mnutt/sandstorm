@@ -8,7 +8,6 @@ import {
   SANDSTORM_CAPNWEB_VERSION,
   SANDSTORM_HELPER_VERSIONS,
   SANDSTORM_RPC_VERSION,
-  SavedCapability,
   createClaimedCapabilityNativeAppRpcStub,
   createNativeAppRpcFetchTransport,
   createNativeAppRpcStub,
@@ -1155,7 +1154,7 @@ export default {
     if (url.pathname === "/native-app-rpc-codec-self-test") {
       const bytes = makeBytes(5);
       const slot = nativeCapabilitySlot("slot-1", { nativeInterface: "appObject" });
-      const savedCapability = new SavedCapability(env, "saved-fixture", "c2F2ZWQtdG9rZW4");
+      const savedCapability = "c2F2ZWQtdG9rZW4";
       const value = {
         none: null,
         truthy: true,

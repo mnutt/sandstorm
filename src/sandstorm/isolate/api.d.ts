@@ -139,7 +139,6 @@ declare module "sandstorm:api" {
     | JsonValue
     | RpcTarget
     | ClaimedCapabilityHandle
-    | SavedCapability
     | CapabilityCallValue[]
     | { [key: string]: CapabilityCallValue };
 
@@ -163,8 +162,7 @@ declare module "sandstorm:api" {
   export type NativeAppRpcSerializableValue =
     | NativeAppRpcPlainValue
     | RpcTarget
-    | ClaimedCapability
-    | SavedCapability;
+    | ClaimedCapability;
 
   export type NativeAppRpcHydratedValue<TCapability = NativeCapabilitySlot> =
     | null
@@ -393,16 +391,6 @@ declare module "sandstorm:api" {
       : never;
   };
 
-  export interface SavedCapability {
-    ok: true;
-    type: "savedCapability";
-    id: string;
-    token: string;
-    tokenEncoding: "base64url";
-    restore(): Promise<ClaimedCapability>;
-    drop(): Promise<{ ok: true }>;
-  }
-
   export interface ClaimedCapability extends ClaimedCapabilityHandle {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
@@ -461,29 +449,6 @@ declare module "sandstorm:api" {
     drop(): Promise<unknown>;
     asRpc(): NativeAppRpcProxy<T>;
     toJSON(): NativeCapabilitySlot;
-  }
-
-  export class SavedCapability {
-    readonly ok: true;
-    readonly type: "savedCapability";
-    readonly id: string;
-    readonly token: string;
-    readonly tokenEncoding: "base64url";
-    constructor(
-      env: SandstormEnv,
-      id: string,
-      token: string | Uint8Array,
-      tokenEncoding?: "base64url",
-    );
-    restore(): Promise<ClaimedCapability>;
-    drop(): Promise<{ ok: true }>;
-    toJSON(): {
-      ok: true;
-      type: "savedCapability";
-      id: string;
-      token: string;
-      tokenEncoding: "base64url";
-    };
   }
 
   export interface ClaimRequestOptions {
@@ -589,10 +554,10 @@ declare module "sandstorm:api" {
     powerbox(): PowerboxApiTarget;
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
-    restore(token: Uint8Array | string | SavedCapability): Promise<ClaimedCapability>;
-    revoke(token: Uint8Array | string | SavedCapability): Promise<{ ok: true }>;
+    restore(token: string): Promise<ClaimedCapability>;
+    revoke(token: string): Promise<{ ok: true }>;
     use<T>(
-      token: Uint8Array | string | SavedCapability,
+      token: string,
       fn: (capability: ClaimedCapability) => T | Promise<T>,
     ): Promise<T>;
     capability(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
@@ -629,10 +594,10 @@ declare module "sandstorm:api" {
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
     apiSession(options?: WebSessionCapabilityOptions): Promise<ClaimedCapability>;
-    restore(token: Uint8Array | string | SavedCapability): Promise<ClaimedCapability>;
-    revoke(token: Uint8Array | string | SavedCapability): Promise<{ ok: true }>;
+    restore(token: string): Promise<ClaimedCapability>;
+    revoke(token: string): Promise<{ ok: true }>;
     use<T>(
-      token: Uint8Array | string | SavedCapability,
+      token: string,
       fn: (capability: ClaimedCapability) => T | Promise<T>,
     ): Promise<T>;
     capability(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
@@ -693,7 +658,7 @@ declare module "sandstorm:api" {
     options?: { nativeInterface?: string },
   ): NativeCapabilitySlot;
   export function serializeNativeAppRpcValue(
-    value: NativeAppRpcPlainValue | SavedCapability,
+    value: NativeAppRpcPlainValue,
     options?: string | NativeAppRpcSerializationOptions,
   ): NativeAppRpcValueEnvelope;
   export function serializeNativeAppRpcValueAsync(
@@ -722,7 +687,7 @@ declare module "sandstorm:api" {
     options: NativeAppRpcHydrationOptions<TCapability>,
   ): { method: string; args: NativeAppRpcHydratedValue<TCapability>[] };
   export function serializeNativeAppRpcResult(
-    value: NativeAppRpcPlainValue | SavedCapability,
+    value: NativeAppRpcPlainValue,
   ): NativeAppRpcResultEnvelope;
   export function serializeNativeAppRpcResultAsync(
     value: NativeAppRpcSerializableValue,

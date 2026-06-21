@@ -1,4 +1,4 @@
-import { ClaimedCapability, RpcTarget, SavedCapability, sandstorm } from "sandstorm:api";
+import { ClaimedCapability, RpcTarget, sandstorm } from "sandstorm:api";
 
 const TOKEN_KEY = "api-powerbox-token";
 const TOKEN_MODE_KEY = "api-powerbox-token-mode";
@@ -224,18 +224,18 @@ async function callApi(capability) {
 }
 
 async function callFeed(api, capability) {
-  const feed = capability.asRpc();
+  const feed = capability.rpc;
   const liveReceiver = new FeedReceiver();
   const live = await feed.subscribe(liveReceiver);
   const durableReceiver = new FeedReceiver();
-  const durable = await api.persistentCallback(durableReceiver, {
+  const durable = await api.exportDurable(durableReceiver, {
     id: "isolate-feed-receiver",
     storageKey: "isolate-feed-receiver-token",
     label: "Isolate feed receiver",
   });
-  const saved = await feed.subscribeSaved(durable.saved.token);
+  const saved = await feed.subscribeSaved(durable.token);
   const durableDrop = await durable.capability.drop();
-  const durableDropSaved = await durable.saved.drop();
+  const durableDropSaved = await api.revoke(durable.token);
   const durableDeleteStorage =
     await api.storage().delete("isolate-feed-receiver-token");
   const durableUnregister = api.unregisterCapability("isolate-feed-receiver");
@@ -250,7 +250,7 @@ async function callFeed(api, capability) {
       restored: durable.restored,
       storageKey: durable.storageKey,
       capabilityClass: durable.capability instanceof ClaimedCapability,
-      savedClass: durable.saved instanceof SavedCapability,
+      tokenType: typeof durable.token,
       drop: durableDrop,
       dropSaved: durableDropSaved,
       deleteStorage: durableDeleteStorage,
@@ -260,12 +260,12 @@ async function callFeed(api, capability) {
 }
 
 async function callLlm(capability) {
-  const llm = capability.asRpc();
+  const llm = capability.rpc;
   const session = await llm.startSession({ topic: "phase-7-llm" });
   const sessionInfo = await session.info();
-  const first = await session.asRpc().complete("draft a summary");
-  const second = await session.asRpc().complete("include next steps");
-  const history = await session.asRpc().history();
+  const first = await session.rpc.complete("draft a summary");
+  const second = await session.rpc.complete("include next steps");
+  const history = await session.rpc.history();
   const drop = await session.drop();
   return {
     ok: true,
@@ -285,26 +285,23 @@ function capabilityMode(body) {
 }
 
 async function callRestoredCapability(api, mode) {
-  if (mode === "feed" || mode === "llm") {
-    const restored = await api.powerbox().restoreStored({ storageKey: TOKEN_KEY });
-    if (!restored.found || !restored.capability) {
-      throw new Error(`No saved Powerbox token is available at ${TOKEN_KEY}`);
-    }
-
-    try {
-      return mode === "feed"
-        ? await callFeed(api, restored.capability)
-        : await callLlm(restored.capability);
-    } finally {
-      await restored.capability.drop();
-    }
+  const token = await api.storage().get(TOKEN_KEY);
+  if (!token) {
+    throw new Error(`No saved Powerbox token is available at ${TOKEN_KEY}`);
   }
 
-  const response = await api.powerbox().fetchStored(
-    { storageKey: TOKEN_KEY },
-    "/status",
-    { headers: { accept: "application/json" } });
-  return readApiResponse(response);
+  return api.use(token, async (capability) => {
+    if (mode === "feed") {
+      return callFeed(api, capability);
+    } else if (mode === "llm") {
+      return callLlm(capability);
+    }
+
+    const response = await capability.fetch("/status", {
+      headers: { accept: "application/json" },
+    });
+    return readApiResponse(response);
+  });
 }
 
 async function readApiResponse(response) {
@@ -378,11 +375,9 @@ export default {
         const body = await readJsonBody(request);
         const canonicalUrl = String(body.canonicalUrl || API_CANONICAL_URL);
         const mode = capabilityMode(body);
-        const claimed = await api.powerbox().claimAndStoreRequest(body, {
-          label: `API: ${canonicalUrl}`,
-          storageKey: TOKEN_KEY,
-        });
-        const { capability, saved } = claimed;
+        const capability = await api.powerbox().claim(body);
+        const token = await capability.save({ label: `API: ${canonicalUrl}` });
+        const store = await api.storage().put(TOKEN_KEY, token);
         await api.storage().put(TOKEN_MODE_KEY, mode);
         const call = mode === "feed"
           ? await callFeed(api, capability)
@@ -394,9 +389,10 @@ export default {
         return new Response(renderPage(await readState(request, env, {
           ok: true,
           capabilityClass: capability instanceof ClaimedCapability,
-          savedClass: saved instanceof SavedCapability,
+          tokenType: typeof token,
           requested: body,
-          saved: JSON.parse(JSON.stringify(saved)),
+          token,
+          store,
           storageKey: TOKEN_KEY,
           mode,
           call,
@@ -419,11 +415,14 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/disconnect") {
-        const dropSaved = await api.powerbox().dropStored({ storageKey: TOKEN_KEY });
+        const token = await api.storage().get(TOKEN_KEY);
+        const dropSaved = token ? await api.revoke(token) : { ok: true, found: false };
+        const deleteToken = await api.storage().delete(TOKEN_KEY);
         const deleteMode = await api.storage().delete(TOKEN_MODE_KEY);
         return new Response(renderPage(await readState(request, env, {
           ok: true,
           dropSaved,
+          deleteToken,
           deleteMode,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },

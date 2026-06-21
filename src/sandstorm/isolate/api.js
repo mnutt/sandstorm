@@ -324,9 +324,6 @@ function validateNativeCapabilitySlotEnvelope(value, name) {
 export function serializeNativeAppRpcValue(value, options = "value") {
   const context = nativeAppRpcSerializationContext(options);
   const name = context.name;
-  if (value instanceof SavedCapability) {
-    value = value.toJSON();
-  }
   if (value === null || value === undefined) {
     return { type: "null" };
   }
@@ -381,9 +378,6 @@ export function serializeNativeAppRpcValue(value, options = "value") {
 export async function serializeNativeAppRpcValueAsync(value, options = "value") {
   const context = nativeAppRpcSerializationContext(options);
   const name = context.name;
-  if (value instanceof SavedCapability) {
-    return serializeNativeAppRpcValue(value, context);
-  }
   if (value instanceof RpcTarget) {
     if (!context.exportRpcTargets || !context.exportCapabilitySlot) {
       throw new ValidationError(
@@ -1097,40 +1091,6 @@ export class ClaimedCapability {
 
 export { ClaimedCapability as Capability };
 
-export class SavedCapability {
-  #env;
-
-  constructor(env, id, token, tokenEncoding = "base64url") {
-    this.#env = env;
-    this.ok = true;
-    this.type = "savedCapability";
-    this.id = validate.string(id, "savedCapability.id", { minLength: 1, maxLength: 4096 });
-    this.token = savedCapabilityToken(token, "savedCapability.token");
-    this.tokenEncoding = validate.string(tokenEncoding, "savedCapability.tokenEncoding", {
-      minLength: 1,
-      maxLength: 32,
-    });
-  }
-
-  restore() {
-    return restoreSavedCapability(this.#env, this);
-  }
-
-  drop() {
-    return dropSavedCapability(this.#env, this);
-  }
-
-  toJSON() {
-    return {
-      ok: true,
-      type: "savedCapability",
-      id: this.id,
-      token: this.token,
-      tokenEncoding: this.tokenEncoding,
-    };
-  }
-}
-
 function saveLabel(options = {}) {
   let label = options.label ?? options.saveLabel ?? "Claimed Sandstorm capability";
   if (label && typeof label === "object" && typeof label.defaultText === "string") {
@@ -1331,7 +1291,7 @@ async function saveClaimedCapabilityRecord(env, capability, options = {}) {
 
   const id = encodeURIComponent(rawId);
   const label = encodeURIComponent(saveLabel(options));
-  return wrapSavedCapability(env, await postPowerbox(env, `powerbox/save?id=${id}&label=${label}`));
+  return savedCapabilityRecord(await postPowerbox(env, `powerbox/save?id=${id}&label=${label}`));
 }
 
 async function saveClaimedCapability(env, capability, options = {}) {
@@ -1768,7 +1728,7 @@ function wrapCapabilityValue(env, value) {
     return wrapClaimedCapability(env, value);
   }
   if (value.type === "savedCapability") {
-    return wrapSavedCapability(env, value);
+    return savedCapabilityRecord(value).token;
   }
 
   const result = {};
@@ -1881,24 +1841,29 @@ function savedCapabilityToken(value, name = "token") {
   if (typeof value === "string") {
     const token = validate.string(value, name, { minLength: 1, maxLength: 4096 });
     if (!/^[A-Za-z0-9_-]+$/.test(token)) {
-      throw new ValidationError(`${name} must be base64url text`);
+      throw new ValidationError(`${name} does not look like a saved capability token`);
     }
     return token;
   }
 
-  if (value instanceof Uint8Array) {
-    let binary = "";
-    for (let i = 0; i < value.length; i += 0x8000) {
-      binary += String.fromCharCode(...value.slice(i, i + 0x8000));
-    }
-    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  throw new ValidationError(`${name} must be a saved capability token string`);
+}
+
+function savedCapabilityRecord(value, name = "saved capability") {
+  if (!value || typeof value !== "object" || value.type !== "savedCapability") {
+    failValidation(name, "a saved capability record", value);
   }
 
-  if (value && typeof value === "object" && value.type === "savedCapability") {
-    return savedCapabilityToken(value.token, `${name}.token`);
-  }
-
-  throw new ValidationError(`${name} must be a saved capability token`);
+  return {
+    ok: true,
+    type: "savedCapability",
+    id: validate.string(value.id, `${name}.id`, { minLength: 1, maxLength: 4096 }),
+    token: savedCapabilityToken(value.token, `${name}.token`),
+    tokenEncoding: validate.string(value.tokenEncoding || "base64url", `${name}.tokenEncoding`, {
+      minLength: 1,
+      maxLength: 32,
+    }),
+  };
 }
 
 const CLAIMED_CAPABILITY_FETCH_HEADER_NAMES = new Set([
@@ -2072,18 +2037,6 @@ function wrapClaimedCapability(env, capability) {
   return new ClaimedCapability(env, capability.id);
 }
 
-function wrapSavedCapability(env, capability) {
-  if (capability instanceof SavedCapability) {
-    return capability;
-  }
-  if (!capability || typeof capability !== "object" ||
-      capability.type !== "savedCapability" || typeof capability.token !== "string") {
-    return capability;
-  }
-
-  return new SavedCapability(env, capability.id, capability.token, capability.tokenEncoding);
-}
-
 function permissionNames(options = {}) {
   if (options.requiredPermissions === undefined || options.requiredPermissions === null) {
     return [];
@@ -2132,17 +2085,16 @@ async function durableObjectCapability(env, target, options = {}) {
   const id = requiredObjectCapabilityId(options);
   const registration = registerObjectCapabilityTarget(target, { id });
   const key = durableObjectCapabilityStorageKey(id, options);
-  const token = await storage(env).get(key);
-  if (token) {
+  const storedToken = await storage(env).get(key);
+  if (storedToken) {
     return {
       ok: true,
       id,
       storageKey: key,
       registered: registration.registered,
       restored: true,
-      capability: await restoreSavedCapability(env, token),
-      saved: new SavedCapability(env, id, token),
-      token,
+      capability: await restoreSavedCapability(env, storedToken),
+      token: storedToken,
     };
   }
 
@@ -2150,8 +2102,8 @@ async function durableObjectCapability(env, target, options = {}) {
     id,
     persistent: true,
   });
-  const saved = await saveClaimedCapabilityRecord(env, capability, options);
-  await storage(env).put(key, saved.token);
+  const token = await saveClaimedCapability(env, capability, options);
+  await storage(env).put(key, token);
   return {
     ok: true,
     id,
@@ -2159,14 +2111,12 @@ async function durableObjectCapability(env, target, options = {}) {
     registered: registration.registered,
     restored: false,
     capability,
-    saved,
-    token: saved.token,
+    token,
   };
 }
 
 function publicDurableCapabilityResult(result) {
-  const { saved, ...publicResult } = result;
-  return publicResult;
+  return result;
 }
 
 async function exportDurableCapability(env, target, options = {}) {
