@@ -2342,6 +2342,46 @@ export default {
         const unstoredDurableExportDrop = await unstoredDurableExport.capability.drop();
         const unstoredDurableExportRevoke =
           await sandstorm(request, env).revoke(unstoredDurableExport.token);
+        let registryFactoryCalls = 0;
+        const registryRouteId = `durable-registry-route-${crypto.randomUUID()}`;
+        const registryRouteRequest = new Request(
+          `http://worker/__sandstorm/object-capabilities/${registryRouteId}/native-app-rpc-call`, {
+            method: "POST",
+            body: JSON.stringify(serializeNativeAppRpcCall("get", [])),
+          });
+        const registryRouteApi = sandstorm(registryRouteRequest, env, {
+          capabilities: {
+            [registryRouteId]: async () => {
+              registryFactoryCalls += 1;
+              const target = new CounterCapability();
+              target.increment(83);
+              return target;
+            },
+          },
+        });
+        const registryFactoryCallsAfterCreate = registryFactoryCalls;
+        const registryRouteResponse = await registryRouteApi.serveSystemRoutes();
+        const registryRouteBody = await registryRouteResponse.json();
+        const registryFactoryCallsAfterRoute = registryFactoryCalls;
+        const registryExportId = `durable-registry-export-${crypto.randomUUID()}`;
+        const registryExportApi = sandstorm(request, env, {
+          capabilities: {
+            [registryExportId]: () => {
+              registryFactoryCalls += 1;
+              const target = new CounterCapability();
+              target.increment(89);
+              return target;
+            },
+          },
+        });
+        const registryFactoryCallsBeforeExport = registryFactoryCalls;
+        const registryExport = await registryExportApi.exportDurable(registryExportId, {
+          label: "Registry durable export fixture",
+        });
+        const registryFactoryCallsAfterExport = registryFactoryCalls;
+        const registryExportGet = await registryExport.capability.rpc.get();
+        const registryExportDrop = await registryExport.capability.drop();
+        const registryExportRevoke = await registryExportApi.revoke(registryExport.token);
         const helperId = `persistent-helper-${crypto.randomUUID()}`;
         const helperStorageKey = `persistent-helper-${crypto.randomUUID()}`;
         const helperTarget = new CounterCapability();
@@ -2425,6 +2465,25 @@ export default {
             get: unstoredDurableExportGet,
             drop: unstoredDurableExportDrop,
             revoke: unstoredDurableExportRevoke,
+          },
+          registry: {
+            factoryCallsAfterCreate: registryFactoryCallsAfterCreate,
+            route: {
+              status: registryRouteResponse.status,
+              body: registryRouteBody,
+              factoryCallsAfterRoute: registryFactoryCallsAfterRoute,
+            },
+            export: {
+              id: registryExport.id,
+              restored: registryExport.restored,
+              registered: registryExport.registered,
+              tokenType: typeof registryExport.token,
+              get: registryExportGet,
+              drop: registryExportDrop,
+              revoke: registryExportRevoke,
+              factoryCallsBeforeExport: registryFactoryCallsBeforeExport,
+              factoryCallsAfterExport: registryFactoryCallsAfterExport,
+            },
           },
           id: helperId,
           storageKey: helperStorageKey,

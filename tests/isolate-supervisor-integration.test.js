@@ -1439,6 +1439,26 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.persistent.helper.unstoredDurableExport.get, { value: 73 });
     assert.equal(selfTest.json.persistent.helper.unstoredDurableExport.drop.ok, true);
     assert.equal(selfTest.json.persistent.helper.unstoredDurableExport.revoke.ok, true);
+    assert.equal(selfTest.json.persistent.helper.registry.factoryCallsAfterCreate, 0);
+    assert.equal(selfTest.json.persistent.helper.registry.route.status, 200);
+    assert.deepEqual(selfTest.json.persistent.helper.registry.route.body, {
+      type: "value",
+      value: {
+        type: "object",
+        value: [
+          { name: "value", value: { type: "number", value: 83 } },
+        ],
+      },
+    });
+    assert.equal(selfTest.json.persistent.helper.registry.route.factoryCallsAfterRoute, 1);
+    assert.equal(selfTest.json.persistent.helper.registry.export.factoryCallsBeforeExport, 1);
+    assert.equal(selfTest.json.persistent.helper.registry.export.factoryCallsAfterExport, 2);
+    assert.equal(selfTest.json.persistent.helper.registry.export.restored, false);
+    assert.equal(selfTest.json.persistent.helper.registry.export.registered, true);
+    assert.equal(selfTest.json.persistent.helper.registry.export.tokenType, "string");
+    assert.deepEqual(selfTest.json.persistent.helper.registry.export.get, { value: 89 });
+    assert.equal(selfTest.json.persistent.helper.registry.export.drop.ok, true);
+    assert.equal(selfTest.json.persistent.helper.registry.export.revoke.ok, true);
     assert.equal(selfTest.json.persistent.helper.first.restored, false);
     assert.equal(selfTest.json.persistent.helper.first.registered, true);
     assert.equal(selfTest.json.persistent.helper.first.capability.type, "capability");

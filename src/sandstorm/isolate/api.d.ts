@@ -352,7 +352,7 @@ declare module "sandstorm:api" {
 
   export type DurableCapabilityRegistry = Record<
     string,
-    RpcTarget | ((request: Request, env: SandstormEnv) => RpcTarget)
+    RpcTarget | ((request: Request, env: SandstormEnv) => RpcTarget | Promise<RpcTarget>)
   >;
 
   export interface SandstormOptions {

@@ -1645,23 +1645,40 @@ function registerObjectCapabilityTarget(target, options = {}) {
   };
 }
 
-function registerDurableCapabilityRegistry(request, env, registry = {}) {
+function durableCapabilityRegistry(registry = {}) {
   if (registry === undefined || registry === null) {
-    return;
+    return new Map();
   }
   if (!isPlainObject(registry)) {
     failValidation("durable capability registry", "an object", registry);
   }
 
+  const result = new Map();
   for (const [rawId, source] of Object.entries(registry)) {
     const id = explicitObjectCapabilityId(rawId, "durable capability registry id");
-    if (exportedObjectTargets.has(id)) {
-      continue;
-    }
-
-    const target = typeof source === "function" ? source(request, env) : source;
-    registerObjectCapabilityTarget(target, { id });
+    result.set(id, source);
   }
+  return result;
+}
+
+async function durableCapabilityRegistryTarget(request, env, registry, id) {
+  if (!registry?.has(id)) {
+    return undefined;
+  }
+
+  const source = registry.get(id);
+  return typeof source === "function" ? await source(request, env) : source;
+}
+
+async function ensureDurableCapabilityRegistryTarget(request, env, registry, id) {
+  const target = exportedObjectTargets.get(id) ||
+    await durableCapabilityRegistryTarget(request, env, registry, id);
+  if (!target) {
+    return undefined;
+  }
+
+  registerObjectCapabilityTarget(target, { id });
+  return target;
 }
 
 async function createObjectCapability(env, target, options = {}) {
@@ -1782,7 +1799,7 @@ function forgetObjectCapabilityHandles(objectId) {
   exportedObjectCapabilityIds.delete(objectId);
 }
 
-async function serveObjectCapability(request, env) {
+async function serveObjectCapability(request, env, registry = undefined) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith(`${OBJECT_CAPABILITY_PREFIX}/`)) {
     return null;
@@ -1793,7 +1810,7 @@ async function serveObjectCapability(request, env) {
   const id = slash < 0 ? rest : rest.slice(0, slash);
   const action = slash < 0 ? "" : rest.slice(slash + 1);
   const objectId = decodeURIComponent(id);
-  const target = exportedObjectTargets.get(objectId);
+  const target = await ensureDurableCapabilityRegistryTarget(request, env, registry, objectId);
   if (!target) {
     const error = missingDurableCapabilityError(objectId);
     if (request.method === "POST" && action === "native-app-rpc-call") {
@@ -2491,12 +2508,13 @@ function isPowerboxDescriptorRequest(request) {
 }
 
 export function sandstorm(request, env, options = {}) {
-  registerDurableCapabilityRegistry(request, env, options.capabilities);
+  const durableRegistry = durableCapabilityRegistry(options.capabilities);
 
-  const exportDurable = (targetOrId, durableOptions = {}) => {
+  const exportDurable = async (targetOrId, durableOptions = {}) => {
     if (typeof targetOrId === "string") {
       const id = explicitObjectCapabilityId(targetOrId);
-      const target = exportedObjectTargets.get(id);
+      const target = exportedObjectTargets.get(id) ||
+        await durableCapabilityRegistryTarget(request, env, durableRegistry, id);
       if (!target) {
         throw new ValidationError(missingDurableCapabilityMessage(id));
       }
@@ -2534,15 +2552,17 @@ export function sandstorm(request, env, options = {}) {
     export: (target, options = {}) => createObjectCapability(env, target, options),
     withExport: (target, fn, options = {}) => withExportedCapability(env, target, fn, options),
     exportDurable,
-    serveObjectCapabilities: () => serveObjectCapability(request, env),
+    serveObjectCapabilities: () => serveObjectCapability(request, env, durableRegistry),
     servePowerboxDescriptors: () => servePowerboxDescriptors(request, env),
-    serveSystemRoutes: () => serveSystemRoutes(request, env),
+    serveSystemRoutes: async () => await servePowerboxDescriptors(request, env) ||
+      await serveObjectCapability(request, env, durableRegistry),
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),
     serveRpc: (target, options) => {
       if (isPowerboxDescriptorRequest(request) || isObjectCapabilityRequest(request)) {
-        return serveSystemRoutes(request, env);
+        return (async () => await servePowerboxDescriptors(request, env) ||
+          await serveObjectCapability(request, env, durableRegistry))();
       }
       return serveRpc(request, target, options);
     },
