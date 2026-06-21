@@ -163,7 +163,7 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/fulfill-feed") {
-      const capability = await api.capability(new MailFeed(api));
+      const capability = await api.export(new MailFeed(api));
       const fulfill = await capability.fulfillRequest(request, {
         title: "Isolate Feed Provider",
         verbPhrase: "can provide feed events",
@@ -179,7 +179,7 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/fulfill-llm") {
-      const capability = await api.capability(new ConversationalLlm());
+      const capability = await api.export(new ConversationalLlm());
       const fulfill = await capability.fulfillRequest(request, {
         title: "Isolate LLM Provider",
         verbPhrase: "can provide conversational sessions",

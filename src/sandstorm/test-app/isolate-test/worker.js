@@ -1069,24 +1069,24 @@ export default {
           return { subject, callback, options };
         },
       };
-      const appObjectNativeRpc = appObjectCapability.asRpc({
+      const appObjectNativeRpc = createClaimedCapabilityNativeAppRpcStub(appObjectCapability, {
         transport: async (transportSlot, call) => {
           nativeRpcTransportCalls.push({ slot: transportSlot, call });
           return dispatchNativeAppRpcCall(nativeRpcTarget, call);
         },
-      });
+      }).asRpc();
       const appObjectNativeValue = await appObjectNativeRpc.deliver(
         "native-subject",
         nativeCapabilitySlot("native-callback", { nativeInterface: "appObject" }),
         { urgent: true });
-      const defaultNativeRpc = appObjectCapability.asRpc();
+      const defaultNativeRpc = appObjectCapability.rpc;
       const defaultNativeRpcValue = await defaultNativeRpc.deliver(
         "default-subject", { urgent: false });
       const defaultCallValue = await appObjectCapability.call(
         "deliver", "call-subject", { urgent: true });
       let wrongResultSlotError = null;
       try {
-        await appObjectCapability.asRpc({
+        await createClaimedCapabilityNativeAppRpcStub(appObjectCapability, {
           transport: async () => ({
             type: "value",
             value: {
@@ -1094,7 +1094,7 @@ export default {
               value: { id: "web-session-slot", nativeInterface: "webSession" },
             },
           }),
-        }).deliver("wrong-result-slot");
+        }).asRpc().deliver("wrong-result-slot");
       } catch (error) {
         wrongResultSlotError = {
           name: String(error?.name || "Error"),
@@ -1118,12 +1118,12 @@ export default {
       const wrongNativeRpcTransportCalls = [];
       let wrongNativeRpcError = null;
       try {
-        await capability.asRpc({
+        await createClaimedCapabilityNativeAppRpcStub(capability, {
           transport: async (transportSlot, call) => {
             wrongNativeRpcTransportCalls.push({ slot: transportSlot, call });
             return dispatchNativeAppRpcCall(nativeRpcTarget, call);
           },
-        }).deliver("wrong-interface");
+        }).asRpc().deliver("wrong-interface");
       } catch (error) {
         wrongNativeRpcError = {
           name: String(error?.name || "Error"),
@@ -1714,7 +1714,7 @@ export default {
     }
 
     if (url.pathname === "/export-object-capability") {
-      const capability = await sandstorm(request, env).capability(new CounterCapability());
+      const capability = await sandstorm(request, env).export(new CounterCapability());
       return Response.json({
         ok: true,
         capabilityClass: capability instanceof ClaimedCapability,
@@ -1728,7 +1728,7 @@ export default {
         id: url.searchParams.get("id") || "mail-feed",
         persistent: true,
       } : {};
-      const capability = await sandstorm(request, env).capability(
+      const capability = await sandstorm(request, env).export(
         new MailFeedCapability(), options);
       return Response.json({
         ok: true,
@@ -1746,7 +1746,7 @@ export default {
       try {
         const feedCapability = await sandstorm(request, env).restore(token);
         const feedInfo = await feedCapability.info();
-        const feed = feedCapability.asRpc();
+        const feed = feedCapability.rpc;
         const receiver = new EventReceiver();
         const disposeBefore = disposedCounterCapabilities;
         const subscription = await sandstorm(request, env).withExport(
@@ -1782,13 +1782,13 @@ export default {
         }
         const session = await feed.startSession();
         const sessionInfo = await session.info();
-        const sessionFirst = await session.asRpc().increment(7);
+        const sessionFirst = await session.rpc.increment(7);
         const sessionSecond = await session.call("increment", 4);
         const forwardedSession = await feed.useCounter(session);
-        const sessionCurrent = await session.asRpc().get();
+        const sessionCurrent = await session.rpc.get();
         let sessionFailure = null;
         try {
-          await session.asRpc().fail("phase-3 returned capability failure");
+          await session.rpc.fail("phase-3 returned capability failure");
         } catch (error) {
           sessionFailure = {
             name: String(error?.name || "Error"),
@@ -1858,9 +1858,9 @@ export default {
 
       try {
         const feedCapability = await sandstorm(request, env).restore(token);
-        const feed = feedCapability.asRpc();
+        const feed = feedCapability.rpc;
         const receiver = new EventReceiver();
-        const receiverCapability = await sandstorm(request, env).capability(receiver);
+        const receiverCapability = await sandstorm(request, env).export(receiver);
         const disposeBeforeSubscribe = disposedCounterCapabilities;
         const subscription = await feed.subscribeRetained(id, receiverCapability);
         const disposeAfterSubscribe = disposedCounterCapabilities;
@@ -1972,7 +1972,7 @@ export default {
     }
 
     if (url.pathname === "/object-capability-self-test") {
-      const capability = await sandstorm(request, env).capability(new CounterCapability());
+      const capability = await sandstorm(request, env).export(new CounterCapability());
       const first = await capability.call("increment", 3);
       const second = await capability.call("increment", 4);
       const current = await capability.call("get");
@@ -1981,14 +1981,14 @@ export default {
       const childInfo = await child.info();
       const childFirst = await child.call("increment", 11);
       const readChild = await capability.call("readOther", child);
-      const stub = capability.asRpc();
+      const stub = capability.rpc;
       const rpc = capability.rpc;
       const rpcStable = capability.rpc === capability.rpc;
       const rpcCurrent = await rpc.get();
       const stubFirst = await stub.increment(2);
       const stubCurrent = await stub.get();
       const stubChild = await stub.child();
-      const stubChildFirst = await stubChild.asRpc().increment(13);
+      const stubChildFirst = await stubChild.rpc.increment(13);
       const stubReadChild = await stub.readOther(stubChild);
       const argumentTarget = new CounterCapability();
       argumentTarget.increment(21);
@@ -2049,15 +2049,15 @@ export default {
       const readRetainedArgumentTarget = await capability.call("readRetained");
       const dropRetainedArgumentTarget = await capability.call("dropRetained");
       const disposeAfterDropRetainedArgumentTarget = disposedCounterCapabilities;
-      const feedCapability = await sandstorm(request, env).capability(new MailFeedCapability());
-      const feed = feedCapability.asRpc();
+      const feedCapability = await sandstorm(request, env).export(new MailFeedCapability());
+      const feed = feedCapability.rpc;
       const receiver = new EventReceiver();
       const disposeBeforeLiveCallback = disposedCounterCapabilities;
       const subscription = await sandstorm(request, env).withExport(
         receiver, (exported) => feed.subscribe(exported));
       const disposeAfterLiveCallback = disposedCounterCapabilities;
       const session = await feed.startSession();
-      const sessionFirst = await session.asRpc().increment(7);
+      const sessionFirst = await session.rpc.increment(7);
       const sessionDrop = await session.drop();
       const feedDrop = await feedCapability.drop();
       let sessionActions = null;
@@ -2161,13 +2161,13 @@ export default {
       const dropDuplicate = await duplicate.drop();
       const duplicateInfoAfterDrop = await duplicate.info({ refresh: true });
       const disposeAfterDuplicateDrop = disposedCounterCapabilities;
-      const stableCapability = await sandstorm(request, env).capability(new CounterCapability(), {
+      const stableCapability = await sandstorm(request, env).export(new CounterCapability(), {
         id: "stable-counter",
       });
       const stableFirst = await stableCapability.call("increment", 17);
       let stableDuplicateError;
       try {
-        await sandstorm(request, env).capability(new CounterCapability(), {
+        await sandstorm(request, env).export(new CounterCapability(), {
           id: "stable-counter",
         });
       } catch (error) {
@@ -2177,14 +2177,14 @@ export default {
         };
       }
       const stableDrop = await stableCapability.drop();
-      const stableRecreated = await sandstorm(request, env).capability(new CounterCapability(), {
+      const stableRecreated = await sandstorm(request, env).export(new CounterCapability(), {
         id: "stable-counter",
       });
       const stableRecreatedFirst = await stableRecreated.call("increment", 19);
       const stableRecreatedDrop = await stableRecreated.drop();
       let persistentWithoutIdError;
       try {
-        await sandstorm(request, env).capability(new CounterCapability(), {
+        await sandstorm(request, env).export(new CounterCapability(), {
           persistent: true,
         });
       } catch (error) {
@@ -2194,7 +2194,7 @@ export default {
         };
       }
       const persistentId = `persistent-counter-${crypto.randomUUID()}`;
-      const persistentCapability = await sandstorm(request, env).capability(
+      const persistentCapability = await sandstorm(request, env).export(
         new CounterCapability(), {
           id: persistentId,
           persistent: true,
@@ -2230,7 +2230,7 @@ export default {
       }
       let persistentTransientMintError;
       try {
-        await sandstorm(request, env).capability(persistentReplacementTarget, {
+        await sandstorm(request, env).export(persistentReplacementTarget, {
           id: persistentId,
         });
       } catch (error) {
@@ -2239,7 +2239,7 @@ export default {
           message: String(error?.message || error),
         };
       }
-      const persistentMintedAfterRegister = await sandstorm(request, env).capability(
+      const persistentMintedAfterRegister = await sandstorm(request, env).export(
         persistentReplacementTarget, {
           id: persistentId,
           persistent: true,

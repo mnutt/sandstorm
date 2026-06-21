@@ -395,9 +395,6 @@ declare module "sandstorm:api" {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
     readonly rpc: NativeAppRpcProxy<Record<string, (...args: any[]) => unknown>>;
-    asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
-      options?: ClaimedCapabilityRpcOptions<ClaimedCapability>,
-    ): NativeAppRpcProxy<T>;
     info(options?: { refresh?: boolean }): Promise<ClaimedCapabilityInfo | null>;
     dup(): Promise<ClaimedCapability>;
     save(options?: SaveCapabilityOptions): Promise<string>;
@@ -416,9 +413,6 @@ declare module "sandstorm:api" {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
     readonly rpc: NativeAppRpcProxy<Record<string, (...args: any[]) => unknown>>;
-    asRpc<T extends object = Record<string, (...args: any[]) => unknown>>(
-      options?: ClaimedCapabilityRpcOptions<ClaimedCapability>,
-    ): NativeAppRpcProxy<T>;
     info(options?: { refresh?: boolean }): Promise<ClaimedCapabilityInfo | null>;
     dup(): Promise<ClaimedCapability>;
     save(options?: SaveCapabilityOptions): Promise<string>;
@@ -560,7 +554,6 @@ declare module "sandstorm:api" {
       token: string,
       fn: (capability: ClaimedCapability) => T | Promise<T>,
     ): Promise<T>;
-    capability(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
     "export"(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
     withExport<T>(
       target: RpcTarget,
@@ -600,7 +593,6 @@ declare module "sandstorm:api" {
       token: string,
       fn: (capability: ClaimedCapability) => T | Promise<T>,
     ): Promise<T>;
-    capability(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
     export(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<ClaimedCapability>;
     withExport<T>(
       target: RpcTarget,
