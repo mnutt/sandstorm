@@ -77,9 +77,9 @@ class MailFeed extends RpcTarget {
   }
 
   async subscribeSaved(token) {
-    const receiver = await this.#api.powerbox().restoreSaved(token);
+    const receiver = await this.#api.restore(token);
     try {
-      const result = await receiver.asRpc().onMailEvent({
+      const result = await receiver.rpc.onMailEvent({
         subject: "isolate-feed-saved-callback",
         unread: 5,
       });
