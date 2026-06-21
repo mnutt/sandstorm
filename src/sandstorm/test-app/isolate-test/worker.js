@@ -646,34 +646,34 @@ export default {
     if (url.pathname === "/offer-session") {
       const api = sandstorm(request, env);
       const powerbox = sandstormPowerbox(request, env);
-      const offered = powerbox.offeredCapability();
-      const offeredInfo = powerbox.offeredCapabilityInfo();
+      const offered = powerbox.offered();
+      const capability = offered?.capability;
       let fetched = null;
       let drop = null;
       let claimedInfo = null;
-      if (offered) {
-        claimedInfo = await offered.info();
-        const fetchedResponse = await offered.fetch("/capability-echo?source=offer-session");
+      if (capability) {
+        claimedInfo = await capability.info();
+        const fetchedResponse = await capability.fetch("/capability-echo?source=offer-session");
         fetched = {
           status: fetchedResponse.status,
           body: await fetchedResponse.json(),
         };
-        drop = await offered.drop();
+        drop = await capability.drop();
       }
       return Response.json({
-        ok: Boolean(offered),
+        ok: Boolean(capability),
         sessionType: request.headers.get("x-sandstorm-session-type"),
         offeredCapabilityId: request.headers.get("x-sandstorm-offered-capability-id"),
-        offeredClass: offered instanceof Capability,
+        offeredClass: capability instanceof Capability,
         sessionOffer: api.session().offer,
-        offeredInfo: offeredInfo ? {
-          ...offeredInfo,
-          capabilityClass: offeredInfo.capability instanceof Capability,
-          capability: offeredInfo.capability
-              ? JSON.parse(JSON.stringify(offeredInfo.capability))
+        offeredInfo: offered ? {
+          ...offered,
+          capabilityClass: offered.capability instanceof Capability,
+          capability: offered.capability
+              ? JSON.parse(JSON.stringify(offered.capability))
               : null,
         } : null,
-        offered: offered ? JSON.parse(JSON.stringify(offered)) : null,
+        offered: capability ? JSON.parse(JSON.stringify(capability)) : null,
         claimedInfo,
         fetched,
         drop,
@@ -2124,10 +2124,7 @@ export default {
           message: String(error?.message || error),
         };
       }
-      const remoteTarget = sandstorm(request, env).powerbox().claimedCapability({
-        type: "capability",
-        id: "remote-like-capability",
-      });
+      const remoteTarget = new Capability(env, "remote-like-capability");
       const remoteArgumentTarget = new CounterCapability();
       remoteArgumentTarget.increment(37);
       let remoteRpcTargetArgumentError;
