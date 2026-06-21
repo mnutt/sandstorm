@@ -20,7 +20,7 @@ const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const exportedObjectTargets = new Map();
 const exportedObjectCapabilityIds = new Map();
 const objectCapabilityIds = new Map();
-const claimedCapabilityMetadata = new Map();
+const capabilityMetadata = new Map();
 
 function header(request, name) {
   return request.headers.get(name) || "";
@@ -79,7 +79,7 @@ async function postSandstorm(env, path) {
   return body;
 }
 
-async function queryClaimedCapabilityInfo(env, id) {
+async function queryCapabilityInfo(env, id) {
   const response = await env.SANDSTORM_API.fetch(
     `http://sandstorm/capabilities/claimed?id=${encodeURIComponent(id)}`);
   const body = await parseApiResponseBody(response);
@@ -87,20 +87,20 @@ async function queryClaimedCapabilityInfo(env, id) {
     return null;
   }
   body.type = "capabilityInfo";
-  const metadata = claimedCapabilityMetadata.get(id) || {};
-  claimedCapabilityMetadata.set(id, { ...metadata, ...body });
+  const metadata = capabilityMetadata.get(id) || {};
+  capabilityMetadata.set(id, { ...metadata, ...body });
   return body;
 }
 
-async function claimedCapabilityInfo(env, capability, options = {}) {
+async function capabilityInfo(env, capability, options = {}) {
   const id = capabilityId(capability);
   if (!options.refresh) {
-    const cached = claimedCapabilityMetadata.get(id);
+    const cached = capabilityMetadata.get(id);
     if (cached?.type === "capabilityInfo") {
       return cached;
     }
   }
-  return queryClaimedCapabilityInfo(env, id);
+  return queryCapabilityInfo(env, id);
 }
 
 function powerboxFetcher(env) {
@@ -785,7 +785,7 @@ export function createNativeAppRpcFetchTransport(fetcher, route) {
 }
 
 async function requireNativeAppRpcCapability(capability) {
-  const info = await claimedCapabilityInfo(capability.env, capability);
+  const info = await capabilityInfo(capability.env, capability);
   if (!capabilitySupportsAppObjectCall(info)) {
     throw new ValidationError(
       `Capability nativeInterface ${info.nativeInterface} cannot be used with app-defined RPC`);
@@ -805,7 +805,7 @@ async function exportCapabilityNativeAppRpcSlot(
   }
 
   if (value instanceof Capability) {
-    const info = await claimedCapabilityInfo(env, value);
+    const info = await capabilityInfo(env, value);
     if (!capabilitySupportsAppObjectCall(info)) {
       throw new ValidationError(
         `${context.name} nativeInterface ${info?.nativeInterface} cannot be used with app-defined RPC`);
@@ -1025,11 +1025,11 @@ export class Capability {
   }
 
   fetch(input, init) {
-    return fetchClaimedCapability(this.#env, this, input, init);
+    return fetchCapability(this.#env, this, input, init);
   }
 
   call(method, ...args) {
-    return callClaimedCapability(this, method, args);
+    return callCapability(this, method, args);
   }
 
   get rpc() {
@@ -1040,23 +1040,23 @@ export class Capability {
   }
 
   info(options = {}) {
-    return claimedCapabilityInfo(this.#env, this, options);
+    return capabilityInfo(this.#env, this, options);
   }
 
   save(options = {}) {
-    return saveClaimedCapability(this.#env, this, options);
+    return saveCapability(this.#env, this, options);
   }
 
   dup() {
-    return duplicateClaimedCapability(this.#env, this);
+    return duplicateCapability(this.#env, this);
   }
 
   async drop() {
-    const metadata = claimedCapabilityMetadata.get(this.id);
+    const metadata = capabilityMetadata.get(this.id);
     const objectId = objectCapabilityIds.get(this.id);
     const result = await postPowerbox(
       this.#env, `powerbox/drop?id=${encodeURIComponent(this.id)}`);
-    forgetClaimedCapabilityHandle(this.id);
+    forgetCapabilityHandle(this.id);
     if (metadata?.transientObjectCapability && result?.released === true && objectId) {
       const ids = exportedObjectCapabilityIds.get(objectId);
       if (!ids || ids.size === 0) {
@@ -1067,7 +1067,7 @@ export class Capability {
   }
 
   offer(request, options = {}) {
-    return offerClaimedCapability(this.#env, request, this, options);
+    return offerCapability(this.#env, request, this, options);
   }
 
   fulfillRequest(request, options = {}) {
@@ -1075,7 +1075,7 @@ export class Capability {
   }
 
   tieToUser(request, options = {}) {
-    return tieClaimedCapabilityToUser(this.#env, request, this, options);
+    return tieCapabilityToUser(this.#env, request, this, options);
   }
 
   [Symbol.dispose]() {
@@ -1280,9 +1280,9 @@ function powerboxDescriptorParams(options = {}) {
   }
 }
 
-async function saveClaimedCapabilityRecord(env, capability, options = {}) {
+async function saveCapabilityRecord(env, capability, options = {}) {
   const rawId = capabilityId(capability);
-  const metadata = claimedCapabilityMetadata.get(rawId);
+  const metadata = capabilityMetadata.get(rawId);
   if (metadata?.transientObjectCapability) {
     throw new Error(
       "JavaScript object capabilities are transient and cannot be saved yet. " +
@@ -1294,24 +1294,24 @@ async function saveClaimedCapabilityRecord(env, capability, options = {}) {
   return savedCapabilityRecord(await postPowerbox(env, `powerbox/save?id=${id}&label=${label}`));
 }
 
-async function saveClaimedCapability(env, capability, options = {}) {
-  return (await saveClaimedCapabilityRecord(env, capability, options)).token;
+async function saveCapability(env, capability, options = {}) {
+  return (await saveCapabilityRecord(env, capability, options)).token;
 }
 
-function duplicateLocalClaimedCapabilityMetadata(metadata) {
+function duplicateLocalCapabilityMetadata(metadata) {
   if (!metadata?.transientObjectCapability) {
     return undefined;
   }
   return { transientObjectCapability: true };
 }
 
-async function duplicateClaimedCapability(env, capability) {
+async function duplicateCapability(env, capability) {
   const sourceId = capabilityId(capability);
-  const duplicated = wrapClaimedCapability(
+  const duplicated = wrapCapability(
     env, await postPowerbox(env, `powerbox/dup?id=${encodeURIComponent(sourceId)}`));
-  const metadata = duplicateLocalClaimedCapabilityMetadata(claimedCapabilityMetadata.get(sourceId));
+  const metadata = duplicateLocalCapabilityMetadata(capabilityMetadata.get(sourceId));
   if (metadata) {
-    claimedCapabilityMetadata.set(duplicated.id, metadata);
+    capabilityMetadata.set(duplicated.id, metadata);
   }
   const objectId = objectCapabilityIds.get(sourceId);
   if (objectId) {
@@ -1340,7 +1340,7 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
   return postPowerbox(env, `powerbox/${endpoint}?${params}`);
 }
 
-async function offerClaimedCapability(env, request, capability, options = {}) {
+async function offerCapability(env, request, capability, options = {}) {
   return sessionPowerboxAction(env, request, "offer", capability, options);
 }
 
@@ -1348,8 +1348,8 @@ async function fulfillRequestWithCapability(env, request, capability, options = 
   return sessionPowerboxAction(env, request, "fulfill-request", capability, options);
 }
 
-async function tieClaimedCapabilityToUser(env, request, capability, options = {}) {
-  return wrapClaimedCapability(
+async function tieCapabilityToUser(env, request, capability, options = {}) {
+  return wrapCapability(
     env, await sessionPowerboxAction(env, request, "tie-to-user", capability, options));
 }
 
@@ -1519,7 +1519,7 @@ async function createWebSessionCapability(env, options = {}) {
   const notifyQuery = dropNotifyPath === undefined
     ? ""
     : `&dropNotifyPath=${encodeURIComponent(dropNotifyPath)}`;
-  return wrapClaimedCapability(
+  return wrapCapability(
     env, await postSandstorm(
       env, `capabilities/web-session?pathPrefix=${pathPrefix}&persistent=${persistent}` +
         notifyQuery));
@@ -1528,7 +1528,7 @@ async function createWebSessionCapability(env, options = {}) {
 async function createApiSessionCapability(env, options = {}) {
   const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
   const persistent = webSessionPersistent(options) ? "true" : "false";
-  return wrapClaimedCapability(
+  return wrapCapability(
     env, await postSandstorm(
       env, `capabilities/api-session?pathPrefix=${pathPrefix}&persistent=${persistent}`));
 }
@@ -1540,7 +1540,7 @@ async function createAppObjectCapability(env, options = {}) {
   const notifyQuery = dropNotifyPath === undefined
     ? ""
     : `&dropNotifyPath=${encodeURIComponent(dropNotifyPath)}`;
-  return wrapClaimedCapability(
+  return wrapCapability(
     env, await postSandstorm(
       env, `capabilities/app-object?pathPrefix=${pathPrefix}&persistent=${persistent}` +
         notifyQuery));
@@ -1679,7 +1679,7 @@ async function createObjectCapability(env, target, options = {}) {
     });
     rememberObjectCapabilityHandle(id, capability.id);
     if (!persistent) {
-      claimedCapabilityMetadata.set(capability.id, { transientObjectCapability: true });
+      capabilityMetadata.set(capability.id, { transientObjectCapability: true });
     }
     return capability;
   } catch (error) {
@@ -1691,10 +1691,10 @@ async function createObjectCapability(env, target, options = {}) {
   }
 }
 
-async function callClaimedCapability(capability, method, args = []) {
+async function callCapability(capability, method, args = []) {
   method = capabilityMethodName(method);
   args = capabilityArgs(args);
-  const info = await claimedCapabilityInfo(capability.env, capability);
+  const info = await capabilityInfo(capability.env, capability);
   if (capabilitySupportsAppObjectCall(info)) {
     return callCapabilityWithNativeAppRpc(capability, method, args);
   }
@@ -1714,7 +1714,7 @@ function wrapCapabilityValue(env, value) {
   }
 
   if (value.type === "capability" || value.type === "claimedCapability") {
-    return wrapClaimedCapability(env, value);
+    return wrapCapability(env, value);
   }
   if (value.type === "savedCapability") {
     return savedCapabilityRecord(value).token;
@@ -1754,8 +1754,8 @@ function rememberObjectCapabilityHandle(objectId, capabilityId) {
   objectCapabilityIds.set(capabilityId, objectId);
 }
 
-function forgetClaimedCapabilityHandle(capabilityId) {
-  claimedCapabilityMetadata.delete(capabilityId);
+function forgetCapabilityHandle(capabilityId) {
+  capabilityMetadata.delete(capabilityId);
   const objectId = objectCapabilityIds.get(capabilityId);
   if (!objectId) {
     return;
@@ -1778,7 +1778,7 @@ function forgetObjectCapabilityHandles(objectId) {
   }
 
   for (const capabilityId of ids) {
-    claimedCapabilityMetadata.delete(capabilityId);
+    capabilityMetadata.delete(capabilityId);
     objectCapabilityIds.delete(capabilityId);
   }
   exportedObjectCapabilityIds.delete(objectId);
@@ -1855,7 +1855,7 @@ function savedCapabilityRecord(value, name = "saved capability") {
   };
 }
 
-const CLAIMED_CAPABILITY_FETCH_HEADER_NAMES = new Set([
+const CAPABILITY_FETCH_HEADER_NAMES = new Set([
   "if-match",
   "if-none-match",
   "oc-total-length",
@@ -1871,31 +1871,31 @@ const CLAIMED_CAPABILITY_FETCH_HEADER_NAMES = new Set([
   "x-csrf-token",
 ]);
 
-const CLAIMED_CAPABILITY_FETCH_HEADER_PREFIXES = [
+const CAPABILITY_FETCH_HEADER_PREFIXES = [
   "x-sandstorm-app-",
   "x-hgarg-",
   "x-phabricator-",
 ];
 
-function shouldForwardClaimedCapabilityFetchHeader(name) {
+function shouldForwardCapabilityFetchHeader(name) {
   name = String(name).toLowerCase();
-  return CLAIMED_CAPABILITY_FETCH_HEADER_NAMES.has(name) ||
-    CLAIMED_CAPABILITY_FETCH_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix));
+  return CAPABILITY_FETCH_HEADER_NAMES.has(name) ||
+    CAPABILITY_FETCH_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
-async function restoreSavedCapability(env, token) {
+async function restoreCapabilityToken(env, token) {
   const encodedToken = encodeURIComponent(savedCapabilityToken(token));
   const capability = await postPowerbox(env, `powerbox/restore?token=${encodedToken}`);
-  return wrapClaimedCapability(env, capability);
+  return wrapCapability(env, capability);
 }
 
-async function dropSavedCapability(env, token) {
+async function revokeCapabilityToken(env, token) {
   const encodedToken = encodeURIComponent(savedCapabilityToken(token));
   return postPowerbox(env, `powerbox/drop-saved?token=${encodedToken}`);
 }
 
-async function fetchClaimedCapability(env, capability, input, init = {}) {
-  const info = await claimedCapabilityInfo(env, capability);
+async function fetchCapability(env, capability, input, init = {}) {
+  const info = await capabilityInfo(env, capability);
   if (info?.nativeInterface === "outboundHttpSession") {
     return fetchOutboundHttpCapability(capability, input, init, info);
   }
@@ -1933,7 +1933,7 @@ async function fetchClaimedCapability(env, capability, input, init = {}) {
     headers["content-type"] = contentType;
   }
   for (const [name, value] of request.headers) {
-    if (name !== "content-type" && shouldForwardClaimedCapabilityFetchHeader(name)) {
+    if (name !== "content-type" && shouldForwardCapabilityFetchHeader(name)) {
       params.append("headerName", name);
       params.append("headerValue", value);
     }
@@ -1976,7 +1976,7 @@ function outboundHttpRequest(input, init = {}) {
 
 async function fetchOutboundHttpCapability(capability, input, init = {}, info = undefined) {
   if (info === undefined) {
-    info = await claimedCapabilityInfo(capability.env, capability);
+    info = await capabilityInfo(capability.env, capability);
   }
   if (info?.supportsOutboundHttpFetch === false || (
       info?.supportsOutboundHttpFetch === undefined &&
@@ -2014,7 +2014,7 @@ async function fetchOutboundHttpCapability(capability, input, init = {}, info = 
     });
 }
 
-function wrapClaimedCapability(env, capability) {
+function wrapCapability(env, capability) {
   if (capability instanceof Capability) {
     return capability;
   }
@@ -2083,7 +2083,7 @@ async function durableObjectCapability(env, target, options = {}) {
       storageKey: key,
       registered: registration.registered,
       restored: true,
-      capability: await restoreSavedCapability(env, storedToken),
+      capability: await restoreCapabilityToken(env, storedToken),
       token: storedToken,
     };
   }
@@ -2092,7 +2092,7 @@ async function durableObjectCapability(env, target, options = {}) {
     id,
     persistent: true,
   });
-  const token = await saveClaimedCapability(env, capability, options);
+  const token = await saveCapability(env, capability, options);
   await storage(env).put(key, token);
   return {
     ok: true,
@@ -2144,7 +2144,7 @@ export function powerbox(request, env) {
     }
     const capability = await postPowerbox(env,
       `powerbox/claim-request?${params}`);
-    return wrapClaimedCapability(env, capability);
+    return wrapCapability(env, capability);
   };
 
   return {
@@ -2193,7 +2193,7 @@ export function powerbox(request, env) {
       if (arguments.length < 1) {
         unsupportedPowerbox("offer");
       }
-      return offerClaimedCapability(env, request, arguments[0], arguments[1] || {});
+      return offerCapability(env, request, arguments[0], arguments[1] || {});
     },
 
     async fulfillRequest() {
@@ -2207,7 +2207,7 @@ export function powerbox(request, env) {
       if (arguments.length < 1) {
         unsupportedPowerbox("tieToUser");
       }
-      return tieClaimedCapabilityToUser(env, request, arguments[0], arguments[1] || {});
+      return tieCapabilityToUser(env, request, arguments[0], arguments[1] || {});
     },
 
   };
@@ -2382,11 +2382,11 @@ class SandstormRpcTarget extends RpcTarget {
   }
 
   restore(token) {
-    return restoreSavedCapability(this.#env, token);
+    return restoreCapabilityToken(this.#env, token);
   }
 
   revoke(token) {
-    return dropSavedCapability(this.#env, token);
+    return revokeCapabilityToken(this.#env, token);
   }
 
   async use(token, fn) {
@@ -2394,7 +2394,7 @@ class SandstormRpcTarget extends RpcTarget {
       failValidation("capability use callback", "a function", fn);
     }
 
-    const capability = await restoreSavedCapability(this.#env, token);
+    const capability = await restoreCapabilityToken(this.#env, token);
     try {
       return await fn(capability);
     } finally {
@@ -2488,14 +2488,14 @@ export function sandstorm(request, env, options = {}) {
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, options),
     apiSession: (options = {}) => createApiSessionCapability(env, options),
-    restore: (token) => restoreSavedCapability(env, token),
-    revoke: (token) => dropSavedCapability(env, token),
+    restore: (token) => restoreCapabilityToken(env, token),
+    revoke: (token) => revokeCapabilityToken(env, token),
     use: async (token, fn) => {
       if (typeof fn !== "function") {
         failValidation("capability use callback", "a function", fn);
       }
 
-      const capability = await restoreSavedCapability(env, token);
+      const capability = await restoreCapabilityToken(env, token);
       try {
         return await fn(capability);
       } finally {
