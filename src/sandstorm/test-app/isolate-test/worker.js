@@ -358,8 +358,8 @@ export default {
     if (internalResponse) return internalResponse;
 
     const url = new URL(request.url);
-    const powerboxResponse = await api.servePowerboxDescriptors();
-    if (powerboxResponse) return powerboxResponse;
+    const systemResponse = await api.serveSystemRoutes();
+    if (systemResponse) return systemResponse;
 
     const headers = {};
     for (const [name, value] of request.headers) {
