@@ -2311,44 +2311,51 @@ export default {
         const helperStorageKey = `persistent-helper-${crypto.randomUUID()}`;
         const helperTarget = new CounterCapability();
         helperTarget.increment(53);
-        const helperFirst = await sandstorm(request, env).persistentCapability(helperTarget, {
+        const helperFirst = await sandstorm(request, env).exportDurable(helperTarget, {
           id: helperId,
           storageKey: helperStorageKey,
           label: "Persistent helper fixture",
         });
         const helperFirstGet = await helperFirst.capability.call("get");
+        const helperFirstTokenType = typeof helperFirst.token;
         const helperFirstDrop = await helperFirst.capability.drop();
-        const helperSecond = await sandstorm(request, env).persistentCapability(helperTarget, {
+        const helperSecond = await sandstorm(request, env).exportDurable(helperTarget, {
           id: helperId,
           storageKey: helperStorageKey,
           label: "Persistent helper fixture",
         });
         const helperSecondGet = await helperSecond.capability.call("get");
+        const helperSecondTokenType = typeof helperSecond.token;
         const helperSecondDrop = await helperSecond.capability.drop();
-        const helperDropSaved = await helperSecond.saved.drop();
+        const helperDropSaved = await sandstorm(request, env).revoke(helperSecond.token);
         const helperDeleteStorage = await sandstorm(request, env).storage().delete(helperStorageKey);
         const helperUnregister = sandstorm(request, env).unregisterCapability(helperId);
         const callbackId = `persistent-callback-${crypto.randomUUID()}`;
+        const callbackStorageKey = `callback-capability-${callbackId}`;
         const callbackTarget = new EventReceiver();
-        const callbackFirst = await sandstorm(request, env).persistentCallback(callbackTarget, {
+        const callbackFirst = await sandstorm(request, env).exportDurable(callbackTarget, {
           id: callbackId,
+          storageKey: callbackStorageKey,
           label: "Persistent callback fixture",
         });
-        const callbackFirstEvent = await callbackFirst.capability.asRpc().onMailEvent({
+        const callbackFirstTokenType = typeof callbackFirst.token;
+        const callbackFirstEvent = await callbackFirst.capability.rpc.onMailEvent({
           subject: "phase-6-durable-callback-first",
           unread: 7,
         });
         const callbackFirstDrop = await callbackFirst.capability.drop();
-        const callbackSecond = await sandstorm(request, env).persistentCallback(callbackTarget, {
+        const callbackSecond = await sandstorm(request, env).exportDurable(callbackTarget, {
           id: callbackId,
+          storageKey: callbackStorageKey,
           label: "Persistent callback fixture",
         });
-        const callbackSecondEvent = await callbackSecond.capability.asRpc().onMailEvent({
+        const callbackSecondTokenType = typeof callbackSecond.token;
+        const callbackSecondEvent = await callbackSecond.capability.rpc.onMailEvent({
           subject: "phase-6-durable-callback-restored",
           unread: 9,
         });
         const callbackSecondDrop = await callbackSecond.capability.drop();
-        const callbackDropSaved = await callbackSecond.saved.drop();
+        const callbackDropSaved = await sandstorm(request, env).revoke(callbackSecond.token);
         const callbackDeleteStorage =
           await sandstorm(request, env).storage().delete(callbackSecond.storageKey);
         const callbackUnregister = sandstorm(request, env).unregisterCapability(callbackId);
@@ -2381,7 +2388,7 @@ export default {
             restored: helperFirst.restored,
             registered: helperFirst.registered,
             capability: JSON.parse(JSON.stringify(helperFirst.capability)),
-            saved: JSON.parse(JSON.stringify(helperFirst.saved)),
+            tokenType: helperFirstTokenType,
             get: helperFirstGet,
             drop: helperFirstDrop,
           },
@@ -2389,7 +2396,7 @@ export default {
             restored: helperSecond.restored,
             registered: helperSecond.registered,
             capability: JSON.parse(JSON.stringify(helperSecond.capability)),
-            saved: JSON.parse(JSON.stringify(helperSecond.saved)),
+            tokenType: helperSecondTokenType,
             get: helperSecondGet,
             drop: helperSecondDrop,
           },
@@ -2399,12 +2406,12 @@ export default {
           callback: {
             id: callbackId,
             storageKey: callbackFirst.storageKey,
-            defaultStorageKey: `callback-capability-${callbackId}`,
+            expectedStorageKey: callbackStorageKey,
             first: {
               restored: callbackFirst.restored,
               registered: callbackFirst.registered,
               capability: JSON.parse(JSON.stringify(callbackFirst.capability)),
-              saved: JSON.parse(JSON.stringify(callbackFirst.saved)),
+              tokenType: callbackFirstTokenType,
               event: callbackFirstEvent,
               drop: callbackFirstDrop,
             },
@@ -2412,7 +2419,7 @@ export default {
               restored: callbackSecond.restored,
               registered: callbackSecond.registered,
               capability: JSON.parse(JSON.stringify(callbackSecond.capability)),
-              saved: JSON.parse(JSON.stringify(callbackSecond.saved)),
+              tokenType: callbackSecondTokenType,
               event: callbackSecondEvent,
               drop: callbackSecondDrop,
             },

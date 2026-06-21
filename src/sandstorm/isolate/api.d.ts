@@ -368,25 +368,6 @@ declare module "sandstorm:api" {
     disposed: boolean;
   }
 
-  export interface PersistentObjectCapabilityOptions
-      extends Required<Pick<ObjectCapabilityOptions, "id">>, SaveCapabilityOptions {
-    storageKey?: string;
-    key?: string;
-  }
-
-  export interface PersistentCallbackOptions extends PersistentObjectCapabilityOptions {}
-
-  export interface PersistentObjectCapabilityResult {
-    ok: true;
-    id: string;
-    storageKey: string;
-    registered: boolean;
-    restored: boolean;
-    capability: ClaimedCapability;
-    saved: SavedCapability;
-    token: string;
-  }
-
   export type DurableCapabilityRegistry = Record<
     string,
     RpcTarget | ((request: Request, env: SandstormEnv) => RpcTarget)
@@ -396,8 +377,15 @@ declare module "sandstorm:api" {
     capabilities?: DurableCapabilityRegistry;
   }
 
-  export type DurableObjectCapabilityResult =
-    Omit<PersistentObjectCapabilityResult, "saved">;
+  export interface DurableObjectCapabilityResult {
+    ok: true;
+    id: string;
+    storageKey: string;
+    registered: boolean;
+    restored: boolean;
+    capability: ClaimedCapability;
+    token: string;
+  }
 
   export type NativeAppRpcProxy<T extends object = Record<string, (...args: any[]) => unknown>> = {
     [K in keyof T]: T[K] extends (...args: infer Args) => infer Result
@@ -618,14 +606,6 @@ declare module "sandstorm:api" {
       target: RpcTarget,
       options: DurableObjectCapabilityTargetOptions,
     ): Promise<DurableObjectCapabilityResult>;
-    persistentCapability(
-      target: RpcTarget,
-      options: PersistentObjectCapabilityOptions,
-    ): Promise<PersistentObjectCapabilityResult>;
-    persistentCallback(
-      target: RpcTarget,
-      options: PersistentCallbackOptions,
-    ): Promise<PersistentObjectCapabilityResult>;
     registerCapability(
       target: RpcTarget,
       options: Required<Pick<ObjectCapabilityOptions, "id">>,
@@ -666,14 +646,6 @@ declare module "sandstorm:api" {
       Promise<DurableObjectCapabilityResult>;
     exportDurable(id: string, options: DurableObjectCapabilityOptions):
       Promise<DurableObjectCapabilityResult>;
-    persistentCapability(
-      target: RpcTarget,
-      options: PersistentObjectCapabilityOptions,
-    ): Promise<PersistentObjectCapabilityResult>;
-    persistentCallback(
-      target: RpcTarget,
-      options: PersistentCallbackOptions,
-    ): Promise<PersistentObjectCapabilityResult>;
     registerCapability(
       target: RpcTarget,
       options: Required<Pick<ObjectCapabilityOptions, "id">>,
