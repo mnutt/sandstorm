@@ -1,4 +1,4 @@
-import { ClaimedCapability, RpcTarget, sandstorm } from "sandstorm:api";
+import { Capability, RpcTarget, sandstorm } from "sandstorm:api";
 
 const TOKEN_KEY = "api-powerbox-token";
 const TOKEN_MODE_KEY = "api-powerbox-token-mode";
@@ -161,7 +161,7 @@ function renderPage(state) {
                 oauthScopes: apiScopes,
                 saveLabel: { defaultText: "Isolate API Powerbox connection" },
               });
-          output.textContent = "Saving claimed capability...";
+          output.textContent = "Saving capability...";
           const response = await fetch("/claim", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -250,7 +250,7 @@ async function callFeed(api, capability) {
     durable: {
       restored: durable.restored,
       storageKey: durable.storageKey,
-      capabilityClass: durable.capability instanceof ClaimedCapability,
+      capabilityClass: durable.capability instanceof Capability,
       tokenType: typeof durable.token,
       drop: durableDrop,
       dropSaved: durableDropSaved,
@@ -388,7 +388,7 @@ export default {
 
         return new Response(renderPage(await readState(request, env, {
           ok: true,
-          capabilityClass: capability instanceof ClaimedCapability,
+          capabilityClass: capability instanceof Capability,
           tokenType: typeof token,
           requested: body,
           token,

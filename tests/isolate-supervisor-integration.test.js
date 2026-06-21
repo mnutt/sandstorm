@@ -611,7 +611,7 @@ test("isolate supervisor integration suite", {
       fixture.stdout, fixture.stderr));
     assert.equal(exported.json.ok, true);
     assert.equal(exported.json.capabilityClass, true);
-    assert.equal(exported.json.capability.type, "claimedCapability");
+    assert.equal(exported.json.capability.type, "capability");
     assert.equal(typeof exported.json.capability.id, "string");
 
     const capabilityId = exported.json.capability.id;
@@ -856,9 +856,9 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.capabilityClass, true);
     assert.equal(selfTest.json.savedToken, true);
     assert.equal(selfTest.json.restoredClass, true);
-    assert.equal(selfTest.json.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.capability.type, "capability");
     assert.equal(typeof selfTest.json.saved, "string");
-    assert.equal(selfTest.json.restored.type, "claimedCapability");
+    assert.equal(selfTest.json.restored.type, "capability");
     assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
     assert.match(selfTest.json.wrongOutboundError.message, /relative path/);
     assert.equal(selfTest.json.dropOriginal.ok, true);
@@ -879,11 +879,11 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.posted.body.method, "POST");
     assert.equal(selfTest.json.posted.body.pathname, "/exported/capability-echo");
     assert.equal(selfTest.json.posted.body.search, "?source=js-post");
-    assert.equal(selfTest.json.posted.body.body, "hello through claimed capability fetch");
+    assert.equal(selfTest.json.posted.body.body, "hello through capability fetch");
     assert.equal(selfTest.json.posted.body.bodyBytes,
-      "hello through claimed capability fetch".length);
+      "hello through capability fetch".length);
     assert.equal(selfTest.json.posted.body.checksum,
-      checksum(Buffer.from("hello through claimed capability fetch")));
+      checksum(Buffer.from("hello through capability fetch")));
     assert.equal(selfTest.json.posted.body.contentType, "text/plain; charset=utf-8");
     assert.equal(selfTest.json.largePost.status, 200);
     assert.equal(selfTest.json.largePost.body.ok, true);
@@ -910,7 +910,7 @@ test("isolate supervisor integration suite", {
       fixture.stdout, fixture.stderr));
     assert.equal(exported.json.ok, true);
     assert.equal(exported.json.capabilityClass, true);
-    assert.equal(exported.json.capability.type, "claimedCapability");
+    assert.equal(exported.json.capability.type, "capability");
     assert.equal(typeof exported.json.capability.id, "string");
 
     const capabilityId = exported.json.capability.id;
@@ -1040,9 +1040,9 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.capabilityClass, true);
     assert.equal(selfTest.json.savedToken, true);
     assert.equal(selfTest.json.restoredClass, true);
-    assert.equal(selfTest.json.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.capability.type, "capability");
     assert.equal(typeof selfTest.json.saved, "string");
-    assert.equal(selfTest.json.restored.type, "claimedCapability");
+    assert.equal(selfTest.json.restored.type, "capability");
     assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
     assert.match(selfTest.json.wrongOutboundError.message, /relative path/);
     assert.equal(selfTest.json.dropOriginal.ok, true);
@@ -1065,7 +1065,7 @@ test("isolate supervisor integration suite", {
       fixture.stdout, fixture.stderr));
     assert.equal(exported.json.ok, true);
     assert.equal(exported.json.capabilityClass, true);
-    assert.equal(exported.json.capability.type, "claimedCapability");
+    assert.equal(exported.json.capability.type, "capability");
     assert.equal(typeof exported.json.capability.id, "string");
 
     const statsAfterParentExport = await requestJson(
@@ -1255,9 +1255,9 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.current, { value: 7 });
     assert.equal(selfTest.json.childClass, true);
     assert.equal(selfTest.json.childCapabilityAliasClass, true);
-    assert.equal(selfTest.json.child.type, "claimedCapability");
+    assert.equal(selfTest.json.child.type, "capability");
     assert.equal(selfTest.json.capabilityInfo.ok, true);
-    assert.equal(selfTest.json.capabilityInfo.type, "claimedCapabilityInfo");
+    assert.equal(selfTest.json.capabilityInfo.type, "capabilityInfo");
     assert.equal(selfTest.json.capabilityInfo.id, selfTest.json.duplicate.sourceId);
     assert.equal(selfTest.json.capabilityInfo.kind, "routeBackedAppObject");
     assert.equal(selfTest.json.capabilityInfo.residence, "localExport");
@@ -1273,7 +1273,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.capabilityInfo.liveForwardable, true);
     assert.equal(typeof selfTest.json.childInfo.id, "string");
     assert.equal(selfTest.json.childInfo.ok, true);
-    assert.equal(selfTest.json.childInfo.type, "claimedCapabilityInfo");
+    assert.equal(selfTest.json.childInfo.type, "capabilityInfo");
     assert.equal(selfTest.json.childInfo.kind, "unknown");
     assert.equal(selfTest.json.childInfo.residence, "imported");
     assert.equal(selfTest.json.childInfo.nativeInterface, "appObject");
@@ -1292,7 +1292,7 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.stubFirst, { value: 9 });
     assert.deepEqual(selfTest.json.stubCurrent, { value: 9 });
     assert.equal(selfTest.json.stubChildClass, true);
-    assert.equal(selfTest.json.stubChild.type, "claimedCapability");
+    assert.equal(selfTest.json.stubChild.type, "capability");
     assert.deepEqual(selfTest.json.stubChildFirst, { value: 13 });
     assert.deepEqual(selfTest.json.stubReadChild, { value: 13 });
     assert.equal(selfTest.json.argumentTarget.rawError.name, "ValidationError");
@@ -1317,7 +1317,7 @@ test("isolate supervisor integration suite", {
       selfTest.json.retainedArgumentTarget.disposeBefore + 1);
     assert.deepEqual(selfTest.json.liveCallback.subscription, {
       ok: true,
-      receiverType: "claimedCapability",
+      receiverType: "capability",
       result: {
         ok: true,
         count: 1,
@@ -1333,7 +1333,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.liveCallback.disposeAfter,
       selfTest.json.liveCallback.disposeBefore + 1);
     assert.equal(selfTest.json.liveCallback.sessionClass, true);
-    assert.equal(selfTest.json.liveCallback.session.type, "claimedCapability");
+    assert.equal(selfTest.json.liveCallback.session.type, "capability");
     assert.deepEqual(selfTest.json.liveCallback.sessionFirst, { value: 7 });
     assert.equal(selfTest.json.liveCallback.sessionDrop.ok, true);
     assert.equal(selfTest.json.liveCallback.feedDrop.ok, true);
@@ -1347,8 +1347,8 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.remoteArguments.rpcTargetError.name, "ValidationError");
     assert.match(selfTest.json.remoteArguments.rpcTargetError.message,
       /nativeInterface unknown cannot be used with app-defined RPC/);
-    assert.equal(selfTest.json.remoteArguments.claimedCapabilityError.name, "ValidationError");
-    assert.match(selfTest.json.remoteArguments.claimedCapabilityError.message,
+    assert.equal(selfTest.json.remoteArguments.capabilityError.name, "ValidationError");
+    assert.match(selfTest.json.remoteArguments.capabilityError.message,
       /nativeInterface unknown cannot be used with app-defined RPC/);
     assert.equal(typeof selfTest.json.duplicate.id, "string");
     assert.notEqual(selfTest.json.duplicate.id, selfTest.json.duplicate.sourceId);
@@ -1383,7 +1383,7 @@ test("isolate supervisor integration suite", {
     assert.match(selfTest.json.persistent.withoutIdError.message, /explicit id/);
     assert.deepEqual(selfTest.json.persistent.first, { value: 29 });
     assert.equal(typeof selfTest.json.persistent.saved, "string");
-    assert.equal(selfTest.json.persistent.restored.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.restored.type, "capability");
     assert.deepEqual(selfTest.json.persistent.restoredGet, { value: 29 });
     assert.deepEqual(selfTest.json.persistent.restoredIncrement, { value: 32 });
     assert.equal(selfTest.json.persistent.dropOriginal.ok, true);
@@ -1392,25 +1392,25 @@ test("isolate supervisor integration suite", {
     assert.match(selfTest.json.persistent.duplicateExportError.message, /already registered/);
     assert.equal(selfTest.json.persistent.transientMintError.name, "ValidationError");
     assert.match(selfTest.json.persistent.transientMintError.message, /persistent: true/);
-    assert.equal(selfTest.json.persistent.mintedAfterRegister.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.mintedAfterRegister.type, "capability");
     assert.deepEqual(selfTest.json.persistent.mintedAfterRegisterGet, { value: 32 });
     assert.equal(selfTest.json.persistent.dropMintedAfterRegister.ok, true);
-    assert.equal(selfTest.json.persistent.restoredAfterRegister.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.restoredAfterRegister.type, "capability");
     assert.deepEqual(selfTest.json.persistent.restoredAfterRegisterGet, { value: 32 });
     assert.equal(selfTest.json.persistent.dropRestoredAfterRegister.ok, true);
-    assert.equal(selfTest.json.persistent.topLevelRestored.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.topLevelRestored.type, "capability");
     assert.deepEqual(selfTest.json.persistent.topLevelRestoreGet, { value: 32 });
     assert.equal(selfTest.json.persistent.dropTopLevelRestored.ok, true);
     assert.deepEqual(selfTest.json.persistent.useGet, { value: 32 });
     assert.equal(selfTest.json.persistent.dropSaved.ok, true);
-    assert.equal(selfTest.json.persistent.helper.export.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.helper.export.capability.type, "capability");
     assert.deepEqual(selfTest.json.persistent.helper.export.increment, { value: 61 });
     assert.equal(selfTest.json.persistent.helper.export.drop.ok, true);
     assert.deepEqual(selfTest.json.persistent.helper.withExport.read, { value: 62 });
     assert.equal(selfTest.json.persistent.helper.durableExport.restored, false);
     assert.equal(selfTest.json.persistent.helper.durableExport.registered, true);
     assert.equal(
-      selfTest.json.persistent.helper.durableExport.capability.type, "claimedCapability");
+      selfTest.json.persistent.helper.durableExport.capability.type, "capability");
     assert.equal(selfTest.json.persistent.helper.durableExport.tokenType, "string");
     assert.equal(selfTest.json.persistent.helper.durableExport.savedType, "undefined");
     assert.equal(selfTest.json.persistent.helper.durableExport.missingLabelError.name,
@@ -1423,13 +1423,13 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.durableExport.deleteStorage.ok, true);
     assert.equal(selfTest.json.persistent.helper.first.restored, false);
     assert.equal(selfTest.json.persistent.helper.first.registered, true);
-    assert.equal(selfTest.json.persistent.helper.first.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.helper.first.capability.type, "capability");
     assert.equal(selfTest.json.persistent.helper.first.tokenType, "string");
     assert.deepEqual(selfTest.json.persistent.helper.first.get, { value: 53 });
     assert.equal(selfTest.json.persistent.helper.first.drop.ok, true);
     assert.equal(selfTest.json.persistent.helper.second.restored, true);
     assert.equal(selfTest.json.persistent.helper.second.registered, false);
-    assert.equal(selfTest.json.persistent.helper.second.capability.type, "claimedCapability");
+    assert.equal(selfTest.json.persistent.helper.second.capability.type, "capability");
     assert.equal(selfTest.json.persistent.helper.second.tokenType, "string");
     assert.deepEqual(selfTest.json.persistent.helper.second.get, { value: 53 });
     assert.equal(selfTest.json.persistent.helper.second.drop.ok, true);
@@ -1441,7 +1441,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.callback.first.restored, false);
     assert.equal(selfTest.json.persistent.helper.callback.first.registered, true);
     assert.equal(
-      selfTest.json.persistent.helper.callback.first.capability.type, "claimedCapability");
+      selfTest.json.persistent.helper.callback.first.capability.type, "capability");
     assert.equal(selfTest.json.persistent.helper.callback.first.tokenType, "string");
     assert.deepEqual(selfTest.json.persistent.helper.callback.first.event, {
       ok: true,
@@ -1452,7 +1452,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.callback.second.restored, true);
     assert.equal(selfTest.json.persistent.helper.callback.second.registered, false);
     assert.equal(
-      selfTest.json.persistent.helper.callback.second.capability.type, "claimedCapability");
+      selfTest.json.persistent.helper.callback.second.capability.type, "capability");
     assert.equal(selfTest.json.persistent.helper.callback.second.tokenType, "string");
     assert.deepEqual(selfTest.json.persistent.helper.callback.second.event, {
       ok: true,
@@ -1499,7 +1499,7 @@ test("isolate supervisor integration suite", {
       provider.stdout, provider.stderr));
     assert.equal(exported.json.ok, true);
     assert.equal(exported.json.capabilityClass, true);
-    assert.equal(exported.json.capability.type, "claimedCapability");
+    assert.equal(exported.json.capability.type, "capability");
     assert.equal(typeof exported.json.capability.id, "string");
 
     const capabilityInfo = await requestJson(
@@ -1530,14 +1530,14 @@ test("isolate supervisor integration suite", {
     assert.equal(callback.statusCode, 200, callback.body + formatOutput(
       client.stdout, client.stderr) + formatOutput(provider.stdout, provider.stderr));
     assert.equal(callback.json.ok, true);
-    assert.equal(callback.json.feedCapability.type, "claimedCapability");
+    assert.equal(callback.json.feedCapability.type, "capability");
     assert.equal(callback.json.feedInfo.kind, "restored");
     assert.equal(callback.json.feedInfo.residence, "imported");
     assert.equal(callback.json.feedInfo.nativeInterface, "appObject");
     assert.equal(callback.json.feedInfo.hasNativeCapability, true);
     assert.deepEqual(callback.json.subscription, {
       ok: true,
-      receiverType: "claimedCapability",
+      receiverType: "capability",
       result: {
         ok: true,
         count: 1,
@@ -1568,7 +1568,7 @@ test("isolate supervisor integration suite", {
         name: "NoSuchMethod",
       },
     });
-    assert.equal(callback.json.session.type, "claimedCapability");
+    assert.equal(callback.json.session.type, "capability");
     assert.equal(callback.json.sessionInfo.kind, "unknown");
     assert.equal(callback.json.sessionInfo.residence, "imported");
     assert.equal(callback.json.sessionInfo.nativeInterface, "appObject");
@@ -1577,7 +1577,7 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(callback.json.sessionSecond, { value: 11 });
     assert.deepEqual(callback.json.forwardedSession, {
       ok: true,
-      counterType: "claimedCapability",
+      counterType: "capability",
       incremented: { value: 17 },
       current: { value: 17 },
     });
@@ -1606,11 +1606,11 @@ test("isolate supervisor integration suite", {
     assert.equal(retainedSubscribe.statusCode, 200, retainedSubscribe.body + formatOutput(
       client.stdout, client.stderr) + formatOutput(provider.stdout, provider.stderr));
     assert.equal(retainedSubscribe.json.ok, true);
-    assert.equal(retainedSubscribe.json.receiverCapability.type, "claimedCapability");
+    assert.equal(retainedSubscribe.json.receiverCapability.type, "capability");
     assert.deepEqual(retainedSubscribe.json.subscription, {
       ok: true,
       id: retainedId,
-      receiverType: "claimedCapability",
+      receiverType: "capability",
     });
     assert.equal(
       retainedSubscribe.json.disposeAfterSubscribe,
@@ -1917,7 +1917,7 @@ test("isolate supervisor integration suite", {
       subject: "native-subject",
       callback: {
         ok: true,
-        type: "claimedCapability",
+        type: "capability",
         id: "native-callback",
       },
       options: { urgent: true },
@@ -2245,7 +2245,7 @@ test("isolate supervisor integration suite", {
       type: "capability",
       value: { id: "exported-slot-0", nativeInterface: "appObject" },
     });
-    assert.deepEqual(nativeAppRpcCodec.json.exported.claimedValue, {
+    assert.deepEqual(nativeAppRpcCodec.json.exported.capabilityValue, {
       type: "capability",
       value: { id: "exported-slot-1", nativeInterface: "appObject" },
     });
@@ -2347,67 +2347,67 @@ test("isolate supervisor integration suite", {
       {
         name: "callback",
         rpcTargetClass: true,
-        claimedClass: false,
+        capabilityClass: false,
         id: "exported-slot-0",
       },
       {
         name: "authority",
         rpcTargetClass: false,
-        claimedClass: true,
+        capabilityClass: true,
         capabilityId: "mock-app-object",
         id: "exported-slot-1",
       },
       {
         name: "call.args[1].authority",
         rpcTargetClass: false,
-        claimedClass: true,
+        capabilityClass: true,
         capabilityId: "mock-app-object",
         id: "exported-slot-2",
       },
       {
         name: "call.args[0]",
         rpcTargetClass: false,
-        claimedClass: true,
+        capabilityClass: true,
         capabilityId: "mock-exported-callback",
         id: "exported-slot-3",
       },
       {
         name: "call.args[1].authority",
         rpcTargetClass: false,
-        claimedClass: true,
+        capabilityClass: true,
         capabilityId: "mock-app-object",
         id: "exported-slot-4",
       },
       {
         name: "call.args[1]",
         rpcTargetClass: false,
-        claimedClass: true,
+        capabilityClass: true,
         capabilityId: "mock-exported-stub-callback",
         id: "exported-slot-5",
       },
       {
         name: "result.child",
         rpcTargetClass: true,
-        claimedClass: false,
+        capabilityClass: false,
         id: "exported-slot-6",
       },
       {
         name: "result.authority",
         rpcTargetClass: false,
-        claimedClass: true,
+        capabilityClass: true,
         capabilityId: "mock-app-object",
         id: "exported-slot-7",
       },
       {
         name: "result",
         rpcTargetClass: true,
-        claimedClass: false,
+        capabilityClass: false,
         id: "exported-slot-8",
       },
       {
         name: "result.authority",
         rpcTargetClass: false,
-        claimedClass: true,
+        capabilityClass: true,
         capabilityId: "mock-app-object",
         id: "exported-slot-9",
       },
