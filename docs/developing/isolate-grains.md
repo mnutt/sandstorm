@@ -236,28 +236,37 @@ methods in application code:
 
 - `api.session()` for Sandstorm session and user metadata
 - `api.storage()` for isolate storage
-- `api.powerbox()` for Powerbox claim, save, restore, offer, and drop helpers
+- `api.powerbox()` for browser-mediated Powerbox claiming and offers
 - `api.webSession()` and `api.apiSession()` for route-backed capabilities
-- `api.capability()`, `api.registerCapability()`, `api.unregisterCapability()`,
-  and `api.persistentCapability()` for JavaScript object capabilities
+- `api.restore(token)`, `api.revoke(token)`, and `api.use(token, fn)` for
+  durable saved capability tokens
+- `api.export(target)` and `api.withExport(target, fn)` for transient local
+  object capabilities
+- `api.exportDurable(targetOrId, options)` for durable local object
+  capabilities
 - `api.serveSystemRoutes()` before normal app routes
 - `api.serveRpc()` for Cap'n Web RPC endpoints
 
-The preferred Powerbox lifecycle names are:
+For durable object routes, pass a registry when creating the request helper:
 
-- `claimRequest(token)` for claiming a browser-returned Powerbox token
-- `claimAndStore(token, options)` and `claimAndStoreRequest(result, options)`
-  for the common claim, save, and store pattern
-- `restoreSaved(token)` and `dropSaved(token)` for durable Sandstorm tokens the
-  app already has
-- `restoreStored(options)`, `fetchStored(options, input, init)`, and
-  `dropStored(options)` for token strings stored in isolate storage
-- `claimedCapability(handle)` for wrapping a browser-returned claimed handle
-- `apiSessionDescriptor(options)` and `outboundHttpDescriptor(options)` for
-  generating packed descriptors used by browser-mediated Powerbox requests
-- `offer()`, `fulfillRequest()`, and `tieToUser()` accept `descriptor` or
-  `powerboxDescriptor` when passing an app-defined packed `PowerboxDescriptor`
-  for custom Powerbox protocols
+```js
+const durableCapabilities = {
+  "main-counter": () => new Counter(),
+};
+
+export default {
+  async fetch(request, env) {
+    const api = sandstorm(request, env, {
+      capabilities: durableCapabilities,
+    });
+
+    const system = await api.serveSystemRoutes();
+    if (system) return system;
+
+    return api.serveRpc(() => new AppApi(request, env));
+  },
+};
+```
 
 The following exports are public but low-level. Prefer the `sandstorm()`
 facade unless a custom framework or test needs direct access:
@@ -271,47 +280,31 @@ facade unless a custom framework or test needs direct access:
 - `rpcClientScript()`
 - `rpcResponse(request, target, options)`
 - `serveRpc(request, target, options)`
-- `ClaimedCapability` and `SavedCapability`
 
-Do not construct `ClaimedCapability` directly in application code unless you
-are writing low-level adapter code. Use `api.powerbox().claimedCapability(...)`
-for browser-returned handles and `api.powerbox().restoreSaved(...)` for saved
-tokens.
+## Capability and token ownership
 
-## Saved capability token ownership
+Isolate apps receive Sandstorm authority through Powerbox, route-backed helpers
+such as `webSession()` and `apiSession()`, restored saved tokens, or explicitly
+exported local objects.
 
-Isolate apps can receive Sandstorm capabilities through Powerbox or by minting
-route-backed capabilities with helpers such as `webSession()`, `apiSession()`,
-or `capability()`.
-
-Route-backed `webSession()` and `apiSession()` capabilities are intended for
-other holders: Powerbox offers, saved tokens, restored capabilities, and calls
-from another session or grain. Do not rely on recursively fetching a
-route-backed WebSession capability from the same worker request that created
-it. If code in the same worker needs the same behavior, call a local function
-or route shared logic directly. The helper may support some direct calls for
-tests and simple cases, but same-request self-fetch is not a compatibility
-contract before isolate APIs are released.
-
-A live capability handle is represented in JavaScript as a `ClaimedCapability`.
-It is process-local supervisor state. It should be dropped when the app is done
-with it:
+A `Capability` is a live, process-local handle. It should be dropped when the
+app is done with it:
 
 ```js
 await cap.drop();
 ```
 
-Saving a live handle creates a durable Sandstorm API token:
+Saving a live handle creates a durable Sandstorm saved capability token:
 
 ```js
-const saved = await cap.save({ label: "Chosen document" });
+const token = await cap.save({ label: "Chosen document" });
 ```
 
-The returned `SavedCapability` contains a token string. That string is app
-state. Sandstorm creates and validates the underlying durable token, but the
-isolate app decides where to store the token string. The usual choices are:
+The returned token is a string. Sandstorm creates and validates the underlying
+durable token, but the isolate app decides where to store that string. The
+usual choices are:
 
-- isolate storage, through `sandstorm(request, env).storage()`
+- isolate storage, through `api.storage()`
 - an app-defined data file or database
 - not storing it at all, if the grant should be used only during the current
   interaction
@@ -319,57 +312,41 @@ isolate app decides where to store the token string. The usual choices are:
 For the common storage-backed pattern:
 
 ```js
-const saved = await cap.save({ label: "Chosen document" });
-await sandstorm(request, env).storage().put("chosen-document-token", saved.token);
+const api = sandstorm(request, env);
+const cap = await api.powerbox().claim(requested);
+
+try {
+  const token = await cap.save({ label: "Chosen document" });
+  await api.storage().put("chosen-document-token", token);
+} finally {
+  await cap.drop();
+}
 ```
 
-On a later request, the app reads the token and restores a new live handle:
+On a later request, the app reads the token and restores a fresh live handle:
 
 ```js
-const token = await sandstorm(request, env).storage().get("chosen-document-token");
-const restored = await sandstorm(request, env).powerbox().restoreSaved(token);
+const api = sandstorm(request, env);
+const token = await api.storage().get("chosen-document-token");
+
+if (token) {
+  await api.use(token, cap => cap.fetch("/status"));
+}
 ```
 
-Restoration returns a `ClaimedCapability` handle, not a guessed interface
-stub. The app that saved the token owns the context needed to decide how to use
-it: call `restored.fetch()` for WebSession-shaped HTTP capabilities,
-`restored.asRpc<T>()` for app-defined object-capability protocols that the app
-expects, or wrap it in a typed adapter such as
-`api.powerbox().outboundHttpCapability(restored)` for OutboundHttpSession
-capabilities. Future typed restoration can add explicit metadata, but tokens
-alone should not imply that the runtime can safely infer a JavaScript type.
+Restoration returns a live `Capability`, not a guessed interface stub. The app
+that saved the token owns the context needed to decide how to use it: call
+`cap.fetch()` for fetch-shaped capabilities or `cap.rpc.method()` for
+app-defined object protocols that the app expects. Tokens alone should not
+imply that the runtime can safely infer a JavaScript protocol type.
 
-Dropping a live handle with `cap.drop()` only releases that in-memory claimed
-handle. It does not revoke saved durable tokens. To revoke a saved token, call:
+Dropping a live handle with `cap.drop()` only releases that in-memory handle.
+It does not revoke saved durable tokens. To revoke a saved token, call:
 
 ```js
-await saved.drop();
+await api.revoke(token);
+await api.storage().delete("chosen-document-token");
 ```
-
-or:
-
-```js
-await sandstorm(request, env).powerbox().dropSaved(token);
-```
-
-If the token string is stored in isolate storage, the app should also delete
-that stored copy after revocation. The helper
-`powerbox().dropStored({ storageKey })` performs both steps for the
-common case.
-
-The helper `powerbox().claimAndStoreRequest()` handles the common browser
-Powerbox flow: accept the browser result, claim it if needed, save it, store
-the saved token string, and return the live and saved handles.
-`powerbox().fetchStored()` handles the common later-use path: restore a saved
-token from storage, fetch through it, buffer the response, and drop the live
-handle. Use `claimAndStore()` and `restoreSaved()` directly when code needs
-lower-level control, multiple calls, or streaming response bodies.
-Storage-backed helpers use non-throwing result shapes for expected absence:
-`restoreStored()` returns `{ ok: true, found: false, ... }` when no token is
-stored, and `dropStored()` returns `{ ok: true, dropped: false, ... }` when
-there is nothing to revoke.
-`persistentCapability()` does the analogous storage-backed setup for
-app-defined stable object capabilities.
 
 ## Service bindings
 
@@ -387,14 +364,12 @@ Development-only mocks can still use local service bindings, but production
 cross-grain wiring should be represented as saved capabilities or explicit
 future capability bindings, not as unresolved global service names.
 
-When using app-defined RPC over a restored cross-grain capability, do not pass
-live `ClaimedCapability` handles or raw `RpcTarget` callback objects as method
-arguments. Those handles are local to the sending grain's isolate supervisor.
-The helper rejects them for remote app-defined RPC calls instead of serializing
-an ID that the receiver cannot use. For cross-grain callbacks, export a
-persistent object capability, save it, pass the saved token string or
-`SavedCapability`, and have the receiver restore that saved capability before
-calling back.
+When using app-defined RPC over a restored cross-grain capability, pass
+capability handles, durable token strings, or other plain JSON values. Do not
+pass raw `RpcTarget` callback objects as method arguments; raw local objects
+are not portable authority. For cross-grain callbacks, first export the object
+with `api.export()` or `api.exportDurable()`, then pass the resulting
+capability or saved token through RPC.
 
 ## Browser-first Powerbox requests
 
@@ -416,7 +391,7 @@ The recommended flow is:
 4. The browser sends the returned token or claimed handle to the worker in an
    app-defined request.
 5. The worker claims the token, optionally saves it, stores the saved token in
-   app storage, and uses the resulting `ClaimedCapability`.
+   app storage, and uses the resulting `Capability`.
 6. On later requests, the worker restores a saved token from storage before
    using it.
 7. When the grant is no longer needed, the worker drops the live handle and
@@ -436,8 +411,7 @@ provider calls `fulfillRequest()` with the capability it wants to return.
 Worker code cannot directly open the Powerbox picker. Sandstorm's underlying
 `SessionContext.request()` operation is not implemented; use browser
 `postMessage` helpers from `/rpc-client.js`, then send the returned token or
-claimed handle to the worker for `claimRequest()`, `claimAndStoreRequest()`,
-or `claimedCapability()`.
+claimed handle to the worker for `api.powerbox().claim(...)`.
 
 For the common browser-to-worker flow:
 
@@ -471,8 +445,8 @@ const requested = await requestOutboundHttpCapability({
 ```
 
 The browser receives the same request result shape as other Powerbox helpers.
-Send it to the worker and use `claimAndStoreRequest()`, `claimRequest()`, or
-`claimedCapability()` exactly as in the API-session flow.
+Send it to the worker and use `api.powerbox().claim(...)` exactly as in the
+API-session flow.
 
 The worker route that receives this request should decide ownership. For a
 lasting connection, save the returned request result into app-owned storage:
@@ -481,28 +455,31 @@ lasting connection, save the returned request result into app-owned storage:
 // Worker route.
 const api = sandstorm(request, env);
 const requested = await request.json();
-const claimed = await api.powerbox().claimAndStoreRequest(requested, {
-  storageKey: "chosen-api-token",
-  label: "Chosen API",
-});
+const cap = await api.powerbox().claim(requested);
 
-const outbound = api.powerbox().outboundHttpCapability(claimed.capability);
-const response = await outbound.fetch("status", {
-  headers: {
-    authorization: `Bearer ${apiToken}`,
-  },
-});
-await claimed.capability.drop();
+try {
+  const token = await cap.save({ label: "Chosen API" });
+  await api.storage().put("chosen-api-token", token);
+
+  const response = await cap.fetch("status", {
+    headers: {
+      authorization: `Bearer ${apiToken}`,
+    },
+  });
+} finally {
+  await cap.drop();
+}
 ```
 
-`ClaimedCapability.fetch()` is for WebSession-shaped capabilities. Use
-`powerbox().outboundHttpCapability(capability).fetch(...)` for outbound HTTP
-grants so normal API headers such as `Authorization` are preserved and routed
-through Sandstorm's OutboundHttpSession interface.
+`cap.fetch()` supports WebSession, ApiSession, and OutboundHttpSession
+capabilities. WebSession and ApiSession capabilities accept relative paths.
+OutboundHttpSession capabilities also accept relative request paths under the
+granted base URL, so normal API headers such as `Authorization` are preserved
+and routed through Sandstorm's OutboundHttpSession interface.
 
-`claimAndStoreRequest()` accepts either the full browser result object or a raw
-Powerbox request token. If browser code uses `requestApiCapability()` or
-`requestAndClaimPowerbox()`, the helper saves the already-claimed capability
+`api.powerbox().claim(...)` accepts either the full browser result object or a
+raw Powerbox request token. If browser code uses `requestApiCapability()` or
+`requestAndClaimPowerbox()`, the helper wraps the already-claimed capability
 handle. If browser code uses `requestApiPowerbox()` or `requestPowerbox()`, the
 helper claims the request token first.
 
@@ -511,40 +488,37 @@ directly:
 
 ```js
 const { token } = await request.json();
-const claimed = await api.powerbox().claimRequest(token);
-const response = await claimed.fetch("/status");
-await claimed.drop();
-```
+const cap = await api.powerbox().claim(token);
 
-If worker code receives an already-claimed handle and wants to use it without
-saving it, wrap it with the request-local helper instead of constructing a
-capability directly:
-
-```js
-const { capability: handle } = await request.json();
-const claimed = api.powerbox().claimedCapability(handle);
+try {
+  const response = await cap.fetch("/status");
+} finally {
+  await cap.drop();
+}
 ```
 
 Later, restore the saved token, use the restored live handle, and drop it
-automatically with `fetchStored()`:
+automatically with `api.use()`:
 
 ```js
 const api = sandstorm(request, env);
-const response = await api.powerbox().fetchStored(
-  { storageKey: "chosen-api-token" },
-  "/status",
-);
+const token = await api.storage().get("chosen-api-token");
+
+if (token) {
+  const response = await api.use(token, cap => cap.fetch("/status"));
+}
 ```
 
-`fetchStored()` buffers the response before dropping the live handle. Use
-`restoreSaved()` when code needs the live handle for more than one call or for
-streaming response bodies.
+Use `api.restore(token)` directly when code needs the live handle for more than
+one call or for streaming response bodies.
 
 To revoke the stored grant, drop both the durable token and the app's stored
 copy:
 
 ```js
-await api.powerbox().dropStored({ storageKey: "chosen-api-token" });
+const token = await api.storage().get("chosen-api-token");
+if (token) await api.revoke(token);
+await api.storage().delete("chosen-api-token");
 ```
 
 Use `inspectPowerboxQuery()` while developing if a query does not show the
@@ -580,7 +554,7 @@ class Counter extends RpcTarget {
   }
 }
 
-const cap = await sandstorm(request, env).capability(new Counter());
+const cap = await sandstorm(request, env).export(new Counter());
 ```
 
 Anonymous object capabilities are transient. They exist only while the current
@@ -592,19 +566,24 @@ To make an app-defined object capability restorable, the app must give it a
 stable ID:
 
 ```js
-const counter = new Counter();
-
 export default {
   async fetch(request, env) {
-    const api = sandstorm(request, env);
-    api.registerCapability(counter, { id: "main-counter" });
-
-    const cap = await api.capability(counter, {
-      id: "main-counter",
-      persistent: true,
+    const api = sandstorm(request, env, {
+      capabilities: {
+        "main-counter": () => new Counter(),
+      },
     });
 
-    return Response.json(await cap.save({ label: "Main counter" }));
+    const durable = await api.exportDurable("main-counter", {
+      label: "Main counter",
+      storageKey: "main-counter-token",
+    });
+
+    try {
+      return Response.json({ token: durable.token });
+    } finally {
+      await durable.capability.drop();
+    }
   },
 };
 ```
@@ -629,24 +608,17 @@ If a target's behavior changes incompatibly, use a new stable ID or keep a
 compatibility adapter registered under the old ID. For example:
 
 ```js
-api.registerCapability(new ProjectSettingsV1Adapter(), {
-  id: "project-settings-v1",
-});
-api.registerCapability(new ProjectSettingsV2(), {
-  id: "project-settings-v2",
-});
-```
-
-For the common case, prefer `persistentCapability()`:
-
-```js
-const durable = await sandstorm(request, env).persistentCapability(counter, {
-  id: "main-counter",
-  storageKey: "main-counter-token",
-  label: "Main counter",
+const api = sandstorm(request, env, {
+  capabilities: {
+    "project-settings-v1": () => new ProjectSettingsV1Adapter(),
+    "project-settings-v2": () => new ProjectSettingsV2(),
+  },
 });
 ```
 
-This registers the target under the stable ID, restores a saved token from
-storage if one exists, or mints and saves a new persistent capability on first
-use.
+`api.exportDurable(id, options)` restores a saved token from storage if one
+exists, or mints and saves a new durable object capability on first use when a
+`storageKey` is provided. If the app deploys without a previously saved ID in
+the durable registry, restored callbacks for that token will fail with a clear
+missing-registry error. Restore the registry entry, migrate the token, or
+revoke the old token.
