@@ -1644,8 +1644,10 @@ public:
         outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"supportsWebFetch\":false"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"supportsOutboundHttpFetch\":true"), outboundBody);
-    KJ_REQUIRE(contains(outboundBody, "\"message\":\"outbound HTTP fetch input must be a "
-        "relative path\""), outboundBody);
+    KJ_REQUIRE(contains(outboundBody,
+        "\"message\":\"cap.fetch() on OutboundHttpSession capabilities accepts only a "
+        "relative path"), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "capability descriptor supplies the origin"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"unifiedFetch\":true"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"status\":201"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"statusText\":\"Created\""), outboundBody);

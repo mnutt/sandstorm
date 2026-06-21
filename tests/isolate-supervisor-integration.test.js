@@ -860,7 +860,8 @@ test("isolate supervisor integration suite", {
     assert.equal(typeof selfTest.json.saved, "string");
     assert.equal(selfTest.json.restored.type, "capability");
     assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
-    assert.match(selfTest.json.wrongOutboundError.message, /relative path/);
+    assert.match(selfTest.json.wrongOutboundError.message, /WebSession and ApiSession/);
+    assert.match(selfTest.json.wrongOutboundError.message, /absolute URLs are rejected/);
     assert.equal(selfTest.json.dropOriginal.ok, true);
     assert.equal(selfTest.json.fetched.status, 200);
     assert.equal(selfTest.json.fetched.headers.etag, "\"capability-echo-etag\"");
@@ -1044,7 +1045,8 @@ test("isolate supervisor integration suite", {
     assert.equal(typeof selfTest.json.saved, "string");
     assert.equal(selfTest.json.restored.type, "capability");
     assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
-    assert.match(selfTest.json.wrongOutboundError.message, /relative path/);
+    assert.match(selfTest.json.wrongOutboundError.message, /WebSession and ApiSession/);
+    assert.match(selfTest.json.wrongOutboundError.message, /absolute URLs are rejected/);
     assert.equal(selfTest.json.dropOriginal.ok, true);
     assert.equal(selfTest.json.fetched.status, 200);
     assert.equal(selfTest.json.fetched.body.ok, true);
@@ -1868,7 +1870,8 @@ test("isolate supervisor integration suite", {
       "http://sandstorm/powerbox/native-app-rpc-call?id=mock-app-object",
     ]);
     assert.equal(nativeInterfaceValidation.json.fetchError.name, "ValidationError");
-    assert.match(nativeInterfaceValidation.json.fetchError.message, /relative path/);
+    assert.match(nativeInterfaceValidation.json.fetchError.message, /OutboundHttpSession/);
+    assert.match(nativeInterfaceValidation.json.fetchError.message, /capability descriptor supplies the origin/);
     assert.deepEqual(nativeInterfaceValidation.json.outboundFetch, {
       status: 202,
       header: "present",
@@ -1883,12 +1886,12 @@ test("isolate supervisor integration suite", {
     assert.match(nativeInterfaceValidation.json.appObjectFetchError.message,
       /nativeInterface appObject/);
     assert.match(nativeInterfaceValidation.json.appObjectFetchError.message,
-      /app-defined RPC transport/);
+      /only for WebSession, ApiSession, and OutboundHttpSession/);
     assert.equal(nativeInterfaceValidation.json.appObjectOutboundError.name, "ValidationError");
     assert.match(nativeInterfaceValidation.json.appObjectOutboundError.message,
       /nativeInterface appObject/);
     assert.match(nativeInterfaceValidation.json.appObjectOutboundError.message,
-      /app-defined RPC transport/);
+      /Use cap\.rpc or cap\.call\(\) for app-defined RPC/);
     assert.deepEqual(nativeInterfaceValidation.json.appObjectNativeSlot, {
       type: "nativeCapabilitySlot",
       id: "mock-app-object",

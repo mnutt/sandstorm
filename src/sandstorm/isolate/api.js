@@ -1874,7 +1874,7 @@ async function revokeCapabilityToken(env, token) {
 async function fetchCapability(env, capability, input, init = {}) {
   const info = await capabilityInfo(env, capability);
   if (info?.nativeInterface === "outboundHttpSession") {
-    return fetchOutboundHttpCapability(capability, input, init, info);
+    return fetchOutboundHttpSession(capability, input, init, info);
   }
 
   if (info?.supportsWebFetch === false || (
@@ -1882,8 +1882,9 @@ async function fetchCapability(env, capability, input, init = {}) {
       info?.nativeInterface === "outboundHttpSession")) {
     const nativeInterface = info?.nativeInterface || "unknown";
     throw new ValidationError(
-      `Capability nativeInterface ${nativeInterface} cannot be used with fetch(); ` +
-      "use a compatible app-defined RPC transport instead");
+      `cap.fetch() is only for WebSession, ApiSession, and OutboundHttpSession capabilities; ` +
+      `nativeInterface ${nativeInterface} cannot be fetched. Use cap.rpc or cap.call() ` +
+      `for app-defined RPC capabilities`);
   }
 
   let request;
@@ -1896,7 +1897,9 @@ async function fetchCapability(env, capability, input, init = {}) {
 
   const url = new URL(request.url);
   if (url.origin !== "http://sandstorm-capability") {
-    throw new ValidationError("WebSession and ApiSession capability fetch input must be a relative path");
+    throw new ValidationError(
+      `cap.fetch() on WebSession and ApiSession capabilities accepts only a relative path ` +
+      `such as "/path?query"; absolute URLs are rejected`);
   }
 
   const params = new URLSearchParams({
@@ -1930,7 +1933,7 @@ async function fetchCapability(env, capability, input, init = {}) {
     });
 }
 
-function outboundHttpRequest(input, init = {}) {
+function outboundHttpSessionRequest(input, init = {}) {
   let request;
   if (input instanceof Request) {
     request = init === undefined ? input : new Request(input, init);
@@ -1941,7 +1944,10 @@ function outboundHttpRequest(input, init = {}) {
 
   const url = new URL(request.url);
   if (url.origin !== "http://sandstorm-outbound") {
-    throw new ValidationError("outbound HTTP fetch input must be a relative path");
+    throw new ValidationError(
+      `cap.fetch() on OutboundHttpSession capabilities accepts only a relative path ` +
+      `such as "v1/resource" or "/v1/resource"; absolute URLs are rejected because ` +
+      `the capability descriptor supplies the origin`);
   }
 
   let path = url.pathname;
@@ -1951,7 +1957,7 @@ function outboundHttpRequest(input, init = {}) {
   return { request, path: `${path}${url.search}` };
 }
 
-async function fetchOutboundHttpCapability(capability, input, init = {}, info = undefined) {
+async function fetchOutboundHttpSession(capability, input, init = {}, info = undefined) {
   if (info === undefined) {
     info = await capabilityInfo(capability.env, capability);
   }
@@ -1960,11 +1966,13 @@ async function fetchOutboundHttpCapability(capability, input, init = {}, info = 
       info?.nativeInterface !== undefined &&
       info.nativeInterface !== "unknown" &&
       info.nativeInterface !== "outboundHttpSession")) {
+    const nativeInterface = info?.nativeInterface || "unknown";
     throw new ValidationError(
-      `Capability nativeInterface ${info.nativeInterface} cannot be used as outbound HTTP`);
+      `cap.fetch() on OutboundHttpSession capabilities cannot use nativeInterface ` +
+      `${nativeInterface}; use app-defined RPC for appObject capabilities`);
   }
 
-  const { request, path } = outboundHttpRequest(input, init);
+  const { request, path } = outboundHttpSessionRequest(input, init);
   const params = new URLSearchParams({
     id: capabilityId(capability),
     method: request.method || "GET",
