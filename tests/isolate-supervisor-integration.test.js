@@ -1866,14 +1866,23 @@ test("isolate supervisor integration suite", {
     assert.equal(nativeInterfaceValidation.json.ok, true);
     assert.deepEqual(nativeInterfaceValidation.json.calls, [
       "http://sandstorm/capabilities/claimed?id=mock-outbound",
+      "http://sandstorm/powerbox/outbound-http-fetch?id=mock-outbound&method=GET&path=v1%2Fmock-fetch%3Fcase%3Dnative-interface",
       "http://sandstorm/capabilities/claimed?id=mock-app-object",
       "http://sandstorm/powerbox/native-app-rpc-call?id=mock-app-object",
       "http://sandstorm/powerbox/native-app-rpc-call?id=mock-app-object",
     ]);
     assert.equal(nativeInterfaceValidation.json.fetchError.name, "ValidationError");
-    assert.match(nativeInterfaceValidation.json.fetchError.message,
-      /nativeInterface outboundHttpSession/);
-    assert.match(nativeInterfaceValidation.json.fetchError.message, /asOutboundHttp\(\)\.fetch/);
+    assert.match(nativeInterfaceValidation.json.fetchError.message, /relative path/);
+    assert.deepEqual(nativeInterfaceValidation.json.outboundFetch, {
+      status: 202,
+      header: "present",
+      body: {
+        ok: true,
+        id: "mock-outbound",
+        method: "GET",
+        path: "v1/mock-fetch?case=native-interface",
+      },
+    });
     assert.equal(nativeInterfaceValidation.json.appObjectFetchError.name, "ValidationError");
     assert.match(nativeInterfaceValidation.json.appObjectFetchError.message,
       /nativeInterface appObject/);

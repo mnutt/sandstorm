@@ -1944,15 +1944,17 @@ async function dropSavedCapability(env, token) {
 
 async function fetchClaimedCapability(env, capability, input, init = {}) {
   const info = await claimedCapabilityInfo(env, capability);
+  if (info?.nativeInterface === "outboundHttpSession") {
+    return fetchOutboundHttpCapability(capability, input, init, info);
+  }
+
   if (info?.supportsWebFetch === false || (
       info?.supportsWebFetch === undefined &&
       info?.nativeInterface === "outboundHttpSession")) {
     const nativeInterface = info?.nativeInterface || "unknown";
-    const hint = nativeInterface === "outboundHttpSession"
-      ? "use asOutboundHttp().fetch() instead"
-      : "use a compatible app-defined RPC transport instead";
     throw new ValidationError(
-      `ClaimedCapability nativeInterface ${nativeInterface} cannot be used with fetch(); ${hint}`);
+      `ClaimedCapability nativeInterface ${nativeInterface} cannot be used with fetch(); ` +
+      "use a compatible app-defined RPC transport instead");
   }
 
   let request;
@@ -1964,6 +1966,10 @@ async function fetchClaimedCapability(env, capability, input, init = {}) {
   }
 
   const url = new URL(request.url);
+  if (url.origin !== "http://sandstorm-capability") {
+    throw new ValidationError("WebSession and ApiSession capability fetch input must be a relative path");
+  }
+
   const params = new URLSearchParams({
     id: capabilityId(capability),
     method: request.method || "GET",
@@ -2016,8 +2022,10 @@ function outboundHttpRequest(input, init = {}) {
   return { request, path: `${path}${url.search}` };
 }
 
-async function fetchOutboundHttpCapability(capability, input, init = {}) {
-  const info = await claimedCapabilityInfo(capability.env, capability);
+async function fetchOutboundHttpCapability(capability, input, init = {}, info = undefined) {
+  if (info === undefined) {
+    info = await claimedCapabilityInfo(capability.env, capability);
+  }
   if (info?.supportsOutboundHttpFetch === false || (
       info?.supportsOutboundHttpFetch === undefined &&
       info?.nativeInterface !== undefined &&

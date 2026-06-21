@@ -950,15 +950,14 @@ export default {
       const capabilityInfo = await capability.info();
       let fetchError = null;
       try {
-        await capability.fetch("/should-not-fetch");
+        await capability.fetch("https://api.example.test/v1/should-not-fetch");
       } catch (error) {
         fetchError = {
           name: String(error?.name || "Error"),
           message: String(error?.message || error),
         };
       }
-      const outbound = api.powerbox().outboundHttpCapability(capability);
-      const response = await outbound.fetch("v1/chat/completions?model=test", {
+      const response = await capability.fetch("v1/chat/completions?model=test", {
         method: "POST",
         headers: {
           authorization: "Bearer isolate-test",
@@ -971,7 +970,7 @@ export default {
         ok: true,
         capabilityInfo,
         fetchError,
-        outboundClass: outbound.constructor.name === "OutboundHttpCapability",
+        unifiedFetch: true,
         status: response.status,
         statusText: response.statusText,
         contentType: response.headers.get("content-type"),
@@ -1012,6 +1011,19 @@ export default {
               return Response.json(await dispatchNativeAppRpcCall(
                 nativeRpcTarget, JSON.parse(String(init?.body || "{}"))));
             }
+            if (parsed.pathname === "/powerbox/outbound-http-fetch") {
+              return Response.json({
+                ok: true,
+                id: parsed.searchParams.get("id"),
+                method: parsed.searchParams.get("method"),
+                path: parsed.searchParams.get("path"),
+              }, {
+                status: 202,
+                headers: {
+                  "x-mock-outbound": "present",
+                },
+              });
+            }
             return Response.json({ ok: false, error: "unexpected mock fetch" }, { status: 500 });
           },
         },
@@ -1019,13 +1031,19 @@ export default {
       const capability = new ClaimedCapability(mockEnv, "mock-outbound");
       let fetchError = null;
       try {
-        await capability.fetch("/should-not-fetch");
+        await capability.fetch("https://api.example.test/v1/should-not-fetch");
       } catch (error) {
         fetchError = {
           name: String(error?.name || "Error"),
           message: String(error?.message || error),
         };
       }
+      const outboundFetchResponse = await capability.fetch("v1/mock-fetch?case=native-interface");
+      const outboundFetch = {
+        status: outboundFetchResponse.status,
+        header: outboundFetchResponse.headers.get("x-mock-outbound"),
+        body: await outboundFetchResponse.json(),
+      };
       const appObjectCapability = new ClaimedCapability(mockEnv, "mock-app-object");
       let appObjectFetchError = null;
       try {
@@ -1118,6 +1136,7 @@ export default {
         ok: true,
         calls,
         fetchError,
+        outboundFetch,
         appObjectFetchError,
         appObjectOutboundError,
         nativeRpcTransportCalls,
