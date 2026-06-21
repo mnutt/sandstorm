@@ -290,7 +290,7 @@ function nativeAppRpcSerializationContext(options = "value", defaultName = "valu
     name: options.name === undefined
       ? defaultName
       : validate.string(options.name, "native app RPC serialization options name"),
-    exportRpcTargets: options.exportRpcTargets === true,
+    exportLocalRpcTargets: options.exportLocalRpcTargets === true,
   };
   if (options.exportCapabilitySlot !== undefined && options.exportCapabilitySlot !== null) {
     if (typeof options.exportCapabilitySlot !== "function") {
@@ -307,7 +307,7 @@ function nativeAppRpcSerializationChild(context, name) {
   return {
     name,
     exportCapabilitySlot: context.exportCapabilitySlot,
-    exportRpcTargets: context.exportRpcTargets,
+    exportLocalRpcTargets: context.exportLocalRpcTargets === true,
   };
 }
 
@@ -380,7 +380,7 @@ export async function serializeNativeAppRpcValueAsync(value, options = "value") 
   const context = nativeAppRpcSerializationContext(options);
   const name = context.name;
   if (value instanceof RpcTarget) {
-    if (!context.exportRpcTargets || !context.exportCapabilitySlot) {
+    if (!context.exportLocalRpcTargets || !context.exportCapabilitySlot) {
       throw new ValidationError(
         `${name} must be explicitly exported with api.export() before native app RPC serialization`);
     }
@@ -569,7 +569,7 @@ export async function serializeNativeAppRpcResultAsync(value, options = {}) {
     value: await serializeNativeAppRpcValueAsync(value, {
       ...nativeAppRpcSerializationContext(options, "result"),
       name: "result",
-      exportRpcTargets: true,
+      exportLocalRpcTargets: true,
     }),
   };
 }
@@ -896,7 +896,6 @@ export function createCapabilityNativeAppRpcStub(capability, options = {}) {
         return {
           serializationOptions: {
             ...options,
-            exportRpcTargets: false,
             exportCapabilitySlot: options.exportCapabilitySlot ??
               ((value, context) => exportCapabilityNativeAppRpcSlot(
                 capability.env, value, context, temporaryCapabilities)),
