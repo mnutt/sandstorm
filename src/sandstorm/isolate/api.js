@@ -2618,8 +2618,6 @@ export function sandstorm(request, env, options = {}) {
     export: (target, options = {}) => exportObjectCapability(env, target, options),
     withExport: (target, fn, options = {}) => withExportedCapability(env, target, fn, options),
     exportDurable,
-    serveObjectCapabilities: () => serveObjectCapability(request, env, durableRegistry),
-    servePowerboxDescriptors: () => servePowerboxDescriptors(request, env),
     serveSystemRoutes: async () => await servePowerboxDescriptors(request, env) ||
       await serveObjectCapability(request, env, durableRegistry),
     apiTarget: () => apiTarget(request, env),

@@ -591,8 +591,6 @@ declare module "sandstorm:api" {
       Promise<DurableObjectCapabilityResult>;
     exportDurable(id: string, options: DurableObjectCapabilityOptions):
       Promise<DurableObjectCapabilityResult>;
-    serveObjectCapabilities(): Promise<Response | null>;
-    servePowerboxDescriptors(): Promise<Response | null>;
     serveSystemRoutes(): Promise<Response | null>;
     apiTarget(): SandstormApiTarget;
     rpcClientScript(): string;
