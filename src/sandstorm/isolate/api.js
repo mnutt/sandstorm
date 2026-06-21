@@ -2152,10 +2152,6 @@ export function powerbox(request, env) {
       return outboundHttpPowerboxDescriptor(env, options);
     },
 
-    claimedCapability(capability) {
-      return new Capability(env, capabilityId(capability));
-    },
-
     async claim(result, options = {}) {
       if (typeof result === "string") {
         return claimToken(result, options);
@@ -2176,12 +2172,7 @@ export function powerbox(request, env) {
       throw new ValidationError("Powerbox claim result must contain token or capability");
     },
 
-    offeredCapability() {
-      const id = header(request, "x-sandstorm-offered-capability-id");
-      return id ? new Capability(env, id) : undefined;
-    },
-
-    offeredCapabilityInfo() {
+    offered() {
       const id = header(request, "x-sandstorm-offered-capability-id");
       const capability = id ? new Capability(env, id) : undefined;
       if (!capability) {
@@ -2305,20 +2296,12 @@ class PowerboxRpcTarget extends RpcTarget {
     return powerbox(this.#request, this.#env).outboundHttpDescriptor(options || {});
   }
 
-  claimedCapability(capability) {
-    return powerbox(this.#request, this.#env).claimedCapability(capability);
-  }
-
   async claim(result, options) {
     return powerbox(this.#request, this.#env).claim(result, options || {});
   }
 
-  offeredCapability() {
-    return powerbox(this.#request, this.#env).offeredCapability();
-  }
-
-  offeredCapabilityInfo() {
-    return powerbox(this.#request, this.#env).offeredCapabilityInfo();
+  offered() {
+    return powerbox(this.#request, this.#env).offered();
   }
 
   async offer() {

@@ -501,13 +501,11 @@ declare module "sandstorm:api" {
   export interface PowerboxApi {
     apiSessionDescriptor(options: ApiSessionPowerboxOptions): Promise<string>;
     outboundHttpDescriptor(options: OutboundHttpPowerboxOptions): Promise<string>;
-    claimedCapability(capability: CapabilityHandle | string): Capability;
     claim(
       result: string | PowerboxRequestResult,
       options?: ClaimRequestOptions,
     ): Promise<Capability>;
-    offeredCapability(): Capability | undefined;
-    offeredCapabilityInfo(): OfferedCapabilityInfo | undefined;
+    offered(): OfferedCapabilityInfo | undefined;
     offer(
       capability: CapabilityHandle | string,
       options?: SessionCapabilityOptions,
