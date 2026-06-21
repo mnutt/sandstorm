@@ -1644,11 +1644,9 @@ public:
         outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"supportsWebFetch\":false"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"supportsOutboundHttpFetch\":true"), outboundBody);
-    KJ_REQUIRE(contains(outboundBody,
-        "\"message\":\"ClaimedCapability nativeInterface outboundHttpSession cannot be used "
-        "with fetch(); use asOutboundHttp().fetch() instead\""),
-        outboundBody);
-    KJ_REQUIRE(contains(outboundBody, "\"outboundClass\":true"), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"message\":\"outbound HTTP fetch input must be a "
+        "relative path\""), outboundBody);
+    KJ_REQUIRE(contains(outboundBody, "\"unifiedFetch\":true"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"status\":201"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"statusText\":\"Created\""), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"contentType\":\"application/json; charset=utf-8\""),
