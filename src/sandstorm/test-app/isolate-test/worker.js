@@ -1737,6 +1737,90 @@ export default {
       });
     }
 
+    if (url.pathname === "/powerbox-grants-helper-self-test") {
+      const grantApi = sandstorm(request, env);
+      const grants = grantApi.powerboxGrants({
+        routePrefix: "/grant-ui-test",
+        grants: {
+          shared: {
+            title: "Shared test capability",
+            description: "Exercises generated Powerbox grant routes.",
+            storageKey: "powerbox-grants-helper-token",
+            descriptor: TEST_PROVIDER_DESCRIPTOR,
+            requiredPermissions: ["view"],
+            saveLabel: "Shared test capability",
+            save: { label: "Shared test capability" },
+            async test(capability) {
+              const response = await capability.fetch("/value?source=grant-test");
+              return {
+                status: response.status,
+                body: await response.json(),
+              };
+            },
+          },
+        },
+      });
+
+      const page = await grants.serve(new Request("http://app/grant-ui-test"));
+      const client = await grants.serve(new Request("http://app/grant-ui-test/client.js"));
+      const rpcClient = await grants.serve(new Request("http://app/grant-ui-test/rpc-client.js"));
+      const configBefore = await (await grants.serve(
+        new Request("http://app/grant-ui-test/config"))).json();
+      const statusBefore = await (await grants.serve(
+        new Request("http://app/grant-ui-test/status?id=shared"))).json();
+
+      const capability = await grantApi.webSession({
+        pathPrefix: "/browser-powerbox-shared",
+      });
+      const claim = await (await grants.serve(new Request(
+        "http://app/grant-ui-test/grants/shared/claim", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ capability }),
+        }))).json();
+
+      const token = await grants.token("shared");
+      const used = await grants.use("shared", async (restored) => {
+        const response = await restored.fetch("/value?source=grant-use");
+        return {
+          capabilityClass: restored instanceof Capability,
+          status: response.status,
+          body: await response.json(),
+        };
+      });
+      const statusAfterClaim = await grants.status("shared");
+      const revoke = await (await grants.serve(new Request(
+        "http://app/grant-ui-test/grants/shared/revoke", { method: "POST" }))).json();
+      const statusAfterRevoke = await grants.status("shared");
+
+      return Response.json({
+        ok: true,
+        page: {
+          status: page.status,
+          contentType: page.headers.get("content-type"),
+          hasElement: (await page.text()).includes("sandstorm-powerbox-grant"),
+        },
+        client: {
+          status: client.status,
+          contentType: client.headers.get("content-type"),
+          hasRequestGrant: (await client.text()).includes("requestGrant"),
+        },
+        rpcClient: {
+          status: rpcClient.status,
+          contentType: rpcClient.headers.get("content-type"),
+          hasRequestPowerbox: (await rpcClient.text()).includes("requestPowerbox"),
+        },
+        configBefore,
+        statusBefore,
+        claim,
+        tokenType: typeof token,
+        used,
+        statusAfterClaim,
+        revoke,
+        statusAfterRevoke,
+      });
+    }
+
     if (url.pathname === "/export-object-capability") {
       const capability = await sandstorm(request, env).export(new CounterCapability());
       return Response.json({

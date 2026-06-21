@@ -17,6 +17,7 @@ export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
 
 const OBJECT_CAPABILITY_PREFIX = "/__sandstorm/object-capabilities";
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
+const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";
 const exportedObjectTargets = new Map();
 const exportedObjectCapabilityIds = new Map();
 const objectCapabilityIds = new Map();
@@ -1528,6 +1529,615 @@ export async function servePowerboxDescriptors(request, env) {
   return null;
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
+function routePrefix(options = {}, fallback, name) {
+  const value = options.routePrefix ?? options.prefix ?? fallback;
+  const prefix = validate.string(value, name, { minLength: 1, maxLength: 1024 });
+  if (!prefix.startsWith("/")) {
+    throw new ValidationError(`${name} must start with '/'`);
+  }
+  if (prefix.length > 1 && prefix.endsWith("/")) {
+    throw new ValidationError(`${name} must not end with '/'`);
+  }
+  if (prefix.includes("://") || prefix.includes("?") || prefix.includes("#")) {
+    throw new ValidationError(`${name} must be a path prefix`);
+  }
+  return prefix;
+}
+
+function normalizePowerboxGrantId(id, name = "grant id") {
+  const value = validate.string(id, name, { minLength: 1, maxLength: 128 });
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
+    throw new ValidationError(`${name} must contain only letters, numbers, '.', '_', and '-'`);
+  }
+  return value;
+}
+
+function normalizePowerboxGrantText(value, fallback, name, maxLength = 256) {
+  let text = value ?? fallback;
+  if (text && typeof text === "object" && typeof text.defaultText === "string") {
+    text = text.defaultText;
+  }
+  return validate.string(text, name, { minLength: 1, maxLength });
+}
+
+function normalizePowerboxGrantSaveLabel(value, fallback, name) {
+  if (value === undefined || value === null) {
+    return { defaultText: fallback };
+  }
+  if (typeof value === "string") {
+    return { defaultText: validate.string(value, name, { minLength: 1, maxLength: 256 }) };
+  }
+  if (value && typeof value === "object" && typeof value.defaultText === "string") {
+    return {
+      defaultText: validate.string(value.defaultText, `${name}.defaultText`, {
+        minLength: 1,
+        maxLength: 256,
+      }),
+    };
+  }
+  throw new ValidationError(`${name} must be a string or { defaultText }`);
+}
+
+function cloneJsonValue(value, name) {
+  if (value === undefined) return undefined;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    throw new ValidationError(`${name} must be JSON-serializable`);
+  }
+}
+
+function publicPowerboxGrantQuery(spec) {
+  if (spec.query !== undefined) {
+    return cloneJsonValue(spec.query, "grant.query");
+  }
+  if (spec.descriptors !== undefined) {
+    if (!Array.isArray(spec.descriptors)) {
+      throw new ValidationError("grant.descriptors must be an array");
+    }
+    return spec.descriptors.map((descriptor, index) =>
+      validatePackedPowerboxDescriptor(descriptor, `grant.descriptors[${index}]`));
+  }
+  if (spec.descriptor !== undefined || spec.powerboxDescriptor !== undefined) {
+    return [validatePackedPowerboxDescriptor(
+      spec.powerboxDescriptor ?? spec.descriptor,
+      spec.powerboxDescriptor === undefined ? "grant.descriptor" : "grant.powerboxDescriptor")];
+  }
+  if (spec.apiSession !== undefined || spec.apiSessionDescriptor !== undefined) {
+    const descriptor = spec.apiSession ?? spec.apiSessionDescriptor;
+    return { apiSession: cloneJsonValue(descriptor, "grant.apiSession") };
+  }
+  if (spec.outboundHttp !== undefined || spec.outboundHttpDescriptor !== undefined) {
+    const descriptor = spec.outboundHttp ?? spec.outboundHttpDescriptor;
+    return { outboundHttp: cloneJsonValue(descriptor, "grant.outboundHttp") };
+  }
+  if (spec.query === null) {
+    return null;
+  }
+  throw new ValidationError("Powerbox grant must specify query, descriptor, descriptors, apiSession, or outboundHttp");
+}
+
+function powerboxGrantClaimDescriptorOptions(spec) {
+  if (spec.claimOptions) {
+    return { ...spec.claimOptions };
+  }
+  if (spec.descriptor !== undefined || spec.powerboxDescriptor !== undefined) {
+    return { descriptor: spec.powerboxDescriptor ?? spec.descriptor };
+  }
+  if (spec.apiSession !== undefined || spec.apiSessionDescriptor !== undefined) {
+    return { apiSession: spec.apiSession ?? spec.apiSessionDescriptor };
+  }
+  if (spec.outboundHttp !== undefined || spec.outboundHttpDescriptor !== undefined) {
+    return { outboundHttp: spec.outboundHttp ?? spec.outboundHttpDescriptor };
+  }
+  return {};
+}
+
+function normalizePowerboxGrant(id, spec) {
+  if (!spec || typeof spec !== "object") {
+    throw new ValidationError(`Powerbox grant ${id} must be an object`);
+  }
+
+  const grantId = normalizePowerboxGrantId(spec.id ?? id);
+  const title = normalizePowerboxGrantText(spec.title ?? spec.label, grantId, `grants.${grantId}.title`);
+  const description = spec.description === undefined || spec.description === null
+    ? ""
+    : normalizePowerboxGrantText(spec.description, "", `grants.${grantId}.description`, 1024);
+  const storageKey = validate.storageKey(spec.storageKey ?? spec.key ?? grantId, `grants.${grantId}.storageKey`);
+  const requiredPermissions = permissionNames({
+    requiredPermissions: spec.requiredPermissions ?? spec.claimOptions?.requiredPermissions,
+  });
+  const saveOptions = {
+    ...(spec.save || {}),
+    label: (spec.save && (spec.save.label ?? spec.save.saveLabel)) ?? spec.saveLabel ?? spec.label ?? title,
+  };
+  requiredSaveLabel(saveOptions, `grants.${grantId}.save.label`);
+
+  return {
+    id: grantId,
+    title,
+    description,
+    storageKey,
+    query: publicPowerboxGrantQuery(spec),
+    saveLabel: normalizePowerboxGrantSaveLabel(
+      spec.saveLabel, title, `grants.${grantId}.saveLabel`),
+    requiredPermissions,
+    saveOptions,
+    claimOptions: {
+      ...powerboxGrantClaimDescriptorOptions(spec),
+      requiredPermissions,
+    },
+    test: spec.test,
+  };
+}
+
+function normalizePowerboxGrantList(options = {}) {
+  const source = options.grants ?? options;
+  const entries = Array.isArray(source)
+    ? source.map((spec) => [spec && spec.id, spec])
+    : Object.entries(source || {});
+  const grants = new Map();
+
+  for (const [id, spec] of entries) {
+    const grant = normalizePowerboxGrant(id, spec);
+    if (grants.has(grant.id)) {
+      throw new ValidationError(`duplicate Powerbox grant id: ${grant.id}`);
+    }
+    grants.set(grant.id, grant);
+  }
+
+  return grants;
+}
+
+function publicPowerboxGrant(grant, connected = false) {
+  return {
+    id: grant.id,
+    title: grant.title,
+    description: grant.description,
+    storageKey: grant.storageKey,
+    query: grant.query,
+    saveLabel: grant.saveLabel,
+    requiredPermissions: grant.requiredPermissions,
+    connected,
+  };
+}
+
+async function powerboxGrantStatus(env, grant) {
+  const token = await storage(env).get(grant.storageKey);
+  return {
+    ok: true,
+    id: grant.id,
+    title: grant.title,
+    description: grant.description,
+    storageKey: grant.storageKey,
+    connected: Boolean(token),
+  };
+}
+
+async function powerboxGrantConfig(env, grants, prefix = POWERBOX_GRANTS_PREFIX) {
+  const publicGrants = [];
+  for (const grant of grants.values()) {
+    const status = await powerboxGrantStatus(env, grant);
+    publicGrants.push(publicPowerboxGrant(grant, status.connected));
+  }
+  return {
+    ok: true,
+    routePrefix: prefix,
+    grants: publicGrants,
+  };
+}
+
+function powerboxGrantErrorResponse(error, status = 400) {
+  return Response.json({
+    ok: false,
+    error: String(error?.message || error),
+  }, { status });
+}
+
+function powerboxGrantClientScript(prefix) {
+  const rpcClientPath = `${prefix}/rpc-client.js`;
+  return `import { inspectPowerboxQuery, requestPowerbox } from ${JSON.stringify(rpcClientPath)};
+
+const ROUTE_PREFIX = ${JSON.stringify(prefix)};
+
+async function readJsonResponse(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return { ok: false, error: text || "HTTP " + response.status };
+  }
+}
+
+async function jsonFetch(path, options = {}) {
+  const response = await fetch(new URL(path, window.location.href), options);
+  const body = await readJsonResponse(response);
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || "Powerbox grant request failed with " + response.status);
+  }
+  return body;
+}
+
+export async function grantConfig() {
+  return jsonFetch(ROUTE_PREFIX + "/config");
+}
+
+export async function grantStatus(id = undefined) {
+  const suffix = id === undefined ? "" : "?id=" + encodeURIComponent(id);
+  return jsonFetch(ROUTE_PREFIX + "/status" + suffix);
+}
+
+async function grantById(id) {
+  const config = await grantConfig();
+  const grant = config.grants.find((candidate) => candidate.id === id);
+  if (!grant) {
+    throw new Error("Unknown Powerbox grant: " + id);
+  }
+  return grant;
+}
+
+export async function requestGrant(id) {
+  const grant = await grantById(id);
+  let query = null;
+  if (grant.query !== null && grant.query !== undefined) {
+    const inspection = await inspectPowerboxQuery(grant.query);
+    query = inspection.descriptors.map((descriptor) => descriptor.descriptor);
+  }
+  const requested = await requestPowerbox(query, { saveLabel: grant.saveLabel });
+  return jsonFetch(ROUTE_PREFIX + "/grants/" + encodeURIComponent(id) + "/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify(requested),
+  });
+}
+
+export async function revokeGrant(id) {
+  return jsonFetch(ROUTE_PREFIX + "/grants/" + encodeURIComponent(id) + "/revoke", {
+    method: "POST",
+  });
+}
+
+function renderGrant(element, state) {
+  element.textContent = "";
+  const root = document.createElement("span");
+  root.className = "sandstorm-powerbox-grant";
+
+  const status = document.createElement("span");
+  status.className = "sandstorm-powerbox-grant-status";
+  status.textContent = state.connected ? "connected" : "not connected";
+  root.append(status);
+
+  const connect = document.createElement("button");
+  connect.type = "button";
+  connect.textContent = state.connected ? "Reconnect" : "Connect";
+  connect.addEventListener("click", async () => {
+    connect.disabled = true;
+    revoke.disabled = true;
+    try {
+      const result = await requestGrant(state.id);
+      renderGrant(element, result.status);
+      element.dispatchEvent(new CustomEvent("sandstorm-powerbox-grant", { detail: result }));
+    } catch (error) {
+      renderError(element, state, error);
+    }
+  });
+  root.append(connect);
+
+  const revoke = document.createElement("button");
+  revoke.type = "button";
+  revoke.textContent = "Disconnect";
+  revoke.disabled = !state.connected;
+  revoke.addEventListener("click", async () => {
+    connect.disabled = true;
+    revoke.disabled = true;
+    try {
+      const result = await revokeGrant(state.id);
+      renderGrant(element, result.status);
+      element.dispatchEvent(new CustomEvent("sandstorm-powerbox-revoke", { detail: result }));
+    } catch (error) {
+      renderError(element, state, error);
+    }
+  });
+  root.append(revoke);
+
+  element.append(root);
+}
+
+function renderError(element, state, error) {
+  renderGrant(element, state);
+  const message = document.createElement("span");
+  message.className = "sandstorm-powerbox-grant-error";
+  message.textContent = error.message || String(error);
+  element.append(message);
+}
+
+class SandstormPowerboxGrantElement extends HTMLElement {
+  connectedCallback() {
+    this.refresh();
+  }
+
+  async refresh() {
+    const id = this.getAttribute("grant") || this.getAttribute("grant-id");
+    if (!id) {
+      this.textContent = "missing grant";
+      return;
+    }
+    try {
+      const result = await grantStatus(id);
+      renderGrant(this, result.status);
+    } catch (error) {
+      this.textContent = error.message || String(error);
+    }
+  }
+}
+
+if (typeof customElements !== "undefined" &&
+    !customElements.get("sandstorm-powerbox-grant")) {
+  customElements.define("sandstorm-powerbox-grant", SandstormPowerboxGrantElement);
+}
+`;
+}
+
+function powerboxGrantPage(grants, prefix) {
+  const rows = Array.from(grants.values()).map((grant) => `
+        <section>
+          <div>
+            <h2>${escapeHtml(grant.title)}</h2>
+            ${grant.description ? `<p>${escapeHtml(grant.description)}</p>` : ""}
+          </div>
+          <sandstorm-powerbox-grant grant="${escapeHtml(grant.id)}"></sandstorm-powerbox-grant>
+        </section>`).join("");
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Powerbox Grants</title>
+    <style>
+      body {
+        color: #1f2933;
+        font: 15px/1.5 system-ui, sans-serif;
+        margin: 2rem;
+        max-width: 52rem;
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin: 0 0 1.25rem;
+      }
+      section {
+        align-items: center;
+        border-top: 1px solid #d8e0e8;
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: minmax(0, 1fr) auto;
+        padding: 1rem 0;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 0;
+      }
+      p {
+        color: #52616f;
+        margin: 0.25rem 0 0;
+      }
+      .sandstorm-powerbox-grant {
+        align-items: center;
+        display: inline-flex;
+        gap: 0.5rem;
+      }
+      .sandstorm-powerbox-grant-status {
+        color: #52616f;
+        min-width: 7rem;
+      }
+      .sandstorm-powerbox-grant-error {
+        color: #8a1f11;
+        display: block;
+        margin-top: 0.35rem;
+      }
+      button {
+        background: #174ea6;
+        border: 1px solid #174ea6;
+        color: white;
+        cursor: pointer;
+        font: inherit;
+        padding: 0.45rem 0.7rem;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+      button + button {
+        background: white;
+        color: #174ea6;
+      }
+      @media (max-width: 640px) {
+        body {
+          margin: 1rem;
+        }
+        section {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+    <script type="module" src="${escapeHtml(prefix)}/client.js"></script>
+  </head>
+  <body>
+    <h1>Powerbox Grants</h1>
+    <main>${rows}</main>
+  </body>
+</html>`;
+}
+
+function powerboxGrantFromRoute(grants, encodedId) {
+  const id = normalizePowerboxGrantId(decodeURIComponent(encodedId || ""), "grant id");
+  const grant = grants.get(id);
+  if (!grant) {
+    throw new ValidationError(`unknown Powerbox grant: ${id}`);
+  }
+  return grant;
+}
+
+export function powerboxGrants(request, env, options = {}) {
+  const prefix = routePrefix(options, POWERBOX_GRANTS_PREFIX, "Powerbox grants routePrefix");
+  const grants = normalizePowerboxGrantList(options);
+  const store = storage(env);
+
+  async function status(id = undefined) {
+    if (id !== undefined && id !== null) {
+      const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
+      return {
+        ok: true,
+        status: await powerboxGrantStatus(env, grant),
+      };
+    }
+
+    const statuses = [];
+    for (const grant of grants.values()) {
+      statuses.push(await powerboxGrantStatus(env, grant));
+    }
+    return {
+      ok: true,
+      statuses,
+    };
+  }
+
+  async function claim(id, result) {
+    const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
+    const cap = await powerbox(request, env).claim(result, grant.claimOptions);
+    let token;
+    try {
+      token = await cap.save(grant.saveOptions);
+      await store.put(grant.storageKey, token);
+      let testResult;
+      if (grant.test !== undefined) {
+        if (typeof grant.test !== "function") {
+          throw new ValidationError(`Powerbox grant ${grant.id} test must be a function`);
+        }
+        testResult = await grant.test(cap);
+      }
+      return {
+        ok: true,
+        id: grant.id,
+        storageKey: grant.storageKey,
+        status: await powerboxGrantStatus(env, grant),
+        test: testResult,
+      };
+    } catch (error) {
+      if (token) {
+        await revokeCapabilityToken(env, token).catch(() => {});
+        await store.delete(grant.storageKey).catch(() => {});
+      }
+      throw error;
+    } finally {
+      await cap.drop();
+    }
+  }
+
+  async function revoke(id) {
+    const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
+    const token = await store.get(grant.storageKey);
+    if (!token) {
+      return {
+        ok: true,
+        id: grant.id,
+        storageKey: grant.storageKey,
+        revoked: false,
+        deleted: await store.delete(grant.storageKey),
+        status: await powerboxGrantStatus(env, grant),
+      };
+    }
+
+    const revoked = await revokeCapabilityToken(env, token);
+    const deleted = await store.delete(grant.storageKey);
+    return {
+      ok: true,
+      id: grant.id,
+      storageKey: grant.storageKey,
+      revoked: true,
+      revoke: revoked,
+      deleted,
+      status: await powerboxGrantStatus(env, grant),
+    };
+  }
+
+  return {
+    config: () => powerboxGrantConfig(env, grants, prefix),
+    status,
+    claim,
+    revoke,
+    async use(id, fn) {
+      const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
+      const token = await store.get(grant.storageKey);
+      if (!token) {
+        throw new Error(`missing saved token for Powerbox grant: ${grant.id}`);
+      }
+      return useCapabilityToken(env, token, fn);
+    },
+    token(id) {
+      const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
+      return store.get(grant.storageKey);
+    },
+    async serve(routeRequest = request) {
+      const url = new URL(routeRequest.url);
+      if (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) {
+        return null;
+      }
+
+      try {
+        if ((url.pathname === prefix || url.pathname === `${prefix}/`) &&
+            routeRequest.method === "GET") {
+          return new Response(powerboxGrantPage(grants, prefix), {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+
+        if (url.pathname === `${prefix}/client.js` && routeRequest.method === "GET") {
+          return new Response(powerboxGrantClientScript(prefix), {
+            headers: { "content-type": "text/javascript; charset=utf-8" },
+          });
+        }
+
+        if (url.pathname === `${prefix}/rpc-client.js` && routeRequest.method === "GET") {
+          return new Response(rpcClientScript(), {
+            headers: { "content-type": "text/javascript; charset=utf-8" },
+          });
+        }
+
+        if (url.pathname === `${prefix}/config` && routeRequest.method === "GET") {
+          return Response.json(await powerboxGrantConfig(env, grants, prefix));
+        }
+
+        if (url.pathname === `${prefix}/status` && routeRequest.method === "GET") {
+          return Response.json(await status(url.searchParams.get("id") ?? undefined));
+        }
+
+        const match = url.pathname.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/grants/([^/]+)/(claim|revoke)$`));
+        if (match && routeRequest.method === "POST") {
+          const grant = powerboxGrantFromRoute(grants, match[1]);
+          if (match[2] === "claim") {
+            return Response.json(await claim(grant.id, await routeRequest.json()));
+          }
+          return Response.json(await revoke(grant.id));
+        }
+
+        return new Response("Not Found", { status: 404 });
+      } catch (error) {
+        return powerboxGrantErrorResponse(error);
+      }
+    },
+  };
+}
+
 export async function serveSystemRoutes(request, env) {
   return await servePowerboxDescriptors(request, env) ||
     await serveObjectCapability(request, env);
@@ -1980,6 +2590,19 @@ async function restoreCapabilityToken(env, token) {
 async function revokeCapabilityToken(env, token) {
   const encodedToken = encodeURIComponent(savedCapabilityToken(token));
   return postPowerbox(env, `powerbox/drop-saved?token=${encodedToken}`);
+}
+
+async function useCapabilityToken(env, token, fn) {
+  if (typeof fn !== "function") {
+    failValidation("capability use callback", "a function", fn);
+  }
+
+  const capability = await restoreCapabilityToken(env, token);
+  try {
+    return await fn(capability);
+  } finally {
+    await capability.drop();
+  }
 }
 
 async function fetchCapability(env, capability, input, init = {}) {
@@ -2501,17 +3124,8 @@ class SandstormRpcTarget extends RpcTarget {
     return revokeCapabilityToken(this.#env, token);
   }
 
-  async use(token, fn) {
-    if (typeof fn !== "function") {
-      failValidation("capability use callback", "a function", fn);
-    }
-
-    const capability = await restoreCapabilityToken(this.#env, token);
-    try {
-      return await fn(capability);
-    } finally {
-      await capability.drop();
-    }
+  use(token, fn) {
+    return useCapabilityToken(this.#env, token, fn);
   }
 
   ["export"](target, options = {}) {
@@ -2603,21 +3217,11 @@ export function sandstorm(request, env, options = {}) {
     apiSession: (options = {}) => createApiSessionCapability(env, options),
     restore: (token) => restoreCapabilityToken(env, token),
     revoke: (token) => revokeCapabilityToken(env, token),
-    use: async (token, fn) => {
-      if (typeof fn !== "function") {
-        failValidation("capability use callback", "a function", fn);
-      }
-
-      const capability = await restoreCapabilityToken(env, token);
-      try {
-        return await fn(capability);
-      } finally {
-        await capability.drop();
-      }
-    },
+    use: (token, fn) => useCapabilityToken(env, token, fn),
     export: (target, options = {}) => exportObjectCapability(env, target, options),
     withExport: (target, fn, options = {}) => withExportedCapability(env, target, fn, options),
     exportDurable,
+    powerboxGrants: (options = {}) => powerboxGrants(request, env, options),
     serveSystemRoutes: async () => await servePowerboxDescriptors(request, env) ||
       await serveObjectCapability(request, env, durableRegistry),
     apiTarget: () => apiTarget(request, env),

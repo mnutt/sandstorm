@@ -532,6 +532,113 @@ declare module "sandstorm:api" {
     ): Promise<Capability>;
   }
 
+  export type PowerboxGrantQuery =
+    | null
+    | string
+    | string[]
+    | { descriptor?: string; descriptors?: string[] }
+    | ApiSessionPowerboxOptions
+    | OutboundHttpPowerboxOptions
+    | {
+        apiSession?: ApiSessionPowerboxRequestOptions;
+        apiSessionDescriptor?: ApiSessionPowerboxRequestOptions;
+        outboundHttp?: OutboundHttpPowerboxRequestOptions;
+        outboundHttpDescriptor?: OutboundHttpPowerboxRequestOptions;
+      };
+
+  export interface PowerboxGrantSpec {
+    id?: string;
+    title?: string | { defaultText: string };
+    label?: string | { defaultText: string };
+    description?: string | { defaultText: string };
+    storageKey?: string;
+    key?: string;
+    query?: PowerboxGrantQuery;
+    descriptor?: string;
+    descriptors?: string[];
+    powerboxDescriptor?: string;
+    apiSession?: ApiSessionPowerboxRequestOptions;
+    apiSessionDescriptor?: ApiSessionPowerboxRequestOptions;
+    outboundHttp?: OutboundHttpPowerboxRequestOptions;
+    outboundHttpDescriptor?: OutboundHttpPowerboxRequestOptions;
+    saveLabel?: string | { defaultText: string };
+    requiredPermissions?: string[];
+    claimOptions?: ClaimRequestOptions;
+    save?: SaveCapabilityOptions;
+    test?: (capability: Capability) => unknown | Promise<unknown>;
+  }
+
+  export interface PowerboxGrantsOptions {
+    routePrefix?: string;
+    prefix?: string;
+    grants: Record<string, PowerboxGrantSpec> | PowerboxGrantSpec[];
+  }
+
+  export interface PublicPowerboxGrant {
+    id: string;
+    title: string;
+    description: string;
+    storageKey: string;
+    query: PowerboxGrantQuery;
+    saveLabel: { defaultText: string };
+    requiredPermissions: string[];
+    connected: boolean;
+  }
+
+  export interface PowerboxGrantStatus {
+    ok: true;
+    id: string;
+    title: string;
+    description: string;
+    storageKey: string;
+    connected: boolean;
+  }
+
+  export interface PowerboxGrantsConfig {
+    ok: true;
+    routePrefix: string;
+    grants: PublicPowerboxGrant[];
+  }
+
+  export interface PowerboxGrantClaimResult {
+    ok: true;
+    id: string;
+    storageKey: string;
+    status: PowerboxGrantStatus;
+    test?: unknown;
+  }
+
+  export interface PowerboxGrantRevokeResult {
+    ok: true;
+    id: string;
+    storageKey: string;
+    revoked: boolean;
+    revoke?: { ok: true };
+    deleted: StorageInfo;
+    status: PowerboxGrantStatus;
+  }
+
+  export interface PowerboxGrantsStatusResult {
+    ok: true;
+    statuses: PowerboxGrantStatus[];
+  }
+
+  export interface PowerboxGrantStatusResult {
+    ok: true;
+    status: PowerboxGrantStatus;
+  }
+
+  export interface PowerboxGrantsApi {
+    config(): Promise<PowerboxGrantsConfig>;
+    status(): Promise<PowerboxGrantsStatusResult>;
+    status(id: string): Promise<PowerboxGrantStatusResult>;
+    claim(id: string, result: string | PowerboxRequestResult): Promise<PowerboxGrantClaimResult>;
+    revoke(id: string): Promise<PowerboxGrantRevokeResult>;
+    use<T>(id: string, fn: (capability: Capability) => T | Promise<T>): Promise<T>;
+    token(id: string): Promise<string | undefined>;
+    serve(request?: Request): Promise<Response | null>;
+  }
+
   export interface SandstormApiTarget extends RpcTarget {
     session(): SessionInfo;
     status(): Promise<unknown>;
@@ -591,6 +698,7 @@ declare module "sandstorm:api" {
       Promise<DurableObjectCapabilityResult>;
     exportDurable(id: string, options: DurableObjectCapabilityOptions):
       Promise<DurableObjectCapabilityResult>;
+    powerboxGrants(options: PowerboxGrantsOptions): PowerboxGrantsApi;
     serveSystemRoutes(): Promise<Response | null>;
     apiTarget(): SandstormApiTarget;
     rpcClientScript(): string;
@@ -603,6 +711,11 @@ declare module "sandstorm:api" {
 
   export function storage(env: SandstormEnv): StorageApi;
   export function powerbox(request: Request, env: SandstormEnv): PowerboxApi;
+  export function powerboxGrants(
+    request: Request,
+    env: SandstormEnv,
+    options: PowerboxGrantsOptions,
+  ): PowerboxGrantsApi;
   export function getSession(request: Request): SessionInfo;
   export function apiTarget(request: Request, env: SandstormEnv): SandstormApiTarget;
   export function servePowerboxDescriptors(
