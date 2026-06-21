@@ -925,7 +925,7 @@ export default {
     if (url.pathname === "/required-permission-validation-self-test") {
       let error = null;
       try {
-        await sandstorm(request, env).powerbox().claimRequest("dummy-token", {
+        await sandstorm(request, env).powerbox().claim("dummy-token", {
           requiredPermissions: ["not-a-permission"],
         });
       } catch (err) {
@@ -940,7 +940,7 @@ export default {
 
     if (url.pathname === "/outbound-http-helper-self-test") {
       const api = sandstorm(request, env);
-      const capability = await api.powerbox().claimRequest("outbound-http/test-token", {
+      const capability = await api.powerbox().claim("outbound-http/test-token", {
         requiredPermissions: ["view"],
         outboundHttp: {
           baseUrl: "https://api.example.test/v1",
@@ -1745,7 +1745,7 @@ export default {
       }
 
       try {
-        const feedCapability = await sandstorm(request, env).powerbox().restoreSaved(token);
+        const feedCapability = await sandstorm(request, env).restore(token);
         const feedInfo = await feedCapability.info();
         const feed = feedCapability.asRpc();
         const receiver = new EventReceiver();
@@ -1858,7 +1858,7 @@ export default {
       }
 
       try {
-        const feedCapability = await sandstorm(request, env).powerbox().restoreSaved(token);
+        const feedCapability = await sandstorm(request, env).restore(token);
         const feed = feedCapability.asRpc();
         const receiver = new EventReceiver();
         const receiverCapability = await sandstorm(request, env).capability(receiver);
@@ -2549,7 +2549,7 @@ export default {
       let claimResponseStatus = 500;
       let claim;
       if (url.searchParams.get("fetch") === "true") {
-        claim = await sandstormPowerbox(request, env).claimRequest(token, {
+        claim = await sandstormPowerbox(request, env).claim(token, {
           requiredPermissions,
         });
         claimResponseOk = true;
@@ -2776,18 +2776,94 @@ export default {
     }
 
     if (url.pathname === "/powerbox-storage-helper-self-test") {
-      const helper = sandstormPowerbox(request, env);
+      const api = sandstorm(request, env);
+      const helper = api.powerbox();
+      const store = api.storage();
+
+      async function claimSaveStore(result, { storageKey, label, ...claimOptions }) {
+        const capability = await helper.claim(result, claimOptions);
+        let token;
+        try {
+          token = await capability.save({ label });
+          await store.put(storageKey, token);
+          return {
+            ok: true,
+            capability,
+            token,
+            storageKey,
+          };
+        } catch (error) {
+          await capability.drop().catch(() => {});
+          if (token) await api.revoke(token).catch(() => {});
+          throw error;
+        }
+      }
+
+      async function restoreStored(storageKey) {
+        const token = await store.get(storageKey);
+        if (!token) {
+          return {
+            ok: true,
+            storageKey,
+            found: false,
+            capability: undefined,
+          };
+        }
+        return {
+          ok: true,
+          storageKey,
+          found: true,
+          token,
+          capability: await api.restore(token),
+        };
+      }
+
+      async function fetchStored(storageKey, input) {
+        const token = await store.get(storageKey);
+        if (!token) {
+          throw new Error(`missing saved token: ${storageKey}`);
+        }
+        return await api.use(token, async (capability) => {
+          const response = await capability.fetch(input);
+          return {
+            status: response.status,
+            body: await response.json(),
+          };
+        });
+      }
+
+      async function dropStored(storageKey) {
+        const token = await store.get(storageKey);
+        if (!token) {
+          return {
+            ok: true,
+            storageKey,
+            dropped: false,
+            deleted: await store.delete(storageKey),
+          };
+        }
+        const dropped = await api.revoke(token);
+        const deleted = await store.delete(storageKey);
+        return {
+          ok: true,
+          storageKey,
+          dropped: true,
+          dropSaved: dropped,
+          deleted,
+        };
+      }
+
       const storageKey = "powerbox-storage-helper-token";
-      const claimed = await helper.claimAndStoreRequest("websession/test+token==", {
+      const claimed = await claimSaveStore("websession/test+token==", {
         label: "WebSession saved capability",
         storageKey,
         requiredPermissions: ["view"],
       });
       const originalFetch = await claimed.capability.fetch("/capability-echo?source=helper-original");
       const dropOriginal = await claimed.capability.drop();
-      const fetchStoredResponse =
-        await helper.fetchStored({ storageKey }, "/capability-echo?source=helper-fetch-saved");
-      const restored = await helper.restoreStored({ storageKey });
+      const fetchStoredResult =
+        await fetchStored(storageKey, "/capability-echo?source=helper-fetch-saved");
+      const restored = await restoreStored(storageKey);
       let restoredFetch = null;
       let dropRestored = null;
       if (restored.capability) {
@@ -2804,7 +2880,7 @@ export default {
       const handleSource = await sandstorm(request, env).webSession({
         pathPrefix: "/exported",
       });
-      const handleClaimed = await helper.claimAndStoreRequest({
+      const handleClaimed = await claimSaveStore({
         capability: handleSource,
       }, {
         label: "WebSession saved from claimed handle",
@@ -2816,20 +2892,18 @@ export default {
       const claimAlias = await helper.claim({ capability: aliasSource });
       const dropHandleClaimed = await handleClaimed.capability.drop();
       const dropClaimAlias = await claimAlias.drop();
-      const handleFetchSavedResponse =
-        await helper.fetchStored(
-          { storageKey: handleStorageKey },
-          "/capability-echo?source=helper-handle-fetch");
-      const dropHandleSaved = await helper.dropStored({ storageKey: handleStorageKey });
+      const handleFetchSaved =
+        await fetchStored(handleStorageKey, "/capability-echo?source=helper-handle-fetch");
+      const dropHandleSaved = await dropStored(handleStorageKey);
 
-      const dropSaved = await helper.dropStored({ storageKey });
-      const afterDrop = await helper.restoreStored({ storageKey });
+      const dropSaved = await dropStored(storageKey);
+      const afterDrop = await restoreStored(storageKey);
       return Response.json({
         ok: true,
         claimed: {
           ok: claimed.ok,
           capabilityClass: claimed.capability instanceof ClaimedCapability,
-          savedClass: claimed.saved instanceof SavedCapability,
+          tokenType: typeof claimed.token,
           storageKey: claimed.storageKey,
           token: claimed.token,
         },
@@ -2838,10 +2912,7 @@ export default {
           body: await originalFetch.json(),
         },
         dropOriginal,
-        fetchStored: {
-          status: fetchStoredResponse.status,
-          body: await fetchStoredResponse.json(),
-        },
+        fetchStored: fetchStoredResult,
         restored: {
           ok: restored.ok,
           found: restored.found,
@@ -2854,7 +2925,7 @@ export default {
         handleClaimed: {
           ok: handleClaimed.ok,
           capabilityClass: handleClaimed.capability instanceof ClaimedCapability,
-          savedClass: handleClaimed.saved instanceof SavedCapability,
+          tokenType: typeof handleClaimed.token,
           storageKey: handleClaimed.storageKey,
           token: handleClaimed.token,
         },
@@ -2865,10 +2936,7 @@ export default {
         },
         dropHandleClaimed,
         dropClaimAlias,
-        handleFetchSaved: {
-          status: handleFetchSavedResponse.status,
-          body: await handleFetchSavedResponse.json(),
-        },
+        handleFetchSaved,
         dropHandleSaved,
         dropSaved,
         afterDrop,
