@@ -640,6 +640,26 @@ test("isolate supervisor integration suite", {
     assert.equal(powerboxGrants.json.statusAfterRevoke.ok, true);
     assert.equal(powerboxGrants.json.statusAfterRevoke.status.connected, false);
 
+    const powerboxFulfillment = await requestJson(
+      fixture.workerdSocket, "/powerbox-fulfillment-helper-self-test");
+    assert.equal(powerboxFulfillment.statusCode, 200, powerboxFulfillment.body);
+    assert.equal(powerboxFulfillment.json.ok, true);
+    assert.equal(powerboxFulfillment.json.page.status, 200);
+    assert.match(powerboxFulfillment.json.page.contentType, /text\/html/);
+    assert.equal(powerboxFulfillment.json.page.hasButton, true);
+    assert.equal(powerboxFulfillment.json.page.hasTitle, true);
+    assert.equal(powerboxFulfillment.json.page.hasInlineScript, true);
+    assert.equal(powerboxFulfillment.json.client.status, 404);
+    assert.equal(powerboxFulfillment.json.unknown.status, 404);
+    assert.equal(powerboxFulfillment.json.outsideIsNull, true);
+    assert.equal(powerboxFulfillment.json.webFulfill, null);
+    assert.equal(powerboxFulfillment.json.objectFulfill, null);
+    assert.equal(powerboxFulfillment.json.durableFulfill, null);
+    assert.equal(powerboxFulfillment.json.errorFulfill.status, 400);
+    assert.equal(powerboxFulfillment.json.errorFulfill.body.ok, false);
+    assert.match(powerboxFulfillment.json.errorFulfill.body.error,
+      /powerbox fulfillment factory failed/);
+
   });
 
   if (REPRESENTATIVE_SYSCALL_TRACE) {

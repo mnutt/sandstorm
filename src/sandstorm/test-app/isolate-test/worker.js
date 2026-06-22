@@ -32,6 +32,7 @@ const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
 const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
 const retainedMailFeedCallbacks = new Map();
 const retainedEventReceivers = new Map();
+let powerboxFulfillmentDurableSerial = 0;
 
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
@@ -1828,6 +1829,116 @@ export default {
         statusAfterClaim,
         revoke,
         statusAfterRevoke,
+      });
+    }
+
+    if (url.pathname === "/powerbox-fulfillment-helper-self-test") {
+      const fulfillmentApi = sandstorm(request, env);
+      const runFulfill = url.searchParams.get("fulfill") === "true";
+      const helperRequest = (path, init = {}) => {
+        const headers = new Headers(request.headers);
+        for (const [name, value] of new Headers(init.headers || {})) {
+          headers.set(name, value);
+        }
+        return new Request(new URL(path, "http://app"), {
+          ...init,
+          headers,
+        });
+      };
+      const fulfillOptions = () => ({
+        title: "WebSession fulfilled capability",
+        verbPhrase: "can use fulfilled capability",
+        description: "Fulfilled capability description",
+        requiredPermissions: ["view"],
+        descriptor: TEST_PROVIDER_DESCRIPTOR,
+      });
+      const web = fulfillmentApi.powerboxFulfillment({
+        title: "Powerbox fulfillment WebSession",
+        description: "Exercises the default generated fulfillment page.",
+        buttonLabel: "Use helper WebSession",
+        capability: () => fulfillmentApi.webSession({ pathPrefix: "/browser-powerbox-shared" }),
+        fulfill: fulfillOptions(),
+      });
+      const object = fulfillmentApi.powerboxFulfillment({
+        routePrefix: "/fulfillment-object-test",
+        title: "Powerbox fulfillment app object",
+        buttonLabel: "Use helper app object",
+        capability: () => fulfillmentApi.export(new CounterCapability()),
+        fulfill: fulfillOptions(),
+      });
+      const durable = fulfillmentApi.powerboxFulfillment({
+        routePrefix: "/fulfillment-durable-test",
+        title: "Powerbox fulfillment durable app object",
+        buttonLabel: "Use helper durable app object",
+        capability: () => fulfillmentApi.exportDurable(new CounterCapability(), {
+          id: `powerbox-fulfillment-durable-${++powerboxFulfillmentDurableSerial}`,
+          label: "Powerbox fulfillment durable app object",
+        }),
+        fulfill: fulfillOptions(),
+      });
+      const throwing = fulfillmentApi.powerboxFulfillment({
+        routePrefix: "/fulfillment-error-test",
+        title: "Powerbox fulfillment error",
+        buttonLabel: "Use helper error",
+        capability: () => {
+          throw new Error("powerbox fulfillment factory failed");
+        },
+        fulfill: fulfillOptions(),
+      });
+
+      const page = await web.serve(helperRequest("/__sandstorm/powerbox-fulfillment"));
+      const client = await web.serve(helperRequest("/__sandstorm/powerbox-fulfillment/client.js"));
+      const unknown = await web.serve(helperRequest("/__sandstorm/powerbox-fulfillment/unknown"));
+      const outside = await web.serve(helperRequest("/outside-fulfillment-helper"));
+      const webFulfill = runFulfill
+        ? await web.serve(helperRequest(
+          "/__sandstorm/powerbox-fulfillment/fulfill", { method: "POST" }))
+        : null;
+      const objectFulfill = runFulfill
+        ? await object.serve(helperRequest(
+          "/fulfillment-object-test/fulfill", { method: "POST" }))
+        : null;
+      const durableFulfill = runFulfill
+        ? await durable.serve(helperRequest(
+          "/fulfillment-durable-test/fulfill", { method: "POST" }))
+        : null;
+      const errorFulfill = await throwing.serve(helperRequest(
+        "/fulfillment-error-test/fulfill", { method: "POST" }));
+      const pageText = await page.text();
+
+      return Response.json({
+        ok: true,
+        page: {
+          status: page.status,
+          contentType: page.headers.get("content-type"),
+          hasButton: pageText.includes("Use helper WebSession"),
+          hasTitle: pageText.includes("Powerbox fulfillment WebSession"),
+          hasInlineScript: pageText.includes("/fulfill"),
+        },
+        client: {
+          status: client.status,
+        },
+        unknown: {
+          status: unknown.status,
+          body: await unknown.text(),
+        },
+        outsideIsNull: outside === null,
+        webFulfill: webFulfill && {
+          status: webFulfill.status,
+          body: await webFulfill.json(),
+        },
+        objectFulfill: objectFulfill && {
+          status: objectFulfill.status,
+          body: await objectFulfill.json(),
+        },
+        durableFulfill: durableFulfill && {
+          status: durableFulfill.status,
+          body: await durableFulfill.json(),
+        },
+        errorFulfill: {
+          status: errorFulfill.status,
+          body: await errorFulfill.json(),
+        },
       });
     }
 

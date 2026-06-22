@@ -18,6 +18,7 @@ export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
 const OBJECT_CAPABILITY_PREFIX = "/__sandstorm/object-capabilities";
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";
+const POWERBOX_FULFILLMENT_PREFIX = "/__sandstorm/powerbox-fulfillment";
 const exportedObjectTargets = new Map();
 const exportedObjectCapabilityIds = new Map();
 const objectCapabilityIds = new Map();
@@ -1774,6 +1775,161 @@ function powerboxGrantErrorResponse(error, status = 400) {
   }, { status });
 }
 
+function normalizePowerboxFulfillmentOptions(options = {}) {
+  if (!options || typeof options !== "object") {
+    throw new ValidationError("Powerbox fulfillment options must be an object");
+  }
+  if (typeof options.capability !== "function") {
+    throw new ValidationError("Powerbox fulfillment capability must be a function");
+  }
+  if (!options.fulfill || typeof options.fulfill !== "object") {
+    throw new ValidationError("Powerbox fulfillment fulfill options must be an object");
+  }
+
+  return {
+    title: normalizePowerboxGrantText(
+      options.title, undefined, "Powerbox fulfillment title"),
+    description: options.description === undefined || options.description === null
+      ? ""
+      : normalizePowerboxGrantText(
+        options.description, "", "Powerbox fulfillment description", 1024),
+    buttonLabel: normalizePowerboxGrantText(
+      options.buttonLabel, "Use this provider", "Powerbox fulfillment buttonLabel"),
+    capability: options.capability,
+    fulfill: options.fulfill,
+  };
+}
+
+function powerboxFulfillmentPage(options, prefix) {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>${escapeHtml(options.title)}</title>
+    <style>
+      body {
+        color: #1f2933;
+        font: 15px/1.5 system-ui, sans-serif;
+        margin: 2rem;
+        max-width: 42rem;
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin: 0 0 0.75rem;
+      }
+      p {
+        color: #52616f;
+        margin: 0 0 1.25rem;
+      }
+      button {
+        background: #174ea6;
+        border: 1px solid #174ea6;
+        color: white;
+        cursor: pointer;
+        font: inherit;
+        padding: 0.5rem 0.8rem;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+      pre {
+        background: #f5f7fa;
+        border: 1px solid #d8e0e8;
+        margin-top: 1.25rem;
+        overflow: auto;
+        padding: 0.75rem;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(options.title)}</h1>
+    ${options.description ? `<p>${escapeHtml(options.description)}</p>` : ""}
+    <button id="fulfill" type="button">${escapeHtml(options.buttonLabel)}</button>
+    <pre id="result"></pre>
+    <script>
+      const button = document.querySelector("#fulfill");
+      const result = document.querySelector("#result");
+      async function readBody(response) {
+        const text = await response.text();
+        try {
+          return JSON.parse(text);
+        } catch (error) {
+          return { ok: false, error: text || "HTTP " + response.status };
+        }
+      }
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        result.textContent = "fulfilling";
+        try {
+          const response = await fetch(${JSON.stringify(`${prefix}/fulfill`)}, {
+            method: "POST",
+          });
+          result.textContent = JSON.stringify(await readBody(response), null, 2);
+        } catch (error) {
+          result.textContent = (error.message || String(error)) + "\\n" + (error.stack || "");
+          button.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>`;
+}
+
+function normalizePowerboxFulfillmentCapability(env, value) {
+  const capability = wrapCapability(env, value && typeof value === "object" && value.capability
+    ? value.capability
+    : value);
+  const id = capabilityId(capability, "Powerbox fulfillment capability");
+  return { capability, handle: { ok: true, type: "capability", id } };
+}
+
+export function powerboxFulfillment(request, env, options = {}) {
+  const prefix = routePrefix(
+    options, POWERBOX_FULFILLMENT_PREFIX, "Powerbox fulfillment routePrefix");
+  const config = normalizePowerboxFulfillmentOptions(options);
+
+  async function fulfill(routeRequest = request) {
+    const produced = await config.capability();
+    const { capability, handle } = normalizePowerboxFulfillmentCapability(env, produced);
+    const fulfilled = await fulfillRequestWithCapability(
+      env, routeRequest, capability, config.fulfill);
+    return {
+      ok: true,
+      fulfill: fulfilled,
+      capability: handle,
+    };
+  }
+
+  return {
+    fulfill,
+    async serve(routeRequest = request) {
+      const url = new URL(routeRequest.url);
+      if (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) {
+        return null;
+      }
+
+      try {
+        if ((url.pathname === prefix || url.pathname === `${prefix}/`) &&
+            routeRequest.method === "GET") {
+          return new Response(powerboxFulfillmentPage(config, prefix), {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+
+        if (url.pathname === `${prefix}/fulfill` && routeRequest.method === "POST") {
+          return Response.json(await fulfill(routeRequest));
+        }
+
+        return new Response("Not Found", { status: 404 });
+      } catch (error) {
+        return powerboxGrantErrorResponse(error);
+      }
+    },
+  };
+}
+
 function powerboxGrantClientScript(prefix) {
   const rpcClientPath = `${prefix}/rpc-client.js`;
   return `import { inspectPowerboxQuery, requestPowerbox } from ${JSON.stringify(rpcClientPath)};
@@ -3254,6 +3410,7 @@ export function sandstorm(request, env, options = {}) {
     export: (target, options = {}) => exportObjectCapability(env, target, options),
     withExport: (target, fn, options = {}) => withExportedCapability(env, target, fn, options),
     exportDurable,
+    powerboxFulfillment: (options = {}) => powerboxFulfillment(request, env, options),
     powerboxGrants: (options = {}) => powerboxGrants(request, env, options),
     serveSystemRoutes: async () => await servePowerboxDescriptors(request, env) ||
       await serveObjectCapability(request, env, durableRegistry),
