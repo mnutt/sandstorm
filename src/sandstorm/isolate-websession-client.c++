@@ -325,6 +325,23 @@ public:
   }
 };
 
+class FakeRevocationObserver final: public SystemPersistent::RevocationObserver::Server {
+public:
+  explicit FakeRevocationObserver(uint& dropWhenRevokedCount)
+      : dropWhenRevokedCount(dropWhenRevokedCount) {}
+
+  kj::Promise<void> dropWhenRevoked(DropWhenRevokedContext context) override {
+    KJ_REQUIRE(context.getParams().hasHandle());
+    handles.add(context.getParams().getHandle());
+    ++dropWhenRevokedCount;
+    return kj::READY_NOW;
+  }
+
+private:
+  uint& dropWhenRevokedCount;
+  kj::Vector<Handle::Client> handles;
+};
+
 class FakeSessionContext final: public SessionContext::Server {
 public:
   kj::Promise<void> claimRequest(ClaimRequestContext context) override {
@@ -412,9 +429,11 @@ public:
   uint providerDescriptorCount = 0;
   uint grainSizeReportCount = 0;
   uint routeBackedTokenCount = 0;
+  uint routeBackedRequirementCount = 0;
   uint childTokenCount = 0;
   uint64_t lastGrainSizeBytes = 0;
   kj::String lastRouteBackedAppRef;
+  kj::String lastRouteBackedRequirement;
   kj::String lastChildTokenParent;
 
 private:
@@ -532,6 +551,7 @@ public:
     auto owner = params.getOwner();
     KJ_REQUIRE(owner.which() == ApiTokenOwner::GRAIN);
     KJ_REQUIRE(owner.getGrain().getGrainId().size() > 0);
+    auto requirements = params.getRequirements();
 
     loadRouteBackedTokens();
     auto appRef = params.getRef().getAppRef().getAs<capnp::Data>();
@@ -542,6 +562,13 @@ public:
         kj::heapArray<byte>(appRef.begin(), appRef.end())
     });
     ++sessionContext.routeBackedTokenCount;
+    sessionContext.routeBackedRequirementCount = requirements.size();
+    if (requirements.size() > 0) {
+      KJ_REQUIRE(requirements[0].which() == MembraneRequirement::TOKEN_VALID);
+      sessionContext.lastRouteBackedRequirement = kj::heapString(requirements[0].getTokenValid());
+    } else {
+      sessionContext.lastRouteBackedRequirement = kj::heapString("");
+    }
     sessionContext.lastRouteBackedAppRef = kj::heapString(appRef.asChars());
     saveRouteBackedTokens();
     context.getResults().setToken(token.asBytes());
@@ -551,7 +578,15 @@ public:
   kj::Promise<void> makeChildToken(MakeChildTokenContext context) override {
     auto params = context.getParams();
     auto parent = params.getParent();
+    auto requirements = params.getRequirements();
     ++sessionContext.childTokenCount;
+    sessionContext.routeBackedRequirementCount = requirements.size();
+    if (requirements.size() > 0) {
+      KJ_REQUIRE(requirements[0].which() == MembraneRequirement::TOKEN_VALID);
+      sessionContext.lastRouteBackedRequirement = kj::heapString(requirements[0].getTokenValid());
+    } else {
+      sessionContext.lastRouteBackedRequirement = kj::heapString("");
+    }
     sessionContext.lastChildTokenParent = kj::heapString(parent.asChars());
     context.getResults().setToken(params.getParent());
     return kj::READY_NOW;
@@ -1060,6 +1095,41 @@ public:
     KJ_REQUIRE(sessionContextRef.childTokenCount == 1, sessionContextRef.childTokenCount);
     KJ_REQUIRE(sessionContextRef.lastChildTokenParent == "parent-route-token",
         sessionContextRef.lastChildTokenParent);
+
+    auto objectAppRef = makeRouteBackedSessionAppRef("object",
+        "/__sandstorm/object-capabilities/requirements-test");
+    capnp::MallocMessageBuilder objectAppRefMessage;
+    auto objectAppRefPointer = objectAppRefMessage.initRoot<capnp::AnyPointer>();
+    objectAppRefPointer.setAs<capnp::Data>(objectAppRef.asBytes());
+
+    auto objectRestoreRequest = supervisor.restoreRequest();
+    objectRestoreRequest.getRef().setAppRef(objectAppRefPointer.asReader());
+    auto restoredObject = objectRestoreRequest.send().wait(io.waitScope)
+        .getCap().castAs<IsolateObjectCapability>();
+
+    uint objectDropWhenRevokedCount = 0;
+    auto addRequirementsRequest = restoredObject.castAs<SystemPersistent>()
+        .addRequirementsRequest();
+    auto objectRequirements = addRequirementsRequest.initRequirements(1);
+    objectRequirements[0].setTokenValid("object-provider-token");
+    addRequirementsRequest.setObserver(
+        kj::heap<FakeRevocationObserver>(objectDropWhenRevokedCount));
+    auto objectPersistent = addRequirementsRequest.send().wait(io.waitScope).getCap();
+    KJ_REQUIRE(objectDropWhenRevokedCount == 1, objectDropWhenRevokedCount);
+
+    auto objectSaveRequest = objectPersistent.saveRequest();
+    auto objectSaveOwner = objectSaveRequest.getSealFor().initGrain();
+    objectSaveOwner.setGrainId("object-route-save-grain");
+    objectSaveOwner.getSaveLabel().setDefaultText("Object route save fixture");
+    objectSaveRequest.send().wait(io.waitScope);
+    KJ_REQUIRE(sessionContextRef.routeBackedRequirementCount == 1,
+        sessionContextRef.routeBackedRequirementCount);
+    KJ_REQUIRE(sessionContextRef.lastRouteBackedRequirement == "object-provider-token",
+        sessionContextRef.lastRouteBackedRequirement);
+    KJ_REQUIRE(contains(sessionContextRef.lastRouteBackedAppRef,
+        "sandstorm-isolate-route-backed-v1\nobject\n"
+        "/__sandstorm/object-capabilities/requirements-test"),
+        sessionContextRef.lastRouteBackedAppRef);
 
     auto routeEscapeRequest = restoredRouteSession.getRequest();
     routeEscapeRequest.setPath("../capability-echo?source=escape");
@@ -1617,6 +1687,52 @@ public:
     KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
     KJ_REQUIRE(sessionContextRef.tieCount == 1, sessionContextRef.tieCount);
 
+    auto appObjectClaimRequest = session.getRequest();
+    appObjectClaimRequest.setPath(
+        "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D"
+        "&requiredPermission=view&nativeInterface=appObject"
+        "&helperClaim=true&save=true&restore=true&dropSaved=true"
+        "&label=WebSession%20saved%20capability");
+    appObjectClaimRequest.setIgnoreBody(false);
+    auto appObjectClaimContext = appObjectClaimRequest.initContext();
+    appObjectClaimContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    appObjectClaimContext.initCookies(0);
+    appObjectClaimContext.initAccept(0);
+    appObjectClaimContext.initAcceptEncoding(0);
+    appObjectClaimContext.initAdditionalHeaders(0);
+
+    auto appObjectClaimResponse = appObjectClaimRequest.send().wait(io.waitScope);
+    auto appObjectClaimDebugBody = responseDebugBody(appObjectClaimResponse);
+    KJ_REQUIRE(appObjectClaimResponse.which() == WebSession::Response::CONTENT,
+        appObjectClaimDebugBody);
+    auto appObjectClaimContent = appObjectClaimResponse.getContent();
+    KJ_REQUIRE(appObjectClaimContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(appObjectClaimContent.getBody().which() ==
+        WebSession::Response::Content::Body::BYTES);
+    auto appObjectClaimBody = kj::str(appObjectClaimContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(appObjectClaimBody, "\"ok\":true"), appObjectClaimBody);
+    KJ_REQUIRE(contains(appObjectClaimBody, "\"claimInfo\":{\"status\":200,\"body\":{\"ok\":true,"
+        "\"type\":\"claimedCapabilityInfo\""), appObjectClaimBody);
+    KJ_REQUIRE(contains(appObjectClaimBody, "\"kind\":\"powerboxClaim\""),
+        appObjectClaimBody);
+    KJ_REQUIRE(contains(appObjectClaimBody, "\"nativeInterface\":\"appObject\""),
+        appObjectClaimBody);
+    KJ_REQUIRE(contains(appObjectClaimBody, "\"save\":{\"status\":200,\"body\":{\"ok\":true"),
+        appObjectClaimBody);
+    KJ_REQUIRE(!contains(appObjectClaimBody,
+        "\"token\":\"d2Vic2Vzc2lvbi1zYXZlZC10b2tlbg\""),
+        appObjectClaimBody);
+    KJ_REQUIRE(contains(appObjectClaimBody,
+        "\"restore\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"capability\""),
+        appObjectClaimBody);
+    KJ_REQUIRE(contains(appObjectClaimBody, "\"kind\":\"restored\""), appObjectClaimBody);
+    KJ_REQUIRE(contains(appObjectClaimBody, "\"dropSaved\":{\"status\":200,\"body\":{\"ok\":true}}"),
+        appObjectClaimBody);
+    KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 2, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 2, sessionContextRef.tokenDropCount);
+
     auto outboundRequest = session.getRequest();
     outboundRequest.setPath("/outbound-http-helper-self-test");
     outboundRequest.setIgnoreBody(false);
@@ -1661,7 +1777,7 @@ public:
     KJ_REQUIRE(contains(outboundBody, "\"body\":\"hello\""), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"drop\":{\"ok\":true,\"released\":false}"),
         outboundBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
 
     auto storageHelperRequest = session.getRequest();
     storageHelperRequest.setPath("/powerbox-storage-helper-self-test");
@@ -1733,10 +1849,10 @@ public:
         "\"afterDrop\":{\"ok\":true,\"storageKey\":\"powerbox-storage-helper-token\","
         "\"found\":false"),
         storageHelperBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
-    KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 4, sessionContextRef.restoreCount);
-    KJ_REQUIRE(sessionContextRef.tokenDropCount == 3, sessionContextRef.tokenDropCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 4, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 5, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
 
     auto exportRequest = session.getRequest();
     exportRequest.setPath("/export-web-session");
@@ -1933,10 +2049,10 @@ public:
     KJ_REQUIRE(contains(badClaimBody,
         "requiredPermissions must use names from this app's viewInfo.permissions"),
         badClaimBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
-    KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 10, sessionContextRef.restoreCount);
-    KJ_REQUIRE(sessionContextRef.tokenDropCount == 6, sessionContextRef.tokenDropCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 4, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 11, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 7, sessionContextRef.tokenDropCount);
 
     auto standardClaimRequest = session.postRequest();
     standardClaimRequest.setPath("/__sandstorm/powerbox/claim");
@@ -1964,7 +2080,7 @@ public:
     KJ_REQUIRE(contains(standardClaimBody, "\"ok\":true"), standardClaimBody);
     KJ_REQUIRE(contains(standardClaimBody, "\"capability\":{\"ok\":true"), standardClaimBody);
     KJ_REQUIRE(contains(standardClaimBody, "\"type\":\"capability\""), standardClaimBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 4, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 5, sessionContextRef.claimCount);
 
     supervisor.syncStorageRequest().send().wait(io.waitScope);
     KJ_REQUIRE(sessionContextRef.grainSizeReportCount == 1,

@@ -225,6 +225,23 @@ kj::StringPtr claimedCapabilityNativeInterfaceName(
   KJ_UNREACHABLE;
 }
 
+kj::Maybe<ClaimedCapabilityNativeInterface> claimedCapabilityNativeInterfaceFromName(
+    kj::StringPtr name) {
+  if (name == "unknown") {
+    return ClaimedCapabilityNativeInterface::UNKNOWN;
+  } else if (name == "webSession") {
+    return ClaimedCapabilityNativeInterface::WEB_SESSION;
+  } else if (name == "apiSession") {
+    return ClaimedCapabilityNativeInterface::API_SESSION;
+  } else if (name == "outboundHttpSession") {
+    return ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION;
+  } else if (name == "appObject") {
+    return ClaimedCapabilityNativeInterface::APP_OBJECT;
+  } else {
+    return nullptr;
+  }
+}
+
 bool claimedCapabilitySupportsWebFetch(ClaimedCapabilityNativeInterface nativeInterface) {
   switch (nativeInterface) {
     case ClaimedCapabilityNativeInterface::UNKNOWN:
@@ -3288,7 +3305,7 @@ private:
   }
 };
 
-class ClaimedIsolateObjectCapability final: public IsolateObjectCapability::Server {
+class ClaimedIsolateObjectCapability final: public IsolatePersistentObjectCapability::Server {
 public:
   ClaimedIsolateObjectCapability(kj::Own<IsolateSessionRegistry> sessions,
       kj::StringPtr id, IsolateObjectCapability::Client cap)
@@ -3324,6 +3341,23 @@ public:
               kj::addRef(*sessions), duplicatedId,
               duplicatedCap->template castAs<IsolateObjectCapability>())));
       }
+    });
+  }
+
+  kj::Promise<void> save(SaveContext context) override {
+    auto request = cap.castAs<SystemPersistent>().saveRequest();
+    request.setSealFor(context.getParams().getSealFor());
+    return request.send().then([context](auto result) mutable {
+      context.getResults().setSturdyRef(result.getSturdyRef());
+    });
+  }
+
+  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
+    auto request = cap.castAs<SystemPersistent>().addRequirementsRequest();
+    request.setRequirements(context.getParams().getRequirements());
+    request.setObserver(context.getParams().getObserver());
+    return request.send().then([context](auto result) mutable {
+      context.getResults().setCap(result.getCap());
     });
   }
 
@@ -3365,6 +3399,8 @@ private:
 struct RouteBackedObjectCapabilityState final: public kj::Refcounted {
   kj::String pathPrefix;
   kj::Maybe<kj::String> claimedId;
+  kj::Own<RouteBackedRequirementState> requirementState =
+      kj::refcounted<RouteBackedRequirementState>();
 };
 
 class RouteBackedIsolateObjectCapability final
@@ -3440,6 +3476,7 @@ public:
         auto duplicatedState = kj::refcounted<RouteBackedObjectCapabilityState>();
         duplicatedState->pathPrefix = kj::heapString(state->pathPrefix);
         duplicatedState->claimedId = kj::heapString(*duplicatedId);
+        duplicatedState->requirementState = kj::addRef(*state->requirementState);
         context.getResults().setCapability(IsolateObjectCapability::Client(
             kj::heap<RouteBackedIsolateObjectCapability>(
               kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
@@ -3451,13 +3488,34 @@ public:
     KJ_FAIL_REQUIRE("unknown route-backed isolate object capability");
   }
 
+  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
+    auto params = context.getParams();
+    if (params.getRequirements().size() > 0) {
+      state->requirementState->requirements.add(newOwnCapnp(params.getRequirements()));
+    }
+
+    auto observer = params.getObserver();
+    auto req = observer.dropWhenRevokedRequest();
+    req.setHandle(kj::heap<RouteBackedRevokerHandle>(
+        kj::addRef(*state->requirementState)));
+    state->requirementState->observers.add(kj::mv(observer));
+
+    return req.send().ignoreResult().then([this, context]() mutable {
+      context.getResults().setCap(this->thisCap().castAs<SystemPersistent>());
+    });
+  }
+
   kj::Promise<void> save(SaveContext context) override {
     KJ_REQUIRE(persistent, "isolate route-backed object capability is not persistent");
+    KJ_REQUIRE(!state->requirementState->revoked,
+        "isolate route-backed object capability requirements have been revoked");
     auto params = context.getParams();
     KJ_IF_MAYBE(parent, parentToken) {
       auto request = runtimeHost->sandstormCore.makeChildTokenRequest();
       request.setParent(*parent);
       request.setOwner(params.getSealFor());
+      request.adoptRequirements(collectRequirements(capnp::Orphanage::getForMessageContaining(
+          SandstormCore::MakeChildTokenParams::Builder(request))));
       return request.send().then([context](auto result) mutable {
         context.getResults().setSturdyRef(result.getToken());
       });
@@ -3472,6 +3530,8 @@ public:
       auto request = runtimeHost->sandstormCore.makeTokenRequest();
       request.getRef().setAppRef(appRef.asReader());
       request.setOwner(params.getSealFor());
+      request.adoptRequirements(collectRequirements(capnp::Orphanage::getForMessageContaining(
+          SandstormCore::MakeTokenParams::Builder(request))));
       return request.send().then([context](auto result) mutable {
         context.getResults().setSturdyRef(result.getToken());
       });
@@ -3485,6 +3545,26 @@ private:
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
   kj::Own<IsolateRuntimeAdapter> runtime;
+
+  capnp::Orphan<capnp::List<MembraneRequirement>> collectRequirements(
+      capnp::Orphanage orphanage) {
+    if (state->requirementState->requirements.size() == 0) {
+      return {};
+    }
+
+    kj::Vector<capnp::List<MembraneRequirement>::Reader> parts(
+        state->requirementState->requirements.size());
+    for (auto& requirement: state->requirementState->requirements) {
+      if (requirement.size() > 0) {
+        parts.add(requirement);
+      }
+    }
+
+    if (parts.size() > 0) {
+      return orphanage.newOrphanConcat(parts.asPtr());
+    }
+    return {};
+  }
 };
 
 struct RouteBackedObjectCapability {
@@ -5593,9 +5673,25 @@ private:
 
   ClaimedCapabilityNativeInterface nativeInterfaceFromPowerboxDescriptorParams(
       kj::StringPtr url) {
+    kj::Maybe<ClaimedCapabilityNativeInterface> explicitNativeInterface = nullptr;
+    auto nativeInterfaceNames = findIsolateQueryParams(url, "nativeInterface");
+    KJ_REQUIRE(nativeInterfaceNames.size() <= 1, "expected at most one nativeInterface");
+    if (nativeInterfaceNames.size() == 1) {
+      KJ_REQUIRE(nativeInterfaceNames[0].size() > 0, "nativeInterface must not be empty");
+      KJ_IF_MAYBE(nativeInterface, claimedCapabilityNativeInterfaceFromName(
+          nativeInterfaceNames[0])) {
+        explicitNativeInterface = *nativeInterface;
+      } else {
+        KJ_FAIL_REQUIRE("unsupported nativeInterface", nativeInterfaceNames[0]);
+      }
+    }
+
     auto descriptorTypes = findIsolateQueryParams(url, "descriptor");
     KJ_REQUIRE(descriptorTypes.size() <= 1, "expected at most one powerbox descriptor type");
     if (descriptorTypes.size() == 0 || descriptorTypes[0].size() == 0) {
+      KJ_IF_MAYBE(nativeInterface, explicitNativeInterface) {
+        return *nativeInterface;
+      }
       return ClaimedCapabilityNativeInterface::UNKNOWN;
     }
 
@@ -5611,7 +5707,17 @@ private:
       KJ_FAIL_REQUIRE("unsupported powerbox descriptor type", descriptorTypes[0]);
     }
 
-    return nativeInterfaceFromPowerboxDescriptor(descriptor.asReader());
+    auto nativeInterface = nativeInterfaceFromPowerboxDescriptor(descriptor.asReader());
+    KJ_IF_MAYBE(explicitNativeInterfaceValue, explicitNativeInterface) {
+      if (nativeInterface != ClaimedCapabilityNativeInterface::UNKNOWN &&
+          nativeInterface != *explicitNativeInterfaceValue) {
+        KJ_FAIL_REQUIRE("nativeInterface conflicts with powerbox descriptor",
+            claimedCapabilityNativeInterfaceName(*explicitNativeInterfaceValue),
+            claimedCapabilityNativeInterfaceName(nativeInterface));
+      }
+      return *explicitNativeInterfaceValue;
+    }
+    return nativeInterface;
   }
 
   kj::Promise<void> claimPowerboxRequest(
@@ -5815,24 +5921,32 @@ private:
 
   kj::String encodeSavedCapabilityToken(
       kj::ArrayPtr<const byte> sturdyRef, kj::Maybe<ClaimedCapabilityMetadata>& metadata) {
-    bool hasRouteMetadata = false;
+    bool hasMetadataEnvelope = false;
     kj::StringPtr type = "unknown";
     kj::String pathPrefix = kj::heapString("");
     KJ_IF_MAYBE(info, metadata) {
+      switch (info->nativeInterface) {
+        case ClaimedCapabilityNativeInterface::WEB_SESSION:
+          hasMetadataEnvelope = true;
+          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::WEB);
+          break;
+        case ClaimedCapabilityNativeInterface::API_SESSION:
+          hasMetadataEnvelope = true;
+          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API);
+          break;
+        case ClaimedCapabilityNativeInterface::APP_OBJECT:
+          hasMetadataEnvelope = true;
+          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT);
+          break;
+        case ClaimedCapabilityNativeInterface::UNKNOWN:
+        case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
+          break;
+      }
+
       switch (info->kind) {
         case ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION:
-          hasRouteMetadata = true;
-          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::WEB);
-          pathPrefix = kj::heapString(info->pathPrefix);
-          break;
         case ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION:
-          hasRouteMetadata = true;
-          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API);
-          pathPrefix = kj::heapString(info->pathPrefix);
-          break;
         case ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT:
-          hasRouteMetadata = true;
-          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT);
           pathPrefix = kj::heapString(info->pathPrefix);
           break;
         default:
@@ -5840,7 +5954,7 @@ private:
       }
     }
 
-    if (!hasRouteMetadata) {
+    if (!hasMetadataEnvelope) {
       return kj::encodeBase64Url(sturdyRef);
     }
 
@@ -5895,38 +6009,45 @@ private:
         return nullptr;
       }
 
-      KJ_IF_MAYBE(pathPrefixBytes, decodeBase64UrlText(encodedPathPrefix, 2048)) {
-        KJ_IF_MAYBE(sturdyRef, decodeBase64UrlText(text, 4096)) {
-          auto pathPrefixText = kj::StringPtr(
-              pathPrefixBytes->asChars().begin(), pathPrefixBytes->size());
-          auto pathPrefix = normalizeRouteBackedPathPrefix(pathPrefixText);
+      kj::Array<byte> pathPrefixBytes = nullptr;
+      if (encodedPathPrefix.size() == 0) {
+        pathPrefixBytes = kj::heapArray<byte>(0);
+      } else KJ_IF_MAYBE(decodedPathPrefix, decodeBase64UrlText(encodedPathPrefix, 2048)) {
+        pathPrefixBytes = kj::mv(*decodedPathPrefix);
+      } else {
+        return nullptr;
+      }
 
-          ClaimedCapabilityNativeInterface nativeInterface =
-              ClaimedCapabilityNativeInterface::UNKNOWN;
-          if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::WEB)) {
-            nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
-          } else if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API)) {
-            nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
-          } else if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT)) {
-            nativeInterface = ClaimedCapabilityNativeInterface::APP_OBJECT;
-          } else if (type != "unknown") {
-            return nullptr;
-          }
+      KJ_IF_MAYBE(sturdyRef, decodeBase64UrlText(text, 4096)) {
+        auto pathPrefixText = kj::StringPtr(
+            pathPrefixBytes.asChars().begin(), pathPrefixBytes.size());
+        auto pathPrefix = normalizeRouteBackedPathPrefix(pathPrefixText);
 
-          return DecodedSavedCapabilityToken {
-            kj::mv(*sturdyRef),
-            ClaimedCapabilityMetadata {
-              ClaimedCapabilityKind::RESTORED,
-              ClaimedCapabilityResidence::IMPORTED,
-              nativeInterface,
-              kj::mv(pathPrefix),
-              true,
-              false,
-              true,
-              true,
-            },
-          };
+        ClaimedCapabilityNativeInterface nativeInterface =
+            ClaimedCapabilityNativeInterface::UNKNOWN;
+        if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::WEB)) {
+          nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
+        } else if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API)) {
+          nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
+        } else if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT)) {
+          nativeInterface = ClaimedCapabilityNativeInterface::APP_OBJECT;
+        } else if (type != "unknown") {
+          return nullptr;
         }
+
+        return DecodedSavedCapabilityToken {
+          kj::mv(*sturdyRef),
+          ClaimedCapabilityMetadata {
+            ClaimedCapabilityKind::RESTORED,
+            ClaimedCapabilityResidence::IMPORTED,
+            nativeInterface,
+            kj::mv(pathPrefix),
+            true,
+            false,
+            true,
+            true,
+          },
+        };
       }
     }
 
