@@ -1675,6 +1675,20 @@ test("isolate supervisor integration suite", {
       /nativeInterface webSession cannot be used with app-defined RPC/);
     assert.equal(callback.json.webSessionDrop.ok, true);
     assert.equal(callback.json.sessionDrop.ok, true);
+    assert.deepEqual(callback.json.savedLiveReceiver, {
+      ok: true,
+      receiverType: "capability",
+      tokenType: "string",
+    });
+    assert.equal(callback.json.restoredLiveReceiver.type, "capability");
+    assert.deepEqual(callback.json.restoredLiveReceiverEvent, {
+      ok: true,
+      count: 1,
+      subject: "phase-3-saved-live-receiver",
+    });
+    assert.equal(callback.json.restoredLiveReceiverDrop.ok, true);
+    assert.equal(callback.json.liveReceiverDropSaved.ok, true);
+    assert.equal(callback.json.durableReceiverDrop.ok, true);
     assert.equal(callback.json.drop.ok, true);
 
     const retainedId = `retained-callback-${Date.now()}`;

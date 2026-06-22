@@ -1320,6 +1320,29 @@ function packedPowerboxDescriptorParams(options = {}) {
   ];
 }
 
+const CLAIM_NATIVE_INTERFACES = new Set([
+  "unknown",
+  "webSession",
+  "apiSession",
+  "outboundHttpSession",
+  "appObject",
+]);
+
+function claimNativeInterfaceParams(options = {}) {
+  if (options.nativeInterface === undefined || options.nativeInterface === null) {
+    return [];
+  }
+  const nativeInterface = validate.string(options.nativeInterface, "nativeInterface", {
+    minLength: 1,
+    maxLength: 64,
+  });
+  if (!CLAIM_NATIVE_INTERFACES.has(nativeInterface)) {
+    throw new ValidationError(
+      "nativeInterface must be one of unknown, webSession, apiSession, outboundHttpSession, appObject");
+  }
+  return [["nativeInterface", nativeInterface]];
+}
+
 function powerboxDescriptorParams(options = {}) {
   const apiSession = apiSessionDescriptorParams(options);
   const outboundHttp = outboundHttpDescriptorParams(options);
@@ -1629,10 +1652,17 @@ function publicPowerboxGrantQuery(spec) {
 
 function powerboxGrantClaimDescriptorOptions(spec) {
   if (spec.claimOptions) {
-    return { ...spec.claimOptions };
+    const claimOptions = { ...spec.claimOptions };
+    if (spec.nativeInterface !== undefined && claimOptions.nativeInterface === undefined) {
+      claimOptions.nativeInterface = spec.nativeInterface;
+    }
+    return claimOptions;
   }
   if (spec.descriptor !== undefined || spec.powerboxDescriptor !== undefined) {
-    return { descriptor: spec.powerboxDescriptor ?? spec.descriptor };
+    return {
+      descriptor: spec.powerboxDescriptor ?? spec.descriptor,
+      nativeInterface: spec.nativeInterface ?? "appObject",
+    };
   }
   if (spec.apiSession !== undefined || spec.apiSessionDescriptor !== undefined) {
     return { apiSession: spec.apiSession ?? spec.apiSessionDescriptor };
@@ -2875,6 +2905,9 @@ export function powerbox(request, env) {
       params.append("requiredPermission", name);
     }
     for (const [name, value] of powerboxDescriptorParams(options)) {
+      params.append(name, value);
+    }
+    for (const [name, value] of claimNativeInterfaceParams(options)) {
       params.append(name, value);
     }
     const capability = await postPowerbox(env,

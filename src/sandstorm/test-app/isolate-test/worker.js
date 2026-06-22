@@ -178,6 +178,16 @@ class MailFeedCapability extends RpcTarget {
     };
   }
 
+  async saveReceiver(receiver) {
+    const token = await receiver.save({ label: "Saved live receiver fixture" });
+    return {
+      ok: true,
+      receiverType: receiver.type,
+      tokenType: typeof token,
+      token,
+    };
+  }
+
   startSession() {
     return new CounterCapability();
   }
@@ -1920,6 +1930,24 @@ export default {
         }
         const webSessionDrop = await webSessionCapability.drop();
         const sessionDrop = await session.drop();
+        const durableReceiverId = `live-save-receiver-${crypto.randomUUID()}`;
+        const durableReceiver = await sandstorm(request, env).exportDurable(
+          new EventReceiver(),
+          {
+            id: durableReceiverId,
+            label: "Live receiver save fixture",
+          });
+        const savedLiveReceiver = await feed.saveReceiver(durableReceiver.capability);
+        const restoredLiveReceiver = await sandstorm(request, env).restore(
+          savedLiveReceiver.token);
+        const restoredLiveReceiverEvent = await restoredLiveReceiver.rpc.onMailEvent({
+          subject: "phase-3-saved-live-receiver",
+          unread: 13,
+        });
+        const restoredLiveReceiverDrop = await restoredLiveReceiver.drop();
+        const liveReceiverDropSaved = await sandstorm(request, env).revoke(
+          savedLiveReceiver.token);
+        const durableReceiverDrop = await durableReceiver.capability.drop();
         const drop = await feedCapability.drop();
         return Response.json({
           ok: true,
@@ -1943,6 +1971,16 @@ export default {
           wrongForwardedCapabilityFailure,
           webSessionDrop,
           sessionDrop,
+          savedLiveReceiver: {
+            ok: savedLiveReceiver.ok,
+            receiverType: savedLiveReceiver.receiverType,
+            tokenType: savedLiveReceiver.tokenType,
+          },
+          restoredLiveReceiver: JSON.parse(JSON.stringify(restoredLiveReceiver)),
+          restoredLiveReceiverEvent,
+          restoredLiveReceiverDrop,
+          liveReceiverDropSaved,
+          durableReceiverDrop,
           drop,
         });
       } catch (error) {
@@ -2734,20 +2772,29 @@ export default {
       const permissionQuery = requiredPermissions
         .map((permission) => `&requiredPermission=${encodeURIComponent(permission)}`)
         .join("");
+      const nativeInterface = url.searchParams.get("nativeInterface");
+      const nativeInterfaceQuery = nativeInterface === null
+        ? ""
+        : `&nativeInterface=${encodeURIComponent(nativeInterface)}`;
       let claimResponseOk = false;
       let claimResponseStatus = 500;
       let claim;
-      if (url.searchParams.get("fetch") === "true") {
-        claim = await sandstormPowerbox(request, env).claim(token, {
+      if (url.searchParams.get("fetch") === "true" ||
+          url.searchParams.get("helperClaim") === "true") {
+        const claimOptions = {
           requiredPermissions,
-        });
+        };
+        if (nativeInterface !== null) {
+          claimOptions.nativeInterface = nativeInterface;
+        }
+        claim = await sandstormPowerbox(request, env).claim(token, claimOptions);
         claimResponseOk = true;
         claimResponseStatus = 200;
       } else {
         const claimResponse = await env.SANDSTORM_API.fetch(
           `http://sandstorm/powerbox/claim-request?` +
           `sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token)}` +
-          permissionQuery,
+          permissionQuery + nativeInterfaceQuery,
           { method: "POST" });
         claimResponseOk = claimResponse.ok;
         claimResponseStatus = claimResponse.status;
