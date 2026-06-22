@@ -574,6 +574,30 @@ declare module "sandstorm:api" {
     grants: Record<string, PowerboxGrantSpec> | PowerboxGrantSpec[];
   }
 
+  export interface PowerboxFulfillmentOptions {
+    routePrefix?: string;
+    prefix?: string;
+    title: string | { defaultText: string };
+    description?: string | { defaultText: string };
+    buttonLabel?: string | { defaultText: string };
+    capability: () =>
+      | Capability
+      | DurableObjectCapabilityResult
+      | Promise<Capability | DurableObjectCapabilityResult>;
+    fulfill: SessionCapabilityOptions;
+  }
+
+  export interface PowerboxFulfillmentResult {
+    ok: true;
+    fulfill: { ok: true };
+    capability: CapabilityHandle;
+  }
+
+  export interface PowerboxFulfillmentApi {
+    fulfill(request?: Request): Promise<PowerboxFulfillmentResult>;
+    serve(request?: Request): Promise<Response | null>;
+  }
+
   export interface PublicPowerboxGrant {
     id: string;
     title: string;
@@ -698,6 +722,7 @@ declare module "sandstorm:api" {
       Promise<DurableObjectCapabilityResult>;
     exportDurable(id: string, options: DurableObjectCapabilityOptions):
       Promise<DurableObjectCapabilityResult>;
+    powerboxFulfillment(options: PowerboxFulfillmentOptions): PowerboxFulfillmentApi;
     powerboxGrants(options: PowerboxGrantsOptions): PowerboxGrantsApi;
     serveSystemRoutes(): Promise<Response | null>;
     apiTarget(): SandstormApiTarget;
@@ -716,6 +741,11 @@ declare module "sandstorm:api" {
     env: SandstormEnv,
     options: PowerboxGrantsOptions,
   ): PowerboxGrantsApi;
+  export function powerboxFulfillment(
+    request: Request,
+    env: SandstormEnv,
+    options: PowerboxFulfillmentOptions,
+  ): PowerboxFulfillmentApi;
   export function getSession(request: Request): SessionInfo;
   export function apiTarget(request: Request, env: SandstormEnv): SandstormApiTarget;
   export function servePowerboxDescriptors(

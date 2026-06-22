@@ -43,13 +43,13 @@ function renderRequestPage(session) {
       }
 
       document.querySelector("#fulfill-api").addEventListener("click", (event) => {
-        fulfill(event.currentTarget, "/fulfill-api");
+        fulfill(event.currentTarget, "/__sandstorm/provider-api/fulfill");
       });
       document.querySelector("#fulfill-feed").addEventListener("click", (event) => {
-        fulfill(event.currentTarget, "/fulfill-feed");
+        fulfill(event.currentTarget, "/__sandstorm/provider-feed/fulfill");
       });
       document.querySelector("#fulfill-llm").addEventListener("click", (event) => {
-        fulfill(event.currentTarget, "/fulfill-llm");
+        fulfill(event.currentTarget, "/__sandstorm/provider-llm/fulfill");
       });
     </script>
   </body>
@@ -133,6 +133,55 @@ export default {
     const api = sandstorm(request, env);
     const session = api.session();
     const url = new URL(request.url);
+    const fulfillApi = api.powerboxFulfillment({
+      routePrefix: "/__sandstorm/provider-api",
+      title: "Isolate Capability Provider",
+      description: "Provides a route-backed WebSession from an isolate grain.",
+      buttonLabel: "Use this provider",
+      capability: () => api.webSession({ pathPrefix: "/provided" }),
+      fulfill: {
+        title: "Isolate Capability Provider",
+        verbPhrase: "can provide isolate capability responses",
+        description: "Provides a route-backed WebSession from an isolate grain.",
+        requiredPermissions: ["view"],
+        descriptor: PROVIDER_DESCRIPTOR,
+      },
+    });
+    const fulfillFeed = api.powerboxFulfillment({
+      routePrefix: "/__sandstorm/provider-feed",
+      title: "Isolate Feed Provider",
+      description: "Provides an app-defined feed object from an isolate grain.",
+      buttonLabel: "Use feed provider",
+      capability: () => api.export(new MailFeed(api)),
+      fulfill: {
+        title: "Isolate Feed Provider",
+        verbPhrase: "can provide feed events",
+        description: "Provides an app-defined feed object from an isolate grain.",
+        requiredPermissions: ["view"],
+        descriptor: PROVIDER_DESCRIPTOR,
+      },
+    });
+    const fulfillLlm = api.powerboxFulfillment({
+      routePrefix: "/__sandstorm/provider-llm",
+      title: "Isolate LLM Provider",
+      description: "Provides an app-defined LLM object with returned child sessions.",
+      buttonLabel: "Use LLM provider",
+      capability: () => api.export(new ConversationalLlm()),
+      fulfill: {
+        title: "Isolate LLM Provider",
+        verbPhrase: "can provide conversational sessions",
+        description: "Provides an app-defined LLM object with returned child sessions.",
+        requiredPermissions: ["view"],
+        descriptor: PROVIDER_DESCRIPTOR,
+      },
+    });
+    const helperResponse =
+      await fulfillApi.serve() ||
+      await fulfillFeed.serve() ||
+      await fulfillLlm.serve();
+    if (helperResponse) {
+      return helperResponse;
+    }
 
     if (url.pathname === "/provided/status") {
       return Response.json({
@@ -143,54 +192,6 @@ export default {
         method: request.method,
         sessionType: session.sessionType,
         user: session.user,
-      });
-    }
-
-    if (request.method === "POST" && url.pathname === "/fulfill-api") {
-      const capability = await api.webSession({ pathPrefix: "/provided" });
-      const fulfill = await capability.fulfillRequest(request, {
-        title: "Isolate Capability Provider",
-        verbPhrase: "can provide isolate capability responses",
-        description: "Provides a route-backed WebSession from an isolate grain.",
-        requiredPermissions: ["view"],
-        descriptor: PROVIDER_DESCRIPTOR,
-      });
-      return Response.json({
-        ok: true,
-        fulfill,
-        capability: JSON.parse(JSON.stringify(capability)),
-      });
-    }
-
-    if (request.method === "POST" && url.pathname === "/fulfill-feed") {
-      const capability = await api.export(new MailFeed(api));
-      const fulfill = await capability.fulfillRequest(request, {
-        title: "Isolate Feed Provider",
-        verbPhrase: "can provide feed events",
-        description: "Provides an app-defined feed object from an isolate grain.",
-        requiredPermissions: ["view"],
-        descriptor: PROVIDER_DESCRIPTOR,
-      });
-      return Response.json({
-        ok: true,
-        fulfill,
-        capability: JSON.parse(JSON.stringify(capability)),
-      });
-    }
-
-    if (request.method === "POST" && url.pathname === "/fulfill-llm") {
-      const capability = await api.export(new ConversationalLlm());
-      const fulfill = await capability.fulfillRequest(request, {
-        title: "Isolate LLM Provider",
-        verbPhrase: "can provide conversational sessions",
-        description: "Provides an app-defined LLM object with returned child sessions.",
-        requiredPermissions: ["view"],
-        descriptor: PROVIDER_DESCRIPTOR,
-      });
-      return Response.json({
-        ok: true,
-        fulfill,
-        capability: JSON.parse(JSON.stringify(capability)),
       });
     }
 

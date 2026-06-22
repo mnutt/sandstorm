@@ -1959,6 +1959,49 @@ public:
     KJ_REQUIRE(sessionContextRef.providerDescriptorCount == 2,
         sessionContextRef.providerDescriptorCount);
 
+    auto fulfillmentHelperRequest = session.getRequest();
+    fulfillmentHelperRequest.setPath("/powerbox-fulfillment-helper-self-test?fulfill=true");
+    fulfillmentHelperRequest.setIgnoreBody(false);
+    auto fulfillmentHelperContext = fulfillmentHelperRequest.initContext();
+    fulfillmentHelperContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    fulfillmentHelperContext.initCookies(0);
+    fulfillmentHelperContext.initAccept(0);
+    fulfillmentHelperContext.initAcceptEncoding(0);
+    fulfillmentHelperContext.initAdditionalHeaders(0);
+
+    auto fulfillmentHelperResponse = fulfillmentHelperRequest.send().wait(io.waitScope);
+    auto fulfillmentHelperDebugBody = responseDebugBody(fulfillmentHelperResponse);
+    KJ_REQUIRE(fulfillmentHelperResponse.which() == WebSession::Response::CONTENT,
+        fulfillmentHelperDebugBody);
+    auto fulfillmentHelperContent = fulfillmentHelperResponse.getContent();
+    KJ_REQUIRE(fulfillmentHelperContent.getStatusCode() ==
+        WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(fulfillmentHelperContent.getBody().which() ==
+        WebSession::Response::Content::Body::BYTES);
+    auto fulfillmentHelperBody =
+        kj::str(fulfillmentHelperContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(fulfillmentHelperBody, "\"ok\":true"), fulfillmentHelperBody);
+    KJ_REQUIRE(contains(fulfillmentHelperBody, "\"hasButton\":true"),
+        fulfillmentHelperBody);
+    KJ_REQUIRE(contains(fulfillmentHelperBody, "\"client\":{\"status\":404}"),
+        fulfillmentHelperBody);
+    KJ_REQUIRE(contains(fulfillmentHelperBody,
+        "\"webFulfill\":{\"status\":200,\"body\":{\"ok\":true,"
+        "\"fulfill\":{\"ok\":true},\"capability\":{\"ok\":true,\"type\":\"capability\""),
+        fulfillmentHelperBody);
+    KJ_REQUIRE(contains(fulfillmentHelperBody,
+        "\"objectFulfill\":{\"status\":200,\"body\":{\"ok\":true,"
+        "\"fulfill\":{\"ok\":true},\"capability\":{\"ok\":true,\"type\":\"capability\""),
+        fulfillmentHelperBody);
+    KJ_REQUIRE(contains(fulfillmentHelperBody,
+        "\"durableFulfill\":{\"status\":200,\"body\":{\"ok\":true,"
+        "\"fulfill\":{\"ok\":true},\"capability\":{\"ok\":true,\"type\":\"capability\""),
+        fulfillmentHelperBody);
+    KJ_REQUIRE(contains(fulfillmentHelperBody,
+        "\"errorFulfill\":{\"status\":400,\"body\":{\"ok\":false"),
+        fulfillmentHelperBody);
+    KJ_REQUIRE(sessionContextRef.fulfillCount == 7, sessionContextRef.fulfillCount);
+
     auto offerSessionContext = kj::heap<FakeSessionContext>();
     auto& offerSessionContextRef = *offerSessionContext;
     auto offerSessionRequest = view.newOfferSessionRequest();
