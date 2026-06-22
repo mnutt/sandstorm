@@ -61,6 +61,16 @@ function makeTimeoutError() {
   return err;
 }
 
+function makeTransportError(err) {
+  if (err && err.kjType) return err;
+
+  const message = err && err.message ? err.message : String(err);
+  const result = new Error("Outbound HTTP request failed: " + message);
+  result.kjType = "disconnected";
+  if (err && err.code) result.code = err.code;
+  return result;
+}
+
 function isDotSegment(segment) {
   const lower = segment.toLowerCase();
   return lower === "." ||
@@ -238,14 +248,15 @@ function writeResponseBody(resp, responseStream) {
     resp.on("data", (chunk) => {
       resp.pause();
       chain = chain.then(() => responseStream.write(chunk))
-          .then(() => resp.resume(), reject);
+          .then(() => resp.resume(), (err) => reject(makeTransportError(err)));
     });
 
     resp.on("end", () => {
-      chain.then(() => responseStream.done()).then(resolve, reject);
+      chain.then(() => responseStream.done())
+          .then(resolve, (err) => reject(makeTransportError(err)));
     });
 
-    resp.on("error", reject);
+    resp.on("error", (err) => reject(makeTransportError(err)));
   });
 }
 
@@ -261,7 +272,7 @@ class OutboundRequestStream {
 
     return new Promise((resolve, reject) => {
       this._req.write(Buffer.from(data), (err) => {
-        if (err) reject(err);
+        if (err) reject(makeTransportError(err));
         else resolve();
       });
     });
@@ -273,7 +284,7 @@ class OutboundRequestStream {
 
     return new Promise((resolve, reject) => {
       this._req.end((err) => {
-        if (err) reject(err);
+        if (err) reject(makeTransportError(err));
         else resolve();
       });
     });
@@ -393,8 +404,9 @@ class OutboundHttpSessionImpl extends PersistentImpl {
                 };
               } catch (err) {
                 clearRequestTimeout();
-                rejectResponse(err);
-                req.destroy(err);
+                const transportError = makeTransportError(err);
+                rejectResponse(transportError);
+                req.destroy(transportError);
                 return;
               }
 
@@ -411,21 +423,22 @@ class OutboundHttpSessionImpl extends PersistentImpl {
 
             req.on("error", (err) => {
               clearRequestTimeout();
-              rejectResponse(err);
+              rejectResponse(makeTransportError(err));
             });
           });
 
           resolve({ req, responsePromise });
         } catch (err) {
-          if (req) req.destroy(err);
+          const transportError = makeTransportError(err);
+          if (req) req.destroy(transportError);
           else {
             clearRequestTimeout();
           }
-          reject(err);
+          reject(transportError);
         }
       }, (err) => {
         clearRequestTimeout();
-        reject(err);
+        reject(makeTransportError(err));
       });
     });
   }
@@ -435,11 +448,21 @@ class OutboundHttpSessionImpl extends PersistentImpl {
 
     return this._startRequest(
         method, path, headers, responseStream, bodyBuffer.length).then(({ req, responsePromise }) => {
-      if (bodyBuffer.length > 0) {
-        req.write(bodyBuffer);
+      try {
+        if (bodyBuffer.length > 0) {
+          req.write(bodyBuffer, (err) => {
+            if (err) req.destroy(makeTransportError(err));
+          });
+        }
+
+        req.end((err) => {
+          if (err) req.destroy(makeTransportError(err));
+        });
+      } catch (err) {
+        const transportError = makeTransportError(err);
+        req.destroy(transportError);
       }
 
-      req.end();
       return responsePromise;
     });
   }

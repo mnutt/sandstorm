@@ -974,6 +974,20 @@ export default {
         },
         body: "hello",
       });
+      const saved = await capability.save({ label: "Outbound HTTP saved capability" });
+      const restored = await api.restore(saved);
+      const restoredInfo = await restored.info();
+      const restoredResponse = await restored.fetch("v1/chat/completions?model=test", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer isolate-test",
+          "content-type": "text/plain; charset=utf-8",
+        },
+        body: "hello",
+      });
+      const restoredBody = await restoredResponse.json();
+      const dropRestored = await restored.drop();
+      const dropSaved = await api.revoke(saved);
 
       return Response.json({
         ok: true,
@@ -985,6 +999,16 @@ export default {
         contentType: response.headers.get("content-type"),
         outboundHeader: response.headers.get("x-outbound-test"),
         body: await response.json(),
+        restored: {
+          capabilityClass: restored instanceof Capability,
+          info: restoredInfo,
+          status: restoredResponse.status,
+          statusText: restoredResponse.statusText,
+          outboundHeader: restoredResponse.headers.get("x-outbound-test"),
+          body: restoredBody,
+        },
+        dropRestored,
+        dropSaved,
         drop: await capability.drop(),
       });
     }

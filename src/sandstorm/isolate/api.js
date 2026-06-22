@@ -2793,7 +2793,8 @@ async function useCapabilityToken(env, token, fn) {
 
 async function fetchCapability(env, capability, input, init = {}) {
   const info = await capabilityInfo(env, capability);
-  if (info?.nativeInterface === "outboundHttpSession") {
+  if (info?.nativeInterface === "outboundHttpSession" ||
+      (info?.supportsOutboundHttpFetch === true && info?.supportsWebFetch === false)) {
     return fetchOutboundHttpSession(capability, input, init, info);
   }
 
