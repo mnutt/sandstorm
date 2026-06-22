@@ -4956,7 +4956,7 @@ private:
     }
 
     for (auto c: value) {
-      if (c == '\r' || c == '\n' || c == '\0') {
+      if ((c >= 0 && c < 0x20 && c != '\t') || c == 0x7f) {
         return false;
       }
     }
@@ -5061,14 +5061,34 @@ private:
         lower != "upgrade";
   }
 
+  kj::String safeOutboundHttpStatusText(kj::StringPtr statusText) {
+    if (statusText.size() == 0 || statusText.size() > 128 ||
+        !isValidCapabilityFetchHeaderValue(statusText)) {
+      return kj::heapString("OK");
+    }
+
+    return kj::heapString(statusText);
+  }
+
   kj::HttpHeaders makeOutboundHttpResponseHeaders(
       OutboundHttpSession::Response::Reader outboundResponse) {
     kj::HttpHeaders headers(headerTable);
     for (auto header: outboundResponse.getHeaders()) {
-      if (shouldForwardOutboundHttpResponseHeader(header.getName()) &&
-          isValidCapabilityFetchHeaderValue(header.getValue())) {
-        headers.add(header.getName(), header.getValue());
+      auto name = header.getName();
+      auto value = header.getValue();
+      if (!isValidCapabilityFetchHeaderName(name)) {
+        continue;
       }
+
+      if (!shouldForwardOutboundHttpResponseHeader(name)) {
+        continue;
+      }
+
+      if (!isValidCapabilityFetchHeaderValue(value)) {
+        continue;
+      }
+
+      headers.add(kj::heapString(name), kj::heapString(value));
     }
     return kj::mv(headers);
   }
@@ -5460,21 +5480,35 @@ private:
       ByteStream::Client responseStreamClient(kj::mv(responseStream));
       request.setResponseStream(kj::mv(responseStreamClient));
 
+      auto responseStarted = kj::heap<bool>(false);
+      auto responseStartedPtr = responseStarted.get();
+
       return request.send()
-          .then([this, &response, responseBody = kj::mv(responseBody)](auto result) mutable {
+          .then([this, &response, responseBody = kj::mv(responseBody), responseStartedPtr](
+              auto result) mutable {
         uint statusCode = result.getStatusCode();
-        auto statusText = kj::heapString(result.getStatusText());
+        auto statusText = safeOutboundHttpStatusText(result.getStatusText());
         auto responseHeaders = makeOutboundHttpResponseHeaders(result);
         return responseBody.then([this, &response, statusCode, statusText = kj::mv(statusText),
-            responseHeaders = kj::mv(responseHeaders)](kj::Array<byte>&& body) mutable {
+            responseHeaders = kj::mv(responseHeaders), responseStartedPtr](
+                kj::Array<byte>&& body) mutable {
           auto statusTextPtr = statusText.size() == 0 ? kj::StringPtr("OK") : statusText.asPtr();
+          *responseStartedPtr = true;
           return sendBytes(response, statusCode, statusTextPtr, kj::mv(responseHeaders),
               kj::mv(body));
         });
-      }).catch_([this, &response](kj::Exception&& exception) mutable {
+      }).catch_([this, &response, responseStartedPtr](
+          kj::Exception&& exception) mutable -> kj::Promise<void> {
+        if (*responseStartedPtr) {
+          KJ_LOG(WARNING, "Outbound HTTP response write failed after response started.",
+              exception);
+          return kj::mv(exception);
+        }
+
         return sendJson(response, 502, "Bad Gateway", renderError(
             kj::str("outbound HTTP fetch failed: ", exception.getDescription())));
-      }).attach(kj::mv(outboundHeaderValues), kj::mv(bodyBytes), kj::mv(params));
+      }).attach(kj::mv(outboundHeaderValues), kj::mv(bodyBytes), kj::mv(params),
+          kj::mv(responseStarted));
     } else {
       return sendJson(response, 404, "Not Found", kj::heapString(
           "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
@@ -5938,8 +5972,11 @@ private:
           hasMetadataEnvelope = true;
           type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT);
           break;
-        case ClaimedCapabilityNativeInterface::UNKNOWN:
         case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
+          hasMetadataEnvelope = true;
+          type = "outboundHttp";
+          break;
+        case ClaimedCapabilityNativeInterface::UNKNOWN:
           break;
       }
 
@@ -6031,6 +6068,8 @@ private:
           nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
         } else if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT)) {
           nativeInterface = ClaimedCapabilityNativeInterface::APP_OBJECT;
+        } else if (type == "outboundHttp") {
+          nativeInterface = ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION;
         } else if (type != "unknown") {
           return nullptr;
         }

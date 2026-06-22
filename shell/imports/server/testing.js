@@ -357,6 +357,7 @@ if(isTesting) {
       }
 
       const seenRequests = [];
+      let expectedHost;
       const server = NodeHttp.createServer((req, res) => {
         const chunks = [];
         req.on("data", (chunk) => chunks.push(chunk));
@@ -372,6 +373,7 @@ if(isTesting) {
           if (req.url === "/api/headers") {
             if (req.headers.authorization !== "Bearer app-token" ||
                 req.headers["x-api-key"] !== "api-key" ||
+                req.headers.host !== expectedHost ||
                 body !== "hello buffered") {
               res.writeHead(500, { "Content-Type": "text/plain" });
               res.end("unexpected headers or body");
@@ -421,6 +423,7 @@ if(isTesting) {
         delete process.env.https_proxy;
 
         const port = server.address().port;
+        expectedHost = "127.0.0.1:" + port;
         const baseUrl = "http://127.0.0.1:" + port + "/api";
         const cap = globalThis.globalFrontendRefRegistry.restore(globalDb, {
           frontendRef: { outboundHttp: { baseUrl } },
