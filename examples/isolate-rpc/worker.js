@@ -1,5 +1,16 @@
-import { RpcTarget, sandstorm, validate } from "sandstorm:api";
+import { Capability, RpcTarget, sandstorm, validate } from "sandstorm:api";
 import { renderRpcDemo } from "./ui.js";
+
+function capabilityFromHandle(env, value) {
+  if (value instanceof Capability) {
+    return value;
+  }
+
+  return new Capability(env, validate.string(value?.id, "capability.id", {
+    minLength: 1,
+    maxLength: 4096,
+  }));
+}
 
 class CounterApi extends RpcTarget {
   constructor(request, env, key) {
@@ -64,15 +75,16 @@ class DemoApi extends RpcTarget {
   }
 
   savePowerboxCapability(capability, label = "Isolate RPC saved capability") {
-    return sandstorm(this.request, this.env).powerbox().save(capability, { label });
+    return capabilityFromHandle(this.env, capability).save({ label })
+      .then((token) => ({ token }));
   }
 
   restorePowerboxCapability(token) {
-    return sandstorm(this.request, this.env).powerbox().restoreSaved(token);
+    return sandstorm(this.request, this.env).restore(token);
   }
 
   dropSavedPowerboxCapability(token) {
-    return sandstorm(this.request, this.env).powerbox().dropSaved(token);
+    return sandstorm(this.request, this.env).revoke(token);
   }
 
   async storeSavedPowerboxCapability(saved, key = "rpc-saved-capability") {
@@ -85,7 +97,7 @@ class DemoApi extends RpcTarget {
   }
 
   dropPowerboxCapability(capability) {
-    return sandstorm(this.request, this.env).powerbox().drop(capability);
+    return capabilityFromHandle(this.env, capability).drop();
   }
 
   sandstorm() {

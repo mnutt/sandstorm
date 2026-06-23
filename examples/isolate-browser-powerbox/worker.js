@@ -193,25 +193,33 @@ export default {
 
       if (url.pathname === "/claim" && request.method === "POST") {
         const body = await request.json();
-        const claimed = await api.powerbox().claimAndStoreRequest(body, {
-          storageKey: TOKEN_KEY,
-          label: "Browser Powerbox Lifecycle API",
-        });
-        const call = await apiCall(claimed.capability);
-        await claimed.capability.drop();
+        const capability = await api.powerbox().claim(body);
+        let token;
+        let call;
+        try {
+          token = await capability.save({ label: "Browser Powerbox Lifecycle API" });
+          await api.storage().put(TOKEN_KEY, token);
+          call = await apiCall(capability);
+        } finally {
+          await capability.drop();
+        }
         return render(request, env, {
           ok: true,
           step: "claimed and saved",
-          saved: JSON.parse(JSON.stringify(claimed.saved)),
+          storageKey: TOKEN_KEY,
+          saved: Boolean(token),
           call,
         });
       }
 
       if (url.pathname === "/use" && request.method === "POST") {
-        const response = await api.powerbox().fetchStored(
-          { storageKey: TOKEN_KEY },
+        const token = await api.storage().get(TOKEN_KEY);
+        if (!token) {
+          throw new Error("No saved token");
+        }
+        const response = await api.use(token, capability => capability.fetch(
           "/status",
-          { headers: { accept: "application/json" } });
+          { headers: { accept: "application/json" } }));
         const call = await readApiResponse(response);
         return render(request, env, {
           ok: true,
@@ -221,11 +229,14 @@ export default {
       }
 
       if (url.pathname === "/revoke" && request.method === "POST") {
-        const dropped = await api.powerbox().dropStored({ storageKey: TOKEN_KEY });
+        const token = await api.storage().get(TOKEN_KEY);
+        const revoked = token ? await api.revoke(token) : { ok: true, skipped: true };
+        const deleted = await api.storage().delete(TOKEN_KEY);
         return render(request, env, {
           ok: true,
           step: "dropped saved token",
-          dropped,
+          revoked,
+          deleted,
         });
       }
 
