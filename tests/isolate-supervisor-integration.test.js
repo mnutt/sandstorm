@@ -545,6 +545,13 @@ test("isolate supervisor integration suite", {
     assert.equal(body.sandstormApi.status.ok, true);
     assert.equal(body.sandstormApi.runtime.mainModule, "worker.js");
     assert.equal(body.storage.text, "stored from isolate");
+    assert.deepEqual(body.appRpcTarget, {
+      targetClass: true,
+      pathname: "/",
+      hasStorage: true,
+      sessionType: "",
+      permissions: [],
+    });
 
     const apiPathResponse = await requestJson(fixture.workerdSocket, "/api/health?ignored=true");
     assert.equal(apiPathResponse.statusCode, 200);

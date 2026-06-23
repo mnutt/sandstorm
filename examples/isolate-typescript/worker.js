@@ -1,19 +1,14 @@
 // Generated from worker.ts with npm run build.
 
 // worker.ts
-import { RpcTarget, sandstorm, validate } from "sandstorm:api";
-var DemoApi = class extends RpcTarget {
-  constructor(request, env) {
-    super();
-    this.request = request;
-    this.env = env;
-  }
+import { AppRpcTarget, sandstorm, validate } from "sandstorm:api";
+var DemoApi = class extends AppRpcTarget {
   session() {
-    return sandstorm(this.request, this.env).session();
+    return this.api.session();
   }
   async increment(step = 1) {
     const amount = validate.integer(step, "step", { min: 1, max: 100 });
-    const store = sandstorm(this.request, this.env).storage();
+    const store = this.api.storage();
     const current = Number(await store.get("typescript-counter") || "0");
     const value = current + amount;
     await store.put("typescript-counter", String(value));

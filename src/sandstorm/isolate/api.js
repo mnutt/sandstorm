@@ -15,6 +15,23 @@ export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
   capnweb: SANDSTORM_CAPNWEB_VERSION,
 });
 
+export class AppRpcTarget extends RpcTarget {
+  #api;
+
+  constructor(request, env) {
+    super();
+    this.request = request;
+    this.env = env;
+  }
+
+  get api() {
+    if (!this.#api) {
+      this.#api = sandstorm(this.request, this.env);
+    }
+    return this.#api;
+  }
+}
+
 const OBJECT_CAPABILITY_PREFIX = "/__sandstorm/object-capabilities";
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";

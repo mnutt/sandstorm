@@ -24,6 +24,13 @@ declare module "sandstorm:api" {
     [binding: string]: unknown;
   }
 
+  export class AppRpcTarget<Env extends SandstormEnv = SandstormEnv> extends RpcTarget {
+    protected readonly request: Request;
+    protected readonly env: Env;
+    protected get api(): SandstormApi;
+    constructor(request: Request, env: Env);
+  }
+
   export interface ServeRpcOptions extends RpcSessionOptions {
     rpcPath?: string;
     clientScriptPath?: string;

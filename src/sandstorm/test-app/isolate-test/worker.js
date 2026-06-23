@@ -1,6 +1,7 @@
 import message from "message.txt";
 import metadata from "metadata.json";
 import {
+  AppRpcTarget,
   Capability,
   RpcTarget,
   SANDSTORM_API_VERSION,
@@ -105,6 +106,20 @@ class CounterCapability extends RpcTarget {
 
   [Symbol.dispose]() {
     disposedCounterCapabilities += 1;
+  }
+}
+
+class AppRpcTargetSelfTest extends AppRpcTarget {
+  summary() {
+    const session = this.api.session();
+    const storage = this.api.storage();
+    return {
+      targetClass: this instanceof RpcTarget,
+      pathname: new URL(this.request.url).pathname,
+      hasStorage: Boolean(storage),
+      sessionType: session.sessionType,
+      permissions: session.permissions,
+    };
   }
 }
 
@@ -3332,6 +3347,7 @@ export default {
         capnweb: SANDSTORM_CAPNWEB_VERSION,
         aggregate: SANDSTORM_HELPER_VERSIONS,
       },
+      appRpcTarget: new AppRpcTargetSelfTest(request, env).summary(),
       sandstormApi: {
         status: apiStatus,
         capabilities: apiCapabilities,
