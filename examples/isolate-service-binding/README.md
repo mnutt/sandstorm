@@ -17,6 +17,7 @@ It also displays `env.MESSAGE` and `env.SETTINGS`, which come from the generated
 text and JSON bindings, plus the byte count and checksum of the binary
 `env.PAYLOAD` data binding.
 
-This example uses `LOOPBACK=main` as a local development stand-in. The long-term
-shape is the same for named services that resolve to other isolate grains,
-process-backed grains, system services, or mocks.
+This example uses `LOOPBACK=main` as a local development stand-in for
+same-workerd services and mocks. Do not use service binding names as
+cross-grain authority; production cross-grain access should go through
+Sandstorm capabilities such as Powerbox grants or saved capability tokens.

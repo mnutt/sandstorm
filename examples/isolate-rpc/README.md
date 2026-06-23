@@ -12,9 +12,8 @@ The browser imports `newSandstormRpcSession()` from `/rpc-client.js`, which
 defaults to the `/rpc` endpoint served by `serveRpc()`.
 The worker passes a target factory to `serveRpc()`, so the API object is only
 created for RPC requests. `serveRpc()` also serves Sandstorm's internal
-app-defined object-capability routes, so apps that export `RpcTarget` objects
-through `sandstorm(request, env).capability()` can use the same helper as their
-front door.
+app-defined object-capability routes, so apps that export durable `RpcTarget`
+objects can use the same helper as their front door.
 
 The "Sandstorm target" button calls an app-defined RPC method that returns the
 Sandstorm helper's own `RpcTarget`, then calls session/runtime methods and a
@@ -28,7 +27,8 @@ the token against the current live session context in the isolate supervisor and
 returns an opaque claimed-capability handle. The example then sends that handle
 through app RPC so the worker can save it, write the returned durable token into
 `sandstorm(request, env).storage()`, read it back, restore it into a second live
-handle, and finally drop both live handles and the saved token. Sandstorm stores
+handle with `api.restore(token)`, and finally drop both live handles and revoke
+the saved token with `api.revoke(token)`. Sandstorm stores
 the token's server-side authority in its API-token store; the isolate app is
 responsible for storing the returned token string if it wants to restore the
 capability later, and for dropping that saved token when it is no longer needed.

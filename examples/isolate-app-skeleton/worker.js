@@ -1,18 +1,12 @@
-import { RpcTarget, sandstorm, validate } from "sandstorm:api";
+import { AppRpcTarget, sandstorm, validate } from "sandstorm:api";
 import { renderSkeletonPage } from "./ui.js";
 
-class AppApi extends RpcTarget {
-  constructor(request, env) {
-    super();
-    this.request = request;
-    this.env = env;
-  }
-
+class AppApi extends AppRpcTarget {
   hello(name = "there") {
     name = validate.optional(name, "there", validate.string, "name", {
       maxLength: 80,
     });
-    const session = sandstorm(this.request, this.env).session();
+    const session = this.api.session();
     return {
       greeting: `Hello, ${name}!`,
       user: session.user.displayName || "anonymous user",
@@ -21,11 +15,11 @@ class AppApi extends RpcTarget {
   }
 
   session() {
-    return sandstorm(this.request, this.env).session();
+    return this.api.session();
   }
 
   async increment() {
-    const store = sandstorm(this.request, this.env).storage();
+    const store = this.api.storage();
     const current = Number(await store.get("skeleton-counter") || "0");
     const next = current + 1;
     await store.put("skeleton-counter", String(next));

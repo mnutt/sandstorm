@@ -1,4 +1,4 @@
-import { ClaimedCapability, SavedCapability, sandstorm } from "sandstorm:api";
+import { sandstorm } from "sandstorm:api";
 import { renderCapabilityProviderDemo } from "./ui.js";
 
 function jsonError(error) {
@@ -33,23 +33,20 @@ function serializeCapability(capability) {
   return JSON.parse(JSON.stringify(capability));
 }
 
-async function exerciseCapability(capability, options) {
-  const saved = await capability.save({ label: options.label });
+async function exerciseCapability(api, capability, options) {
+  const token = await capability.save({ label: options.label });
   const directCall = await callJson(capability, options.path, options.fetchInit);
   const dropOriginal = await capability.drop();
-  const restored = await saved.restore();
+  const restored = await api.restore(token);
   const restoredCall = await callJson(restored, options.restoredPath || options.path);
   const dropRestored = await restored.drop();
-  const dropSaved = await saved.drop();
+  const dropSaved = await api.revoke(token);
 
   return {
     ok: true,
-    capabilityClass: capability instanceof ClaimedCapability,
-    savedClass: saved instanceof SavedCapability,
-    restoredClass: restored instanceof ClaimedCapability,
     capability: serializeCapability(capability),
-    saved: serializeCapability(saved),
     restored: serializeCapability(restored),
+    saved: Boolean(token),
     directCall,
     dropOriginal,
     restoredCall,
@@ -97,7 +94,7 @@ export default {
 
       if (request.method === "POST" && url.pathname === "/api/export-web-session") {
         const capability = await api.webSession({ pathPrefix: "/shared" });
-        return Response.json(await exerciseCapability(capability, {
+        return Response.json(await exerciseCapability(api, capability, {
           label: "Isolate provider WebSession",
           path: "/info?source=direct",
           restoredPath: "/info?source=restored",
@@ -112,7 +109,7 @@ export default {
 
       if (request.method === "POST" && url.pathname === "/api/export-api-session") {
         const capability = await api.apiSession({ pathPrefix: "/api/v1" });
-        return Response.json(await exerciseCapability(capability, {
+        return Response.json(await exerciseCapability(api, capability, {
           label: "Isolate provider ApiSession",
           path: "/status?source=direct",
           restoredPath: "/status?source=restored",

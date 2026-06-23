@@ -1,4 +1,4 @@
-import { ClaimedCapability, SavedCapability, sandstorm } from "sandstorm:api";
+import { sandstorm } from "sandstorm:api";
 
 const TOKEN_KEY = "api-powerbox-token";
 const API_CANONICAL_URL = "https://api.example.test/v1";
@@ -232,21 +232,22 @@ export default {
       if (request.method === "POST" && url.pathname === "/claim") {
         const body = await readJsonBody(request);
         const canonicalUrl = String(body.canonicalUrl || API_CANONICAL_URL);
-        const claimed = await api.powerbox().claimAndStoreRequest(body, {
-          label: `API: ${canonicalUrl}`,
-          storageKey: TOKEN_KEY,
-        });
-        const { capability, saved } = claimed;
-        const call = await callApi(body.skipApiCall ? null : capability);
-        await capability.drop();
+        const capability = await api.powerbox().claim(body);
+        let token;
+        let call;
+        try {
+          token = await capability.save({ label: `API: ${canonicalUrl}` });
+          await api.storage().put(TOKEN_KEY, token);
+          call = await callApi(body.skipApiCall ? null : capability);
+        } finally {
+          await capability.drop();
+        }
 
         return new Response(renderPage(await readState(request, env, {
           ok: true,
-          capabilityClass: capability instanceof ClaimedCapability,
-          savedClass: saved instanceof SavedCapability,
           requested: body,
-          saved: JSON.parse(JSON.stringify(saved)),
           storageKey: TOKEN_KEY,
+          saved: Boolean(token),
           call,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },
@@ -254,10 +255,13 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/restore") {
-        const response = await api.powerbox().fetchStored(
-          { storageKey: TOKEN_KEY },
+        const token = await api.storage().get(TOKEN_KEY);
+        if (!token) {
+          throw new Error("No saved API token");
+        }
+        const response = await api.use(token, capability => capability.fetch(
           "/status",
-          { headers: { accept: "application/json" } });
+          { headers: { accept: "application/json" } }));
         const call = await readApiResponse(response);
         return new Response(renderPage(await readState(request, env, {
           ok: true,
@@ -269,10 +273,13 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/disconnect") {
-        const dropSaved = await api.powerbox().dropStored({ storageKey: TOKEN_KEY });
+        const token = await api.storage().get(TOKEN_KEY);
+        const revoked = token ? await api.revoke(token) : { ok: true, skipped: true };
+        const deleted = await api.storage().delete(TOKEN_KEY);
         return new Response(renderPage(await readState(request, env, {
           ok: true,
-          dropSaved,
+          revoked,
+          deleted,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },
         });

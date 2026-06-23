@@ -217,12 +217,12 @@ import {
 } from "sandstorm:api";
 ```
 
-During the experimental pre-release period, the Sandstorm helper surface
-versions are `0`. Treat `0` as "not stable yet", not as a supported v0
-compatibility line. When Sandstorm promotes isolate grains to a supported
-runtime, the public helper surface should move to version `1`, and future
-breaking behavior changes should be gated by compatibility dates or explicit
-flags rather than by changing import paths.
+During the experimental pre-release period, `SANDSTORM_API_VERSION` and
+`SANDSTORM_RPC_VERSION` are `0`. Treat `0` as "not stable yet", not as a
+supported v0 compatibility line. When Sandstorm promotes isolate grains to a
+supported runtime, the public helper surface should move to version `1`, and
+future breaking behavior changes should be gated by compatibility dates or
+explicit flags rather than by changing import paths.
 
 `SANDSTORM_CAPNWEB_VERSION` reports the pinned `capnweb` package version
 injected by Sandstorm. The `capnweb` import should still be treated as the
@@ -250,6 +250,8 @@ methods in application code:
   object capabilities
 - `api.exportDurable(targetOrId, options)` for durable local object
   capabilities
+- `api.powerboxGrants()` for storage-backed Powerbox connection helpers
+- `api.powerboxFulfillment()` for provider-side Powerbox fulfillment routes
 - `api.serveSystemRoutes()` before normal app routes
 - `api.serveRpc()` for Cap'n Web RPC endpoints
 
@@ -290,18 +292,10 @@ export default {
 };
 ```
 
-The following exports are public but low-level. Prefer the `sandstorm()`
-facade unless a custom framework or test needs direct access:
-
-- `storage(env)`
-- `powerbox(request, env)`
-- `getSession(request)`
-- `apiTarget(request, env)`
-- `serveSystemRoutes(request, env)`
-- `servePowerboxDescriptors(request, env)`
-- `rpcClientScript()`
-- `rpcResponse(request, target, options)`
-- `serveRpc(request, target, options)`
+The helper modules also expose lower-level functions for tests, framework
+adapters, and internal plumbing. App code should prefer the `sandstorm()`
+facade unless it has a specific integration reason to pass `request` and `env`
+through manually.
 
 ## Capability and token ownership
 
@@ -471,7 +465,8 @@ Send it to the worker and use `api.powerbox().claim(...)` exactly as in the
 API-session flow.
 
 The worker route that receives this request should decide ownership. For a
-lasting connection, save the returned request result into app-owned storage:
+lasting connection, claim the browser result, save the resulting capability,
+and store that saved token in app-owned storage:
 
 ```js
 // Worker route.

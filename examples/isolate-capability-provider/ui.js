@@ -53,8 +53,9 @@ export function renderCapabilityProviderDemo() {
         This worker mints Sandstorm capabilities backed by its own routes:
         <code>webSession({ pathPrefix })</code> and
         <code>apiSession({ pathPrefix })</code>. Each action creates a
-        capability, calls it through <code>ClaimedCapability.fetch()</code>,
-        saves it, restores it, calls it again, and drops both handles.
+        capability, calls it through <code>cap.fetch()</code>, saves it,
+        restores it, calls it again, revokes the saved token, and drops both
+        handles.
       </p>
 
       <div class="controls">

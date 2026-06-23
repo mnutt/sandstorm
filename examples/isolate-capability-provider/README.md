@@ -22,16 +22,16 @@ const api = await sandstorm(request, env).apiSession({
 });
 ```
 
-The returned values are `ClaimedCapability` objects. They can be called with
-`cap.fetch()`, saved with `cap.save()`, restored from the resulting
-`SavedCapability`, and explicitly dropped.
+The returned values are `Capability` objects. They can be called with
+`cap.fetch()`, saved with `cap.save()`, restored from the resulting token with
+`api.restore(token)`, revoked with `api.revoke(token)`, and explicitly dropped.
 
 The WebSession button exercises:
 
 - `webSession({ pathPrefix: "/shared" })`
 - local `cap.fetch("/info?source=direct")`
 - whitelisted `x-sandstorm-app-*` request header forwarding
-- `save()`, `drop()`, `restore()`, and a restored fetch
+- `save()`, `drop()`, `api.restore()`, `api.revoke()`, and a restored fetch
 
 The ApiSession button exercises the same lifecycle for:
 
