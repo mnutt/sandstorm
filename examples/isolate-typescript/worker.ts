@@ -1,27 +1,20 @@
 /// <reference path="./sandstorm-isolate.d.ts" />
 
-import { RpcTarget, sandstorm, validate } from "sandstorm:api";
-import type { SandstormEnv, SessionInfo, StorageApi } from "sandstorm:api";
+import { AppRpcTarget, sandstorm, validate } from "sandstorm:api";
+import type { SandstormEnv, SessionInfo } from "sandstorm:api";
 
 interface Env extends SandstormEnv {
   STORAGE: SandstormEnv["STORAGE"];
 }
 
-class DemoApi extends RpcTarget {
-  constructor(
-    private readonly request: Request,
-    private readonly env: Env,
-  ) {
-    super();
-  }
-
+class DemoApi extends AppRpcTarget<Env> {
   session(): SessionInfo {
-    return sandstorm(this.request, this.env).session();
+    return this.api.session();
   }
 
   async increment(step: number = 1): Promise<{ value: number }> {
     const amount = validate.integer(step, "step", { min: 1, max: 100 });
-    const store: StorageApi = sandstorm(this.request, this.env).storage();
+    const store = this.api.storage();
     const current = Number(await store.get("typescript-counter") || "0");
     const value = current + amount;
     await store.put("typescript-counter", String(value));

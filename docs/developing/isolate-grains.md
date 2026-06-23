@@ -100,7 +100,8 @@ spk dev-isolate --title "TypeScript isolate" worker.js
 
 For a complete small example, see `examples/isolate-typescript/`.
 
-Use a local declaration shim in the app source tree:
+Eventually, we will publish a sandstorm-isolates package. Until then, you
+will need to use a local declaration shim in the app source tree:
 
 ```ts
 /// <reference path="../../src/sandstorm/isolate/capnweb.d.ts" />
@@ -111,7 +112,7 @@ Use a local declaration shim in the app source tree:
 Then import normal values and types from `sandstorm:api`:
 
 ```ts
-import { RpcTarget, sandstorm } from "sandstorm:api";
+import { AppRpcTarget, sandstorm } from "sandstorm:api";
 import type { SandstormEnv, SessionInfo } from "sandstorm:api";
 ```
 
@@ -124,16 +125,21 @@ interface Env extends SandstormEnv {
 }
 ```
 
-The `RpcTarget` base class is also exported from `sandstorm:api`, so app code
-does not need to import `capnweb` directly for common RPC targets:
+The `AppRpcTarget` base class is exported from `sandstorm:api` for RPC targets
+that need per-request Sandstorm authority. It stores `request` and `env` as
+protected fields and exposes `this.api` as a cached `sandstorm(request, env)`
+helper:
 
 ```ts
-class AppApi extends RpcTarget {
+class AppApi extends AppRpcTarget<Env> {
   session(): SessionInfo {
-    return sandstorm(this.request, this.env).session();
+    return this.api.session();
   }
 }
 ```
+
+Use `RpcTarget` directly for stateless targets, callbacks, and local objects
+whose behavior does not need `request`, `env`, or `this.api`.
 
 When browser code uses `newSandstormRpcSession()` with JavaScript's `using`
 declaration, await RPC calls before leaving the `using` scope:
@@ -228,7 +234,7 @@ available for a given isolate runtime.
 The preferred app-author entry point is:
 
 ```js
-import { RpcTarget, sandstorm, validate } from "sandstorm:api";
+import { AppRpcTarget, RpcTarget, sandstorm, validate } from "sandstorm:api";
 ```
 
 Create `const api = sandstorm(request, env)` once per request and prefer these
@@ -246,6 +252,22 @@ methods in application code:
   capabilities
 - `api.serveSystemRoutes()` before normal app routes
 - `api.serveRpc()` for Cap'n Web RPC endpoints
+
+For app-defined RPC endpoints that need Sandstorm context, extend
+`AppRpcTarget` and serve a fresh instance per request:
+
+```js
+class AppApi extends AppRpcTarget {
+  hello() {
+    return {
+      user: this.api.session().user.displayName || "anonymous user",
+    };
+  }
+}
+```
+
+Keep using `RpcTarget` for targets that are stateless, only hold their own
+local state, or only interact with capabilities passed as method arguments.
 
 For durable object routes, pass a registry when creating the request helper:
 
