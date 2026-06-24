@@ -344,6 +344,7 @@ declare module "sandstorm:api" {
     };
     descriptor?: string;
     powerboxDescriptor?: string;
+    nativeInterface?: "unknown" | "webSession" | "apiSession" | "outboundHttpSession" | "appObject";
   }
 
   export interface WebSessionCapabilityOptions {
