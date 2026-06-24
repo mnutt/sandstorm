@@ -86,10 +86,31 @@ export async function claimPowerboxToken(token, options = {}) {
     claimUrl = "/__sandstorm/powerbox/claim",
     requiredPermissions = [],
   } = options;
+  const body = { token, requiredPermissions };
+  if (options.apiSession !== undefined) {
+    body.apiSession = options.apiSession;
+  }
+  if (options.apiSessionDescriptor !== undefined) {
+    body.apiSessionDescriptor = options.apiSessionDescriptor;
+  }
+  if (options.outboundHttp !== undefined) {
+    body.outboundHttp = options.outboundHttp;
+  }
+  if (options.outboundHttpDescriptor !== undefined) {
+    body.outboundHttpDescriptor = options.outboundHttpDescriptor;
+  }
+  if (options.powerboxDescriptor !== undefined) {
+    body.powerboxDescriptor = options.powerboxDescriptor;
+  } else if (options.descriptor !== undefined) {
+    body.descriptor = options.descriptor;
+  }
+  if (options.nativeInterface !== undefined) {
+    body.nativeInterface = options.nativeInterface;
+  }
   const response = await fetch(new URL(claimUrl, window.location.href), {
     method: "POST",
     headers: { "content-type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ token, requiredPermissions }),
+    body: JSON.stringify(body),
   });
   const result = await readJsonResponse(response);
   if (!response.ok || !result.ok) {
@@ -416,10 +437,31 @@ export async function claimPowerboxToken(token, options = {}) {
     claimUrl = "/__sandstorm/powerbox/claim",
     requiredPermissions = [],
   } = options;
+  const body = { token, requiredPermissions };
+  if (options.apiSession !== undefined) {
+    body.apiSession = options.apiSession;
+  }
+  if (options.apiSessionDescriptor !== undefined) {
+    body.apiSessionDescriptor = options.apiSessionDescriptor;
+  }
+  if (options.outboundHttp !== undefined) {
+    body.outboundHttp = options.outboundHttp;
+  }
+  if (options.outboundHttpDescriptor !== undefined) {
+    body.outboundHttpDescriptor = options.outboundHttpDescriptor;
+  }
+  if (options.powerboxDescriptor !== undefined) {
+    body.powerboxDescriptor = options.powerboxDescriptor;
+  } else if (options.descriptor !== undefined) {
+    body.descriptor = options.descriptor;
+  }
+  if (options.nativeInterface !== undefined) {
+    body.nativeInterface = options.nativeInterface;
+  }
   const response = await fetch(new URL(claimUrl, window.location.href), {
     method: "POST",
     headers: { "content-type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ token, requiredPermissions }),
+    body: JSON.stringify(body),
   });
   const result = await readJsonResponse(response);
   if (!response.ok || !result.ok) {

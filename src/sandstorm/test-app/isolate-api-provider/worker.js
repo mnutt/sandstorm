@@ -76,7 +76,8 @@ class MailFeed extends RpcTarget {
     };
   }
 
-  async subscribeSaved(token) {
+  async subscribeSaved(receiverCapability) {
+    const token = await receiverCapability.save({ label: "Saved isolate feed receiver" });
     const receiver = await this.#api.restore(token);
     try {
       const result = await receiver.rpc.onMailEvent({
@@ -86,10 +87,12 @@ class MailFeed extends RpcTarget {
       return {
         ok: true,
         mode: "saved",
+        tokenType: typeof token,
         result,
       };
     } finally {
       await receiver.drop();
+      await this.#api.revoke(token);
     }
   }
 }
@@ -128,9 +131,26 @@ class ConversationalLlm extends RpcTarget {
   }
 }
 
+const FEED_PROVIDER_ID = "isolate-feed-provider";
+const LLM_PROVIDER_ID = "isolate-llm-provider";
+
+const durableCapabilities = {
+  [FEED_PROVIDER_ID]: (request, env) => new MailFeed(providerApi(request, env)),
+  [LLM_PROVIDER_ID]: () => new ConversationalLlm(),
+};
+
+function providerApi(request, env) {
+  return sandstorm(request, env, { capabilities: durableCapabilities });
+}
+
 export default {
   async fetch(request, env) {
-    const api = sandstorm(request, env);
+    const api = providerApi(request, env);
+    const systemResponse = await api.serveSystemRoutes();
+    if (systemResponse) {
+      return systemResponse;
+    }
+
     const session = api.session();
     const url = new URL(request.url);
     const fulfillApi = api.powerboxFulfillment({
@@ -152,7 +172,9 @@ export default {
       title: "Isolate Feed Provider",
       description: "Provides an app-defined feed object from an isolate grain.",
       buttonLabel: "Use feed provider",
-      capability: () => api.export(new MailFeed(api)),
+      capability: () => api.exportDurable(FEED_PROVIDER_ID, {
+        label: "Isolate feed provider",
+      }),
       fulfill: {
         title: "Isolate Feed Provider",
         verbPhrase: "can provide feed events",
@@ -166,7 +188,9 @@ export default {
       title: "Isolate LLM Provider",
       description: "Provides an app-defined LLM object with returned child sessions.",
       buttonLabel: "Use LLM provider",
-      capability: () => api.export(new ConversationalLlm()),
+      capability: () => api.exportDurable(LLM_PROVIDER_ID, {
+        label: "Isolate LLM provider",
+      }),
       fulfill: {
         title: "Isolate LLM Provider",
         verbPhrase: "can provide conversational sessions",

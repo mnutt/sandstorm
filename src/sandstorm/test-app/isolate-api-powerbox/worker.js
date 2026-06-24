@@ -150,6 +150,7 @@ function renderPage(state) {
                 descriptor: powerboxDescriptors.providerTag({
                   descriptor: "${PROVIDER_DESCRIPTOR}",
                 }),
+                ...(feedFlow || llmFlow ? { nativeInterface: "appObject" } : {}),
                 saveLabel: {
                   defaultText: feedFlow ? "Isolate feed provider connection" : llmFlow ?
                     "Isolate LLM provider connection" :
@@ -205,6 +206,18 @@ class FeedReceiver extends RpcTarget {
   }
 }
 
+const FEED_RECEIVER_ID = "isolate-feed-receiver";
+const FEED_RECEIVER_STORAGE_KEY = "isolate-feed-receiver-token";
+const durableFeedReceiver = new FeedReceiver();
+
+const durableCapabilities = {
+  [FEED_RECEIVER_ID]: () => durableFeedReceiver,
+};
+
+function appApi(request, env) {
+  return sandstorm(request, env, { capabilities: durableCapabilities });
+}
+
 async function callApi(capability) {
   if (!capability) {
     return {
@@ -226,27 +239,23 @@ async function callApi(capability) {
 async function callFeed(api, capability) {
   const feed = capability.rpc;
   const liveReceiver = new FeedReceiver();
-  const live = await feed.subscribe(liveReceiver);
-  const durableReceiver = new FeedReceiver();
-  const durableId = `isolate-feed-receiver-${crypto.randomUUID()}`;
-  const durableStorageKey = `${durableId}-token`;
-  const durable = await api.exportDurable(durableReceiver, {
-    id: durableId,
-    storageKey: durableStorageKey,
+  const live = await api.withExport(liveReceiver, (exported) => feed.subscribe(exported));
+  const durable = await api.exportDurable(FEED_RECEIVER_ID, {
+    storageKey: FEED_RECEIVER_STORAGE_KEY,
     label: "Isolate feed receiver",
   });
-  const saved = await feed.subscribeSaved(durable.token);
+  const saved = await feed.subscribeSaved(durable.capability);
   const durableDrop = await durable.capability.drop();
   const durableDropSaved = await api.revoke(durable.token);
   const durableDeleteStorage =
-    await api.storage().delete(durableStorageKey);
+    await api.storage().delete(FEED_RECEIVER_STORAGE_KEY);
 
   return {
     ok: true,
     live,
     liveEvents: liveReceiver.events(),
     saved,
-    savedEvents: durableReceiver.events(),
+    savedEvents: durableFeedReceiver.events(),
     durable: {
       restored: durable.restored,
       storageKey: durable.storageKey,
@@ -320,7 +329,7 @@ async function readApiResponse(response) {
 }
 
 async function readState(request, env, result = null, error = null) {
-  const store = sandstorm(request, env).storage();
+  const store = appApi(request, env).storage();
   const savedToken = await store.get(TOKEN_KEY);
   const savedMode = await store.get(TOKEN_MODE_KEY);
   const url = new URL(request.url);
@@ -357,7 +366,7 @@ async function readJsonBody(request) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const api = sandstorm(request, env);
+    const api = appApi(request, env);
 
     try {
       const systemRoute = await api.serveSystemRoutes();
@@ -379,6 +388,9 @@ export default {
         const token = await capability.save({ label: `API: ${canonicalUrl}` });
         const store = await api.storage().put(TOKEN_KEY, token);
         await api.storage().put(TOKEN_MODE_KEY, mode);
+        const savedCapability = await api.restore(token);
+        const savedClass = savedCapability instanceof Capability;
+        const savedDrop = await savedCapability.drop();
         const call = mode === "feed"
           ? await callFeed(api, capability)
           : mode === "llm"
@@ -389,10 +401,12 @@ export default {
         return new Response(renderPage(await readState(request, env, {
           ok: true,
           capabilityClass: capability instanceof Capability,
+          savedClass,
           tokenType: typeof token,
           requested: body,
           token,
           store,
+          savedDrop,
           storageKey: TOKEN_KEY,
           mode,
           call,

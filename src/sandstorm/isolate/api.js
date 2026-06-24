@@ -1550,11 +1550,25 @@ export async function servePowerboxDescriptors(request, env) {
   if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/claim` && request.method === "POST") {
     try {
       const body = await request.json();
-      const capability = await powerbox(request, env).claim(body.token, {
+      const claimOptions = {
         requiredPermissions: Array.isArray(body.requiredPermissions)
           ? body.requiredPermissions
           : [],
-      });
+      };
+      for (const name of [
+        "apiSession",
+        "apiSessionDescriptor",
+        "outboundHttp",
+        "outboundHttpDescriptor",
+        "descriptor",
+        "powerboxDescriptor",
+        "nativeInterface",
+      ]) {
+        if (body[name] !== undefined) {
+          claimOptions[name] = body[name];
+        }
+      }
+      const capability = await powerbox(request, env).claim(body.token, claimOptions);
       return Response.json({
         ok: true,
         capability: JSON.parse(JSON.stringify(capability)),
