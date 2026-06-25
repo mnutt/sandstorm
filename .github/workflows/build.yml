@@ -164,9 +164,8 @@ jobs:
           path: tests/screenshots
 
   smoke_old_distro_docker:
+    needs: build_and_test
     runs-on: ubuntu-24.04
-    env:
-      SMOKE_BUNDLE_URL: https://github.com/mnutt/sandstorm/releases/download/sandstorm-2-default-mongo-7/sandstorm-2.tar.xz
     strategy:
       fail-fast: false
       matrix:
@@ -188,11 +187,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: download sandstorm tarball
-        run: |
-          mkdir -p smoke-artifact
-          curl --fail --location --show-error \
-            --output smoke-artifact/sandstorm-smoke.tar.xz \
-            "$SMOKE_BUNDLE_URL"
+        uses: actions/download-artifact@v4
+        with:
+          name: sandstorm-0-fast.tar.xz
+          path: smoke-artifact
       - name: setup chrome
         id: setup-chrome
         uses: browser-actions/setup-chrome@v1
@@ -205,4 +203,4 @@ jobs:
           bash tests/ci/old-distro-smoke.sh \
             "${{ matrix.distro.name }}" \
             "${{ matrix.distro.image }}" \
-            smoke-artifact/sandstorm-smoke.tar.xz
+            smoke-artifact/sandstorm-0-fast.tar.xz
