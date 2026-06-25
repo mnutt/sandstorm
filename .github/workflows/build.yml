@@ -162,3 +162,47 @@ jobs:
         with:
           name: screenshots
           path: tests/screenshots
+
+  smoke_old_distro_docker:
+    runs-on: ubuntu-24.04
+    env:
+      SMOKE_BUNDLE_URL: https://github.com/mnutt/sandstorm/releases/download/sandstorm-2-default-mongo-7/sandstorm-2.tar.xz
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - name: ubuntu-14.04
+            image: ubuntu:14.04
+          - name: ubuntu-20.04
+            image: ubuntu:20.04
+          - name: ubuntu-22.04
+            image: ubuntu:22.04
+          - name: debian-9
+            image: debian:9
+          - name: debian-10
+            image: debian:10
+          - name: debian-11
+            image: debian:11
+          - name: centos-7
+            image: quay.io/centos/centos:7
+    steps:
+      - uses: actions/checkout@v4
+      - name: download sandstorm tarball
+        run: |
+          mkdir -p smoke-artifact
+          curl --fail --location --show-error \
+            --output smoke-artifact/sandstorm-smoke.tar.xz \
+            "$SMOKE_BUNDLE_URL"
+      - name: setup chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v1
+      - name: install smoke test dependencies
+        run: npm install --no-save --no-package-lock playwright-core
+      - name: smoke test on ${{ matrix.distro.name }}
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: |
+          bash tests/ci/old-distro-smoke.sh \
+            "${{ matrix.distro.name }}" \
+            "${{ matrix.distro.image }}" \
+            smoke-artifact/sandstorm-smoke.tar.xz
