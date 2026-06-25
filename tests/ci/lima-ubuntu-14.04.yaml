@@ -1,0 +1,31 @@
+# old-kernel-lima-smoke.sh expands @SANDSTORM_REPO_ROOT@ before invoking limactl.
+arch: x86_64
+vmType: qemu
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/trusty/release/ubuntu-14.04-server-cloudimg-amd64-disk1.img"
+    arch: x86_64
+
+cpus: 2
+memory: "3GiB"
+disk: "10GiB"
+
+firmware:
+  legacyBIOS: true
+
+mounts:
+  - location: "@SANDSTORM_REPO_ROOT@"
+    mountPoint: "/workspace"
+    writable: false
+mountType: reverse-sshfs
+
+portForwards:
+  - guestPort: 6080
+    hostPort: 6080
+
+containerd:
+  system: false
+  user: false
+
+ssh:
+  localPort: 0

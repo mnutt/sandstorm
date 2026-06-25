@@ -204,3 +204,31 @@ jobs:
             "${{ matrix.distro.name }}" \
             "${{ matrix.distro.image }}" \
             smoke-artifact/sandstorm-0-fast.tar.xz
+
+  smoke_old_kernel_lima:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: download sandstorm tarball
+        run: |
+          mkdir -p smoke-artifact
+          curl -LfsS \
+            https://github.com/mnutt/sandstorm/releases/download/sandstorm-2-default-mongo-7/sandstorm-2.tar.xz \
+            -o smoke-artifact/sandstorm-0-fast.tar.xz
+      - name: setup chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v1
+      - name: install smoke test dependencies
+        run: npm install --no-save --no-package-lock playwright-core
+      - name: setup lima
+        id: lima-actions-setup
+        uses: lima-vm/lima-actions/setup@v1
+      - name: cache lima images
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/lima
+          key: lima-${{ steps.lima-actions-setup.outputs.version }}-ubuntu-14.04
+      - name: smoke test on ubuntu-14.04 kernel
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+        run: bash tests/ci/old-kernel-lima-smoke.sh smoke-artifact/sandstorm-0-fast.tar.xz
