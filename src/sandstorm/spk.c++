@@ -955,11 +955,21 @@ private:
   // =====================================================================================
 
   kj::String spkfile;
+  kj::Maybe<kj::String> devAppId;
+  kj::Maybe<kj::String> devAppTitle;
+  kj::Maybe<kj::String> devAppVersion;
 
   kj::MainFunc getPackMain() {
     return addCommonOptions(OptionSet::ALL_READONLY,
         kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
             "Package the app as an spk, writing it to <output>.")
+        .addOptionWithArg({"dev-app-id"}, KJ_BIND_METHOD(*this, setDevAppId), "<app-id>",
+            "Sign with <app-id> instead of the package definition's app ID, and omit PGP "
+            "author identity from the manifest.")
+        .addOptionWithArg({"dev-app-title"}, KJ_BIND_METHOD(*this, setDevAppTitle), "<title>",
+            "Override the manifest app title. Requires --dev-app-id.")
+        .addOptionWithArg({"dev-app-version"}, KJ_BIND_METHOD(*this, setDevAppVersion), "<version>",
+            "Override the manifest marketing version.")
         .expectArg("<output>", KJ_BIND_METHOD(*this, setSpkfile))
         .callAfterParsing(KJ_BIND_METHOD(*this, doPack)))
         .build();
@@ -970,10 +980,39 @@ private:
     return true;
   }
 
+  kj::MainBuilder::Validity setDevAppId(kj::StringPtr id) {
+    byte appIdBytes[APP_ID_BYTE_SIZE];
+    if (!tryParseAppId(id, appIdBytes)) {
+      return "invalid app ID";
+    }
+
+    devAppId = kj::heapString(id);
+    return true;
+  }
+
+  kj::MainBuilder::Validity setDevAppTitle(kj::StringPtr title) {
+    devAppTitle = kj::heapString(title);
+    return true;
+  }
+
+  kj::MainBuilder::Validity setDevAppVersion(kj::StringPtr version) {
+    devAppVersion = kj::heapString(version);
+    return true;
+  }
+
   kj::MainBuilder::Validity doPack() {
     ensurePackageDefParsed();
 
-    spk::KeyFile::Reader key = lookupKey(packageDef.getId());
+    if (devAppTitle != nullptr && devAppId == nullptr) {
+      context.exitError("--dev-app-title requires --dev-app-id.");
+    }
+
+    kj::StringPtr appId = packageDef.getId();
+    KJ_IF_MAYBE(id, devAppId) {
+      appId = *id;
+    }
+
+    spk::KeyFile::Reader key = lookupKey(appId);
 
     kj::AutoCloseFd tmpfile = packToTempFile();
 
@@ -1030,6 +1069,43 @@ private:
     printAppId(key.getPublicKey());
 
     return true;
+  }
+
+  kj::String devDefaultTitle() {
+    return kj::str(packageDef.getManifest().getAppTitle().getDefaultText(), " Unsigned");
+  }
+
+  static void setDefaultLocalizedText(sandstorm::LocalizedText::Builder text,
+                                      kj::StringPtr defaultText) {
+    text.setDefaultText(defaultText);
+    text.initLocalizations(0);
+  }
+
+  kj::Array<capnp::word> makeManifestForPack() {
+    auto manifestReader = packageDef.getManifest();
+    capnp::MallocMessageBuilder manifestMessage(manifestReader.totalSize().wordCount + 32);
+    manifestMessage.setRoot(manifestReader);
+
+    auto manifest = manifestMessage.getRoot<spk::Manifest>();
+
+    KJ_IF_MAYBE(title, devAppTitle) {
+      setDefaultLocalizedText(manifest.initAppTitle(), *title);
+    } else KJ_IF_MAYBE(id, devAppId) {
+      auto title = devDefaultTitle();
+      setDefaultLocalizedText(manifest.initAppTitle(), title);
+    }
+
+    KJ_IF_MAYBE(version, devAppVersion) {
+      setDefaultLocalizedText(manifest.initAppMarketingVersion(), *version);
+    }
+
+    if (devAppId != nullptr && manifest.hasMetadata()) {
+      auto metadata = manifest.getMetadata();
+      metadata.getAuthor().clearPgpSignature();
+      metadata.clearPgpKeyring();
+    }
+
+    return capnp::messageToFlatArray(manifestMessage);
   }
 
   kj::AutoCloseFd packToTempFile() {
@@ -1235,10 +1311,7 @@ private:
     auto& node = root.followPath(path);
     if (path == "sandstorm-manifest") {
       // Serialize the manifest.
-      auto manifestReader = packageDef.getManifest();
-      capnp::MallocMessageBuilder manifestMessage(manifestReader.totalSize().wordCount + 4);
-      manifestMessage.setRoot(manifestReader);
-      node.setData(capnp::messageToFlatArray(manifestMessage));
+      node.setData(makeManifestForPack());
     } else if (path == "sandstorm-http-bridge-config") {
       // Serialize the bridgeConfig.
       auto bridgeConfigReader = packageDef.getBridgeConfig();
