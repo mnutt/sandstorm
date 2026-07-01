@@ -39,6 +39,13 @@ declare module "sandstorm:capnp" {
   export type CapnpResultCapabilities<TMethods extends object> =
     Partial<Record<keyof TMethods & string, CapnpResultCapabilityBinding>>;
 
+  export type CapnpArgumentCapabilities<TMethods extends object> =
+    Partial<Record<keyof TMethods & string, {
+      indexes?: readonly number[];
+      indices?: readonly number[];
+      fields?: readonly string[];
+    }>>;
+
   export interface CapnpInterfaceBinding<
     TMethods extends object = Record<string, CapnpRpcMethod>,
     TResultOverrides extends object = object,
@@ -62,6 +69,7 @@ declare module "sandstorm:capnp" {
       importSpecifier?: string;
       schemaPath?: string;
       schemaText?: string;
+      argumentCapabilities?: CapnpArgumentCapabilities<TMethods>;
       resultCapabilities?: CapnpResultCapabilities<TMethods>;
     },
   ): CapnpInterfaceBinding<TMethods, TResultOverrides>;
@@ -71,6 +79,7 @@ declare module "capnp:*" {
   import type { CapnpInterfaceBinding } from "sandstorm:capnp";
 
   export type {
+    CapnpArgumentCapabilities,
     CapnpCapabilityClient,
     CapnpInterfaceBinding,
     CapnpMethodMap,
