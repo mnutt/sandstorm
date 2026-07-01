@@ -12,6 +12,12 @@ const greeterMethods = {
       },
     });
   },
+  async useGreeting(greeting) {
+    if (typeof greeting.call === "function") {
+      return greeting.call("read");
+    }
+    return greeting.read();
+  },
 };
 
 export default {
@@ -34,6 +40,7 @@ export default {
       name: url.searchParams.get("name") || "isolate",
     });
     const greetingResult = await greeting.read();
+    const useGreetingResult = await greeter.useGreeting(greeting);
 
     return Response.json({
       ok: true,
@@ -41,6 +48,7 @@ export default {
       methodNames: Greeter.methodNames,
       result,
       greetingResult,
+      useGreetingResult,
     });
   },
 };
