@@ -1,9 +1,11 @@
-declare module "capnp:*" {
+declare module "sandstorm:capnp" {
   import type {
     Capability,
     RpcTarget,
     SaveCapabilityOptions,
   } from "sandstorm:api";
+
+  export const SANDSTORM_CAPNP_VERSION: 0;
 
   export type CapnpRpcMethod = (...args: any[]) => unknown;
   export type CapnpMethodMap<TMethods> = {
@@ -38,6 +40,30 @@ declare module "capnp:*" {
     local(methods: CapnpMethodMap<TMethods>): CapnpRpcClient<TMethods>;
     powerboxDescriptor(options?: unknown): never;
   }
+
+  export function makeCapnpInterfaceBinding<
+    TMethods extends object = Record<string, CapnpRpcMethod>,
+  >(
+    interfaceName: string,
+    methodNames: readonly (keyof TMethods & string)[],
+    schema?: {
+      importSpecifier?: string;
+      schemaPath?: string;
+      schemaText?: string;
+    },
+  ): CapnpInterfaceBinding<TMethods>;
+}
+
+declare module "capnp:*" {
+  import type { CapnpInterfaceBinding } from "sandstorm:capnp";
+
+  export type {
+    CapnpCapabilityClient,
+    CapnpInterfaceBinding,
+    CapnpMethodMap,
+    CapnpRpcClient,
+    CapnpRpcMethod,
+  } from "sandstorm:capnp";
 
   export interface CapnpSchemaModule {
     readonly importSpecifier: string;

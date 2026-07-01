@@ -22,6 +22,9 @@ for simple schema-first app-object RPC. The generated binding can:
 This is an authoring bridge over today's app-object RPC transport. It is not
 native Cap'n Proto RPC transport yet.
 
+The generated module delegates its runtime `implement()`, `cast()`, and
+`local()` behavior to Sandstorm's injected `sandstorm:capnp` helper.
+
 TypeScript can import the default schema object with the shared declaration in
 `src/sandstorm/isolate/capnp.d.ts`:
 

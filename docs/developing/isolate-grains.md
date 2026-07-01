@@ -30,8 +30,8 @@ shim:
 
 - the `spk dev-isolate` command and generated package layout
 - `Manifest.Command.isolate` and related package schema fields
-- injected helper modules such as `sandstorm:api`, `sandstorm:rpc`, and
-  `capnweb`
+- injected helper modules such as `sandstorm:api`, `sandstorm:rpc`,
+  `sandstorm:capnp`, and `capnweb`
 - JavaScript helper names, method signatures, and return shapes
 - supervisor-local helper endpoints behind `SANDSTORM_API`, `POWERBOX`, and
   `STORAGE`
@@ -73,7 +73,8 @@ modules:
 - `src/sandstorm/isolate/api.d.ts` for `sandstorm:api`
 - `src/sandstorm/isolate/rpc.d.ts` for `sandstorm:rpc`
 - `src/sandstorm/isolate/capnweb.d.ts` for the injected `capnweb`
-- `src/sandstorm/isolate/capnp.d.ts` for generated `capnp:` imports
+- `src/sandstorm/isolate/capnp.d.ts` for `sandstorm:capnp` and generated
+  `capnp:` imports
 
 These declarations describe the runtime APIs that `workerd` receives from
 Sandstorm. They do not imply that Sandstorm transpiles TypeScript source yet.
@@ -176,6 +177,11 @@ name, plus a default schema object. The binding can expose a server target with
 `Greeter.implement(methods)`, cast a Sandstorm capability with
 `Greeter.cast(capability)`, or create an in-memory test client with
 `Greeter.local(methods)`.
+
+Generated `capnp:` modules use the injected `sandstorm:capnp` helper for their
+runtime binding logic. App code should normally import generated schemas
+through `capnp:` rather than hand-writing `makeCapnpInterfaceBinding()` calls,
+but the helper is available for tests and generated-code plumbing.
 
 The shared `capnp.d.ts` declaration can describe the default schema object and
 generic helper shape, but it cannot infer schema-specific named exports from a
