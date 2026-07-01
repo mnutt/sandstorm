@@ -14,35 +14,47 @@ declare module "sandstorm:capnp" {
 
   export type CapnpRpcClient<
     TMethods extends object = Record<string, CapnpRpcMethod>,
+    TResultOverrides extends object = object,
   > = {
     [K in keyof TMethods]: TMethods[K] extends (...args: infer Args) => infer Result
-      ? (...args: Args) => Promise<Awaited<Result>>
+      ? (...args: Args) => Promise<K extends keyof TResultOverrides
+          ? TResultOverrides[K]
+          : Awaited<Result>>
       : never;
   };
 
   export type CapnpCapabilityClient<
     TMethods extends object = Record<string, CapnpRpcMethod>,
+    TResultOverrides extends object = object,
   > =
-    CapnpRpcClient<TMethods> & {
+    CapnpRpcClient<TMethods, TResultOverrides> & {
       readonly capability: Capability;
       drop(): Promise<unknown>;
       save(options?: SaveCapabilityOptions): Promise<string>;
     };
 
+  export type CapnpResultCapabilityBinding =
+    CapnpInterfaceBinding<any, any> | (() => CapnpInterfaceBinding<any, any>);
+
+  export type CapnpResultCapabilities<TMethods extends object> =
+    Partial<Record<keyof TMethods & string, CapnpResultCapabilityBinding>>;
+
   export interface CapnpInterfaceBinding<
     TMethods extends object = Record<string, CapnpRpcMethod>,
+    TResultOverrides extends object = object,
   > {
     readonly interfaceName: string;
     readonly schemaPath: string;
     readonly methodNames: readonly (keyof TMethods & string)[];
     implement(methods: CapnpMethodMap<TMethods>): RpcTarget;
-    cast(capability: Capability): CapnpCapabilityClient<TMethods>;
-    local(methods: CapnpMethodMap<TMethods>): CapnpRpcClient<TMethods>;
+    cast(capability: Capability): CapnpCapabilityClient<TMethods, TResultOverrides>;
+    local(methods: CapnpMethodMap<TMethods>): CapnpRpcClient<TMethods, TResultOverrides>;
     powerboxDescriptor(options?: unknown): never;
   }
 
   export function makeCapnpInterfaceBinding<
     TMethods extends object = Record<string, CapnpRpcMethod>,
+    TResultOverrides extends object = object,
   >(
     interfaceName: string,
     methodNames: readonly (keyof TMethods & string)[],
@@ -50,8 +62,9 @@ declare module "sandstorm:capnp" {
       importSpecifier?: string;
       schemaPath?: string;
       schemaText?: string;
+      resultCapabilities?: CapnpResultCapabilities<TMethods>;
     },
-  ): CapnpInterfaceBinding<TMethods>;
+  ): CapnpInterfaceBinding<TMethods, TResultOverrides>;
 }
 
 declare module "capnp:*" {
@@ -61,6 +74,8 @@ declare module "capnp:*" {
     CapnpCapabilityClient,
     CapnpInterfaceBinding,
     CapnpMethodMap,
+    CapnpResultCapabilities,
+    CapnpResultCapabilityBinding,
     CapnpRpcClient,
     CapnpRpcMethod,
   } from "sandstorm:capnp";

@@ -132,6 +132,9 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
     "  fail @4 (message :Text) -> ();",
     "}",
   ].join("\n"),
+  resultCapabilities: {
+    child: () => GeneratedCounter,
+  },
 });
 
 class AppRpcTargetSelfTest extends AppRpcTarget {
@@ -2950,10 +2953,9 @@ export default {
       const transientClient = GeneratedCounter.cast(transient);
       const transientFirst = await transientClient.increment(5);
       const transientCurrent = await transientClient.get();
-      const childCapability = await transientClient.child();
-      const childClient = GeneratedCounter.cast(childCapability);
+      const childClient = await transientClient.child();
       const childFirst = await childClient.increment(7);
-      const readChild = await transientClient.readOther(childCapability);
+      const readChild = await transientClient.readOther(childClient.capability);
 
       const durableTarget = new CounterCapability();
       durableTarget.increment(11);
@@ -3014,7 +3016,7 @@ export default {
           current: transientCurrent,
         },
         child: {
-          capability: JSON.parse(JSON.stringify(childCapability)),
+          capability: JSON.parse(JSON.stringify(childClient.capability)),
           first: childFirst,
           read: readChild,
           drop: dropChild,
