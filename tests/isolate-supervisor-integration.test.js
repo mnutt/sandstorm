@@ -504,9 +504,12 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
     workerPath,
   ]);
   assert.match(generated.stdout, /export const Greeter = makeInterface\("Greeter"/);
-  assert.match(generated.stdout, /"hello", "greeting"/);
+  assert.match(generated.stdout, /"hello", "greeting", "useGreeting"/);
   assert.match(generated.stdout, /export const Greeting = makeInterface\("Greeting"/);
   assert.match(generated.stdout, /"read"/);
+  assert.match(
+    generated.stdout,
+    /"useGreeting": \{ indexes: \[0\], fields: \["greeting"\] \}/);
   assert.match(generated.stdout, /"greeting": \(\) => Greeting/);
   assert.doesNotMatch(generated.stdout, /"hello": \(\) =>/);
 });

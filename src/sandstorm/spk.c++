@@ -2766,9 +2766,14 @@ private:
 
   struct DevCapnpInterface {
     kj::String name;
+    struct Field {
+      kj::String name;
+      kj::String type;
+    };
     struct Method {
       kj::String name;
       kj::String resultType;
+      kj::Vector<Field> params;
     };
     kj::Vector<Method> methods;
   };
@@ -2820,8 +2825,7 @@ private:
     return pos;
   }
 
-  static kj::String scanSingleCapnpResultType(
-      std::string const& source, size_t start, size_t end) {
+  static size_t findCapnpArrow(std::string const& source, size_t start, size_t end) {
     size_t arrow = end;
     uint parenDepth = 0;
     for (size_t pos = start; pos + 1 < end; ++pos) {
@@ -2834,53 +2838,68 @@ private:
         break;
       }
     }
+    return arrow;
+  }
 
-    if (arrow == end) {
-      return kj::heapString("");
-    }
-
-    size_t pos = arrow;
-    while (pos < end && source[pos] != '(') {
-      ++pos;
-    }
-    if (pos >= end) {
-      return kj::heapString("");
-    }
-
-    auto resultStart = ++pos;
-    parenDepth = 1;
-    while (pos < end && parenDepth > 0) {
-      if (source[pos] == '(') {
-        ++parenDepth;
-      } else if (source[pos] == ')') {
-        --parenDepth;
+  static bool findFirstCapnpTuple(
+      std::string const& source, size_t start, size_t end, size_t& tupleStart, size_t& tupleEnd) {
+    auto pos = start;
+    while (pos < end) {
+      if (source[pos] == '"' || source[pos] == '\'') {
+        skipCapnpString(source, pos);
+      } else if (source[pos] == '(') {
+        tupleStart = ++pos;
+        uint parenDepth = 1;
+        while (pos < end && parenDepth > 0) {
+          if (source[pos] == '"' || source[pos] == '\'') {
+            skipCapnpString(source, pos);
+          } else if (source[pos] == '(') {
+            ++parenDepth;
+            ++pos;
+          } else if (source[pos] == ')') {
+            --parenDepth;
+            ++pos;
+          } else {
+            ++pos;
+          }
+        }
+        if (parenDepth == 0) {
+          tupleEnd = pos - 1;
+          return true;
+        }
+        return false;
+      } else {
+        ++pos;
       }
-      ++pos;
     }
-    if (parenDepth != 0) {
-      return kj::heapString("");
-    }
+    return false;
+  }
 
-    auto resultEnd = pos - 1;
-    size_t fieldCount = 0;
-    kj::String resultType = kj::heapString("");
-    pos = resultStart;
-    while (pos < resultEnd) {
+  static kj::Vector<DevCapnpInterface::Field> scanCapnpTupleFields(
+      std::string const& source, size_t start, size_t end) {
+    kj::Vector<DevCapnpInterface::Field> fields;
+    auto pos = start;
+    while (pos < end) {
       skipCapnpWhitespaceAndComments(source, pos);
-      if (pos >= resultEnd) break;
+      if (pos >= end) break;
 
       if (source[pos] == '"' || source[pos] == '\'') {
         skipCapnpString(source, pos);
-      } else if (source[pos] == ':') {
-        ++fieldCount;
-        ++pos;
-        skipCapnpWhitespaceAndComments(source, pos);
-        while (pos < resultEnd && source[pos] == '.') {
-          ++pos;
-        }
-        KJ_IF_MAYBE(typeName, scanCapnpIdentifier(source, pos)) {
-          if (fieldCount == 1) {
-            resultType = kj::mv(*typeName);
+      } else if (isalpha(static_cast<unsigned char>(source[pos]))) {
+        KJ_IF_MAYBE(fieldName, scanCapnpIdentifier(source, pos)) {
+          skipCapnpWhitespaceAndComments(source, pos);
+          if (pos < end && source[pos] == ':') {
+            ++pos;
+            skipCapnpWhitespaceAndComments(source, pos);
+            while (pos < end && source[pos] == '.') {
+              ++pos;
+            }
+            KJ_IF_MAYBE(typeName, scanCapnpIdentifier(source, pos)) {
+              fields.add(DevCapnpInterface::Field {
+                kj::mv(*fieldName),
+                kj::mv(*typeName),
+              });
+            }
           }
         }
       } else {
@@ -2888,7 +2907,34 @@ private:
       }
     }
 
-    return fieldCount == 1 ? kj::mv(resultType) : kj::heapString("");
+    return fields;
+  }
+
+  static kj::Vector<DevCapnpInterface::Field> scanCapnpMethodParams(
+      std::string const& source, size_t start, size_t end) {
+    size_t tupleStart = 0;
+    size_t tupleEnd = 0;
+    if (!findFirstCapnpTuple(source, start, end, tupleStart, tupleEnd)) {
+      return kj::Vector<DevCapnpInterface::Field>();
+    }
+    return scanCapnpTupleFields(source, tupleStart, tupleEnd);
+  }
+
+  static kj::String scanSingleCapnpResultType(
+      std::string const& source, size_t start, size_t end) {
+    auto arrow = findCapnpArrow(source, start, end);
+    if (arrow == end) {
+      return kj::heapString("");
+    }
+
+    size_t tupleStart = 0;
+    size_t tupleEnd = 0;
+    if (!findFirstCapnpTuple(source, arrow, end, tupleStart, tupleEnd)) {
+      return kj::heapString("");
+    }
+
+    auto fields = scanCapnpTupleFields(source, tupleStart, tupleEnd);
+    return fields.size() == 1 ? kj::mv(fields[0].type) : kj::heapString("");
   }
 
   static kj::Maybe<DevCapnpInterface::Method> scanCapnpMethodAt(
@@ -2901,11 +2947,14 @@ private:
       skipCapnpWhitespaceAndComments(source, pos);
       if (pos < source.size() && source[pos] == '@') {
         auto methodEnd = scanCapnpMethodEnd(source, methodStart);
+        auto params = scanCapnpMethodParams(
+            source, methodStart, findCapnpArrow(source, methodStart, methodEnd));
         auto resultType = scanSingleCapnpResultType(source, methodStart, methodEnd);
         pos = methodEnd;
         return DevCapnpInterface::Method {
           kj::mv(*name),
           kj::mv(resultType),
+          kj::mv(params),
         };
       }
     }
@@ -3034,12 +3083,13 @@ private:
     }
 
     output.addAll(kj::StringPtr(
-        "\nfunction makeInterface(interfaceName, methodNames, resultCapabilities = {}) {\n"
+        "\nfunction makeInterface(interfaceName, methodNames, metadata = {}) {\n"
         "  return makeCapnpInterfaceBinding(interfaceName, methodNames, {\n"
         "    importSpecifier,\n"
         "    schemaPath,\n"
         "    schemaText,\n"
-        "    resultCapabilities,\n"
+        "    argumentCapabilities: metadata.argumentCapabilities || {},\n"
+        "    resultCapabilities: metadata.resultCapabilities || {},\n"
         "  });\n"
         "}\n\n"));
 
@@ -3055,23 +3105,83 @@ private:
       output.addAll(interfaceDef.name);
       output.addAll(kj::StringPtr("MethodNames"));
 
+      bool wroteMetadata = false;
+      bool wroteArgumentCapabilities = false;
+      for (auto& method: interfaceDef.methods) {
+        for (auto& param: method.params) {
+          if (param.type.size() > 0 &&
+              interfaceNames.find(toStdString(param.type)) != interfaceNames.end()) {
+            if (!wroteMetadata) {
+              output.addAll(kj::StringPtr(", {\n"));
+              wroteMetadata = true;
+            }
+            if (!wroteArgumentCapabilities) {
+              output.addAll(kj::StringPtr("  argumentCapabilities: {\n"));
+              wroteArgumentCapabilities = true;
+            } else {
+              output.addAll(kj::StringPtr(",\n"));
+            }
+            output.addAll(kj::StringPtr("    "));
+            appendJsString(output, method.name);
+            output.addAll(kj::StringPtr(": { indexes: ["));
+            bool wroteIndex = false;
+            for (auto i: kj::indices(method.params)) {
+              auto& indexedParam = method.params[i];
+              if (indexedParam.type.size() > 0 &&
+                  interfaceNames.find(toStdString(indexedParam.type)) != interfaceNames.end()) {
+                if (wroteIndex) output.addAll(kj::StringPtr(", "));
+                output.addAll(kj::str(i));
+                wroteIndex = true;
+              }
+            }
+            output.addAll(kj::StringPtr("], fields: ["));
+            bool wroteField = false;
+            for (auto& namedParam: method.params) {
+              if (namedParam.type.size() > 0 &&
+                  interfaceNames.find(toStdString(namedParam.type)) != interfaceNames.end()) {
+                if (wroteField) output.addAll(kj::StringPtr(", "));
+                appendJsString(output, namedParam.name);
+                wroteField = true;
+              }
+            }
+            output.addAll(kj::StringPtr("] }"));
+            break;
+          }
+        }
+      }
+      if (wroteArgumentCapabilities) {
+        output.addAll(kj::StringPtr("\n  }"));
+      }
+
       bool wroteResultCapabilities = false;
+      bool separateResultCapabilities = wroteArgumentCapabilities;
       for (auto& method: interfaceDef.methods) {
         if (method.resultType.size() > 0 &&
             interfaceNames.find(toStdString(method.resultType)) != interfaceNames.end()) {
-          if (!wroteResultCapabilities) {
+          if (!wroteMetadata) {
             output.addAll(kj::StringPtr(", {\n"));
+            wroteMetadata = true;
+          }
+          if (!wroteResultCapabilities) {
+            if (separateResultCapabilities) {
+              output.addAll(kj::StringPtr(",\n"));
+              separateResultCapabilities = false;
+            }
+            output.addAll(kj::StringPtr("  resultCapabilities: {\n"));
             wroteResultCapabilities = true;
           } else {
             output.addAll(kj::StringPtr(",\n"));
           }
-          output.addAll(kj::StringPtr("  "));
+          output.addAll(kj::StringPtr("    "));
           appendJsString(output, method.name);
           output.addAll(kj::StringPtr(": () => "));
           output.addAll(method.resultType);
         }
       }
       if (wroteResultCapabilities) {
+        output.addAll(kj::StringPtr("\n  }"));
+      }
+      if (wroteMetadata) {
         output.addAll(kj::StringPtr("\n}"));
       }
 

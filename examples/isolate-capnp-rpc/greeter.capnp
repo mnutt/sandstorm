@@ -3,6 +3,7 @@
 interface Greeter {
   hello @0 (name :Text) -> (message :Text);
   greeting @1 (name :Text) -> (greeting :Greeting);
+  useGreeting @2 (greeting :Greeting) -> (message :Text);
 }
 
 interface Greeting {
