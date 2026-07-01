@@ -456,6 +456,46 @@ async function startIsolateFixture(options = {}) {
   }
 }
 
+test("spk dev-isolate prints manifests with capnp imports", async () => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+
+  const workerPath = path.join(REPO_DIR, "examples/isolate-capnp-rpc/worker.js");
+  const { stdout } = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-manifest-json",
+    "--title", "Capnp Manifest Test",
+    workerPath,
+  ]);
+  const manifest = JSON.parse(stdout);
+  const isolate = manifest.continueCommand.isolate;
+  const modules = new Map(isolate.modules.map((module) => [module.name, module]));
+  const bindings = new Map(isolate.bindings.map((binding) => [binding.name, binding]));
+
+  assert.equal(manifest.appTitle.defaultText, "Capnp Manifest Test");
+  assert.equal(isolate.mainModule, "worker.js");
+  assert.equal(modules.get("worker.js").esModulePath, "__sandstorm_dev_isolate_app/worker.js");
+  assert.match(
+    modules.get("capnp:./greeter.capnp").esModulePath,
+    /^__sandstorm_isolate_runtime\/capnp\/[0-9a-f]+\.js$/);
+  assert.equal(modules.get("sandstorm:api").esModulePath, "__sandstorm_isolate_runtime/api.js");
+  assert.equal(modules.get("sandstorm:rpc").esModulePath, "__sandstorm_isolate_runtime/rpc.js");
+  assert.equal(modules.get("capnweb").esModulePath, "__sandstorm_isolate_runtime/capnweb.js");
+
+  assert.deepEqual([...bindings.keys()], ["SANDSTORM_API", "POWERBOX", "STORAGE"]);
+  assert.deepEqual(bindings.get("SANDSTORM_API"), {
+    name: "SANDSTORM_API",
+    sandstormApi: null,
+  });
+  assert.deepEqual(bindings.get("POWERBOX"), {
+    name: "POWERBOX",
+    powerbox: null,
+  });
+  assert.deepEqual(bindings.get("STORAGE"), {
+    name: "STORAGE",
+    storage: null,
+  });
+});
+
 test("isolate supervisor integration suite", {
   timeout: TEST_TIMEOUT_MS,
 }, async (t) => {

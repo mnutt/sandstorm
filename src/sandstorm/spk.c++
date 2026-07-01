@@ -1926,6 +1926,7 @@ private:
   kj::String devIsolateWorkerPath;
   kj::String devIsolateTitle = kj::heapString("Ad hoc Isolate App");
   kj::String devIsolateCompatibilityDate = kj::heapString("2025-01-01");
+  bool devIsolatePrintManifestJson = false;
   struct DevIsolateServiceBinding {
     kj::String name;
     kj::String service;
@@ -2033,6 +2034,9 @@ private:
             "<name>=<service>",
             "Add a workerd service binding to the generated isolate manifest. For example: "
             "--service-binding LOOPBACK=main")
+        .addOption({"print-manifest-json"}, KJ_BIND_METHOD(*this, enableDevIsolatePrintManifestJson),
+            "Print the generated dynamic isolate manifest as JSON and exit without mounting or "
+            "connecting to a Sandstorm server.")
         .expectArg("<worker.js>", KJ_BIND_METHOD(*this, setDevIsolateWorkerPath))
         .callAfterParsing(KJ_BIND_METHOD(*this, doDevIsolate))
         .build();
@@ -2051,6 +2055,11 @@ private:
       return "compatibility date must not be empty";
     }
     devIsolateCompatibilityDate = kj::heapString(date);
+    return true;
+  }
+
+  kj::MainBuilder::Validity enableDevIsolatePrintManifestJson() {
+    devIsolatePrintManifestJson = true;
     return true;
   }
 
@@ -2165,6 +2174,11 @@ private:
     auto rootDir = dirnameForPath(devIsolateWorkerPath);
     devIsolateSupportDir = writeDevIsolateSupportDir();
     KJ_DEFER(recursivelyDelete(devIsolateSupportDir));
+
+    if (devIsolatePrintManifestJson) {
+      return printDevIsolateManifestJson();
+    }
+
     auto generatedPkgdef = writeDevIsolatePkgdef(rootDir, devIsolateSupportDir);
     KJ_DEFER(unlink(generatedPkgdef.cStr()));
 
@@ -2174,6 +2188,20 @@ private:
     }
 
     return doDev();
+  }
+
+  kj::MainBuilder::Validity printDevIsolateManifestJson() {
+    auto manifestBytes = buildDevIsolateManifestBytes();
+    capnp::FlatArrayMessageReader reader(manifestBytes.asPtr());
+    auto manifest = reader.getRoot<spk::Manifest>();
+
+    capnp::JsonCodec json;
+    json.setPrettyPrint(true);
+    auto text = json.encode(manifest);
+    kj::FdOutputStream(STDOUT_FILENO).write(text.begin(), text.size());
+    kj::FdOutputStream(STDOUT_FILENO).write("\n", 1);
+    context.exit();
+    return true;
   }
 
   enum class DevIsolateModuleType {
