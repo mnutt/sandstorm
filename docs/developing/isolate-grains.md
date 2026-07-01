@@ -73,6 +73,7 @@ modules:
 - `src/sandstorm/isolate/api.d.ts` for `sandstorm:api`
 - `src/sandstorm/isolate/rpc.d.ts` for `sandstorm:rpc`
 - `src/sandstorm/isolate/capnweb.d.ts` for the injected `capnweb`
+- `src/sandstorm/isolate/capnp.d.ts` for generated `capnp:` imports
 
 These declarations describe the runtime APIs that `workerd` receives from
 Sandstorm. They do not imply that Sandstorm transpiles TypeScript source yet.
@@ -107,6 +108,7 @@ will need to use a local declaration shim in the app source tree:
 /// <reference path="../../src/sandstorm/isolate/capnweb.d.ts" />
 /// <reference path="../../src/sandstorm/isolate/api.d.ts" />
 /// <reference path="../../src/sandstorm/isolate/rpc.d.ts" />
+/// <reference path="../../src/sandstorm/isolate/capnp.d.ts" />
 ```
 
 Then import normal values and types from `sandstorm:api`:
@@ -161,6 +163,38 @@ modules that `workerd` can load directly. For the first isolate runtime
 iteration, TypeScript transpilation is intentionally outside `spk
 dev-isolate`; use an app-local build step such as the `esbuild` example above
 and pass the generated `.js` file to `spk`.
+
+`spk dev-isolate` also supports experimental `capnp:` imports for simple
+schema-first app-object RPC:
+
+```js
+import { Greeter } from "capnp:./greeter.capnp";
+```
+
+The generated JavaScript module exports one binding per Cap'n Proto interface
+name, plus a default schema object. The binding can expose a server target with
+`Greeter.implement(methods)`, cast a Sandstorm capability with
+`Greeter.cast(capability)`, or create an in-memory test client with
+`Greeter.local(methods)`.
+
+The shared `capnp.d.ts` declaration can describe the default schema object and
+generic helper shape, but it cannot infer schema-specific named exports from a
+wildcard module by itself. TypeScript code should either add an app-local
+declaration for named imports or use the default schema import with a local
+type assertion:
+
+```ts
+import schema, { type CapnpInterfaceBinding } from "capnp:./greeter.capnp";
+
+interface GreeterMethods {
+  hello(request: { name?: string }): Promise<{ message: string }>;
+}
+
+const Greeter = schema.Greeter as CapnpInterfaceBinding<GreeterMethods>;
+```
+
+These generated bindings are an authoring bridge over today's app-object RPC
+transport. They do not yet use native Cap'n Proto encoding.
 
 ## Compatibility dates and flags
 
