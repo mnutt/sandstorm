@@ -1657,6 +1657,7 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.local.current, { value: 2 });
     assert.deepEqual(selfTest.json.local.child.first, { value: 3 });
     assert.deepEqual(selfTest.json.local.child.current, { value: 3 });
+    assert.deepEqual(selfTest.json.local.child.read, { value: 3 });
     assert.equal(selfTest.json.transient.capability.type, "capability");
     assert.deepEqual(selfTest.json.transient.first, { value: 5 });
     assert.deepEqual(selfTest.json.transient.current, { value: 5 });

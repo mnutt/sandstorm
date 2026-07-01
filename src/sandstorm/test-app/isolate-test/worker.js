@@ -73,7 +73,10 @@ class CounterCapability extends RpcTarget {
   }
 
   async readOther(other) {
-    return other.call("get");
+    if (typeof other.call === "function") {
+      return other.call("get");
+    }
+    return other.get();
   }
 
   async readOtherRpc(other) {
@@ -132,6 +135,9 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
     "  fail @4 (message :Text) -> ();",
     "}",
   ].join("\n"),
+  argumentCapabilities: {
+    readOther: { indexes: [0] },
+  },
   resultCapabilities: {
     child: () => GeneratedCounter,
   },
@@ -2951,6 +2957,7 @@ export default {
       const localChild = await local.child();
       const localChildFirst = await localChild.increment(3);
       const localChildCurrent = await localChild.get();
+      const localReadChild = await local.readOther(localChild);
 
       const transient = await api.export(GeneratedCounter.implement(new CounterCapability()));
       const transientClient = GeneratedCounter.cast(transient);
@@ -2958,7 +2965,7 @@ export default {
       const transientCurrent = await transientClient.get();
       const childClient = await transientClient.child();
       const childFirst = await childClient.increment(7);
-      const readChild = await transientClient.readOther(childClient.capability);
+      const readChild = await transientClient.readOther(childClient);
 
       const durableTarget = new CounterCapability();
       durableTarget.increment(11);
@@ -3015,6 +3022,7 @@ export default {
           child: {
             first: localChildFirst,
             current: localChildCurrent,
+            read: localReadChild,
           },
         },
         transient: {

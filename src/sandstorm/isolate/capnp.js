@@ -50,12 +50,73 @@ async function castResult(interfaceName, methodName, result, resultCapabilities,
   }
 }
 
-function makeClient(interfaceName, methodNames, resultCapabilities, caller, options = {}) {
+function unwrapCapabilityArgument(value) {
+  if (value && typeof value === "object" && value.capability) {
+    return value.capability;
+  }
+  return value;
+}
+
+function normalizeObjectCapabilityFields(value, fields) {
+  if (!value || typeof value !== "object" || value.rpc || value.call || value.capability) {
+    return value;
+  }
+
+  let normalized = value;
+  for (const field of fields) {
+    if (Object.prototype.hasOwnProperty.call(value, field)) {
+      const nextValue = unwrapCapabilityArgument(value[field]);
+      if (nextValue !== value[field]) {
+        if (normalized === value) {
+          normalized = { ...value };
+        }
+        normalized[field] = nextValue;
+      }
+    }
+  }
+  return normalized;
+}
+
+function normalizeArgs(methodName, args, argumentCapabilities) {
+  const spec = argumentCapabilities[methodName];
+  if (!spec) return args;
+
+  let normalized = args;
+  const indexes = spec.indexes || spec.indices || [];
+  for (const index of indexes) {
+    if (Number.isInteger(index) && index >= 0 && index < args.length) {
+      const nextValue = unwrapCapabilityArgument(args[index]);
+      if (nextValue !== args[index]) {
+        if (normalized === args) {
+          normalized = [...args];
+        }
+        normalized[index] = nextValue;
+      }
+    }
+  }
+
+  const fields = spec.fields || [];
+  if (fields.length > 0 && args.length === 1) {
+    const nextValue = normalizeObjectCapabilityFields(normalized[0], fields);
+    if (nextValue !== normalized[0]) {
+      if (normalized === args) {
+        normalized = [...args];
+      }
+      normalized[0] = nextValue;
+    }
+  }
+
+  return normalized;
+}
+
+function makeClient(
+    interfaceName, methodNames, argumentCapabilities, resultCapabilities, caller, options = {}) {
   const client = { ...(options.extras || {}) };
   const localMode = Boolean(options.local);
   for (const methodName of methodNames) {
     client[methodName] = async (...args) => {
-      const result = await caller(methodName, args);
+      const normalizedArgs = normalizeArgs(methodName, args, argumentCapabilities);
+      const result = await caller(methodName, normalizedArgs);
       return await castResult(interfaceName, methodName, result, resultCapabilities, localMode);
     };
   }
@@ -64,6 +125,7 @@ function makeClient(interfaceName, methodNames, resultCapabilities, caller, opti
 
 export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {}) {
   const frozenMethodNames = Object.freeze([...methodNames]);
+  const argumentCapabilities = Object.freeze({ ...(schema.argumentCapabilities || {}) });
   const resultCapabilities = Object.freeze({ ...(schema.resultCapabilities || {}) });
   return Object.freeze({
     interfaceName,
@@ -79,6 +141,7 @@ export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {
       return makeClient(
         interfaceName,
         frozenMethodNames,
+        argumentCapabilities,
         resultCapabilities,
         (methodName, args) => capability.rpc[methodName](...args),
         {
@@ -94,6 +157,7 @@ export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {
       return makeClient(
         interfaceName,
         frozenMethodNames,
+        argumentCapabilities,
         resultCapabilities,
         async (methodName, args) => {
           const method = source[methodName];
