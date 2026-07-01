@@ -479,6 +479,9 @@ test("spk dev-isolate prints manifests with capnp imports", async () => {
     /^__sandstorm_isolate_runtime\/capnp\/[0-9a-f]+\.js$/);
   assert.equal(modules.get("sandstorm:api").esModulePath, "__sandstorm_isolate_runtime/api.js");
   assert.equal(modules.get("sandstorm:rpc").esModulePath, "__sandstorm_isolate_runtime/rpc.js");
+  assert.equal(
+    modules.get("sandstorm:capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp.js");
   assert.equal(modules.get("capnweb").esModulePath, "__sandstorm_isolate_runtime/capnweb.js");
 
   assert.deepEqual([...bindings.keys()], ["SANDSTORM_API", "POWERBOX", "STORAGE"]);
@@ -517,6 +520,7 @@ test("isolate supervisor integration suite", {
         ["sandstorm:capnweb-source", "text"],
         ["sandstorm:rpc", "esModule"],
         ["sandstorm:api", "esModule"],
+        ["sandstorm:capnp", "esModule"],
       ]);
     assert.deepEqual(
       manifest.bindings.map((binding) => [binding.name, binding.type]),
@@ -1621,6 +1625,55 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.callback.deleteStorage.ok, true);
   });
 
+  await t.test("round trips generated capnp bindings over object capabilities", async () => {
+    const selfTest = await requestJson(
+      fixture.workerdSocket, "/capnp-binding-object-self-test");
+    assert.equal(selfTest.statusCode, 200, selfTest.body + formatOutput(
+      fixture.stdout, fixture.stderr));
+    assert.equal(selfTest.json.ok, true);
+    assert.equal(selfTest.json.helperVersion, 0);
+    assert.equal(selfTest.json.interfaceName, "GeneratedCounter");
+    assert.equal(selfTest.json.schemaPath, "test/generated-counter.capnp");
+    assert.deepEqual(selfTest.json.methodNames, [
+      "increment",
+      "get",
+      "child",
+      "readOther",
+      "fail",
+    ]);
+    assert.deepEqual(selfTest.json.local.first, { value: 2 });
+    assert.deepEqual(selfTest.json.local.current, { value: 2 });
+    assert.equal(selfTest.json.transient.capability.type, "capability");
+    assert.deepEqual(selfTest.json.transient.first, { value: 5 });
+    assert.deepEqual(selfTest.json.transient.current, { value: 5 });
+    assert.equal(selfTest.json.child.capability.type, "capability");
+    assert.deepEqual(selfTest.json.child.first, { value: 7 });
+    assert.deepEqual(selfTest.json.child.read, { value: 7 });
+    assert.equal(selfTest.json.child.drop.ok, true);
+    assert.equal(selfTest.json.durable.registered, true);
+    assert.equal(selfTest.json.durable.restored, false);
+    assert.equal(selfTest.json.durable.tokenType, "string");
+    assert.equal(selfTest.json.durable.castSavedType, "string");
+    assert.deepEqual(selfTest.json.durable.get, { value: 11 });
+    assert.deepEqual(selfTest.json.durable.increment, { value: 24 });
+    assert.equal(selfTest.json.durable.drop.ok, true);
+    assert.equal(selfTest.json.durable.restoredCapability.type, "capability");
+    assert.deepEqual(selfTest.json.durable.restoredGet, { value: 24 });
+    assert.deepEqual(selfTest.json.durable.restoredIncrement, { value: 41 });
+    assert.deepEqual(selfTest.json.durable.restoredFailure, {
+      name: "CapabilityCallError",
+      message: "generated binding failure",
+      details: {
+        name: "Error",
+      },
+    });
+    assert.equal(selfTest.json.durable.restoredDrop.ok, true);
+    assert.equal(selfTest.json.durable.revokeCastSaved.ok, true);
+    assert.equal(selfTest.json.durable.revokeDurableToken.ok, true);
+    assert.equal(selfTest.json.durable.deleteStorage.ok, true);
+    assert.equal(selfTest.json.dropTransient.ok, true);
+  });
+
   await t.test("calls saved app-object capabilities across supervisors", async (t) => {
     const sharedDir = await fs.mkdtemp(path.join(REPO_TMP_DIR, "iso-cross-"));
     const tokenStorePath = path.join(sharedDir, "fake-core-route-backed-tokens");
@@ -1936,7 +1989,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.statusCode, 200);
     assert.equal(runtime.json.ok, true);
     assert.equal(runtime.json.mainModule, "worker.js");
-    assert.equal(runtime.json.moduleCount, 7);
+    assert.equal(runtime.json.moduleCount, 8);
     assert.equal(runtime.json.bindingCount, 6);
 
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
@@ -2001,6 +2054,7 @@ test("isolate supervisor integration suite", {
         ["sandstorm:capnweb-source", "text", false],
         ["sandstorm:rpc", "esModule", false],
         ["sandstorm:api", "esModule", false],
+        ["sandstorm:capnp", "esModule", false],
       ]);
 
     const bindings = await requestJson(fixture.sandstormApiSocket, "/bindings");
