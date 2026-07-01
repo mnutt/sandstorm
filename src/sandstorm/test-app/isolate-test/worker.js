@@ -2948,6 +2948,9 @@ export default {
       const local = GeneratedCounter.local(new CounterCapability());
       const localFirst = await local.increment(2);
       const localCurrent = await local.get();
+      const localChild = await local.child();
+      const localChildFirst = await localChild.increment(3);
+      const localChildCurrent = await localChild.get();
 
       const transient = await api.export(GeneratedCounter.implement(new CounterCapability()));
       const transientClient = GeneratedCounter.cast(transient);
@@ -3009,6 +3012,10 @@ export default {
         local: {
           first: localFirst,
           current: localCurrent,
+          child: {
+            first: localChildFirst,
+            current: localChildCurrent,
+          },
         },
         transient: {
           capability: JSON.parse(JSON.stringify(transient)),

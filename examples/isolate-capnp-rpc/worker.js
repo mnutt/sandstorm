@@ -30,12 +30,17 @@ export default {
     const result = await greeter.hello({
       name: url.searchParams.get("name") || "isolate",
     });
+    const greeting = await greeter.greeting({
+      name: url.searchParams.get("name") || "isolate",
+    });
+    const greetingResult = await greeting.read();
 
     return Response.json({
       ok: true,
       interfaceName: Greeter.interfaceName,
       methodNames: Greeter.methodNames,
       result,
+      greetingResult,
     });
   },
 };

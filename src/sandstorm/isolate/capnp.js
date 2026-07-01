@@ -37,18 +37,26 @@ function resolveResultBinding(interfaceName, methodName, caster) {
   return binding;
 }
 
-async function castResult(interfaceName, methodName, result, resultCapabilities) {
+async function castResult(interfaceName, methodName, result, resultCapabilities, localMode) {
   const caster = resultCapabilities[methodName];
   if (!caster) return result;
-  return resolveResultBinding(interfaceName, methodName, caster).cast(result);
+  const binding = resolveResultBinding(interfaceName, methodName, caster);
+  if (result && typeof result === "object" && result.rpc) {
+    return binding.cast(result);
+  } else if (localMode) {
+    return binding.local(result);
+  } else {
+    return binding.cast(result);
+  }
 }
 
-function makeClient(interfaceName, methodNames, resultCapabilities, caller, extras = {}) {
-  const client = { ...extras };
+function makeClient(interfaceName, methodNames, resultCapabilities, caller, options = {}) {
+  const client = { ...(options.extras || {}) };
+  const localMode = Boolean(options.local);
   for (const methodName of methodNames) {
     client[methodName] = async (...args) => {
       const result = await caller(methodName, args);
-      return await castResult(interfaceName, methodName, result, resultCapabilities);
+      return await castResult(interfaceName, methodName, result, resultCapabilities, localMode);
     };
   }
   return Object.freeze(client);
@@ -74,9 +82,11 @@ export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {
         resultCapabilities,
         (methodName, args) => capability.rpc[methodName](...args),
         {
-          capability,
-          drop: () => capability.drop(),
-          save: (...args) => capability.save(...args),
+          extras: {
+            capability,
+            drop: () => capability.drop(),
+            save: (...args) => capability.save(...args),
+          },
         });
     },
     local(methods) {
@@ -91,7 +101,8 @@ export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {
             throw new TypeError(`${interfaceName}.${methodName} is not implemented`);
           }
           return await method.apply(source, args);
-        });
+        },
+        { local: true });
     },
     powerboxDescriptor() {
       throw bindingError(interfaceName, "powerboxDescriptor");
