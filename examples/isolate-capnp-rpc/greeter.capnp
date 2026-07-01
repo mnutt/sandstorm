@@ -2,4 +2,9 @@
 
 interface Greeter {
   hello @0 (name :Text) -> (message :Text);
+  greeting @1 (name :Text) -> (greeting :Greeting);
+}
+
+interface Greeting {
+  read @0 () -> (message :Text);
 }

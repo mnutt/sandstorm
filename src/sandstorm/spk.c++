@@ -1897,6 +1897,7 @@ private:
   kj::String devIsolateTitle = kj::heapString("Ad hoc Isolate App");
   kj::String devIsolateCompatibilityDate = kj::heapString("2025-01-01");
   bool devIsolatePrintManifestJson = false;
+  kj::String devIsolatePrintGeneratedModule = nullptr;
   struct DevIsolateServiceBinding {
     kj::String name;
     kj::String service;
@@ -2007,6 +2008,9 @@ private:
         .addOption({"print-manifest-json"}, KJ_BIND_METHOD(*this, enableDevIsolatePrintManifestJson),
             "Print the generated dynamic isolate manifest as JSON and exit without mounting or "
             "connecting to a Sandstorm server.")
+        .addOptionWithArg({"print-generated-module"},
+            KJ_BIND_METHOD(*this, setDevIsolatePrintGeneratedModule), "<specifier>",
+            "Print a generated isolate support module by import specifier and exit.")
         .expectArg("<worker.js>", KJ_BIND_METHOD(*this, setDevIsolateWorkerPath))
         .callAfterParsing(KJ_BIND_METHOD(*this, doDevIsolate))
         .build();
@@ -2029,7 +2033,21 @@ private:
   }
 
   kj::MainBuilder::Validity enableDevIsolatePrintManifestJson() {
+    if (devIsolatePrintGeneratedModule != nullptr) {
+      return "cannot use --print-manifest-json with --print-generated-module";
+    }
     devIsolatePrintManifestJson = true;
+    return true;
+  }
+
+  kj::MainBuilder::Validity setDevIsolatePrintGeneratedModule(kj::StringPtr specifier) {
+    if (devIsolatePrintManifestJson) {
+      return "cannot use --print-generated-module with --print-manifest-json";
+    }
+    if (specifier.size() == 0) {
+      return "generated module specifier must not be empty";
+    }
+    devIsolatePrintGeneratedModule = kj::heapString(specifier);
     return true;
   }
 
@@ -2145,6 +2163,10 @@ private:
     devIsolateSupportDir = writeDevIsolateSupportDir();
     KJ_DEFER(recursivelyDelete(devIsolateSupportDir));
 
+    if (devIsolatePrintGeneratedModule != nullptr) {
+      return printDevIsolateGeneratedModule();
+    }
+
     if (devIsolatePrintManifestJson) {
       return printDevIsolateManifestJson();
     }
@@ -2172,6 +2194,25 @@ private:
     kj::FdOutputStream(STDOUT_FILENO).write("\n", 1);
     context.exit();
     return true;
+  }
+
+  kj::MainBuilder::Validity printDevIsolateGeneratedModule() {
+    auto modules = collectDevIsolateModules();
+    for (auto& module: modules) {
+      if (module.name == devIsolatePrintGeneratedModule) {
+        KJ_REQUIRE(module.sourcePath.startsWith("__sandstorm_isolate_runtime/"),
+            "Requested module is not generated isolate runtime support.", module.name,
+            module.sourcePath);
+        auto relativePath = module.sourcePath.slice(strlen("__sandstorm_isolate_runtime/"));
+        auto path = kj::str(devIsolateSupportDir, "/", relativePath);
+        auto content = readAll(raiiOpen(path, O_RDONLY | O_CLOEXEC));
+        kj::FdOutputStream(STDOUT_FILENO).write(content.begin(), content.size());
+        context.exit();
+        return true;
+      }
+    }
+
+    return kj::str("generated module not found: ", devIsolatePrintGeneratedModule);
   }
 
   enum class DevIsolateModuleType {
@@ -2694,26 +2735,155 @@ private:
 
   struct DevCapnpInterface {
     kj::String name;
-    kj::Vector<kj::String> methods;
+    struct Method {
+      kj::String name;
+      kj::String resultType;
+    };
+    kj::Vector<Method> methods;
   };
 
-  static kj::Maybe<kj::String> scanCapnpMethodNameAt(
+  static size_t scanCapnpMethodEnd(std::string const& source, size_t pos) {
+    uint parenDepth = 0;
+    uint bracketDepth = 0;
+    while (pos < source.size()) {
+      if (source[pos] == '"' || source[pos] == '\'') {
+        skipCapnpString(source, pos);
+      } else if (source[pos] == '#') {
+        while (pos < source.size() && source[pos] != '\n') {
+          ++pos;
+        }
+      } else if (pos + 1 < source.size() && source[pos] == '/' && source[pos + 1] == '/') {
+        pos += 2;
+        while (pos < source.size() && source[pos] != '\n') {
+          ++pos;
+        }
+      } else if (pos + 1 < source.size() && source[pos] == '/' && source[pos + 1] == '*') {
+        pos += 2;
+        while (pos + 1 < source.size()) {
+          if (source[pos] == '*' && source[pos + 1] == '/') {
+            pos += 2;
+            break;
+          }
+          ++pos;
+        }
+      } else if (source[pos] == '(') {
+        ++parenDepth;
+        ++pos;
+      } else if (source[pos] == ')' && parenDepth > 0) {
+        --parenDepth;
+        ++pos;
+      } else if (source[pos] == '[') {
+        ++bracketDepth;
+        ++pos;
+      } else if (source[pos] == ']' && bracketDepth > 0) {
+        --bracketDepth;
+        ++pos;
+      } else if (source[pos] == ';' && parenDepth == 0 && bracketDepth == 0) {
+        return pos + 1;
+      } else if (source[pos] == '}' && parenDepth == 0 && bracketDepth == 0) {
+        return pos;
+      } else {
+        ++pos;
+      }
+    }
+    return pos;
+  }
+
+  static kj::String scanSingleCapnpResultType(
+      std::string const& source, size_t start, size_t end) {
+    size_t arrow = end;
+    uint parenDepth = 0;
+    for (size_t pos = start; pos + 1 < end; ++pos) {
+      if (source[pos] == '(') {
+        ++parenDepth;
+      } else if (source[pos] == ')' && parenDepth > 0) {
+        --parenDepth;
+      } else if (source[pos] == '-' && source[pos + 1] == '>' && parenDepth == 0) {
+        arrow = pos + 2;
+        break;
+      }
+    }
+
+    if (arrow == end) {
+      return kj::heapString("");
+    }
+
+    size_t pos = arrow;
+    while (pos < end && source[pos] != '(') {
+      ++pos;
+    }
+    if (pos >= end) {
+      return kj::heapString("");
+    }
+
+    auto resultStart = ++pos;
+    parenDepth = 1;
+    while (pos < end && parenDepth > 0) {
+      if (source[pos] == '(') {
+        ++parenDepth;
+      } else if (source[pos] == ')') {
+        --parenDepth;
+      }
+      ++pos;
+    }
+    if (parenDepth != 0) {
+      return kj::heapString("");
+    }
+
+    auto resultEnd = pos - 1;
+    size_t fieldCount = 0;
+    kj::String resultType = kj::heapString("");
+    pos = resultStart;
+    while (pos < resultEnd) {
+      skipCapnpWhitespaceAndComments(source, pos);
+      if (pos >= resultEnd) break;
+
+      if (source[pos] == '"' || source[pos] == '\'') {
+        skipCapnpString(source, pos);
+      } else if (source[pos] == ':') {
+        ++fieldCount;
+        ++pos;
+        skipCapnpWhitespaceAndComments(source, pos);
+        while (pos < resultEnd && source[pos] == '.') {
+          ++pos;
+        }
+        KJ_IF_MAYBE(typeName, scanCapnpIdentifier(source, pos)) {
+          if (fieldCount == 1) {
+            resultType = kj::mv(*typeName);
+          }
+        }
+      } else {
+        ++pos;
+      }
+    }
+
+    return fieldCount == 1 ? kj::mv(resultType) : kj::heapString("");
+  }
+
+  static kj::Maybe<DevCapnpInterface::Method> scanCapnpMethodAt(
       std::string const& source, size_t& pos, kj::StringPtr interfaceName) {
+    auto methodStart = pos;
     KJ_IF_MAYBE(name, scanCapnpIdentifier(source, pos)) {
       if (*name == interfaceName) {
         return nullptr;
       }
       skipCapnpWhitespaceAndComments(source, pos);
       if (pos < source.size() && source[pos] == '@') {
-        return kj::mv(*name);
+        auto methodEnd = scanCapnpMethodEnd(source, methodStart);
+        auto resultType = scanSingleCapnpResultType(source, methodStart, methodEnd);
+        pos = methodEnd;
+        return DevCapnpInterface::Method {
+          kj::mv(*name),
+          kj::mv(resultType),
+        };
       }
     }
     return nullptr;
   }
 
-  static kj::Vector<kj::String> scanCapnpInterfaceMethods(
+  static kj::Vector<DevCapnpInterface::Method> scanCapnpInterfaceMethods(
       std::string const& source, size_t& pos, kj::StringPtr interfaceName) {
-    kj::Vector<kj::String> methods;
+    kj::Vector<DevCapnpInterface::Method> methods;
     std::set<std::string> seen;
     skipCapnpWhitespaceAndComments(source, pos);
     if (pos >= source.size() || source[pos] != '{') {
@@ -2738,12 +2908,11 @@ private:
         ++pos;
       } else if (depth == 1 && isalpha(static_cast<unsigned char>(source[pos]))) {
         auto candidateStart = pos;
-        KJ_IF_MAYBE(method, scanCapnpMethodNameAt(source, pos, interfaceName)) {
-          auto methodStd = toStdString(*method);
+        KJ_IF_MAYBE(method, scanCapnpMethodAt(source, pos, interfaceName)) {
+          auto methodStd = toStdString(method->name);
           if (seen.insert(methodStd).second) {
             methods.add(kj::mv(*method));
           }
-          ++pos;
         } else {
           pos = candidateStart + 1;
         }
@@ -2817,23 +2986,29 @@ private:
     }
     output.addAll(kj::StringPtr("]);\n\n"));
 
+    std::set<std::string> interfaceNames;
+    for (auto& interfaceDef: interfaces) {
+      interfaceNames.insert(toStdString(interfaceDef.name));
+    }
+
     for (auto& interfaceDef: interfaces) {
       output.addAll(kj::StringPtr("const "));
       output.addAll(interfaceDef.name);
       output.addAll(kj::StringPtr("MethodNames = Object.freeze(["));
       for (auto i: kj::indices(interfaceDef.methods)) {
         if (i > 0) output.addAll(kj::StringPtr(", "));
-        appendJsString(output, interfaceDef.methods[i]);
+        appendJsString(output, interfaceDef.methods[i].name);
       }
       output.addAll(kj::StringPtr("]);\n"));
     }
 
     output.addAll(kj::StringPtr(
-        "\nfunction makeInterface(interfaceName, methodNames) {\n"
+        "\nfunction makeInterface(interfaceName, methodNames, resultCapabilities = {}) {\n"
         "  return makeCapnpInterfaceBinding(interfaceName, methodNames, {\n"
         "    importSpecifier,\n"
         "    schemaPath,\n"
         "    schemaText,\n"
+        "    resultCapabilities,\n"
         "  });\n"
         "}\n\n"));
 
@@ -2847,7 +3022,29 @@ private:
       appendJsString(output, interfaceDef.name);
       output.addAll(kj::StringPtr(", "));
       output.addAll(interfaceDef.name);
-      output.addAll(kj::StringPtr("MethodNames);\n"));
+      output.addAll(kj::StringPtr("MethodNames"));
+
+      bool wroteResultCapabilities = false;
+      for (auto& method: interfaceDef.methods) {
+        if (method.resultType.size() > 0 &&
+            interfaceNames.find(toStdString(method.resultType)) != interfaceNames.end()) {
+          if (!wroteResultCapabilities) {
+            output.addAll(kj::StringPtr(", {\n"));
+            wroteResultCapabilities = true;
+          } else {
+            output.addAll(kj::StringPtr(",\n"));
+          }
+          output.addAll(kj::StringPtr("  "));
+          appendJsString(output, method.name);
+          output.addAll(kj::StringPtr(": () => "));
+          output.addAll(method.resultType);
+        }
+      }
+      if (wroteResultCapabilities) {
+        output.addAll(kj::StringPtr("\n}"));
+      }
+
+      output.addAll(kj::StringPtr(");\n"));
     }
 
     output.addAll(kj::StringPtr(

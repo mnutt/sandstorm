@@ -456,7 +456,7 @@ async function startIsolateFixture(options = {}) {
   }
 }
 
-test("spk dev-isolate prints manifests with capnp imports", async () => {
+test("spk dev-isolate prints manifests and generated capnp modules", async () => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
 
   const workerPath = path.join(REPO_DIR, "examples/isolate-capnp-rpc/worker.js");
@@ -497,6 +497,18 @@ test("spk dev-isolate prints manifests with capnp imports", async () => {
     name: "STORAGE",
     storage: null,
   });
+
+  const generated = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-generated-module", "capnp:./greeter.capnp",
+    workerPath,
+  ]);
+  assert.match(generated.stdout, /export const Greeter = makeInterface\("Greeter"/);
+  assert.match(generated.stdout, /"hello", "greeting"/);
+  assert.match(generated.stdout, /export const Greeting = makeInterface\("Greeting"/);
+  assert.match(generated.stdout, /"read"/);
+  assert.match(generated.stdout, /"greeting": \(\) => Greeting/);
+  assert.doesNotMatch(generated.stdout, /"hello": \(\) =>/);
 });
 
 test("isolate supervisor integration suite", {
