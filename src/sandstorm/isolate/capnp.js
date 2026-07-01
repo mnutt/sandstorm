@@ -28,16 +28,35 @@ function makeServerTarget(interfaceName, methodNames, methods) {
   return target;
 }
 
-function makeClient(methodNames, caller, extras = {}) {
+function resolveResultBinding(interfaceName, methodName, caster) {
+  const binding = typeof caster === "function" ? caster() : caster;
+  if (!binding || typeof binding !== "object" || typeof binding.cast !== "function") {
+    throw new TypeError(
+      `${interfaceName}.${methodName} result capability caster must be a capnp interface binding`);
+  }
+  return binding;
+}
+
+async function castResult(interfaceName, methodName, result, resultCapabilities) {
+  const caster = resultCapabilities[methodName];
+  if (!caster) return result;
+  return resolveResultBinding(interfaceName, methodName, caster).cast(result);
+}
+
+function makeClient(interfaceName, methodNames, resultCapabilities, caller, extras = {}) {
   const client = { ...extras };
   for (const methodName of methodNames) {
-    client[methodName] = async (...args) => await caller(methodName, args);
+    client[methodName] = async (...args) => {
+      const result = await caller(methodName, args);
+      return await castResult(interfaceName, methodName, result, resultCapabilities);
+    };
   }
   return Object.freeze(client);
 }
 
 export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {}) {
   const frozenMethodNames = Object.freeze([...methodNames]);
+  const resultCapabilities = Object.freeze({ ...(schema.resultCapabilities || {}) });
   return Object.freeze({
     interfaceName,
     schemaPath: schema.schemaPath || "",
@@ -50,7 +69,9 @@ export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {
         throw new TypeError(`${interfaceName}.cast() requires a Sandstorm capability`);
       }
       return makeClient(
+        interfaceName,
         frozenMethodNames,
+        resultCapabilities,
         (methodName, args) => capability.rpc[methodName](...args),
         {
           capability,
@@ -60,13 +81,17 @@ export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {
     },
     local(methods) {
       const source = requiredMethods(interfaceName, methods);
-      return makeClient(frozenMethodNames, async (methodName, args) => {
-        const method = source[methodName];
-        if (typeof method !== "function") {
-          throw new TypeError(`${interfaceName}.${methodName} is not implemented`);
-        }
-        return await method.apply(source, args);
-      });
+      return makeClient(
+        interfaceName,
+        frozenMethodNames,
+        resultCapabilities,
+        async (methodName, args) => {
+          const method = source[methodName];
+          if (typeof method !== "function") {
+            throw new TypeError(`${interfaceName}.${methodName} is not implemented`);
+          }
+          return await method.apply(source, args);
+        });
     },
     powerboxDescriptor() {
       throw bindingError(interfaceName, "powerboxDescriptor");
