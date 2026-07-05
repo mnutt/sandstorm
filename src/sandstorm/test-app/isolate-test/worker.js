@@ -28,6 +28,7 @@ import {
   powerbox as sandstormPowerbox,
 } from "sandstorm:api";
 import {
+  SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
   makeCapnpInterfaceBinding,
 } from "sandstorm:capnp";
@@ -3604,6 +3605,9 @@ export default {
     const apiRuntime = await (await env.SANDSTORM_API.fetch("http://sandstorm/runtime")).json();
     const apiModules = await (await env.SANDSTORM_API.fetch("http://sandstorm/modules")).json();
     const apiBindings = await (await env.SANDSTORM_API.fetch("http://sandstorm/bindings")).json();
+    const apiCapnpBridgeInfo =
+        await (await env.SANDSTORM_API.fetch("http://sandstorm/capnp/bridge-info")).json();
+    const helperCapnpBridgeInfo = await sandstorm(request, env).capnpBridgeInfo();
 
     const storagePut = await (await env.STORAGE.fetch("http://storage/fixture", {
       method: "PUT",
@@ -3629,6 +3633,8 @@ export default {
         api: SANDSTORM_API_VERSION,
         rpc: SANDSTORM_RPC_VERSION,
         capnweb: SANDSTORM_CAPNWEB_VERSION,
+        capnp: SANDSTORM_CAPNP_VERSION,
+        capnpNativeBridge: SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
         aggregate: SANDSTORM_HELPER_VERSIONS,
       },
       appRpcTarget: new AppRpcTargetSelfTest(request, env).summary(),
@@ -3638,6 +3644,8 @@ export default {
         runtime: apiRuntime,
         modules: apiModules,
         bindings: apiBindings,
+        capnpBridgeInfo: apiCapnpBridgeInfo,
+        helperCapnpBridgeInfo,
       },
       storage: {
         put: storagePut,

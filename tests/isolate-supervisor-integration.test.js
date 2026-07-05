@@ -628,6 +628,8 @@ test("isolate supervisor integration suite", {
       api: 0,
       rpc: 0,
       capnweb: "0.8.0",
+      capnp: 0,
+      capnpNativeBridge: 0,
       aggregate: {
         api: 0,
         rpc: 0,
@@ -636,6 +638,21 @@ test("isolate supervisor integration suite", {
     });
     assert.equal(body.sandstormApi.status.ok, true);
     assert.equal(body.sandstormApi.runtime.mainModule, "worker.js");
+    assert.deepEqual(body.sandstormApi.capnpBridgeInfo, {
+      ok: true,
+      type: "capnpBridgeInfo",
+      protocolVersion: 0,
+      minProtocolVersion: 0,
+      maxProtocolVersion: 0,
+      nativeTransport: false,
+      nativeCalls: false,
+      nativeExports: false,
+      capabilitySlots: false,
+      fallbackTransport: "appObjectRpc",
+    });
+    assert.deepEqual(
+      body.sandstormApi.helperCapnpBridgeInfo,
+      body.sandstormApi.capnpBridgeInfo);
     assert.equal(body.storage.text, "stored from isolate");
     assert.deepEqual(body.appRpcTarget, {
       targetClass: true,
@@ -2151,6 +2168,22 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("capabilities.apiSession"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimed"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimedStats"));
+    assert.ok(capabilities.json.capabilities.includes("capnp.bridgeInfo"));
+
+    const capnpBridgeInfo = await requestJson(fixture.sandstormApiSocket, "/capnp/bridge-info");
+    assert.equal(capnpBridgeInfo.statusCode, 200, capnpBridgeInfo.body);
+    assert.deepEqual(capnpBridgeInfo.json, {
+      ok: true,
+      type: "capnpBridgeInfo",
+      protocolVersion: 0,
+      minProtocolVersion: 0,
+      maxProtocolVersion: 0,
+      nativeTransport: false,
+      nativeCalls: false,
+      nativeExports: false,
+      capabilitySlots: false,
+      fallbackTransport: "appObjectRpc",
+    });
 
     const claimedStats = await requestJson(
       fixture.sandstormApiSocket, "/capabilities/claimed-stats");

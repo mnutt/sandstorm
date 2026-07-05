@@ -670,6 +670,15 @@ Implementation work:
 - keep current app-object RPC transport as a compatibility fallback until the
   native bridge is mature
 
+Progress:
+
+- supervisor exposes `/capnp/bridge-info`, and `sandstorm:api` exposes
+  `capnpBridgeInfo()`, so generated bindings can feature-detect the native
+  bridge protocol before switching away from the app-object RPC fallback
+- the bridge info currently advertises protocol version `0` with native
+  transport disabled; later Phase 4 chunks should turn on feature flags only
+  as real native calls, exports, and capability slots land
+
 Interop tests:
 
 - legacy grain calls isolate-defined `Greeter`
