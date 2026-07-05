@@ -8,6 +8,37 @@ declare module "sandstorm:capnp" {
   export const SANDSTORM_CAPNP_VERSION: 0;
   export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION: 0;
 
+  export type NativeCapnpBridgeFeature =
+    "nativeTransport" | "nativeCalls" | "nativeExports" | "capabilitySlots";
+
+  export interface NativeCapnpBridgeNegotiationOptions {
+    requiredFeatures?: readonly NativeCapnpBridgeFeature[];
+  }
+
+  export interface NativeCapnpBridgeNegotiation {
+    readonly available: boolean;
+    readonly protocolSupported: boolean;
+    readonly protocolVersion: 0;
+    readonly nativeTransport: boolean;
+    readonly nativeCalls: boolean;
+    readonly nativeExports: boolean;
+    readonly capabilitySlots: boolean;
+    readonly fallbackTransport: string;
+    readonly missingFeatures: readonly NativeCapnpBridgeFeature[];
+    readonly reason: string;
+    readonly info: unknown;
+  }
+
+  export function negotiateNativeCapnpBridgeInfo(
+    info: unknown,
+    options?: NativeCapnpBridgeNegotiationOptions,
+  ): NativeCapnpBridgeNegotiation;
+
+  export function negotiateNativeCapnpBridge(
+    api: { capnpBridgeInfo(): Promise<unknown> },
+    options?: NativeCapnpBridgeNegotiationOptions,
+  ): Promise<NativeCapnpBridgeNegotiation>;
+
   export type CapnpRpcMethod = (...args: any[]) => unknown;
   export type CapnpMethodMap<TMethods> = {
     [K in keyof TMethods]: TMethods[K] extends CapnpRpcMethod ? TMethods[K] : never;
