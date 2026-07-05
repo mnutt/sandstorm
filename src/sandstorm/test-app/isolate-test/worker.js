@@ -3702,6 +3702,7 @@ export default {
         kind: "receiverHosted",
       },
       message: nativeCapnpRpcMessage,
+      connectionId: "native-capnp-fixture-rpc",
       capabilities: [
         {
           id: "rpc-argument-capability",
@@ -3840,7 +3841,9 @@ export default {
     const decodedNativeCapnpBridgeBinaryRpc =
         decodeNativeCapnpBridgeResponse(nativeCapnpBridgeBinaryRpc.body);
     const nativeCapnpBridgeTransport =
-        new NativeCapnpBridgeTransport(apiHelper, nativeCapnpTarget);
+        new NativeCapnpBridgeTransport(apiHelper, nativeCapnpTarget, {
+          connectionId: "native-capnp-fixture-transport",
+        });
     let nativeCapnpBridgeTransportError = "";
     nativeCapnpBridgeTransport.sendMessage(nativeCapnpRpcMessage.getRoot(CapnpRpcMessage));
     try {
@@ -4011,6 +4014,7 @@ export default {
             targetId: nativeCapnpBridgeRpc.target.id,
             targetInterfaceId: nativeCapnpBridgeRpc.target.interfaceId.toString(16),
             targetInterfaceName: nativeCapnpBridgeRpc.target.interfaceName,
+            connectionId: nativeCapnpBridgeRpc.connectionId,
             messageBytes: nativeCapnpBridgeRpcMessage.message.toUint8Array().byteLength,
             capabilityCount: nativeCapnpBridgeRpcMessage.capabilities.length,
             firstCapability: {

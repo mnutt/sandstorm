@@ -5045,6 +5045,8 @@ private:
       auto message = rpc.getMessage();
       json.addAll(kj::StringPtr(",\n    "));
       appendNativeCapnpBridgeTargetJson(json, target);
+      json.addAll(kj::StringPtr(",\n    "));
+      appendJsonField(json, "connectionId", rpc.getConnectionId());
       json.addAll(kj::StringPtr(",\n    \"messageBytes\": "));
       json.addAll(kj::str(message.getMessage().size()));
       json.addAll(kj::StringPtr(",\n    \"capabilityCount\": "));
@@ -5893,6 +5895,10 @@ private:
         if (target.getId().size() == 0) {
           return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
               "native Cap'n Proto bridge RPC request target id is empty", binaryResponse);
+        }
+        if (rpc.getConnectionId().size() == 0) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              "native Cap'n Proto bridge RPC request connection id is empty", binaryResponse);
         }
         if (host.sessions->findClaimedCapability(target.getId()) == nullptr) {
           return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",

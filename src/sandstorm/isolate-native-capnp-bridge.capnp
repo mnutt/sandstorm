@@ -68,6 +68,7 @@ struct NativeCapnpBridgeRpcMessage @0xcac17a86f640a869 {
   # to Sandstorm's native Cap'n Proto transport.
   target @0 :NativeCapnpCapabilitySlot;
   message @1 :NativeCapnpPayload;
+  connectionId @2 :Text;
 }
 
 struct NativeCapnpBridgeSaved @0xe7a0b85c446da212 {
