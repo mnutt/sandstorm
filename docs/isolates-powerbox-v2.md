@@ -572,6 +572,10 @@ Progress:
 - generated binding metadata can declare expected argument slot interfaces, and
   `sandstorm:capnp` validates `cap.info().nativeInterface` before dispatch when
   a live capability handle exposes metadata.
+- `spk dev-isolate` recognizes Sandstorm native `capnp:` imports for
+  `WebSession`, `ApiSession`, and `OutboundHttpSession`, emits fetch-shaped
+  slot metadata for them, and includes an object-store example where
+  `openObject()` returns a fetch-capable object.
 
 Add support for generic capability slots:
 
