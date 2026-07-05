@@ -661,6 +661,7 @@ test("isolate supervisor integration suite", {
     assert.equal(body.textBinding, "hello from a text binding");
     assert.deepEqual(body.jsonBinding, { binding: "json" });
     assert.equal(body.capnpEs.messageBytes, 16);
+    assert.equal(body.capnpEs.payloadBytes, 16);
     assert.deepEqual(body.helperVersions, {
       api: 0,
       rpc: 0,
@@ -702,6 +703,11 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(
       body.sandstormApi.capnpBridgeNegotiation.info,
       body.sandstormApi.capnpBridgeInfo);
+    assert.deepEqual(body.sandstormApi.nativeCapnpBridge, {
+      available: false,
+      protocolVersion: 0,
+      callError: "NativeCapnpBridgeUnavailableError",
+    });
     assert.equal(body.storage.text, "stored from isolate");
     assert.deepEqual(body.appRpcTarget, {
       targetClass: true,

@@ -1,4 +1,5 @@
 import { RpcTarget } from "sandstorm:api";
+import { Message as CapnpEsMessage } from "@mnutt/capnp-es";
 
 export const SANDSTORM_CAPNP_VERSION = 0;
 export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
@@ -76,6 +77,106 @@ export async function negotiateNativeCapnpBridge(api, options = {}) {
     throw new TypeError("negotiateNativeCapnpBridge() requires a Sandstorm API object");
   }
   return negotiateNativeCapnpBridgeInfo(await api.capnpBridgeInfo(), options);
+}
+
+export class NativeCapnpBridgeUnavailableError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "NativeCapnpBridgeUnavailableError";
+    this.details = details;
+  }
+}
+
+export class NativeCapnpBridgeProtocolError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "NativeCapnpBridgeProtocolError";
+    this.details = details;
+  }
+}
+
+function nativeCapnpMessageBytes(message) {
+  if (message instanceof Uint8Array) {
+    return message;
+  } else if (message instanceof ArrayBuffer) {
+    return new Uint8Array(message);
+  } else if (ArrayBuffer.isView(message)) {
+    return new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
+  } else if (message && typeof message.toUint8Array === "function") {
+    return message.toUint8Array();
+  }
+  throw new TypeError("native Cap'n Proto payload message must be capnp-es Message or bytes");
+}
+
+function normalizeNativeCapnpCapabilitySlot(slot) {
+  if (!slot || typeof slot !== "object") {
+    throw new TypeError("native Cap'n Proto capability slot must be an object");
+  }
+  if (typeof slot.id !== "string" || slot.id.length === 0) {
+    throw new TypeError("native Cap'n Proto capability slot requires a non-empty id");
+  }
+  return Object.freeze({
+    id: slot.id,
+    interfaceId: slot.interfaceId ?? 0n,
+    interfaceName: typeof slot.interfaceName === "string" ? slot.interfaceName : "",
+    kind: typeof slot.kind === "string" ? slot.kind : "receiverHosted",
+  });
+}
+
+export function makeNativeCapnpPayload(message = new CapnpEsMessage(), capabilities = []) {
+  if (!Array.isArray(capabilities)) {
+    throw new TypeError("native Cap'n Proto payload capabilities must be an array");
+  }
+  return Object.freeze({
+    message: nativeCapnpMessageBytes(message),
+    capabilities: Object.freeze(capabilities.map(normalizeNativeCapnpCapabilitySlot)),
+  });
+}
+
+function methodSchemaMetadata(binding, methodName) {
+  const schema = binding?.schema;
+  if (!schema || typeof schema !== "object") {
+    throw new NativeCapnpBridgeProtocolError("native bridge call requires generated schema metadata");
+  }
+  const methodOrdinal = schema.methodIds?.[methodName];
+  if (!Number.isInteger(methodOrdinal)) {
+    throw new NativeCapnpBridgeProtocolError(
+      `native bridge call requires a method ordinal for ${binding.interfaceName}.${methodName}`);
+  }
+  return {
+    interfaceId: schema.interfaceId || binding.interfaceId || "",
+    interfaceName: schema.interfaceName || binding.interfaceName || "",
+    methodOrdinal,
+    methodName,
+  };
+}
+
+export async function createNativeCapnpBridge(api, options = {}) {
+  const negotiation = await negotiateNativeCapnpBridge(api, options);
+  return Object.freeze({
+    negotiation,
+    available: negotiation.available,
+    protocolVersion: negotiation.protocolVersion,
+
+    makePayload: makeNativeCapnpPayload,
+
+    async call({ target, binding, methodName, params, capabilities = [] } = {}) {
+      if (!negotiation.available) {
+        throw new NativeCapnpBridgeUnavailableError(
+          `native Cap'n Proto bridge is unavailable: ${negotiation.reason || "unavailable"}`,
+          { negotiation });
+      }
+      if (!target || typeof target !== "object" || typeof target.id !== "string") {
+        throw new NativeCapnpBridgeProtocolError(
+          "native bridge call target must be a Sandstorm capability handle");
+      }
+      const method = methodSchemaMetadata(binding, methodName);
+      const payload = makeNativeCapnpPayload(params, capabilities);
+      throw new NativeCapnpBridgeUnavailableError(
+        "native Cap'n Proto bridge call transport is not implemented yet",
+        { negotiation, targetId: target.id, method, payload });
+    },
+  });
 }
 
 const bindingError = (interfaceName, operation) => new Error(

@@ -31,7 +31,9 @@ import {
 import {
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
+  createNativeCapnpBridge,
   makeCapnpInterfaceBinding,
+  makeNativeCapnpPayload,
   negotiateNativeCapnpBridge,
 } from "sandstorm:capnp";
 
@@ -3614,6 +3616,16 @@ export default {
     const capnpBridgeNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeCalls", "capabilitySlots"],
     });
+    const nativeCapnpPayload = makeNativeCapnpPayload(new CapnpEsMessage());
+    const nativeCapnpBridge = await createNativeCapnpBridge(apiHelper, {
+      requiredFeatures: ["nativeCalls", "capabilitySlots"],
+    });
+    let nativeCapnpBridgeCallError = "";
+    try {
+      await nativeCapnpBridge.call();
+    } catch (error) {
+      nativeCapnpBridgeCallError = error.name;
+    }
 
     const storagePut = await (await env.STORAGE.fetch("http://storage/fixture", {
       method: "PUT",
@@ -3637,6 +3649,7 @@ export default {
       jsonBinding: env.JSON_BINDING,
       capnpEs: {
         messageBytes: new CapnpEsMessage().toUint8Array().byteLength,
+        payloadBytes: nativeCapnpPayload.message.byteLength,
       },
       helperVersions: {
         api: SANDSTORM_API_VERSION,
@@ -3656,6 +3669,11 @@ export default {
         capnpBridgeInfo: apiCapnpBridgeInfo,
         helperCapnpBridgeInfo,
         capnpBridgeNegotiation,
+        nativeCapnpBridge: {
+          available: nativeCapnpBridge.available,
+          protocolVersion: nativeCapnpBridge.protocolVersion,
+          callError: nativeCapnpBridgeCallError,
+        },
       },
       storage: {
         put: storagePut,

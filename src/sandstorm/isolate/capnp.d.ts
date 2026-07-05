@@ -39,6 +39,61 @@ declare module "sandstorm:capnp" {
     options?: NativeCapnpBridgeNegotiationOptions,
   ): Promise<NativeCapnpBridgeNegotiation>;
 
+  export class NativeCapnpBridgeUnavailableError extends Error {
+    readonly name: "NativeCapnpBridgeUnavailableError";
+    readonly details: unknown;
+    constructor(message: string, details?: unknown);
+  }
+
+  export class NativeCapnpBridgeProtocolError extends Error {
+    readonly name: "NativeCapnpBridgeProtocolError";
+    readonly details: unknown;
+    constructor(message: string, details?: unknown);
+  }
+
+  export type NativeCapnpCapabilitySlotKind = "senderHosted" | "receiverHosted" | "savedToken";
+
+  export interface NativeCapnpCapabilitySlot {
+    readonly id: string;
+    readonly interfaceId?: bigint | number | string;
+    readonly interfaceName?: string;
+    readonly kind?: NativeCapnpCapabilitySlotKind;
+  }
+
+  export interface NativeCapnpPayload {
+    readonly message: Uint8Array;
+    readonly capabilities: readonly Required<NativeCapnpCapabilitySlot>[];
+  }
+
+  export function makeNativeCapnpPayload(
+    message?: { toUint8Array(): Uint8Array } | Uint8Array | ArrayBuffer | ArrayBufferView,
+    capabilities?: readonly NativeCapnpCapabilitySlot[],
+  ): NativeCapnpPayload;
+
+  export interface NativeCapnpBridgeCallOptions {
+    readonly target: Capability;
+    readonly binding: CapnpInterfaceBinding<any, any>;
+    readonly methodName: string;
+    readonly params?: { toUint8Array(): Uint8Array } | Uint8Array | ArrayBuffer | ArrayBufferView;
+    readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
+  }
+
+  export interface NativeCapnpBridge {
+    readonly negotiation: NativeCapnpBridgeNegotiation;
+    readonly available: boolean;
+    readonly protocolVersion: 0;
+    makePayload(
+      message?: { toUint8Array(): Uint8Array } | Uint8Array | ArrayBuffer | ArrayBufferView,
+      capabilities?: readonly NativeCapnpCapabilitySlot[],
+    ): NativeCapnpPayload;
+    call(options: NativeCapnpBridgeCallOptions): Promise<never>;
+  }
+
+  export function createNativeCapnpBridge(
+    api: { capnpBridgeInfo(): Promise<unknown> },
+    options?: NativeCapnpBridgeNegotiationOptions,
+  ): Promise<NativeCapnpBridge>;
+
   export type CapnpRpcMethod = (...args: any[]) => unknown;
   export type CapnpMethodMap<TMethods> = {
     [K in keyof TMethods]: TMethods[K] extends CapnpRpcMethod ? TMethods[K] : never;
