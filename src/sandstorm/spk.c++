@@ -2236,14 +2236,17 @@ private:
     kj::Vector<DevIsolateModule> modules;
     std::set<std::string> seen;
     std::map<std::string, std::string> capnpImports;
-    collectDevIsolateModule(devIsolateWorkerPath, rootDir, modules, seen, capnpImports);
+    std::map<std::string, std::string> capnpEsImports;
+    collectDevIsolateModule(
+        devIsolateWorkerPath, rootDir, modules, seen, capnpImports, capnpEsImports);
     return modules;
   }
 
   void collectDevIsolateModule(kj::StringPtr path, kj::StringPtr rootDir,
                                kj::Vector<DevIsolateModule>& modules,
                                std::set<std::string>& seen,
-                               std::map<std::string, std::string>& capnpImports) {
+                               std::map<std::string, std::string>& capnpImports,
+                               std::map<std::string, std::string>& capnpEsImports) {
     char* resolved = realpath(path.cStr(), nullptr);
     KJ_REQUIRE(resolved != nullptr, "Could not resolve isolate module path.", path, strerror(errno));
     KJ_DEFER(free(resolved));
@@ -2275,9 +2278,15 @@ private:
           auto resolvedImport = resolveDevIsolateCapnpImport(
               importerDir, rootDir, specifier);
           addDevIsolateCapnpModule(specifier, resolvedImport, rootDir, modules, capnpImports);
+        } else if (isCapnpEsImport(specifier)) {
+          auto resolvedImport = resolveDevIsolateCapnpEsImport(
+              importerDir, rootDir, specifier);
+          addDevIsolateCapnpEsModule(
+              specifier, resolvedImport, rootDir, modules, capnpEsImports);
         } else if (isRelativeImport(specifier)) {
           auto resolvedImport = resolveDevIsolateImport(importerDir, rootDir, specifier);
-          collectDevIsolateModule(resolvedImport, rootDir, modules, seen, capnpImports);
+          collectDevIsolateModule(
+              resolvedImport, rootDir, modules, seen, capnpImports, capnpEsImports);
         }
       }
     } else {
@@ -2370,6 +2379,7 @@ private:
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es").cStr(), 0700));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es/capnp").cStr(), 0700));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es/shared").cStr(), 0700));
+    KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es-generated").cStr(), 0700));
     writeDevIsolateSupportFile(path, "placeholder.js",
         "export default { fetch() { return new Response(\"dev isolate manifest not mounted\", "
         "{ status: 500 }); } };\n");
@@ -2404,8 +2414,26 @@ private:
   void writeDevIsolateGeneratedSupportFile(
       kj::StringPtr dir, kj::StringPtr name, kj::StringPtr content) {
     auto path = kj::str(dir, "/", name);
+    mkdirParentDirs(path);
     kj::FdOutputStream(raiiOpen(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600))
         .write(content.begin(), content.size());
+  }
+
+  static void mkdirParentDirs(kj::StringPtr path) {
+    auto pathStd = toStdString(path);
+    size_t pos = 1;
+    for (;;) {
+      auto slash = pathStd.find('/', pos);
+      if (slash == std::string::npos) {
+        return;
+      }
+      auto parent = pathStd.substr(0, slash);
+      if (mkdir(parent.c_str(), 0700) != 0) {
+        KJ_REQUIRE(errno == EEXIST, "Could not create generated isolate runtime directory.",
+            parent, strerror(errno));
+      }
+      pos = slash + 1;
+    }
   }
 
   kj::Array<capnp::word> buildDevIsolateManifestBytes() {
@@ -2584,6 +2612,10 @@ private:
     return specifier.startsWith("capnp:");
   }
 
+  static bool isCapnpEsImport(kj::StringPtr specifier) {
+    return specifier.startsWith("capnp-es:");
+  }
+
   static kj::String resolveDevIsolateImport(
       kj::StringPtr importerDir, kj::StringPtr rootDir, kj::StringPtr specifier) {
     KJ_REQUIRE(specifier.findFirst('?') == nullptr && specifier.findFirst('#') == nullptr,
@@ -2609,6 +2641,18 @@ private:
         "`capnp:` isolate imports must use a relative schema path for now.", specifier);
     KJ_REQUIRE(pathSpecifier.endsWith(".capnp"),
         "`capnp:` isolate imports must point to a .capnp schema.", specifier);
+    return resolveDevIsolateImport(importerDir, rootDir, pathSpecifier);
+  }
+
+  static kj::String resolveDevIsolateCapnpEsImport(
+      kj::StringPtr importerDir, kj::StringPtr rootDir, kj::StringPtr specifier) {
+    KJ_REQUIRE(specifier.startsWith("capnp-es:"), "Internal error: expected capnp-es import.",
+        specifier);
+    auto pathSpecifier = specifier.slice(strlen("capnp-es:"));
+    KJ_REQUIRE(isRelativeImport(pathSpecifier),
+        "`capnp-es:` isolate imports must use a relative schema path for now.", specifier);
+    KJ_REQUIRE(pathSpecifier.endsWith(".capnp"),
+        "`capnp-es:` isolate imports must point to a .capnp schema.", specifier);
     return resolveDevIsolateImport(importerDir, rootDir, pathSpecifier);
   }
 
@@ -2671,6 +2715,50 @@ private:
     });
   }
 
+  void addDevIsolateCapnpEsModule(
+      kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
+      kj::Vector<DevIsolateModule>& modules,
+      std::map<std::string, std::string>& capnpEsImports) {
+    auto specifierStd = toStdString(specifier);
+    auto resolvedStd = toStdString(resolvedPath);
+    auto existing = capnpEsImports.find(specifierStd);
+    if (existing != capnpEsImports.end()) {
+      KJ_REQUIRE(existing->second == resolvedStd,
+          "`capnp-es:` isolate import specifier resolves to multiple schemas. "
+          "Use distinct import specifiers until import rewriting is implemented.",
+          specifier, existing->second, resolvedPath);
+      return;
+    }
+    capnpEsImports.insert(std::make_pair(specifierStd, resolvedStd));
+
+    KJ_REQUIRE(devIsolateSupportDir != nullptr,
+        "`capnp-es:` isolate imports require the generated dev-isolate support directory.");
+
+    auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
+    auto schemaImports = scanCapnpImports(source);
+    auto importerDir = dirnameForPath(resolvedPath);
+    for (auto& schemaImport: schemaImports) {
+      if (nativeCapnpCapabilitySpec(schemaImport.specifier) != nullptr) {
+        continue;
+      }
+      auto importedPath = resolveDevIsolateCapnpSchemaImport(
+          importerDir, rootDir, schemaImport.specifier);
+      auto importedSpecifier = devIsolateCapnpEsSpecifierForPath(importedPath, rootDir);
+      addDevIsolateCapnpEsModule(
+          importedSpecifier, importedPath, rootDir, modules, capnpEsImports);
+    }
+
+    auto runtimePath = devIsolateCapnpEsRuntimePath(resolvedPath, rootDir);
+    auto content = generateDevIsolateCapnpEsModule(resolvedPath, rootDir);
+    writeDevIsolateGeneratedSupportFile(devIsolateSupportDir, runtimePath, content);
+
+    modules.add(DevIsolateModule {
+      kj::heapString(specifier),
+      kj::str("__sandstorm_isolate_runtime/", runtimePath),
+      DevIsolateModuleType::ES_MODULE
+    });
+  }
+
   static kj::String resolveDevIsolateCapnpSchemaImport(
       kj::StringPtr importerDir, kj::StringPtr rootDir, kj::StringPtr specifier) {
     KJ_REQUIRE(isRelativeImport(specifier),
@@ -2684,6 +2772,21 @@ private:
                                                     kj::StringPtr rootDir) {
     auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
     return kj::str("capnp:./", moduleName);
+  }
+
+  static kj::String devIsolateCapnpEsSpecifierForPath(kj::StringPtr resolvedPath,
+                                                      kj::StringPtr rootDir) {
+    auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
+    return kj::str("capnp-es:./", moduleName);
+  }
+
+  static kj::String devIsolateCapnpEsRuntimePath(kj::StringPtr resolvedPath,
+                                                 kj::StringPtr rootDir) {
+    auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
+    KJ_REQUIRE(moduleName.endsWith(".capnp"), "Internal error: expected .capnp module.",
+        moduleName);
+    return kj::str("capnp-es-generated/",
+        moduleName.slice(0, moduleName.size() - strlen(".capnp")), ".js");
   }
 
   static kj::String devIsolateCapnpGeneratedFileName(kj::StringPtr resolvedPath) {
@@ -3235,6 +3338,80 @@ private:
     } else {
       return nullptr;
     }
+  }
+
+  static kj::String generateDevIsolateCapnpEsModule(
+      kj::StringPtr resolvedPath, kj::StringPtr rootDir) {
+    auto compilerModule = getenv("SANDSTORM_CAPNP_ES_COMPILER_MODULE");
+    KJ_REQUIRE(compilerModule != nullptr && strlen(compilerModule) > 0,
+        "`capnp-es:` isolate imports require SANDSTORM_CAPNP_ES_COMPILER_MODULE to point at "
+        "the @mnutt/capnp-es compiler module.");
+
+    auto capnpcOutPipe = Pipe::make();
+    auto capnpcErrPipe = Pipe::make();
+    auto rootInclude = kj::str("-I", rootDir);
+    Subprocess::Options capnpcOptions({
+        "capnpc", "-o-", rootInclude, "-Isrc", "-I/usr/include", resolvedPath});
+    capnpcOptions.stdout = capnpcOutPipe.writeEnd;
+    capnpcOptions.stderr = capnpcErrPipe.writeEnd;
+    Subprocess capnpc(kj::mv(capnpcOptions));
+    capnpcOutPipe.writeEnd = nullptr;
+    capnpcErrPipe.writeEnd = nullptr;
+
+    auto codegenRequest = readAllBytes(capnpcOutPipe.readEnd);
+    auto capnpcStderr = readAll(capnpcErrPipe.readEnd);
+    auto capnpcExit = capnpc.waitForExit();
+    KJ_REQUIRE(capnpcExit == 0, "capnpc failed while generating capnp-es module.",
+        resolvedPath, capnpcStderr);
+
+    auto nodeInPipe = Pipe::make();
+    auto nodeOutPipe = Pipe::make();
+    auto nodeErrPipe = Pipe::make();
+    auto compilerModulePtr = kj::StringPtr(compilerModule);
+    kj::StringPtr script =
+        "const chunks = [];\n"
+        "for await (const chunk of process.stdin) chunks.push(chunk);\n"
+        "const { compileAll } = await import(process.argv[1]);\n"
+        "const sourcePath = process.argv[2];\n"
+        "const basename = sourcePath.split('/').pop().replace(/\\.capnp$/, '.js');\n"
+        "const expectedPath = sourcePath.replace(/\\.capnp$/, '.js');\n"
+        "const { files } = await compileAll(Buffer.concat(chunks), {\n"
+        "  js: true,\n"
+        "  tsconfig: { noCheck: true }\n"
+        "});\n"
+        "let content = files.get(expectedPath);\n"
+        "if (content === undefined) {\n"
+        "  for (const [name, value] of files) {\n"
+        "    if (name === basename || name.endsWith('/' + basename)) {\n"
+        "      content = value;\n"
+        "      break;\n"
+        "    }\n"
+        "  }\n"
+        "}\n"
+        "if (content === undefined) {\n"
+        "  console.error('capnp-es compiler did not emit expected JS file for ' + sourcePath);\n"
+        "  console.error([...files.keys()].join('\\n'));\n"
+        "  process.exit(1);\n"
+        "}\n"
+        "process.stdout.write(content);\n";
+    Subprocess::Options nodeOptions({
+        "node", "--input-type=module", "-e", script, compilerModulePtr, resolvedPath});
+    nodeOptions.stdin = nodeInPipe.readEnd;
+    nodeOptions.stdout = nodeOutPipe.writeEnd;
+    nodeOptions.stderr = nodeErrPipe.writeEnd;
+    Subprocess node(kj::mv(nodeOptions));
+    nodeInPipe.readEnd = nullptr;
+    nodeOutPipe.writeEnd = nullptr;
+    nodeErrPipe.writeEnd = nullptr;
+
+    kj::FdOutputStream(nodeInPipe.writeEnd.get())
+        .write(codegenRequest.begin(), codegenRequest.size());
+    nodeInPipe.writeEnd = nullptr;
+    auto generated = readAll(nodeOutPipe.readEnd);
+    auto nodeStderr = readAll(nodeErrPipe.readEnd);
+    auto nodeExit = node.waitForExit();
+    KJ_REQUIRE(nodeExit == 0, "capnp-es compiler failed.", resolvedPath, nodeStderr);
+    return generated;
   }
 
   static kj::String generateDevIsolateCapnpModule(

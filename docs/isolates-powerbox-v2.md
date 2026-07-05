@@ -478,6 +478,9 @@ Progress:
 - the isolate Cap'n Proto RPC example is split across imported schemas, and
   the isolate supervisor integration test covers generated cross-schema
   metadata.
+- `spk dev-isolate` can now discover `capnp-es:` schema imports and generate
+  raw `@mnutt/capnp-es` JavaScript modules through a configured compiler
+  module, preserving source-relative module paths for schema imports.
 
 Deliverables:
 
@@ -764,6 +767,10 @@ Progress:
   integration fixture also sends a real RPC `call` after bootstrap and receives
   the native C++ exception `return`, proving calls are reaching the target
   Sandstorm capability through the per-connection RPC session
+- `spk dev-isolate` now has an explicit raw `capnp-es:` import path backed by
+  `SANDSTORM_CAPNP_ES_COMPILER_MODULE`, so isolate tooling can materialize the
+  generated JS classes that the native bridge will use without replacing the
+  current `capnp:` app-object compatibility wrapper yet
 
 Interop tests:
 

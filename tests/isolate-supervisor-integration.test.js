@@ -32,6 +32,8 @@ const SPK_PATH = process.env.ISOLATE_TEST_SPK ||
     path.join(REPO_DIR, "tests/assets/isolate-test-app.spk");
 const WEBSESSION_CLIENT_BIN = process.env.ISOLATE_WEBSESSION_CLIENT ||
   path.join(REPO_DIR, "tmp/sandstorm/isolate-websession-client");
+const CAPNP_ES_COMPILER_MODULE = process.env.CAPNP_ES_COMPILER_MODULE ||
+  path.resolve(REPO_DIR, "../../personal/capnp-es/dist/compiler/index.mjs");
 const STRACE_BIN = process.env.STRACE_BIN || "strace";
 const SYSCALL_TRACE_DIR = process.env.ISOLATE_SYSCALL_TRACE_DIR || "";
 const SYSCALL_TRACE_PROFILE = process.env.ISOLATE_SYSCALL_TRACE_PROFILE || "";
@@ -583,6 +585,71 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
     generatedObjectStore.stdout,
     /"openObject": \{ nativeInterface: "webSession", fetch: true \}/);
   assert.doesNotMatch(generatedObjectStore.stdout, /from "capnp:.*web-session/);
+});
+
+test("spk dev-isolate prints generated capnp-es modules", async (t) => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+  try {
+    await requireFile(
+      CAPNP_ES_COMPILER_MODULE,
+      "Set CAPNP_ES_COMPILER_MODULE to the @mnutt/capnp-es compiler module.");
+  } catch (err) {
+    t.skip(err.message);
+    return;
+  }
+
+  await fs.mkdir(REPO_TMP_DIR, { recursive: true });
+  const fixtureRoot = await fs.mkdtemp(path.join(REPO_TMP_DIR, "capnp-es-dev-isolate-"));
+  t.after(async () => {
+    await fs.rm(fixtureRoot, { recursive: true, force: true });
+  });
+
+  await fs.copyFile(
+    path.join(REPO_DIR, "examples/isolate-capnp-rpc/greeter.capnp"),
+    path.join(fixtureRoot, "greeter.capnp"));
+  await fs.copyFile(
+    path.join(REPO_DIR, "examples/isolate-capnp-rpc/greeting.capnp"),
+    path.join(fixtureRoot, "greeting.capnp"));
+  const workerPath = path.join(fixtureRoot, "worker.js");
+  await fs.writeFile(workerPath, [
+    "import * as greeter from \"capnp-es:./greeter.capnp\";",
+    "export default { fetch() { return Response.json(Object.keys(greeter)); } };",
+    "",
+  ].join("\n"));
+
+  const options = {
+    env: {
+      ...process.env,
+      SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
+    },
+  };
+  const { stdout } = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-manifest-json",
+    workerPath,
+  ], options);
+  const manifest = JSON.parse(stdout);
+  const modules = new Map(
+    manifest.continueCommand.isolate.modules.map((module) => [module.name, module]));
+
+  assert.equal(
+    modules.get("capnp-es:./greeter.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/greeter.js");
+  assert.equal(
+    modules.get("capnp-es:./greeting.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/greeting.js");
+
+  const generated = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-generated-module", "capnp-es:./greeter.capnp",
+    workerPath,
+  ], options);
+  assert.match(
+    generated.stdout,
+    /import \{ Greeting, Greeting\$Client \} from "\.\/greeting\.js";/);
+  assert.match(generated.stdout, /export class Greeter\$Client \{/);
+  assert.match(generated.stdout, /export class Greeter\$Server extends \$\.Server/);
+  assert.match(generated.stdout, /export class Greeter extends \$\.Interface/);
 });
 
 test("isolate supervisor integration suite", {
