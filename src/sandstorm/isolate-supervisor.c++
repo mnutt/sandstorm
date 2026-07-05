@@ -4875,10 +4875,16 @@ private:
         "}\n");
   }
 
+  void appendNativeCapnpBridgeTargetJson(
+      kj::Vector<char>& json, NativeCapnpCapabilitySlot::Reader target) {
+    appendJsonField(json, "targetId", target.getId());
+    json.addAll(kj::StringPtr(",\n    "));
+    appendJsonField(json, "targetInterfaceId", kj::str("0x", kj::hex(target.getInterfaceId())));
+    json.addAll(kj::StringPtr(",\n    "));
+    appendJsonField(json, "targetInterfaceName", target.getInterfaceName());
+  }
+
   kj::String renderNativeCapnpBridgeDisabled(NativeCapnpBridgeRequest::Reader request) {
-    auto call = request.getCall();
-    auto target = call.getTarget();
-    auto params = call.getParams();
     kj::Vector<char> json;
     json.addAll(kj::StringPtr(
         "{\n"
@@ -4889,25 +4895,57 @@ private:
     json.addAll(kj::StringPtr(",\n"
         "  \"error\": \"native Cap'n Proto bridge transport is not enabled\",\n"
         "  \"request\": {\n"
-        "    \"kind\": \"call\",\n"
+        "    \"kind\": "));
+    if (request.isCall()) {
+      appendJsonString(json, "call");
+    } else if (request.isDrop()) {
+      appendJsonString(json, "drop");
+    } else if (request.isSave()) {
+      appendJsonString(json, "save");
+    } else if (request.isRestore()) {
+      appendJsonString(json, "restore");
+    } else {
+      appendJsonString(json, "unknown");
+    }
+    json.addAll(kj::StringPtr(",\n"
         "    \"protocolVersion\": "));
     json.addAll(kj::str(request.getProtocolVersion()));
-    json.addAll(kj::StringPtr(",\n    "));
-    appendJsonField(json, "targetId", target.getId());
-    json.addAll(kj::StringPtr(",\n    "));
-    appendJsonField(json, "targetInterfaceId", kj::str("0x", kj::hex(target.getInterfaceId())));
-    json.addAll(kj::StringPtr(",\n    "));
-    appendJsonField(json, "targetInterfaceName", target.getInterfaceName());
-    json.addAll(kj::StringPtr(",\n    "));
-    appendJsonField(json, "interfaceId", kj::str("0x", kj::hex(call.getInterfaceId())));
-    json.addAll(kj::StringPtr(",\n    \"methodOrdinal\": "));
-    json.addAll(kj::str(call.getMethodOrdinal()));
-    json.addAll(kj::StringPtr(",\n    "));
-    appendJsonField(json, "methodName", call.getMethodName());
-    json.addAll(kj::StringPtr(",\n    \"paramsBytes\": "));
-    json.addAll(kj::str(params.getMessage().size()));
-    json.addAll(kj::StringPtr(",\n    \"capabilityCount\": "));
-    json.addAll(kj::str(params.getCapabilities().size()));
+
+    if (request.isCall()) {
+      auto call = request.getCall();
+      auto target = call.getTarget();
+      auto params = call.getParams();
+      json.addAll(kj::StringPtr(",\n    "));
+      appendNativeCapnpBridgeTargetJson(json, target);
+      json.addAll(kj::StringPtr(",\n    "));
+      appendJsonField(json, "interfaceId", kj::str("0x", kj::hex(call.getInterfaceId())));
+      json.addAll(kj::StringPtr(",\n    \"methodOrdinal\": "));
+      json.addAll(kj::str(call.getMethodOrdinal()));
+      json.addAll(kj::StringPtr(",\n    "));
+      appendJsonField(json, "methodName", call.getMethodName());
+      json.addAll(kj::StringPtr(",\n    \"paramsBytes\": "));
+      json.addAll(kj::str(params.getMessage().size()));
+      json.addAll(kj::StringPtr(",\n    \"capabilityCount\": "));
+      json.addAll(kj::str(params.getCapabilities().size()));
+    } else if (request.isDrop()) {
+      auto drop = request.getDrop();
+      json.addAll(kj::StringPtr(",\n    "));
+      appendNativeCapnpBridgeTargetJson(json, drop.getTarget());
+    } else if (request.isSave()) {
+      auto save = request.getSave();
+      json.addAll(kj::StringPtr(",\n    "));
+      appendNativeCapnpBridgeTargetJson(json, save.getTarget());
+    } else if (request.isRestore()) {
+      auto restore = request.getRestore();
+      json.addAll(kj::StringPtr(",\n    "));
+      appendJsonField(json, "token", restore.getToken());
+      json.addAll(kj::StringPtr(",\n    "));
+      appendJsonField(json, "expectedInterfaceId",
+          kj::str("0x", kj::hex(restore.getExpectedInterfaceId())));
+      json.addAll(kj::StringPtr(",\n    "));
+      appendJsonField(json, "expectedInterfaceName", restore.getExpectedInterfaceName());
+    }
+
     json.addAll(kj::StringPtr("\n  },\n"
         "  \"exception\": {\n"
         "    \"type\": \"unimplemented\",\n"
@@ -5491,29 +5529,55 @@ private:
             "unsupported native Cap'n Proto bridge protocol version: ",
             request.getProtocolVersion()), binaryResponse);
       }
-      if (!request.isCall() || !request.hasCall()) {
-        return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
-            "expected native Cap'n Proto bridge call request", binaryResponse);
-      }
+      if (request.isCall() && request.hasCall()) {
+        auto call = request.getCall();
+        if (!call.hasTarget()) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              "native Cap'n Proto bridge call request is missing target", binaryResponse);
+        }
+        if (!call.hasParams()) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              "native Cap'n Proto bridge call request is missing params", binaryResponse);
+        }
 
-      auto call = request.getCall();
-      if (!call.hasTarget()) {
+        auto target = call.getTarget();
+        if (target.getId().size() == 0) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              "native Cap'n Proto bridge call request target id is empty", binaryResponse);
+        }
+        if (host.sessions->findClaimedCapability(target.getId()) == nullptr) {
+          return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",
+              "unknown native Cap'n Proto bridge target capability", binaryResponse);
+        }
+      } else if (request.isDrop() && request.hasDrop()) {
+        auto target = request.getDrop().getTarget();
+        if (target.getId().size() == 0) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              "native Cap'n Proto bridge drop request target id is empty", binaryResponse);
+        }
+        if (host.sessions->findClaimedCapability(target.getId()) == nullptr) {
+          return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",
+              "unknown native Cap'n Proto bridge target capability", binaryResponse);
+        }
+      } else if (request.isSave() && request.hasSave()) {
+        auto target = request.getSave().getTarget();
+        if (target.getId().size() == 0) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              "native Cap'n Proto bridge save request target id is empty", binaryResponse);
+        }
+        if (host.sessions->findClaimedCapability(target.getId()) == nullptr) {
+          return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",
+              "unknown native Cap'n Proto bridge target capability", binaryResponse);
+        }
+      } else if (request.isRestore() && request.hasRestore()) {
+        auto restore = request.getRestore();
+        if (restore.getToken().size() == 0) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              "native Cap'n Proto bridge restore request token is empty", binaryResponse);
+        }
+      } else {
         return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
-            "native Cap'n Proto bridge call request is missing target", binaryResponse);
-      }
-      if (!call.hasParams()) {
-        return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
-            "native Cap'n Proto bridge call request is missing params", binaryResponse);
-      }
-
-      auto target = call.getTarget();
-      if (target.getId().size() == 0) {
-        return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
-            "native Cap'n Proto bridge call request target id is empty", binaryResponse);
-      }
-      if (host.sessions->findClaimedCapability(target.getId()) == nullptr) {
-        return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",
-            "unknown native Cap'n Proto bridge target capability", binaryResponse);
+            "expected native Cap'n Proto bridge request", binaryResponse);
       }
 
       if (binaryResponse) {

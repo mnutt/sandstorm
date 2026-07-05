@@ -87,6 +87,28 @@ declare module "sandstorm:capnp" {
     options?: NativeCapnpBridgeCallRequestOptions,
   ): NativeCapnpPayload;
 
+  export interface NativeCapnpBridgeTargetRequestOptions {
+    readonly target: NativeCapnpCapabilitySlot;
+  }
+
+  export function makeNativeCapnpBridgeDropRequest(
+    options?: NativeCapnpBridgeTargetRequestOptions,
+  ): NativeCapnpPayload;
+
+  export function makeNativeCapnpBridgeSaveRequest(
+    options?: NativeCapnpBridgeTargetRequestOptions,
+  ): NativeCapnpPayload;
+
+  export interface NativeCapnpBridgeRestoreRequestOptions {
+    readonly token: string;
+    readonly expectedInterfaceId?: bigint | number | string;
+    readonly expectedInterfaceName?: string;
+  }
+
+  export function makeNativeCapnpBridgeRestoreRequest(
+    options?: NativeCapnpBridgeRestoreRequestOptions,
+  ): NativeCapnpPayload;
+
   export function readNativeCapnpBridgeRequest(
     message: Uint8Array | ArrayBuffer | ArrayBufferView,
   ): unknown;
@@ -108,6 +130,16 @@ declare module "sandstorm:capnp" {
   export function makeNativeCapnpBridgeExceptionResponse(
     exception?: NativeCapnpBridgeException,
   ): NativeCapnpPayload;
+
+  export function makeNativeCapnpBridgeCapabilityResponse(
+    options?: { readonly capability: NativeCapnpCapabilitySlot },
+  ): NativeCapnpPayload;
+
+  export function makeNativeCapnpBridgeSavedResponse(
+    options?: { readonly token: string },
+  ): NativeCapnpPayload;
+
+  export function makeNativeCapnpBridgeAcknowledgedResponse(): NativeCapnpPayload;
 
   export function readNativeCapnpBridgeResponse(
     message: Uint8Array | ArrayBuffer | ArrayBufferView,
@@ -163,6 +195,12 @@ declare module "sandstorm:capnp" {
       capabilities?: readonly NativeCapnpCapabilitySlot[],
     ): NativeCapnpPayload;
     call(options: NativeCapnpBridgeCallOptions): Promise<NativeCapnpPayload>;
+    drop(options: { readonly target: Capability }): Promise<void>;
+    save(options: { readonly target: Capability }): Promise<string>;
+    restore(options: {
+      readonly token: string;
+      readonly binding?: CapnpInterfaceBinding<any, any>;
+    }): Promise<Required<NativeCapnpCapabilitySlot>>;
   }
 
   export function createNativeCapnpBridge(
