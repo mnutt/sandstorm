@@ -511,6 +511,9 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
     /import \{ Greeting as _capnpImport0_Greeting \} from "capnp:\.\/greeting\.capnp";/);
   assert.match(generated.stdout, /export const Greeter = makeInterface\("Greeter"/);
   assert.match(generated.stdout, /interfaceId: "0x[0-9a-f]{16}"/);
+  assert.match(generated.stdout, /methodIds: \{\n    "hello": 0,\n    "greeting": 1,\n    "useGreeting": 2\n  \}/);
+  assert.match(generated.stdout, /paramStructIds: \{\n    "hello": "0x[0-9a-f]{16}"/);
+  assert.match(generated.stdout, /resultStructIds: \{\n    "hello": "0x[0-9a-f]{16}"/);
   assert.match(generated.stdout, /"hello", "greeting", "useGreeting"/);
   assert.match(
     generated.stdout,
@@ -525,6 +528,7 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
   ]);
   assert.match(generatedGreeting.stdout, /export const Greeting = makeInterface\("Greeting"/);
   assert.match(generatedGreeting.stdout, /interfaceId: "0x[0-9a-f]{16}"/);
+  assert.match(generatedGreeting.stdout, /methodIds: \{\n    "read": 0\n  \}/);
   assert.match(generatedGreeting.stdout, /"read"/);
 });
 
@@ -1693,6 +1697,9 @@ test("isolate supervisor integration suite", {
         "readOther",
         "fail",
       ],
+      methodIds: {},
+      paramStructIds: {},
+      resultStructIds: {},
       argumentCapabilities: {
         readOther: { indexes: [0] },
       },

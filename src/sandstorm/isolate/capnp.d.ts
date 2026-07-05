@@ -53,6 +53,9 @@ declare module "sandstorm:capnp" {
     readonly schemaPath: string;
     readonly schemaText: string;
     readonly methodNames: readonly (keyof TMethods & string)[];
+    readonly methodIds: Partial<Record<keyof TMethods & string, number>>;
+    readonly paramStructIds: Partial<Record<keyof TMethods & string, string>>;
+    readonly resultStructIds: Partial<Record<keyof TMethods & string, string>>;
     readonly argumentCapabilities: CapnpArgumentCapabilities<TMethods>;
     readonly resultCapabilities: CapnpResultCapabilities<TMethods>;
   }
@@ -83,6 +86,9 @@ declare module "sandstorm:capnp" {
       interfaceId?: string;
       schemaPath?: string;
       schemaText?: string;
+      methodIds?: Partial<Record<keyof TMethods & string, number>>;
+      paramStructIds?: Partial<Record<keyof TMethods & string, string>>;
+      resultStructIds?: Partial<Record<keyof TMethods & string, string>>;
       argumentCapabilities?: CapnpArgumentCapabilities<TMethods>;
       resultCapabilities?: CapnpResultCapabilities<TMethods>;
     },
