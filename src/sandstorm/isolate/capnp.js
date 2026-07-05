@@ -2,6 +2,8 @@ import { RpcTarget } from "sandstorm:api";
 import { Message as CapnpEsMessage } from "@mnutt/capnp-es";
 import {
   NativeCapnpBridgeRequest,
+  NativeCapnpBridgeResponse,
+  NativeCapnpBridgeResult,
   NativeCapnpCapabilitySlotKind,
 } from "sandstorm:native-capnp-bridge";
 
@@ -169,6 +171,29 @@ function writeNativeCapnpCapabilitySlot(builder, slot) {
   builder.kind = nativeCapnpSlotKind(slot.kind);
 }
 
+function nativeCapnpSlotKindName(kind) {
+  switch (kind) {
+    case NativeCapnpCapabilitySlotKind.SENDER_HOSTED:
+      return "senderHosted";
+    case NativeCapnpCapabilitySlotKind.RECEIVER_HOSTED:
+      return "receiverHosted";
+    case NativeCapnpCapabilitySlotKind.SAVED_TOKEN:
+      return "savedToken";
+    default:
+      throw new NativeCapnpBridgeProtocolError(
+        `unknown native Cap'n Proto capability slot kind: ${kind}`);
+  }
+}
+
+function readNativeCapnpCapabilitySlot(slot) {
+  return Object.freeze({
+    id: slot.id,
+    interfaceId: slot.interfaceId,
+    interfaceName: slot.interfaceName,
+    kind: nativeCapnpSlotKindName(slot.kind),
+  });
+}
+
 function writeNativeCapnpPayload(builder, payload) {
   const message = builder._initMessage(payload.message.byteLength);
   message.copyBuffer(payload.message);
@@ -177,6 +202,28 @@ function writeNativeCapnpPayload(builder, payload) {
   for (let i = 0; i < payload.capabilities.length; ++i) {
     writeNativeCapnpCapabilitySlot(capabilities.get(i), payload.capabilities[i]);
   }
+}
+
+function readNativeCapnpPayloadValue(payload) {
+  const capabilities = [];
+  for (let i = 0; i < payload.capabilities.length; ++i) {
+    capabilities.push(readNativeCapnpCapabilitySlot(payload.capabilities.get(i)));
+  }
+  return makeNativeCapnpPayload(payload.message.toUint8Array(), capabilities);
+}
+
+function writeNativeCapnpBridgeException(builder, exception = {}) {
+  builder.type = typeof exception.type === "string" ? exception.type : "failed";
+  builder.reason = typeof exception.reason === "string" ? exception.reason : "";
+  builder.trace = typeof exception.trace === "string" ? exception.trace : "";
+}
+
+function readNativeCapnpBridgeExceptionValue(exception) {
+  return Object.freeze({
+    type: exception.type,
+    reason: exception.reason,
+    trace: exception.trace,
+  });
 }
 
 export function makeNativeCapnpBridgeCallRequest({ target, method, payload } = {}) {
@@ -206,6 +253,97 @@ export function makeNativeCapnpBridgeCallRequest({ target, method, payload } = {
 export function readNativeCapnpBridgeRequest(message) {
   const bytes = nativeCapnpMessageBytes(message);
   return new CapnpEsMessage(bytes, false).getRoot(NativeCapnpBridgeRequest);
+}
+
+export function makeNativeCapnpBridgeResultResponse({ payload } = {}) {
+  const bridgePayload = payload || makeNativeCapnpPayload();
+  const message = new CapnpEsMessage();
+  const response = message.initRoot(NativeCapnpBridgeResponse);
+  response.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
+  writeNativeCapnpPayload(response._initResult()._initValue(), bridgePayload);
+  return makeNativeCapnpPayload(message);
+}
+
+export function makeNativeCapnpBridgeExceptionResponse(exception = {}) {
+  const message = new CapnpEsMessage();
+  const response = message.initRoot(NativeCapnpBridgeResponse);
+  response.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
+  writeNativeCapnpBridgeException(response._initException(), exception);
+  return makeNativeCapnpPayload(message);
+}
+
+export function readNativeCapnpBridgeResponse(message) {
+  const bytes = nativeCapnpMessageBytes(message);
+  return new CapnpEsMessage(bytes, false).getRoot(NativeCapnpBridgeResponse);
+}
+
+export function decodeNativeCapnpBridgeResponse(message) {
+  const response = readNativeCapnpBridgeResponse(message);
+  if (response.protocolVersion !== SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION) {
+    throw new NativeCapnpBridgeProtocolError(
+      `unsupported native Cap'n Proto bridge response protocol version: ${response.protocolVersion}`);
+  }
+
+  switch (response.which()) {
+    case NativeCapnpBridgeResponse.RESULT: {
+      const result = response.result;
+      switch (result.which()) {
+        case NativeCapnpBridgeResult.VALUE:
+          return Object.freeze({
+            protocolVersion: response.protocolVersion,
+            which: "result",
+            result: Object.freeze({
+              which: "value",
+              value: readNativeCapnpPayloadValue(result.value),
+            }),
+          });
+        case NativeCapnpBridgeResult.EXCEPTION:
+          return Object.freeze({
+            protocolVersion: response.protocolVersion,
+            which: "result",
+            result: Object.freeze({
+              which: "exception",
+              exception: readNativeCapnpBridgeExceptionValue(result.exception),
+            }),
+          });
+        case NativeCapnpBridgeResult.CANCELED:
+          return Object.freeze({
+            protocolVersion: response.protocolVersion,
+            which: "result",
+            result: Object.freeze({ which: "canceled" }),
+          });
+        default:
+          throw new NativeCapnpBridgeProtocolError(
+            `unknown native Cap'n Proto bridge result discriminant: ${result.which()}`);
+      }
+    }
+    case NativeCapnpBridgeResponse.CAPABILITY:
+      return Object.freeze({
+        protocolVersion: response.protocolVersion,
+        which: "capability",
+        capability: readNativeCapnpCapabilitySlot(response.capability),
+      });
+    case NativeCapnpBridgeResponse.SAVED:
+      return Object.freeze({
+        protocolVersion: response.protocolVersion,
+        which: "saved",
+        saved: Object.freeze({ token: response.saved.token }),
+      });
+    case NativeCapnpBridgeResponse.ACKNOWLEDGED:
+      return Object.freeze({
+        protocolVersion: response.protocolVersion,
+        which: "acknowledged",
+      });
+    case NativeCapnpBridgeResponse.EXCEPTION:
+      return Object.freeze({
+        protocolVersion: response.protocolVersion,
+        which: "exception",
+        exception: readNativeCapnpBridgeExceptionValue(response.exception),
+      });
+    default:
+      throw new NativeCapnpBridgeProtocolError(
+        `unknown native Cap'n Proto bridge response discriminant: ${response.which()}`);
+  }
 }
 
 function methodSchemaMetadata(binding, methodName) {

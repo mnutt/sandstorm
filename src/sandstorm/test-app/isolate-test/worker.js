@@ -32,8 +32,11 @@ import {
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
   createNativeCapnpBridge,
+  decodeNativeCapnpBridgeResponse,
   makeCapnpInterfaceBinding,
   makeNativeCapnpBridgeCallRequest,
+  makeNativeCapnpBridgeExceptionResponse,
+  makeNativeCapnpBridgeResultResponse,
   makeNativeCapnpPayload,
   negotiateNativeCapnpBridge,
   readNativeCapnpBridgeRequest,
@@ -3663,6 +3666,20 @@ export default {
         readNativeCapnpBridgeRequest(nativeCapnpBridgeRequest.message);
     const nativeCapnpBridgeRequestCall = nativeCapnpBridgeRequestRoot.call;
     const nativeCapnpBridgeRequestParams = nativeCapnpBridgeRequestCall.params;
+    const nativeCapnpBridgeResultResponse = makeNativeCapnpBridgeResultResponse({
+      payload: nativeCapnpPayload,
+    });
+    const decodedNativeCapnpBridgeResultResponse =
+        decodeNativeCapnpBridgeResponse(nativeCapnpBridgeResultResponse.message);
+    const nativeCapnpBridgeResultValue = decodedNativeCapnpBridgeResultResponse.result.value;
+    const nativeCapnpBridgeResultCapability = nativeCapnpBridgeResultValue.capabilities[0];
+    const nativeCapnpBridgeExceptionResponse = makeNativeCapnpBridgeExceptionResponse({
+      type: "unimplemented",
+      reason: "fixture exception",
+      trace: "fixture trace",
+    });
+    const decodedNativeCapnpBridgeExceptionResponse =
+        decodeNativeCapnpBridgeResponse(nativeCapnpBridgeExceptionResponse.message);
     const nativeCapnpBridge = await createNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeCalls", "capabilitySlots"],
     });
@@ -3722,6 +3739,26 @@ export default {
             interfaceName: nativeCapnpBridgeRequestParams.capabilities.get(0).interfaceName,
             kind: nativeCapnpBridgeRequestParams.capabilities.get(0).kind,
           },
+        },
+        bridgeResultResponse: {
+          bytes: nativeCapnpBridgeResultResponse.message.byteLength,
+          protocolVersion: decodedNativeCapnpBridgeResultResponse.protocolVersion,
+          which: decodedNativeCapnpBridgeResultResponse.which,
+          resultWhich: decodedNativeCapnpBridgeResultResponse.result.which,
+          valueBytes: nativeCapnpBridgeResultValue.message.byteLength,
+          capabilityCount: nativeCapnpBridgeResultValue.capabilities.length,
+          firstCapability: {
+            id: nativeCapnpBridgeResultCapability.id,
+            interfaceId: nativeCapnpBridgeResultCapability.interfaceId.toString(16),
+            interfaceName: nativeCapnpBridgeResultCapability.interfaceName,
+            kind: nativeCapnpBridgeResultCapability.kind,
+          },
+        },
+        bridgeExceptionResponse: {
+          bytes: nativeCapnpBridgeExceptionResponse.message.byteLength,
+          protocolVersion: decodedNativeCapnpBridgeExceptionResponse.protocolVersion,
+          which: decodedNativeCapnpBridgeExceptionResponse.which,
+          exception: decodedNativeCapnpBridgeExceptionResponse.exception,
         },
       },
       helperVersions: {

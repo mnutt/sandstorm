@@ -709,6 +709,9 @@ Progress:
 - the disabled supervisor `/capnp/call` route now rejects bridge calls whose
   target id is not an already-claimed Sandstorm capability handle, preserving
   the object-capability authority boundary before native dispatch is enabled
+- `sandstorm:capnp` can now encode and decode native bridge response envelopes
+  for result payloads and exceptions, giving generated clients a typed response
+  format to target before `/capnp/call` returns binary native results
 
 Interop tests:
 
