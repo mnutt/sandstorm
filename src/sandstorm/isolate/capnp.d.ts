@@ -109,6 +109,22 @@ declare module "sandstorm:capnp" {
     options?: NativeCapnpBridgeRestoreRequestOptions,
   ): NativeCapnpPayload;
 
+  export interface NativeCapnpBridgeRpcRequestOptions {
+    readonly target: NativeCapnpCapabilitySlot;
+    readonly message: { toUint8Array(): Uint8Array } | {
+      readonly segment?: {
+        readonly id?: number;
+        readonly message?: { toUint8Array(): Uint8Array };
+      };
+      readonly byteOffset?: number;
+    } | Uint8Array | ArrayBuffer | ArrayBufferView;
+    readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
+  }
+
+  export function makeNativeCapnpBridgeRpcRequest(
+    options?: NativeCapnpBridgeRpcRequestOptions,
+  ): NativeCapnpPayload;
+
   export function readNativeCapnpBridgeRequest(
     message: Uint8Array | ArrayBuffer | ArrayBufferView,
   ): unknown;
@@ -216,6 +232,36 @@ declare module "sandstorm:capnp" {
     },
     options?: NativeCapnpBridgeNegotiationOptions,
   ): Promise<NativeCapnpBridge>;
+
+  export class NativeCapnpBridgeTransport {
+    readonly api: {
+      nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<{
+        ok: boolean;
+        status: number;
+        contentType: string;
+        body: Uint8Array;
+      }>;
+    };
+    readonly target: Required<NativeCapnpCapabilitySlot>;
+    readonly capabilities: readonly Required<NativeCapnpCapabilitySlot>[];
+    constructor(
+      api: NativeCapnpBridgeTransport["api"],
+      target: NativeCapnpCapabilitySlot,
+      options?: { readonly capabilities?: readonly NativeCapnpCapabilitySlot[] },
+    );
+    sendMessage(message: unknown): void;
+    recvMessage(): Promise<unknown>;
+    close(error?: unknown): void;
+  }
+
+  export function createNativeCapnpBridgeConnection(
+    api: NativeCapnpBridgeTransport["api"],
+    target: NativeCapnpCapabilitySlot,
+    options?: {
+      readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
+      readonly finalize?: unknown;
+    },
+  ): unknown;
 
   export type CapnpRpcMethod = (...args: any[]) => unknown;
   export type CapnpMethodMap<TMethods> = {

@@ -4904,6 +4904,8 @@ private:
       appendJsonString(json, "save");
     } else if (request.isRestore()) {
       appendJsonString(json, "restore");
+    } else if (request.isRpc()) {
+      appendJsonString(json, "rpc");
     } else {
       appendJsonString(json, "unknown");
     }
@@ -4944,6 +4946,16 @@ private:
           kj::str("0x", kj::hex(restore.getExpectedInterfaceId())));
       json.addAll(kj::StringPtr(",\n    "));
       appendJsonField(json, "expectedInterfaceName", restore.getExpectedInterfaceName());
+    } else if (request.isRpc()) {
+      auto rpc = request.getRpc();
+      auto target = rpc.getTarget();
+      auto message = rpc.getMessage();
+      json.addAll(kj::StringPtr(",\n    "));
+      appendNativeCapnpBridgeTargetJson(json, target);
+      json.addAll(kj::StringPtr(",\n    \"messageBytes\": "));
+      json.addAll(kj::str(message.getMessage().size()));
+      json.addAll(kj::StringPtr(",\n    \"capabilityCount\": "));
+      json.addAll(kj::str(message.getCapabilities().size()));
     }
 
     json.addAll(kj::StringPtr("\n  },\n"
@@ -5766,6 +5778,26 @@ private:
           return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
               "native Cap'n Proto bridge restore request token is empty", binaryResponse);
         }
+      } else if (request.isRpc() && request.hasRpc()) {
+        auto rpc = request.getRpc();
+        if (!rpc.hasTarget()) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              "native Cap'n Proto bridge RPC request is missing target", binaryResponse);
+        }
+        if (!rpc.hasMessage()) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              "native Cap'n Proto bridge RPC request is missing message", binaryResponse);
+        }
+
+        auto target = rpc.getTarget();
+        if (target.getId().size() == 0) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              "native Cap'n Proto bridge RPC request target id is empty", binaryResponse);
+        }
+        if (host.sessions->findClaimedCapability(target.getId()) == nullptr) {
+          return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",
+              "unknown native Cap'n Proto bridge target capability", binaryResponse);
+        }
       } else {
         return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
             "expected native Cap'n Proto bridge request", binaryResponse);
@@ -5778,6 +5810,9 @@ private:
           return saveNativeCapnpBridgeCapability(request.getSave().getTarget(), response);
         } else if (request.isRestore()) {
           return restoreNativeCapnpBridgeCapability(request.getRestore(), response);
+        } else if (request.isRpc()) {
+          return sendNativeCapnpBridgeException(response, 501, "Not Implemented", "unimplemented",
+              "native Cap'n Proto bridge RPC transport is not enabled");
         } else {
           return sendNativeCapnpBridgeException(response, 501, "Not Implemented", "unimplemented",
               "native Cap'n Proto bridge transport is not enabled");

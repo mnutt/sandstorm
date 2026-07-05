@@ -740,6 +740,21 @@ test("isolate supervisor integration suite", {
         expectedInterfaceId: "a8e9655582dcde6f",
         expectedInterfaceName: "sandstorm.WebSession",
       },
+      rpcRequest: {
+        protocolVersion: 0,
+        which: 4,
+        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
+        targetInterfaceId: "a8e9655582dcde6f",
+        targetInterfaceName: "sandstorm.WebSession",
+        messageBytes: 16,
+        capabilityCount: 1,
+        firstCapability: {
+          id: "rpc-argument-capability",
+          interfaceId: "d7a322498a996313",
+          interfaceName: "sandstorm.IsolateObjectCapability",
+          kind: 0,
+        },
+      },
       acknowledgedResponse: {
         bytes: body.capnpEs.bridgeLifecycle.acknowledgedResponse.bytes,
         which: "acknowledged",
@@ -862,6 +877,15 @@ test("isolate supervisor integration suite", {
         expectedInterfaceId: "0xa8e9655582dcde6f",
         expectedInterfaceName: "sandstorm.WebSession",
       },
+      rpcRequest: {
+        kind: "rpc",
+        protocolVersion: 0,
+        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
+        targetInterfaceId: "0xa8e9655582dcde6f",
+        targetInterfaceName: "sandstorm.WebSession",
+        messageBytes: 16,
+        capabilityCount: 1,
+      },
       binaryRoute: {
         ok: false,
         status: 501,
@@ -874,6 +898,19 @@ test("isolate supervisor integration suite", {
           trace: "",
         },
       },
+      rpcBinaryRoute: {
+        ok: false,
+        status: 501,
+        contentType: "application/octet-stream",
+        bytes: body.sandstormApi.nativeCapnpBridge.rpcBinaryRoute.bytes,
+        which: "exception",
+        exception: {
+          type: "unimplemented",
+          reason: "native Cap'n Proto bridge RPC transport is not enabled",
+          trace: "",
+        },
+      },
+      transportError: "NativeCapnpBridgeUnavailableError",
       lifecycleBinary: {
         save: {
           ok: true,
@@ -907,6 +944,7 @@ test("isolate supervisor integration suite", {
       unknownTargetError: "unknown native Cap'n Proto bridge target capability",
     });
     assert.ok(body.sandstormApi.nativeCapnpBridge.binaryRoute.bytes > 0);
+    assert.ok(body.sandstormApi.nativeCapnpBridge.rpcBinaryRoute.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.drop.bytes > 0);
