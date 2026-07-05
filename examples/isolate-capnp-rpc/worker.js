@@ -13,6 +13,20 @@ const greeterMethods = {
       },
     });
   },
+  async greetingPair({ name = "world" } = {}) {
+    return {
+      formal: Greeting.implement({
+        async read() {
+          return { message: `Hello, ${name}` };
+        },
+      }),
+      casual: Greeting.implement({
+        async read() {
+          return { message: `Hi, ${name}` };
+        },
+      }),
+    };
+  },
   async useGreeting(greeting) {
     if (typeof greeting.call === "function") {
       return greeting.call("read");
@@ -40,7 +54,12 @@ export default {
     const greeting = await greeter.greeting({
       name: url.searchParams.get("name") || "isolate",
     });
+    const greetingPair = await greeter.greetingPair({
+      name: url.searchParams.get("name") || "isolate",
+    });
     const greetingResult = await greeting.read();
+    const formalGreetingResult = await greetingPair.formal.read();
+    const casualGreetingResult = await greetingPair.casual.read();
     const useGreetingResult = await greeter.useGreeting(greeting);
 
     return Response.json({
@@ -49,6 +68,8 @@ export default {
       methodNames: Greeter.methodNames,
       result,
       greetingResult,
+      formalGreetingResult,
+      casualGreetingResult,
       useGreetingResult,
     });
   },

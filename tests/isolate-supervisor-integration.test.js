@@ -511,14 +511,17 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
     /import \{ Greeting as _capnpImport0_Greeting \} from "capnp:\.\/greeting\.capnp";/);
   assert.match(generated.stdout, /export const Greeter = makeInterface\("Greeter"/);
   assert.match(generated.stdout, /interfaceId: "0x[0-9a-f]{16}"/);
-  assert.match(generated.stdout, /methodIds: \{\n    "hello": 0,\n    "greeting": 1,\n    "useGreeting": 2\n  \}/);
+  assert.match(generated.stdout, /methodIds: \{\n    "hello": 0,\n    "greeting": 1,\n    "greetingPair": 2,\n    "useGreeting": 3\n  \}/);
   assert.match(generated.stdout, /paramStructIds: \{\n    "hello": "0x[0-9a-f]{16}"/);
   assert.match(generated.stdout, /resultStructIds: \{\n    "hello": "0x[0-9a-f]{16}"/);
-  assert.match(generated.stdout, /"hello", "greeting", "useGreeting"/);
+  assert.match(generated.stdout, /"hello", "greeting", "greetingPair", "useGreeting"/);
   assert.match(
     generated.stdout,
     /"useGreeting": \{ indexes: \[0\], fields: \["greeting"\] \}/);
   assert.match(generated.stdout, /"greeting": \(\) => _capnpImport0_Greeting/);
+  assert.match(
+    generated.stdout,
+    /"greetingPair": \{ fields: \{\n      "formal": \(\) => _capnpImport0_Greeting,\n      "casual": \(\) => _capnpImport0_Greeting\n    \} \}/);
   assert.doesNotMatch(generated.stdout, /"hello": \(\) =>/);
 
   const generatedGreeting = await runCommand(SPK_BIN, [

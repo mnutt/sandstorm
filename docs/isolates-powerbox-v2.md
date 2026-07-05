@@ -557,6 +557,12 @@ Exit criteria:
 Generalize current capability slot support so typed methods can pass and
 return all Sandstorm capability kinds that matter to isolate apps.
 
+Progress:
+
+- generated `capnp:` modules emit structured result capability slot metadata
+  for methods whose result structs contain multiple top-level capability
+  fields.
+
 Add support for generic capability slots:
 
 - app-object capabilities
