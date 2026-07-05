@@ -1660,6 +1660,7 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.ok, true);
     assert.equal(selfTest.json.helperVersion, 0);
     assert.equal(selfTest.json.interfaceName, "GeneratedCounter");
+    assert.equal(selfTest.json.interfaceId, "");
     assert.equal(selfTest.json.schemaPath, "test/generated-counter.capnp");
     assert.deepEqual(selfTest.json.methodNames, [
       "increment",
@@ -1668,6 +1669,33 @@ test("isolate supervisor integration suite", {
       "readOther",
       "fail",
     ]);
+    assert.deepEqual(selfTest.json.schema, {
+      importSpecifier: "capnp:test/generated-counter.capnp",
+      interfaceName: "GeneratedCounter",
+      interfaceId: "",
+      schemaPath: "test/generated-counter.capnp",
+      schemaText: [
+        "@0xd8c883d5220f7e53;",
+        "interface GeneratedCounter {",
+        "  increment @0 (amount :Float64) -> (value :Float64);",
+        "  get @1 () -> (value :Float64);",
+        "  child @2 () -> (counter :GeneratedCounter);",
+        "  readOther @3 (other :GeneratedCounter) -> (value :Float64);",
+        "  fail @4 (message :Text) -> ();",
+        "}",
+      ].join("\n"),
+      methodNames: [
+        "increment",
+        "get",
+        "child",
+        "readOther",
+        "fail",
+      ],
+      argumentCapabilities: {
+        readOther: { indexes: [0] },
+      },
+      resultCapabilityNames: ["child"],
+    });
     assert.deepEqual(selfTest.json.local.first, { value: 2 });
     assert.deepEqual(selfTest.json.local.current, { value: 2 });
     assert.deepEqual(selfTest.json.local.child.first, { value: 3 });
