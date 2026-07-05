@@ -144,6 +144,15 @@ async function callSandstormApi(env, path) {
   return body;
 }
 
+async function callNativeCapnpBridge(env, body = new Uint8Array()) {
+  const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/call", {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream" },
+    body,
+  });
+  return parseApiResponseBody(response);
+}
+
 async function postPowerbox(env, path) {
   const response = await powerboxFetcher(env).fetch(`http://sandstorm/${path}`, {
     method: "POST",
@@ -3313,6 +3322,10 @@ class SandstormRpcTarget extends RpcTarget {
     return callSandstorm(this.#env, "capnp/bridge-info");
   }
 
+  nativeCapnpBridgeCall(body) {
+    return callNativeCapnpBridge(this.#env, body);
+  }
+
   storage() {
     return new StorageRpcTarget(this.#env);
   }
@@ -3425,6 +3438,7 @@ export function sandstorm(request, env, options = {}) {
     modules: () => callSandstorm(env, "modules"),
     bindings: () => callSandstorm(env, "bindings"),
     capnpBridgeInfo: () => callSandstorm(env, "capnp/bridge-info"),
+    nativeCapnpBridgeCall: (body) => callNativeCapnpBridge(env, body),
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, options),

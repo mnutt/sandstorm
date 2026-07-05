@@ -172,9 +172,22 @@ export async function createNativeCapnpBridge(api, options = {}) {
       }
       const method = methodSchemaMetadata(binding, methodName);
       const payload = makeNativeCapnpPayload(params, capabilities);
-      throw new NativeCapnpBridgeUnavailableError(
-        "native Cap'n Proto bridge call transport is not implemented yet",
-        { negotiation, targetId: target.id, method, payload });
+      if (typeof api.nativeCapnpBridgeCall !== "function") {
+        throw new NativeCapnpBridgeProtocolError(
+          "native bridge call requires api.nativeCapnpBridgeCall()");
+      }
+      const result = await api.nativeCapnpBridgeCall(payload.message);
+      if (!result || typeof result !== "object") {
+        throw new NativeCapnpBridgeProtocolError("native bridge call returned an invalid response");
+      }
+      if (result.ok === false) {
+        throw new NativeCapnpBridgeUnavailableError(
+          result.exception?.reason || result.error || "native Cap'n Proto bridge call failed",
+          { negotiation, targetId: target.id, method, payload, response: result });
+      }
+      throw new NativeCapnpBridgeProtocolError(
+        "native Cap'n Proto bridge result decoding is not implemented yet",
+        { negotiation, targetId: target.id, method, payload, response: result });
     },
   });
 }

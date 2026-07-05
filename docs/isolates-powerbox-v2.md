@@ -693,6 +693,9 @@ Progress:
 - supervisor exposes a disabled `POST /capnp/call` route with a structured
   native bridge response envelope, giving JS clients a stable endpoint before
   native dispatch is enabled
+- `sandstorm:api` exposes `nativeCapnpBridgeCall()` as the narrow JS helper
+  for posting to that route, and the native bridge client will use it once
+  negotiation enables native calls
 
 Interop tests:
 

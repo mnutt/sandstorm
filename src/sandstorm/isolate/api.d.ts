@@ -679,6 +679,7 @@ declare module "sandstorm:api" {
     modules(): Promise<unknown>;
     bindings(): Promise<unknown>;
     capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
+    nativeCapnpBridgeCall(body?: BodyInit): Promise<NativeCapnpBridgeResponse>;
     storage(): StorageApiTarget;
     powerbox(): PowerboxApiTarget;
     webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
@@ -717,6 +718,18 @@ declare module "sandstorm:api" {
     fallbackTransport: "appObjectRpc";
   }
 
+  export interface NativeCapnpBridgeResponse {
+    ok: boolean;
+    type: "nativeCapnpBridgeResponse";
+    protocolVersion: 0;
+    error?: string;
+    exception?: {
+      type: string;
+      reason: string;
+      trace: string;
+    };
+  }
+
   export interface SandstormApi {
     session(): SessionInfo;
     status(): Promise<unknown>;
@@ -725,6 +738,7 @@ declare module "sandstorm:api" {
     modules(): Promise<unknown>;
     bindings(): Promise<unknown>;
     capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
+    nativeCapnpBridgeCall(body?: BodyInit): Promise<NativeCapnpBridgeResponse>;
     storage(): StorageApi;
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;

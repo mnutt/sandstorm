@@ -707,6 +707,7 @@ test("isolate supervisor integration suite", {
       available: false,
       protocolVersion: 0,
       callError: "NativeCapnpBridgeUnavailableError",
+      routeError: "native Cap'n Proto bridge transport is not enabled",
     });
     assert.equal(body.storage.text, "stored from isolate");
     assert.deepEqual(body.appRpcTarget, {
