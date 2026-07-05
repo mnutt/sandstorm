@@ -30,6 +30,7 @@
 
 #include <capnp/message.h>
 #include <capnp/compat/json.h>
+#include <capnp/rpc.capnp.h>
 #include <capnp/rpc-twoparty.h>
 #include <capnp/schema.h>
 #include <capnp/serialize.h>
@@ -4884,6 +4885,98 @@ private:
     appendJsonField(json, "targetInterfaceName", target.getInterfaceName());
   }
 
+  kj::StringPtr nativeCapnpRpcMessageKind(capnp::rpc::Message::Which which) {
+    switch (which) {
+      case capnp::rpc::Message::UNIMPLEMENTED:
+        return "unimplemented";
+      case capnp::rpc::Message::ABORT:
+        return "abort";
+      case capnp::rpc::Message::BOOTSTRAP:
+        return "bootstrap";
+      case capnp::rpc::Message::CALL:
+        return "call";
+      case capnp::rpc::Message::RETURN:
+        return "return";
+      case capnp::rpc::Message::FINISH:
+        return "finish";
+      case capnp::rpc::Message::RESOLVE:
+        return "resolve";
+      case capnp::rpc::Message::RELEASE:
+        return "release";
+      case capnp::rpc::Message::DISEMBARGO:
+        return "disembargo";
+      case capnp::rpc::Message::OBSOLETE_SAVE:
+        return "obsoleteSave";
+      case capnp::rpc::Message::OBSOLETE_DELETE:
+        return "obsoleteDelete";
+      case capnp::rpc::Message::PROVIDE:
+        return "provide";
+      case capnp::rpc::Message::ACCEPT:
+        return "accept";
+      case capnp::rpc::Message::JOIN:
+        return "join";
+    }
+    KJ_UNREACHABLE;
+  }
+
+  kj::StringPtr nativeCapnpRpcTargetKind(capnp::rpc::MessageTarget::Which which) {
+    switch (which) {
+      case capnp::rpc::MessageTarget::IMPORTED_CAP:
+        return "importedCap";
+      case capnp::rpc::MessageTarget::PROMISED_ANSWER:
+        return "promisedAnswer";
+    }
+    KJ_UNREACHABLE;
+  }
+
+  void appendNativeCapnpRpcMessageJson(
+      kj::Vector<char>& json, capnp::rpc::Message::Reader rpcMessage) {
+    appendJsonField(json, "rpcMessageKind", nativeCapnpRpcMessageKind(rpcMessage.which()));
+
+    switch (rpcMessage.which()) {
+      case capnp::rpc::Message::BOOTSTRAP: {
+        auto bootstrap = rpcMessage.getBootstrap();
+        json.addAll(kj::StringPtr(",\n    \"rpcQuestionId\": "));
+        json.addAll(kj::str(bootstrap.getQuestionId()));
+        break;
+      }
+      case capnp::rpc::Message::CALL: {
+        auto call = rpcMessage.getCall();
+        json.addAll(kj::StringPtr(",\n    \"rpcQuestionId\": "));
+        json.addAll(kj::str(call.getQuestionId()));
+        json.addAll(kj::StringPtr(",\n    "));
+        appendJsonField(json, "rpcTargetKind", nativeCapnpRpcTargetKind(call.getTarget().which()));
+        json.addAll(kj::StringPtr(",\n    "));
+        appendJsonField(json, "rpcInterfaceId", kj::str("0x", kj::hex(call.getInterfaceId())));
+        json.addAll(kj::StringPtr(",\n    \"rpcMethodId\": "));
+        json.addAll(kj::str(call.getMethodId()));
+        json.addAll(kj::StringPtr(",\n    \"rpcParamCapCount\": "));
+        json.addAll(kj::str(call.getParams().getCapTable().size()));
+        break;
+      }
+      case capnp::rpc::Message::RETURN: {
+        json.addAll(kj::StringPtr(",\n    \"rpcAnswerId\": "));
+        json.addAll(kj::str(rpcMessage.getReturn().getAnswerId()));
+        break;
+      }
+      case capnp::rpc::Message::FINISH: {
+        json.addAll(kj::StringPtr(",\n    \"rpcQuestionId\": "));
+        json.addAll(kj::str(rpcMessage.getFinish().getQuestionId()));
+        break;
+      }
+      case capnp::rpc::Message::RELEASE: {
+        auto release = rpcMessage.getRelease();
+        json.addAll(kj::StringPtr(",\n    \"rpcReleaseId\": "));
+        json.addAll(kj::str(release.getId()));
+        json.addAll(kj::StringPtr(",\n    \"rpcReleaseRefs\": "));
+        json.addAll(kj::str(release.getReferenceCount()));
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
   kj::String renderNativeCapnpBridgeDisabled(NativeCapnpBridgeRequest::Reader request) {
     kj::Vector<char> json;
     json.addAll(kj::StringPtr(
@@ -4956,6 +5049,13 @@ private:
       json.addAll(kj::str(message.getMessage().size()));
       json.addAll(kj::StringPtr(",\n    \"capabilityCount\": "));
       json.addAll(kj::str(message.getCapabilities().size()));
+      if (message.getMessage().size() > 0) {
+        kj::ArrayInputStream rpcInput(message.getMessage());
+        capnp::InputStreamMessageReader rpcReader(rpcInput);
+        auto rpcMessage = rpcReader.getRoot<capnp::rpc::Message>();
+        json.addAll(kj::StringPtr(",\n    "));
+        appendNativeCapnpRpcMessageJson(json, rpcMessage);
+      }
     }
 
     json.addAll(kj::StringPtr("\n  },\n"
@@ -5797,6 +5897,16 @@ private:
         if (host.sessions->findClaimedCapability(target.getId()) == nullptr) {
           return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",
               "unknown native Cap'n Proto bridge target capability", binaryResponse);
+        }
+
+        try {
+          kj::ArrayInputStream rpcInput(rpc.getMessage().getMessage());
+          capnp::InputStreamMessageReader rpcReader(rpcInput);
+          rpcReader.getRoot<capnp::rpc::Message>();
+        } catch (kj::Exception& exception) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed", kj::str(
+              "invalid native Cap'n Proto bridge RPC message: ", exception.getDescription()),
+              binaryResponse);
         }
       } else {
         return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
