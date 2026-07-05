@@ -702,6 +702,10 @@ Progress:
   encode and test-decode full native bridge call request messages containing
   the target capability slot, interface ID, method ordinal/name, params bytes,
   and payload capability slots
+- the disabled supervisor `/capnp/call` route now parses and validates the
+  native bridge request envelope before returning its stable unimplemented
+  response, so C++ and isolate JS agree on the initial wire format before any
+  native capability dispatch is enabled
 
 Interop tests:
 

@@ -734,6 +734,18 @@ test("isolate supervisor integration suite", {
       protocolVersion: 0,
       callError: "NativeCapnpBridgeUnavailableError",
       routeError: "native Cap'n Proto bridge transport is not enabled",
+      routeRequest: {
+        kind: "call",
+        protocolVersion: 0,
+        targetId: "target-capability",
+        targetInterfaceId: "0xa8e9655582dcde6f",
+        targetInterfaceName: "sandstorm.WebSession",
+        interfaceId: "0xa8e9655582dcde6f",
+        methodOrdinal: 2,
+        methodName: "get",
+        paramsBytes: 16,
+        capabilityCount: 1,
+      },
     });
     assert.equal(body.storage.text, "stored from isolate");
     assert.deepEqual(body.appRpcTarget, {
@@ -2272,17 +2284,10 @@ test("isolate supervisor integration suite", {
       method: "POST",
       body: "",
     });
-    assert.equal(capnpCall.statusCode, 501, capnpCall.body);
+    assert.equal(capnpCall.statusCode, 400, capnpCall.body);
     assert.deepEqual(capnpCall.json, {
       ok: false,
-      type: "nativeCapnpBridgeResponse",
-      protocolVersion: 0,
-      error: "native Cap'n Proto bridge transport is not enabled",
-      exception: {
-        type: "unimplemented",
-        reason: "native Cap'n Proto bridge transport is not enabled",
-        trace: "",
-      },
+      error: "native Cap'n Proto bridge request body is empty",
     });
 
     const claimedStats = await requestJson(
