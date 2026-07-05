@@ -3693,7 +3693,7 @@ export default {
       expectedInterfaceName: "sandstorm.WebSession",
     });
     const nativeCapnpRpcMessage = new CapnpEsMessage();
-    nativeCapnpRpcMessage.initRoot(CapnpRpcMessage);
+    nativeCapnpRpcMessage.initRoot(CapnpRpcMessage)._initBootstrap().questionId = 123;
     const nativeCapnpBridgeRpcConnectionId =
         `native-capnp-fixture-rpc-${nativeCapnpTarget.id}`;
     const nativeCapnpBridgeTransportConnectionId =
@@ -3844,14 +3844,22 @@ export default {
         await apiHelper.nativeCapnpBridgeCallBytes(nativeCapnpBridgeRpcRequest.message);
     const decodedNativeCapnpBridgeBinaryRpc =
         decodeNativeCapnpBridgeResponse(nativeCapnpBridgeBinaryRpc.body);
+    const nativeCapnpBridgeBinaryRpcMessage =
+        new CapnpEsMessage(decodedNativeCapnpBridgeBinaryRpc.result.value.message, false)
+            .getRoot(CapnpRpcMessage);
     const nativeCapnpBridgeTransport =
         new NativeCapnpBridgeTransport(apiHelper, nativeCapnpTarget, {
           connectionId: nativeCapnpBridgeTransportConnectionId,
         });
     let nativeCapnpBridgeTransportError = "";
+    let nativeCapnpBridgeTransportMessage = null;
     nativeCapnpBridgeTransport.sendMessage(nativeCapnpRpcMessage.getRoot(CapnpRpcMessage));
     try {
-      await nativeCapnpBridgeTransport.recvMessage();
+      const message = await nativeCapnpBridgeTransport.recvMessage();
+      nativeCapnpBridgeTransportMessage = {
+        which: message.which(),
+        answerId: message.return.answerId,
+      };
     } catch (error) {
       nativeCapnpBridgeTransportError = error.name;
     }
@@ -4114,8 +4122,13 @@ export default {
             bytes: nativeCapnpBridgeBinaryRpc.body.byteLength,
             which: decodedNativeCapnpBridgeBinaryRpc.which,
             exception: decodedNativeCapnpBridgeBinaryRpc.exception,
+            rpcMessageKind: nativeCapnpBridgeBinaryRpcMessage.which(),
+            rpcAnswerId: nativeCapnpBridgeBinaryRpcMessage.return.answerId,
+            rpcResultCapCount:
+                nativeCapnpBridgeBinaryRpcMessage.return.results.capTable.length,
           },
           transportError: nativeCapnpBridgeTransportError,
+          transportMessage: nativeCapnpBridgeTransportMessage,
           lifecycleBinary: nativeCapnpLifecycleBinary,
           unknownTargetError: unknownNativeCapnpBridgeCall.error,
         },

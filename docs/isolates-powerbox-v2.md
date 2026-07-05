@@ -754,6 +754,11 @@ Progress:
   of the same connection id for a different target, and reports the session's
   received message count in diagnostics; the session is still only scaffolding
   until the C++ RPC adapter starts dispatching messages
+- each native bridge RPC session now owns a C++ in-memory `MessageStream`,
+  `TwoPartyVatNetwork`, and `RpcSystem` bootstrapped with the target Sandstorm
+  capability; binary `bootstrap` RPC envelopes now dispatch through that native
+  stack and return real Cap'n Proto RPC `return` messages to `@mnutt/capnp-es`,
+  while ordinary method-call envelopes remain disabled in bridge negotiation
 
 Interop tests:
 

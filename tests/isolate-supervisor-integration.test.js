@@ -747,7 +747,7 @@ test("isolate supervisor integration suite", {
         targetInterfaceId: "a8e9655582dcde6f",
         targetInterfaceName: "sandstorm.WebSession",
         connectionId: `native-capnp-fixture-rpc-${body.sandstormApi.nativeCapnpBridge.targetId}`,
-        messageBytes: 32,
+        messageBytes: 48,
         capabilityCount: 1,
         firstCapability: {
           id: "rpc-argument-capability",
@@ -886,9 +886,10 @@ test("isolate supervisor integration suite", {
         targetInterfaceName: "sandstorm.WebSession",
         connectionId: `native-capnp-fixture-rpc-${body.sandstormApi.nativeCapnpBridge.targetId}`,
         rpcSessionMessageCount: 1,
-        messageBytes: 32,
+        messageBytes: 48,
         capabilityCount: 1,
-        rpcMessageKind: "unimplemented",
+        rpcMessageKind: "bootstrap",
+        rpcQuestionId: 123,
       },
       binaryRoute: {
         ok: false,
@@ -903,18 +904,20 @@ test("isolate supervisor integration suite", {
         },
       },
       rpcBinaryRoute: {
-        ok: false,
-        status: 501,
+        ok: true,
+        status: 200,
         contentType: "application/octet-stream",
         bytes: body.sandstormApi.nativeCapnpBridge.rpcBinaryRoute.bytes,
-        which: "exception",
-        exception: {
-          type: "unimplemented",
-          reason: "native Cap'n Proto bridge RPC transport is not enabled",
-          trace: "",
-        },
+        which: "result",
+        rpcMessageKind: 3,
+        rpcAnswerId: 123,
+        rpcResultCapCount: 1,
       },
-      transportError: "NativeCapnpBridgeUnavailableError",
+      transportError: "",
+      transportMessage: {
+        which: 3,
+        answerId: 123,
+      },
       lifecycleBinary: {
         save: {
           ok: true,
