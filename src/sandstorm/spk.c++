@@ -2902,8 +2902,8 @@ private:
     };
     struct Method {
       kj::String name;
-      kj::String resultType;
       kj::Vector<Field> params;
+      kj::Vector<Field> results;
     };
     kj::Vector<Method> methods;
   };
@@ -3047,21 +3047,20 @@ private:
     return scanCapnpTupleFields(source, tupleStart, tupleEnd);
   }
 
-  static kj::String scanSingleCapnpResultType(
+  static kj::Vector<DevCapnpInterface::Field> scanCapnpMethodResults(
       std::string const& source, size_t start, size_t end) {
     auto arrow = findCapnpArrow(source, start, end);
     if (arrow == end) {
-      return kj::heapString("");
+      return kj::Vector<DevCapnpInterface::Field>();
     }
 
     size_t tupleStart = 0;
     size_t tupleEnd = 0;
     if (!findFirstCapnpTuple(source, arrow, end, tupleStart, tupleEnd)) {
-      return kj::heapString("");
+      return kj::Vector<DevCapnpInterface::Field>();
     }
 
-    auto fields = scanCapnpTupleFields(source, tupleStart, tupleEnd);
-    return fields.size() == 1 ? kj::mv(fields[0].type) : kj::heapString("");
+    return scanCapnpTupleFields(source, tupleStart, tupleEnd);
   }
 
   static kj::Maybe<DevCapnpInterface::Method> scanCapnpMethodAt(
@@ -3076,12 +3075,12 @@ private:
         auto methodEnd = scanCapnpMethodEnd(source, methodStart);
         auto params = scanCapnpMethodParams(
             source, methodStart, findCapnpArrow(source, methodStart, methodEnd));
-        auto resultType = scanSingleCapnpResultType(source, methodStart, methodEnd);
+        auto results = scanCapnpMethodResults(source, methodStart, methodEnd);
         pos = methodEnd;
         return DevCapnpInterface::Method {
           kj::mv(*name),
-          kj::mv(resultType),
           kj::mv(params),
+          kj::mv(results),
         };
       }
     }
@@ -3426,11 +3425,17 @@ private:
 
       bool wroteResultCapabilities = false;
       for (auto& method: interfaceDef.methods) {
-        auto resultType = toStdString(method.resultType);
-        auto localResult = interfaceNames.find(resultType) != interfaceNames.end();
-        auto importedResult = importedInterfaceBindings.find(resultType);
-        if (method.resultType.size() > 0 &&
-            (localResult || importedResult != importedInterfaceBindings.end())) {
+        kj::Vector<DevCapnpInterface::Field*> capabilityResults;
+        for (auto& result: method.results) {
+          auto resultType = toStdString(result.type);
+          if (result.type.size() > 0 &&
+              (interfaceNames.find(resultType) != interfaceNames.end() ||
+               importedInterfaceBindings.find(resultType) != importedInterfaceBindings.end())) {
+            capabilityResults.add(&result);
+          }
+        }
+
+        if (capabilityResults.size() > 0) {
           if (!wroteMetadata) {
             output.addAll(kj::StringPtr(", {\n"));
             wroteMetadata = true;
@@ -3447,11 +3452,33 @@ private:
           }
           output.addAll(kj::StringPtr("    "));
           appendJsString(output, method.name);
-          output.addAll(kj::StringPtr(": () => "));
-          if (localResult) {
-            output.addAll(method.resultType);
+          if (capabilityResults.size() == 1) {
+            auto resultType = toStdString(capabilityResults[0]->type);
+            auto importedResult = importedInterfaceBindings.find(resultType);
+            output.addAll(kj::StringPtr(": () => "));
+            if (importedResult == importedInterfaceBindings.end()) {
+              output.addAll(capabilityResults[0]->type);
+            } else {
+              output.addAll(kj::StringPtr(importedResult->second));
+            }
           } else {
-            output.addAll(kj::StringPtr(importedResult->second));
+            output.addAll(kj::StringPtr(": { fields: {\n"));
+            bool wroteField = false;
+            for (auto& result: capabilityResults) {
+              auto resultType = toStdString(result->type);
+              auto importedResult = importedInterfaceBindings.find(resultType);
+              if (wroteField) output.addAll(kj::StringPtr(",\n"));
+              output.addAll(kj::StringPtr("      "));
+              appendJsString(output, result->name);
+              output.addAll(kj::StringPtr(": () => "));
+              if (importedResult == importedInterfaceBindings.end()) {
+                output.addAll(result->type);
+              } else {
+                output.addAll(kj::StringPtr(importedResult->second));
+              }
+              wroteField = true;
+            }
+            output.addAll(kj::StringPtr("\n    } }"));
           }
         }
       }

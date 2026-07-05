@@ -5,5 +5,9 @@ using GreetingSchema = import "./greeting.capnp";
 interface Greeter {
   hello @0 (name :Text) -> (message :Text);
   greeting @1 (name :Text) -> (greeting :GreetingSchema.Greeting);
-  useGreeting @2 (greeting :GreetingSchema.Greeting) -> (message :Text);
+  greetingPair @2 (name :Text) -> (
+    formal :GreetingSchema.Greeting,
+    casual :GreetingSchema.Greeting,
+  );
+  useGreeting @3 (greeting :GreetingSchema.Greeting) -> (message :Text);
 }
