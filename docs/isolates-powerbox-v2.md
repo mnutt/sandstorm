@@ -566,6 +566,9 @@ Progress:
   as opaque values, and `sandstorm:capnp` can declare fetch-shaped result
   slots by native interface. The supervisor native app-RPC route still rejects
   non-appObject slots pending a broader slot schema change.
+- `sandstorm:capnp` supports nested capability paths for local/generated
+  argument normalization and result casting while preserving the older shallow
+  `fields` metadata shape.
 
 Add support for generic capability slots:
 

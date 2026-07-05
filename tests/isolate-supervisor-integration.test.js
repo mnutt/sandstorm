@@ -1677,6 +1677,8 @@ test("isolate supervisor integration suite", {
       "child",
       "children",
       "readOther",
+      "readNested",
+      "nestedChildren",
       "mirrorSession",
       "fail",
     ]);
@@ -1694,8 +1696,10 @@ test("isolate supervisor integration suite", {
         "  child @2 () -> (counter :GeneratedCounter);",
         "  children @3 () -> (left :GeneratedCounter, right :GeneratedCounter);",
         "  readOther @4 (other :GeneratedCounter) -> (value :Float64);",
-        "  mirrorSession @5 (session :WebSession) -> (session :WebSession);",
-        "  fail @6 (message :Text) -> ();",
+        "  readNested @5 (wrapper :AnyPointer) -> (value :Float64);",
+        "  nestedChildren @6 () -> (group :AnyPointer);",
+        "  mirrorSession @7 (session :WebSession) -> (session :WebSession);",
+        "  fail @8 (message :Text) -> ();",
         "}",
       ].join("\n"),
       methodNames: [
@@ -1704,6 +1708,8 @@ test("isolate supervisor integration suite", {
         "child",
         "children",
         "readOther",
+        "readNested",
+        "nestedChildren",
         "mirrorSession",
         "fail",
       ],
@@ -1712,9 +1718,10 @@ test("isolate supervisor integration suite", {
       resultStructIds: {},
       argumentCapabilities: {
         readOther: { indexes: [0] },
+        readNested: { paths: [["wrapper", "other"]] },
         mirrorSession: { fields: ["session"] },
       },
-      resultCapabilityNames: ["child", "children", "mirrorSession"],
+      resultCapabilityNames: ["child", "children", "nestedChildren", "mirrorSession"],
     });
     assert.deepEqual(selfTest.json.local.first, { value: 2 });
     assert.deepEqual(selfTest.json.local.current, { value: 2 });
@@ -1723,6 +1730,9 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.local.child.read, { value: 3 });
     assert.deepEqual(selfTest.json.local.children.left, { value: 19 });
     assert.deepEqual(selfTest.json.local.children.right, { value: 23 });
+    assert.deepEqual(selfTest.json.local.nested.read, { value: 3 });
+    assert.deepEqual(selfTest.json.local.nested.left, { value: 37 });
+    assert.deepEqual(selfTest.json.local.nested.right, { value: 41 });
     assert.equal(selfTest.json.transient.capability.type, "capability");
     assert.deepEqual(selfTest.json.transient.first, { value: 5 });
     assert.deepEqual(selfTest.json.transient.current, { value: 5 });
@@ -1736,6 +1746,13 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.children.right, { value: 31 });
     assert.equal(selfTest.json.children.leftDrop.ok, true);
     assert.equal(selfTest.json.children.rightDrop.ok, true);
+    assert.deepEqual(selfTest.json.nested.read, { value: 7 });
+    assert.equal(selfTest.json.nested.leftCapability.type, "capability");
+    assert.equal(selfTest.json.nested.rightCapability.type, "capability");
+    assert.deepEqual(selfTest.json.nested.left, { value: 43 });
+    assert.deepEqual(selfTest.json.nested.right, { value: 47 });
+    assert.equal(selfTest.json.nested.leftDrop.ok, true);
+    assert.equal(selfTest.json.nested.rightDrop.ok, true);
     assert.equal(selfTest.json.mirroredSession.capability.type, "capability");
     assert.equal(selfTest.json.mirroredSession.info.nativeInterface, "webSession");
     assert.equal(selfTest.json.mirroredSession.fetch.status, 200);
