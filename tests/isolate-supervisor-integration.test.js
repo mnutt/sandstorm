@@ -1672,6 +1672,7 @@ test("isolate supervisor integration suite", {
       "increment",
       "get",
       "child",
+      "children",
       "readOther",
       "fail",
     ]);
@@ -1686,14 +1687,16 @@ test("isolate supervisor integration suite", {
         "  increment @0 (amount :Float64) -> (value :Float64);",
         "  get @1 () -> (value :Float64);",
         "  child @2 () -> (counter :GeneratedCounter);",
-        "  readOther @3 (other :GeneratedCounter) -> (value :Float64);",
-        "  fail @4 (message :Text) -> ();",
+        "  children @3 () -> (left :GeneratedCounter, right :GeneratedCounter);",
+        "  readOther @4 (other :GeneratedCounter) -> (value :Float64);",
+        "  fail @5 (message :Text) -> ();",
         "}",
       ].join("\n"),
       methodNames: [
         "increment",
         "get",
         "child",
+        "children",
         "readOther",
         "fail",
       ],
@@ -1703,13 +1706,15 @@ test("isolate supervisor integration suite", {
       argumentCapabilities: {
         readOther: { indexes: [0] },
       },
-      resultCapabilityNames: ["child"],
+      resultCapabilityNames: ["child", "children"],
     });
     assert.deepEqual(selfTest.json.local.first, { value: 2 });
     assert.deepEqual(selfTest.json.local.current, { value: 2 });
     assert.deepEqual(selfTest.json.local.child.first, { value: 3 });
     assert.deepEqual(selfTest.json.local.child.current, { value: 3 });
     assert.deepEqual(selfTest.json.local.child.read, { value: 3 });
+    assert.deepEqual(selfTest.json.local.children.left, { value: 19 });
+    assert.deepEqual(selfTest.json.local.children.right, { value: 23 });
     assert.equal(selfTest.json.transient.capability.type, "capability");
     assert.deepEqual(selfTest.json.transient.first, { value: 5 });
     assert.deepEqual(selfTest.json.transient.current, { value: 5 });
@@ -1717,6 +1722,12 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.child.first, { value: 7 });
     assert.deepEqual(selfTest.json.child.read, { value: 7 });
     assert.equal(selfTest.json.child.drop.ok, true);
+    assert.equal(selfTest.json.children.leftCapability.type, "capability");
+    assert.equal(selfTest.json.children.rightCapability.type, "capability");
+    assert.deepEqual(selfTest.json.children.left, { value: 29 });
+    assert.deepEqual(selfTest.json.children.right, { value: 31 });
+    assert.equal(selfTest.json.children.leftDrop.ok, true);
+    assert.equal(selfTest.json.children.rightDrop.ok, true);
     assert.equal(selfTest.json.durable.registered, true);
     assert.equal(selfTest.json.durable.restored, false);
     assert.equal(selfTest.json.durable.tokenType, "string");

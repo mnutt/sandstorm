@@ -520,6 +520,9 @@ Progress:
   an empty string when they do not.
 - generated `capnp:` bindings expose parser-derived method ordinals plus
   parameter/result struct ids in `Interface.schema`.
+- `sandstorm:capnp` supports top-level named result capability fields in
+  `Interface.schema.resultCapabilities`, so methods can return structs that
+  contain more than one capability-valued field.
 
 Deliverables:
 
