@@ -736,6 +736,12 @@ export async function saveNativeCapnp(api, target) {
   return decoded.saved.token;
 }
 
+export async function dropNativeCapnp(api, target) {
+  const request = makeNativeCapnpBridgeDropRequest({ target });
+  await sendNativeCapnpBridgeEnvelope(api, request, { targetId: target?.id }, "acknowledged");
+  return undefined;
+}
+
 export function connectNativeCapnp(api, target, InterfaceClass, options = {}) {
   if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
     throw new TypeError("connectNativeCapnp() requires a capnp-es generated interface class");
@@ -752,8 +758,12 @@ export function connectNativeCapnp(api, target, InterfaceClass, options = {}) {
     capability: target,
     connection,
     transport: connection.transport,
-    drop: () => target.drop?.(),
-    save: (...args) => target.save?.(...args),
+    drop: (...args) => typeof target.drop === "function" ?
+      target.drop(...args) :
+      dropNativeCapnp(api, connection.transport.target),
+    save: (...args) => typeof target.save === "function" ?
+      target.save(...args) :
+      saveNativeCapnp(api, connection.transport.target),
   });
 }
 

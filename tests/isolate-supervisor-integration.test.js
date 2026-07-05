@@ -833,6 +833,10 @@ test("isolate supervisor integration suite", {
       "string");
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.helperToken.length > 0);
     assert.equal(
+      typeof body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restoredClient.savedToken,
+      "string");
+    assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restoredClient.savedToken.length > 0);
+    assert.equal(
       typeof body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id,
       "string");
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id.length > 0);
@@ -1128,6 +1132,9 @@ test("isolate supervisor integration suite", {
             which: 3,
             answerId: 0,
           },
+          savedToken: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restoredClient
+              .savedToken,
+          dropResult: null,
         },
         restore: {
           ok: true,

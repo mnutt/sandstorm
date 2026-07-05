@@ -793,6 +793,9 @@ Progress:
   restore negotiates the native RPC bridge, restores a durable token through
   Sandstorm's lifecycle route, and returns a live generated `@mnutt/capnp-es`
   client connected to the restored capability
+- generated clients returned by `connectNativeCapnp()` now fall back to native
+  lifecycle save/drop requests when their underlying Sandstorm capability is a
+  bare restored bridge slot rather than a richer JS capability object
 
 Interop tests:
 
