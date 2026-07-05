@@ -712,6 +712,10 @@ Progress:
 - `sandstorm:capnp` can now encode and decode native bridge response envelopes
   for result payloads and exceptions, giving generated clients a typed response
   format to target before `/capnp/call` returns binary native results
+- `/capnp/call` now has an opt-in binary response path using
+  `Accept: application/octet-stream`; disabled/failed bridge calls can return a
+  serialized `NativeCapnpBridgeResponse.exception` envelope, while the default
+  JSON diagnostics remain available
 
 Interop tests:
 

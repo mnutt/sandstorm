@@ -3685,6 +3685,10 @@ export default {
     });
     const nativeCapnpBridgeCall =
         await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeRequest.message);
+    const nativeCapnpBridgeBinaryCall =
+        await apiHelper.nativeCapnpBridgeCallBytes(nativeCapnpBridgeRequest.message);
+    const decodedNativeCapnpBridgeBinaryCall =
+        decodeNativeCapnpBridgeResponse(nativeCapnpBridgeBinaryCall.body);
     const unknownNativeCapnpBridgeCall =
         await apiHelper.nativeCapnpBridgeCall(unknownNativeCapnpBridgeRequest.message);
     let nativeCapnpBridgeCallError = "";
@@ -3786,6 +3790,14 @@ export default {
           callError: nativeCapnpBridgeCallError,
           routeError: nativeCapnpBridgeCall.error,
           routeRequest: nativeCapnpBridgeCall.request,
+          binaryRoute: {
+            ok: nativeCapnpBridgeBinaryCall.ok,
+            status: nativeCapnpBridgeBinaryCall.status,
+            contentType: nativeCapnpBridgeBinaryCall.contentType,
+            bytes: nativeCapnpBridgeBinaryCall.body.byteLength,
+            which: decodedNativeCapnpBridgeBinaryCall.which,
+            exception: decodedNativeCapnpBridgeBinaryCall.exception,
+          },
           unknownTargetError: unknownNativeCapnpBridgeCall.error,
         },
       },
