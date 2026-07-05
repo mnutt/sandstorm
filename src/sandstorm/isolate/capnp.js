@@ -1,6 +1,7 @@
 import { RpcTarget } from "sandstorm:api";
 
 export const SANDSTORM_CAPNP_VERSION = 0;
+export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
 
 const bindingError = (interfaceName, operation) => new Error(
   `capnp:${interfaceName}.${operation} is not implemented yet for this schema binding.`

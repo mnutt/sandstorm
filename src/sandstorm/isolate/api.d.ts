@@ -678,6 +678,7 @@ declare module "sandstorm:api" {
     runtime(): Promise<unknown>;
     modules(): Promise<unknown>;
     bindings(): Promise<unknown>;
+    capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
     storage(): StorageApiTarget;
     powerbox(): PowerboxApiTarget;
     webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
@@ -703,6 +704,19 @@ declare module "sandstorm:api" {
   export interface StorageApiTarget extends RpcTarget, StorageApi {}
   export interface PowerboxApiTarget extends RpcTarget, PowerboxApi {}
 
+  export interface CapnpBridgeInfo {
+    ok: true;
+    type: "capnpBridgeInfo";
+    protocolVersion: 0;
+    minProtocolVersion: 0;
+    maxProtocolVersion: 0;
+    nativeTransport: boolean;
+    nativeCalls: boolean;
+    nativeExports: boolean;
+    capabilitySlots: boolean;
+    fallbackTransport: "appObjectRpc";
+  }
+
   export interface SandstormApi {
     session(): SessionInfo;
     status(): Promise<unknown>;
@@ -710,6 +724,7 @@ declare module "sandstorm:api" {
     runtime(): Promise<unknown>;
     modules(): Promise<unknown>;
     bindings(): Promise<unknown>;
+    capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
     storage(): StorageApi;
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;

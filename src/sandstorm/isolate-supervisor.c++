@@ -1823,6 +1823,7 @@ struct ParsedETag {
 constexpr uint64_t MAX_SIDECAR_REQUEST_BYTES = 64 * 1024 * 1024;
 constexpr uint64_t MAX_SIDECAR_RESPONSE_BYTES = 64 * 1024 * 1024;
 constexpr uint64_t MAX_API_BINDING_REQUEST_BYTES = 1024 * 1024;
+constexpr uint NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION = 0;
 constexpr uint64_t SIDECAR_RESPONSE_STREAM_THRESHOLD_BYTES = 64 * 1024;
 constexpr uint SIDECAR_READY_TIMEOUT_MS = 10000;
 constexpr uint SIDECAR_READY_POLL_MS = 50;
@@ -4531,6 +4532,8 @@ public:
         return sendJson(response, 200, "OK", renderModules());
       } else if (route == "/bindings") {
         return sendJson(response, 200, "OK", renderBindings());
+      } else if (route == "/capnp/bridge-info") {
+        return sendJson(response, 200, "OK", renderCapnpBridgeInfo());
       } else if (route == "/permissions") {
         return sendJson(response, 200, "OK", renderPermissions());
       } else {
@@ -4811,13 +4814,29 @@ private:
         "  \"ok\": true,\n"
         "  \"binding\": \"sandstormApi\",\n"
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", "
-        "\"bindings\", \"permissions\", "
+        "\"bindings\", \"permissions\", \"capnp.bridgeInfo\", "
         "\"powerbox.claim\", \"powerbox.fetch\", "
         "\"powerbox.outboundHttpFetch\", \"powerbox.nativeAppRpcCall\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\", "
         "\"capabilities.claimed\", \"capabilities.claimedStats\"]\n"
+        "}\n");
+  }
+
+  kj::String renderCapnpBridgeInfo() {
+    return kj::str(
+        "{\n"
+        "  \"ok\": true,\n"
+        "  \"type\": \"capnpBridgeInfo\",\n"
+        "  \"protocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
+        "  \"minProtocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
+        "  \"maxProtocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
+        "  \"nativeTransport\": false,\n"
+        "  \"nativeCalls\": false,\n"
+        "  \"nativeExports\": false,\n"
+        "  \"capabilitySlots\": false,\n"
+        "  \"fallbackTransport\": \"appObjectRpc\"\n"
         "}\n");
   }
 

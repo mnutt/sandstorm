@@ -3309,6 +3309,10 @@ class SandstormRpcTarget extends RpcTarget {
     return callSandstorm(this.#env, "bindings");
   }
 
+  capnpBridgeInfo() {
+    return callSandstorm(this.#env, "capnp/bridge-info");
+  }
+
   storage() {
     return new StorageRpcTarget(this.#env);
   }
@@ -3420,6 +3424,7 @@ export function sandstorm(request, env, options = {}) {
     runtime: () => callSandstorm(env, "runtime"),
     modules: () => callSandstorm(env, "modules"),
     bindings: () => callSandstorm(env, "bindings"),
+    capnpBridgeInfo: () => callSandstorm(env, "capnp/bridge-info"),
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, options),

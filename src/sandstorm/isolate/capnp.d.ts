@@ -6,6 +6,7 @@ declare module "sandstorm:capnp" {
   } from "sandstorm:api";
 
   export const SANDSTORM_CAPNP_VERSION: 0;
+  export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION: 0;
 
   export type CapnpRpcMethod = (...args: any[]) => unknown;
   export type CapnpMethodMap<TMethods> = {
