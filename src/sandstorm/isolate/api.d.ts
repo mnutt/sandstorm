@@ -723,6 +723,18 @@ declare module "sandstorm:api" {
     type: "nativeCapnpBridgeResponse";
     protocolVersion: 0;
     error?: string;
+    request?: {
+      kind: "call";
+      protocolVersion: 0;
+      targetId: string;
+      targetInterfaceId: string;
+      targetInterfaceName: string;
+      interfaceId: string;
+      methodOrdinal: number;
+      methodName: string;
+      paramsBytes: number;
+      capabilityCount: number;
+    };
     exception?: {
       type: string;
       reason: string;

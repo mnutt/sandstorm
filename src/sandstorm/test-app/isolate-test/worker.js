@@ -3648,7 +3648,8 @@ export default {
     const nativeCapnpBridge = await createNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeCalls", "capabilitySlots"],
     });
-    const nativeCapnpBridgeCall = await apiHelper.nativeCapnpBridgeCall(nativeCapnpPayload.message);
+    const nativeCapnpBridgeCall =
+        await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeRequest.message);
     let nativeCapnpBridgeCallError = "";
     try {
       await nativeCapnpBridge.call();
@@ -3726,6 +3727,7 @@ export default {
           protocolVersion: nativeCapnpBridge.protocolVersion,
           callError: nativeCapnpBridgeCallError,
           routeError: nativeCapnpBridgeCall.error,
+          routeRequest: nativeCapnpBridgeCall.request,
         },
       },
       storage: {
