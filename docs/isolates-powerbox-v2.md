@@ -515,9 +515,9 @@ Progress:
 - generated and hand-written bindings expose `Interface.schema`, a stable
   metadata object containing the import specifier, interface name/id,
   schema path/text, method names, and generated capability metadata.
-- bindings expose `Interface.interfaceId`; it is currently empty for
-  scanner-generated bindings until real schema compilation provides official
-  interface IDs.
+- generated `capnp:` bindings expose parser-derived `Interface.interfaceId`;
+  hand-written bindings can still pass `interfaceId` explicitly, and default to
+  an empty string when they do not.
 
 Deliverables:
 
