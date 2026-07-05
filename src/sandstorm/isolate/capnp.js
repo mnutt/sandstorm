@@ -679,7 +679,9 @@ export class NativeCapnpBridgeTransport extends CapnpEsDeferredTransport {
 
     switch (decoded.result.which) {
       case "value":
-        this.resolve(decoded.result.value.message);
+        if (decoded.result.value.message.byteLength > 0) {
+          this.resolve(decoded.result.value.message);
+        }
         return;
       case "exception":
         throw nativeCapnpBridgeExceptionError(
