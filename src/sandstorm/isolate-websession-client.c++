@@ -48,6 +48,10 @@ static_assert(capnp::typeId<IsolateObjectCallValue>() == 0x976b1fa67593b262,
     "IsolateObjectCallValue schema ID changed");
 static_assert(capnp::typeId<IsolateObjectCallResult>() == 0xdaea7034fe7730f4,
     "IsolateObjectCallResult schema ID changed");
+static_assert(capnp::typeId<NativeCapnpBridgeRequest>() == 0xa9d7cd8e6cc2b4e9,
+    "NativeCapnpBridgeRequest schema ID changed");
+static_assert(capnp::typeId<NativeCapnpBridgeResponse>() == 0xc1ef5dce7db1a7f1,
+    "NativeCapnpBridgeResponse schema ID changed");
 
 bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
   if (needle.size() > haystack.size()) {
