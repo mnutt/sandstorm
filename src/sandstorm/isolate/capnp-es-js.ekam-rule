@@ -4,14 +4,21 @@ set -euo pipefail
 
 inputs=(
   "sandstorm/isolate/capnp-es/index.mjs"
+  "sandstorm/isolate/capnp-es/capnp/persistent.mjs"
   "sandstorm/isolate/capnp-es/capnp/rpc.mjs"
-  "sandstorm/isolate/capnp-es/shared/capnp-es.-PjN5D7P.mjs"
-  "sandstorm/isolate/capnp-es/shared/capnp-es.2t3WiX8T.mjs"
-  "sandstorm/isolate/capnp-es/shared/capnp-es.BC_cLggu.mjs"
-  "sandstorm/isolate/capnp-es/shared/capnp-es.BylpbGNO.mjs"
-  "sandstorm/isolate/capnp-es/shared/capnp-es.D7Alb_lP.mjs"
-  "sandstorm/isolate/capnp-es/shared/capnp-es.FsZL20ID.mjs"
-  "sandstorm/isolate/capnp-es/shared/capnp-es.QN5nOfqw.mjs"
+  "sandstorm/isolate/capnp-es/capnp/rpc.mjs"
+  "sandstorm/isolate/capnp-es/capnp/rpc-twoparty.mjs"
+  "sandstorm/isolate/capnp-es/capnp/schema.mjs"
+  "sandstorm/isolate/capnp-es/capnp/stream.mjs"
+  "sandstorm/isolate/capnp-es/capnp/ts.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.jIzw5uss.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.Da9bkTPj.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.Da2a44Ii.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.CKgVaTmi.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.iydqJhtG.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.2NJr_hdR.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.VoaMMsf2.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.BLGTYa4t.mjs"
 )
 output="sandstorm/isolate/capnp-es.js.h"
 
@@ -37,14 +44,21 @@ output_path = sys.argv[1]
 input_paths = sys.argv[2:]
 module_names = [
     "@mnutt/capnp-es",
+    "@mnutt/capnp-es/capnp/persistent",
     "@mnutt/capnp/rpc.mjs",
-    "@mnutt/shared/capnp-es.-PjN5D7P.mjs",
-    "@mnutt/shared/capnp-es.2t3WiX8T.mjs",
-    "@mnutt/shared/capnp-es.BC_cLggu.mjs",
-    "@mnutt/shared/capnp-es.BylpbGNO.mjs",
-    "@mnutt/shared/capnp-es.D7Alb_lP.mjs",
-    "@mnutt/shared/capnp-es.FsZL20ID.mjs",
-    "@mnutt/shared/capnp-es.QN5nOfqw.mjs",
+    "@mnutt/capnp-es/capnp/rpc",
+    "@mnutt/capnp-es/capnp/rpc-twoparty",
+    "@mnutt/capnp-es/capnp/schema",
+    "@mnutt/capnp-es/capnp/stream",
+    "@mnutt/capnp-es/capnp/ts",
+    "@mnutt/shared/capnp-es.jIzw5uss.mjs",
+    "@mnutt/shared/capnp-es.Da9bkTPj.mjs",
+    "@mnutt/shared/capnp-es.Da2a44Ii.mjs",
+    "@mnutt/shared/capnp-es.CKgVaTmi.mjs",
+    "@mnutt/shared/capnp-es.iydqJhtG.mjs",
+    "@mnutt/shared/capnp-es.2NJr_hdR.mjs",
+    "@mnutt/shared/capnp-es.VoaMMsf2.mjs",
+    "@mnutt/shared/capnp-es.BLGTYa4t.mjs",
 ]
 
 def escape_chunk(chunk):

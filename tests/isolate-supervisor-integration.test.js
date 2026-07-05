@@ -42,34 +42,62 @@ const STRESS_64M = process.env.ISOLATE_STRESS_64M === "1";
 const TEST_TIMEOUT_MS = SYSCALL_TRACE_DIR || STRESS_64M ? 180000 : 30000;
 const CAPNP_ES_RUNTIME_MODULES = [
   ["@mnutt/capnp-es", "__sandstorm_isolate_runtime/capnp-es/index.mjs"],
+  [
+    "@mnutt/capnp-es/capnp/persistent",
+    "__sandstorm_isolate_runtime/capnp-es/capnp/persistent.mjs",
+  ],
   ["@mnutt/capnp/rpc.mjs", "__sandstorm_isolate_runtime/capnp-es/capnp/rpc.mjs"],
   [
-    "@mnutt/shared/capnp-es.-PjN5D7P.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.-PjN5D7P.mjs",
+    "@mnutt/capnp-es/capnp/rpc",
+    "__sandstorm_isolate_runtime/capnp-es/capnp/rpc.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.2t3WiX8T.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.2t3WiX8T.mjs",
+    "@mnutt/capnp-es/capnp/rpc-twoparty",
+    "__sandstorm_isolate_runtime/capnp-es/capnp/rpc-twoparty.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.BC_cLggu.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.BC_cLggu.mjs",
+    "@mnutt/capnp-es/capnp/schema",
+    "__sandstorm_isolate_runtime/capnp-es/capnp/schema.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.BylpbGNO.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.BylpbGNO.mjs",
+    "@mnutt/capnp-es/capnp/stream",
+    "__sandstorm_isolate_runtime/capnp-es/capnp/stream.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.D7Alb_lP.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.D7Alb_lP.mjs",
+    "@mnutt/capnp-es/capnp/ts",
+    "__sandstorm_isolate_runtime/capnp-es/capnp/ts.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.FsZL20ID.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.FsZL20ID.mjs",
+    "@mnutt/shared/capnp-es.jIzw5uss.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.jIzw5uss.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.QN5nOfqw.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.QN5nOfqw.mjs",
+    "@mnutt/shared/capnp-es.Da9bkTPj.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.Da9bkTPj.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.Da2a44Ii.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.Da2a44Ii.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.CKgVaTmi.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.CKgVaTmi.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.iydqJhtG.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.iydqJhtG.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.2NJr_hdR.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.2NJr_hdR.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.VoaMMsf2.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.VoaMMsf2.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.BLGTYa4t.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.BLGTYa4t.mjs",
   ],
 ];
 
@@ -2532,7 +2560,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.statusCode, 200);
     assert.equal(runtime.json.ok, true);
     assert.equal(runtime.json.mainModule, "worker.js");
-    assert.equal(runtime.json.moduleCount, 18);
+    assert.equal(runtime.json.moduleCount, 9 + CAPNP_ES_RUNTIME_MODULES.length);
     assert.equal(runtime.json.bindingCount, 6);
 
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");

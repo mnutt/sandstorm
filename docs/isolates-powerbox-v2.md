@@ -776,6 +776,10 @@ Progress:
   transport, bootstraps a `@mnutt/capnp-es` generated interface class, and
   returns the generated client with the underlying Sandstorm capability handle
   plus connection metadata attached
+- the bundled `@mnutt/capnp-es` runtime has been refreshed to the local runtime
+  shape used by the compiler hook, including standard generated schema modules
+  such as `@mnutt/capnp-es/capnp/stream` while preserving the older
+  `@mnutt/capnp/rpc.mjs` alias used by existing tests
 
 Interop tests:
 
