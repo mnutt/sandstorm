@@ -46,6 +46,7 @@
 #include <dirent.h>
 #include <set>
 #include <map>
+#include <vector>
 #include <string>
 #include <sys/xattr.h>
 #include <capnp/schema-parser.h>
@@ -2701,10 +2702,16 @@ private:
     KJ_REQUIRE(specifier.startsWith("capnp-es:"), "Internal error: expected capnp-es import.",
         specifier);
     auto pathSpecifier = specifier.slice(strlen("capnp-es:"));
-    KJ_REQUIRE(isRelativeImport(pathSpecifier),
-        "`capnp-es:` isolate imports must use a relative schema path for now.", specifier);
     KJ_REQUIRE(pathSpecifier.endsWith(".capnp"),
         "`capnp-es:` isolate imports must point to a .capnp schema.", specifier);
+
+    if (pathSpecifier.startsWith("/sandstorm/")) {
+      return resolveDevIsolateSandstormSchemaImport(pathSpecifier);
+    }
+
+    KJ_REQUIRE(isRelativeImport(pathSpecifier),
+        "`capnp-es:` isolate imports must use a relative schema path or /sandstorm schema path.",
+        specifier);
     return resolveDevIsolateImport(importerDir, rootDir, pathSpecifier);
   }
 
@@ -2790,18 +2797,21 @@ private:
     auto schemaImports = scanCapnpImports(source);
     auto importerDir = dirnameForPath(resolvedPath);
     for (auto& schemaImport: schemaImports) {
-      if (nativeCapnpCapabilitySpec(schemaImport.specifier) != nullptr) {
+      if (isDevIsolateCapnpEsRuntimeSchemaImport(schemaImport.specifier)) {
         continue;
       }
-      auto importedPath = resolveDevIsolateCapnpSchemaImport(
+      auto importedPath = resolveDevIsolateCapnpEsSchemaImport(
           importerDir, rootDir, schemaImport.specifier);
-      auto importedSpecifier = devIsolateCapnpEsSpecifierForPath(importedPath, rootDir);
+      auto importedSpecifier = devIsolateCapnpEsSpecifierForSchemaImport(
+          specifier, importedPath, rootDir, schemaImport.specifier);
       addDevIsolateCapnpEsModule(
           importedSpecifier, importedPath, rootDir, modules, capnpEsImports);
     }
 
-    auto runtimePath = devIsolateCapnpEsRuntimePath(resolvedPath, rootDir);
+    auto runtimePath = devIsolateCapnpEsRuntimePath(specifier, resolvedPath, rootDir);
     auto content = generateDevIsolateCapnpEsModule(resolvedPath, rootDir);
+    content = rewriteDevIsolateCapnpEsImports(
+        kj::mv(content), specifier, resolvedPath, rootDir, schemaImports.asPtr());
     writeDevIsolateGeneratedSupportFile(devIsolateSupportDir, runtimePath, content);
 
     modules.add(DevIsolateModule {
@@ -2820,6 +2830,68 @@ private:
     return resolveDevIsolateImport(importerDir, rootDir, specifier);
   }
 
+  static bool isDevIsolateCapnpEsRuntimeSchemaImport(kj::StringPtr specifier) {
+    return specifier.startsWith("/capnp/");
+  }
+
+  static bool isDevIsolateLocalCapnpSchemaImport(kj::StringPtr specifier) {
+    return !specifier.startsWith("/") && specifier.findFirst(':') == nullptr;
+  }
+
+  struct DevCapnpImport {
+    kj::String alias;
+    kj::String specifier;
+  };
+
+  static kj::String resolveDevIsolateSandstormSchemaImport(kj::StringPtr specifier) {
+    KJ_REQUIRE(specifier.startsWith("/sandstorm/"),
+        "`capnp-es:` absolute schema imports must use /sandstorm or /capnp.",
+        specifier);
+    KJ_REQUIRE(specifier.endsWith(".capnp"),
+        "`capnp-es:` isolate schema imports must point to .capnp files.", specifier);
+
+    auto candidate = kj::str("src", specifier);
+    char* resolved = realpath(candidate.cStr(), nullptr);
+    KJ_REQUIRE(resolved != nullptr, "Could not resolve Sandstorm schema import.",
+        specifier, candidate, strerror(errno));
+    KJ_DEFER(free(resolved));
+    return kj::heapString(resolved);
+  }
+
+  static kj::String resolveDevIsolateCapnpEsSchemaImport(
+      kj::StringPtr importerDir, kj::StringPtr rootDir, kj::StringPtr specifier) {
+    if (specifier.startsWith("/sandstorm/")) {
+      return resolveDevIsolateSandstormSchemaImport(specifier);
+    }
+
+    KJ_REQUIRE(isDevIsolateLocalCapnpSchemaImport(specifier),
+        "`capnp-es:` isolate schema imports must use local paths, /sandstorm, or /capnp.",
+        specifier);
+    KJ_REQUIRE(specifier.endsWith(".capnp"),
+        "`capnp-es:` isolate schema imports must point to .capnp files.", specifier);
+
+    auto candidate = kj::str(importerDir, '/', specifier);
+    char* resolved = realpath(candidate.cStr(), nullptr);
+    KJ_REQUIRE(resolved != nullptr, "Could not resolve capnp-es schema import.",
+        specifier, candidate, strerror(errno));
+    KJ_DEFER(free(resolved));
+    auto resolvedPath = kj::heapString(resolved);
+    if (isPathUnderRoot(resolvedPath, rootDir)) {
+      return kj::mv(resolvedPath);
+    }
+
+    char* sandstormRootRaw = realpath("src/sandstorm", nullptr);
+    KJ_REQUIRE(sandstormRootRaw != nullptr, "Could not resolve Sandstorm schema root.",
+        strerror(errno));
+    KJ_DEFER(free(sandstormRootRaw));
+    auto sandstormRoot = kj::heapString(sandstormRootRaw);
+    KJ_REQUIRE(isPathUnderRoot(resolvedPath, sandstormRoot),
+        "`capnp-es:` isolate schema imports must stay under the entrypoint directory or "
+        "Sandstorm's own schema tree.",
+        specifier, resolvedPath);
+    return kj::mv(resolvedPath);
+  }
+
   static kj::String devIsolateCapnpSpecifierForPath(kj::StringPtr resolvedPath,
                                                     kj::StringPtr rootDir) {
     auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
@@ -2832,13 +2904,206 @@ private:
     return kj::str("capnp-es:./", moduleName);
   }
 
-  static kj::String devIsolateCapnpEsRuntimePath(kj::StringPtr resolvedPath,
-                                                 kj::StringPtr rootDir) {
+  static kj::String devIsolateCapnpEsSpecifierForSchemaImport(
+      kj::StringPtr importerSpecifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
+      kj::StringPtr importSpecifier) {
+    if (importSpecifier.startsWith("/sandstorm/")) {
+      return kj::str("capnp-es:", importSpecifier);
+    }
+
+    if (importerSpecifier.startsWith("capnp-es:/sandstorm/")) {
+      auto importerPath = importerSpecifier.slice(strlen("capnp-es:"));
+      auto slash = toStdString(importerPath).rfind('/');
+      KJ_REQUIRE(slash != std::string::npos,
+          "Internal error: expected absolute capnp-es Sandstorm schema specifier.",
+          importerSpecifier);
+      auto joined = normalizeDevIsolatePath(
+          kj::str(importerPath.slice(0, slash + 1), importSpecifier));
+      return kj::str("capnp-es:", joined);
+    }
+
+    return devIsolateCapnpEsSpecifierForPath(resolvedPath, rootDir);
+  }
+
+  static kj::String devIsolateCapnpEsRuntimePath(
+      kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir) {
+    if (specifier.startsWith("capnp-es:/")) {
+      auto schemaPath = specifier.slice(strlen("capnp-es:/"));
+      KJ_REQUIRE(schemaPath.endsWith(".capnp"), "Internal error: expected .capnp module.",
+          specifier);
+      return kj::str("capnp-es-generated/",
+          schemaPath.slice(0, schemaPath.size() - strlen(".capnp")), ".js");
+    }
+
     auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
     KJ_REQUIRE(moduleName.endsWith(".capnp"), "Internal error: expected .capnp module.",
         moduleName);
     return kj::str("capnp-es-generated/",
         moduleName.slice(0, moduleName.size() - strlen(".capnp")), ".js");
+  }
+
+  static kj::String normalizeDevIsolatePath(kj::StringPtr path) {
+    auto pathStd = toStdString(path);
+    std::vector<std::string> parts;
+    bool absolute = !pathStd.empty() && pathStd[0] == '/';
+    size_t start = 0;
+    while (start <= pathStd.size()) {
+      auto slash = pathStd.find('/', start);
+      auto end = slash == std::string::npos ? pathStd.size() : slash;
+      auto part = pathStd.substr(start, end - start);
+      if (part.empty() || part == ".") {
+        // Skip.
+      } else if (part == "..") {
+        KJ_REQUIRE(!parts.empty(), "Schema import escaped its root.", path);
+        parts.pop_back();
+      } else {
+        parts.push_back(part);
+      }
+      if (slash == std::string::npos) break;
+      start = slash + 1;
+    }
+
+    std::string normalized = absolute ? "/" : "";
+    for (size_t i = 0; i < parts.size(); ++i) {
+      if (i > 0) normalized += "/";
+      normalized += parts[i];
+    }
+    return kj::heapString(normalized.c_str());
+  }
+
+  static kj::String replaceCapnpExtensionWithJs(kj::StringPtr path) {
+    KJ_REQUIRE(path.endsWith(".capnp"), "Internal error: expected .capnp path.", path);
+    return kj::str(path.slice(0, path.size() - strlen(".capnp")), ".js");
+  }
+
+  static std::vector<std::string> splitPathComponents(std::string path) {
+    std::vector<std::string> result;
+    size_t start = 0;
+    while (start <= path.size()) {
+      auto slash = path.find('/', start);
+      auto end = slash == std::string::npos ? path.size() : slash;
+      if (end > start) {
+        result.push_back(path.substr(start, end - start));
+      }
+      if (slash == std::string::npos) break;
+      start = slash + 1;
+    }
+    return result;
+  }
+
+  static kj::String relativeJsImportSpecifier(kj::StringPtr fromGeneratedKey,
+                                              kj::StringPtr toGeneratedKey) {
+    auto fromStd = toStdString(fromGeneratedKey);
+    auto toStd = toStdString(toGeneratedKey);
+    auto fromSlash = fromStd.rfind('/');
+    auto fromDir = fromSlash == std::string::npos ? std::string() : fromStd.substr(0, fromSlash);
+    auto fromParts = splitPathComponents(fromDir);
+    auto toParts = splitPathComponents(toStd);
+
+    size_t common = 0;
+    while (common < fromParts.size() && common < toParts.size() &&
+           fromParts[common] == toParts[common]) {
+      ++common;
+    }
+
+    std::vector<std::string> resultParts;
+    for (size_t i = common; i < fromParts.size(); ++i) {
+      resultParts.push_back("..");
+    }
+    for (size_t i = common; i < toParts.size(); ++i) {
+      resultParts.push_back(toParts[i]);
+    }
+
+    std::string result;
+    for (size_t i = 0; i < resultParts.size(); ++i) {
+      if (i > 0) result += "/";
+      result += resultParts[i];
+    }
+    if (result.empty()) {
+      result = ".";
+    }
+    if (result[0] != '.') {
+      result = "./" + result;
+    }
+    return kj::heapString(result.c_str());
+  }
+
+  static kj::String capnpEsGeneratedKeyForSourcePath(kj::StringPtr resolvedPath) {
+    auto jsPath = replaceCapnpExtensionWithJs(resolvedPath);
+    char* cwdRaw = getcwd(nullptr, 0);
+    KJ_REQUIRE(cwdRaw != nullptr, "Could not resolve current directory.", strerror(errno));
+    KJ_DEFER(free(cwdRaw));
+    auto cwd = kj::StringPtr(cwdRaw);
+    if (isPathUnderRoot(jsPath, cwd)) {
+      auto pathStd = toStdString(jsPath);
+      auto cwdStd = toStdString(cwd);
+      return kj::heapString(pathStd.substr(cwdStd.size() + 1).c_str());
+    }
+
+    if (jsPath.startsWith("/")) {
+      return kj::heapString(jsPath.slice(1));
+    }
+    return jsPath;
+  }
+
+  static kj::String capnpEsGeneratedImportSpecifierForSchemaImport(
+      kj::StringPtr resolvedPath, kj::StringPtr importSpecifier) {
+    if (importSpecifier.startsWith("/sandstorm/")) {
+      auto fromKey = capnpEsGeneratedKeyForSourcePath(resolvedPath);
+      auto toKey = replaceCapnpExtensionWithJs(importSpecifier.slice(1));
+      return relativeJsImportSpecifier(fromKey, toKey);
+    }
+
+    auto jsImport = replaceCapnpExtensionWithJs(importSpecifier);
+    if (isRelativeImport(jsImport)) {
+      return jsImport;
+    }
+    return kj::str("./", jsImport);
+  }
+
+  static kj::String replaceAll(kj::StringPtr input, kj::StringPtr needle,
+                               kj::StringPtr replacement) {
+    auto inputStd = toStdString(input);
+    auto needleStd = toStdString(needle);
+    auto replacementStd = toStdString(replacement);
+    KJ_REQUIRE(!needleStd.empty(), "Internal error: empty replacement needle.");
+
+    std::string result;
+    size_t pos = 0;
+    for (;;) {
+      auto match = inputStd.find(needleStd, pos);
+      if (match == std::string::npos) {
+        result.append(inputStd, pos, std::string::npos);
+        break;
+      }
+      result.append(inputStd, pos, match - pos);
+      result += replacementStd;
+      pos = match + needleStd.size();
+    }
+    return kj::heapString(result.c_str());
+  }
+
+  static kj::String rewriteDevIsolateCapnpEsImports(
+      kj::String content, kj::StringPtr specifier, kj::StringPtr resolvedPath,
+      kj::StringPtr rootDir, kj::ArrayPtr<DevCapnpImport> schemaImports) {
+    auto importerDir = dirnameForPath(resolvedPath);
+    for (auto& schemaImport: schemaImports) {
+      if (isDevIsolateCapnpEsRuntimeSchemaImport(schemaImport.specifier)) {
+        continue;
+      }
+
+      auto importedPath = resolveDevIsolateCapnpEsSchemaImport(
+          importerDir, rootDir, schemaImport.specifier);
+      auto importedSpecifier = devIsolateCapnpEsSpecifierForSchemaImport(
+          specifier, importedPath, rootDir, schemaImport.specifier);
+      auto generatedSpecifier = capnpEsGeneratedImportSpecifierForSchemaImport(
+          resolvedPath, schemaImport.specifier);
+      auto quotedGeneratedSpecifier = kj::str("\"", generatedSpecifier, "\"");
+      auto quotedImportedSpecifier = kj::str("\"", importedSpecifier, "\"");
+      content = replaceAll(content, quotedGeneratedSpecifier, quotedImportedSpecifier);
+    }
+
+    return kj::mv(content);
   }
 
   static kj::String devIsolateCapnpGeneratedFileName(kj::StringPtr resolvedPath) {
@@ -2999,11 +3264,6 @@ private:
 
     return nullptr;
   }
-
-  struct DevCapnpImport {
-    kj::String alias;
-    kj::String specifier;
-  };
 
   static kj::Vector<DevCapnpImport> scanCapnpImports(kj::StringPtr schemaSource) {
     auto source = toStdString(schemaSource);

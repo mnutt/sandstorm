@@ -780,6 +780,10 @@ Progress:
   shape used by the compiler hook, including standard generated schema modules
   such as `@mnutt/capnp-es/capnp/stream` while preserving the older
   `@mnutt/capnp/rpc.mjs` alias used by existing tests
+- raw `capnp-es:` generated modules now rewrite generated schema imports to
+  stable workerd module specifiers, follow relative app schemas, skip bundled
+  `/capnp/*` runtime schemas, and generate Sandstorm-owned `/sandstorm/*`
+  schema dependencies under explicit `capnp-es:/sandstorm/...` module names
 
 Interop tests:
 
