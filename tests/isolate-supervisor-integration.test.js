@@ -2224,6 +2224,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimed"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimedStats"));
     assert.ok(capabilities.json.capabilities.includes("capnp.bridgeInfo"));
+    assert.ok(capabilities.json.capabilities.includes("capnp.call"));
 
     const capnpBridgeInfo = await requestJson(fixture.sandstormApiSocket, "/capnp/bridge-info");
     assert.equal(capnpBridgeInfo.statusCode, 200, capnpBridgeInfo.body);
@@ -2238,6 +2239,23 @@ test("isolate supervisor integration suite", {
       nativeExports: false,
       capabilitySlots: false,
       fallbackTransport: "appObjectRpc",
+    });
+
+    const capnpCall = await requestJson(fixture.sandstormApiSocket, "/capnp/call", {
+      method: "POST",
+      body: "",
+    });
+    assert.equal(capnpCall.statusCode, 501, capnpCall.body);
+    assert.deepEqual(capnpCall.json, {
+      ok: false,
+      type: "nativeCapnpBridgeResponse",
+      protocolVersion: 0,
+      error: "native Cap'n Proto bridge transport is not enabled",
+      exception: {
+        type: "unimplemented",
+        reason: "native Cap'n Proto bridge transport is not enabled",
+        trace: "",
+      },
     });
 
     const claimedStats = await requestJson(

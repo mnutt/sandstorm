@@ -4500,6 +4500,8 @@ public:
             path, kj::mv(outboundHeaderValues), kj::mv(bodyBytes), response);
       } else if (methodName == "POST" && route == "/powerbox/native-app-rpc-call") {
         return callWorkerAppObjectCapability(path, kj::mv(bodyBytes), response);
+      } else if (methodName == "POST" && route == "/capnp/call") {
+        return sendJson(response, 501, "Not Implemented", renderNativeCapnpBridgeDisabled());
       } else if (methodName == "POST" && route == "/powerbox/offer") {
         return offerClaimedCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fulfill-request") {
@@ -4819,7 +4821,7 @@ private:
         "  \"ok\": true,\n"
         "  \"binding\": \"sandstormApi\",\n"
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", "
-        "\"bindings\", \"permissions\", \"capnp.bridgeInfo\", "
+        "\"bindings\", \"permissions\", \"capnp.bridgeInfo\", \"capnp.call\", "
         "\"powerbox.claim\", \"powerbox.fetch\", "
         "\"powerbox.outboundHttpFetch\", \"powerbox.nativeAppRpcCall\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
@@ -4842,6 +4844,21 @@ private:
         "  \"nativeExports\": false,\n"
         "  \"capabilitySlots\": false,\n"
         "  \"fallbackTransport\": \"appObjectRpc\"\n"
+        "}\n");
+  }
+
+  kj::String renderNativeCapnpBridgeDisabled() {
+    return kj::str(
+        "{\n"
+        "  \"ok\": false,\n"
+        "  \"type\": \"nativeCapnpBridgeResponse\",\n"
+        "  \"protocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
+        "  \"error\": \"native Cap'n Proto bridge transport is not enabled\",\n"
+        "  \"exception\": {\n"
+        "    \"type\": \"unimplemented\",\n"
+        "    \"reason\": \"native Cap'n Proto bridge transport is not enabled\",\n"
+        "    \"trace\": \"\"\n"
+        "  }\n"
         "}\n");
   }
 
