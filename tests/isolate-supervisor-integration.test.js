@@ -716,6 +716,47 @@ test("isolate supervisor integration suite", {
         trace: "fixture trace",
       },
     });
+    assert.deepEqual(body.capnpEs.bridgeLifecycle, {
+      dropRequest: {
+        protocolVersion: 0,
+        which: 1,
+        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
+      },
+      saveRequest: {
+        protocolVersion: 0,
+        which: 2,
+        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
+      },
+      restoreRequest: {
+        protocolVersion: 0,
+        which: 3,
+        token: "native-bridge-saved-token",
+        expectedInterfaceId: "a8e9655582dcde6f",
+        expectedInterfaceName: "sandstorm.WebSession",
+      },
+      acknowledgedResponse: {
+        bytes: body.capnpEs.bridgeLifecycle.acknowledgedResponse.bytes,
+        which: "acknowledged",
+      },
+      savedResponse: {
+        bytes: body.capnpEs.bridgeLifecycle.savedResponse.bytes,
+        which: "saved",
+        token: "native-bridge-saved-token",
+      },
+      capabilityResponse: {
+        bytes: body.capnpEs.bridgeLifecycle.capabilityResponse.bytes,
+        which: "capability",
+        capability: {
+          id: body.sandstormApi.nativeCapnpBridge.targetId,
+          interfaceId: "a8e9655582dcde6f",
+          interfaceName: "sandstorm.WebSession",
+          kind: "receiverHosted",
+        },
+      },
+    });
+    assert.ok(body.capnpEs.bridgeLifecycle.acknowledgedResponse.bytes > 0);
+    assert.ok(body.capnpEs.bridgeLifecycle.savedResponse.bytes > 0);
+    assert.ok(body.capnpEs.bridgeLifecycle.capabilityResponse.bytes > 0);
     assert.deepEqual(body.capnpEs.bridgeClientCall, {
       available: true,
       resultBytes: 16,
@@ -725,6 +766,14 @@ test("isolate supervisor integration suite", {
         interfaceId: "d7a322498a996313",
         interfaceName: "sandstorm.IsolateObjectCapability",
         kind: "senderHosted",
+      },
+      dropResult: null,
+      savedToken: "native-bridge-saved-token",
+      restoredCapability: {
+        id: body.sandstormApi.nativeCapnpBridge.targetId,
+        interfaceId: "a8e9655582dcde6f",
+        interfaceName: "sandstorm.WebSession",
+        kind: "receiverHosted",
       },
     });
     assert.deepEqual(body.helperVersions, {
@@ -785,6 +834,27 @@ test("isolate supervisor integration suite", {
         methodName: "get",
         paramsBytes: 16,
         capabilityCount: 1,
+      },
+      dropRequest: {
+        kind: "drop",
+        protocolVersion: 0,
+        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
+        targetInterfaceId: "0xa8e9655582dcde6f",
+        targetInterfaceName: "sandstorm.WebSession",
+      },
+      saveRequest: {
+        kind: "save",
+        protocolVersion: 0,
+        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
+        targetInterfaceId: "0xa8e9655582dcde6f",
+        targetInterfaceName: "sandstorm.WebSession",
+      },
+      restoreRequest: {
+        kind: "restore",
+        protocolVersion: 0,
+        token: "native-bridge-saved-token",
+        expectedInterfaceId: "0xa8e9655582dcde6f",
+        expectedInterfaceName: "sandstorm.WebSession",
       },
       binaryRoute: {
         ok: false,

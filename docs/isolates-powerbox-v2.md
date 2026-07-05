@@ -719,6 +719,10 @@ Progress:
 - `createNativeCapnpBridge().call()` now uses the binary API helper when bridge
   negotiation succeeds and returns decoded result payloads, or maps response
   exception/canceled envelopes to JS errors
+- `sandstorm:capnp` can encode save, restore, and drop native bridge lifecycle
+  requests plus acknowledged/saved/capability responses; the disabled
+  supervisor route now parses and validates those lifecycle variants before
+  returning the stable unimplemented response
 
 Interop tests:
 
