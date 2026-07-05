@@ -16,6 +16,7 @@ struct NativeCapnpBridgeRequest @0xa9d7cd8e6cc2b4e9 {
     drop @2 :NativeCapnpBridgeDrop;
     save @3 :NativeCapnpBridgeSave;
     restore @4 :NativeCapnpBridgeRestore;
+    rpc @5 :NativeCapnpBridgeRpcMessage;
   }
 }
 
@@ -59,6 +60,14 @@ struct NativeCapnpBridgeRestore @0xc35dd976b9efc866 {
   token @0 :Text;
   expectedInterfaceId @1 :UInt64;
   expectedInterfaceName @2 :Text;
+}
+
+struct NativeCapnpBridgeRpcMessage @0xcac17a86f640a869 {
+  # A capnp-es two-party RPC message addressed to an already-held Sandstorm
+  # capability. The supervisor owns translation from this restricted endpoint
+  # to Sandstorm's native Cap'n Proto transport.
+  target @0 :NativeCapnpCapabilitySlot;
+  message @1 :NativeCapnpPayload;
 }
 
 struct NativeCapnpBridgeSaved @0xe7a0b85c446da212 {

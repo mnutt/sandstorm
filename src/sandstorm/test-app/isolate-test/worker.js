@@ -31,6 +31,7 @@ import {
 import {
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
+  NativeCapnpBridgeTransport,
   createNativeCapnpBridge,
   decodeNativeCapnpBridgeResponse,
   makeCapnpInterfaceBinding,
@@ -41,6 +42,7 @@ import {
   makeNativeCapnpBridgeExceptionResponse,
   makeNativeCapnpBridgeResultResponse,
   makeNativeCapnpBridgeRestoreRequest,
+  makeNativeCapnpBridgeRpcRequest,
   makeNativeCapnpBridgeSaveRequest,
   makeNativeCapnpBridgeSavedResponse,
   makeNativeCapnpPayload,
@@ -3689,6 +3691,23 @@ export default {
       expectedInterfaceId: "0xa8e9655582dcde6f",
       expectedInterfaceName: "sandstorm.WebSession",
     });
+    const nativeCapnpBridgeRpcRequest = makeNativeCapnpBridgeRpcRequest({
+      target: {
+        id: nativeCapnpTarget.id,
+        interfaceId: "0xa8e9655582dcde6f",
+        interfaceName: "sandstorm.WebSession",
+        kind: "receiverHosted",
+      },
+      message: new CapnpEsMessage(),
+      capabilities: [
+        {
+          id: "rpc-argument-capability",
+          interfaceId: "0xd7a322498a996313",
+          interfaceName: "sandstorm.IsolateObjectCapability",
+          kind: "senderHosted",
+        },
+      ],
+    });
     const nativeCapnpBridgeRequestRoot =
         readNativeCapnpBridgeRequest(nativeCapnpBridgeRequest.message);
     const nativeCapnpBridgeRequestCall = nativeCapnpBridgeRequestRoot.call;
@@ -3699,6 +3718,10 @@ export default {
         readNativeCapnpBridgeRequest(nativeCapnpBridgeSaveRequest.message);
     const nativeCapnpBridgeRestoreRequestRoot =
         readNativeCapnpBridgeRequest(nativeCapnpBridgeRestoreRequest.message);
+    const nativeCapnpBridgeRpcRequestRoot =
+        readNativeCapnpBridgeRequest(nativeCapnpBridgeRpcRequest.message);
+    const nativeCapnpBridgeRpc = nativeCapnpBridgeRpcRequestRoot.rpc;
+    const nativeCapnpBridgeRpcMessage = nativeCapnpBridgeRpc.message;
     const nativeCapnpBridgeResultResponse = makeNativeCapnpBridgeResultResponse({
       payload: nativeCapnpPayload,
     });
@@ -3807,6 +3830,21 @@ export default {
         await apiHelper.nativeCapnpBridgeCallBytes(nativeCapnpBridgeRequest.message);
     const decodedNativeCapnpBridgeBinaryCall =
         decodeNativeCapnpBridgeResponse(nativeCapnpBridgeBinaryCall.body);
+    const nativeCapnpBridgeRpcRoute =
+        await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeRpcRequest.message);
+    const nativeCapnpBridgeBinaryRpc =
+        await apiHelper.nativeCapnpBridgeCallBytes(nativeCapnpBridgeRpcRequest.message);
+    const decodedNativeCapnpBridgeBinaryRpc =
+        decodeNativeCapnpBridgeResponse(nativeCapnpBridgeBinaryRpc.body);
+    const nativeCapnpBridgeTransport =
+        new NativeCapnpBridgeTransport(apiHelper, nativeCapnpTarget);
+    let nativeCapnpBridgeTransportError = "";
+    nativeCapnpBridgeTransport.sendMessage(new CapnpEsMessage());
+    try {
+      await nativeCapnpBridgeTransport.recvMessage();
+    } catch (error) {
+      nativeCapnpBridgeTransportError = error.name;
+    }
     let nativeCapnpLifecycleBinary = null;
     if (url.searchParams.has("nativeLifecycle")) {
       const nativeCapnpLifecycleTarget = await apiHelper.webSession({
@@ -3964,6 +4002,22 @@ export default {
             expectedInterfaceName:
                 nativeCapnpBridgeRestoreRequestRoot.restore.expectedInterfaceName,
           },
+          rpcRequest: {
+            protocolVersion: nativeCapnpBridgeRpcRequestRoot.protocolVersion,
+            which: nativeCapnpBridgeRpcRequestRoot.which(),
+            targetId: nativeCapnpBridgeRpc.target.id,
+            targetInterfaceId: nativeCapnpBridgeRpc.target.interfaceId.toString(16),
+            targetInterfaceName: nativeCapnpBridgeRpc.target.interfaceName,
+            messageBytes: nativeCapnpBridgeRpcMessage.message.toUint8Array().byteLength,
+            capabilityCount: nativeCapnpBridgeRpcMessage.capabilities.length,
+            firstCapability: {
+              id: nativeCapnpBridgeRpcMessage.capabilities.get(0).id,
+              interfaceId: nativeCapnpBridgeRpcMessage.capabilities.get(0)
+                  .interfaceId.toString(16),
+              interfaceName: nativeCapnpBridgeRpcMessage.capabilities.get(0).interfaceName,
+              kind: nativeCapnpBridgeRpcMessage.capabilities.get(0).kind,
+            },
+          },
           acknowledgedResponse: {
             bytes: nativeCapnpBridgeAcknowledgedResponse.message.byteLength,
             which: decodedNativeCapnpBridgeAcknowledgedResponse.which,
@@ -4033,6 +4087,7 @@ export default {
           dropRequest: nativeCapnpBridgeDrop.request,
           saveRequest: nativeCapnpBridgeSave.request,
           restoreRequest: nativeCapnpBridgeRestore.request,
+          rpcRequest: nativeCapnpBridgeRpcRoute.request,
           binaryRoute: {
             ok: nativeCapnpBridgeBinaryCall.ok,
             status: nativeCapnpBridgeBinaryCall.status,
@@ -4041,6 +4096,15 @@ export default {
             which: decodedNativeCapnpBridgeBinaryCall.which,
             exception: decodedNativeCapnpBridgeBinaryCall.exception,
           },
+          rpcBinaryRoute: {
+            ok: nativeCapnpBridgeBinaryRpc.ok,
+            status: nativeCapnpBridgeBinaryRpc.status,
+            contentType: nativeCapnpBridgeBinaryRpc.contentType,
+            bytes: nativeCapnpBridgeBinaryRpc.body.byteLength,
+            which: decodedNativeCapnpBridgeBinaryRpc.which,
+            exception: decodedNativeCapnpBridgeBinaryRpc.exception,
+          },
+          transportError: nativeCapnpBridgeTransportError,
           lifecycleBinary: nativeCapnpLifecycleBinary,
           unknownTargetError: unknownNativeCapnpBridgeCall.error,
         },

@@ -727,6 +727,19 @@ Progress:
   against claimed Sandstorm capability handles using the existing durable token
   format and capability table, while ordinary native method calls remain
   disabled in bridge negotiation
+- `isolate-native-capnp-bridge.capnp` now has a separate `rpc` envelope for
+  carrying `@mnutt/capnp-es` two-party RPC messages addressed to an
+  already-held Sandstorm capability handle; this moves the next bridge step
+  from ad hoc method-call envelopes toward the actual Cap'n Proto RPC protocol
+- `sandstorm:capnp` exposes `NativeCapnpBridgeTransport` and
+  `createNativeCapnpBridgeConnection()` so generated `@mnutt/capnp-es` clients
+  can be wired to the restricted supervisor endpoint; while native dispatch is
+  disabled, this transport reports the supervisor's structured unimplemented
+  exception instead of silently falling back
+- the supervisor parses and validates native bridge `rpc` requests, including
+  target capability lookup and payload metadata, then returns a binary
+  unimplemented response; native RPC message translation to Sandstorm's C++
+  Cap'n Proto transport remains the next Phase 4 implementation step
 
 Interop tests:
 
