@@ -690,6 +690,9 @@ Progress:
 - `sandstorm:capnp` exposes native bridge client scaffolding and Cap'n
   Proto payload normalization around `@mnutt/capnp-es`, while still failing
   calls with a stable unavailable error until the supervisor transport exists
+- supervisor exposes a disabled `POST /capnp/call` route with a structured
+  native bridge response envelope, giving JS clients a stable endpoint before
+  native dispatch is enabled
 
 Interop tests:
 
