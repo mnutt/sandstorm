@@ -3,6 +3,81 @@ import { RpcTarget } from "sandstorm:api";
 export const SANDSTORM_CAPNP_VERSION = 0;
 export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
 
+const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
+  "nativeTransport",
+  "nativeCalls",
+  "nativeExports",
+  "capabilitySlots",
+]);
+
+function invalidNativeCapnpBridgeInfo(reason, info) {
+  return Object.freeze({
+    available: false,
+    protocolSupported: false,
+    protocolVersion: SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
+    nativeTransport: false,
+    nativeCalls: false,
+    nativeExports: false,
+    capabilitySlots: false,
+    fallbackTransport: "",
+    missingFeatures: Object.freeze([]),
+    reason,
+    info,
+  });
+}
+
+export function negotiateNativeCapnpBridgeInfo(info, options = {}) {
+  if (!info || typeof info !== "object" || info.type !== "capnpBridgeInfo") {
+    return invalidNativeCapnpBridgeInfo("invalid bridge info", info);
+  }
+
+  const requiredFeatures = options.requiredFeatures || [];
+  for (const feature of requiredFeatures) {
+    if (!NATIVE_CAPNP_BRIDGE_FEATURES.includes(feature)) {
+      throw new TypeError(`unknown native Cap'n Proto bridge feature: ${feature}`);
+    }
+  }
+
+  const minProtocolVersion = Number(info.minProtocolVersion);
+  const maxProtocolVersion = Number(info.maxProtocolVersion);
+  const protocolSupported = Number.isInteger(minProtocolVersion) &&
+    Number.isInteger(maxProtocolVersion) &&
+    minProtocolVersion <= SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION &&
+    SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION <= maxProtocolVersion;
+  const missingFeatures = requiredFeatures.filter((feature) => info[feature] !== true);
+  const nativeTransport = info.nativeTransport === true;
+  const available = protocolSupported && nativeTransport && missingFeatures.length === 0;
+  let reason = "";
+  if (!protocolSupported) {
+    reason = "unsupported protocol";
+  } else if (!nativeTransport) {
+    reason = "native transport unavailable";
+  } else if (missingFeatures.length > 0) {
+    reason = "missing features";
+  }
+
+  return Object.freeze({
+    available,
+    protocolSupported,
+    protocolVersion: SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
+    nativeTransport,
+    nativeCalls: info.nativeCalls === true,
+    nativeExports: info.nativeExports === true,
+    capabilitySlots: info.capabilitySlots === true,
+    fallbackTransport: typeof info.fallbackTransport === "string" ? info.fallbackTransport : "",
+    missingFeatures: Object.freeze(missingFeatures),
+    reason,
+    info,
+  });
+}
+
+export async function negotiateNativeCapnpBridge(api, options = {}) {
+  if (!api || typeof api.capnpBridgeInfo !== "function") {
+    throw new TypeError("negotiateNativeCapnpBridge() requires a Sandstorm API object");
+  }
+  return negotiateNativeCapnpBridgeInfo(await api.capnpBridgeInfo(), options);
+}
+
 const bindingError = (interfaceName, operation) => new Error(
   `capnp:${interfaceName}.${operation} is not implemented yet for this schema binding.`
 );

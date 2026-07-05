@@ -681,6 +681,9 @@ Progress:
 - `isolate-supervisor-internal.capnp` defines the first native bridge request,
   response, payload, exception, lifecycle, and capability-slot envelopes; these
   are schema only until the supervisor dispatch path is implemented
+- `sandstorm:capnp` exposes `negotiateNativeCapnpBridge()` so generated
+  bindings have one conservative feature-detection path for native transport
+  vs. app-object RPC fallback
 
 Interop tests:
 

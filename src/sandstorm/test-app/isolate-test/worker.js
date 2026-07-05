@@ -31,6 +31,7 @@ import {
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
   makeCapnpInterfaceBinding,
+  negotiateNativeCapnpBridge,
 } from "sandstorm:capnp";
 
 let disposedCounterCapabilities = 0;
@@ -3607,7 +3608,11 @@ export default {
     const apiBindings = await (await env.SANDSTORM_API.fetch("http://sandstorm/bindings")).json();
     const apiCapnpBridgeInfo =
         await (await env.SANDSTORM_API.fetch("http://sandstorm/capnp/bridge-info")).json();
-    const helperCapnpBridgeInfo = await sandstorm(request, env).capnpBridgeInfo();
+    const apiHelper = sandstorm(request, env);
+    const helperCapnpBridgeInfo = await apiHelper.capnpBridgeInfo();
+    const capnpBridgeNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
+      requiredFeatures: ["nativeCalls", "capabilitySlots"],
+    });
 
     const storagePut = await (await env.STORAGE.fetch("http://storage/fixture", {
       method: "PUT",
@@ -3646,6 +3651,7 @@ export default {
         bindings: apiBindings,
         capnpBridgeInfo: apiCapnpBridgeInfo,
         helperCapnpBridgeInfo,
+        capnpBridgeNegotiation,
       },
       storage: {
         put: storagePut,

@@ -653,6 +653,18 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(
       body.sandstormApi.helperCapnpBridgeInfo,
       body.sandstormApi.capnpBridgeInfo);
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.available, false);
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.protocolSupported, true);
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.protocolVersion, 0);
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.nativeTransport, false);
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.reason, "native transport unavailable");
+    assert.deepEqual(body.sandstormApi.capnpBridgeNegotiation.missingFeatures, [
+      "nativeCalls",
+      "capabilitySlots",
+    ]);
+    assert.deepEqual(
+      body.sandstormApi.capnpBridgeNegotiation.info,
+      body.sandstormApi.capnpBridgeInfo);
     assert.equal(body.storage.text, "stored from isolate");
     assert.deepEqual(body.appRpcTarget, {
       targetClass: true,
