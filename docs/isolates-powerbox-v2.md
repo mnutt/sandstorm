@@ -565,7 +565,9 @@ Progress:
 - local app-object RPC dispatch can carry non-appObject Sandstorm capabilities
   as opaque values, and `sandstorm:capnp` can declare fetch-shaped result
   slots by native interface. The supervisor native app-RPC route still rejects
-  non-appObject slots pending a broader slot schema change.
+  non-appObject slots; cross-supervisor transport for those slots is deferred
+  to Phase 4's native Cap'n Proto bridge rather than expanding the temporary
+  app-object route.
 - `sandstorm:capnp` supports nested capability paths for local/generated
   argument normalization and result casting while preserving the older shallow
   `fields` metadata shape.
@@ -588,6 +590,12 @@ Add support for generic capability slots:
 
 This unlocks control-plane methods that return data-plane capabilities, such
 as `openObject()` returning an object with `fetch()`.
+
+Scope note: Phase 3 covers local/generated binding behavior and authoring
+examples. Non-appObject capability slots crossing supervisor boundaries will
+ride the native Cap'n Proto bridge in Phase 4, where the transport can preserve
+the actual public interface instead of forcing every slot through
+`IsolateObjectCapability`.
 
 Deliverables:
 
@@ -626,6 +634,9 @@ Deliverables:
 - legacy grains can call isolate-defined capabilities
 - isolates can call legacy grain capabilities
 - capability slots cross the bridge safely
+- non-appObject capability slots returned by app-object compatibility calls can
+  cross supervisor boundaries through the native bridge, rather than the
+  temporary `IsolateObjectCapability` JSON route
 - membranes, save, restore, drop, and revocation continue to work
 
 This is the main interop milestone.
