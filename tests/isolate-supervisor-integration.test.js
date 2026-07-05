@@ -775,8 +775,21 @@ test("isolate supervisor integration suite", {
         paramsBytes: 16,
         capabilityCount: 1,
       },
+      binaryRoute: {
+        ok: false,
+        status: 501,
+        contentType: "application/octet-stream",
+        bytes: body.sandstormApi.nativeCapnpBridge.binaryRoute.bytes,
+        which: "exception",
+        exception: {
+          type: "unimplemented",
+          reason: "native Cap'n Proto bridge transport is not enabled",
+          trace: "",
+        },
+      },
       unknownTargetError: "unknown native Cap'n Proto bridge target capability",
     });
+    assert.ok(body.sandstormApi.nativeCapnpBridge.binaryRoute.bytes > 0);
     assert.equal(body.storage.text, "stored from isolate");
     assert.deepEqual(body.appRpcTarget, {
       targetClass: true,
