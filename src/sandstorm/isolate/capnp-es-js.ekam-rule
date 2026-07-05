@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+inputs=(
+  "sandstorm/isolate/capnp-es/index.mjs"
+  "sandstorm/isolate/capnp-es/capnp/rpc.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.-PjN5D7P.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.2t3WiX8T.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.BC_cLggu.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.BylpbGNO.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.D7Alb_lP.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.FsZL20ID.mjs"
+  "sandstorm/isolate/capnp-es/shared/capnp-es.QN5nOfqw.mjs"
+)
+output="sandstorm/isolate/capnp-es.js.h"
+
+if test $# = 0; then
+  echo "trigger canonical:${inputs[0]}"
+  exit 0
+fi
+
+disk_inputs=()
+for input in "${inputs[@]}"; do
+  echo "findInput ${input}"
+  read INPUT_DISK_FILE
+  disk_inputs+=("$INPUT_DISK_FILE")
+done
+
+echo "newOutput ${output}"
+read OUTPUT_DISK_FILE
+
+python3 - "$OUTPUT_DISK_FILE" "${disk_inputs[@]}" <<'PY'
+import sys
+
+output_path = sys.argv[1]
+input_paths = sys.argv[2:]
+module_names = [
+    "@mnutt/capnp-es",
+    "@mnutt/capnp/rpc.mjs",
+    "@mnutt/shared/capnp-es.-PjN5D7P.mjs",
+    "@mnutt/shared/capnp-es.2t3WiX8T.mjs",
+    "@mnutt/shared/capnp-es.BC_cLggu.mjs",
+    "@mnutt/shared/capnp-es.BylpbGNO.mjs",
+    "@mnutt/shared/capnp-es.D7Alb_lP.mjs",
+    "@mnutt/shared/capnp-es.FsZL20ID.mjs",
+    "@mnutt/shared/capnp-es.QN5nOfqw.mjs",
+]
+
+def escape_chunk(chunk):
+    out = []
+    for b in chunk:
+        if b == 0x0a:
+            out.append(r"\n")
+        elif b == 0x0d:
+            out.append(r"\r")
+        elif b == 0x09:
+            out.append(r"\t")
+        elif b == 0x22:
+            out.append(r"\"")
+        elif b == 0x5c:
+            out.append(r"\\")
+        elif 0x20 <= b <= 0x7e:
+            out.append(chr(b))
+        else:
+            out.append("\\x%02x" % b)
+    return "".join(out)
+
+with open(output_path, "w", encoding="utf-8") as out:
+    out.write("// Generated from src/sandstorm/isolate/capnp-es. Do not edit.\n")
+    out.write("#pragma once\n\n")
+    out.write("namespace sandstorm {\n\n")
+    out.write("struct IsolateCapnpEsModuleSource {\n")
+    out.write("  const char* name;\n")
+    out.write("  const char* source;\n")
+    out.write("};\n\n")
+
+    source_names = []
+    for i, path in enumerate(input_paths):
+        source_name = "ISOLATE_CAPNP_ES_SOURCE_%u" % i
+        source_names.append(source_name)
+        with open(path, "rb") as f:
+            data = f.read()
+        out.write("static constexpr const char %s[] =\n" % source_name)
+        for offset in range(0, len(data), 100):
+            out.write("    \"")
+            out.write(escape_chunk(data[offset:offset + 100]))
+            out.write("\"\n")
+        out.write("    ;\n\n")
+
+    out.write("static constexpr IsolateCapnpEsModuleSource ISOLATE_CAPNP_ES_MODULES[] = {\n")
+    for module_name, source_name in zip(module_names, source_names):
+        out.write("  { \"")
+        out.write(module_name)
+        out.write("\", ")
+        out.write(source_name)
+        out.write(" },\n")
+    out.write("};\n\n")
+    out.write("static constexpr uint ISOLATE_CAPNP_ES_MODULE_COUNT = %u;\n\n" % len(module_names))
+    out.write("}  // namespace sandstorm\n")
+PY

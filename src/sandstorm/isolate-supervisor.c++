@@ -23,6 +23,7 @@
 
 #include <sandstorm/isolate/api.js.h>
 #include <sandstorm/isolate/capnweb.js.h>
+#include <sandstorm/isolate/capnp-es.js.h>
 #include <sandstorm/isolate/capnp.js.h>
 #include <sandstorm/isolate/rpc.js.h>
 
@@ -906,6 +907,10 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
       ISOLATE_API_HELPER_SOURCE);
   addGeneratedIsolateModule(config, "sandstorm:capnp", IsolateRuntimeConfig::ModuleType::ES_MODULE,
       ISOLATE_CAPNP_HELPER_SOURCE);
+  for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
+    addGeneratedIsolateModule(
+        config, module.name, IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);
+  }
 }
 
 kj::Own<IsolateRuntimeConfig> copyIsolateConfig(

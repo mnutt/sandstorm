@@ -684,6 +684,9 @@ Progress:
 - `sandstorm:capnp` exposes `negotiateNativeCapnpBridge()` so generated
   bindings have one conservative feature-detection path for native transport
   vs. app-object RPC fallback
+- isolate runtime bundles the browser-safe `@mnutt/capnp-es` ESM runtime as
+  built-in modules; this is the selected JS-side Cap'n Proto encoder/runtime
+  for native bridge work
 
 Interop tests:
 

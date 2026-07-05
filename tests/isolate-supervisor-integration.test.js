@@ -38,6 +38,38 @@ const SYSCALL_TRACE_PROFILE = process.env.ISOLATE_SYSCALL_TRACE_PROFILE || "";
 const REPRESENTATIVE_SYSCALL_TRACE = SYSCALL_TRACE_PROFILE === "representative";
 const STRESS_64M = process.env.ISOLATE_STRESS_64M === "1";
 const TEST_TIMEOUT_MS = SYSCALL_TRACE_DIR || STRESS_64M ? 180000 : 30000;
+const CAPNP_ES_RUNTIME_MODULES = [
+  ["@mnutt/capnp-es", "__sandstorm_isolate_runtime/capnp-es/index.mjs"],
+  ["@mnutt/capnp/rpc.mjs", "__sandstorm_isolate_runtime/capnp-es/capnp/rpc.mjs"],
+  [
+    "@mnutt/shared/capnp-es.-PjN5D7P.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.-PjN5D7P.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.2t3WiX8T.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.2t3WiX8T.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.BC_cLggu.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.BC_cLggu.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.BylpbGNO.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.BylpbGNO.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.D7Alb_lP.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.D7Alb_lP.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.FsZL20ID.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.FsZL20ID.mjs",
+  ],
+  [
+    "@mnutt/shared/capnp-es.QN5nOfqw.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.QN5nOfqw.mjs",
+  ],
+];
 
 function formatOutput(stdout, stderr) {
   const out = stdout.join("");
@@ -486,6 +518,9 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
     modules.get("sandstorm:capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp.js");
   assert.equal(modules.get("capnweb").esModulePath, "__sandstorm_isolate_runtime/capnweb.js");
+  for (const [name, esModulePath] of CAPNP_ES_RUNTIME_MODULES) {
+    assert.equal(modules.get(name).esModulePath, esModulePath);
+  }
 
   assert.deepEqual([...bindings.keys()], ["SANDSTORM_API", "POWERBOX", "STORAGE"]);
   assert.deepEqual(bindings.get("SANDSTORM_API"), {
@@ -569,6 +604,7 @@ test("isolate supervisor integration suite", {
         ["sandstorm:rpc", "esModule"],
         ["sandstorm:api", "esModule"],
         ["sandstorm:capnp", "esModule"],
+        ...CAPNP_ES_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
       ]);
     assert.deepEqual(
       manifest.bindings.map((binding) => [binding.name, binding.type]),
@@ -624,6 +660,7 @@ test("isolate supervisor integration suite", {
     assert.equal(body.metadata.fixture, "isolate-test-app");
     assert.equal(body.textBinding, "hello from a text binding");
     assert.deepEqual(body.jsonBinding, { binding: "json" });
+    assert.equal(body.capnpEs.messageBytes, 16);
     assert.deepEqual(body.helperVersions, {
       api: 0,
       rpc: 0,
@@ -2157,7 +2194,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.statusCode, 200);
     assert.equal(runtime.json.ok, true);
     assert.equal(runtime.json.mainModule, "worker.js");
-    assert.equal(runtime.json.moduleCount, 8);
+    assert.equal(runtime.json.moduleCount, 17);
     assert.equal(runtime.json.bindingCount, 6);
 
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
@@ -2239,6 +2276,7 @@ test("isolate supervisor integration suite", {
         ["sandstorm:rpc", "esModule", false],
         ["sandstorm:api", "esModule", false],
         ["sandstorm:capnp", "esModule", false],
+        ...CAPNP_ES_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
       ]);
 
     const bindings = await requestJson(fixture.sandstormApiSocket, "/bindings");

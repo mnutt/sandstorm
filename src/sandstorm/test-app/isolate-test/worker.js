@@ -1,5 +1,6 @@
 import message from "message.txt";
 import metadata from "metadata.json";
+import { Message as CapnpEsMessage } from "@mnutt/capnp-es";
 import {
   AppRpcTarget,
   Capability,
@@ -3634,6 +3635,9 @@ export default {
       metadata,
       textBinding: env.TEXT_BINDING,
       jsonBinding: env.JSON_BINDING,
+      capnpEs: {
+        messageBytes: new CapnpEsMessage().toUint8Array().byteLength,
+      },
       helperVersions: {
         api: SANDSTORM_API_VERSION,
         rpc: SANDSTORM_RPC_VERSION,

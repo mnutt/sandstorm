@@ -38,6 +38,7 @@
 #include <sandstorm/appid-replacements.capnp.h>
 #include <sandstorm/isolate/api.js.h>
 #include <sandstorm/isolate/capnweb.js.h>
+#include <sandstorm/isolate/capnp-es.js.h>
 #include <sandstorm/isolate/capnp.js.h>
 #include <sandstorm/isolate/rpc.js.h>
 #include <stdlib.h>
@@ -2396,6 +2397,9 @@ private:
     kj::String path = kj::heapString("/tmp/sandstorm-dev-isolate-runtime-XXXXXX");
     KJ_REQUIRE(mkdtemp(path.begin()) != nullptr, "mkdtemp() failed", path, strerror(errno));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp").cStr(), 0700));
+    KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es").cStr(), 0700));
+    KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es/capnp").cStr(), 0700));
+    KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es/shared").cStr(), 0700));
     writeDevIsolateSupportFile(path, "placeholder.js",
         "export default { fetch() { return new Response(\"dev isolate manifest not mounted\", "
         "{ status: 500 }); } };\n");
@@ -2403,7 +2407,20 @@ private:
     writeDevIsolateSupportFile(path, "capnp.js", ISOLATE_CAPNP_HELPER_SOURCE);
     writeDevIsolateSupportFile(path, "api.js", ISOLATE_API_HELPER_SOURCE);
     writeDevIsolateSupportFile(path, "rpc.js", ISOLATE_RPC_HELPER_SOURCE);
+    for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
+      writeDevIsolateSupportFile(path, capnpEsRuntimePath(module.name), module.source);
+    }
     return path;
+  }
+
+  kj::String capnpEsRuntimePath(kj::StringPtr moduleName) {
+    if (moduleName == "@mnutt/capnp-es") {
+      return kj::heapString("capnp-es/index.mjs");
+    }
+
+    kj::StringPtr prefix = "@mnutt/";
+    KJ_REQUIRE(moduleName.startsWith(prefix), "Unexpected capnp-es runtime module.", moduleName);
+    return kj::str("capnp-es/", moduleName.slice(prefix.size()));
   }
 
   void writeDevIsolateSupportFile(kj::StringPtr dir, kj::StringPtr name, kj::StringPtr content) {
@@ -2454,7 +2471,7 @@ private:
     isolate.setCompatibilityDate(devIsolateCompatibilityDate);
     isolate.initCompatibilityFlags(0);
 
-    auto moduleList = isolate.initModules(modules.size() + 5);
+    auto moduleList = isolate.initModules(modules.size() + 5 + ISOLATE_CAPNP_ES_MODULE_COUNT);
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2473,21 +2490,28 @@ private:
           break;
       }
     }
-    auto capnwebModule = moduleList[modules.size()];
+    auto helperIndex = modules.size();
+    auto capnwebModule = moduleList[helperIndex++];
     capnwebModule.setName("capnweb");
     capnwebModule.setEsModulePath("__sandstorm_isolate_runtime/capnweb.js");
-    auto capnwebSourceModule = moduleList[modules.size() + 1];
+    auto capnwebSourceModule = moduleList[helperIndex++];
     capnwebSourceModule.setName("sandstorm:capnweb-source");
     capnwebSourceModule.setTextPath("__sandstorm_isolate_runtime/capnweb.js");
-    auto helperModule = moduleList[modules.size() + 2];
+    auto helperModule = moduleList[helperIndex++];
     helperModule.setName("sandstorm:api");
     helperModule.setEsModulePath("__sandstorm_isolate_runtime/api.js");
-    auto rpcHelperModule = moduleList[modules.size() + 3];
+    auto rpcHelperModule = moduleList[helperIndex++];
     rpcHelperModule.setName("sandstorm:rpc");
     rpcHelperModule.setEsModulePath("__sandstorm_isolate_runtime/rpc.js");
-    auto capnpHelperModule = moduleList[modules.size() + 4];
+    auto capnpHelperModule = moduleList[helperIndex++];
     capnpHelperModule.setName("sandstorm:capnp");
     capnpHelperModule.setEsModulePath("__sandstorm_isolate_runtime/capnp.js");
+    for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
+      auto module = moduleList[helperIndex++];
+      module.setName(runtimeModule.name);
+      module.setEsModulePath(kj::str(
+          "__sandstorm_isolate_runtime/", capnpEsRuntimePath(runtimeModule.name)));
+    }
 
     auto bindings = isolate.initBindings(
         3 + devIsolateTextBindings.size() + devIsolateJsonBindings.size() +
