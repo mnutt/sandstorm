@@ -90,6 +90,16 @@ class CounterCapability extends RpcTarget {
     return other.get();
   }
 
+  async readNested(input) {
+    return this.readOther(input?.wrapper?.other);
+  }
+
+  nestedChildren() {
+    return {
+      group: this.children(),
+    };
+  }
+
   mirrorSession(input) {
     return {
       session: input.session,
@@ -135,6 +145,8 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
   "child",
   "children",
   "readOther",
+  "readNested",
+  "nestedChildren",
   "mirrorSession",
   "fail",
 ], {
@@ -149,12 +161,15 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
     "  child @2 () -> (counter :GeneratedCounter);",
     "  children @3 () -> (left :GeneratedCounter, right :GeneratedCounter);",
     "  readOther @4 (other :GeneratedCounter) -> (value :Float64);",
-    "  mirrorSession @5 (session :WebSession) -> (session :WebSession);",
-    "  fail @6 (message :Text) -> ();",
+    "  readNested @5 (wrapper :AnyPointer) -> (value :Float64);",
+    "  nestedChildren @6 () -> (group :AnyPointer);",
+    "  mirrorSession @7 (session :WebSession) -> (session :WebSession);",
+    "  fail @8 (message :Text) -> ();",
     "}",
   ].join("\n"),
   argumentCapabilities: {
     readOther: { indexes: [0] },
+    readNested: { paths: [["wrapper", "other"]] },
     mirrorSession: { fields: ["session"] },
   },
   resultCapabilities: {
@@ -163,6 +178,12 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
       fields: {
         left: () => GeneratedCounter,
         right: () => GeneratedCounter,
+      },
+    },
+    nestedChildren: {
+      paths: {
+        "group.left": () => GeneratedCounter,
+        "group.right": () => GeneratedCounter,
       },
     },
     mirrorSession: {
@@ -2990,6 +3011,10 @@ export default {
       const localChildren = await local.children();
       const localLeftFirst = await localChildren.left.increment(19);
       const localRightFirst = await localChildren.right.increment(23);
+      const localNestedRead = await local.readNested({ wrapper: { other: localChild } });
+      const localNestedChildren = await local.nestedChildren();
+      const localNestedLeftFirst = await localNestedChildren.group.left.increment(37);
+      const localNestedRightFirst = await localNestedChildren.group.right.increment(41);
 
       const transient = await api.export(GeneratedCounter.implement(new CounterCapability()));
       const transientClient = GeneratedCounter.cast(transient);
@@ -3001,6 +3026,10 @@ export default {
       const children = await transientClient.children();
       const leftFirst = await children.left.increment(29);
       const rightFirst = await children.right.increment(31);
+      const nestedRead = await transientClient.readNested({ wrapper: { other: childClient } });
+      const nestedChildren = await transientClient.nestedChildren();
+      const nestedLeftFirst = await nestedChildren.group.left.increment(43);
+      const nestedRightFirst = await nestedChildren.group.right.increment(47);
       const webSession = await api.webSession({ pathPrefix: "/exported" });
       const mirroredSession = await transientClient.mirrorSession({ session: webSession });
       const mirroredSessionInfo = await mirroredSession.session.info();
@@ -3049,6 +3078,8 @@ export default {
       const dropChild = await childClient.drop();
       const dropChildrenLeft = await children.left.drop();
       const dropChildrenRight = await children.right.drop();
+      const dropNestedChildrenLeft = await nestedChildren.group.left.drop();
+      const dropNestedChildrenRight = await nestedChildren.group.right.drop();
       const dropMirroredSession = await mirroredSession.session.drop();
       const dropTransient = await transientClient.drop();
       const revokeCastSaved = await api.revoke(castSaved);
@@ -3089,6 +3120,11 @@ export default {
             left: localLeftFirst,
             right: localRightFirst,
           },
+          nested: {
+            read: localNestedRead,
+            left: localNestedLeftFirst,
+            right: localNestedRightFirst,
+          },
         },
         transient: {
           capability: JSON.parse(JSON.stringify(transient)),
@@ -3108,6 +3144,15 @@ export default {
           right: rightFirst,
           leftDrop: dropChildrenLeft,
           rightDrop: dropChildrenRight,
+        },
+        nested: {
+          read: nestedRead,
+          leftCapability: JSON.parse(JSON.stringify(nestedChildren.group.left.capability)),
+          rightCapability: JSON.parse(JSON.stringify(nestedChildren.group.right.capability)),
+          left: nestedLeftFirst,
+          right: nestedRightFirst,
+          leftDrop: dropNestedChildrenLeft,
+          rightDrop: dropNestedChildrenRight,
         },
         mirroredSession: {
           capability: JSON.parse(JSON.stringify(mirroredSession.session)),
