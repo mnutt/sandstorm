@@ -3683,6 +3683,43 @@ export default {
     const nativeCapnpBridge = await createNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeCalls", "capabilitySlots"],
     });
+    const nativeCapnpBridgeClient = await createNativeCapnpBridge({
+      capnpBridgeInfo: async () => ({
+        ok: true,
+        type: "capnpBridgeInfo",
+        protocolVersion: 0,
+        minProtocolVersion: 0,
+        maxProtocolVersion: 0,
+        nativeTransport: true,
+        nativeCalls: true,
+        nativeExports: false,
+        capabilitySlots: true,
+        fallbackTransport: "appObjectRpc",
+      }),
+      nativeCapnpBridgeCallBytes: async () => ({
+        ok: true,
+        status: 200,
+        contentType: "application/octet-stream",
+        body: nativeCapnpBridgeResultResponse.message,
+      }),
+    }, {
+      requiredFeatures: ["nativeCalls", "capabilitySlots"],
+    });
+    const nativeCapnpBridgeClientCallResult = await nativeCapnpBridgeClient.call({
+      target: nativeCapnpTarget,
+      binding: {
+        interfaceName: "sandstorm.WebSession",
+        schema: {
+          interfaceId: "0xa8e9655582dcde6f",
+          interfaceName: "sandstorm.WebSession",
+          methodIds: { get: 2 },
+        },
+      },
+      methodName: "get",
+      params: new CapnpEsMessage(),
+    });
+    const nativeCapnpBridgeClientCallCapability =
+        nativeCapnpBridgeClientCallResult.capabilities[0];
     const nativeCapnpBridgeCall =
         await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeRequest.message);
     const nativeCapnpBridgeBinaryCall =
@@ -3763,6 +3800,17 @@ export default {
           protocolVersion: decodedNativeCapnpBridgeExceptionResponse.protocolVersion,
           which: decodedNativeCapnpBridgeExceptionResponse.which,
           exception: decodedNativeCapnpBridgeExceptionResponse.exception,
+        },
+        bridgeClientCall: {
+          available: nativeCapnpBridgeClient.available,
+          resultBytes: nativeCapnpBridgeClientCallResult.message.byteLength,
+          capabilityCount: nativeCapnpBridgeClientCallResult.capabilities.length,
+          firstCapability: {
+            id: nativeCapnpBridgeClientCallCapability.id,
+            interfaceId: nativeCapnpBridgeClientCallCapability.interfaceId.toString(16),
+            interfaceName: nativeCapnpBridgeClientCallCapability.interfaceName,
+            kind: nativeCapnpBridgeClientCallCapability.kind,
+          },
         },
       },
       helperVersions: {

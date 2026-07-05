@@ -716,6 +716,17 @@ test("isolate supervisor integration suite", {
         trace: "fixture trace",
       },
     });
+    assert.deepEqual(body.capnpEs.bridgeClientCall, {
+      available: true,
+      resultBytes: 16,
+      capabilityCount: 1,
+      firstCapability: {
+        id: "argument-capability",
+        interfaceId: "d7a322498a996313",
+        interfaceName: "sandstorm.IsolateObjectCapability",
+        kind: "senderHosted",
+      },
+    });
     assert.deepEqual(body.helperVersions, {
       api: 0,
       rpc: 0,

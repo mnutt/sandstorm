@@ -385,23 +385,44 @@ export async function createNativeCapnpBridge(api, options = {}) {
       }
       const method = methodSchemaMetadata(binding, methodName);
       const payload = makeNativeCapnpPayload(params, capabilities);
-      if (typeof api.nativeCapnpBridgeCall !== "function") {
+      if (typeof api.nativeCapnpBridgeCallBytes !== "function") {
         throw new NativeCapnpBridgeProtocolError(
-          "native bridge call requires api.nativeCapnpBridgeCall()");
+          "native bridge call requires api.nativeCapnpBridgeCallBytes()");
       }
       const request = makeNativeCapnpBridgeCallRequest({ target, method, payload });
-      const result = await api.nativeCapnpBridgeCall(request.message);
-      if (!result || typeof result !== "object") {
+      const response = await api.nativeCapnpBridgeCallBytes(request.message);
+      if (!response || typeof response !== "object" || !(response.body instanceof Uint8Array)) {
         throw new NativeCapnpBridgeProtocolError("native bridge call returned an invalid response");
       }
-      if (result.ok === false) {
+
+      const decoded = decodeNativeCapnpBridgeResponse(response.body);
+      if (decoded.which === "exception") {
         throw new NativeCapnpBridgeUnavailableError(
-          result.exception?.reason || result.error || "native Cap'n Proto bridge call failed",
-          { negotiation, targetId: target.id, method, payload, response: result });
+          decoded.exception.reason || "native Cap'n Proto bridge call failed",
+          { negotiation, targetId: target.id, method, payload, response, decoded });
       }
-      throw new NativeCapnpBridgeProtocolError(
-        "native Cap'n Proto bridge result decoding is not implemented yet",
-        { negotiation, targetId: target.id, method, payload, response: result });
+      if (decoded.which !== "result") {
+        throw new NativeCapnpBridgeProtocolError(
+          `native Cap'n Proto bridge returned unexpected ${decoded.which} response`,
+          { negotiation, targetId: target.id, method, payload, response, decoded });
+      }
+
+      switch (decoded.result.which) {
+        case "value":
+          return decoded.result.value;
+        case "exception":
+          throw new NativeCapnpBridgeUnavailableError(
+            decoded.result.exception.reason || "native Cap'n Proto bridge call failed",
+            { negotiation, targetId: target.id, method, payload, response, decoded });
+        case "canceled":
+          throw new NativeCapnpBridgeUnavailableError(
+            "native Cap'n Proto bridge call was canceled",
+            { negotiation, targetId: target.id, method, payload, response, decoded });
+        default:
+          throw new NativeCapnpBridgeProtocolError(
+            "native Cap'n Proto bridge returned an unknown result response",
+            { negotiation, targetId: target.id, method, payload, response, decoded });
+      }
     },
   });
 }
