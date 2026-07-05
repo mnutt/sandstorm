@@ -5464,6 +5464,16 @@ private:
             renderError("native Cap'n Proto bridge call request is missing params"));
       }
 
+      auto target = call.getTarget();
+      if (target.getId().size() == 0) {
+        return sendJson(response, 400, "Bad Request",
+            renderError("native Cap'n Proto bridge call request target id is empty"));
+      }
+      if (host.sessions->findClaimedCapability(target.getId()) == nullptr) {
+        return sendJson(response, 404, "Not Found",
+            renderError("unknown native Cap'n Proto bridge target capability"));
+      }
+
       return sendJson(response, 501, "Not Implemented", renderNativeCapnpBridgeDisabled(request));
     } catch (kj::Exception& exception) {
       return sendJson(response, 400, "Bad Request", renderError(kj::str(

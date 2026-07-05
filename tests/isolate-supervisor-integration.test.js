@@ -667,11 +667,13 @@ test("isolate supervisor integration suite", {
     assert.equal(body.capnpEs.messageBytes, 16);
     assert.equal(body.capnpEs.payloadBytes, 16);
     assert.ok(body.capnpEs.bridgeRequestBytes > body.capnpEs.payloadBytes);
+    assert.equal(typeof body.sandstormApi.nativeCapnpBridge.targetId, "string");
+    assert.ok(body.sandstormApi.nativeCapnpBridge.targetId.length > 0);
     assert.deepEqual(body.capnpEs.bridgeRequest, {
       protocolVersion: 0,
       which: 0,
       target: {
-        id: "target-capability",
+        id: body.sandstormApi.nativeCapnpBridge.targetId,
         interfaceId: "a8e9655582dcde6f",
         interfaceName: "sandstorm.WebSession",
         kind: 1,
@@ -732,12 +734,13 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(body.sandstormApi.nativeCapnpBridge, {
       available: false,
       protocolVersion: 0,
+      targetId: body.sandstormApi.nativeCapnpBridge.targetId,
       callError: "NativeCapnpBridgeUnavailableError",
       routeError: "native Cap'n Proto bridge transport is not enabled",
       routeRequest: {
         kind: "call",
         protocolVersion: 0,
-        targetId: "target-capability",
+        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
         targetInterfaceId: "0xa8e9655582dcde6f",
         targetInterfaceName: "sandstorm.WebSession",
         interfaceId: "0xa8e9655582dcde6f",
@@ -746,6 +749,7 @@ test("isolate supervisor integration suite", {
         paramsBytes: 16,
         capabilityCount: 1,
       },
+      unknownTargetError: "unknown native Cap'n Proto bridge target capability",
     });
     assert.equal(body.storage.text, "stored from isolate");
     assert.deepEqual(body.appRpcTarget, {

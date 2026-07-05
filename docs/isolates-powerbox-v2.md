@@ -706,6 +706,9 @@ Progress:
   native bridge request envelope before returning its stable unimplemented
   response, so C++ and isolate JS agree on the initial wire format before any
   native capability dispatch is enabled
+- the disabled supervisor `/capnp/call` route now rejects bridge calls whose
+  target id is not an already-claimed Sandstorm capability handle, preserving
+  the object-capability authority boundary before native dispatch is enabled
 
 Interop tests:
 

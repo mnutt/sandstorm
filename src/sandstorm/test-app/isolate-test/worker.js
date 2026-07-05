@@ -3618,6 +3618,9 @@ export default {
     const capnpBridgeNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeCalls", "capabilitySlots"],
     });
+    const nativeCapnpTarget = await apiHelper.webSession({
+      pathPrefix: "/native-capnp-bridge-target",
+    });
     const nativeCapnpPayload = makeNativeCapnpPayload(new CapnpEsMessage(), [
       {
         id: "argument-capability",
@@ -3628,7 +3631,22 @@ export default {
     ]);
     const nativeCapnpBridgeRequest = makeNativeCapnpBridgeCallRequest({
       target: {
-        id: "target-capability",
+        id: nativeCapnpTarget.id,
+        interfaceId: "0xa8e9655582dcde6f",
+        interfaceName: "sandstorm.WebSession",
+        kind: "receiverHosted",
+      },
+      method: {
+        interfaceId: "0xa8e9655582dcde6f",
+        interfaceName: "sandstorm.WebSession",
+        methodOrdinal: 2,
+        methodName: "get",
+      },
+      payload: nativeCapnpPayload,
+    });
+    const unknownNativeCapnpBridgeRequest = makeNativeCapnpBridgeCallRequest({
+      target: {
+        id: "unknown-target-capability",
         interfaceId: "0xa8e9655582dcde6f",
         interfaceName: "sandstorm.WebSession",
         kind: "receiverHosted",
@@ -3650,6 +3668,8 @@ export default {
     });
     const nativeCapnpBridgeCall =
         await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeRequest.message);
+    const unknownNativeCapnpBridgeCall =
+        await apiHelper.nativeCapnpBridgeCall(unknownNativeCapnpBridgeRequest.message);
     let nativeCapnpBridgeCallError = "";
     try {
       await nativeCapnpBridge.call();
@@ -3725,9 +3745,11 @@ export default {
         nativeCapnpBridge: {
           available: nativeCapnpBridge.available,
           protocolVersion: nativeCapnpBridge.protocolVersion,
+          targetId: nativeCapnpTarget.id,
           callError: nativeCapnpBridgeCallError,
           routeError: nativeCapnpBridgeCall.error,
           routeRequest: nativeCapnpBridgeCall.request,
+          unknownTargetError: unknownNativeCapnpBridgeCall.error,
         },
       },
       storage: {
