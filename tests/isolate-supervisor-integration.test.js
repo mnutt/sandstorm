@@ -993,6 +993,15 @@ test("isolate supervisor integration suite", {
         exceptionReasonLength: body.sandstormApi.nativeCapnpBridge.transportCall
             .exceptionReasonLength,
       },
+      connectedClient: {
+        isFixtureClient: true,
+        hasBootstrapClient: true,
+        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
+        connectionId:
+            `native-capnp-fixture-connect-${body.sandstormApi.nativeCapnpBridge.targetId}`,
+        hasDrop: true,
+        hasSave: true,
+      },
       lifecycleBinary: {
         save: {
           ok: true,

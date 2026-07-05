@@ -269,6 +269,29 @@ declare module "sandstorm:capnp" {
     },
   ): unknown;
 
+  export interface NativeCapnpGeneratedInterface<TClient extends object> {
+    readonly Client: new (client: unknown) => TClient;
+  }
+
+  export type NativeCapnpConnectedClient<TClient extends object> = TClient & {
+    readonly capability: NativeCapnpCapabilitySlot;
+    readonly connection: unknown;
+    readonly transport: NativeCapnpBridgeTransport;
+    drop(): Promise<unknown> | unknown;
+    save(...args: unknown[]): Promise<string> | string | undefined;
+  };
+
+  export function connectNativeCapnp<TClient extends object>(
+    api: NativeCapnpBridgeTransport["api"],
+    target: NativeCapnpCapabilitySlot,
+    InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
+    options?: {
+      readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
+      readonly connectionId?: string;
+      readonly finalize?: unknown;
+    },
+  ): NativeCapnpConnectedClient<TClient>;
+
   export type CapnpRpcMethod = (...args: any[]) => unknown;
   export type CapnpMethodMap<TMethods> = {
     [K in keyof TMethods]: TMethods[K] extends CapnpRpcMethod ? TMethods[K] : never;
