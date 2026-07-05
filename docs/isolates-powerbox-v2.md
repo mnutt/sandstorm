@@ -687,6 +687,9 @@ Progress:
 - isolate runtime bundles the browser-safe `@mnutt/capnp-es` ESM runtime as
   built-in modules; this is the selected JS-side Cap'n Proto encoder/runtime
   for native bridge work
+- `sandstorm:capnp` exposes native bridge client scaffolding and Cap'n
+  Proto payload normalization around `@mnutt/capnp-es`, while still failing
+  calls with a stable unavailable error until the supervisor transport exists
 
 Interop tests:
 
