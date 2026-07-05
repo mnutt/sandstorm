@@ -1,4 +1,4 @@
-import { f as format, P as PTR_INVALID_LIST_SIZE, L as ListElementSize, s as setListPointer, b as PTR_COMPOSITE_SIZE_UNDEFINED, e as padToWord, g as getByteLength, h as setStructPointer, j as getListElementByteLength, k as initPointer, l as Pointer, m as getTargetListLength, n as LIST_NO_SEARCH, o as LIST_NO_MUTABLE, v as validate, q as PointerType, r as getContent, i as isNull, t as erase, u as RPC_NULL_CLIENT, w as getTargetStructSize, x as getTargetCompositeListSize, y as getWordLength, z as followFars, A as getTargetPointerType, B as getTargetListElementSize, C as PTR_STRUCT_DATA_OUT_OF_BOUNDS, D as PTR_STRUCT_POINTER_OUT_OF_BOUNDS, p as padToWord$1, E as PTR_INIT_COMPOSITE_STRUCT, F as getDataWordLength, G as getStructSize, H as getInterfacePointer, c as copyFrom, N as NATIVE_LITTLE_ENDIAN, I as PTR_INVALID_UNION_ACCESS } from './capnp-es.BylpbGNO.mjs';
+import { P as Pointer, L as ListElementSize, g as getTargetListLength, b as LIST_NO_SEARCH, f as LIST_NO_MUTABLE, h as format, j as PTR_INVALID_LIST_SIZE, s as setListPointer, k as PTR_COMPOSITE_SIZE_UNDEFINED, l as padToWord, m as getByteLength, n as setStructPointer, o as getListElementByteLength, q as initPointer, v as validate, r as PointerType, t as getContent, i as isNull, e as erase, u as RPC_NULL_CLIENT, w as getTargetStructSize, x as getTargetCompositeListSize, y as getWordLength, z as followFars, A as getTargetPointerType, B as getTargetListElementSize, C as PTR_STRUCT_DATA_OUT_OF_BOUNDS, D as PTR_STRUCT_POINTER_OUT_OF_BOUNDS, p as padToWord$1, E as PTR_INIT_COMPOSITE_STRUCT, F as getDataWordLength, G as getStructSize, H as getInterfacePointer, c as copyFrom, N as NATIVE_LITTLE_ENDIAN, I as PTR_INVALID_UNION_ACCESS } from './capnp-es.Da9bkTPj.mjs';
 
 class List extends Pointer {
   static _capnp = {
@@ -40,6 +40,9 @@ class List extends Pointer {
   at(index) {
     return this.get(index < 0 ? this.length + index : index);
   }
+  arrayCallbackTarget() {
+    return this;
+  }
   concat(other) {
     const { length } = this;
     const otherLength = other.length;
@@ -49,8 +52,9 @@ class List extends Pointer {
     return res;
   }
   some(cb, _this) {
+    const array = this.arrayCallbackTarget();
     for (let i = 0; i < this.length; i++) {
-      if (cb.call(_this, this.at(i), i, this)) {
+      if (cb.call(_this, this.at(i), i, array)) {
         return true;
       }
     }
@@ -58,56 +62,63 @@ class List extends Pointer {
   }
   filter(cb, _this) {
     const res = [];
+    const array = this.arrayCallbackTarget();
     for (let i = 0; i < this.length; i++) {
       const value = this.at(i);
-      if (cb.call(_this, value, i, this)) {
+      if (cb.call(_this, value, i, array)) {
         res.push(value);
       }
     }
     return res;
   }
   find(cb, _this) {
+    const array = this.arrayCallbackTarget();
     for (let i = 0; i < this.length; i++) {
       const value = this.at(i);
-      if (cb.call(_this, value, i, this)) {
+      if (cb.call(_this, value, i, array)) {
         return value;
       }
     }
     return void 0;
   }
   findIndex(cb, _this) {
+    const array = this.arrayCallbackTarget();
     for (let i = 0; i < this.length; i++) {
       const value = this.at(i);
-      if (cb.call(_this, value, i, this)) {
+      if (cb.call(_this, value, i, array)) {
         return i;
       }
     }
     return -1;
   }
   forEach(cb, _this) {
+    const array = this.arrayCallbackTarget();
     for (let i = 0; i < this.length; i++) {
-      cb.call(_this, this.at(i), i, this);
+      cb.call(_this, this.at(i), i, array);
     }
   }
   map(cb, _this) {
     const { length } = this;
     const res = Array.from({ length });
+    const array = this.arrayCallbackTarget();
     for (let i = 0; i < length; i++) {
-      res[i] = cb.call(_this, this.at(i), i, this);
+      res[i] = cb.call(_this, this.at(i), i, array);
     }
     return res;
   }
   flatMap(cb, _this) {
     const res = [];
+    const array = this.arrayCallbackTarget();
     for (let i = 0; i < this.length; i++) {
-      const r = cb.call(_this, this.at(i), i, this);
+      const r = cb.call(_this, this.at(i), i, array);
       res.push(...Array.isArray(r) ? r : [r]);
     }
     return res;
   }
   every(cb, _this) {
+    const array = this.arrayCallbackTarget();
     for (let i = 0; i < this.length; i++) {
-      if (!cb.call(_this, this.at(i), i, this)) {
+      if (!cb.call(_this, this.at(i), i, array)) {
         return false;
       }
     }
@@ -116,6 +127,7 @@ class List extends Pointer {
   reduce(cb, initialValue) {
     let i = 0;
     let res;
+    const array = this.arrayCallbackTarget();
     if (initialValue === void 0) {
       res = this.at(0);
       i++;
@@ -123,13 +135,14 @@ class List extends Pointer {
       res = initialValue;
     }
     for (; i < this.length; i++) {
-      res = cb(res, this.at(i), i, this);
+      res = cb(res, this.at(i), i, array);
     }
     return res;
   }
   reduceRight(cb, initialValue) {
     let i = this.length - 1;
     let res;
+    const array = this.arrayCallbackTarget();
     if (initialValue === void 0) {
       res = this.at(i);
       i--;
@@ -137,7 +150,7 @@ class List extends Pointer {
       res = initialValue;
     }
     for (; i >= 0; i--) {
-      res = cb(res, this.at(i), i, this);
+      res = cb(res, this.at(i), i, array);
     }
     return res;
   }
@@ -226,7 +239,7 @@ class List extends Pointer {
   unshift(..._items) {
     throw new Error(LIST_NO_MUTABLE);
   }
-  splice(_start, _deleteCount, ..._rest) {
+  splice(_start, _deleteCount, ..._items) {
     throw new Error(LIST_NO_MUTABLE);
   }
   sort(_fn) {
@@ -244,7 +257,7 @@ class List extends Pointer {
   toString() {
     return this.join(",");
   }
-  toLocaleString(_locales, _options) {
+  toLocaleString() {
     return this.toString();
   }
   [Symbol.toStringTag]() {
@@ -1023,4 +1036,4 @@ function checkDataBounds(byteOffset, byteLength, s) {
   }
 }
 
-export { setInt64 as A, getFloat32 as B, setFloat32 as C, getFloat64 as D, ErrorAnswer as E, setFloat64 as F, getData as G, initData as H, resize as I, initStruct as J, FixedAnswer as K, List as L, getInterfaceClientOrNull as M, ErrorClient as N, checkDataBounds as O, checkPointerBounds as P, getDataSection as Q, getInterfaceClientOrNullAt as R, getPointerAs as S, getPointerSection as T, getSize as U, Data as V, Text as W, clientOrNull as X, getUint16 as a, getUint32 as b, setUint32 as c, getBit as d, setBit as e, getStruct as f, getPointer as g, getUint64 as h, initStructAt as i, setUint64 as j, getAs as k, getList as l, initList as m, getUint8 as n, setUint8 as o, getText as p, setText as q, getInt8 as r, setUint16 as s, testWhich as t, setInt8 as u, getInt16 as v, setInt16 as w, getInt32 as x, setInt32 as y, getInt64 as z };
+export { setInt64 as A, getFloat32 as B, setFloat32 as C, Data as D, ErrorAnswer as E, getFloat64 as F, setFloat64 as G, getData as H, initData as I, initList$1 as J, resize as K, List as L, initStruct as M, FixedAnswer as N, getInterfaceClientOrNull as O, ErrorClient as P, checkDataBounds as Q, checkPointerBounds as R, getDataSection as S, getInterfaceClientOrNullAt as T, getPointerAs as U, getPointerSection as V, getSize as W, Text as X, clientOrNull as Y, getUint16 as a, getUint32 as b, setUint32 as c, getBit as d, setBit as e, getStruct as f, getPointer as g, getUint64 as h, initStructAt as i, setUint64 as j, getAs as k, getList as l, initList as m, getUint8 as n, setUint8 as o, getText as p, setText as q, getInt8 as r, setUint16 as s, testWhich as t, setInt8 as u, getInt16 as v, setInt16 as w, getInt32 as x, setInt32 as y, getInt64 as z };

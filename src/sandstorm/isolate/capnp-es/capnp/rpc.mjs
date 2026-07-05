@@ -1,6 +1,6 @@
-import { S as Struct, O as ObjectSize, a as adopt, d as disown, i as isNull, c as copyFrom } from '../shared/capnp-es.BylpbGNO.mjs';
-import { g as getBitMask, a as getUint8Mask, C as CompositeList } from '../shared/capnp-es.QN5nOfqw.mjs';
-import { b as getUint32, c as setUint32, g as getPointer, f as getStruct, i as initStructAt, h as getUint64, j as setUint64, a as getUint16, s as setUint16, d as getBit, e as setBit, k as getAs, t as testWhich, l as getList, m as initList, n as getUint8, o as setUint8, p as getText, q as setText } from '../shared/capnp-es.-PjN5D7P.mjs';
+import { S as Struct, O as ObjectSize, a as adopt, d as disown, i as isNull, c as copyFrom } from '../shared/capnp-es.Da9bkTPj.mjs';
+import { g as getBitMask, a as getUint8Mask, C as CompositeList } from '../shared/capnp-es.CKgVaTmi.mjs';
+import { b as getUint32, c as setUint32, g as getPointer, f as getStruct, i as initStructAt, h as getUint64, j as setUint64, a as getUint16, s as setUint16, d as getBit, e as setBit, k as getAs, t as testWhich, L as List, l as getList, m as initList, n as getUint8, o as setUint8, p as getText, q as setText } from '../shared/capnp-es.iydqJhtG.mjs';
 
 const _capnpFileId = 0xb312981b2552a250n;
 const Message_Which = {
@@ -135,6 +135,141 @@ class Message extends Struct {
       { name: "join", codeOrder: 13, ordinal: 12, discriminantValue: 12, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xfbe1980490e001afn, typeIdHex: "fbe1980490e001af", displayName: "Join" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["unimplemented"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Message) {
+          target.unimplemented = value2;
+        } else {
+          Message._applyInit(target._initUnimplemented(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["abort"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Exception) {
+          target.abort = value2;
+        } else {
+          Exception._applyInit(target._initAbort(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["bootstrap"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Bootstrap) {
+          target.bootstrap = value2;
+        } else {
+          Bootstrap._applyInit(target._initBootstrap(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["call"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Call) {
+          target.call = value2;
+        } else {
+          Call._applyInit(target._initCall(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["return"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Return) {
+          target.return = value2;
+        } else {
+          Return._applyInit(target._initReturn(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["finish"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Finish) {
+          target.finish = value2;
+        } else {
+          Finish._applyInit(target._initFinish(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["resolve"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Resolve) {
+          target.resolve = value2;
+        } else {
+          Resolve._applyInit(target._initResolve(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["release"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Release) {
+          target.release = value2;
+        } else {
+          Release._applyInit(target._initRelease(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["disembargo"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Disembargo) {
+          target.disembargo = value2;
+        } else {
+          Disembargo._applyInit(target._initDisembargo(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["obsoleteSave"];
+      if (value2 !== void 0) {
+        target.obsoleteSave = value2;
+      }
+    }
+    {
+      const value2 = init["obsoleteDelete"];
+      if (value2 !== void 0) {
+        target.obsoleteDelete = value2;
+      }
+    }
+    {
+      const value2 = init["provide"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Provide) {
+          target.provide = value2;
+        } else {
+          Provide._applyInit(target._initProvide(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["accept"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Accept) {
+          target.accept = value2;
+        } else {
+          Accept._applyInit(target._initAccept(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["join"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Join) {
+          target.join = value2;
+        } else {
+          Join._applyInit(target._initJoin(), value2);
+        }
+      }
+    }
+  }
   _adoptUnimplemented(value) {
     setUint16(0, 0, this);
     adopt(value, getPointer(0, this));
@@ -561,6 +696,173 @@ class Message extends Struct {
   which() {
     return getUint16(0, this);
   }
+  _set(value) {
+    switch (value.which) {
+      case "unimplemented": {
+        this.unimplemented = value.value;
+        return;
+      }
+      case "abort": {
+        this.abort = value.value;
+        return;
+      }
+      case "bootstrap": {
+        this.bootstrap = value.value;
+        return;
+      }
+      case "call": {
+        this.call = value.value;
+        return;
+      }
+      case "return": {
+        this.return = value.value;
+        return;
+      }
+      case "finish": {
+        this.finish = value.value;
+        return;
+      }
+      case "resolve": {
+        this.resolve = value.value;
+        return;
+      }
+      case "release": {
+        this.release = value.value;
+        return;
+      }
+      case "disembargo": {
+        this.disembargo = value.value;
+        return;
+      }
+      case "obsoleteSave": {
+        this.obsoleteSave = value.value;
+        return;
+      }
+      case "obsoleteDelete": {
+        this.obsoleteDelete = value.value;
+        return;
+      }
+      case "provide": {
+        this.provide = value.value;
+        return;
+      }
+      case "accept": {
+        this.accept = value.value;
+        return;
+      }
+      case "join": {
+        this.join = value.value;
+        return;
+      }
+    }
+  }
+  _match(cases) {
+    const which = this.which();
+    switch (which) {
+      case 0: {
+        const callback = cases["unimplemented"];
+        if (callback) {
+          return callback(this.unimplemented);
+        }
+        break;
+      }
+      case 1: {
+        const callback = cases["abort"];
+        if (callback) {
+          return callback(this.abort);
+        }
+        break;
+      }
+      case 8: {
+        const callback = cases["bootstrap"];
+        if (callback) {
+          return callback(this.bootstrap);
+        }
+        break;
+      }
+      case 2: {
+        const callback = cases["call"];
+        if (callback) {
+          return callback(this.call);
+        }
+        break;
+      }
+      case 3: {
+        const callback = cases["return"];
+        if (callback) {
+          return callback(this.return);
+        }
+        break;
+      }
+      case 4: {
+        const callback = cases["finish"];
+        if (callback) {
+          return callback(this.finish);
+        }
+        break;
+      }
+      case 5: {
+        const callback = cases["resolve"];
+        if (callback) {
+          return callback(this.resolve);
+        }
+        break;
+      }
+      case 6: {
+        const callback = cases["release"];
+        if (callback) {
+          return callback(this.release);
+        }
+        break;
+      }
+      case 13: {
+        const callback = cases["disembargo"];
+        if (callback) {
+          return callback(this.disembargo);
+        }
+        break;
+      }
+      case 7: {
+        const callback = cases["obsoleteSave"];
+        if (callback) {
+          return callback(this.obsoleteSave);
+        }
+        break;
+      }
+      case 9: {
+        const callback = cases["obsoleteDelete"];
+        if (callback) {
+          return callback(this.obsoleteDelete);
+        }
+        break;
+      }
+      case 10: {
+        const callback = cases["provide"];
+        if (callback) {
+          return callback(this.provide);
+        }
+        break;
+      }
+      case 11: {
+        const callback = cases["accept"];
+        if (callback) {
+          return callback(this.accept);
+        }
+        break;
+      }
+      case 12: {
+        const callback = cases["join"];
+        if (callback) {
+          return callback(this.join);
+        }
+        break;
+      }
+    }
+    if (cases._) {
+      return cases._(which);
+    }
+    throw new Error("Unhandled Message union case: " + which);
+  }
 }
 class Bootstrap extends Struct {
   static _capnp = {
@@ -574,6 +876,21 @@ class Bootstrap extends Struct {
       { name: "deprecatedObjectId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 0, type: { kind: "anyPointer" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["questionId"];
+      if (value2 !== void 0) {
+        target.questionId = value2;
+      }
+    }
+    {
+      const value2 = init["deprecatedObjectId"];
+      if (value2 !== void 0) {
+        target.deprecatedObjectId = value2;
+      }
+    }
+  }
   /**
   * A new question ID identifying this request, which will eventually receive a Return message
   * containing the restored capability.
@@ -758,6 +1075,27 @@ class Call_SendResultsTo extends Struct {
       { name: "thirdParty", codeOrder: 2, ordinal: 7, discriminantValue: 2, kind: "slot", offset: 2, type: { kind: "anyPointer" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["caller"];
+      if (value2 !== void 0) {
+        target.caller = true;
+      }
+    }
+    {
+      const value2 = init["yourself"];
+      if (value2 !== void 0) {
+        target.yourself = true;
+      }
+    }
+    {
+      const value2 = init["thirdParty"];
+      if (value2 !== void 0) {
+        target.thirdParty = value2;
+      }
+    }
+  }
   get _isCaller() {
     return getUint16(6, this) === 0;
   }
@@ -811,6 +1149,52 @@ class Call_SendResultsTo extends Struct {
   which() {
     return getUint16(6, this);
   }
+  _set(value) {
+    switch (value.which) {
+      case "caller": {
+        this.caller = true;
+        return;
+      }
+      case "yourself": {
+        this.yourself = true;
+        return;
+      }
+      case "thirdParty": {
+        this.thirdParty = value.value;
+        return;
+      }
+    }
+  }
+  _match(cases) {
+    const which = this.which();
+    switch (which) {
+      case 0: {
+        const callback = cases["caller"];
+        if (callback) {
+          return callback();
+        }
+        break;
+      }
+      case 1: {
+        const callback = cases["yourself"];
+        if (callback) {
+          return callback();
+        }
+        break;
+      }
+      case 2: {
+        const callback = cases["thirdParty"];
+        if (callback) {
+          return callback(this.thirdParty);
+        }
+        break;
+      }
+    }
+    if (cases._) {
+      return cases._(which);
+    }
+    throw new Error("Unhandled Call_SendResultsTo union case: " + which);
+  }
 }
 class Call extends Struct {
   static _capnp = {
@@ -834,6 +1218,71 @@ class Call extends Struct {
     defaultNoPromisePipelining: getBitMask(false, 1),
     defaultOnlyPromisePipeline: getBitMask(false, 2)
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["questionId"];
+      if (value2 !== void 0) {
+        target.questionId = value2;
+      }
+    }
+    {
+      const value2 = init["target"];
+      if (value2 !== void 0) {
+        if (value2 instanceof MessageTarget) {
+          target.target = value2;
+        } else {
+          MessageTarget._applyInit(target._initTarget(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["interfaceId"];
+      if (value2 !== void 0) {
+        target.interfaceId = value2;
+      }
+    }
+    {
+      const value2 = init["methodId"];
+      if (value2 !== void 0) {
+        target.methodId = value2;
+      }
+    }
+    {
+      const value2 = init["allowThirdPartyTailCall"];
+      if (value2 !== void 0) {
+        target.allowThirdPartyTailCall = value2;
+      }
+    }
+    {
+      const value2 = init["noPromisePipelining"];
+      if (value2 !== void 0) {
+        target.noPromisePipelining = value2;
+      }
+    }
+    {
+      const value2 = init["onlyPromisePipeline"];
+      if (value2 !== void 0) {
+        target.onlyPromisePipeline = value2;
+      }
+    }
+    {
+      const value2 = init["params"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Payload) {
+          target.params = value2;
+        } else {
+          Payload._applyInit(target._initParams(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["sendResultsTo"];
+      if (value2 !== void 0) {
+        Call_SendResultsTo._applyInit(target._initSendResultsTo(), value2);
+      }
+    }
+  }
   /**
   * A number, chosen by the caller, that identifies this call in future messages.  This number
   * must be different from all other calls originating from the same end of the connection (but
@@ -1058,6 +1507,71 @@ class Return extends Struct {
     defaultReleaseParamCaps: getBitMask(true, 0),
     defaultNoFinishNeeded: getBitMask(false, 1)
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["answerId"];
+      if (value2 !== void 0) {
+        target.answerId = value2;
+      }
+    }
+    {
+      const value2 = init["releaseParamCaps"];
+      if (value2 !== void 0) {
+        target.releaseParamCaps = value2;
+      }
+    }
+    {
+      const value2 = init["noFinishNeeded"];
+      if (value2 !== void 0) {
+        target.noFinishNeeded = value2;
+      }
+    }
+    {
+      const value2 = init["results"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Payload) {
+          target.results = value2;
+        } else {
+          Payload._applyInit(target._initResults(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["exception"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Exception) {
+          target.exception = value2;
+        } else {
+          Exception._applyInit(target._initException(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["canceled"];
+      if (value2 !== void 0) {
+        target.canceled = true;
+      }
+    }
+    {
+      const value2 = init["resultsSentElsewhere"];
+      if (value2 !== void 0) {
+        target.resultsSentElsewhere = true;
+      }
+    }
+    {
+      const value2 = init["takeFromOtherQuestion"];
+      if (value2 !== void 0) {
+        target.takeFromOtherQuestion = value2;
+      }
+    }
+    {
+      const value2 = init["acceptFromThirdParty"];
+      if (value2 !== void 0) {
+        target.acceptFromThirdParty = value2;
+      }
+    }
+  }
   /**
   * Equal to the QuestionId of the corresponding `Call` message.
   *
@@ -1227,6 +1741,85 @@ class Return extends Struct {
   which() {
     return getUint16(6, this);
   }
+  _set(value) {
+    switch (value.which) {
+      case "results": {
+        this.results = value.value;
+        return;
+      }
+      case "exception": {
+        this.exception = value.value;
+        return;
+      }
+      case "canceled": {
+        this.canceled = true;
+        return;
+      }
+      case "resultsSentElsewhere": {
+        this.resultsSentElsewhere = true;
+        return;
+      }
+      case "takeFromOtherQuestion": {
+        this.takeFromOtherQuestion = value.value;
+        return;
+      }
+      case "acceptFromThirdParty": {
+        this.acceptFromThirdParty = value.value;
+        return;
+      }
+    }
+  }
+  _match(cases) {
+    const which = this.which();
+    switch (which) {
+      case 0: {
+        const callback = cases["results"];
+        if (callback) {
+          return callback(this.results);
+        }
+        break;
+      }
+      case 1: {
+        const callback = cases["exception"];
+        if (callback) {
+          return callback(this.exception);
+        }
+        break;
+      }
+      case 2: {
+        const callback = cases["canceled"];
+        if (callback) {
+          return callback();
+        }
+        break;
+      }
+      case 3: {
+        const callback = cases["resultsSentElsewhere"];
+        if (callback) {
+          return callback();
+        }
+        break;
+      }
+      case 4: {
+        const callback = cases["takeFromOtherQuestion"];
+        if (callback) {
+          return callback(this.takeFromOtherQuestion);
+        }
+        break;
+      }
+      case 5: {
+        const callback = cases["acceptFromThirdParty"];
+        if (callback) {
+          return callback(this.acceptFromThirdParty);
+        }
+        break;
+      }
+    }
+    if (cases._) {
+      return cases._(which);
+    }
+    throw new Error("Unhandled Return union case: " + which);
+  }
 }
 class Finish extends Struct {
   static _capnp = {
@@ -1243,6 +1836,27 @@ class Finish extends Struct {
     defaultReleaseResultCaps: getBitMask(true, 0),
     defaultRequireEarlyCancellationWorkaround: getBitMask(true, 1)
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["questionId"];
+      if (value2 !== void 0) {
+        target.questionId = value2;
+      }
+    }
+    {
+      const value2 = init["releaseResultCaps"];
+      if (value2 !== void 0) {
+        target.releaseResultCaps = value2;
+      }
+    }
+    {
+      const value2 = init["requireEarlyCancellationWorkaround"];
+      if (value2 !== void 0) {
+        target.requireEarlyCancellationWorkaround = value2;
+      }
+    }
+  }
   /**
   * ID of the call whose result is to be released.
   *
@@ -1347,6 +1961,35 @@ class Resolve extends Struct {
       { name: "exception", codeOrder: 2, ordinal: 2, discriminantValue: 1, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xd625b7063acf691an, typeIdHex: "d625b7063acf691a", displayName: "Exception" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["promiseId"];
+      if (value2 !== void 0) {
+        target.promiseId = value2;
+      }
+    }
+    {
+      const value2 = init["cap"];
+      if (value2 !== void 0) {
+        if (value2 instanceof CapDescriptor) {
+          target.cap = value2;
+        } else {
+          CapDescriptor._applyInit(target._initCap(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["exception"];
+      if (value2 !== void 0) {
+        if (value2 instanceof Exception) {
+          target.exception = value2;
+        } else {
+          Exception._applyInit(target._initException(), value2);
+        }
+      }
+    }
+  }
   /**
   * The ID of the promise to be resolved.
   *
@@ -1449,6 +2092,41 @@ class Resolve extends Struct {
   which() {
     return getUint16(4, this);
   }
+  _set(value) {
+    switch (value.which) {
+      case "cap": {
+        this.cap = value.value;
+        return;
+      }
+      case "exception": {
+        this.exception = value.value;
+        return;
+      }
+    }
+  }
+  _match(cases) {
+    const which = this.which();
+    switch (which) {
+      case 0: {
+        const callback = cases["cap"];
+        if (callback) {
+          return callback(this.cap);
+        }
+        break;
+      }
+      case 1: {
+        const callback = cases["exception"];
+        if (callback) {
+          return callback(this.exception);
+        }
+        break;
+      }
+    }
+    if (cases._) {
+      return cases._(which);
+    }
+    throw new Error("Unhandled Resolve union case: " + which);
+  }
 }
 class Release extends Struct {
   static _capnp = {
@@ -1462,6 +2140,21 @@ class Release extends Struct {
       { name: "referenceCount", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "uint32" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["id"];
+      if (value2 !== void 0) {
+        target.id = value2;
+      }
+    }
+    {
+      const value2 = init["referenceCount"];
+      if (value2 !== void 0) {
+        target.referenceCount = value2;
+      }
+    }
+  }
   /**
   * What to release.
   *
@@ -1550,6 +2243,33 @@ class Disembargo_Context extends Struct {
       { name: "provide", codeOrder: 3, ordinal: 4, discriminantValue: 3, kind: "slot", offset: 0, type: { kind: "uint32" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["senderLoopback"];
+      if (value2 !== void 0) {
+        target.senderLoopback = value2;
+      }
+    }
+    {
+      const value2 = init["receiverLoopback"];
+      if (value2 !== void 0) {
+        target.receiverLoopback = value2;
+      }
+    }
+    {
+      const value2 = init["accept"];
+      if (value2 !== void 0) {
+        target.accept = true;
+      }
+    }
+    {
+      const value2 = init["provide"];
+      if (value2 !== void 0) {
+        target.provide = value2;
+      }
+    }
+  }
   /**
   * The sender is requesting a disembargo on a promise that is known to resolve back to a
   * capability hosted by the sender.  As soon as the receiver has echoed back all pipelined calls
@@ -1622,6 +2342,63 @@ class Disembargo_Context extends Struct {
   which() {
     return getUint16(4, this);
   }
+  _set(value) {
+    switch (value.which) {
+      case "senderLoopback": {
+        this.senderLoopback = value.value;
+        return;
+      }
+      case "receiverLoopback": {
+        this.receiverLoopback = value.value;
+        return;
+      }
+      case "accept": {
+        this.accept = true;
+        return;
+      }
+      case "provide": {
+        this.provide = value.value;
+        return;
+      }
+    }
+  }
+  _match(cases) {
+    const which = this.which();
+    switch (which) {
+      case 0: {
+        const callback = cases["senderLoopback"];
+        if (callback) {
+          return callback(this.senderLoopback);
+        }
+        break;
+      }
+      case 1: {
+        const callback = cases["receiverLoopback"];
+        if (callback) {
+          return callback(this.receiverLoopback);
+        }
+        break;
+      }
+      case 2: {
+        const callback = cases["accept"];
+        if (callback) {
+          return callback();
+        }
+        break;
+      }
+      case 3: {
+        const callback = cases["provide"];
+        if (callback) {
+          return callback(this.provide);
+        }
+        break;
+      }
+    }
+    if (cases._) {
+      return cases._(which);
+    }
+    throw new Error("Unhandled Disembargo_Context union case: " + which);
+  }
 }
 class Disembargo extends Struct {
   static _capnp = {
@@ -1635,6 +2412,25 @@ class Disembargo extends Struct {
       { name: "context", codeOrder: 1, ordinal: 1, kind: "group", type: { kind: "group", typeId: 0xd562b4df655bdd4dn, typeIdHex: "d562b4df655bdd4d", displayName: "context" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["target"];
+      if (value2 !== void 0) {
+        if (value2 instanceof MessageTarget) {
+          target.target = value2;
+        } else {
+          MessageTarget._applyInit(target._initTarget(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["context"];
+      if (value2 !== void 0) {
+        Disembargo_Context._applyInit(target._initContext(), value2);
+      }
+    }
+  }
   _adoptTarget(value) {
     adopt(value, getPointer(0, this));
   }
@@ -1680,6 +2476,31 @@ class Provide extends Struct {
       { name: "recipient", codeOrder: 2, ordinal: 2, kind: "slot", offset: 1, type: { kind: "anyPointer" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["questionId"];
+      if (value2 !== void 0) {
+        target.questionId = value2;
+      }
+    }
+    {
+      const value2 = init["target"];
+      if (value2 !== void 0) {
+        if (value2 instanceof MessageTarget) {
+          target.target = value2;
+        } else {
+          MessageTarget._applyInit(target._initTarget(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["recipient"];
+      if (value2 !== void 0) {
+        target.recipient = value2;
+      }
+    }
+  }
   /**
   * Question ID to be held open until the recipient has received the capability.  A result will be
   * returned once the third party has successfully received the capability.  The sender must at some
@@ -1751,6 +2572,27 @@ class Accept extends Struct {
       { name: "embargo", codeOrder: 2, ordinal: 2, kind: "slot", offset: 32, type: { kind: "bool" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["questionId"];
+      if (value2 !== void 0) {
+        target.questionId = value2;
+      }
+    }
+    {
+      const value2 = init["provision"];
+      if (value2 !== void 0) {
+        target.provision = value2;
+      }
+    }
+    {
+      const value2 = init["embargo"];
+      if (value2 !== void 0) {
+        target.embargo = value2;
+      }
+    }
+  }
   /**
   * A new question ID identifying this accept message, which will eventually receive a Return
   * message containing the provided capability (or the call result in the case of a redirected
@@ -1840,6 +2682,31 @@ class Join extends Struct {
       { name: "keyPart", codeOrder: 2, ordinal: 2, kind: "slot", offset: 1, type: { kind: "anyPointer" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["questionId"];
+      if (value2 !== void 0) {
+        target.questionId = value2;
+      }
+    }
+    {
+      const value2 = init["target"];
+      if (value2 !== void 0) {
+        if (value2 instanceof MessageTarget) {
+          target.target = value2;
+        } else {
+          MessageTarget._applyInit(target._initTarget(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["keyPart"];
+      if (value2 !== void 0) {
+        target.keyPart = value2;
+      }
+    }
+  }
   /**
   * Question ID used to respond to this Join.  (Note that this ID only identifies one part of the
   * request for one hop; each part has a different ID and relayed copies of the request have
@@ -1941,6 +2808,25 @@ class MessageTarget extends Struct {
       { name: "promisedAnswer", codeOrder: 1, ordinal: 1, discriminantValue: 1, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xd800b1d6cd6f1ca0n, typeIdHex: "d800b1d6cd6f1ca0", displayName: "PromisedAnswer" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["importedCap"];
+      if (value2 !== void 0) {
+        target.importedCap = value2;
+      }
+    }
+    {
+      const value2 = init["promisedAnswer"];
+      if (value2 !== void 0) {
+        if (value2 instanceof PromisedAnswer) {
+          target.promisedAnswer = value2;
+        } else {
+          PromisedAnswer._applyInit(target._initPromisedAnswer(), value2);
+        }
+      }
+    }
+  }
   /**
   * This message is to a capability or promise previously imported by the caller (exported by
   * the receiver).
@@ -1996,6 +2882,41 @@ class MessageTarget extends Struct {
   which() {
     return getUint16(4, this);
   }
+  _set(value) {
+    switch (value.which) {
+      case "importedCap": {
+        this.importedCap = value.value;
+        return;
+      }
+      case "promisedAnswer": {
+        this.promisedAnswer = value.value;
+        return;
+      }
+    }
+  }
+  _match(cases) {
+    const which = this.which();
+    switch (which) {
+      case 0: {
+        const callback = cases["importedCap"];
+        if (callback) {
+          return callback(this.importedCap);
+        }
+        break;
+      }
+      case 1: {
+        const callback = cases["promisedAnswer"];
+        if (callback) {
+          return callback(this.promisedAnswer);
+        }
+        break;
+      }
+    }
+    if (cases._) {
+      return cases._(which);
+    }
+    throw new Error("Unhandled MessageTarget union case: " + which);
+  }
 }
 class Payload extends Struct {
   static _capnp = {
@@ -2010,6 +2931,34 @@ class Payload extends Struct {
     ]
   };
   static _CapTable;
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["content"];
+      if (value2 !== void 0) {
+        target.content = value2;
+      }
+    }
+    {
+      const value2 = init["capTable"];
+      if (value2 !== void 0) {
+        if (value2 instanceof List) {
+          target.capTable = value2;
+        } else {
+          const values = Array.isArray(value2) ? value2 : Array.from(value2);
+          const list = target._initCapTable(values.length);
+          for (let index = 0; index < values.length; index++) {
+            const item = values[index];
+            if (item instanceof CapDescriptor) {
+              list.set(index, item);
+            } else {
+              CapDescriptor._applyInit(list.get(index), item);
+            }
+          }
+        }
+      }
+    }
+  }
   _adoptContent(value) {
     adopt(value, getPointer(0, this));
   }
@@ -2129,6 +3078,59 @@ class CapDescriptor extends Struct {
     ],
     defaultAttachedFd: getUint8Mask(255)
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["none"];
+      if (value2 !== void 0) {
+        target.none = true;
+      }
+    }
+    {
+      const value2 = init["senderHosted"];
+      if (value2 !== void 0) {
+        target.senderHosted = value2;
+      }
+    }
+    {
+      const value2 = init["senderPromise"];
+      if (value2 !== void 0) {
+        target.senderPromise = value2;
+      }
+    }
+    {
+      const value2 = init["receiverHosted"];
+      if (value2 !== void 0) {
+        target.receiverHosted = value2;
+      }
+    }
+    {
+      const value2 = init["receiverAnswer"];
+      if (value2 !== void 0) {
+        if (value2 instanceof PromisedAnswer) {
+          target.receiverAnswer = value2;
+        } else {
+          PromisedAnswer._applyInit(target._initReceiverAnswer(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["thirdPartyHosted"];
+      if (value2 !== void 0) {
+        if (value2 instanceof ThirdPartyCapDescriptor) {
+          target.thirdPartyHosted = value2;
+        } else {
+          ThirdPartyCapDescriptor._applyInit(target._initThirdPartyHosted(), value2);
+        }
+      }
+    }
+    {
+      const value2 = init["attachedFd"];
+      if (value2 !== void 0) {
+        target.attachedFd = value2;
+      }
+    }
+  }
   get _isNone() {
     return getUint16(0, this) === 0;
   }
@@ -2320,6 +3322,85 @@ class CapDescriptor extends Struct {
   which() {
     return getUint16(0, this);
   }
+  _set(value) {
+    switch (value.which) {
+      case "none": {
+        this.none = true;
+        return;
+      }
+      case "senderHosted": {
+        this.senderHosted = value.value;
+        return;
+      }
+      case "senderPromise": {
+        this.senderPromise = value.value;
+        return;
+      }
+      case "receiverHosted": {
+        this.receiverHosted = value.value;
+        return;
+      }
+      case "receiverAnswer": {
+        this.receiverAnswer = value.value;
+        return;
+      }
+      case "thirdPartyHosted": {
+        this.thirdPartyHosted = value.value;
+        return;
+      }
+    }
+  }
+  _match(cases) {
+    const which = this.which();
+    switch (which) {
+      case 0: {
+        const callback = cases["none"];
+        if (callback) {
+          return callback();
+        }
+        break;
+      }
+      case 1: {
+        const callback = cases["senderHosted"];
+        if (callback) {
+          return callback(this.senderHosted);
+        }
+        break;
+      }
+      case 2: {
+        const callback = cases["senderPromise"];
+        if (callback) {
+          return callback(this.senderPromise);
+        }
+        break;
+      }
+      case 3: {
+        const callback = cases["receiverHosted"];
+        if (callback) {
+          return callback(this.receiverHosted);
+        }
+        break;
+      }
+      case 4: {
+        const callback = cases["receiverAnswer"];
+        if (callback) {
+          return callback(this.receiverAnswer);
+        }
+        break;
+      }
+      case 5: {
+        const callback = cases["thirdPartyHosted"];
+        if (callback) {
+          return callback(this.thirdPartyHosted);
+        }
+        break;
+      }
+    }
+    if (cases._) {
+      return cases._(which);
+    }
+    throw new Error("Unhandled CapDescriptor union case: " + which);
+  }
 }
 const PromisedAnswer_Op_Which = {
   /**
@@ -2349,6 +3430,21 @@ class PromisedAnswer_Op extends Struct {
       { name: "getPointerField", codeOrder: 1, ordinal: 1, discriminantValue: 1, kind: "slot", offset: 1, type: { kind: "uint16" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["noop"];
+      if (value2 !== void 0) {
+        target.noop = true;
+      }
+    }
+    {
+      const value2 = init["getPointerField"];
+      if (value2 !== void 0) {
+        target.getPointerField = value2;
+      }
+    }
+  }
   get _isNoop() {
     return getUint16(0, this) === 0;
   }
@@ -2377,6 +3473,41 @@ class PromisedAnswer_Op extends Struct {
   which() {
     return getUint16(0, this);
   }
+  _set(value) {
+    switch (value.which) {
+      case "noop": {
+        this.noop = true;
+        return;
+      }
+      case "getPointerField": {
+        this.getPointerField = value.value;
+        return;
+      }
+    }
+  }
+  _match(cases) {
+    const which = this.which();
+    switch (which) {
+      case 0: {
+        const callback = cases["noop"];
+        if (callback) {
+          return callback();
+        }
+        break;
+      }
+      case 1: {
+        const callback = cases["getPointerField"];
+        if (callback) {
+          return callback(this.getPointerField);
+        }
+        break;
+      }
+    }
+    if (cases._) {
+      return cases._(which);
+    }
+    throw new Error("Unhandled PromisedAnswer_Op union case: " + which);
+  }
 }
 class PromisedAnswer extends Struct {
   static Op = PromisedAnswer_Op;
@@ -2392,6 +3523,34 @@ class PromisedAnswer extends Struct {
     ]
   };
   static _Transform;
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["questionId"];
+      if (value2 !== void 0) {
+        target.questionId = value2;
+      }
+    }
+    {
+      const value2 = init["transform"];
+      if (value2 !== void 0) {
+        if (value2 instanceof List) {
+          target.transform = value2;
+        } else {
+          const values = Array.isArray(value2) ? value2 : Array.from(value2);
+          const list = target._initTransform(values.length);
+          for (let index = 0; index < values.length; index++) {
+            const item = values[index];
+            if (item instanceof PromisedAnswer_Op) {
+              list.set(index, item);
+            } else {
+              PromisedAnswer_Op._applyInit(list.get(index), item);
+            }
+          }
+        }
+      }
+    }
+  }
   /**
   * ID of the question (in the sender's question table / receiver's answer table) whose answer is
   * expected to contain the capability.
@@ -2443,6 +3602,21 @@ class ThirdPartyCapDescriptor extends Struct {
       { name: "vineId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 0, type: { kind: "uint32" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["id"];
+      if (value2 !== void 0) {
+        target.id = value2;
+      }
+    }
+    {
+      const value2 = init["vineId"];
+      if (value2 !== void 0) {
+        target.vineId = value2;
+      }
+    }
+  }
   _adoptId(value) {
     adopt(value, getPointer(0, this));
   }
@@ -2563,6 +3737,39 @@ class Exception extends Struct {
       { name: "trace", codeOrder: 4, ordinal: 4, kind: "slot", offset: 1, type: { kind: "text" } }
     ]
   };
+  static _applyInit(target, value) {
+    const init = value;
+    {
+      const value2 = init["reason"];
+      if (value2 !== void 0) {
+        target.reason = value2;
+      }
+    }
+    {
+      const value2 = init["type"];
+      if (value2 !== void 0) {
+        target.type = value2;
+      }
+    }
+    {
+      const value2 = init["obsoleteIsCallersFault"];
+      if (value2 !== void 0) {
+        target.obsoleteIsCallersFault = value2;
+      }
+    }
+    {
+      const value2 = init["obsoleteDurability"];
+      if (value2 !== void 0) {
+        target.obsoleteDurability = value2;
+      }
+    }
+    {
+      const value2 = init["trace"];
+      if (value2 !== void 0) {
+        target.trace = value2;
+      }
+    }
+  }
   /**
   * Human-readable failure description.
   *

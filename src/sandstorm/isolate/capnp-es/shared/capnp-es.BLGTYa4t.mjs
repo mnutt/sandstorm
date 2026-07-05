@@ -1,7 +1,7 @@
-import { M as Message } from './capnp-es.BC_cLggu.mjs';
-import { M as MethodError, c as copyCall, F as Fulfiller } from './capnp-es.2t3WiX8T.mjs';
-import { E as ErrorAnswer } from './capnp-es.-PjN5D7P.mjs';
-import { R as RPC_METHOD_NOT_IMPLEMENTED } from './capnp-es.BylpbGNO.mjs';
+import { M as Message } from './capnp-es.Da2a44Ii.mjs';
+import { M as MethodError, c as copyCall, F as Fulfiller } from './capnp-es.2NJr_hdR.mjs';
+import { E as ErrorAnswer } from './capnp-es.iydqJhtG.mjs';
+import { R as RPC_METHOD_NOT_IMPLEMENTED } from './capnp-es.Da9bkTPj.mjs';
 
 const disposeSymbol = Symbol.for("capnp-es.dispose");
 class Server {

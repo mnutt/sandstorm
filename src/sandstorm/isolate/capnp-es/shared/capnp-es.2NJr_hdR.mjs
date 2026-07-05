@@ -1,6 +1,6 @@
-import { J as initStruct, g as getPointer, K as FixedAnswer, M as getInterfaceClientOrNull, E as ErrorAnswer, k as getAs } from './capnp-es.-PjN5D7P.mjs';
-import { M as Message } from './capnp-es.BC_cLggu.mjs';
-import { l as Pointer, a3 as MAX_DEPTH, f as format, q as PointerType, A as getTargetPointerType, S as Struct, a4 as RPC_ERROR, a5 as RPC_CALL_QUEUE_FULL, a6 as INVARIANT_UNREACHABLE_CODE, a7 as RPC_QUEUE_CALL_CANCEL, u as RPC_NULL_CLIENT, c as copyFrom, a8 as RPC_METHOD_ERROR } from './capnp-es.BylpbGNO.mjs';
+import { M as initStruct, g as getPointer, N as FixedAnswer, O as getInterfaceClientOrNull, E as ErrorAnswer, k as getAs } from './capnp-es.iydqJhtG.mjs';
+import { M as Message } from './capnp-es.Da2a44Ii.mjs';
+import { P as Pointer, a3 as MAX_DEPTH, h as format, r as PointerType, A as getTargetPointerType, S as Struct, a4 as RPC_ERROR, a5 as RPC_CALL_QUEUE_FULL, a6 as INVARIANT_UNREACHABLE_CODE, a7 as RPC_QUEUE_CALL_CANCEL, u as RPC_NULL_CLIENT, c as copyFrom, a8 as RPC_METHOD_ERROR } from './capnp-es.Da9bkTPj.mjs';
 import { Exception } from '../capnp/rpc.mjs';
 
 class Interface extends Pointer {

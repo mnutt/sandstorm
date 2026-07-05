@@ -2420,8 +2420,12 @@ private:
     writeDevIsolateSupportFile(path, "rpc.js", ISOLATE_RPC_HELPER_SOURCE);
     writeDevIsolateSupportFile(
         path, "native-capnp-bridge.js", ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE);
+    std::set<std::string> writtenCapnpEsRuntimePaths;
     for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
-      writeDevIsolateSupportFile(path, capnpEsRuntimePath(module.name), module.source);
+      auto runtimePath = capnpEsRuntimePath(module.name);
+      if (writtenCapnpEsRuntimePaths.insert(toStdString(runtimePath)).second) {
+        writeDevIsolateSupportFile(path, runtimePath, module.source);
+      }
     }
     return path;
   }
@@ -2429,6 +2433,23 @@ private:
   kj::String capnpEsRuntimePath(kj::StringPtr moduleName) {
     if (moduleName == "@mnutt/capnp-es") {
       return kj::heapString("capnp-es/index.mjs");
+    }
+    if (moduleName == "@mnutt/capnp/rpc.mjs") {
+      return kj::heapString("capnp-es/capnp/rpc.mjs");
+    }
+
+    kj::StringPtr capnpEsPrefix = "@mnutt/capnp-es/";
+    if (moduleName.startsWith(capnpEsPrefix)) {
+      auto relative = moduleName.slice(capnpEsPrefix.size());
+      if (relative.endsWith(".mjs")) {
+        return kj::str("capnp-es/", relative);
+      }
+      return kj::str("capnp-es/", relative, ".mjs");
+    }
+
+    kj::StringPtr sharedPrefix = "@mnutt/shared/";
+    if (moduleName.startsWith(sharedPrefix)) {
+      return kj::str("capnp-es/shared/", moduleName.slice(sharedPrefix.size()));
     }
 
     kj::StringPtr prefix = "@mnutt/";

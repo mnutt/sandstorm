@@ -1,8 +1,8 @@
-import { N as ErrorClient, M as getInterfaceClientOrNull, k as getAs, E as ErrorAnswer, K as FixedAnswer } from './capnp-es.-PjN5D7P.mjs';
-import { a9 as RPC_ZERO_REF, a6 as INVARIANT_UNREACHABLE_CODE, aa as RPC_FULFILL_ALREADY_CALLED, a5 as RPC_CALL_QUEUE_FULL, a7 as RPC_QUEUE_CALL_CANCEL, u as RPC_NULL_CLIENT, ab as RPC_IMPORT_CLOSED, ac as AnyStruct, ad as RPC_QUESTION_ID_REUSED, ae as RPC_NO_MAIN_INTERFACE, af as setInterfacePointer, ag as RPC_UNIMPLEMENTED, f as format, ah as RPC_RETURN_FOR_UNKNOWN_QUESTION, ai as RPC_BAD_TARGET, aj as RPC_UNKNOWN_CAP_DESCRIPTOR, ak as RPC_UNKNOWN_ANSWER_ID, al as RPC_UNKNOWN_EXPORT_ID } from './capnp-es.BylpbGNO.mjs';
-import { t as transformPtr, a as toException, D as Deferred, Q as Queue, c as copyCall, F as Fulfiller, I as Interface, P as Pipeline, C as CapnpRpcError, M as MethodError, R as Registry, p as placeParams, b as PipelineClient } from './capnp-es.2t3WiX8T.mjs';
+import { P as ErrorClient, O as getInterfaceClientOrNull, k as getAs, E as ErrorAnswer, N as FixedAnswer } from './capnp-es.iydqJhtG.mjs';
+import { a9 as RPC_ZERO_REF, a6 as INVARIANT_UNREACHABLE_CODE, aa as RPC_FULFILL_ALREADY_CALLED, a5 as RPC_CALL_QUEUE_FULL, a7 as RPC_QUEUE_CALL_CANCEL, u as RPC_NULL_CLIENT, ab as RPC_IMPORT_CLOSED, ac as AnyStruct, ad as RPC_QUESTION_ID_REUSED, ae as RPC_NO_MAIN_INTERFACE, af as setInterfacePointer, ag as RPC_UNIMPLEMENTED, h as format, ah as RPC_RETURN_FOR_UNKNOWN_QUESTION, ai as RPC_BAD_TARGET, aj as RPC_UNKNOWN_CAP_DESCRIPTOR, ak as RPC_UNKNOWN_ANSWER_ID, al as RPC_UNKNOWN_EXPORT_ID } from './capnp-es.Da9bkTPj.mjs';
+import { t as transformPtr, a as toException, D as Deferred, Q as Queue, c as copyCall, F as Fulfiller, I as Interface, P as Pipeline, C as CapnpRpcError, M as MethodError, R as Registry, p as placeParams, b as PipelineClient } from './capnp-es.2NJr_hdR.mjs';
 import { Message as Message$1, Disembargo_Context_Which, PromisedAnswer_Op, Resolve, CapDescriptor, Return, MessageTarget, Call_SendResultsTo_Which } from '../capnp/rpc.mjs';
-import { M as Message } from './capnp-es.BC_cLggu.mjs';
+import { M as Message } from './capnp-es.Da2a44Ii.mjs';
 
 function isSameClient(c, d) {
   const norm = (c2) => {

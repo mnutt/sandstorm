@@ -1,5 +1,5 @@
-import { f as format, J as SEG_NOT_WORD_ALIGNED, K as DEFAULT_BUFFER_SIZE, M as SEG_ID_OUT_OF_BOUNDS, p as padToWord, Q as SEG_GET_NON_ZERO_SINGLE, T as MIN_SINGLE_SEGMENT_GROWTH, U as assertNever, V as MSG_PACK_NOT_WORD_ALIGNED, W as PACK_SPAN_THRESHOLD, X as MAX_SEGMENT_LENGTH, Y as SEG_SIZE_OVERFLOW, l as Pointer, N as NATIVE_LITTLE_ENDIAN, Z as SEG_REPLACEMENT_BUFFER_TOO_SMALL, _ as MSG_SEGMENT_OUT_OF_BOUNDS, $ as dumpBuffer, v as validate, q as PointerType, w as getTargetStructSize, a0 as MSG_SEGMENT_TOO_SMALL, a1 as DEFAULT_TRAVERSE_LIMIT, c as copyFrom, a2 as MSG_INVALID_FRAME_HEADER } from './capnp-es.BylpbGNO.mjs';
-import { I as resize, J as initStruct } from './capnp-es.-PjN5D7P.mjs';
+import { h as format, J as SEG_NOT_WORD_ALIGNED, K as DEFAULT_BUFFER_SIZE, M as SEG_ID_OUT_OF_BOUNDS, p as padToWord, Q as SEG_GET_NON_ZERO_SINGLE, T as MIN_SINGLE_SEGMENT_GROWTH, U as assertNever, V as MSG_PACK_NOT_WORD_ALIGNED, W as PACK_SPAN_THRESHOLD, X as MAX_SEGMENT_LENGTH, Y as SEG_SIZE_OVERFLOW, P as Pointer, N as NATIVE_LITTLE_ENDIAN, Z as SEG_REPLACEMENT_BUFFER_TOO_SMALL, _ as MSG_SEGMENT_OUT_OF_BOUNDS, $ as dumpBuffer, v as validate, r as PointerType, w as getTargetStructSize, a0 as MSG_SEGMENT_TOO_SMALL, a1 as DEFAULT_TRAVERSE_LIMIT, c as copyFrom, a2 as MSG_INVALID_FRAME_HEADER } from './capnp-es.Da9bkTPj.mjs';
+import { K as resize, M as initStruct } from './capnp-es.iydqJhtG.mjs';
 
 var ArenaKind = /* @__PURE__ */ ((ArenaKind2) => {
   ArenaKind2[ArenaKind2["SINGLE_SEGMENT"] = 0] = "SINGLE_SEGMENT";
