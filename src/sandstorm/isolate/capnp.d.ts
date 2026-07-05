@@ -70,6 +70,27 @@ declare module "sandstorm:capnp" {
     capabilities?: readonly NativeCapnpCapabilitySlot[],
   ): NativeCapnpPayload;
 
+  export interface NativeCapnpBridgeMethodMetadata {
+    readonly interfaceId: bigint | number | string;
+    readonly interfaceName?: string;
+    readonly methodOrdinal: number;
+    readonly methodName: string;
+  }
+
+  export interface NativeCapnpBridgeCallRequestOptions {
+    readonly target: NativeCapnpCapabilitySlot;
+    readonly method: NativeCapnpBridgeMethodMetadata;
+    readonly payload?: NativeCapnpPayload;
+  }
+
+  export function makeNativeCapnpBridgeCallRequest(
+    options?: NativeCapnpBridgeCallRequestOptions,
+  ): NativeCapnpPayload;
+
+  export function readNativeCapnpBridgeRequest(
+    message: Uint8Array | ArrayBuffer | ArrayBufferView,
+  ): unknown;
+
   export interface NativeCapnpBridgeCallOptions {
     readonly target: Capability;
     readonly binding: CapnpInterfaceBinding<any, any>;
@@ -90,7 +111,10 @@ declare module "sandstorm:capnp" {
   }
 
   export function createNativeCapnpBridge(
-    api: { capnpBridgeInfo(): Promise<unknown> },
+    api: {
+      capnpBridgeInfo(): Promise<unknown>;
+      nativeCapnpBridgeCall?(body?: BodyInit): Promise<unknown>;
+    },
     options?: NativeCapnpBridgeNegotiationOptions,
   ): Promise<NativeCapnpBridge>;
 

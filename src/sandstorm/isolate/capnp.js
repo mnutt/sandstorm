@@ -1,5 +1,9 @@
 import { RpcTarget } from "sandstorm:api";
 import { Message as CapnpEsMessage } from "@mnutt/capnp-es";
+import {
+  NativeCapnpBridgeRequest,
+  NativeCapnpCapabilitySlotKind,
+} from "sandstorm:native-capnp-bridge";
 
 export const SANDSTORM_CAPNP_VERSION = 0;
 export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
@@ -117,7 +121,7 @@ function normalizeNativeCapnpCapabilitySlot(slot) {
   }
   return Object.freeze({
     id: slot.id,
-    interfaceId: slot.interfaceId ?? 0n,
+    interfaceId: nativeCapnpInterfaceId(slot.interfaceId ?? 0n),
     interfaceName: typeof slot.interfaceName === "string" ? slot.interfaceName : "",
     kind: typeof slot.kind === "string" ? slot.kind : "receiverHosted",
   });
@@ -131,6 +135,77 @@ export function makeNativeCapnpPayload(message = new CapnpEsMessage(), capabilit
     message: nativeCapnpMessageBytes(message),
     capabilities: Object.freeze(capabilities.map(normalizeNativeCapnpCapabilitySlot)),
   });
+}
+
+function nativeCapnpInterfaceId(value) {
+  if (typeof value === "bigint") {
+    return value;
+  } else if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return BigInt(value);
+  } else if (typeof value === "string") {
+    const text = value.startsWith("0x") ? value : `0x${value}`;
+    return BigInt(text);
+  }
+  throw new TypeError("native Cap'n Proto interface ID must be a bigint, safe integer, or hex string");
+}
+
+function nativeCapnpSlotKind(kind) {
+  switch (kind) {
+    case "senderHosted":
+      return NativeCapnpCapabilitySlotKind.SENDER_HOSTED;
+    case "receiverHosted":
+      return NativeCapnpCapabilitySlotKind.RECEIVER_HOSTED;
+    case "savedToken":
+      return NativeCapnpCapabilitySlotKind.SAVED_TOKEN;
+    default:
+      throw new TypeError(`unknown native Cap'n Proto capability slot kind: ${kind}`);
+  }
+}
+
+function writeNativeCapnpCapabilitySlot(builder, slot) {
+  builder.id = slot.id;
+  builder.interfaceId = nativeCapnpInterfaceId(slot.interfaceId);
+  builder.interfaceName = slot.interfaceName;
+  builder.kind = nativeCapnpSlotKind(slot.kind);
+}
+
+function writeNativeCapnpPayload(builder, payload) {
+  const message = builder._initMessage(payload.message.byteLength);
+  message.copyBuffer(payload.message);
+
+  const capabilities = builder._initCapabilities(payload.capabilities.length);
+  for (let i = 0; i < payload.capabilities.length; ++i) {
+    writeNativeCapnpCapabilitySlot(capabilities.get(i), payload.capabilities[i]);
+  }
+}
+
+export function makeNativeCapnpBridgeCallRequest({ target, method, payload } = {}) {
+  if (!target || typeof target !== "object" || typeof target.id !== "string") {
+    throw new NativeCapnpBridgeProtocolError(
+      "native bridge call target must be a Sandstorm capability handle");
+  }
+  if (!method || typeof method !== "object") {
+    throw new NativeCapnpBridgeProtocolError("native bridge call requires method metadata");
+  }
+
+  const bridgePayload = payload || makeNativeCapnpPayload();
+  const message = new CapnpEsMessage();
+  const request = message.initRoot(NativeCapnpBridgeRequest);
+  request.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
+
+  const call = request._initCall();
+  writeNativeCapnpCapabilitySlot(call._initTarget(), normalizeNativeCapnpCapabilitySlot(target));
+  call.interfaceId = nativeCapnpInterfaceId(method.interfaceId);
+  call.methodOrdinal = method.methodOrdinal;
+  call.methodName = method.methodName;
+  writeNativeCapnpPayload(call._initParams(), bridgePayload);
+
+  return makeNativeCapnpPayload(message);
+}
+
+export function readNativeCapnpBridgeRequest(message) {
+  const bytes = nativeCapnpMessageBytes(message);
+  return new CapnpEsMessage(bytes, false).getRoot(NativeCapnpBridgeRequest);
 }
 
 function methodSchemaMetadata(binding, methodName) {
@@ -176,7 +251,8 @@ export async function createNativeCapnpBridge(api, options = {}) {
         throw new NativeCapnpBridgeProtocolError(
           "native bridge call requires api.nativeCapnpBridgeCall()");
       }
-      const result = await api.nativeCapnpBridgeCall(payload.message);
+      const request = makeNativeCapnpBridgeCallRequest({ target, method, payload });
+      const result = await api.nativeCapnpBridgeCall(request.message);
       if (!result || typeof result !== "object") {
         throw new NativeCapnpBridgeProtocolError("native bridge call returned an invalid response");
       }

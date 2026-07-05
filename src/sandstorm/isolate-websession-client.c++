@@ -23,6 +23,7 @@
 #include <sandstorm/api-session.capnp.h>
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
+#include <sandstorm/isolate-native-capnp-bridge.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
 #include <sandstorm/outbound-http-session-impl.capnp.h>
 #include <sandstorm/outbound-http-session.capnp.h>

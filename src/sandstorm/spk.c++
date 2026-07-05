@@ -40,6 +40,7 @@
 #include <sandstorm/isolate/capnweb.js.h>
 #include <sandstorm/isolate/capnp-es.js.h>
 #include <sandstorm/isolate/capnp.js.h>
+#include <sandstorm/isolate/native-capnp-bridge.js.h>
 #include <sandstorm/isolate/rpc.js.h>
 #include <stdlib.h>
 #include <dirent.h>
@@ -2407,6 +2408,8 @@ private:
     writeDevIsolateSupportFile(path, "capnp.js", ISOLATE_CAPNP_HELPER_SOURCE);
     writeDevIsolateSupportFile(path, "api.js", ISOLATE_API_HELPER_SOURCE);
     writeDevIsolateSupportFile(path, "rpc.js", ISOLATE_RPC_HELPER_SOURCE);
+    writeDevIsolateSupportFile(
+        path, "native-capnp-bridge.js", ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE);
     for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
       writeDevIsolateSupportFile(path, capnpEsRuntimePath(module.name), module.source);
     }
@@ -2471,7 +2474,7 @@ private:
     isolate.setCompatibilityDate(devIsolateCompatibilityDate);
     isolate.initCompatibilityFlags(0);
 
-    auto moduleList = isolate.initModules(modules.size() + 5 + ISOLATE_CAPNP_ES_MODULE_COUNT);
+    auto moduleList = isolate.initModules(modules.size() + 6 + ISOLATE_CAPNP_ES_MODULE_COUNT);
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2506,6 +2509,9 @@ private:
     auto capnpHelperModule = moduleList[helperIndex++];
     capnpHelperModule.setName("sandstorm:capnp");
     capnpHelperModule.setEsModulePath("__sandstorm_isolate_runtime/capnp.js");
+    auto nativeCapnpBridgeModule = moduleList[helperIndex++];
+    nativeCapnpBridgeModule.setName("sandstorm:native-capnp-bridge");
+    nativeCapnpBridgeModule.setEsModulePath("__sandstorm_isolate_runtime/native-capnp-bridge.js");
     for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
       auto module = moduleList[helperIndex++];
       module.setName(runtimeModule.name);

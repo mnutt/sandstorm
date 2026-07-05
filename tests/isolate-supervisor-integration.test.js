@@ -517,6 +517,9 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
   assert.equal(
     modules.get("sandstorm:capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp.js");
+  assert.equal(
+    modules.get("sandstorm:native-capnp-bridge").esModulePath,
+    "__sandstorm_isolate_runtime/native-capnp-bridge.js");
   assert.equal(modules.get("capnweb").esModulePath, "__sandstorm_isolate_runtime/capnweb.js");
   for (const [name, esModulePath] of CAPNP_ES_RUNTIME_MODULES) {
     assert.equal(modules.get(name).esModulePath, esModulePath);
@@ -604,6 +607,7 @@ test("isolate supervisor integration suite", {
         ["sandstorm:rpc", "esModule"],
         ["sandstorm:api", "esModule"],
         ["sandstorm:capnp", "esModule"],
+        ["sandstorm:native-capnp-bridge", "esModule"],
         ...CAPNP_ES_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
       ]);
     assert.deepEqual(
@@ -662,6 +666,28 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(body.jsonBinding, { binding: "json" });
     assert.equal(body.capnpEs.messageBytes, 16);
     assert.equal(body.capnpEs.payloadBytes, 16);
+    assert.ok(body.capnpEs.bridgeRequestBytes > body.capnpEs.payloadBytes);
+    assert.deepEqual(body.capnpEs.bridgeRequest, {
+      protocolVersion: 0,
+      which: 0,
+      target: {
+        id: "target-capability",
+        interfaceId: "a8e9655582dcde6f",
+        interfaceName: "sandstorm.WebSession",
+        kind: 1,
+      },
+      interfaceId: "a8e9655582dcde6f",
+      methodOrdinal: 2,
+      methodName: "get",
+      paramsBytes: 16,
+      capabilityCount: 1,
+      firstCapability: {
+        id: "argument-capability",
+        interfaceId: "d7a322498a996313",
+        interfaceName: "sandstorm.IsolateObjectCapability",
+        kind: 0,
+      },
+    });
     assert.deepEqual(body.helperVersions, {
       api: 0,
       rpc: 0,
@@ -2201,7 +2227,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.statusCode, 200);
     assert.equal(runtime.json.ok, true);
     assert.equal(runtime.json.mainModule, "worker.js");
-    assert.equal(runtime.json.moduleCount, 17);
+    assert.equal(runtime.json.moduleCount, 18);
     assert.equal(runtime.json.bindingCount, 6);
 
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
@@ -2301,6 +2327,7 @@ test("isolate supervisor integration suite", {
         ["sandstorm:rpc", "esModule", false],
         ["sandstorm:api", "esModule", false],
         ["sandstorm:capnp", "esModule", false],
+        ["sandstorm:native-capnp-bridge", "esModule", false],
         ...CAPNP_ES_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
       ]);
 
