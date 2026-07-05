@@ -119,6 +119,7 @@ declare module "sandstorm:capnp" {
       readonly byteOffset?: number;
     } | Uint8Array | ArrayBuffer | ArrayBufferView;
     readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
+    readonly connectionId?: string;
   }
 
   export function makeNativeCapnpBridgeRpcRequest(
@@ -243,11 +244,15 @@ declare module "sandstorm:capnp" {
       }>;
     };
     readonly target: Required<NativeCapnpCapabilitySlot>;
+    readonly connectionId: string;
     readonly capabilities: readonly Required<NativeCapnpCapabilitySlot>[];
     constructor(
       api: NativeCapnpBridgeTransport["api"],
       target: NativeCapnpCapabilitySlot,
-      options?: { readonly capabilities?: readonly NativeCapnpCapabilitySlot[] },
+      options?: {
+        readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
+        readonly connectionId?: string;
+      },
     );
     sendMessage(message: unknown): void;
     recvMessage(): Promise<unknown>;
@@ -259,6 +264,7 @@ declare module "sandstorm:capnp" {
     target: NativeCapnpCapabilitySlot,
     options?: {
       readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
+      readonly connectionId?: string;
       readonly finalize?: unknown;
     },
   ): unknown;

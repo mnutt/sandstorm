@@ -133,6 +133,28 @@ function normalizeNativeCapnpCapabilitySlot(slot) {
   });
 }
 
+function makeNativeCapnpBridgeConnectionId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return `native-capnp-${globalThis.crypto.randomUUID()}`;
+  }
+
+  const bytes = new Uint8Array(16);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(bytes);
+    return "native-capnp-" + Array.from(bytes, (byte) =>
+      byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  return `native-capnp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function normalizeNativeCapnpBridgeConnectionId(connectionId = makeNativeCapnpBridgeConnectionId()) {
+  if (typeof connectionId !== "string" || connectionId.length === 0) {
+    throw new TypeError("native Cap'n Proto bridge connection id must be a non-empty string");
+  }
+  return connectionId;
+}
+
 export function makeNativeCapnpPayload(message = new CapnpEsMessage(), capabilities = []) {
   if (!Array.isArray(capabilities)) {
     throw new TypeError("native Cap'n Proto payload capabilities must be an array");
@@ -327,6 +349,7 @@ export function makeNativeCapnpBridgeRpcRequest({
   target,
   message,
   capabilities = [],
+  connectionId,
 } = {}) {
   if (!target || typeof target !== "object" || typeof target.id !== "string") {
     throw new NativeCapnpBridgeProtocolError(
@@ -345,6 +368,7 @@ export function makeNativeCapnpBridgeRpcRequest({
   const rpc = request._initRpc();
   writeNativeCapnpCapabilitySlot(rpc._initTarget(), normalizeNativeCapnpCapabilitySlot(target));
   writeNativeCapnpPayload(rpc._initMessage(), bridgePayload);
+  rpc.connectionId = normalizeNativeCapnpBridgeConnectionId(connectionId);
 
   return makeNativeCapnpPayload(envelope);
 }
@@ -613,6 +637,7 @@ export class NativeCapnpBridgeTransport extends CapnpEsDeferredTransport {
 
     this.api = api;
     this.target = normalizeNativeCapnpCapabilitySlot(target);
+    this.connectionId = normalizeNativeCapnpBridgeConnectionId(options.connectionId);
     this.capabilities = Object.freeze([...(options.capabilities || [])]);
   }
 
@@ -631,6 +656,7 @@ export class NativeCapnpBridgeTransport extends CapnpEsDeferredTransport {
       target: this.target,
       message,
       capabilities: this.capabilities,
+      connectionId: this.connectionId,
     });
     const response = await this.api.nativeCapnpBridgeCallBytes(request.message);
     if (!response || typeof response !== "object" || !(response.body instanceof Uint8Array)) {

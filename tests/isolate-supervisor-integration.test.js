@@ -746,6 +746,7 @@ test("isolate supervisor integration suite", {
         targetId: body.sandstormApi.nativeCapnpBridge.targetId,
         targetInterfaceId: "a8e9655582dcde6f",
         targetInterfaceName: "sandstorm.WebSession",
+        connectionId: "native-capnp-fixture-rpc",
         messageBytes: 32,
         capabilityCount: 1,
         firstCapability: {
@@ -883,6 +884,7 @@ test("isolate supervisor integration suite", {
         targetId: body.sandstormApi.nativeCapnpBridge.targetId,
         targetInterfaceId: "0xa8e9655582dcde6f",
         targetInterfaceName: "sandstorm.WebSession",
+        connectionId: "native-capnp-fixture-rpc",
         messageBytes: 32,
         capabilityCount: 1,
         rpcMessageKind: "unimplemented",

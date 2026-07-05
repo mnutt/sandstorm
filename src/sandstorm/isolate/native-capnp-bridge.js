@@ -1006,10 +1006,11 @@ export class NativeCapnpBridgeRpcMessage extends $.Struct {
     id: "cac17a86f640a869",
     typeId: 0xcac17a86f640a869n,
     typeIdHex: "cac17a86f640a869",
-    size: new $.ObjectSize(0, 2),
+    size: new $.ObjectSize(0, 3),
     fields: [
       { name: "target", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xf3fc15de30f50d47n, typeIdHex: "f3fc15de30f50d47", displayName: "NativeCapnpCapabilitySlot" } },
-      { name: "message", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "struct", typeId: 0xb146c9fcd6929328n, typeIdHex: "b146c9fcd6929328", displayName: "NativeCapnpPayload" } }
+      { name: "message", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "struct", typeId: 0xb146c9fcd6929328n, typeIdHex: "b146c9fcd6929328", displayName: "NativeCapnpPayload" } },
+      { name: "connectionId", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "text" } }
     ],
   };
   static _applyInit(target, value) {
@@ -1034,6 +1035,12 @@ export class NativeCapnpBridgeRpcMessage extends $.Struct {
         else {
           NativeCapnpPayload._applyInit(target._initMessage(), value);
         }
+      }
+    }
+    {
+      const value = init["connectionId"];
+      if (value !== undefined) {
+        target.connectionId = value;
       }
     }
   }
@@ -1072,6 +1079,12 @@ export class NativeCapnpBridgeRpcMessage extends $.Struct {
   }
   set message(value) {
     $.utils.copyFrom(value, $.utils.getPointer(1, this));
+  }
+  get connectionId() {
+    return $.utils.getText(2, this);
+  }
+  set connectionId(value) {
+    $.utils.setText(2, value, this);
   }
   toString() { return "NativeCapnpBridgeRpcMessage_" + super.toString(); }
 }

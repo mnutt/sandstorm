@@ -744,6 +744,11 @@ Progress:
   and reports its RPC message kind plus key bootstrap/call/release metadata in
   diagnostics, so the native adapter can branch on real Cap'n Proto RPC
   messages instead of treating the payload as opaque bytes
+- native bridge `rpc` envelopes now carry an explicit `connectionId` generated
+  by `NativeCapnpBridgeTransport`, and the supervisor validates/reports it;
+  this gives the future native adapter a stable key for per-connection
+  question/import/export state while preserving the target Sandstorm capability
+  as the actual authority for every message
 
 Interop tests:
 
