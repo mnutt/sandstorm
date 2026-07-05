@@ -3926,6 +3926,10 @@ export default {
         });
       const nativeCapnpLifecycleRestoredMessage =
           await nativeCapnpLifecycleRestoredClient.transport.recvMessage();
+      const nativeCapnpLifecycleRestoredSavedToken =
+          await nativeCapnpLifecycleRestoredClient.save();
+      const nativeCapnpLifecycleRestoredDropResult =
+          await nativeCapnpLifecycleRestoredClient.drop();
       const nativeCapnpLifecycleSave =
           await apiHelper.nativeCapnpBridgeCallBytes(makeNativeCapnpBridgeSaveRequest({
             target: nativeCapnpLifecycleTargetSlot,
@@ -3966,6 +3970,8 @@ export default {
             which: nativeCapnpLifecycleRestoredMessage.which(),
             answerId: nativeCapnpLifecycleRestoredMessage.return.answerId,
           },
+          savedToken: nativeCapnpLifecycleRestoredSavedToken,
+          dropResult: nativeCapnpLifecycleRestoredDropResult ?? null,
         },
         restore: {
           ok: nativeCapnpLifecycleRestore.ok,

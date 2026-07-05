@@ -275,6 +275,11 @@ declare module "sandstorm:capnp" {
     target: NativeCapnpCapabilitySlot,
   ): Promise<string>;
 
+  export function dropNativeCapnp(
+    api: NativeCapnpBridgeTransport["api"],
+    target: NativeCapnpCapabilitySlot,
+  ): Promise<void>;
+
   export interface NativeCapnpGeneratedInterface<TClient extends object> {
     readonly Client: new (client: unknown) => TClient;
     readonly interfaceId?: bigint | number | string;
