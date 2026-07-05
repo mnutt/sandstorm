@@ -35,6 +35,7 @@ declare module "sandstorm:capnp" {
 
   export type CapnpResultCapabilityBinding =
     CapnpInterfaceBinding<any, any> | (() => CapnpInterfaceBinding<any, any>);
+  export type CapnpArgumentCapabilityBinding = CapnpResultCapabilityBinding;
 
   export type CapnpNativeInterface =
     "unknown" | "webSession" | "apiSession" | "outboundHttpSession" | "appObject";
@@ -57,6 +58,17 @@ declare module "sandstorm:capnp" {
       CapnpResultCapabilityBinding | CapnpNativeCapabilitySlot,
     ])[];
 
+  export type CapnpArgumentCapabilitySlot =
+    CapnpArgumentCapabilityBinding | CapnpNativeCapabilitySlot;
+
+  export type CapnpArgumentCapabilityFields =
+    readonly string[] | Record<string, CapnpArgumentCapabilitySlot>;
+
+  export type CapnpArgumentCapabilityPaths =
+    readonly CapnpCapabilityPath[] |
+    Record<string, CapnpArgumentCapabilitySlot> |
+    readonly (readonly [CapnpCapabilityPath, CapnpArgumentCapabilitySlot])[];
+
   export interface CapnpResultCapabilityStruct {
     fields?: CapnpResultCapabilityFields;
     paths?: CapnpResultCapabilityPaths;
@@ -70,8 +82,8 @@ declare module "sandstorm:capnp" {
     Partial<Record<keyof TMethods & string, {
       indexes?: readonly number[];
       indices?: readonly number[];
-      fields?: readonly string[];
-      paths?: readonly CapnpCapabilityPath[];
+      fields?: CapnpArgumentCapabilityFields;
+      paths?: CapnpArgumentCapabilityPaths;
     }>>;
 
   export interface CapnpSchemaMetadata<TMethods extends object> {
@@ -128,6 +140,10 @@ declare module "capnp:*" {
 
   export type {
     CapnpArgumentCapabilities,
+    CapnpArgumentCapabilityBinding,
+    CapnpArgumentCapabilityFields,
+    CapnpArgumentCapabilityPaths,
+    CapnpArgumentCapabilitySlot,
     CapnpCapabilityPath,
     CapnpCapabilityClient,
     CapnpInterfaceBinding,
