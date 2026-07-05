@@ -33,6 +33,7 @@ import {
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
   NativeCapnpBridgeTransport,
+  connectNativeCapnp,
   createNativeCapnpBridge,
   decodeNativeCapnpBridgeResponse,
   makeCapnpInterfaceBinding,
@@ -3851,6 +3852,16 @@ export default {
         new NativeCapnpBridgeTransport(apiHelper, nativeCapnpTarget, {
           connectionId: nativeCapnpBridgeTransportConnectionId,
         });
+    class NativeCapnpBridgeFixtureClient {
+      constructor(client) {
+        this.client = client;
+      }
+    }
+    const nativeCapnpConnectedClient = connectNativeCapnp(
+      apiHelper,
+      nativeCapnpTarget,
+      { Client: NativeCapnpBridgeFixtureClient },
+      { connectionId: `native-capnp-fixture-connect-${nativeCapnpTarget.id}` });
     let nativeCapnpBridgeTransportError = "";
     let nativeCapnpBridgeTransportMessage = null;
     let nativeCapnpBridgeTransportCall = null;
@@ -4153,6 +4164,14 @@ export default {
           transportError: nativeCapnpBridgeTransportError,
           transportMessage: nativeCapnpBridgeTransportMessage,
           transportCall: nativeCapnpBridgeTransportCall,
+          connectedClient: {
+            isFixtureClient: nativeCapnpConnectedClient instanceof NativeCapnpBridgeFixtureClient,
+            hasBootstrapClient: Boolean(nativeCapnpConnectedClient.client),
+            targetId: nativeCapnpConnectedClient.capability.id,
+            connectionId: nativeCapnpConnectedClient.transport.connectionId,
+            hasDrop: typeof nativeCapnpConnectedClient.drop === "function",
+            hasSave: typeof nativeCapnpConnectedClient.save === "function",
+          },
           lifecycleBinary: nativeCapnpLifecycleBinary,
           unknownTargetError: unknownNativeCapnpBridgeCall.error,
         },

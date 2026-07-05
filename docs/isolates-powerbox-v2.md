@@ -771,6 +771,11 @@ Progress:
   `SANDSTORM_CAPNP_ES_COMPILER_MODULE`, so isolate tooling can materialize the
   generated JS classes that the native bridge will use without replacing the
   current `capnp:` app-object compatibility wrapper yet
+- `sandstorm:capnp` exposes `connectNativeCapnp(api, target, InterfaceClass)`
+  as the first raw generated-client helper: it creates the restricted bridge
+  transport, bootstraps a `@mnutt/capnp-es` generated interface class, and
+  returns the generated client with the underlying Sandstorm capability handle
+  plus connection metadata attached
 
 Interop tests:
 

@@ -709,6 +709,27 @@ export function createNativeCapnpBridgeConnection(api, target, options = {}) {
   return Object.assign(conn, { transport });
 }
 
+export function connectNativeCapnp(api, target, InterfaceClass, options = {}) {
+  if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
+    throw new TypeError("connectNativeCapnp() requires a capnp-es generated interface class");
+  }
+
+  const connection = createNativeCapnpBridgeConnection(api, target, options);
+  const client = connection.bootstrap(InterfaceClass);
+  if (!client || typeof client !== "object") {
+    throw new NativeCapnpBridgeProtocolError(
+      "capnp-es generated interface did not produce a client object");
+  }
+
+  return Object.assign(client, {
+    capability: target,
+    connection,
+    transport: connection.transport,
+    drop: () => target.drop?.(),
+    save: (...args) => target.save?.(...args),
+  });
+}
+
 const bindingError = (interfaceName, operation) => new Error(
   `capnp:${interfaceName}.${operation} is not implemented yet for this schema binding.`
 );
