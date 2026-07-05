@@ -918,6 +918,14 @@ test("isolate supervisor integration suite", {
         which: 3,
         answerId: 123,
       },
+      transportCall: {
+        which: 3,
+        answerId: 124,
+        returnWhich: 1,
+        exceptionType: 3,
+        exceptionReasonLength: body.sandstormApi.nativeCapnpBridge.transportCall
+            .exceptionReasonLength,
+      },
       lifecycleBinary: {
         save: {
           ok: true,
@@ -952,6 +960,7 @@ test("isolate supervisor integration suite", {
     });
     assert.ok(body.sandstormApi.nativeCapnpBridge.binaryRoute.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.rpcBinaryRoute.bytes > 0);
+    assert.ok(body.sandstormApi.nativeCapnpBridge.transportCall.exceptionReasonLength > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.drop.bytes > 0);

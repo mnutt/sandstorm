@@ -3853,12 +3853,35 @@ export default {
         });
     let nativeCapnpBridgeTransportError = "";
     let nativeCapnpBridgeTransportMessage = null;
+    let nativeCapnpBridgeTransportCall = null;
     nativeCapnpBridgeTransport.sendMessage(nativeCapnpRpcMessage.getRoot(CapnpRpcMessage));
     try {
       const message = await nativeCapnpBridgeTransport.recvMessage();
       nativeCapnpBridgeTransportMessage = {
         which: message.which(),
         answerId: message.return.answerId,
+      };
+
+      const nativeCapnpCallMessage = new CapnpEsMessage();
+      const nativeCapnpCall =
+          nativeCapnpCallMessage.initRoot(CapnpRpcMessage)._initCall();
+      nativeCapnpCall.questionId = 124;
+      nativeCapnpCall.interfaceId = 0xa8e9655582dcde6fn;
+      nativeCapnpCall.methodId = 2;
+      nativeCapnpCall.noPromisePipelining = true;
+      nativeCapnpCall._initTarget().importedCap = 0;
+      nativeCapnpCall._initParams()._initCapTable(0);
+      nativeCapnpCall._initSendResultsTo().caller = true;
+
+      nativeCapnpBridgeTransport.sendMessage(
+        nativeCapnpCallMessage.getRoot(CapnpRpcMessage));
+      const callMessage = await nativeCapnpBridgeTransport.recvMessage();
+      nativeCapnpBridgeTransportCall = {
+        which: callMessage.which(),
+        answerId: callMessage.return.answerId,
+        returnWhich: callMessage.return.which(),
+        exceptionType: callMessage.return.exception.type,
+        exceptionReasonLength: callMessage.return.exception.reason.length,
       };
     } catch (error) {
       nativeCapnpBridgeTransportError = error.name;
@@ -4129,6 +4152,7 @@ export default {
           },
           transportError: nativeCapnpBridgeTransportError,
           transportMessage: nativeCapnpBridgeTransportMessage,
+          transportCall: nativeCapnpBridgeTransportCall,
           lifecycleBinary: nativeCapnpLifecycleBinary,
           unknownTargetError: unknownNativeCapnpBridgeCall.error,
         },

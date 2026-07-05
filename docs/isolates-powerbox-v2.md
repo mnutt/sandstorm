@@ -759,6 +759,11 @@ Progress:
   capability; binary `bootstrap` RPC envelopes now dispatch through that native
   stack and return real Cap'n Proto RPC `return` messages to `@mnutt/capnp-es`,
   while ordinary method-call envelopes remain disabled in bridge negotiation
+- `NativeCapnpBridgeTransport` now serializes outgoing HTTP bridge requests per
+  connection, matching the current one-response-per-request bridge shape; the
+  integration fixture also sends a real RPC `call` after bootstrap and receives
+  the native C++ exception `return`, proving calls are reaching the target
+  Sandstorm capability through the per-connection RPC session
 
 Interop tests:
 

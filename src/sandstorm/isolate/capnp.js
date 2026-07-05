@@ -624,6 +624,8 @@ function nativeCapnpBridgeExceptionError(message, context) {
 }
 
 export class NativeCapnpBridgeTransport extends CapnpEsDeferredTransport {
+  #sendQueue = Promise.resolve();
+
   constructor(api, target, options = {}) {
     super();
     if (!api || typeof api.nativeCapnpBridgeCallBytes !== "function") {
@@ -648,7 +650,9 @@ export class NativeCapnpBridgeTransport extends CapnpEsDeferredTransport {
       });
     }
 
-    void this.#sendMessage(message).catch((error) => this.close(error));
+    this.#sendQueue = this.#sendQueue
+      .then(() => this.#sendMessage(message))
+      .catch((error) => this.close(error));
   }
 
   async #sendMessage(message) {
