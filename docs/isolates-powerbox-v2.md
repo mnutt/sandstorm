@@ -716,6 +716,9 @@ Progress:
   `Accept: application/octet-stream`; disabled/failed bridge calls can return a
   serialized `NativeCapnpBridgeResponse.exception` envelope, while the default
   JSON diagnostics remain available
+- `createNativeCapnpBridge().call()` now uses the binary API helper when bridge
+  negotiation succeeds and returns decoded result payloads, or maps response
+  exception/canceled envelopes to JS errors
 
 Interop tests:
 

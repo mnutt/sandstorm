@@ -162,13 +162,19 @@ declare module "sandstorm:capnp" {
       message?: { toUint8Array(): Uint8Array } | Uint8Array | ArrayBuffer | ArrayBufferView,
       capabilities?: readonly NativeCapnpCapabilitySlot[],
     ): NativeCapnpPayload;
-    call(options: NativeCapnpBridgeCallOptions): Promise<never>;
+    call(options: NativeCapnpBridgeCallOptions): Promise<NativeCapnpPayload>;
   }
 
   export function createNativeCapnpBridge(
     api: {
       capnpBridgeInfo(): Promise<unknown>;
       nativeCapnpBridgeCall?(body?: BodyInit): Promise<unknown>;
+      nativeCapnpBridgeCallBytes?(body?: BodyInit): Promise<{
+        ok: boolean;
+        status: number;
+        contentType: string;
+        body: Uint8Array;
+      }>;
     },
     options?: NativeCapnpBridgeNegotiationOptions,
   ): Promise<NativeCapnpBridge>;
