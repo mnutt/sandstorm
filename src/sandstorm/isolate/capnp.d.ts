@@ -270,8 +270,19 @@ declare module "sandstorm:capnp" {
     },
   ): unknown;
 
+  export function saveNativeCapnp(
+    api: NativeCapnpBridgeTransport["api"],
+    target: NativeCapnpCapabilitySlot,
+  ): Promise<string>;
+
   export interface NativeCapnpGeneratedInterface<TClient extends object> {
     readonly Client: new (client: unknown) => TClient;
+    readonly interfaceId?: bigint | number | string;
+    readonly interfaceName?: string;
+    readonly schema?: {
+      readonly interfaceId?: bigint | number | string;
+      readonly interfaceName?: string;
+    };
   }
 
   export type NativeCapnpConnectedClient<TClient extends object> = TClient & {
@@ -292,6 +303,29 @@ declare module "sandstorm:capnp" {
       readonly finalize?: unknown;
     },
   ): NativeCapnpConnectedClient<TClient>;
+
+  export function restoreNativeCapnp<TClient extends object>(
+    api: NativeCapnpBridgeTransport["api"] & { capnpBridgeInfo(): Promise<unknown> },
+    token: string,
+    InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
+    options?: {
+      readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
+      readonly connectionId?: string;
+      readonly finalize?: unknown;
+      readonly interfaceId?: bigint | number | string;
+      readonly interfaceName?: string;
+      readonly schema?: {
+        readonly interfaceId?: bigint | number | string;
+        readonly interfaceName?: string;
+      };
+      readonly binding?: {
+        readonly schema?: {
+          readonly interfaceId?: bigint | number | string;
+          readonly interfaceName?: string;
+        };
+      };
+    },
+  ): Promise<NativeCapnpConnectedClient<TClient>>;
 
   export type CapnpRpcMethod = (...args: any[]) => unknown;
   export type CapnpMethodMap<TMethods> = {

@@ -50,6 +50,8 @@ import {
   makeNativeCapnpPayload,
   negotiateNativeCapnpBridge,
   readNativeCapnpBridgeRequest,
+  restoreNativeCapnp,
+  saveNativeCapnp,
 } from "sandstorm:capnp";
 
 let disposedCounterCapabilities = 0;
@@ -3905,14 +3907,28 @@ export default {
       const nativeCapnpLifecycleTarget = await apiHelper.webSession({
         pathPrefix: "/native-capnp-bridge-lifecycle-target",
       });
+      const nativeCapnpLifecycleTargetSlot = {
+        id: nativeCapnpLifecycleTarget.id,
+        interfaceId: "0xa8e9655582dcde6f",
+        interfaceName: "sandstorm.WebSession",
+        kind: "receiverHosted",
+      };
+      const nativeCapnpLifecycleHelperSavedToken =
+          await saveNativeCapnp(apiHelper, nativeCapnpLifecycleTargetSlot);
+      const nativeCapnpLifecycleRestoredClient = await restoreNativeCapnp(
+        apiHelper,
+        nativeCapnpLifecycleHelperSavedToken,
+        { Client: NativeCapnpBridgeFixtureClient },
+        {
+          interfaceId: "0xa8e9655582dcde6f",
+          interfaceName: "sandstorm.WebSession",
+          connectionId: `native-capnp-fixture-restore-${nativeCapnpLifecycleTarget.id}`,
+        });
+      const nativeCapnpLifecycleRestoredMessage =
+          await nativeCapnpLifecycleRestoredClient.transport.recvMessage();
       const nativeCapnpLifecycleSave =
           await apiHelper.nativeCapnpBridgeCallBytes(makeNativeCapnpBridgeSaveRequest({
-            target: {
-              id: nativeCapnpLifecycleTarget.id,
-              interfaceId: "0xa8e9655582dcde6f",
-              interfaceName: "sandstorm.WebSession",
-              kind: "receiverHosted",
-            },
+            target: nativeCapnpLifecycleTargetSlot,
           }).message);
       const decodedNativeCapnpLifecycleSave =
           decodeNativeCapnpBridgeResponse(nativeCapnpLifecycleSave.body);
@@ -3938,6 +3954,18 @@ export default {
           bytes: nativeCapnpLifecycleSave.body.byteLength,
           which: decodedNativeCapnpLifecycleSave.which,
           token: decodedNativeCapnpLifecycleSave.saved.token,
+          helperToken: nativeCapnpLifecycleHelperSavedToken,
+        },
+        restoredClient: {
+          isFixtureClient: nativeCapnpLifecycleRestoredClient instanceof
+              NativeCapnpBridgeFixtureClient,
+          hasBootstrapClient: !!nativeCapnpLifecycleRestoredClient.client,
+          targetId: nativeCapnpLifecycleRestoredClient.capability.id,
+          connectionId: nativeCapnpLifecycleRestoredClient.transport.connectionId,
+          bootstrap: {
+            which: nativeCapnpLifecycleRestoredMessage.which(),
+            answerId: nativeCapnpLifecycleRestoredMessage.return.answerId,
+          },
         },
         restore: {
           ok: nativeCapnpLifecycleRestore.ok,

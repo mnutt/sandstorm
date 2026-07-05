@@ -678,9 +678,9 @@ Progress:
 - supervisor exposes `/capnp/bridge-info`, and `sandstorm:api` exposes
   `capnpBridgeInfo()`, so generated bindings can feature-detect the native
   bridge protocol before switching away from the app-object RPC fallback
-- the bridge info currently advertises protocol version `0` with native
-  transport disabled; later Phase 4 chunks should turn on feature flags only
-  as real native calls, exports, and capability slots land
+- the bridge info advertises protocol version `0` and turns on feature flags
+  only as paths become real; `nativeRpc` is available, while direct native
+  method calls, native exports, and cross-envelope capability slots remain off
 - `isolate-native-capnp-bridge.capnp` defines the first native bridge request,
   response, payload, exception, lifecycle, and capability-slot envelopes, while
   `isolate-supervisor-internal.capnp` continues to own the app-object
@@ -789,6 +789,10 @@ Progress:
   `/capnp/bridge-info` advertises `nativeTransport` and `nativeRpc`, while
   `nativeCalls`, `nativeExports`, and cross-envelope `capabilitySlots` remain
   false until those paths are implemented
+- `sandstorm:capnp` now exposes `saveNativeCapnp()` and `restoreNativeCapnp()`;
+  restore negotiates the native RPC bridge, restores a durable token through
+  Sandstorm's lifecycle route, and returns a live generated `@mnutt/capnp-es`
+  client connected to the restored capability
 
 Interop tests:
 
