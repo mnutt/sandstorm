@@ -860,14 +860,9 @@ async function exportCapabilityNativeAppRpcSlot(
 
   if (value instanceof Capability) {
     const info = await capabilityInfo(env, value);
-    if (!capabilitySupportsAppObjectCall(info)) {
-      const nativeInterface = info?.nativeInterface || "unknown";
-      throw new UnsupportedCapabilityError(
-        nativeInterface,
-        "rpc",
-        `${context.name} nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
-    }
-    return nativeCapabilitySlot(value.id, { nativeInterface: "appObject" });
+    return nativeCapabilitySlot(value.id, {
+      nativeInterface: info?.nativeInterface || "unknown",
+    });
   }
 
   failValidation(context.name, "an app-defined RPC capability", value);
@@ -891,13 +886,6 @@ async function releaseTemporaryNativeAppRpcCapabilities(temporaryCapabilities) {
 }
 
 function capabilityNativeAppRpcSlotValue(env, slot) {
-  if (slot?.nativeInterface !== "appObject") {
-    const nativeInterface = slot?.nativeInterface || "unknown";
-    throw new UnsupportedCapabilityError(
-      nativeInterface,
-      "rpc",
-      `native capability slot nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
-  }
   return new Capability(env, slot.id);
 }
 
