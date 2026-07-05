@@ -72,6 +72,13 @@ class CounterCapability extends RpcTarget {
     return new CounterCapability();
   }
 
+  children() {
+    return {
+      left: new CounterCapability(),
+      right: new CounterCapability(),
+    };
+  }
+
   async readOther(other) {
     if (typeof other.call === "function") {
       return other.call("get");
@@ -120,6 +127,7 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
   "increment",
   "get",
   "child",
+  "children",
   "readOther",
   "fail",
 ], {
@@ -131,8 +139,9 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
     "  increment @0 (amount :Float64) -> (value :Float64);",
     "  get @1 () -> (value :Float64);",
     "  child @2 () -> (counter :GeneratedCounter);",
-    "  readOther @3 (other :GeneratedCounter) -> (value :Float64);",
-    "  fail @4 (message :Text) -> ();",
+    "  children @3 () -> (left :GeneratedCounter, right :GeneratedCounter);",
+    "  readOther @4 (other :GeneratedCounter) -> (value :Float64);",
+    "  fail @5 (message :Text) -> ();",
     "}",
   ].join("\n"),
   argumentCapabilities: {
@@ -140,6 +149,12 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
   },
   resultCapabilities: {
     child: () => GeneratedCounter,
+    children: {
+      fields: {
+        left: () => GeneratedCounter,
+        right: () => GeneratedCounter,
+      },
+    },
   },
 });
 
@@ -2958,6 +2973,9 @@ export default {
       const localChildFirst = await localChild.increment(3);
       const localChildCurrent = await localChild.get();
       const localReadChild = await local.readOther(localChild);
+      const localChildren = await local.children();
+      const localLeftFirst = await localChildren.left.increment(19);
+      const localRightFirst = await localChildren.right.increment(23);
 
       const transient = await api.export(GeneratedCounter.implement(new CounterCapability()));
       const transientClient = GeneratedCounter.cast(transient);
@@ -2966,6 +2984,9 @@ export default {
       const childClient = await transientClient.child();
       const childFirst = await childClient.increment(7);
       const readChild = await transientClient.readOther(childClient);
+      const children = await transientClient.children();
+      const leftFirst = await children.left.increment(29);
+      const rightFirst = await children.right.increment(31);
 
       const durableTarget = new CounterCapability();
       durableTarget.increment(11);
@@ -3003,6 +3024,8 @@ export default {
 
       const restoredDrop = await restoredClient.drop();
       const dropChild = await childClient.drop();
+      const dropChildrenLeft = await children.left.drop();
+      const dropChildrenRight = await children.right.drop();
       const dropTransient = await transientClient.drop();
       const revokeCastSaved = await api.revoke(castSaved);
       const revokeDurableToken = castSaved === durable.token
@@ -3038,6 +3061,10 @@ export default {
             current: localChildCurrent,
             read: localReadChild,
           },
+          children: {
+            left: localLeftFirst,
+            right: localRightFirst,
+          },
         },
         transient: {
           capability: JSON.parse(JSON.stringify(transient)),
@@ -3049,6 +3076,14 @@ export default {
           first: childFirst,
           read: readChild,
           drop: dropChild,
+        },
+        children: {
+          leftCapability: JSON.parse(JSON.stringify(children.left.capability)),
+          rightCapability: JSON.parse(JSON.stringify(children.right.capability)),
+          left: leftFirst,
+          right: rightFirst,
+          leftDrop: dropChildrenLeft,
+          rightDrop: dropChildrenRight,
         },
         durable: {
           id: durable.id,

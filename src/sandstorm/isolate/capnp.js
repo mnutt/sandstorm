@@ -37,17 +37,48 @@ function resolveResultBinding(interfaceName, methodName, caster) {
   return binding;
 }
 
-async function castResult(interfaceName, methodName, result, resultCapabilities, localMode) {
-  const caster = resultCapabilities[methodName];
-  if (!caster) return result;
-  const binding = resolveResultBinding(interfaceName, methodName, caster);
-  if (result && typeof result === "object" && result.rpc) {
-    return binding.cast(result);
+function castCapabilityValue(binding, value, localMode) {
+  if (value && typeof value === "object" && value.rpc) {
+    return binding.cast(value);
   } else if (localMode) {
-    return binding.local(result);
+    return binding.local(value);
   } else {
-    return binding.cast(result);
+    return binding.cast(value);
   }
+}
+
+function resultFieldEntries(spec) {
+  if (!spec || typeof spec !== "object" || !spec.fields) return [];
+  if (Array.isArray(spec.fields)) {
+    return spec.fields;
+  }
+  return Object.entries(spec.fields);
+}
+
+async function castResult(interfaceName, methodName, result, resultCapabilities, localMode) {
+  const spec = resultCapabilities[methodName];
+  if (!spec) return result;
+
+  if (typeof spec === "function" || typeof spec.cast === "function") {
+    const binding = resolveResultBinding(interfaceName, methodName, spec);
+    return castCapabilityValue(binding, result, localMode);
+  }
+
+  const fields = resultFieldEntries(spec);
+  if (fields.length === 0 || !result || typeof result !== "object") {
+    return result;
+  }
+
+  let casted = result;
+  for (const [field, caster] of fields) {
+    if (!Object.prototype.hasOwnProperty.call(result, field)) continue;
+    const binding = resolveResultBinding(interfaceName, methodName, caster);
+    if (casted === result) {
+      casted = { ...result };
+    }
+    casted[field] = castCapabilityValue(binding, result[field], localMode);
+  }
+  return casted;
 }
 
 function unwrapCapabilityArgument(value) {
