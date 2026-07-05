@@ -169,8 +169,15 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
   ].join("\n"),
   argumentCapabilities: {
     readOther: { indexes: [0] },
-    readNested: { paths: [["wrapper", "other"]] },
-    mirrorSession: { fields: ["session"] },
+    readNested: { paths: [[["wrapper", "other"], () => GeneratedCounter]] },
+    mirrorSession: {
+      fields: {
+        session: {
+          nativeInterface: "webSession",
+          fetch: true,
+        },
+      },
+    },
   },
   resultCapabilities: {
     child: () => GeneratedCounter,
@@ -3032,6 +3039,15 @@ export default {
       const nestedRightFirst = await nestedChildren.group.right.increment(47);
       const webSession = await api.webSession({ pathPrefix: "/exported" });
       const mirroredSession = await transientClient.mirrorSession({ session: webSession });
+      let wrongMirrorSessionError = null;
+      try {
+        await transientClient.mirrorSession({ session: childClient });
+      } catch (error) {
+        wrongMirrorSessionError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
       const mirroredSessionInfo = await mirroredSession.session.info();
       const mirroredSessionFetchResponse =
         await mirroredSession.session.fetch("/capability-echo?source=capnp-mirror");
@@ -3159,6 +3175,7 @@ export default {
           info: mirroredSessionInfo,
           fetch: mirroredSessionFetch,
           drop: dropMirroredSession,
+          wrongSessionError: wrongMirrorSessionError,
         },
         durable: {
           id: durable.id,

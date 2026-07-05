@@ -1718,8 +1718,15 @@ test("isolate supervisor integration suite", {
       resultStructIds: {},
       argumentCapabilities: {
         readOther: { indexes: [0] },
-        readNested: { paths: [["wrapper", "other"]] },
-        mirrorSession: { fields: ["session"] },
+        readNested: { paths: [[["wrapper", "other"], null]] },
+        mirrorSession: {
+          fields: {
+            session: {
+              nativeInterface: "webSession",
+              fetch: true,
+            },
+          },
+        },
       },
       resultCapabilityNames: ["child", "children", "nestedChildren", "mirrorSession"],
     });
@@ -1759,6 +1766,10 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.mirroredSession.fetch.body.pathname, "/exported/capability-echo");
     assert.equal(selfTest.json.mirroredSession.fetch.body.search, "?source=capnp-mirror");
     assert.equal(selfTest.json.mirroredSession.drop.ok, true);
+    assert.equal(selfTest.json.mirroredSession.wrongSessionError.name, "TypeError");
+    assert.match(
+      selfTest.json.mirroredSession.wrongSessionError.message,
+      /argument capability nativeInterface appObject does not match declared webSession/);
     assert.equal(selfTest.json.durable.registered, true);
     assert.equal(selfTest.json.durable.restored, false);
     assert.equal(selfTest.json.durable.tokenType, "string");

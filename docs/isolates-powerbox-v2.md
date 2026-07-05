@@ -569,6 +569,9 @@ Progress:
 - `sandstorm:capnp` supports nested capability paths for local/generated
   argument normalization and result casting while preserving the older shallow
   `fields` metadata shape.
+- generated binding metadata can declare expected argument slot interfaces, and
+  `sandstorm:capnp` validates `cap.info().nativeInterface` before dispatch when
+  a live capability handle exposes metadata.
 
 Add support for generic capability slots:
 

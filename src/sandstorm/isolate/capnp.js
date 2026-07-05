@@ -108,6 +108,29 @@ function mapCapabilityPathValue(value, path, mapper) {
   return nextValue;
 }
 
+async function mapCapabilityPathValueAsync(value, path, mapper) {
+  if (path.length === 0) {
+    return await mapper(value);
+  }
+  if (!value || typeof value !== "object" || isCapabilityLikeValue(value)) {
+    return value;
+  }
+
+  const [field, ...rest] = path;
+  if (!Object.prototype.hasOwnProperty.call(value, field)) {
+    return value;
+  }
+
+  const nextFieldValue = await mapCapabilityPathValueAsync(value[field], rest, mapper);
+  if (nextFieldValue === value[field]) {
+    return value;
+  }
+
+  const nextValue = Array.isArray(value) ? [...value] : { ...value };
+  nextValue[field] = nextFieldValue;
+  return nextValue;
+}
+
 function resultPathEntries(spec) {
   if (!spec || typeof spec !== "object") return [];
   const entries = [];
@@ -168,31 +191,86 @@ function unwrapCapabilityArgument(value) {
   return value;
 }
 
-function normalizeObjectCapabilityPaths(value, paths) {
+function declaredNativeInterface(spec) {
+  if (!spec) return undefined;
+  if (isNativeCapabilitySpec(spec)) return spec.nativeInterface;
+  if (typeof spec === "function" || typeof spec.cast === "function") return "appObject";
+  return undefined;
+}
+
+async function validateCapabilityArgument(interfaceName, methodName, value, spec) {
+  const expected = declaredNativeInterface(spec);
+  if (!expected) return;
+
+  const capability = value?.capability || value;
+  if (!capability || typeof capability !== "object" || typeof capability.info !== "function") {
+    return;
+  }
+
+  const info = await capability.info();
+  const actual = info?.nativeInterface || "unknown";
+  if (actual !== expected) {
+    throw new TypeError(
+      `${interfaceName}.${methodName} argument capability nativeInterface ` +
+      `${actual} does not match declared ${expected}`);
+  }
+
+  if (isNativeCapabilitySpec(spec) && spec.fetch && typeof capability.fetch !== "function") {
+    throw new TypeError(
+      `${interfaceName}.${methodName} argument capability must be fetch-shaped`);
+  }
+}
+
+async function normalizeObjectCapabilityPaths(interfaceName, methodName, value, entries) {
   if (!value || typeof value !== "object" || value.rpc || value.call || value.capability) {
     return value;
   }
 
   let normalized = value;
-  for (const path of paths) {
-    normalized = mapCapabilityPathValue(normalized, path, unwrapCapabilityArgument);
+  for (const [path, spec] of entries) {
+    normalized = await mapCapabilityPathValueAsync(normalized, path, async (pathValue) => {
+      await validateCapabilityArgument(interfaceName, methodName, pathValue, spec);
+      return unwrapCapabilityArgument(pathValue);
+    });
   }
   return normalized;
 }
 
-function argumentCapabilityPaths(spec) {
-  const paths = [];
-  for (const field of spec.fields || []) {
-    paths.push(normalizeCapabilityPath([field]));
+function argumentCapabilityPathEntries(spec) {
+  const entries = [];
+  const fields = spec.fields || [];
+  if (Array.isArray(fields)) {
+    for (const field of fields) {
+      entries.push([normalizeCapabilityPath([field]), undefined]);
+    }
+  } else if (fields && typeof fields === "object") {
+    for (const [field, fieldSpec] of Object.entries(fields)) {
+      entries.push([normalizeCapabilityPath([field]), fieldSpec]);
+    }
   }
 
-  for (const path of spec.paths || []) {
-    paths.push(normalizeCapabilityPath(path));
+  const paths = spec.paths || [];
+  if (Array.isArray(paths)) {
+    for (const pathEntry of paths) {
+      if (Array.isArray(pathEntry) && pathEntry.length === 2 &&
+          (Array.isArray(pathEntry[0]) || typeof pathEntry[0] === "string") &&
+          (typeof pathEntry[1] === "function" || isNativeCapabilitySpec(pathEntry[1]) ||
+           (pathEntry[1] && typeof pathEntry[1] === "object" &&
+            typeof pathEntry[1].cast === "function"))) {
+        entries.push([normalizeCapabilityPath(pathEntry[0]), pathEntry[1]]);
+      } else {
+        entries.push([normalizeCapabilityPath(pathEntry), undefined]);
+      }
+    }
+  } else if (paths && typeof paths === "object") {
+    for (const [path, pathSpec] of Object.entries(paths)) {
+      entries.push([normalizeCapabilityPath(path), pathSpec]);
+    }
   }
-  return paths;
+  return entries;
 }
 
-function normalizeArgs(methodName, args, argumentCapabilities) {
+async function normalizeArgs(interfaceName, methodName, args, argumentCapabilities) {
   const spec = argumentCapabilities[methodName];
   if (!spec) return args;
 
@@ -210,9 +288,10 @@ function normalizeArgs(methodName, args, argumentCapabilities) {
     }
   }
 
-  const paths = argumentCapabilityPaths(spec);
+  const paths = argumentCapabilityPathEntries(spec);
   if (paths.length > 0 && args.length === 1) {
-    const nextValue = normalizeObjectCapabilityPaths(normalized[0], paths);
+    const nextValue = await normalizeObjectCapabilityPaths(
+      interfaceName, methodName, normalized[0], paths);
     if (nextValue !== normalized[0]) {
       if (normalized === args) {
         normalized = [...args];
@@ -230,7 +309,8 @@ function makeClient(
   const localMode = Boolean(options.local);
   for (const methodName of methodNames) {
     client[methodName] = async (...args) => {
-      const normalizedArgs = normalizeArgs(methodName, args, argumentCapabilities);
+      const normalizedArgs = await normalizeArgs(
+        interfaceName, methodName, args, argumentCapabilities);
       const result = await caller(methodName, normalizedArgs);
       return await castResult(interfaceName, methodName, result, resultCapabilities, localMode);
     };
