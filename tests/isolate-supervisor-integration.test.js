@@ -638,9 +638,25 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   await fs.copyFile(
     path.join(REPO_DIR, "examples/isolate-capnp-rpc/greeting.capnp"),
     path.join(fixtureRoot, "greeting.capnp"));
+  await fs.writeFile(path.join(fixtureRoot, "uses-standard.capnp"), [
+    "@0xfcc5bd8efeaebe01;",
+    "using Stream = import \"/capnp/stream.capnp\";",
+    "struct UsesStream { result @0 :Stream.StreamResult; }",
+    "",
+  ].join("\n"));
+  await fs.writeFile(path.join(fixtureRoot, "uses-web.capnp"), [
+    "@0xbdeca847b5bef001;",
+    "using Web = import \"/sandstorm/web-session.capnp\";",
+    "interface UsesWeb { get @0 () -> (session :Web.WebSession); }",
+    "",
+  ].join("\n"));
   const workerPath = path.join(fixtureRoot, "worker.js");
   await fs.writeFile(workerPath, [
     "import * as greeter from \"capnp-es:./greeter.capnp\";",
+    "import * as standard from \"capnp-es:./uses-standard.capnp\";",
+    "import * as web from \"capnp-es:./uses-web.capnp\";",
+    "void standard;",
+    "void web;",
     "export default { fetch() { return Response.json(Object.keys(greeter)); } };",
     "",
   ].join("\n"));
@@ -666,6 +682,22 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   assert.equal(
     modules.get("capnp-es:./greeting.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/greeting.js");
+  assert.equal(
+    modules.get("capnp-es:./uses-standard.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/uses-standard.js");
+  assert.equal(
+    modules.get("capnp-es:./uses-web.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/uses-web.js");
+  assert.equal(
+    modules.get("capnp-es:/sandstorm/web-session.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js");
+  assert.equal(
+    modules.get("capnp-es:/sandstorm/grain.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/grain.js");
+  assert.equal(
+    modules.get("capnp-es:/sandstorm/util.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/util.js");
+  assert.equal(modules.has("capnp-es:/capnp/stream.capnp"), false);
 
   const generated = await runCommand(SPK_BIN, [
     "dev-isolate",
@@ -674,10 +706,40 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   ], options);
   assert.match(
     generated.stdout,
-    /import \{ Greeting, Greeting\$Client \} from "\.\/greeting\.js";/);
+    /import \{ Greeting, Greeting\$Client \} from "capnp-es:\.\/greeting\.capnp";/);
   assert.match(generated.stdout, /export class Greeter\$Client \{/);
   assert.match(generated.stdout, /export class Greeter\$Server extends \$\.Server/);
   assert.match(generated.stdout, /export class Greeter extends \$\.Interface/);
+
+  const generatedStandard = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-generated-module", "capnp-es:./uses-standard.capnp",
+    workerPath,
+  ], options);
+  assert.match(
+    generatedStandard.stdout,
+    /from "@mnutt\/capnp-es\/capnp\/stream";/);
+
+  const generatedWeb = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-generated-module", "capnp-es:./uses-web.capnp",
+    workerPath,
+  ], options);
+  assert.match(
+    generatedWeb.stdout,
+    /from "capnp-es:\/sandstorm\/web-session\.capnp";/);
+
+  const generatedSandstormWeb = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-generated-module", "capnp-es:/sandstorm/web-session.capnp",
+    workerPath,
+  ], options);
+  assert.match(
+    generatedSandstormWeb.stdout,
+    /from "capnp-es:\/sandstorm\/grain\.capnp";/);
+  assert.match(
+    generatedSandstormWeb.stdout,
+    /from "capnp-es:\/sandstorm\/util\.capnp";/);
 });
 
 test("isolate supervisor integration suite", {
