@@ -784,6 +784,11 @@ Progress:
   stable workerd module specifiers, follow relative app schemas, skip bundled
   `/capnp/*` runtime schemas, and generate Sandstorm-owned `/sandstorm/*`
   schema dependencies under explicit `capnp-es:/sandstorm/...` module names
+- bridge feature negotiation now distinguishes the working binary `rpc`
+  transport from the still-disabled direct method-call envelope:
+  `/capnp/bridge-info` advertises `nativeTransport` and `nativeRpc`, while
+  `nativeCalls`, `nativeExports`, and cross-envelope `capabilitySlots` remain
+  false until those paths are implemented
 
 Interop tests:
 

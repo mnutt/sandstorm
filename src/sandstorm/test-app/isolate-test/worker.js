@@ -3631,6 +3631,9 @@ export default {
     const capnpBridgeNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeCalls", "capabilitySlots"],
     });
+    const capnpBridgeRpcNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
+      requiredFeatures: ["nativeRpc"],
+    });
     const nativeCapnpTarget = await apiHelper.webSession({
       pathPrefix: "/native-capnp-bridge-target",
     });
@@ -4130,6 +4133,7 @@ export default {
         capnpBridgeInfo: apiCapnpBridgeInfo,
         helperCapnpBridgeInfo,
         capnpBridgeNegotiation,
+        capnpBridgeRpcNegotiation,
         nativeCapnpBridge: {
           available: nativeCapnpBridge.available,
           protocolVersion: nativeCapnpBridge.protocolVersion,

@@ -713,6 +713,7 @@ declare module "sandstorm:api" {
     minProtocolVersion: 0;
     maxProtocolVersion: 0;
     nativeTransport: boolean;
+    nativeRpc: boolean;
     nativeCalls: boolean;
     nativeExports: boolean;
     capabilitySlots: boolean;

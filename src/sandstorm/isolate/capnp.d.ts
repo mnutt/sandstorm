@@ -9,7 +9,7 @@ declare module "sandstorm:capnp" {
   export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION: 0;
 
   export type NativeCapnpBridgeFeature =
-    "nativeTransport" | "nativeCalls" | "nativeExports" | "capabilitySlots";
+    "nativeTransport" | "nativeRpc" | "nativeCalls" | "nativeExports" | "capabilitySlots";
 
   export interface NativeCapnpBridgeNegotiationOptions {
     requiredFeatures?: readonly NativeCapnpBridgeFeature[];
@@ -20,6 +20,7 @@ declare module "sandstorm:capnp" {
     readonly protocolSupported: boolean;
     readonly protocolVersion: 0;
     readonly nativeTransport: boolean;
+    readonly nativeRpc: boolean;
     readonly nativeCalls: boolean;
     readonly nativeExports: boolean;
     readonly capabilitySlots: boolean;
