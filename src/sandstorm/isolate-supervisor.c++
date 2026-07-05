@@ -4971,12 +4971,114 @@ private:
     return kj::heapArray<byte>(words.asBytes());
   }
 
+  uint64_t nativeInterfaceTypeId(ClaimedCapabilityNativeInterface nativeInterface) {
+    switch (nativeInterface) {
+      case ClaimedCapabilityNativeInterface::WEB_SESSION:
+        return capnp::typeId<IsolateWebSession>();
+      case ClaimedCapabilityNativeInterface::API_SESSION:
+        return capnp::typeId<IsolateApiSession>();
+      case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
+        return capnp::typeId<OutboundHttpSession>();
+      case ClaimedCapabilityNativeInterface::APP_OBJECT:
+        return capnp::typeId<IsolateObjectCapability>();
+      case ClaimedCapabilityNativeInterface::UNKNOWN:
+        return 0;
+    }
+    KJ_UNREACHABLE;
+  }
+
+  kj::StringPtr nativeInterfaceBridgeName(ClaimedCapabilityNativeInterface nativeInterface) {
+    switch (nativeInterface) {
+      case ClaimedCapabilityNativeInterface::WEB_SESSION:
+        return "sandstorm.WebSession";
+      case ClaimedCapabilityNativeInterface::API_SESSION:
+        return "sandstorm.ApiSession";
+      case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
+        return "sandstorm.OutboundHttpSession";
+      case ClaimedCapabilityNativeInterface::APP_OBJECT:
+        return "sandstorm.IsolateObjectCapability";
+      case ClaimedCapabilityNativeInterface::UNKNOWN:
+        return "";
+    }
+    KJ_UNREACHABLE;
+  }
+
+  bool nativeInterfaceMatchesExpected(ClaimedCapabilityNativeInterface nativeInterface,
+      uint64_t expectedInterfaceId, kj::StringPtr expectedInterfaceName) {
+    if (nativeInterface == ClaimedCapabilityNativeInterface::UNKNOWN) {
+      return true;
+    }
+
+    auto actualInterfaceId = nativeInterfaceTypeId(nativeInterface);
+    if (expectedInterfaceId != 0 && expectedInterfaceId != actualInterfaceId) {
+      return false;
+    }
+
+    auto actualInterfaceName = nativeInterfaceBridgeName(nativeInterface);
+    return expectedInterfaceName.size() == 0 || expectedInterfaceName == actualInterfaceName;
+  }
+
+  void initNativeCapnpCapabilitySlot(NativeCapnpCapabilitySlot::Builder slot,
+      kj::StringPtr id, ClaimedCapabilityNativeInterface nativeInterface,
+      uint64_t fallbackInterfaceId = 0, kj::StringPtr fallbackInterfaceName = "") {
+    auto interfaceId = nativeInterfaceTypeId(nativeInterface);
+    auto interfaceName = nativeInterfaceBridgeName(nativeInterface);
+    if (nativeInterface == ClaimedCapabilityNativeInterface::UNKNOWN) {
+      interfaceId = fallbackInterfaceId;
+      interfaceName = fallbackInterfaceName;
+    }
+
+    slot.setId(id);
+    slot.setInterfaceId(interfaceId);
+    slot.setInterfaceName(interfaceName);
+    slot.setKind(NativeCapnpCapabilitySlotKind::RECEIVER_HOSTED);
+  }
+
+  kj::Array<byte> encodeNativeCapnpBridgeAcknowledgedResponse() {
+    capnp::MallocMessageBuilder message;
+    auto response = message.initRoot<NativeCapnpBridgeResponse>();
+    response.setProtocolVersion(NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION);
+    response.setAcknowledged();
+
+    auto words = capnp::messageToFlatArray(message);
+    return kj::heapArray<byte>(words.asBytes());
+  }
+
+  kj::Array<byte> encodeNativeCapnpBridgeSavedResponse(kj::StringPtr token) {
+    capnp::MallocMessageBuilder message;
+    auto response = message.initRoot<NativeCapnpBridgeResponse>();
+    response.setProtocolVersion(NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION);
+    response.initSaved().setToken(token);
+
+    auto words = capnp::messageToFlatArray(message);
+    return kj::heapArray<byte>(words.asBytes());
+  }
+
+  kj::Array<byte> encodeNativeCapnpBridgeCapabilityResponse(kj::StringPtr id,
+      ClaimedCapabilityNativeInterface nativeInterface,
+      uint64_t fallbackInterfaceId = 0, kj::StringPtr fallbackInterfaceName = "") {
+    capnp::MallocMessageBuilder message;
+    auto response = message.initRoot<NativeCapnpBridgeResponse>();
+    response.setProtocolVersion(NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION);
+    initNativeCapnpCapabilitySlot(
+        response.initCapability(), id, nativeInterface, fallbackInterfaceId, fallbackInterfaceName);
+
+    auto words = capnp::messageToFlatArray(message);
+    return kj::heapArray<byte>(words.asBytes());
+  }
+
+  kj::Promise<void> sendNativeCapnpBridgeBytes(
+      kj::HttpService::Response& response, uint statusCode, kj::StringPtr statusText,
+      kj::Array<byte> body) {
+    kj::HttpHeaders responseHeaders(headerTable);
+    responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream");
+    return sendBytes(response, statusCode, statusText, kj::mv(responseHeaders), kj::mv(body));
+  }
+
   kj::Promise<void> sendNativeCapnpBridgeException(
       kj::HttpService::Response& response, uint statusCode, kj::StringPtr statusText,
       kj::StringPtr type, kj::StringPtr reason) {
-    kj::HttpHeaders responseHeaders(headerTable);
-    responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream");
-    return sendBytes(response, statusCode, statusText, kj::mv(responseHeaders),
+    return sendNativeCapnpBridgeBytes(response, statusCode, statusText,
         encodeNativeCapnpBridgeExceptionResponse(type, reason));
   }
 
@@ -5513,6 +5615,95 @@ private:
     }
   }
 
+  kj::Promise<void> dropNativeCapnpBridgeCapability(
+      NativeCapnpCapabilitySlot::Reader target, kj::HttpService::Response& response) {
+    auto id = kj::heapString(target.getId());
+    KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(id)) {
+      KJ_IF_MAYBE(dropNotifyPath, dropped->dropNotifyPath) {
+        return notifyDroppedClaimedCapability(kj::mv(*dropNotifyPath))
+            .catch_([](kj::Exception&& exception) {
+          KJ_LOG(WARNING, "Native Cap'n Proto bridge drop notification threw.", exception);
+        }).then([this, &response]() mutable {
+          return sendNativeCapnpBridgeBytes(response, 200, "OK",
+              encodeNativeCapnpBridgeAcknowledgedResponse());
+        });
+      } else if (dropped->metadata.nativeInterface == ClaimedCapabilityNativeInterface::APP_OBJECT &&
+          !dropped->metadata.hasDropNotify) {
+        auto req = dropped->cap.castAs<IsolateObjectCapability>().dropRequest();
+        return req.send().then([this, &response](auto result) mutable {
+          (void)result;
+          return sendNativeCapnpBridgeBytes(response, 200, "OK",
+              encodeNativeCapnpBridgeAcknowledgedResponse());
+        }).catch_([this, &response](kj::Exception&& exception) {
+          KJ_LOG(WARNING, "Native Cap'n Proto bridge object capability drop threw.", exception);
+          return sendNativeCapnpBridgeBytes(response, 200, "OK",
+              encodeNativeCapnpBridgeAcknowledgedResponse());
+        });
+      } else {
+        return sendNativeCapnpBridgeBytes(response, 200, "OK",
+            encodeNativeCapnpBridgeAcknowledgedResponse());
+      }
+    } else {
+      return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",
+          "unknown native Cap'n Proto bridge target capability", true);
+    }
+  }
+
+  kj::Promise<void> saveNativeCapnpBridgeCapability(
+      NativeCapnpCapabilitySlot::Reader target, kj::HttpService::Response& response) {
+    auto id = kj::heapString(target.getId());
+    KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
+      auto metadata = host.sessions->findClaimedCapabilityMetadata(id);
+      auto request = cap->castAs<SystemPersistent>().saveRequest();
+      auto owner = request.getSealFor().initGrain();
+      owner.setGrainId(host.grainId);
+      owner.getSaveLabel().setDefaultText("Native Cap'n Proto bridge capability");
+      return request.send().then(
+          [this, &response, metadata = kj::mv(metadata)](auto result) mutable {
+        auto token = encodeSavedCapabilityToken(result.getSturdyRef(), metadata);
+        return sendNativeCapnpBridgeBytes(response, 200, "OK",
+            encodeNativeCapnpBridgeSavedResponse(token));
+      }).catch_([this, &response](kj::Exception&& exception) mutable {
+        return sendNativeCapnpBridgeException(response, 502, "Bad Gateway", "failed", kj::str(
+            "native Cap'n Proto bridge save failed: ", exception.getDescription()));
+      });
+    } else {
+      return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",
+          "unknown native Cap'n Proto bridge target capability", true);
+    }
+  }
+
+  kj::Promise<void> restoreNativeCapnpBridgeCapability(
+      NativeCapnpBridgeRestore::Reader restore, kj::HttpService::Response& response) {
+    KJ_IF_MAYBE(token, decodeSavedCapabilityEnvelope(restore.getToken())) {
+      if (!nativeInterfaceMatchesExpected(token->metadata.nativeInterface,
+          restore.getExpectedInterfaceId(), restore.getExpectedInterfaceName())) {
+        return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+            "saved capability does not match the expected native interface", true);
+      }
+
+      auto request = host.sandstormCore.restoreRequest();
+      request.setToken(token->sturdyRef.asPtr());
+      auto fallbackInterfaceId = restore.getExpectedInterfaceId();
+      auto fallbackInterfaceName = kj::heapString(restore.getExpectedInterfaceName());
+      return request.send().then(
+          [this, &response, metadata = kj::mv(token->metadata), fallbackInterfaceId,
+              fallbackInterfaceName = kj::mv(fallbackInterfaceName)](auto result) mutable {
+        auto nativeInterface = metadata.nativeInterface;
+        auto capId = host.sessions->storeClaimedCapability(result.getCap(), kj::mv(metadata));
+        return sendNativeCapnpBridgeBytes(response, 200, "OK",
+            encodeNativeCapnpBridgeCapabilityResponse(
+              capId, nativeInterface, fallbackInterfaceId, fallbackInterfaceName));
+      }).catch_([this, &response](kj::Exception&& exception) mutable {
+        return sendNativeCapnpBridgeException(response, 502, "Bad Gateway", "failed", kj::str(
+            "native Cap'n Proto bridge restore failed: ", exception.getDescription()));
+      });
+    } else {
+      return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+          "invalid saved capability token", true);
+    }
+  }
+
   kj::Promise<void> callNativeCapnpBridge(
       kj::Array<byte> bodyBytes, kj::HttpService::Response& response, bool binaryResponse) {
     if (bodyBytes.size() == 0) {
@@ -5581,8 +5772,16 @@ private:
       }
 
       if (binaryResponse) {
-        return sendNativeCapnpBridgeException(response, 501, "Not Implemented", "unimplemented",
-            "native Cap'n Proto bridge transport is not enabled");
+        if (request.isDrop()) {
+          return dropNativeCapnpBridgeCapability(request.getDrop().getTarget(), response);
+        } else if (request.isSave()) {
+          return saveNativeCapnpBridgeCapability(request.getSave().getTarget(), response);
+        } else if (request.isRestore()) {
+          return restoreNativeCapnpBridgeCapability(request.getRestore(), response);
+        } else {
+          return sendNativeCapnpBridgeException(response, 501, "Not Implemented", "unimplemented",
+              "native Cap'n Proto bridge transport is not enabled");
+        }
       } else {
         return sendJson(response, 501, "Not Implemented", renderNativeCapnpBridgeDisabled(request));
       }

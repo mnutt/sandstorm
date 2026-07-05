@@ -3807,6 +3807,68 @@ export default {
         await apiHelper.nativeCapnpBridgeCallBytes(nativeCapnpBridgeRequest.message);
     const decodedNativeCapnpBridgeBinaryCall =
         decodeNativeCapnpBridgeResponse(nativeCapnpBridgeBinaryCall.body);
+    let nativeCapnpLifecycleBinary = null;
+    if (url.searchParams.has("nativeLifecycle")) {
+      const nativeCapnpLifecycleTarget = await apiHelper.webSession({
+        pathPrefix: "/native-capnp-bridge-lifecycle-target",
+      });
+      const nativeCapnpLifecycleSave =
+          await apiHelper.nativeCapnpBridgeCallBytes(makeNativeCapnpBridgeSaveRequest({
+            target: {
+              id: nativeCapnpLifecycleTarget.id,
+              interfaceId: "0xa8e9655582dcde6f",
+              interfaceName: "sandstorm.WebSession",
+              kind: "receiverHosted",
+            },
+          }).message);
+      const decodedNativeCapnpLifecycleSave =
+          decodeNativeCapnpBridgeResponse(nativeCapnpLifecycleSave.body);
+      const nativeCapnpLifecycleRestore =
+          await apiHelper.nativeCapnpBridgeCallBytes(makeNativeCapnpBridgeRestoreRequest({
+            token: decodedNativeCapnpLifecycleSave.saved.token,
+            expectedInterfaceId: "0xa8e9655582dcde6f",
+            expectedInterfaceName: "sandstorm.WebSession",
+          }).message);
+      const decodedNativeCapnpLifecycleRestore =
+          decodeNativeCapnpBridgeResponse(nativeCapnpLifecycleRestore.body);
+      const nativeCapnpLifecycleDrop =
+          await apiHelper.nativeCapnpBridgeCallBytes(makeNativeCapnpBridgeDropRequest({
+            target: decodedNativeCapnpLifecycleRestore.capability,
+          }).message);
+      const decodedNativeCapnpLifecycleDrop =
+          decodeNativeCapnpBridgeResponse(nativeCapnpLifecycleDrop.body);
+      nativeCapnpLifecycleBinary = {
+        save: {
+          ok: nativeCapnpLifecycleSave.ok,
+          status: nativeCapnpLifecycleSave.status,
+          contentType: nativeCapnpLifecycleSave.contentType,
+          bytes: nativeCapnpLifecycleSave.body.byteLength,
+          which: decodedNativeCapnpLifecycleSave.which,
+          token: decodedNativeCapnpLifecycleSave.saved.token,
+        },
+        restore: {
+          ok: nativeCapnpLifecycleRestore.ok,
+          status: nativeCapnpLifecycleRestore.status,
+          contentType: nativeCapnpLifecycleRestore.contentType,
+          bytes: nativeCapnpLifecycleRestore.body.byteLength,
+          which: decodedNativeCapnpLifecycleRestore.which,
+          capability: {
+            id: decodedNativeCapnpLifecycleRestore.capability.id,
+            interfaceId: decodedNativeCapnpLifecycleRestore.capability.interfaceId
+                .toString(16),
+            interfaceName: decodedNativeCapnpLifecycleRestore.capability.interfaceName,
+            kind: decodedNativeCapnpLifecycleRestore.capability.kind,
+          },
+        },
+        drop: {
+          ok: nativeCapnpLifecycleDrop.ok,
+          status: nativeCapnpLifecycleDrop.status,
+          contentType: nativeCapnpLifecycleDrop.contentType,
+          bytes: nativeCapnpLifecycleDrop.body.byteLength,
+          which: decodedNativeCapnpLifecycleDrop.which,
+        },
+      };
+    }
     const unknownNativeCapnpBridgeCall =
         await apiHelper.nativeCapnpBridgeCall(unknownNativeCapnpBridgeRequest.message);
     let nativeCapnpBridgeCallError = "";
@@ -3979,6 +4041,7 @@ export default {
             which: decodedNativeCapnpBridgeBinaryCall.which,
             exception: decodedNativeCapnpBridgeBinaryCall.exception,
           },
+          lifecycleBinary: nativeCapnpLifecycleBinary,
           unknownTargetError: unknownNativeCapnpBridgeCall.error,
         },
       },

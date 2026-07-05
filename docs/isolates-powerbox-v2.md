@@ -723,6 +723,10 @@ Progress:
   requests plus acknowledged/saved/capability responses; the disabled
   supervisor route now parses and validates those lifecycle variants before
   returning the stable unimplemented response
+- binary native bridge save, restore, and drop lifecycle requests now execute
+  against claimed Sandstorm capability handles using the existing durable token
+  format and capability table, while ordinary native method calls remain
+  disabled in bridge negotiation
 
 Interop tests:
 
