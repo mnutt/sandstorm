@@ -54,6 +54,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <poll.h>
+#include <inttypes.h>
 #include <sandstorm/app-index/submit.capnp.h>
 #include <sodium/crypto_generichash_blake2b.h>
 
@@ -2697,6 +2698,12 @@ private:
     return kj::str(hex, ".js");
   }
 
+  static kj::String capnpInterfaceIdString(uint64_t id) {
+    char buffer[19];
+    snprintf(buffer, sizeof(buffer), "0x%016" PRIx64, id);
+    return kj::heapString(buffer);
+  }
+
   static bool isJsIdentifierStart(char c) {
     return isalpha(static_cast<unsigned char>(c)) || c == '_' || c == '$';
   }
@@ -3163,10 +3170,37 @@ private:
     return interfaces;
   }
 
+  static std::map<std::string, std::string> parseCapnpInterfaceIds(
+      kj::StringPtr resolvedPath, kj::StringPtr rootDir,
+      kj::ArrayPtr<DevCapnpInterface> interfaces) {
+    std::map<std::string, std::string> ids;
+    capnp::SchemaParser parser;
+
+    kj::Vector<kj::String> importPath;
+    importPath.add(kj::heapString(rootDir));
+    importPath.add(kj::heapString("/usr/local/include"));
+    importPath.add(kj::heapString("/usr/include"));
+    auto importPathPtrs = KJ_MAP(p, importPath) -> kj::StringPtr { return p; };
+
+    auto schema = parser.parseDiskFile(resolvedPath, resolvedPath, importPathPtrs);
+    for (auto& interfaceDef: interfaces) {
+      KJ_IF_MAYBE(symbol, schema.findNested(interfaceDef.name)) {
+        if (symbol->getProto().isInterface()) {
+          ids.insert(std::make_pair(
+              toStdString(interfaceDef.name),
+              toStdString(capnpInterfaceIdString(symbol->getProto().getId()))));
+        }
+      }
+    }
+
+    return ids;
+  }
+
   static kj::String generateDevIsolateCapnpModule(
       kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
       kj::StringPtr schemaSource) {
     auto interfaces = scanCapnpInterfaces(schemaSource);
+    auto interfaceIds = parseCapnpInterfaceIds(resolvedPath, rootDir, interfaces.asPtr());
     auto imports = scanCapnpImports(schemaSource);
     auto importerDir = dirnameForPath(resolvedPath);
     kj::Vector<char> output;
@@ -3237,6 +3271,7 @@ private:
         "\nfunction makeInterface(interfaceName, methodNames, metadata = {}) {\n"
         "  return makeCapnpInterfaceBinding(interfaceName, methodNames, {\n"
         "    importSpecifier,\n"
+        "    interfaceId: metadata.interfaceId || \"\",\n"
         "    schemaPath,\n"
         "    schemaText,\n"
         "    argumentCapabilities: metadata.argumentCapabilities || {},\n"
@@ -3257,6 +3292,15 @@ private:
       output.addAll(kj::StringPtr("MethodNames"));
 
       bool wroteMetadata = false;
+      bool wroteMetadataEntry = false;
+      auto interfaceId = interfaceIds.find(toStdString(interfaceDef.name));
+      if (interfaceId != interfaceIds.end()) {
+        output.addAll(kj::StringPtr(", {\n  interfaceId: "));
+        appendJsString(output, kj::StringPtr(interfaceId->second));
+        wroteMetadata = true;
+        wroteMetadataEntry = true;
+      }
+
       bool wroteArgumentCapabilities = false;
       for (auto& method: interfaceDef.methods) {
         for (auto& param: method.params) {
@@ -3269,8 +3313,12 @@ private:
               wroteMetadata = true;
             }
             if (!wroteArgumentCapabilities) {
+              if (wroteMetadataEntry) {
+                output.addAll(kj::StringPtr(",\n"));
+              }
               output.addAll(kj::StringPtr("  argumentCapabilities: {\n"));
               wroteArgumentCapabilities = true;
+              wroteMetadataEntry = true;
             } else {
               output.addAll(kj::StringPtr(",\n"));
             }
@@ -3313,7 +3361,6 @@ private:
       }
 
       bool wroteResultCapabilities = false;
-      bool separateResultCapabilities = wroteArgumentCapabilities;
       for (auto& method: interfaceDef.methods) {
         auto resultType = toStdString(method.resultType);
         auto localResult = interfaceNames.find(resultType) != interfaceNames.end();
@@ -3325,12 +3372,12 @@ private:
             wroteMetadata = true;
           }
           if (!wroteResultCapabilities) {
-            if (separateResultCapabilities) {
+            if (wroteMetadataEntry) {
               output.addAll(kj::StringPtr(",\n"));
-              separateResultCapabilities = false;
             }
             output.addAll(kj::StringPtr("  resultCapabilities: {\n"));
             wroteResultCapabilities = true;
+            wroteMetadataEntry = true;
           } else {
             output.addAll(kj::StringPtr(",\n"));
           }

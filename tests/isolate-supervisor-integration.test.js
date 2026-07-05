@@ -510,6 +510,7 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
     generated.stdout,
     /import \{ Greeting as _capnpImport0_Greeting \} from "capnp:\.\/greeting\.capnp";/);
   assert.match(generated.stdout, /export const Greeter = makeInterface\("Greeter"/);
+  assert.match(generated.stdout, /interfaceId: "0x[0-9a-f]{16}"/);
   assert.match(generated.stdout, /"hello", "greeting", "useGreeting"/);
   assert.match(
     generated.stdout,
@@ -523,6 +524,7 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
     workerPath,
   ]);
   assert.match(generatedGreeting.stdout, /export const Greeting = makeInterface\("Greeting"/);
+  assert.match(generatedGreeting.stdout, /interfaceId: "0x[0-9a-f]{16}"/);
   assert.match(generatedGreeting.stdout, /"read"/);
 });
 
