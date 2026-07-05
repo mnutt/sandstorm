@@ -1,6 +1,7 @@
 import message from "message.txt";
 import metadata from "metadata.json";
 import { Message as CapnpEsMessage } from "@mnutt/capnp-es";
+import { Message as CapnpRpcMessage } from "@mnutt/capnp/rpc.mjs";
 import {
   AppRpcTarget,
   Capability,
@@ -3691,6 +3692,8 @@ export default {
       expectedInterfaceId: "0xa8e9655582dcde6f",
       expectedInterfaceName: "sandstorm.WebSession",
     });
+    const nativeCapnpRpcMessage = new CapnpEsMessage();
+    nativeCapnpRpcMessage.initRoot(CapnpRpcMessage);
     const nativeCapnpBridgeRpcRequest = makeNativeCapnpBridgeRpcRequest({
       target: {
         id: nativeCapnpTarget.id,
@@ -3698,7 +3701,7 @@ export default {
         interfaceName: "sandstorm.WebSession",
         kind: "receiverHosted",
       },
-      message: new CapnpEsMessage(),
+      message: nativeCapnpRpcMessage,
       capabilities: [
         {
           id: "rpc-argument-capability",
@@ -3839,7 +3842,7 @@ export default {
     const nativeCapnpBridgeTransport =
         new NativeCapnpBridgeTransport(apiHelper, nativeCapnpTarget);
     let nativeCapnpBridgeTransportError = "";
-    nativeCapnpBridgeTransport.sendMessage(new CapnpEsMessage());
+    nativeCapnpBridgeTransport.sendMessage(nativeCapnpRpcMessage.getRoot(CapnpRpcMessage));
     try {
       await nativeCapnpBridgeTransport.recvMessage();
     } catch (error) {

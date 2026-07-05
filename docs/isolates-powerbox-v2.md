@@ -740,6 +740,10 @@ Progress:
   target capability lookup and payload metadata, then returns a binary
   unimplemented response; native RPC message translation to Sandstorm's C++
   Cap'n Proto transport remains the next Phase 4 implementation step
+- the disabled supervisor endpoint now parses the embedded `capnp::rpc::Message`
+  and reports its RPC message kind plus key bootstrap/call/release metadata in
+  diagnostics, so the native adapter can branch on real Cap'n Proto RPC
+  messages instead of treating the payload as opaque bytes
 
 Interop tests:
 
