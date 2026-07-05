@@ -46,12 +46,25 @@ declare module "sandstorm:capnp" {
       fields?: readonly string[];
     }>>;
 
+  export interface CapnpSchemaMetadata<TMethods extends object> {
+    readonly importSpecifier: string;
+    readonly interfaceName: string;
+    readonly interfaceId: string;
+    readonly schemaPath: string;
+    readonly schemaText: string;
+    readonly methodNames: readonly (keyof TMethods & string)[];
+    readonly argumentCapabilities: CapnpArgumentCapabilities<TMethods>;
+    readonly resultCapabilities: CapnpResultCapabilities<TMethods>;
+  }
+
   export interface CapnpInterfaceBinding<
     TMethods extends object = Record<string, CapnpRpcMethod>,
     TResultOverrides extends object = object,
   > {
     readonly interfaceName: string;
+    readonly interfaceId: string;
     readonly schemaPath: string;
+    readonly schema: CapnpSchemaMetadata<TMethods>;
     readonly methodNames: readonly (keyof TMethods & string)[];
     implement(methods: CapnpMethodMap<TMethods>): RpcTarget;
     cast(capability: Capability): CapnpCapabilityClient<TMethods, TResultOverrides>;
@@ -67,6 +80,7 @@ declare module "sandstorm:capnp" {
     methodNames: readonly (keyof TMethods & string)[],
     schema?: {
       importSpecifier?: string;
+      interfaceId?: string;
       schemaPath?: string;
       schemaText?: string;
       argumentCapabilities?: CapnpArgumentCapabilities<TMethods>;
@@ -83,6 +97,7 @@ declare module "capnp:*" {
     CapnpCapabilityClient,
     CapnpInterfaceBinding,
     CapnpMethodMap,
+    CapnpSchemaMetadata,
     CapnpResultCapabilities,
     CapnpResultCapabilityBinding,
     CapnpRpcClient,

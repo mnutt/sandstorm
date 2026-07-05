@@ -510,6 +510,15 @@ Exit criteria:
 
 Stabilize the app-facing generated API before adding a native transport.
 
+Progress:
+
+- generated and hand-written bindings expose `Interface.schema`, a stable
+  metadata object containing the import specifier, interface name/id,
+  schema path/text, method names, and generated capability metadata.
+- bindings expose `Interface.interfaceId`; it is currently empty for
+  scanner-generated bindings until real schema compilation provides official
+  interface IDs.
+
 Deliverables:
 
 - finalize `Interface.implement()`
