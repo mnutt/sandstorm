@@ -127,6 +127,9 @@ export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {
   const frozenMethodNames = Object.freeze([...methodNames]);
   const argumentCapabilities = Object.freeze({ ...(schema.argumentCapabilities || {}) });
   const resultCapabilities = Object.freeze({ ...(schema.resultCapabilities || {}) });
+  const methodIds = Object.freeze({ ...(schema.methodIds || {}) });
+  const paramStructIds = Object.freeze({ ...(schema.paramStructIds || {}) });
+  const resultStructIds = Object.freeze({ ...(schema.resultStructIds || {}) });
   const schemaMetadata = Object.freeze({
     importSpecifier: schema.importSpecifier || "",
     interfaceName,
@@ -134,6 +137,9 @@ export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {
     schemaPath: schema.schemaPath || "",
     schemaText: schema.schemaText || "",
     methodNames: frozenMethodNames,
+    methodIds,
+    paramStructIds,
+    resultStructIds,
     argumentCapabilities,
     resultCapabilities,
   });

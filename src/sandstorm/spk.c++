@@ -3170,10 +3170,21 @@ private:
     return interfaces;
   }
 
-  static std::map<std::string, std::string> parseCapnpInterfaceIds(
+  struct DevCapnpParsedMethodMetadata {
+    uint16_t id = 0;
+    std::string paramStructId;
+    std::string resultStructId;
+  };
+
+  struct DevCapnpParsedInterfaceMetadata {
+    std::string interfaceId;
+    std::map<std::string, DevCapnpParsedMethodMetadata> methods;
+  };
+
+  static std::map<std::string, DevCapnpParsedInterfaceMetadata> parseCapnpInterfaceMetadata(
       kj::StringPtr resolvedPath, kj::StringPtr rootDir,
       kj::ArrayPtr<DevCapnpInterface> interfaces) {
-    std::map<std::string, std::string> ids;
+    std::map<std::string, DevCapnpParsedInterfaceMetadata> metadata;
     capnp::SchemaParser parser;
 
     kj::Vector<kj::String> importPath;
@@ -3186,21 +3197,34 @@ private:
     for (auto& interfaceDef: interfaces) {
       KJ_IF_MAYBE(symbol, schema.findNested(interfaceDef.name)) {
         if (symbol->getProto().isInterface()) {
-          ids.insert(std::make_pair(
-              toStdString(interfaceDef.name),
-              toStdString(capnpInterfaceIdString(symbol->getProto().getId()))));
+          DevCapnpParsedInterfaceMetadata interfaceMetadata;
+          interfaceMetadata.interfaceId =
+              toStdString(capnpInterfaceIdString(symbol->getProto().getId()));
+          auto interfaceSchema = symbol->asInterface();
+          for (auto method: interfaceSchema.getMethods()) {
+            auto proto = method.getProto();
+            interfaceMetadata.methods.insert(std::make_pair(
+                toStdString(proto.getName()),
+                DevCapnpParsedMethodMetadata {
+                  method.getOrdinal(),
+                  toStdString(capnpInterfaceIdString(proto.getParamStructType())),
+                  toStdString(capnpInterfaceIdString(proto.getResultStructType())),
+                }));
+          }
+
+          metadata.insert(std::make_pair(toStdString(interfaceDef.name), kj::mv(interfaceMetadata)));
         }
       }
     }
 
-    return ids;
+    return metadata;
   }
 
   static kj::String generateDevIsolateCapnpModule(
       kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
       kj::StringPtr schemaSource) {
     auto interfaces = scanCapnpInterfaces(schemaSource);
-    auto interfaceIds = parseCapnpInterfaceIds(resolvedPath, rootDir, interfaces.asPtr());
+    auto interfaceMetadata = parseCapnpInterfaceMetadata(resolvedPath, rootDir, interfaces.asPtr());
     auto imports = scanCapnpImports(schemaSource);
     auto importerDir = dirnameForPath(resolvedPath);
     kj::Vector<char> output;
@@ -3274,6 +3298,9 @@ private:
         "    interfaceId: metadata.interfaceId || \"\",\n"
         "    schemaPath,\n"
         "    schemaText,\n"
+        "    methodIds: metadata.methodIds || {},\n"
+        "    paramStructIds: metadata.paramStructIds || {},\n"
+        "    resultStructIds: metadata.resultStructIds || {},\n"
         "    argumentCapabilities: metadata.argumentCapabilities || {},\n"
         "    resultCapabilities: metadata.resultCapabilities || {},\n"
         "  });\n"
@@ -3293,10 +3320,47 @@ private:
 
       bool wroteMetadata = false;
       bool wroteMetadataEntry = false;
-      auto interfaceId = interfaceIds.find(toStdString(interfaceDef.name));
-      if (interfaceId != interfaceIds.end()) {
+      auto parsedInterface = interfaceMetadata.find(toStdString(interfaceDef.name));
+      if (parsedInterface != interfaceMetadata.end()) {
         output.addAll(kj::StringPtr(", {\n  interfaceId: "));
-        appendJsString(output, kj::StringPtr(interfaceId->second));
+        appendJsString(output, kj::StringPtr(parsedInterface->second.interfaceId));
+        output.addAll(kj::StringPtr(",\n  methodIds: {\n"));
+        bool wroteMethodId = false;
+        for (auto& method: interfaceDef.methods) {
+          auto parsedMethod = parsedInterface->second.methods.find(toStdString(method.name));
+          if (parsedMethod == parsedInterface->second.methods.end()) continue;
+          if (wroteMethodId) output.addAll(kj::StringPtr(",\n"));
+          output.addAll(kj::StringPtr("    "));
+          appendJsString(output, method.name);
+          output.addAll(kj::StringPtr(": "));
+          output.addAll(kj::str(parsedMethod->second.id));
+          wroteMethodId = true;
+        }
+        output.addAll(kj::StringPtr("\n  },\n  paramStructIds: {\n"));
+        bool wroteParamStructId = false;
+        for (auto& method: interfaceDef.methods) {
+          auto parsedMethod = parsedInterface->second.methods.find(toStdString(method.name));
+          if (parsedMethod == parsedInterface->second.methods.end()) continue;
+          if (wroteParamStructId) output.addAll(kj::StringPtr(",\n"));
+          output.addAll(kj::StringPtr("    "));
+          appendJsString(output, method.name);
+          output.addAll(kj::StringPtr(": "));
+          appendJsString(output, kj::StringPtr(parsedMethod->second.paramStructId));
+          wroteParamStructId = true;
+        }
+        output.addAll(kj::StringPtr("\n  },\n  resultStructIds: {\n"));
+        bool wroteResultStructId = false;
+        for (auto& method: interfaceDef.methods) {
+          auto parsedMethod = parsedInterface->second.methods.find(toStdString(method.name));
+          if (parsedMethod == parsedInterface->second.methods.end()) continue;
+          if (wroteResultStructId) output.addAll(kj::StringPtr(",\n"));
+          output.addAll(kj::StringPtr("    "));
+          appendJsString(output, method.name);
+          output.addAll(kj::StringPtr(": "));
+          appendJsString(output, kj::StringPtr(parsedMethod->second.resultStructId));
+          wroteResultStructId = true;
+        }
+        output.addAll(kj::StringPtr("\n  }"));
         wroteMetadata = true;
         wroteMetadataEntry = true;
       }

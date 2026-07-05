@@ -518,6 +518,8 @@ Progress:
 - generated `capnp:` bindings expose parser-derived `Interface.interfaceId`;
   hand-written bindings can still pass `interfaceId` explicitly, and default to
   an empty string when they do not.
+- generated `capnp:` bindings expose parser-derived method ordinals plus
+  parameter/result struct ids in `Interface.schema`.
 
 Deliverables:
 
