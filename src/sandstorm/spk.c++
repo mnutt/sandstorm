@@ -2620,6 +2620,9 @@ private:
     auto schemaImports = scanCapnpImports(source);
     auto importerDir = dirnameForPath(resolvedPath);
     for (auto& schemaImport: schemaImports) {
+      if (nativeCapnpCapabilitySpec(schemaImport.specifier) != nullptr) {
+        continue;
+      }
       auto importedPath = resolveDevIsolateCapnpSchemaImport(
           importerDir, rootDir, schemaImport.specifier);
       auto importedSpecifier = devIsolateCapnpSpecifierForPath(importedPath, rootDir);
@@ -3157,6 +3160,9 @@ private:
 
     kj::Vector<kj::String> importPath;
     importPath.add(kj::heapString(rootDir));
+    if (access("src/sandstorm/web-session.capnp", R_OK) == 0) {
+      importPath.add(kj::heapString("src"));
+    }
     importPath.add(kj::heapString("/usr/local/include"));
     importPath.add(kj::heapString("/usr/include"));
     auto importPathPtrs = KJ_MAP(p, importPath) -> kj::StringPtr { return p; };
@@ -3188,6 +3194,19 @@ private:
     return metadata;
   }
 
+  static kj::Maybe<kj::String> nativeCapnpCapabilitySpec(
+      kj::StringPtr importSpecifier) {
+    if (importSpecifier == "/sandstorm/web-session.capnp") {
+      return kj::heapString("{ nativeInterface: \"webSession\", fetch: true }");
+    } else if (importSpecifier == "/sandstorm/api-session.capnp") {
+      return kj::heapString("{ nativeInterface: \"apiSession\", fetch: true }");
+    } else if (importSpecifier == "/sandstorm/outbound-http-session.capnp") {
+      return kj::heapString("{ nativeInterface: \"outboundHttpSession\", fetch: true }");
+    } else {
+      return nullptr;
+    }
+  }
+
   static kj::String generateDevIsolateCapnpModule(
       kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
       kj::StringPtr schemaSource) {
@@ -3203,8 +3222,15 @@ private:
         "import { makeCapnpInterfaceBinding } from \"sandstorm:capnp\";\n\n"));
 
     std::map<std::string, std::string> importedInterfaceBindings;
+    std::map<std::string, std::string> nativeInterfaceSpecs;
     uint importIndex = 0;
     for (auto& importDef: imports) {
+      KJ_IF_MAYBE(nativeSpec, nativeCapnpCapabilitySpec(importDef.specifier)) {
+        nativeInterfaceSpecs.insert(std::make_pair(
+            toStdString(importDef.alias), toStdString(*nativeSpec)));
+        continue;
+      }
+
       auto importedPath = resolveDevIsolateCapnpSchemaImport(
           importerDir, rootDir, importDef.specifier);
       auto importedSpecifier = devIsolateCapnpSpecifierForPath(importedPath, rootDir);
@@ -3247,6 +3273,28 @@ private:
     for (auto& interfaceDef: interfaces) {
       interfaceNames.insert(toStdString(interfaceDef.name));
     }
+
+    auto isCapabilityType = [&](kj::StringPtr type) {
+      auto typeName = toStdString(type);
+      return type.size() > 0 &&
+          (interfaceNames.find(typeName) != interfaceNames.end() ||
+           importedInterfaceBindings.find(typeName) != importedInterfaceBindings.end() ||
+           nativeInterfaceSpecs.find(typeName) != nativeInterfaceSpecs.end());
+    };
+
+    auto appendCapabilityCaster = [&](kj::Vector<char>& output, kj::StringPtr type) {
+      auto typeName = toStdString(type);
+      auto imported = importedInterfaceBindings.find(typeName);
+      auto native = nativeInterfaceSpecs.find(typeName);
+      if (interfaceNames.find(typeName) != interfaceNames.end()) {
+        output.addAll(type);
+      } else if (imported != importedInterfaceBindings.end()) {
+        output.addAll(kj::StringPtr(imported->second));
+      } else {
+        KJ_ASSERT(native != nativeInterfaceSpecs.end(), type);
+        output.addAll(kj::StringPtr(native->second));
+      }
+    };
 
     for (auto& interfaceDef: interfaces) {
       output.addAll(kj::StringPtr("const "));
@@ -3336,10 +3384,7 @@ private:
       bool wroteArgumentCapabilities = false;
       for (auto& method: interfaceDef.methods) {
         for (auto& param: method.params) {
-          auto paramType = toStdString(param.type);
-          if (param.type.size() > 0 &&
-              (interfaceNames.find(paramType) != interfaceNames.end() ||
-               importedInterfaceBindings.find(paramType) != importedInterfaceBindings.end())) {
+          if (isCapabilityType(param.type)) {
             if (!wroteMetadata) {
               output.addAll(kj::StringPtr(", {\n"));
               wroteMetadata = true;
@@ -3360,30 +3405,24 @@ private:
             bool wroteIndex = false;
             for (auto i: kj::indices(method.params)) {
               auto& indexedParam = method.params[i];
-              auto indexedParamType = toStdString(indexedParam.type);
-              if (indexedParam.type.size() > 0 &&
-                  (interfaceNames.find(indexedParamType) != interfaceNames.end() ||
-                   importedInterfaceBindings.find(indexedParamType) !=
-                   importedInterfaceBindings.end())) {
+              if (isCapabilityType(indexedParam.type)) {
                 if (wroteIndex) output.addAll(kj::StringPtr(", "));
                 output.addAll(kj::str(i));
                 wroteIndex = true;
               }
             }
-            output.addAll(kj::StringPtr("], fields: ["));
+            output.addAll(kj::StringPtr("], fields: {"));
             bool wroteField = false;
             for (auto& namedParam: method.params) {
-              auto namedParamType = toStdString(namedParam.type);
-              if (namedParam.type.size() > 0 &&
-                  (interfaceNames.find(namedParamType) != interfaceNames.end() ||
-                   importedInterfaceBindings.find(namedParamType) !=
-                   importedInterfaceBindings.end())) {
+              if (isCapabilityType(namedParam.type)) {
                 if (wroteField) output.addAll(kj::StringPtr(", "));
                 appendJsString(output, namedParam.name);
+                output.addAll(kj::StringPtr(": "));
+                appendCapabilityCaster(output, namedParam.type);
                 wroteField = true;
               }
             }
-            output.addAll(kj::StringPtr("] }"));
+            output.addAll(kj::StringPtr("} }"));
             break;
           }
         }
@@ -3396,10 +3435,7 @@ private:
       for (auto& method: interfaceDef.methods) {
         kj::Vector<DevCapnpInterface::Field*> capabilityResults;
         for (auto& result: method.results) {
-          auto resultType = toStdString(result.type);
-          if (result.type.size() > 0 &&
-              (interfaceNames.find(resultType) != interfaceNames.end() ||
-               importedInterfaceBindings.find(resultType) != importedInterfaceBindings.end())) {
+          if (isCapabilityType(result.type)) {
             capabilityResults.add(&result);
           }
         }
@@ -3422,29 +3458,25 @@ private:
           output.addAll(kj::StringPtr("    "));
           appendJsString(output, method.name);
           if (capabilityResults.size() == 1) {
+            output.addAll(kj::StringPtr(": "));
             auto resultType = toStdString(capabilityResults[0]->type);
-            auto importedResult = importedInterfaceBindings.find(resultType);
-            output.addAll(kj::StringPtr(": () => "));
-            if (importedResult == importedInterfaceBindings.end()) {
-              output.addAll(capabilityResults[0]->type);
-            } else {
-              output.addAll(kj::StringPtr(importedResult->second));
+            if (nativeInterfaceSpecs.find(resultType) == nativeInterfaceSpecs.end()) {
+              output.addAll(kj::StringPtr("() => "));
             }
+            appendCapabilityCaster(output, capabilityResults[0]->type);
           } else {
             output.addAll(kj::StringPtr(": { fields: {\n"));
             bool wroteField = false;
             for (auto& result: capabilityResults) {
-              auto resultType = toStdString(result->type);
-              auto importedResult = importedInterfaceBindings.find(resultType);
               if (wroteField) output.addAll(kj::StringPtr(",\n"));
               output.addAll(kj::StringPtr("      "));
               appendJsString(output, result->name);
-              output.addAll(kj::StringPtr(": () => "));
-              if (importedResult == importedInterfaceBindings.end()) {
-                output.addAll(result->type);
-              } else {
-                output.addAll(kj::StringPtr(importedResult->second));
+              output.addAll(kj::StringPtr(": "));
+              auto resultType = toStdString(result->type);
+              if (nativeInterfaceSpecs.find(resultType) == nativeInterfaceSpecs.end()) {
+                output.addAll(kj::StringPtr("() => "));
               }
+              appendCapabilityCaster(output, result->type);
               wroteField = true;
             }
             output.addAll(kj::StringPtr("\n    } }"));

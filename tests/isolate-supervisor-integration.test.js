@@ -517,7 +517,7 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
   assert.match(generated.stdout, /"hello", "greeting", "greetingPair", "useGreeting"/);
   assert.match(
     generated.stdout,
-    /"useGreeting": \{ indexes: \[0\], fields: \["greeting"\] \}/);
+    /"useGreeting": \{ indexes: \[0\], fields: \{"greeting": _capnpImport0_Greeting\} \}/);
   assert.match(generated.stdout, /"greeting": \(\) => _capnpImport0_Greeting/);
   assert.match(
     generated.stdout,
@@ -533,6 +533,18 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
   assert.match(generatedGreeting.stdout, /interfaceId: "0x[0-9a-f]{16}"/);
   assert.match(generatedGreeting.stdout, /methodIds: \{\n    "read": 0\n  \}/);
   assert.match(generatedGreeting.stdout, /"read"/);
+
+  const objectStorePath = path.join(REPO_DIR, "examples/isolate-object-store/worker.js");
+  const generatedObjectStore = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-generated-module", "capnp:./object-store.capnp",
+    objectStorePath,
+  ]);
+  assert.match(generatedObjectStore.stdout, /export const ObjectStore = makeInterface\("ObjectStore"/);
+  assert.match(
+    generatedObjectStore.stdout,
+    /"openObject": \{ nativeInterface: "webSession", fetch: true \}/);
+  assert.doesNotMatch(generatedObjectStore.stdout, /from "capnp:.*web-session/);
 });
 
 test("isolate supervisor integration suite", {
