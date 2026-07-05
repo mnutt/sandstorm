@@ -520,32 +520,49 @@ function methodSchemaMetadata(binding, methodName) {
   };
 }
 
+function nativeCapnpInterfaceMetadata(InterfaceClass, options = {}) {
+  const schema = options.schema || options.binding?.schema ||
+      InterfaceClass?.schema || InterfaceClass?.Client?.schema ||
+      InterfaceClass?._capnp || InterfaceClass?.Client?._capnp || {};
+  return Object.freeze({
+    interfaceId: options.interfaceId ?? schema.interfaceId ??
+        InterfaceClass?.interfaceId ?? InterfaceClass?.Client?.interfaceId ?? 0n,
+    interfaceName: options.interfaceName ?? schema.interfaceName ??
+        InterfaceClass?.interfaceName ?? InterfaceClass?.Client?.interfaceName ?? "",
+  });
+}
+
+async function sendNativeCapnpBridgeEnvelope(api, request, context, expectedWhich) {
+  if (!api || typeof api.nativeCapnpBridgeCallBytes !== "function") {
+    throw new NativeCapnpBridgeProtocolError(
+      "native bridge call requires api.nativeCapnpBridgeCallBytes()");
+  }
+
+  const response = await api.nativeCapnpBridgeCallBytes(request.message);
+  if (!response || typeof response !== "object" || !(response.body instanceof Uint8Array)) {
+    throw new NativeCapnpBridgeProtocolError("native bridge call returned an invalid response");
+  }
+
+  const decoded = decodeNativeCapnpBridgeResponse(response.body);
+  if (decoded.which === "exception") {
+    throw new NativeCapnpBridgeUnavailableError(
+      decoded.exception.reason || "native Cap'n Proto bridge call failed",
+      { ...context, response, decoded });
+  }
+  if (decoded.which !== expectedWhich) {
+    throw new NativeCapnpBridgeProtocolError(
+      `native Cap'n Proto bridge returned unexpected ${decoded.which} response`,
+      { ...context, response, decoded });
+  }
+
+  return { response, decoded };
+}
+
 export async function createNativeCapnpBridge(api, options = {}) {
   const negotiation = await negotiateNativeCapnpBridge(api, options);
   const sendRequest = async (request, context, expectedWhich) => {
-    if (typeof api.nativeCapnpBridgeCallBytes !== "function") {
-      throw new NativeCapnpBridgeProtocolError(
-        "native bridge call requires api.nativeCapnpBridgeCallBytes()");
-    }
-
-    const response = await api.nativeCapnpBridgeCallBytes(request.message);
-    if (!response || typeof response !== "object" || !(response.body instanceof Uint8Array)) {
-      throw new NativeCapnpBridgeProtocolError("native bridge call returned an invalid response");
-    }
-
-    const decoded = decodeNativeCapnpBridgeResponse(response.body);
-    if (decoded.which === "exception") {
-      throw new NativeCapnpBridgeUnavailableError(
-        decoded.exception.reason || "native Cap'n Proto bridge call failed",
-        { negotiation, ...context, response, decoded });
-    }
-    if (decoded.which !== expectedWhich) {
-      throw new NativeCapnpBridgeProtocolError(
-        `native Cap'n Proto bridge returned unexpected ${decoded.which} response`,
-        { negotiation, ...context, response, decoded });
-    }
-
-    return { response, decoded };
+    return sendNativeCapnpBridgeEnvelope(
+      api, request, { negotiation, ...context }, expectedWhich);
   };
 
   const requireAvailable = (operation) => {
@@ -712,6 +729,13 @@ export function createNativeCapnpBridgeConnection(api, target, options = {}) {
   return Object.assign(conn, { transport });
 }
 
+export async function saveNativeCapnp(api, target) {
+  const request = makeNativeCapnpBridgeSaveRequest({ target });
+  const { decoded } = await sendNativeCapnpBridgeEnvelope(
+    api, request, { targetId: target?.id }, "saved");
+  return decoded.saved.token;
+}
+
 export function connectNativeCapnp(api, target, InterfaceClass, options = {}) {
   if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
     throw new TypeError("connectNativeCapnp() requires a capnp-es generated interface class");
@@ -731,6 +755,31 @@ export function connectNativeCapnp(api, target, InterfaceClass, options = {}) {
     drop: () => target.drop?.(),
     save: (...args) => target.save?.(...args),
   });
+}
+
+export async function restoreNativeCapnp(api, token, InterfaceClass, options = {}) {
+  if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
+    throw new TypeError("restoreNativeCapnp() requires a capnp-es generated interface class");
+  }
+
+  const negotiation = await negotiateNativeCapnpBridge(api, { requiredFeatures: ["nativeRpc"] });
+  if (!negotiation.available) {
+    throw new NativeCapnpBridgeUnavailableError(
+      `native Cap'n Proto RPC transport is unavailable for restore: ` +
+          `${negotiation.reason || "unavailable"}`,
+      { negotiation });
+  }
+
+  const interfaceMetadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
+  const request = makeNativeCapnpBridgeRestoreRequest({
+    token,
+    expectedInterfaceId: interfaceMetadata.interfaceId,
+    expectedInterfaceName: interfaceMetadata.interfaceName,
+  });
+  const { decoded } = await sendNativeCapnpBridgeEnvelope(
+    api, request, { negotiation, token, interfaceMetadata }, "capability");
+
+  return connectNativeCapnp(api, decoded.capability, InterfaceClass, options);
 }
 
 const bindingError = (interfaceName, operation) => new Error(

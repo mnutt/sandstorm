@@ -829,6 +829,10 @@ test("isolate supervisor integration suite", {
     assert.equal(typeof body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.token, "string");
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.token.length > 0);
     assert.equal(
+      typeof body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.helperToken,
+      "string");
+    assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.helperToken.length > 0);
+    assert.equal(
       typeof body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id,
       "string");
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id.length > 0);
@@ -1112,6 +1116,18 @@ test("isolate supervisor integration suite", {
           bytes: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.bytes,
           which: "saved",
           token: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.token,
+          helperToken: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.helperToken,
+        },
+        restoredClient: {
+          isFixtureClient: true,
+          hasBootstrapClient: true,
+          targetId: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restoredClient.targetId,
+          connectionId: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restoredClient
+              .connectionId,
+          bootstrap: {
+            which: 3,
+            answerId: 0,
+          },
         },
         restore: {
           ok: true,
