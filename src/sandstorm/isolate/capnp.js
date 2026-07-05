@@ -37,7 +37,27 @@ function resolveResultBinding(interfaceName, methodName, caster) {
   return binding;
 }
 
-function castCapabilityValue(binding, value, localMode) {
+function isNativeCapabilitySpec(caster) {
+  return caster && typeof caster === "object" &&
+    typeof caster.cast !== "function" &&
+    typeof caster.nativeInterface === "string";
+}
+
+function nativeCapabilityValue(interfaceName, methodName, value, caster) {
+  if (!value || typeof value !== "object" || typeof value.fetch !== "function") {
+    throw new TypeError(
+      `${interfaceName}.${methodName} result capability must be a Sandstorm ` +
+      `${caster.nativeInterface} capability`);
+  }
+  return value;
+}
+
+function castCapabilityValue(interfaceName, methodName, caster, value, localMode) {
+  if (isNativeCapabilitySpec(caster)) {
+    return nativeCapabilityValue(interfaceName, methodName, value, caster);
+  }
+
+  const binding = resolveResultBinding(interfaceName, methodName, caster);
   if (value && typeof value === "object" && value.rpc) {
     return binding.cast(value);
   } else if (localMode) {
@@ -60,8 +80,11 @@ async function castResult(interfaceName, methodName, result, resultCapabilities,
   if (!spec) return result;
 
   if (typeof spec === "function" || typeof spec.cast === "function") {
-    const binding = resolveResultBinding(interfaceName, methodName, spec);
-    return castCapabilityValue(binding, result, localMode);
+    return castCapabilityValue(interfaceName, methodName, spec, result, localMode);
+  }
+
+  if (isNativeCapabilitySpec(spec)) {
+    return nativeCapabilityValue(interfaceName, methodName, result, spec);
   }
 
   const fields = resultFieldEntries(spec);
@@ -72,11 +95,11 @@ async function castResult(interfaceName, methodName, result, resultCapabilities,
   let casted = result;
   for (const [field, caster] of fields) {
     if (!Object.prototype.hasOwnProperty.call(result, field)) continue;
-    const binding = resolveResultBinding(interfaceName, methodName, caster);
     if (casted === result) {
       casted = { ...result };
     }
-    casted[field] = castCapabilityValue(binding, result[field], localMode);
+    casted[field] = castCapabilityValue(
+      interfaceName, methodName, caster, result[field], localMode);
   }
   return casted;
 }

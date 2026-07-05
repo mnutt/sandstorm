@@ -1677,6 +1677,7 @@ test("isolate supervisor integration suite", {
       "child",
       "children",
       "readOther",
+      "mirrorSession",
       "fail",
     ]);
     assert.deepEqual(selfTest.json.schema, {
@@ -1686,13 +1687,15 @@ test("isolate supervisor integration suite", {
       schemaPath: "test/generated-counter.capnp",
       schemaText: [
         "@0xd8c883d5220f7e53;",
+        "using WebSession = import \"/sandstorm/web-session.capnp\".WebSession;",
         "interface GeneratedCounter {",
         "  increment @0 (amount :Float64) -> (value :Float64);",
         "  get @1 () -> (value :Float64);",
         "  child @2 () -> (counter :GeneratedCounter);",
         "  children @3 () -> (left :GeneratedCounter, right :GeneratedCounter);",
         "  readOther @4 (other :GeneratedCounter) -> (value :Float64);",
-        "  fail @5 (message :Text) -> ();",
+        "  mirrorSession @5 (session :WebSession) -> (session :WebSession);",
+        "  fail @6 (message :Text) -> ();",
         "}",
       ].join("\n"),
       methodNames: [
@@ -1701,6 +1704,7 @@ test("isolate supervisor integration suite", {
         "child",
         "children",
         "readOther",
+        "mirrorSession",
         "fail",
       ],
       methodIds: {},
@@ -1708,8 +1712,9 @@ test("isolate supervisor integration suite", {
       resultStructIds: {},
       argumentCapabilities: {
         readOther: { indexes: [0] },
+        mirrorSession: { fields: ["session"] },
       },
-      resultCapabilityNames: ["child", "children"],
+      resultCapabilityNames: ["child", "children", "mirrorSession"],
     });
     assert.deepEqual(selfTest.json.local.first, { value: 2 });
     assert.deepEqual(selfTest.json.local.current, { value: 2 });
@@ -1731,6 +1736,12 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(selfTest.json.children.right, { value: 31 });
     assert.equal(selfTest.json.children.leftDrop.ok, true);
     assert.equal(selfTest.json.children.rightDrop.ok, true);
+    assert.equal(selfTest.json.mirroredSession.capability.type, "capability");
+    assert.equal(selfTest.json.mirroredSession.info.nativeInterface, "webSession");
+    assert.equal(selfTest.json.mirroredSession.fetch.status, 200);
+    assert.equal(selfTest.json.mirroredSession.fetch.body.pathname, "/exported/capability-echo");
+    assert.equal(selfTest.json.mirroredSession.fetch.body.search, "?source=capnp-mirror");
+    assert.equal(selfTest.json.mirroredSession.drop.ok, true);
     assert.equal(selfTest.json.durable.registered, true);
     assert.equal(selfTest.json.durable.restored, false);
     assert.equal(selfTest.json.durable.tokenType, "string");
@@ -1870,10 +1881,17 @@ test("isolate supervisor integration suite", {
         name: "Error",
       },
     });
-    assert.equal(callback.json.wrongForwardedCapabilityFailure.name, "UnsupportedCapabilityError");
+    assert.equal(callback.json.wrongForwardedCapabilityFailure.name, "CapabilityCallError");
     assert.match(
       callback.json.wrongForwardedCapabilityFailure.message,
-      /nativeInterface webSession cannot be used with app-defined RPC/);
+      /native app RPC transport returned invalid response with status 400/);
+    assert.equal(callback.json.wrongForwardedCapabilityFailure.details.status, 400);
+    assert.match(
+      callback.json.wrongForwardedCapabilityFailure.details.body.error,
+      /claimed capability cannot be used as native app RPC argument/);
+    assert.match(
+      callback.json.wrongForwardedCapabilityFailure.details.body.error,
+      /webSession/);
     assert.equal(callback.json.webSessionDrop.ok, true);
     assert.equal(callback.json.sessionDrop.ok, true);
     assert.deepEqual(callback.json.savedLiveReceiver, {
@@ -2230,12 +2248,11 @@ test("isolate supervisor integration suite", {
       callback: { urgent: true },
       options: null,
     });
-    assert.equal(nativeInterfaceValidation.json.wrongResultSlotError.name,
-      "UnsupportedCapabilityError");
-    assert.match(nativeInterfaceValidation.json.wrongResultSlotError.message,
-      /nativeInterface webSession/);
-    assert.match(nativeInterfaceValidation.json.wrongResultSlotError.message,
-      /app-defined RPC/);
+    assert.deepEqual(nativeInterfaceValidation.json.nonAppObjectResultSlot, {
+      ok: true,
+      type: "capability",
+      id: "web-session-slot",
+    });
     assert.deepEqual(nativeInterfaceValidation.json.helperNativeSlot,
       nativeInterfaceValidation.json.appObjectNativeSlot);
     assert.deepEqual(nativeInterfaceValidation.json.helperNativeDrop, {

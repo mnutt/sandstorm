@@ -562,6 +562,10 @@ Progress:
 - generated `capnp:` modules emit structured result capability slot metadata
   for methods whose result structs contain multiple top-level capability
   fields.
+- local app-object RPC dispatch can carry non-appObject Sandstorm capabilities
+  as opaque values, and `sandstorm:capnp` can declare fetch-shaped result
+  slots by native interface. The supervisor native app-RPC route still rejects
+  non-appObject slots pending a broader slot schema change.
 
 Add support for generic capability slots:
 

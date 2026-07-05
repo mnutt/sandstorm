@@ -90,6 +90,12 @@ class CounterCapability extends RpcTarget {
     return other.get();
   }
 
+  mirrorSession(input) {
+    return {
+      session: input.session,
+    };
+  }
+
   async retainOther(other) {
     if (this.#retained) {
       await this.#retained.drop();
@@ -129,23 +135,27 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
   "child",
   "children",
   "readOther",
+  "mirrorSession",
   "fail",
 ], {
   importSpecifier: "capnp:test/generated-counter.capnp",
   schemaPath: "test/generated-counter.capnp",
   schemaText: [
     "@0xd8c883d5220f7e53;",
+    "using WebSession = import \"/sandstorm/web-session.capnp\".WebSession;",
     "interface GeneratedCounter {",
     "  increment @0 (amount :Float64) -> (value :Float64);",
     "  get @1 () -> (value :Float64);",
     "  child @2 () -> (counter :GeneratedCounter);",
     "  children @3 () -> (left :GeneratedCounter, right :GeneratedCounter);",
     "  readOther @4 (other :GeneratedCounter) -> (value :Float64);",
-    "  fail @5 (message :Text) -> ();",
+    "  mirrorSession @5 (session :WebSession) -> (session :WebSession);",
+    "  fail @6 (message :Text) -> ();",
     "}",
   ].join("\n"),
   argumentCapabilities: {
     readOther: { indexes: [0] },
+    mirrorSession: { fields: ["session"] },
   },
   resultCapabilities: {
     child: () => GeneratedCounter,
@@ -153,6 +163,14 @@ const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
       fields: {
         left: () => GeneratedCounter,
         right: () => GeneratedCounter,
+      },
+    },
+    mirrorSession: {
+      fields: {
+        session: {
+          nativeInterface: "webSession",
+          fetch: true,
+        },
       },
     },
   },
@@ -1182,23 +1200,15 @@ export default {
         "default-subject", { urgent: false });
       const defaultCallValue = await appObjectCapability.call(
         "deliver", "call-subject", { urgent: true });
-      let wrongResultSlotError = null;
-      try {
-        await createCapabilityNativeAppRpcStub(appObjectCapability, {
-          transport: async () => ({
-            type: "value",
-            value: {
-              type: "capability",
-              value: { id: "web-session-slot", nativeInterface: "webSession" },
-            },
-          }),
-        }).rpc.deliver("wrong-result-slot");
-      } catch (error) {
-        wrongResultSlotError = {
-          name: String(error?.name || "Error"),
-          message: String(error?.message || error),
-        };
-      }
+      const nonAppObjectResultSlot = await createCapabilityNativeAppRpcStub(appObjectCapability, {
+        transport: async () => ({
+          type: "value",
+          value: {
+            type: "capability",
+            value: { id: "web-session-slot", nativeInterface: "webSession" },
+          },
+        }),
+      }).rpc.deliver("non-app-object-result-slot");
 
       const helperNativeRpcStub = createCapabilityNativeAppRpcStub(appObjectCapability, {
         checkInfo: false,
@@ -1241,7 +1251,7 @@ export default {
         appObjectNativeValue,
         defaultNativeRpcValue,
         defaultCallValue,
-        wrongResultSlotError,
+        nonAppObjectResultSlot,
         helperNativeSlot,
         helperNativeDrop,
         wrongNativeRpcTransportCalls,
@@ -2125,6 +2135,10 @@ export default {
           wrongForwardedCapabilityFailure = {
             name: String(error?.name || "Error"),
             message: String(error?.message || error),
+            details: {
+              status: error?.details?.status ?? null,
+              body: error?.details?.body ?? null,
+            },
           };
         }
         const webSessionDrop = await webSessionCapability.drop();
@@ -2987,6 +3001,15 @@ export default {
       const children = await transientClient.children();
       const leftFirst = await children.left.increment(29);
       const rightFirst = await children.right.increment(31);
+      const webSession = await api.webSession({ pathPrefix: "/exported" });
+      const mirroredSession = await transientClient.mirrorSession({ session: webSession });
+      const mirroredSessionInfo = await mirroredSession.session.info();
+      const mirroredSessionFetchResponse =
+        await mirroredSession.session.fetch("/capability-echo?source=capnp-mirror");
+      const mirroredSessionFetch = {
+        status: mirroredSessionFetchResponse.status,
+        body: await mirroredSessionFetchResponse.json(),
+      };
 
       const durableTarget = new CounterCapability();
       durableTarget.increment(11);
@@ -3026,6 +3049,7 @@ export default {
       const dropChild = await childClient.drop();
       const dropChildrenLeft = await children.left.drop();
       const dropChildrenRight = await children.right.drop();
+      const dropMirroredSession = await mirroredSession.session.drop();
       const dropTransient = await transientClient.drop();
       const revokeCastSaved = await api.revoke(castSaved);
       const revokeDurableToken = castSaved === durable.token
@@ -3084,6 +3108,12 @@ export default {
           right: rightFirst,
           leftDrop: dropChildrenLeft,
           rightDrop: dropChildrenRight,
+        },
+        mirroredSession: {
+          capability: JSON.parse(JSON.stringify(mirroredSession.session)),
+          info: mirroredSessionInfo,
+          fetch: mirroredSessionFetch,
+          drop: dropMirroredSession,
         },
         durable: {
           id: durable.id,
