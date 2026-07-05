@@ -2271,7 +2271,7 @@ private:
         if (isCapnpImport(specifier)) {
           auto resolvedImport = resolveDevIsolateCapnpImport(
               importerDir, rootDir, specifier);
-          addDevIsolateCapnpModule(specifier, resolvedImport, modules, capnpImports);
+          addDevIsolateCapnpModule(specifier, resolvedImport, rootDir, modules, capnpImports);
         } else if (isRelativeImport(specifier)) {
           auto resolvedImport = resolveDevIsolateImport(importerDir, rootDir, specifier);
           collectDevIsolateModule(resolvedImport, rootDir, modules, seen, capnpImports);
@@ -2597,7 +2597,8 @@ private:
   }
 
   void addDevIsolateCapnpModule(
-      kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::Vector<DevIsolateModule>& modules,
+      kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
+      kj::Vector<DevIsolateModule>& modules,
       std::map<std::string, std::string>& capnpImports) {
     auto specifierStd = toStdString(specifier);
     auto resolvedStd = toStdString(resolvedPath);
@@ -2615,9 +2616,18 @@ private:
         "`capnp:` isolate imports require the generated dev-isolate support directory.");
 
     auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
+    auto schemaImports = scanCapnpImports(source);
+    auto importerDir = dirnameForPath(resolvedPath);
+    for (auto& schemaImport: schemaImports) {
+      auto importedPath = resolveDevIsolateCapnpSchemaImport(
+          importerDir, rootDir, schemaImport.specifier);
+      auto importedSpecifier = devIsolateCapnpSpecifierForPath(importedPath, rootDir);
+      addDevIsolateCapnpModule(importedSpecifier, importedPath, rootDir, modules, capnpImports);
+    }
+
     auto moduleFileName = devIsolateCapnpGeneratedFileName(resolvedPath);
     auto runtimePath = kj::str("capnp/", moduleFileName);
-    auto content = generateDevIsolateCapnpModule(specifier, resolvedPath, source);
+    auto content = generateDevIsolateCapnpModule(specifier, resolvedPath, rootDir, source);
     writeDevIsolateGeneratedSupportFile(devIsolateSupportDir, runtimePath, content);
 
     modules.add(DevIsolateModule {
@@ -2625,6 +2635,21 @@ private:
       kj::str("__sandstorm_isolate_runtime/", runtimePath),
       DevIsolateModuleType::ES_MODULE
     });
+  }
+
+  static kj::String resolveDevIsolateCapnpSchemaImport(
+      kj::StringPtr importerDir, kj::StringPtr rootDir, kj::StringPtr specifier) {
+    KJ_REQUIRE(isRelativeImport(specifier),
+        "`capnp:` isolate schema imports must use relative paths for now.", specifier);
+    KJ_REQUIRE(specifier.endsWith(".capnp"),
+        "`capnp:` isolate schema imports must point to .capnp files.", specifier);
+    return resolveDevIsolateImport(importerDir, rootDir, specifier);
+  }
+
+  static kj::String devIsolateCapnpSpecifierForPath(kj::StringPtr resolvedPath,
+                                                    kj::StringPtr rootDir) {
+    auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
+    return kj::str("capnp:./", moduleName);
   }
 
   static kj::String devIsolateCapnpGeneratedFileName(kj::StringPtr resolvedPath) {
@@ -2690,6 +2715,26 @@ private:
     }
   }
 
+  static kj::Maybe<kj::String> parseCapnpString(std::string const& source, size_t& pos) {
+    if (pos >= source.size() || (source[pos] != '"' && source[pos] != '\'')) {
+      return nullptr;
+    }
+
+    char quote = source[pos++];
+    std::string value;
+    while (pos < source.size()) {
+      char c = source[pos++];
+      if (c == '\\' && pos < source.size()) {
+        value.push_back(source[pos++]);
+      } else if (c == quote) {
+        return kj::heapString(value.c_str());
+      } else {
+        value.push_back(c);
+      }
+    }
+    return nullptr;
+  }
+
   static void skipCapnpWhitespaceAndComments(std::string const& source, size_t& pos) {
     for (;;) {
       while (pos < source.size() && isspace(static_cast<unsigned char>(source[pos]))) {
@@ -2731,6 +2776,84 @@ private:
       ++pos;
     }
     return kj::heapString(source.substr(start, pos - start).c_str());
+  }
+
+  static kj::Maybe<kj::String> scanCapnpTypeName(std::string const& source, size_t& pos) {
+    skipCapnpWhitespaceAndComments(source, pos);
+    while (pos < source.size() && source[pos] == '.') {
+      ++pos;
+    }
+
+    KJ_IF_MAYBE(firstPart, scanCapnpIdentifier(source, pos)) {
+      std::string typeName = toStdString(*firstPart);
+      for (;;) {
+        skipCapnpWhitespaceAndComments(source, pos);
+        if (pos >= source.size() || source[pos] != '.') {
+          break;
+        }
+        ++pos;
+        KJ_IF_MAYBE(nextPart, scanCapnpIdentifier(source, pos)) {
+          typeName += ".";
+          typeName += toStdString(*nextPart);
+        } else {
+          break;
+        }
+      }
+      return kj::heapString(typeName.c_str());
+    }
+
+    return nullptr;
+  }
+
+  struct DevCapnpImport {
+    kj::String alias;
+    kj::String specifier;
+  };
+
+  static kj::Vector<DevCapnpImport> scanCapnpImports(kj::StringPtr schemaSource) {
+    auto source = toStdString(schemaSource);
+    kj::Vector<DevCapnpImport> imports;
+    size_t pos = 0;
+    while (pos < source.size()) {
+      skipCapnpWhitespaceAndComments(source, pos);
+      if (pos >= source.size()) break;
+
+      if (source[pos] == '"' || source[pos] == '\'') {
+        skipCapnpString(source, pos);
+      } else if (isalpha(static_cast<unsigned char>(source[pos]))) {
+        auto start = pos++;
+        while (pos < source.size() &&
+               (isalnum(static_cast<unsigned char>(source[pos])) || source[pos] == '_')) {
+          ++pos;
+        }
+
+        if (source.compare(start, pos - start, "using") == 0) {
+          auto usingPos = pos;
+          KJ_IF_MAYBE(alias, scanCapnpIdentifier(source, usingPos)) {
+            skipCapnpWhitespaceAndComments(source, usingPos);
+            if (usingPos < source.size() && source[usingPos] == '=') {
+              ++usingPos;
+              KJ_IF_MAYBE(importKeyword, scanCapnpIdentifier(source, usingPos)) {
+                if (*importKeyword == "import") {
+                  skipCapnpWhitespaceAndComments(source, usingPos);
+                  KJ_IF_MAYBE(specifier, parseCapnpString(source, usingPos)) {
+                    imports.add(DevCapnpImport {
+                      kj::mv(*alias),
+                      kj::mv(*specifier),
+                    });
+                    pos = usingPos;
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else {
+        ++pos;
+      }
+    }
+
+    return imports;
   }
 
   struct DevCapnpInterface {
@@ -2860,10 +2983,7 @@ private:
           if (pos < end && source[pos] == ':') {
             ++pos;
             skipCapnpWhitespaceAndComments(source, pos);
-            while (pos < end && source[pos] == '.') {
-              ++pos;
-            }
-            KJ_IF_MAYBE(typeName, scanCapnpIdentifier(source, pos)) {
+            KJ_IF_MAYBE(typeName, scanCapnpTypeName(source, pos)) {
               fields.add(DevCapnpInterface::Field {
                 kj::mv(*fieldName),
                 kj::mv(*typeName),
@@ -3013,14 +3133,45 @@ private:
   }
 
   static kj::String generateDevIsolateCapnpModule(
-      kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr schemaSource) {
+      kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
+      kj::StringPtr schemaSource) {
     auto interfaces = scanCapnpInterfaces(schemaSource);
+    auto imports = scanCapnpImports(schemaSource);
+    auto importerDir = dirnameForPath(resolvedPath);
     kj::Vector<char> output;
     output.addAll(kj::StringPtr(
         "// Generated by `spk dev-isolate` for a `capnp:` import.\n"
         "// This module provides schema-first bindings over Sandstorm's current\n"
         "// app-object RPC transport. It is not native Cap'n Proto encoding yet.\n\n"
         "import { makeCapnpInterfaceBinding } from \"sandstorm:capnp\";\n\n"));
+
+    std::map<std::string, std::string> importedInterfaceBindings;
+    uint importIndex = 0;
+    for (auto& importDef: imports) {
+      auto importedPath = resolveDevIsolateCapnpSchemaImport(
+          importerDir, rootDir, importDef.specifier);
+      auto importedSpecifier = devIsolateCapnpSpecifierForPath(importedPath, rootDir);
+      auto importedSource = readAll(raiiOpen(importedPath, O_RDONLY | O_CLOEXEC));
+      auto importedInterfaces = scanCapnpInterfaces(importedSource);
+      for (auto& importedInterface: importedInterfaces) {
+        auto bindingName = kj::str("_capnpImport", importIndex, "_", importedInterface.name);
+        output.addAll(kj::StringPtr("import { "));
+        output.addAll(importedInterface.name);
+        output.addAll(kj::StringPtr(" as "));
+        output.addAll(bindingName);
+        output.addAll(kj::StringPtr(" } from "));
+        appendJsString(output, importedSpecifier);
+        output.addAll(kj::StringPtr(";\n"));
+
+        auto typeName = kj::str(importDef.alias, ".", importedInterface.name);
+        importedInterfaceBindings.insert(std::make_pair(
+            toStdString(typeName), toStdString(bindingName)));
+      }
+      ++importIndex;
+    }
+    if (imports.size() > 0) {
+      output.addAll(kj::StringPtr("\n"));
+    }
 
     output.addAll(kj::StringPtr("export const importSpecifier = "));
     appendJsString(output, specifier);
@@ -3078,8 +3229,10 @@ private:
       bool wroteArgumentCapabilities = false;
       for (auto& method: interfaceDef.methods) {
         for (auto& param: method.params) {
+          auto paramType = toStdString(param.type);
           if (param.type.size() > 0 &&
-              interfaceNames.find(toStdString(param.type)) != interfaceNames.end()) {
+              (interfaceNames.find(paramType) != interfaceNames.end() ||
+               importedInterfaceBindings.find(paramType) != importedInterfaceBindings.end())) {
             if (!wroteMetadata) {
               output.addAll(kj::StringPtr(", {\n"));
               wroteMetadata = true;
@@ -3096,8 +3249,11 @@ private:
             bool wroteIndex = false;
             for (auto i: kj::indices(method.params)) {
               auto& indexedParam = method.params[i];
+              auto indexedParamType = toStdString(indexedParam.type);
               if (indexedParam.type.size() > 0 &&
-                  interfaceNames.find(toStdString(indexedParam.type)) != interfaceNames.end()) {
+                  (interfaceNames.find(indexedParamType) != interfaceNames.end() ||
+                   importedInterfaceBindings.find(indexedParamType) !=
+                   importedInterfaceBindings.end())) {
                 if (wroteIndex) output.addAll(kj::StringPtr(", "));
                 output.addAll(kj::str(i));
                 wroteIndex = true;
@@ -3106,8 +3262,11 @@ private:
             output.addAll(kj::StringPtr("], fields: ["));
             bool wroteField = false;
             for (auto& namedParam: method.params) {
+              auto namedParamType = toStdString(namedParam.type);
               if (namedParam.type.size() > 0 &&
-                  interfaceNames.find(toStdString(namedParam.type)) != interfaceNames.end()) {
+                  (interfaceNames.find(namedParamType) != interfaceNames.end() ||
+                   importedInterfaceBindings.find(namedParamType) !=
+                   importedInterfaceBindings.end())) {
                 if (wroteField) output.addAll(kj::StringPtr(", "));
                 appendJsString(output, namedParam.name);
                 wroteField = true;
@@ -3125,8 +3284,11 @@ private:
       bool wroteResultCapabilities = false;
       bool separateResultCapabilities = wroteArgumentCapabilities;
       for (auto& method: interfaceDef.methods) {
+        auto resultType = toStdString(method.resultType);
+        auto localResult = interfaceNames.find(resultType) != interfaceNames.end();
+        auto importedResult = importedInterfaceBindings.find(resultType);
         if (method.resultType.size() > 0 &&
-            interfaceNames.find(toStdString(method.resultType)) != interfaceNames.end()) {
+            (localResult || importedResult != importedInterfaceBindings.end())) {
           if (!wroteMetadata) {
             output.addAll(kj::StringPtr(", {\n"));
             wroteMetadata = true;
@@ -3144,7 +3306,11 @@ private:
           output.addAll(kj::StringPtr("    "));
           appendJsString(output, method.name);
           output.addAll(kj::StringPtr(": () => "));
-          output.addAll(method.resultType);
+          if (localResult) {
+            output.addAll(method.resultType);
+          } else {
+            output.addAll(kj::StringPtr(importedResult->second));
+          }
         }
       }
       if (wroteResultCapabilities) {

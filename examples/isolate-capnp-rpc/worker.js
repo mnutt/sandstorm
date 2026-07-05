@@ -1,5 +1,6 @@
 import { sandstorm } from "sandstorm:api";
-import { Greeter, Greeting } from "capnp:./greeter.capnp";
+import { Greeting } from "capnp:./greeting.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 
 const greeterMethods = {
   async hello({ name = "world" } = {}) {

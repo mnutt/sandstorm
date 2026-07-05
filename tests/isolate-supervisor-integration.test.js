@@ -477,6 +477,9 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
   assert.match(
     modules.get("capnp:./greeter.capnp").esModulePath,
     /^__sandstorm_isolate_runtime\/capnp\/[0-9a-f]+\.js$/);
+  assert.match(
+    modules.get("capnp:./greeting.capnp").esModulePath,
+    /^__sandstorm_isolate_runtime\/capnp\/[0-9a-f]+\.js$/);
   assert.equal(modules.get("sandstorm:api").esModulePath, "__sandstorm_isolate_runtime/api.js");
   assert.equal(modules.get("sandstorm:rpc").esModulePath, "__sandstorm_isolate_runtime/rpc.js");
   assert.equal(
@@ -503,15 +506,24 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
     "--print-generated-module", "capnp:./greeter.capnp",
     workerPath,
   ]);
+  assert.match(
+    generated.stdout,
+    /import \{ Greeting as _capnpImport0_Greeting \} from "capnp:\.\/greeting\.capnp";/);
   assert.match(generated.stdout, /export const Greeter = makeInterface\("Greeter"/);
   assert.match(generated.stdout, /"hello", "greeting", "useGreeting"/);
-  assert.match(generated.stdout, /export const Greeting = makeInterface\("Greeting"/);
-  assert.match(generated.stdout, /"read"/);
   assert.match(
     generated.stdout,
     /"useGreeting": \{ indexes: \[0\], fields: \["greeting"\] \}/);
-  assert.match(generated.stdout, /"greeting": \(\) => Greeting/);
+  assert.match(generated.stdout, /"greeting": \(\) => _capnpImport0_Greeting/);
   assert.doesNotMatch(generated.stdout, /"hello": \(\) =>/);
+
+  const generatedGreeting = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-generated-module", "capnp:./greeting.capnp",
+    workerPath,
+  ]);
+  assert.match(generatedGreeting.stdout, /export const Greeting = makeInterface\("Greeting"/);
+  assert.match(generatedGreeting.stdout, /"read"/);
 });
 
 test("isolate supervisor integration suite", {

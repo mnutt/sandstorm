@@ -469,6 +469,16 @@ Replace the conservative scanner with real schema compilation/generation.
 This phase keeps the current transport but removes the largest correctness
 risk in the authoring model.
 
+Progress:
+
+- `spk dev-isolate` now follows relative imports between `.capnp` files for
+  generated `capnp:` modules.
+- generated modules can reference imported interface bindings for simple
+  capability parameters and single-capability results.
+- the isolate Cap'n Proto RPC example is split across imported schemas, and
+  the isolate supervisor integration test covers generated cross-schema
+  metadata.
+
 Deliverables:
 
 - bundle or expose Sandstorm-owned Cap'n Proto schema tooling for isolate
