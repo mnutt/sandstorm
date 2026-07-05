@@ -678,6 +678,9 @@ Progress:
 - the bridge info currently advertises protocol version `0` with native
   transport disabled; later Phase 4 chunks should turn on feature flags only
   as real native calls, exports, and capability slots land
+- `isolate-supervisor-internal.capnp` defines the first native bridge request,
+  response, payload, exception, lifecycle, and capability-slot envelopes; these
+  are schema only until the supervisor dispatch path is implemented
 
 Interop tests:
 
