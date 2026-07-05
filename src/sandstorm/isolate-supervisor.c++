@@ -25,6 +25,7 @@
 #include <sandstorm/isolate/capnweb.js.h>
 #include <sandstorm/isolate/capnp-es.js.h>
 #include <sandstorm/isolate/capnp.js.h>
+#include <sandstorm/isolate/native-capnp-bridge.js.h>
 #include <sandstorm/isolate/rpc.js.h>
 
 #include <capnp/message.h>
@@ -43,6 +44,7 @@
 #include <sandstorm/api-session.capnp.h>
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
+#include <sandstorm/isolate-native-capnp-bridge.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
 #include <sandstorm/outbound-http-session.capnp.h>
 #include <sandstorm/package.capnp.h>
@@ -907,6 +909,8 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
       ISOLATE_API_HELPER_SOURCE);
   addGeneratedIsolateModule(config, "sandstorm:capnp", IsolateRuntimeConfig::ModuleType::ES_MODULE,
       ISOLATE_CAPNP_HELPER_SOURCE);
+  addGeneratedIsolateModule(config, "sandstorm:native-capnp-bridge",
+      IsolateRuntimeConfig::ModuleType::ES_MODULE, ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE);
   for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
     addGeneratedIsolateModule(
         config, module.name, IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);

@@ -678,9 +678,10 @@ Progress:
 - the bridge info currently advertises protocol version `0` with native
   transport disabled; later Phase 4 chunks should turn on feature flags only
   as real native calls, exports, and capability slots land
-- `isolate-supervisor-internal.capnp` defines the first native bridge request,
-  response, payload, exception, lifecycle, and capability-slot envelopes; these
-  are schema only until the supervisor dispatch path is implemented
+- `isolate-native-capnp-bridge.capnp` defines the first native bridge request,
+  response, payload, exception, lifecycle, and capability-slot envelopes, while
+  `isolate-supervisor-internal.capnp` continues to own the app-object
+  compatibility transport
 - `sandstorm:capnp` exposes `negotiateNativeCapnpBridge()` so generated
   bindings have one conservative feature-detection path for native transport
   vs. app-object RPC fallback
@@ -696,6 +697,11 @@ Progress:
 - `sandstorm:api` exposes `nativeCapnpBridgeCall()` as the narrow JS helper
   for posting to that route, and the native bridge client will use it once
   negotiation enables native calls
+- isolate runtime bundles generated `@mnutt/capnp-es` bindings for the native
+  bridge envelope as `sandstorm:native-capnp-bridge`; `sandstorm:capnp` can now
+  encode and test-decode full native bridge call request messages containing
+  the target capability slot, interface ID, method ordinal/name, params bytes,
+  and payload capability slots
 
 Interop tests:
 

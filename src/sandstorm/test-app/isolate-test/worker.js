@@ -33,8 +33,10 @@ import {
   SANDSTORM_CAPNP_VERSION,
   createNativeCapnpBridge,
   makeCapnpInterfaceBinding,
+  makeNativeCapnpBridgeCallRequest,
   makeNativeCapnpPayload,
   negotiateNativeCapnpBridge,
+  readNativeCapnpBridgeRequest,
 } from "sandstorm:capnp";
 
 let disposedCounterCapabilities = 0;
@@ -3616,7 +3618,33 @@ export default {
     const capnpBridgeNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeCalls", "capabilitySlots"],
     });
-    const nativeCapnpPayload = makeNativeCapnpPayload(new CapnpEsMessage());
+    const nativeCapnpPayload = makeNativeCapnpPayload(new CapnpEsMessage(), [
+      {
+        id: "argument-capability",
+        interfaceId: "0xd7a322498a996313",
+        interfaceName: "sandstorm.IsolateObjectCapability",
+        kind: "senderHosted",
+      },
+    ]);
+    const nativeCapnpBridgeRequest = makeNativeCapnpBridgeCallRequest({
+      target: {
+        id: "target-capability",
+        interfaceId: "0xa8e9655582dcde6f",
+        interfaceName: "sandstorm.WebSession",
+        kind: "receiverHosted",
+      },
+      method: {
+        interfaceId: "0xa8e9655582dcde6f",
+        interfaceName: "sandstorm.WebSession",
+        methodOrdinal: 2,
+        methodName: "get",
+      },
+      payload: nativeCapnpPayload,
+    });
+    const nativeCapnpBridgeRequestRoot =
+        readNativeCapnpBridgeRequest(nativeCapnpBridgeRequest.message);
+    const nativeCapnpBridgeRequestCall = nativeCapnpBridgeRequestRoot.call;
+    const nativeCapnpBridgeRequestParams = nativeCapnpBridgeRequestCall.params;
     const nativeCapnpBridge = await createNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeCalls", "capabilitySlots"],
     });
@@ -3651,6 +3679,29 @@ export default {
       capnpEs: {
         messageBytes: new CapnpEsMessage().toUint8Array().byteLength,
         payloadBytes: nativeCapnpPayload.message.byteLength,
+        bridgeRequestBytes: nativeCapnpBridgeRequest.message.byteLength,
+        bridgeRequest: {
+          protocolVersion: nativeCapnpBridgeRequestRoot.protocolVersion,
+          which: nativeCapnpBridgeRequestRoot.which(),
+          target: {
+            id: nativeCapnpBridgeRequestCall.target.id,
+            interfaceId: nativeCapnpBridgeRequestCall.target.interfaceId.toString(16),
+            interfaceName: nativeCapnpBridgeRequestCall.target.interfaceName,
+            kind: nativeCapnpBridgeRequestCall.target.kind,
+          },
+          interfaceId: nativeCapnpBridgeRequestCall.interfaceId.toString(16),
+          methodOrdinal: nativeCapnpBridgeRequestCall.methodOrdinal,
+          methodName: nativeCapnpBridgeRequestCall.methodName,
+          paramsBytes: nativeCapnpBridgeRequestParams.message.toUint8Array().byteLength,
+          capabilityCount: nativeCapnpBridgeRequestParams.capabilities.length,
+          firstCapability: {
+            id: nativeCapnpBridgeRequestParams.capabilities.get(0).id,
+            interfaceId: nativeCapnpBridgeRequestParams.capabilities.get(0)
+                .interfaceId.toString(16),
+            interfaceName: nativeCapnpBridgeRequestParams.capabilities.get(0).interfaceName,
+            kind: nativeCapnpBridgeRequestParams.capabilities.get(0).kind,
+          },
+        },
       },
       helperVersions: {
         api: SANDSTORM_API_VERSION,
