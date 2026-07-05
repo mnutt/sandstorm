@@ -16,6 +16,7 @@ export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
 
 const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
   "nativeTransport",
+  "nativeRpc",
   "nativeCalls",
   "nativeExports",
   "capabilitySlots",
@@ -27,6 +28,7 @@ function invalidNativeCapnpBridgeInfo(reason, info) {
     protocolSupported: false,
     protocolVersion: SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
     nativeTransport: false,
+    nativeRpc: false,
     nativeCalls: false,
     nativeExports: false,
     capabilitySlots: false,
@@ -72,6 +74,7 @@ export function negotiateNativeCapnpBridgeInfo(info, options = {}) {
     protocolSupported,
     protocolVersion: SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
     nativeTransport,
+    nativeRpc: info.nativeRpc === true,
     nativeCalls: info.nativeCalls === true,
     nativeExports: info.nativeExports === true,
     capabilitySlots: info.capabilitySlots === true,

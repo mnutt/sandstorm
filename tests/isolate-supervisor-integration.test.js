@@ -975,7 +975,8 @@ test("isolate supervisor integration suite", {
       protocolVersion: 0,
       minProtocolVersion: 0,
       maxProtocolVersion: 0,
-      nativeTransport: false,
+      nativeTransport: true,
+      nativeRpc: true,
       nativeCalls: false,
       nativeExports: false,
       capabilitySlots: false,
@@ -987,14 +988,25 @@ test("isolate supervisor integration suite", {
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.available, false);
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.protocolSupported, true);
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.protocolVersion, 0);
-    assert.equal(body.sandstormApi.capnpBridgeNegotiation.nativeTransport, false);
-    assert.equal(body.sandstormApi.capnpBridgeNegotiation.reason, "native transport unavailable");
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.nativeTransport, true);
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.nativeRpc, true);
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.reason, "missing features");
     assert.deepEqual(body.sandstormApi.capnpBridgeNegotiation.missingFeatures, [
       "nativeCalls",
       "capabilitySlots",
     ]);
     assert.deepEqual(
       body.sandstormApi.capnpBridgeNegotiation.info,
+      body.sandstormApi.capnpBridgeInfo);
+    assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.available, true);
+    assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.protocolSupported, true);
+    assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.protocolVersion, 0);
+    assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.nativeTransport, true);
+    assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.nativeRpc, true);
+    assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.reason, "");
+    assert.deepEqual(body.sandstormApi.capnpBridgeRpcNegotiation.missingFeatures, []);
+    assert.deepEqual(
+      body.sandstormApi.capnpBridgeRpcNegotiation.info,
       body.sandstormApi.capnpBridgeInfo);
     assert.deepEqual(body.sandstormApi.nativeCapnpBridge, {
       available: false,
@@ -2656,7 +2668,8 @@ test("isolate supervisor integration suite", {
       protocolVersion: 0,
       minProtocolVersion: 0,
       maxProtocolVersion: 0,
-      nativeTransport: false,
+      nativeTransport: true,
+      nativeRpc: true,
       nativeCalls: false,
       nativeExports: false,
       capabilitySlots: false,
