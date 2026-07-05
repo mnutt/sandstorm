@@ -3694,6 +3694,10 @@ export default {
     });
     const nativeCapnpRpcMessage = new CapnpEsMessage();
     nativeCapnpRpcMessage.initRoot(CapnpRpcMessage);
+    const nativeCapnpBridgeRpcConnectionId =
+        `native-capnp-fixture-rpc-${nativeCapnpTarget.id}`;
+    const nativeCapnpBridgeTransportConnectionId =
+        `native-capnp-fixture-transport-${nativeCapnpTarget.id}`;
     const nativeCapnpBridgeRpcRequest = makeNativeCapnpBridgeRpcRequest({
       target: {
         id: nativeCapnpTarget.id,
@@ -3702,7 +3706,7 @@ export default {
         kind: "receiverHosted",
       },
       message: nativeCapnpRpcMessage,
-      connectionId: "native-capnp-fixture-rpc",
+      connectionId: nativeCapnpBridgeRpcConnectionId,
       capabilities: [
         {
           id: "rpc-argument-capability",
@@ -3842,7 +3846,7 @@ export default {
         decodeNativeCapnpBridgeResponse(nativeCapnpBridgeBinaryRpc.body);
     const nativeCapnpBridgeTransport =
         new NativeCapnpBridgeTransport(apiHelper, nativeCapnpTarget, {
-          connectionId: "native-capnp-fixture-transport",
+          connectionId: nativeCapnpBridgeTransportConnectionId,
         });
     let nativeCapnpBridgeTransportError = "";
     nativeCapnpBridgeTransport.sendMessage(nativeCapnpRpcMessage.getRoot(CapnpRpcMessage));

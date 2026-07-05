@@ -74,6 +74,9 @@
 #include <string.h>
 #include <limits.h>
 #include <sched.h>
+#include <map>
+#include <string>
+#include <utility>
 
 #ifndef __NR_bpf
 #define __NR_bpf 321
@@ -4576,6 +4579,60 @@ private:
   IsolateRuntimeHost& host;
   bool powerboxOnly;
 
+  struct NativeCapnpBridgeRpcSession {
+    kj::String targetId;
+    uint64_t targetInterfaceId = 0;
+    kj::String targetInterfaceName;
+    uint64_t receivedMessageCount = 0;
+  };
+
+  std::map<std::string, NativeCapnpBridgeRpcSession> nativeCapnpBridgeRpcSessions;
+
+  std::string nativeCapnpBridgeRpcSessionKey(kj::StringPtr connectionId) {
+    return std::string(connectionId.begin(), connectionId.size());
+  }
+
+  kj::Maybe<NativeCapnpBridgeRpcSession&> findNativeCapnpBridgeRpcSession(
+      kj::StringPtr connectionId) {
+    auto session = nativeCapnpBridgeRpcSessions.find(
+        nativeCapnpBridgeRpcSessionKey(connectionId));
+    if (session == nativeCapnpBridgeRpcSessions.end()) {
+      return nullptr;
+    }
+
+    return session->second;
+  }
+
+  kj::Maybe<kj::String> registerNativeCapnpBridgeRpcSession(
+      NativeCapnpBridgeRpcMessage::Reader rpc) {
+    auto connectionId = rpc.getConnectionId();
+    auto target = rpc.getTarget();
+    auto key = nativeCapnpBridgeRpcSessionKey(connectionId);
+    auto session = nativeCapnpBridgeRpcSessions.find(key);
+    if (session == nativeCapnpBridgeRpcSessions.end()) {
+      auto inserted = nativeCapnpBridgeRpcSessions.emplace(std::move(key),
+          NativeCapnpBridgeRpcSession {
+            kj::heapString(target.getId()),
+            target.getInterfaceId(),
+            kj::heapString(target.getInterfaceName()),
+            1,
+          });
+      KJ_ASSERT(inserted.second);
+      return nullptr;
+    }
+
+    auto& value = session->second;
+    if (value.targetId != target.getId() ||
+        value.targetInterfaceId != target.getInterfaceId() ||
+        value.targetInterfaceName != target.getInterfaceName()) {
+      return kj::str(
+          "native Cap'n Proto bridge RPC connection id is already bound to another target");
+    }
+
+    ++value.receivedMessageCount;
+    return nullptr;
+  }
+
   kj::Maybe<kj::String> readSingleNonEmptyQueryParam(kj::StringPtr url, kj::StringPtr name,
       kj::StringPtr errorMessage, kj::String& output) {
     auto values = findIsolateQueryParams(url, name);
@@ -5047,6 +5104,10 @@ private:
       appendNativeCapnpBridgeTargetJson(json, target);
       json.addAll(kj::StringPtr(",\n    "));
       appendJsonField(json, "connectionId", rpc.getConnectionId());
+      KJ_IF_MAYBE(session, findNativeCapnpBridgeRpcSession(rpc.getConnectionId())) {
+        json.addAll(kj::StringPtr(",\n    \"rpcSessionMessageCount\": "));
+        json.addAll(kj::str(session->receivedMessageCount));
+      }
       json.addAll(kj::StringPtr(",\n    \"messageBytes\": "));
       json.addAll(kj::str(message.getMessage().size()));
       json.addAll(kj::StringPtr(",\n    \"capabilityCount\": "));
@@ -5904,7 +5965,6 @@ private:
           return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",
               "unknown native Cap'n Proto bridge target capability", binaryResponse);
         }
-
         try {
           kj::ArrayInputStream rpcInput(rpc.getMessage().getMessage());
           capnp::InputStreamMessageReader rpcReader(rpcInput);
@@ -5913,6 +5973,10 @@ private:
           return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed", kj::str(
               "invalid native Cap'n Proto bridge RPC message: ", exception.getDescription()),
               binaryResponse);
+        }
+        KJ_IF_MAYBE(error, registerNativeCapnpBridgeRpcSession(rpc)) {
+          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+              *error, binaryResponse);
         }
       } else {
         return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",

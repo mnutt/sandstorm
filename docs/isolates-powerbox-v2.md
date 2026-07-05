@@ -749,6 +749,11 @@ Progress:
   this gives the future native adapter a stable key for per-connection
   question/import/export state while preserving the target Sandstorm capability
   as the actual authority for every message
+- the supervisor now creates a per-connection native bridge RPC session record
+  after validating the target and embedded `capnp::rpc::Message`, rejects reuse
+  of the same connection id for a different target, and reports the session's
+  received message count in diagnostics; the session is still only scaffolding
+  until the C++ RPC adapter starts dispatching messages
 
 Interop tests:
 
