@@ -91,6 +91,61 @@ declare module "sandstorm:capnp" {
     message: Uint8Array | ArrayBuffer | ArrayBufferView,
   ): unknown;
 
+  export interface NativeCapnpBridgeException {
+    readonly type: string;
+    readonly reason: string;
+    readonly trace?: string;
+  }
+
+  export interface NativeCapnpBridgeResultResponseOptions {
+    readonly payload?: NativeCapnpPayload;
+  }
+
+  export function makeNativeCapnpBridgeResultResponse(
+    options?: NativeCapnpBridgeResultResponseOptions,
+  ): NativeCapnpPayload;
+
+  export function makeNativeCapnpBridgeExceptionResponse(
+    exception?: NativeCapnpBridgeException,
+  ): NativeCapnpPayload;
+
+  export function readNativeCapnpBridgeResponse(
+    message: Uint8Array | ArrayBuffer | ArrayBufferView,
+  ): unknown;
+
+  export type DecodedNativeCapnpBridgeResponse =
+    | {
+        readonly protocolVersion: 0;
+        readonly which: "result";
+        readonly result:
+          | { readonly which: "value"; readonly value: NativeCapnpPayload }
+          | { readonly which: "exception"; readonly exception: Required<NativeCapnpBridgeException> }
+          | { readonly which: "canceled" };
+      }
+    | {
+        readonly protocolVersion: 0;
+        readonly which: "capability";
+        readonly capability: Required<NativeCapnpCapabilitySlot>;
+      }
+    | {
+        readonly protocolVersion: 0;
+        readonly which: "saved";
+        readonly saved: { readonly token: string };
+      }
+    | {
+        readonly protocolVersion: 0;
+        readonly which: "acknowledged";
+      }
+    | {
+        readonly protocolVersion: 0;
+        readonly which: "exception";
+        readonly exception: Required<NativeCapnpBridgeException>;
+      };
+
+  export function decodeNativeCapnpBridgeResponse(
+    message: Uint8Array | ArrayBuffer | ArrayBufferView,
+  ): DecodedNativeCapnpBridgeResponse;
+
   export interface NativeCapnpBridgeCallOptions {
     readonly target: Capability;
     readonly binding: CapnpInterfaceBinding<any, any>;

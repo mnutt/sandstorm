@@ -690,6 +690,32 @@ test("isolate supervisor integration suite", {
         kind: 0,
       },
     });
+    assert.ok(body.capnpEs.bridgeResultResponse.bytes > body.capnpEs.payloadBytes);
+    assert.deepEqual(body.capnpEs.bridgeResultResponse, {
+      bytes: body.capnpEs.bridgeResultResponse.bytes,
+      protocolVersion: 0,
+      which: "result",
+      resultWhich: "value",
+      valueBytes: 16,
+      capabilityCount: 1,
+      firstCapability: {
+        id: "argument-capability",
+        interfaceId: "d7a322498a996313",
+        interfaceName: "sandstorm.IsolateObjectCapability",
+        kind: "senderHosted",
+      },
+    });
+    assert.ok(body.capnpEs.bridgeExceptionResponse.bytes > body.capnpEs.messageBytes);
+    assert.deepEqual(body.capnpEs.bridgeExceptionResponse, {
+      bytes: body.capnpEs.bridgeExceptionResponse.bytes,
+      protocolVersion: 0,
+      which: "exception",
+      exception: {
+        type: "unimplemented",
+        reason: "fixture exception",
+        trace: "fixture trace",
+      },
+    });
     assert.deepEqual(body.helperVersions, {
       api: 0,
       rpc: 0,
