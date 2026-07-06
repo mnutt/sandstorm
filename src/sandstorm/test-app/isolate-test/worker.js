@@ -3693,6 +3693,15 @@ export default {
         missingFeatures: error?.details?.negotiation?.missingFeatures || [],
       };
     }
+    const nativeExportUnknownRouteResponse = await serveSystemRoutes(new Request(
+      "http://sandstorm/__sandstorm/native-capnp/export-sessions/missing-export", {
+        method: "POST",
+        body: new Uint8Array(0),
+      }), env);
+    const nativeExportUnknownRoute = {
+      status: nativeExportUnknownRouteResponse.status,
+      body: await nativeExportUnknownRouteResponse.json(),
+    };
     const nativeCapnpTarget = await apiHelper.webSession({
       pathPrefix: "/native-capnp-bridge-target",
     });
@@ -4346,6 +4355,7 @@ export default {
             echoQuestionId: nativeExportEchoMessage.bootstrap.questionId,
           },
           unavailableError: nativeExportUnavailableError,
+          unknownRoute: nativeExportUnknownRoute,
         },
         nativeCapnpBridge: {
           available: nativeCapnpBridge.available,

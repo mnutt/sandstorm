@@ -1,4 +1,4 @@
-import { RpcTarget } from "sandstorm:api";
+import { RpcTarget } from "capnweb";
 import {
   Conn as CapnpEsConn,
   DeferredTransport as CapnpEsDeferredTransport,
@@ -21,6 +21,9 @@ const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
   "nativeExports",
   "capabilitySlots",
 ]);
+
+const NATIVE_CAPNP_EXPORT_SESSION_PREFIX = "/__sandstorm/native-capnp/export-sessions";
+const nativeCapnpExportTargets = new Map();
 
 function invalidNativeCapnpBridgeInfo(reason, info) {
   return Object.freeze({
@@ -156,6 +159,14 @@ function normalizeNativeCapnpBridgeConnectionId(connectionId = makeNativeCapnpBr
     throw new TypeError("native Cap'n Proto bridge connection id must be a non-empty string");
   }
   return connectionId;
+}
+
+function nativeCapnpExportId(options = {}) {
+  return normalizeNativeCapnpBridgeConnectionId(options.id);
+}
+
+function nativeCapnpExportSessionPath(id) {
+  return `${NATIVE_CAPNP_EXPORT_SESSION_PREFIX}/${encodeURIComponent(id)}`;
 }
 
 export function makeNativeCapnpPayload(message = new CapnpEsMessage(), capabilities = []) {
@@ -913,6 +924,69 @@ export function createNativeCapnpExportSession(
   return Object.assign(connection, {
     transport,
     interfaceMetadata: nativeCapnpInterfaceMetadata(InterfaceClass),
+  });
+}
+
+export function registerNativeCapnpExport(InterfaceClass, target, options = {}) {
+  validateNativeCapnpGeneratedInterface(InterfaceClass, "registerNativeCapnpExport()");
+  if (!target || typeof target !== "object") {
+    throw new TypeError("registerNativeCapnpExport() requires a server target object");
+  }
+
+  const id = nativeCapnpExportId(options);
+  const existing = nativeCapnpExportTargets.get(id);
+  if (existing && existing.target !== target) {
+    throw new NativeCapnpBridgeProtocolError(
+      `native Cap'n Proto export id is already registered: ${id}`);
+  }
+
+  const entry = Object.freeze({
+    id,
+    InterfaceClass,
+    target,
+    interfaceMetadata: nativeCapnpInterfaceMetadata(InterfaceClass, options),
+    path: nativeCapnpExportSessionPath(id),
+  });
+  nativeCapnpExportTargets.set(id, entry);
+  return entry;
+}
+
+export function unregisterNativeCapnpExport(id) {
+  return nativeCapnpExportTargets.delete(id);
+}
+
+export async function serveNativeCapnpExportSession(request, options = {}) {
+  const url = new URL(request.url);
+  if (!url.pathname.startsWith(`${NATIVE_CAPNP_EXPORT_SESSION_PREFIX}/`)) {
+    return null;
+  }
+  if (request.method !== "POST") {
+    return Response.json({ ok: false, error: "method not allowed" }, { status: 405 });
+  }
+  if (!request.body) {
+    return Response.json(
+      { ok: false, error: "native Cap'n Proto export session requires a request stream" },
+      { status: 400 });
+  }
+
+  const id = decodeURIComponent(
+    url.pathname.slice(NATIVE_CAPNP_EXPORT_SESSION_PREFIX.length + 1));
+  const registry = options.registry || nativeCapnpExportTargets;
+  const entry = registry.get(id);
+  if (!entry) {
+    return Response.json(
+      { ok: false, error: "unknown native Cap'n Proto export target" },
+      { status: 404 });
+  }
+
+  const responseStream = new TransformStream();
+  createNativeCapnpExportSession(entry.InterfaceClass, entry.target, {
+    readable: request.body,
+    writable: responseStream.writable,
+    finalize: options.finalize,
+  });
+  return new Response(responseStream.readable, {
+    headers: { "content-type": "application/octet-stream" },
   });
 }
 
