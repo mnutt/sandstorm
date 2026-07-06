@@ -1045,6 +1045,9 @@ test("isolate supervisor integration suite", {
       reason: "unknown native Cap'n Proto bridge target capability",
       trace: "",
     });
+    assert.match(
+      body.sandstormApi.nativeCapnpBridge.generatedClient.drop.generatedCallAfterDropError,
+      /NativeCapnpBridgeUnavailableError: unknown native Cap'n Proto bridge target capability/);
     assert.deepEqual(body.capnpEs.bridgeRequest, {
       protocolVersion: 0,
       which: 0,
@@ -1354,6 +1357,9 @@ test("isolate supervisor integration suite", {
             ok: true,
             released: false,
           },
+          generatedCallAfterDropError:
+              body.sandstormApi.nativeCapnpBridge.generatedClient.drop
+                  .generatedCallAfterDropError,
           afterDropStatus: 404,
           afterDropOk: false,
           afterDropWhich: "exception",
