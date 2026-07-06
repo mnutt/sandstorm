@@ -355,6 +355,16 @@ private:
   uint& saveCount;
 };
 
+class FakeLegacyNativeGreeter final: public NativeGreeter::Server {
+public:
+  kj::Promise<void> hello(HelloContext context) override {
+    auto params = context.getParams();
+    auto message = kj::str("legacy native hello ", params.getName());
+    context.getResults().setMessage(message);
+    return kj::READY_NOW;
+  }
+};
+
 class FakeRevocationObserver final: public SystemPersistent::RevocationObserver::Server {
 public:
   explicit FakeRevocationObserver(uint& dropWhenRevokedCount)
@@ -532,6 +542,10 @@ public:
     } else if (tokenText == "outbound-http-saved-token") {
       ++sessionContext.restoreCount;
       context.getResults().setCap(kj::heap<FakeOutboundHttpSession>(sessionContext.saveCount));
+      return kj::READY_NOW;
+    } else if (tokenText == "native-greeter-saved-token") {
+      ++sessionContext.restoreCount;
+      context.getResults().setCap(kj::heap<FakeLegacyNativeGreeter>());
       return kj::READY_NOW;
     }
 

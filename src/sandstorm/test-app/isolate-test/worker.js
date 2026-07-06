@@ -1015,6 +1015,37 @@ export default {
       });
     }
 
+    if (url.pathname === "/legacy-native-greeter-self-test") {
+      const token = url.searchParams.get("token");
+      if (!token) {
+        return Response.json({ ok: false, error: "missing token" }, { status: 400 });
+      }
+
+      const api = sandstorm(request, env);
+      const client = await restoreNativeCapnp(api, token, NativeGreeter, {
+        connectionId: `legacy-native-greeter-${token.slice(0, 16)}`,
+        interfaceName: "NativeGreeter",
+      });
+      const hello = await client.hello({
+        name: url.searchParams.get("name") || "client isolate",
+      });
+      const drop = await client.drop();
+      const { id, interfaceId, interfaceName, kind } = client.capability;
+      return Response.json({
+        ok: true,
+        capability: {
+          id,
+          kind,
+          interfaceId: interfaceId.toString(16),
+          interfaceName,
+        },
+        hello: {
+          message: hello.message,
+        },
+        dropResult: drop ?? null,
+      });
+    }
+
     if (url.pathname === "/web-session-save-restore-self-test") {
       const capability = await sandstorm(request, env).webSession({
         pathPrefix: "/exported",
