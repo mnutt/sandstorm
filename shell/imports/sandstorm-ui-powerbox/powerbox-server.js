@@ -122,6 +122,75 @@ function outboundHttpMethodAccessor(option) {
   }
 }
 
+function normalizePowerboxTagId(tagId) {
+  const text = String(tagId || "");
+  if (!/^(0x[0-9a-fA-F]+|[0-9]+)$/.test(text)) return undefined;
+
+  const value = BigInt(text);
+  if (value <= 0n || value > 0xffffffffffffffffn) return undefined;
+  return value.toString(10);
+}
+
+function publicInterfaceTagId(publicInterface) {
+  return normalizePowerboxTagId(publicInterface && publicInterface.interfaceId);
+}
+
+function descriptorTagsMatch(queryTags, provisionTags, diagnostics) {
+  const provisionTagsById = {};
+  provisionTags.forEach(tag => {
+    const tagId = normalizePowerboxTagId(tag.id);
+    if (tagId) provisionTagsById[tagId] = tag.value;
+  });
+
+  let allMatched = true;
+  queryTags.forEach(queryTag => {
+    if (!allMatched) return;
+
+    const queryTagId = normalizePowerboxTagId(queryTag.id);
+    if (queryTagId && queryTagId in provisionTagsById) {
+      const value = provisionTagsById[queryTagId];
+      // Null values match everything, so only pay attention if non-null.
+      if (value && queryTag.value) {
+        if (!Capnp.matchPowerboxQuery(queryTag.value, value)) {
+          diagnostics.grainDescriptorValueMismatchCount++;
+          allMatched = false;
+        }
+      }
+    } else {
+      diagnostics.grainDescriptorMissingTagCount++;
+      allMatched = false;
+    }
+  });
+
+  return allMatched;
+}
+
+async function publicInterfaceManifestsByPackageId(db, packageIds) {
+  const result = {};
+  const uniquePackageIds = _.uniq(packageIds.filter(id => !!id));
+  uniquePackageIds.forEach(packageId => {
+    result[packageId] = undefined;
+  });
+  if (uniquePackageIds.length === 0) return result;
+
+  const fields = { "manifest.publicInterfaces": 1 };
+  const installedPackages = await db.collections.packages
+      .find({ _id: { $in: uniquePackageIds } }, { fields })
+      .fetchAsync();
+  installedPackages.forEach(pkg => {
+    result[pkg._id] = pkg.manifest;
+  });
+
+  const devPackages = await db.collections.devPackages
+      .find({ _id: { $in: uniquePackageIds } }, { fields })
+      .fetchAsync();
+  devPackages.forEach(pkg => {
+    result[pkg._id] = pkg.manifest;
+  });
+
+  return result;
+}
+
 Meteor.methods({
   async newFrontendRef(sessionId, frontendRefRequest) {
     // Completes a powerbox request for a frontendRef capability.
@@ -314,6 +383,8 @@ function powerboxDescriptorDiagnostics(queryDescriptor, index) {
     grainDescriptorMissingTagCount: 0,
     grainDescriptorValueMismatchCount: 0,
     hostedObjectMatchCount: 0,
+    publicInterfaceDescriptorsChecked: 0,
+    publicInterfaceMatchCount: 0,
   };
 }
 
@@ -450,7 +521,7 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
               $or: [{ userId: this.userId }, { _id: { $in: sharedGrainIds } }],
               "cachedViewInfo.matchRequests.tags.id":
                   { $in: queryDescriptor.tags.map(tag => tag.id) },
-            }, { fields: { "cachedViewInfo.matchRequests": 1 } })
+            }, { fields: { "cachedViewInfo.matchRequests": 1, packageId: 1 } })
             .fetchAsync();
         diagnostics.grainsWithMatchingTagIds = grains.length;
         grains.forEach((grain) => {
@@ -460,32 +531,7 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
             if (alreadyMatched) return;
             diagnostics.grainDescriptorsChecked++;
 
-            // Build map of descriptor tags by ID.
-            const grainTagsById = {};
-            grainDescriptor.tags.forEach(tag => {
-              grainTagsById[tag.id] = tag.value;
-            });
-
-            let allMatched = true;
-            queryDescriptor.tags.forEach(queryTag => {
-              if (!allMatched) return;
-
-              if (queryTag.id in grainTagsById) {
-                const value = grainTagsById[queryTag.id];
-                // Null values match everything, so only pay attention if non-null.
-                if (value && queryTag.value) {
-                  if (!Capnp.matchPowerboxQuery(queryTag.value, value)) {
-                    diagnostics.grainDescriptorValueMismatchCount++;
-                    allMatched = false;
-                  }
-                }
-              } else {
-                diagnostics.grainDescriptorMissingTagCount++;
-                allMatched = false;
-              }
-            });
-
-            if (allMatched) {
+            if (descriptorTagsMatch(queryDescriptor.tags, grainDescriptor.tags, diagnostics)) {
               diagnostics.hostedObjectMatchCount++;
               alreadyMatched = true;
               const option = new PowerboxOption({
@@ -503,6 +549,48 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
             }
           });
         });
+
+        const queryTagIds = new Set(queryDescriptor.tags.map(tag => normalizePowerboxTagId(tag.id)));
+        const allCandidateGrains = await db.collections.grains
+            .find({
+              $or: [{ userId: this.userId }, { _id: { $in: sharedGrainIds } }],
+              packageId: { $exists: true },
+            }, { fields: { packageId: 1 } })
+            .fetchAsync();
+        const manifestsByPackageId = await publicInterfaceManifestsByPackageId(
+            db, allCandidateGrains.map(grain => grain.packageId));
+        for (const grain of allCandidateGrains) {
+          const manifest = manifestsByPackageId[grain.packageId];
+          const publicInterfaces = (manifest && manifest.publicInterfaces) || [];
+          const candidateInterfaces = publicInterfaces.filter(publicInterface => {
+            const tagId = publicInterfaceTagId(publicInterface);
+            return tagId && queryTagIds.has(tagId);
+          });
+
+          for (const publicInterface of candidateInterfaces) {
+            diagnostics.publicInterfaceDescriptorsChecked++;
+            const tagId = publicInterfaceTagId(publicInterface);
+            if (!tagId) continue;
+
+            const provisionTags = [{ id: tagId }];
+            if (descriptorTagsMatch(queryDescriptor.tags, provisionTags, diagnostics)) {
+              diagnostics.publicInterfaceMatchCount++;
+              const option = new PowerboxOption({
+                _id: "grain-" + grain._id,
+                grainId: grain._id,
+                hostedObject: {},
+                cardTemplate: "grainPowerboxCard",
+                configureTemplate: "uiViewPowerboxConfiguration",  // TODO(cleanup): rename
+              });
+              if (option._id in matches) {
+                matches[option._id].union(option);
+              } else {
+                matches[option._id] = option;
+              }
+              break;
+            }
+          }
+        }
       }
 
         return { descriptor: queryDescriptor, diagnostics, matches };

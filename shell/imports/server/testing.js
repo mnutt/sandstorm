@@ -739,6 +739,90 @@ if(isTesting) {
       }
     },
 
+    testRegressionPublicInterfacePowerboxOptions: async function () {
+      const userId = "test-public-interface-user-" + Random.id();
+      const appId = "test-public-interface-app-" + Random.id();
+      const packageId = "test-public-interface-package-" + Random.id();
+      const grainId = "testPublicInterfaceGrain" + Random.id().replace(/[^a-zA-Z0-9]/g, "");
+      const interfaceId = "0x85d0f155d6c54b6d";
+      const interfaceTagId = BigInt(interfaceId).toString(10);
+
+      const descriptor = Capnp.serializePacked(Powerbox.PowerboxDescriptor, {
+        tags: [{ id: interfaceTagId }],
+      }).toString("base64");
+
+      const otherDescriptor = Capnp.serializePacked(Powerbox.PowerboxDescriptor, {
+        tags: [{ id: BigInt("0x85d0f155d6c54b6e").toString(10) }],
+      }).toString("base64");
+
+      const publishPowerboxOptions = async function (descriptorList) {
+        const sub = makeFakeSubscription(userId);
+        const resultPromise = new Promise((resolve, reject) => {
+          sub.ready = function () {
+            sub.readyCalled = true;
+            resolve(sub.addedDocs.powerboxOptions || {});
+          };
+
+          sub.error = reject;
+        });
+
+        sub.connection = {
+          sandstormDb: globalDb,
+          frontendRefRegistry: globalThis.globalFrontendRefRegistry,
+        };
+
+        getPublishHandler("powerboxOptions").apply(
+            sub, ["public-interface-powerbox-options", descriptorList]);
+        return await resultPromise;
+      };
+
+      try {
+        await globalDb.collections.packages.insertAsync({
+          _id: packageId,
+          status: "ready",
+          appId,
+          manifest: {
+            appTitle: { defaultText: "Public Interface Test" },
+            appVersion: 0,
+            publicInterfaces: [{
+              name: "greeter",
+              interfaceName: "Greeter",
+              schemaPath: "app/greeter.capnp",
+              interfaceId,
+              displayInfo: { title: { defaultText: "Greeter" } },
+            }],
+          },
+        });
+        await globalDb.collections.grains.insertAsync({
+          _id: grainId,
+          userId,
+          packageId,
+          appId,
+          appVersion: 0,
+          title: "Public Interface Grain",
+          lastUsed: new Date(),
+        });
+
+        const matches = await publishPowerboxOptions([descriptor]);
+        const option = matches["grain-" + grainId];
+        if (!option || option.grainId !== grainId || !option.hostedObject) {
+          throw new Meteor.Error("public-interface-powerbox-missing",
+              "Powerbox did not offer a grain whose package advertises the requested interface.");
+        }
+
+        const misses = await publishPowerboxOptions([otherDescriptor]);
+        if (misses["grain-" + grainId]) {
+          throw new Meteor.Error("public-interface-powerbox-false-positive",
+              "Powerbox offered a public-interface grain for an unrelated interface.");
+        }
+
+        return true;
+      } finally {
+        await globalDb.collections.grains.removeAsync(grainId);
+        await globalDb.collections.packages.removeAsync(packageId);
+      }
+    },
+
     testRegressionLdapQuotaReturnValue: async function () {
       const userId = "test-ldap-account-" + Random.id();
       const credentialId = "test-ldap-credential-" + Random.id();
