@@ -572,6 +572,7 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
     "dev-isolate",
     "--print-manifest-json",
     "--title", "Capnp Manifest Test",
+    "--app-interface", "capnp:./greeter.capnp#Greeter",
     workerPath,
   ]);
   const manifest = JSON.parse(stdout);
@@ -581,6 +582,9 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
 
   assert.equal(manifest.appTitle.defaultText, "Capnp Manifest Test");
   assert.equal(isolate.mainModule, "worker.js");
+  assert.equal(
+    String(isolate.bridgeConfig.viewInfo.matchRequests[0].tags[0].id),
+    BigInt("0x85d0f155d6c54b6d").toString());
   assert.equal(modules.get("worker.js").esModulePath, "__sandstorm_dev_isolate_app/worker.js");
   assert.match(
     modules.get("capnp:./greeter.capnp").esModulePath,

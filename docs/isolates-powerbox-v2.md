@@ -1044,6 +1044,9 @@ Progress:
   schema-defined isolate capabilities should advertise through Sandstorm's
   existing `UiView.ViewInfo.matchRequests` descriptor path instead of creating a
   second package-manifest discovery mechanism
+- `spk dev-isolate --app-interface <capnp-specifier>#<Interface>` now resolves
+  the named Cap'n Proto interface ID and materializes a normal
+  `PowerboxDescriptor` tag in the generated `bridgeConfig.viewInfo.matchRequests`
 
 Exit criteria:
 

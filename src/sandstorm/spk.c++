@@ -1953,10 +1953,15 @@ private:
     kj::String name;
     kj::String value;
   };
+  struct DevIsolateAppInterface {
+    kj::String specifier;
+    kj::String interfaceName;
+  };
   kj::Vector<DevIsolateServiceBinding> devIsolateServiceBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateTextBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateJsonBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateDataBindings;
+  kj::Vector<DevIsolateAppInterface> devIsolateAppInterfaces;
   kj::String devIsolateSupportDir = nullptr;
 
   kj::MainFunc getDevMain() {
@@ -2052,6 +2057,10 @@ private:
             "<name>=<service>",
             "Add a workerd service binding to the generated isolate manifest. For example: "
             "--service-binding LOOPBACK=main")
+        .addOptionWithArg({"app-interface"}, KJ_BIND_METHOD(*this, addDevIsolateAppInterface),
+            "<capnp-specifier>#<Interface>",
+            "Advertise a schema-defined app capability through ViewInfo.matchRequests. For "
+            "example: --app-interface capnp:./greeter.capnp#Greeter")
         .addOption({"print-manifest-json"}, KJ_BIND_METHOD(*this, enableDevIsolatePrintManifestJson),
             "Print the generated dynamic isolate manifest as JSON and exit without mounting or "
             "connecting to a Sandstorm server.")
@@ -2188,6 +2197,25 @@ private:
     }
 
     return "service binding must be NAME=SERVICE with a unique non-built-in name and non-empty service";
+  }
+
+  kj::MainBuilder::Validity addDevIsolateAppInterface(kj::StringPtr spec) {
+    auto specStd = toStdString(spec);
+    auto hash = specStd.rfind('#');
+    if (hash == std::string::npos || hash == 0 || hash + 1 == specStd.size()) {
+      return "app interface must be CAPNP-SPECIFIER#INTERFACE";
+    }
+
+    auto schemaSpecifier = kj::heapString(spec.slice(0, hash));
+    if (!schemaSpecifier.startsWith("capnp:") && !schemaSpecifier.startsWith("capnp-es:")) {
+      schemaSpecifier = kj::str("capnp:", schemaSpecifier);
+    }
+
+    devIsolateAppInterfaces.add(DevIsolateAppInterface {
+      kj::mv(schemaSpecifier),
+      kj::heapString(spec.slice(hash + 1, spec.size())),
+    });
+    return true;
   }
 
   kj::MainBuilder::Validity setDevIsolateWorkerPath(kj::StringPtr path) {
@@ -2664,7 +2692,58 @@ private:
       binding.setService(devIsolateServiceBindings[i].service);
     }
 
-    isolate.initBridgeConfig().initViewInfo().initAppTitle().setDefaultText(devIsolateTitle);
+    initDevIsolateBridgeConfig(isolate.initBridgeConfig());
+  }
+
+  uint64_t resolveDevIsolateAppInterfaceId(
+      kj::StringPtr rootDir, const DevIsolateAppInterface& appInterface) {
+    auto importerDir = dirnameForPath(devIsolateWorkerPath);
+    kj::String resolvedPath = nullptr;
+    if (appInterface.specifier.startsWith("capnp:")) {
+      resolvedPath = resolveDevIsolateCapnpImport(importerDir, rootDir, appInterface.specifier);
+    } else if (appInterface.specifier.startsWith("capnp-es:")) {
+      resolvedPath = resolveDevIsolateCapnpEsImport(importerDir, rootDir, appInterface.specifier);
+    } else {
+      KJ_FAIL_REQUIRE("Internal error: unsupported app interface schema specifier.",
+          appInterface.specifier);
+    }
+
+    auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
+    auto interfaces = scanCapnpInterfaces(source);
+    auto metadataRoot = isPathUnderRoot(resolvedPath, rootDir)
+        ? kj::heapString(rootDir)
+        : dirnameForPath(resolvedPath);
+    auto metadata = parseCapnpInterfaceMetadata(
+        resolvedPath, metadataRoot, interfaces.asPtr());
+    auto found = metadata.find(toStdString(appInterface.interfaceName));
+    KJ_REQUIRE(found != metadata.end(),
+        "Advertised app interface schema does not define the requested interface.",
+        appInterface.specifier, appInterface.interfaceName);
+
+    auto interfaceId = kj::StringPtr(found->second.interfaceId);
+    KJ_REQUIRE(interfaceId.startsWith("0x"),
+        "Internal error: expected 0x-prefixed interface ID.", interfaceId);
+    KJ_IF_MAYBE(parsed, parseUInt64(kj::str(interfaceId.slice(2)), 16)) {
+      return *parsed;
+    } else {
+      KJ_FAIL_REQUIRE("Internal error: could not parse interface ID.", interfaceId);
+    }
+  }
+
+  void initDevIsolateBridgeConfig(spk::BridgeConfig::Builder bridgeConfig) {
+    auto viewInfo = bridgeConfig.initViewInfo();
+    viewInfo.initAppTitle().setDefaultText(devIsolateTitle);
+
+    if (devIsolateAppInterfaces.size() == 0) {
+      return;
+    }
+
+    auto rootDir = dirnameForPath(devIsolateWorkerPath);
+    auto matchRequests = viewInfo.initMatchRequests(devIsolateAppInterfaces.size());
+    for (auto i: kj::indices(devIsolateAppInterfaces)) {
+      auto tag = matchRequests[i].initTags(1)[0];
+      tag.setId(resolveDevIsolateAppInterfaceId(rootDir, devIsolateAppInterfaces[i]));
+    }
   }
 
   kj::String appIdForDevIsolate(kj::StringPtr workerPath) {
