@@ -1051,6 +1051,10 @@ Progress:
   single-tag packed `PowerboxDescriptor` used by browser Powerbox requests, with
   `--format=capnp` for package authors who want a pasteable
   `viewInfo.matchRequests` descriptor and `--format=json` for tooling/tests
+- the packaged-isolate integration test now exercises schema-defined provider
+  advertisement through `bridgeConfig.viewInfo.matchRequests`, and
+  `docs/developing/isolate-grains.md` plus `examples/isolate-file-store-rpc`
+  document the dev-mode and packaged-app flows
 
 Exit criteria:
 

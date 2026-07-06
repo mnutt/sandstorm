@@ -3,7 +3,10 @@
 Run:
 
 ```sh
-spk dev-isolate --title "File Store RPC" examples/isolate-file-store-rpc/worker.js
+spk dev-isolate \
+  --title "File Store RPC" \
+  --app-interface capnp:./file-store.capnp#FileStore \
+  examples/isolate-file-store-rpc/worker.js
 ```
 
 This example models a small directory/file API as a schema-defined app-object
@@ -26,6 +29,17 @@ The public protocol is in `file-store.capnp`; the isolate code imports it with:
 ```js
 import { File, FileStore } from "capnp:./file-store.capnp";
 ```
+
+For a packaged app, advertise the same provider through the normal
+`bridgeConfig.viewInfo.matchRequests` field. Generate the descriptor snippet
+from the schema:
+
+```sh
+spk powerbox-descriptor --format capnp capnp:./file-store.capnp#FileStore
+# (tags = [(id = 0x9e13c3025dcd3d36)])
+```
+
+and put that descriptor in `ViewInfo.matchRequests`.
 
 Today this uses Sandstorm's schema-shaped app-object RPC bridge, not the native
 Cap'n Proto RPC transport. It is suitable for control-plane calls and small
