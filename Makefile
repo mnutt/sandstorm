@@ -29,6 +29,7 @@ WORKERD_NPM_PACKAGE_DIR=deps/workerd-npm
 WORKERD_BIN=
 CAPNWEB_NPM_VERSION=0.8.0
 CAPNWEB_NPM_PACKAGE_DIR=deps/capnweb-npm
+CAPNP_ES_COMPILER_MODULE?=$(abspath ../../personal/capnp-es/dist/compiler/index.mjs)
 
 # You generally should not modify this.
 # TODO(cleanup): -fPIC is unfortunate since most of our code is static binaries
@@ -527,6 +528,7 @@ tests/assets/isolate-test-app.spk: tmp/.ekam-run src/sandstorm/test-app/isolate-
 	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
 	@rm -rf tmp/sandstorm/isolate-test-app/isolate-test
 	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
+	SANDSTORM_CAPNP_ES_COMPILER_MODULE=$(CAPNP_ES_COMPILER_MODULE) \
 	bin/spk pack -ksrc/sandstorm/test-app/isolate-test-app.key -Isrc -Itmp \
 		-ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef tests/assets/isolate-test-app.spk
 

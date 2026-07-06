@@ -101,6 +101,37 @@ const CAPNP_ES_RUNTIME_MODULES = [
     "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.BLGTYa4t.mjs",
   ],
 ];
+const CAPNP_ES_SCHEME_RUNTIME_MODULES = Array.from(new Map(CAPNP_ES_RUNTIME_MODULES.map(
+  ([, sourcePath]) => [
+    `capnp-es:/${sourcePath.replace("__sandstorm_isolate_runtime/", "")}`,
+    sourcePath,
+  ])));
+const CAPNP_ES_GENERATED_SCHEMA_MODULES = [
+  [
+    "capnp-es:/sandstorm/util.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/util.js",
+  ],
+  [
+    "capnp-es:/sandstorm/powerbox.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/powerbox.js",
+  ],
+  [
+    "capnp-es:/sandstorm/identity.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/identity.js",
+  ],
+  [
+    "capnp-es:/sandstorm/activity.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/activity.js",
+  ],
+  [
+    "capnp-es:/sandstorm/grain.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/grain.js",
+  ],
+  [
+    "capnp-es:/sandstorm/web-session.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js",
+  ],
+];
 
 function formatOutput(stdout, stderr) {
   const out = stdout.join("");
@@ -711,7 +742,7 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   ], options);
   assert.match(
     generated.stdout,
-    /import \{ Greeting, Greeting\$Client \} from "capnp-es:\.\/greeting\.capnp";/);
+    /import \{ Greeting, Greeting\$Client \} from "\.\/greeting\.capnp";/);
   assert.match(generated.stdout, /export class Greeter\$Client \{/);
   assert.match(generated.stdout, /export class Greeter\$Server extends \$\.Server/);
   assert.match(generated.stdout, /export class Greeter extends \$\.Interface/);
@@ -723,7 +754,7 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   ], options);
   assert.match(
     generatedStandard.stdout,
-    /from "@mnutt\/capnp-es\/capnp\/stream";/);
+    /from "\.\/capnp-es\/capnp\/stream\.mjs";/);
 
   const generatedWeb = await runCommand(SPK_BIN, [
     "dev-isolate",
@@ -732,7 +763,7 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   ], options);
   assert.match(
     generatedWeb.stdout,
-    /from "capnp-es:\/sandstorm\/web-session\.capnp";/);
+    /from "\.\/sandstorm\/web-session\.capnp";/);
 
   const generatedSandstormWeb = await runCommand(SPK_BIN, [
     "dev-isolate",
@@ -741,10 +772,10 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   ], options);
   assert.match(
     generatedSandstormWeb.stdout,
-    /from "capnp-es:\/sandstorm\/grain\.capnp";/);
+    /from "\.\/grain\.capnp";/);
   assert.match(
     generatedSandstormWeb.stdout,
-    /from "capnp-es:\/sandstorm\/util\.capnp";/);
+    /from "\.\/util\.capnp";/);
 });
 
 test("spk pack materializes generated capnp-es modules for packaged isolates", async (t) => {
@@ -897,6 +928,7 @@ test("isolate supervisor integration suite", {
         ["worker.js", "esModule"],
         ["message.txt", "text"],
         ["metadata.json", "json"],
+        ...CAPNP_ES_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule"]),
         ["capnweb", "esModule"],
         ["sandstorm:capnweb-source", "text"],
         ["sandstorm:rpc", "esModule"],
@@ -904,6 +936,7 @@ test("isolate supervisor integration suite", {
         ["sandstorm:capnp", "esModule"],
         ["sandstorm:native-capnp-bridge", "esModule"],
         ...CAPNP_ES_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
+        ...CAPNP_ES_SCHEME_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
       ]);
     assert.deepEqual(
       manifest.bindings.map((binding) => [binding.name, binding.type]),
@@ -978,6 +1011,22 @@ test("isolate supervisor integration suite", {
       typeof body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id,
       "string");
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id.length > 0);
+    assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.error, "");
+    assert.equal(
+      typeof body.sandstormApi.nativeCapnpBridge.generatedClient.response.bodyText,
+      "string");
+    assert.equal(
+      typeof body.sandstormApi.nativeCapnpBridge.generatedClient.response.bodyBytes,
+      "number");
+    assert.deepEqual(
+      JSON.parse(body.sandstormApi.nativeCapnpBridge.generatedClient.response.bodyText),
+      {
+        ok: true,
+        source: "native-capnp-generated-websession",
+        method: "GET",
+        pathname: "/native-capnp-bridge-target/generated-client",
+        search: "",
+      });
     assert.deepEqual(body.capnpEs.bridgeRequest, {
       protocolVersion: 0,
       which: 0,
@@ -1249,6 +1298,22 @@ test("isolate supervisor integration suite", {
             `native-capnp-fixture-connect-${body.sandstormApi.nativeCapnpBridge.targetId}`,
         hasDrop: true,
         hasSave: true,
+      },
+      generatedClient: {
+        ok: true,
+        error: "",
+        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
+        connectionId:
+            `native-capnp-fixture-generated-${body.sandstormApi.nativeCapnpBridge.targetId}`,
+        response: {
+          responseWhich: 1,
+          content: true,
+          statusCode: 0,
+          mimeType: "application/json",
+          bodyWhich: 0,
+          bodyBytes: body.sandstormApi.nativeCapnpBridge.generatedClient.response.bodyBytes,
+          bodyText: body.sandstormApi.nativeCapnpBridge.generatedClient.response.bodyText,
+        },
       },
       lifecycleBinary: {
         save: {
@@ -2795,7 +2860,10 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.statusCode, 200);
     assert.equal(runtime.json.ok, true);
     assert.equal(runtime.json.mainModule, "worker.js");
-    assert.equal(runtime.json.moduleCount, 9 + CAPNP_ES_RUNTIME_MODULES.length);
+    assert.equal(
+      runtime.json.moduleCount,
+      9 + CAPNP_ES_GENERATED_SCHEMA_MODULES.length + CAPNP_ES_RUNTIME_MODULES.length +
+          CAPNP_ES_SCHEME_RUNTIME_MODULES.length);
     assert.equal(runtime.json.bindingCount, 6);
 
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
@@ -2884,6 +2952,7 @@ test("isolate supervisor integration suite", {
         ["worker.js", "esModule", true],
         ["message.txt", "text", false],
         ["metadata.json", "json", false],
+        ...CAPNP_ES_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule", false]),
         ["capnweb", "esModule", false],
         ["sandstorm:capnweb-source", "text", false],
         ["sandstorm:rpc", "esModule", false],
@@ -2891,6 +2960,7 @@ test("isolate supervisor integration suite", {
         ["sandstorm:capnp", "esModule", false],
         ["sandstorm:native-capnp-bridge", "esModule", false],
         ...CAPNP_ES_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
+        ...CAPNP_ES_SCHEME_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
       ]);
 
     const bindings = await requestJson(fixture.sandstormApiSocket, "/bindings");

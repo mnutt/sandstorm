@@ -903,6 +903,37 @@ void addGeneratedIsolateModule(
   config.modules.add(kj::mv(moduleConfig));
 }
 
+kj::String capnpEsRuntimePath(kj::StringPtr moduleName) {
+  if (moduleName == "@mnutt/capnp-es") {
+    return kj::heapString("capnp-es/index.mjs");
+  }
+  if (moduleName == "@mnutt/capnp/rpc.mjs") {
+    return kj::heapString("capnp-es/capnp/rpc.mjs");
+  }
+
+  kj::StringPtr capnpEsPrefix = "@mnutt/capnp-es/";
+  if (moduleName.startsWith(capnpEsPrefix)) {
+    auto relative = moduleName.slice(capnpEsPrefix.size());
+    if (relative.endsWith(".mjs")) {
+      return kj::str("capnp-es/", relative);
+    }
+    return kj::str("capnp-es/", relative, ".mjs");
+  }
+
+  kj::StringPtr sharedPrefix = "@mnutt/shared/";
+  if (moduleName.startsWith(sharedPrefix)) {
+    return kj::str("capnp-es/shared/", moduleName.slice(sharedPrefix.size()));
+  }
+
+  kj::StringPtr prefix = "@mnutt/";
+  KJ_REQUIRE(moduleName.startsWith(prefix), "Unexpected capnp-es runtime module.", moduleName);
+  return kj::str("capnp-es/", moduleName.slice(prefix.size()));
+}
+
+kj::String capnpEsSchemeRuntimeSpecifier(kj::StringPtr moduleName) {
+  return kj::str("capnp-es:/", capnpEsRuntimePath(moduleName));
+}
+
 void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
   addGeneratedIsolateModule(config, "capnweb", IsolateRuntimeConfig::ModuleType::ES_MODULE,
       CAPNWEB_SOURCE);
@@ -919,6 +950,10 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
   for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
     addGeneratedIsolateModule(
         config, module.name, IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);
+  }
+  for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
+    addGeneratedIsolateModule(config, capnpEsSchemeRuntimeSpecifier(module.name),
+        IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);
   }
 }
 

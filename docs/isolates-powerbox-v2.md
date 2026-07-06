@@ -796,6 +796,10 @@ Progress:
 - generated clients returned by `connectNativeCapnp()` now fall back to native
   lifecycle save/drop requests when their underlying Sandstorm capability is a
   bare restored bridge slot rather than a richer JS capability object
+- packaged isolates can now import `capnp-es:/sandstorm/web-session.capnp`,
+  connect a generated `WebSession` client to a route-backed Sandstorm
+  capability with `connectNativeCapnp()`, call `get()`, and decode the typed
+  `Response.content.body.bytes` result across the restricted native RPC bridge
 
 Interop tests:
 
