@@ -1,6 +1,7 @@
 import message from "message.txt";
 import metadata from "metadata.json";
 import { Message as CapnpEsMessage } from "@mnutt/capnp-es";
+import { NativeGreeter } from "capnp-es:./native-greeter.capnp";
 import { Message as CapnpRpcMessage } from "@mnutt/capnp/rpc.mjs";
 import { WebSession } from "capnp-es:/sandstorm/web-session.capnp";
 import {
@@ -3729,6 +3730,44 @@ export default {
         stack: error.stack,
       };
     }
+    const nativeExportGreeterTarget = {
+      async hello(params) {
+        return {
+          message: `native export greeter hello ${params.name}`,
+        };
+      },
+    };
+    let nativeExportGreeterResult;
+    try {
+      const nativeExportGreeter = await exportNativeCapnp(
+        apiHelper,
+        NativeGreeter,
+        nativeExportGreeterTarget,
+        { interfaceName: "NativeGreeter" });
+      const nativeExportGreeterClient = connectNativeCapnp(
+        apiHelper,
+        nativeExportGreeter,
+        NativeGreeter,
+        { connectionId: `native-capnp-export-greeter-${nativeExportGreeter.id}` });
+      const nativeExportGreeterHello = await nativeExportGreeterClient.hello({
+        name: "isolate schema",
+      });
+      const nativeExportGreeterInfo = await nativeExportGreeter.info();
+      const nativeExportGreeterDrop = await nativeExportGreeter.drop();
+      nativeExportGreeterResult = {
+        ok: true,
+        message: nativeExportGreeterHello.message,
+        info: nativeExportGreeterInfo,
+        drop: nativeExportGreeterDrop,
+      };
+    } catch (error) {
+      nativeExportGreeterResult = {
+        ok: false,
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+      };
+    }
     const nativeExportUnknownRouteResponse = await serveSystemRoutes(new Request(
       "http://sandstorm/__sandstorm/native-capnp/export-sessions/missing-export", {
         method: "POST",
@@ -4397,6 +4436,7 @@ export default {
             drop: nativeExportCapabilityDrop,
           },
           webSession: nativeExportWebSessionResult,
+          greeter: nativeExportGreeterResult,
           unknownRoute: nativeExportUnknownRoute,
         },
         nativeCapnpBridge: {

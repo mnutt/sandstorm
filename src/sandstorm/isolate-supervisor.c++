@@ -941,6 +941,10 @@ kj::String capnpEsSchemeRuntimeSpecifier(kj::StringPtr moduleName) {
   return kj::str("capnp-es:/", capnpEsRuntimePath(moduleName));
 }
 
+kj::String capnpEsSchemeRelativeRuntimeSpecifier(kj::StringPtr moduleName) {
+  return kj::str("capnp-es:./", capnpEsRuntimePath(moduleName));
+}
+
 void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
   addGeneratedIsolateModule(config, "capnweb", IsolateRuntimeConfig::ModuleType::ES_MODULE,
       CAPNWEB_SOURCE);
@@ -960,6 +964,14 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
   }
   for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
     addGeneratedIsolateModule(config, capnpEsSchemeRuntimeSpecifier(module.name),
+        IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);
+  }
+  for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
+    addGeneratedIsolateModule(config, capnpEsRuntimePath(module.name),
+        IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);
+  }
+  for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
+    addGeneratedIsolateModule(config, capnpEsSchemeRelativeRuntimeSpecifier(module.name),
         IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);
   }
 }
