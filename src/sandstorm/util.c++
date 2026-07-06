@@ -946,8 +946,10 @@ capnp::Capability::Server::DispatchCallResult CapRedirector::dispatchCall(
 // =======================================================================================
 
 TwoPartyServerWithClientBootstrap::TwoPartyServerWithClientBootstrap(
-  capnp::Capability::Client bootstrapInterface, kj::Own<CapRedirector> redirector)
+  capnp::Capability::Client bootstrapInterface, kj::Own<CapRedirector> redirector,
+  bool updateRedirectorFromClientBootstrap)
     : bootstrapInterface(kj::mv(bootstrapInterface)), redirector(kj::mv(redirector)),
+      updateRedirectorFromClientBootstrap(updateRedirectorFromClientBootstrap),
       tasks(*this) {}
 
 struct TwoPartyServerWithClientBootstrap::AcceptedConnection {
@@ -969,16 +971,21 @@ kj::Promise<void> TwoPartyServerWithClientBootstrap::listen(
     auto connectionState = kj::heap<AcceptedConnection>(bootstrapInterface, kj::mv(connection));
 
     // Update the bootstrap redirector to point at the new connection's bootstrap.
-    capnp::MallocMessageBuilder message(8);
-    auto vatId = message.getRoot<capnp::rpc::twoparty::VatId>();
-    vatId.setSide(capnp::rpc::twoparty::Side::CLIENT);
-    uint iteration = redirector->setTarget(connectionState->rpcSystem.bootstrap(vatId));
+    uint iteration = 0;
+    if (updateRedirectorFromClientBootstrap) {
+      capnp::MallocMessageBuilder message(8);
+      auto vatId = message.getRoot<capnp::rpc::twoparty::VatId>();
+      vatId.setSide(capnp::rpc::twoparty::Side::CLIENT);
+      iteration = redirector->setTarget(connectionState->rpcSystem.bootstrap(vatId));
+    }
 
     // Run the connection until disconnect.
     auto promise = connectionState->network.onDisconnect();
     tasks.add(promise.attach(kj::mv(connectionState), kj::defer([this,iteration]() {
       // Disconnect the redirector when the client disconnects.
-      redirector->setDisconnected(iteration);
+      if (updateRedirectorFromClientBootstrap) {
+        redirector->setDisconnected(iteration);
+      }
     })));
 
     return listen(kj::mv(listener));

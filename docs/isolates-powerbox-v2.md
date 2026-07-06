@@ -836,6 +836,12 @@ Progress:
   module specifiers, avoiding workerd's `capnp-es:` scheme-relative resolution
   split; the integration fixture exports an isolate-defined `NativeGreeter`
   server and calls it back over the native supervisor bridge
+- native isolate exports can now be saved as durable supervisor-owned
+  `nativeCapnpExport` object IDs, restored later as live generated
+  `@mnutt/capnp-es` clients, and called across two isolate supervisors through
+  the restricted native RPC bridge; the fake-core test harness now registers its
+  SandstormCore capability explicitly so cross-supervisor client connections do
+  not replace the grain's core authority target
 
 Interop tests:
 

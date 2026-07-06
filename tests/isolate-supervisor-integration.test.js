@@ -2855,6 +2855,55 @@ test("isolate supervisor integration suite", {
     assert.equal(callback.json.durableReceiverDrop.ok, true);
     assert.equal(callback.json.drop.ok, true);
 
+    const nativeGreeterName = `cross-grain-native-greeter-${Date.now()}`;
+    const nativeGreeter = await requestJson(
+      provider.workerdSocket,
+      `/export-native-greeter-capability?id=${encodeURIComponent(nativeGreeterName)}`);
+    assert.equal(nativeGreeter.statusCode, 200, nativeGreeter.body + formatOutput(
+      provider.stdout, provider.stderr));
+    assert.equal(nativeGreeter.json.ok, true);
+    assert.equal(nativeGreeter.json.capabilityClass, true);
+    assert.equal(nativeGreeter.json.capability.type, "capability");
+    assert.equal(typeof nativeGreeter.json.capability.id, "string");
+    assert.equal(nativeGreeter.json.info.kind, "nativeCapnpExport");
+    assert.equal(nativeGreeter.json.info.residence, "localExport");
+    assert.equal(nativeGreeter.json.info.hasNativeCapability, true);
+
+    const nativeGreeterSaved = await requestJson(
+      provider.sandstormApiSocket,
+      `/powerbox/save?id=${encodeURIComponent(nativeGreeter.json.capability.id)}` +
+      `&label=${encodeURIComponent("Cross grain native greeter")}`,
+      { method: "POST" });
+    assert.equal(nativeGreeterSaved.statusCode, 200, nativeGreeterSaved.body + formatOutput(
+      provider.stdout, provider.stderr));
+    assert.equal(nativeGreeterSaved.json.ok, true);
+    assert.equal(nativeGreeterSaved.json.type, "savedCapability");
+    assert.equal(nativeGreeterSaved.json.tokenEncoding, "base64url");
+    assert.equal(typeof nativeGreeterSaved.json.token, "string");
+
+    const nativeGreeterCall = await requestJson(
+      client.workerdSocket,
+      `/cross-grain-native-greeter-self-test?token=${
+        encodeURIComponent(nativeGreeterSaved.json.token)}&name=${encodeURIComponent("client")}`);
+    assert.equal(nativeGreeterCall.statusCode, 200, nativeGreeterCall.body + formatOutput(
+      client.stdout, client.stderr) + formatOutput(provider.stdout, provider.stderr));
+    assert.equal(typeof nativeGreeterCall.json.capability.id, "string");
+    assert.notEqual(nativeGreeterCall.json.capability.id, nativeGreeter.json.capability.id);
+    assert.deepEqual(nativeGreeterCall.json, {
+      ok: true,
+      capability: {
+        id: nativeGreeterCall.json.capability.id,
+        kind: "receiverHosted",
+        interfaceId: "b66316217ceedb1b",
+        interfaceName: "NativeGreeter",
+      },
+      savedToken: nativeGreeterSaved.json.token,
+      hello: {
+        message: "cross supervisor native hello client",
+      },
+      dropResult: null,
+    });
+
     const retainedId = `retained-callback-${Date.now()}`;
     const retainedSubscribe = await requestJson(
       client.workerdSocket,

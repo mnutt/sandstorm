@@ -102,6 +102,8 @@ namespace {
 
 constexpr const char* ISOLATE_ROUTE_BACKED_APP_REF_PREFIX =
     "sandstorm-isolate-route-backed-v1\n";
+constexpr uint64_t CAPNP_PERSISTENT_INTERFACE_ID = 0xc8cb212fcd9f5691ull;
+constexpr uint64_t SYSTEM_PERSISTENT_INTERFACE_ID = 0xc38cedd77cbed5b4ull;
 
 struct IsolateRuntimeConfig final: public kj::Refcounted {
   enum class ModuleType {
@@ -2969,6 +2971,7 @@ enum class RouteBackedCapabilityType {
   WEB,
   API,
   OBJECT,
+  NATIVE_CAPNP_EXPORT,
 };
 
 kj::StringPtr routeBackedCapabilityTypeToken(RouteBackedCapabilityType type) {
@@ -2979,6 +2982,8 @@ kj::StringPtr routeBackedCapabilityTypeToken(RouteBackedCapabilityType type) {
       return "api";
     case RouteBackedCapabilityType::OBJECT:
       return "object";
+    case RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT:
+      return "nativeCapnpExport";
   }
   KJ_UNREACHABLE;
 }
@@ -2990,6 +2995,8 @@ RouteBackedCapabilityType parseRouteBackedCapabilityType(kj::StringPtr value) {
     return RouteBackedCapabilityType::API;
   } else if (value == "object") {
     return RouteBackedCapabilityType::OBJECT;
+  } else if (value == "nativeCapnpExport") {
+    return RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT;
   } else {
     KJ_FAIL_REQUIRE("invalid isolate route-backed capability type", value);
   }
@@ -3058,6 +3065,9 @@ bool routeBackedPathIsWithinPrefix(kj::StringPtr path, kj::StringPtr prefix) {
 struct RouteBackedCapabilityRef {
   RouteBackedCapabilityType type;
   kj::String pathPrefix;
+  kj::String nativeCapnpExportId;
+  uint64_t nativeCapnpExportInterfaceId = 0;
+  kj::String nativeCapnpExportInterfaceName;
 };
 
 RouteBackedCapabilityRef parseRouteBackedCapabilityRef(kj::StringPtr payload) {
@@ -3065,14 +3075,50 @@ RouteBackedCapabilityRef parseRouteBackedCapabilityRef(kj::StringPtr payload) {
     auto typeName = kj::StringPtr(payload.begin(), *newline);
     auto pathPrefix = kj::StringPtr(payload.begin() + *newline + 1,
         payload.size() - *newline - 1);
+    if (typeName == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT)) {
+      kj::StringPtr rest = pathPrefix;
+      KJ_IF_MAYBE(idEnd, rest.findFirst('\n')) {
+        auto id = kj::StringPtr(rest.begin(), *idEnd);
+        rest = kj::StringPtr(rest.begin() + *idEnd + 1, rest.size() - *idEnd - 1);
+        KJ_IF_MAYBE(interfaceIdEnd, rest.findFirst('\n')) {
+          auto interfaceIdText = kj::StringPtr(rest.begin(), *interfaceIdEnd);
+          auto interfaceName = kj::StringPtr(rest.begin() + *interfaceIdEnd + 1,
+              rest.size() - *interfaceIdEnd - 1);
+          uint64_t interfaceId = 0;
+          KJ_IF_MAYBE(parsed, parseUInt64(kj::str(interfaceIdText), 10)) {
+            interfaceId = *parsed;
+          } else {
+            KJ_FAIL_REQUIRE("invalid isolate native Cap'n Proto export interface ID");
+          }
+          KJ_REQUIRE(id.size() > 0 && id.size() <= 256,
+              "invalid isolate native Cap'n Proto export id");
+          KJ_REQUIRE(interfaceName.size() > 0 && interfaceName.size() <= 512,
+              "invalid isolate native Cap'n Proto export interface name");
+          return RouteBackedCapabilityRef {
+              RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT,
+              kj::heapString(""),
+              kj::heapString(id),
+              interfaceId,
+              kj::heapString(interfaceName),
+          };
+        }
+      }
+      KJ_FAIL_REQUIRE("invalid isolate native Cap'n Proto export app-ref");
+    }
     return RouteBackedCapabilityRef {
         parseRouteBackedCapabilityType(typeName),
-        normalizeRouteBackedPathPrefix(pathPrefix)
+        normalizeRouteBackedPathPrefix(pathPrefix),
+        kj::heapString(""),
+        0,
+        kj::heapString(""),
     };
   } else {
     return RouteBackedCapabilityRef {
         RouteBackedCapabilityType::WEB,
-        normalizeRouteBackedPathPrefix(payload)
+        normalizeRouteBackedPathPrefix(payload),
+        kj::heapString(""),
+        0,
+        kj::heapString(""),
     };
   }
 }
@@ -3681,8 +3727,414 @@ capnp::Capability::Client makeRouteBackedSessionCapability(
           kj::mv(parentToken));
     case RouteBackedCapabilityType::OBJECT:
       KJ_FAIL_REQUIRE("route-backed object capabilities are not session capabilities");
+    case RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT:
+      KJ_FAIL_REQUIRE("native Cap'n Proto export capabilities are not session capabilities");
   }
   KJ_UNREACHABLE;
+}
+
+class NativeCapnpExportEntropySource final: public kj::EntropySource {
+public:
+  void generate(kj::ArrayPtr<byte> buffer) override {
+    randombytes_buf(buffer.begin(), buffer.size());
+  }
+};
+
+struct NativeCapnpExportWebSocketState final: public kj::Refcounted {
+  kj::Own<kj::NetworkAddress> addr;
+  kj::Own<kj::HttpClient> client;
+  kj::Own<kj::WebSocket> webSocket;
+
+  NativeCapnpExportWebSocketState(kj::Own<kj::NetworkAddress>&& addr,
+      kj::Own<kj::HttpClient>&& client, kj::Own<kj::WebSocket>&& webSocket)
+      : addr(kj::mv(addr)), client(kj::mv(client)), webSocket(kj::mv(webSocket)) {}
+};
+
+struct NativeCapnpExportFailedWebSocketState final: public kj::Refcounted {
+  kj::Own<kj::NetworkAddress> addr;
+  kj::Own<kj::HttpClient> client;
+  kj::Own<kj::AsyncInputStream> body;
+
+  NativeCapnpExportFailedWebSocketState(kj::Own<kj::NetworkAddress>&& addr,
+      kj::Own<kj::HttpClient>&& client, kj::Own<kj::AsyncInputStream>&& body)
+      : addr(kj::mv(addr)), client(kj::mv(client)), body(kj::mv(body)) {}
+};
+
+class NativeCapnpExportHttpMessageStream final: public capnp::MessageStream {
+public:
+  NativeCapnpExportHttpMessageStream(kj::Own<IsolateRuntimeConfig> config,
+      kj::Own<IsolateRuntimeHost> host, kj::HttpHeaderTable& headerTable, kj::String path)
+      : config(kj::mv(config)),
+        host(kj::mv(host)),
+        headerTable(headerTable),
+        path(kj::mv(path)) {}
+
+  kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> tryReadMessage(
+      kj::ArrayPtr<kj::AutoCloseFd> fdSpace,
+      capnp::ReaderOptions options = capnp::ReaderOptions(),
+      kj::ArrayPtr<capnp::word> scratchSpace = nullptr) override {
+    (void)fdSpace;
+    return ensureStarted().then([this, options, scratchSpace]() mutable {
+      auto& current = KJ_ASSERT_NONNULL(state);
+      return current->webSocket->receive(kj::WebSocket::SUGGESTED_MAX_MESSAGE_SIZE)
+          .then([options, scratchSpace](kj::WebSocket::Message&& message) mutable
+              -> kj::Maybe<capnp::MessageReaderAndFds> {
+        KJ_SWITCH_ONEOF(message) {
+          KJ_CASE_ONEOF(text, kj::String) {
+            KJ_FAIL_REQUIRE("native Cap'n Proto export session received a text WebSocket frame");
+          }
+          KJ_CASE_ONEOF(bytes, kj::Array<byte>) {
+            kj::ArrayInputStream input(bytes);
+            auto reader = kj::heap<capnp::InputStreamMessageReader>(
+                input, options, scratchSpace);
+            return capnp::MessageReaderAndFds { kj::mv(reader), nullptr };
+          }
+          KJ_CASE_ONEOF(close, kj::WebSocket::Close) {
+            (void)close;
+            return nullptr;
+          }
+        }
+        KJ_UNREACHABLE;
+      });
+    });
+  }
+
+  kj::Promise<void> writeMessage(kj::ArrayPtr<const int> fds,
+      kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) override {
+    if (fds.size() > 0) {
+      return KJ_EXCEPTION(UNIMPLEMENTED,
+          "native Cap'n Proto export sessions do not support file descriptors");
+    }
+
+    auto data = serializeMessageSegments(segments);
+    auto fork = writeQueue.then([this, data = kj::mv(data)]() mutable {
+      return ensureStarted().then([this, data = kj::mv(data)]() mutable {
+        auto& current = KJ_ASSERT_NONNULL(state);
+        return current->webSocket->send(data.asPtr()).attach(kj::mv(data));
+      });
+    }).fork();
+    writeQueue = fork.addBranch();
+    return fork.addBranch();
+  }
+
+  kj::Promise<void> writeMessages(
+      kj::ArrayPtr<kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>>> messages) override {
+    kj::Vector<kj::Array<byte>> serialized;
+    for (auto message: messages) {
+      serialized.add(serializeMessageSegments(message));
+    }
+    auto fork = writeQueue.then([this, serialized = serialized.releaseAsArray()]() mutable {
+      return ensureStarted().then([this, serialized = kj::mv(serialized)]() mutable {
+        auto& current = KJ_ASSERT_NONNULL(state);
+        auto webSocket = current->webSocket.get();
+        kj::Promise<void> result = kj::READY_NOW;
+        for (auto& message: serialized) {
+          result = result.then([webSocket, data = kj::mv(message)]() mutable {
+            return webSocket->send(data.asPtr()).attach(kj::mv(data));
+          });
+        }
+        return kj::mv(result).attach(kj::mv(serialized));
+      });
+    }).fork();
+    writeQueue = fork.addBranch();
+    return fork.addBranch();
+  }
+
+  kj::Maybe<int> getSendBufferSize() override {
+    return nullptr;
+  }
+
+  kj::Promise<void> end() override {
+    auto fork = writeQueue.then([this]() mutable -> kj::Promise<void> {
+      KJ_IF_MAYBE(existing, started) {
+        return existing->addBranch().then([this]() mutable -> kj::Promise<void> {
+          KJ_IF_MAYBE(current, state) {
+            return (*current)->webSocket->close(1000, "native Cap'n Proto export session ended");
+          }
+          return kj::READY_NOW;
+        });
+      }
+
+      KJ_IF_MAYBE(current, state) {
+        return (*current)->webSocket->close(1000, "native Cap'n Proto export session ended");
+      }
+      return kj::READY_NOW;
+    }).fork();
+    writeQueue = fork.addBranch();
+    return fork.addBranch();
+  }
+
+private:
+  kj::Own<IsolateRuntimeConfig> config;
+  kj::Own<IsolateRuntimeHost> host;
+  kj::HttpHeaderTable& headerTable;
+  kj::String path;
+  kj::Maybe<kj::Own<NativeCapnpExportWebSocketState>> state;
+  kj::Maybe<kj::ForkedPromise<void>> started;
+  kj::Promise<void> writeQueue = kj::READY_NOW;
+
+  kj::Promise<void> ensureStarted() {
+    KJ_IF_MAYBE(existing, started) {
+      return existing->addBranch();
+    }
+
+    started = start().fork();
+    return KJ_ASSERT_NONNULL(started).addBranch();
+  }
+
+  kj::Promise<void> start() {
+    return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
+        .then([this](kj::Own<kj::NetworkAddress>&& addr) mutable {
+      static NativeCapnpExportEntropySource entropySource;
+      kj::HttpClientSettings settings;
+      settings.entropySource = entropySource;
+      auto client = kj::newHttpClient(host->timer, headerTable, *addr, settings);
+      kj::HttpHeaders headers(headerTable);
+      headers.set(kj::HttpHeaderId::HOST, "sandbox");
+      return client->openWebSocket(path, headers)
+          .then([this, addr = kj::mv(addr), client = kj::mv(client)](
+              kj::HttpClient::WebSocketResponse&& response) mutable -> kj::Promise<void> {
+        if (response.statusCode != 101) {
+          auto statusCode = response.statusCode;
+          auto statusText = kj::str(response.statusText);
+          KJ_LOG(WARNING, "Native Cap'n Proto export WebSocket returned an unsuccessful status.",
+              statusCode, statusText);
+          KJ_SWITCH_ONEOF(response.webSocketOrBody) {
+            KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
+              auto failed = kj::refcounted<NativeCapnpExportFailedWebSocketState>(
+                  kj::mv(addr), kj::mv(client), kj::mv(body));
+              return failed->body->readAllText()
+                  .then([statusCode, statusText = kj::mv(statusText),
+                      failed = kj::mv(failed)](kj::String&& bodyText) mutable {
+                (void)failed;
+                KJ_FAIL_REQUIRE(
+                    "native Cap'n Proto export WebSocket returned an unsuccessful status",
+                    statusCode, statusText, bodyText);
+              });
+            }
+            KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
+              (void)webSocket;
+              KJ_FAIL_REQUIRE(
+                  "native Cap'n Proto export WebSocket returned an unsuccessful status",
+                  statusCode, statusText);
+            }
+          }
+        }
+        KJ_SWITCH_ONEOF(response.webSocketOrBody) {
+          KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
+            (void)body;
+            KJ_FAIL_REQUIRE("native Cap'n Proto export WebSocket did not upgrade");
+          }
+          KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
+            state = kj::refcounted<NativeCapnpExportWebSocketState>(
+                kj::mv(addr), kj::mv(client), kj::mv(webSocket));
+            return kj::READY_NOW;
+          }
+        }
+        KJ_UNREACHABLE;
+      });
+    });
+  }
+
+  kj::Array<byte> serializeMessageSegments(
+      kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) {
+    kj::VectorOutputStream output;
+    capnp::writeMessage(output, segments);
+    auto data = output.getArray();
+    auto result = kj::heapArray<byte>(data.size());
+    memcpy(result.begin(), data.begin(), data.size());
+    return result;
+  }
+};
+
+struct NativeCapnpExportRpcSession {
+  kj::String exportId;
+  kj::String path;
+  uint64_t interfaceId = 0;
+  kj::String interfaceName;
+
+  NativeCapnpExportHttpMessageStream stream;
+  capnp::TwoPartyVatNetwork network;
+  capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
+  kj::Maybe<capnp::Capability::Client> cap;
+
+  NativeCapnpExportRpcSession(kj::Own<IsolateRuntimeConfig> config,
+      kj::Own<IsolateRuntimeHost> host, kj::HttpHeaderTable& headerTable,
+      kj::String exportId, kj::String path, uint64_t interfaceId, kj::String interfaceName)
+      : exportId(kj::mv(exportId)),
+        path(kj::heapString(path)),
+        interfaceId(interfaceId),
+        interfaceName(kj::mv(interfaceName)),
+        stream(kj::mv(config), kj::mv(host), headerTable, kj::mv(path)),
+        network(stream, capnp::rpc::twoparty::Side::CLIENT),
+        rpcSystem(network, kj::Maybe<capnp::Capability::Client>(nullptr)) {
+    capnp::MallocMessageBuilder message;
+    auto vatId = message.initRoot<capnp::rpc::twoparty::VatId>();
+    vatId.setSide(capnp::rpc::twoparty::Side::SERVER);
+    cap = rpcSystem.bootstrap(vatId);
+  }
+};
+
+kj::String nativeCapnpExportSessionPath(kj::StringPtr exportId);
+
+class NativeCapnpExportPersistentCapability final: public SystemPersistent::Server {
+public:
+  NativeCapnpExportPersistentCapability(kj::Own<IsolateRuntimeConfig> config,
+      kj::Own<IsolateRuntimeHost> host, kj::StringPtr exportId,
+      uint64_t interfaceId, kj::StringPtr interfaceName,
+      kj::Maybe<kj::Array<const byte>> parentToken = nullptr)
+      : config(kj::mv(config)),
+        host(kj::mv(host)),
+        exportId(kj::heapString(exportId)),
+        interfaceId(interfaceId),
+        interfaceName(kj::heapString(interfaceName)),
+        parentToken(kj::mv(parentToken)) {}
+
+  capnp::Capability::Client getNativeCap() {
+    KJ_IF_MAYBE(existing, session) {
+      return KJ_ASSERT_NONNULL((*existing)->cap);
+    }
+
+    session = kj::heap<NativeCapnpExportRpcSession>(
+        kj::addRef(*config), kj::addRef(*host), host->headerTable,
+        kj::heapString(exportId), nativeCapnpExportSessionPath(exportId),
+        interfaceId, kj::heapString(interfaceName));
+    return KJ_ASSERT_NONNULL(KJ_ASSERT_NONNULL(session)->cap);
+  }
+
+  DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
+      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer> context) override {
+    if (interfaceId == SYSTEM_PERSISTENT_INTERFACE_ID ||
+        interfaceId == CAPNP_PERSISTENT_INTERFACE_ID) {
+      return SystemPersistent::Server::dispatchCall(interfaceId, methodId, context);
+    }
+
+    capnp::AnyPointer::Reader params = context.getParams();
+    auto req = getNativeCap().typelessRequest(
+        interfaceId, methodId, params.targetSize());
+    req.set(params);
+    auto promise = req.send().then([context](auto&& response) mutable -> kj::Promise<void> {
+      context.initResults(response.targetSize()).set(response);
+      return kj::READY_NOW;
+    });
+    return { kj::mv(promise), false };
+  }
+
+  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
+    auto params = context.getParams();
+    if (params.getRequirements().size() > 0) {
+      requirementState->requirements.add(newOwnCapnp(params.getRequirements()));
+    }
+
+    auto observer = params.getObserver();
+    auto req = observer.dropWhenRevokedRequest();
+    req.setHandle(kj::heap<RouteBackedRevokerHandle>(kj::addRef(*requirementState)));
+    requirementState->observers.add(kj::mv(observer));
+
+    return req.send().ignoreResult().then([this, context]() mutable {
+      context.getResults().setCap(thisCap());
+    });
+  }
+
+  kj::Promise<void> save(SaveContext context) override {
+    KJ_REQUIRE(!requirementState->revoked,
+        "isolate native Cap'n Proto export capability requirements have been revoked");
+    auto params = context.getParams();
+    KJ_IF_MAYBE(parent, parentToken) {
+      auto request = host->sandstormCore.makeChildTokenRequest();
+      request.setParent(*parent);
+      request.setOwner(params.getSealFor());
+      request.adoptRequirements(collectRequirements(capnp::Orphanage::getForMessageContaining(
+          SandstormCore::MakeChildTokenParams::Builder(request))));
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setSturdyRef(result.getToken());
+      });
+    } else {
+      auto request = host->sandstormCore.makeTokenRequest();
+      auto nativeExport = request.getRef().initNativeCapnpExport();
+      nativeExport.setExportId(exportId);
+      nativeExport.setInterfaceId(interfaceId);
+      nativeExport.setInterfaceName(interfaceName);
+      request.setOwner(params.getSealFor());
+      request.adoptRequirements(collectRequirements(capnp::Orphanage::getForMessageContaining(
+          SandstormCore::MakeTokenParams::Builder(request))));
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setSturdyRef(result.getToken());
+      });
+    }
+  }
+
+private:
+  kj::Own<IsolateRuntimeConfig> config;
+  kj::Own<IsolateRuntimeHost> host;
+  kj::String exportId;
+  uint64_t interfaceId = 0;
+  kj::String interfaceName;
+  kj::Maybe<kj::Own<NativeCapnpExportRpcSession>> session;
+  kj::Own<RouteBackedRequirementState> requirementState =
+      kj::refcounted<RouteBackedRequirementState>();
+  kj::Maybe<kj::Array<const byte>> parentToken;
+
+  capnp::Orphan<capnp::List<MembraneRequirement>> collectRequirements(
+      capnp::Orphanage orphanage) {
+    if (requirementState->requirements.size() == 0) {
+      return {};
+    }
+
+    kj::Vector<capnp::List<MembraneRequirement>::Reader> parts(
+        requirementState->requirements.size());
+    for (auto& requirement: requirementState->requirements) {
+      if (requirement.size() > 0) {
+        parts.add(requirement);
+      }
+    }
+
+    if (parts.size() > 0) {
+      return orphanage.newOrphanConcat(parts.asPtr());
+    }
+    return {};
+  }
+};
+
+kj::String nativeCapnpExportSessionPath(kj::StringPtr exportId) {
+  return kj::str("/__sandstorm/native-capnp/export-sessions/", kj::encodeUriComponent(exportId));
+}
+
+struct NativeCapnpExportPersistentCapabilityClients {
+  capnp::Capability::Client cap;
+  capnp::Capability::Client nativeCap;
+};
+
+NativeCapnpExportPersistentCapabilityClients makeNativeCapnpExportPersistentCapabilityWithNative(
+    kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
+    kj::StringPtr exportId, uint64_t interfaceId, kj::StringPtr interfaceName,
+    kj::Maybe<kj::Array<const byte>> parentToken = nullptr) {
+  auto server = kj::heap<NativeCapnpExportPersistentCapability>(
+      kj::mv(config), kj::mv(host), exportId, interfaceId, interfaceName, kj::mv(parentToken));
+  auto nativeCap = server->getNativeCap();
+  auto cap = capnp::Capability::Client(kj::mv(server));
+  return NativeCapnpExportPersistentCapabilityClients { kj::mv(cap), kj::mv(nativeCap) };
+}
+
+capnp::Capability::Client makeNativeCapnpExportPersistentCapability(
+    kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
+    kj::StringPtr exportId, uint64_t interfaceId, kj::StringPtr interfaceName,
+    kj::Maybe<kj::Array<const byte>> parentToken = nullptr) {
+  return capnp::Capability::Client(kj::heap<NativeCapnpExportPersistentCapability>(
+      kj::mv(config), kj::mv(host), exportId, interfaceId, interfaceName, kj::mv(parentToken)));
+}
+
+ClaimedCapabilityMetadata makeNativeCapnpExportClaimedCapabilityMetadata() {
+  return ClaimedCapabilityMetadata {
+    ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT,
+    ClaimedCapabilityResidence::LOCAL_EXPORT,
+    ClaimedCapabilityNativeInterface::UNKNOWN,
+    kj::heapString(""),
+    true,
+    false,
+    true,
+    true,
+  };
 }
 
 class IsolateUiViewImpl final: public UiView::Server {
@@ -6130,6 +6582,8 @@ private:
         kind = ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT;
         nativeInterface = ClaimedCapabilityNativeInterface::APP_OBJECT;
         break;
+      case RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT:
+        KJ_FAIL_REQUIRE("native Cap'n Proto export capabilities are not route-backed metadata");
     }
 
     return ClaimedCapabilityMetadata {
@@ -6201,19 +6655,6 @@ private:
     return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
 
-  ClaimedCapabilityMetadata makeNativeCapnpExportClaimedCapabilityMetadata() {
-    return ClaimedCapabilityMetadata {
-      ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT,
-      ClaimedCapabilityResidence::LOCAL_EXPORT,
-      ClaimedCapabilityNativeInterface::UNKNOWN,
-      kj::heapString(""),
-      true,
-      false,
-      true,
-      true,
-    };
-  }
-
   kj::Promise<void> createNativeCapnpExportCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
     auto ids = findIsolateQueryParams(url, "id");
@@ -6242,20 +6683,14 @@ private:
           "  \"error\": \"interfaceId must be a decimal integer or 0x-prefixed hex integer\"\n}\n"));
     }
 
-    auto encodedId = kj::encodeUriComponent(ids[0]);
-    auto session = kj::heap<NativeCapnpExportRpcSession>(
-        kj::addRef(config), kj::addRef(host), headerTable,
-        kj::mv(ids[0]),
-        kj::str("/__sandstorm/native-capnp/export-sessions/", encodedId),
-        interfaceId, kj::mv(interfaceNames[0]));
-    auto cap = KJ_ASSERT_NONNULL(session->cap);
-    return cap.whenResolved()
-        .then([this, &response, session = kj::mv(session)]() mutable {
+    auto caps = makeNativeCapnpExportPersistentCapabilityWithNative(
+        kj::addRef(config), kj::addRef(host), ids[0], interfaceId, interfaceNames[0]);
+    return caps.nativeCap.whenResolved()
+        .then([this, &response, cap = kj::mv(caps.cap),
+            nativeCap = kj::mv(caps.nativeCap)]() mutable {
+      (void)nativeCap;
       auto capId = host.sessions->storeClaimedCapability(
-          KJ_ASSERT_NONNULL(session->cap), makeNativeCapnpExportClaimedCapabilityMetadata());
-      auto inserted = nativeCapnpExportRpcSessions.emplace(
-          std::string(capId.begin(), capId.size()), kj::mv(session));
-      KJ_ASSERT(inserted.second);
+          kj::mv(cap), makeNativeCapnpExportClaimedCapabilityMetadata());
       return sendJson(response, 200, "OK", renderClaimedCapability(capId));
     }).catch_([this, &response](kj::Exception&& exception) mutable {
       return sendJson(response, 502, "Bad Gateway", renderError(
@@ -8094,11 +8529,29 @@ public:
           context.getResults().setCap(makeRouteBackedObjectCapability(
               kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
               routeRef.pathPrefix, true, kj::mv(parentToken)));
+        } else if (routeRef.type == RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT) {
+          context.getResults().setCap(makeNativeCapnpExportPersistentCapability(
+              kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
+              routeRef.nativeCapnpExportId, routeRef.nativeCapnpExportInterfaceId,
+              routeRef.nativeCapnpExportInterfaceName, kj::mv(parentToken)));
         } else {
           context.getResults().setCap(makeRouteBackedSessionCapability(
               kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
               routeRef.type, routeRef.pathPrefix, true, kj::mv(parentToken)));
         }
+        return kj::READY_NOW;
+      }
+      case SupervisorObjectId<>::NATIVE_CAPNP_EXPORT: {
+        auto params = context.getParams();
+        auto nativeExport = objectId.getNativeCapnpExport();
+        kj::Maybe<kj::Array<const byte>> parentToken = nullptr;
+        if (params.getParentToken().size() > 0) {
+          parentToken = kj::heapArray<const byte>(params.getParentToken());
+        }
+        context.getResults().setCap(makeNativeCapnpExportPersistentCapability(
+            kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
+            nativeExport.getExportId(), nativeExport.getInterfaceId(),
+            nativeExport.getInterfaceName(), kj::mv(parentToken)));
         return kj::READY_NOW;
       }
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
@@ -8113,6 +8566,8 @@ public:
     switch (objectId.which()) {
       case SupervisorObjectId<>::APP_REF:
         parseRouteBackedCapabilityAppRef(objectId.getAppRef().getAs<capnp::Data>());
+        return kj::READY_NOW;
+      case SupervisorObjectId<>::NATIVE_CAPNP_EXPORT:
         return kj::READY_NOW;
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
         KJ_FAIL_REQUIRE("isolate supervisor-owned persistent object type is not supported yet");
@@ -8655,7 +9110,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
 
   KJ_LOG(WARNING, "Creating isolate supervisor listener.");
   auto listener = kj::heap<TwoPartyServerWithClientBootstrap>(
-      kj::mv(mainCap), kj::mv(coreRedirector));
+      kj::mv(mainCap), kj::mv(coreRedirector), false);
   KJ_LOG(WARNING, "Isolate supervisor listener created.");
 
   auto socketPath = kj::str(varPath, "/socket");

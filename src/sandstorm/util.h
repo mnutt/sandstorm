@@ -482,7 +482,8 @@ class TwoPartyServerWithClientBootstrap final: private kj::TaskSet::ErrorHandler
 public:
   explicit TwoPartyServerWithClientBootstrap(
       capnp::Capability::Client bootstrapInterface,
-      kj::Own<CapRedirector> redirector = kj::refcounted<CapRedirector>());
+      kj::Own<CapRedirector> redirector = kj::refcounted<CapRedirector>(),
+      bool updateRedirectorFromClientBootstrap = true);
   // If `redirector` is provided, its `setTarget()` method will be called every time a new
   // connection is opened, passing the new bootstrap interface.
   //
@@ -500,6 +501,7 @@ public:
 private:
   capnp::Capability::Client bootstrapInterface;
   kj::Own<CapRedirector> redirector;
+  bool updateRedirectorFromClientBootstrap;
   kj::TaskSet tasks;
 
   struct AcceptedConnection;
