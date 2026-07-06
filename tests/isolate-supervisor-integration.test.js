@@ -685,6 +685,35 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
   assert.match(generatedFileStore.stdout, /"listDirectory", "stat", "readFile", "openFile"/);
 });
 
+test("spk powerbox-descriptor emits schema interface descriptors", async () => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+
+  const options = { cwd: path.join(REPO_DIR, "examples/isolate-capnp-rpc") };
+  const base64 = (await runCommand(SPK_BIN, [
+    "powerbox-descriptor",
+    "./greeter.capnp#Greeter",
+  ], options)).stdout.trim();
+  assert.match(base64, /^[A-Za-z0-9_-]+$/);
+
+  const json = JSON.parse((await runCommand(SPK_BIN, [
+    "powerbox-descriptor",
+    "--format", "json",
+    "capnp:./greeter.capnp#Greeter",
+  ], options)).stdout);
+  assert.equal(json.type, "packedPowerboxDescriptor");
+  assert.equal(json.descriptor, base64);
+  assert.equal(json.interfaceId, "0x85d0f155d6c54b6d");
+  assert.equal(json.interfaceName, "Greeter");
+  assert.equal(json.schema, "capnp:./greeter.capnp");
+
+  const capnp = (await runCommand(SPK_BIN, [
+    "powerbox-descriptor",
+    "--format", "capnp",
+    "capnp-es:./greeter.capnp#Greeter",
+  ], options)).stdout.trim();
+  assert.equal(capnp, "(tags = [(id = 0x85d0f155d6c54b6d)])");
+});
+
 test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   try {

@@ -35,6 +35,7 @@
 #include <sys/mman.h>
 #include <errno.h>
 #include <sandstorm/package.capnp.h>
+#include <sandstorm/powerbox.capnp.h>
 #include <sandstorm/appid-replacements.capnp.h>
 #include <sandstorm/isolate/api.js.h>
 #include <sandstorm/isolate/capnweb.js.h>
@@ -228,6 +229,8 @@ public:
                        "Run an app in dev mode.")
         .addSubCommand("dev-isolate", KJ_BIND_METHOD(*this, getDevIsolateMain),
                        "Run a JavaScript module as an isolate app in dev mode.")
+        .addSubCommand("powerbox-descriptor", KJ_BIND_METHOD(*this, getPowerboxDescriptorMain),
+                       "Generate a packed PowerboxDescriptor for a Cap'n Proto interface.")
         .addSubCommand("publish", KJ_BIND_METHOD(*this, getPublishMain),
                        "Publish a package to the app market."))
         .build();
@@ -248,6 +251,14 @@ private:
   kj::String sourceDir;
   bool sawPkgDef = false;
   kj::Maybe<kj::Array<capnp::word>> packManifestOverride;
+
+  enum class PowerboxDescriptorOutputFormat {
+    BASE64URL,
+    CAPNP,
+    JSON,
+  };
+  PowerboxDescriptorOutputFormat powerboxDescriptorOutputFormat =
+      PowerboxDescriptorOutputFormat::BASE64URL;
 
   kj::StringPtr keyringPath = nullptr;
   bool quiet = false;
@@ -1934,6 +1945,47 @@ private:
   }
 
   // =====================================================================================
+  // "powerbox-descriptor" command
+
+  kj::MainFunc getPowerboxDescriptorMain() {
+    return kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
+            "Generate a packed PowerboxDescriptor for a Cap'n Proto interface.")
+        .addOptionWithArg({"format"}, KJ_BIND_METHOD(*this, setPowerboxDescriptorFormat),
+            "base64url|capnp|json",
+            "Choose the output format. base64url is suitable for browser Powerbox queries; "
+            "capnp is suitable for bridgeConfig.viewInfo.matchRequests.")
+        .expectArg("<capnp-specifier>#<Interface>",
+            KJ_BIND_METHOD(*this, doPowerboxDescriptor))
+        .build();
+  }
+
+  kj::MainBuilder::Validity setPowerboxDescriptorFormat(kj::StringPtr format) {
+    if (format == "base64url") {
+      powerboxDescriptorOutputFormat = PowerboxDescriptorOutputFormat::BASE64URL;
+    } else if (format == "capnp") {
+      powerboxDescriptorOutputFormat = PowerboxDescriptorOutputFormat::CAPNP;
+    } else if (format == "json") {
+      powerboxDescriptorOutputFormat = PowerboxDescriptorOutputFormat::JSON;
+    } else {
+      return "format must be base64url, capnp, or json";
+    }
+    return true;
+  }
+
+  kj::MainBuilder::Validity doPowerboxDescriptor(kj::StringPtr spec) {
+    KJ_IF_MAYBE(appInterface, parseAppInterfaceSpec(spec)) {
+      auto cwd = currentWorkingDirectory();
+      auto resolved = resolveAppInterfaceId(cwd, *appInterface);
+      auto output = renderPowerboxDescriptor(resolved);
+      kj::FdOutputStream(STDOUT_FILENO).write(output.begin(), output.size());
+      kj::FdOutputStream(STDOUT_FILENO).write("\n", 1);
+      return true;
+    } else {
+      return "descriptor argument must be CAPNP-SPECIFIER#INTERFACE";
+    }
+  }
+
+  // =====================================================================================
   // "dev" command
 
   kj::String serverBinary;
@@ -1956,6 +2008,11 @@ private:
   struct DevIsolateAppInterface {
     kj::String specifier;
     kj::String interfaceName;
+  };
+  struct ResolvedAppInterface {
+    kj::String specifier;
+    kj::String interfaceName;
+    uint64_t interfaceId;
   };
   kj::Vector<DevIsolateServiceBinding> devIsolateServiceBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateTextBindings;
@@ -2200,10 +2257,19 @@ private:
   }
 
   kj::MainBuilder::Validity addDevIsolateAppInterface(kj::StringPtr spec) {
+    KJ_IF_MAYBE(appInterface, parseAppInterfaceSpec(spec)) {
+      devIsolateAppInterfaces.add(kj::mv(*appInterface));
+      return true;
+    } else {
+      return "app interface must be CAPNP-SPECIFIER#INTERFACE";
+    }
+  }
+
+  kj::Maybe<DevIsolateAppInterface> parseAppInterfaceSpec(kj::StringPtr spec) {
     auto specStd = toStdString(spec);
     auto hash = specStd.rfind('#');
     if (hash == std::string::npos || hash == 0 || hash + 1 == specStd.size()) {
-      return "app interface must be CAPNP-SPECIFIER#INTERFACE";
+      return nullptr;
     }
 
     auto schemaSpecifier = kj::heapString(spec.slice(0, hash));
@@ -2211,11 +2277,141 @@ private:
       schemaSpecifier = kj::str("capnp:", schemaSpecifier);
     }
 
-    devIsolateAppInterfaces.add(DevIsolateAppInterface {
+    return DevIsolateAppInterface {
       kj::mv(schemaSpecifier),
       kj::heapString(spec.slice(hash + 1, spec.size())),
-    });
-    return true;
+    };
+  }
+
+  static kj::String currentWorkingDirectory() {
+    char* cwd = getcwd(nullptr, 0);
+    if (cwd == nullptr) {
+      KJ_FAIL_SYSCALL("getcwd", errno);
+    }
+    KJ_DEFER(free(cwd));
+    return kj::heapString(cwd);
+  }
+
+  ResolvedAppInterface resolveAppInterfaceId(
+      kj::StringPtr rootDir, const DevIsolateAppInterface& appInterface) {
+    auto importerDir = rootDir;
+    kj::String resolvedPath = nullptr;
+    if (appInterface.specifier.startsWith("capnp:")) {
+      resolvedPath = resolveDevIsolateCapnpImport(importerDir, rootDir, appInterface.specifier);
+    } else if (appInterface.specifier.startsWith("capnp-es:")) {
+      resolvedPath = resolveDevIsolateCapnpEsImport(importerDir, rootDir, appInterface.specifier);
+    } else {
+      KJ_FAIL_REQUIRE("Internal error: unsupported app interface schema specifier.",
+          appInterface.specifier);
+    }
+
+    auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
+    auto interfaces = scanCapnpInterfaces(source);
+    auto metadataRoot = isPathUnderRoot(resolvedPath, rootDir)
+        ? kj::heapString(rootDir)
+        : dirnameForPath(resolvedPath);
+    auto metadata = parseCapnpInterfaceMetadata(
+        resolvedPath, metadataRoot, interfaces.asPtr());
+    auto found = metadata.find(toStdString(appInterface.interfaceName));
+    KJ_REQUIRE(found != metadata.end(),
+        "Advertised app interface schema does not define the requested interface.",
+        appInterface.specifier, appInterface.interfaceName);
+
+    auto interfaceId = kj::StringPtr(found->second.interfaceId);
+    KJ_REQUIRE(interfaceId.startsWith("0x"),
+        "Internal error: expected 0x-prefixed interface ID.", interfaceId);
+    uint64_t parsedInterfaceId = 0;
+    KJ_IF_MAYBE(parsed, parseUInt64(kj::str(interfaceId.slice(2)), 16)) {
+      parsedInterfaceId = *parsed;
+    } else {
+      KJ_FAIL_REQUIRE("Internal error: could not parse interface ID.", interfaceId);
+    }
+
+    return ResolvedAppInterface {
+      kj::heapString(appInterface.specifier),
+      kj::heapString(appInterface.interfaceName),
+      parsedInterfaceId,
+    };
+  }
+
+  static kj::String encodePackedPowerboxDescriptor(uint64_t interfaceId) {
+    capnp::MallocMessageBuilder message;
+    auto descriptor = message.initRoot<PowerboxDescriptor>();
+    auto tag = descriptor.initTags(1)[0];
+    tag.setId(interfaceId);
+
+    kj::VectorOutputStream output;
+    capnp::writePackedMessage(output, message);
+    return kj::encodeBase64Url(output.getArray());
+  }
+
+  static void appendJsonQuoted(kj::Vector<char>& output, kj::StringPtr text) {
+    output.add('"');
+    for (auto c: text) {
+      switch (c) {
+        case '"':
+          output.addAll(kj::StringPtr("\\\""));
+          break;
+        case '\\':
+          output.addAll(kj::StringPtr("\\\\"));
+          break;
+        case '\b':
+          output.addAll(kj::StringPtr("\\b"));
+          break;
+        case '\f':
+          output.addAll(kj::StringPtr("\\f"));
+          break;
+        case '\n':
+          output.addAll(kj::StringPtr("\\n"));
+          break;
+        case '\r':
+          output.addAll(kj::StringPtr("\\r"));
+          break;
+        case '\t':
+          output.addAll(kj::StringPtr("\\t"));
+          break;
+        default: {
+          auto byte = static_cast<unsigned char>(c);
+          if (byte < 0x20) {
+            const char hex[] = "0123456789abcdef";
+            output.addAll(kj::StringPtr("\\u00"));
+            output.add(hex[(byte >> 4) & 0xf]);
+            output.add(hex[byte & 0xf]);
+          } else {
+            output.add(c);
+          }
+          break;
+        }
+      }
+    }
+    output.add('"');
+  }
+
+  kj::String renderPowerboxDescriptor(const ResolvedAppInterface& appInterface) {
+    auto packed = encodePackedPowerboxDescriptor(appInterface.interfaceId);
+    switch (powerboxDescriptorOutputFormat) {
+      case PowerboxDescriptorOutputFormat::BASE64URL:
+        return kj::mv(packed);
+      case PowerboxDescriptorOutputFormat::CAPNP:
+        return kj::str("(tags = [(id = 0x", kj::hex(appInterface.interfaceId), ")])");
+      case PowerboxDescriptorOutputFormat::JSON: {
+        auto interfaceId = kj::str("0x", kj::hex(appInterface.interfaceId));
+        kj::Vector<char> json;
+        json.addAll(kj::StringPtr("{\n  \"type\": \"packedPowerboxDescriptor\",\n  "
+            "\"descriptor\": "));
+        appendJsonQuoted(json, packed);
+        json.addAll(kj::StringPtr(",\n  \"interfaceId\": "));
+        appendJsonQuoted(json, interfaceId);
+        json.addAll(kj::StringPtr(",\n  \"interfaceName\": "));
+        appendJsonQuoted(json, appInterface.interfaceName);
+        json.addAll(kj::StringPtr(",\n  \"schema\": "));
+        appendJsonQuoted(json, appInterface.specifier);
+        json.addAll(kj::StringPtr("\n}"));
+        json.add('\0');
+        return kj::String(json.releaseAsArray());
+      }
+    }
+    KJ_UNREACHABLE;
   }
 
   kj::MainBuilder::Validity setDevIsolateWorkerPath(kj::StringPtr path) {
@@ -2695,41 +2891,6 @@ private:
     initDevIsolateBridgeConfig(isolate.initBridgeConfig());
   }
 
-  uint64_t resolveDevIsolateAppInterfaceId(
-      kj::StringPtr rootDir, const DevIsolateAppInterface& appInterface) {
-    auto importerDir = dirnameForPath(devIsolateWorkerPath);
-    kj::String resolvedPath = nullptr;
-    if (appInterface.specifier.startsWith("capnp:")) {
-      resolvedPath = resolveDevIsolateCapnpImport(importerDir, rootDir, appInterface.specifier);
-    } else if (appInterface.specifier.startsWith("capnp-es:")) {
-      resolvedPath = resolveDevIsolateCapnpEsImport(importerDir, rootDir, appInterface.specifier);
-    } else {
-      KJ_FAIL_REQUIRE("Internal error: unsupported app interface schema specifier.",
-          appInterface.specifier);
-    }
-
-    auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
-    auto interfaces = scanCapnpInterfaces(source);
-    auto metadataRoot = isPathUnderRoot(resolvedPath, rootDir)
-        ? kj::heapString(rootDir)
-        : dirnameForPath(resolvedPath);
-    auto metadata = parseCapnpInterfaceMetadata(
-        resolvedPath, metadataRoot, interfaces.asPtr());
-    auto found = metadata.find(toStdString(appInterface.interfaceName));
-    KJ_REQUIRE(found != metadata.end(),
-        "Advertised app interface schema does not define the requested interface.",
-        appInterface.specifier, appInterface.interfaceName);
-
-    auto interfaceId = kj::StringPtr(found->second.interfaceId);
-    KJ_REQUIRE(interfaceId.startsWith("0x"),
-        "Internal error: expected 0x-prefixed interface ID.", interfaceId);
-    KJ_IF_MAYBE(parsed, parseUInt64(kj::str(interfaceId.slice(2)), 16)) {
-      return *parsed;
-    } else {
-      KJ_FAIL_REQUIRE("Internal error: could not parse interface ID.", interfaceId);
-    }
-  }
-
   void initDevIsolateBridgeConfig(spk::BridgeConfig::Builder bridgeConfig) {
     auto viewInfo = bridgeConfig.initViewInfo();
     viewInfo.initAppTitle().setDefaultText(devIsolateTitle);
@@ -2742,7 +2903,7 @@ private:
     auto matchRequests = viewInfo.initMatchRequests(devIsolateAppInterfaces.size());
     for (auto i: kj::indices(devIsolateAppInterfaces)) {
       auto tag = matchRequests[i].initTags(1)[0];
-      tag.setId(resolveDevIsolateAppInterfaceId(rootDir, devIsolateAppInterfaces[i]));
+      tag.setId(resolveAppInterfaceId(rootDir, devIsolateAppInterfaces[i]).interfaceId);
     }
   }
 
