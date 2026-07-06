@@ -244,6 +244,7 @@ private:
   spk::PackageDefinition::Reader packageDef;
   kj::String sourceDir;
   bool sawPkgDef = false;
+  kj::Maybe<kj::Array<capnp::word>> packManifestOverride;
 
   kj::StringPtr keyringPath = nullptr;
   bool quiet = false;
@@ -1055,6 +1056,15 @@ private:
 
     auto sourceMap = packageDef.getSourceMap();
 
+    kj::String packIsolateSupportDir = nullptr;
+    KJ_DEFER({
+      if (packIsolateSupportDir != nullptr) {
+        recursivelyDelete(packIsolateSupportDir);
+      }
+      packManifestOverride = nullptr;
+    });
+    preparePackIsolateSupport(root, packIsolateSupportDir);
+
     if (packageDef.hasFileList()) {
       auto fileListFile = packageDef.getFileList();
       if (access(fileListFile.cStr(), F_OK) != 0) {
@@ -1246,10 +1256,14 @@ private:
     auto& node = root.followPath(path);
     if (path == "sandstorm-manifest") {
       // Serialize the manifest.
-      auto manifestReader = packageDef.getManifest();
-      capnp::MallocMessageBuilder manifestMessage(manifestReader.totalSize().wordCount + 4);
-      manifestMessage.setRoot(manifestReader);
-      node.setData(capnp::messageToFlatArray(manifestMessage));
+      KJ_IF_MAYBE(manifest, packManifestOverride) {
+        node.setData(kj::mv(*manifest));
+      } else {
+        auto manifestReader = packageDef.getManifest();
+        capnp::MallocMessageBuilder manifestMessage(manifestReader.totalSize().wordCount + 4);
+        manifestMessage.setRoot(manifestReader);
+        node.setData(capnp::messageToFlatArray(manifestMessage));
+      }
     } else if (path == "sandstorm-http-bridge-config") {
       // Serialize the bridgeConfig.
       auto bridgeConfigReader = packageDef.getBridgeConfig();
@@ -2223,7 +2237,9 @@ private:
     ES_MODULE,
     COMMON_JS,
     TEXT,
-    JSON
+    JSON,
+    DATA,
+    WASM
   };
 
   struct DevIsolateModule {
@@ -2509,6 +2525,12 @@ private:
           break;
         case DevIsolateModuleType::JSON:
           module.setJsonPath(modules[i].sourcePath);
+          break;
+        case DevIsolateModuleType::DATA:
+          module.setDataPath(modules[i].sourcePath);
+          break;
+        case DevIsolateModuleType::WASM:
+          module.setWasmPath(modules[i].sourcePath);
           break;
       }
     }
@@ -4161,6 +4183,216 @@ private:
     }
 
     return imports;
+  }
+
+  struct PackIsolateModuleSpec {
+    kj::String name;
+    kj::String sourcePath;
+    DevIsolateModuleType type;
+  };
+
+  kj::String writePackIsolateSupportDir() {
+    kj::String path = kj::heapString("/tmp/sandstorm-pack-isolate-runtime-XXXXXX");
+    KJ_REQUIRE(mkdtemp(path.begin()) != nullptr, "mkdtemp() failed", path, strerror(errno));
+    KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es-generated").cStr(), 0700));
+    return path;
+  }
+
+  void addArchiveDirectory(ArchiveNode& root, kj::StringPtr packagePath, kj::StringPtr sourcePath) {
+    for (auto& child: listDirectory(sourcePath)) {
+      if (child == "." || child == "..") {
+        continue;
+      }
+
+      auto childPackagePath = packagePath.size() == 0 ? kj::str(child) :
+          kj::str(packagePath, "/", child);
+      auto childSourcePath = kj::str(sourcePath, "/", child);
+      if (isDirectory(childSourcePath)) {
+        addArchiveDirectory(root, childPackagePath, childSourcePath);
+      } else {
+        root.followPath(childPackagePath).setTarget(kj::mv(childSourcePath));
+      }
+    }
+  }
+
+  kj::Maybe<kj::String> trySourcePathForPackagePath(kj::StringPtr packagePath) {
+    auto mapping = mapFile(sourceDir, packageDef.getSourceMap(), packagePath);
+    if (mapping.sourcePaths.size() == 0 || isDirectory(mapping.sourcePaths[0])) {
+      return nullptr;
+    }
+    return kj::str(mapping.sourcePaths[0]);
+  }
+
+  PackIsolateModuleSpec copyPackIsolateModuleSpec(
+      spk::Manifest::IsolateConfig::Module::Builder module) {
+    PackIsolateModuleSpec result;
+    result.name = kj::str(module.getName());
+    switch (module.which()) {
+      case spk::Manifest::IsolateConfig::Module::ES_MODULE_PATH:
+        result.type = DevIsolateModuleType::ES_MODULE;
+        result.sourcePath = kj::str(module.getEsModulePath());
+        break;
+      case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
+        result.type = DevIsolateModuleType::COMMON_JS;
+        result.sourcePath = kj::str(module.getCommonJsModulePath());
+        break;
+      case spk::Manifest::IsolateConfig::Module::TEXT_PATH:
+        result.type = DevIsolateModuleType::TEXT;
+        result.sourcePath = kj::str(module.getTextPath());
+        break;
+      case spk::Manifest::IsolateConfig::Module::JSON_PATH:
+        result.type = DevIsolateModuleType::JSON;
+        result.sourcePath = kj::str(module.getJsonPath());
+        break;
+      case spk::Manifest::IsolateConfig::Module::DATA_PATH:
+        result.type = DevIsolateModuleType::DATA;
+        result.sourcePath = kj::str(module.getDataPath());
+        break;
+      case spk::Manifest::IsolateConfig::Module::WASM_PATH:
+        result.type = DevIsolateModuleType::WASM;
+        result.sourcePath = kj::str(module.getWasmPath());
+        break;
+    }
+    return result;
+  }
+
+  void writePackIsolateModuleSpec(
+      spk::Manifest::IsolateConfig::Module::Builder module,
+      PackIsolateModuleSpec& spec) {
+    module.setName(spec.name);
+    switch (spec.type) {
+      case DevIsolateModuleType::ES_MODULE:
+        module.setEsModulePath(spec.sourcePath);
+        break;
+      case DevIsolateModuleType::COMMON_JS:
+        module.setCommonJsModulePath(spec.sourcePath);
+        break;
+      case DevIsolateModuleType::TEXT:
+        module.setTextPath(spec.sourcePath);
+        break;
+      case DevIsolateModuleType::JSON:
+        module.setJsonPath(spec.sourcePath);
+        break;
+      case DevIsolateModuleType::DATA:
+        module.setDataPath(spec.sourcePath);
+        break;
+      case DevIsolateModuleType::WASM:
+        module.setWasmPath(spec.sourcePath);
+        break;
+    }
+  }
+
+  bool collectPackCapnpEsImportsFromModule(
+      kj::StringPtr packagePath, kj::Vector<DevIsolateModule>& generatedModules,
+      std::map<std::string, std::string>& capnpEsImports) {
+    auto maybeRealPath = trySourcePathForPackagePath(packagePath);
+    KJ_IF_MAYBE(realPath, maybeRealPath) {
+      auto source = readAll(raiiOpen(*realPath, O_RDONLY | O_CLOEXEC));
+      auto imports = scanDevIsolateImports(source);
+      auto importerDir = dirnameForPath(*realPath);
+      bool found = false;
+
+      for (auto& specifier: imports) {
+        if (!isCapnpEsImport(specifier)) {
+          continue;
+        }
+
+        auto resolvedImport = resolveDevIsolateCapnpEsImport(
+            importerDir, importerDir, specifier);
+        addDevIsolateCapnpEsModule(
+            specifier, resolvedImport, importerDir, generatedModules, capnpEsImports);
+        found = true;
+      }
+
+      return found;
+    }
+
+    return false;
+  }
+
+  bool augmentPackIsolateConfig(spk::Manifest::IsolateConfig::Builder isolate) {
+    auto oldModuleList = isolate.getModules();
+    kj::Vector<PackIsolateModuleSpec> oldModules;
+    std::set<std::string> existingModuleNames;
+    kj::Vector<DevIsolateModule> generatedModules;
+    std::map<std::string, std::string> capnpEsImports;
+
+    for (auto i: kj::indices(oldModuleList)) {
+      auto module = oldModuleList[i];
+      auto spec = copyPackIsolateModuleSpec(module);
+      existingModuleNames.insert(toStdString(spec.name));
+      if (spec.type == DevIsolateModuleType::ES_MODULE) {
+        collectPackCapnpEsImportsFromModule(
+            spec.sourcePath, generatedModules, capnpEsImports);
+      }
+      oldModules.add(kj::mv(spec));
+    }
+
+    kj::Vector<DevIsolateModule> modulesToAppend;
+    for (auto& generated: generatedModules) {
+      if (existingModuleNames.insert(toStdString(generated.name)).second) {
+        modulesToAppend.add(DevIsolateModule {
+          kj::str(generated.name),
+          kj::str(generated.sourcePath),
+          generated.type,
+        });
+      }
+    }
+
+    if (modulesToAppend.size() == 0) {
+      return false;
+    }
+
+    auto newModuleList = isolate.initModules(oldModules.size() + modulesToAppend.size());
+    size_t index = 0;
+    for (auto& oldModule: oldModules) {
+      writePackIsolateModuleSpec(newModuleList[index++], oldModule);
+    }
+    for (auto& generated: modulesToAppend) {
+      PackIsolateModuleSpec spec {
+        kj::str(generated.name),
+        kj::str(generated.sourcePath),
+        generated.type,
+      };
+      writePackIsolateModuleSpec(newModuleList[index++], spec);
+    }
+
+    return true;
+  }
+
+  void preparePackIsolateSupport(ArchiveNode& root, kj::String& packIsolateSupportDir) {
+    auto manifestReader = packageDef.getManifest();
+    capnp::MallocMessageBuilder manifestMessage(manifestReader.totalSize().wordCount + 64);
+    manifestMessage.setRoot(manifestReader);
+    auto manifest = manifestMessage.getRoot<spk::Manifest>();
+
+    auto oldDevIsolateSupportDir = kj::mv(devIsolateSupportDir);
+    packIsolateSupportDir = writePackIsolateSupportDir();
+    devIsolateSupportDir = kj::heapString(packIsolateSupportDir);
+    KJ_DEFER(devIsolateSupportDir = kj::mv(oldDevIsolateSupportDir));
+
+    bool changed = false;
+    if (manifest.getContinueCommand().hasIsolate()) {
+      changed = augmentPackIsolateConfig(manifest.getContinueCommand().getIsolate()) || changed;
+    }
+
+    auto actions = manifest.getActions();
+    for (auto i: kj::indices(actions)) {
+      auto command = actions[i].getCommand();
+      if (command.hasIsolate()) {
+        changed = augmentPackIsolateConfig(command.getIsolate()) || changed;
+      }
+    }
+
+    if (!changed) {
+      recursivelyDelete(packIsolateSupportDir);
+      packIsolateSupportDir = nullptr;
+      return;
+    }
+
+    addArchiveDirectory(root, "__sandstorm_isolate_runtime/capnp-es-generated",
+        kj::str(packIsolateSupportDir, "/capnp-es-generated"));
+    packManifestOverride = capnp::messageToFlatArray(manifestMessage);
   }
 
   static void appendCapnpText(kj::Vector<char>& output, kj::StringPtr text) {

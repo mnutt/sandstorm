@@ -913,6 +913,14 @@ Deliverables:
 - migration path from current JavaScript-defined app-object capabilities
 - compatibility story for grains packed before the native bridge exists
 
+Progress:
+
+- normal `spk pack` now scans packaged isolate ES modules for `capnp-es:`
+  schema imports, generates the same rewritten `@mnutt/capnp-es` support
+  modules as `spk dev-isolate`, stores them under
+  `__sandstorm_isolate_runtime/capnp-es-generated`, and serializes an
+  augmented isolate module list into `sandstorm-manifest`
+
 Exit criteria:
 
 - an app can publish a schema-defined capability as part of its package
