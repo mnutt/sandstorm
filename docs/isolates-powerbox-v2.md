@@ -804,6 +804,10 @@ Progress:
   RPC result cap table: the integration fixture forces a streamed WebSession
   response, observes `Response.content.body.stream`, and calls the returned
   generated `Handle.ping()` client over the same restricted native RPC bridge
+- dropping a claimed native bridge capability now also tears down supervisor
+  RPC sessions bound to that target, and the integration fixture verifies that
+  a later bridge RPC envelope for the dropped target is rejected instead of
+  continuing through a stale per-connection session
 
 Interop tests:
 
