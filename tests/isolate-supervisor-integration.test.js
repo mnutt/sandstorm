@@ -3312,6 +3312,7 @@ test("isolate supervisor integration suite", {
       fixture.workerdSocket, "/__sandstorm/rpc-client.js");
     assert.equal(browserRpcClient.statusCode, 200);
     assert.match(browserRpcClient.body, /powerboxDescriptor/);
+    assert.match(browserRpcClient.body, /local\(methods\)/);
 
     const appInterfaceDescriptor = await requestJson(
       fixture.sandstormApiSocket,

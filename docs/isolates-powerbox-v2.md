@@ -928,6 +928,9 @@ Progress:
   `powerboxDescriptorInfo()` for schema-defined interfaces; the helper asks
   Sandstorm to pack a real `PowerboxDescriptor` whose boolean tag is the
   schema interface id
+- generated browser bindings now expose `local(methods)` for in-memory tests
+  and browser-local fakes, using the same argument/result capability metadata
+  as browser RPC clients
 
 Powerbox work:
 
