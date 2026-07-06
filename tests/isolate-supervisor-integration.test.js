@@ -28,6 +28,7 @@ const REPO_DIR = path.resolve(__dirname, "..");
 const REPO_TMP_DIR = path.join(REPO_DIR, "tmp");
 const SANDSTORM_BIN = process.env.SANDSTORM_BIN || path.join(REPO_DIR, "bin/sandstorm");
 const SPK_BIN = process.env.SPK_BIN || path.join(REPO_DIR, "bin/spk");
+const CAPNP_BIN = process.env.CAPNP_BIN || path.join(REPO_DIR, "tmp/capnp/compiler/capnp");
 const SPK_PATH = process.env.ISOLATE_TEST_SPK ||
     path.join(REPO_DIR, "tests/assets/isolate-test-app.spk");
 const WEBSESSION_CLIENT_BIN = process.env.ISOLATE_WEBSESSION_CLIENT ||
@@ -128,13 +129,17 @@ async function requireFile(file, hint) {
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
+    const { input, ...spawnOptions } = options;
     const stdout = [];
     const stderr = [];
     const child = spawn(command, args, {
-      ...options,
-      stdio: ["ignore", "pipe", "pipe"],
+      ...spawnOptions,
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
 
+    if (input !== undefined) {
+      child.stdin.end(input);
+    }
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (data) => stdout.push(data));
@@ -740,6 +745,139 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   assert.match(
     generatedSandstormWeb.stdout,
     /from "capnp-es:\/sandstorm\/util\.capnp";/);
+});
+
+test("spk pack materializes generated capnp-es modules for packaged isolates", async (t) => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+  await requireExecutable(CAPNP_BIN, "Build the project first, e.g. make fast.");
+  try {
+    await requireFile(
+      CAPNP_ES_COMPILER_MODULE,
+      "Set CAPNP_ES_COMPILER_MODULE to the @mnutt/capnp-es compiler module.");
+  } catch (err) {
+    t.skip(err.message);
+    return;
+  }
+
+  await fs.mkdir(REPO_TMP_DIR, { recursive: true });
+  const fixtureRoot = await fs.mkdtemp(path.join(REPO_TMP_DIR, "capnp-es-pack-"));
+  t.after(async () => {
+    await fs.rm(fixtureRoot, { recursive: true, force: true });
+  });
+
+  const appDir = path.join(fixtureRoot, "app");
+  await fs.mkdir(appDir);
+  await fs.copyFile(
+    path.join(REPO_DIR, "examples/isolate-capnp-rpc/greeter.capnp"),
+    path.join(appDir, "greeter.capnp"));
+  await fs.copyFile(
+    path.join(REPO_DIR, "examples/isolate-capnp-rpc/greeting.capnp"),
+    path.join(appDir, "greeting.capnp"));
+  await fs.writeFile(path.join(appDir, "worker.js"), [
+    "import { Greeter } from \"capnp-es:./greeter.capnp\";",
+    "export default { fetch() { return Response.json({ name: Greeter.name }); } };",
+    "",
+  ].join("\n"));
+
+  const pkgdefPath = path.join(fixtureRoot, "sandstorm-pkgdef.capnp");
+  await fs.writeFile(pkgdefPath, [
+    "@0xbeba1a4a7a55e001;",
+    "",
+    "using Grain = import \"/sandstorm/grain.capnp\";",
+    "using Spk = import \"/sandstorm/package.capnp\";",
+    "",
+    "const viewInfo :Grain.UiView.ViewInfo = (",
+    "  appTitle = (defaultText = \"Pack Capnp Es Test\")",
+    ");",
+    "",
+    "const command :Spk.Manifest.Command = (",
+    "  argv = [",
+    "    \"workerd\",",
+    "    \"serve\",",
+    "    \"${SANDSTORM_ISOLATE_WORKERD_CONFIG}\",",
+    "    \"sandstormConfig\"",
+    "  ],",
+    "  isolate = (",
+    "    mainModule = \"worker.js\",",
+    "    compatibilityDate = \"2025-01-01\",",
+    "    compatibilityFlags = [],",
+    "    modules = [",
+    "      ( name = \"worker.js\", esModulePath = \"app/worker.js\" )",
+    "    ],",
+    "    bindings = [],",
+    "    bridgeConfig = ( viewInfo = .viewInfo )",
+    "  )",
+    ");",
+    "",
+    "const pkgdef :Spk.PackageDefinition = (",
+    "  id = \"d2jw0rpnkydeupwend6dk0ugfkz3xfkygg21awx478pzz29gdtp0\",",
+    "  manifest = (",
+    "    appTitle = (defaultText = \"Pack Capnp Es Test\"),",
+    "    appVersion = 0,",
+    "    appMarketingVersion = (defaultText = \"0.0.0\"),",
+    "    actions = [",
+    "      ( title = (defaultText = \"New Pack Capnp Es Test\"),",
+    "        nounPhrase = (defaultText = \"instance\"),",
+    "        command = .command )",
+    "    ],",
+    "    continueCommand = .command",
+    "  ),",
+    "  sourceMap = (",
+    "    searchPath = [ ( packagePath = \"app\", sourcePath = \"app\" ) ]",
+    "  ),",
+    "  alwaysInclude = [ \"sandstorm-manifest\", \"app\" ]",
+    ");",
+    "",
+  ].join("\n"));
+
+  const spkPath = path.join(fixtureRoot, "pkg.spk");
+  await runCommand(SPK_BIN, [
+    "pack",
+    `-k${path.join(REPO_DIR, "src/sandstorm/test-app/isolate-test-app.key")}`,
+    "-Isrc",
+    "-p", `${pkgdefPath}:pkgdef`,
+    spkPath,
+  ], {
+    cwd: REPO_DIR,
+    env: {
+      ...process.env,
+      SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
+    },
+  });
+
+  const unpackDir = path.join(fixtureRoot, "unpacked");
+  await runCommand(SPK_BIN, ["unpack", spkPath, unpackDir], { cwd: REPO_DIR });
+
+  const greeterPath = path.join(
+    unpackDir, "__sandstorm_isolate_runtime/capnp-es-generated/greeter.js");
+  const greetingPath = path.join(
+    unpackDir, "__sandstorm_isolate_runtime/capnp-es-generated/greeting.js");
+  await requireFile(greeterPath, "spk pack should generate the imported schema module.");
+  await requireFile(greetingPath, "spk pack should generate transitive schema imports.");
+  assert.match(await fs.readFile(greeterPath, "utf8"), /export class Greeter extends/);
+
+  const manifestBytes = await fs.readFile(path.join(unpackDir, "sandstorm-manifest"));
+  const { stdout } = await runCommand(CAPNP_BIN, [
+    "convert",
+    "-Isrc",
+    "binary:json",
+    "src/sandstorm/package.capnp",
+    "Manifest",
+  ], {
+    cwd: REPO_DIR,
+    input: manifestBytes,
+  });
+  const manifest = JSON.parse(stdout);
+  const modules = new Map(
+    manifest.continueCommand.isolate.modules.map((module) => [module.name, module]));
+
+  assert.equal(modules.get("worker.js").esModulePath, "app/worker.js");
+  assert.equal(
+    modules.get("capnp-es:./greeter.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/greeter.js");
+  assert.equal(
+    modules.get("capnp-es:./greeting.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/greeting.js");
 });
 
 test("isolate supervisor integration suite", {
