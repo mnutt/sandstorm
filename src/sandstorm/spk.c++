@@ -2552,6 +2552,7 @@ private:
     std::map<std::string, std::string> capnpEsImports;
     collectDevIsolateModule(
         devIsolateWorkerPath, rootDir, modules, seen, capnpImports, capnpEsImports);
+    addDevIsolatePlatformCapnpEsModules(rootDir, modules, capnpEsImports);
     return modules;
   }
 
@@ -3178,6 +3179,19 @@ private:
       kj::str("__sandstorm_isolate_runtime/", runtimePath),
       DevIsolateModuleType::ES_MODULE
     });
+  }
+
+  void addDevIsolatePlatformCapnpEsModules(
+      kj::StringPtr rootDir, kj::Vector<DevIsolateModule>& modules,
+      std::map<std::string, std::string>& capnpEsImports) {
+    auto compilerModule = getenv("SANDSTORM_CAPNP_ES_COMPILER_MODULE");
+    if (compilerModule == nullptr || strlen(compilerModule) == 0) {
+      return;
+    }
+
+    kj::StringPtr bridgeSpecifier = "capnp-es:/sandstorm/isolate-native-capnp-bridge.capnp";
+    auto bridgePath = resolveDevIsolateCapnpEsImport(rootDir, rootDir, bridgeSpecifier);
+    addDevIsolateCapnpEsModule(bridgeSpecifier, bridgePath, rootDir, modules, capnpEsImports);
   }
 
   static kj::String resolveDevIsolateCapnpSchemaImport(
@@ -5158,6 +5172,7 @@ private:
       }
       oldModules.add(kj::mv(spec));
     }
+    addDevIsolatePlatformCapnpEsModules(sourceDir, generatedModules, capnpEsImports);
 
     kj::Vector<DevIsolateModule> modulesToAppend;
     for (auto& generated: generatedModules) {

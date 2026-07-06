@@ -955,6 +955,11 @@ Progress:
   `capnp-es` schema modules through `/__sandstorm/capnp-es/...` and the bundled
   `@mnutt/capnp-es` runtime imports through `/capnp-es/...`, giving browser
   code loadable native modules before Powerbox/browser transport wiring
+- browser system routes now expose `/__sandstorm/native-capnp/bridge-info` and
+  `/__sandstorm/native-capnp/call`, forwarding negotiation metadata and binary
+  native bridge envelopes to the supervisor without exposing service bindings
+  directly to browser code; when the `capnp-es` compiler is configured, `spk`
+  also generates the native bridge schema as a platform module
 
 Powerbox work:
 
