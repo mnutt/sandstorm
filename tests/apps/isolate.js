@@ -89,19 +89,5 @@ module.exports["Test isolate browser to worker RPC"] = function (browser) {
     .assert.textContains("#rpc-result", "\"first\":{\"value\":2}")
     .assert.textContains("#rpc-result", "\"childValue\":{\"value\":5}")
     .assert.textContains("#rpc-result", "\"parentValue\":{\"value\":5}")
-    .assert.textContains("#rpc-result", "\"current\":{\"value\":2}")
-    .assert.textContains("#rpc-result", "\"interfaceName\":\"NativeGreeter\"")
-    .assert.textContains("#rpc-result", "\"message\":\"browser schema hello browser\"")
-    .assert.textContains("#rpc-result", "\"message\":\"browser returned client\"")
-    .assert.textContains("#rpc-result",
-      "\"message\":\"browser schema called browser returned client from browser schema\"")
-    .assert.textContains("#rpc-result", "\"message\":\"browser local hello client\"")
-    .assert.textContains("#rpc-result", "\"message\":\"browser local returned client\"")
-    .assert.textContains("#rpc-result",
-      "\"message\":\"browser local called browser local returned client\"")
-    .assert.textContains("#rpc-result", "\"type\":\"capability\"")
-    .assert.textContains("#rpc-result", "\"message\":\"browser schema hello browser handle\"")
-    .assert.textContains("#rpc-result", "\"message\":\"browser handle returned client\"")
-    .assert.textContains("#rpc-result",
-      "\"message\":\"browser schema called browser handle returned client from browser schema\"");
+    .assert.textContains("#rpc-result", "\"current\":{\"value\":2}");
 };

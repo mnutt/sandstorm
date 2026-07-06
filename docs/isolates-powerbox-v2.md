@@ -923,34 +923,6 @@ Implementation work:
 
 Progress:
 
-- the browser RPC helper now exposes `makeBrowserCapnpInterfaceBinding()` and
-  `connectBrowserCapnp()`, giving browser code a schema-shaped client facade
-  over Cap'n Web stubs; the isolate browser RPC fixture imports a generated-like
-  `NativeGreeter` module, calls schema-named methods, casts a returned
-  capability, and passes that capability back as an argument
-- `spk dev-isolate` now emits a Sandstorm-owned browser companion module for
-  each `capnp:` schema import under `sandstorm:browser-capnp:...`; the isolate
-  API serves those modules from `/__sandstorm/capnp/...`, so frontend code can
-  import the same schema by URL without app code hand-serving generated JS
-- generated browser modules share the same schema metadata as isolate modules
-  but bind through `makeBrowserCapnpInterfaceBinding()` and
-  `/__sandstorm/rpc-client.js`, keeping the transport decision inside the
-  Sandstorm browser helper
-- generated browser bindings now expose `powerboxDescriptor()` and
-  `powerboxDescriptorInfo()` for schema-defined interfaces; the helper asks
-  Sandstorm to pack a real `PowerboxDescriptor` whose boolean tag is the
-  schema interface id
-- generated browser bindings now expose `local(methods)` for in-memory tests
-  and browser-local fakes, using the same argument/result capability metadata
-  as browser RPC clients
-- generated browser bindings now accept either a direct Cap'n Web-style stub or
-  a Sandstorm browser capability handle; handle-backed clients dispatch through
-  `/__sandstorm/object-capabilities/:id/native-app-rpc-call`, hydrate returned
-  capability slots, and can be requested with `Interface.requestCapability()`
-- `docs/developing/isolate-grains.md` now documents frontend bundler behavior:
-  worker code imports `capnp:` schemas, browser code imports served
-  `/__sandstorm/capnp/...` companion modules, and browser bundlers should
-  alias or externalize those runtime URLs rather than compiling `.capnp` files
 - the supervisor and browser system routes can now serve native browser
   `capnp-es` schema modules through `/__sandstorm/capnp-es/...` and the bundled
   `@mnutt/capnp-es` runtime imports through `/capnp-es/...`, giving browser
@@ -970,6 +942,11 @@ Progress:
   browser code can request a user-mediated app-interface capability, claim the
   returned token through Sandstorm's normal claim route, and receive a generated
   `capnp-es` client without going through the old app-object browser transport
+- the unreleased `sandstorm:browser-capnp:*` companion module generator,
+  `__sandstorm_isolate_runtime/capnp-browser` package output,
+  `/capnp/browser-module` supervisor route, and `/__sandstorm/capnp/...`
+  browser route have been removed; browser schema RPC now uses served
+  `capnp-es` modules plus `/__sandstorm/native-capnp/client.js`
 
 Powerbox work:
 
@@ -1060,10 +1037,10 @@ Progress:
   `__sandstorm_isolate_runtime/capnp-es-generated`, and serializes an
   augmented isolate module list into `sandstorm-manifest`
 - normal `spk pack` also scans packaged isolate ES modules for `capnp:`
-  imports, generates app-object compatibility modules under
-  `__sandstorm_isolate_runtime/capnp`, generates browser companion modules
-  under `__sandstorm_isolate_runtime/capnp-browser`, and records both worker
-  and browser schema modules in `sandstorm-manifest`
+  imports and generates app-object compatibility modules under
+  `__sandstorm_isolate_runtime/capnp`; browser schema modules are generated
+  through the native `capnp-es:` path instead of a separate app-object
+  companion module path
 - isolate generated bindings now expose `powerboxDescriptor(env)` and
   `powerboxDescriptorInfo(env)` for schema-defined interfaces, backed by the
   same supervisor descriptor route as browser bindings
@@ -1132,15 +1109,14 @@ Progress:
   authoring boundary: `capnp-es:` generated modules plus
   `exportNativeCapnp()` / `restoreNativeCapnp()` are the native cross-grain and
   legacy interop path, while `capnp:` generated modules remain the
-  app-object/browser compatibility bridge and local control-plane helper
+  app-object compatibility bridge and local control-plane helper
 - current JavaScript-defined app-object RPC and `capnp:` schema-shaped
   app-object bindings are retained as private/local convenience APIs during the
   isolate pre-release period; public cross-grain protocols should be
   schema-first native Cap'n Proto capabilities
-- once the native browser `capnp-es` bridge works, unreleased Cap'n Web and
-  app-object browser RPC prototype transports should be removed instead of kept
-  as compatibility fallbacks; `fetch()` remains supported for HTTP-shaped and
-  large data-plane capabilities
+- unreleased Cap'n Web and app-object browser RPC prototype schema transports
+  have been removed instead of kept as compatibility fallbacks; `fetch()`
+  remains supported for HTTP-shaped and large data-plane capabilities
 
 ## Open Questions
 
@@ -1172,7 +1148,7 @@ Use schema-first public protocols:
 - `capnp-es:` imports provide native generated clients and servers for public
   cross-grain interfaces.
 - `capnp:` imports remain the schema-shaped app-object compatibility and
-  browser-helper path.
+  local helper path.
 - Sandstorm tooling bundles the compiler/generator used by packaged isolates.
 - Isolates receive typed generated stubs and server adapters.
 - Legacy grains see ordinary Cap'n Proto interfaces.
