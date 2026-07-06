@@ -40,7 +40,6 @@ import {
   createNativeCapnpBridge,
   decodeNativeCapnpBridgeResponse,
   exportNativeCapnp,
-  makeCapnpInterfaceBinding,
   makeNativeCapnpBridgeAcknowledgedResponse,
   makeNativeCapnpBridgeCallRequest,
   makeNativeCapnpBridgeCapabilityResponse,
@@ -166,71 +165,6 @@ class CounterCapability extends RpcTarget {
     disposedCounterCapabilities += 1;
   }
 }
-
-const GeneratedCounter = makeCapnpInterfaceBinding("GeneratedCounter", [
-  "increment",
-  "get",
-  "child",
-  "children",
-  "readOther",
-  "readNested",
-  "nestedChildren",
-  "mirrorSession",
-  "fail",
-], {
-  importSpecifier: "capnp:test/generated-counter.capnp",
-  schemaPath: "test/generated-counter.capnp",
-  schemaText: [
-    "@0xd8c883d5220f7e53;",
-    "using WebSession = import \"/sandstorm/web-session.capnp\".WebSession;",
-    "interface GeneratedCounter {",
-    "  increment @0 (amount :Float64) -> (value :Float64);",
-    "  get @1 () -> (value :Float64);",
-    "  child @2 () -> (counter :GeneratedCounter);",
-    "  children @3 () -> (left :GeneratedCounter, right :GeneratedCounter);",
-    "  readOther @4 (other :GeneratedCounter) -> (value :Float64);",
-    "  readNested @5 (wrapper :AnyPointer) -> (value :Float64);",
-    "  nestedChildren @6 () -> (group :AnyPointer);",
-    "  mirrorSession @7 (session :WebSession) -> (session :WebSession);",
-    "  fail @8 (message :Text) -> ();",
-    "}",
-  ].join("\n"),
-  argumentCapabilities: {
-    readOther: { indexes: [0] },
-    readNested: { paths: [[["wrapper", "other"], () => GeneratedCounter]] },
-    mirrorSession: {
-      fields: {
-        session: {
-          nativeInterface: "webSession",
-          fetch: true,
-        },
-      },
-    },
-  },
-  resultCapabilities: {
-    child: () => GeneratedCounter,
-    children: {
-      fields: {
-        left: () => GeneratedCounter,
-        right: () => GeneratedCounter,
-      },
-    },
-    nestedChildren: {
-      paths: {
-        "group.left": () => GeneratedCounter,
-        "group.right": () => GeneratedCounter,
-      },
-    },
-    mirrorSession: {
-      fields: {
-        session: {
-          nativeInterface: "webSession",
-          fetch: true,
-        },
-      },
-    },
-  },
-});
 
 class AppRpcTargetSelfTest extends AppRpcTarget {
   summary() {
@@ -3223,72 +3157,7 @@ export default {
       });
     }
 
-    if (url.pathname === "/capnp-binding-object-self-test") {
-      const api = sandstorm(request, env);
-      const local = GeneratedCounter.local(new CounterCapability());
-      const localFirst = await local.increment(2);
-      const localCurrent = await local.get();
-      const localChild = await local.child();
-      const localChildFirst = await localChild.increment(3);
-      const localChildCurrent = await localChild.get();
-      const localReadChild = await local.readOther(localChild);
-      const localChildren = await local.children();
-      const localLeftFirst = await localChildren.left.increment(19);
-      const localRightFirst = await localChildren.right.increment(23);
-      const localNestedRead = await local.readNested({ wrapper: { other: localChild } });
-      const localNestedChildren = await local.nestedChildren();
-      const localNestedLeftFirst = await localNestedChildren.group.left.increment(37);
-      const localNestedRightFirst = await localNestedChildren.group.right.increment(41);
-
-      const transient = await api.export(GeneratedCounter.implement(new CounterCapability()));
-      const transientClient = GeneratedCounter.cast(transient);
-      const transientFirst = await transientClient.increment(5);
-      const transientCurrent = await transientClient.get();
-      const childClient = await transientClient.child();
-      const childFirst = await childClient.increment(7);
-      const readChild = await transientClient.readOther(childClient);
-      const children = await transientClient.children();
-      const leftFirst = await children.left.increment(29);
-      const rightFirst = await children.right.increment(31);
-      const nestedRead = await transientClient.readNested({ wrapper: { other: childClient } });
-      const nestedChildren = await transientClient.nestedChildren();
-      const nestedLeftFirst = await nestedChildren.group.left.increment(43);
-      const nestedRightFirst = await nestedChildren.group.right.increment(47);
-      const webSession = await api.webSession({ pathPrefix: "/exported" });
-      const mirroredSession = await transientClient.mirrorSession({ session: webSession });
-      let wrongMirrorSessionError = null;
-      try {
-        await transientClient.mirrorSession({ session: childClient });
-      } catch (error) {
-        wrongMirrorSessionError = {
-          name: String(error?.name || "Error"),
-          message: String(error?.message || error),
-        };
-      }
-      const mirroredSessionInfo = await mirroredSession.session.info();
-      const mirroredSessionFetchResponse =
-        await mirroredSession.session.fetch("/capability-echo?source=capnp-mirror");
-      const mirroredSessionFetch = {
-        status: mirroredSessionFetchResponse.status,
-        body: await mirroredSessionFetchResponse.json(),
-      };
-
-      const durableTarget = new CounterCapability();
-      durableTarget.increment(11);
-      const durableId = `generated-counter-${crypto.randomUUID()}`;
-      const durableStorageKey = `generated-counter-token-${crypto.randomUUID()}`;
-      const durable = await api.exportDurable(GeneratedCounter.implement(durableTarget), {
-        id: durableId,
-        storageKey: durableStorageKey,
-        label: "Generated counter binding fixture",
-      });
-      const durableClient = GeneratedCounter.cast(durable.capability);
-      const durableGet = await durableClient.get();
-      const durableIncrement = await durableClient.increment(13);
-      const castSaved = await durableClient.save({
-        label: "Generated counter binding saved through cast client",
-      });
-      const durableDrop = await durableClient.drop();
+    if (url.pathname === "/native-capnp-descriptor-self-test") {
       const powerboxDescriptorInfo = await nativeCapnpPowerboxDescriptorInfo(
         env, NativeGreeter, { interfaceName: "NativeGreeter" });
       const powerboxDescriptor = await nativeCapnpPowerboxDescriptor(
@@ -3300,57 +3169,9 @@ export default {
         await nativeCapnpPowerboxDescriptorInfo(
           env, NativeGreeter, { interfaceName: "NativeGreeter" });
 
-      const restored = await api.restore(castSaved);
-      const restoredClient = GeneratedCounter.cast(restored);
-      const restoredGet = await restoredClient.get();
-      const restoredIncrement = await restoredClient.increment(17);
-      let restoredFailure;
-      try {
-        await restoredClient.fail("generated binding failure");
-      } catch (error) {
-        restoredFailure = {
-          name: String(error?.name || "Error"),
-          message: String(error?.message || error),
-          details: {
-            name: String(error?.details?.name || ""),
-          },
-        };
-      }
-
-      const restoredDrop = await restoredClient.drop();
-      const dropChild = await childClient.drop();
-      const dropChildrenLeft = await children.left.drop();
-      const dropChildrenRight = await children.right.drop();
-      const dropNestedChildrenLeft = await nestedChildren.group.left.drop();
-      const dropNestedChildrenRight = await nestedChildren.group.right.drop();
-      const dropMirroredSession = await mirroredSession.session.drop();
-      const dropTransient = await transientClient.drop();
-      const revokeCastSaved = await api.revoke(castSaved);
-      const revokeDurableToken = castSaved === durable.token
-        ? { ok: true, sameToken: true }
-        : await api.revoke(durable.token);
-      const deleteStorage = await api.storage().delete(durableStorageKey);
-
       return Response.json({
         ok: true,
         helperVersion: SANDSTORM_CAPNP_VERSION,
-        interfaceName: GeneratedCounter.interfaceName,
-        interfaceId: GeneratedCounter.interfaceId,
-        schemaPath: GeneratedCounter.schemaPath,
-        methodNames: GeneratedCounter.methodNames,
-        schema: {
-          importSpecifier: GeneratedCounter.schema.importSpecifier,
-          interfaceName: GeneratedCounter.schema.interfaceName,
-          interfaceId: GeneratedCounter.schema.interfaceId,
-          schemaPath: GeneratedCounter.schema.schemaPath,
-          schemaText: GeneratedCounter.schema.schemaText,
-          methodNames: GeneratedCounter.schema.methodNames,
-          methodIds: GeneratedCounter.schema.methodIds,
-          paramStructIds: GeneratedCounter.schema.paramStructIds,
-          resultStructIds: GeneratedCounter.schema.resultStructIds,
-          argumentCapabilities: GeneratedCounter.schema.argumentCapabilities,
-          resultCapabilityNames: Object.keys(GeneratedCounter.schema.resultCapabilities),
-        },
         powerboxDescriptor: {
           interfaceName: "NativeGreeter",
           interfaceId: `0x${NativeGreeter._capnp.typeIdHex}`,
@@ -3358,78 +3179,6 @@ export default {
           info: powerboxDescriptorInfo,
           cachedInfo: cachedPowerboxDescriptorInfoAfterMutation,
         },
-        local: {
-          first: localFirst,
-          current: localCurrent,
-          child: {
-            first: localChildFirst,
-            current: localChildCurrent,
-            read: localReadChild,
-          },
-          children: {
-            left: localLeftFirst,
-            right: localRightFirst,
-          },
-          nested: {
-            read: localNestedRead,
-            left: localNestedLeftFirst,
-            right: localNestedRightFirst,
-          },
-        },
-        transient: {
-          capability: JSON.parse(JSON.stringify(transient)),
-          first: transientFirst,
-          current: transientCurrent,
-        },
-        child: {
-          capability: JSON.parse(JSON.stringify(childClient.capability)),
-          first: childFirst,
-          read: readChild,
-          drop: dropChild,
-        },
-        children: {
-          leftCapability: JSON.parse(JSON.stringify(children.left.capability)),
-          rightCapability: JSON.parse(JSON.stringify(children.right.capability)),
-          left: leftFirst,
-          right: rightFirst,
-          leftDrop: dropChildrenLeft,
-          rightDrop: dropChildrenRight,
-        },
-        nested: {
-          read: nestedRead,
-          leftCapability: JSON.parse(JSON.stringify(nestedChildren.group.left.capability)),
-          rightCapability: JSON.parse(JSON.stringify(nestedChildren.group.right.capability)),
-          left: nestedLeftFirst,
-          right: nestedRightFirst,
-          leftDrop: dropNestedChildrenLeft,
-          rightDrop: dropNestedChildrenRight,
-        },
-        mirroredSession: {
-          capability: JSON.parse(JSON.stringify(mirroredSession.session)),
-          info: mirroredSessionInfo,
-          fetch: mirroredSessionFetch,
-          drop: dropMirroredSession,
-          wrongSessionError: wrongMirrorSessionError,
-        },
-        durable: {
-          id: durable.id,
-          registered: durable.registered,
-          restored: durable.restored,
-          tokenType: typeof durable.token,
-          castSavedType: typeof castSaved,
-          get: durableGet,
-          increment: durableIncrement,
-          drop: durableDrop,
-          restoredCapability: JSON.parse(JSON.stringify(restored)),
-          restoredGet,
-          restoredIncrement,
-          restoredFailure,
-          restoredDrop,
-          revokeCastSaved,
-          revokeDurableToken,
-          deleteStorage,
-        },
-        dropTransient,
       });
     }
 
