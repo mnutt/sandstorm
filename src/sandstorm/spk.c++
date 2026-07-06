@@ -2474,6 +2474,10 @@ private:
     return kj::str("capnp-es/", moduleName.slice(prefix.size()));
   }
 
+  kj::String capnpEsSchemeRuntimeSpecifier(kj::StringPtr moduleName) {
+    return kj::str("capnp-es:/", capnpEsRuntimePath(moduleName));
+  }
+
   void writeDevIsolateSupportFile(kj::StringPtr dir, kj::StringPtr name, kj::StringPtr content) {
     auto path = kj::str(dir, "/", name);
     kj::FdOutputStream(raiiOpen(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600))
@@ -2540,7 +2544,8 @@ private:
     isolate.setCompatibilityDate(devIsolateCompatibilityDate);
     isolate.initCompatibilityFlags(0);
 
-    auto moduleList = isolate.initModules(modules.size() + 6 + ISOLATE_CAPNP_ES_MODULE_COUNT);
+    auto moduleList = isolate.initModules(
+        modules.size() + 6 + (2 * ISOLATE_CAPNP_ES_MODULE_COUNT));
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2587,6 +2592,12 @@ private:
     for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
       auto module = moduleList[helperIndex++];
       module.setName(runtimeModule.name);
+      module.setEsModulePath(kj::str(
+          "__sandstorm_isolate_runtime/", capnpEsRuntimePath(runtimeModule.name)));
+    }
+    for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
+      auto module = moduleList[helperIndex++];
+      module.setName(capnpEsSchemeRuntimeSpecifier(runtimeModule.name));
       module.setEsModulePath(kj::str(
           "__sandstorm_isolate_runtime/", capnpEsRuntimePath(runtimeModule.name)));
     }
@@ -2832,6 +2843,7 @@ private:
 
     auto runtimePath = devIsolateCapnpEsRuntimePath(specifier, resolvedPath, rootDir);
     auto content = generateDevIsolateCapnpEsModule(resolvedPath, rootDir);
+    content = rewriteDevIsolateCapnpEsRuntimeImports(kj::mv(content), specifier);
     content = rewriteDevIsolateCapnpEsImports(
         kj::mv(content), specifier, resolvedPath, rootDir, schemaImports.asPtr());
     writeDevIsolateGeneratedSupportFile(devIsolateSupportDir, runtimePath, content);
@@ -3050,6 +3062,24 @@ private:
     return kj::heapString(result.c_str());
   }
 
+  static kj::String capnpEsSpecifierKey(kj::StringPtr specifier) {
+    KJ_REQUIRE(specifier.startsWith("capnp-es:"), "Internal error: expected capnp-es module.",
+        specifier);
+    auto path = specifier.slice(strlen("capnp-es:"));
+    if (path.startsWith("/")) {
+      path = path.slice(1);
+    } else if (path.startsWith("./")) {
+      path = path.slice(2);
+    }
+    return kj::heapString(path);
+  }
+
+  static kj::String relativeCapnpEsImportSpecifier(kj::StringPtr fromSpecifier,
+                                                   kj::StringPtr toSpecifier) {
+    return relativeJsImportSpecifier(
+        capnpEsSpecifierKey(fromSpecifier), capnpEsSpecifierKey(toSpecifier));
+  }
+
   static kj::String capnpEsGeneratedKeyForSourcePath(kj::StringPtr resolvedPath) {
     auto jsPath = replaceCapnpExtensionWithJs(resolvedPath);
     char* cwdRaw = getcwd(nullptr, 0);
@@ -3105,6 +3135,19 @@ private:
     return kj::heapString(result.c_str());
   }
 
+  kj::String rewriteDevIsolateCapnpEsRuntimeImports(
+      kj::String content, kj::StringPtr importerSpecifier) {
+    for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
+      auto quotedRuntimeName = kj::str("\"", runtimeModule.name, "\"");
+      auto relativeSpecifier = relativeCapnpEsImportSpecifier(
+          importerSpecifier, capnpEsSchemeRuntimeSpecifier(runtimeModule.name));
+      auto quotedRelativeName = kj::str("\"", relativeSpecifier, "\"");
+      content = replaceAll(content, quotedRuntimeName, quotedRelativeName);
+    }
+
+    return kj::mv(content);
+  }
+
   static kj::String rewriteDevIsolateCapnpEsImports(
       kj::String content, kj::StringPtr specifier, kj::StringPtr resolvedPath,
       kj::StringPtr rootDir, kj::ArrayPtr<DevCapnpImport> schemaImports) {
@@ -3121,7 +3164,8 @@ private:
       auto generatedSpecifier = capnpEsGeneratedImportSpecifierForSchemaImport(
           resolvedPath, schemaImport.specifier);
       auto quotedGeneratedSpecifier = kj::str("\"", generatedSpecifier, "\"");
-      auto quotedImportedSpecifier = kj::str("\"", importedSpecifier, "\"");
+      auto quotedImportedSpecifier = kj::str(
+          "\"", relativeCapnpEsImportSpecifier(specifier, importedSpecifier), "\"");
       content = replaceAll(content, quotedGeneratedSpecifier, quotedImportedSpecifier);
     }
 

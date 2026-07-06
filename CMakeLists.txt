@@ -35,6 +35,9 @@ set(SANDSTORM_WORKERD_BIN "" CACHE FILEPATH
   "Optional prebuilt workerd binary to bundle instead of installing from npm")
 set(SANDSTORM_CAPNWEB_NPM_VERSION 0.8.0 CACHE STRING
   "npm capnweb version embedded for isolate grains")
+set(SANDSTORM_CAPNP_ES_COMPILER_MODULE
+  "${PROJECT_SOURCE_DIR}/../../personal/capnp-es/dist/compiler/index.mjs"
+  CACHE FILEPATH "Path to the capnp-es compiler module")
 option(SANDSTORM_BUILD_NODE_CAPNP "Build the capnp.node addon" ON)
 option(SANDSTORM_BUILD_FRONTEND "Enable Meteor shell build targets" ON)
 option(SANDSTORM_STATIC_RUNTIME_BINARIES

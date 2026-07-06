@@ -113,7 +113,9 @@ function(sandstorm_add_packaging_targets)
   set(_isolate_test_app_spk "${PROJECT_SOURCE_DIR}/tests/assets/isolate-test-app.spk")
   add_custom_command(
     OUTPUT "${_isolate_test_app_spk}"
-    COMMAND "$<TARGET_FILE:spk>" pack
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "SANDSTORM_CAPNP_ES_COMPILER_MODULE=${SANDSTORM_CAPNP_ES_COMPILER_MODULE}"
+      "$<TARGET_FILE:spk>" pack
       -k "${_isolate_test_app_source}/isolate-test-app.key"
       -I "${PROJECT_SOURCE_DIR}/src"
       -I "${_spk_stage}"

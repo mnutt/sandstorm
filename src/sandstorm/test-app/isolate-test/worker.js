@@ -2,6 +2,7 @@ import message from "message.txt";
 import metadata from "metadata.json";
 import { Message as CapnpEsMessage } from "@mnutt/capnp-es";
 import { Message as CapnpRpcMessage } from "@mnutt/capnp/rpc.mjs";
+import { WebSession } from "capnp-es:/sandstorm/web-session.capnp";
 import {
   AppRpcTarget,
   Capability,
@@ -521,6 +522,16 @@ export default {
         checksum: checksum(body),
         contentType: request.headers.get("content-type"),
         customHeader: request.headers.get("x-isolate-test"),
+      });
+    }
+
+    if (url.pathname === "/native-capnp-bridge-target/generated-client") {
+      return Response.json({
+        ok: true,
+        source: "native-capnp-generated-websession",
+        method: request.method,
+        pathname: url.pathname,
+        search: url.search,
       });
     }
 
@@ -3867,6 +3878,35 @@ export default {
       nativeCapnpTarget,
       { Client: NativeCapnpBridgeFixtureClient },
       { connectionId: `native-capnp-fixture-connect-${nativeCapnpTarget.id}` });
+    const nativeCapnpGeneratedWebSession = connectNativeCapnp(
+      apiHelper,
+      nativeCapnpTarget,
+      WebSession,
+      { connectionId: `native-capnp-fixture-generated-${nativeCapnpTarget.id}` });
+    let nativeCapnpGeneratedClientResult = null;
+    let nativeCapnpGeneratedClientError = "";
+    try {
+      const generatedResponse = await nativeCapnpGeneratedWebSession.get({
+        path: "/generated-client",
+        context: {},
+        ignoreBody: false,
+      });
+      const content = generatedResponse.content;
+      const body = content.body;
+      const bodyBytes = typeof body.bytes.toUint8Array === "function" ?
+          body.bytes.toUint8Array() : body.bytes;
+      nativeCapnpGeneratedClientResult = {
+        responseWhich: generatedResponse.which(),
+        content: generatedResponse._isContent,
+        statusCode: content.statusCode,
+        mimeType: content.mimeType,
+        bodyWhich: body.which(),
+        bodyBytes: bodyBytes.byteLength,
+        bodyText: new TextDecoder().decode(bodyBytes),
+      };
+    } catch (error) {
+      nativeCapnpGeneratedClientError = `${error.name}: ${error.message}`;
+    }
     let nativeCapnpBridgeTransportError = "";
     let nativeCapnpBridgeTransportMessage = null;
     let nativeCapnpBridgeTransportCall = null;
@@ -4209,6 +4249,13 @@ export default {
             connectionId: nativeCapnpConnectedClient.transport.connectionId,
             hasDrop: typeof nativeCapnpConnectedClient.drop === "function",
             hasSave: typeof nativeCapnpConnectedClient.save === "function",
+          },
+          generatedClient: {
+            ok: nativeCapnpGeneratedClientError === "",
+            error: nativeCapnpGeneratedClientError,
+            targetId: nativeCapnpGeneratedWebSession.capability.id,
+            connectionId: nativeCapnpGeneratedWebSession.transport.connectionId,
+            response: nativeCapnpGeneratedClientResult,
           },
           lifecycleBinary: nativeCapnpLifecycleBinary,
           unknownTargetError: unknownNativeCapnpBridgeCall.error,
