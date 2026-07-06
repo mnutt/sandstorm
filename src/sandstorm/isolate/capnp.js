@@ -661,6 +661,7 @@ export class NativeCapnpBridgeTransport extends CapnpEsDeferredTransport {
     this.target = normalizeNativeCapnpCapabilitySlot(target);
     this.connectionId = normalizeNativeCapnpBridgeConnectionId(options.connectionId);
     this.capabilities = Object.freeze([...(options.capabilities || [])]);
+    this.connection = null;
   }
 
   sendMessage(message) {
@@ -672,7 +673,16 @@ export class NativeCapnpBridgeTransport extends CapnpEsDeferredTransport {
 
     this.#sendQueue = this.#sendQueue
       .then(() => this.#sendMessage(message))
-      .catch((error) => this.close(error));
+      .catch((error) => this.abort(error));
+  }
+
+  abort(error) {
+    if (this.connection && !this.connection.closed) {
+      this.connection.shutdown(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+
+    this.close(error);
   }
 
   async #sendMessage(message) {
@@ -726,6 +736,7 @@ export class NativeCapnpBridgeTransport extends CapnpEsDeferredTransport {
 export function createNativeCapnpBridgeConnection(api, target, options = {}) {
   const transport = new NativeCapnpBridgeTransport(api, target, options);
   const conn = new CapnpEsConn(transport, options.finalize);
+  transport.connection = conn;
   return Object.assign(conn, { transport });
 }
 

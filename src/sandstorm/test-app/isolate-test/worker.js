@@ -3959,6 +3959,21 @@ export default {
         ignoreBody: false,
       });
       const dropResult = await nativeCapnpDropWebSession.drop();
+      let generatedCallAfterDropError = "";
+      try {
+        await Promise.race([
+          nativeCapnpDropWebSession.get({
+            path: "/generated-client",
+            context: {},
+            ignoreBody: false,
+          }),
+          new Promise((resolve, reject) => setTimeout(
+            () => reject(new Error("generated call after drop timed out")),
+            2000)),
+        ]);
+      } catch (error) {
+        generatedCallAfterDropError = `${error.name}: ${error.message}`;
+      }
       const afterDropMessage = new CapnpEsMessage();
       afterDropMessage.initRoot(CapnpRpcMessage)._initBootstrap().questionId = 125;
       const afterDropResponse = await apiHelper.nativeCapnpBridgeCallBytes(
@@ -3977,6 +3992,7 @@ export default {
         targetId: nativeCapnpDropTarget.id,
         connectionId: nativeCapnpDropWebSession.transport.connectionId,
         dropResult: dropResult ?? null,
+        generatedCallAfterDropError,
         afterDropStatus: afterDropResponse.status,
         afterDropOk: afterDropResponse.ok,
         afterDropWhich: decodedAfterDropResponse.which,

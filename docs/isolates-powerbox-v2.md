@@ -806,8 +806,8 @@ Progress:
   generated `Handle.ping()` client over the same restricted native RPC bridge
 - dropping a claimed native bridge capability now also tears down supervisor
   RPC sessions bound to that target, and the integration fixture verifies that
-  a later bridge RPC envelope for the dropped target is rejected instead of
-  continuing through a stale per-connection session
+  generated calls and raw bridge RPC envelopes for the dropped target are
+  rejected instead of continuing through a stale per-connection session
 
 Interop tests:
 
