@@ -931,6 +931,10 @@ Progress:
 - generated browser bindings now expose `local(methods)` for in-memory tests
   and browser-local fakes, using the same argument/result capability metadata
   as browser RPC clients
+- generated browser bindings now accept either a direct Cap'n Web-style stub or
+  a Sandstorm browser capability handle; handle-backed clients dispatch through
+  `/__sandstorm/object-capabilities/:id/native-app-rpc-call`, hydrate returned
+  capability slots, and can be requested with `Interface.requestCapability()`
 
 Powerbox work:
 

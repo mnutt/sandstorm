@@ -202,10 +202,228 @@ function mapBrowserCapabilityPath(value, path, mapper) {
   return copy;
 }
 
+function isPlainBrowserObject(value) {
+  if (!value || typeof value !== "object") return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function browserNativeAppRpcFieldName(value, name = "field name") {
+  if (typeof value !== "string") {
+    throw new TypeError(name + " must be a string");
+  }
+  if (value === "__proto__" || value === "constructor" || value === "prototype") {
+    throw new TypeError(name + " is reserved");
+  }
+  return value;
+}
+
+function isBrowserSandstormCapability(value) {
+  return !!(value && typeof value === "object" &&
+    (value.type === "capability" || value.type === "claimedCapability") &&
+    typeof value.id === "string" && value.id.length > 0);
+}
+
+function isBrowserNativeCapabilitySlot(value) {
+  return !!(value && typeof value === "object" &&
+    (value.type === "nativeCapabilitySlot" || value.type === undefined) &&
+    typeof value.id === "string" && value.id.length > 0);
+}
+
+function browserNativeCapabilitySlot(value, name = "capability") {
+  if (!isBrowserSandstormCapability(value) && !isBrowserNativeCapabilitySlot(value)) {
+    throw new TypeError(name + " must be a Sandstorm capability handle");
+  }
+  const slot = {
+    id: value.id,
+  };
+  if (typeof value.nativeInterface === "string" && value.nativeInterface.length > 0) {
+    slot.nativeInterface = value.nativeInterface;
+  }
+  return slot;
+}
+
+function browserCapabilityNativeAppRpcRoute(capability) {
+  return "/__sandstorm/object-capabilities/" +
+    encodeURIComponent(browserNativeCapabilitySlot(capability).id) +
+    "/native-app-rpc-call";
+}
+
 function browserStubValue(value) {
-  return value && typeof value === "object" && value.__sandstormCapnpBrowserStub
-    ? value.stub
-    : value;
+  if (!value || typeof value !== "object" || !value.__sandstormCapnpBrowserStub) {
+    return value;
+  }
+  return value.capability || value.stub;
+}
+
+function bytesToBrowserBase64Url(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function browserBase64UrlToBytes(value) {
+  if (typeof value !== "string") {
+    throw new TypeError("data value must be a string");
+  }
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; ++i) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function serializeBrowserNativeAppRpcValue(value, name = "value") {
+  if (value === null || value === undefined) {
+    return { type: "null" };
+  }
+  if (typeof value === "boolean") {
+    return { type: "bool", value };
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError(name + " must be a finite number");
+    return { type: "number", value };
+  }
+  if (typeof value === "string") {
+    return { type: "text", value };
+  }
+  if (value instanceof ArrayBuffer) {
+    return { type: "data", value: bytesToBrowserBase64Url(new Uint8Array(value)) };
+  }
+  if (ArrayBuffer.isView(value)) {
+    return {
+      type: "data",
+      value: bytesToBrowserBase64Url(new Uint8Array(
+        value.buffer, value.byteOffset, value.byteLength)),
+    };
+  }
+  if (Array.isArray(value)) {
+    return {
+      type: "list",
+      value: value.map((item, index) =>
+        serializeBrowserNativeAppRpcValue(item, name + "[" + index + "]")),
+    };
+  }
+  if (isBrowserSandstormCapability(value)) {
+    return { type: "capability", value: browserNativeCapabilitySlot(value, name) };
+  }
+  if (value && typeof value === "object" && value.__sandstormCapnpBrowserStub) {
+    const capability = browserStubValue(value);
+    if (isBrowserSandstormCapability(capability)) {
+      return { type: "capability", value: browserNativeCapabilitySlot(capability, name) };
+    }
+    throw new TypeError(
+      name + " is a direct Cap'n Web stub and cannot be passed through the Sandstorm gateway");
+  }
+  if (!isPlainBrowserObject(value)) {
+    throw new TypeError(name + " must be a native app RPC value");
+  }
+
+  return {
+    type: "object",
+    value: Object.entries(value).map(([key, item]) => {
+      const fieldName = browserNativeAppRpcFieldName(key, name + " field name");
+      return {
+        name: fieldName,
+        value: serializeBrowserNativeAppRpcValue(item, name + "." + fieldName),
+      };
+    }),
+  };
+}
+
+function serializeBrowserNativeAppRpcCall(method, args = []) {
+  return {
+    method,
+    args: args.map((arg, index) =>
+      serializeBrowserNativeAppRpcValue(arg, "args[" + index + "]")),
+  };
+}
+
+function hydrateBrowserNativeAppRpcValue(value, name = "value") {
+  if (!value || typeof value !== "object" || typeof value.type !== "string") {
+    throw new TypeError(name + " must be a native app RPC value envelope");
+  }
+  switch (value.type) {
+    case "null":
+      return null;
+    case "bool":
+      if (typeof value.value !== "boolean") throw new TypeError(name + ".value must be a boolean");
+      return value.value;
+    case "number":
+      if (typeof value.value !== "number" || !Number.isFinite(value.value)) {
+        throw new TypeError(name + ".value must be a finite number");
+      }
+      return value.value;
+    case "text":
+      if (typeof value.value !== "string") throw new TypeError(name + ".value must be a string");
+      return value.value;
+    case "data":
+      return browserBase64UrlToBytes(value.value);
+    case "list":
+      if (!Array.isArray(value.value)) throw new TypeError(name + ".value must be an array");
+      return value.value.map((item, index) =>
+        hydrateBrowserNativeAppRpcValue(item, name + "[" + index + "]"));
+    case "object": {
+      if (!Array.isArray(value.value)) {
+        throw new TypeError(name + ".value must be an array of fields");
+      }
+      const result = {};
+      for (const [index, field] of value.value.entries()) {
+        const fieldName = browserNativeAppRpcFieldName(
+          field?.name, name + ".value[" + index + "].name");
+        result[fieldName] = hydrateBrowserNativeAppRpcValue(
+          field.value, name + "." + fieldName);
+      }
+      return result;
+    }
+    case "capability":
+      {
+        const slot = browserNativeCapabilitySlot(value.value, name + ".value");
+        return {
+          ok: true,
+          type: "capability",
+          id: slot.id,
+          nativeInterface: slot.nativeInterface || "unknown",
+        };
+      }
+    default:
+      throw new TypeError(name + ".type is unsupported: " + value.type);
+  }
+}
+
+function hydrateBrowserNativeAppRpcResult(result) {
+  if (!result || typeof result !== "object" || typeof result.type !== "string") {
+    throw new TypeError("result must be a native app RPC result envelope");
+  }
+  if (result.type === "value") {
+    return hydrateBrowserNativeAppRpcValue(result.value, "result.value");
+  }
+  if (result.type === "exception") {
+    const exception = result.value || {};
+    const error = new Error(String(exception.message || ""));
+    error.name = String(exception.name || "Error");
+    if (exception.stack) error.stack = String(exception.stack);
+    error.nativeAppRpcResult = result;
+    throw error;
+  }
+  throw new TypeError("result.type is unsupported: " + result.type);
+}
+
+async function callBrowserSandstormCapability(capability, methodName, args) {
+  const response = await fetch(new URL(
+    browserCapabilityNativeAppRpcRoute(capability), window.location.href), {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify(serializeBrowserNativeAppRpcCall(methodName, args)),
+  });
+  const result = await readJsonResponse(response);
+  if (!response.ok && (!result || result.type !== "exception")) {
+    throw new Error(result.error || "native app RPC call failed with " + response.status);
+  }
+  return hydrateBrowserNativeAppRpcResult(result);
 }
 
 function castBrowserCapnpResult(interfaceName, methodName, result, resultCapabilities) {
@@ -311,26 +529,30 @@ function makeBrowserLocalCapnp(interfaceName, methodNames, schema, methods) {
 
 export function connectBrowserCapnp(stub, binding) {
   if (!stub || typeof stub !== "object" && typeof stub !== "function") {
-    throw new TypeError("connectBrowserCapnp() requires a Cap'n Web RPC stub");
+    throw new TypeError("connectBrowserCapnp() requires a Cap'n Web RPC stub or Sandstorm capability");
   }
   const interfaceName = binding?.interfaceName || browserCapnpSchema(binding).interfaceName || "";
   const methodNames = browserCapnpMethodNames(binding);
   const schema = browserCapnpSchema(binding);
   const argumentCapabilities = schema.argumentCapabilities || {};
   const resultCapabilities = schema.resultCapabilities || {};
+  const capability = isBrowserSandstormCapability(stub) ? stub : undefined;
   const client = {
     __sandstormCapnpBrowserStub: true,
     stub,
+    capability,
   };
   for (const methodName of methodNames) {
     client[methodName] = async (...args) => {
       const normalizedArgs = normalizeBrowserCapnpArgs(
         methodName, args, argumentCapabilities);
-      const result = await stub[methodName](...normalizedArgs);
+      const result = capability
+        ? await callBrowserSandstormCapability(capability, methodName, normalizedArgs)
+        : await stub[methodName](...normalizedArgs);
       return castBrowserCapnpResult(interfaceName, methodName, result, resultCapabilities);
     };
   }
-  if (typeof stub[Symbol.dispose] === "function") {
+  if (!capability && typeof stub[Symbol.dispose] === "function") {
     client[Symbol.dispose] = () => stub[Symbol.dispose]();
   }
   return Object.freeze(client);
@@ -385,6 +607,22 @@ export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, sch
     async powerboxDescriptorInfo(options = {}) {
       return fetchBrowserAppInterfacePowerboxDescriptor(
         interfaceName, binding.schema, options);
+    },
+    async requestCapability(options = {}) {
+      const info = await fetchBrowserAppInterfacePowerboxDescriptor(
+        interfaceName, binding.schema, options);
+      const requested = await requestPowerbox([info.descriptor], options);
+      const capability = await claimPowerboxToken(requested.token, {
+        ...options,
+        powerboxDescriptor: info.descriptor,
+        nativeInterface: options.nativeInterface || "appObject",
+      });
+      return {
+        ...requested,
+        capability,
+        client: connectBrowserCapnp(capability, binding),
+        powerboxDescriptor: info,
+      };
     },
   });
 }
@@ -814,10 +1052,228 @@ function mapBrowserCapabilityPath(value, path, mapper) {
   return copy;
 }
 
+function isPlainBrowserObject(value) {
+  if (!value || typeof value !== "object") return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function browserNativeAppRpcFieldName(value, name = "field name") {
+  if (typeof value !== "string") {
+    throw new TypeError(name + " must be a string");
+  }
+  if (value === "__proto__" || value === "constructor" || value === "prototype") {
+    throw new TypeError(name + " is reserved");
+  }
+  return value;
+}
+
+function isBrowserSandstormCapability(value) {
+  return !!(value && typeof value === "object" &&
+    (value.type === "capability" || value.type === "claimedCapability") &&
+    typeof value.id === "string" && value.id.length > 0);
+}
+
+function isBrowserNativeCapabilitySlot(value) {
+  return !!(value && typeof value === "object" &&
+    (value.type === "nativeCapabilitySlot" || value.type === undefined) &&
+    typeof value.id === "string" && value.id.length > 0);
+}
+
+function browserNativeCapabilitySlot(value, name = "capability") {
+  if (!isBrowserSandstormCapability(value) && !isBrowserNativeCapabilitySlot(value)) {
+    throw new TypeError(name + " must be a Sandstorm capability handle");
+  }
+  const slot = {
+    id: value.id,
+  };
+  if (typeof value.nativeInterface === "string" && value.nativeInterface.length > 0) {
+    slot.nativeInterface = value.nativeInterface;
+  }
+  return slot;
+}
+
+function browserCapabilityNativeAppRpcRoute(capability) {
+  return "/__sandstorm/object-capabilities/" +
+    encodeURIComponent(browserNativeCapabilitySlot(capability).id) +
+    "/native-app-rpc-call";
+}
+
 function browserStubValue(value) {
-  return value && typeof value === "object" && value.__sandstormCapnpBrowserStub
-    ? value.stub
-    : value;
+  if (!value || typeof value !== "object" || !value.__sandstormCapnpBrowserStub) {
+    return value;
+  }
+  return value.capability || value.stub;
+}
+
+function bytesToBrowserBase64Url(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
+}
+
+function browserBase64UrlToBytes(value) {
+  if (typeof value !== "string") {
+    throw new TypeError("data value must be a string");
+  }
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; ++i) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function serializeBrowserNativeAppRpcValue(value, name = "value") {
+  if (value === null || value === undefined) {
+    return { type: "null" };
+  }
+  if (typeof value === "boolean") {
+    return { type: "bool", value };
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError(name + " must be a finite number");
+    return { type: "number", value };
+  }
+  if (typeof value === "string") {
+    return { type: "text", value };
+  }
+  if (value instanceof ArrayBuffer) {
+    return { type: "data", value: bytesToBrowserBase64Url(new Uint8Array(value)) };
+  }
+  if (ArrayBuffer.isView(value)) {
+    return {
+      type: "data",
+      value: bytesToBrowserBase64Url(new Uint8Array(
+        value.buffer, value.byteOffset, value.byteLength)),
+    };
+  }
+  if (Array.isArray(value)) {
+    return {
+      type: "list",
+      value: value.map((item, index) =>
+        serializeBrowserNativeAppRpcValue(item, name + "[" + index + "]")),
+    };
+  }
+  if (isBrowserSandstormCapability(value)) {
+    return { type: "capability", value: browserNativeCapabilitySlot(value, name) };
+  }
+  if (value && typeof value === "object" && value.__sandstormCapnpBrowserStub) {
+    const capability = browserStubValue(value);
+    if (isBrowserSandstormCapability(capability)) {
+      return { type: "capability", value: browserNativeCapabilitySlot(capability, name) };
+    }
+    throw new TypeError(
+      name + " is a direct Cap'n Web stub and cannot be passed through the Sandstorm gateway");
+  }
+  if (!isPlainBrowserObject(value)) {
+    throw new TypeError(name + " must be a native app RPC value");
+  }
+
+  return {
+    type: "object",
+    value: Object.entries(value).map(([key, item]) => {
+      const fieldName = browserNativeAppRpcFieldName(key, name + " field name");
+      return {
+        name: fieldName,
+        value: serializeBrowserNativeAppRpcValue(item, name + "." + fieldName),
+      };
+    }),
+  };
+}
+
+function serializeBrowserNativeAppRpcCall(method, args = []) {
+  return {
+    method,
+    args: args.map((arg, index) =>
+      serializeBrowserNativeAppRpcValue(arg, "args[" + index + "]")),
+  };
+}
+
+function hydrateBrowserNativeAppRpcValue(value, name = "value") {
+  if (!value || typeof value !== "object" || typeof value.type !== "string") {
+    throw new TypeError(name + " must be a native app RPC value envelope");
+  }
+  switch (value.type) {
+    case "null":
+      return null;
+    case "bool":
+      if (typeof value.value !== "boolean") throw new TypeError(name + ".value must be a boolean");
+      return value.value;
+    case "number":
+      if (typeof value.value !== "number" || !Number.isFinite(value.value)) {
+        throw new TypeError(name + ".value must be a finite number");
+      }
+      return value.value;
+    case "text":
+      if (typeof value.value !== "string") throw new TypeError(name + ".value must be a string");
+      return value.value;
+    case "data":
+      return browserBase64UrlToBytes(value.value);
+    case "list":
+      if (!Array.isArray(value.value)) throw new TypeError(name + ".value must be an array");
+      return value.value.map((item, index) =>
+        hydrateBrowserNativeAppRpcValue(item, name + "[" + index + "]"));
+    case "object": {
+      if (!Array.isArray(value.value)) {
+        throw new TypeError(name + ".value must be an array of fields");
+      }
+      const result = {};
+      for (const [index, field] of value.value.entries()) {
+        const fieldName = browserNativeAppRpcFieldName(
+          field?.name, name + ".value[" + index + "].name");
+        result[fieldName] = hydrateBrowserNativeAppRpcValue(
+          field.value, name + "." + fieldName);
+      }
+      return result;
+    }
+    case "capability":
+      {
+        const slot = browserNativeCapabilitySlot(value.value, name + ".value");
+        return {
+          ok: true,
+          type: "capability",
+          id: slot.id,
+          nativeInterface: slot.nativeInterface || "unknown",
+        };
+      }
+    default:
+      throw new TypeError(name + ".type is unsupported: " + value.type);
+  }
+}
+
+function hydrateBrowserNativeAppRpcResult(result) {
+  if (!result || typeof result !== "object" || typeof result.type !== "string") {
+    throw new TypeError("result must be a native app RPC result envelope");
+  }
+  if (result.type === "value") {
+    return hydrateBrowserNativeAppRpcValue(result.value, "result.value");
+  }
+  if (result.type === "exception") {
+    const exception = result.value || {};
+    const error = new Error(String(exception.message || ""));
+    error.name = String(exception.name || "Error");
+    if (exception.stack) error.stack = String(exception.stack);
+    error.nativeAppRpcResult = result;
+    throw error;
+  }
+  throw new TypeError("result.type is unsupported: " + result.type);
+}
+
+async function callBrowserSandstormCapability(capability, methodName, args) {
+  const response = await fetch(new URL(
+    browserCapabilityNativeAppRpcRoute(capability), window.location.href), {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify(serializeBrowserNativeAppRpcCall(methodName, args)),
+  });
+  const result = await readJsonResponse(response);
+  if (!response.ok && (!result || result.type !== "exception")) {
+    throw new Error(result.error || "native app RPC call failed with " + response.status);
+  }
+  return hydrateBrowserNativeAppRpcResult(result);
 }
 
 function castBrowserCapnpResult(interfaceName, methodName, result, resultCapabilities) {
@@ -923,26 +1379,30 @@ function makeBrowserLocalCapnp(interfaceName, methodNames, schema, methods) {
 
 export function connectBrowserCapnp(stub, binding) {
   if (!stub || typeof stub !== "object" && typeof stub !== "function") {
-    throw new TypeError("connectBrowserCapnp() requires a Cap'n Web RPC stub");
+    throw new TypeError("connectBrowserCapnp() requires a Cap'n Web RPC stub or Sandstorm capability");
   }
   const interfaceName = binding?.interfaceName || browserCapnpSchema(binding).interfaceName || "";
   const methodNames = browserCapnpMethodNames(binding);
   const schema = browserCapnpSchema(binding);
   const argumentCapabilities = schema.argumentCapabilities || {};
   const resultCapabilities = schema.resultCapabilities || {};
+  const capability = isBrowserSandstormCapability(stub) ? stub : undefined;
   const client = {
     __sandstormCapnpBrowserStub: true,
     stub,
+    capability,
   };
   for (const methodName of methodNames) {
     client[methodName] = async (...args) => {
       const normalizedArgs = normalizeBrowserCapnpArgs(
         methodName, args, argumentCapabilities);
-      const result = await stub[methodName](...normalizedArgs);
+      const result = capability
+        ? await callBrowserSandstormCapability(capability, methodName, normalizedArgs)
+        : await stub[methodName](...normalizedArgs);
       return castBrowserCapnpResult(interfaceName, methodName, result, resultCapabilities);
     };
   }
-  if (typeof stub[Symbol.dispose] === "function") {
+  if (!capability && typeof stub[Symbol.dispose] === "function") {
     client[Symbol.dispose] = () => stub[Symbol.dispose]();
   }
   return Object.freeze(client);
@@ -997,6 +1457,22 @@ export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, sch
     async powerboxDescriptorInfo(options = {}) {
       return fetchBrowserAppInterfacePowerboxDescriptor(
         interfaceName, binding.schema, options);
+    },
+    async requestCapability(options = {}) {
+      const info = await fetchBrowserAppInterfacePowerboxDescriptor(
+        interfaceName, binding.schema, options);
+      const requested = await requestPowerbox([info.descriptor], options);
+      const capability = await claimPowerboxToken(requested.token, {
+        ...options,
+        powerboxDescriptor: info.descriptor,
+        nativeInterface: options.nativeInterface || "appObject",
+      });
+      return {
+        ...requested,
+        capability,
+        client: connectBrowserCapnp(capability, binding),
+        powerboxDescriptor: info,
+      };
     },
   });
 }
