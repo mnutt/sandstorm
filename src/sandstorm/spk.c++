@@ -1064,8 +1064,6 @@ private:
       packManifestOverride = nullptr;
     });
     preparePackIsolateSupport(root, packIsolateSupportDir);
-    addPackPublicInterfaceSchemas(root, sourceMap, packageDef.getManifest());
-
     if (packageDef.hasFileList()) {
       auto fileListFile = packageDef.getFileList();
       if (access(fileListFile.cStr(), F_OK) != 0) {
@@ -1583,7 +1581,6 @@ private:
           info->setMarketingVersion(manifest.getAppMarketingVersion());
           auto metadata = manifest.getMetadata();
           info->setMetadata(metadata);
-
           // Validate some things.
           if (metadata.hasWebsite()) requireHttpUrl(metadata.getWebsite());
           if (metadata.hasCodeUrl()) requireHttpUrl(metadata.getCodeUrl());
@@ -4524,111 +4521,6 @@ private:
     return true;
   }
 
-  bool augmentPackPublicInterfaces(spk::Manifest::Builder manifest) {
-    auto publicInterfaces = manifest.getPublicInterfaces();
-    bool changed = false;
-
-    for (auto i: kj::indices(publicInterfaces)) {
-      auto publicInterface = publicInterfaces[i];
-      auto name = publicInterface.getName();
-      auto interfaceName = publicInterface.getInterfaceName();
-      auto schemaPath = publicInterface.getSchemaPath();
-
-      KJ_REQUIRE(name.size() > 0, "Manifest publicInterfaces entries must have a name.");
-      KJ_REQUIRE(interfaceName.size() > 0,
-          "Manifest publicInterfaces entries must have an interfaceName.", name);
-      KJ_REQUIRE(schemaPath.size() > 0,
-          "Manifest publicInterfaces entries must have a schemaPath.", name);
-
-      auto maybeSourcePath = trySourcePathForPackagePath(schemaPath);
-      KJ_IF_MAYBE(sourcePath, maybeSourcePath) {
-        char* resolvedRaw = realpath(sourcePath->cStr(), nullptr);
-        KJ_REQUIRE(resolvedRaw != nullptr, "Could not resolve public interface schema.",
-            name, schemaPath, *sourcePath, strerror(errno));
-        KJ_DEFER(free(resolvedRaw));
-        auto resolvedPath = kj::StringPtr(resolvedRaw);
-
-        auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
-        auto interfaces = scanCapnpInterfaces(source);
-        auto metadata = parseCapnpInterfaceMetadata(
-            resolvedPath, dirnameForPath(resolvedPath), interfaces.asPtr());
-        auto parsedInterface = metadata.find(toStdString(interfaceName));
-        KJ_REQUIRE(parsedInterface != metadata.end(),
-            "Public interface schema does not define the requested interface.",
-            name, interfaceName, schemaPath);
-
-        auto actualInterfaceId = kj::StringPtr(parsedInterface->second.interfaceId);
-        if (publicInterface.getInterfaceId().size() == 0) {
-          publicInterface.setInterfaceId(actualInterfaceId);
-          changed = true;
-        } else {
-          KJ_REQUIRE(publicInterface.getInterfaceId().asString() == actualInterfaceId,
-              "Public interface ID does not match schema.", name, interfaceName,
-              schemaPath, publicInterface.getInterfaceId(), actualInterfaceId);
-        }
-      } else {
-        KJ_FAIL_REQUIRE("Could not resolve public interface schema from package source map.",
-            name, schemaPath);
-      }
-    }
-
-    return changed;
-  }
-
-  void addPackPublicInterfaceSchema(ArchiveNode& root,
-      const spk::SourceMap::Reader& sourceMap, kj::StringPtr packagePath,
-      std::set<std::string>& seen) {
-    auto packagePathStd = toStdString(packagePath);
-    if (!seen.insert(packagePathStd).second) {
-      return;
-    }
-
-    KJ_REQUIRE(packagePath.size() > 0 && !packagePath.startsWith("/"),
-        "Public interface schemaPath must be a relative package path.", packagePath);
-    KJ_REQUIRE(packagePath.endsWith(".capnp"),
-        "Public interface schemaPath must point to a .capnp file.", packagePath);
-
-    addNode(root, packagePath, sourceMap, false);
-
-    auto maybeSourcePath = trySourcePathForPackagePath(packagePath);
-    KJ_IF_MAYBE(sourcePath, maybeSourcePath) {
-      auto source = readAll(raiiOpen(*sourcePath, O_RDONLY | O_CLOEXEC));
-      auto imports = scanCapnpImports(source);
-      auto packageDir = dirnameForPath(packagePath);
-      for (auto& importDef: imports) {
-        if (importDef.specifier.startsWith("/")) {
-          continue;
-        }
-
-        KJ_REQUIRE(isDevIsolateLocalCapnpSchemaImport(importDef.specifier),
-            "Public interface schemas may only import local package schemas or absolute "
-            "Sandstorm/runtime schemas.", packagePath, importDef.specifier);
-        KJ_REQUIRE(importDef.specifier.endsWith(".capnp"),
-            "Public interface schema imports must point to .capnp files.",
-            packagePath, importDef.specifier);
-
-        auto importedPackagePath = normalizeDevIsolatePath(
-            kj::str(packageDir, "/", importDef.specifier));
-        KJ_REQUIRE(!importedPackagePath.startsWith("/"),
-            "Public interface schema import escaped the package root.",
-            packagePath, importDef.specifier);
-        addPackPublicInterfaceSchema(root, sourceMap, importedPackagePath, seen);
-      }
-    } else {
-      KJ_FAIL_REQUIRE("Could not resolve public interface schema from package source map.",
-          packagePath);
-    }
-  }
-
-  void addPackPublicInterfaceSchemas(ArchiveNode& root,
-      const spk::SourceMap::Reader& sourceMap, spk::Manifest::Reader manifest) {
-    std::set<std::string> seen;
-    auto publicInterfaces = manifest.getPublicInterfaces();
-    for (auto i: kj::indices(publicInterfaces)) {
-      addPackPublicInterfaceSchema(root, sourceMap, publicInterfaces[i].getSchemaPath(), seen);
-    }
-  }
-
   void preparePackIsolateSupport(ArchiveNode& root, kj::String& packIsolateSupportDir) {
     auto manifestReader = packageDef.getManifest();
     capnp::MallocMessageBuilder manifestMessage(manifestReader.totalSize().wordCount + 64);
@@ -4640,7 +4532,7 @@ private:
     devIsolateSupportDir = kj::heapString(packIsolateSupportDir);
     KJ_DEFER(devIsolateSupportDir = kj::mv(oldDevIsolateSupportDir));
 
-    bool changed = augmentPackPublicInterfaces(manifest);
+    bool changed = false;
     bool isolateSupportChanged = false;
     if (manifest.getContinueCommand().hasIsolate()) {
       isolateSupportChanged =

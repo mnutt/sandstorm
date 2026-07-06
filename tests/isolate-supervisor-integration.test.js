@@ -883,13 +883,7 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     "        nounPhrase = (defaultText = \"instance\"),",
     "        command = .command )",
     "    ],",
-    "    continueCommand = .command,",
-    "    publicInterfaces = [",
-    "      ( name = \"greeter\",",
-    "        interfaceName = \"Greeter\",",
-    "        schemaPath = \"app/greeter.capnp\",",
-    "        displayInfo = ( title = (defaultText = \"Greeter\") ) )",
-    "    ]",
+    "    continueCommand = .command",
     "  ),",
     "  sourceMap = (",
     "    searchPath = [ ( packagePath = \"app\", sourcePath = \"app\" ) ]",
@@ -925,19 +919,12 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     unpackDir, "__sandstorm_isolate_runtime/capnp-browser/greeter.capnp.js");
   const browserGreetingPath = path.join(
     unpackDir, "__sandstorm_isolate_runtime/capnp-browser/greeting.capnp.js");
-  const publicGreeterSchemaPath = path.join(unpackDir, "app/greeter.capnp");
-  const publicGreetingSchemaPath = path.join(unpackDir, "app/greeting.capnp");
   await requireFile(greeterPath, "spk pack should generate the imported schema module.");
   await requireFile(greetingPath, "spk pack should generate transitive schema imports.");
   await requireFile(
     browserGreeterPath, "spk pack should generate the browser schema module.");
   await requireFile(
     browserGreetingPath, "spk pack should generate transitive browser schema imports.");
-  await requireFile(
-    publicGreeterSchemaPath, "spk pack should include declared public interface schemas.");
-  await requireFile(
-    publicGreetingSchemaPath,
-    "spk pack should include public interface schema imports.");
   const greeterSource = await fs.readFile(greeterPath, "utf8");
   assert.match(greeterSource, /from "\/capnp-es\/index\.mjs";/);
   assert.match(greeterSource, /export class Greeter extends/);
@@ -980,17 +967,6 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     modules.get("sandstorm:browser-capnp:./greeting.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-browser/greeting.capnp.js");
 
-  assert.deepEqual(manifest.publicInterfaces, [{
-    name: "greeter",
-    interfaceName: "Greeter",
-    schemaPath: "app/greeter.capnp",
-    interfaceId: "0x85d0f155d6c54b6d",
-    displayInfo: {
-      title: {
-        defaultText: "Greeter",
-      },
-    },
-  }]);
 });
 
 test("isolate supervisor integration suite", {

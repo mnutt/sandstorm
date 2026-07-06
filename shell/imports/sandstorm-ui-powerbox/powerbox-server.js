@@ -131,10 +131,6 @@ function normalizePowerboxTagId(tagId) {
   return value.toString(10);
 }
 
-function publicInterfaceTagId(publicInterface) {
-  return normalizePowerboxTagId(publicInterface && publicInterface.interfaceId);
-}
-
 function descriptorTagsMatch(queryTags, provisionTags, diagnostics) {
   const provisionTagsById = {};
   provisionTags.forEach(tag => {
@@ -163,32 +159,6 @@ function descriptorTagsMatch(queryTags, provisionTags, diagnostics) {
   });
 
   return allMatched;
-}
-
-async function publicInterfaceManifestsByPackageId(db, packageIds) {
-  const result = {};
-  const uniquePackageIds = _.uniq(packageIds.filter(id => !!id));
-  uniquePackageIds.forEach(packageId => {
-    result[packageId] = undefined;
-  });
-  if (uniquePackageIds.length === 0) return result;
-
-  const fields = { "manifest.publicInterfaces": 1 };
-  const installedPackages = await db.collections.packages
-      .find({ _id: { $in: uniquePackageIds } }, { fields })
-      .fetchAsync();
-  installedPackages.forEach(pkg => {
-    result[pkg._id] = pkg.manifest;
-  });
-
-  const devPackages = await db.collections.devPackages
-      .find({ _id: { $in: uniquePackageIds } }, { fields })
-      .fetchAsync();
-  devPackages.forEach(pkg => {
-    result[pkg._id] = pkg.manifest;
-  });
-
-  return result;
 }
 
 Meteor.methods({
@@ -383,8 +353,6 @@ function powerboxDescriptorDiagnostics(queryDescriptor, index) {
     grainDescriptorMissingTagCount: 0,
     grainDescriptorValueMismatchCount: 0,
     hostedObjectMatchCount: 0,
-    publicInterfaceDescriptorsChecked: 0,
-    publicInterfaceMatchCount: 0,
   };
 }
 
@@ -550,47 +518,6 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
           });
         });
 
-        const queryTagIds = new Set(queryDescriptor.tags.map(tag => normalizePowerboxTagId(tag.id)));
-        const allCandidateGrains = await db.collections.grains
-            .find({
-              $or: [{ userId: this.userId }, { _id: { $in: sharedGrainIds } }],
-              packageId: { $exists: true },
-            }, { fields: { packageId: 1 } })
-            .fetchAsync();
-        const manifestsByPackageId = await publicInterfaceManifestsByPackageId(
-            db, allCandidateGrains.map(grain => grain.packageId));
-        for (const grain of allCandidateGrains) {
-          const manifest = manifestsByPackageId[grain.packageId];
-          const publicInterfaces = (manifest && manifest.publicInterfaces) || [];
-          const candidateInterfaces = publicInterfaces.filter(publicInterface => {
-            const tagId = publicInterfaceTagId(publicInterface);
-            return tagId && queryTagIds.has(tagId);
-          });
-
-          for (const publicInterface of candidateInterfaces) {
-            diagnostics.publicInterfaceDescriptorsChecked++;
-            const tagId = publicInterfaceTagId(publicInterface);
-            if (!tagId) continue;
-
-            const provisionTags = [{ id: tagId }];
-            if (descriptorTagsMatch(queryDescriptor.tags, provisionTags, diagnostics)) {
-              diagnostics.publicInterfaceMatchCount++;
-              const option = new PowerboxOption({
-                _id: "grain-" + grain._id,
-                grainId: grain._id,
-                hostedObject: {},
-                cardTemplate: "grainPowerboxCard",
-                configureTemplate: "uiViewPowerboxConfiguration",  // TODO(cleanup): rename
-              });
-              if (option._id in matches) {
-                matches[option._id].union(option);
-              } else {
-                matches[option._id] = option;
-              }
-              break;
-            }
-          }
-        }
       }
 
         return { descriptor: queryDescriptor, diagnostics, matches };
