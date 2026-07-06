@@ -3336,6 +3336,8 @@ export default {
         label: "Generated counter binding saved through cast client",
       });
       const durableDrop = await durableClient.drop();
+      const powerboxDescriptorInfo = await BrowserNativeGreeter.powerboxDescriptorInfo(env);
+      const powerboxDescriptor = await BrowserNativeGreeter.powerboxDescriptor(env);
 
       const restored = await api.restore(castSaved);
       const restoredClient = GeneratedCounter.cast(restored);
@@ -3387,6 +3389,12 @@ export default {
           resultStructIds: GeneratedCounter.schema.resultStructIds,
           argumentCapabilities: GeneratedCounter.schema.argumentCapabilities,
           resultCapabilityNames: Object.keys(GeneratedCounter.schema.resultCapabilities),
+        },
+        powerboxDescriptor: {
+          interfaceName: BrowserNativeGreeter.interfaceName,
+          interfaceId: BrowserNativeGreeter.interfaceId,
+          descriptor: powerboxDescriptor,
+          info: powerboxDescriptorInfo,
         },
         local: {
           first: localFirst,
