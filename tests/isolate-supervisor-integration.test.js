@@ -3485,6 +3485,9 @@ test("isolate supervisor integration suite", {
       fixture.workerdSocket, "/__sandstorm/native-capnp/client.js");
     assert.equal(browserNativeCapnpClient.statusCode, 200);
     assert.match(browserNativeCapnpClient.body, /connectBrowserNativeCapnp/);
+    assert.match(browserNativeCapnpClient.body, /nativeCapnpPowerboxDescriptor/);
+    assert.match(browserNativeCapnpClient.body, /requestBrowserNativeCapnp/);
+    assert.match(browserNativeCapnpClient.body, /claimBrowserNativeCapnpToken/);
     assert.match(browserNativeCapnpClient.body, /from "\/capnp-es\/index\.mjs"/);
     assert.match(
       browserNativeCapnpClient.body,
