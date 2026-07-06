@@ -165,8 +165,18 @@ iteration, TypeScript transpilation is intentionally outside `spk
 dev-isolate`; use an app-local build step such as the `esbuild` example above
 and pass the generated `.js` file to `spk`.
 
-`spk dev-isolate` also supports experimental `capnp:` imports for simple
-schema-first app-object RPC:
+`spk dev-isolate` supports two schema import forms:
+
+- `capnp:` imports generate Sandstorm's schema-shaped app-object compatibility
+  binding. Use this for local tests, browser companion modules, Powerbox
+  descriptor helpers, and app-object control-plane RPC.
+- `capnp-es:` imports generate native `@mnutt/capnp-es` classes. Use this for
+  public cross-grain Cap'n Proto interfaces, legacy grain interop, and typed
+  calls over Sandstorm's native bridge.
+
+### App-object compatibility modules
+
+Use `capnp:` imports for simple schema-first app-object RPC:
 
 ```js
 import { Greeter } from "capnp:./greeter.capnp";
@@ -199,8 +209,68 @@ interface GreeterMethods {
 const Greeter = schema.Greeter as CapnpInterfaceBinding<GreeterMethods>;
 ```
 
-These generated bindings are an authoring bridge over today's app-object RPC
-transport. They do not yet use native Cap'n Proto encoding.
+The `capnp:` binding is an authoring bridge over Sandstorm's app-object RPC
+transport. It is useful for private/local app APIs and browser helper modules,
+but it is not the native Cap'n Proto transport that legacy grains speak
+directly.
+
+### Native Cap'n Proto modules
+
+Use `capnp-es:` imports when the capability is a public schema-defined
+interface that other isolate grains or legacy Cap'n Proto grains should call:
+
+```js
+import { sandstorm } from "sandstorm:api";
+import { exportNativeCapnp, restoreNativeCapnp } from "sandstorm:capnp";
+import { Greeter } from "capnp-es:./greeter.capnp";
+
+const greeterTarget = {
+  async hello({ name = "world" } = {}) {
+    return { message: `hello ${name}` };
+  },
+};
+
+export default {
+  async fetch(request, env) {
+    const api = sandstorm(request, env);
+    const system = await api.serveSystemRoutes();
+    if (system) return system;
+
+    const url = new URL(request.url);
+
+    if (url.pathname === "/export-greeter") {
+      const capability = await exportNativeCapnp(api, Greeter, greeterTarget, {
+        interfaceName: "Greeter",
+      });
+      return Response.json({ capability });
+    }
+
+    if (url.pathname === "/call-saved-greeter") {
+      const token = url.searchParams.get("token");
+      const client = await restoreNativeCapnp(api, token, Greeter, {
+        interfaceName: "Greeter",
+      });
+      const result = await client.hello({ name: "isolate" });
+      await client.drop();
+      return Response.json(result);
+    }
+
+    return new Response("ok");
+  },
+};
+```
+
+The native bridge still uses Sandstorm capability handles as the authority
+source. An isolate can connect to or restore only capabilities it already
+holds through Powerbox, durable restore, or an explicit export result; it does
+not get access to a raw Cap'n Proto vat network.
+
+Low-level helpers such as `NativeCapnpBridgeTransport`,
+`createNativeCapnpBridgeConnection()`, and bridge envelope encoders are
+available in `sandstorm:capnp` for generated-code plumbing and tests. App code
+should prefer `exportNativeCapnp()`, `restoreNativeCapnp()`,
+`connectNativeCapnp()`, `saveNativeCapnp()`, and client `.drop()` / `.save()`
+methods.
 
 To advertise a schema-defined capability from `spk dev-isolate`, pass the
 schema and interface name:
