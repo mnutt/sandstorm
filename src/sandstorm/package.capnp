@@ -109,35 +109,6 @@ struct Manifest {
   # Stuff that's not important to actually executing the app, but important to how the app is
   # presented to the user in the Sandstorm UI and app marketplace.
 
-  publicInterfaces @9 :List(PublicInterface);
-  # Schema-defined capabilities which this package intentionally advertises as public interfaces.
-  #
-  # Unlike BridgeConfig.powerboxApis, these are not HTTP ApiSession exports. Each entry names a
-  # Cap'n Proto interface in a schema file shipped with the package, so other grains can discover
-  # and request typed capabilities without treating raw service binding names as authority.
-  #
-  # `spk pack` validates these declarations against the schema and fills `interfaceId` if it is
-  # omitted. If `interfaceId` is present, it must match the schema's canonical interface ID.
-
-  struct PublicInterface {
-    name @0 :Text;
-    # App-local symbolic name for this public capability, suitable for UI/debugging and for future
-    # provider-side dispatch metadata.
-
-    interfaceName @1 :Text;
-    # Name of the Cap'n Proto interface inside `schemaPath`, e.g. "FileStore".
-
-    schemaPath @2 :Text;
-    # Canonical package path to the .capnp file containing `interfaceName`.
-
-    interfaceId @3 :Text;
-    # Canonical Cap'n Proto interface ID, formatted as "0x0123456789abcdef". This may be left empty
-    # in sandstorm-pkgdef.capnp; `spk pack` fills it in the serialized sandstorm-manifest.
-
-    displayInfo @4 :Powerbox.PowerboxDisplayInfo;
-    # Information for displaying this capability in Powerbox and future capability-management UI.
-  }
-
   struct Command {
     # Description of a command to execute.
     #

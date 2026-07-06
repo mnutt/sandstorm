@@ -187,7 +187,6 @@ Meteor.users.ensureIndexOnServer("services.github.id", { unique: 1, sparse: 1 })
 Meteor.users.ensureIndexOnServer("suspended.willDelete", { sparse: 1 });
 
 const Packages = new Mongo.Collection("packages", collectionOptions);
-Packages.ensureIndexOnServer("manifest.publicInterfaces.interfaceId", { sparse: 1 });
 // Packages which are installed or downloading.
 //
 // Each contains:
@@ -210,7 +209,6 @@ Packages.ensureIndexOnServer("manifest.publicInterfaces.interfaceId", { sparse: 
 //     packager.
 
 const DevPackages = new Mongo.Collection("devpackages", collectionOptions);
-DevPackages.ensureIndexOnServer("manifest.publicInterfaces.interfaceId", { sparse: 1 });
 // List of packages currently made available via the dev tools running on the local machine.
 // This is normally empty; the only time it is non-empty is when a developer is using the spk tool
 // on the local machine to publish an under-development app to this server. That should only ever

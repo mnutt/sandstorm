@@ -1011,8 +1011,9 @@ Make schema-defined isolate capabilities publishable and maintainable.
 
 Deliverables:
 
-- package metadata advertises exported public interfaces
-- package metadata includes schema files or stable schema references
+- schema-defined exports materialize normal `UiView.ViewInfo.matchRequests`
+- packaged generated code includes the schemas needed by isolate and browser
+  bindings
 - Powerbox discovery can match requested interfaces to providers
 - app updates preserve interface compatibility or report breaking changes
 - generated code is reproducible during package build
@@ -1039,25 +1040,16 @@ Progress:
   app-object capability that can be offered or used to fulfill Powerbox
   requests, keeping directory listing and small file reads in RPC while calling
   out that large byte streams should use a fetch-shaped data plane
-- `Manifest.publicInterfaces` now provides a package-level metadata section
-  for public schema-defined capabilities; `spk pack` validates each declared
-  schema/interface pair, fills the canonical Cap'n Proto interface ID when it is
-  omitted, rejects mismatches, and preserves the enriched declaration in
-  `sandstorm-manifest`
-- the shell Powerbox option query now treats `Manifest.publicInterfaces` as
-  hosted-object provider metadata: app-interface descriptors match accessible
-  grains whose installed or dev package advertises the requested interface ID,
-  and the result still flows through the normal capability request/fulfillment
-  path
-- `spk pack` now includes each declared public interface schema file and its
-  local `.capnp` imports in the package archive automatically, so
-  `schemaPath` is a stable package-local reference rather than metadata that
-  can point at an omitted source file
+- the package-level `Manifest.publicInterfaces` prototype was removed; public
+  schema-defined isolate capabilities should advertise through Sandstorm's
+  existing `UiView.ViewInfo.matchRequests` descriptor path instead of creating a
+  second package-manifest discovery mechanism
 
 Exit criteria:
 
 - an app can publish a schema-defined capability as part of its package
-- other apps can discover/request it through Powerbox
+- other apps can discover/request it through Powerbox using normal
+  `PowerboxDescriptor` matching against cached `ViewInfo.matchRequests`
 - legacy grains and isolate grains can both depend on the published schema
 
 ### Phase 8: De-Risking And Cleanup
