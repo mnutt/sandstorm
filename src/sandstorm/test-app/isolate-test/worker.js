@@ -1010,6 +1010,34 @@ export default {
       }
 
       const api = sandstorm(request, env);
+      if (url.searchParams.get("expectRestoreFailure") === "true") {
+        try {
+          const unexpectedClient = await restoreNativeCapnp(api, token, NativeGreeter, {
+            connectionId: `cross-grain-native-greeter-revoked-${token.slice(0, 16)}`,
+            interfaceName: "NativeGreeter",
+          });
+          const unexpectedHello = await unexpectedClient.hello({
+            name: "revoked token",
+          });
+          return Response.json({
+            ok: false,
+            restoreFailed: false,
+            unexpectedHello: {
+              message: unexpectedHello.message,
+            },
+          }, { status: 500 });
+        } catch (error) {
+          return Response.json({
+            ok: true,
+            restoreFailed: true,
+            error: {
+              name: String(error?.name || "Error"),
+              message: String(error?.message || error),
+            },
+          });
+        }
+      }
+
       const client = await restoreNativeCapnp(api, token, NativeGreeter, {
         connectionId: `cross-grain-native-greeter-${token.slice(0, 16)}`,
         interfaceName: "NativeGreeter",

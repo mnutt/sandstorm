@@ -2946,6 +2946,26 @@ test("isolate supervisor integration suite", {
       "--native-greeter-token", nativeGreeterRawToken,
       client.supervisorSocket,
     ]);
+    const nativeGreeterDropSaved = await requestJson(
+      provider.sandstormApiSocket,
+      `/powerbox/drop-saved?token=${encodeURIComponent(nativeGreeterSaved.json.token)}`,
+      { method: "POST" });
+    assert.equal(nativeGreeterDropSaved.statusCode, 200, nativeGreeterDropSaved.body);
+    assert.equal(nativeGreeterDropSaved.json.ok, true);
+
+    const nativeGreeterRevokedCall = await requestJson(
+      client.workerdSocket,
+      `/cross-grain-native-greeter-self-test?token=${
+        encodeURIComponent(nativeGreeterSaved.json.token)}&expectRestoreFailure=true`);
+    assert.equal(nativeGreeterRevokedCall.statusCode, 200,
+      nativeGreeterRevokedCall.body + formatOutput(client.stdout, client.stderr) +
+      formatOutput(provider.stdout, provider.stderr));
+    assert.equal(nativeGreeterRevokedCall.json.ok, true);
+    assert.equal(nativeGreeterRevokedCall.json.restoreFailed, true);
+    assert.equal(nativeGreeterRevokedCall.json.error.name, "NativeCapnpBridgeUnavailableError");
+    assert.match(
+      nativeGreeterRevokedCall.json.error.message,
+      /native Cap'n Proto bridge restore failed/);
 
     const retainedId = `retained-callback-${Date.now()}`;
     const retainedSubscribe = await requestJson(
