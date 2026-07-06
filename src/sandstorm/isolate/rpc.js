@@ -35,6 +35,12 @@ async function readJsonResponse(response) {
   }
 }
 
+const browserAppInterfacePowerboxDescriptorCache = new Map();
+
+function cloneJsonValue(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
 export function requestPowerbox(query, options = {}) {
   if (typeof window === "undefined" || !window.parent) {
     return Promise.reject(new Error("requestPowerbox() is only available in a browser session"));
@@ -569,13 +575,18 @@ async function fetchBrowserAppInterfacePowerboxDescriptor(interfaceName, schema,
   const url = new URL(descriptorUrl, window.location.href);
   url.searchParams.set("interfaceId", interfaceId);
   url.searchParams.set("interfaceName", schema.interfaceName || interfaceName);
+  const cacheKey = url.href;
+  if (browserAppInterfacePowerboxDescriptorCache.has(cacheKey)) {
+    return cloneJsonValue(browserAppInterfacePowerboxDescriptorCache.get(cacheKey));
+  }
 
   const response = await fetch(url);
   const result = await readJsonResponse(response);
   if (!response.ok || !result.ok) {
     throw new Error(result.error || `Powerbox descriptor request failed with ${response.status}`);
   }
-  return result;
+  browserAppInterfacePowerboxDescriptorCache.set(cacheKey, cloneJsonValue(result));
+  return cloneJsonValue(result);
 }
 
 export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, schema = {}) {
@@ -883,6 +894,12 @@ async function readJsonResponse(response) {
       error: text || \`HTTP \${response.status}\`,
     };
   }
+}
+
+const browserAppInterfacePowerboxDescriptorCache = new Map();
+
+function cloneJsonValue(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
 export function requestPowerbox(query, options = {}) {
@@ -1419,13 +1436,18 @@ async function fetchBrowserAppInterfacePowerboxDescriptor(interfaceName, schema,
   const url = new URL(descriptorUrl, window.location.href);
   url.searchParams.set("interfaceId", interfaceId);
   url.searchParams.set("interfaceName", schema.interfaceName || interfaceName);
+  const cacheKey = url.href;
+  if (browserAppInterfacePowerboxDescriptorCache.has(cacheKey)) {
+    return cloneJsonValue(browserAppInterfacePowerboxDescriptorCache.get(cacheKey));
+  }
 
   const response = await fetch(url);
   const result = await readJsonResponse(response);
   if (!response.ok || !result.ok) {
     throw new Error(result.error || \`Powerbox descriptor request failed with \${response.status}\`);
   }
-  return result;
+  browserAppInterfacePowerboxDescriptorCache.set(cacheKey, cloneJsonValue(result));
+  return cloneJsonValue(result);
 }
 
 export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, schema = {}) {

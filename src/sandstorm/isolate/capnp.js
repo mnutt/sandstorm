@@ -24,6 +24,11 @@ const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
 
 const NATIVE_CAPNP_EXPORT_SESSION_PREFIX = "/__sandstorm/native-capnp/export-sessions";
 const nativeCapnpExportTargets = new Map();
+const appInterfacePowerboxDescriptorCache = new Map();
+
+function cloneJsonValue(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
 
 async function readJsonResponse(response) {
   const text = await response.text();
@@ -55,13 +60,19 @@ async function fetchAppInterfacePowerboxDescriptor(env, interfaceName, schema, o
   }
 
   const params = appInterfaceDescriptorParams(interfaceName, schema, options);
+  const cacheKey = params.toString();
+  if (appInterfacePowerboxDescriptorCache.has(cacheKey)) {
+    return cloneJsonValue(appInterfacePowerboxDescriptorCache.get(cacheKey));
+  }
+
   const response = await env.SANDSTORM_API.fetch(
     `http://sandstorm/powerbox/app-interface-descriptor?${params}`);
   const result = await readJsonResponse(response);
   if (!response.ok || !result.ok) {
     throw new Error(result.error || `Powerbox descriptor request failed with ${response.status}`);
   }
-  return result;
+  appInterfacePowerboxDescriptorCache.set(cacheKey, cloneJsonValue(result));
+  return cloneJsonValue(result);
 }
 
 function invalidNativeCapnpBridgeInfo(reason, info) {

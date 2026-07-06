@@ -1417,6 +1417,21 @@ const CLAIM_NATIVE_INTERFACES = new Set([
   "outboundHttpSession",
   "appObject",
 ]);
+const powerboxDescriptorInfoCache = new Map();
+
+function cloneDescriptorJsonValue(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+async function cachedPowerboxDescriptorInfo(cacheKey, loader) {
+  if (powerboxDescriptorInfoCache.has(cacheKey)) {
+    return cloneDescriptorJsonValue(powerboxDescriptorInfoCache.get(cacheKey));
+  }
+
+  const result = await loader();
+  powerboxDescriptorInfoCache.set(cacheKey, cloneDescriptorJsonValue(result));
+  return cloneDescriptorJsonValue(result);
+}
 
 function claimNativeInterfaceParams(options = {}) {
   if (options.nativeInterface === undefined || options.nativeInterface === null) {
@@ -1558,7 +1573,8 @@ async function apiSessionPowerboxDescriptorInfo(env, options = {}) {
       params.append(name, value);
     }
   }
-  return callPowerbox(env, `powerbox/api-session-descriptor?${params}`);
+  const path = `powerbox/api-session-descriptor?${params}`;
+  return cachedPowerboxDescriptorInfo(path, () => callPowerbox(env, path));
 }
 
 async function outboundHttpPowerboxDescriptor(env, options = {}) {
@@ -1573,7 +1589,8 @@ async function outboundHttpPowerboxDescriptorInfo(env, options = {}) {
       params.append(name, value);
     }
   }
-  return callPowerbox(env, `powerbox/outbound-http-descriptor?${params}`);
+  const path = `powerbox/outbound-http-descriptor?${params}`;
+  return cachedPowerboxDescriptorInfo(path, () => callPowerbox(env, path));
 }
 
 function appInterfaceRequestOptions(options = {}) {
@@ -1596,7 +1613,8 @@ async function appInterfacePowerboxDescriptorInfo(env, options = {}) {
       params.append(name, value);
     }
   }
-  return callPowerbox(env, `powerbox/app-interface-descriptor?${params}`);
+  const path = `powerbox/app-interface-descriptor?${params}`;
+  return cachedPowerboxDescriptorInfo(path, () => callPowerbox(env, path));
 }
 
 export async function servePowerboxDescriptors(request, env) {
