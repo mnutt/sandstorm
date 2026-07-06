@@ -260,6 +260,18 @@ declare module "sandstorm:capnp" {
     close(error?: unknown): void;
   }
 
+  export class NativeCapnpStreamTransport {
+    constructor(
+      readable: ReadableStream<Uint8Array>,
+      writable: WritableStream<Uint8Array>,
+      options?: { readonly connection?: unknown },
+    );
+    attachConnection(connection: unknown): void;
+    sendMessage(message: unknown): void;
+    recvMessage(): Promise<unknown>;
+    close(error?: unknown): void;
+  }
+
   export function createNativeCapnpBridgeConnection(
     api: NativeCapnpBridgeTransport["api"],
     target: NativeCapnpCapabilitySlot,
@@ -269,6 +281,40 @@ declare module "sandstorm:capnp" {
       readonly finalize?: unknown;
     },
   ): unknown;
+
+  export function createNativeCapnpExportSession(
+    InterfaceClass: NativeCapnpGeneratedInterface<object> & {
+      readonly Server: new (target: object) => unknown;
+    },
+    target: object,
+    options: {
+      readonly readable: ReadableStream<Uint8Array>;
+      readonly writable: WritableStream<Uint8Array>;
+      readonly finalize?: unknown;
+    },
+  ): unknown;
+
+  export function exportNativeCapnp<TClient extends object>(
+    api: { capnpBridgeInfo(): Promise<unknown> },
+    InterfaceClass: NativeCapnpGeneratedInterface<TClient> & {
+      readonly Server: new (target: object) => unknown;
+    },
+    target: object,
+    options?: {
+      readonly interfaceId?: bigint | number | string;
+      readonly interfaceName?: string;
+      readonly schema?: {
+        readonly interfaceId?: bigint | number | string;
+        readonly interfaceName?: string;
+      };
+      readonly binding?: {
+        readonly schema?: {
+          readonly interfaceId?: bigint | number | string;
+          readonly interfaceName?: string;
+        };
+      };
+    },
+  ): Promise<never>;
 
   export function saveNativeCapnp(
     api: NativeCapnpBridgeTransport["api"],

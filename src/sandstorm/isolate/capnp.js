@@ -348,6 +348,70 @@ function nativeCapnpRootMessageBytes(message) {
   return nativeCapnpMessageBytes(message);
 }
 
+const NATIVE_CAPNP_MAX_STREAM_FRAME_BYTES = 16 * 1024 * 1024;
+const NATIVE_CAPNP_MAX_STREAM_SEGMENTS = 4096;
+
+function copyUint8Array(value) {
+  const bytes = nativeCapnpMessageBytes(value);
+  return new Uint8Array(bytes);
+}
+
+function concatNativeCapnpChunks(left, right) {
+  if (left.byteLength === 0) {
+    return copyUint8Array(right);
+  }
+
+  const bytes = copyUint8Array(right);
+  const result = new Uint8Array(left.byteLength + bytes.byteLength);
+  result.set(left);
+  result.set(bytes, left.byteLength);
+  return result;
+}
+
+class NativeCapnpStreamFrameDecoder {
+  #pending = new Uint8Array(0);
+
+  push(chunk) {
+    this.#pending = concatNativeCapnpChunks(this.#pending, chunk);
+    const frames = [];
+
+    while (this.#pending.byteLength >= 8) {
+      const view = new DataView(
+        this.#pending.buffer, this.#pending.byteOffset, this.#pending.byteLength);
+      const segmentCount = view.getUint32(0, true) + 1;
+      if (segmentCount <= 0 || segmentCount > NATIVE_CAPNP_MAX_STREAM_SEGMENTS) {
+        throw new NativeCapnpBridgeProtocolError(
+          `invalid native Cap'n Proto stream segment count: ${segmentCount}`);
+      }
+
+      const tableInts = 1 + segmentCount;
+      const headerBytes = Math.ceil(tableInts / 2) * 8;
+      if (this.#pending.byteLength < headerBytes) {
+        break;
+      }
+
+      let payloadWords = 0;
+      for (let i = 0; i < segmentCount; ++i) {
+        payloadWords += view.getUint32(4 + i * 4, true);
+      }
+
+      const frameBytes = headerBytes + payloadWords * 8;
+      if (frameBytes > NATIVE_CAPNP_MAX_STREAM_FRAME_BYTES) {
+        throw new NativeCapnpBridgeProtocolError(
+          `native Cap'n Proto stream frame exceeds ${NATIVE_CAPNP_MAX_STREAM_FRAME_BYTES} bytes`);
+      }
+      if (this.#pending.byteLength < frameBytes) {
+        break;
+      }
+
+      frames.push(this.#pending.slice(0, frameBytes));
+      this.#pending = this.#pending.slice(frameBytes);
+    }
+
+    return frames;
+  }
+}
+
 export function makeNativeCapnpBridgeRpcRequest({
   target,
   message,
@@ -733,11 +797,141 @@ export class NativeCapnpBridgeTransport extends CapnpEsDeferredTransport {
   }
 }
 
+export class NativeCapnpStreamTransport extends CapnpEsDeferredTransport {
+  #decoder = new NativeCapnpStreamFrameDecoder();
+  #reader;
+  #writer;
+  #writeQueue = Promise.resolve();
+  #connection;
+
+  constructor(readable, writable, options = {}) {
+    super();
+    if (!readable || typeof readable.getReader !== "function") {
+      throw new TypeError("NativeCapnpStreamTransport requires a ReadableStream");
+    }
+    if (!writable || typeof writable.getWriter !== "function") {
+      throw new TypeError("NativeCapnpStreamTransport requires a WritableStream");
+    }
+
+    this.#reader = readable.getReader();
+    this.#writer = writable.getWriter();
+    this.#connection = options.connection || null;
+    this.#readLoop();
+  }
+
+  attachConnection(connection) {
+    this.#connection = connection;
+  }
+
+  sendMessage(message) {
+    if (this.closed) {
+      throw new NativeCapnpBridgeUnavailableError("native Cap'n Proto stream transport is closed");
+    }
+
+    const bytes = nativeCapnpRootMessageBytes(message);
+    this.#writeQueue = this.#writeQueue
+      .then(() => this.#writer.write(bytes))
+      .catch((error) => this.abort(error));
+  }
+
+  abort(error) {
+    if (this.closed) {
+      return;
+    }
+
+    if (this.#connection && !this.#connection.closed) {
+      this.#connection.shutdown(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+
+    this.close(error);
+  }
+
+  close(error) {
+    if (this.closed) {
+      return;
+    }
+
+    try {
+      this.#reader.cancel(error);
+    } catch (_) {}
+    try {
+      if (error === undefined) {
+        this.#writer.close();
+      } else {
+        this.#writer.abort(error);
+      }
+    } catch (_) {}
+
+    super.close(error);
+  }
+
+  async #readLoop() {
+    try {
+      while (!this.closed) {
+        const { done, value } = await this.#reader.read();
+        if (done) {
+          this.close();
+          return;
+        }
+
+        for (const frame of this.#decoder.push(value)) {
+          this.resolve(frame);
+        }
+      }
+    } catch (error) {
+      this.abort(error);
+    }
+  }
+}
+
 export function createNativeCapnpBridgeConnection(api, target, options = {}) {
   const transport = new NativeCapnpBridgeTransport(api, target, options);
   const conn = new CapnpEsConn(transport, options.finalize);
   transport.connection = conn;
   return Object.assign(conn, { transport });
+}
+
+function validateNativeCapnpGeneratedInterface(InterfaceClass, operation) {
+  if (!InterfaceClass || typeof InterfaceClass.Client !== "function" ||
+      typeof InterfaceClass.Server !== "function") {
+    throw new TypeError(`${operation} requires a capnp-es generated interface class`);
+  }
+}
+
+export function createNativeCapnpExportSession(
+    InterfaceClass, target, { readable, writable, finalize } = {}) {
+  validateNativeCapnpGeneratedInterface(InterfaceClass, "createNativeCapnpExportSession()");
+  if (!target || typeof target !== "object") {
+    throw new TypeError("createNativeCapnpExportSession() requires a server target object");
+  }
+
+  const transport = new NativeCapnpStreamTransport(readable, writable);
+  const connection = new CapnpEsConn(transport, finalize);
+  transport.attachConnection(connection);
+  connection.initMain(InterfaceClass, target);
+  return Object.assign(connection, {
+    transport,
+    interfaceMetadata: nativeCapnpInterfaceMetadata(InterfaceClass),
+  });
+}
+
+export async function exportNativeCapnp(api, InterfaceClass, target, options = {}) {
+  validateNativeCapnpGeneratedInterface(InterfaceClass, "exportNativeCapnp()");
+  if (!api || typeof api.capnpBridgeInfo !== "function") {
+    throw new TypeError("exportNativeCapnp() requires a Sandstorm API object");
+  }
+
+  const negotiation = await negotiateNativeCapnpBridge(api, { requiredFeatures: ["nativeExports"] });
+  if (!negotiation.available) {
+    throw new NativeCapnpBridgeUnavailableError(
+      `native Cap'n Proto exports are unavailable: ${negotiation.reason || "unavailable"}`,
+      { negotiation, interfaceMetadata: nativeCapnpInterfaceMetadata(InterfaceClass, options) });
+  }
+
+  throw new NativeCapnpBridgeUnavailableError(
+    "native Cap'n Proto export supervisor sessions are not wired yet",
+    { negotiation, interfaceMetadata: nativeCapnpInterfaceMetadata(InterfaceClass, options) });
 }
 
 export async function saveNativeCapnp(api, target) {

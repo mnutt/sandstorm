@@ -1224,6 +1224,19 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(
       body.sandstormApi.capnpBridgeRpcNegotiation.info,
       body.sandstormApi.capnpBridgeInfo);
+    assert.deepEqual(body.sandstormApi.nativeCapnpExport, {
+      stream: {
+        serverBootstrap: true,
+        serverQuestionId: 77,
+        echoBootstrap: true,
+        echoQuestionId: 77,
+      },
+      unavailableError: {
+        name: "NativeCapnpBridgeUnavailableError",
+        message: "native Cap'n Proto exports are unavailable: missing features",
+        missingFeatures: ["nativeExports"],
+      },
+    });
     assert.deepEqual(body.sandstormApi.nativeCapnpBridge, {
       available: false,
       protocolVersion: 0,

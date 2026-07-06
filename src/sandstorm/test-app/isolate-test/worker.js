@@ -34,9 +34,11 @@ import {
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
   NativeCapnpBridgeTransport,
+  NativeCapnpStreamTransport,
   connectNativeCapnp,
   createNativeCapnpBridge,
   decodeNativeCapnpBridgeResponse,
+  exportNativeCapnp,
   makeCapnpInterfaceBinding,
   makeNativeCapnpBridgeAcknowledgedResponse,
   makeNativeCapnpBridgeCallRequest,
@@ -3657,6 +3659,40 @@ export default {
     const capnpBridgeRpcNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeRpc"],
     });
+    const nativeExportClientToServer = new TransformStream();
+    const nativeExportServerToClient = new TransformStream();
+    const nativeExportClientTransport = new NativeCapnpStreamTransport(
+      nativeExportServerToClient.readable,
+      nativeExportClientToServer.writable);
+    const nativeExportServerTransport = new NativeCapnpStreamTransport(
+      nativeExportClientToServer.readable,
+      nativeExportServerToClient.writable);
+    const nativeExportRpcMessage = new CapnpEsMessage();
+    nativeExportRpcMessage.initRoot(CapnpRpcMessage)._initBootstrap().questionId = 77;
+    nativeExportClientTransport.sendMessage(nativeExportRpcMessage.getRoot(CapnpRpcMessage));
+    const nativeExportServerMessage = await nativeExportServerTransport.recvMessage();
+    nativeExportServerTransport.sendMessage(nativeExportServerMessage);
+    const nativeExportEchoMessage = await nativeExportClientTransport.recvMessage();
+    nativeExportClientTransport.close();
+    nativeExportServerTransport.close();
+    class NativeExportFixtureClient {}
+    class NativeExportFixtureServer {}
+    const nativeExportInterface = {
+      Client: NativeExportFixtureClient,
+      Server: NativeExportFixtureServer,
+      interfaceId: 0x9ea3c98729c78d51n,
+      interfaceName: "NativeExportFixture",
+    };
+    let nativeExportUnavailableError = null;
+    try {
+      await exportNativeCapnp(apiHelper, nativeExportInterface, {});
+    } catch (error) {
+      nativeExportUnavailableError = {
+        name: String(error?.name || "Error"),
+        message: String(error?.message || error),
+        missingFeatures: error?.details?.negotiation?.missingFeatures || [],
+      };
+    }
     const nativeCapnpTarget = await apiHelper.webSession({
       pathPrefix: "/native-capnp-bridge-target",
     });
@@ -4302,6 +4338,15 @@ export default {
         helperCapnpBridgeInfo,
         capnpBridgeNegotiation,
         capnpBridgeRpcNegotiation,
+        nativeCapnpExport: {
+          stream: {
+            serverBootstrap: nativeExportServerMessage.which() === CapnpRpcMessage.BOOTSTRAP,
+            serverQuestionId: nativeExportServerMessage.bootstrap.questionId,
+            echoBootstrap: nativeExportEchoMessage.which() === CapnpRpcMessage.BOOTSTRAP,
+            echoQuestionId: nativeExportEchoMessage.bootstrap.questionId,
+          },
+          unavailableError: nativeExportUnavailableError,
+        },
         nativeCapnpBridge: {
           available: nativeCapnpBridge.available,
           protocolVersion: nativeCapnpBridge.protocolVersion,
