@@ -960,6 +960,11 @@ Progress:
   native bridge envelopes to the supervisor without exposing service bindings
   directly to browser code; when the `capnp-es` compiler is configured, `spk`
   also generates the native bridge schema as a platform module
+- browser system routes now serve `/__sandstorm/native-capnp/client.js`, a
+  native-only browser helper that imports the served `capnp-es` runtime and
+  native bridge schema, exposes generated-client helpers such as
+  `connectBrowserNativeCapnp()` and `restoreBrowserNativeCapnp()`, and can
+  save/drop Sandstorm capability handles through the binary supervisor bridge
 
 Powerbox work:
 

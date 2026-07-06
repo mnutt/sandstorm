@@ -3481,6 +3481,15 @@ test("isolate supervisor integration suite", {
     assert.match(browserRpcClient.body, /powerboxDescriptor/);
     assert.match(browserRpcClient.body, /local\(methods\)/);
 
+    const browserNativeCapnpClient = await requestUnixSocket(
+      fixture.workerdSocket, "/__sandstorm/native-capnp/client.js");
+    assert.equal(browserNativeCapnpClient.statusCode, 200);
+    assert.match(browserNativeCapnpClient.body, /connectBrowserNativeCapnp/);
+    assert.match(browserNativeCapnpClient.body, /from "\/capnp-es\/index\.mjs"/);
+    assert.match(
+      browserNativeCapnpClient.body,
+      /from "\/__sandstorm\/capnp-es\/sandstorm\/isolate-native-capnp-bridge\.capnp\.js"/);
+
     const appInterfaceDescriptor = await requestJson(
       fixture.sandstormApiSocket,
       "/powerbox/app-interface-descriptor" +
