@@ -281,6 +281,34 @@ function normalizeBrowserCapnpArgs(methodName, args, argumentCapabilities) {
   return normalized;
 }
 
+function requiredBrowserMethods(interfaceName, methodNames, methods) {
+  if (!methods || typeof methods !== "object") {
+    throw new TypeError(`${interfaceName}.local() requires a methods object`);
+  }
+  for (const methodName of methodNames) {
+    if (typeof methods[methodName] !== "function") {
+      throw new TypeError(`${interfaceName}.${methodName} is not implemented`);
+    }
+  }
+  return methods;
+}
+
+function makeBrowserLocalCapnp(interfaceName, methodNames, schema, methods) {
+  const source = requiredBrowserMethods(interfaceName, methodNames, methods);
+  const argumentCapabilities = schema.argumentCapabilities || {};
+  const resultCapabilities = schema.resultCapabilities || {};
+  const client = {};
+  for (const methodName of methodNames) {
+    client[methodName] = async (...args) => {
+      const normalizedArgs = normalizeBrowserCapnpArgs(
+        methodName, args, argumentCapabilities);
+      const result = await source[methodName](...normalizedArgs);
+      return castBrowserCapnpResult(interfaceName, methodName, result, resultCapabilities);
+    };
+  }
+  return Object.freeze(client);
+}
+
 export function connectBrowserCapnp(stub, binding) {
   if (!stub || typeof stub !== "object" && typeof stub !== "function") {
     throw new TypeError("connectBrowserCapnp() requires a Cap'n Web RPC stub");
@@ -345,6 +373,9 @@ export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, sch
     ...binding,
     cast(stub) {
       return connectBrowserCapnp(stub, binding);
+    },
+    local(methods) {
+      return makeBrowserLocalCapnp(interfaceName, binding.methodNames, binding.schema, methods);
     },
     async powerboxDescriptor(options = {}) {
       const result = await fetchBrowserAppInterfacePowerboxDescriptor(
@@ -862,6 +893,34 @@ function normalizeBrowserCapnpArgs(methodName, args, argumentCapabilities) {
   return normalized;
 }
 
+function requiredBrowserMethods(interfaceName, methodNames, methods) {
+  if (!methods || typeof methods !== "object") {
+    throw new TypeError(\`\${interfaceName}.local() requires a methods object\`);
+  }
+  for (const methodName of methodNames) {
+    if (typeof methods[methodName] !== "function") {
+      throw new TypeError(\`\${interfaceName}.\${methodName} is not implemented\`);
+    }
+  }
+  return methods;
+}
+
+function makeBrowserLocalCapnp(interfaceName, methodNames, schema, methods) {
+  const source = requiredBrowserMethods(interfaceName, methodNames, methods);
+  const argumentCapabilities = schema.argumentCapabilities || {};
+  const resultCapabilities = schema.resultCapabilities || {};
+  const client = {};
+  for (const methodName of methodNames) {
+    client[methodName] = async (...args) => {
+      const normalizedArgs = normalizeBrowserCapnpArgs(
+        methodName, args, argumentCapabilities);
+      const result = await source[methodName](...normalizedArgs);
+      return castBrowserCapnpResult(interfaceName, methodName, result, resultCapabilities);
+    };
+  }
+  return Object.freeze(client);
+}
+
 export function connectBrowserCapnp(stub, binding) {
   if (!stub || typeof stub !== "object" && typeof stub !== "function") {
     throw new TypeError("connectBrowserCapnp() requires a Cap'n Web RPC stub");
@@ -926,6 +985,9 @@ export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, sch
     ...binding,
     cast(stub) {
       return connectBrowserCapnp(stub, binding);
+    },
+    local(methods) {
+      return makeBrowserLocalCapnp(interfaceName, binding.methodNames, binding.schema, methods);
     },
     async powerboxDescriptor(options = {}) {
       const result = await fetchBrowserAppInterfacePowerboxDescriptor(

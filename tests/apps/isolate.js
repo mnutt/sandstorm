@@ -94,5 +94,9 @@ module.exports["Test isolate browser to worker RPC"] = function (browser) {
     .assert.textContains("#rpc-result", "\"message\":\"browser schema hello browser\"")
     .assert.textContains("#rpc-result", "\"message\":\"browser returned client\"")
     .assert.textContains("#rpc-result",
-      "\"message\":\"browser schema called browser returned client from browser schema\"");
+      "\"message\":\"browser schema called browser returned client from browser schema\"")
+    .assert.textContains("#rpc-result", "\"message\":\"browser local hello client\"")
+    .assert.textContains("#rpc-result", "\"message\":\"browser local returned client\"")
+    .assert.textContains("#rpc-result",
+      "\"message\":\"browser local called browser local returned client\"");
 };

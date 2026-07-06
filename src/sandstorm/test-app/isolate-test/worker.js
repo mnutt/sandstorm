@@ -515,6 +515,37 @@ function renderBrowserRpcPage() {
           const schemaReturned = await schemaReturnedPromise;
           const schemaReturnedHello = await schemaReturned.hello({ name: "client" });
           const schemaGreeted = await greeter.greetWith(schemaReturned, "client");
+          const localGreeter = NativeGreeter.local({
+            async hello({ name = "browser" } = {}) {
+              return { message: "browser local hello " + name };
+            },
+            async makeGreeter({ prefix = "browser local returned" } = {}) {
+              return {
+                greeter: NativeGreeter.local({
+                  async hello({ name = "browser" } = {}) {
+                    return { message: prefix + " " + name };
+                  },
+                  async makeGreeter() {
+                    throw new Error("nested local makeGreeter not used");
+                  },
+                  async greetWith(greeter, name = "browser") {
+                    const hello = await greeter.hello({ name });
+                    return { message: "nested local called " + hello.message };
+                  },
+                }),
+              };
+            },
+            async greetWith(greeter, name = "browser") {
+              const hello = await greeter.hello({ name });
+              return { message: "browser local called " + hello.message };
+            },
+          });
+          const localHello = await localGreeter.hello({ name: "client" });
+          const localReturned = await localGreeter.makeGreeter({
+            prefix: "browser local returned",
+          });
+          const localReturnedHello = await localReturned.greeter.hello({ name: "client" });
+          const localGreeted = await localGreeter.greetWith(localReturned.greeter, "client");
           rpc[Symbol.dispose]();
           greeter[Symbol.dispose]?.();
           result.textContent = JSON.stringify({
@@ -529,6 +560,9 @@ function renderBrowserRpcPage() {
               hello: schemaHello,
               returnedHello: schemaReturnedHello,
               greeted: schemaGreeted,
+              localHello,
+              localReturnedHello,
+              localGreeted,
             },
           });
         } catch (error) {
