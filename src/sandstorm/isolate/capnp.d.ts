@@ -1,8 +1,6 @@
 declare module "sandstorm:capnp" {
   import type {
     Capability,
-    RpcTarget,
-    SaveCapabilityOptions,
   } from "sandstorm:api";
 
   export const SANDSTORM_CAPNP_VERSION: 0;
@@ -198,7 +196,7 @@ declare module "sandstorm:capnp" {
 
   export interface NativeCapnpBridgeCallOptions {
     readonly target: Capability;
-    readonly binding: CapnpInterfaceBinding<any, any>;
+    readonly binding: NativeCapnpGeneratedInterface<any>;
     readonly methodName: string;
     readonly params?: { toUint8Array(): Uint8Array } | Uint8Array | ArrayBuffer | ArrayBufferView;
     readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
@@ -217,7 +215,7 @@ declare module "sandstorm:capnp" {
     save(options: { readonly target: Capability }): Promise<string>;
     restore(options: {
       readonly token: string;
-      readonly binding?: CapnpInterfaceBinding<any, any>;
+      readonly binding?: NativeCapnpGeneratedInterface<any>;
     }): Promise<Required<NativeCapnpCapabilitySlot>>;
   }
 
@@ -473,36 +471,6 @@ declare module "sandstorm:capnp" {
     },
   ): Promise<NativeCapnpConnectedClient<TClient>>;
 
-  export type CapnpRpcMethod = (...args: any[]) => unknown;
-  export type CapnpMethodMap<TMethods> = {
-    [K in keyof TMethods]: TMethods[K] extends CapnpRpcMethod ? TMethods[K] : never;
-  };
-
-  export type CapnpRpcClient<
-    TMethods extends object = Record<string, CapnpRpcMethod>,
-    TResultOverrides extends object = object,
-  > = {
-    [K in keyof TMethods]: TMethods[K] extends (...args: infer Args) => infer Result
-      ? (...args: Args) => Promise<K extends keyof TResultOverrides
-          ? TResultOverrides[K]
-          : Awaited<Result>>
-      : never;
-  };
-
-  export type CapnpCapabilityClient<
-    TMethods extends object = Record<string, CapnpRpcMethod>,
-    TResultOverrides extends object = object,
-  > =
-    CapnpRpcClient<TMethods, TResultOverrides> & {
-      readonly capability: Capability;
-      drop(): Promise<unknown>;
-      save(options?: SaveCapabilityOptions): Promise<string>;
-    };
-
-  export type CapnpResultCapabilityBinding =
-    CapnpInterfaceBinding<any, any> | (() => CapnpInterfaceBinding<any, any>);
-  export type CapnpArgumentCapabilityBinding = CapnpResultCapabilityBinding;
-
   export type CapnpNativeInterface =
     "unknown" | "webSession" | "apiSession" | "outboundHttpSession" | "appObject";
 
@@ -510,135 +478,4 @@ declare module "sandstorm:capnp" {
     nativeInterface: CapnpNativeInterface;
     fetch?: boolean;
   }
-
-  export type CapnpCapabilityPath = string | readonly (string | number)[];
-
-  export type CapnpResultCapabilityFields =
-    Record<string, CapnpResultCapabilityBinding | CapnpNativeCapabilitySlot> |
-    readonly (readonly [string, CapnpResultCapabilityBinding | CapnpNativeCapabilitySlot])[];
-
-  export type CapnpResultCapabilityPaths =
-    Record<string, CapnpResultCapabilityBinding | CapnpNativeCapabilitySlot> |
-    readonly (readonly [
-      CapnpCapabilityPath,
-      CapnpResultCapabilityBinding | CapnpNativeCapabilitySlot,
-    ])[];
-
-  export type CapnpArgumentCapabilitySlot =
-    CapnpArgumentCapabilityBinding | CapnpNativeCapabilitySlot;
-
-  export type CapnpArgumentCapabilityFields =
-    readonly string[] | Record<string, CapnpArgumentCapabilitySlot>;
-
-  export type CapnpArgumentCapabilityPaths =
-    readonly CapnpCapabilityPath[] |
-    Record<string, CapnpArgumentCapabilitySlot> |
-    readonly (readonly [CapnpCapabilityPath, CapnpArgumentCapabilitySlot])[];
-
-  export interface CapnpResultCapabilityStruct {
-    fields?: CapnpResultCapabilityFields;
-    paths?: CapnpResultCapabilityPaths;
-  }
-
-  export type CapnpResultCapabilities<TMethods extends object> =
-    Partial<Record<keyof TMethods & string,
-      CapnpResultCapabilityBinding | CapnpResultCapabilityStruct | CapnpNativeCapabilitySlot>>;
-
-  export type CapnpArgumentCapabilities<TMethods extends object> =
-    Partial<Record<keyof TMethods & string, {
-      indexes?: readonly number[];
-      indices?: readonly number[];
-      fields?: CapnpArgumentCapabilityFields;
-      paths?: CapnpArgumentCapabilityPaths;
-    }>>;
-
-  export interface CapnpSchemaMetadata<TMethods extends object> {
-    readonly importSpecifier: string;
-    readonly interfaceName: string;
-    readonly interfaceId: string;
-    readonly schemaPath: string;
-    readonly schemaText: string;
-    readonly methodNames: readonly (keyof TMethods & string)[];
-    readonly methodIds: Partial<Record<keyof TMethods & string, number>>;
-    readonly paramStructIds: Partial<Record<keyof TMethods & string, string>>;
-    readonly resultStructIds: Partial<Record<keyof TMethods & string, string>>;
-    readonly argumentCapabilities: CapnpArgumentCapabilities<TMethods>;
-    readonly resultCapabilities: CapnpResultCapabilities<TMethods>;
-  }
-
-  export interface CapnpInterfaceBinding<
-    TMethods extends object = Record<string, CapnpRpcMethod>,
-    TResultOverrides extends object = object,
-  > {
-    readonly interfaceName: string;
-    readonly interfaceId: string;
-    readonly schemaPath: string;
-    readonly schema: CapnpSchemaMetadata<TMethods>;
-    readonly methodNames: readonly (keyof TMethods & string)[];
-    implement(methods: CapnpMethodMap<TMethods>): RpcTarget;
-    cast(capability: Capability): CapnpCapabilityClient<TMethods, TResultOverrides>;
-    local(methods: CapnpMethodMap<TMethods>): CapnpRpcClient<TMethods, TResultOverrides>;
-    powerboxDescriptor(options?: unknown): never;
-  }
-
-  export function makeCapnpInterfaceBinding<
-    TMethods extends object = Record<string, CapnpRpcMethod>,
-    TResultOverrides extends object = object,
-  >(
-    interfaceName: string,
-    methodNames: readonly (keyof TMethods & string)[],
-    schema?: {
-      importSpecifier?: string;
-      interfaceId?: string;
-      schemaPath?: string;
-      schemaText?: string;
-      methodIds?: Partial<Record<keyof TMethods & string, number>>;
-      paramStructIds?: Partial<Record<keyof TMethods & string, string>>;
-      resultStructIds?: Partial<Record<keyof TMethods & string, string>>;
-      argumentCapabilities?: CapnpArgumentCapabilities<TMethods>;
-      resultCapabilities?: CapnpResultCapabilities<TMethods>;
-    },
-  ): CapnpInterfaceBinding<TMethods, TResultOverrides>;
-}
-
-declare module "capnp:*" {
-  import type { CapnpInterfaceBinding } from "sandstorm:capnp";
-
-  export type {
-    CapnpArgumentCapabilities,
-    CapnpArgumentCapabilityBinding,
-    CapnpArgumentCapabilityFields,
-    CapnpArgumentCapabilityPaths,
-    CapnpArgumentCapabilitySlot,
-    CapnpCapabilityPath,
-    CapnpCapabilityClient,
-    CapnpInterfaceBinding,
-    CapnpMethodMap,
-    CapnpSchemaMetadata,
-    CapnpResultCapabilities,
-    CapnpResultCapabilityBinding,
-    CapnpResultCapabilityPaths,
-    CapnpNativeCapabilitySlot,
-    CapnpNativeInterface,
-    CapnpResultCapabilityFields,
-    CapnpResultCapabilityStruct,
-    CapnpRpcClient,
-    CapnpRpcMethod,
-  } from "sandstorm:capnp";
-
-  export interface CapnpSchemaModule {
-    readonly importSpecifier: string;
-    readonly schemaPath: string;
-    readonly schemaText: string;
-    readonly interfaceNames: readonly string[];
-    readonly [interfaceName: string]: unknown;
-  }
-
-  export const importSpecifier: string;
-  export const schemaPath: string;
-  export const schemaText: string;
-  export const interfaceNames: readonly string[];
-
-  const schema: CapnpSchemaModule;
-  export default schema;
 }

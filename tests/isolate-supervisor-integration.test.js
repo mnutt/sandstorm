@@ -2682,75 +2682,13 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.persistent.helper.callback.deleteStorage.ok, true);
   });
 
-  await t.test("round trips generated capnp bindings over object capabilities", async () => {
+  await t.test("generates native capnp powerbox descriptors from worker bindings", async () => {
     const selfTest = await requestJson(
-      fixture.workerdSocket, "/capnp-binding-object-self-test");
+      fixture.workerdSocket, "/native-capnp-descriptor-self-test");
     assert.equal(selfTest.statusCode, 200, selfTest.body + formatOutput(
       fixture.stdout, fixture.stderr));
     assert.equal(selfTest.json.ok, true);
     assert.equal(selfTest.json.helperVersion, 0);
-    assert.equal(selfTest.json.interfaceName, "GeneratedCounter");
-    assert.equal(selfTest.json.interfaceId, "");
-    assert.equal(selfTest.json.schemaPath, "test/generated-counter.capnp");
-    assert.deepEqual(selfTest.json.methodNames, [
-      "increment",
-      "get",
-      "child",
-      "children",
-      "readOther",
-      "readNested",
-      "nestedChildren",
-      "mirrorSession",
-      "fail",
-    ]);
-    assert.deepEqual(selfTest.json.schema, {
-      importSpecifier: "capnp:test/generated-counter.capnp",
-      interfaceName: "GeneratedCounter",
-      interfaceId: "",
-      schemaPath: "test/generated-counter.capnp",
-      schemaText: [
-        "@0xd8c883d5220f7e53;",
-        "using WebSession = import \"/sandstorm/web-session.capnp\".WebSession;",
-        "interface GeneratedCounter {",
-        "  increment @0 (amount :Float64) -> (value :Float64);",
-        "  get @1 () -> (value :Float64);",
-        "  child @2 () -> (counter :GeneratedCounter);",
-        "  children @3 () -> (left :GeneratedCounter, right :GeneratedCounter);",
-        "  readOther @4 (other :GeneratedCounter) -> (value :Float64);",
-        "  readNested @5 (wrapper :AnyPointer) -> (value :Float64);",
-        "  nestedChildren @6 () -> (group :AnyPointer);",
-        "  mirrorSession @7 (session :WebSession) -> (session :WebSession);",
-        "  fail @8 (message :Text) -> ();",
-        "}",
-      ].join("\n"),
-      methodNames: [
-        "increment",
-        "get",
-        "child",
-        "children",
-        "readOther",
-        "readNested",
-        "nestedChildren",
-        "mirrorSession",
-        "fail",
-      ],
-      methodIds: {},
-      paramStructIds: {},
-      resultStructIds: {},
-      argumentCapabilities: {
-        readOther: { indexes: [0] },
-        readNested: { paths: [[["wrapper", "other"], null]] },
-        mirrorSession: {
-          fields: {
-            session: {
-              nativeInterface: "webSession",
-              fetch: true,
-            },
-          },
-        },
-      },
-      resultCapabilityNames: ["child", "children", "nestedChildren", "mirrorSession"],
-    });
     assert.equal(selfTest.json.powerboxDescriptor.interfaceName, "NativeGreeter");
     assert.equal(selfTest.json.powerboxDescriptor.interfaceId, "0xb66316217ceedb1b");
     assert.equal(typeof selfTest.json.powerboxDescriptor.descriptor, "string");
@@ -2769,68 +2707,6 @@ test("isolate supervisor integration suite", {
       interfaceId: "0xb66316217ceedb1b",
       interfaceName: "NativeGreeter",
     });
-    assert.deepEqual(selfTest.json.local.first, { value: 2 });
-    assert.deepEqual(selfTest.json.local.current, { value: 2 });
-    assert.deepEqual(selfTest.json.local.child.first, { value: 3 });
-    assert.deepEqual(selfTest.json.local.child.current, { value: 3 });
-    assert.deepEqual(selfTest.json.local.child.read, { value: 3 });
-    assert.deepEqual(selfTest.json.local.children.left, { value: 19 });
-    assert.deepEqual(selfTest.json.local.children.right, { value: 23 });
-    assert.deepEqual(selfTest.json.local.nested.read, { value: 3 });
-    assert.deepEqual(selfTest.json.local.nested.left, { value: 37 });
-    assert.deepEqual(selfTest.json.local.nested.right, { value: 41 });
-    assert.equal(selfTest.json.transient.capability.type, "capability");
-    assert.deepEqual(selfTest.json.transient.first, { value: 5 });
-    assert.deepEqual(selfTest.json.transient.current, { value: 5 });
-    assert.equal(selfTest.json.child.capability.type, "capability");
-    assert.deepEqual(selfTest.json.child.first, { value: 7 });
-    assert.deepEqual(selfTest.json.child.read, { value: 7 });
-    assert.equal(selfTest.json.child.drop.ok, true);
-    assert.equal(selfTest.json.children.leftCapability.type, "capability");
-    assert.equal(selfTest.json.children.rightCapability.type, "capability");
-    assert.deepEqual(selfTest.json.children.left, { value: 29 });
-    assert.deepEqual(selfTest.json.children.right, { value: 31 });
-    assert.equal(selfTest.json.children.leftDrop.ok, true);
-    assert.equal(selfTest.json.children.rightDrop.ok, true);
-    assert.deepEqual(selfTest.json.nested.read, { value: 7 });
-    assert.equal(selfTest.json.nested.leftCapability.type, "capability");
-    assert.equal(selfTest.json.nested.rightCapability.type, "capability");
-    assert.deepEqual(selfTest.json.nested.left, { value: 43 });
-    assert.deepEqual(selfTest.json.nested.right, { value: 47 });
-    assert.equal(selfTest.json.nested.leftDrop.ok, true);
-    assert.equal(selfTest.json.nested.rightDrop.ok, true);
-    assert.equal(selfTest.json.mirroredSession.capability.type, "capability");
-    assert.equal(selfTest.json.mirroredSession.info.nativeInterface, "webSession");
-    assert.equal(selfTest.json.mirroredSession.fetch.status, 200);
-    assert.equal(selfTest.json.mirroredSession.fetch.body.pathname, "/exported/capability-echo");
-    assert.equal(selfTest.json.mirroredSession.fetch.body.search, "?source=capnp-mirror");
-    assert.equal(selfTest.json.mirroredSession.drop.ok, true);
-    assert.equal(selfTest.json.mirroredSession.wrongSessionError.name, "TypeError");
-    assert.match(
-      selfTest.json.mirroredSession.wrongSessionError.message,
-      /argument capability nativeInterface appObject does not match declared webSession/);
-    assert.equal(selfTest.json.durable.registered, true);
-    assert.equal(selfTest.json.durable.restored, false);
-    assert.equal(selfTest.json.durable.tokenType, "string");
-    assert.equal(selfTest.json.durable.castSavedType, "string");
-    assert.deepEqual(selfTest.json.durable.get, { value: 11 });
-    assert.deepEqual(selfTest.json.durable.increment, { value: 24 });
-    assert.equal(selfTest.json.durable.drop.ok, true);
-    assert.equal(selfTest.json.durable.restoredCapability.type, "capability");
-    assert.deepEqual(selfTest.json.durable.restoredGet, { value: 24 });
-    assert.deepEqual(selfTest.json.durable.restoredIncrement, { value: 41 });
-    assert.deepEqual(selfTest.json.durable.restoredFailure, {
-      name: "CapabilityCallError",
-      message: "generated binding failure",
-      details: {
-        name: "Error",
-      },
-    });
-    assert.equal(selfTest.json.durable.restoredDrop.ok, true);
-    assert.equal(selfTest.json.durable.revokeCastSaved.ok, true);
-    assert.equal(selfTest.json.durable.revokeDurableToken.ok, true);
-    assert.equal(selfTest.json.durable.deleteStorage.ok, true);
-    assert.equal(selfTest.json.dropTransient.ok, true);
   });
 
   await t.test("calls legacy native capnp capabilities from isolate JS", async () => {

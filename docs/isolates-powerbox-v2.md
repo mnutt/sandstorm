@@ -345,22 +345,30 @@ avoids a second partial parser for `.capnp`.
 Generated bindings should expose a small, predictable surface:
 
 ```js
-Greeter.implement(methods);
-Greeter.cast(capability);
-Greeter.local(methods);
-Greeter.powerboxDescriptor(options);
-Greeter.interfaceId;
-Greeter.schema;
+import {
+  connectNativeCapnp,
+  exportNativeCapnp,
+  nativeCapnpPowerboxDescriptor,
+} from "sandstorm:capnp";
+import { Greeter } from "capnp-es:./greeter.capnp";
+
+const exported = await exportNativeCapnp(api, Greeter, methods);
+const client = connectNativeCapnp(api, capability, Greeter);
+const localClient = new Greeter.Server(methods).client();
+const descriptor = await nativeCapnpPowerboxDescriptor(env, Greeter);
+const interfaceId = Greeter._capnp.typeIdHex;
 ```
 
-`implement()` creates an object suitable for the isolate export table.
+`exportNativeCapnp()` creates a Sandstorm capability from a generated
+`capnp-es` server class and app-supplied method object.
 
-`cast()` wraps an existing Sandstorm capability handle with typed methods.
+`connectNativeCapnp()` wraps an existing Sandstorm capability handle with a
+generated client.
 
-`local()` creates an in-memory client for tests.
+`new Interface.Server(methods).client()` creates an in-memory client for tests.
 
-`powerboxDescriptor()` creates the descriptor needed to request a compatible
-capability.
+`nativeCapnpPowerboxDescriptor()` creates the descriptor needed to request a
+compatible capability from generated metadata.
 
 Generated TypeScript types should be emitted from the same schema:
 
@@ -456,13 +464,15 @@ dispatch through a live capability handle.
 
 ## Staged Plan
 
-### Completed Slice: Fetch-Shaped App-Object Bindings
+### Removed Prototype Slice: Fetch-Shaped App-Object Bindings
 
-The current implementation has completed the first narrow slice of this plan.
-It proves the authoring shape over the existing fetch-shaped app-object RPC
-transport, not over native Cap'n Proto transport.
+The first prototype slice proved part of the schema-authoring shape over the
+existing fetch-shaped app-object RPC transport, not over native Cap'n Proto
+transport. Since the native `capnp-es` path now works and isolates have not
+shipped with the prototype API, this slice is no longer part of the supported
+surface.
 
-Implemented:
+Previously implemented, then removed or superseded:
 
 - import scanner recognizes `capnp:` specifiers
 - `.capnp` files are resolved for `spk dev-isolate`
@@ -478,7 +488,7 @@ Implemented:
 - typed capability clients can be passed back as arguments
 - examples show a schema-defined isolate capability
 
-Known limitations of this completed slice:
+The limitations that motivated removal:
 
 - the `.capnp` scanner is conservative and not a full compiler
 - generated bindings still serialize through current app-object RPC helpers
@@ -491,8 +501,8 @@ Known limitations of this completed slice:
 ### Phase 1: Real Schema Compilation
 
 Replace the conservative scanner with real schema compilation/generation.
-This phase keeps the current transport but removes the largest correctness
-risk in the authoring model.
+The final direction uses native `capnp-es` generated modules instead of keeping
+the prototype app-object transport.
 
 Progress:
 
@@ -530,36 +540,33 @@ Deliverables:
 Exit criteria:
 
 - app authors do not need a separately installed `capnp` binary
-- the current scanner can be deleted
-- generated app-object bindings remain behaviorally compatible with the
-  completed slice
+- schema code is generated through the selected native `capnp-es` compiler
+- generated app-object compatibility bindings are no longer part of the public
+  schema path
 
 ### Phase 2: Stable Public Generated API
 
-Stabilize the app-facing generated API before adding a native transport.
+Stabilize the app-facing generated API around native `capnp-es` classes and
+Sandstorm helper functions.
 
 Progress:
 
-- generated and hand-written bindings expose `Interface.schema`, a stable
-  metadata object containing the import specifier, interface name/id,
-  schema path/text, method names, and generated capability metadata.
-- generated `capnp:` bindings expose parser-derived `Interface.interfaceId`;
-  hand-written bindings can still pass `interfaceId` explicitly, and default to
-  an empty string when they do not.
-- generated `capnp:` bindings expose parser-derived method ordinals plus
-  parameter/result struct ids in `Interface.schema`.
-- `sandstorm:capnp` supports top-level named result capability fields in
-  `Interface.schema.resultCapabilities`, so methods can return structs that
-  contain more than one capability-valued field.
+- generated `capnp-es:` modules expose native `Interface.Client` and
+  `Interface.Server` classes plus `_capnp` metadata such as `typeIdHex`
+- `sandstorm:capnp` exposes native helper functions for exporting, connecting,
+  saving, restoring, and deriving Powerbox descriptors from generated
+  interfaces
+- the hand-written `makeCapnpInterfaceBinding()` API and `capnp:*` declaration
+  surface have been removed; schema-defined protocols use `capnp-es:` only
 
 Deliverables:
 
-- finalize `Interface.implement()`
-- finalize `Interface.cast()`
-- finalize `Interface.local()`
-- finalize `Interface.powerboxDescriptor()`
-- expose `Interface.interfaceId`
-- expose schema/interface/method metadata in a documented shape
+- finalize `exportNativeCapnp()`
+- finalize `connectNativeCapnp()`
+- finalize `restoreNativeCapnp()`
+- finalize `nativeCapnpPowerboxDescriptor()`
+- expose generated interface IDs through `_capnp` metadata
+- document the generated `capnp-es` metadata shape consumed by Sandstorm
 - define client and server TypeScript types
 - define error mapping between JS exceptions and Cap'n Proto exceptions
 - define lifecycle behavior for returned capabilities:
@@ -577,8 +584,7 @@ Exit criteria:
 - examples and tests use only the documented API
 - app authors can write and test schema-defined isolate capabilities without
   relying on private helper details
-- the API is ready to support more than one transport under the same generated
-  client/server shape
+- the API uses native Cap'n Proto transport for schema-defined protocols
 
 ### Phase 3: Generic Capability Slots
 
@@ -587,29 +593,15 @@ return all Sandstorm capability kinds that matter to isolate apps.
 
 Progress:
 
-- generated `capnp:` modules emit structured result capability slot metadata
-  for methods whose result structs contain multiple top-level capability
-  fields.
-- local app-object RPC dispatch can carry non-appObject Sandstorm capabilities
-  as opaque values, and `sandstorm:capnp` can declare fetch-shaped result
-  slots by native interface. The supervisor native app-RPC route still rejects
-  non-appObject slots; cross-supervisor transport for those slots is deferred
-  to Phase 4's native Cap'n Proto bridge rather than expanding the temporary
-  app-object route.
-- `sandstorm:capnp` supports nested capability paths for local/generated
-  argument normalization and result casting while preserving the older shallow
-  `fields` metadata shape.
-- generated binding metadata can declare expected argument slot interfaces, and
-  `sandstorm:capnp` validates `cap.info().nativeInterface` before dispatch when
-  a live capability handle exposes metadata.
-- `spk dev-isolate` recognizes Sandstorm native `capnp:` imports for
-  `WebSession`, `ApiSession`, and `OutboundHttpSession`, emits fetch-shaped
-  slot metadata for them, and includes an object-store example where
-  `openObject()` returns a fetch-capable object.
+- native `capnp-es` generated clients and servers can pass capability slots
+  through Sandstorm's native bridge
+- generated modules can import Sandstorm schemas such as
+  `capnp-es:/sandstorm/web-session.capnp`
+- the object-store example shows an RPC control plane returning a generated
+  `WebSession` client for fetch-shaped data-plane reads
 
 Add support for generic capability slots:
 
-- app-object capabilities
 - fetch-shaped WebSession / ApiSession capabilities
 - outbound HTTP capabilities
 - future public Cap'n Proto interface capabilities
@@ -619,11 +611,9 @@ Add support for generic capability slots:
 This unlocks control-plane methods that return data-plane capabilities, such
 as `openObject()` returning an object with `fetch()`.
 
-Scope note: Phase 3 covers local/generated binding behavior and authoring
-examples. Non-appObject capability slots crossing supervisor boundaries will
-ride the native Cap'n Proto bridge in Phase 4, where the transport can preserve
-the actual public interface instead of forcing every slot through
-`IsolateObjectCapability`.
+Scope note: schema-defined capability slots should ride the native Cap'n Proto
+bridge, where the transport can preserve the actual public interface instead
+of forcing every slot through `IsolateObjectCapability`.
 
 Deliverables:
 
@@ -640,7 +630,7 @@ Deliverables:
   - data-plane object capabilities
 - integration tests for:
   - object-store control plane returning fetch-shaped objects
-  - typed app-object capabilities passing other typed app-object capabilities
+  - typed native capabilities passing other typed native capabilities
   - saved/restored capabilities with declared native interfaces
   - revoked capability calls failing cleanly
 
@@ -695,24 +685,21 @@ Implementation work:
 - implement cancellation/drop semantics
 - implement save/restore/drop/revoke against native handles
 - add protocol version negotiation between generated bindings and supervisor
-- keep current app-object RPC transport as a compatibility fallback until the
-  native bridge is mature
 
 Progress:
 
 - supervisor exposes `/capnp/bridge-info`, and `sandstorm:api` exposes
-  `capnpBridgeInfo()`, so generated bindings can feature-detect the native
-  bridge protocol before switching away from the app-object RPC fallback
+  `capnpBridgeInfo()`, so helper code can feature-detect the native bridge
+  protocol
 - the bridge info advertises protocol version `0` and turns on feature flags
-  only as paths become real; `nativeRpc` is available, while direct native
-  method calls, native exports, and cross-envelope capability slots remain off
+  only as paths become real; native RPC, native calls, native exports, and
+  capability slots are now implemented for the supported schema path
 - `isolate-native-capnp-bridge.capnp` defines the first native bridge request,
   response, payload, exception, lifecycle, and capability-slot envelopes, while
   `isolate-supervisor-internal.capnp` continues to own the app-object
   compatibility transport
-- `sandstorm:capnp` exposes `negotiateNativeCapnpBridge()` so generated
-  bindings have one conservative feature-detection path for native transport
-  vs. app-object RPC fallback
+- `sandstorm:capnp` exposes `negotiateNativeCapnpBridge()` so helper code has
+  one conservative feature-detection path for native transport availability
 - isolate runtime bundles the browser-safe `@mnutt/capnp-es` ESM runtime as
   built-in modules; this is the selected JS-side Cap'n Proto encoder/runtime
   for native bridge work
@@ -1123,6 +1110,9 @@ Progress:
 - generated `capnp:` schema-shaped app-object bindings are removed instead of
   retained as a compatibility fallback; JavaScript-defined app-object RPC
   remains only for current helper/UI internals pending a separate cleanup
+- the hand-written `makeCapnpInterfaceBinding()` helper and `capnp:*`
+  TypeScript declaration surface have also been removed, so app authors do not
+  have a second schema-shaped app-object API alongside native `capnp-es`
 - unreleased Cap'n Web and app-object browser RPC prototype schema transports
   have been removed instead of kept as compatibility fallbacks; `fetch()`
   remains supported for HTTP-shaped and large data-plane capabilities
