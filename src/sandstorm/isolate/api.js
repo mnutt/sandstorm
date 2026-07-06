@@ -2503,6 +2503,12 @@ async function serveBrowserSystemRoute(request, env) {
     });
   }
 
+  if (url.pathname === "/__sandstorm/native-capnp/client.js" && request.method === "GET") {
+    return new Response(nativeCapnpBrowserClientScript(), {
+      headers: { "content-type": "text/javascript; charset=utf-8" },
+    });
+  }
+
   if (url.pathname === "/__sandstorm/native-capnp/bridge-info" &&
       request.method === "GET") {
     const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/bridge-info");
@@ -3611,6 +3617,413 @@ export function apiTarget(request, env) {
 
 export function rpcClientScript() {
   return browserClientScript();
+}
+
+export function nativeCapnpBrowserClientScript() {
+  return `
+import {
+  Conn,
+  DeferredTransport,
+  Message,
+} from "/capnp-es/index.mjs";
+import {
+  NativeCapnpBridgeRequest,
+  NativeCapnpBridgeResponse,
+  NativeCapnpCapabilitySlotKind,
+} from "/__sandstorm/capnp-es/sandstorm/isolate-native-capnp-bridge.capnp.js";
+
+export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
+
+export class NativeCapnpBridgeUnavailableError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "NativeCapnpBridgeUnavailableError";
+    this.details = details;
+  }
+}
+
+export class NativeCapnpBridgeProtocolError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "NativeCapnpBridgeProtocolError";
+    this.details = details;
+  }
+}
+
+function nativeCapnpMessageBytes(message) {
+  if (message instanceof Uint8Array) return message;
+  if (message instanceof ArrayBuffer) return new Uint8Array(message);
+  if (ArrayBuffer.isView(message)) {
+    return new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
+  }
+  if (message && typeof message.toUint8Array === "function") {
+    return message.toUint8Array();
+  }
+  throw new TypeError("native Cap'n Proto message must be bytes or a capnp-es Message");
+}
+
+function nativeCapnpRootMessageBytes(message) {
+  if (message && typeof message === "object" && message.segment?.message) {
+    if (message.segment.id === 0 && message.byteOffset === 0) {
+      return message.segment.message.toUint8Array();
+    }
+    const copy = new Message();
+    copy.setRoot(message);
+    return copy.toUint8Array();
+  }
+  return nativeCapnpMessageBytes(message);
+}
+
+function nativeCapnpInterfaceId(value = 0n) {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return BigInt(value);
+  }
+  if (typeof value === "string" && value.length > 0) {
+    return BigInt(value.startsWith("0x") ? value : "0x" + value);
+  }
+  return 0n;
+}
+
+function nativeCapnpSlotKind(kind = "receiverHosted") {
+  switch (kind) {
+    case NativeCapnpCapabilitySlotKind.SENDER_HOSTED:
+    case NativeCapnpCapabilitySlotKind.RECEIVER_HOSTED:
+    case NativeCapnpCapabilitySlotKind.SAVED_TOKEN:
+      return kind;
+    case "senderHosted":
+      return NativeCapnpCapabilitySlotKind.SENDER_HOSTED;
+    case "receiverHosted":
+      return NativeCapnpCapabilitySlotKind.RECEIVER_HOSTED;
+    case "savedToken":
+      return NativeCapnpCapabilitySlotKind.SAVED_TOKEN;
+    default:
+      throw new TypeError("unknown native capability slot kind: " + kind);
+  }
+}
+
+function nativeCapnpSlotKindName(kind) {
+  switch (kind) {
+    case NativeCapnpCapabilitySlotKind.SENDER_HOSTED:
+      return "senderHosted";
+    case NativeCapnpCapabilitySlotKind.RECEIVER_HOSTED:
+      return "receiverHosted";
+    case NativeCapnpCapabilitySlotKind.SAVED_TOKEN:
+      return "savedToken";
+    default:
+      throw new NativeCapnpBridgeProtocolError("unknown native capability slot kind: " + kind);
+  }
+}
+
+function normalizeNativeCapnpCapabilitySlot(slot) {
+  if (!slot || typeof slot !== "object" || typeof slot.id !== "string" || slot.id.length === 0) {
+    throw new NativeCapnpBridgeProtocolError(
+      "native bridge target must be a Sandstorm capability handle");
+  }
+  return Object.freeze({
+    id: slot.id,
+    interfaceId: nativeCapnpInterfaceId(slot.interfaceId),
+    interfaceName: typeof slot.interfaceName === "string" ? slot.interfaceName : "",
+    kind: nativeCapnpSlotKind(slot.kind),
+  });
+}
+
+function writeNativeCapnpCapabilitySlot(target, slot) {
+  const normalized = normalizeNativeCapnpCapabilitySlot(slot);
+  target.id = normalized.id;
+  target.interfaceId = normalized.interfaceId;
+  target.interfaceName = normalized.interfaceName;
+  target.kind = normalized.kind;
+}
+
+function readNativeCapnpCapabilitySlot(slot) {
+  return Object.freeze({
+    id: slot.id,
+    interfaceId: slot.interfaceId,
+    interfaceName: slot.interfaceName,
+    kind: nativeCapnpSlotKindName(slot.kind),
+  });
+}
+
+function writeNativeCapnpPayload(target, { message = new Uint8Array(), capabilities = [] } = {}) {
+  const bytes = nativeCapnpMessageBytes(message);
+  target._initMessage(bytes.byteLength).copyBuffer(bytes);
+  const slots = target._initCapabilities(capabilities.length);
+  for (let index = 0; index < capabilities.length; index++) {
+    writeNativeCapnpCapabilitySlot(slots.get(index), capabilities[index]);
+  }
+}
+
+function readNativeCapnpPayload(payload) {
+  const capabilities = [];
+  const slots = payload.capabilities;
+  for (let index = 0; index < slots.length; index++) {
+    capabilities.push(readNativeCapnpCapabilitySlot(slots.get(index)));
+  }
+  return Object.freeze({
+    message: payload.message.toUint8Array(),
+    capabilities: Object.freeze(capabilities),
+  });
+}
+
+function normalizeConnectionId(connectionId) {
+  if (typeof connectionId === "string" && connectionId.length > 0) return connectionId;
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return "browser-native-capnp-" + globalThis.crypto.randomUUID();
+  }
+  return "browser-native-capnp-" + Date.now().toString(36) + "-" +
+    Math.random().toString(36).slice(2);
+}
+
+function makeNativeCapnpBridgeRpcRequest({
+  target,
+  message,
+  capabilities = [],
+  connectionId,
+} = {}) {
+  const envelope = new Message();
+  const request = envelope.initRoot(NativeCapnpBridgeRequest);
+  request.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
+  const rpc = request._initRpc();
+  writeNativeCapnpCapabilitySlot(rpc._initTarget(), target);
+  writeNativeCapnpPayload(rpc._initMessage(), {
+    message: nativeCapnpRootMessageBytes(message),
+    capabilities,
+  });
+  rpc.connectionId = normalizeConnectionId(connectionId);
+  return envelope;
+}
+
+function makeNativeCapnpBridgeRestoreRequest(token, InterfaceClass, options = {}) {
+  if (typeof token !== "string" || token.length === 0) {
+    throw new TypeError("restoreBrowserNativeCapnp() requires a non-empty token");
+  }
+  const schema = InterfaceClass?.schema || InterfaceClass?.Client?.schema ||
+    InterfaceClass?._capnp || InterfaceClass?.Client?._capnp || {};
+  const envelope = new Message();
+  const request = envelope.initRoot(NativeCapnpBridgeRequest);
+  request.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
+  const restore = request._initRestore();
+  restore.token = token;
+  restore.expectedInterfaceId = nativeCapnpInterfaceId(
+    options.interfaceId ?? schema.interfaceId ?? InterfaceClass?.interfaceId ?? 0n);
+  restore.expectedInterfaceName = options.interfaceName ?? schema.interfaceName ??
+    InterfaceClass?.interfaceName ?? "";
+  return envelope;
+}
+
+function makeNativeCapnpBridgeTargetRequest(which, target) {
+  const envelope = new Message();
+  const request = envelope.initRoot(NativeCapnpBridgeRequest);
+  request.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
+  const body = which === "save" ? request._initSave() : request._initDrop();
+  writeNativeCapnpCapabilitySlot(body._initTarget(), target);
+  return envelope;
+}
+
+export function readNativeCapnpBridgeResponse(message) {
+  return new Message(nativeCapnpMessageBytes(message), false).getRoot(NativeCapnpBridgeResponse);
+}
+
+export function decodeNativeCapnpBridgeResponse(message) {
+  const response = readNativeCapnpBridgeResponse(message);
+  if (response.protocolVersion !== SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION) {
+    throw new NativeCapnpBridgeProtocolError(
+      "unsupported native bridge protocol version: " + response.protocolVersion);
+  }
+
+  switch (response.which()) {
+    case NativeCapnpBridgeResponse.RESULT: {
+      const result = response.result;
+      switch (result.which()) {
+        case result.constructor.VALUE:
+          return Object.freeze({ which: "result", result: Object.freeze({
+            which: "value",
+            value: readNativeCapnpPayload(result.value),
+          }) });
+        case result.constructor.EXCEPTION:
+          return Object.freeze({ which: "result", result: Object.freeze({
+            which: "exception",
+            exception: Object.freeze({
+              type: result.exception.type,
+              reason: result.exception.reason,
+              trace: result.exception.trace,
+            }),
+          }) });
+        case result.constructor.CANCELED:
+          return Object.freeze({ which: "result", result: Object.freeze({ which: "canceled" }) });
+        default:
+          throw new NativeCapnpBridgeProtocolError("unknown native bridge result response");
+      }
+    }
+    case NativeCapnpBridgeResponse.CAPABILITY:
+      return Object.freeze({
+        which: "capability",
+        capability: readNativeCapnpCapabilitySlot(response.capability),
+      });
+    case NativeCapnpBridgeResponse.SAVED:
+      return Object.freeze({ which: "saved", saved: Object.freeze({ token: response.saved.token }) });
+    case NativeCapnpBridgeResponse.ACKNOWLEDGED:
+      return Object.freeze({ which: "acknowledged" });
+    case NativeCapnpBridgeResponse.EXCEPTION:
+      return Object.freeze({ which: "exception", exception: Object.freeze({
+        type: response.exception.type,
+        reason: response.exception.reason,
+        trace: response.exception.trace,
+      }) });
+    default:
+      throw new NativeCapnpBridgeProtocolError("unknown native bridge response");
+  }
+}
+
+export async function nativeCapnpBridgeInfo() {
+  const response = await fetch("/__sandstorm/native-capnp/bridge-info");
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    throw new NativeCapnpBridgeUnavailableError(
+      result.error || "native bridge info request failed", { response, result });
+  }
+  return result;
+}
+
+export async function nativeCapnpBridgeCallBytes(message) {
+  const response = await fetch("/__sandstorm/native-capnp/call", {
+    method: "POST",
+    headers: {
+      "accept": "application/octet-stream",
+      "content-type": "application/octet-stream",
+    },
+    body: nativeCapnpMessageBytes(message),
+  });
+  return {
+    ok: response.ok,
+    status: response.status,
+    contentType: response.headers.get("content-type") || "",
+    body: new Uint8Array(await response.arrayBuffer()),
+  };
+}
+
+export const browserNativeCapnpApi = Object.freeze({
+  capnpBridgeInfo: nativeCapnpBridgeInfo,
+  nativeCapnpBridgeCallBytes,
+});
+
+export class BrowserNativeCapnpBridgeTransport extends DeferredTransport {
+  #sendQueue = Promise.resolve();
+
+  constructor(target, options = {}) {
+    super();
+    this.target = normalizeNativeCapnpCapabilitySlot(target);
+    this.connectionId = normalizeConnectionId(options.connectionId);
+    this.capabilities = Object.freeze([...(options.capabilities || [])]);
+    this.connection = null;
+  }
+
+  sendMessage(message) {
+    this.#sendQueue = this.#sendQueue
+      .then(() => this.#sendMessage(message))
+      .catch((error) => this.abort(error));
+  }
+
+  abort(error) {
+    if (this.connection && !this.connection.closed) {
+      this.connection.shutdown(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    this.close(error);
+  }
+
+  async #sendMessage(message) {
+    const request = makeNativeCapnpBridgeRpcRequest({
+      target: this.target,
+      message,
+      capabilities: this.capabilities,
+      connectionId: this.connectionId,
+    });
+    const response = await nativeCapnpBridgeCallBytes(request.toUint8Array());
+    const decoded = decodeNativeCapnpBridgeResponse(response.body);
+    if (decoded.which === "exception") {
+      throw new NativeCapnpBridgeUnavailableError(
+        decoded.exception.reason || "native bridge RPC failed", { response, decoded });
+    }
+    if (decoded.which !== "result") {
+      throw new NativeCapnpBridgeProtocolError(
+        "native bridge RPC returned unexpected " + decoded.which, { response, decoded });
+    }
+    switch (decoded.result.which) {
+      case "value":
+        if (decoded.result.value.message.byteLength > 0) {
+          this.resolve(decoded.result.value.message);
+        }
+        return;
+      case "exception":
+        throw new NativeCapnpBridgeUnavailableError(
+          decoded.result.exception.reason || "native bridge RPC failed", { response, decoded });
+      case "canceled":
+        throw new NativeCapnpBridgeUnavailableError(
+          "native bridge RPC call was canceled", { response, decoded });
+      default:
+        throw new NativeCapnpBridgeProtocolError("unknown native bridge RPC result", {
+          response,
+          decoded,
+        });
+    }
+  }
+}
+
+export function createBrowserNativeCapnpConnection(target, options = {}) {
+  const transport = new BrowserNativeCapnpBridgeTransport(target, options);
+  const connection = new Conn(transport, options.finalize);
+  transport.connection = connection;
+  return Object.assign(connection, { transport });
+}
+
+export function connectBrowserNativeCapnp(target, InterfaceClass, options = {}) {
+  if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
+    throw new TypeError("connectBrowserNativeCapnp() requires a capnp-es generated interface");
+  }
+  const connection = createBrowserNativeCapnpConnection(target, options);
+  const client = connection.bootstrap(InterfaceClass);
+  return Object.assign(client, {
+    capability: target,
+    connection,
+    transport: connection.transport,
+    save: () => saveBrowserNativeCapnp(connection.transport.target),
+    drop: () => dropBrowserNativeCapnp(connection.transport.target),
+  });
+}
+
+async function sendNativeCapnpBridgeEnvelope(message, expectedWhich) {
+  const response = await nativeCapnpBridgeCallBytes(message.toUint8Array());
+  const decoded = decodeNativeCapnpBridgeResponse(response.body);
+  if (decoded.which === "exception") {
+    throw new NativeCapnpBridgeUnavailableError(
+      decoded.exception.reason || "native bridge call failed", { response, decoded });
+  }
+  if (decoded.which !== expectedWhich) {
+    throw new NativeCapnpBridgeProtocolError(
+      "native bridge returned unexpected " + decoded.which, { response, decoded });
+  }
+  return decoded;
+}
+
+export async function restoreBrowserNativeCapnp(token, InterfaceClass, options = {}) {
+  const decoded = await sendNativeCapnpBridgeEnvelope(
+    makeNativeCapnpBridgeRestoreRequest(token, InterfaceClass, options), "capability");
+  return connectBrowserNativeCapnp(decoded.capability, InterfaceClass, options);
+}
+
+export async function saveBrowserNativeCapnp(target) {
+  const decoded = await sendNativeCapnpBridgeEnvelope(
+    makeNativeCapnpBridgeTargetRequest("save", target), "saved");
+  return decoded.saved.token;
+}
+
+export async function dropBrowserNativeCapnp(target) {
+  await sendNativeCapnpBridgeEnvelope(
+    makeNativeCapnpBridgeTargetRequest("drop", target), "acknowledged");
+}
+`;
 }
 
 export function rpcResponse(request, target, options) {
