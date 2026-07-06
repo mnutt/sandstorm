@@ -89,5 +89,10 @@ module.exports["Test isolate browser to worker RPC"] = function (browser) {
     .assert.textContains("#rpc-result", "\"first\":{\"value\":2}")
     .assert.textContains("#rpc-result", "\"childValue\":{\"value\":5}")
     .assert.textContains("#rpc-result", "\"parentValue\":{\"value\":5}")
-    .assert.textContains("#rpc-result", "\"current\":{\"value\":2}");
+    .assert.textContains("#rpc-result", "\"current\":{\"value\":2}")
+    .assert.textContains("#rpc-result", "\"interfaceName\":\"NativeGreeter\"")
+    .assert.textContains("#rpc-result", "\"message\":\"browser schema hello browser\"")
+    .assert.textContains("#rpc-result", "\"message\":\"browser returned client\"")
+    .assert.textContains("#rpc-result",
+      "\"message\":\"browser schema called browser returned client from browser schema\"");
 };

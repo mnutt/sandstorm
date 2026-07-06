@@ -65,6 +65,80 @@ const retainedMailFeedCallbacks = new Map();
 const retainedEventReceivers = new Map();
 let powerboxFulfillmentDurableSerial = 0;
 
+const BrowserNativeGreeter = makeCapnpInterfaceBinding("NativeGreeter", [
+  "hello",
+  "makeGreeter",
+  "greetWith",
+], {
+  interfaceId: "0xb66316217ceedb1b",
+  argumentCapabilities: {
+    greetWith: {
+      indexes: [0],
+      fields: {
+        greeter: () => BrowserNativeGreeter,
+      },
+    },
+  },
+  resultCapabilities: {
+    makeGreeter: () => BrowserNativeGreeter,
+  },
+});
+
+const browserNativeGreeterMethods = {
+  async hello({ name = "browser" } = {}) {
+    return {
+      message: `browser schema hello ${name}`,
+    };
+  },
+
+  async makeGreeter({ prefix = "browser returned" } = {}) {
+    return BrowserNativeGreeter.implement({
+      async hello({ name = "browser" } = {}) {
+        return {
+          message: `${prefix} ${name}`,
+        };
+      },
+    });
+  },
+
+  async greetWith(greeter, name = "browser") {
+    const hello = await greeter.hello({
+      name: `${name} from browser schema`,
+    });
+    return {
+      message: `browser schema called ${hello.message}`,
+    };
+  },
+};
+
+function renderBrowserNativeGreeterModule() {
+  return `import { makeBrowserCapnpInterfaceBinding } from "/__sandstorm/test-rpc-client.js";
+
+export const NativeGreeter = makeBrowserCapnpInterfaceBinding("NativeGreeter", [
+  "hello",
+  "makeGreeter",
+  "greetWith",
+], {
+  interfaceId: "0xb66316217ceedb1b",
+  argumentCapabilities: {
+    greetWith: {
+      indexes: [0],
+      fields: {
+        greeter: () => NativeGreeter,
+      },
+    },
+  },
+  resultCapabilities: {
+    makeGreeter: () => NativeGreeter,
+  },
+});
+
+export default Object.freeze({
+  NativeGreeter,
+});
+`;
+}
+
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
   for (let i = 0; i < bytes.length; ++i) {
@@ -460,6 +534,7 @@ function renderBrowserRpcPage() {
 
     <script type="module">
       import { newSandstormRpcSession } from "/__sandstorm/test-rpc-client.js";
+      import { NativeGreeter } from "/browser-native-greeter.capnp.js";
 
       const result = document.querySelector("#rpc-result");
 
@@ -472,19 +547,35 @@ function renderBrowserRpcPage() {
           const childValuePromise = child.increment(5);
           const parentValuePromise = rpc.readOtherRpc(child);
           const currentPromise = rpc.get();
+          const greeter = NativeGreeter.cast(
+            newSandstormRpcSession("/__sandstorm/browser-greeter-rpc"));
+          const schemaHelloPromise = greeter.hello({ name: "browser" });
+          const schemaReturnedPromise = greeter.makeGreeter({ prefix: "browser returned" });
           const [first, childValue, parentValue, current] = await Promise.all([
             firstPromise,
             childValuePromise,
             parentValuePromise,
             currentPromise,
           ]);
+          const schemaHello = await schemaHelloPromise;
+          const schemaReturned = await schemaReturnedPromise;
+          const schemaReturnedHello = await schemaReturned.hello({ name: "client" });
+          const schemaGreeted = await greeter.greetWith(schemaReturned, "client");
           rpc[Symbol.dispose]();
+          greeter[Symbol.dispose]?.();
           result.textContent = JSON.stringify({
             ok: true,
             first,
             childValue,
             parentValue,
             current,
+            schema: {
+              interfaceName: NativeGreeter.interfaceName,
+              methodNames: NativeGreeter.methodNames,
+              hello: schemaHello,
+              returnedHello: schemaReturnedHello,
+              greeted: schemaGreeted,
+            },
           });
         } catch (error) {
           result.textContent = (error.message || String(error)) + "\\n" + (error.stack || "");
@@ -503,6 +594,12 @@ export default {
       rpcPath: "/__sandstorm/test-rpc",
     });
     if (internalResponse) return internalResponse;
+    const browserGreeterRpcResponse = api.serveRpc(
+      () => BrowserNativeGreeter.implement(browserNativeGreeterMethods), {
+        clientScriptPath: "/__sandstorm/browser-greeter-rpc-client-unused.js",
+        rpcPath: "/__sandstorm/browser-greeter-rpc",
+      });
+    if (browserGreeterRpcResponse) return browserGreeterRpcResponse;
 
     const url = new URL(request.url);
     const systemResponse = await api.serveSystemRoutes();
@@ -646,6 +743,12 @@ export default {
     if (url.pathname === "/browser-rpc-test") {
       return new Response(renderBrowserRpcPage(), {
         headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (url.pathname === "/browser-native-greeter.capnp.js") {
+      return new Response(renderBrowserNativeGreeterModule(), {
+        headers: { "content-type": "text/javascript; charset=utf-8" },
       });
     }
 
@@ -2112,6 +2215,7 @@ export default {
       const page = await grants.serve(new Request("http://app/grant-ui-test"));
       const client = await grants.serve(new Request("http://app/grant-ui-test/client.js"));
       const rpcClient = await grants.serve(new Request("http://app/grant-ui-test/rpc-client.js"));
+      const rpcClientText = await rpcClient.text();
       const configBefore = await (await grants.serve(
         new Request("http://app/grant-ui-test/config"))).json();
       const statusBefore = await (await grants.serve(
@@ -2156,7 +2260,8 @@ export default {
         rpcClient: {
           status: rpcClient.status,
           contentType: rpcClient.headers.get("content-type"),
-          hasRequestPowerbox: (await rpcClient.text()).includes("requestPowerbox"),
+          hasRequestPowerbox: rpcClientText.includes("requestPowerbox"),
+          hasBrowserCapnp: rpcClientText.includes("connectBrowserCapnp"),
         },
         configBefore,
         statusBefore,

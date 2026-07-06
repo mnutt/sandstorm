@@ -55,6 +55,37 @@ declare module "sandstorm:rpc" {
       id: string;
     };
   }>;
+  export interface BrowserCapnpInterfaceBinding<TClient = unknown> {
+    readonly interfaceName: string;
+    readonly interfaceId: string;
+    readonly methodNames: readonly string[];
+    readonly schema: {
+      readonly interfaceName: string;
+      readonly interfaceId?: string;
+      readonly methodNames: readonly string[];
+      readonly argumentCapabilities?: Record<string, unknown>;
+      readonly resultCapabilities?: Record<string, unknown>;
+    };
+    cast(stub: unknown): TClient & BrowserCapnpConnectedClient;
+  }
+  export interface BrowserCapnpConnectedClient {
+    readonly __sandstormCapnpBrowserStub: true;
+    readonly stub: unknown;
+    [Symbol.dispose]?(): void;
+  }
+  export function connectBrowserCapnp<TClient = unknown>(
+    stub: unknown,
+    binding: BrowserCapnpInterfaceBinding<TClient>,
+  ): TClient & BrowserCapnpConnectedClient;
+  export function makeBrowserCapnpInterfaceBinding<TClient = unknown>(
+    interfaceName: string,
+    methodNames: readonly string[],
+    schema?: {
+      readonly interfaceId?: string;
+      readonly argumentCapabilities?: Record<string, unknown>;
+      readonly resultCapabilities?: Record<string, unknown>;
+    },
+  ): BrowserCapnpInterfaceBinding<TClient>;
   export type OutboundHttpMethod =
     | "GET"
     | "POST"
