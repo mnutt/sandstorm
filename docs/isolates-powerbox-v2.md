@@ -1044,6 +1044,11 @@ Progress:
   schema/interface pair, fills the canonical Cap'n Proto interface ID when it is
   omitted, rejects mismatches, and preserves the enriched declaration in
   `sandstorm-manifest`
+- the shell Powerbox option query now treats `Manifest.publicInterfaces` as
+  hosted-object provider metadata: app-interface descriptors match accessible
+  grains whose installed or dev package advertises the requested interface ID,
+  and the result still flows through the normal capability request/fulfillment
+  path
 
 Exit criteria:
 
