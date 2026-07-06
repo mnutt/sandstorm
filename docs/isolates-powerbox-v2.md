@@ -808,6 +808,12 @@ Progress:
   RPC sessions bound to that target, and the integration fixture verifies that
   generated calls and raw bridge RPC envelopes for the dropped target are
   rejected instead of continuing through a stale per-connection session
+- `sandstorm:capnp` now has the JS half of native isolate exports:
+  `NativeCapnpStreamTransport` pumps standard stream-framed Cap'n Proto RPC
+  messages over Web Streams, `createNativeCapnpExportSession()` hosts a
+  generated `@mnutt/capnp-es` server with `Conn.initMain()`, and
+  `exportNativeCapnp()` exposes the intended public helper while correctly
+  refusing until the supervisor advertises `nativeExports`
 
 Interop tests:
 
