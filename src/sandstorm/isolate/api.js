@@ -2503,6 +2503,38 @@ async function serveBrowserSystemRoute(request, env) {
     });
   }
 
+  if (url.pathname === "/__sandstorm/native-capnp/bridge-info" &&
+      request.method === "GET") {
+    const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/bridge-info");
+    return new Response(await response.text(), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: {
+        "content-type": response.headers.get("content-type") ||
+          "application/json; charset=utf-8",
+      },
+    });
+  }
+
+  if (url.pathname === "/__sandstorm/native-capnp/call" && request.method === "POST") {
+    const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/call", {
+      method: "POST",
+      headers: {
+        "accept": "application/octet-stream",
+        "content-type": "application/octet-stream",
+      },
+      body: request.body,
+    });
+    return new Response(await response.arrayBuffer(), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: {
+        "content-type": response.headers.get("content-type") ||
+          "application/octet-stream",
+      },
+    });
+  }
+
   const capnpPrefix = "/__sandstorm/capnp/";
   if (url.pathname.startsWith(capnpPrefix) && request.method === "GET") {
     const path = url.pathname.slice(capnpPrefix.length);

@@ -141,6 +141,10 @@ const CAPNP_ES_GENERATED_SCHEMA_MODULES = [
     "capnp-es:/sandstorm/web-session.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js",
   ],
+  [
+    "capnp-es:/sandstorm/isolate-native-capnp-bridge.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/isolate-native-capnp-bridge.js",
+  ],
 ];
 
 function formatOutput(stdout, stderr) {
@@ -3353,6 +3357,23 @@ test("isolate supervisor integration suite", {
       error: "native Cap'n Proto bridge request body is empty",
     });
 
+    const browserCapnpBridgeInfo = await requestJson(
+      fixture.workerdSocket, "/__sandstorm/native-capnp/bridge-info");
+    assert.equal(browserCapnpBridgeInfo.statusCode, 200, browserCapnpBridgeInfo.body);
+    assert.deepEqual(browserCapnpBridgeInfo.json, capnpBridgeInfo.json);
+
+    const browserCapnpCall = await requestUnixSocket(
+      fixture.workerdSocket, "/__sandstorm/native-capnp/call", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: "",
+      });
+    assert.equal(browserCapnpCall.statusCode, 400, browserCapnpCall.body);
+    assert.match(
+      String(browserCapnpCall.headers["content-type"] || ""),
+      /application\/octet-stream/);
+    assert.ok(browserCapnpCall.bodyBuffer.length > 0);
+
     const claimedStats = await requestJson(
       fixture.sandstormApiSocket, "/capabilities/claimed-stats");
     assert.equal(claimedStats.statusCode, 200, claimedStats.body);
@@ -3442,6 +3463,12 @@ test("isolate supervisor integration suite", {
       fixture.workerdSocket, "/__sandstorm/capnp-es/native-greeter.capnp.js");
     assert.equal(servedNativeBrowserCapnpModule.statusCode, 200);
     assert.match(servedNativeBrowserCapnpModule.body, /export class NativeGreeter/);
+
+    const servedNativeBridgeSchemaModule = await requestUnixSocket(
+      fixture.workerdSocket,
+      "/__sandstorm/capnp-es/sandstorm/isolate-native-capnp-bridge.capnp.js");
+    assert.equal(servedNativeBridgeSchemaModule.statusCode, 200);
+    assert.match(servedNativeBridgeSchemaModule.body, /NativeCapnpBridgeRequest/);
 
     const servedNativeBrowserCapnpRuntime = await requestUnixSocket(
       fixture.workerdSocket, "/capnp-es/index.mjs");
