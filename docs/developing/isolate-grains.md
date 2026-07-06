@@ -202,6 +202,47 @@ const Greeter = schema.Greeter as CapnpInterfaceBinding<GreeterMethods>;
 These generated bindings are an authoring bridge over today's app-object RPC
 transport. They do not yet use native Cap'n Proto encoding.
 
+### Browser schema modules
+
+Worker modules import schemas with `capnp:`:
+
+```js
+import { Greeter } from "capnp:./greeter.capnp";
+```
+
+Browser modules should import the browser companion module served by the
+isolate helper routes:
+
+```js
+import { Greeter } from "/__sandstorm/capnp/greeter.capnp.js";
+```
+
+Serve those routes before normal app routes:
+
+```js
+const api = sandstorm(request, env);
+const system = await api.serveSystemRoutes();
+if (system) return system;
+```
+
+The browser companion module imports `/__sandstorm/rpc-client.js` internally
+and exposes the same schema-shaped binding surface: `Greeter.cast(...)`,
+`Greeter.local(...)`, `Greeter.powerboxDescriptor(...)`,
+`Greeter.powerboxDescriptorInfo(...)`, and `Greeter.requestCapability(...)`.
+
+If browser code is bundled, keep Sandstorm-served URLs external. A browser
+bundler should not try to resolve `capnp:` or compile `.capnp` files itself
+unless the app has its own matching plugin. For shared source that imports
+`capnp:./greeter.capnp`, configure the browser build to rewrite that specifier
+to `/__sandstorm/capnp/greeter.capnp.js`; keep `/__sandstorm/rpc-client.js`
+as a runtime import.
+
+The served browser modules are generated from schemas discovered in the
+isolate worker module graph. If a schema is used only by frontend code, import
+it from the worker as well or otherwise make it part of the packaged isolate
+module graph so `spk dev-isolate` and `spk pack` know to generate the browser
+companion module.
+
 ## Compatibility dates and flags
 
 Isolate manifests include a `compatibilityDate` and optional

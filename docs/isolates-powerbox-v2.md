@@ -935,6 +935,10 @@ Progress:
   a Sandstorm browser capability handle; handle-backed clients dispatch through
   `/__sandstorm/object-capabilities/:id/native-app-rpc-call`, hydrate returned
   capability slots, and can be requested with `Interface.requestCapability()`
+- `docs/developing/isolate-grains.md` now documents frontend bundler behavior:
+  worker code imports `capnp:` schemas, browser code imports served
+  `/__sandstorm/capnp/...` companion modules, and browser bundlers should
+  alias or externalize those runtime URLs rather than compiling `.capnp` files
 
 Powerbox work:
 
