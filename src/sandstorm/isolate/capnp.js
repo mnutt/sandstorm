@@ -3,7 +3,7 @@ import {
   Conn as CapnpEsConn,
   DeferredTransport as CapnpEsDeferredTransport,
   Message as CapnpEsMessage,
-} from "capnp-es:/capnp-es/index.mjs";
+} from "capnp-es/index.mjs";
 import {
   NativeCapnpBridgeRequest,
   NativeCapnpBridgeResponse,

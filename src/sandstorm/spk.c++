@@ -2447,6 +2447,10 @@ private:
     return kj::str("capnp-es:/", capnpEsRuntimePath(moduleName));
   }
 
+  kj::String capnpEsSchemeRelativeRuntimeSpecifier(kj::StringPtr moduleName) {
+    return kj::str("capnp-es:./", capnpEsRuntimePath(moduleName));
+  }
+
   void writeDevIsolateSupportFile(kj::StringPtr dir, kj::StringPtr name, kj::StringPtr content) {
     auto path = kj::str(dir, "/", name);
     kj::FdOutputStream(raiiOpen(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600))
@@ -2514,7 +2518,7 @@ private:
     isolate.initCompatibilityFlags(0);
 
     auto moduleList = isolate.initModules(
-        modules.size() + 6 + (2 * ISOLATE_CAPNP_ES_MODULE_COUNT));
+        modules.size() + 6 + (4 * ISOLATE_CAPNP_ES_MODULE_COUNT));
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2570,7 +2574,18 @@ private:
       module.setEsModulePath(kj::str(
           "__sandstorm_isolate_runtime/", capnpEsRuntimePath(runtimeModule.name)));
     }
-
+    for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
+      auto module = moduleList[helperIndex++];
+      module.setName(capnpEsRuntimePath(runtimeModule.name));
+      module.setEsModulePath(kj::str(
+          "__sandstorm_isolate_runtime/", capnpEsRuntimePath(runtimeModule.name)));
+    }
+    for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
+      auto module = moduleList[helperIndex++];
+      module.setName(capnpEsSchemeRelativeRuntimeSpecifier(runtimeModule.name));
+      module.setEsModulePath(kj::str(
+          "__sandstorm_isolate_runtime/", capnpEsRuntimePath(runtimeModule.name)));
+    }
     auto bindings = isolate.initBindings(
         3 + devIsolateTextBindings.size() + devIsolateJsonBindings.size() +
         devIsolateDataBindings.size() + devIsolateServiceBindings.size());
@@ -3043,6 +3058,12 @@ private:
     return kj::heapString(path);
   }
 
+  kj::String capnpEsRuntimeImportSpecifier(
+      kj::StringPtr importerSpecifier, kj::StringPtr runtimeModuleName) {
+    (void)importerSpecifier;
+    return kj::str("/", capnpEsRuntimePath(runtimeModuleName));
+  }
+
   static kj::String relativeCapnpEsImportSpecifier(kj::StringPtr fromSpecifier,
                                                    kj::StringPtr toSpecifier) {
     return relativeJsImportSpecifier(
@@ -3108,10 +3129,9 @@ private:
       kj::String content, kj::StringPtr importerSpecifier) {
     for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
       auto quotedRuntimeName = kj::str("\"", runtimeModule.name, "\"");
-      auto relativeSpecifier = relativeCapnpEsImportSpecifier(
-          importerSpecifier, capnpEsSchemeRuntimeSpecifier(runtimeModule.name));
-      auto quotedRelativeName = kj::str("\"", relativeSpecifier, "\"");
-      content = replaceAll(content, quotedRuntimeName, quotedRelativeName);
+      auto quotedPathRuntimeName = kj::str(
+          "\"", capnpEsRuntimeImportSpecifier(importerSpecifier, runtimeModule.name), "\"");
+      content = replaceAll(content, quotedRuntimeName, quotedPathRuntimeName);
     }
 
     return kj::mv(content);
@@ -4331,9 +4351,15 @@ private:
       std::map<std::string, std::string>& capnpEsImports) {
     auto maybeRealPath = trySourcePathForPackagePath(packagePath);
     KJ_IF_MAYBE(realPath, maybeRealPath) {
-      auto source = readAll(raiiOpen(*realPath, O_RDONLY | O_CLOEXEC));
+      char* resolvedModuleRaw = realpath(realPath->cStr(), nullptr);
+      KJ_REQUIRE(resolvedModuleRaw != nullptr, "Could not resolve isolate module.",
+          packagePath, *realPath, strerror(errno));
+      KJ_DEFER(free(resolvedModuleRaw));
+      auto resolvedModule = kj::StringPtr(resolvedModuleRaw);
+
+      auto source = readAll(raiiOpen(resolvedModule, O_RDONLY | O_CLOEXEC));
       auto imports = scanDevIsolateImports(source);
-      auto importerDir = dirnameForPath(*realPath);
+      auto importerDir = dirnameForPath(resolvedModule);
       bool found = false;
 
       for (auto& specifier: imports) {

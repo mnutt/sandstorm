@@ -832,6 +832,10 @@ Progress:
   the same bundled `@mnutt/capnp-es` runtime module identity, so generated
   server registrations populate the `Registry` instance used by native RPC
   dispatch
+- generated schema runtime imports now canonicalize through `/capnp-es/...`
+  module specifiers, avoiding workerd's `capnp-es:` scheme-relative resolution
+  split; the integration fixture exports an isolate-defined `NativeGreeter`
+  server and calls it back over the native supervisor bridge
 
 Interop tests:
 
