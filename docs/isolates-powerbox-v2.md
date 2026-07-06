@@ -916,6 +916,14 @@ Progress:
   over Cap'n Web stubs; the isolate browser RPC fixture imports a generated-like
   `NativeGreeter` module, calls schema-named methods, casts a returned
   capability, and passes that capability back as an argument
+- `spk dev-isolate` now emits a Sandstorm-owned browser companion module for
+  each `capnp:` schema import under `sandstorm:browser-capnp:...`; the isolate
+  API serves those modules from `/__sandstorm/capnp/...`, so frontend code can
+  import the same schema by URL without app code hand-serving generated JS
+- generated browser modules share the same schema metadata as isolate modules
+  but bind through `makeBrowserCapnpInterfaceBinding()` and
+  `/__sandstorm/rpc-client.js`, keeping the transport decision inside the
+  Sandstorm browser helper
 
 Powerbox work:
 
@@ -997,6 +1005,11 @@ Progress:
   modules as `spk dev-isolate`, stores them under
   `__sandstorm_isolate_runtime/capnp-es-generated`, and serializes an
   augmented isolate module list into `sandstorm-manifest`
+- normal `spk pack` also scans packaged isolate ES modules for `capnp:`
+  imports, generates app-object compatibility modules under
+  `__sandstorm_isolate_runtime/capnp`, generates browser companion modules
+  under `__sandstorm_isolate_runtime/capnp-browser`, and records both worker
+  and browser schema modules in `sandstorm-manifest`
 
 Exit criteria:
 

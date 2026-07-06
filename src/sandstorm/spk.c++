@@ -2393,6 +2393,8 @@ private:
     kj::String path = kj::heapString("/tmp/sandstorm-dev-isolate-runtime-XXXXXX");
     KJ_REQUIRE(mkdtemp(path.begin()) != nullptr, "mkdtemp() failed", path, strerror(errno));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp").cStr(), 0700));
+    KJ_SYSCALL(mkdir(kj::str(path, "/capnp-browser").cStr(), 0700));
+    KJ_SYSCALL(mkdir(kj::str(path, "/capnp-scheme").cStr(), 0700));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es").cStr(), 0700));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es/capnp").cStr(), 0700));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es/shared").cStr(), 0700));
@@ -2406,6 +2408,11 @@ private:
     writeDevIsolateSupportFile(path, "rpc.js", ISOLATE_RPC_HELPER_SOURCE);
     writeDevIsolateSupportFile(
         path, "native-capnp-bridge.js", ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE);
+    writeDevIsolateSupportFile(path, "capnp-scheme/capnweb.js", CAPNWEB_SOURCE);
+    writeDevIsolateSupportFile(
+        path, "capnp-scheme/capnp.js", capnpSchemeCapnpHelperSource());
+    writeDevIsolateSupportFile(path, "capnp-scheme/native-capnp-bridge.js",
+        capnpSchemeNativeCapnpBridgeSource());
     std::set<std::string> writtenCapnpEsRuntimePaths;
     for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
       auto runtimePath = capnpEsRuntimePath(module.name);
@@ -2518,7 +2525,7 @@ private:
     isolate.initCompatibilityFlags(0);
 
     auto moduleList = isolate.initModules(
-        modules.size() + 6 + (4 * ISOLATE_CAPNP_ES_MODULE_COUNT));
+        modules.size() + 9 + (4 * ISOLATE_CAPNP_ES_MODULE_COUNT));
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2559,6 +2566,16 @@ private:
     auto capnpHelperModule = moduleList[helperIndex++];
     capnpHelperModule.setName("sandstorm:capnp");
     capnpHelperModule.setEsModulePath("__sandstorm_isolate_runtime/capnp.js");
+    auto capnpSchemeCapnwebModule = moduleList[helperIndex++];
+    capnpSchemeCapnwebModule.setName("capnp:/capnweb.js");
+    capnpSchemeCapnwebModule.setEsModulePath("__sandstorm_isolate_runtime/capnp-scheme/capnweb.js");
+    auto capnpSchemeCapnpModule = moduleList[helperIndex++];
+    capnpSchemeCapnpModule.setName("capnp:/sandstorm/capnp.js");
+    capnpSchemeCapnpModule.setEsModulePath("__sandstorm_isolate_runtime/capnp-scheme/capnp.js");
+    auto capnpSchemeNativeCapnpBridgeModule = moduleList[helperIndex++];
+    capnpSchemeNativeCapnpBridgeModule.setName("capnp:/sandstorm/native-capnp-bridge.js");
+    capnpSchemeNativeCapnpBridgeModule.setEsModulePath(
+        "__sandstorm_isolate_runtime/capnp-scheme/native-capnp-bridge.js");
     auto nativeCapnpBridgeModule = moduleList[helperIndex++];
     nativeCapnpBridgeModule.setName("sandstorm:native-capnp-bridge");
     nativeCapnpBridgeModule.setEsModulePath("__sandstorm_isolate_runtime/native-capnp-bridge.js");
@@ -2789,6 +2806,18 @@ private:
       kj::str("__sandstorm_isolate_runtime/", runtimePath),
       DevIsolateModuleType::ES_MODULE
     });
+
+    auto browserRuntimePath = devIsolateBrowserCapnpRuntimePath(resolvedPath, rootDir);
+    auto browserContent = generateDevIsolateCapnpModule(
+        specifier, resolvedPath, rootDir, source, true);
+    writeDevIsolateGeneratedSupportFile(
+        devIsolateSupportDir, browserRuntimePath, browserContent);
+
+    modules.add(DevIsolateModule {
+      devIsolateBrowserCapnpSpecifierForPath(resolvedPath, rootDir),
+      kj::str("__sandstorm_isolate_runtime/", browserRuntimePath),
+      DevIsolateModuleType::ES_MODULE
+    });
   }
 
   void addDevIsolateCapnpEsModule(
@@ -2914,6 +2943,24 @@ private:
                                                     kj::StringPtr rootDir) {
     auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
     return kj::str("capnp:./", moduleName);
+  }
+
+  static kj::String devIsolateBrowserCapnpSpecifierForPath(
+      kj::StringPtr resolvedPath, kj::StringPtr rootDir) {
+    auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
+    return kj::str("sandstorm:browser-capnp:./", moduleName);
+  }
+
+  static kj::String devIsolateBrowserCapnpRouteForPath(
+      kj::StringPtr resolvedPath, kj::StringPtr rootDir) {
+    auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
+    return kj::str("/__sandstorm/capnp/", moduleName, ".js");
+  }
+
+  static kj::String devIsolateBrowserCapnpRuntimePath(
+      kj::StringPtr resolvedPath, kj::StringPtr rootDir) {
+    auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
+    return kj::str("capnp-browser/", moduleName, ".js");
   }
 
   static kj::String devIsolateCapnpEsSpecifierForPath(kj::StringPtr resolvedPath,
@@ -3123,6 +3170,21 @@ private:
       pos = match + needleStd.size();
     }
     return kj::heapString(result.c_str());
+  }
+
+  static kj::String capnpSchemeCapnpHelperSource() {
+    auto content = replaceAll(
+        ISOLATE_CAPNP_HELPER_SOURCE, "\"capnweb\"", "\"/capnp:/capnweb.js\"");
+    content = replaceAll(content, "\"capnp-es/index.mjs\"",
+        "\"/capnp-es:/capnp-es/index.mjs\"");
+    content = replaceAll(content, "\"sandstorm:native-capnp-bridge\"",
+        "\"/capnp:/sandstorm/native-capnp-bridge.js\"");
+    return content;
+  }
+
+  static kj::String capnpSchemeNativeCapnpBridgeSource() {
+    return replaceAll(ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE, "\"capnp-es/index.mjs\"",
+        "\"/capnp-es:/capnp-es/index.mjs\"");
   }
 
   kj::String rewriteDevIsolateCapnpEsRuntimeImports(
@@ -3783,17 +3845,25 @@ private:
 
   static kj::String generateDevIsolateCapnpModule(
       kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
-      kj::StringPtr schemaSource) {
+      kj::StringPtr schemaSource, bool browserModule = false) {
     auto interfaces = scanCapnpInterfaces(schemaSource);
     auto interfaceMetadata = parseCapnpInterfaceMetadata(resolvedPath, rootDir, interfaces.asPtr());
     auto imports = scanCapnpImports(schemaSource);
     auto importerDir = dirnameForPath(resolvedPath);
     kj::Vector<char> output;
-    output.addAll(kj::StringPtr(
-        "// Generated by `spk dev-isolate` for a `capnp:` import.\n"
-        "// This module provides schema-first bindings over Sandstorm's current\n"
-        "// app-object RPC transport. It is not native Cap'n Proto encoding yet.\n\n"
-        "import { makeCapnpInterfaceBinding } from \"sandstorm:capnp\";\n\n"));
+    if (browserModule) {
+      output.addAll(kj::StringPtr(
+          "// Generated by Sandstorm for a browser-side `capnp:` schema import.\n"
+          "// This module provides schema-first bindings over Sandstorm's current\n"
+          "// app-object RPC transport. It is not native Cap'n Proto encoding yet.\n\n"
+          "import { makeBrowserCapnpInterfaceBinding } from \"/__sandstorm/rpc-client.js\";\n\n"));
+    } else {
+      output.addAll(kj::StringPtr(
+          "// Generated by `spk dev-isolate` for a `capnp:` import.\n"
+          "// This module provides schema-first bindings over Sandstorm's current\n"
+          "// app-object RPC transport. It is not native Cap'n Proto encoding yet.\n\n"
+          "import { makeCapnpInterfaceBinding } from \"/capnp:/sandstorm/capnp.js\";\n\n"));
+    }
 
     std::map<std::string, std::string> importedInterfaceBindings;
     std::map<std::string, std::string> nativeInterfaceSpecs;
@@ -3807,7 +3877,9 @@ private:
 
       auto importedPath = resolveDevIsolateCapnpSchemaImport(
           importerDir, rootDir, importDef.specifier);
-      auto importedSpecifier = devIsolateCapnpSpecifierForPath(importedPath, rootDir);
+      auto importedSpecifier = browserModule
+          ? devIsolateBrowserCapnpRouteForPath(importedPath, rootDir)
+          : devIsolateCapnpSpecifierForPath(importedPath, rootDir);
       auto importedSource = readAll(raiiOpen(importedPath, O_RDONLY | O_CLOEXEC));
       auto importedInterfaces = scanCapnpInterfaces(importedSource);
       for (auto& importedInterface: importedInterfaces) {
@@ -3833,9 +3905,14 @@ private:
     output.addAll(kj::StringPtr("export const importSpecifier = "));
     appendJsString(output, specifier);
     output.addAll(kj::StringPtr(";\nexport const schemaPath = "));
-    appendJsString(output, resolvedPath);
+    if (browserModule) {
+      auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
+      appendJsString(output, moduleName);
+    } else {
+      appendJsString(output, resolvedPath);
+    }
     output.addAll(kj::StringPtr(";\nexport const schemaText = "));
-    appendJsString(output, schemaSource);
+    appendJsString(output, browserModule ? kj::StringPtr("") : schemaSource);
     output.addAll(kj::StringPtr(";\nexport const interfaceNames = Object.freeze(["));
     for (auto i: kj::indices(interfaces)) {
       if (i > 0) output.addAll(kj::StringPtr(", "));
@@ -3883,7 +3960,11 @@ private:
 
     output.addAll(kj::StringPtr(
         "\nfunction makeInterface(interfaceName, methodNames, metadata = {}) {\n"
-        "  return makeCapnpInterfaceBinding(interfaceName, methodNames, {\n"
+        "  return "));
+    output.addAll(browserModule
+        ? kj::StringPtr("makeBrowserCapnpInterfaceBinding")
+        : kj::StringPtr("makeCapnpInterfaceBinding"));
+    output.addAll(kj::StringPtr("(interfaceName, methodNames, {\n"
         "    importSpecifier,\n"
         "    interfaceId: metadata.interfaceId || \"\",\n"
         "    schemaPath,\n"
@@ -3992,6 +4073,10 @@ private:
                 if (wroteField) output.addAll(kj::StringPtr(", "));
                 appendJsString(output, namedParam.name);
                 output.addAll(kj::StringPtr(": "));
+                auto namedParamType = toStdString(namedParam.type);
+                if (nativeInterfaceSpecs.find(namedParamType) == nativeInterfaceSpecs.end()) {
+                  output.addAll(kj::StringPtr("() => "));
+                }
                 appendCapabilityCaster(output, namedParam.type);
                 wroteField = true;
               }
@@ -4258,6 +4343,8 @@ private:
   kj::String writePackIsolateSupportDir() {
     kj::String path = kj::heapString("/tmp/sandstorm-pack-isolate-runtime-XXXXXX");
     KJ_REQUIRE(mkdtemp(path.begin()) != nullptr, "mkdtemp() failed", path, strerror(errno));
+    KJ_SYSCALL(mkdir(kj::str(path, "/capnp").cStr(), 0700));
+    KJ_SYSCALL(mkdir(kj::str(path, "/capnp-browser").cStr(), 0700));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es-generated").cStr(), 0700));
     return path;
   }
@@ -4346,8 +4433,9 @@ private:
     }
   }
 
-  bool collectPackCapnpEsImportsFromModule(
+  bool collectPackCapnpImportsFromModule(
       kj::StringPtr packagePath, kj::Vector<DevIsolateModule>& generatedModules,
+      std::map<std::string, std::string>& capnpImports,
       std::map<std::string, std::string>& capnpEsImports) {
     auto maybeRealPath = trySourcePathForPackagePath(packagePath);
     KJ_IF_MAYBE(realPath, maybeRealPath) {
@@ -4363,15 +4451,19 @@ private:
       bool found = false;
 
       for (auto& specifier: imports) {
-        if (!isCapnpEsImport(specifier)) {
-          continue;
+        if (isCapnpImport(specifier)) {
+          auto resolvedImport = resolveDevIsolateCapnpImport(
+              importerDir, importerDir, specifier);
+          addDevIsolateCapnpModule(
+              specifier, resolvedImport, importerDir, generatedModules, capnpImports);
+          found = true;
+        } else if (isCapnpEsImport(specifier)) {
+          auto resolvedImport = resolveDevIsolateCapnpEsImport(
+              importerDir, importerDir, specifier);
+          addDevIsolateCapnpEsModule(
+              specifier, resolvedImport, importerDir, generatedModules, capnpEsImports);
+          found = true;
         }
-
-        auto resolvedImport = resolveDevIsolateCapnpEsImport(
-            importerDir, importerDir, specifier);
-        addDevIsolateCapnpEsModule(
-            specifier, resolvedImport, importerDir, generatedModules, capnpEsImports);
-        found = true;
       }
 
       return found;
@@ -4385,6 +4477,7 @@ private:
     kj::Vector<PackIsolateModuleSpec> oldModules;
     std::set<std::string> existingModuleNames;
     kj::Vector<DevIsolateModule> generatedModules;
+    std::map<std::string, std::string> capnpImports;
     std::map<std::string, std::string> capnpEsImports;
 
     for (auto i: kj::indices(oldModuleList)) {
@@ -4392,8 +4485,8 @@ private:
       auto spec = copyPackIsolateModuleSpec(module);
       existingModuleNames.insert(toStdString(spec.name));
       if (spec.type == DevIsolateModuleType::ES_MODULE) {
-        collectPackCapnpEsImportsFromModule(
-            spec.sourcePath, generatedModules, capnpEsImports);
+        collectPackCapnpImportsFromModule(
+            spec.sourcePath, generatedModules, capnpImports, capnpEsImports);
       }
       oldModules.add(kj::mv(spec));
     }
@@ -4460,6 +4553,10 @@ private:
       return;
     }
 
+    addArchiveDirectory(root, "__sandstorm_isolate_runtime/capnp",
+        kj::str(packIsolateSupportDir, "/capnp"));
+    addArchiveDirectory(root, "__sandstorm_isolate_runtime/capnp-browser",
+        kj::str(packIsolateSupportDir, "/capnp-browser"));
     addArchiveDirectory(root, "__sandstorm_isolate_runtime/capnp-es-generated",
         kj::str(packIsolateSupportDir, "/capnp-es-generated"));
     packManifestOverride = capnp::messageToFlatArray(manifestMessage);

@@ -912,6 +912,42 @@ void addGeneratedIsolateModule(
   config.modules.add(kj::mv(moduleConfig));
 }
 
+kj::String replaceAll(kj::StringPtr input, kj::StringPtr needle, kj::StringPtr replacement) {
+  auto inputStd = std::string(input.begin(), input.size());
+  auto needleStd = std::string(needle.begin(), needle.size());
+  auto replacementStd = std::string(replacement.begin(), replacement.size());
+  KJ_REQUIRE(!needleStd.empty(), "Internal error: empty replacement needle.");
+
+  std::string result;
+  size_t pos = 0;
+  for (;;) {
+    auto match = inputStd.find(needleStd, pos);
+    if (match == std::string::npos) {
+      result.append(inputStd, pos, std::string::npos);
+      break;
+    }
+    result.append(inputStd, pos, match - pos);
+    result += replacementStd;
+    pos = match + needleStd.size();
+  }
+  return kj::heapString(result.c_str());
+}
+
+kj::String capnpSchemeCapnpHelperSource() {
+  auto content = replaceAll(
+      ISOLATE_CAPNP_HELPER_SOURCE, "\"capnweb\"", "\"/capnp:/capnweb.js\"");
+  content = replaceAll(content, "\"capnp-es/index.mjs\"",
+      "\"/capnp-es:/capnp-es/index.mjs\"");
+  content = replaceAll(content, "\"sandstorm:native-capnp-bridge\"",
+      "\"/capnp:/sandstorm/native-capnp-bridge.js\"");
+  return content;
+}
+
+kj::String capnpSchemeNativeCapnpBridgeSource() {
+  return replaceAll(ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE, "\"capnp-es/index.mjs\"",
+      "\"/capnp-es:/capnp-es/index.mjs\"");
+}
+
 kj::String capnpEsRuntimePath(kj::StringPtr moduleName) {
   if (moduleName == "@mnutt/capnp-es") {
     return kj::heapString("capnp-es/index.mjs");
@@ -958,6 +994,12 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
       ISOLATE_API_HELPER_SOURCE);
   addGeneratedIsolateModule(config, "sandstorm:capnp", IsolateRuntimeConfig::ModuleType::ES_MODULE,
       ISOLATE_CAPNP_HELPER_SOURCE);
+  addGeneratedIsolateModule(config, "capnp:/capnweb.js",
+      IsolateRuntimeConfig::ModuleType::ES_MODULE, CAPNWEB_SOURCE);
+  addGeneratedIsolateModule(config, "capnp:/sandstorm/capnp.js",
+      IsolateRuntimeConfig::ModuleType::ES_MODULE, capnpSchemeCapnpHelperSource());
+  addGeneratedIsolateModule(config, "capnp:/sandstorm/native-capnp-bridge.js",
+      IsolateRuntimeConfig::ModuleType::ES_MODULE, capnpSchemeNativeCapnpBridgeSource());
   addGeneratedIsolateModule(config, "sandstorm:native-capnp-bridge",
       IsolateRuntimeConfig::ModuleType::ES_MODULE, ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE);
   for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
@@ -5067,6 +5109,8 @@ public:
         return sendJson(response, 200, "OK", renderBindings());
       } else if (route == "/capnp/bridge-info") {
         return sendJson(response, 200, "OK", renderCapnpBridgeInfo());
+      } else if (route == "/capnp/browser-module") {
+        return browserCapnpModule(path, response);
       } else if (route == "/permissions") {
         return sendJson(response, 200, "OK", renderPermissions());
       } else {
@@ -8230,6 +8274,57 @@ private:
     json.addAll(kj::StringPtr("\n  ]\n}\n"));
     json.add('\0');
     return kj::String(json.releaseAsArray());
+  }
+
+  kj::Promise<void> browserCapnpModule(kj::StringPtr url, kj::HttpService::Response& response) {
+    auto paths = findIsolateRawQueryParams(url, "path");
+    if (paths.size() != 1) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"expected exactly one path query parameter\"\n}\n"));
+    }
+
+    auto path = paths[0].asPtr();
+    if (path.size() == 0 || path.startsWith("/") || !path.endsWith(".capnp.js") ||
+        path.findFirst('\\') != nullptr) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"invalid browser Cap'n Proto module path\"\n}\n"));
+    }
+
+    size_t segmentStart = 0;
+    while (segmentStart <= path.size()) {
+      size_t segmentEnd = path.size();
+      KJ_IF_MAYBE(slash, path.slice(segmentStart).findFirst('/')) {
+        segmentEnd = segmentStart + *slash;
+      }
+      auto segment = path.slice(segmentStart, segmentEnd);
+      if (segment.size() == 0 ||
+          segment == kj::StringPtr(".") || segment == kj::StringPtr("..")) {
+        return sendJson(response, 400, "Bad Request", kj::heapString(
+            "{\n  \"ok\": false,\n"
+            "  \"error\": \"invalid browser Cap'n Proto module path\"\n}\n"));
+      }
+      if (segmentEnd == path.size()) {
+        break;
+      }
+      segmentStart = segmentEnd + 1;
+    }
+
+    auto schemaPath = path.slice(0, path.size() - strlen(".js"));
+    auto moduleName = kj::str("sandstorm:browser-capnp:./", schemaPath);
+    for (auto& module: config.modules) {
+      if (module.name == moduleName) {
+        kj::HttpHeaders responseHeaders(headerTable);
+        responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "text/javascript; charset=utf-8");
+        return sendBytes(response, 200, "OK", kj::mv(responseHeaders),
+            kj::heapArray<byte>(module.content.asPtr()));
+      }
+    }
+
+    return sendJson(response, 404, "Not Found", kj::heapString(
+        "{\n  \"ok\": false,\n"
+        "  \"error\": \"browser Cap'n Proto module not found\"\n}\n"));
   }
 
   kj::String renderBindings() {

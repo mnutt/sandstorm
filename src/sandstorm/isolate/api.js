@@ -2395,9 +2395,37 @@ export function powerboxGrants(request, env, options = {}) {
 }
 
 export async function serveSystemRoutes(request, env) {
-  return await serveNativeCapnpExportSession(request, { env }) ||
+  return await serveBrowserSystemRoute(request, env) ||
+    await serveNativeCapnpExportSession(request, { env }) ||
     await servePowerboxDescriptors(request, env) ||
     await serveObjectCapability(request, env);
+}
+
+async function serveBrowserSystemRoute(request, env) {
+  const url = new URL(request.url);
+
+  if (url.pathname === "/__sandstorm/rpc-client.js" && request.method === "GET") {
+    return new Response(rpcClientScript(), {
+      headers: { "content-type": "text/javascript; charset=utf-8" },
+    });
+  }
+
+  const capnpPrefix = "/__sandstorm/capnp/";
+  if (url.pathname.startsWith(capnpPrefix) && request.method === "GET") {
+    const path = url.pathname.slice(capnpPrefix.length);
+    const response = await env.SANDSTORM_API.fetch(
+      `http://sandstorm/capnp/browser-module?path=${encodeURIComponent(path)}`);
+    return new Response(await response.text(), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: {
+        "content-type": response.headers.get("content-type") ||
+          "text/javascript; charset=utf-8",
+      },
+    });
+  }
+
+  return null;
 }
 
 function webSessionPathPrefix(options = {}) {
@@ -3508,7 +3536,8 @@ export function sandstorm(request, env, options = {}) {
     exportDurable,
     powerboxFulfillment: (options = {}) => powerboxFulfillment(request, env, options),
     powerboxGrants: (options = {}) => powerboxGrants(request, env, options),
-    serveSystemRoutes: async () => await serveNativeCapnpExportSession(request, { env }) ||
+    serveSystemRoutes: async () => await serveBrowserSystemRoute(request, env) ||
+      await serveNativeCapnpExportSession(request, { env }) ||
       await servePowerboxDescriptors(request, env) ||
       await serveObjectCapability(request, env, durableRegistry),
     apiTarget: () => apiTarget(request, env),
