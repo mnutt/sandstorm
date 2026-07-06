@@ -842,10 +842,15 @@ Progress:
   the restricted native RPC bridge; the fake-core test harness now registers its
   SandstormCore capability explicitly so cross-supervisor client connections do
   not replace the grain's core authority target
+- the integration suite now restores the same saved isolate-defined
+  `NativeGreeter` token from a C++ harness and calls it through the ordinary
+  generated Cap'n Proto client API, covering the first legacy/native client path
+  without routing the call through isolate JS
 
 Interop tests:
 
-- legacy grain calls isolate-defined `Greeter`
+- legacy grain calls isolate-defined `Greeter` (covered by the C++ native
+  restore harness for `NativeGreeter`)
 - isolate calls legacy grain `Greeter`
 - isolate calls another isolate through saved/restored capability
 - legacy grain receives a capability returned by an isolate

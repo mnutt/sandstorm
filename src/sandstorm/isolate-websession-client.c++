@@ -28,6 +28,7 @@
 #include <sandstorm/outbound-http-session-impl.capnp.h>
 #include <sandstorm/outbound-http-session.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
+#include <sandstorm/test-app/isolate-test/native-greeter.capnp.h>
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
 
@@ -53,6 +54,8 @@ static_assert(capnp::typeId<NativeCapnpBridgeRequest>() == 0xa9d7cd8e6cc2b4e9,
     "NativeCapnpBridgeRequest schema ID changed");
 static_assert(capnp::typeId<NativeCapnpBridgeResponse>() == 0xc1ef5dce7db1a7f1,
     "NativeCapnpBridgeResponse schema ID changed");
+static_assert(capnp::typeId<NativeGreeter>() == 0xb66316217ceedb1b,
+    "NativeGreeter schema ID changed");
 
 bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
   if (needle.size() > haystack.size()) {
@@ -1125,6 +1128,26 @@ kj::String responseDebugBody(WebSession::Response::Reader response) {
   }
 }
 
+void testNativeGreeterToken(kj::WaitScope& waitScope, SandstormCore::Client core,
+    kj::StringPtr token) {
+  auto restoreRequest = core.restoreRequest();
+  restoreRequest.setToken(token.asBytes());
+  auto greeter = restoreRequest.send().wait(waitScope).getCap().castAs<NativeGreeter>();
+
+  auto helloRequest = greeter.helloRequest();
+  helloRequest.setName("legacy c++ client");
+  auto hello = helloRequest.send().wait(waitScope);
+  auto message = hello.getMessage();
+  KJ_REQUIRE(message == "cross supervisor native hello legacy c++ client", message);
+
+  auto saveRequest = greeter.castAs<SystemPersistent>().saveRequest();
+  auto owner = saveRequest.getSealFor().initGrain();
+  owner.setGrainId("native-greeter-legacy-client");
+  owner.getSaveLabel().setDefaultText("Native greeter legacy client fixture");
+  auto savedToken = saveRequest.send().wait(waitScope).getSturdyRef();
+  KJ_REQUIRE(savedToken.size() > 0);
+}
+
 class IsolateWebSessionClientMain {
 public:
   explicit IsolateWebSessionClientMain(kj::ProcessContext& context)
@@ -1137,6 +1160,9 @@ public:
             "Keep a fake SandstormCore connected until terminated.")
         .addOptionWithArg({"token-store"}, KJ_BIND_METHOD(*this, setTokenStorePath), "<path>",
             "Share fake SandstormCore route-backed saved tokens across core-server processes.")
+        .addOptionWithArg({"native-greeter-token"},
+            KJ_BIND_METHOD(*this, setNativeGreeterToken), "<token>",
+            "Restore and call a saved native NativeGreeter capability, then exit.")
         .expectArg("<supervisor-socket>", KJ_BIND_METHOD(*this, setSocketPath))
         .callAfterParsing(KJ_BIND_METHOD(*this, run))
         .build();
@@ -1157,6 +1183,11 @@ public:
     return true;
   }
 
+  kj::MainBuilder::Validity setNativeGreeterToken(kj::StringPtr token) {
+    nativeGreeterToken = kj::heapString(token);
+    return true;
+  }
+
   kj::MainBuilder::Validity run() {
     KJ_REQUIRE(socketPath != nullptr);
     testNativeObjectCapabilityTransport(io.waitScope);
@@ -1172,7 +1203,8 @@ public:
     auto selectedTokenStorePath = tokenStorePath == nullptr
         ? defaultTokenStorePath.asPtr()
         : tokenStorePath.asPtr();
-    auto fakeCore = coreServerMode
+    bool needsTokenStore = coreServerMode || nativeGreeterToken != nullptr;
+    auto fakeCore = needsTokenStore
         ? kj::heap<FakeSandstormCore>(
             io.provider->getNetwork(), sessionContextRef, socketPath, selectedTokenStorePath)
         : kj::heap<FakeSandstormCore>(
@@ -1189,6 +1221,12 @@ public:
 
     auto supervisor = rpcSystem.bootstrap(hostId).castAs<Supervisor>();
     fakeCoreRef.setSupervisor(supervisor);
+
+    if (nativeGreeterToken != nullptr) {
+      testNativeGreeterToken(io.waitScope, fakeCoreClient, nativeGreeterToken);
+      return true;
+    }
+
     auto keepAliveRequest = supervisor.keepAliveRequest();
     keepAliveRequest.setCore(fakeCoreClient);
     keepAliveRequest.send().wait(io.waitScope);
@@ -2318,6 +2356,7 @@ private:
   kj::AsyncIoContext io;
   kj::String socketPath;
   kj::String tokenStorePath;
+  kj::String nativeGreeterToken;
   bool coreServerMode = false;
 };
 
