@@ -800,6 +800,10 @@ Progress:
   connect a generated `WebSession` client to a route-backed Sandstorm
   capability with `connectNativeCapnp()`, call `get()`, and decode the typed
   `Response.content.body.bytes` result across the restricted native RPC bridge
+- generated clients can now receive a returned native capability through the
+  RPC result cap table: the integration fixture forces a streamed WebSession
+  response, observes `Response.content.body.stream`, and calls the returned
+  generated `Handle.ping()` client over the same restricted native RPC bridge
 
 Interop tests:
 

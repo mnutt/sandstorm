@@ -535,6 +535,16 @@ export default {
       });
     }
 
+    if (url.pathname === "/native-capnp-bridge-target/generated-client-stream") {
+      const body = makeBytes(70 * 1024);
+      return new Response(body, {
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(body.byteLength),
+        },
+      });
+    }
+
     if (url.pathname === "/browser-powerbox") {
       return new Response(renderBrowserPowerboxPage(), {
         headers: { "content-type": "text/html; charset=utf-8" },
@@ -3885,6 +3895,8 @@ export default {
       { connectionId: `native-capnp-fixture-generated-${nativeCapnpTarget.id}` });
     let nativeCapnpGeneratedClientResult = null;
     let nativeCapnpGeneratedClientError = "";
+    let nativeCapnpGeneratedStreamResult = null;
+    let nativeCapnpGeneratedStreamError = "";
     try {
       const generatedResponse = await nativeCapnpGeneratedWebSession.get({
         path: "/generated-client",
@@ -3906,6 +3918,28 @@ export default {
       };
     } catch (error) {
       nativeCapnpGeneratedClientError = `${error.name}: ${error.message}`;
+    }
+
+    try {
+      const generatedStreamResponse = await nativeCapnpGeneratedWebSession.get({
+        path: "/generated-client-stream",
+        context: {},
+        ignoreBody: false,
+      });
+      const streamBody = generatedStreamResponse.content.body;
+      const streamHandle = streamBody.stream;
+      await streamHandle.ping();
+      nativeCapnpGeneratedStreamResult = {
+        responseWhich: generatedStreamResponse.which(),
+        content: generatedStreamResponse._isContent,
+        statusCode: generatedStreamResponse.content.statusCode,
+        mimeType: generatedStreamResponse.content.mimeType,
+        bodyWhich: streamBody.which(),
+        handleClient: typeof streamHandle.ping === "function",
+        pinged: true,
+      };
+    } catch (error) {
+      nativeCapnpGeneratedStreamError = `${error.name}: ${error.message}`;
     }
     let nativeCapnpBridgeTransportError = "";
     let nativeCapnpBridgeTransportMessage = null;
@@ -4253,9 +4287,12 @@ export default {
           generatedClient: {
             ok: nativeCapnpGeneratedClientError === "",
             error: nativeCapnpGeneratedClientError,
+            streamOk: nativeCapnpGeneratedStreamError === "",
+            streamError: nativeCapnpGeneratedStreamError,
             targetId: nativeCapnpGeneratedWebSession.capability.id,
             connectionId: nativeCapnpGeneratedWebSession.transport.connectionId,
             response: nativeCapnpGeneratedClientResult,
+            stream: nativeCapnpGeneratedStreamResult,
           },
           lifecycleBinary: nativeCapnpLifecycleBinary,
           unknownTargetError: unknownNativeCapnpBridgeCall.error,

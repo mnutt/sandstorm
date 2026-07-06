@@ -1012,6 +1012,7 @@ test("isolate supervisor integration suite", {
       "string");
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id.length > 0);
     assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.error, "");
+    assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.streamError, "");
     assert.equal(
       typeof body.sandstormApi.nativeCapnpBridge.generatedClient.response.bodyText,
       "string");
@@ -1027,6 +1028,15 @@ test("isolate supervisor integration suite", {
         pathname: "/native-capnp-bridge-target/generated-client",
         search: "",
       });
+    assert.deepEqual(body.sandstormApi.nativeCapnpBridge.generatedClient.stream, {
+      responseWhich: 1,
+      content: true,
+      statusCode: 0,
+      mimeType: "application/octet-stream",
+      bodyWhich: 1,
+      handleClient: true,
+      pinged: true,
+    });
     assert.deepEqual(body.capnpEs.bridgeRequest, {
       protocolVersion: 0,
       which: 0,
@@ -1302,6 +1312,8 @@ test("isolate supervisor integration suite", {
       generatedClient: {
         ok: true,
         error: "",
+        streamOk: true,
+        streamError: "",
         targetId: body.sandstormApi.nativeCapnpBridge.targetId,
         connectionId:
             `native-capnp-fixture-generated-${body.sandstormApi.nativeCapnpBridge.targetId}`,
@@ -1313,6 +1325,15 @@ test("isolate supervisor integration suite", {
           bodyWhich: 0,
           bodyBytes: body.sandstormApi.nativeCapnpBridge.generatedClient.response.bodyBytes,
           bodyText: body.sandstormApi.nativeCapnpBridge.generatedClient.response.bodyText,
+        },
+        stream: {
+          responseWhich: 1,
+          content: true,
+          statusCode: 0,
+          mimeType: "application/octet-stream",
+          bodyWhich: 1,
+          handleClient: true,
+          pinged: true,
         },
       },
       lifecycleBinary: {
