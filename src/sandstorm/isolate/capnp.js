@@ -3,7 +3,7 @@ import {
   Conn as CapnpEsConn,
   DeferredTransport as CapnpEsDeferredTransport,
   Message as CapnpEsMessage,
-} from "@mnutt/capnp-es";
+} from "capnp-es:/capnp-es/index.mjs";
 import {
   NativeCapnpBridgeRequest,
   NativeCapnpBridgeResponse,
@@ -896,6 +896,74 @@ export class NativeCapnpStreamTransport extends CapnpEsDeferredTransport {
   }
 }
 
+export class NativeCapnpWebSocketTransport extends CapnpEsDeferredTransport {
+  #webSocket;
+  #sendQueue = Promise.resolve();
+  #connection;
+
+  constructor(webSocket, options = {}) {
+    super();
+    if (!webSocket || typeof webSocket.send !== "function" ||
+        typeof webSocket.addEventListener !== "function") {
+      throw new TypeError("NativeCapnpWebSocketTransport requires a WebSocket");
+    }
+
+    this.#webSocket = webSocket;
+    this.#connection = options.connection || null;
+    this.#webSocket.binaryType = "arraybuffer";
+    this.#webSocket.addEventListener("message", (event) => {
+      try {
+        this.resolve(nativeCapnpMessageBytes(event.data));
+      } catch (error) {
+        this.abort(error);
+      }
+    });
+    this.#webSocket.addEventListener("close", () => this.close());
+    this.#webSocket.addEventListener("error", (event) => this.abort(event.error || event));
+  }
+
+  attachConnection(connection) {
+    this.#connection = connection;
+  }
+
+  sendMessage(message) {
+    if (this.closed) {
+      throw new NativeCapnpBridgeUnavailableError(
+        "native Cap'n Proto WebSocket transport is closed");
+    }
+
+    const bytes = nativeCapnpRootMessageBytes(message);
+    this.#sendQueue = this.#sendQueue
+      .then(() => this.#webSocket.send(bytes))
+      .catch((error) => this.abort(error));
+  }
+
+  abort(error) {
+    if (this.closed) {
+      return;
+    }
+
+    if (this.#connection && !this.#connection.closed) {
+      this.#connection.shutdown(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+
+    this.close(error);
+  }
+
+  close(error) {
+    if (this.closed) {
+      return;
+    }
+
+    try {
+      this.#webSocket.close(error === undefined ? 1000 : 1011);
+    } catch (_) {}
+
+    super.close(error);
+  }
+}
+
 export function createNativeCapnpBridgeConnection(api, target, options = {}) {
   const transport = new NativeCapnpBridgeTransport(api, target, options);
   const conn = new CapnpEsConn(transport, options.finalize);
@@ -911,13 +979,15 @@ function validateNativeCapnpGeneratedInterface(InterfaceClass, operation) {
 }
 
 export function createNativeCapnpExportSession(
-    InterfaceClass, target, { readable, writable, finalize } = {}) {
+    InterfaceClass, target, { readable, writable, webSocket, finalize } = {}) {
   validateNativeCapnpGeneratedInterface(InterfaceClass, "createNativeCapnpExportSession()");
   if (!target || typeof target !== "object") {
     throw new TypeError("createNativeCapnpExportSession() requires a server target object");
   }
 
-  const transport = new NativeCapnpStreamTransport(readable, writable);
+  const transport = webSocket
+    ? new NativeCapnpWebSocketTransport(webSocket)
+    : new NativeCapnpStreamTransport(readable, writable);
   const connection = new CapnpEsConn(transport, finalize);
   transport.attachConnection(connection);
   connection.initMain(InterfaceClass, target);
@@ -960,15 +1030,6 @@ export async function serveNativeCapnpExportSession(request, options = {}) {
   if (!url.pathname.startsWith(`${NATIVE_CAPNP_EXPORT_SESSION_PREFIX}/`)) {
     return null;
   }
-  if (request.method !== "POST") {
-    return Response.json({ ok: false, error: "method not allowed" }, { status: 405 });
-  }
-  if (!request.body) {
-    return Response.json(
-      { ok: false, error: "native Cap'n Proto export session requires a request stream" },
-      { status: 400 });
-  }
-
   const id = decodeURIComponent(
     url.pathname.slice(NATIVE_CAPNP_EXPORT_SESSION_PREFIX.length + 1));
   const registry = options.registry || nativeCapnpExportTargets;
@@ -977,6 +1038,33 @@ export async function serveNativeCapnpExportSession(request, options = {}) {
     return Response.json(
       { ok: false, error: "unknown native Cap'n Proto export target" },
       { status: 404 });
+  }
+
+  if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+    if (request.method !== "GET") {
+      return Response.json({ ok: false, error: "method not allowed" }, { status: 405 });
+    }
+
+    const pair = new WebSocketPair();
+    const server = pair[0];
+    server.accept();
+    createNativeCapnpExportSession(entry.InterfaceClass, entry.target, {
+      webSocket: server,
+      finalize: options.finalize,
+    });
+    return new Response(null, {
+      status: 101,
+      webSocket: pair[1],
+    });
+  }
+
+  if (request.method !== "POST") {
+    return Response.json({ ok: false, error: "method not allowed" }, { status: 405 });
+  }
+  if (!request.body) {
+    return Response.json(
+      { ok: false, error: "native Cap'n Proto export session requires a request stream" },
+      { status: 400 });
   }
 
   const responseStream = new TransformStream();

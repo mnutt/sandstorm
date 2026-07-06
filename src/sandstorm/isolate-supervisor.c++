@@ -55,6 +55,7 @@
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
 #include <netinet/in.h>
+#include <sodium/randombytes.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -4752,16 +4753,31 @@ private:
 
   std::map<std::string, kj::Own<NativeCapnpBridgeRpcSession>> nativeCapnpBridgeRpcSessions;
 
-  struct NativeCapnpExportHttpState final: public kj::Refcounted {
+  class NativeCapnpExportEntropySource final: public kj::EntropySource {
+  public:
+    void generate(kj::ArrayPtr<byte> buffer) override {
+      randombytes_buf(buffer.begin(), buffer.size());
+    }
+  };
+
+  struct NativeCapnpExportWebSocketState final: public kj::Refcounted {
     kj::Own<kj::NetworkAddress> addr;
     kj::Own<kj::HttpClient> client;
-    kj::Own<kj::AsyncOutputStream> requestBody;
-    kj::Promise<kj::HttpClient::Response> response = nullptr;
-    kj::Maybe<kj::Own<kj::AsyncInputStream>> responseBody;
+    kj::Own<kj::WebSocket> webSocket;
 
-    NativeCapnpExportHttpState(kj::Own<kj::NetworkAddress>&& addr,
-        kj::Own<kj::HttpClient>&& client)
-        : addr(kj::mv(addr)), client(kj::mv(client)) {}
+    NativeCapnpExportWebSocketState(kj::Own<kj::NetworkAddress>&& addr,
+        kj::Own<kj::HttpClient>&& client, kj::Own<kj::WebSocket>&& webSocket)
+        : addr(kj::mv(addr)), client(kj::mv(client)), webSocket(kj::mv(webSocket)) {}
+  };
+
+  struct NativeCapnpExportFailedWebSocketState final: public kj::Refcounted {
+    kj::Own<kj::NetworkAddress> addr;
+    kj::Own<kj::HttpClient> client;
+    kj::Own<kj::AsyncInputStream> body;
+
+    NativeCapnpExportFailedWebSocketState(kj::Own<kj::NetworkAddress>&& addr,
+        kj::Own<kj::HttpClient>&& client, kj::Own<kj::AsyncInputStream>&& body)
+        : addr(kj::mv(addr)), client(kj::mv(client)), body(kj::mv(body)) {}
   };
 
   class NativeCapnpExportHttpMessageStream final: public capnp::MessageStream {
@@ -4771,32 +4787,34 @@ private:
         : config(kj::mv(config)),
           host(kj::mv(host)),
           headerTable(headerTable),
-          path(kj::mv(path)),
-          started(start().fork()) {}
+          path(kj::mv(path)) {}
 
     kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> tryReadMessage(
         kj::ArrayPtr<kj::AutoCloseFd> fdSpace,
         capnp::ReaderOptions options = capnp::ReaderOptions(),
         kj::ArrayPtr<capnp::word> scratchSpace = nullptr) override {
       (void)fdSpace;
-      return started.addBranch().then([this, options, scratchSpace]() mutable {
+      return ensureStarted().then([this, options, scratchSpace]() mutable {
         auto& current = KJ_ASSERT_NONNULL(state);
-        KJ_IF_MAYBE(body, current->responseBody) {
-          return readFromResponse(**body, options, scratchSpace);
-        }
-
-        auto response = kj::mv(current->response);
-        return response.then([this, options, scratchSpace](
-            kj::HttpClient::Response&& response) mutable {
-          KJ_REQUIRE(response.statusCode == 200,
-              "native Cap'n Proto export session returned an unsuccessful status",
-              response.statusCode, response.statusText);
-          KJ_REQUIRE(response.body.get() != nullptr,
-              "native Cap'n Proto export session did not return a response stream");
-          auto& current = KJ_ASSERT_NONNULL(state);
-          current->responseBody = kj::mv(response.body);
-          auto& body = KJ_ASSERT_NONNULL(current->responseBody);
-          return readFromResponse(*body, options, scratchSpace);
+        return current->webSocket->receive(kj::WebSocket::SUGGESTED_MAX_MESSAGE_SIZE)
+            .then([options, scratchSpace](kj::WebSocket::Message&& message) mutable
+                -> kj::Maybe<capnp::MessageReaderAndFds> {
+          KJ_SWITCH_ONEOF(message) {
+            KJ_CASE_ONEOF(text, kj::String) {
+              KJ_FAIL_REQUIRE("native Cap'n Proto export session received a text WebSocket frame");
+            }
+            KJ_CASE_ONEOF(bytes, kj::Array<byte>) {
+              kj::ArrayInputStream input(bytes);
+              auto reader = kj::heap<capnp::InputStreamMessageReader>(
+                  input, options, scratchSpace);
+              return capnp::MessageReaderAndFds { kj::mv(reader), nullptr };
+            }
+            KJ_CASE_ONEOF(close, kj::WebSocket::Close) {
+              (void)close;
+              return nullptr;
+            }
+          }
+          KJ_UNREACHABLE;
         });
       });
     }
@@ -4808,12 +4826,11 @@ private:
             "native Cap'n Proto export sessions do not support file descriptors");
       }
 
-      auto fork = writeQueue.then([this, segments]() mutable {
-        return started.addBranch().then([this, segments]() mutable {
+      auto data = serializeMessageSegments(segments);
+      auto fork = writeQueue.then([this, data = kj::mv(data)]() mutable {
+        return ensureStarted().then([this, data = kj::mv(data)]() mutable {
           auto& current = KJ_ASSERT_NONNULL(state);
-          KJ_REQUIRE(current->requestBody.get() != nullptr,
-              "native Cap'n Proto export request stream is closed");
-          return capnp::writeMessage(*current->requestBody, segments);
+          return current->webSocket->send(data.asPtr()).attach(kj::mv(data));
         });
       }).fork();
       writeQueue = fork.addBranch();
@@ -4822,12 +4839,21 @@ private:
 
     kj::Promise<void> writeMessages(
         kj::ArrayPtr<kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>>> messages) override {
-      auto fork = writeQueue.then([this, messages]() mutable {
-        return started.addBranch().then([this, messages]() mutable {
+      kj::Vector<kj::Array<byte>> serialized;
+      for (auto message: messages) {
+        serialized.add(serializeMessageSegments(message));
+      }
+      auto fork = writeQueue.then([this, serialized = serialized.releaseAsArray()]() mutable {
+        return ensureStarted().then([this, serialized = kj::mv(serialized)]() mutable {
           auto& current = KJ_ASSERT_NONNULL(state);
-          KJ_REQUIRE(current->requestBody.get() != nullptr,
-              "native Cap'n Proto export request stream is closed");
-          return capnp::writeMessages(*current->requestBody, messages);
+          auto webSocket = current->webSocket.get();
+          kj::Promise<void> result = kj::READY_NOW;
+          for (auto& message: serialized) {
+            result = result.then([webSocket, data = kj::mv(message)]() mutable {
+              return webSocket->send(data.asPtr()).attach(kj::mv(data));
+            });
+          }
+          return kj::mv(result).attach(kj::mv(serialized));
         });
       }).fork();
       writeQueue = fork.addBranch();
@@ -4839,12 +4865,20 @@ private:
     }
 
     kj::Promise<void> end() override {
-      auto fork = writeQueue.then([this]() mutable {
-        return started.addBranch().then([this]() mutable {
-          KJ_IF_MAYBE(current, state) {
-            (*current)->requestBody = nullptr;
-          }
-        });
+      auto fork = writeQueue.then([this]() mutable -> kj::Promise<void> {
+        KJ_IF_MAYBE(existing, started) {
+          return existing->addBranch().then([this]() mutable -> kj::Promise<void> {
+            KJ_IF_MAYBE(current, state) {
+              return (*current)->webSocket->close(1000, "native Cap'n Proto export session ended");
+            }
+            return kj::READY_NOW;
+          });
+        }
+
+        KJ_IF_MAYBE(current, state) {
+          return (*current)->webSocket->close(1000, "native Cap'n Proto export session ended");
+        }
+        return kj::READY_NOW;
       }).fork();
       writeQueue = fork.addBranch();
       return fork.addBranch();
@@ -4855,40 +4889,81 @@ private:
     kj::Own<IsolateRuntimeHost> host;
     kj::HttpHeaderTable& headerTable;
     kj::String path;
-    kj::Maybe<kj::Own<NativeCapnpExportHttpState>> state;
-    kj::ForkedPromise<void> started;
+    kj::Maybe<kj::Own<NativeCapnpExportWebSocketState>> state;
+    kj::Maybe<kj::ForkedPromise<void>> started;
     kj::Promise<void> writeQueue = kj::READY_NOW;
+
+    kj::Promise<void> ensureStarted() {
+      KJ_IF_MAYBE(existing, started) {
+        return existing->addBranch();
+      }
+
+      started = start().fork();
+      return KJ_ASSERT_NONNULL(started).addBranch();
+    }
 
     kj::Promise<void> start() {
       return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
           .then([this](kj::Own<kj::NetworkAddress>&& addr) mutable {
-        auto client = kj::newHttpClient(host->timer, headerTable, *addr);
-        auto newState = kj::refcounted<NativeCapnpExportHttpState>(kj::mv(addr), kj::mv(client));
+        static NativeCapnpExportEntropySource entropySource;
+        kj::HttpClientSettings settings;
+        settings.entropySource = entropySource;
+        auto client = kj::newHttpClient(host->timer, headerTable, *addr, settings);
         kj::HttpHeaders headers(headerTable);
-        headers.add("content-type", "application/octet-stream");
-
-        auto httpRequest = newState->client->request(
-            kj::HttpMethod::POST, path, headers, kj::Maybe<uint64_t>(nullptr));
-        KJ_REQUIRE(httpRequest.body.get() != nullptr,
-            "native Cap'n Proto export session did not produce a request stream");
-        newState->requestBody = kj::mv(httpRequest.body);
-        newState->response = kj::mv(httpRequest.response);
-        state = kj::mv(newState);
+        headers.set(kj::HttpHeaderId::HOST, "sandbox");
+        return client->openWebSocket(path, headers)
+            .then([this, addr = kj::mv(addr), client = kj::mv(client)](
+                kj::HttpClient::WebSocketResponse&& response) mutable -> kj::Promise<void> {
+          if (response.statusCode != 101) {
+            auto statusCode = response.statusCode;
+            auto statusText = kj::str(response.statusText);
+            KJ_LOG(WARNING, "Native Cap'n Proto export WebSocket returned an unsuccessful status.",
+                statusCode, statusText);
+            KJ_SWITCH_ONEOF(response.webSocketOrBody) {
+              KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
+                auto failed = kj::refcounted<NativeCapnpExportFailedWebSocketState>(
+                    kj::mv(addr), kj::mv(client), kj::mv(body));
+                return failed->body->readAllText()
+                    .then([statusCode, statusText = kj::mv(statusText),
+                        failed = kj::mv(failed)](kj::String&& bodyText) mutable {
+                  (void)failed;
+                  KJ_FAIL_REQUIRE(
+                      "native Cap'n Proto export WebSocket returned an unsuccessful status",
+                      statusCode, statusText, bodyText);
+                });
+              }
+              KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
+                (void)webSocket;
+                KJ_FAIL_REQUIRE(
+                    "native Cap'n Proto export WebSocket returned an unsuccessful status",
+                    statusCode, statusText);
+              }
+            }
+          }
+          KJ_SWITCH_ONEOF(response.webSocketOrBody) {
+            KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
+              (void)body;
+              KJ_FAIL_REQUIRE("native Cap'n Proto export WebSocket did not upgrade");
+            }
+            KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
+              state = kj::refcounted<NativeCapnpExportWebSocketState>(
+                  kj::mv(addr), kj::mv(client), kj::mv(webSocket));
+              return kj::READY_NOW;
+            }
+          }
+          KJ_UNREACHABLE;
+        });
       });
     }
 
-    kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> readFromResponse(
-        kj::AsyncInputStream& body, capnp::ReaderOptions options,
-        kj::ArrayPtr<capnp::word> scratchSpace) {
-      return capnp::tryReadMessage(body, options, scratchSpace)
-          .then([](kj::Maybe<kj::Own<capnp::MessageReader>> maybeReader)
-              -> kj::Maybe<capnp::MessageReaderAndFds> {
-        KJ_IF_MAYBE(reader, maybeReader) {
-          return capnp::MessageReaderAndFds { kj::mv(*reader), nullptr };
-        } else {
-          return nullptr;
-        }
-      });
+    kj::Array<byte> serializeMessageSegments(
+        kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) {
+      kj::VectorOutputStream output;
+      capnp::writeMessage(output, segments);
+      auto data = output.getArray();
+      auto result = kj::heapArray<byte>(data.size());
+      memcpy(result.begin(), data.begin(), data.size());
+      return result;
     }
   };
 
@@ -6161,12 +6236,19 @@ private:
         kj::mv(ids[0]),
         kj::str("/__sandstorm/native-capnp/export-sessions/", encodedId),
         interfaceId, kj::mv(interfaceNames[0]));
-    auto capId = host.sessions->storeClaimedCapability(
-        KJ_ASSERT_NONNULL(session->cap), makeNativeCapnpExportClaimedCapabilityMetadata());
-    auto inserted = nativeCapnpExportRpcSessions.emplace(
-        std::string(capId.begin(), capId.size()), kj::mv(session));
-    KJ_ASSERT(inserted.second);
-    return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+    auto cap = KJ_ASSERT_NONNULL(session->cap);
+    return cap.whenResolved()
+        .then([this, &response, session = kj::mv(session)]() mutable {
+      auto capId = host.sessions->storeClaimedCapability(
+          KJ_ASSERT_NONNULL(session->cap), makeNativeCapnpExportClaimedCapabilityMetadata());
+      auto inserted = nativeCapnpExportRpcSessions.emplace(
+          std::string(capId.begin(), capId.size()), kj::mv(session));
+      KJ_ASSERT(inserted.second);
+      return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+    }).catch_([this, &response](kj::Exception&& exception) mutable {
+      return sendJson(response, 502, "Bad Gateway", renderError(
+          kj::str("native Cap'n Proto export bootstrap failed: ", exception.getDescription())));
+    });
   }
 
   kj::Promise<void> callWorkerAppObjectCapability(

@@ -1224,6 +1224,8 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(
       body.sandstormApi.capnpBridgeRpcNegotiation.info,
       body.sandstormApi.capnpBridgeInfo);
+    assert.equal(body.sandstormApi.nativeCapnpExport.webSession.ok, true,
+      JSON.stringify(body.sandstormApi.nativeCapnpExport.webSession, null, 2));
     assert.deepEqual(body.sandstormApi.nativeCapnpExport, {
       stream: {
         serverBootstrap: true,
@@ -1238,6 +1240,32 @@ test("isolate supervisor integration suite", {
           ok: true,
           type: "capabilityInfo",
           id: body.sandstormApi.nativeCapnpExport.capability.info.id,
+          kind: "nativeCapnpExport",
+          residence: "localExport",
+          nativeInterface: "unknown",
+          pathPrefix: "",
+          persistent: true,
+          hasDropNotify: false,
+          dropNotifyRefCount: 0,
+          supportsWebFetch: true,
+          supportsOutboundHttpFetch: true,
+          hasNativeCapability: true,
+          liveForwardable: true,
+        },
+        drop: {
+          ok: true,
+          released: false,
+        },
+      },
+      webSession: {
+        ok: true,
+        status: 200,
+        contentType: "text/plain; charset=utf-8",
+        text: "native export websession get native-export-websession?from=fetch",
+        info: {
+          ok: true,
+          type: "capabilityInfo",
+          id: body.sandstormApi.nativeCapnpExport.webSession.info.id,
           kind: "nativeCapnpExport",
           residence: "localExport",
           nativeInterface: "unknown",

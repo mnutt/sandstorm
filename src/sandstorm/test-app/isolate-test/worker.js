@@ -3686,6 +3686,49 @@ export default {
     const nativeExportCapability = await exportNativeCapnp(apiHelper, nativeExportInterface, {});
     const nativeExportCapabilityInfo = await nativeExportCapability.info();
     const nativeExportCapabilityDrop = await nativeExportCapability.drop();
+    const nativeExportWebSessionTarget = {
+      async get(params) {
+        const path = typeof params?.path === "string" ? params.path : "";
+        const text = `native export websession get ${path}`;
+        return {
+          content: {
+            statusCode: WebSession.Response.SuccessCode.OK,
+            mimeType: "text/plain; charset=utf-8",
+            body: { bytes: new TextEncoder().encode(text) },
+          },
+        };
+      },
+    };
+    let nativeExportWebSessionResult;
+    try {
+      const nativeExportWebSession = await exportNativeCapnp(
+        apiHelper,
+        WebSession,
+        nativeExportWebSessionTarget,
+        {
+          interfaceId: WebSession.interfaceId ?? WebSession.Client?.interfaceId,
+          interfaceName: "sandstorm.WebSession",
+        });
+      const nativeExportWebSessionFetch =
+          await nativeExportWebSession.fetch("/native-export-websession?from=fetch");
+      const nativeExportWebSessionInfo = await nativeExportWebSession.info();
+      const nativeExportWebSessionDrop = await nativeExportWebSession.drop();
+      nativeExportWebSessionResult = {
+        ok: true,
+        status: nativeExportWebSessionFetch.status,
+        contentType: nativeExportWebSessionFetch.headers.get("content-type"),
+        text: await nativeExportWebSessionFetch.text(),
+        info: nativeExportWebSessionInfo,
+        drop: nativeExportWebSessionDrop,
+      };
+    } catch (error) {
+      nativeExportWebSessionResult = {
+        ok: false,
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+      };
+    }
     const nativeExportUnknownRouteResponse = await serveSystemRoutes(new Request(
       "http://sandstorm/__sandstorm/native-capnp/export-sessions/missing-export", {
         method: "POST",
@@ -4353,6 +4396,7 @@ export default {
             info: nativeExportCapabilityInfo,
             drop: nativeExportCapabilityDrop,
           },
+          webSession: nativeExportWebSessionResult,
           unknownRoute: nativeExportUnknownRoute,
         },
         nativeCapnpBridge: {

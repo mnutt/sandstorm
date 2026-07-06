@@ -823,6 +823,15 @@ Progress:
   `/capabilities/native-capnp-export`, and the C++ side keeps a live
   `TwoPartyVatNetwork` client over the reserved Web Streams endpoint; bridge
   negotiation now advertises `nativeExports`
+- minted isolate exports now use a C++ WebSocket transport on the normal native
+  capability path: the supervisor opens the isolate export session, reaches the
+  generated `@mnutt/capnp-es` server, and the integration fixture exports a
+  generated `WebSession` implementation that can be fetched through the claimed
+  Sandstorm capability
+- generated `capnp-es:` modules and Sandstorm's native bridge helpers now share
+  the same bundled `@mnutt/capnp-es` runtime module identity, so generated
+  server registrations populate the `Registry` instance used by native RPC
+  dispatch
 
 Interop tests:
 
