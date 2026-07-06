@@ -1047,6 +1047,10 @@ Progress:
 - `spk dev-isolate --app-interface <capnp-specifier>#<Interface>` now resolves
   the named Cap'n Proto interface ID and materializes a normal
   `PowerboxDescriptor` tag in the generated `bridgeConfig.viewInfo.matchRequests`
+- `spk powerbox-descriptor <capnp-specifier>#<Interface>` now emits the same
+  single-tag packed `PowerboxDescriptor` used by browser Powerbox requests, with
+  `--format=capnp` for package authors who want a pasteable
+  `viewInfo.matchRequests` descriptor and `--format=json` for tooling/tests
 
 Exit criteria:
 
