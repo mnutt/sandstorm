@@ -909,6 +909,14 @@ Implementation work:
 - support local/in-memory browser tests
 - document frontend bundler behavior for `capnp:` imports
 
+Progress:
+
+- the browser RPC helper now exposes `makeBrowserCapnpInterfaceBinding()` and
+  `connectBrowserCapnp()`, giving browser code a schema-shaped client facade
+  over Cap'n Web stubs; the isolate browser RPC fixture imports a generated-like
+  `NativeGreeter` module, calls schema-named methods, casts a returned
+  capability, and passes that capability back as an argument
+
 Powerbox work:
 
 - generate request descriptors from interface metadata

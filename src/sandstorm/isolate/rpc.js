@@ -128,6 +128,207 @@ export async function requestAndClaimPowerbox(query, options = {}) {
   };
 }
 
+function browserCapnpMethodNames(binding) {
+  const methodNames = binding?.methodNames || binding?.schema?.methodNames;
+  if (!Array.isArray(methodNames)) {
+    throw new TypeError("browser Cap'n Proto binding requires methodNames");
+  }
+  return methodNames;
+}
+
+function browserCapnpSchema(binding) {
+  return binding?.schema && typeof binding.schema === "object" ? binding.schema : {};
+}
+
+function resolveBrowserResultBinding(interfaceName, methodName, caster) {
+  const binding = typeof caster === "function" ? caster() : caster;
+  if (!binding || typeof binding !== "object") {
+    throw new TypeError(
+      interfaceName + "." + methodName + " result capability caster must be a schema binding");
+  }
+  return binding;
+}
+
+function browserCapabilityPath(path) {
+  const parts = typeof path === "string" ? path.split(".") : path;
+  if (!Array.isArray(parts) || parts.length === 0) {
+    throw new TypeError("browser Cap'n Proto capability path must be non-empty");
+  }
+  return parts;
+}
+
+function browserCapabilityPathEntries(spec) {
+  if (!spec || typeof spec !== "object") return [];
+  const entries = [];
+  const fields = spec.fields;
+  if (Array.isArray(fields)) {
+    for (const [field, caster] of fields) {
+      entries.push([browserCapabilityPath([field]), caster]);
+    }
+  } else if (fields && typeof fields === "object") {
+    for (const [field, caster] of Object.entries(fields)) {
+      entries.push([browserCapabilityPath([field]), caster]);
+    }
+  }
+
+  const paths = spec.paths;
+  if (Array.isArray(paths)) {
+    for (const [path, caster] of paths) {
+      entries.push([browserCapabilityPath(path), caster]);
+    }
+  } else if (paths && typeof paths === "object") {
+    for (const [path, caster] of Object.entries(paths)) {
+      entries.push([browserCapabilityPath(path), caster]);
+    }
+  }
+  return entries;
+}
+
+function mapBrowserCapabilityPath(value, path, mapper) {
+  if (path.length === 0) return mapper(value);
+  if (!value || typeof value !== "object" || value.__sandstormCapnpBrowserStub) {
+    return value;
+  }
+
+  const [field, ...rest] = path;
+  if (!Object.prototype.hasOwnProperty.call(value, field)) {
+    return value;
+  }
+
+  const mapped = mapBrowserCapabilityPath(value[field], rest, mapper);
+  if (mapped === value[field]) return value;
+  const copy = Array.isArray(value) ? [...value] : { ...value };
+  copy[field] = mapped;
+  return copy;
+}
+
+function browserStubValue(value) {
+  return value && typeof value === "object" && value.__sandstormCapnpBrowserStub
+    ? value.stub
+    : value;
+}
+
+function castBrowserCapnpResult(interfaceName, methodName, result, resultCapabilities) {
+  const spec = resultCapabilities?.[methodName];
+  if (!spec) return result;
+
+  if (typeof spec === "function" || spec.methodNames || spec.schema) {
+    return connectBrowserCapnp(
+      result, resolveBrowserResultBinding(interfaceName, methodName, spec));
+  }
+
+  const paths = browserCapabilityPathEntries(spec);
+  if (paths.length === 0 || !result || typeof result !== "object") {
+    return result;
+  }
+
+  let casted = result;
+  for (const [path, caster] of paths) {
+    casted = mapBrowserCapabilityPath(casted, path, (value) => connectBrowserCapnp(
+      value, resolveBrowserResultBinding(interfaceName, methodName, caster)));
+  }
+  return casted;
+}
+
+function browserArgumentCapabilityPathEntries(spec) {
+  const entries = [];
+  const fields = spec?.fields;
+  if (Array.isArray(fields)) {
+    for (const field of fields) entries.push([browserCapabilityPath([field])]);
+  } else if (fields && typeof fields === "object") {
+    for (const field of Object.keys(fields)) entries.push([browserCapabilityPath([field])]);
+  }
+
+  const paths = spec?.paths;
+  if (Array.isArray(paths)) {
+    for (const entry of paths) {
+      entries.push([browserCapabilityPath(Array.isArray(entry) && entry.length === 2
+        ? entry[0]
+        : entry)]);
+    }
+  } else if (paths && typeof paths === "object") {
+    for (const path of Object.keys(paths)) entries.push([browserCapabilityPath(path)]);
+  }
+  return entries;
+}
+
+function normalizeBrowserCapnpArgs(methodName, args, argumentCapabilities) {
+  const spec = argumentCapabilities?.[methodName];
+  if (!spec) return args;
+
+  let normalized = args;
+  for (const index of spec.indexes || spec.indices || []) {
+    if (Number.isInteger(index) && index >= 0 && index < args.length) {
+      const next = browserStubValue(args[index]);
+      if (next !== args[index]) {
+        if (normalized === args) normalized = [...args];
+        normalized[index] = next;
+      }
+    }
+  }
+
+  const paths = browserArgumentCapabilityPathEntries(spec);
+  if (paths.length > 0 && args.length === 1) {
+    let first = normalized[0];
+    for (const [path] of paths) {
+      first = mapBrowserCapabilityPath(first, path, browserStubValue);
+    }
+    if (first !== normalized[0]) {
+      if (normalized === args) normalized = [...args];
+      normalized[0] = first;
+    }
+  }
+  return normalized;
+}
+
+export function connectBrowserCapnp(stub, binding) {
+  if (!stub || typeof stub !== "object" && typeof stub !== "function") {
+    throw new TypeError("connectBrowserCapnp() requires a Cap'n Web RPC stub");
+  }
+  const interfaceName = binding?.interfaceName || browserCapnpSchema(binding).interfaceName || "";
+  const methodNames = browserCapnpMethodNames(binding);
+  const schema = browserCapnpSchema(binding);
+  const argumentCapabilities = schema.argumentCapabilities || {};
+  const resultCapabilities = schema.resultCapabilities || {};
+  const client = {
+    __sandstormCapnpBrowserStub: true,
+    stub,
+  };
+  for (const methodName of methodNames) {
+    client[methodName] = async (...args) => {
+      const normalizedArgs = normalizeBrowserCapnpArgs(
+        methodName, args, argumentCapabilities);
+      const result = await stub[methodName](...normalizedArgs);
+      return castBrowserCapnpResult(interfaceName, methodName, result, resultCapabilities);
+    };
+  }
+  if (typeof stub[Symbol.dispose] === "function") {
+    client[Symbol.dispose] = () => stub[Symbol.dispose]();
+  }
+  return Object.freeze(client);
+}
+
+export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, schema = {}) {
+  const binding = {
+    interfaceName,
+    interfaceId: schema.interfaceId || "",
+    methodNames: Object.freeze([...methodNames]),
+    schema: Object.freeze({
+      ...schema,
+      interfaceName,
+      methodNames: Object.freeze([...methodNames]),
+      argumentCapabilities: Object.freeze({ ...(schema.argumentCapabilities || {}) }),
+      resultCapabilities: Object.freeze({ ...(schema.resultCapabilities || {}) }),
+    }),
+  };
+  return Object.freeze({
+    ...binding,
+    cast(stub) {
+      return connectBrowserCapnp(stub, binding);
+    },
+  });
+}
+
 function validatePackedDescriptor(descriptor, name = "descriptor") {
   if (typeof descriptor !== "string" || descriptor.length === 0) {
     throw new Error(`${name} must be a non-empty packed Powerbox descriptor string`);
@@ -477,6 +678,207 @@ export async function requestAndClaimPowerbox(query, options = {}) {
     ...requested,
     capability,
   };
+}
+
+function browserCapnpMethodNames(binding) {
+  const methodNames = binding?.methodNames || binding?.schema?.methodNames;
+  if (!Array.isArray(methodNames)) {
+    throw new TypeError("browser Cap'n Proto binding requires methodNames");
+  }
+  return methodNames;
+}
+
+function browserCapnpSchema(binding) {
+  return binding?.schema && typeof binding.schema === "object" ? binding.schema : {};
+}
+
+function resolveBrowserResultBinding(interfaceName, methodName, caster) {
+  const binding = typeof caster === "function" ? caster() : caster;
+  if (!binding || typeof binding !== "object") {
+    throw new TypeError(
+      interfaceName + "." + methodName + " result capability caster must be a schema binding");
+  }
+  return binding;
+}
+
+function browserCapabilityPath(path) {
+  const parts = typeof path === "string" ? path.split(".") : path;
+  if (!Array.isArray(parts) || parts.length === 0) {
+    throw new TypeError("browser Cap'n Proto capability path must be non-empty");
+  }
+  return parts;
+}
+
+function browserCapabilityPathEntries(spec) {
+  if (!spec || typeof spec !== "object") return [];
+  const entries = [];
+  const fields = spec.fields;
+  if (Array.isArray(fields)) {
+    for (const [field, caster] of fields) {
+      entries.push([browserCapabilityPath([field]), caster]);
+    }
+  } else if (fields && typeof fields === "object") {
+    for (const [field, caster] of Object.entries(fields)) {
+      entries.push([browserCapabilityPath([field]), caster]);
+    }
+  }
+
+  const paths = spec.paths;
+  if (Array.isArray(paths)) {
+    for (const [path, caster] of paths) {
+      entries.push([browserCapabilityPath(path), caster]);
+    }
+  } else if (paths && typeof paths === "object") {
+    for (const [path, caster] of Object.entries(paths)) {
+      entries.push([browserCapabilityPath(path), caster]);
+    }
+  }
+  return entries;
+}
+
+function mapBrowserCapabilityPath(value, path, mapper) {
+  if (path.length === 0) return mapper(value);
+  if (!value || typeof value !== "object" || value.__sandstormCapnpBrowserStub) {
+    return value;
+  }
+
+  const [field, ...rest] = path;
+  if (!Object.prototype.hasOwnProperty.call(value, field)) {
+    return value;
+  }
+
+  const mapped = mapBrowserCapabilityPath(value[field], rest, mapper);
+  if (mapped === value[field]) return value;
+  const copy = Array.isArray(value) ? [...value] : { ...value };
+  copy[field] = mapped;
+  return copy;
+}
+
+function browserStubValue(value) {
+  return value && typeof value === "object" && value.__sandstormCapnpBrowserStub
+    ? value.stub
+    : value;
+}
+
+function castBrowserCapnpResult(interfaceName, methodName, result, resultCapabilities) {
+  const spec = resultCapabilities?.[methodName];
+  if (!spec) return result;
+
+  if (typeof spec === "function" || spec.methodNames || spec.schema) {
+    return connectBrowserCapnp(
+      result, resolveBrowserResultBinding(interfaceName, methodName, spec));
+  }
+
+  const paths = browserCapabilityPathEntries(spec);
+  if (paths.length === 0 || !result || typeof result !== "object") {
+    return result;
+  }
+
+  let casted = result;
+  for (const [path, caster] of paths) {
+    casted = mapBrowserCapabilityPath(casted, path, (value) => connectBrowserCapnp(
+      value, resolveBrowserResultBinding(interfaceName, methodName, caster)));
+  }
+  return casted;
+}
+
+function browserArgumentCapabilityPathEntries(spec) {
+  const entries = [];
+  const fields = spec?.fields;
+  if (Array.isArray(fields)) {
+    for (const field of fields) entries.push([browserCapabilityPath([field])]);
+  } else if (fields && typeof fields === "object") {
+    for (const field of Object.keys(fields)) entries.push([browserCapabilityPath([field])]);
+  }
+
+  const paths = spec?.paths;
+  if (Array.isArray(paths)) {
+    for (const entry of paths) {
+      entries.push([browserCapabilityPath(Array.isArray(entry) && entry.length === 2
+        ? entry[0]
+        : entry)]);
+    }
+  } else if (paths && typeof paths === "object") {
+    for (const path of Object.keys(paths)) entries.push([browserCapabilityPath(path)]);
+  }
+  return entries;
+}
+
+function normalizeBrowserCapnpArgs(methodName, args, argumentCapabilities) {
+  const spec = argumentCapabilities?.[methodName];
+  if (!spec) return args;
+
+  let normalized = args;
+  for (const index of spec.indexes || spec.indices || []) {
+    if (Number.isInteger(index) && index >= 0 && index < args.length) {
+      const next = browserStubValue(args[index]);
+      if (next !== args[index]) {
+        if (normalized === args) normalized = [...args];
+        normalized[index] = next;
+      }
+    }
+  }
+
+  const paths = browserArgumentCapabilityPathEntries(spec);
+  if (paths.length > 0 && args.length === 1) {
+    let first = normalized[0];
+    for (const [path] of paths) {
+      first = mapBrowserCapabilityPath(first, path, browserStubValue);
+    }
+    if (first !== normalized[0]) {
+      if (normalized === args) normalized = [...args];
+      normalized[0] = first;
+    }
+  }
+  return normalized;
+}
+
+export function connectBrowserCapnp(stub, binding) {
+  if (!stub || typeof stub !== "object" && typeof stub !== "function") {
+    throw new TypeError("connectBrowserCapnp() requires a Cap'n Web RPC stub");
+  }
+  const interfaceName = binding?.interfaceName || browserCapnpSchema(binding).interfaceName || "";
+  const methodNames = browserCapnpMethodNames(binding);
+  const schema = browserCapnpSchema(binding);
+  const argumentCapabilities = schema.argumentCapabilities || {};
+  const resultCapabilities = schema.resultCapabilities || {};
+  const client = {
+    __sandstormCapnpBrowserStub: true,
+    stub,
+  };
+  for (const methodName of methodNames) {
+    client[methodName] = async (...args) => {
+      const normalizedArgs = normalizeBrowserCapnpArgs(
+        methodName, args, argumentCapabilities);
+      const result = await stub[methodName](...normalizedArgs);
+      return castBrowserCapnpResult(interfaceName, methodName, result, resultCapabilities);
+    };
+  }
+  if (typeof stub[Symbol.dispose] === "function") {
+    client[Symbol.dispose] = () => stub[Symbol.dispose]();
+  }
+  return Object.freeze(client);
+}
+
+export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, schema = {}) {
+  const binding = {
+    interfaceName,
+    interfaceId: schema.interfaceId || "",
+    methodNames: Object.freeze([...methodNames]),
+    schema: Object.freeze({
+      ...schema,
+      interfaceName,
+      methodNames: Object.freeze([...methodNames]),
+      argumentCapabilities: Object.freeze({ ...(schema.argumentCapabilities || {}) }),
+      resultCapabilities: Object.freeze({ ...(schema.resultCapabilities || {}) }),
+    }),
+  };
+  return Object.freeze({
+    ...binding,
+    cast(stub) {
+      return connectBrowserCapnp(stub, binding);
+    },
+  });
 }
 
 function validatePackedDescriptor(descriptor, name = "descriptor") {
