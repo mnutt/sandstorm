@@ -1031,6 +1031,10 @@ Progress:
 - isolate generated bindings now expose `powerboxDescriptor(env)` and
   `powerboxDescriptorInfo(env)` for schema-defined interfaces, backed by the
   same supervisor descriptor route as browser bindings
+- `examples/isolate-file-store-rpc` documents and exercises a schema-defined
+  app-object capability that can be offered or used to fulfill Powerbox
+  requests, keeping directory listing and small file reads in RPC while calling
+  out that large byte streams should use a fetch-shaped data plane
 
 Exit criteria:
 

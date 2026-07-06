@@ -668,6 +668,17 @@ test("spk dev-isolate prints manifests and generated capnp modules", async () =>
     generatedObjectStore.stdout,
     /"openObject": \{ nativeInterface: "webSession", fetch: true \}/);
   assert.doesNotMatch(generatedObjectStore.stdout, /from "capnp:.*web-session/);
+
+  const fileStorePath = path.join(REPO_DIR, "examples/isolate-file-store-rpc/worker.js");
+  const generatedFileStore = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-generated-module", "capnp:./file-store.capnp",
+    fileStorePath,
+  ]);
+  assert.match(generatedFileStore.stdout, /export const FileStore = makeInterface\("FileStore"/);
+  assert.match(generatedFileStore.stdout, /export const File = makeInterface\("File"/);
+  assert.match(generatedFileStore.stdout, /"openFile": \(\) => File/);
+  assert.match(generatedFileStore.stdout, /"listDirectory", "stat", "readFile", "openFile"/);
 });
 
 test("spk dev-isolate prints generated capnp-es modules", async (t) => {
