@@ -1646,6 +1646,8 @@ test("isolate supervisor integration suite", {
     assert.match(powerboxGrants.json.rpcClient.contentType, /text\/javascript/);
     assert.equal(powerboxGrants.json.rpcClient.hasRequestPowerbox, true);
     assert.equal(powerboxGrants.json.rpcClient.hasBrowserCapnp, true);
+    assert.equal(powerboxGrants.json.rpcClient.hasBrowserCapnpCapabilityGateway, true);
+    assert.equal(powerboxGrants.json.rpcClient.hasBrowserCapnpRequestCapability, true);
     assert.equal(powerboxGrants.json.configBefore.ok, true);
     assert.equal(powerboxGrants.json.configBefore.routePrefix, "/grant-ui-test");
     assert.equal(powerboxGrants.json.configBefore.grants.length, 1);

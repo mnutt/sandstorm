@@ -546,6 +546,18 @@ function renderBrowserRpcPage() {
           });
           const localReturnedHello = await localReturned.greeter.hello({ name: "client" });
           const localGreeted = await localGreeter.greetWith(localReturned.greeter, "client");
+          const handleResponse = await fetch("/browser-greeter-handle");
+          if (!handleResponse.ok) {
+            throw new Error("browser greeter handle failed with " + handleResponse.status);
+          }
+          const handleBody = await handleResponse.json();
+          const handleGreeter = NativeGreeter.cast(handleBody.capability);
+          const handleHello = await handleGreeter.hello({ name: "browser handle" });
+          const handleReturned = await handleGreeter.makeGreeter({
+            prefix: "browser handle returned",
+          });
+          const handleReturnedHello = await handleReturned.hello({ name: "client" });
+          const handleGreeted = await handleGreeter.greetWith(handleReturned, "client");
           rpc[Symbol.dispose]();
           greeter[Symbol.dispose]?.();
           result.textContent = JSON.stringify({
@@ -563,6 +575,10 @@ function renderBrowserRpcPage() {
               localHello,
               localReturnedHello,
               localGreeted,
+              handle: handleBody.capability,
+              handleHello,
+              handleReturnedHello,
+              handleGreeted,
             },
           });
         } catch (error) {
@@ -731,6 +747,20 @@ export default {
     if (url.pathname === "/browser-rpc-test") {
       return new Response(renderBrowserRpcPage(), {
         headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (url.pathname === "/browser-greeter-handle") {
+      const capability = await api.export(
+        BrowserNativeGreeter.implement(browserNativeGreeterMethods));
+      return Response.json({
+        ok: true,
+        capability: {
+          ok: true,
+          type: capability.type,
+          id: capability.id,
+          nativeInterface: "appObject",
+        },
       });
     }
 
@@ -2244,6 +2274,8 @@ export default {
           contentType: rpcClient.headers.get("content-type"),
           hasRequestPowerbox: rpcClientText.includes("requestPowerbox"),
           hasBrowserCapnp: rpcClientText.includes("connectBrowserCapnp"),
+          hasBrowserCapnpCapabilityGateway: rpcClientText.includes("native-app-rpc-call"),
+          hasBrowserCapnpRequestCapability: rpcClientText.includes("requestCapability"),
         },
         configBefore,
         statusBefore,
