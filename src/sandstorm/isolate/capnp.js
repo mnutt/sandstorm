@@ -657,6 +657,40 @@ function nativeCapnpInterfaceMetadata(InterfaceClass, options = {}) {
   });
 }
 
+function nativeCapnpInterfaceIdHex(interfaceId) {
+  if (typeof interfaceId === "bigint") {
+    return `0x${interfaceId.toString(16)}`;
+  } else if (typeof interfaceId === "number" && Number.isSafeInteger(interfaceId)) {
+    return `0x${BigInt(interfaceId).toString(16)}`;
+  } else if (typeof interfaceId === "string" && interfaceId.length > 0) {
+    return interfaceId.startsWith("0x") ? interfaceId : `0x${interfaceId}`;
+  }
+  return "";
+}
+
+function nativeCapnpDescriptorSchema(InterfaceClass, options = {}) {
+  const metadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
+  const interfaceId = nativeCapnpInterfaceIdHex(metadata.interfaceId);
+  if (!interfaceId || interfaceId === "0x0") {
+    throw new TypeError("native Cap'n Proto Powerbox descriptor requires an interface id");
+  }
+  return Object.freeze({
+    interfaceId,
+    interfaceName: metadata.interfaceName || InterfaceClass?._capnp?.displayName || "",
+  });
+}
+
+export async function nativeCapnpPowerboxDescriptorInfo(env, InterfaceClass, options = {}) {
+  const schema = nativeCapnpDescriptorSchema(InterfaceClass, options);
+  return fetchAppInterfacePowerboxDescriptor(
+    env, schema.interfaceName || "native Cap'n Proto interface", schema, options);
+}
+
+export async function nativeCapnpPowerboxDescriptor(env, InterfaceClass, options = {}) {
+  const result = await nativeCapnpPowerboxDescriptorInfo(env, InterfaceClass, options);
+  return result.descriptor;
+}
+
 async function sendNativeCapnpBridgeEnvelope(api, request, context, expectedWhich) {
   if (!api || typeof api.nativeCapnpBridgeCallBytes !== "function") {
     throw new NativeCapnpBridgeProtocolError(

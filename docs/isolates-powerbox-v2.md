@@ -109,21 +109,25 @@ interface Greeter {
 
 ```js
 // worker.js
-import { app } from "sandstorm:api";
-import { Greeter } from "capnp:./greeter.capnp";
+import { sandstorm } from "sandstorm:api";
+import { exportNativeCapnp } from "sandstorm:capnp";
+import { Greeter } from "capnp-es:./greeter.capnp";
 
-const greeter = Greeter.implement({
+const greeter = {
   async hello({ name }) {
     return { message: `Hello, ${name}` };
   },
-});
+};
 
-export default app({
-  capabilities: {
-    greeter,
-  },
-
+export default {
   async fetch(request, env) {
+    const api = sandstorm(request, env);
+    if (new URL(request.url).pathname === "/export-greeter") {
+      return Response.json(await exportNativeCapnp(api, Greeter, greeter, {
+        interfaceName: "Greeter",
+      }));
+    }
+
     return new Response(`
       <button id="hello">Say hello</button>
       <pre id="out"></pre>
@@ -132,7 +136,7 @@ export default app({
       headers: { "content-type": "text/html" },
     });
   },
-});
+};
 ```
 
 The `capabilities` block is the public export table for app-defined object
@@ -143,11 +147,12 @@ local names.
 
 ```js
 // ui.js
-import { Greeter } from "capnp:./greeter.capnp";
-import { currentGrain } from "sandstorm:browser";
+import { Greeter } from "/__sandstorm/capnp-es/greeter.capnp.js";
+import { requestBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
 
-const root = await currentGrain.capability("greeter");
-const greeter = Greeter.cast(root);
+const { client: greeter } = await requestBrowserNativeCapnp(Greeter, {
+  saveLabel: { defaultText: "Greeter service" },
+});
 
 document.querySelector("#hello").onclick = async () => {
   const { message } = await greeter.hello({ name: "Ada" });
@@ -163,26 +168,28 @@ streaming APIs should stay fetch-shaped instead of becoming RPC calls.
 
 ```js
 // caller-worker.js
-import { app } from "sandstorm:api";
-import { Greeter } from "capnp:./greeter.capnp";
+import { sandstorm } from "sandstorm:api";
+import { restoreNativeCapnp } from "sandstorm:capnp";
+import { Greeter } from "capnp-es:./greeter.capnp";
 
-export default app({
+export default {
   async fetch(request, env) {
     const token = await env.STORAGE.get("greeter-token");
     if (!token) {
       return new Response("Greeter is not connected", { status: 409 });
     }
 
-    const cap = await env.SANDSTORM.restore(token);
+    const greeter = await restoreNativeCapnp(sandstorm(request, env), token, Greeter, {
+      interfaceName: "Greeter",
+    });
     try {
-      const greeter = Greeter.cast(cap);
       const { message } = await greeter.hello({ name: "other isolate" });
       return Response.json({ message });
     } finally {
-      await cap.drop();
+      await greeter.drop();
     }
   },
-});
+};
 ```
 
 The token is durable authority obtained through Powerbox. The restored live
@@ -191,16 +198,19 @@ capability handle is what the generated `Greeter` stub calls.
 ### Obtaining And Saving The Capability
 
 ```js
-import { Greeter } from "capnp:./greeter.capnp";
+import { connectNativeCapnp, nativeCapnpPowerboxDescriptor } from "sandstorm:capnp";
+import { Greeter } from "capnp-es:./greeter.capnp";
 
-const request = Greeter.powerboxDescriptor({
-  title: "Greeter service",
-  verbPhrase: "say hello",
+const descriptor = await nativeCapnpPowerboxDescriptor(env, Greeter, {
+  interfaceName: "Greeter",
 });
 
-const cap = await env.POWERBOX.request(request);
+const cap = await api.powerbox().claim(requestTokenFromBrowser, {
+  descriptor,
+  requiredPermissions: ["view"],
+});
 try {
-  const greeter = Greeter.cast(cap);
+  const greeter = connectNativeCapnp(api, cap, Greeter, { interfaceName: "Greeter" });
   const { message } = await greeter.hello({ name: "setup check" });
 
   const token = await cap.save({ label: "Greeter service" });
@@ -230,14 +240,14 @@ implementation to a native Cap'n Proto server object.
 Generated bindings should also provide an in-memory transport:
 
 ```js
-import { Greeter } from "capnp:./greeter.capnp";
+import { Greeter } from "capnp-es:./greeter.capnp";
 
 test("hello", async () => {
-  const greeter = Greeter.local({
+  const greeter = new Greeter.Server({
     async hello({ name }) {
       return { message: `Hello, ${name}` };
     },
-  });
+  }).client();
 
   await expect(greeter.hello({ name: "Ada" }))
       .resolves.toEqual({ message: "Hello, Ada" });
@@ -275,9 +285,12 @@ interface ObjectStore {
 Isolate caller:
 
 ```js
-import { ObjectStore } from "capnp:./object-store.capnp";
+import { ObjectStore } from "capnp-es:./object-store.capnp";
+import { restoreNativeCapnp } from "sandstorm:capnp";
 
-const store = ObjectStore.cast(await env.SANDSTORM.restore(token));
+const store = await restoreNativeCapnp(api, token, ObjectStore, {
+  interfaceName: "ObjectStore",
+});
 
 const listing = await store.listObjects({
   bucket: "photos",
@@ -290,7 +303,7 @@ const object = await store.openObject({
   key: "2026/cover.jpg",
 });
 
-const response = await object.fetch("", { method: "GET" });
+const response = await object.object.get({ path: "", context: {}, ignoreBody: false });
 ```
 
 For this to work cleanly, typed RPC needs generic capability slots: a method
@@ -298,12 +311,12 @@ must be able to return a capability whose native interface is fetch-shaped,
 app-object-shaped, or another public Cap'n Proto interface. The current
 prototype is narrower than that.
 
-## `capnp:` Imports
+## `capnp-es:` Imports
 
 Authors should be able to write:
 
 ```js
-import { Greeter } from "capnp:./greeter.capnp";
+import { Greeter } from "capnp-es:./greeter.capnp";
 ```
 
 The import is package-time syntax. Workerd does not need to parse `.capnp`
@@ -312,7 +325,7 @@ files at runtime.
 The `spk dev-isolate` and package build flow should:
 
 1. scan JavaScript imports
-2. detect `capnp:` specifiers
+2. detect `capnp-es:` specifiers
 3. resolve the `.capnp` file relative to the importing module
 4. run Sandstorm-bundled schema/codegen tooling
 5. add generated ES modules to the isolate module list
@@ -1036,18 +1049,17 @@ Progress:
   modules as `spk dev-isolate`, stores them under
   `__sandstorm_isolate_runtime/capnp-es-generated`, and serializes an
   augmented isolate module list into `sandstorm-manifest`
-- normal `spk pack` also scans packaged isolate ES modules for `capnp:`
-  imports and generates app-object compatibility modules under
-  `__sandstorm_isolate_runtime/capnp`; browser schema modules are generated
-  through the native `capnp-es:` path instead of a separate app-object
-  companion module path
-- isolate generated bindings now expose `powerboxDescriptor(env)` and
-  `powerboxDescriptorInfo(env)` for schema-defined interfaces, backed by the
+- generated `capnp:` app-object compatibility modules have been removed:
+  `spk dev-isolate` and `spk pack` now materialize schema code only for
+  `capnp-es:` imports, reject old `capnp:` isolate imports with a clear error,
+  and no longer include the virtual `capnp:/...` wrapper support modules
+- native worker helpers now expose `nativeCapnpPowerboxDescriptor(env,
+  InterfaceClass)` and `nativeCapnpPowerboxDescriptorInfo(...)`, backed by the
   same supervisor descriptor route as browser bindings
 - `examples/isolate-file-store-rpc` documents and exercises a schema-defined
-  app-object capability that can be offered or used to fulfill Powerbox
+  native Cap'n Proto capability that can be offered or used to fulfill Powerbox
   requests, keeping directory listing and small file reads in RPC while calling
-  out that large byte streams should use a fetch-shaped data plane
+  out that large byte streams should use a fetch/data-plane capability
 - the package-level `Manifest.publicInterfaces` prototype was removed; public
   schema-defined isolate capabilities should advertise through Sandstorm's
   existing `UiView.ViewInfo.matchRequests` descriptor path instead of creating a
@@ -1105,15 +1117,12 @@ Exit criteria:
 
 Progress:
 
-- `docs/developing/isolate-grains.md` now separates the intended public
-  authoring boundary: `capnp-es:` generated modules plus
-  `exportNativeCapnp()` / `restoreNativeCapnp()` are the native cross-grain and
-  legacy interop path, while `capnp:` generated modules remain the
-  app-object compatibility bridge and local control-plane helper
-- current JavaScript-defined app-object RPC and `capnp:` schema-shaped
-  app-object bindings are retained as private/local convenience APIs during the
-  isolate pre-release period; public cross-grain protocols should be
-  schema-first native Cap'n Proto capabilities
+- `docs/developing/isolate-grains.md` now presents `capnp-es:` generated
+  modules plus `exportNativeCapnp()` / `restoreNativeCapnp()` as the schema
+  authoring path for native cross-grain and legacy interop
+- generated `capnp:` schema-shaped app-object bindings are removed instead of
+  retained as a compatibility fallback; JavaScript-defined app-object RPC
+  remains only for current helper/UI internals pending a separate cleanup
 - unreleased Cap'n Web and app-object browser RPC prototype schema transports
   have been removed instead of kept as compatibility fallbacks; `fetch()`
   remains supported for HTTP-shaped and large data-plane capabilities
@@ -1147,8 +1156,7 @@ Use schema-first public protocols:
 - `.capnp` is the source of truth for cross-grain interfaces.
 - `capnp-es:` imports provide native generated clients and servers for public
   cross-grain interfaces.
-- `capnp:` imports remain the schema-shaped app-object compatibility and
-  local helper path.
+- `capnp:` generated app-object schema imports are removed; use `capnp-es:`.
 - Sandstorm tooling bundles the compiler/generator used by packaged isolates.
 - Isolates receive typed generated stubs and server adapters.
 - Legacy grains see ordinary Cap'n Proto interfaces.

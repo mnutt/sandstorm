@@ -1,5 +1,9 @@
 import { sandstorm } from "sandstorm:api";
-import { File, FileStore } from "capnp:./file-store.capnp";
+import {
+  exportNativeCapnp,
+  nativeCapnpPowerboxDescriptor,
+} from "sandstorm:capnp";
+import { File, FileStore } from "capnp-es:./file-store.capnp";
 
 const encoder = new TextEncoder();
 
@@ -97,7 +101,7 @@ function makeFile(path) {
     throw new Error(`not a file: ${path}`);
   }
 
-  return File.implement({
+  return new File.Server({
     async stat() {
       return { entry: statPath(path) };
     },
@@ -109,7 +113,7 @@ function makeFile(path) {
         contentType: file.contentType,
       };
     },
-  });
+  }).client();
 }
 
 function makeFileStore() {
@@ -158,7 +162,7 @@ function renderPage() {
 }
 
 async function descriptor(env) {
-  return FileStore.powerboxDescriptor(env);
+  return nativeCapnpPowerboxDescriptor(env, FileStore, { interfaceName: "FileStore" });
 }
 
 export default {
@@ -171,7 +175,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/self-test") {
-      const store = FileStore.local(makeFileStore());
+      const store = new FileStore.Server(makeFileStore()).client();
       const root = await store.listDirectory({ path: "" });
       const docs = await store.listDirectory({ path: "docs" });
       const stat = await store.stat({ path: "docs/intro.txt" });
@@ -192,13 +196,14 @@ export default {
     }
 
     if (url.pathname === "/offer-file-store" && request.method === "POST") {
-      const capability = await api.export(FileStore.implement(makeFileStore()));
+      const capability = await exportNativeCapnp(api, FileStore, makeFileStore(), {
+        interfaceName: "FileStore",
+      });
       return Response.json(await capability.offer(request, {
         title: "File store",
         verbPhrase: "can browse and read files",
         description: "RPC access to this grain's example file directory.",
         descriptor: await descriptor(env),
-        nativeInterface: "appObject",
       }));
     }
 
@@ -207,13 +212,14 @@ export default {
       title: "File store",
       description: "RPC access to this grain's example file directory.",
       buttonLabel: "Use this file store",
-      capability: () => api.export(FileStore.implement(makeFileStore())),
+      capability: () => exportNativeCapnp(api, FileStore, makeFileStore(), {
+        interfaceName: "FileStore",
+      }),
       fulfill: {
         title: "File store",
         verbPhrase: "can browse and read files",
         description: "RPC access to this grain's example file directory.",
         descriptor: await descriptor(env),
-        nativeInterface: "appObject",
       },
     });
 

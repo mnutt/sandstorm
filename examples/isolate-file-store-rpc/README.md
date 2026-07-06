@@ -5,12 +5,12 @@ Run:
 ```sh
 spk dev-isolate \
   --title "File Store RPC" \
-  --app-interface capnp:./file-store.capnp#FileStore \
+  --app-interface capnp-es:./file-store.capnp#FileStore \
   examples/isolate-file-store-rpc/worker.js
 ```
 
-This example models a small directory/file API as a schema-defined app-object
-capability:
+This example models a small directory/file API as a schema-defined native
+Cap'n Proto capability:
 
 ```js
 const listing = await store.listDirectory({ path: "docs" });
@@ -27,7 +27,7 @@ The app exposes the same capability in two Sandstorm ways:
 The public protocol is in `file-store.capnp`; the isolate code imports it with:
 
 ```js
-import { File, FileStore } from "capnp:./file-store.capnp";
+import { File, FileStore } from "capnp-es:./file-store.capnp";
 ```
 
 For a packaged app, advertise the same provider through the normal
@@ -35,14 +35,13 @@ For a packaged app, advertise the same provider through the normal
 from the schema:
 
 ```sh
-spk powerbox-descriptor --format capnp capnp:./file-store.capnp#FileStore
+spk powerbox-descriptor --format capnp capnp-es:./file-store.capnp#FileStore
 # (tags = [(id = 0x9e13c3025dcd3d36)])
 ```
 
 and put that descriptor in `ViewInfo.matchRequests`.
 
-Today this uses Sandstorm's schema-shaped app-object RPC bridge, not the native
-Cap'n Proto RPC transport. It is suitable for control-plane calls and small
-payloads. For large file contents, prefer the object-store pattern in
+This example keeps directory listing and small file reads in typed RPC. For
+large file contents, prefer the object-store pattern in
 `examples/isolate-object-store`, where Cap'n Proto RPC selects the object and a
-returned `WebSession` capability carries the byte stream over fetch.
+returned `WebSession` capability carries the byte stream.

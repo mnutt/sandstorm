@@ -6,14 +6,19 @@ Run:
 spk dev-isolate --title "Isolate Object Store" examples/isolate-object-store/worker.js
 ```
 
-This example uses Cap'n Proto-style RPC for the object-store control plane and
-fetch-shaped `WebSession` capabilities for object data:
+This example uses native Cap'n Proto RPC for the object-store control plane and
+a returned Sandstorm `WebSession` capability for object data:
 
 ```js
-const object = await storage.rpc.openObject({ bucket, key });
-const response = await object.fetch("", { method: "GET" });
+const object = await storage.openObject({ bucket, key });
+const response = await object.object.get({
+  path: "",
+  context: {},
+  ignoreBody: false,
+});
 ```
 
-The generated `capnp:` binding recognizes the imported Sandstorm `WebSession`
-result and casts it as an opaque fetch-capable Sandstorm capability instead of
-an app-object RPC client.
+The isolate imports `ObjectStore` with `capnp-es:` and imports Sandstorm's
+`WebSession` schema with `capnp-es:/sandstorm/web-session.capnp`. In browser or
+HTTP-shaped flows, the same object route can still be served over ordinary
+`fetch()`.

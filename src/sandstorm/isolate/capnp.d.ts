@@ -376,7 +376,60 @@ declare module "sandstorm:capnp" {
       readonly interfaceId?: bigint | number | string;
       readonly interfaceName?: string;
     };
+    readonly _capnp?: {
+      readonly displayName?: string;
+      readonly typeId?: bigint;
+      readonly typeIdHex?: string;
+    };
   }
+
+  export interface NativeCapnpPowerboxDescriptorInfo {
+    readonly ok: true;
+    readonly type: "packedPowerboxDescriptor";
+    readonly descriptor: string;
+    readonly decoded: {
+      readonly interfaceId: string;
+      readonly interfaceName: string;
+    };
+  }
+
+  export function nativeCapnpPowerboxDescriptorInfo<TClient extends object>(
+    env: { readonly SANDSTORM_API: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> } },
+    InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
+    options?: {
+      readonly interfaceId?: bigint | number | string;
+      readonly interfaceName?: string;
+      readonly schema?: {
+        readonly interfaceId?: bigint | number | string;
+        readonly interfaceName?: string;
+      };
+      readonly binding?: {
+        readonly schema?: {
+          readonly interfaceId?: bigint | number | string;
+          readonly interfaceName?: string;
+        };
+      };
+    },
+  ): Promise<NativeCapnpPowerboxDescriptorInfo>;
+
+  export function nativeCapnpPowerboxDescriptor<TClient extends object>(
+    env: { readonly SANDSTORM_API: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> } },
+    InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
+    options?: {
+      readonly interfaceId?: bigint | number | string;
+      readonly interfaceName?: string;
+      readonly schema?: {
+        readonly interfaceId?: bigint | number | string;
+        readonly interfaceName?: string;
+      };
+      readonly binding?: {
+        readonly schema?: {
+          readonly interfaceId?: bigint | number | string;
+          readonly interfaceName?: string;
+        };
+      };
+    },
+  ): Promise<string>;
 
   export type NativeCapnpConnectedClient<TClient extends object> = TClient & {
     readonly capability: NativeCapnpCapabilitySlot;
