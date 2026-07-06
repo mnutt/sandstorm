@@ -357,12 +357,34 @@ private:
 
 class FakeLegacyNativeGreeter final: public NativeGreeter::Server {
 public:
+  explicit FakeLegacyNativeGreeter(kj::StringPtr prefix = "legacy native hello ")
+      : prefix(kj::heapString(prefix)) {}
+
   kj::Promise<void> hello(HelloContext context) override {
     auto params = context.getParams();
-    auto message = kj::str("legacy native hello ", params.getName());
+    auto message = kj::str(prefix, params.getName());
     context.getResults().setMessage(message);
     return kj::READY_NOW;
   }
+
+  kj::Promise<void> makeGreeter(MakeGreeterContext context) override {
+    auto prefix = kj::str(context.getParams().getPrefix(), " ");
+    context.getResults().setGreeter(kj::heap<FakeLegacyNativeGreeter>(prefix));
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> greetWith(GreetWithContext context) override {
+    auto params = context.getParams();
+    auto helloRequest = params.getGreeter().helloRequest();
+    auto name = kj::str(params.getName(), " from legacy");
+    helloRequest.setName(name);
+    return helloRequest.send().then([context](auto hello) mutable {
+      context.getResults().setMessage(kj::str("legacy called ", hello.getMessage()));
+    });
+  }
+
+private:
+  kj::String prefix;
 };
 
 class FakeRevocationObserver final: public SystemPersistent::RevocationObserver::Server {
@@ -1153,6 +1175,24 @@ void testNativeGreeterToken(kj::WaitScope& waitScope, SandstormCore::Client core
   auto hello = helloRequest.send().wait(waitScope);
   auto message = hello.getMessage();
   KJ_REQUIRE(message == "cross supervisor native hello legacy c++ client", message);
+
+  auto makeGreeterRequest = greeter.makeGreeterRequest();
+  makeGreeterRequest.setPrefix("isolate returned");
+  auto returnedGreeter = makeGreeterRequest.send().wait(waitScope).getGreeter();
+  auto returnedHelloRequest = returnedGreeter.helloRequest();
+  returnedHelloRequest.setName("legacy c++ client");
+  auto returnedHello = returnedHelloRequest.send().wait(waitScope);
+  auto returnedMessage = returnedHello.getMessage();
+  KJ_REQUIRE(returnedMessage == "isolate returned legacy c++ client", returnedMessage);
+
+  auto greetWithRequest = greeter.greetWithRequest();
+  greetWithRequest.setGreeter(returnedGreeter);
+  greetWithRequest.setName("legacy c++ client");
+  auto greetWith = greetWithRequest.send().wait(waitScope);
+  auto greetWithMessage = greetWith.getMessage();
+  KJ_REQUIRE(
+      greetWithMessage == "isolate called isolate returned legacy c++ client from isolate export",
+      greetWithMessage);
 
   auto saveRequest = greeter.castAs<SystemPersistent>().saveRequest();
   auto owner = saveRequest.getSealFor().initGrain();

@@ -970,6 +970,26 @@ export default {
             message: `cross supervisor native hello ${params.name}`,
           };
         },
+        async makeGreeter(params) {
+          const greeter = new NativeGreeter.Server({
+            async hello(helloParams) {
+              return {
+                message: `${params.prefix} ${helloParams.name}`,
+              };
+            },
+          }).client();
+          return {
+            greeter,
+          };
+        },
+        async greetWith(params) {
+          const hello = await params.greeter.hello({
+            name: `${params.name} from isolate export`,
+          });
+          return {
+            message: `isolate called ${hello.message}`,
+          };
+        },
       };
       const capability = await exportNativeCapnp(api, NativeGreeter, target, {
         id,
@@ -997,6 +1017,16 @@ export default {
       const hello = await client.hello({
         name: url.searchParams.get("name") || "client isolate",
       });
+      const returned = await client.makeGreeter({
+        prefix: "isolate returned",
+      });
+      const returnedHello = await returned.greeter.hello({
+        name: "isolate client",
+      });
+      const greeted = await client.greetWith({
+        greeter: returned.greeter,
+        name: "client",
+      });
       const drop = await client.drop();
       const { id, interfaceId, interfaceName, kind } = client.capability;
       return Response.json({
@@ -1010,6 +1040,12 @@ export default {
         savedToken: token,
         hello: {
           message: hello.message,
+        },
+        returnedHello: {
+          message: returnedHello.message,
+        },
+        greeted: {
+          message: greeted.message,
         },
         dropResult: drop ?? null,
       });
@@ -1029,6 +1065,16 @@ export default {
       const hello = await client.hello({
         name: url.searchParams.get("name") || "client isolate",
       });
+      const returned = await client.makeGreeter({
+        prefix: "legacy returned",
+      });
+      const returnedHello = await returned.greeter.hello({
+        name: "isolate client",
+      });
+      const greeted = await client.greetWith({
+        greeter: returned.greeter,
+        name: "isolate client",
+      });
       const drop = await client.drop();
       const { id, interfaceId, interfaceName, kind } = client.capability;
       return Response.json({
@@ -1041,6 +1087,12 @@ export default {
         },
         hello: {
           message: hello.message,
+        },
+        returnedHello: {
+          message: returnedHello.message,
+        },
+        greeted: {
+          message: greeted.message,
         },
         dropResult: drop ?? null,
       });
@@ -3819,6 +3871,26 @@ export default {
       async hello(params) {
         return {
           message: `native export greeter hello ${params.name}`,
+        };
+      },
+      async makeGreeter(params) {
+        const greeter = new NativeGreeter.Server({
+          async hello(helloParams) {
+            return {
+              message: `${params.prefix} ${helloParams.name}`,
+            };
+          },
+        }).client();
+        return {
+          greeter,
+        };
+      },
+      async greetWith(params) {
+        const hello = await params.greeter.hello({
+          name: `${params.name} from native export self-test`,
+        });
+        return {
+          message: `native export greeter called ${hello.message}`,
         };
       },
     };
