@@ -1064,6 +1064,7 @@ private:
       packManifestOverride = nullptr;
     });
     preparePackIsolateSupport(root, packIsolateSupportDir);
+    addPackPublicInterfaceSchemas(root, sourceMap, packageDef.getManifest());
 
     if (packageDef.hasFileList()) {
       auto fileListFile = packageDef.getFileList();
@@ -4572,6 +4573,60 @@ private:
     }
 
     return changed;
+  }
+
+  void addPackPublicInterfaceSchema(ArchiveNode& root,
+      const spk::SourceMap::Reader& sourceMap, kj::StringPtr packagePath,
+      std::set<std::string>& seen) {
+    auto packagePathStd = toStdString(packagePath);
+    if (!seen.insert(packagePathStd).second) {
+      return;
+    }
+
+    KJ_REQUIRE(packagePath.size() > 0 && !packagePath.startsWith("/"),
+        "Public interface schemaPath must be a relative package path.", packagePath);
+    KJ_REQUIRE(packagePath.endsWith(".capnp"),
+        "Public interface schemaPath must point to a .capnp file.", packagePath);
+
+    addNode(root, packagePath, sourceMap, false);
+
+    auto maybeSourcePath = trySourcePathForPackagePath(packagePath);
+    KJ_IF_MAYBE(sourcePath, maybeSourcePath) {
+      auto source = readAll(raiiOpen(*sourcePath, O_RDONLY | O_CLOEXEC));
+      auto imports = scanCapnpImports(source);
+      auto packageDir = dirnameForPath(packagePath);
+      for (auto& importDef: imports) {
+        if (importDef.specifier.startsWith("/")) {
+          continue;
+        }
+
+        KJ_REQUIRE(isDevIsolateLocalCapnpSchemaImport(importDef.specifier),
+            "Public interface schemas may only import local package schemas or absolute "
+            "Sandstorm/runtime schemas.", packagePath, importDef.specifier);
+        KJ_REQUIRE(importDef.specifier.endsWith(".capnp"),
+            "Public interface schema imports must point to .capnp files.",
+            packagePath, importDef.specifier);
+
+        auto importedPackagePath = normalizeDevIsolatePath(
+            kj::str(packageDir, "/", importDef.specifier));
+        KJ_REQUIRE(!importedPackagePath.startsWith("/"),
+            "Public interface schema import escaped the package root.",
+            packagePath, importDef.specifier);
+        addPackPublicInterfaceSchema(root, sourceMap, importedPackagePath, seen);
+      }
+    } else {
+      KJ_FAIL_REQUIRE("Could not resolve public interface schema from package source map.",
+          packagePath);
+    }
+  }
+
+  void addPackPublicInterfaceSchemas(ArchiveNode& root,
+      const spk::SourceMap::Reader& sourceMap, spk::Manifest::Reader manifest) {
+    std::set<std::string> seen;
+    auto publicInterfaces = manifest.getPublicInterfaces();
+    for (auto i: kj::indices(publicInterfaces)) {
+      addPackPublicInterfaceSchema(root, sourceMap, publicInterfaces[i].getSchemaPath(), seen);
+    }
   }
 
   void preparePackIsolateSupport(ArchiveNode& root, kj::String& packIsolateSupportDir) {

@@ -1049,6 +1049,10 @@ Progress:
   grains whose installed or dev package advertises the requested interface ID,
   and the result still flows through the normal capability request/fulfillment
   path
+- `spk pack` now includes each declared public interface schema file and its
+  local `.capnp` imports in the package archive automatically, so
+  `schemaPath` is a stable package-local reference rather than metadata that
+  can point at an omitted source file
 
 Exit criteria:
 
