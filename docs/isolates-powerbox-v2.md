@@ -1095,6 +1095,14 @@ Exit criteria:
 - private helper APIs are clearly separated from stable authoring APIs
 - tests cover each supported transport against the same generated interface
 
+Progress:
+
+- `docs/developing/isolate-grains.md` now separates the public/stable
+  authoring boundary: `capnp-es:` generated modules plus
+  `exportNativeCapnp()` / `restoreNativeCapnp()` are the native cross-grain and
+  legacy interop path, while `capnp:` generated modules remain the
+  app-object/browser compatibility bridge and local control-plane helper
+
 ## Open Questions
 
 - Should `.capnp` be the only source of truth for public protocols, or should
