@@ -2541,21 +2541,6 @@ async function serveBrowserSystemRoute(request, env) {
     });
   }
 
-  const capnpPrefix = "/__sandstorm/capnp/";
-  if (url.pathname.startsWith(capnpPrefix) && request.method === "GET") {
-    const path = url.pathname.slice(capnpPrefix.length);
-    const response = await env.SANDSTORM_API.fetch(
-      `http://sandstorm/capnp/browser-module?path=${encodeURIComponent(path)}`);
-    return new Response(await response.text(), {
-      status: response.status,
-      statusText: response.statusText,
-      headers: {
-        "content-type": response.headers.get("content-type") ||
-          "text/javascript; charset=utf-8",
-      },
-    });
-  }
-
   const capnpEsPrefix = "/__sandstorm/capnp-es/";
   if (url.pathname.startsWith(capnpEsPrefix) && request.method === "GET") {
     const path = url.pathname.slice(capnpEsPrefix.length);

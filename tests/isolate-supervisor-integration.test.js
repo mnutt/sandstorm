@@ -1006,22 +1006,11 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     unpackDir, "__sandstorm_isolate_runtime/capnp-es-generated/greeter.js");
   const greetingPath = path.join(
     unpackDir, "__sandstorm_isolate_runtime/capnp-es-generated/greeting.js");
-  const browserGreeterPath = path.join(
-    unpackDir, "__sandstorm_isolate_runtime/capnp-browser/greeter.capnp.js");
-  const browserGreetingPath = path.join(
-    unpackDir, "__sandstorm_isolate_runtime/capnp-browser/greeting.capnp.js");
   await requireFile(greeterPath, "spk pack should generate the imported schema module.");
   await requireFile(greetingPath, "spk pack should generate transitive schema imports.");
-  await requireFile(
-    browserGreeterPath, "spk pack should generate the browser schema module.");
-  await requireFile(
-    browserGreetingPath, "spk pack should generate transitive browser schema imports.");
   const greeterSource = await fs.readFile(greeterPath, "utf8");
   assert.match(greeterSource, /from "\/capnp-es\/index\.mjs";/);
   assert.match(greeterSource, /export class Greeter extends/);
-  const browserGreeterSource = await fs.readFile(browserGreeterPath, "utf8");
-  assert.match(browserGreeterSource, /from "\/__sandstorm\/rpc-client\.js";/);
-  assert.match(browserGreeterSource, /makeBrowserCapnpInterfaceBinding/);
 
   const manifestBytes = await fs.readFile(path.join(unpackDir, "sandstorm-manifest"));
   const { stdout } = await runCommand(CAPNP_BIN, [
@@ -1051,12 +1040,8 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
   assert.match(
     modules.get("capnp:./greeting.capnp").esModulePath,
     /^__sandstorm_isolate_runtime\/capnp\/[a-f0-9]+\.js$/);
-  assert.equal(
-    modules.get("sandstorm:browser-capnp:./greeter.capnp").esModulePath,
-    "__sandstorm_isolate_runtime/capnp-browser/greeter.capnp.js");
-  assert.equal(
-    modules.get("sandstorm:browser-capnp:./greeting.capnp").esModulePath,
-    "__sandstorm_isolate_runtime/capnp-browser/greeting.capnp.js");
+  assert.equal(modules.has("sandstorm:browser-capnp:./greeter.capnp"), false);
+  assert.equal(modules.has("sandstorm:browser-capnp:./greeting.capnp"), false);
   assert.equal(
     String(manifest.continueCommand.isolate.bridgeConfig.viewInfo.matchRequests[0].tags[0].id),
     BigInt("0x85d0f155d6c54b6d").toString());
@@ -1082,7 +1067,6 @@ test("isolate supervisor integration suite", {
         ["metadata.json", "json"],
         ["capnp-es:./native-greeter.capnp", "esModule"],
         ["capnp:./native-greeter.capnp", "esModule"],
-        ["sandstorm:browser-capnp:./native-greeter.capnp", "esModule"],
         ...CAPNP_ES_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule"]),
         ["capnweb", "esModule"],
         ["sandstorm:capnweb-source", "text"],
@@ -1751,9 +1735,9 @@ test("isolate supervisor integration suite", {
     assert.equal(powerboxGrants.json.rpcClient.status, 200);
     assert.match(powerboxGrants.json.rpcClient.contentType, /text\/javascript/);
     assert.equal(powerboxGrants.json.rpcClient.hasRequestPowerbox, true);
-    assert.equal(powerboxGrants.json.rpcClient.hasBrowserCapnp, true);
-    assert.equal(powerboxGrants.json.rpcClient.hasBrowserCapnpCapabilityGateway, true);
-    assert.equal(powerboxGrants.json.rpcClient.hasBrowserCapnpRequestCapability, true);
+    assert.equal(powerboxGrants.json.rpcClient.hasBrowserCapnp, false);
+    assert.equal(powerboxGrants.json.rpcClient.hasBrowserCapnpInterfaceBinding, false);
+    assert.equal(powerboxGrants.json.rpcClient.hasBrowserCapnpRequestCapability, false);
     assert.equal(powerboxGrants.json.configBefore.ok, true);
     assert.equal(powerboxGrants.json.configBefore.routePrefix, "/grant-ui-test");
     assert.equal(powerboxGrants.json.configBefore.grants.length, 1);
@@ -3303,7 +3287,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.json.mainModule, "worker.js");
     assert.equal(
       runtime.json.moduleCount,
-      15 + CAPNP_ES_GENERATED_SCHEMA_MODULES.length + CAPNP_ES_RUNTIME_MODULES.length +
+      14 + CAPNP_ES_GENERATED_SCHEMA_MODULES.length + CAPNP_ES_RUNTIME_MODULES.length +
           CAPNP_ES_SCHEME_RUNTIME_MODULES.length + CAPNP_ES_PATH_RUNTIME_MODULES.length +
           CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.length);
     assert.equal(runtime.json.bindingCount, 6);
@@ -3413,7 +3397,6 @@ test("isolate supervisor integration suite", {
         ["metadata.json", "json", false],
         ["capnp-es:./native-greeter.capnp", "esModule", false],
         ["capnp:./native-greeter.capnp", "esModule", false],
-        ["sandstorm:browser-capnp:./native-greeter.capnp", "esModule", false],
         ...CAPNP_ES_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule", false]),
         ["capnweb", "esModule", false],
         ["sandstorm:capnweb-source", "text", false],
@@ -3430,15 +3413,10 @@ test("isolate supervisor integration suite", {
         ...CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
       ]);
 
-    const browserCapnpModule = await requestUnixSocket(
+    const removedBrowserCapnpModule = await requestUnixSocket(
       fixture.sandstormApiSocket,
       "/capnp/browser-module?path=native-greeter.capnp.js");
-    assert.equal(browserCapnpModule.statusCode, 200);
-    assert.match(
-      String(browserCapnpModule.headers["content-type"] || ""),
-      /text\/javascript/);
-    assert.match(browserCapnpModule.body, /makeBrowserCapnpInterfaceBinding/);
-    assert.match(browserCapnpModule.body, /export const NativeGreeter/);
+    assert.equal(removedBrowserCapnpModule.statusCode, 404);
 
     const nativeBrowserCapnpModule = await requestUnixSocket(
       fixture.sandstormApiSocket,
@@ -3478,8 +3456,9 @@ test("isolate supervisor integration suite", {
     const browserRpcClient = await requestUnixSocket(
       fixture.workerdSocket, "/__sandstorm/rpc-client.js");
     assert.equal(browserRpcClient.statusCode, 200);
-    assert.match(browserRpcClient.body, /powerboxDescriptor/);
-    assert.match(browserRpcClient.body, /local\(methods\)/);
+    assert.match(browserRpcClient.body, /requestPowerbox/);
+    assert.doesNotMatch(browserRpcClient.body, /makeBrowserCapnpInterfaceBinding/);
+    assert.doesNotMatch(browserRpcClient.body, /connectBrowserCapnp/);
 
     const browserNativeCapnpClient = await requestUnixSocket(
       fixture.workerdSocket, "/__sandstorm/native-capnp/client.js");

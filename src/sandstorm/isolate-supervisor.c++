@@ -5111,8 +5111,6 @@ public:
         return sendJson(response, 200, "OK", renderBindings());
       } else if (route == "/capnp/bridge-info") {
         return sendJson(response, 200, "OK", renderCapnpBridgeInfo());
-      } else if (route == "/capnp/browser-module") {
-        return browserCapnpModule(path, response);
       } else if (route == "/capnp-es/browser-module") {
         return browserCapnpEsModule(path, response);
       } else if (route == "/permissions") {
@@ -8354,57 +8352,6 @@ private:
     json.addAll(kj::StringPtr("\n  ]\n}\n"));
     json.add('\0');
     return kj::String(json.releaseAsArray());
-  }
-
-  kj::Promise<void> browserCapnpModule(kj::StringPtr url, kj::HttpService::Response& response) {
-    auto paths = findIsolateRawQueryParams(url, "path");
-    if (paths.size() != 1) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n"
-          "  \"error\": \"expected exactly one path query parameter\"\n}\n"));
-    }
-
-    auto path = paths[0].asPtr();
-    if (path.size() == 0 || path.startsWith("/") || !path.endsWith(".capnp.js") ||
-        path.findFirst('\\') != nullptr) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n"
-          "  \"error\": \"invalid browser Cap'n Proto module path\"\n}\n"));
-    }
-
-    size_t segmentStart = 0;
-    while (segmentStart <= path.size()) {
-      size_t segmentEnd = path.size();
-      KJ_IF_MAYBE(slash, path.slice(segmentStart).findFirst('/')) {
-        segmentEnd = segmentStart + *slash;
-      }
-      auto segment = path.slice(segmentStart, segmentEnd);
-      if (segment.size() == 0 ||
-          segment == kj::StringPtr(".") || segment == kj::StringPtr("..")) {
-        return sendJson(response, 400, "Bad Request", kj::heapString(
-            "{\n  \"ok\": false,\n"
-            "  \"error\": \"invalid browser Cap'n Proto module path\"\n}\n"));
-      }
-      if (segmentEnd == path.size()) {
-        break;
-      }
-      segmentStart = segmentEnd + 1;
-    }
-
-    auto schemaPath = path.slice(0, path.size() - strlen(".js"));
-    auto moduleName = kj::str("sandstorm:browser-capnp:./", schemaPath);
-    for (auto& module: config.modules) {
-      if (module.name == moduleName) {
-        kj::HttpHeaders responseHeaders(headerTable);
-        responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "text/javascript; charset=utf-8");
-        return sendBytes(response, 200, "OK", kj::mv(responseHeaders),
-            kj::heapArray<byte>(module.content.asPtr()));
-      }
-    }
-
-    return sendJson(response, 404, "Not Found", kj::heapString(
-        "{\n  \"ok\": false,\n"
-        "  \"error\": \"browser Cap'n Proto module not found\"\n}\n"));
   }
 
   static bool isValidBrowserModulePath(kj::StringPtr path) {

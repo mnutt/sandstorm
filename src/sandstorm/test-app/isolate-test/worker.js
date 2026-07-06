@@ -488,7 +488,6 @@ function renderBrowserRpcPage() {
 
     <script type="module">
       import { newSandstormRpcSession } from "/__sandstorm/test-rpc-client.js";
-      import { NativeGreeter } from "/__sandstorm/capnp/native-greeter.capnp.js";
 
       const result = document.querySelector("#rpc-result");
 
@@ -501,85 +500,19 @@ function renderBrowserRpcPage() {
           const childValuePromise = child.increment(5);
           const parentValuePromise = rpc.readOtherRpc(child);
           const currentPromise = rpc.get();
-          const greeter = NativeGreeter.cast(
-            newSandstormRpcSession("/__sandstorm/browser-greeter-rpc"));
-          const schemaHelloPromise = greeter.hello({ name: "browser" });
-          const schemaReturnedPromise = greeter.makeGreeter({ prefix: "browser returned" });
           const [first, childValue, parentValue, current] = await Promise.all([
             firstPromise,
             childValuePromise,
             parentValuePromise,
             currentPromise,
           ]);
-          const schemaHello = await schemaHelloPromise;
-          const schemaReturned = await schemaReturnedPromise;
-          const schemaReturnedHello = await schemaReturned.hello({ name: "client" });
-          const schemaGreeted = await greeter.greetWith(schemaReturned, "client");
-          const localGreeter = NativeGreeter.local({
-            async hello({ name = "browser" } = {}) {
-              return { message: "browser local hello " + name };
-            },
-            async makeGreeter({ prefix = "browser local returned" } = {}) {
-              return {
-                greeter: NativeGreeter.local({
-                  async hello({ name = "browser" } = {}) {
-                    return { message: prefix + " " + name };
-                  },
-                  async makeGreeter() {
-                    throw new Error("nested local makeGreeter not used");
-                  },
-                  async greetWith(greeter, name = "browser") {
-                    const hello = await greeter.hello({ name });
-                    return { message: "nested local called " + hello.message };
-                  },
-                }),
-              };
-            },
-            async greetWith(greeter, name = "browser") {
-              const hello = await greeter.hello({ name });
-              return { message: "browser local called " + hello.message };
-            },
-          });
-          const localHello = await localGreeter.hello({ name: "client" });
-          const localReturned = await localGreeter.makeGreeter({
-            prefix: "browser local returned",
-          });
-          const localReturnedHello = await localReturned.greeter.hello({ name: "client" });
-          const localGreeted = await localGreeter.greetWith(localReturned.greeter, "client");
-          const handleResponse = await fetch("/browser-greeter-handle");
-          if (!handleResponse.ok) {
-            throw new Error("browser greeter handle failed with " + handleResponse.status);
-          }
-          const handleBody = await handleResponse.json();
-          const handleGreeter = NativeGreeter.cast(handleBody.capability);
-          const handleHello = await handleGreeter.hello({ name: "browser handle" });
-          const handleReturned = await handleGreeter.makeGreeter({
-            prefix: "browser handle returned",
-          });
-          const handleReturnedHello = await handleReturned.hello({ name: "client" });
-          const handleGreeted = await handleGreeter.greetWith(handleReturned, "client");
           rpc[Symbol.dispose]();
-          greeter[Symbol.dispose]?.();
           result.textContent = JSON.stringify({
             ok: true,
             first,
             childValue,
             parentValue,
             current,
-            schema: {
-              interfaceName: NativeGreeter.interfaceName,
-              methodNames: NativeGreeter.methodNames,
-              hello: schemaHello,
-              returnedHello: schemaReturnedHello,
-              greeted: schemaGreeted,
-              localHello,
-              localReturnedHello,
-              localGreeted,
-              handle: handleBody.capability,
-              handleHello,
-              handleReturnedHello,
-              handleGreeted,
-            },
           });
         } catch (error) {
           result.textContent = (error.message || String(error)) + "\\n" + (error.stack || "");
@@ -2274,7 +2207,7 @@ export default {
           contentType: rpcClient.headers.get("content-type"),
           hasRequestPowerbox: rpcClientText.includes("requestPowerbox"),
           hasBrowserCapnp: rpcClientText.includes("connectBrowserCapnp"),
-          hasBrowserCapnpCapabilityGateway: rpcClientText.includes("native-app-rpc-call"),
+          hasBrowserCapnpInterfaceBinding: rpcClientText.includes("makeBrowserCapnpInterfaceBinding"),
           hasBrowserCapnpRequestCapability: rpcClientText.includes("requestCapability"),
         },
         configBefore,

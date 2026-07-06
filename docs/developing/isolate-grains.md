@@ -168,8 +168,8 @@ and pass the generated `.js` file to `spk`.
 `spk dev-isolate` supports two schema import forms:
 
 - `capnp:` imports generate Sandstorm's schema-shaped app-object compatibility
-  binding. Use this for local tests, browser companion modules, Powerbox
-  descriptor helpers, and app-object control-plane RPC.
+  binding. Use this for local tests, Powerbox descriptor helpers, and
+  app-object control-plane RPC.
 - `capnp-es:` imports generate native `@mnutt/capnp-es` classes. Use this for
   public cross-grain Cap'n Proto interfaces, legacy grain interop, and typed
   calls over Sandstorm's native bridge.
@@ -329,17 +329,23 @@ methods, or appended fields is allowed.
 
 ### Browser schema modules
 
-Worker modules import schemas with `capnp:`:
+Worker modules import public schemas with `capnp-es:`:
 
 ```js
-import { Greeter } from "capnp:./greeter.capnp";
+import { Greeter } from "capnp-es:./greeter.capnp";
 ```
 
-Browser modules should import the browser companion module served by the
-isolate helper routes:
+Browser modules should import the generated native module served by the
+isolate helper routes, plus Sandstorm's native browser client helper:
 
 ```js
-import { Greeter } from "/__sandstorm/capnp/greeter.capnp.js";
+import { Greeter } from "/__sandstorm/capnp-es/greeter.capnp.js";
+import { requestBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
+
+const { client } = await requestBrowserNativeCapnp(Greeter, {
+  saveLabel: { defaultText: "a greeter" },
+});
+const result = await client.hello({ name: "Ada" });
 ```
 
 Serve those routes before normal app routes:
@@ -350,23 +356,25 @@ const system = await api.serveSystemRoutes();
 if (system) return system;
 ```
 
-The browser companion module imports `/__sandstorm/rpc-client.js` internally
-and exposes the same schema-shaped binding surface: `Greeter.cast(...)`,
-`Greeter.local(...)`, `Greeter.powerboxDescriptor(...)`,
-`Greeter.powerboxDescriptorInfo(...)`, and `Greeter.requestCapability(...)`.
+The native browser helper exposes `nativeCapnpPowerboxDescriptor(...)`,
+`requestPowerbox(...)`, `claimBrowserNativeCapnpToken(...)`,
+`connectBrowserNativeCapnp(...)`, `restoreBrowserNativeCapnp(...)`, and
+`requestBrowserNativeCapnp(...)`. These helpers use Sandstorm's normal
+Powerbox request/claim flow and then connect a generated `capnp-es` client over
+the restricted native browser bridge.
 
 If browser code is bundled, keep Sandstorm-served URLs external. A browser
-bundler should not try to resolve `capnp:` or compile `.capnp` files itself
+bundler should not try to resolve `capnp-es:` or compile `.capnp` files itself
 unless the app has its own matching plugin. For shared source that imports
-`capnp:./greeter.capnp`, configure the browser build to rewrite that specifier
-to `/__sandstorm/capnp/greeter.capnp.js`; keep `/__sandstorm/rpc-client.js`
-as a runtime import.
+`capnp-es:./greeter.capnp`, configure the browser build to rewrite that
+specifier to `/__sandstorm/capnp-es/greeter.capnp.js`; keep `/capnp-es/...`
+runtime imports and `/__sandstorm/native-capnp/client.js` external.
 
 The served browser modules are generated from schemas discovered in the
 isolate worker module graph. If a schema is used only by frontend code, import
-it from the worker as well or otherwise make it part of the packaged isolate
-module graph so `spk dev-isolate` and `spk pack` know to generate the browser
-companion module.
+it from the worker as well using `capnp-es:` or otherwise make it part of the
+packaged isolate module graph so `spk dev-isolate` and `spk pack` know to
+generate the native browser module.
 
 ## Compatibility dates and flags
 
