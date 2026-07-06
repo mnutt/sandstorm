@@ -4,6 +4,7 @@ import {
   SANDSTORM_RPC_VERSION,
   browserClientScript,
 } from "sandstorm:rpc";
+import { serveNativeCapnpExportSession } from "sandstorm:capnp";
 
 export { RpcTarget } from "capnweb";
 export { SANDSTORM_CAPNWEB_VERSION, SANDSTORM_RPC_VERSION } from "sandstorm:rpc";
@@ -2370,7 +2371,8 @@ export function powerboxGrants(request, env, options = {}) {
 }
 
 export async function serveSystemRoutes(request, env) {
-  return await servePowerboxDescriptors(request, env) ||
+  return await serveNativeCapnpExportSession(request, { env }) ||
+    await servePowerboxDescriptors(request, env) ||
     await serveObjectCapability(request, env);
 }
 
@@ -3434,6 +3436,10 @@ function isPowerboxDescriptorRequest(request) {
   return new URL(request.url).pathname.startsWith(`${POWERBOX_DESCRIPTOR_PREFIX}/`);
 }
 
+function isNativeCapnpExportSessionRequest(request) {
+  return new URL(request.url).pathname.startsWith("/__sandstorm/native-capnp/export-sessions/");
+}
+
 export function sandstorm(request, env, options = {}) {
   const durableRegistry = durableCapabilityRegistry(options.capabilities);
 
@@ -3473,14 +3479,18 @@ export function sandstorm(request, env, options = {}) {
     exportDurable,
     powerboxFulfillment: (options = {}) => powerboxFulfillment(request, env, options),
     powerboxGrants: (options = {}) => powerboxGrants(request, env, options),
-    serveSystemRoutes: async () => await servePowerboxDescriptors(request, env) ||
+    serveSystemRoutes: async () => await serveNativeCapnpExportSession(request, { env }) ||
+      await servePowerboxDescriptors(request, env) ||
       await serveObjectCapability(request, env, durableRegistry),
     apiTarget: () => apiTarget(request, env),
     rpcClientScript: () => rpcClientScript(),
     rpcResponse: (target, options) => rpcResponse(request, target, options),
     serveRpc: (target, options) => {
-      if (isPowerboxDescriptorRequest(request) || isObjectCapabilityRequest(request)) {
-        return (async () => await servePowerboxDescriptors(request, env) ||
+      if (isNativeCapnpExportSessionRequest(request) ||
+          isPowerboxDescriptorRequest(request) ||
+          isObjectCapabilityRequest(request)) {
+        return (async () => await serveNativeCapnpExportSession(request, { env }) ||
+          await servePowerboxDescriptors(request, env) ||
           await serveObjectCapability(request, env, durableRegistry))();
       }
       return serveRpc(request, target, options);

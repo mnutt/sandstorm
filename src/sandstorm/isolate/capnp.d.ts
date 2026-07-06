@@ -294,6 +294,45 @@ declare module "sandstorm:capnp" {
     },
   ): unknown;
 
+  export interface NativeCapnpExportRegistration {
+    readonly id: string;
+    readonly InterfaceClass: NativeCapnpGeneratedInterface<object> & {
+      readonly Server: new (target: object) => unknown;
+    };
+    readonly target: object;
+    readonly interfaceMetadata: {
+      readonly interfaceId: bigint | number | string;
+      readonly interfaceName: string;
+    };
+    readonly path: string;
+  }
+
+  export function registerNativeCapnpExport(
+    InterfaceClass: NativeCapnpGeneratedInterface<object> & {
+      readonly Server: new (target: object) => unknown;
+    },
+    target: object,
+    options?: {
+      readonly id?: string;
+      readonly interfaceId?: bigint | number | string;
+      readonly interfaceName?: string;
+      readonly schema?: {
+        readonly interfaceId?: bigint | number | string;
+        readonly interfaceName?: string;
+      };
+    },
+  ): NativeCapnpExportRegistration;
+
+  export function unregisterNativeCapnpExport(id: string): boolean;
+
+  export function serveNativeCapnpExportSession(
+    request: Request,
+    options?: {
+      readonly registry?: Map<string, NativeCapnpExportRegistration>;
+      readonly finalize?: unknown;
+    },
+  ): Promise<Response | null>;
+
   export function exportNativeCapnp<TClient extends object>(
     api: { capnpBridgeInfo(): Promise<unknown> },
     InterfaceClass: NativeCapnpGeneratedInterface<TClient> & {

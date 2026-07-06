@@ -814,6 +814,10 @@ Progress:
   generated `@mnutt/capnp-es` server with `Conn.initMain()`, and
   `exportNativeCapnp()` exposes the intended public helper while correctly
   refusing until the supervisor advertises `nativeExports`
+- `sandstorm:api` now routes
+  `/__sandstorm/native-capnp/export-sessions/:id` through the native export
+  registry, so the supervisor has a reserved binary Web Streams endpoint for
+  the next C++ session-pump chunk
 
 Interop tests:
 

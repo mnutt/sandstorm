@@ -1236,6 +1236,13 @@ test("isolate supervisor integration suite", {
         message: "native Cap'n Proto exports are unavailable: missing features",
         missingFeatures: ["nativeExports"],
       },
+      unknownRoute: {
+        status: 404,
+        body: {
+          ok: false,
+          error: "unknown native Cap'n Proto export target",
+        },
+      },
     });
     assert.deepEqual(body.sandstormApi.nativeCapnpBridge, {
       available: false,
