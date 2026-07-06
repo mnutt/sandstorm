@@ -3683,16 +3683,9 @@ export default {
       interfaceId: 0x9ea3c98729c78d51n,
       interfaceName: "NativeExportFixture",
     };
-    let nativeExportUnavailableError = null;
-    try {
-      await exportNativeCapnp(apiHelper, nativeExportInterface, {});
-    } catch (error) {
-      nativeExportUnavailableError = {
-        name: String(error?.name || "Error"),
-        message: String(error?.message || error),
-        missingFeatures: error?.details?.negotiation?.missingFeatures || [],
-      };
-    }
+    const nativeExportCapability = await exportNativeCapnp(apiHelper, nativeExportInterface, {});
+    const nativeExportCapabilityInfo = await nativeExportCapability.info();
+    const nativeExportCapabilityDrop = await nativeExportCapability.drop();
     const nativeExportUnknownRouteResponse = await serveSystemRoutes(new Request(
       "http://sandstorm/__sandstorm/native-capnp/export-sessions/missing-export", {
         method: "POST",
@@ -4354,7 +4347,12 @@ export default {
             echoBootstrap: nativeExportEchoMessage.which() === CapnpRpcMessage.BOOTSTRAP,
             echoQuestionId: nativeExportEchoMessage.bootstrap.questionId,
           },
-          unavailableError: nativeExportUnavailableError,
+          capability: {
+            ok: nativeExportCapability.ok,
+            idType: typeof nativeExportCapability.id,
+            info: nativeExportCapabilityInfo,
+            drop: nativeExportCapabilityDrop,
+          },
           unknownRoute: nativeExportUnknownRoute,
         },
         nativeCapnpBridge: {

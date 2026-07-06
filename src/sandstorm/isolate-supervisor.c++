@@ -34,6 +34,7 @@
 #include <capnp/rpc-twoparty.h>
 #include <capnp/schema.h>
 #include <capnp/serialize.h>
+#include <capnp/serialize-async.h>
 #include <capnp/serialize-packed.h>
 #include <kj/async-io.h>
 #include <kj/async-unix.h>
@@ -167,6 +168,7 @@ enum class ClaimedCapabilityKind {
   ROUTE_BACKED_WEB_SESSION,
   ROUTE_BACKED_API_SESSION,
   ROUTE_BACKED_APP_OBJECT,
+  NATIVE_CAPNP_EXPORT,
 };
 
 enum class ClaimedCapabilityResidence {
@@ -201,6 +203,8 @@ kj::StringPtr claimedCapabilityKindName(ClaimedCapabilityKind kind) {
       return "routeBackedApiSession";
     case ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT:
       return "routeBackedAppObject";
+    case ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT:
+      return "nativeCapnpExport";
   }
   KJ_UNREACHABLE;
 }
@@ -526,6 +530,8 @@ public:
           break;
         case ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT:
           ++stats.routeBackedAppObjectCount;
+          break;
+        case ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT:
           break;
         case ClaimedCapabilityKind::POWERBOX_CLAIM:
           ++stats.powerboxClaimCount;
@@ -4567,6 +4573,8 @@ public:
         return createRouteBackedCapability(path, response, RouteBackedCapabilityType::API);
       } else if (methodName == "POST" && route == "/capabilities/app-object") {
         return createRouteBackedCapability(path, response, RouteBackedCapabilityType::OBJECT);
+      } else if (methodName == "POST" && route == "/capabilities/native-capnp-export") {
+        return createNativeCapnpExportCapability(path, response);
       }
 
       if (methodName != "GET") {
@@ -4744,6 +4752,176 @@ private:
 
   std::map<std::string, kj::Own<NativeCapnpBridgeRpcSession>> nativeCapnpBridgeRpcSessions;
 
+  struct NativeCapnpExportHttpState final: public kj::Refcounted {
+    kj::Own<kj::NetworkAddress> addr;
+    kj::Own<kj::HttpClient> client;
+    kj::Own<kj::AsyncOutputStream> requestBody;
+    kj::Promise<kj::HttpClient::Response> response = nullptr;
+    kj::Maybe<kj::Own<kj::AsyncInputStream>> responseBody;
+
+    NativeCapnpExportHttpState(kj::Own<kj::NetworkAddress>&& addr,
+        kj::Own<kj::HttpClient>&& client)
+        : addr(kj::mv(addr)), client(kj::mv(client)) {}
+  };
+
+  class NativeCapnpExportHttpMessageStream final: public capnp::MessageStream {
+  public:
+    NativeCapnpExportHttpMessageStream(kj::Own<IsolateRuntimeConfig> config,
+        kj::Own<IsolateRuntimeHost> host, kj::HttpHeaderTable& headerTable, kj::String path)
+        : config(kj::mv(config)),
+          host(kj::mv(host)),
+          headerTable(headerTable),
+          path(kj::mv(path)),
+          started(start().fork()) {}
+
+    kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> tryReadMessage(
+        kj::ArrayPtr<kj::AutoCloseFd> fdSpace,
+        capnp::ReaderOptions options = capnp::ReaderOptions(),
+        kj::ArrayPtr<capnp::word> scratchSpace = nullptr) override {
+      (void)fdSpace;
+      return started.addBranch().then([this, options, scratchSpace]() mutable {
+        auto& current = KJ_ASSERT_NONNULL(state);
+        KJ_IF_MAYBE(body, current->responseBody) {
+          return readFromResponse(**body, options, scratchSpace);
+        }
+
+        auto response = kj::mv(current->response);
+        return response.then([this, options, scratchSpace](
+            kj::HttpClient::Response&& response) mutable {
+          KJ_REQUIRE(response.statusCode == 200,
+              "native Cap'n Proto export session returned an unsuccessful status",
+              response.statusCode, response.statusText);
+          KJ_REQUIRE(response.body.get() != nullptr,
+              "native Cap'n Proto export session did not return a response stream");
+          auto& current = KJ_ASSERT_NONNULL(state);
+          current->responseBody = kj::mv(response.body);
+          auto& body = KJ_ASSERT_NONNULL(current->responseBody);
+          return readFromResponse(*body, options, scratchSpace);
+        });
+      });
+    }
+
+    kj::Promise<void> writeMessage(kj::ArrayPtr<const int> fds,
+        kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) override {
+      if (fds.size() > 0) {
+        return KJ_EXCEPTION(UNIMPLEMENTED,
+            "native Cap'n Proto export sessions do not support file descriptors");
+      }
+
+      auto fork = writeQueue.then([this, segments]() mutable {
+        return started.addBranch().then([this, segments]() mutable {
+          auto& current = KJ_ASSERT_NONNULL(state);
+          KJ_REQUIRE(current->requestBody.get() != nullptr,
+              "native Cap'n Proto export request stream is closed");
+          return capnp::writeMessage(*current->requestBody, segments);
+        });
+      }).fork();
+      writeQueue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+    kj::Promise<void> writeMessages(
+        kj::ArrayPtr<kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>>> messages) override {
+      auto fork = writeQueue.then([this, messages]() mutable {
+        return started.addBranch().then([this, messages]() mutable {
+          auto& current = KJ_ASSERT_NONNULL(state);
+          KJ_REQUIRE(current->requestBody.get() != nullptr,
+              "native Cap'n Proto export request stream is closed");
+          return capnp::writeMessages(*current->requestBody, messages);
+        });
+      }).fork();
+      writeQueue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+    kj::Maybe<int> getSendBufferSize() override {
+      return nullptr;
+    }
+
+    kj::Promise<void> end() override {
+      auto fork = writeQueue.then([this]() mutable {
+        return started.addBranch().then([this]() mutable {
+          KJ_IF_MAYBE(current, state) {
+            (*current)->requestBody = nullptr;
+          }
+        });
+      }).fork();
+      writeQueue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+  private:
+    kj::Own<IsolateRuntimeConfig> config;
+    kj::Own<IsolateRuntimeHost> host;
+    kj::HttpHeaderTable& headerTable;
+    kj::String path;
+    kj::Maybe<kj::Own<NativeCapnpExportHttpState>> state;
+    kj::ForkedPromise<void> started;
+    kj::Promise<void> writeQueue = kj::READY_NOW;
+
+    kj::Promise<void> start() {
+      return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
+          .then([this](kj::Own<kj::NetworkAddress>&& addr) mutable {
+        auto client = kj::newHttpClient(host->timer, headerTable, *addr);
+        auto newState = kj::refcounted<NativeCapnpExportHttpState>(kj::mv(addr), kj::mv(client));
+        kj::HttpHeaders headers(headerTable);
+        headers.add("content-type", "application/octet-stream");
+
+        auto httpRequest = newState->client->request(
+            kj::HttpMethod::POST, path, headers, kj::Maybe<uint64_t>(nullptr));
+        KJ_REQUIRE(httpRequest.body.get() != nullptr,
+            "native Cap'n Proto export session did not produce a request stream");
+        newState->requestBody = kj::mv(httpRequest.body);
+        newState->response = kj::mv(httpRequest.response);
+        state = kj::mv(newState);
+      });
+    }
+
+    kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> readFromResponse(
+        kj::AsyncInputStream& body, capnp::ReaderOptions options,
+        kj::ArrayPtr<capnp::word> scratchSpace) {
+      return capnp::tryReadMessage(body, options, scratchSpace)
+          .then([](kj::Maybe<kj::Own<capnp::MessageReader>> maybeReader)
+              -> kj::Maybe<capnp::MessageReaderAndFds> {
+        KJ_IF_MAYBE(reader, maybeReader) {
+          return capnp::MessageReaderAndFds { kj::mv(*reader), nullptr };
+        } else {
+          return nullptr;
+        }
+      });
+    }
+  };
+
+  struct NativeCapnpExportRpcSession {
+    kj::String exportId;
+    kj::String path;
+    uint64_t interfaceId = 0;
+    kj::String interfaceName;
+
+    NativeCapnpExportHttpMessageStream stream;
+    capnp::TwoPartyVatNetwork network;
+    capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
+    kj::Maybe<capnp::Capability::Client> cap;
+
+    NativeCapnpExportRpcSession(kj::Own<IsolateRuntimeConfig> config,
+        kj::Own<IsolateRuntimeHost> host, kj::HttpHeaderTable& headerTable,
+        kj::String exportId, kj::String path, uint64_t interfaceId, kj::String interfaceName)
+        : exportId(kj::mv(exportId)),
+          path(kj::heapString(path)),
+          interfaceId(interfaceId),
+          interfaceName(kj::mv(interfaceName)),
+          stream(kj::mv(config), kj::mv(host), headerTable, kj::mv(path)),
+          network(stream, capnp::rpc::twoparty::Side::CLIENT),
+          rpcSystem(network, kj::Maybe<capnp::Capability::Client>(nullptr)) {
+      capnp::MallocMessageBuilder message;
+      auto vatId = message.initRoot<capnp::rpc::twoparty::VatId>();
+      vatId.setSide(capnp::rpc::twoparty::Side::SERVER);
+      cap = rpcSystem.bootstrap(vatId);
+    }
+  };
+
+  std::map<std::string, kj::Own<NativeCapnpExportRpcSession>> nativeCapnpExportRpcSessions;
+
   std::string nativeCapnpBridgeRpcSessionKey(kj::StringPtr connectionId) {
     return std::string(connectionId.begin(), connectionId.size());
   }
@@ -4772,6 +4950,11 @@ private:
     }
 
     return dropped;
+  }
+
+  bool dropNativeCapnpExportRpcSession(kj::StringPtr capabilityId) {
+    return nativeCapnpExportRpcSessions.erase(std::string(
+        capabilityId.begin(), capabilityId.size())) > 0;
   }
 
   kj::Maybe<kj::String> registerNativeCapnpBridgeRpcSession(
@@ -4819,6 +5002,13 @@ private:
 
     output = kj::mv(values);
     return nullptr;
+  }
+
+  kj::Maybe<uint64_t> parseNativeCapnpExportInterfaceId(kj::StringPtr value) {
+    if (value.startsWith("0x") || value.startsWith("0X")) {
+      return parseUInt64(kj::str(value.slice(2)), 16);
+    }
+    return parseUInt64(value, 10);
   }
 
   kj::Promise<void> sendBadRequest(
@@ -5064,6 +5254,7 @@ private:
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\", "
+        "\"capabilities.nativeCapnpExport\", "
         "\"capabilities.claimed\", \"capabilities.claimedStats\"]\n"
         "}\n");
   }
@@ -5079,7 +5270,7 @@ private:
         "  \"nativeTransport\": true,\n"
         "  \"nativeRpc\": true,\n"
         "  \"nativeCalls\": false,\n"
-        "  \"nativeExports\": false,\n"
+        "  \"nativeExports\": true,\n"
         "  \"capabilitySlots\": false,\n"
         "  \"fallbackTransport\": \"appObjectRpc\"\n"
         "}\n");
@@ -5923,6 +6114,61 @@ private:
     return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
 
+  ClaimedCapabilityMetadata makeNativeCapnpExportClaimedCapabilityMetadata() {
+    return ClaimedCapabilityMetadata {
+      ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT,
+      ClaimedCapabilityResidence::LOCAL_EXPORT,
+      ClaimedCapabilityNativeInterface::UNKNOWN,
+      kj::heapString(""),
+      true,
+      false,
+      true,
+      true,
+    };
+  }
+
+  kj::Promise<void> createNativeCapnpExportCapability(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    auto ids = findIsolateQueryParams(url, "id");
+    auto interfaceIds = findIsolateQueryParams(url, "interfaceId");
+    auto interfaceNames = findIsolateQueryParams(url, "interfaceName");
+    if (ids.size() != 1 || ids[0].size() == 0 ||
+        interfaceIds.size() != 1 || interfaceIds[0].size() == 0 ||
+        interfaceNames.size() != 1 || interfaceNames[0].size() == 0) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"expected exactly one id, interfaceId, and interfaceName\"\n}\n"));
+    }
+
+    if (ids[0].size() > 256 || interfaceNames[0].size() > 512) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"native Cap'n Proto export metadata is too large\"\n}\n"));
+    }
+
+    uint64_t interfaceId;
+    KJ_IF_MAYBE(parsed, parseNativeCapnpExportInterfaceId(interfaceIds[0])) {
+      interfaceId = *parsed;
+    } else {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"interfaceId must be a decimal integer or 0x-prefixed hex integer\"\n}\n"));
+    }
+
+    auto encodedId = kj::encodeUriComponent(ids[0]);
+    auto session = kj::heap<NativeCapnpExportRpcSession>(
+        kj::addRef(config), kj::addRef(host), headerTable,
+        kj::mv(ids[0]),
+        kj::str("/__sandstorm/native-capnp/export-sessions/", encodedId),
+        interfaceId, kj::mv(interfaceNames[0]));
+    auto capId = host.sessions->storeClaimedCapability(
+        KJ_ASSERT_NONNULL(session->cap), makeNativeCapnpExportClaimedCapabilityMetadata());
+    auto inserted = nativeCapnpExportRpcSessions.emplace(
+        std::string(capId.begin(), capId.size()), kj::mv(session));
+    KJ_ASSERT(inserted.second);
+    return sendJson(response, 200, "OK", renderClaimedCapability(capId));
+  }
+
   kj::Promise<void> callWorkerAppObjectCapability(
       kj::StringPtr url, kj::Array<byte> bodyBytes, kj::HttpService::Response& response) {
     auto ids = findIsolateQueryParams(url, "id");
@@ -5974,6 +6220,9 @@ private:
       NativeCapnpCapabilitySlot::Reader target, kj::HttpService::Response& response) {
     auto id = kj::heapString(target.getId());
     KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(id)) {
+      if (dropNativeCapnpExportRpcSession(id)) {
+        KJ_LOG(INFO, "Dropped native Cap'n Proto export RPC session for capability.", id);
+      }
       auto droppedSessions = dropNativeCapnpBridgeRpcSessionsForTarget(id);
       if (droppedSessions > 0) {
         KJ_LOG(INFO, "Dropped native Cap'n Proto bridge RPC sessions for capability.",
@@ -6885,6 +7134,8 @@ private:
         case ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT:
           pathPrefix = kj::heapString(info->pathPrefix);
           break;
+        case ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT:
+          break;
         default:
           break;
       }
@@ -7376,6 +7627,9 @@ private:
     }
 
     KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(id)) {
+      if (dropNativeCapnpExportRpcSession(id)) {
+        KJ_LOG(INFO, "Dropped native Cap'n Proto export RPC session for capability.", id);
+      }
       KJ_IF_MAYBE(dropNotifyPath, dropped->dropNotifyPath) {
         return notifyDroppedClaimedCapability(kj::mv(*dropNotifyPath))
             .catch_([](kj::Exception&& exception) {

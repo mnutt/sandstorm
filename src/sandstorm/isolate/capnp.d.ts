@@ -334,7 +334,10 @@ declare module "sandstorm:capnp" {
   ): Promise<Response | null>;
 
   export function exportNativeCapnp<TClient extends object>(
-    api: { capnpBridgeInfo(): Promise<unknown> },
+    api: {
+      capnpBridgeInfo(): Promise<unknown>;
+      nativeCapnpExport(registration: NativeCapnpExportRegistration): Promise<Capability>;
+    },
     InterfaceClass: NativeCapnpGeneratedInterface<TClient> & {
       readonly Server: new (target: object) => unknown;
     },
@@ -353,7 +356,7 @@ declare module "sandstorm:capnp" {
         };
       };
     },
-  ): Promise<never>;
+  ): Promise<Capability>;
 
   export function saveNativeCapnp(
     api: NativeCapnpBridgeTransport["api"],

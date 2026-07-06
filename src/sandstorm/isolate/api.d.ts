@@ -681,6 +681,7 @@ declare module "sandstorm:api" {
     capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
     nativeCapnpBridgeCall(body?: BodyInit): Promise<NativeCapnpBridgeResponse>;
     nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<NativeCapnpBridgeByteResponse>;
+    nativeCapnpExport(registration: NativeCapnpExportRegistration): Promise<Capability>;
     storage(): StorageApiTarget;
     powerbox(): PowerboxApiTarget;
     webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
@@ -751,6 +752,14 @@ declare module "sandstorm:api" {
     body: Uint8Array;
   }
 
+  export interface NativeCapnpExportRegistration {
+    readonly id: string;
+    readonly interfaceMetadata: {
+      readonly interfaceId: bigint | number | string;
+      readonly interfaceName: string;
+    };
+  }
+
   export interface SandstormApi {
     session(): SessionInfo;
     status(): Promise<unknown>;
@@ -761,6 +770,7 @@ declare module "sandstorm:api" {
     capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
     nativeCapnpBridgeCall(body?: BodyInit): Promise<NativeCapnpBridgeResponse>;
     nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<NativeCapnpBridgeByteResponse>;
+    nativeCapnpExport(registration: NativeCapnpExportRegistration): Promise<Capability>;
     storage(): StorageApi;
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;

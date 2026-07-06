@@ -818,6 +818,11 @@ Progress:
   `/__sandstorm/native-capnp/export-sessions/:id` through the native export
   registry, so the supervisor has a reserved binary Web Streams endpoint for
   the next C++ session-pump chunk
+- the supervisor can now mint a claimed native capability for a registered
+  isolate export: `exportNativeCapnp()` registers the JS server target, calls
+  `/capabilities/native-capnp-export`, and the C++ side keeps a live
+  `TwoPartyVatNetwork` client over the reserved Web Streams endpoint; bridge
+  negotiation now advertises `nativeExports`
 
 Interop tests:
 
