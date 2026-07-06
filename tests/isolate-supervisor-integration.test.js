@@ -883,7 +883,13 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     "        nounPhrase = (defaultText = \"instance\"),",
     "        command = .command )",
     "    ],",
-    "    continueCommand = .command",
+    "    continueCommand = .command,",
+    "    publicInterfaces = [",
+    "      ( name = \"greeter\",",
+    "        interfaceName = \"Greeter\",",
+    "        schemaPath = \"app/greeter.capnp\",",
+    "        displayInfo = ( title = (defaultText = \"Greeter\") ) )",
+    "    ]",
     "  ),",
     "  sourceMap = (",
     "    searchPath = [ ( packagePath = \"app\", sourcePath = \"app\" ) ]",
@@ -966,6 +972,18 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
   assert.equal(
     modules.get("sandstorm:browser-capnp:./greeting.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-browser/greeting.capnp.js");
+
+  assert.deepEqual(manifest.publicInterfaces, [{
+    name: "greeter",
+    interfaceName: "Greeter",
+    schemaPath: "app/greeter.capnp",
+    interfaceId: "0x85d0f155d6c54b6d",
+    displayInfo: {
+      title: {
+        defaultText: "Greeter",
+      },
+    },
+  }]);
 });
 
 test("isolate supervisor integration suite", {

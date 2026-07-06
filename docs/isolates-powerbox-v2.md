@@ -1039,6 +1039,11 @@ Progress:
   app-object capability that can be offered or used to fulfill Powerbox
   requests, keeping directory listing and small file reads in RPC while calling
   out that large byte streams should use a fetch-shaped data plane
+- `Manifest.publicInterfaces` now provides a package-level metadata section
+  for public schema-defined capabilities; `spk pack` validates each declared
+  schema/interface pair, fills the canonical Cap'n Proto interface ID when it is
+  omitted, rejects mismatches, and preserves the enriched declaration in
+  `sandstorm-manifest`
 
 Exit criteria:
 

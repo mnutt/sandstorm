@@ -4523,6 +4523,57 @@ private:
     return true;
   }
 
+  bool augmentPackPublicInterfaces(spk::Manifest::Builder manifest) {
+    auto publicInterfaces = manifest.getPublicInterfaces();
+    bool changed = false;
+
+    for (auto i: kj::indices(publicInterfaces)) {
+      auto publicInterface = publicInterfaces[i];
+      auto name = publicInterface.getName();
+      auto interfaceName = publicInterface.getInterfaceName();
+      auto schemaPath = publicInterface.getSchemaPath();
+
+      KJ_REQUIRE(name.size() > 0, "Manifest publicInterfaces entries must have a name.");
+      KJ_REQUIRE(interfaceName.size() > 0,
+          "Manifest publicInterfaces entries must have an interfaceName.", name);
+      KJ_REQUIRE(schemaPath.size() > 0,
+          "Manifest publicInterfaces entries must have a schemaPath.", name);
+
+      auto maybeSourcePath = trySourcePathForPackagePath(schemaPath);
+      KJ_IF_MAYBE(sourcePath, maybeSourcePath) {
+        char* resolvedRaw = realpath(sourcePath->cStr(), nullptr);
+        KJ_REQUIRE(resolvedRaw != nullptr, "Could not resolve public interface schema.",
+            name, schemaPath, *sourcePath, strerror(errno));
+        KJ_DEFER(free(resolvedRaw));
+        auto resolvedPath = kj::StringPtr(resolvedRaw);
+
+        auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
+        auto interfaces = scanCapnpInterfaces(source);
+        auto metadata = parseCapnpInterfaceMetadata(
+            resolvedPath, dirnameForPath(resolvedPath), interfaces.asPtr());
+        auto parsedInterface = metadata.find(toStdString(interfaceName));
+        KJ_REQUIRE(parsedInterface != metadata.end(),
+            "Public interface schema does not define the requested interface.",
+            name, interfaceName, schemaPath);
+
+        auto actualInterfaceId = kj::StringPtr(parsedInterface->second.interfaceId);
+        if (publicInterface.getInterfaceId().size() == 0) {
+          publicInterface.setInterfaceId(actualInterfaceId);
+          changed = true;
+        } else {
+          KJ_REQUIRE(publicInterface.getInterfaceId().asString() == actualInterfaceId,
+              "Public interface ID does not match schema.", name, interfaceName,
+              schemaPath, publicInterface.getInterfaceId(), actualInterfaceId);
+        }
+      } else {
+        KJ_FAIL_REQUIRE("Could not resolve public interface schema from package source map.",
+            name, schemaPath);
+      }
+    }
+
+    return changed;
+  }
+
   void preparePackIsolateSupport(ArchiveNode& root, kj::String& packIsolateSupportDir) {
     auto manifestReader = packageDef.getManifest();
     capnp::MallocMessageBuilder manifestMessage(manifestReader.totalSize().wordCount + 64);
@@ -4534,22 +4585,30 @@ private:
     devIsolateSupportDir = kj::heapString(packIsolateSupportDir);
     KJ_DEFER(devIsolateSupportDir = kj::mv(oldDevIsolateSupportDir));
 
-    bool changed = false;
+    bool changed = augmentPackPublicInterfaces(manifest);
+    bool isolateSupportChanged = false;
     if (manifest.getContinueCommand().hasIsolate()) {
-      changed = augmentPackIsolateConfig(manifest.getContinueCommand().getIsolate()) || changed;
+      isolateSupportChanged =
+          augmentPackIsolateConfig(manifest.getContinueCommand().getIsolate()) ||
+          isolateSupportChanged;
     }
 
     auto actions = manifest.getActions();
     for (auto i: kj::indices(actions)) {
       auto command = actions[i].getCommand();
       if (command.hasIsolate()) {
-        changed = augmentPackIsolateConfig(command.getIsolate()) || changed;
+        isolateSupportChanged =
+            augmentPackIsolateConfig(command.getIsolate()) || isolateSupportChanged;
       }
     }
+    changed = isolateSupportChanged || changed;
 
-    if (!changed) {
+    if (!isolateSupportChanged) {
       recursivelyDelete(packIsolateSupportDir);
       packIsolateSupportDir = nullptr;
+      if (changed) {
+        packManifestOverride = capnp::messageToFlatArray(manifestMessage);
+      }
       return;
     }
 
