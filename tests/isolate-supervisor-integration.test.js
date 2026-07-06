@@ -2903,6 +2903,13 @@ test("isolate supervisor integration suite", {
       },
       dropResult: null,
     });
+    const nativeGreeterRawToken = Buffer.from(
+      nativeGreeterSaved.json.token, "base64url").toString("utf8");
+    await runCommand(WEBSESSION_CLIENT_BIN, [
+      "--token-store", tokenStorePath,
+      "--native-greeter-token", nativeGreeterRawToken,
+      client.supervisorSocket,
+    ]);
 
     const retainedId = `retained-callback-${Date.now()}`;
     const retainedSubscribe = await requestJson(
