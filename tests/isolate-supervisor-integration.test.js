@@ -1013,6 +1013,7 @@ test("isolate supervisor integration suite", {
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id.length > 0);
     assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.error, "");
     assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.streamError, "");
+    assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.dropError, "");
     assert.equal(
       typeof body.sandstormApi.nativeCapnpBridge.generatedClient.response.bodyText,
       "string");
@@ -1036,6 +1037,13 @@ test("isolate supervisor integration suite", {
       bodyWhich: 1,
       handleClient: true,
       pinged: true,
+    });
+    assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.drop.afterDropStatus, 404);
+    assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.drop.afterDropOk, false);
+    assert.deepEqual(body.sandstormApi.nativeCapnpBridge.generatedClient.drop.afterDropException, {
+      type: "failed",
+      reason: "unknown native Cap'n Proto bridge target capability",
+      trace: "",
     });
     assert.deepEqual(body.capnpEs.bridgeRequest, {
       protocolVersion: 0,
@@ -1314,6 +1322,8 @@ test("isolate supervisor integration suite", {
         error: "",
         streamOk: true,
         streamError: "",
+        dropOk: true,
+        dropError: "",
         targetId: body.sandstormApi.nativeCapnpBridge.targetId,
         connectionId:
             `native-capnp-fixture-generated-${body.sandstormApi.nativeCapnpBridge.targetId}`,
@@ -1334,6 +1344,24 @@ test("isolate supervisor integration suite", {
           bodyWhich: 1,
           handleClient: true,
           pinged: true,
+        },
+        drop: {
+          targetId: body.sandstormApi.nativeCapnpBridge.generatedClient.drop.targetId,
+          connectionId:
+              `native-capnp-fixture-drop-${
+                body.sandstormApi.nativeCapnpBridge.generatedClient.drop.targetId}`,
+          dropResult: {
+            ok: true,
+            released: false,
+          },
+          afterDropStatus: 404,
+          afterDropOk: false,
+          afterDropWhich: "exception",
+          afterDropException: {
+            type: "failed",
+            reason: "unknown native Cap'n Proto bridge target capability",
+            trace: "",
+          },
         },
       },
       lifecycleBinary: {

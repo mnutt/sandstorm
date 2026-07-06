@@ -4759,6 +4759,21 @@ private:
     return *session->second;
   }
 
+  uint dropNativeCapnpBridgeRpcSessionsForTarget(kj::StringPtr targetId) {
+    uint dropped = 0;
+    for (auto iter = nativeCapnpBridgeRpcSessions.begin();
+         iter != nativeCapnpBridgeRpcSessions.end();) {
+      if (iter->second->targetId == targetId) {
+        iter = nativeCapnpBridgeRpcSessions.erase(iter);
+        ++dropped;
+      } else {
+        ++iter;
+      }
+    }
+
+    return dropped;
+  }
+
   kj::Maybe<kj::String> registerNativeCapnpBridgeRpcSession(
       NativeCapnpBridgeRpcMessage::Reader rpc, capnp::Capability::Client targetCap) {
     auto connectionId = rpc.getConnectionId();
@@ -5959,6 +5974,11 @@ private:
       NativeCapnpCapabilitySlot::Reader target, kj::HttpService::Response& response) {
     auto id = kj::heapString(target.getId());
     KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(id)) {
+      auto droppedSessions = dropNativeCapnpBridgeRpcSessionsForTarget(id);
+      if (droppedSessions > 0) {
+        KJ_LOG(INFO, "Dropped native Cap'n Proto bridge RPC sessions for capability.",
+            id, droppedSessions);
+      }
       KJ_IF_MAYBE(dropNotifyPath, dropped->dropNotifyPath) {
         return notifyDroppedClaimedCapability(kj::mv(*dropNotifyPath))
             .catch_([](kj::Exception&& exception) {

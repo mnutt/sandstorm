@@ -3897,6 +3897,8 @@ export default {
     let nativeCapnpGeneratedClientError = "";
     let nativeCapnpGeneratedStreamResult = null;
     let nativeCapnpGeneratedStreamError = "";
+    let nativeCapnpGeneratedDropResult = null;
+    let nativeCapnpGeneratedDropError = "";
     try {
       const generatedResponse = await nativeCapnpGeneratedWebSession.get({
         path: "/generated-client",
@@ -3940,6 +3942,48 @@ export default {
       };
     } catch (error) {
       nativeCapnpGeneratedStreamError = `${error.name}: ${error.message}`;
+    }
+
+    try {
+      const nativeCapnpDropTarget = await apiHelper.webSession({
+        pathPrefix: "/native-capnp-bridge-target",
+      });
+      const nativeCapnpDropWebSession = connectNativeCapnp(
+        apiHelper,
+        nativeCapnpDropTarget,
+        WebSession,
+        { connectionId: `native-capnp-fixture-drop-${nativeCapnpDropTarget.id}` });
+      await nativeCapnpDropWebSession.get({
+        path: "/generated-client",
+        context: {},
+        ignoreBody: false,
+      });
+      const dropResult = await nativeCapnpDropWebSession.drop();
+      const afterDropMessage = new CapnpEsMessage();
+      afterDropMessage.initRoot(CapnpRpcMessage)._initBootstrap().questionId = 125;
+      const afterDropResponse = await apiHelper.nativeCapnpBridgeCallBytes(
+        makeNativeCapnpBridgeRpcRequest({
+          target: {
+            id: nativeCapnpDropTarget.id,
+            interfaceId: "0xa8e9655582dcde6f",
+            interfaceName: "sandstorm.WebSession",
+            kind: "receiverHosted",
+          },
+          message: afterDropMessage,
+          connectionId: nativeCapnpDropWebSession.transport.connectionId,
+        }).message);
+      const decodedAfterDropResponse = decodeNativeCapnpBridgeResponse(afterDropResponse.body);
+      nativeCapnpGeneratedDropResult = {
+        targetId: nativeCapnpDropTarget.id,
+        connectionId: nativeCapnpDropWebSession.transport.connectionId,
+        dropResult: dropResult ?? null,
+        afterDropStatus: afterDropResponse.status,
+        afterDropOk: afterDropResponse.ok,
+        afterDropWhich: decodedAfterDropResponse.which,
+        afterDropException: decodedAfterDropResponse.exception,
+      };
+    } catch (error) {
+      nativeCapnpGeneratedDropError = `${error.name}: ${error.message}`;
     }
     let nativeCapnpBridgeTransportError = "";
     let nativeCapnpBridgeTransportMessage = null;
@@ -4289,10 +4333,13 @@ export default {
             error: nativeCapnpGeneratedClientError,
             streamOk: nativeCapnpGeneratedStreamError === "",
             streamError: nativeCapnpGeneratedStreamError,
+            dropOk: nativeCapnpGeneratedDropError === "",
+            dropError: nativeCapnpGeneratedDropError,
             targetId: nativeCapnpGeneratedWebSession.capability.id,
             connectionId: nativeCapnpGeneratedWebSession.transport.connectionId,
             response: nativeCapnpGeneratedClientResult,
             stream: nativeCapnpGeneratedStreamResult,
+            drop: nativeCapnpGeneratedDropResult,
           },
           lifecycleBinary: nativeCapnpLifecycleBinary,
           unknownTargetError: unknownNativeCapnpBridgeCall.error,
