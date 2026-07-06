@@ -965,6 +965,11 @@ Progress:
   native bridge schema, exposes generated-client helpers such as
   `connectBrowserNativeCapnp()` and `restoreBrowserNativeCapnp()`, and can
   save/drop Sandstorm capability handles through the binary supervisor bridge
+- the native browser helper now exposes schema-derived Powerbox descriptor
+  helpers plus `requestBrowserNativeCapnp()` / `claimBrowserNativeCapnpToken()`;
+  browser code can request a user-mediated app-interface capability, claim the
+  returned token through Sandstorm's normal claim route, and receive a generated
+  `capnp-es` client without going through the old app-object browser transport
 
 Powerbox work:
 

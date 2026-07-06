@@ -3650,6 +3650,22 @@ export class NativeCapnpBridgeProtocolError extends Error {
   }
 }
 
+async function readJsonResponse(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return {
+      ok: false,
+      error: text || "HTTP " + response.status,
+    };
+  }
+}
+
+function cloneNativeCapnpJsonValue(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
 function nativeCapnpMessageBytes(message) {
   if (message instanceof Uint8Array) return message;
   if (message instanceof ArrayBuffer) return new Uint8Array(message);
@@ -3683,6 +3699,41 @@ function nativeCapnpInterfaceId(value = 0n) {
     return BigInt(value.startsWith("0x") ? value : "0x" + value);
   }
   return 0n;
+}
+
+function nativeCapnpInterfaceIdText(value = 0n) {
+  const interfaceId = nativeCapnpInterfaceId(value);
+  return interfaceId === 0n ? "" : "0x" + interfaceId.toString(16);
+}
+
+function nativeCapnpInterfaceMetadata(InterfaceClass, options = {}) {
+  if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
+    throw new TypeError("expected a capnp-es generated interface class");
+  }
+  const schema = InterfaceClass.schema || InterfaceClass.Client.schema ||
+    InterfaceClass._capnp || InterfaceClass.Client._capnp || {};
+  const firstMethod = Array.isArray(InterfaceClass.Client.methods) ?
+    InterfaceClass.Client.methods[0] : undefined;
+  const interfaceId = nativeCapnpInterfaceId(
+    options.interfaceId ??
+    schema.interfaceId ??
+    schema.typeId ??
+    InterfaceClass.interfaceId ??
+    InterfaceClass.Client.interfaceId ??
+    firstMethod?.interfaceId ??
+    0n);
+  const interfaceName = options.interfaceName ??
+    schema.interfaceName ??
+    firstMethod?.interfaceName ??
+    schema.displayName ??
+    InterfaceClass.interfaceName ??
+    InterfaceClass.name ??
+    "";
+  return Object.freeze({
+    interfaceId,
+    interfaceIdText: nativeCapnpInterfaceIdText(interfaceId),
+    interfaceName,
+  });
 }
 
 function nativeCapnpSlotKind(kind = "receiverHosted") {
@@ -3725,6 +3776,17 @@ function normalizeNativeCapnpCapabilitySlot(slot) {
     interfaceId: nativeCapnpInterfaceId(slot.interfaceId),
     interfaceName: typeof slot.interfaceName === "string" ? slot.interfaceName : "",
     kind: nativeCapnpSlotKind(slot.kind),
+  });
+}
+
+function nativeCapnpCapabilityForInterface(capability, InterfaceClass, options = {}) {
+  const metadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
+  return Object.freeze({
+    ...capability,
+    id: capability.id,
+    interfaceId: options.interfaceId ?? capability.interfaceId ?? metadata.interfaceId,
+    interfaceName: options.interfaceName ?? capability.interfaceName ?? metadata.interfaceName,
+    kind: capability.kind ?? "receiverHosted",
   });
 }
 
@@ -3907,6 +3969,157 @@ export const browserNativeCapnpApi = Object.freeze({
   capnpBridgeInfo: nativeCapnpBridgeInfo,
   nativeCapnpBridgeCallBytes,
 });
+
+const nativeCapnpPowerboxDescriptorCache = new Map();
+
+function validateNativeCapnpPowerboxDescriptor(descriptor, name = "descriptor") {
+  if (typeof descriptor !== "string" || descriptor.length === 0) {
+    throw new TypeError(name + " must be a non-empty packed Powerbox descriptor string");
+  }
+  return descriptor;
+}
+
+async function fetchNativeCapnpPowerboxDescriptorInfo(InterfaceClass, options = {}) {
+  const metadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
+  if (!metadata.interfaceIdText) {
+    throw new TypeError("native Cap'n Proto Powerbox descriptor requires an interface id");
+  }
+
+  const descriptorUrl = options.descriptorUrl ||
+    "/__sandstorm/powerbox/app-interface-descriptor";
+  const url = new URL(descriptorUrl, globalThis.location?.href || "http://sandstorm/");
+  url.searchParams.set("interfaceId", metadata.interfaceIdText);
+  url.searchParams.set("interfaceName", metadata.interfaceName);
+  const cacheKey = url.href;
+  if (nativeCapnpPowerboxDescriptorCache.has(cacheKey)) {
+    return cloneNativeCapnpJsonValue(nativeCapnpPowerboxDescriptorCache.get(cacheKey));
+  }
+
+  const response = await fetch(url);
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new NativeCapnpBridgeUnavailableError(
+      result.error || "Powerbox descriptor request failed with " + response.status,
+      { response, result });
+  }
+  validateNativeCapnpPowerboxDescriptor(result.descriptor, "native Cap'n Proto descriptor");
+  nativeCapnpPowerboxDescriptorCache.set(cacheKey, cloneNativeCapnpJsonValue(result));
+  return cloneNativeCapnpJsonValue(result);
+}
+
+export async function nativeCapnpPowerboxDescriptor(InterfaceClass, options = {}) {
+  const result = await fetchNativeCapnpPowerboxDescriptorInfo(InterfaceClass, options);
+  return result.descriptor;
+}
+
+export async function nativeCapnpPowerboxDescriptorInfo(InterfaceClass, options = {}) {
+  return fetchNativeCapnpPowerboxDescriptorInfo(InterfaceClass, options);
+}
+
+export function requestPowerbox(query, options = {}) {
+  const browserWindow = globalThis.window;
+  if (!browserWindow || !browserWindow.parent) {
+    return Promise.reject(new Error("requestPowerbox() is only available in a browser session"));
+  }
+
+  const rpcId = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : "sandstorm-powerbox-" + Date.now().toString(36) + "-" +
+      Math.random().toString(36).slice(2);
+
+  return new Promise((resolve, reject) => {
+    function cleanup() {
+      browserWindow.removeEventListener("message", onMessage);
+    }
+
+    function onMessage(event) {
+      if (event.source !== browserWindow.parent) return;
+      const data = event.data || {};
+      if (data.rpcId !== rpcId) return;
+
+      cleanup();
+      if (data.error) {
+        reject(new Error(data.error));
+      } else if (data.canceled) {
+        reject(new Error("Powerbox request canceled"));
+      } else {
+        resolve({
+          token: data.token,
+          descriptor: data.descriptor,
+        });
+      }
+    }
+
+    browserWindow.addEventListener("message", onMessage);
+    const powerboxRequest = { rpcId };
+    if (query !== undefined && query !== null) {
+      powerboxRequest.query = query;
+      powerboxRequest.saveLabel = options.saveLabel;
+    }
+
+    browserWindow.parent.postMessage({ powerboxRequest }, options.targetOrigin || "*");
+  });
+}
+
+export async function claimPowerboxToken(token, options = {}) {
+  if (typeof token !== "string" || token.length === 0) {
+    throw new TypeError("claimPowerboxToken() requires a non-empty token");
+  }
+  const {
+    claimUrl = "/__sandstorm/powerbox/claim",
+    requiredPermissions = [],
+  } = options;
+  const body = { token, requiredPermissions };
+  if (options.powerboxDescriptor !== undefined) {
+    body.powerboxDescriptor = options.powerboxDescriptor;
+  } else if (options.descriptor !== undefined) {
+    body.descriptor = options.descriptor;
+  }
+  if (options.nativeInterface !== undefined) {
+    body.nativeInterface = options.nativeInterface;
+  }
+
+  const response = await fetch(new URL(
+    claimUrl, globalThis.location?.href || "http://sandstorm/"), {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify(body),
+  });
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new NativeCapnpBridgeUnavailableError(
+      result.error || "Powerbox claim failed with " + response.status,
+      { response, result });
+  }
+  return result.capability;
+}
+
+export async function claimBrowserNativeCapnpToken(token, InterfaceClass, options = {}) {
+  const capability = await claimPowerboxToken(token, options);
+  return nativeCapnpCapabilityForInterface(capability, InterfaceClass, options);
+}
+
+export async function requestBrowserNativeCapnpPowerbox(InterfaceClass, options = {}) {
+  const info = await nativeCapnpPowerboxDescriptorInfo(InterfaceClass, options);
+  const requested = await requestPowerbox([info.descriptor], options);
+  return Object.freeze({
+    ...requested,
+    powerboxDescriptor: info,
+  });
+}
+
+export async function requestBrowserNativeCapnp(InterfaceClass, options = {}) {
+  const requested = await requestBrowserNativeCapnpPowerbox(InterfaceClass, options);
+  const capability = await claimBrowserNativeCapnpToken(requested.token, InterfaceClass, {
+    ...options,
+    powerboxDescriptor: requested.powerboxDescriptor.descriptor,
+  });
+  return Object.freeze({
+    ...requested,
+    capability,
+    client: connectBrowserNativeCapnp(capability, InterfaceClass, options),
+  });
+}
 
 export class BrowserNativeCapnpBridgeTransport extends DeferredTransport {
   #sendQueue = Promise.resolve();
