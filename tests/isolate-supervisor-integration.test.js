@@ -883,7 +883,8 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     "using Spk = import \"/sandstorm/package.capnp\";",
     "",
     "const viewInfo :Grain.UiView.ViewInfo = (",
-    "  appTitle = (defaultText = \"Pack Capnp Es Test\")",
+    "  appTitle = (defaultText = \"Pack Capnp Es Test\"),",
+    "  matchRequests = [ (tags = [(id = 0x85d0f155d6c54b6d)]) ]",
     ");",
     "",
     "const command :Spk.Manifest.Command = (",
@@ -999,6 +1000,9 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
   assert.equal(
     modules.get("sandstorm:browser-capnp:./greeting.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-browser/greeting.capnp.js");
+  assert.equal(
+    String(manifest.continueCommand.isolate.bridgeConfig.viewInfo.matchRequests[0].tags[0].id),
+    BigInt("0x85d0f155d6c54b6d").toString());
 
 });
 

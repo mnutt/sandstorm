@@ -202,6 +202,35 @@ const Greeter = schema.Greeter as CapnpInterfaceBinding<GreeterMethods>;
 These generated bindings are an authoring bridge over today's app-object RPC
 transport. They do not yet use native Cap'n Proto encoding.
 
+To advertise a schema-defined capability from `spk dev-isolate`, pass the
+schema and interface name:
+
+```sh
+spk dev-isolate \
+  --app-interface capnp:./greeter.capnp#Greeter \
+  worker.js
+```
+
+For packaged isolate apps, put the same descriptor in the normal
+`bridgeConfig.viewInfo.matchRequests` field. `spk powerbox-descriptor` can
+derive the pasteable descriptor from the schema, avoiding hand-copied type IDs:
+
+```sh
+spk powerbox-descriptor --format capnp capnp:./greeter.capnp#Greeter
+# (tags = [(id = 0x85d0f155d6c54b6d)])
+```
+
+Then include it in the package definition:
+
+```capnp
+const viewInfo :Grain.UiView.ViewInfo = (
+  appTitle = (defaultText = "Greeter"),
+  matchRequests = [
+    (tags = [(id = 0x85d0f155d6c54b6d)])
+  ]
+);
+```
+
 ### Browser schema modules
 
 Worker modules import schemas with `capnp:`:
@@ -504,6 +533,9 @@ not just a JavaScript or TypeScript interface name. Define the protocol tag in
 Cap'n Proto, pack its `PowerboxDescriptor`, request that packed descriptor from
 browser code, and pass the same packed descriptor as `descriptor` when the
 provider calls `fulfillRequest()` with the capability it wants to return.
+For a schema-defined app interface, generated `capnp:` browser modules expose
+`Interface.powerboxDescriptor(env)`, and `spk powerbox-descriptor` can produce
+the same packed descriptor at package/development time.
 
 Worker code cannot directly open the Powerbox picker. Sandstorm's underlying
 `SessionContext.request()` operation is not implemented; use browser
