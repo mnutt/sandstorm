@@ -849,6 +849,11 @@ Progress:
 - the reverse path is also covered: the fake C++ SandstormCore can restore a
   legacy `NativeGreeter::Server` from a saved token, and isolate JS calls it
   through `restoreNativeCapnp()` plus generated `@mnutt/capnp-es` bindings
+- native RPC cap tables now have focused interop coverage on the test
+  `NativeGreeter` interface: legacy C++ calls a greeter capability returned by
+  an isolate export, and isolate JS calls a greeter capability returned by the
+  fake legacy C++ greeter; this is separate from the still-disabled direct
+  bridge-envelope `capabilitySlots` feature
 
 Interop tests:
 
@@ -857,8 +862,10 @@ Interop tests:
 - isolate calls legacy grain `Greeter` (covered by the fake C++ `NativeGreeter`
   restore fixture)
 - isolate calls another isolate through saved/restored capability
-- legacy grain receives a capability returned by an isolate
-- isolate receives a capability returned by a legacy grain
+- legacy grain receives a capability returned by an isolate (covered by
+  `NativeGreeter.makeGreeter()`)
+- isolate receives a capability returned by a legacy grain (covered by
+  `NativeGreeter.makeGreeter()`)
 - permission membrane blocks a disallowed call
 - revoked capability fails on later use
 - durable token restore produces a live generated client

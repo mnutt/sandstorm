@@ -2,4 +2,6 @@
 
 interface NativeGreeter {
   hello @0 (name :Text) -> (message :Text);
+  makeGreeter @1 (prefix :Text) -> (greeter :NativeGreeter);
+  greetWith @2 (greeter :NativeGreeter, name :Text) -> (message :Text);
 }

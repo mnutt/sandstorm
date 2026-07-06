@@ -2731,6 +2731,12 @@ test("isolate supervisor integration suite", {
       hello: {
         message: "legacy native hello isolate client",
       },
+      returnedHello: {
+        message: "legacy returned isolate client",
+      },
+      greeted: {
+        message: "legacy called legacy returned isolate client from legacy",
+      },
       dropResult: null,
     });
   });
@@ -2924,6 +2930,12 @@ test("isolate supervisor integration suite", {
       savedToken: nativeGreeterSaved.json.token,
       hello: {
         message: "cross supervisor native hello client",
+      },
+      returnedHello: {
+        message: "isolate returned isolate client",
+      },
+      greeted: {
+        message: "isolate called isolate returned client from isolate export",
       },
       dropResult: null,
     });
