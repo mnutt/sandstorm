@@ -846,12 +846,16 @@ Progress:
   `NativeGreeter` token from a C++ harness and calls it through the ordinary
   generated Cap'n Proto client API, covering the first legacy/native client path
   without routing the call through isolate JS
+- the reverse path is also covered: the fake C++ SandstormCore can restore a
+  legacy `NativeGreeter::Server` from a saved token, and isolate JS calls it
+  through `restoreNativeCapnp()` plus generated `@mnutt/capnp-es` bindings
 
 Interop tests:
 
 - legacy grain calls isolate-defined `Greeter` (covered by the C++ native
   restore harness for `NativeGreeter`)
-- isolate calls legacy grain `Greeter`
+- isolate calls legacy grain `Greeter` (covered by the fake C++ `NativeGreeter`
+  restore fixture)
 - isolate calls another isolate through saved/restored capability
 - legacy grain receives a capability returned by an isolate
 - isolate receives a capability returned by a legacy grain

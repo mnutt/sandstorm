@@ -2711,6 +2711,30 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.dropTransient.ok, true);
   });
 
+  await t.test("calls legacy native capnp capabilities from isolate JS", async () => {
+    const savedToken = Buffer.from("native-greeter-saved-token", "utf8").toString("base64url");
+    const selfTest = await requestJson(
+      fixture.workerdSocket,
+      `/legacy-native-greeter-self-test?token=${encodeURIComponent(savedToken)}` +
+      `&name=${encodeURIComponent("isolate client")}`);
+    assert.equal(selfTest.statusCode, 200, selfTest.body + formatOutput(
+      fixture.stdout, fixture.stderr));
+    assert.equal(typeof selfTest.json.capability.id, "string");
+    assert.deepEqual(selfTest.json, {
+      ok: true,
+      capability: {
+        id: selfTest.json.capability.id,
+        kind: "receiverHosted",
+        interfaceId: "b66316217ceedb1b",
+        interfaceName: "NativeGreeter",
+      },
+      hello: {
+        message: "legacy native hello isolate client",
+      },
+      dropResult: null,
+    });
+  });
+
   await t.test("calls saved app-object capabilities across supervisors", async (t) => {
     const sharedDir = await fs.mkdtemp(path.join(REPO_TMP_DIR, "iso-cross-"));
     const tokenStorePath = path.join(sharedDir, "fake-core-route-backed-tokens");
