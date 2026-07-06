@@ -1097,31 +1097,44 @@ Exit criteria:
 
 Progress:
 
-- `docs/developing/isolate-grains.md` now separates the public/stable
+- `docs/developing/isolate-grains.md` now separates the intended public
   authoring boundary: `capnp-es:` generated modules plus
   `exportNativeCapnp()` / `restoreNativeCapnp()` are the native cross-grain and
   legacy interop path, while `capnp:` generated modules remain the
   app-object/browser compatibility bridge and local control-plane helper
+- current JavaScript-defined app-object RPC and `capnp:` schema-shaped
+  app-object bindings are retained as private/local convenience APIs during the
+  isolate pre-release period; public cross-grain protocols should be
+  schema-first native Cap'n Proto capabilities
 
 ## Open Questions
 
-- Should `.capnp` be the only source of truth for public protocols, or should
-  TypeScript classes be allowed to generate draft schemas?
-- Should generated JS use a third-party library such as `capnp-es`, a
-  Sandstorm-maintained generator, or both?
-- How should package metadata advertise exported public interfaces for
-  Powerbox discovery?
-- How should schema evolution be surfaced to JS authors?
 - How much Cap'n Proto pipelining can be exposed cleanly in JavaScript?
 - What browser transport should be the default for frontend clients?
+
+## Decisions
+
+- `.capnp` is the source of truth for public cross-grain protocols. TypeScript
+  classes may still be useful for local/private adapters, but they should not
+  define public Powerbox protocols.
+- `@mnutt/capnp-es` is the selected isolate-side native Cap'n Proto runtime,
+  with Sandstorm-owned helper modules layered around it.
+- Apps advertise offered public interfaces through Sandstorm's existing
+  `UiView.ViewInfo.matchRequests` / `PowerboxDescriptor` path. There is no
+  separate isolate package-metadata discovery mechanism.
+- Schema evolution is surfaced through `spk capnp-abi` dumps and
+  `spk capnp-abi --check` for CI.
 
 ## Recommended Direction
 
 Use schema-first public protocols:
 
 - `.capnp` is the source of truth for cross-grain interfaces.
-- `capnp:` imports provide simple JS authoring.
-- Sandstorm tooling bundles the compiler/generator.
+- `capnp-es:` imports provide native generated clients and servers for public
+  cross-grain interfaces.
+- `capnp:` imports remain the schema-shaped app-object compatibility and
+  browser-helper path.
+- Sandstorm tooling bundles the compiler/generator used by packaged isolates.
 - Isolates receive typed generated stubs and server adapters.
 - Legacy grains see ordinary Cap'n Proto interfaces.
 - Browsers use the same generated interface API over a browser-appropriate
