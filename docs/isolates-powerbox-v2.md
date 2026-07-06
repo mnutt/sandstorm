@@ -70,12 +70,14 @@ provide the same authoring model over different transports.
  isolate server   isolate client   browser client
       |                |                |
       v                v                v
- native capnp     native capnp     Cap'n Web or
- capability       bridge transport HTTP gateway
+ native capnp     native capnp     native capnp-es
+ capability       bridge transport browser bridge
  adapter
 ```
 
-The interface is shared. The transport is allowed to differ by runtime.
+The interface is shared. Schema RPC should converge on native Cap'n Proto
+semantics in every runtime; `fetch()` remains the separate data-plane shape for
+HTTP and large streaming capabilities.
 
 | Runtime | Transport |
 | --- | --- |
@@ -83,7 +85,7 @@ The interface is shared. The transport is allowed to differ by runtime.
 | Legacy grain to isolate | native Cap'n Proto RPC to supervisor adapter |
 | Isolate to legacy grain | generated JS stub over restricted native bridge |
 | Isolate to isolate | same restricted native bridge, with local fast paths where safe |
-| Browser to isolate or legacy grain | Cap'n Web or Sandstorm HTTP gateway |
+| Browser to isolate or legacy grain | generated browser client over restricted native capnp-es bridge |
 | Tests | in-memory generated transport |
 
 The security invariant is that a caller must hold a Sandstorm capability
@@ -153,9 +155,9 @@ document.querySelector("#hello").onclick = async () => {
 };
 ```
 
-The browser sees the generated `Greeter` API. Under the hood, this can use
-Cap'n Web or a Sandstorm HTTP gateway. It does not need the same wire transport
-as isolate-to-isolate calls.
+The browser sees the generated `Greeter` API. Under the hood, schema RPC should
+use the restricted native browser `capnp-es` bridge; app-defined HTTP and large
+streaming APIs should stay fetch-shaped instead of becoming RPC calls.
 
 ### Another Isolate Calls It
 
@@ -380,23 +382,33 @@ an ambient name service.
 
 ## Browser Bridge
 
-Browsers should share the schema and generated client API, but not necessarily
-the isolate native transport.
+Browsers should share the schema, generated client API, and native Cap'n Proto
+semantics with isolates. Because isolate browser APIs have not shipped, there is
+no backwards-compatibility requirement for the current Cap'n Web/app-object
+prototype paths.
 
-Browser clients can use:
+Browser schema RPC should use:
 
-- Cap'n Web
-- a Sandstorm HTTP gateway
-- generated fetch-based stubs for selected interfaces
+- generated `capnp-es` modules
+- a restricted Sandstorm browser bridge rooted in an already-held Powerbox
+  capability handle
+- native Cap'n Proto RPC envelopes and cap tables, matching the isolate bridge
+
+Browser data-plane access should use:
+
+- `fetch()` for intentionally HTTP-shaped capabilities
+- stream-capable native/fetch capabilities for large byte flows
 
 The frontend author should still write:
 
 ```js
-const greeter = Greeter.cast(capabilityFromShell);
+const greeter = Greeter.connect(capabilityFromShell);
 await greeter.hello({ name: "Ada" });
 ```
 
-The generated client can choose the browser transport internally.
+The generated client should not silently choose a public fallback transport.
+Internal diagnostics and in-memory fakes are fine, but public schema RPC should
+fail clearly if the native browser bridge is unavailable.
 
 ## Performance Model
 
@@ -892,17 +904,17 @@ Generate browser clients from the same `.capnp` schemas.
 Deliverables:
 
 - frontend code can import the same schema-generated module
-- browser calls use Cap'n Web or a Sandstorm HTTP gateway
+- browser calls use the native browser `capnp-es` bridge for schema RPC
 - Powerbox request descriptors can be generated from schema metadata
 - browser-side tests can use the in-memory transport
 
 Implementation work:
 
 - define browser capability handle representation
-- decide default browser transport:
-  - Cap'n Web where available
-  - Sandstorm HTTP gateway for compatibility
-  - generated fetch-based bridge for selected app-object interfaces
+- implement native browser `capnp-es` transport over a restricted Sandstorm
+  capability bridge
+- remove Cap'n Web/app-object browser RPC prototype transports once native
+  browser RPC reaches feature parity
 - generate browser-safe modules from the same schema
 - expose the same client method names and TypeScript types
 - map browser Powerbox results to generated clients
@@ -1106,11 +1118,14 @@ Progress:
   app-object bindings are retained as private/local convenience APIs during the
   isolate pre-release period; public cross-grain protocols should be
   schema-first native Cap'n Proto capabilities
+- once the native browser `capnp-es` bridge works, unreleased Cap'n Web and
+  app-object browser RPC prototype transports should be removed instead of kept
+  as compatibility fallbacks; `fetch()` remains supported for HTTP-shaped and
+  large data-plane capabilities
 
 ## Open Questions
 
 - How much Cap'n Proto pipelining can be exposed cleanly in JavaScript?
-- What browser transport should be the default for frontend clients?
 
 ## Decisions
 
@@ -1124,6 +1139,11 @@ Progress:
   separate isolate package-metadata discovery mechanism.
 - Schema evolution is surfaced through `spk capnp-abi` dumps and
   `spk capnp-abi --check` for CI.
+- The default browser schema RPC transport is native `capnp-es` over a
+  restricted Sandstorm capability bridge. Since isolate browser RPC has not
+  shipped, there is no fallback/backwards-compatibility transport to preserve.
+- `fetch()` remains the right public surface for HTTP-shaped APIs and large
+  data-plane flows.
 
 ## Recommended Direction
 
@@ -1138,7 +1158,7 @@ Use schema-first public protocols:
 - Isolates receive typed generated stubs and server adapters.
 - Legacy grains see ordinary Cap'n Proto interfaces.
 - Browsers use the same generated interface API over a browser-appropriate
-  transport.
+  native `capnp-es` bridge.
 - Fetch remains the preferred data plane for HTTP and large byte streams.
 
 This provides one authoring model without weakening Sandstorm's object-
