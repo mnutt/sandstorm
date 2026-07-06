@@ -2690,6 +2690,13 @@ test("isolate supervisor integration suite", {
       interfaceId: "0xb66316217ceedb1b",
       interfaceName: "NativeGreeter",
     });
+    assert.equal(selfTest.json.powerboxDescriptor.cachedInfo.descriptor,
+      selfTest.json.powerboxDescriptor.info.descriptor);
+    assert.deepEqual(selfTest.json.powerboxDescriptor.cachedInfo.decoded, {
+      kind: "appInterface",
+      interfaceId: "0xb66316217ceedb1b",
+      interfaceName: "NativeGreeter",
+    });
     assert.deepEqual(selfTest.json.local.first, { value: 2 });
     assert.deepEqual(selfTest.json.local.current, { value: 2 });
     assert.deepEqual(selfTest.json.local.child.first, { value: 3 });

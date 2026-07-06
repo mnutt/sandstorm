@@ -3404,6 +3404,10 @@ export default {
       const durableDrop = await durableClient.drop();
       const powerboxDescriptorInfo = await BrowserNativeGreeter.powerboxDescriptorInfo(env);
       const powerboxDescriptor = await BrowserNativeGreeter.powerboxDescriptor(env);
+      const cachedPowerboxDescriptorInfo = await BrowserNativeGreeter.powerboxDescriptorInfo(env);
+      cachedPowerboxDescriptorInfo.decoded.interfaceName = "mutated cached descriptor";
+      const cachedPowerboxDescriptorInfoAfterMutation =
+        await BrowserNativeGreeter.powerboxDescriptorInfo(env);
 
       const restored = await api.restore(castSaved);
       const restoredClient = GeneratedCounter.cast(restored);
@@ -3461,6 +3465,7 @@ export default {
           interfaceId: BrowserNativeGreeter.interfaceId,
           descriptor: powerboxDescriptor,
           info: powerboxDescriptorInfo,
+          cachedInfo: cachedPowerboxDescriptorInfoAfterMutation,
         },
         local: {
           first: localFirst,

@@ -994,6 +994,13 @@ Exit criteria:
 - local fast paths are demonstrably faster but do not bypass capability
   authority checks
 
+Progress:
+
+- app-interface, API-session, and outbound-HTTP Powerbox descriptor info is
+  cached by descriptor endpoint/options in the isolate API helper; generated
+  worker and browser bindings also cache schema-derived app-interface
+  descriptors and return cloned results so app code cannot mutate cached state
+
 ### Phase 7: Packaging, Publishing, And Migration
 
 Make schema-defined isolate capabilities publishable and maintainable.
