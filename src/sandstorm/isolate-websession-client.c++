@@ -537,14 +537,13 @@ public:
       ++sessionContext.restoreCount;
       if (saved->supervisorSocketPath == supervisorSocketPath) {
         KJ_IF_MAYBE(supervisor, this->supervisor) {
-          return restoreRouteBackedToken(*supervisor, saved->appRef.asPtr(), context);
+          return restoreRouteBackedToken(*supervisor, *saved, context);
         } else {
           KJ_FAIL_REQUIRE("fake SandstormCore has no supervisor for route-backed restore");
         }
       } else {
-        auto appRef = kj::heapArray<byte>(saved->appRef.asPtr());
         return restoreRouteBackedTokenFromSupervisor(
-            saved->supervisorSocketPath, kj::mv(appRef), context);
+            saved->supervisorSocketPath, copyRouteBackedToken(*saved), context);
       }
     } else {
       KJ_FAIL_REQUIRE("unknown fake SandstormCore token", tokenText);
@@ -580,21 +579,42 @@ public:
 
   kj::Promise<void> makeToken(MakeTokenContext context) override {
     auto params = context.getParams();
-    KJ_REQUIRE(params.getRef().which() == SupervisorObjectId<>::APP_REF,
-        "fake SandstormCore only supports isolate app refs");
     auto owner = params.getOwner();
     KJ_REQUIRE(owner.which() == ApiTokenOwner::GRAIN);
     KJ_REQUIRE(owner.getGrain().getGrainId().size() > 0);
     auto requirements = params.getRequirements();
 
     loadRouteBackedTokens();
-    auto appRef = params.getRef().getAppRef().getAs<capnp::Data>();
     auto token = kj::str("route-backed-token-", ++routeBackedTokenCounter);
-    routeBackedTokens.add(RouteBackedToken {
+    auto tokenEntry = RouteBackedToken {
         kj::heapString(token),
         kj::heapString(supervisorSocketPath),
-        kj::heapArray<byte>(appRef.begin(), appRef.end())
-    });
+        RouteBackedToken::Kind::APP_REF,
+        kj::heapArray<byte>(0),
+        kj::heapString(""),
+        0,
+        kj::heapString("")
+    };
+    switch (params.getRef().which()) {
+      case SupervisorObjectId<>::APP_REF: {
+        auto appRef = params.getRef().getAppRef().getAs<capnp::Data>();
+        tokenEntry.appRef = kj::heapArray<byte>(appRef.begin(), appRef.end());
+        sessionContext.lastRouteBackedAppRef = kj::heapString(appRef.asChars());
+        break;
+      }
+      case SupervisorObjectId<>::NATIVE_CAPNP_EXPORT: {
+        auto nativeExport = params.getRef().getNativeCapnpExport();
+        tokenEntry.kind = RouteBackedToken::Kind::NATIVE_CAPNP_EXPORT;
+        tokenEntry.nativeCapnpExportId = kj::heapString(nativeExport.getExportId());
+        tokenEntry.nativeCapnpExportInterfaceId = nativeExport.getInterfaceId();
+        tokenEntry.nativeCapnpExportInterfaceName = kj::heapString(nativeExport.getInterfaceName());
+        sessionContext.lastRouteBackedAppRef = kj::heapString("");
+        break;
+      }
+      default:
+        KJ_FAIL_REQUIRE("fake SandstormCore only supports isolate app refs and native exports");
+    }
+    routeBackedTokens.add(kj::mv(tokenEntry));
     ++sessionContext.routeBackedTokenCount;
     sessionContext.routeBackedRequirementCount = requirements.size();
     if (requirements.size() > 0) {
@@ -603,7 +623,6 @@ public:
     } else {
       sessionContext.lastRouteBackedRequirement = kj::heapString("");
     }
-    sessionContext.lastRouteBackedAppRef = kj::heapString(appRef.asChars());
     saveRouteBackedTokens();
     context.getResults().setToken(token.asBytes());
     return kj::READY_NOW;
@@ -635,9 +654,18 @@ public:
 
 private:
   struct RouteBackedToken {
+    enum class Kind {
+      APP_REF,
+      NATIVE_CAPNP_EXPORT,
+    };
+
     kj::String token;
     kj::String supervisorSocketPath;
+    Kind kind;
     kj::Array<byte> appRef;
+    kj::String nativeCapnpExportId;
+    uint64_t nativeCapnpExportInterfaceId = 0;
+    kj::String nativeCapnpExportInterfaceName;
   };
 
   struct SupervisorConnection {
@@ -676,41 +704,66 @@ private:
   kj::Vector<RouteBackedToken> routeBackedTokens;
   kj::Vector<kj::Own<SupervisorConnection>> supervisorConnections;
 
-  kj::Promise<void> restoreRouteBackedToken(
-      Supervisor::Client supervisor, kj::ArrayPtr<const byte> appRefBytes,
-      RestoreContext context) {
-    capnp::MallocMessageBuilder appRefMessage;
-    auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
-    appRef.setAs<capnp::Data>(appRefBytes);
+  RouteBackedToken copyRouteBackedToken(const RouteBackedToken& token) {
+    return RouteBackedToken {
+        kj::heapString(token.token),
+        kj::heapString(token.supervisorSocketPath),
+        token.kind,
+        kj::heapArray<byte>(token.appRef.asPtr()),
+        kj::heapString(token.nativeCapnpExportId),
+        token.nativeCapnpExportInterfaceId,
+        kj::heapString(token.nativeCapnpExportInterfaceName)
+    };
+  }
 
+  void setRouteBackedTokenObjectId(
+      SupervisorObjectId<>::Builder objectId, const RouteBackedToken& token) {
+    switch (token.kind) {
+      case RouteBackedToken::Kind::APP_REF: {
+        capnp::MallocMessageBuilder appRefMessage;
+        auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
+        appRef.setAs<capnp::Data>(token.appRef.asPtr());
+        objectId.setAppRef(appRef.asReader());
+        break;
+      }
+      case RouteBackedToken::Kind::NATIVE_CAPNP_EXPORT: {
+        auto nativeExport = objectId.initNativeCapnpExport();
+        nativeExport.setExportId(token.nativeCapnpExportId);
+        nativeExport.setInterfaceId(token.nativeCapnpExportInterfaceId);
+        nativeExport.setInterfaceName(token.nativeCapnpExportInterfaceName);
+        break;
+      }
+    }
+  }
+
+  kj::Promise<void> restoreRouteBackedToken(
+      Supervisor::Client supervisor, const RouteBackedToken& token,
+      RestoreContext context) {
     auto request = supervisor.restoreRequest();
-    request.getRef().setAppRef(appRef.asReader());
+    setRouteBackedTokenObjectId(request.getRef(), token);
     return request.send().then([context](auto result) mutable {
       context.getResults().setCap(result.getCap());
     });
   }
 
   kj::Promise<void> restoreRouteBackedTokenFromSupervisor(
-      kj::StringPtr ownerSupervisorSocketPath, kj::Array<byte> appRefBytes,
+      kj::StringPtr ownerSupervisorSocketPath, RouteBackedToken token,
       RestoreContext context) {
     return network.parseAddress(kj::str("unix:", ownerSupervisorSocketPath), 0)
-        .then([this, appRefBytes = kj::mv(appRefBytes), context](
+        .then([this, token = kj::mv(token), context](
             kj::Own<kj::NetworkAddress> address) mutable {
       return address->connect()
-          .then([this, address = kj::mv(address), appRefBytes = kj::mv(appRefBytes), context](
+          .then([this, address = kj::mv(address), token = kj::mv(token), context](
               kj::Own<kj::AsyncIoStream> stream) mutable {
         auto connection = kj::heap<SupervisorConnection>(kj::mv(stream));
         auto supervisor = connection->bootstrapSupervisor();
         supervisorConnections.add(kj::mv(connection));
-        capnp::MallocMessageBuilder appRefMessage;
-        auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
-        appRef.setAs<capnp::Data>(appRefBytes.asPtr());
 
         auto request = supervisor.restoreRequest();
-        request.getRef().setAppRef(appRef.asReader());
+        setRouteBackedTokenObjectId(request.getRef(), token);
         return request.send().then([context](auto result) mutable {
           context.getResults().setCap(result.getCap());
-        }).attach(kj::mv(appRefBytes));
+        }).attach(kj::mv(token));
       }).attach(kj::mv(address));
     });
   }
@@ -727,17 +780,63 @@ private:
             auto rest = kj::StringPtr(line.begin() + *tab + 1, line.size() - *tab - 1);
             KJ_IF_MAYBE(secondTab, rest.findFirst('\t')) {
               auto encodedSupervisorPath = rest.slice(0, *secondTab);
-              auto encodedAppRef = rest.slice(*secondTab + 1);
               auto decodedSupervisorPath = kj::decodeBase64(encodedSupervisorPath);
-              auto decodedAppRef = kj::decodeBase64(encodedAppRef);
               KJ_REQUIRE(!decodedSupervisorPath.hadErrors,
                   "invalid fake core token store supervisor path");
-              KJ_REQUIRE(!decodedAppRef.hadErrors, "invalid fake core token store app-ref");
-              routeBackedTokens.add(RouteBackedToken {
-                  kj::mv(token),
-                  kj::heapString(decodedSupervisorPath.asChars()),
-                  kj::mv(decodedAppRef),
-              });
+              rest = rest.slice(*secondTab + 1);
+              KJ_IF_MAYBE(thirdTab, rest.findFirst('\t')) {
+                auto kind = rest.slice(0, *thirdTab);
+                rest = rest.slice(*thirdTab + 1);
+                if (kind == kj::StringPtr("nativeCapnpExport")) {
+                  KJ_IF_MAYBE(fourthTab, rest.findFirst('\t')) {
+                    auto encodedExportId = rest.slice(0, *fourthTab);
+                    rest = rest.slice(*fourthTab + 1);
+                    KJ_IF_MAYBE(fifthTab, rest.findFirst('\t')) {
+                      auto interfaceIdText = rest.slice(0, *fifthTab);
+                      auto encodedInterfaceName = rest.slice(*fifthTab + 1);
+                      auto decodedExportId = kj::decodeBase64(encodedExportId);
+                      auto decodedInterfaceName = kj::decodeBase64(encodedInterfaceName);
+                      KJ_REQUIRE(!decodedExportId.hadErrors,
+                          "invalid fake core token store native export id");
+                      KJ_REQUIRE(!decodedInterfaceName.hadErrors,
+                          "invalid fake core token store native export interface name");
+                      uint64_t interfaceId = 0;
+                      KJ_IF_MAYBE(parsed, parseUInt64(kj::str(interfaceIdText), 10)) {
+                        interfaceId = *parsed;
+                      } else {
+                        KJ_FAIL_REQUIRE("invalid fake core token store native export interface id");
+                      }
+                      routeBackedTokens.add(RouteBackedToken {
+                          kj::mv(token),
+                          kj::heapString(decodedSupervisorPath.asChars()),
+                          RouteBackedToken::Kind::NATIVE_CAPNP_EXPORT,
+                          kj::heapArray<byte>(0),
+                          kj::heapString(decodedExportId.asChars()),
+                          interfaceId,
+                          kj::heapString(decodedInterfaceName.asChars()),
+                      });
+                    } else {
+                      KJ_FAIL_REQUIRE("invalid fake core token store native export line", line);
+                    }
+                  } else {
+                    KJ_FAIL_REQUIRE("invalid fake core token store native export line", line);
+                  }
+                } else {
+                  KJ_FAIL_REQUIRE("invalid fake core token store route-backed token kind", kind);
+                }
+              } else {
+                auto decodedAppRef = kj::decodeBase64(rest);
+                KJ_REQUIRE(!decodedAppRef.hadErrors, "invalid fake core token store app-ref");
+                routeBackedTokens.add(RouteBackedToken {
+                    kj::mv(token),
+                    kj::heapString(decodedSupervisorPath.asChars()),
+                    RouteBackedToken::Kind::APP_REF,
+                    kj::mv(decodedAppRef),
+                    kj::heapString(""),
+                    0,
+                    kj::heapString(""),
+                });
+              }
             } else {
               KJ_FAIL_REQUIRE("invalid fake core token store line", line);
             }
@@ -759,8 +858,26 @@ private:
         auto encodedSupervisorPath = kj::encodeBase64Url(token.supervisorSocketPath.asBytes());
         content.addAll(encodedSupervisorPath);
         content.add('\t');
-        auto encodedAppRef = kj::encodeBase64Url(token.appRef.asPtr());
-        content.addAll(encodedAppRef);
+        switch (token.kind) {
+          case RouteBackedToken::Kind::APP_REF: {
+            auto encodedAppRef = kj::encodeBase64Url(token.appRef.asPtr());
+            content.addAll(encodedAppRef);
+            break;
+          }
+          case RouteBackedToken::Kind::NATIVE_CAPNP_EXPORT: {
+            content.addAll(kj::StringPtr("nativeCapnpExport"));
+            content.add('\t');
+            auto encodedExportId = kj::encodeBase64Url(token.nativeCapnpExportId.asBytes());
+            content.addAll(encodedExportId);
+            content.add('\t');
+            content.addAll(kj::str(token.nativeCapnpExportInterfaceId));
+            content.add('\t');
+            auto encodedInterfaceName =
+                kj::encodeBase64Url(token.nativeCapnpExportInterfaceName.asBytes());
+            content.addAll(encodedInterfaceName);
+            break;
+          }
+        }
         content.add('\n');
       }
       writeTestFile(*path, content.asPtr());
@@ -1061,8 +1178,10 @@ public:
         : kj::heap<FakeSandstormCore>(
             io.provider->getNetwork(), sessionContextRef, socketPath);
     auto& fakeCoreRef = *fakeCore;
+    SandstormCore::Client fakeCoreClient = capnp::Capability::Client(kj::mv(fakeCore))
+        .castAs<SandstormCore>();
     capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
-    auto rpcSystem = capnp::makeRpcServer(network, kj::mv(fakeCore));
+    auto rpcSystem = capnp::makeRpcServer(network, fakeCoreClient);
 
     capnp::MallocMessageBuilder vatMessage;
     auto hostId = vatMessage.initRoot<capnp::rpc::twoparty::VatId>();
@@ -1070,6 +1189,9 @@ public:
 
     auto supervisor = rpcSystem.bootstrap(hostId).castAs<Supervisor>();
     fakeCoreRef.setSupervisor(supervisor);
+    auto keepAliveRequest = supervisor.keepAliveRequest();
+    keepAliveRequest.setCore(fakeCoreClient);
+    keepAliveRequest.send().wait(io.waitScope);
 
     if (coreServerMode) {
       context.warning("Core ready.");

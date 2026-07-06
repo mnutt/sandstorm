@@ -961,6 +961,60 @@ export default {
       });
     }
 
+    if (url.pathname === "/export-native-greeter-capability") {
+      const api = sandstorm(request, env);
+      const id = url.searchParams.get("id") || undefined;
+      const target = {
+        async hello(params) {
+          return {
+            message: `cross supervisor native hello ${params.name}`,
+          };
+        },
+      };
+      const capability = await exportNativeCapnp(api, NativeGreeter, target, {
+        id,
+        interfaceName: "NativeGreeter",
+      });
+      return Response.json({
+        ok: true,
+        capabilityClass: capability instanceof Capability,
+        capability: JSON.parse(JSON.stringify(capability)),
+        info: await capability.info(),
+      });
+    }
+
+    if (url.pathname === "/cross-grain-native-greeter-self-test") {
+      const token = url.searchParams.get("token");
+      if (!token) {
+        return Response.json({ ok: false, error: "missing token" }, { status: 400 });
+      }
+
+      const api = sandstorm(request, env);
+      const client = await restoreNativeCapnp(api, token, NativeGreeter, {
+        connectionId: `cross-grain-native-greeter-${token.slice(0, 16)}`,
+        interfaceName: "NativeGreeter",
+      });
+      const hello = await client.hello({
+        name: url.searchParams.get("name") || "client isolate",
+      });
+      const drop = await client.drop();
+      const { id, interfaceId, interfaceName, kind } = client.capability;
+      return Response.json({
+        ok: true,
+        capability: {
+          id,
+          kind,
+          interfaceId: interfaceId.toString(16),
+          interfaceName,
+        },
+        savedToken: token,
+        hello: {
+          message: hello.message,
+        },
+        dropResult: drop ?? null,
+      });
+    }
+
     if (url.pathname === "/web-session-save-restore-self-test") {
       const capability = await sandstorm(request, env).webSession({
         pathPrefix: "/exported",

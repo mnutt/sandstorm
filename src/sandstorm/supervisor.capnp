@@ -385,6 +385,12 @@ struct SupervisorObjectId(AppObjectId) {
   # Refers to some persistent object which the Supervisor for a particular grain knows how to
   # restore.
 
+  struct NativeCapnpExport {
+    exportId @0 :Text;
+    interfaceId @1 :UInt64;
+    interfaceName @2 :Text;
+  }
+
   union {
     appRef @0 :AppObjectId;
     # A reference restorable by the app.
@@ -393,5 +399,8 @@ struct SupervisorObjectId(AppObjectId) {
     # This refers to an OngoingNotification for a wake lock. Note that although the app itself
     # implements an `OngoingNotification`, the supervisor wraps it in order to detect the `cancel`
     # call.
+
+    nativeCapnpExport @2 :NativeCapnpExport;
+    # A native Cap'n Proto capability exported by an isolate and hosted by the isolate supervisor.
   }
 }
