@@ -716,13 +716,15 @@ test("spk powerbox-descriptor emits schema interface descriptors", async () => {
 
 test("spk capnp-abi dumps schema interface metadata", async () => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+  await fs.mkdir(REPO_TMP_DIR, { recursive: true });
 
   const options = { cwd: path.join(REPO_DIR, "examples/isolate-capnp-rpc") };
-  const abi = JSON.parse((await runCommand(SPK_BIN, [
+  const dumped = await runCommand(SPK_BIN, [
     "capnp-abi",
     "--interface", "Greeter",
     "capnp:./greeter.capnp",
-  ], options)).stdout);
+  ], options);
+  const abi = JSON.parse(dumped.stdout);
 
   assert.equal(abi.format, "sandstorm-capnp-abi-v1");
   assert.equal(abi.schema, "capnp:./greeter.capnp");
@@ -739,6 +741,30 @@ test("spk capnp-abi dumps schema interface metadata", async () => {
   assert.deepEqual(methods.get("useGreeting").params, [
     { name: "greeting", type: "GreetingSchema.Greeting" },
   ]);
+
+  const fixtureRoot = await fs.mkdtemp(path.join(REPO_TMP_DIR, "capnp-abi-"));
+  const baselinePath = path.join(fixtureRoot, "greeter.capnp-abi.json");
+  await fs.writeFile(baselinePath, dumped.stdout);
+
+  const check = await runCommand(SPK_BIN, [
+    "capnp-abi",
+    "--interface", "Greeter",
+    "--check", baselinePath,
+    "capnp:./greeter.capnp",
+  ], options);
+  assert.match(check.stdout, /Cap'n Proto ABI compatible/);
+
+  abi.interfaces[0].interfaceId = "0x0000000000000001";
+  const incompatiblePath = path.join(fixtureRoot, "incompatible.capnp-abi.json");
+  await fs.writeFile(incompatiblePath, `${JSON.stringify(abi, null, 2)}\n`);
+  await assert.rejects(
+    runCommand(SPK_BIN, [
+      "capnp-abi",
+      "--interface", "Greeter",
+      "--check", incompatiblePath,
+      "capnp:./greeter.capnp",
+    ], options),
+    /changed ID/);
 });
 
 test("spk dev-isolate prints generated capnp-es modules", async (t) => {

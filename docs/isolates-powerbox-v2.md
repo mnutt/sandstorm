@@ -1059,6 +1059,10 @@ Progress:
   dump of public interface IDs, method ordinals, generated parameter/result
   struct IDs, and source-level parameter/result fields so CI can snapshot or
   diff schema-defined public protocols without involving package build state
+- `spk capnp-abi --check <baseline.json> <schema.capnp>` now compares the
+  current schema against a committed ABI dump, rejecting removed/changed
+  interfaces, methods, ordinals, generated struct IDs, and existing fields while
+  allowing additive interfaces, methods, and appended fields
 
 Exit criteria:
 
