@@ -25,6 +25,45 @@ const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
 const NATIVE_CAPNP_EXPORT_SESSION_PREFIX = "/__sandstorm/native-capnp/export-sessions";
 const nativeCapnpExportTargets = new Map();
 
+async function readJsonResponse(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return {
+      ok: false,
+      error: text || `HTTP ${response.status}`,
+    };
+  }
+}
+
+function appInterfaceDescriptorParams(interfaceName, schema, options = {}) {
+  const interfaceId = schema.interfaceId || "";
+  if (!interfaceId) {
+    throw new TypeError(`${interfaceName}.powerboxDescriptor() requires schema interfaceId`);
+  }
+
+  const params = new URLSearchParams();
+  params.set("interfaceId", interfaceId);
+  params.set("interfaceName", schema.interfaceName || interfaceName);
+  return params;
+}
+
+async function fetchAppInterfacePowerboxDescriptor(env, interfaceName, schema, options = {}) {
+  if (!env?.SANDSTORM_API || typeof env.SANDSTORM_API.fetch !== "function") {
+    throw new TypeError(`${interfaceName}.powerboxDescriptor() requires env.SANDSTORM_API`);
+  }
+
+  const params = appInterfaceDescriptorParams(interfaceName, schema, options);
+  const response = await env.SANDSTORM_API.fetch(
+    `http://sandstorm/powerbox/app-interface-descriptor?${params}`);
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || `Powerbox descriptor request failed with ${response.status}`);
+  }
+  return result;
+}
+
 function invalidNativeCapnpBridgeInfo(reason, info) {
   return Object.freeze({
     available: false,
@@ -1159,10 +1198,6 @@ export async function restoreNativeCapnp(api, token, InterfaceClass, options = {
   return connectNativeCapnp(api, decoded.capability, InterfaceClass, options);
 }
 
-const bindingError = (interfaceName, operation) => new Error(
-  `capnp:${interfaceName}.${operation} is not implemented yet for this schema binding.`
-);
-
 function requiredMethods(interfaceName, methods) {
   if (!methods || typeof methods !== "object") {
     throw new TypeError(`${interfaceName}.implement() requires a methods object`);
@@ -1538,8 +1573,13 @@ export function makeCapnpInterfaceBinding(interfaceName, methodNames, schema = {
         },
         { local: true });
     },
-    powerboxDescriptor() {
-      throw bindingError(interfaceName, "powerboxDescriptor");
+    async powerboxDescriptor(env, options = {}) {
+      const result = await fetchAppInterfacePowerboxDescriptor(
+        env, interfaceName, schemaMetadata, options);
+      return result.descriptor;
+    },
+    async powerboxDescriptorInfo(env, options = {}) {
+      return fetchAppInterfacePowerboxDescriptor(env, interfaceName, schemaMetadata, options);
     },
   });
 }

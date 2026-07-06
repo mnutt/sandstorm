@@ -308,6 +308,26 @@ export function connectBrowserCapnp(stub, binding) {
   return Object.freeze(client);
 }
 
+async function fetchBrowserAppInterfacePowerboxDescriptor(interfaceName, schema, options = {}) {
+  const interfaceId = schema.interfaceId || "";
+  if (!interfaceId) {
+    throw new TypeError(`${interfaceName}.powerboxDescriptor() requires schema interfaceId`);
+  }
+
+  const descriptorUrl = options.descriptorUrl ||
+    "/__sandstorm/powerbox/app-interface-descriptor";
+  const url = new URL(descriptorUrl, window.location.href);
+  url.searchParams.set("interfaceId", interfaceId);
+  url.searchParams.set("interfaceName", schema.interfaceName || interfaceName);
+
+  const response = await fetch(url);
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || `Powerbox descriptor request failed with ${response.status}`);
+  }
+  return result;
+}
+
 export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, schema = {}) {
   const binding = {
     interfaceName,
@@ -325,6 +345,15 @@ export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, sch
     ...binding,
     cast(stub) {
       return connectBrowserCapnp(stub, binding);
+    },
+    async powerboxDescriptor(options = {}) {
+      const result = await fetchBrowserAppInterfacePowerboxDescriptor(
+        interfaceName, binding.schema, options);
+      return result.descriptor;
+    },
+    async powerboxDescriptorInfo(options = {}) {
+      return fetchBrowserAppInterfacePowerboxDescriptor(
+        interfaceName, binding.schema, options);
     },
   });
 }
@@ -860,6 +889,26 @@ export function connectBrowserCapnp(stub, binding) {
   return Object.freeze(client);
 }
 
+async function fetchBrowserAppInterfacePowerboxDescriptor(interfaceName, schema, options = {}) {
+  const interfaceId = schema.interfaceId || "";
+  if (!interfaceId) {
+    throw new TypeError(\`\${interfaceName}.powerboxDescriptor() requires schema interfaceId\`);
+  }
+
+  const descriptorUrl = options.descriptorUrl ||
+    "/__sandstorm/powerbox/app-interface-descriptor";
+  const url = new URL(descriptorUrl, window.location.href);
+  url.searchParams.set("interfaceId", interfaceId);
+  url.searchParams.set("interfaceName", schema.interfaceName || interfaceName);
+
+  const response = await fetch(url);
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || \`Powerbox descriptor request failed with \${response.status}\`);
+  }
+  return result;
+}
+
 export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, schema = {}) {
   const binding = {
     interfaceName,
@@ -877,6 +926,15 @@ export function makeBrowserCapnpInterfaceBinding(interfaceName, methodNames, sch
     ...binding,
     cast(stub) {
       return connectBrowserCapnp(stub, binding);
+    },
+    async powerboxDescriptor(options = {}) {
+      const result = await fetchBrowserAppInterfacePowerboxDescriptor(
+        interfaceName, binding.schema, options);
+      return result.descriptor;
+    },
+    async powerboxDescriptorInfo(options = {}) {
+      return fetchBrowserAppInterfacePowerboxDescriptor(
+        interfaceName, binding.schema, options);
     },
   });
 }

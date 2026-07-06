@@ -924,6 +924,10 @@ Progress:
   but bind through `makeBrowserCapnpInterfaceBinding()` and
   `/__sandstorm/rpc-client.js`, keeping the transport decision inside the
   Sandstorm browser helper
+- generated browser bindings now expose `powerboxDescriptor()` and
+  `powerboxDescriptorInfo()` for schema-defined interfaces; the helper asks
+  Sandstorm to pack a real `PowerboxDescriptor` whose boolean tag is the
+  schema interface id
 
 Powerbox work:
 
@@ -1010,6 +1014,9 @@ Progress:
   `__sandstorm_isolate_runtime/capnp`, generates browser companion modules
   under `__sandstorm_isolate_runtime/capnp-browser`, and records both worker
   and browser schema modules in `sandstorm-manifest`
+- isolate generated bindings now expose `powerboxDescriptor(env)` and
+  `powerboxDescriptorInfo(env)` for schema-defined interfaces, backed by the
+  same supervisor descriptor route as browser bindings
 
 Exit criteria:
 

@@ -1354,6 +1354,39 @@ function outboundHttpDescriptorParams(options = {}) {
   return result;
 }
 
+function appInterfaceDescriptorParams(options = {}) {
+  const descriptor = options.appInterface ?? options.appInterfaceDescriptor ?? null;
+  if (descriptor === null || descriptor === undefined) {
+    return [];
+  }
+  if (typeof descriptor !== "object") {
+    throw new ValidationError("appInterface descriptor must be an object");
+  }
+
+  const interfaceId = validate.string(descriptor.interfaceId, "appInterface.interfaceId", {
+    minLength: 1,
+    maxLength: 32,
+  });
+  if (!/^(0x[0-9a-fA-F]+|[0-9]+)$/.test(interfaceId)) {
+    throw new ValidationError(
+      "appInterface.interfaceId must be a decimal integer or 0x-prefixed hex integer");
+  }
+
+  const result = [
+    ["descriptor", "appInterface"],
+    ["interfaceId", interfaceId],
+  ];
+  if (descriptor.interfaceName !== undefined && descriptor.interfaceName !== null) {
+    result.push(["interfaceName", validate.string(
+      descriptor.interfaceName, "appInterface.interfaceName", {
+        minLength: 1,
+        maxLength: 512,
+      })]);
+  }
+
+  return result;
+}
+
 function validatePackedPowerboxDescriptor(descriptor, label = "descriptor") {
   const value = validate.string(descriptor, label, {
     minLength: 1,
@@ -1403,10 +1436,12 @@ function claimNativeInterfaceParams(options = {}) {
 function powerboxDescriptorParams(options = {}) {
   const apiSession = apiSessionDescriptorParams(options);
   const outboundHttp = outboundHttpDescriptorParams(options);
+  const appInterface = appInterfaceDescriptorParams(options);
   const packed = packedPowerboxDescriptorParams(options);
   const descriptorCount =
     (apiSession.length > 0 ? 1 : 0) +
     (outboundHttp.length > 0 ? 1 : 0) +
+    (appInterface.length > 0 ? 1 : 0) +
     (packed.length > 0 ? 1 : 0);
   if (descriptorCount > 1) {
     throw new ValidationError("Powerbox options must specify only one descriptor type");
@@ -1415,6 +1450,8 @@ function powerboxDescriptorParams(options = {}) {
     return apiSession;
   } else if (outboundHttp.length > 0) {
     return outboundHttp;
+  } else if (appInterface.length > 0) {
+    return appInterface;
   } else {
     return packed;
   }
@@ -1539,6 +1576,29 @@ async function outboundHttpPowerboxDescriptorInfo(env, options = {}) {
   return callPowerbox(env, `powerbox/outbound-http-descriptor?${params}`);
 }
 
+function appInterfaceRequestOptions(options = {}) {
+  if (options.appInterface !== undefined || options.appInterfaceDescriptor !== undefined) {
+    return options;
+  }
+
+  return { ...options, appInterface: options };
+}
+
+async function appInterfacePowerboxDescriptor(env, options = {}) {
+  const result = await appInterfacePowerboxDescriptorInfo(env, options);
+  return result.descriptor;
+}
+
+async function appInterfacePowerboxDescriptorInfo(env, options = {}) {
+  const params = new URLSearchParams();
+  for (const [name, value] of appInterfaceDescriptorParams(appInterfaceRequestOptions(options))) {
+    if (name !== "descriptor") {
+      params.append(name, value);
+    }
+  }
+  return callPowerbox(env, `powerbox/app-interface-descriptor?${params}`);
+}
+
 export async function servePowerboxDescriptors(request, env) {
   const url = new URL(request.url);
 
@@ -1582,6 +1642,21 @@ export async function servePowerboxDescriptors(request, env) {
       return Response.json({
         ok: false,
         error: String(error?.message || error),
+      }, { status: 400 });
+    }
+  }
+
+  if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/app-interface-descriptor`) {
+    try {
+      const descriptor = await appInterfacePowerboxDescriptorInfo(env, {
+        interfaceId: url.searchParams.get("interfaceId") || "",
+        interfaceName: url.searchParams.get("interfaceName") || undefined,
+      });
+      return Response.json(descriptor);
+    } catch (error) {
+      return Response.json({
+        ok: false,
+        error: error.message || String(error),
       }, { status: 400 });
     }
   }
@@ -3178,6 +3253,10 @@ export function powerbox(request, env) {
 
     async outboundHttpDescriptor(options = {}) {
       return outboundHttpPowerboxDescriptor(env, options);
+    },
+
+    async appInterfaceDescriptor(options = {}) {
+      return appInterfacePowerboxDescriptor(env, options);
     },
 
     async claim(result, options = {}) {

@@ -5095,6 +5095,8 @@ public:
         return apiSessionPowerboxDescriptor(path, response);
       } else if (route == "/powerbox/outbound-http-descriptor") {
         return outboundHttpPowerboxDescriptor(path, response);
+      } else if (route == "/powerbox/app-interface-descriptor") {
+        return appInterfacePowerboxDescriptor(path, response);
       } else if (route == "/capabilities") {
         return sendJson(response, 200, "OK", renderCapabilities());
       } else if (route == "/capabilities/claimed") {
@@ -7456,6 +7458,8 @@ private:
       initApiSessionPowerboxDescriptor(url, descriptor);
     } else if (descriptorTypes[0] == "outboundHttp") {
       initOutboundHttpPowerboxDescriptor(url, descriptor);
+    } else if (descriptorTypes[0] == "appInterface") {
+      initAppInterfacePowerboxDescriptor(url, descriptor);
     } else if (descriptorTypes[0] == "packed") {
       initPackedPowerboxDescriptor(url, descriptor);
     } else {
@@ -7595,6 +7599,40 @@ private:
     json.addAll(kj::StringPtr(",\n  \"decoded\": "));
     appendOutboundHttpDescriptorJson(json, tag);
     json.addAll(kj::StringPtr("\n}\n"));
+    json.add('\0');
+    return sendJson(response, 200, "OK", kj::String(json.releaseAsArray()));
+  }
+
+  kj::Promise<void> appInterfacePowerboxDescriptor(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    capnp::MallocMessageBuilder message;
+    auto descriptor = message.initRoot<PowerboxDescriptor>();
+    uint64_t interfaceId = 0;
+    KJ_IF_MAYBE(error, initAppInterfacePowerboxDescriptor(url, descriptor, interfaceId)) {
+      return sendJson(response, 400, "Bad Request", renderError(*error));
+    }
+
+    kj::VectorOutputStream output;
+    capnp::writePackedMessage(output, message);
+    auto packed = kj::encodeBase64Url(output.getArray());
+
+    auto interfaceNames = findIsolateQueryParams(url, "interfaceName");
+    kj::StringPtr interfaceName = interfaceNames.size() == 1 ? interfaceNames[0].asPtr() : "";
+
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  "));
+    appendJsonField(json, "type", "packedPowerboxDescriptor");
+    json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "descriptor", packed);
+    json.addAll(kj::StringPtr(",\n  \"decoded\": {\n    "));
+    appendJsonField(json, "kind", "appInterface");
+    json.addAll(kj::StringPtr(",\n    "));
+    appendJsonField(json, "interfaceId", kj::str("0x", kj::hex(interfaceId)));
+    if (interfaceName.size() > 0) {
+      json.addAll(kj::StringPtr(",\n    "));
+      appendJsonField(json, "interfaceName", interfaceName);
+    }
+    json.addAll(kj::StringPtr("\n  }\n}\n"));
     json.add('\0');
     return sendJson(response, 200, "OK", kj::String(json.releaseAsArray()));
   }
@@ -7986,6 +8024,8 @@ private:
       initApiSessionPowerboxDescriptor(url, descriptor);
     } else if (descriptorTypes[0] == "outboundHttp") {
       initOutboundHttpPowerboxDescriptor(url, descriptor);
+    } else if (descriptorTypes[0] == "appInterface") {
+      initAppInterfacePowerboxDescriptor(url, descriptor);
     } else if (descriptorTypes[0] == "packed") {
       initPackedPowerboxDescriptor(url, descriptor);
     } else {
@@ -8055,6 +8095,44 @@ private:
       } else {
         KJ_FAIL_REQUIRE("unsupported outboundHttp method", methodNames[i]);
       }
+    }
+  }
+
+  kj::Maybe<kj::String> initAppInterfacePowerboxDescriptor(
+      kj::StringPtr url, PowerboxDescriptor::Builder descriptor, uint64_t& interfaceId) {
+    auto interfaceIds = findIsolateQueryParams(url, "interfaceId");
+    if (interfaceIds.size() != 1 || interfaceIds[0].size() == 0) {
+      return kj::str("appInterface descriptor requires exactly one interfaceId");
+    }
+
+    KJ_IF_MAYBE(parsed, parseNativeCapnpExportInterfaceId(interfaceIds[0])) {
+      if (*parsed == 0) {
+        return kj::str("appInterface descriptor interfaceId must not be zero");
+      }
+      interfaceId = *parsed;
+    } else {
+      return kj::str("appInterface descriptor interfaceId must be a decimal integer or "
+          "0x-prefixed hex integer");
+    }
+
+    auto interfaceNames = findIsolateQueryParams(url, "interfaceName");
+    if (interfaceNames.size() > 1) {
+      return kj::str("appInterface descriptor accepts at most one interfaceName");
+    }
+    if (interfaceNames.size() == 1 && interfaceNames[0].size() > 512) {
+      return kj::str("appInterface descriptor interfaceName is too long");
+    }
+
+    auto tag = descriptor.initTags(1)[0];
+    tag.setId(interfaceId);
+    return nullptr;
+  }
+
+  void initAppInterfacePowerboxDescriptor(
+      kj::StringPtr url, PowerboxDescriptor::Builder descriptor) {
+    uint64_t interfaceId = 0;
+    KJ_IF_MAYBE(error, initAppInterfacePowerboxDescriptor(url, descriptor, interfaceId)) {
+      KJ_FAIL_REQUIRE(*error);
     }
   }
 

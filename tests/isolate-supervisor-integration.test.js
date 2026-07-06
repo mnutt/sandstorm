@@ -2677,6 +2677,17 @@ test("isolate supervisor integration suite", {
       },
       resultCapabilityNames: ["child", "children", "nestedChildren", "mirrorSession"],
     });
+    assert.equal(selfTest.json.powerboxDescriptor.interfaceName, "NativeGreeter");
+    assert.equal(selfTest.json.powerboxDescriptor.interfaceId, "0xb66316217ceedb1b");
+    assert.equal(typeof selfTest.json.powerboxDescriptor.descriptor, "string");
+    assert.match(selfTest.json.powerboxDescriptor.descriptor, /^[A-Za-z0-9_-]+$/);
+    assert.equal(selfTest.json.powerboxDescriptor.descriptor,
+      selfTest.json.powerboxDescriptor.info.descriptor);
+    assert.deepEqual(selfTest.json.powerboxDescriptor.info.decoded, {
+      kind: "appInterface",
+      interfaceId: "0xb66316217ceedb1b",
+      interfaceName: "NativeGreeter",
+    });
     assert.deepEqual(selfTest.json.local.first, { value: 2 });
     assert.deepEqual(selfTest.json.local.current, { value: 2 });
     assert.deepEqual(selfTest.json.local.child.first, { value: 3 });
@@ -3296,6 +3307,25 @@ test("isolate supervisor integration suite", {
       /text\/javascript/);
     assert.match(browserCapnpModule.body, /makeBrowserCapnpInterfaceBinding/);
     assert.match(browserCapnpModule.body, /export const NativeGreeter/);
+
+    const browserRpcClient = await requestUnixSocket(
+      fixture.workerdSocket, "/__sandstorm/rpc-client.js");
+    assert.equal(browserRpcClient.statusCode, 200);
+    assert.match(browserRpcClient.body, /powerboxDescriptor/);
+
+    const appInterfaceDescriptor = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/app-interface-descriptor" +
+        "?interfaceId=0xb66316217ceedb1b&interfaceName=NativeGreeter");
+    assert.equal(appInterfaceDescriptor.statusCode, 200, appInterfaceDescriptor.body);
+    assert.equal(appInterfaceDescriptor.json.type, "packedPowerboxDescriptor");
+    assert.equal(typeof appInterfaceDescriptor.json.descriptor, "string");
+    assert.match(appInterfaceDescriptor.json.descriptor, /^[A-Za-z0-9_-]+$/);
+    assert.deepEqual(appInterfaceDescriptor.json.decoded, {
+      kind: "appInterface",
+      interfaceId: "0xb66316217ceedb1b",
+      interfaceName: "NativeGreeter",
+    });
 
     const bindings = await requestJson(fixture.sandstormApiSocket, "/bindings");
     assert.equal(bindings.statusCode, 200);
