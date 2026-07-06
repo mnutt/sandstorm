@@ -174,6 +174,12 @@ and pass the generated `.js` file to `spk`.
   public cross-grain Cap'n Proto interfaces, legacy grain interop, and typed
   calls over Sandstorm's native bridge.
 
+Because isolate grains have not shipped as a stable runtime, Sandstorm does
+not need to preserve older browser/app-object schema transports for backwards
+compatibility. Once native browser `capnp-es` RPC is available, public
+schema-defined RPC should use that path directly. `fetch()` remains the public
+shape for HTTP-like APIs and large data-plane transfers.
+
 ### App-object compatibility modules
 
 Use `capnp:` imports for simple schema-first app-object RPC:
