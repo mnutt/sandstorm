@@ -992,7 +992,8 @@ export async function serveNativeCapnpExportSession(request, options = {}) {
 
 export async function exportNativeCapnp(api, InterfaceClass, target, options = {}) {
   validateNativeCapnpGeneratedInterface(InterfaceClass, "exportNativeCapnp()");
-  if (!api || typeof api.capnpBridgeInfo !== "function") {
+  if (!api || typeof api.capnpBridgeInfo !== "function" ||
+      typeof api.nativeCapnpExport !== "function") {
     throw new TypeError("exportNativeCapnp() requires a Sandstorm API object");
   }
 
@@ -1003,9 +1004,8 @@ export async function exportNativeCapnp(api, InterfaceClass, target, options = {
       { negotiation, interfaceMetadata: nativeCapnpInterfaceMetadata(InterfaceClass, options) });
   }
 
-  throw new NativeCapnpBridgeUnavailableError(
-    "native Cap'n Proto export supervisor sessions are not wired yet",
-    { negotiation, interfaceMetadata: nativeCapnpInterfaceMetadata(InterfaceClass, options) });
+  const registration = registerNativeCapnpExport(InterfaceClass, target, options);
+  return await api.nativeCapnpExport(registration);
 }
 
 export async function saveNativeCapnp(api, target) {

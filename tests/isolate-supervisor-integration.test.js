@@ -1194,7 +1194,7 @@ test("isolate supervisor integration suite", {
       nativeTransport: true,
       nativeRpc: true,
       nativeCalls: false,
-      nativeExports: false,
+      nativeExports: true,
       capabilitySlots: false,
       fallbackTransport: "appObjectRpc",
     });
@@ -1231,10 +1231,29 @@ test("isolate supervisor integration suite", {
         echoBootstrap: true,
         echoQuestionId: 77,
       },
-      unavailableError: {
-        name: "NativeCapnpBridgeUnavailableError",
-        message: "native Cap'n Proto exports are unavailable: missing features",
-        missingFeatures: ["nativeExports"],
+      capability: {
+        ok: true,
+        idType: "string",
+        info: {
+          ok: true,
+          type: "capabilityInfo",
+          id: body.sandstormApi.nativeCapnpExport.capability.info.id,
+          kind: "nativeCapnpExport",
+          residence: "localExport",
+          nativeInterface: "unknown",
+          pathPrefix: "",
+          persistent: true,
+          hasDropNotify: false,
+          dropNotifyRefCount: 0,
+          supportsWebFetch: true,
+          supportsOutboundHttpFetch: true,
+          hasNativeCapability: true,
+          liveForwardable: true,
+        },
+        drop: {
+          ok: true,
+          released: false,
+        },
       },
       unknownRoute: {
         status: 404,
@@ -2975,7 +2994,7 @@ test("isolate supervisor integration suite", {
       nativeTransport: true,
       nativeRpc: true,
       nativeCalls: false,
-      nativeExports: false,
+      nativeExports: true,
       capabilitySlots: false,
       fallbackTransport: "appObjectRpc",
     });

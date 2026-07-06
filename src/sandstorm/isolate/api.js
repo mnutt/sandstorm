@@ -171,6 +171,30 @@ async function callNativeCapnpBridgeBytes(env, body = new Uint8Array()) {
   };
 }
 
+async function createNativeCapnpExportCapability(env, registration) {
+  if (!registration || typeof registration !== "object") {
+    throw new ValidationError("native Cap'n Proto export registration must be an object");
+  }
+
+  const metadata = registration.interfaceMetadata || {};
+  const params = new URLSearchParams({
+    id: validate.string(registration.id, "native Cap'n Proto export id", {
+      minLength: 1,
+      maxLength: 256,
+    }),
+    interfaceId: validate.string(String(metadata.interfaceId), "native Cap'n Proto interfaceId", {
+      minLength: 1,
+      maxLength: 64,
+    }),
+    interfaceName: validate.string(metadata.interfaceName, "native Cap'n Proto interfaceName", {
+      minLength: 1,
+      maxLength: 512,
+    }),
+  });
+  return wrapCapability(
+    env, await postSandstorm(env, `capabilities/native-capnp-export?${params}`));
+}
+
 async function postPowerbox(env, path) {
   const response = await powerboxFetcher(env).fetch(`http://sandstorm/${path}`, {
     method: "POST",
@@ -3349,6 +3373,10 @@ class SandstormRpcTarget extends RpcTarget {
     return callNativeCapnpBridgeBytes(this.#env, body);
   }
 
+  nativeCapnpExport(registration) {
+    return createNativeCapnpExportCapability(this.#env, registration);
+  }
+
   storage() {
     return new StorageRpcTarget(this.#env);
   }
@@ -3467,6 +3495,7 @@ export function sandstorm(request, env, options = {}) {
     capnpBridgeInfo: () => callSandstorm(env, "capnp/bridge-info"),
     nativeCapnpBridgeCall: (body) => callNativeCapnpBridge(env, body),
     nativeCapnpBridgeCallBytes: (body) => callNativeCapnpBridgeBytes(env, body),
+    nativeCapnpExport: (registration) => createNativeCapnpExportCapability(env, registration),
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, options),
