@@ -714,6 +714,33 @@ test("spk powerbox-descriptor emits schema interface descriptors", async () => {
   assert.equal(capnp, "(tags = [(id = 0x85d0f155d6c54b6d)])");
 });
 
+test("spk capnp-abi dumps schema interface metadata", async () => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+
+  const options = { cwd: path.join(REPO_DIR, "examples/isolate-capnp-rpc") };
+  const abi = JSON.parse((await runCommand(SPK_BIN, [
+    "capnp-abi",
+    "--interface", "Greeter",
+    "capnp:./greeter.capnp",
+  ], options)).stdout);
+
+  assert.equal(abi.format, "sandstorm-capnp-abi-v1");
+  assert.equal(abi.schema, "capnp:./greeter.capnp");
+  assert.equal(abi.interfaces.length, 1);
+  assert.equal(abi.interfaces[0].name, "Greeter");
+  assert.equal(abi.interfaces[0].interfaceId, "0x85d0f155d6c54b6d");
+
+  const methods = new Map(abi.interfaces[0].methods.map((method) => [method.name, method]));
+  assert.deepEqual([...methods.keys()], ["hello", "greeting", "greetingPair", "useGreeting"]);
+  assert.equal(methods.get("hello").ordinal, 0);
+  assert.deepEqual(methods.get("hello").params, [{ name: "name", type: "Text" }]);
+  assert.deepEqual(methods.get("hello").results, [{ name: "message", type: "Text" }]);
+  assert.equal(methods.get("useGreeting").ordinal, 3);
+  assert.deepEqual(methods.get("useGreeting").params, [
+    { name: "greeting", type: "GreetingSchema.Greeting" },
+  ]);
+});
+
 test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   try {

@@ -1055,6 +1055,10 @@ Progress:
   advertisement through `bridgeConfig.viewInfo.matchRequests`, and
   `docs/developing/isolate-grains.md` plus `examples/isolate-file-store-rpc`
   document the dev-mode and packaged-app flows
+- `spk capnp-abi [--interface <name>] <schema.capnp>` now emits a stable JSON
+  dump of public interface IDs, method ordinals, generated parameter/result
+  struct IDs, and source-level parameter/result fields so CI can snapshot or
+  diff schema-defined public protocols without involving package build state
 
 Exit criteria:
 
