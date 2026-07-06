@@ -5113,6 +5113,8 @@ public:
         return sendJson(response, 200, "OK", renderCapnpBridgeInfo());
       } else if (route == "/capnp/browser-module") {
         return browserCapnpModule(path, response);
+      } else if (route == "/capnp-es/browser-module") {
+        return browserCapnpEsModule(path, response);
       } else if (route == "/permissions") {
         return sendJson(response, 200, "OK", renderPermissions());
       } else {
@@ -8403,6 +8405,79 @@ private:
     return sendJson(response, 404, "Not Found", kj::heapString(
         "{\n  \"ok\": false,\n"
         "  \"error\": \"browser Cap'n Proto module not found\"\n}\n"));
+  }
+
+  static bool isValidBrowserModulePath(kj::StringPtr path) {
+    if (path.size() == 0 || path.startsWith("/") || path.findFirst('\\') != nullptr) {
+      return false;
+    }
+
+    size_t segmentStart = 0;
+    while (segmentStart <= path.size()) {
+      size_t segmentEnd = path.size();
+      KJ_IF_MAYBE(slash, path.slice(segmentStart).findFirst('/')) {
+        segmentEnd = segmentStart + *slash;
+      }
+      auto segment = path.slice(segmentStart, segmentEnd);
+      if (segment.size() == 0 ||
+          segment == kj::StringPtr(".") || segment == kj::StringPtr("..")) {
+        return false;
+      }
+      if (segmentEnd == path.size()) {
+        break;
+      }
+      segmentStart = segmentEnd + 1;
+    }
+
+    return true;
+  }
+
+  static kj::Maybe<kj::String> browserCapnpEsModuleName(kj::StringPtr path) {
+    if (!isValidBrowserModulePath(path)) {
+      return nullptr;
+    }
+
+    if (path.endsWith(".capnp.js")) {
+      auto schemaPath = path.slice(0, path.size() - strlen(".js"));
+      if (schemaPath.startsWith(kj::StringPtr("sandstorm/"))) {
+        return kj::str("capnp-es:/", schemaPath);
+      }
+      return kj::str("capnp-es:./", schemaPath);
+    }
+
+    if (path.startsWith(kj::StringPtr("capnp-es/")) && path.endsWith(kj::StringPtr(".mjs"))) {
+      return kj::heapString(path);
+    }
+
+    return nullptr;
+  }
+
+  kj::Promise<void> browserCapnpEsModule(kj::StringPtr url, kj::HttpService::Response& response) {
+    auto paths = findIsolateRawQueryParams(url, "path");
+    if (paths.size() != 1) {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"expected exactly one path query parameter\"\n}\n"));
+    }
+
+    KJ_IF_MAYBE(moduleName, browserCapnpEsModuleName(paths[0])) {
+      for (auto& module: config.modules) {
+        if (module.name == *moduleName) {
+          kj::HttpHeaders responseHeaders(headerTable);
+          responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "text/javascript; charset=utf-8");
+          return sendBytes(response, 200, "OK", kj::mv(responseHeaders),
+              kj::heapArray<byte>(module.content.asPtr()));
+        }
+      }
+
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"browser capnp-es module not found\"\n}\n"));
+    } else {
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"invalid browser capnp-es module path\"\n}\n"));
+    }
   }
 
   kj::String renderBindings() {

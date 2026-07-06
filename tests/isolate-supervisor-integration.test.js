@@ -3419,6 +3419,35 @@ test("isolate supervisor integration suite", {
     assert.match(browserCapnpModule.body, /makeBrowserCapnpInterfaceBinding/);
     assert.match(browserCapnpModule.body, /export const NativeGreeter/);
 
+    const nativeBrowserCapnpModule = await requestUnixSocket(
+      fixture.sandstormApiSocket,
+      "/capnp-es/browser-module?path=native-greeter.capnp.js");
+    assert.equal(nativeBrowserCapnpModule.statusCode, 200);
+    assert.match(
+      String(nativeBrowserCapnpModule.headers["content-type"] || ""),
+      /text\/javascript/);
+    assert.match(nativeBrowserCapnpModule.body, /export class NativeGreeter/);
+    assert.match(nativeBrowserCapnpModule.body, /from "\/capnp-es\/index\.mjs"/);
+
+    const nativeBrowserCapnpRuntime = await requestUnixSocket(
+      fixture.sandstormApiSocket,
+      "/capnp-es/browser-module?path=capnp-es%2Findex.mjs");
+    assert.equal(nativeBrowserCapnpRuntime.statusCode, 200);
+    assert.match(
+      String(nativeBrowserCapnpRuntime.headers["content-type"] || ""),
+      /text\/javascript/);
+    assert.match(nativeBrowserCapnpRuntime.body, /\bMessage\b/);
+
+    const servedNativeBrowserCapnpModule = await requestUnixSocket(
+      fixture.workerdSocket, "/__sandstorm/capnp-es/native-greeter.capnp.js");
+    assert.equal(servedNativeBrowserCapnpModule.statusCode, 200);
+    assert.match(servedNativeBrowserCapnpModule.body, /export class NativeGreeter/);
+
+    const servedNativeBrowserCapnpRuntime = await requestUnixSocket(
+      fixture.workerdSocket, "/capnp-es/index.mjs");
+    assert.equal(servedNativeBrowserCapnpRuntime.statusCode, 200);
+    assert.match(servedNativeBrowserCapnpRuntime.body, /\bMessage\b/);
+
     const browserRpcClient = await requestUnixSocket(
       fixture.workerdSocket, "/__sandstorm/rpc-client.js");
     assert.equal(browserRpcClient.statusCode, 200);

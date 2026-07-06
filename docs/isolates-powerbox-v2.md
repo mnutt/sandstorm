@@ -951,6 +951,10 @@ Progress:
   worker code imports `capnp:` schemas, browser code imports served
   `/__sandstorm/capnp/...` companion modules, and browser bundlers should
   alias or externalize those runtime URLs rather than compiling `.capnp` files
+- the supervisor and browser system routes can now serve native browser
+  `capnp-es` schema modules through `/__sandstorm/capnp-es/...` and the bundled
+  `@mnutt/capnp-es` runtime imports through `/capnp-es/...`, giving browser
+  code loadable native modules before Powerbox/browser transport wiring
 
 Powerbox work:
 
