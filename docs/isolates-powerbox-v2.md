@@ -854,6 +854,10 @@ Progress:
   an isolate export, and isolate JS calls a greeter capability returned by the
   fake legacy C++ greeter; this is separate from the still-disabled direct
   bridge-envelope `capabilitySlots` feature
+- native export saved tokens are now covered through restore and revocation:
+  after a saved isolate-defined `NativeGreeter` token is used from isolate JS
+  and from the C++ harness, the integration suite revokes the token and asserts
+  that a later generated-client restore fails through the native bridge
 
 Interop tests:
 
@@ -867,8 +871,11 @@ Interop tests:
 - isolate receives a capability returned by a legacy grain (covered by
   `NativeGreeter.makeGreeter()`)
 - permission membrane blocks a disallowed call
-- revoked capability fails on later use
-- durable token restore produces a live generated client
+- revoked saved token fails on later restore (covered by the cross-supervisor
+  `NativeGreeter` revoke check)
+- durable token restore produces a live generated client (covered by
+  `restoreNativeCapnp()` calls for route-backed `WebSession` and
+  isolate-defined `NativeGreeter`)
 
 Exit criteria:
 
