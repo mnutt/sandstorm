@@ -229,6 +229,8 @@ public:
                        "Run an app in dev mode.")
         .addSubCommand("dev-isolate", KJ_BIND_METHOD(*this, getDevIsolateMain),
                        "Run a JavaScript module as an isolate app in dev mode.")
+        .addSubCommand("capnp-abi", KJ_BIND_METHOD(*this, getCapnpAbiMain),
+                       "Dump public Cap'n Proto interface ABI metadata as JSON.")
         .addSubCommand("powerbox-descriptor", KJ_BIND_METHOD(*this, getPowerboxDescriptorMain),
                        "Generate a packed PowerboxDescriptor for a Cap'n Proto interface.")
         .addSubCommand("publish", KJ_BIND_METHOD(*this, getPublishMain),
@@ -256,6 +258,7 @@ private:
   };
   PowerboxDescriptorOutputFormat powerboxDescriptorOutputFormat =
       PowerboxDescriptorOutputFormat::BASE64URL;
+  kj::String capnpAbiInterfaceFilter = nullptr;
 
   kj::StringPtr keyringPath = nullptr;
   bool quiet = false;
@@ -1914,6 +1917,35 @@ private:
   }
 
   // =====================================================================================
+  // "capnp-abi" command
+
+  kj::MainFunc getCapnpAbiMain() {
+    return kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
+            "Dump public Cap'n Proto interface ABI metadata as JSON.")
+        .addOptionWithArg({'I', "import-path"}, KJ_BIND_METHOD(*this, addImportPath), "<path>",
+            "Additionally search for imported Cap'n Proto schemas in <path>.")
+        .addOptionWithArg({"interface"}, KJ_BIND_METHOD(*this, setCapnpAbiInterfaceFilter),
+            "<name>", "Only include the named interface.")
+        .expectArg("<schema.capnp>", KJ_BIND_METHOD(*this, doCapnpAbi))
+        .build();
+  }
+
+  kj::MainBuilder::Validity setCapnpAbiInterfaceFilter(kj::StringPtr name) {
+    if (name.size() == 0) {
+      return "interface name must not be empty";
+    }
+    capnpAbiInterfaceFilter = kj::heapString(name);
+    return true;
+  }
+
+  kj::MainBuilder::Validity doCapnpAbi(kj::StringPtr specifier) {
+    auto output = renderCapnpAbiJson(specifier);
+    kj::FdOutputStream(STDOUT_FILENO).write(output.begin(), output.size());
+    kj::FdOutputStream(STDOUT_FILENO).write("\n", 1);
+    return true;
+  }
+
+  // =====================================================================================
   // "powerbox-descriptor" command
 
   kj::MainFunc getPowerboxDescriptorMain() {
@@ -2259,6 +2291,32 @@ private:
     }
     KJ_DEFER(free(cwd));
     return kj::heapString(cwd);
+  }
+
+  static kj::String resolveCapnpAbiSchemaPath(
+      kj::StringPtr rootDir, kj::StringPtr specifier) {
+    kj::StringPtr pathSpecifier = specifier;
+    if (specifier.startsWith("capnp:")) {
+      pathSpecifier = specifier.slice(strlen("capnp:"));
+    } else if (specifier.startsWith("capnp-es:")) {
+      pathSpecifier = specifier.slice(strlen("capnp-es:"));
+    }
+
+    KJ_REQUIRE(pathSpecifier.endsWith(".capnp"),
+        "Cap'n Proto ABI dump input must point to a .capnp schema.", specifier);
+
+    if (pathSpecifier.startsWith("/sandstorm/")) {
+      return resolveDevIsolateSandstormSchemaImport(pathSpecifier);
+    }
+
+    auto candidate = pathSpecifier.startsWith("/")
+        ? kj::heapString(pathSpecifier)
+        : kj::str(rootDir, '/', pathSpecifier);
+    char* resolved = realpath(candidate.cStr(), nullptr);
+    KJ_REQUIRE(resolved != nullptr, "Could not resolve Cap'n Proto ABI dump schema.",
+        specifier, candidate, strerror(errno));
+    KJ_DEFER(free(resolved));
+    return kj::heapString(resolved);
   }
 
   ResolvedAppInterface resolveAppInterfaceId(
@@ -3954,12 +4012,16 @@ private:
 
   static std::map<std::string, DevCapnpParsedInterfaceMetadata> parseCapnpInterfaceMetadata(
       kj::StringPtr resolvedPath, kj::StringPtr rootDir,
-      kj::ArrayPtr<DevCapnpInterface> interfaces) {
+      kj::ArrayPtr<DevCapnpInterface> interfaces,
+      kj::ArrayPtr<kj::String> extraImportPath = nullptr) {
     std::map<std::string, DevCapnpParsedInterfaceMetadata> metadata;
     capnp::SchemaParser parser;
 
     kj::Vector<kj::String> importPath;
     importPath.add(kj::heapString(rootDir));
+    for (auto& path: extraImportPath) {
+      importPath.add(kj::heapString(path));
+    }
     if (access("src/sandstorm/web-session.capnp", R_OK) == 0) {
       importPath.add(kj::heapString("src"));
     }
@@ -3992,6 +4054,105 @@ private:
     }
 
     return metadata;
+  }
+
+  static void appendCapnpAbiFieldsJson(
+      kj::Vector<char>& json, kj::ArrayPtr<DevCapnpInterface::Field> fields) {
+    json.add('[');
+    for (auto i: kj::indices(fields)) {
+      if (i > 0) {
+        json.addAll(kj::StringPtr(", "));
+      }
+      json.addAll(kj::StringPtr("{\"name\": "));
+      appendJsonQuoted(json, fields[i].name);
+      json.addAll(kj::StringPtr(", \"type\": "));
+      appendJsonQuoted(json, fields[i].type);
+      json.add('}');
+    }
+    json.add(']');
+  }
+
+  kj::String renderCapnpAbiJson(kj::StringPtr specifier) {
+    auto rootDir = currentWorkingDirectory();
+    auto resolvedPath = resolveCapnpAbiSchemaPath(rootDir, specifier);
+    auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
+    auto interfaces = scanCapnpInterfaces(source);
+    auto metadataRoot = isPathUnderRoot(resolvedPath, rootDir)
+        ? kj::heapString(rootDir)
+        : dirnameForPath(resolvedPath);
+    auto metadata = parseCapnpInterfaceMetadata(
+        resolvedPath, metadataRoot, interfaces.asPtr(), importPath.asPtr());
+
+    if (capnpAbiInterfaceFilter != nullptr) {
+      auto found = metadata.find(toStdString(capnpAbiInterfaceFilter));
+      KJ_REQUIRE(found != metadata.end(),
+          "Cap'n Proto ABI dump schema does not define the requested interface.",
+          specifier, capnpAbiInterfaceFilter);
+    }
+
+    kj::Vector<char> json;
+    json.addAll(kj::StringPtr("{\n  \"format\": \"sandstorm-capnp-abi-v1\",\n  "
+        "\"schema\": "));
+    appendJsonQuoted(json, specifier);
+    json.addAll(kj::StringPtr(",\n  \"interfaces\": ["));
+
+    bool firstInterface = true;
+    for (auto& interfaceDef: interfaces) {
+      if (capnpAbiInterfaceFilter != nullptr && interfaceDef.name != capnpAbiInterfaceFilter) {
+        continue;
+      }
+
+      auto found = metadata.find(toStdString(interfaceDef.name));
+      if (found == metadata.end()) {
+        continue;
+      }
+
+      if (!firstInterface) {
+        json.add(',');
+      }
+      firstInterface = false;
+
+      auto& interfaceMetadata = found->second;
+      json.addAll(kj::StringPtr("\n    {\n      \"name\": "));
+      appendJsonQuoted(json, interfaceDef.name);
+      json.addAll(kj::StringPtr(",\n      \"interfaceId\": "));
+      appendJsonQuoted(json, kj::StringPtr(interfaceMetadata.interfaceId));
+      json.addAll(kj::StringPtr(",\n      \"methods\": ["));
+
+      bool firstMethod = true;
+      for (auto& methodDef: interfaceDef.methods) {
+        auto methodFound = interfaceMetadata.methods.find(toStdString(methodDef.name));
+        if (methodFound == interfaceMetadata.methods.end()) {
+          continue;
+        }
+
+        if (!firstMethod) {
+          json.add(',');
+        }
+        firstMethod = false;
+
+        auto& methodMetadata = methodFound->second;
+        json.addAll(kj::StringPtr("\n        {\n          \"name\": "));
+        appendJsonQuoted(json, methodDef.name);
+        json.addAll(kj::StringPtr(",\n          \"ordinal\": "));
+        json.addAll(kj::str(methodMetadata.id));
+        json.addAll(kj::StringPtr(",\n          \"paramStructId\": "));
+        appendJsonQuoted(json, kj::StringPtr(methodMetadata.paramStructId));
+        json.addAll(kj::StringPtr(",\n          \"resultStructId\": "));
+        appendJsonQuoted(json, kj::StringPtr(methodMetadata.resultStructId));
+        json.addAll(kj::StringPtr(",\n          \"params\": "));
+        appendCapnpAbiFieldsJson(json, methodDef.params.asPtr());
+        json.addAll(kj::StringPtr(",\n          \"results\": "));
+        appendCapnpAbiFieldsJson(json, methodDef.results.asPtr());
+        json.addAll(kj::StringPtr("\n        }"));
+      }
+
+      json.addAll(kj::StringPtr("\n      ]\n    }"));
+    }
+
+    json.addAll(kj::StringPtr("\n  ]\n}"));
+    json.add('\0');
+    return kj::String(json.releaseAsArray());
   }
 
   static kj::Maybe<kj::String> nativeCapnpCapabilitySpec(

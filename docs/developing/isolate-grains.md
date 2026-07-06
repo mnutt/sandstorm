@@ -231,6 +231,17 @@ const viewInfo :Grain.UiView.ViewInfo = (
 );
 ```
 
+For CI, `spk capnp-abi` dumps the public interface metadata that should remain
+stable across compatible app updates:
+
+```sh
+spk capnp-abi capnp:./greeter.capnp > greeter.capnp-abi.json
+```
+
+The JSON includes interface IDs, method ordinals, generated parameter/result
+struct IDs, and source-level parameter/result field names and types. Commit the
+dump or compare it in CI when reviewing schema changes.
+
 ### Browser schema modules
 
 Worker modules import schemas with `capnp:`:
