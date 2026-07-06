@@ -240,7 +240,16 @@ spk capnp-abi capnp:./greeter.capnp > greeter.capnp-abi.json
 
 The JSON includes interface IDs, method ordinals, generated parameter/result
 struct IDs, and source-level parameter/result field names and types. Commit the
-dump or compare it in CI when reviewing schema changes.
+dump, then check future schema changes in CI:
+
+```sh
+spk capnp-abi --check greeter.capnp-abi.json capnp:./greeter.capnp
+```
+
+The check rejects removed interfaces, changed interface IDs, removed methods,
+changed method ordinals, changed generated parameter/result struct IDs, and
+changed or removed existing parameter/result fields. Adding new interfaces,
+methods, or appended fields is allowed.
 
 ### Browser schema modules
 
