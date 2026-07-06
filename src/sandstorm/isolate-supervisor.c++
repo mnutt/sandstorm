@@ -912,42 +912,6 @@ void addGeneratedIsolateModule(
   config.modules.add(kj::mv(moduleConfig));
 }
 
-kj::String replaceAll(kj::StringPtr input, kj::StringPtr needle, kj::StringPtr replacement) {
-  auto inputStd = std::string(input.begin(), input.size());
-  auto needleStd = std::string(needle.begin(), needle.size());
-  auto replacementStd = std::string(replacement.begin(), replacement.size());
-  KJ_REQUIRE(!needleStd.empty(), "Internal error: empty replacement needle.");
-
-  std::string result;
-  size_t pos = 0;
-  for (;;) {
-    auto match = inputStd.find(needleStd, pos);
-    if (match == std::string::npos) {
-      result.append(inputStd, pos, std::string::npos);
-      break;
-    }
-    result.append(inputStd, pos, match - pos);
-    result += replacementStd;
-    pos = match + needleStd.size();
-  }
-  return kj::heapString(result.c_str());
-}
-
-kj::String capnpSchemeCapnpHelperSource() {
-  auto content = replaceAll(
-      ISOLATE_CAPNP_HELPER_SOURCE, "\"capnweb\"", "\"/capnp:/capnweb.js\"");
-  content = replaceAll(content, "\"capnp-es/index.mjs\"",
-      "\"/capnp-es:/capnp-es/index.mjs\"");
-  content = replaceAll(content, "\"sandstorm:native-capnp-bridge\"",
-      "\"/capnp:/sandstorm/native-capnp-bridge.js\"");
-  return content;
-}
-
-kj::String capnpSchemeNativeCapnpBridgeSource() {
-  return replaceAll(ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE, "\"capnp-es/index.mjs\"",
-      "\"/capnp-es:/capnp-es/index.mjs\"");
-}
-
 kj::String capnpEsRuntimePath(kj::StringPtr moduleName) {
   if (moduleName == "@mnutt/capnp-es") {
     return kj::heapString("capnp-es/index.mjs");
@@ -994,12 +958,6 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
       ISOLATE_API_HELPER_SOURCE);
   addGeneratedIsolateModule(config, "sandstorm:capnp", IsolateRuntimeConfig::ModuleType::ES_MODULE,
       ISOLATE_CAPNP_HELPER_SOURCE);
-  addGeneratedIsolateModule(config, "capnp:/capnweb.js",
-      IsolateRuntimeConfig::ModuleType::ES_MODULE, CAPNWEB_SOURCE);
-  addGeneratedIsolateModule(config, "capnp:/sandstorm/capnp.js",
-      IsolateRuntimeConfig::ModuleType::ES_MODULE, capnpSchemeCapnpHelperSource());
-  addGeneratedIsolateModule(config, "capnp:/sandstorm/native-capnp-bridge.js",
-      IsolateRuntimeConfig::ModuleType::ES_MODULE, capnpSchemeNativeCapnpBridgeSource());
   addGeneratedIsolateModule(config, "sandstorm:native-capnp-bridge",
       IsolateRuntimeConfig::ModuleType::ES_MODULE, ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE);
   for (auto& module: ISOLATE_CAPNP_ES_MODULES) {

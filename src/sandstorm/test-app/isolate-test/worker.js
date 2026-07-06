@@ -2,7 +2,6 @@ import message from "message.txt";
 import metadata from "metadata.json";
 import { Message as CapnpEsMessage } from "@mnutt/capnp-es";
 import { NativeGreeter } from "capnp-es:./native-greeter.capnp";
-import { NativeGreeter as BrowserNativeGreeter } from "capnp:./native-greeter.capnp";
 import { Message as CapnpRpcMessage } from "@mnutt/capnp/rpc.mjs";
 import { WebSession } from "capnp-es:/sandstorm/web-session.capnp";
 import {
@@ -54,6 +53,8 @@ import {
   makeNativeCapnpBridgeSavedResponse,
   makeNativeCapnpPayload,
   negotiateNativeCapnpBridge,
+  nativeCapnpPowerboxDescriptor,
+  nativeCapnpPowerboxDescriptorInfo,
   readNativeCapnpBridgeRequest,
   restoreNativeCapnp,
   saveNativeCapnp,
@@ -65,33 +66,6 @@ const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm
 const retainedMailFeedCallbacks = new Map();
 const retainedEventReceivers = new Map();
 let powerboxFulfillmentDurableSerial = 0;
-
-const browserNativeGreeterMethods = {
-  async hello({ name = "browser" } = {}) {
-    return {
-      message: `browser schema hello ${name}`,
-    };
-  },
-
-  async makeGreeter({ prefix = "browser returned" } = {}) {
-    return BrowserNativeGreeter.implement({
-      async hello({ name = "browser" } = {}) {
-        return {
-          message: `${prefix} ${name}`,
-        };
-      },
-    });
-  },
-
-  async greetWith(greeter, name = "browser") {
-    const hello = await greeter.hello({
-      name: `${name} from browser schema`,
-    });
-    return {
-      message: `browser schema called ${hello.message}`,
-    };
-  },
-};
 
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
@@ -531,12 +505,6 @@ export default {
       rpcPath: "/__sandstorm/test-rpc",
     });
     if (internalResponse) return internalResponse;
-    const browserGreeterRpcResponse = api.serveRpc(
-      () => BrowserNativeGreeter.implement(browserNativeGreeterMethods), {
-        clientScriptPath: "/__sandstorm/browser-greeter-rpc-client-unused.js",
-        rpcPath: "/__sandstorm/browser-greeter-rpc",
-      });
-    if (browserGreeterRpcResponse) return browserGreeterRpcResponse;
 
     const url = new URL(request.url);
     const systemResponse = await api.serveSystemRoutes();
@@ -680,20 +648,6 @@ export default {
     if (url.pathname === "/browser-rpc-test") {
       return new Response(renderBrowserRpcPage(), {
         headers: { "content-type": "text/html; charset=utf-8" },
-      });
-    }
-
-    if (url.pathname === "/browser-greeter-handle") {
-      const capability = await api.export(
-        BrowserNativeGreeter.implement(browserNativeGreeterMethods));
-      return Response.json({
-        ok: true,
-        capability: {
-          ok: true,
-          type: capability.type,
-          id: capability.id,
-          nativeInterface: "appObject",
-        },
       });
     }
 
@@ -3335,12 +3289,16 @@ export default {
         label: "Generated counter binding saved through cast client",
       });
       const durableDrop = await durableClient.drop();
-      const powerboxDescriptorInfo = await BrowserNativeGreeter.powerboxDescriptorInfo(env);
-      const powerboxDescriptor = await BrowserNativeGreeter.powerboxDescriptor(env);
-      const cachedPowerboxDescriptorInfo = await BrowserNativeGreeter.powerboxDescriptorInfo(env);
+      const powerboxDescriptorInfo = await nativeCapnpPowerboxDescriptorInfo(
+        env, NativeGreeter, { interfaceName: "NativeGreeter" });
+      const powerboxDescriptor = await nativeCapnpPowerboxDescriptor(
+        env, NativeGreeter, { interfaceName: "NativeGreeter" });
+      const cachedPowerboxDescriptorInfo = await nativeCapnpPowerboxDescriptorInfo(
+        env, NativeGreeter, { interfaceName: "NativeGreeter" });
       cachedPowerboxDescriptorInfo.decoded.interfaceName = "mutated cached descriptor";
       const cachedPowerboxDescriptorInfoAfterMutation =
-        await BrowserNativeGreeter.powerboxDescriptorInfo(env);
+        await nativeCapnpPowerboxDescriptorInfo(
+          env, NativeGreeter, { interfaceName: "NativeGreeter" });
 
       const restored = await api.restore(castSaved);
       const restoredClient = GeneratedCounter.cast(restored);
@@ -3394,8 +3352,8 @@ export default {
           resultCapabilityNames: Object.keys(GeneratedCounter.schema.resultCapabilities),
         },
         powerboxDescriptor: {
-          interfaceName: BrowserNativeGreeter.interfaceName,
-          interfaceId: BrowserNativeGreeter.interfaceId,
+          interfaceName: "NativeGreeter",
+          interfaceId: `0x${NativeGreeter._capnp.typeIdHex}`,
           descriptor: powerboxDescriptor,
           info: powerboxDescriptorInfo,
           cachedInfo: cachedPowerboxDescriptorInfoAfterMutation,

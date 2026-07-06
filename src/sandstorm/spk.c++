@@ -2165,7 +2165,7 @@ private:
         .addOptionWithArg({"app-interface"}, KJ_BIND_METHOD(*this, addDevIsolateAppInterface),
             "<capnp-specifier>#<Interface>",
             "Advertise a schema-defined app capability through ViewInfo.matchRequests. For "
-            "example: --app-interface capnp:./greeter.capnp#Greeter")
+            "example: --app-interface capnp-es:./greeter.capnp#Greeter")
         .addOption({"print-manifest-json"}, KJ_BIND_METHOD(*this, enableDevIsolatePrintManifestJson),
             "Print the generated dynamic isolate manifest as JSON and exit without mounting or "
             "connecting to a Sandstorm server.")
@@ -2322,7 +2322,7 @@ private:
 
     auto schemaSpecifier = kj::heapString(spec.slice(0, hash));
     if (!schemaSpecifier.startsWith("capnp:") && !schemaSpecifier.startsWith("capnp-es:")) {
-      schemaSpecifier = kj::str("capnp:", schemaSpecifier);
+      schemaSpecifier = kj::str("capnp-es:", schemaSpecifier);
     }
 
     return DevIsolateAppInterface {
@@ -2371,7 +2371,8 @@ private:
     auto importerDir = rootDir;
     kj::String resolvedPath = nullptr;
     if (appInterface.specifier.startsWith("capnp:")) {
-      resolvedPath = resolveDevIsolateCapnpImport(importerDir, rootDir, appInterface.specifier);
+      KJ_FAIL_REQUIRE("`capnp:` app interfaces have been removed; use `capnp-es:`.",
+          appInterface.specifier);
     } else if (appInterface.specifier.startsWith("capnp-es:")) {
       resolvedPath = resolveDevIsolateCapnpEsImport(importerDir, rootDir, appInterface.specifier);
     } else {
@@ -2542,6 +2543,10 @@ private:
   }
 
   kj::MainBuilder::Validity printDevIsolateGeneratedModule() {
+    if (devIsolatePrintGeneratedModule.startsWith("capnp:")) {
+      return "`capnp:` isolate schema imports have been removed; use `capnp-es:`";
+    }
+
     auto modules = collectDevIsolateModules();
     for (auto& module: modules) {
       if (module.name == devIsolatePrintGeneratedModule) {
@@ -2579,10 +2584,9 @@ private:
     auto rootDir = dirnameForPath(devIsolateWorkerPath);
     kj::Vector<DevIsolateModule> modules;
     std::set<std::string> seen;
-    std::map<std::string, std::string> capnpImports;
     std::map<std::string, std::string> capnpEsImports;
     collectDevIsolateModule(
-        devIsolateWorkerPath, rootDir, modules, seen, capnpImports, capnpEsImports);
+        devIsolateWorkerPath, rootDir, modules, seen, capnpEsImports);
     addDevIsolatePlatformCapnpEsModules(rootDir, modules, capnpEsImports);
     return modules;
   }
@@ -2590,7 +2594,6 @@ private:
   void collectDevIsolateModule(kj::StringPtr path, kj::StringPtr rootDir,
                                kj::Vector<DevIsolateModule>& modules,
                                std::set<std::string>& seen,
-                               std::map<std::string, std::string>& capnpImports,
                                std::map<std::string, std::string>& capnpEsImports) {
     char* resolved = realpath(path.cStr(), nullptr);
     KJ_REQUIRE(resolved != nullptr, "Could not resolve isolate module path.", path, strerror(errno));
@@ -2620,9 +2623,8 @@ private:
       auto importerDir = dirnameForPath(realPath);
       for (auto& specifier: imports) {
         if (isCapnpImport(specifier)) {
-          auto resolvedImport = resolveDevIsolateCapnpImport(
-              importerDir, rootDir, specifier);
-          addDevIsolateCapnpModule(specifier, resolvedImport, rootDir, modules, capnpImports);
+          KJ_FAIL_REQUIRE("`capnp:` isolate schema imports have been removed; use `capnp-es:`.",
+              specifier);
         } else if (isCapnpEsImport(specifier)) {
           auto resolvedImport = resolveDevIsolateCapnpEsImport(
               importerDir, rootDir, specifier);
@@ -2631,7 +2633,7 @@ private:
         } else if (isRelativeImport(specifier)) {
           auto resolvedImport = resolveDevIsolateImport(importerDir, rootDir, specifier);
           collectDevIsolateModule(
-              resolvedImport, rootDir, modules, seen, capnpImports, capnpEsImports);
+              resolvedImport, rootDir, modules, seen, capnpEsImports);
         }
       }
     } else {
@@ -2720,8 +2722,6 @@ private:
   kj::String writeDevIsolateSupportDir() {
     kj::String path = kj::heapString("/tmp/sandstorm-dev-isolate-runtime-XXXXXX");
     KJ_REQUIRE(mkdtemp(path.begin()) != nullptr, "mkdtemp() failed", path, strerror(errno));
-    KJ_SYSCALL(mkdir(kj::str(path, "/capnp").cStr(), 0700));
-    KJ_SYSCALL(mkdir(kj::str(path, "/capnp-scheme").cStr(), 0700));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es").cStr(), 0700));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es/capnp").cStr(), 0700));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es/shared").cStr(), 0700));
@@ -2735,11 +2735,6 @@ private:
     writeDevIsolateSupportFile(path, "rpc.js", ISOLATE_RPC_HELPER_SOURCE);
     writeDevIsolateSupportFile(
         path, "native-capnp-bridge.js", ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE);
-    writeDevIsolateSupportFile(path, "capnp-scheme/capnweb.js", CAPNWEB_SOURCE);
-    writeDevIsolateSupportFile(
-        path, "capnp-scheme/capnp.js", capnpSchemeCapnpHelperSource());
-    writeDevIsolateSupportFile(path, "capnp-scheme/native-capnp-bridge.js",
-        capnpSchemeNativeCapnpBridgeSource());
     std::set<std::string> writtenCapnpEsRuntimePaths;
     for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
       auto runtimePath = capnpEsRuntimePath(module.name);
@@ -2852,7 +2847,7 @@ private:
     isolate.initCompatibilityFlags(0);
 
     auto moduleList = isolate.initModules(
-        modules.size() + 9 + (4 * ISOLATE_CAPNP_ES_MODULE_COUNT));
+        modules.size() + 6 + (4 * ISOLATE_CAPNP_ES_MODULE_COUNT));
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2893,16 +2888,6 @@ private:
     auto capnpHelperModule = moduleList[helperIndex++];
     capnpHelperModule.setName("sandstorm:capnp");
     capnpHelperModule.setEsModulePath("__sandstorm_isolate_runtime/capnp.js");
-    auto capnpSchemeCapnwebModule = moduleList[helperIndex++];
-    capnpSchemeCapnwebModule.setName("capnp:/capnweb.js");
-    capnpSchemeCapnwebModule.setEsModulePath("__sandstorm_isolate_runtime/capnp-scheme/capnweb.js");
-    auto capnpSchemeCapnpModule = moduleList[helperIndex++];
-    capnpSchemeCapnpModule.setName("capnp:/sandstorm/capnp.js");
-    capnpSchemeCapnpModule.setEsModulePath("__sandstorm_isolate_runtime/capnp-scheme/capnp.js");
-    auto capnpSchemeNativeCapnpBridgeModule = moduleList[helperIndex++];
-    capnpSchemeNativeCapnpBridgeModule.setName("capnp:/sandstorm/native-capnp-bridge.js");
-    capnpSchemeNativeCapnpBridgeModule.setEsModulePath(
-        "__sandstorm_isolate_runtime/capnp-scheme/native-capnp-bridge.js");
     auto nativeCapnpBridgeModule = moduleList[helperIndex++];
     nativeCapnpBridgeModule.setName("sandstorm:native-capnp-bridge");
     nativeCapnpBridgeModule.setEsModulePath("__sandstorm_isolate_runtime/native-capnp-bridge.js");
@@ -3062,18 +3047,6 @@ private:
     return resolvedPath;
   }
 
-  static kj::String resolveDevIsolateCapnpImport(
-      kj::StringPtr importerDir, kj::StringPtr rootDir, kj::StringPtr specifier) {
-    KJ_REQUIRE(specifier.startsWith("capnp:"), "Internal error: expected capnp import.",
-        specifier);
-    auto pathSpecifier = specifier.slice(strlen("capnp:"));
-    KJ_REQUIRE(isRelativeImport(pathSpecifier),
-        "`capnp:` isolate imports must use a relative schema path for now.", specifier);
-    KJ_REQUIRE(pathSpecifier.endsWith(".capnp"),
-        "`capnp:` isolate imports must point to a .capnp schema.", specifier);
-    return resolveDevIsolateImport(importerDir, rootDir, pathSpecifier);
-  }
-
   static kj::String resolveDevIsolateCapnpEsImport(
       kj::StringPtr importerDir, kj::StringPtr rootDir, kj::StringPtr specifier) {
     KJ_REQUIRE(specifier.startsWith("capnp-es:"), "Internal error: expected capnp-es import.",
@@ -3105,50 +3078,6 @@ private:
       KJ_FAIL_REQUIRE("Unsupported isolate dev module extension. Supported: .js, .mjs, .cjs, "
           ".json, .txt, .text", path);
     }
-  }
-
-  void addDevIsolateCapnpModule(
-      kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
-      kj::Vector<DevIsolateModule>& modules,
-      std::map<std::string, std::string>& capnpImports) {
-    auto specifierStd = toStdString(specifier);
-    auto resolvedStd = toStdString(resolvedPath);
-    auto existing = capnpImports.find(specifierStd);
-    if (existing != capnpImports.end()) {
-      KJ_REQUIRE(existing->second == resolvedStd,
-          "`capnp:` isolate import specifier resolves to multiple schemas. "
-          "Use distinct import specifiers until import rewriting is implemented.",
-          specifier, existing->second, resolvedPath);
-      return;
-    }
-    capnpImports.insert(std::make_pair(specifierStd, resolvedStd));
-
-    KJ_REQUIRE(devIsolateSupportDir != nullptr,
-        "`capnp:` isolate imports require the generated dev-isolate support directory.");
-
-    auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
-    auto schemaImports = scanCapnpImports(source);
-    auto importerDir = dirnameForPath(resolvedPath);
-    for (auto& schemaImport: schemaImports) {
-      if (nativeCapnpCapabilitySpec(schemaImport.specifier) != nullptr) {
-        continue;
-      }
-      auto importedPath = resolveDevIsolateCapnpSchemaImport(
-          importerDir, rootDir, schemaImport.specifier);
-      auto importedSpecifier = devIsolateCapnpSpecifierForPath(importedPath, rootDir);
-      addDevIsolateCapnpModule(importedSpecifier, importedPath, rootDir, modules, capnpImports);
-    }
-
-    auto moduleFileName = devIsolateCapnpGeneratedFileName(resolvedPath);
-    auto runtimePath = kj::str("capnp/", moduleFileName);
-    auto content = generateDevIsolateCapnpModule(specifier, resolvedPath, rootDir, source);
-    writeDevIsolateGeneratedSupportFile(devIsolateSupportDir, runtimePath, content);
-
-    modules.add(DevIsolateModule {
-      kj::heapString(specifier),
-      kj::str("__sandstorm_isolate_runtime/", runtimePath),
-      DevIsolateModuleType::ES_MODULE
-    });
   }
 
   void addDevIsolateCapnpEsModule(
@@ -3496,21 +3425,6 @@ private:
       pos = match + needleStd.size();
     }
     return kj::heapString(result.c_str());
-  }
-
-  static kj::String capnpSchemeCapnpHelperSource() {
-    auto content = replaceAll(
-        ISOLATE_CAPNP_HELPER_SOURCE, "\"capnweb\"", "\"/capnp:/capnweb.js\"");
-    content = replaceAll(content, "\"capnp-es/index.mjs\"",
-        "\"/capnp-es:/capnp-es/index.mjs\"");
-    content = replaceAll(content, "\"sandstorm:native-capnp-bridge\"",
-        "\"/capnp:/sandstorm/native-capnp-bridge.js\"");
-    return content;
-  }
-
-  static kj::String capnpSchemeNativeCapnpBridgeSource() {
-    return replaceAll(ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE, "\"capnp-es/index.mjs\"",
-        "\"/capnp-es:/capnp-es/index.mjs\"");
   }
 
   kj::String rewriteDevIsolateCapnpEsRuntimeImports(
@@ -4525,313 +4439,6 @@ private:
     return generated;
   }
 
-  static kj::String generateDevIsolateCapnpModule(
-      kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
-      kj::StringPtr schemaSource) {
-    auto interfaces = scanCapnpInterfaces(schemaSource);
-    auto interfaceMetadata = parseCapnpInterfaceMetadata(resolvedPath, rootDir, interfaces.asPtr());
-    auto imports = scanCapnpImports(schemaSource);
-    auto importerDir = dirnameForPath(resolvedPath);
-    kj::Vector<char> output;
-    output.addAll(kj::StringPtr(
-        "// Generated by `spk dev-isolate` for a `capnp:` import.\n"
-        "// This module provides schema-first bindings over Sandstorm's current\n"
-        "// app-object RPC transport. It is not native Cap'n Proto encoding yet.\n\n"
-        "import { makeCapnpInterfaceBinding } from \"/capnp:/sandstorm/capnp.js\";\n\n"));
-
-    std::map<std::string, std::string> importedInterfaceBindings;
-    std::map<std::string, std::string> nativeInterfaceSpecs;
-    uint importIndex = 0;
-    for (auto& importDef: imports) {
-      KJ_IF_MAYBE(nativeSpec, nativeCapnpCapabilitySpec(importDef.specifier)) {
-        nativeInterfaceSpecs.insert(std::make_pair(
-            toStdString(importDef.alias), toStdString(*nativeSpec)));
-        continue;
-      }
-
-      auto importedPath = resolveDevIsolateCapnpSchemaImport(
-          importerDir, rootDir, importDef.specifier);
-      auto importedSpecifier = devIsolateCapnpSpecifierForPath(importedPath, rootDir);
-      auto importedSource = readAll(raiiOpen(importedPath, O_RDONLY | O_CLOEXEC));
-      auto importedInterfaces = scanCapnpInterfaces(importedSource);
-      for (auto& importedInterface: importedInterfaces) {
-        auto bindingName = kj::str("_capnpImport", importIndex, "_", importedInterface.name);
-        output.addAll(kj::StringPtr("import { "));
-        output.addAll(importedInterface.name);
-        output.addAll(kj::StringPtr(" as "));
-        output.addAll(bindingName);
-        output.addAll(kj::StringPtr(" } from "));
-        appendJsString(output, importedSpecifier);
-        output.addAll(kj::StringPtr(";\n"));
-
-        auto typeName = kj::str(importDef.alias, ".", importedInterface.name);
-        importedInterfaceBindings.insert(std::make_pair(
-            toStdString(typeName), toStdString(bindingName)));
-      }
-      ++importIndex;
-    }
-    if (imports.size() > 0) {
-      output.addAll(kj::StringPtr("\n"));
-    }
-
-    output.addAll(kj::StringPtr("export const importSpecifier = "));
-    appendJsString(output, specifier);
-    output.addAll(kj::StringPtr(";\nexport const schemaPath = "));
-    appendJsString(output, resolvedPath);
-    output.addAll(kj::StringPtr(";\nexport const schemaText = "));
-    appendJsString(output, schemaSource);
-    output.addAll(kj::StringPtr(";\nexport const interfaceNames = Object.freeze(["));
-    for (auto i: kj::indices(interfaces)) {
-      if (i > 0) output.addAll(kj::StringPtr(", "));
-      appendJsString(output, interfaces[i].name);
-    }
-    output.addAll(kj::StringPtr("]);\n\n"));
-
-    std::set<std::string> interfaceNames;
-    for (auto& interfaceDef: interfaces) {
-      interfaceNames.insert(toStdString(interfaceDef.name));
-    }
-
-    auto isCapabilityType = [&](kj::StringPtr type) {
-      auto typeName = toStdString(type);
-      return type.size() > 0 &&
-          (interfaceNames.find(typeName) != interfaceNames.end() ||
-           importedInterfaceBindings.find(typeName) != importedInterfaceBindings.end() ||
-           nativeInterfaceSpecs.find(typeName) != nativeInterfaceSpecs.end());
-    };
-
-    auto appendCapabilityCaster = [&](kj::Vector<char>& output, kj::StringPtr type) {
-      auto typeName = toStdString(type);
-      auto imported = importedInterfaceBindings.find(typeName);
-      auto native = nativeInterfaceSpecs.find(typeName);
-      if (interfaceNames.find(typeName) != interfaceNames.end()) {
-        output.addAll(type);
-      } else if (imported != importedInterfaceBindings.end()) {
-        output.addAll(kj::StringPtr(imported->second));
-      } else {
-        KJ_ASSERT(native != nativeInterfaceSpecs.end(), type);
-        output.addAll(kj::StringPtr(native->second));
-      }
-    };
-
-    for (auto& interfaceDef: interfaces) {
-      output.addAll(kj::StringPtr("const "));
-      output.addAll(interfaceDef.name);
-      output.addAll(kj::StringPtr("MethodNames = Object.freeze(["));
-      for (auto i: kj::indices(interfaceDef.methods)) {
-        if (i > 0) output.addAll(kj::StringPtr(", "));
-        appendJsString(output, interfaceDef.methods[i].name);
-      }
-      output.addAll(kj::StringPtr("]);\n"));
-    }
-
-    output.addAll(kj::StringPtr(
-        "\nfunction makeInterface(interfaceName, methodNames, metadata = {}) {\n"
-        "  return "));
-    output.addAll(kj::StringPtr("makeCapnpInterfaceBinding"));
-    output.addAll(kj::StringPtr("(interfaceName, methodNames, {\n"
-        "    importSpecifier,\n"
-        "    interfaceId: metadata.interfaceId || \"\",\n"
-        "    schemaPath,\n"
-        "    schemaText,\n"
-        "    methodIds: metadata.methodIds || {},\n"
-        "    paramStructIds: metadata.paramStructIds || {},\n"
-        "    resultStructIds: metadata.resultStructIds || {},\n"
-        "    argumentCapabilities: metadata.argumentCapabilities || {},\n"
-        "    resultCapabilities: metadata.resultCapabilities || {},\n"
-        "  });\n"
-        "}\n\n"));
-
-    for (auto& interfaceDef: interfaces) {
-      KJ_REQUIRE(isJsExportIdentifier(interfaceDef.name),
-          "Cannot generate a JavaScript export for Cap'n Proto interface name.",
-          interfaceDef.name);
-      output.addAll(kj::StringPtr("export const "));
-      output.addAll(interfaceDef.name);
-      output.addAll(kj::StringPtr(" = makeInterface("));
-      appendJsString(output, interfaceDef.name);
-      output.addAll(kj::StringPtr(", "));
-      output.addAll(interfaceDef.name);
-      output.addAll(kj::StringPtr("MethodNames"));
-
-      bool wroteMetadata = false;
-      bool wroteMetadataEntry = false;
-      auto parsedInterface = interfaceMetadata.find(toStdString(interfaceDef.name));
-      if (parsedInterface != interfaceMetadata.end()) {
-        output.addAll(kj::StringPtr(", {\n  interfaceId: "));
-        appendJsString(output, kj::StringPtr(parsedInterface->second.interfaceId));
-        output.addAll(kj::StringPtr(",\n  methodIds: {\n"));
-        bool wroteMethodId = false;
-        for (auto& method: interfaceDef.methods) {
-          auto parsedMethod = parsedInterface->second.methods.find(toStdString(method.name));
-          if (parsedMethod == parsedInterface->second.methods.end()) continue;
-          if (wroteMethodId) output.addAll(kj::StringPtr(",\n"));
-          output.addAll(kj::StringPtr("    "));
-          appendJsString(output, method.name);
-          output.addAll(kj::StringPtr(": "));
-          output.addAll(kj::str(parsedMethod->second.id));
-          wroteMethodId = true;
-        }
-        output.addAll(kj::StringPtr("\n  },\n  paramStructIds: {\n"));
-        bool wroteParamStructId = false;
-        for (auto& method: interfaceDef.methods) {
-          auto parsedMethod = parsedInterface->second.methods.find(toStdString(method.name));
-          if (parsedMethod == parsedInterface->second.methods.end()) continue;
-          if (wroteParamStructId) output.addAll(kj::StringPtr(",\n"));
-          output.addAll(kj::StringPtr("    "));
-          appendJsString(output, method.name);
-          output.addAll(kj::StringPtr(": "));
-          appendJsString(output, kj::StringPtr(parsedMethod->second.paramStructId));
-          wroteParamStructId = true;
-        }
-        output.addAll(kj::StringPtr("\n  },\n  resultStructIds: {\n"));
-        bool wroteResultStructId = false;
-        for (auto& method: interfaceDef.methods) {
-          auto parsedMethod = parsedInterface->second.methods.find(toStdString(method.name));
-          if (parsedMethod == parsedInterface->second.methods.end()) continue;
-          if (wroteResultStructId) output.addAll(kj::StringPtr(",\n"));
-          output.addAll(kj::StringPtr("    "));
-          appendJsString(output, method.name);
-          output.addAll(kj::StringPtr(": "));
-          appendJsString(output, kj::StringPtr(parsedMethod->second.resultStructId));
-          wroteResultStructId = true;
-        }
-        output.addAll(kj::StringPtr("\n  }"));
-        wroteMetadata = true;
-        wroteMetadataEntry = true;
-      }
-
-      bool wroteArgumentCapabilities = false;
-      for (auto& method: interfaceDef.methods) {
-        for (auto& param: method.params) {
-          if (isCapabilityType(param.type)) {
-            if (!wroteMetadata) {
-              output.addAll(kj::StringPtr(", {\n"));
-              wroteMetadata = true;
-            }
-            if (!wroteArgumentCapabilities) {
-              if (wroteMetadataEntry) {
-                output.addAll(kj::StringPtr(",\n"));
-              }
-              output.addAll(kj::StringPtr("  argumentCapabilities: {\n"));
-              wroteArgumentCapabilities = true;
-              wroteMetadataEntry = true;
-            } else {
-              output.addAll(kj::StringPtr(",\n"));
-            }
-            output.addAll(kj::StringPtr("    "));
-            appendJsString(output, method.name);
-            output.addAll(kj::StringPtr(": { indexes: ["));
-            bool wroteIndex = false;
-            for (auto i: kj::indices(method.params)) {
-              auto& indexedParam = method.params[i];
-              if (isCapabilityType(indexedParam.type)) {
-                if (wroteIndex) output.addAll(kj::StringPtr(", "));
-                output.addAll(kj::str(i));
-                wroteIndex = true;
-              }
-            }
-            output.addAll(kj::StringPtr("], fields: {"));
-            bool wroteField = false;
-            for (auto& namedParam: method.params) {
-              if (isCapabilityType(namedParam.type)) {
-                if (wroteField) output.addAll(kj::StringPtr(", "));
-                appendJsString(output, namedParam.name);
-                output.addAll(kj::StringPtr(": "));
-                auto namedParamType = toStdString(namedParam.type);
-                if (nativeInterfaceSpecs.find(namedParamType) == nativeInterfaceSpecs.end()) {
-                  output.addAll(kj::StringPtr("() => "));
-                }
-                appendCapabilityCaster(output, namedParam.type);
-                wroteField = true;
-              }
-            }
-            output.addAll(kj::StringPtr("} }"));
-            break;
-          }
-        }
-      }
-      if (wroteArgumentCapabilities) {
-        output.addAll(kj::StringPtr("\n  }"));
-      }
-
-      bool wroteResultCapabilities = false;
-      for (auto& method: interfaceDef.methods) {
-        kj::Vector<DevCapnpInterface::Field*> capabilityResults;
-        for (auto& result: method.results) {
-          if (isCapabilityType(result.type)) {
-            capabilityResults.add(&result);
-          }
-        }
-
-        if (capabilityResults.size() > 0) {
-          if (!wroteMetadata) {
-            output.addAll(kj::StringPtr(", {\n"));
-            wroteMetadata = true;
-          }
-          if (!wroteResultCapabilities) {
-            if (wroteMetadataEntry) {
-              output.addAll(kj::StringPtr(",\n"));
-            }
-            output.addAll(kj::StringPtr("  resultCapabilities: {\n"));
-            wroteResultCapabilities = true;
-            wroteMetadataEntry = true;
-          } else {
-            output.addAll(kj::StringPtr(",\n"));
-          }
-          output.addAll(kj::StringPtr("    "));
-          appendJsString(output, method.name);
-          if (capabilityResults.size() == 1) {
-            output.addAll(kj::StringPtr(": "));
-            auto resultType = toStdString(capabilityResults[0]->type);
-            if (nativeInterfaceSpecs.find(resultType) == nativeInterfaceSpecs.end()) {
-              output.addAll(kj::StringPtr("() => "));
-            }
-            appendCapabilityCaster(output, capabilityResults[0]->type);
-          } else {
-            output.addAll(kj::StringPtr(": { fields: {\n"));
-            bool wroteField = false;
-            for (auto& result: capabilityResults) {
-              if (wroteField) output.addAll(kj::StringPtr(",\n"));
-              output.addAll(kj::StringPtr("      "));
-              appendJsString(output, result->name);
-              output.addAll(kj::StringPtr(": "));
-              auto resultType = toStdString(result->type);
-              if (nativeInterfaceSpecs.find(resultType) == nativeInterfaceSpecs.end()) {
-                output.addAll(kj::StringPtr("() => "));
-              }
-              appendCapabilityCaster(output, result->type);
-              wroteField = true;
-            }
-            output.addAll(kj::StringPtr("\n    } }"));
-          }
-        }
-      }
-      if (wroteResultCapabilities) {
-        output.addAll(kj::StringPtr("\n  }"));
-      }
-      if (wroteMetadata) {
-        output.addAll(kj::StringPtr("\n}"));
-      }
-
-      output.addAll(kj::StringPtr(");\n"));
-    }
-
-    output.addAll(kj::StringPtr(
-        "\nexport default Object.freeze({\n"
-        "  importSpecifier,\n"
-        "  schemaPath,\n"
-        "  schemaText,\n"
-        "  interfaceNames"));
-    for (auto& interfaceDef: interfaces) {
-      output.addAll(kj::StringPtr(",\n  "));
-      output.addAll(interfaceDef.name);
-    }
-    output.addAll(kj::StringPtr("\n});\n"));
-    output.add('\0');
-    return kj::String(output.releaseAsArray());
-  }
-
   static void skipJsString(std::string const& source, size_t& pos) {
     char quote = source[pos++];
     while (pos < source.size()) {
@@ -5008,7 +4615,6 @@ private:
   kj::String writePackIsolateSupportDir() {
     kj::String path = kj::heapString("/tmp/sandstorm-pack-isolate-runtime-XXXXXX");
     KJ_REQUIRE(mkdtemp(path.begin()) != nullptr, "mkdtemp() failed", path, strerror(errno));
-    KJ_SYSCALL(mkdir(kj::str(path, "/capnp").cStr(), 0700));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es-generated").cStr(), 0700));
     return path;
   }
@@ -5099,7 +4705,6 @@ private:
 
   bool collectPackCapnpImportsFromModule(
       kj::StringPtr packagePath, kj::Vector<DevIsolateModule>& generatedModules,
-      std::map<std::string, std::string>& capnpImports,
       std::map<std::string, std::string>& capnpEsImports) {
     auto maybeRealPath = trySourcePathForPackagePath(packagePath);
     KJ_IF_MAYBE(realPath, maybeRealPath) {
@@ -5116,11 +4721,8 @@ private:
 
       for (auto& specifier: imports) {
         if (isCapnpImport(specifier)) {
-          auto resolvedImport = resolveDevIsolateCapnpImport(
-              importerDir, importerDir, specifier);
-          addDevIsolateCapnpModule(
-              specifier, resolvedImport, importerDir, generatedModules, capnpImports);
-          found = true;
+          KJ_FAIL_REQUIRE("`capnp:` isolate schema imports have been removed; use `capnp-es:`.",
+              specifier);
         } else if (isCapnpEsImport(specifier)) {
           auto resolvedImport = resolveDevIsolateCapnpEsImport(
               importerDir, importerDir, specifier);
@@ -5141,7 +4743,6 @@ private:
     kj::Vector<PackIsolateModuleSpec> oldModules;
     std::set<std::string> existingModuleNames;
     kj::Vector<DevIsolateModule> generatedModules;
-    std::map<std::string, std::string> capnpImports;
     std::map<std::string, std::string> capnpEsImports;
 
     for (auto i: kj::indices(oldModuleList)) {
@@ -5150,7 +4751,7 @@ private:
       existingModuleNames.insert(toStdString(spec.name));
       if (spec.type == DevIsolateModuleType::ES_MODULE) {
         collectPackCapnpImportsFromModule(
-            spec.sourcePath, generatedModules, capnpImports, capnpEsImports);
+            spec.sourcePath, generatedModules, capnpEsImports);
       }
       oldModules.add(kj::mv(spec));
     }
@@ -5226,8 +4827,6 @@ private:
       return;
     }
 
-    addArchiveDirectory(root, "__sandstorm_isolate_runtime/capnp",
-        kj::str(packIsolateSupportDir, "/capnp"));
     addArchiveDirectory(root, "__sandstorm_isolate_runtime/capnp-es-generated",
         kj::str(packIsolateSupportDir, "/capnp-es-generated"));
     packManifestOverride = capnp::messageToFlatArray(manifestMessage);

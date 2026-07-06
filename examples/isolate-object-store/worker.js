@@ -1,5 +1,7 @@
 import { sandstorm } from "sandstorm:api";
-import { ObjectStore } from "capnp:./object-store.capnp";
+import { connectNativeCapnp } from "sandstorm:capnp";
+import { ObjectStore } from "capnp-es:./object-store.capnp";
+import { WebSession } from "capnp-es:/sandstorm/web-session.capnp";
 
 const OBJECTS = Object.freeze({
   photos: Object.freeze({
@@ -54,7 +56,12 @@ function makeObjectStore(api) {
       if (!findObject(bucket, key)) {
         throw new Error(`object not found: ${bucket}/${key}`);
       }
-      return api.webSession({ pathPrefix: objectPath(bucket, key) });
+      const capability = await api.webSession({ pathPrefix: objectPath(bucket, key) });
+      return {
+        object: connectNativeCapnp(api, capability, WebSession, {
+          connectionId: `object-store-${bucket}-${key}`,
+        }),
+      };
     },
   };
 }
@@ -80,12 +87,7 @@ function serveObject(url) {
 
 export default {
   async fetch(request, env) {
-    const api = sandstorm(request, env, {
-      capabilities: {
-        objectStore: ObjectStore.implement(makeObjectStore(
-          sandstorm(request, env))),
-      },
-    });
+    const api = sandstorm(request, env);
 
     const system = await api.serveSystemRoutes();
     if (system) return system;
@@ -94,7 +96,7 @@ export default {
     const objectResponse = serveObject(url);
     if (objectResponse) return objectResponse;
 
-    const store = ObjectStore.local(makeObjectStore(api));
+    const store = new ObjectStore.Server(makeObjectStore(api)).client();
     const listing = await store.listObjects({
       bucket: "photos",
       prefix: "2026/",
@@ -104,17 +106,24 @@ export default {
       bucket: "photos",
       key: "2026/cover.txt",
     });
-    const response = await object.fetch("", { method: "GET" });
+    const response = await object.object.get({
+      path: "",
+      context: {},
+      ignoreBody: false,
+    });
+    const content = response.content;
+    const body = content.body.bytes;
+    const bodyBytes = typeof body.toUint8Array === "function" ? body.toUint8Array() : body;
 
     return Response.json({
       ok: true,
-      interfaceName: ObjectStore.interfaceName,
-      methodNames: ObjectStore.methodNames,
+      interfaceName: "ObjectStore",
+      interfaceId: `0x${ObjectStore._capnp.typeIdHex}`,
       listing,
       object: {
-        status: response.status,
-        contentType: response.headers.get("content-type"),
-        body: await response.text(),
+        statusCode: content.statusCode,
+        contentType: content.mimeType,
+        body: new TextDecoder().decode(bodyBytes),
       },
     });
   },
