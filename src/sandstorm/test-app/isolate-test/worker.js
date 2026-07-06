@@ -2,6 +2,7 @@ import message from "message.txt";
 import metadata from "metadata.json";
 import { Message as CapnpEsMessage } from "@mnutt/capnp-es";
 import { NativeGreeter } from "capnp-es:./native-greeter.capnp";
+import { NativeGreeter as BrowserNativeGreeter } from "capnp:./native-greeter.capnp";
 import { Message as CapnpRpcMessage } from "@mnutt/capnp/rpc.mjs";
 import { WebSession } from "capnp-es:/sandstorm/web-session.capnp";
 import {
@@ -65,25 +66,6 @@ const retainedMailFeedCallbacks = new Map();
 const retainedEventReceivers = new Map();
 let powerboxFulfillmentDurableSerial = 0;
 
-const BrowserNativeGreeter = makeCapnpInterfaceBinding("NativeGreeter", [
-  "hello",
-  "makeGreeter",
-  "greetWith",
-], {
-  interfaceId: "0xb66316217ceedb1b",
-  argumentCapabilities: {
-    greetWith: {
-      indexes: [0],
-      fields: {
-        greeter: () => BrowserNativeGreeter,
-      },
-    },
-  },
-  resultCapabilities: {
-    makeGreeter: () => BrowserNativeGreeter,
-  },
-});
-
 const browserNativeGreeterMethods = {
   async hello({ name = "browser" } = {}) {
     return {
@@ -110,34 +92,6 @@ const browserNativeGreeterMethods = {
     };
   },
 };
-
-function renderBrowserNativeGreeterModule() {
-  return `import { makeBrowserCapnpInterfaceBinding } from "/__sandstorm/test-rpc-client.js";
-
-export const NativeGreeter = makeBrowserCapnpInterfaceBinding("NativeGreeter", [
-  "hello",
-  "makeGreeter",
-  "greetWith",
-], {
-  interfaceId: "0xb66316217ceedb1b",
-  argumentCapabilities: {
-    greetWith: {
-      indexes: [0],
-      fields: {
-        greeter: () => NativeGreeter,
-      },
-    },
-  },
-  resultCapabilities: {
-    makeGreeter: () => NativeGreeter,
-  },
-});
-
-export default Object.freeze({
-  NativeGreeter,
-});
-`;
-}
 
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
@@ -534,7 +488,7 @@ function renderBrowserRpcPage() {
 
     <script type="module">
       import { newSandstormRpcSession } from "/__sandstorm/test-rpc-client.js";
-      import { NativeGreeter } from "/browser-native-greeter.capnp.js";
+      import { NativeGreeter } from "/__sandstorm/capnp/native-greeter.capnp.js";
 
       const result = document.querySelector("#rpc-result");
 
@@ -743,12 +697,6 @@ export default {
     if (url.pathname === "/browser-rpc-test") {
       return new Response(renderBrowserRpcPage(), {
         headers: { "content-type": "text/html; charset=utf-8" },
-      });
-    }
-
-    if (url.pathname === "/browser-native-greeter.capnp.js") {
-      return new Response(renderBrowserNativeGreeterModule(), {
-        headers: { "content-type": "text/javascript; charset=utf-8" },
       });
     }
 
