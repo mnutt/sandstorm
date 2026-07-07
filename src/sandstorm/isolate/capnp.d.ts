@@ -158,8 +158,8 @@ declare module "sandstorm:capnp" {
   export function createNativeCapnpBridge(
     api: {
       capnpBridgeInfo(): Promise<unknown>;
-      nativeCapnpBridgeCall?(body?: BodyInit): Promise<unknown>;
-      nativeCapnpBridgeCallBytes?(body?: BodyInit): Promise<{
+      nativeCapnpBridgeLifecycle?(body?: BodyInit): Promise<unknown>;
+      nativeCapnpBridgeLifecycleBytes?(body?: BodyInit): Promise<{
         ok: boolean;
         status: number;
         contentType: string;
@@ -299,7 +299,7 @@ declare module "sandstorm:capnp" {
 
   export function saveNativeCapnp(
     api: {
-      nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<{
+      nativeCapnpBridgeLifecycleBytes(body?: BodyInit): Promise<{
         ok: boolean;
         status: number;
         contentType: string;
@@ -311,7 +311,7 @@ declare module "sandstorm:capnp" {
 
   export function dropNativeCapnp(
     api: {
-      nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<{
+      nativeCapnpBridgeLifecycleBytes(body?: BodyInit): Promise<{
         ok: boolean;
         status: number;
         contentType: string;
@@ -394,7 +394,7 @@ declare module "sandstorm:capnp" {
 
   export function connectNativeCapnp<TClient extends object>(
     api: {
-      nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<{
+      nativeCapnpBridgeLifecycleBytes(body?: BodyInit): Promise<{
         ok: boolean;
         status: number;
         contentType: string;
@@ -417,7 +417,7 @@ declare module "sandstorm:capnp" {
   export function restoreNativeCapnp<TClient extends object>(
     api: {
       capnpBridgeInfo(): Promise<unknown>;
-      nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<{
+      nativeCapnpBridgeLifecycleBytes(body?: BodyInit): Promise<{
         ok: boolean;
         status: number;
         contentType: string;

@@ -2351,12 +2351,12 @@ test("isolate supervisor integration suite", {
       nativeExports: true,
     });
 
-    const capnpCall = await requestJson(fixture.sandstormApiSocket, "/capnp/call", {
+    const capnpLifecycle = await requestJson(fixture.sandstormApiSocket, "/capnp/lifecycle", {
       method: "POST",
       body: "",
     });
-    assert.equal(capnpCall.statusCode, 400, capnpCall.body);
-    assert.deepEqual(capnpCall.json, {
+    assert.equal(capnpLifecycle.statusCode, 400, capnpLifecycle.body);
+    assert.deepEqual(capnpLifecycle.json, {
       ok: false,
       error: "native Cap'n Proto bridge request body is empty",
     });
@@ -2366,17 +2366,17 @@ test("isolate supervisor integration suite", {
     assert.equal(browserCapnpBridgeInfo.statusCode, 200, browserCapnpBridgeInfo.body);
     assert.deepEqual(browserCapnpBridgeInfo.json, capnpBridgeInfo.json);
 
-    const browserCapnpCall = await requestUnixSocket(
-      fixture.workerdSocket, "/__sandstorm/native-capnp/call", {
+    const browserCapnpLifecycle = await requestUnixSocket(
+      fixture.workerdSocket, "/__sandstorm/native-capnp/lifecycle", {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
         body: "",
       });
-    assert.equal(browserCapnpCall.statusCode, 400, browserCapnpCall.body);
+    assert.equal(browserCapnpLifecycle.statusCode, 400, browserCapnpLifecycle.body);
     assert.match(
-      String(browserCapnpCall.headers["content-type"] || ""),
+      String(browserCapnpLifecycle.headers["content-type"] || ""),
       /application\/octet-stream/);
-    assert.ok(browserCapnpCall.bodyBuffer.length > 0);
+    assert.ok(browserCapnpLifecycle.bodyBuffer.length > 0);
 
     const claimedStats = await requestJson(
       fixture.sandstormApiSocket, "/capabilities/claimed-stats");

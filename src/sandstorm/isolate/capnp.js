@@ -556,20 +556,20 @@ export async function nativeCapnpPowerboxDescriptor(env, InterfaceClass, options
 }
 
 async function sendNativeCapnpBridgeEnvelope(api, request, context, expectedWhich) {
-  if (!api || typeof api.nativeCapnpBridgeCallBytes !== "function") {
+  if (!api || typeof api.nativeCapnpBridgeLifecycleBytes !== "function") {
     throw new NativeCapnpBridgeProtocolError(
-      "native bridge call requires api.nativeCapnpBridgeCallBytes()");
+      "native bridge lifecycle requires api.nativeCapnpBridgeLifecycleBytes()");
   }
 
-  const response = await api.nativeCapnpBridgeCallBytes(request.message);
+  const response = await api.nativeCapnpBridgeLifecycleBytes(request.message);
   if (!response || typeof response !== "object" || !(response.body instanceof Uint8Array)) {
-    throw new NativeCapnpBridgeProtocolError("native bridge call returned an invalid response");
+    throw new NativeCapnpBridgeProtocolError("native bridge lifecycle returned an invalid response");
   }
 
   const decoded = decodeNativeCapnpBridgeResponse(response.body);
   if (decoded.which === "exception") {
     throw new NativeCapnpBridgeUnavailableError(
-      decoded.exception.reason || "native Cap'n Proto bridge call failed",
+      decoded.exception.reason || "native Cap'n Proto bridge lifecycle failed",
       { ...context, response, decoded });
   }
   if (decoded.which !== expectedWhich) {

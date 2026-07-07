@@ -4692,8 +4692,8 @@ public:
       } else if (methodName == "POST" && route == "/powerbox/outbound-http-fetch") {
         return fetchOutboundHttpCapability(
             path, kj::mv(outboundHeaderValues), kj::mv(bodyBytes), response);
-      } else if (methodName == "POST" && route == "/capnp/call") {
-        return callNativeCapnpBridge(
+      } else if (methodName == "POST" && route == "/capnp/lifecycle") {
+        return handleNativeCapnpBridgeLifecycle(
             kj::mv(bodyBytes), response, accept == "application/octet-stream");
       } else if (methodName == "POST" && route == "/powerbox/offer") {
         return offerClaimedCapability(path, response);
@@ -6084,7 +6084,7 @@ private:
     }
   }
 
-  kj::Promise<void> callNativeCapnpBridge(
+  kj::Promise<void> handleNativeCapnpBridgeLifecycle(
       kj::Array<byte> bodyBytes, kj::HttpService::Response& response, bool binaryResponse) {
     if (bodyBytes.size() == 0) {
       return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",

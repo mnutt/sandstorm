@@ -1997,7 +1997,7 @@ export default {
         nativeRpcWebSocket: true,
         nativeExports: false,
       }),
-      nativeCapnpBridgeCallBytes: async () => ({
+      nativeCapnpBridgeLifecycleBytes: async () => ({
         ok: true,
         status: 200,
         contentType: "application/octet-stream",
@@ -2024,11 +2024,11 @@ export default {
       },
     });
     const nativeCapnpBridgeDrop =
-        await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeDropRequest.message);
+        await apiHelper.nativeCapnpBridgeLifecycle(nativeCapnpBridgeDropRequest.message);
     const nativeCapnpBridgeSave =
-        await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeSaveRequest.message);
+        await apiHelper.nativeCapnpBridgeLifecycle(nativeCapnpBridgeSaveRequest.message);
     const nativeCapnpBridgeRestore =
-        await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeRestoreRequest.message);
+        await apiHelper.nativeCapnpBridgeLifecycle(nativeCapnpBridgeRestoreRequest.message);
     class NativeCapnpBridgeFixtureClient {
       constructor(client) {
         this.client = client;
@@ -2168,13 +2168,13 @@ export default {
       const nativeCapnpLifecycleRestoredDropResult =
           await nativeCapnpLifecycleRestoredClient.drop();
       const nativeCapnpLifecycleSave =
-          await apiHelper.nativeCapnpBridgeCallBytes(makeNativeCapnpBridgeSaveRequest({
+          await apiHelper.nativeCapnpBridgeLifecycleBytes(makeNativeCapnpBridgeSaveRequest({
             target: nativeCapnpLifecycleTargetSlot,
           }).message);
       const decodedNativeCapnpLifecycleSave =
           decodeNativeCapnpBridgeResponse(nativeCapnpLifecycleSave.body);
       const nativeCapnpLifecycleRestore =
-          await apiHelper.nativeCapnpBridgeCallBytes(makeNativeCapnpBridgeRestoreRequest({
+          await apiHelper.nativeCapnpBridgeLifecycleBytes(makeNativeCapnpBridgeRestoreRequest({
             token: decodedNativeCapnpLifecycleSave.saved.token,
             expectedInterfaceId: "0xa8e9655582dcde6f",
             expectedInterfaceName: "sandstorm.WebSession",
@@ -2182,7 +2182,7 @@ export default {
       const decodedNativeCapnpLifecycleRestore =
           decodeNativeCapnpBridgeResponse(nativeCapnpLifecycleRestore.body);
       const nativeCapnpLifecycleDrop =
-          await apiHelper.nativeCapnpBridgeCallBytes(makeNativeCapnpBridgeDropRequest({
+          await apiHelper.nativeCapnpBridgeLifecycleBytes(makeNativeCapnpBridgeDropRequest({
             target: decodedNativeCapnpLifecycleRestore.capability,
           }).message);
       const decodedNativeCapnpLifecycleDrop =
@@ -2234,7 +2234,7 @@ export default {
       };
     }
     const unknownNativeCapnpBridgeDrop =
-        await apiHelper.nativeCapnpBridgeCall(makeNativeCapnpBridgeDropRequest({
+        await apiHelper.nativeCapnpBridgeLifecycle(makeNativeCapnpBridgeDropRequest({
           target: {
             id: "unknown-target-capability",
             interfaceId: "0xa8e9655582dcde6f",

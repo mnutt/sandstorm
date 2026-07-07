@@ -278,8 +278,8 @@ declare module "sandstorm:api" {
     modules(): Promise<unknown>;
     bindings(): Promise<unknown>;
     capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
-    nativeCapnpBridgeCall(body?: BodyInit): Promise<NativeCapnpBridgeResponse>;
-    nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<NativeCapnpBridgeByteResponse>;
+    nativeCapnpBridgeLifecycle(body?: BodyInit): Promise<NativeCapnpBridgeResponse>;
+    nativeCapnpBridgeLifecycleBytes(body?: BodyInit): Promise<NativeCapnpBridgeByteResponse>;
     nativeCapnpBridgeOpenRpcSession(
       target: { id: string; interfaceId?: bigint | number | string; interfaceName?: string },
       connectionId: string,
