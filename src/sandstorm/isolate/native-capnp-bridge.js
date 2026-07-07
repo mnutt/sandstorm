@@ -2,10 +2,9 @@
 import * as $ from "@mnutt/capnp-es";
 export const _capnpFileId = 0xc3bd5bfe7541dc41n;
 export const NativeCapnpBridgeRequest_Which = {
-  OBSOLETE_CALL: 0,
-  DROP: 1,
-  SAVE: 2,
-  RESTORE: 3
+    DROP: 0,
+    SAVE: 1,
+    RESTORE: 2
 };
 /**
 * Versioned isolate-to-supervisor native Cap'n Proto bridge envelope.
@@ -16,764 +15,713 @@ export const NativeCapnpBridgeRequest_Which = {
 *
 */
 export class NativeCapnpBridgeRequest extends $.Struct {
-  static OBSOLETE_CALL = NativeCapnpBridgeRequest_Which.OBSOLETE_CALL;
-  static DROP = NativeCapnpBridgeRequest_Which.DROP;
-  static SAVE = NativeCapnpBridgeRequest_Which.SAVE;
-  static RESTORE = NativeCapnpBridgeRequest_Which.RESTORE;
-  static _capnp = {
-    displayName: "NativeCapnpBridgeRequest",
-    id: "a9d7cd8e6cc2b4e9",
-    typeId: 0xa9d7cd8e6cc2b4e9n,
-    typeIdHex: "a9d7cd8e6cc2b4e9",
-    size: new $.ObjectSize(8, 1),
-    fields: [
-      { name: "protocolVersion", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "uint32" } },
-      { name: "obsoleteCall", codeOrder: 1, ordinal: 1, discriminantValue: 0, kind: "slot", offset: 0, type: { kind: "void" } },
-      { name: "drop", codeOrder: 2, ordinal: 2, discriminantValue: 1, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xd2a93fb3be7f688dn, typeIdHex: "d2a93fb3be7f688d", displayName: "NativeCapnpBridgeDrop" } },
-      { name: "save", codeOrder: 3, ordinal: 3, discriminantValue: 2, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0x90f6b72cbec1e44dn, typeIdHex: "90f6b72cbec1e44d", displayName: "NativeCapnpBridgeSave" } },
-      { name: "restore", codeOrder: 4, ordinal: 4, discriminantValue: 3, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xc35dd976b9efc866n, typeIdHex: "c35dd976b9efc866", displayName: "NativeCapnpBridgeRestore" } }
-    ],
-  };
-  static _applyInit(target, value) {
-    const init = value;
-    {
-      const value = init["protocolVersion"];
-      if (value !== undefined) {
-        target.protocolVersion = value;
-      }
+    static DROP = NativeCapnpBridgeRequest_Which.DROP;
+    static SAVE = NativeCapnpBridgeRequest_Which.SAVE;
+    static RESTORE = NativeCapnpBridgeRequest_Which.RESTORE;
+    static _capnp = {
+        displayName: "NativeCapnpBridgeRequest",
+        id: "a9d7cd8e6cc2b4e9",
+        typeId: 0xa9d7cd8e6cc2b4e9n,
+        typeIdHex: "a9d7cd8e6cc2b4e9",
+        size: new $.ObjectSize(8, 1),
+        fields: [
+            { name: "protocolVersion", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "uint32" } },
+            { name: "drop", codeOrder: 1, ordinal: 1, discriminantValue: 0, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xd2a93fb3be7f688dn, typeIdHex: "d2a93fb3be7f688d", displayName: "NativeCapnpBridgeDrop" } },
+            { name: "save", codeOrder: 2, ordinal: 2, discriminantValue: 1, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0x90f6b72cbec1e44dn, typeIdHex: "90f6b72cbec1e44d", displayName: "NativeCapnpBridgeSave" } },
+            { name: "restore", codeOrder: 3, ordinal: 3, discriminantValue: 2, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xc35dd976b9efc866n, typeIdHex: "c35dd976b9efc866", displayName: "NativeCapnpBridgeRestore" } }
+        ],
+    };
+    static _applyInit(target, value) {
+        const init = value;
+        {
+            const value = init["protocolVersion"];
+            if (value !== undefined) {
+                target.protocolVersion = value;
+            }
+        }
+        {
+            const value = init["drop"];
+            if (value !== undefined) {
+                if (value instanceof NativeCapnpBridgeDrop) {
+                    target.drop = value;
+                }
+                else {
+                    NativeCapnpBridgeDrop._applyInit(target._initDrop(), value);
+                }
+            }
+        }
+        {
+            const value = init["save"];
+            if (value !== undefined) {
+                if (value instanceof NativeCapnpBridgeSave) {
+                    target.save = value;
+                }
+                else {
+                    NativeCapnpBridgeSave._applyInit(target._initSave(), value);
+                }
+            }
+        }
+        {
+            const value = init["restore"];
+            if (value !== undefined) {
+                if (value instanceof NativeCapnpBridgeRestore) {
+                    target.restore = value;
+                }
+                else {
+                    NativeCapnpBridgeRestore._applyInit(target._initRestore(), value);
+                }
+            }
+        }
     }
-    {
-      const value = init["obsoleteCall"];
-      if (value !== undefined) {
-        target.obsoleteCall = true;
-      }
+    get protocolVersion() {
+        return $.utils.getUint32(0, this);
     }
-    {
-      const value = init["drop"];
-      if (value !== undefined) {
-        if (value instanceof NativeCapnpBridgeDrop) {
-          target.drop = value;
-        }
-        else {
-          NativeCapnpBridgeDrop._applyInit(target._initDrop(), value);
-        }
-      }
+    set protocolVersion(value) {
+        $.utils.setUint32(0, value, this);
     }
-    {
-      const value = init["save"];
-      if (value !== undefined) {
-        if (value instanceof NativeCapnpBridgeSave) {
-          target.save = value;
-        }
-        else {
-          NativeCapnpBridgeSave._applyInit(target._initSave(), value);
-        }
-      }
+    _adoptDrop(value) {
+        $.utils.setUint16(4, 0, this);
+        $.utils.adopt(value, $.utils.getPointer(0, this));
     }
-    {
-      const value = init["restore"];
-      if (value !== undefined) {
-        if (value instanceof NativeCapnpBridgeRestore) {
-          target.restore = value;
-        }
-        else {
-          NativeCapnpBridgeRestore._applyInit(target._initRestore(), value);
-        }
-      }
+    _disownDrop() {
+        return $.utils.disown(this.drop);
     }
-  }
-  get protocolVersion() {
-    return $.utils.getUint32(0, this);
-  }
-  set protocolVersion(value) {
-    $.utils.setUint32(0, value, this);
-  }
-  get _isObsoleteCall() {
-    return $.utils.getUint16(4, this) === 0;
-  }
-  set obsoleteCall(_) {
-    $.utils.setUint16(4, 0, this);
-  }
-  _adoptDrop(value) {
-    $.utils.setUint16(4, 1, this);
-    $.utils.adopt(value, $.utils.getPointer(0, this));
-  }
-  _disownDrop() {
-    return $.utils.disown(this.drop);
-  }
-  get drop() {
-    $.utils.testWhich("drop", $.utils.getUint16(4, this), 1, this);
-    return $.utils.getStruct(0, NativeCapnpBridgeDrop, this);
-  }
-  _hasDrop() {
-    return !$.utils.isNull($.utils.getPointer(0, this));
-  }
-  _initDrop() {
-    $.utils.setUint16(4, 1, this);
-    return $.utils.initStructAt(0, NativeCapnpBridgeDrop, this);
-  }
-  get _isDrop() {
-    return $.utils.getUint16(4, this) === 1;
-  }
-  set drop(value) {
-    $.utils.setUint16(4, 1, this);
-    $.utils.copyFrom(value, $.utils.getPointer(0, this));
-  }
-  _adoptSave(value) {
-    $.utils.setUint16(4, 2, this);
-    $.utils.adopt(value, $.utils.getPointer(0, this));
-  }
-  _disownSave() {
-    return $.utils.disown(this.save);
-  }
-  get save() {
-    $.utils.testWhich("save", $.utils.getUint16(4, this), 2, this);
-    return $.utils.getStruct(0, NativeCapnpBridgeSave, this);
-  }
-  _hasSave() {
-    return !$.utils.isNull($.utils.getPointer(0, this));
-  }
-  _initSave() {
-    $.utils.setUint16(4, 2, this);
-    return $.utils.initStructAt(0, NativeCapnpBridgeSave, this);
-  }
-  get _isSave() {
-    return $.utils.getUint16(4, this) === 2;
-  }
-  set save(value) {
-    $.utils.setUint16(4, 2, this);
-    $.utils.copyFrom(value, $.utils.getPointer(0, this));
-  }
-  _adoptRestore(value) {
-    $.utils.setUint16(4, 3, this);
-    $.utils.adopt(value, $.utils.getPointer(0, this));
-  }
-  _disownRestore() {
-    return $.utils.disown(this.restore);
-  }
-  get restore() {
-    $.utils.testWhich("restore", $.utils.getUint16(4, this), 3, this);
-    return $.utils.getStruct(0, NativeCapnpBridgeRestore, this);
-  }
-  _hasRestore() {
-    return !$.utils.isNull($.utils.getPointer(0, this));
-  }
-  _initRestore() {
-    $.utils.setUint16(4, 3, this);
-    return $.utils.initStructAt(0, NativeCapnpBridgeRestore, this);
-  }
-  get _isRestore() {
-    return $.utils.getUint16(4, this) === 3;
-  }
-  set restore(value) {
-    $.utils.setUint16(4, 3, this);
-    $.utils.copyFrom(value, $.utils.getPointer(0, this));
-  }
-  toString() { return "NativeCapnpBridgeRequest_" + super.toString(); }
-  which() {
-    return $.utils.getUint16(4, this);
-  }
-  _set(value) {
-    switch (value.which) {
-      case "obsoleteCall": {
-        this.obsoleteCall = true;
-        return;
-      }
-      case "drop": {
-        this.drop = value.value;
-        return;
-      }
-      case "save": {
-        this.save = value.value;
-        return;
-      }
-      case "restore": {
-        this.restore = value.value;
-        return;
-      }
+    get drop() {
+        $.utils.testWhich("drop", $.utils.getUint16(4, this), 0, this);
+        return $.utils.getStruct(0, NativeCapnpBridgeDrop, this);
     }
-  }
-  _match(cases) {
-    const which = this.which();
-    switch (which) {
-      case 0: {
-        const callback = cases["obsoleteCall"];
-        if (callback) {
-          return callback();
-        }
-        break;
-      }
-      case 1: {
-        const callback = cases["drop"];
-        if (callback) {
-          return callback(this.drop);
-        }
-        break;
-      }
-      case 2: {
-        const callback = cases["save"];
-        if (callback) {
-          return callback(this.save);
-        }
-        break;
-      }
-      case 3: {
-        const callback = cases["restore"];
-        if (callback) {
-          return callback(this.restore);
-        }
-        break;
-      }
+    _hasDrop() {
+        return !$.utils.isNull($.utils.getPointer(0, this));
     }
-    if (cases._) {
-      return cases._(which);
+    _initDrop() {
+        $.utils.setUint16(4, 0, this);
+        return $.utils.initStructAt(0, NativeCapnpBridgeDrop, this);
     }
-    throw new Error("Unhandled NativeCapnpBridgeRequest union case: " + which);
-  }
+    get _isDrop() {
+        return $.utils.getUint16(4, this) === 0;
+    }
+    set drop(value) {
+        $.utils.setUint16(4, 0, this);
+        $.utils.copyFrom(value, $.utils.getPointer(0, this));
+    }
+    _adoptSave(value) {
+        $.utils.setUint16(4, 1, this);
+        $.utils.adopt(value, $.utils.getPointer(0, this));
+    }
+    _disownSave() {
+        return $.utils.disown(this.save);
+    }
+    get save() {
+        $.utils.testWhich("save", $.utils.getUint16(4, this), 1, this);
+        return $.utils.getStruct(0, NativeCapnpBridgeSave, this);
+    }
+    _hasSave() {
+        return !$.utils.isNull($.utils.getPointer(0, this));
+    }
+    _initSave() {
+        $.utils.setUint16(4, 1, this);
+        return $.utils.initStructAt(0, NativeCapnpBridgeSave, this);
+    }
+    get _isSave() {
+        return $.utils.getUint16(4, this) === 1;
+    }
+    set save(value) {
+        $.utils.setUint16(4, 1, this);
+        $.utils.copyFrom(value, $.utils.getPointer(0, this));
+    }
+    _adoptRestore(value) {
+        $.utils.setUint16(4, 2, this);
+        $.utils.adopt(value, $.utils.getPointer(0, this));
+    }
+    _disownRestore() {
+        return $.utils.disown(this.restore);
+    }
+    get restore() {
+        $.utils.testWhich("restore", $.utils.getUint16(4, this), 2, this);
+        return $.utils.getStruct(0, NativeCapnpBridgeRestore, this);
+    }
+    _hasRestore() {
+        return !$.utils.isNull($.utils.getPointer(0, this));
+    }
+    _initRestore() {
+        $.utils.setUint16(4, 2, this);
+        return $.utils.initStructAt(0, NativeCapnpBridgeRestore, this);
+    }
+    get _isRestore() {
+        return $.utils.getUint16(4, this) === 2;
+    }
+    set restore(value) {
+        $.utils.setUint16(4, 2, this);
+        $.utils.copyFrom(value, $.utils.getPointer(0, this));
+    }
+    toString() { return "NativeCapnpBridgeRequest_" + super.toString(); }
+    which() {
+        return $.utils.getUint16(4, this);
+    }
+    _set(value) {
+        switch (value.which) {
+            case "drop": {
+                this.drop = value.value;
+                return;
+            }
+            case "save": {
+                this.save = value.value;
+                return;
+            }
+            case "restore": {
+                this.restore = value.value;
+                return;
+            }
+        }
+    }
+    _match(cases) {
+        const which = this.which();
+        switch (which) {
+            case 0: {
+                const callback = cases["drop"];
+                if (callback) {
+                    return callback(this.drop);
+                }
+                break;
+            }
+            case 1: {
+                const callback = cases["save"];
+                if (callback) {
+                    return callback(this.save);
+                }
+                break;
+            }
+            case 2: {
+                const callback = cases["restore"];
+                if (callback) {
+                    return callback(this.restore);
+                }
+                break;
+            }
+        }
+        if (cases._) {
+            return cases._(which);
+        }
+        throw new Error("Unhandled NativeCapnpBridgeRequest union case: " + which);
+    }
 }
 export const NativeCapnpBridgeResponse_Which = {
-  OBSOLETE_RESULT: 0,
-  CAPABILITY: 1,
-  SAVED: 2,
-  ACKNOWLEDGED: 3,
-  EXCEPTION: 4
+    CAPABILITY: 0,
+    SAVED: 1,
+    ACKNOWLEDGED: 2,
+    EXCEPTION: 3
 };
 export class NativeCapnpBridgeResponse extends $.Struct {
-  static OBSOLETE_RESULT = NativeCapnpBridgeResponse_Which.OBSOLETE_RESULT;
-  static CAPABILITY = NativeCapnpBridgeResponse_Which.CAPABILITY;
-  static SAVED = NativeCapnpBridgeResponse_Which.SAVED;
-  static ACKNOWLEDGED = NativeCapnpBridgeResponse_Which.ACKNOWLEDGED;
-  static EXCEPTION = NativeCapnpBridgeResponse_Which.EXCEPTION;
-  static _capnp = {
-    displayName: "NativeCapnpBridgeResponse",
-    id: "c1ef5dce7db1a7f1",
-    typeId: 0xc1ef5dce7db1a7f1n,
-    typeIdHex: "c1ef5dce7db1a7f1",
-    size: new $.ObjectSize(8, 1),
-    fields: [
-      { name: "protocolVersion", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "uint32" } },
-      { name: "obsoleteResult", codeOrder: 1, ordinal: 1, discriminantValue: 0, kind: "slot", offset: 0, type: { kind: "void" } },
-      { name: "capability", codeOrder: 2, ordinal: 2, discriminantValue: 1, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xf3fc15de30f50d47n, typeIdHex: "f3fc15de30f50d47", displayName: "NativeCapnpCapabilitySlot" } },
-      { name: "saved", codeOrder: 3, ordinal: 3, discriminantValue: 2, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xe7a0b85c446da212n, typeIdHex: "e7a0b85c446da212", displayName: "NativeCapnpBridgeSaved" } },
-      { name: "acknowledged", codeOrder: 4, ordinal: 4, discriminantValue: 3, kind: "slot", offset: 0, type: { kind: "void" } },
-      { name: "exception", codeOrder: 5, ordinal: 5, discriminantValue: 4, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xb4098ed814dc3f1bn, typeIdHex: "b4098ed814dc3f1b", displayName: "NativeCapnpBridgeException" } }
-    ],
-  };
-  static _applyInit(target, value) {
-    const init = value;
-    {
-      const value = init["protocolVersion"];
-      if (value !== undefined) {
-        target.protocolVersion = value;
-      }
+    static CAPABILITY = NativeCapnpBridgeResponse_Which.CAPABILITY;
+    static SAVED = NativeCapnpBridgeResponse_Which.SAVED;
+    static ACKNOWLEDGED = NativeCapnpBridgeResponse_Which.ACKNOWLEDGED;
+    static EXCEPTION = NativeCapnpBridgeResponse_Which.EXCEPTION;
+    static _capnp = {
+        displayName: "NativeCapnpBridgeResponse",
+        id: "c1ef5dce7db1a7f1",
+        typeId: 0xc1ef5dce7db1a7f1n,
+        typeIdHex: "c1ef5dce7db1a7f1",
+        size: new $.ObjectSize(8, 1),
+        fields: [
+            { name: "protocolVersion", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "uint32" } },
+            { name: "capability", codeOrder: 1, ordinal: 1, discriminantValue: 0, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xf3fc15de30f50d47n, typeIdHex: "f3fc15de30f50d47", displayName: "NativeCapnpCapabilitySlot" } },
+            { name: "saved", codeOrder: 2, ordinal: 2, discriminantValue: 1, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xe7a0b85c446da212n, typeIdHex: "e7a0b85c446da212", displayName: "NativeCapnpBridgeSaved" } },
+            { name: "acknowledged", codeOrder: 3, ordinal: 3, discriminantValue: 2, kind: "slot", offset: 0, type: { kind: "void" } },
+            { name: "exception", codeOrder: 4, ordinal: 4, discriminantValue: 3, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xb4098ed814dc3f1bn, typeIdHex: "b4098ed814dc3f1b", displayName: "NativeCapnpBridgeException" } }
+        ],
+    };
+    static _applyInit(target, value) {
+        const init = value;
+        {
+            const value = init["protocolVersion"];
+            if (value !== undefined) {
+                target.protocolVersion = value;
+            }
+        }
+        {
+            const value = init["capability"];
+            if (value !== undefined) {
+                if (value instanceof NativeCapnpCapabilitySlot) {
+                    target.capability = value;
+                }
+                else {
+                    NativeCapnpCapabilitySlot._applyInit(target._initCapability(), value);
+                }
+            }
+        }
+        {
+            const value = init["saved"];
+            if (value !== undefined) {
+                if (value instanceof NativeCapnpBridgeSaved) {
+                    target.saved = value;
+                }
+                else {
+                    NativeCapnpBridgeSaved._applyInit(target._initSaved(), value);
+                }
+            }
+        }
+        {
+            const value = init["acknowledged"];
+            if (value !== undefined) {
+                target.acknowledged = true;
+            }
+        }
+        {
+            const value = init["exception"];
+            if (value !== undefined) {
+                if (value instanceof NativeCapnpBridgeException) {
+                    target.exception = value;
+                }
+                else {
+                    NativeCapnpBridgeException._applyInit(target._initException(), value);
+                }
+            }
+        }
     }
-    {
-      const value = init["obsoleteResult"];
-      if (value !== undefined) {
-        target.obsoleteResult = true;
-      }
+    get protocolVersion() {
+        return $.utils.getUint32(0, this);
     }
-    {
-      const value = init["capability"];
-      if (value !== undefined) {
-        if (value instanceof NativeCapnpCapabilitySlot) {
-          target.capability = value;
-        }
-        else {
-          NativeCapnpCapabilitySlot._applyInit(target._initCapability(), value);
-        }
-      }
+    set protocolVersion(value) {
+        $.utils.setUint32(0, value, this);
     }
-    {
-      const value = init["saved"];
-      if (value !== undefined) {
-        if (value instanceof NativeCapnpBridgeSaved) {
-          target.saved = value;
-        }
-        else {
-          NativeCapnpBridgeSaved._applyInit(target._initSaved(), value);
-        }
-      }
+    _adoptCapability(value) {
+        $.utils.setUint16(4, 0, this);
+        $.utils.adopt(value, $.utils.getPointer(0, this));
     }
-    {
-      const value = init["acknowledged"];
-      if (value !== undefined) {
-        target.acknowledged = true;
-      }
+    _disownCapability() {
+        return $.utils.disown(this.capability);
     }
-    {
-      const value = init["exception"];
-      if (value !== undefined) {
-        if (value instanceof NativeCapnpBridgeException) {
-          target.exception = value;
-        }
-        else {
-          NativeCapnpBridgeException._applyInit(target._initException(), value);
-        }
-      }
+    get capability() {
+        $.utils.testWhich("capability", $.utils.getUint16(4, this), 0, this);
+        return $.utils.getStruct(0, NativeCapnpCapabilitySlot, this);
     }
-  }
-  get protocolVersion() {
-    return $.utils.getUint32(0, this);
-  }
-  set protocolVersion(value) {
-    $.utils.setUint32(0, value, this);
-  }
-  get _isObsoleteResult() {
-    return $.utils.getUint16(4, this) === 0;
-  }
-  set obsoleteResult(_) {
-    $.utils.setUint16(4, 0, this);
-  }
-  _adoptCapability(value) {
-    $.utils.setUint16(4, 1, this);
-    $.utils.adopt(value, $.utils.getPointer(0, this));
-  }
-  _disownCapability() {
-    return $.utils.disown(this.capability);
-  }
-  get capability() {
-    $.utils.testWhich("capability", $.utils.getUint16(4, this), 1, this);
-    return $.utils.getStruct(0, NativeCapnpCapabilitySlot, this);
-  }
-  _hasCapability() {
-    return !$.utils.isNull($.utils.getPointer(0, this));
-  }
-  _initCapability() {
-    $.utils.setUint16(4, 1, this);
-    return $.utils.initStructAt(0, NativeCapnpCapabilitySlot, this);
-  }
-  get _isCapability() {
-    return $.utils.getUint16(4, this) === 1;
-  }
-  set capability(value) {
-    $.utils.setUint16(4, 1, this);
-    $.utils.copyFrom(value, $.utils.getPointer(0, this));
-  }
-  _adoptSaved(value) {
-    $.utils.setUint16(4, 2, this);
-    $.utils.adopt(value, $.utils.getPointer(0, this));
-  }
-  _disownSaved() {
-    return $.utils.disown(this.saved);
-  }
-  get saved() {
-    $.utils.testWhich("saved", $.utils.getUint16(4, this), 2, this);
-    return $.utils.getStruct(0, NativeCapnpBridgeSaved, this);
-  }
-  _hasSaved() {
-    return !$.utils.isNull($.utils.getPointer(0, this));
-  }
-  _initSaved() {
-    $.utils.setUint16(4, 2, this);
-    return $.utils.initStructAt(0, NativeCapnpBridgeSaved, this);
-  }
-  get _isSaved() {
-    return $.utils.getUint16(4, this) === 2;
-  }
-  set saved(value) {
-    $.utils.setUint16(4, 2, this);
-    $.utils.copyFrom(value, $.utils.getPointer(0, this));
-  }
-  get _isAcknowledged() {
-    return $.utils.getUint16(4, this) === 3;
-  }
-  set acknowledged(_) {
-    $.utils.setUint16(4, 3, this);
-  }
-  _adoptException(value) {
-    $.utils.setUint16(4, 4, this);
-    $.utils.adopt(value, $.utils.getPointer(0, this));
-  }
-  _disownException() {
-    return $.utils.disown(this.exception);
-  }
-  get exception() {
-    $.utils.testWhich("exception", $.utils.getUint16(4, this), 4, this);
-    return $.utils.getStruct(0, NativeCapnpBridgeException, this);
-  }
-  _hasException() {
-    return !$.utils.isNull($.utils.getPointer(0, this));
-  }
-  _initException() {
-    $.utils.setUint16(4, 4, this);
-    return $.utils.initStructAt(0, NativeCapnpBridgeException, this);
-  }
-  get _isException() {
-    return $.utils.getUint16(4, this) === 4;
-  }
-  set exception(value) {
-    $.utils.setUint16(4, 4, this);
-    $.utils.copyFrom(value, $.utils.getPointer(0, this));
-  }
-  toString() { return "NativeCapnpBridgeResponse_" + super.toString(); }
-  which() {
-    return $.utils.getUint16(4, this);
-  }
-  _set(value) {
-    switch (value.which) {
-      case "obsoleteResult": {
-        this.obsoleteResult = true;
-        return;
-      }
-      case "capability": {
-        this.capability = value.value;
-        return;
-      }
-      case "saved": {
-        this.saved = value.value;
-        return;
-      }
-      case "acknowledged": {
-        this.acknowledged = true;
-        return;
-      }
-      case "exception": {
-        this.exception = value.value;
-        return;
-      }
+    _hasCapability() {
+        return !$.utils.isNull($.utils.getPointer(0, this));
     }
-  }
-  _match(cases) {
-    const which = this.which();
-    switch (which) {
-      case 0: {
-        const callback = cases["obsoleteResult"];
-        if (callback) {
-          return callback();
-        }
-        break;
-      }
-      case 1: {
-        const callback = cases["capability"];
-        if (callback) {
-          return callback(this.capability);
-        }
-        break;
-      }
-      case 2: {
-        const callback = cases["saved"];
-        if (callback) {
-          return callback(this.saved);
-        }
-        break;
-      }
-      case 3: {
-        const callback = cases["acknowledged"];
-        if (callback) {
-          return callback();
-        }
-        break;
-      }
-      case 4: {
-        const callback = cases["exception"];
-        if (callback) {
-          return callback(this.exception);
-        }
-        break;
-      }
+    _initCapability() {
+        $.utils.setUint16(4, 0, this);
+        return $.utils.initStructAt(0, NativeCapnpCapabilitySlot, this);
     }
-    if (cases._) {
-      return cases._(which);
+    get _isCapability() {
+        return $.utils.getUint16(4, this) === 0;
     }
-    throw new Error("Unhandled NativeCapnpBridgeResponse union case: " + which);
-  }
+    set capability(value) {
+        $.utils.setUint16(4, 0, this);
+        $.utils.copyFrom(value, $.utils.getPointer(0, this));
+    }
+    _adoptSaved(value) {
+        $.utils.setUint16(4, 1, this);
+        $.utils.adopt(value, $.utils.getPointer(0, this));
+    }
+    _disownSaved() {
+        return $.utils.disown(this.saved);
+    }
+    get saved() {
+        $.utils.testWhich("saved", $.utils.getUint16(4, this), 1, this);
+        return $.utils.getStruct(0, NativeCapnpBridgeSaved, this);
+    }
+    _hasSaved() {
+        return !$.utils.isNull($.utils.getPointer(0, this));
+    }
+    _initSaved() {
+        $.utils.setUint16(4, 1, this);
+        return $.utils.initStructAt(0, NativeCapnpBridgeSaved, this);
+    }
+    get _isSaved() {
+        return $.utils.getUint16(4, this) === 1;
+    }
+    set saved(value) {
+        $.utils.setUint16(4, 1, this);
+        $.utils.copyFrom(value, $.utils.getPointer(0, this));
+    }
+    get _isAcknowledged() {
+        return $.utils.getUint16(4, this) === 2;
+    }
+    set acknowledged(_) {
+        $.utils.setUint16(4, 2, this);
+    }
+    _adoptException(value) {
+        $.utils.setUint16(4, 3, this);
+        $.utils.adopt(value, $.utils.getPointer(0, this));
+    }
+    _disownException() {
+        return $.utils.disown(this.exception);
+    }
+    get exception() {
+        $.utils.testWhich("exception", $.utils.getUint16(4, this), 3, this);
+        return $.utils.getStruct(0, NativeCapnpBridgeException, this);
+    }
+    _hasException() {
+        return !$.utils.isNull($.utils.getPointer(0, this));
+    }
+    _initException() {
+        $.utils.setUint16(4, 3, this);
+        return $.utils.initStructAt(0, NativeCapnpBridgeException, this);
+    }
+    get _isException() {
+        return $.utils.getUint16(4, this) === 3;
+    }
+    set exception(value) {
+        $.utils.setUint16(4, 3, this);
+        $.utils.copyFrom(value, $.utils.getPointer(0, this));
+    }
+    toString() { return "NativeCapnpBridgeResponse_" + super.toString(); }
+    which() {
+        return $.utils.getUint16(4, this);
+    }
+    _set(value) {
+        switch (value.which) {
+            case "capability": {
+                this.capability = value.value;
+                return;
+            }
+            case "saved": {
+                this.saved = value.value;
+                return;
+            }
+            case "acknowledged": {
+                this.acknowledged = true;
+                return;
+            }
+            case "exception": {
+                this.exception = value.value;
+                return;
+            }
+        }
+    }
+    _match(cases) {
+        const which = this.which();
+        switch (which) {
+            case 0: {
+                const callback = cases["capability"];
+                if (callback) {
+                    return callback(this.capability);
+                }
+                break;
+            }
+            case 1: {
+                const callback = cases["saved"];
+                if (callback) {
+                    return callback(this.saved);
+                }
+                break;
+            }
+            case 2: {
+                const callback = cases["acknowledged"];
+                if (callback) {
+                    return callback();
+                }
+                break;
+            }
+            case 3: {
+                const callback = cases["exception"];
+                if (callback) {
+                    return callback(this.exception);
+                }
+                break;
+            }
+        }
+        if (cases._) {
+            return cases._(which);
+        }
+        throw new Error("Unhandled NativeCapnpBridgeResponse union case: " + which);
+    }
 }
 export class NativeCapnpBridgeDrop extends $.Struct {
-  static _capnp = {
-    displayName: "NativeCapnpBridgeDrop",
-    id: "d2a93fb3be7f688d",
-    typeId: 0xd2a93fb3be7f688dn,
-    typeIdHex: "d2a93fb3be7f688d",
-    size: new $.ObjectSize(0, 1),
-    fields: [
-      { name: "target", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xf3fc15de30f50d47n, typeIdHex: "f3fc15de30f50d47", displayName: "NativeCapnpCapabilitySlot" } }
-    ],
-  };
-  static _applyInit(target, value) {
-    const init = value;
-    {
-      const value = init["target"];
-      if (value !== undefined) {
-        if (value instanceof NativeCapnpCapabilitySlot) {
-          target.target = value;
+    static _capnp = {
+        displayName: "NativeCapnpBridgeDrop",
+        id: "d2a93fb3be7f688d",
+        typeId: 0xd2a93fb3be7f688dn,
+        typeIdHex: "d2a93fb3be7f688d",
+        size: new $.ObjectSize(0, 1),
+        fields: [
+            { name: "target", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xf3fc15de30f50d47n, typeIdHex: "f3fc15de30f50d47", displayName: "NativeCapnpCapabilitySlot" } }
+        ],
+    };
+    static _applyInit(target, value) {
+        const init = value;
+        {
+            const value = init["target"];
+            if (value !== undefined) {
+                if (value instanceof NativeCapnpCapabilitySlot) {
+                    target.target = value;
+                }
+                else {
+                    NativeCapnpCapabilitySlot._applyInit(target._initTarget(), value);
+                }
+            }
         }
-        else {
-          NativeCapnpCapabilitySlot._applyInit(target._initTarget(), value);
-        }
-      }
     }
-  }
-  _adoptTarget(value) {
-    $.utils.adopt(value, $.utils.getPointer(0, this));
-  }
-  _disownTarget() {
-    return $.utils.disown(this.target);
-  }
-  get target() {
-    return $.utils.getStruct(0, NativeCapnpCapabilitySlot, this);
-  }
-  _hasTarget() {
-    return !$.utils.isNull($.utils.getPointer(0, this));
-  }
-  _initTarget() {
-    return $.utils.initStructAt(0, NativeCapnpCapabilitySlot, this);
-  }
-  set target(value) {
-    $.utils.copyFrom(value, $.utils.getPointer(0, this));
-  }
-  toString() { return "NativeCapnpBridgeDrop_" + super.toString(); }
+    _adoptTarget(value) {
+        $.utils.adopt(value, $.utils.getPointer(0, this));
+    }
+    _disownTarget() {
+        return $.utils.disown(this.target);
+    }
+    get target() {
+        return $.utils.getStruct(0, NativeCapnpCapabilitySlot, this);
+    }
+    _hasTarget() {
+        return !$.utils.isNull($.utils.getPointer(0, this));
+    }
+    _initTarget() {
+        return $.utils.initStructAt(0, NativeCapnpCapabilitySlot, this);
+    }
+    set target(value) {
+        $.utils.copyFrom(value, $.utils.getPointer(0, this));
+    }
+    toString() { return "NativeCapnpBridgeDrop_" + super.toString(); }
 }
 export class NativeCapnpBridgeSave extends $.Struct {
-  static _capnp = {
-    displayName: "NativeCapnpBridgeSave",
-    id: "90f6b72cbec1e44d",
-    typeId: 0x90f6b72cbec1e44dn,
-    typeIdHex: "90f6b72cbec1e44d",
-    size: new $.ObjectSize(0, 1),
-    fields: [
-      { name: "target", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xf3fc15de30f50d47n, typeIdHex: "f3fc15de30f50d47", displayName: "NativeCapnpCapabilitySlot" } }
-    ],
-  };
-  static _applyInit(target, value) {
-    const init = value;
-    {
-      const value = init["target"];
-      if (value !== undefined) {
-        if (value instanceof NativeCapnpCapabilitySlot) {
-          target.target = value;
+    static _capnp = {
+        displayName: "NativeCapnpBridgeSave",
+        id: "90f6b72cbec1e44d",
+        typeId: 0x90f6b72cbec1e44dn,
+        typeIdHex: "90f6b72cbec1e44d",
+        size: new $.ObjectSize(0, 1),
+        fields: [
+            { name: "target", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "struct", typeId: 0xf3fc15de30f50d47n, typeIdHex: "f3fc15de30f50d47", displayName: "NativeCapnpCapabilitySlot" } }
+        ],
+    };
+    static _applyInit(target, value) {
+        const init = value;
+        {
+            const value = init["target"];
+            if (value !== undefined) {
+                if (value instanceof NativeCapnpCapabilitySlot) {
+                    target.target = value;
+                }
+                else {
+                    NativeCapnpCapabilitySlot._applyInit(target._initTarget(), value);
+                }
+            }
         }
-        else {
-          NativeCapnpCapabilitySlot._applyInit(target._initTarget(), value);
-        }
-      }
     }
-  }
-  _adoptTarget(value) {
-    $.utils.adopt(value, $.utils.getPointer(0, this));
-  }
-  _disownTarget() {
-    return $.utils.disown(this.target);
-  }
-  get target() {
-    return $.utils.getStruct(0, NativeCapnpCapabilitySlot, this);
-  }
-  _hasTarget() {
-    return !$.utils.isNull($.utils.getPointer(0, this));
-  }
-  _initTarget() {
-    return $.utils.initStructAt(0, NativeCapnpCapabilitySlot, this);
-  }
-  set target(value) {
-    $.utils.copyFrom(value, $.utils.getPointer(0, this));
-  }
-  toString() { return "NativeCapnpBridgeSave_" + super.toString(); }
+    _adoptTarget(value) {
+        $.utils.adopt(value, $.utils.getPointer(0, this));
+    }
+    _disownTarget() {
+        return $.utils.disown(this.target);
+    }
+    get target() {
+        return $.utils.getStruct(0, NativeCapnpCapabilitySlot, this);
+    }
+    _hasTarget() {
+        return !$.utils.isNull($.utils.getPointer(0, this));
+    }
+    _initTarget() {
+        return $.utils.initStructAt(0, NativeCapnpCapabilitySlot, this);
+    }
+    set target(value) {
+        $.utils.copyFrom(value, $.utils.getPointer(0, this));
+    }
+    toString() { return "NativeCapnpBridgeSave_" + super.toString(); }
 }
 export class NativeCapnpBridgeRestore extends $.Struct {
-  static _capnp = {
-    displayName: "NativeCapnpBridgeRestore",
-    id: "c35dd976b9efc866",
-    typeId: 0xc35dd976b9efc866n,
-    typeIdHex: "c35dd976b9efc866",
-    size: new $.ObjectSize(8, 2),
-    fields: [
-      { name: "token", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
-      { name: "expectedInterfaceId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 0, type: { kind: "uint64" } },
-      { name: "expectedInterfaceName", codeOrder: 2, ordinal: 2, kind: "slot", offset: 1, type: { kind: "text" } }
-    ],
-  };
-  static _applyInit(target, value) {
-    const init = value;
-    {
-      const value = init["token"];
-      if (value !== undefined) {
-        target.token = value;
-      }
+    static _capnp = {
+        displayName: "NativeCapnpBridgeRestore",
+        id: "c35dd976b9efc866",
+        typeId: 0xc35dd976b9efc866n,
+        typeIdHex: "c35dd976b9efc866",
+        size: new $.ObjectSize(8, 2),
+        fields: [
+            { name: "token", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+            { name: "expectedInterfaceId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 0, type: { kind: "uint64" } },
+            { name: "expectedInterfaceName", codeOrder: 2, ordinal: 2, kind: "slot", offset: 1, type: { kind: "text" } }
+        ],
+    };
+    static _applyInit(target, value) {
+        const init = value;
+        {
+            const value = init["token"];
+            if (value !== undefined) {
+                target.token = value;
+            }
+        }
+        {
+            const value = init["expectedInterfaceId"];
+            if (value !== undefined) {
+                target.expectedInterfaceId = value;
+            }
+        }
+        {
+            const value = init["expectedInterfaceName"];
+            if (value !== undefined) {
+                target.expectedInterfaceName = value;
+            }
+        }
     }
-    {
-      const value = init["expectedInterfaceId"];
-      if (value !== undefined) {
-        target.expectedInterfaceId = value;
-      }
+    get token() {
+        return $.utils.getText(0, this);
     }
-    {
-      const value = init["expectedInterfaceName"];
-      if (value !== undefined) {
-        target.expectedInterfaceName = value;
-      }
+    set token(value) {
+        $.utils.setText(0, value, this);
     }
-  }
-  get token() {
-    return $.utils.getText(0, this);
-  }
-  set token(value) {
-    $.utils.setText(0, value, this);
-  }
-  get expectedInterfaceId() {
-    return $.utils.getUint64(0, this);
-  }
-  set expectedInterfaceId(value) {
-    $.utils.setUint64(0, value, this);
-  }
-  get expectedInterfaceName() {
-    return $.utils.getText(1, this);
-  }
-  set expectedInterfaceName(value) {
-    $.utils.setText(1, value, this);
-  }
-  toString() { return "NativeCapnpBridgeRestore_" + super.toString(); }
+    get expectedInterfaceId() {
+        return $.utils.getUint64(0, this);
+    }
+    set expectedInterfaceId(value) {
+        $.utils.setUint64(0, value, this);
+    }
+    get expectedInterfaceName() {
+        return $.utils.getText(1, this);
+    }
+    set expectedInterfaceName(value) {
+        $.utils.setText(1, value, this);
+    }
+    toString() { return "NativeCapnpBridgeRestore_" + super.toString(); }
 }
 export class NativeCapnpBridgeSaved extends $.Struct {
-  static _capnp = {
-    displayName: "NativeCapnpBridgeSaved",
-    id: "e7a0b85c446da212",
-    typeId: 0xe7a0b85c446da212n,
-    typeIdHex: "e7a0b85c446da212",
-    size: new $.ObjectSize(0, 1),
-    fields: [
-      { name: "token", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } }
-    ],
-  };
-  static _applyInit(target, value) {
-    const init = value;
-    {
-      const value = init["token"];
-      if (value !== undefined) {
-        target.token = value;
-      }
+    static _capnp = {
+        displayName: "NativeCapnpBridgeSaved",
+        id: "e7a0b85c446da212",
+        typeId: 0xe7a0b85c446da212n,
+        typeIdHex: "e7a0b85c446da212",
+        size: new $.ObjectSize(0, 1),
+        fields: [
+            { name: "token", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } }
+        ],
+    };
+    static _applyInit(target, value) {
+        const init = value;
+        {
+            const value = init["token"];
+            if (value !== undefined) {
+                target.token = value;
+            }
+        }
     }
-  }
-  get token() {
-    return $.utils.getText(0, this);
-  }
-  set token(value) {
-    $.utils.setText(0, value, this);
-  }
-  toString() { return "NativeCapnpBridgeSaved_" + super.toString(); }
+    get token() {
+        return $.utils.getText(0, this);
+    }
+    set token(value) {
+        $.utils.setText(0, value, this);
+    }
+    toString() { return "NativeCapnpBridgeSaved_" + super.toString(); }
 }
 export class NativeCapnpCapabilitySlot extends $.Struct {
-  static _capnp = {
-    displayName: "NativeCapnpCapabilitySlot",
-    id: "f3fc15de30f50d47",
-    typeId: 0xf3fc15de30f50d47n,
-    typeIdHex: "f3fc15de30f50d47",
-    size: new $.ObjectSize(16, 2),
-    fields: [
-      { name: "id", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
-      { name: "interfaceId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 0, type: { kind: "uint64" } },
-      { name: "interfaceName", codeOrder: 2, ordinal: 2, kind: "slot", offset: 1, type: { kind: "text" } },
-      { name: "kind", codeOrder: 3, ordinal: 3, kind: "slot", offset: 4, type: { kind: "enum", typeId: 0x874023c5caa9b3dfn, typeIdHex: "874023c5caa9b3df", displayName: "NativeCapnpCapabilitySlotKind" } }
-    ],
-  };
-  static _applyInit(target, value) {
-    const init = value;
-    {
-      const value = init["id"];
-      if (value !== undefined) {
-        target.id = value;
-      }
+    static _capnp = {
+        displayName: "NativeCapnpCapabilitySlot",
+        id: "f3fc15de30f50d47",
+        typeId: 0xf3fc15de30f50d47n,
+        typeIdHex: "f3fc15de30f50d47",
+        size: new $.ObjectSize(16, 2),
+        fields: [
+            { name: "id", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+            { name: "interfaceId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 0, type: { kind: "uint64" } },
+            { name: "interfaceName", codeOrder: 2, ordinal: 2, kind: "slot", offset: 1, type: { kind: "text" } },
+            { name: "kind", codeOrder: 3, ordinal: 3, kind: "slot", offset: 4, type: { kind: "enum", typeId: 0x874023c5caa9b3dfn, typeIdHex: "874023c5caa9b3df", displayName: "NativeCapnpCapabilitySlotKind" } }
+        ],
+    };
+    static _applyInit(target, value) {
+        const init = value;
+        {
+            const value = init["id"];
+            if (value !== undefined) {
+                target.id = value;
+            }
+        }
+        {
+            const value = init["interfaceId"];
+            if (value !== undefined) {
+                target.interfaceId = value;
+            }
+        }
+        {
+            const value = init["interfaceName"];
+            if (value !== undefined) {
+                target.interfaceName = value;
+            }
+        }
+        {
+            const value = init["kind"];
+            if (value !== undefined) {
+                target.kind = value;
+            }
+        }
     }
-    {
-      const value = init["interfaceId"];
-      if (value !== undefined) {
-        target.interfaceId = value;
-      }
+    get id() {
+        return $.utils.getText(0, this);
     }
-    {
-      const value = init["interfaceName"];
-      if (value !== undefined) {
-        target.interfaceName = value;
-      }
+    set id(value) {
+        $.utils.setText(0, value, this);
     }
-    {
-      const value = init["kind"];
-      if (value !== undefined) {
-        target.kind = value;
-      }
+    get interfaceId() {
+        return $.utils.getUint64(0, this);
     }
-  }
-  get id() {
-    return $.utils.getText(0, this);
-  }
-  set id(value) {
-    $.utils.setText(0, value, this);
-  }
-  get interfaceId() {
-    return $.utils.getUint64(0, this);
-  }
-  set interfaceId(value) {
-    $.utils.setUint64(0, value, this);
-  }
-  get interfaceName() {
-    return $.utils.getText(1, this);
-  }
-  set interfaceName(value) {
-    $.utils.setText(1, value, this);
-  }
-  get kind() {
-    return $.utils.getUint16(8, this);
-  }
-  set kind(value) {
-    $.utils.setUint16(8, value, this);
-  }
-  toString() { return "NativeCapnpCapabilitySlot_" + super.toString(); }
+    set interfaceId(value) {
+        $.utils.setUint64(0, value, this);
+    }
+    get interfaceName() {
+        return $.utils.getText(1, this);
+    }
+    set interfaceName(value) {
+        $.utils.setText(1, value, this);
+    }
+    get kind() {
+        return $.utils.getUint16(8, this);
+    }
+    set kind(value) {
+        $.utils.setUint16(8, value, this);
+    }
+    toString() { return "NativeCapnpCapabilitySlot_" + super.toString(); }
 }
 export const NativeCapnpCapabilitySlotKind = {
-  SENDER_HOSTED: 0,
-  RECEIVER_HOSTED: 1,
-  SAVED_TOKEN: 2
+    SENDER_HOSTED: 0,
+    RECEIVER_HOSTED: 1,
+    SAVED_TOKEN: 2
 };
 export class NativeCapnpBridgeException extends $.Struct {
-  static _capnp = {
-    displayName: "NativeCapnpBridgeException",
-    id: "b4098ed814dc3f1b",
-    typeId: 0xb4098ed814dc3f1bn,
-    typeIdHex: "b4098ed814dc3f1b",
-    size: new $.ObjectSize(0, 3),
-    fields: [
-      { name: "type", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
-      { name: "reason", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "text" } },
-      { name: "trace", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "text" } }
-    ],
-  };
-  static _applyInit(target, value) {
-    const init = value;
-    {
-      const value = init["type"];
-      if (value !== undefined) {
-        target.type = value;
-      }
+    static _capnp = {
+        displayName: "NativeCapnpBridgeException",
+        id: "b4098ed814dc3f1b",
+        typeId: 0xb4098ed814dc3f1bn,
+        typeIdHex: "b4098ed814dc3f1b",
+        size: new $.ObjectSize(0, 3),
+        fields: [
+            { name: "type", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+            { name: "reason", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "text" } },
+            { name: "trace", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "text" } }
+        ],
+    };
+    static _applyInit(target, value) {
+        const init = value;
+        {
+            const value = init["type"];
+            if (value !== undefined) {
+                target.type = value;
+            }
+        }
+        {
+            const value = init["reason"];
+            if (value !== undefined) {
+                target.reason = value;
+            }
+        }
+        {
+            const value = init["trace"];
+            if (value !== undefined) {
+                target.trace = value;
+            }
+        }
     }
-    {
-      const value = init["reason"];
-      if (value !== undefined) {
-        target.reason = value;
-      }
+    get type() {
+        return $.utils.getText(0, this);
     }
-    {
-      const value = init["trace"];
-      if (value !== undefined) {
-        target.trace = value;
-      }
+    set type(value) {
+        $.utils.setText(0, value, this);
     }
-  }
-  get type() {
-    return $.utils.getText(0, this);
-  }
-  set type(value) {
-    $.utils.setText(0, value, this);
-  }
-  get reason() {
-    return $.utils.getText(1, this);
-  }
-  set reason(value) {
-    $.utils.setText(1, value, this);
-  }
-  get trace() {
-    return $.utils.getText(2, this);
-  }
-  set trace(value) {
-    $.utils.setText(2, value, this);
-  }
-  toString() { return "NativeCapnpBridgeException_" + super.toString(); }
+    get reason() {
+        return $.utils.getText(1, this);
+    }
+    set reason(value) {
+        $.utils.setText(1, value, this);
+    }
+    get trace() {
+        return $.utils.getText(2, this);
+    }
+    set trace(value) {
+        $.utils.setText(2, value, this);
+    }
+    toString() { return "NativeCapnpBridgeException_" + super.toString(); }
 }

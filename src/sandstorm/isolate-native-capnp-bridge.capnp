@@ -12,10 +12,9 @@ struct NativeCapnpBridgeRequest @0xa9d7cd8e6cc2b4e9 {
   protocolVersion @0 :UInt32;
 
   union {
-    obsoleteCall @1 :Void;
-    drop @2 :NativeCapnpBridgeDrop;
-    save @3 :NativeCapnpBridgeSave;
-    restore @4 :NativeCapnpBridgeRestore;
+    drop @1 :NativeCapnpBridgeDrop;
+    save @2 :NativeCapnpBridgeSave;
+    restore @3 :NativeCapnpBridgeRestore;
   }
 }
 
@@ -23,11 +22,10 @@ struct NativeCapnpBridgeResponse @0xc1ef5dce7db1a7f1 {
   protocolVersion @0 :UInt32;
 
   union {
-    obsoleteResult @1 :Void;
-    capability @2 :NativeCapnpCapabilitySlot;
-    saved @3 :NativeCapnpBridgeSaved;
-    acknowledged @4 :Void;
-    exception @5 :NativeCapnpBridgeException;
+    capability @1 :NativeCapnpCapabilitySlot;
+    saved @2 :NativeCapnpBridgeSaved;
+    acknowledged @3 :Void;
+    exception @4 :NativeCapnpBridgeException;
   }
 }
 
