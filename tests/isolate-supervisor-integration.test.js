@@ -1408,7 +1408,6 @@ test("isolate supervisor integration suite", {
       nativeCalls: false,
       nativeExports: true,
       capabilitySlots: false,
-      fallbackTransport: "appObjectRpc",
     });
     assert.deepEqual(
       body.sandstormApi.helperCapnpBridgeInfo,
@@ -3306,7 +3305,6 @@ test("isolate supervisor integration suite", {
       nativeCalls: false,
       nativeExports: true,
       capabilitySlots: false,
-      fallbackTransport: "appObjectRpc",
     });
 
     const capnpCall = await requestJson(fixture.sandstormApiSocket, "/capnp/call", {

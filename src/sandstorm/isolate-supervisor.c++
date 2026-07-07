@@ -6036,8 +6036,7 @@ private:
         "  \"nativeRpcWebSocket\": true,\n"
         "  \"nativeCalls\": false,\n"
         "  \"nativeExports\": true,\n"
-        "  \"capabilitySlots\": false,\n"
-        "  \"fallbackTransport\": \"appObjectRpc\"\n"
+        "  \"capabilitySlots\": false\n"
         "}\n");
   }
 

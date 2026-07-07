@@ -4694,7 +4694,6 @@ export default {
         nativeCalls: true,
         nativeExports: false,
         capabilitySlots: true,
-        fallbackTransport: "appObjectRpc",
       }),
       nativeCapnpBridgeCallBytes: async () => ({
         ok: true,
