@@ -1426,6 +1426,7 @@ test("isolate supervisor integration suite", {
     assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.protocolVersion, 0);
     assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.nativeTransport, true);
     assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.nativeRpc, true);
+    assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.nativeRpcWebSocket, true);
     assert.equal(body.sandstormApi.capnpBridgeRpcNegotiation.reason, "");
     assert.deepEqual(body.sandstormApi.capnpBridgeRpcNegotiation.missingFeatures, []);
     assert.deepEqual(
@@ -1644,19 +1645,6 @@ test("isolate supervisor integration suite", {
         rpcAnswerId: 123,
         rpcResultCapCount: 1,
       },
-      transportError: "",
-      transportMessage: {
-        which: 3,
-        answerId: 123,
-      },
-      transportCall: {
-        which: 3,
-        answerId: 124,
-        returnWhich: 1,
-        exceptionType: 3,
-        exceptionReasonLength: body.sandstormApi.nativeCapnpBridge.transportCall
-            .exceptionReasonLength,
-      },
       connectedClient: {
         isFixtureClient: true,
         hasBootstrapClient: true,
@@ -1765,7 +1753,6 @@ test("isolate supervisor integration suite", {
     });
     assert.ok(body.sandstormApi.nativeCapnpBridge.binaryRoute.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.rpcBinaryRoute.bytes > 0);
-    assert.ok(body.sandstormApi.nativeCapnpBridge.transportCall.exceptionReasonLength > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.drop.bytes > 0);

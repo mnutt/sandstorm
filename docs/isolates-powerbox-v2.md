@@ -757,7 +757,7 @@ Progress:
   carrying `@mnutt/capnp-es` two-party RPC messages addressed to an
   already-held Sandstorm capability handle; this moves the next bridge step
   from ad hoc method-call envelopes toward the actual Cap'n Proto RPC protocol
-- `sandstorm:capnp` exposes `NativeCapnpBridgeTransport` and
+- `sandstorm:capnp` exposes `NativeCapnpBridgeWebSocketRpcTransport` and
   `createNativeCapnpBridgeConnection()` so generated `@mnutt/capnp-es` clients
   can be wired to the restricted supervisor endpoint; while native dispatch is
   disabled, this transport reports the supervisor's structured unimplemented
@@ -771,8 +771,8 @@ Progress:
   diagnostics, so the native adapter can branch on real Cap'n Proto RPC
   messages instead of treating the payload as opaque bytes
 - native bridge `rpc` envelopes now carry an explicit `connectionId` generated
-  by `NativeCapnpBridgeTransport`, and the supervisor validates/reports it;
-  this gives the future native adapter a stable key for per-connection
+  by the native RPC transport, and the supervisor validates/reports it; this
+  gives the native adapter a stable key for per-connection
   question/import/export state while preserving the target Sandstorm capability
   as the actual authority for every message
 - the supervisor now creates a per-connection native bridge RPC session record
@@ -785,9 +785,7 @@ Progress:
   capability; binary `bootstrap` RPC envelopes now dispatch through that native
   stack and return real Cap'n Proto RPC `return` messages to `@mnutt/capnp-es`,
   while ordinary method-call envelopes remain disabled in bridge negotiation
-- `NativeCapnpBridgeTransport` now serializes outgoing HTTP bridge requests per
-  connection, matching the current one-response-per-request bridge shape; the
-  integration fixture also sends a real RPC `call` after bootstrap and receives
+- the integration fixture sends a real RPC `call` after bootstrap and receives
   the native C++ exception `return`, proving calls are reaching the target
   Sandstorm capability through the per-connection RPC session
 - `spk dev-isolate` now has an explicit raw `capnp:` import path backed by
@@ -1045,21 +1043,24 @@ Progress:
   returned capability before the parent result resolves. Large binary payloads
   should continue to use fetch/data-plane paths; typed RPC can carry byte
   bodies, but fetch is the measured streaming path.
-- native `capnp-es` RPC now defaults to a persistent WebSocket-backed Cap'n
-  Proto RPC session instead of routing every RPC message through
-  `/capnp/call`; callers can still force the previous fetch transport with
-  `transport: "fetch"` for comparison/debugging. Browser generated clients use
-  the same WebSocket RPC session through
+- native `capnp-es` RPC now uses a persistent WebSocket-backed Cap'n Proto RPC
+  session instead of routing every RPC message through `/capnp/call`. The
+  earlier fetch-shaped RPC transport was removed because it could not correctly
+  model Cap'n Proto's bidirectional message stream. Browser generated clients
+  use the same WebSocket RPC session through
   `/__sandstorm/native-capnp/rpc-session`, while keeping the browser-facing
   authority boundary rooted in Sandstorm capability handles instead of service
   binding names. An ad hoc 10k-call, 1k-warmup, 5-round benchmark measured live
-  native WebSocket RPC at about 0.13ms/call, old native fetch RPC at about
-  0.34ms/call, and generic JavaScript RPC via supervisor at about 0.26ms/call;
-  with 16 outstanding calls, native WebSocket RPC measured about 0.085ms/call
-  vs old native fetch RPC at about 0.31ms/call.
+  native WebSocket RPC at about 0.13ms/call and generic JavaScript RPC via
+  supervisor at about 0.26ms/call; with 16 outstanding calls, native WebSocket
+  RPC measured about 0.085ms/call.
 - the isolate supervisor integration suite now exercises native Cap'n Proto
   promised-answer pipelining over the Sandstorm WebSocket bridge by calling an
   interface returned from `makeGreeter()` before awaiting that method's result.
+- native RPC fetch fallback support has been removed from worker and browser
+  generated-client helpers; `/capnp/call` remains for lifecycle envelopes such
+  as save, restore, and drop, but generated RPC clients require the WebSocket
+  RPC session transport.
 
 ### Phase 7: Packaging, Publishing, And Migration
 

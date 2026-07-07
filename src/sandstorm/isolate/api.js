@@ -4246,69 +4246,6 @@ export async function requestBrowserNativeCapnp(InterfaceClass, options = {}) {
   });
 }
 
-export class BrowserNativeCapnpBridgeTransport extends DeferredTransport {
-  #sendQueue = Promise.resolve();
-
-  constructor(target, options = {}) {
-    super();
-    this.target = normalizeNativeCapnpCapabilitySlot(target);
-    this.connectionId = normalizeConnectionId(options.connectionId);
-    this.capabilities = Object.freeze([...(options.capabilities || [])]);
-    this.connection = null;
-  }
-
-  sendMessage(message) {
-    this.#sendQueue = this.#sendQueue
-      .then(() => this.#sendMessage(message))
-      .catch((error) => this.abort(error));
-  }
-
-  abort(error) {
-    if (this.connection && !this.connection.closed) {
-      this.connection.shutdown(error instanceof Error ? error : new Error(String(error)));
-      return;
-    }
-    this.close(error);
-  }
-
-  async #sendMessage(message) {
-    const request = makeNativeCapnpBridgeRpcRequest({
-      target: this.target,
-      message,
-      capabilities: this.capabilities,
-      connectionId: this.connectionId,
-    });
-    const response = await nativeCapnpBridgeCallBytes(request.toUint8Array());
-    const decoded = decodeNativeCapnpBridgeResponse(response.body);
-    if (decoded.which === "exception") {
-      throw new NativeCapnpBridgeUnavailableError(
-        decoded.exception.reason || "native bridge RPC failed", { response, decoded });
-    }
-    if (decoded.which !== "result") {
-      throw new NativeCapnpBridgeProtocolError(
-        "native bridge RPC returned unexpected " + decoded.which, { response, decoded });
-    }
-    switch (decoded.result.which) {
-      case "value":
-        if (decoded.result.value.message.byteLength > 0) {
-          this.resolve(decoded.result.value.message);
-        }
-        return;
-      case "exception":
-        throw new NativeCapnpBridgeUnavailableError(
-          decoded.result.exception.reason || "native bridge RPC failed", { response, decoded });
-      case "canceled":
-        throw new NativeCapnpBridgeUnavailableError(
-          "native bridge RPC call was canceled", { response, decoded });
-      default:
-        throw new NativeCapnpBridgeProtocolError("unknown native bridge RPC result", {
-          response,
-          decoded,
-        });
-    }
-  }
-}
-
 export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTransport {
   #webSocket = null;
   #openPromise = null;
@@ -4379,9 +4316,11 @@ export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTranspor
 }
 
 export function createBrowserNativeCapnpConnection(target, options = {}) {
-  const transport = options.transport === "fetch" || typeof WebSocket !== "function"
-    ? new BrowserNativeCapnpBridgeTransport(target, options)
-    : new BrowserNativeCapnpBridgeWebSocketTransport(target, options);
+  if (typeof WebSocket !== "function") {
+    throw new NativeCapnpBridgeUnavailableError(
+      "native Cap'n Proto browser RPC requires WebSocket");
+  }
+  const transport = new BrowserNativeCapnpBridgeWebSocketTransport(target, options);
   const connection = new Conn(transport, options.finalize);
   transport.connection = connection;
   return Object.assign(connection, { transport });

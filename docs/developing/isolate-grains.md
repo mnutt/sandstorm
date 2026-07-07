@@ -240,10 +240,12 @@ source. An isolate can connect to or restore only capabilities it already
 holds through Powerbox, durable restore, or an explicit export result; it does
 not get access to a raw Cap'n Proto vat network.
 
-Low-level helpers such as `NativeCapnpBridgeTransport`,
+Low-level helpers such as `NativeCapnpBridgeWebSocketRpcTransport`,
 `createNativeCapnpBridgeConnection()`, and bridge envelope encoders are
-available in `sandstorm:capnp` for generated-code plumbing and tests. App code
-should prefer `exportNativeCapnp()`, `restoreNativeCapnp()`,
+available in `sandstorm:capnp` for generated-code plumbing and tests. Native
+Cap'n Proto RPC uses the WebSocket RPC session transport; the one-shot binary
+bridge calls are for lifecycle operations and diagnostics, not a fallback RPC
+stream. App code should prefer `exportNativeCapnp()`, `restoreNativeCapnp()`,
 `connectNativeCapnp()`, `saveNativeCapnp()`, and client `.drop()` / `.save()`
 methods.
 
