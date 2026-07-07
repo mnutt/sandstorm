@@ -123,7 +123,11 @@ function renderPage(state) {
     <pre>${jsonBlock(state.result || state.error)}</pre>
 
     <script type="module">
-      import { inspectPowerboxQuery, requestApiPowerbox } from "./rpc-client.js";
+      import {
+        apiSessionPowerboxDescriptor,
+        inspectPowerboxQuery,
+        requestPowerbox,
+      } from "/__sandstorm/native-capnp/client.js";
 
       const button = document.querySelector("#connect");
       const output = document.querySelector("pre");
@@ -139,8 +143,7 @@ function renderPage(state) {
           output.textContent = "Opening Powerbox with query:\\n" +
             JSON.stringify(inspection, null, 2);
 
-          const requested = await requestApiPowerbox({
-            ...query,
+          const requested = await requestPowerbox([await apiSessionPowerboxDescriptor(query)], {
             saveLabel: { defaultText: "Browser Powerbox Lifecycle API" },
           });
 

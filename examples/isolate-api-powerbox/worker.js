@@ -106,7 +106,10 @@ function renderPage(state) {
     <pre>${pretty}</pre>
 
     <script type="module">
-      import { requestApiCapability } from "./rpc-client.js";
+      import {
+        apiSessionPowerboxDescriptor,
+        requestPowerbox,
+      } from "/__sandstorm/native-capnp/client.js";
 
       const button = document.querySelector("#connect-api");
       const output = document.querySelector("pre");
@@ -117,14 +120,15 @@ function renderPage(state) {
         button.disabled = true;
         try {
           output.textContent = "Opening Powerbox...";
-          const requested = await requestApiCapability({
-            canonicalUrl: canonicalUrl.value,
-            oauthScopes: oauthScopes.value
+          const requested = await requestPowerbox([await apiSessionPowerboxDescriptor({
+              canonicalUrl: canonicalUrl.value,
+              oauthScopes: oauthScopes.value
               .split(/[,\\s]+/)
               .map((scope) => scope.trim())
               .filter(Boolean),
-            saveLabel: { defaultText: "Isolate API Powerbox connection" },
-          });
+            })], {
+              saveLabel: { defaultText: "Isolate API Powerbox connection" },
+            });
           output.textContent = "Saving claimed capability...";
           const response = await fetch("/claim", {
             method: "POST",
@@ -221,12 +225,6 @@ export default {
       const systemRoute = await api.serveSystemRoutes();
       if (systemRoute) {
         return systemRoute;
-      }
-
-      if (url.pathname === "/rpc-client.js") {
-        return new Response(api.rpcClientScript(), {
-          headers: { "content-type": "text/javascript; charset=utf-8" },
-        });
       }
 
       if (request.method === "POST" && url.pathname === "/claim") {
