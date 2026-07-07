@@ -82,6 +82,95 @@ function checksum(bytes) {
   return sum;
 }
 
+function benchmarkInteger(searchParams, name, defaultValue, maxValue) {
+  const value = Number(searchParams.get(name) || defaultValue);
+  if (!Number.isFinite(value) || value < 1) return defaultValue;
+  return Math.min(Math.floor(value), maxValue);
+}
+
+function benchmarkNow() {
+  return performance.now();
+}
+
+function benchmarkSummary(start, calls, extra = {}) {
+  const totalMs = benchmarkNow() - start;
+  return {
+    calls,
+    totalMs,
+    avgMs: calls === 0 ? 0 : totalMs / calls,
+    ...extra,
+  };
+}
+
+function benchmarkLast(value) {
+  if (value && typeof value === "object" && typeof value.message === "string") {
+    return { message: value.message };
+  }
+
+  if (value && typeof value === "object" && typeof value.value === "number") {
+    return { value: value.value };
+  }
+
+  if (value == null || ["boolean", "number", "string"].includes(typeof value)) {
+    return value;
+  }
+
+  return { type: Object.prototype.toString.call(value) };
+}
+
+async function benchmarkSequential(calls, fn) {
+  const start = benchmarkNow();
+  let last = null;
+  for (let i = 0; i < calls; ++i) {
+    last = await fn(i);
+  }
+  return benchmarkSummary(start, calls, { last: benchmarkLast(last) });
+}
+
+async function benchmarkConcurrent(batches, concurrency, fn) {
+  const start = benchmarkNow();
+  let last = null;
+  for (let batch = 0; batch < batches; ++batch) {
+    const results = await Promise.all(Array.from(
+      { length: concurrency },
+      (_, index) => fn((batch * concurrency) + index)));
+    last = results[results.length - 1];
+  }
+  return benchmarkSummary(start, batches * concurrency, {
+    batches,
+    concurrency,
+    last: benchmarkLast(last),
+  });
+}
+
+class BenchmarkGreeterCapability extends RpcTarget {
+  #prefix;
+
+  constructor(prefix = "generic js hello") {
+    super();
+    this.#prefix = prefix;
+  }
+
+  hello(params = {}) {
+    return {
+      message: `${this.#prefix} ${params.name || ""}`.trim(),
+    };
+  }
+
+  makeGreeter(params = {}) {
+    return new BenchmarkGreeterCapability(params.prefix || "generic js child");
+  }
+
+  async greetWith(greeter, params = {}) {
+    const hello = await greeter.rpc.hello({
+      name: `${params.name || ""} from generic js export`.trim(),
+    });
+    return {
+      message: `generic js called ${hello.message}`,
+    };
+  }
+}
+
 class CounterCapability extends RpcTarget {
   #value = 0;
   #retained = null;
@@ -895,6 +984,317 @@ export default {
         capabilityClass: capability instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
       });
+    }
+
+    if (url.pathname === "/native-capnp-performance-benchmark") {
+      const iterations = benchmarkInteger(url.searchParams, "iterations", 25, 500);
+      const concurrency = benchmarkInteger(url.searchParams, "concurrency", 8, 64);
+      const concurrentBatches = benchmarkInteger(
+        url.searchParams, "batches", Math.max(1, Math.ceil(iterations / concurrency)), 200);
+      const restoreIterations = benchmarkInteger(url.searchParams, "restoreIterations", 3, 50);
+      const dataPlaneBytes = benchmarkInteger(
+        url.searchParams, "bytes", 128 * 1024, 8 * 1024 * 1024);
+      const cleanup = [];
+      const savedTokens = [];
+
+      const nativeTarget = {
+        async hello(params) {
+          return {
+            message: `native capnp hello ${params.name}`,
+          };
+        },
+        async makeGreeter(params) {
+          const greeter = new NativeGreeter.Server({
+            async hello(helloParams) {
+              return {
+                message: `${params.prefix} ${helloParams.name}`,
+              };
+            },
+          }).client();
+          return {
+            greeter,
+          };
+        },
+        async greetWith(params) {
+          const hello = await params.greeter.hello({
+            name: `${params.name} from native capnp export`,
+          });
+          return {
+            message: `native capnp called ${hello.message}`,
+          };
+        },
+      };
+
+      try {
+        const jsDirectTarget = new BenchmarkGreeterCapability("generic js direct hello");
+        const nativeDirectClient = new NativeGreeter.Server({
+          async hello(params) {
+            return {
+              message: `native capnp direct hello ${params.name}`,
+            };
+          },
+          async makeGreeter(params) {
+            const greeter = new NativeGreeter.Server({
+              async hello(helloParams) {
+                return {
+                  message: `${params.prefix} ${helloParams.name}`,
+                };
+              },
+            }).client();
+            return { greeter };
+          },
+          async greetWith(params) {
+            const hello = await params.greeter.hello({
+              name: `${params.name} from native capnp direct`,
+            });
+            return {
+              message: `native capnp direct called ${hello.message}`,
+            };
+          },
+        }).client();
+
+        const jsDurableExport = await api.exportDurable(
+          new BenchmarkGreeterCapability("generic js exported hello"),
+          {
+            id: `generic-js-benchmark-${crypto.randomUUID()}`,
+            label: "Generic JS benchmark greeter",
+          });
+        const jsCapability = jsDurableExport.capability;
+        cleanup.push(() => jsCapability.drop());
+        savedTokens.push(jsDurableExport.token);
+        const jsRpc = jsCapability.rpc;
+        await jsRpc.hello({ name: "warmup" });
+
+        const nativeCapability = await exportNativeCapnp(api, NativeGreeter, nativeTarget, {
+          interfaceName: "NativeGreeter",
+        });
+        cleanup.push(() => nativeCapability.drop());
+        const nativeClient = connectNativeCapnp(api, nativeCapability, NativeGreeter, {
+          connectionId: `native-capnp-benchmark-live-${nativeCapability.id}`,
+        });
+        await nativeClient.hello({ name: "warmup" });
+
+        const jsSavedToken = jsDurableExport.token;
+        const jsRestoredCapability = await api.restore(jsSavedToken);
+        cleanup.push(() => jsRestoredCapability.drop());
+        const jsRestoredRpc = jsRestoredCapability.rpc;
+        await jsRestoredRpc.hello({ name: "warmup" });
+
+        const nativeSavedToken = await nativeClient.save({
+          label: "Native capnp benchmark greeter",
+        });
+        savedTokens.push(nativeSavedToken);
+        const nativeRestoredClient = await restoreNativeCapnp(
+          api,
+          nativeSavedToken,
+          NativeGreeter,
+          {
+            connectionId: `native-capnp-benchmark-restored-${nativeCapability.id}`,
+            interfaceName: "NativeGreeter",
+          });
+        cleanup.push(() => nativeRestoredClient.drop());
+        await nativeRestoredClient.hello({ name: "warmup" });
+
+        const routeBackedWebSession = await api.webSession({
+          pathPrefix: "/exported",
+        });
+        cleanup.push(() => routeBackedWebSession.drop());
+        const generatedWebSessionTarget = await api.webSession({
+          pathPrefix: "/native-capnp-bridge-target",
+        });
+        cleanup.push(() => generatedWebSessionTarget.drop());
+        const generatedWebSession = connectNativeCapnp(
+          api,
+          generatedWebSessionTarget,
+          WebSession,
+          { connectionId: `native-capnp-benchmark-websession-${generatedWebSessionTarget.id}` });
+
+        const metrics = {
+          direct: {
+            genericJs: await benchmarkSequential(iterations, (i) =>
+              jsDirectTarget.hello({ name: `direct-${i}` })),
+            nativeCapnpEs: await benchmarkSequential(iterations, (i) =>
+              nativeDirectClient.hello({ name: `direct-${i}` })),
+          },
+          liveExported: {
+            genericJs: await benchmarkSequential(iterations, (i) =>
+              jsRpc.hello({ name: `live-${i}` })),
+            nativeCapnpEs: await benchmarkSequential(iterations, (i) =>
+              nativeClient.hello({ name: `live-${i}` })),
+          },
+          restoredLive: {
+            genericJs: await benchmarkSequential(iterations, (i) =>
+              jsRestoredRpc.hello({ name: `restored-${i}` })),
+            nativeCapnpEs: await benchmarkSequential(iterations, (i) =>
+              nativeRestoredClient.hello({ name: `restored-${i}` })),
+          },
+          restorePerCall: {
+            genericJs: await benchmarkSequential(restoreIterations, async (i) => {
+              const restored = await api.restore(jsSavedToken);
+              try {
+                return await restored.rpc.hello({ name: `restore-each-${i}` });
+              } finally {
+                await restored.drop();
+              }
+            }),
+            nativeCapnpEs: await benchmarkSequential(restoreIterations, async (i) => {
+              const restored = await restoreNativeCapnp(
+                api,
+                nativeSavedToken,
+                NativeGreeter,
+                {
+                  connectionId: `native-capnp-benchmark-restore-each-${i}-${nativeCapability.id}`,
+                  interfaceName: "NativeGreeter",
+                });
+              try {
+                return await restored.hello({ name: `restore-each-${i}` });
+              } finally {
+                await restored.drop();
+              }
+            }),
+          },
+          concurrentOutstanding: {
+            genericJs: await benchmarkConcurrent(concurrentBatches, concurrency, (i) =>
+              jsRpc.hello({ name: `concurrent-${i}` })),
+            nativeCapnpEs: await benchmarkConcurrent(concurrentBatches, concurrency, (i) =>
+              nativeClient.hello({ name: `concurrent-${i}` })),
+          },
+          capabilityResult: {
+            genericJs: await benchmarkSequential(iterations, async (i) => {
+              const child = await jsRpc.makeGreeter({ prefix: "generic js child" });
+              try {
+                return await child.rpc.hello({ name: `child-${i}` });
+              } finally {
+                await child.drop();
+              }
+            }),
+            nativeCapnpEs: await benchmarkSequential(iterations, async (i) => {
+              const child = await nativeClient.makeGreeter({ prefix: "native capnp child" });
+              try {
+                return await child.greeter.hello({ name: `child-${i}` });
+              } finally {
+                if (typeof child.greeter.drop === "function") {
+                  await child.greeter.drop();
+                }
+              }
+            }),
+          },
+          capabilityArgument: {
+            genericJs: await benchmarkSequential(iterations, async (i) => {
+              const child = await jsRpc.makeGreeter({ prefix: "generic js argument" });
+              try {
+                return await jsRpc.greetWith(child, { name: `argument-${i}` });
+              } finally {
+                await child.drop();
+              }
+            }),
+            nativeCapnpEs: await benchmarkSequential(iterations, async (i) => {
+              const child = await nativeClient.makeGreeter({ prefix: "native capnp argument" });
+              try {
+                return await nativeClient.greetWith({
+                  greeter: child.greeter,
+                  name: `argument-${i}`,
+                });
+              } finally {
+                if (typeof child.greeter.drop === "function") {
+                  await child.greeter.drop();
+                }
+              }
+            }),
+          },
+        };
+
+        const webSessionGetStart = benchmarkNow();
+        let webSessionGetLast = null;
+        for (let i = 0; i < iterations; ++i) {
+          webSessionGetLast = await generatedWebSession.get({
+            path: "/generated-client",
+            context: {},
+            ignoreBody: false,
+          });
+        }
+        const webSessionGet = benchmarkSummary(webSessionGetStart, iterations);
+        const webSessionGetContent = webSessionGetLast?._isContent ?
+          webSessionGetLast.content : null;
+        metrics.nativeWebSessionGet = {
+          calls: webSessionGet.calls,
+          totalMs: webSessionGet.totalMs,
+          avgMs: webSessionGet.avgMs,
+          lastWhich: typeof webSessionGetLast?.which === "function" ?
+            webSessionGetLast.which() : null,
+          lastStatusCode: webSessionGetContent?.statusCode ?? null,
+          lastBodyWhich: typeof webSessionGetContent?.body?.which === "function" ?
+            webSessionGetContent.body.which() : null,
+        };
+
+        const streamStart = benchmarkNow();
+        const streamResponse = await generatedWebSession.get({
+          path: "/generated-client-stream",
+          context: {},
+          ignoreBody: false,
+        });
+        const streamBody = streamResponse.content.body;
+        await streamBody.stream.ping();
+        const streamMs = benchmarkNow() - streamStart;
+
+        const fetchStart = benchmarkNow();
+        const fetchResponse = await routeBackedWebSession.fetch(`/download?bytes=${dataPlaneBytes}`);
+        const fetchBody = new Uint8Array(await fetchResponse.arrayBuffer());
+        const fetchMs = benchmarkNow() - fetchStart;
+        metrics.fetchDataPlane = {
+          bytes: fetchBody.byteLength,
+          checksum: checksum(fetchBody),
+          status: fetchResponse.status,
+          totalMs: fetchMs,
+          mibPerSecond: fetchMs === 0 ? null :
+            (fetchBody.byteLength / (1024 * 1024)) / (fetchMs / 1000),
+        };
+
+        return Response.json({
+          ok: true,
+          type: "nativeCapnpPerformanceBenchmark",
+          parameters: {
+            iterations,
+            concurrency,
+            concurrentBatches,
+            restoreIterations,
+            dataPlaneBytes,
+          },
+          notes: {
+            scope: "same isolate/supervisor test app; use repeated runs for representative data",
+            timing: "ad hoc characterization only; no CI thresholds",
+            promisePipelining: "capnp-es generated methods currently expose Promise-returning calls, but no JS promise-pipeline API is exposed by this helper layer",
+            streaming: "large bytes are measured through fetch; typed WebSession stream support is characterized by obtaining and pinging the returned stream capability",
+          },
+          metrics,
+          streaming: {
+            nativeWebSessionStream: {
+              statusCode: streamResponse.content.statusCode,
+              bodyWhich: streamBody.which(),
+              handleClient: typeof streamBody.stream.ping === "function",
+              pinged: true,
+              totalMs: streamMs,
+            },
+          },
+        });
+      } catch (error) {
+        return Response.json({
+          ok: false,
+          type: "nativeCapnpPerformanceBenchmark",
+          error: {
+            name: String(error?.name || "Error"),
+            message: String(error?.message || error),
+            stack: String(error?.stack || ""),
+          },
+        }, { status: 500 });
+      } finally {
+        for (const cleanupOne of cleanup.reverse()) {
+          await cleanupOne().catch(() => {});
+        }
+        for (const token of savedTokens.reverse()) {
+          await api.revoke(token).catch(() => {});
+        }
+      }
     }
 
     if (url.pathname === "/export-native-greeter-capability") {
