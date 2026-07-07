@@ -716,24 +716,24 @@ Progress:
 - `sandstorm:capnp` exposes native bridge lifecycle helpers around
   `@mnutt/capnp-es`; generated schema RPC clients use the WebSocket Cap'n
   Proto RPC session transport rather than posting method calls to
-  `/capnp/call`
-- supervisor exposes `POST /capnp/call` only for native bridge lifecycle
+  `/capnp/lifecycle`
+- supervisor exposes `POST /capnp/lifecycle` only for native bridge lifecycle
   envelopes: save, restore, and drop. The direct method-call/result envelope
   prototype has been removed.
-- `sandstorm:api` exposes `nativeCapnpBridgeCall()` as the narrow lifecycle
+- `sandstorm:api` exposes `nativeCapnpBridgeLifecycle()` as the narrow lifecycle
   helper for posting to that route; generated RPC clients use
   `nativeCapnpBridgeOpenRpcSession()`
 - isolate runtime bundles generated `@mnutt/capnp-es` bindings for the native
   bridge envelope as `sandstorm:native-capnp-bridge`; `sandstorm:capnp` can
   encode and test-decode lifecycle request/response envelopes without exposing
   a second RPC transport
-- the supervisor `/capnp/call` route parses and validates lifecycle envelopes
+- the supervisor `/capnp/lifecycle` route parses and validates lifecycle envelopes
   and rejects unknown target ids that are not already-claimed Sandstorm
   capability handles, preserving the object-capability authority boundary
 - `sandstorm:capnp` can now encode and decode native bridge lifecycle response
   envelopes for saved tokens, restored capabilities, acknowledgements, and
   exceptions
-- `/capnp/call` now has an opt-in binary response path using
+- `/capnp/lifecycle` now has an opt-in binary response path using
   `Accept: application/octet-stream`; failed lifecycle operations can return a
   serialized `NativeCapnpBridgeResponse.exception` envelope, while the default
   JSON diagnostics remain available
@@ -800,7 +800,7 @@ Progress:
   `/capnp/*` runtime schemas, and generate Sandstorm-owned `/sandstorm/*`
   schema dependencies under explicit `capnp:/sandstorm/...` module names
 - bridge feature negotiation now distinguishes the working binary `rpc`
-  transport from lifecycle-only `/capnp/call`: `/capnp/bridge-info`
+  transport from lifecycle-only `/capnp/lifecycle`: `/capnp/bridge-info`
   advertises `nativeTransport`, `nativeRpc`, `nativeRpcWebSocket`, and
   `nativeExports`; the removed direct method-call envelope no longer has a
   feature flag
@@ -930,7 +930,7 @@ Progress:
   `@mnutt/capnp-es` runtime imports through `/capnp-es/...`, giving browser
   code loadable native modules before Powerbox/browser transport wiring
 - browser system routes now expose `/__sandstorm/native-capnp/bridge-info` and
-  `/__sandstorm/native-capnp/call`, forwarding negotiation metadata and binary
+  `/__sandstorm/native-capnp/lifecycle`, forwarding negotiation metadata and binary
   native bridge envelopes to the supervisor without exposing service bindings
   directly to browser code; when the `capnp-es` compiler is configured, `spk`
   also generates the native bridge schema as a platform module
@@ -1037,7 +1037,7 @@ Progress:
   should continue to use fetch/data-plane paths; typed RPC can carry byte
   bodies, but fetch is the measured streaming path.
 - native `capnp-es` RPC now uses a persistent WebSocket-backed Cap'n Proto RPC
-  session instead of routing every RPC message through `/capnp/call`. The
+  session instead of routing every RPC message through `/capnp/lifecycle`. The
   earlier fetch-shaped RPC transport was removed because it could not correctly
   model Cap'n Proto's bidirectional message stream. Browser generated clients
   use the same WebSocket RPC session through
@@ -1051,7 +1051,7 @@ Progress:
   promised-answer pipelining over the Sandstorm WebSocket bridge by calling an
   interface returned from `makeGreeter()` before awaiting that method's result.
 - native RPC fetch fallback support has been removed from worker and browser
-  generated-client helpers; `/capnp/call` remains for lifecycle envelopes such
+  generated-client helpers; `/capnp/lifecycle` remains for lifecycle envelopes such
   as save, restore, and drop, but generated RPC clients require the WebSocket
   RPC session transport.
 
@@ -1202,13 +1202,13 @@ Progress:
   session maps, message-stream mutation, WebSocket lifetime cleanup, and
   legacy RPC queue dispatch now live behind a dedicated controller instead of
   being spread across the general Sandstorm API binding service
-- `/capnp/call` is now lifecycle-only for native bridge save, restore, and
+- `/capnp/lifecycle` is now lifecycle-only for native bridge save, restore, and
   drop envelopes; POSTed native RPC envelopes are rejected with a WebSocket RPC
   session error, removing the stale fetch-shaped in-memory RPC fallback from
   the supervisor
 - the private native bridge schema and JS helpers no longer define the removed
   RPC request envelope; WebSocket is now the only native Cap'n Proto RPC
-  transport surface, while `/capnp/call` carries lifecycle requests only
+  transport surface, while `/capnp/lifecycle` carries lifecycle requests only
 - the public isolate helper module set no longer includes `sandstorm:rpc`,
   `sandstorm:capnweb-source`, or `capnweb`; `sandstorm:api` no longer exports
   `RpcTarget`, `AppRpcTarget`, `api.export()`, `api.withExport()`,

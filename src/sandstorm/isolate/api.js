@@ -113,8 +113,8 @@ async function callSandstormApi(env, path) {
   return body;
 }
 
-async function callNativeCapnpBridge(env, body = new Uint8Array()) {
-  const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/call", {
+async function nativeCapnpBridgeLifecycle(env, body = new Uint8Array()) {
+  const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/lifecycle", {
     method: "POST",
     headers: { "content-type": "application/octet-stream" },
     body,
@@ -122,8 +122,8 @@ async function callNativeCapnpBridge(env, body = new Uint8Array()) {
   return parseApiResponseBody(response);
 }
 
-async function callNativeCapnpBridgeBytes(env, body = new Uint8Array()) {
-  const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/call", {
+async function nativeCapnpBridgeLifecycleBytesForEnv(env, body = new Uint8Array()) {
+  const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/lifecycle", {
     method: "POST",
     headers: {
       "accept": "application/octet-stream",
@@ -1781,8 +1781,8 @@ async function serveBrowserSystemRoute(request, env) {
     });
   }
 
-  if (url.pathname === "/__sandstorm/native-capnp/call" && request.method === "POST") {
-    const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/call", {
+  if (url.pathname === "/__sandstorm/native-capnp/lifecycle" && request.method === "POST") {
+    const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/lifecycle", {
       method: "POST",
       headers: {
         "accept": "application/octet-stream",
@@ -2547,8 +2547,8 @@ export async function nativeCapnpBridgeInfo() {
   return result;
 }
 
-export async function nativeCapnpBridgeCallBytes(message) {
-  const response = await fetch("/__sandstorm/native-capnp/call", {
+export async function nativeCapnpBridgeLifecycleBytes(message) {
+  const response = await fetch("/__sandstorm/native-capnp/lifecycle", {
     method: "POST",
     headers: {
       "accept": "application/octet-stream",
@@ -2635,7 +2635,7 @@ export function openBrowserNativeCapnpRpcSession(target, connectionId) {
 
 export const browserNativeCapnpApi = Object.freeze({
   capnpBridgeInfo: nativeCapnpBridgeInfo,
-  nativeCapnpBridgeCallBytes,
+  nativeCapnpBridgeLifecycleBytes,
   openBrowserNativeCapnpRpcSession,
 });
 
@@ -3000,7 +3000,7 @@ export function connectBrowserNativeCapnp(target, InterfaceClass, options = {}) 
 }
 
 async function sendNativeCapnpBridgeEnvelope(message, expectedWhich) {
-  const response = await nativeCapnpBridgeCallBytes(message.toUint8Array());
+  const response = await nativeCapnpBridgeLifecycleBytes(message.toUint8Array());
   const decoded = decodeNativeCapnpBridgeResponse(response.body);
   if (decoded.which === "exception") {
     throw new NativeCapnpBridgeUnavailableError(
@@ -3041,8 +3041,8 @@ export function sandstorm(request, env) {
     modules: () => callSandstorm(env, "modules"),
     bindings: () => callSandstorm(env, "bindings"),
     capnpBridgeInfo: () => callSandstorm(env, "capnp/bridge-info"),
-    nativeCapnpBridgeCall: (body) => callNativeCapnpBridge(env, body),
-    nativeCapnpBridgeCallBytes: (body) => callNativeCapnpBridgeBytes(env, body),
+    nativeCapnpBridgeLifecycle: (body) => nativeCapnpBridgeLifecycle(env, body),
+    nativeCapnpBridgeLifecycleBytes: (body) => nativeCapnpBridgeLifecycleBytesForEnv(env, body),
     nativeCapnpBridgeOpenRpcSession: (target, connectionId) =>
       openNativeCapnpBridgeRpcSession(env, target, connectionId),
     nativeCapnpExport: (registration) => createNativeCapnpExportCapability(env, registration),
