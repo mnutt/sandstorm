@@ -1,8 +1,9 @@
 # Isolate Powerbox V2
 
-This document sketches a target architecture for isolate capabilities,
-Powerbox, and app-defined protocols. It is a design plan, not a description of
-the current isolate API.
+This document sketches the target architecture for isolate capabilities,
+Powerbox, and app-defined protocols, and tracks implementation progress toward
+that architecture. Isolate grains are still experimental, but much of the
+schema-first native Cap'n Proto path described below is now implemented.
 
 The goal is to let isolate app authors define a capability protocol once and
 use it from:
@@ -37,10 +38,10 @@ Sandstorm capabilities and Powerbox, not through ambient service names.
   app-specific data-plane endpoints.
 - Preserve compatibility with unreleased isolate prototypes.
 
-## Current Model
+## Current App-Object Model
 
-Current isolate app-object RPC is JavaScript-defined and fetch-shaped at the
-runtime boundary:
+Isolate app-object RPC is JavaScript-defined and fetch-shaped at the runtime
+boundary:
 
 - App code exports JavaScript objects.
 - Calls are serialized by Sandstorm's isolate helper code.
@@ -49,10 +50,10 @@ runtime boundary:
 - The supervisor owns native capability handles.
 - App-object RPC can dispatch locally for some local object capabilities.
 
-This model is useful, but it is not yet a public Cap'n Proto protocol model.
-The JavaScript class shape is not a stable schema that a legacy grain can
-compile against. It also means the app-object RPC path carries JSON-shaped
-values rather than native Cap'n Proto messages.
+This model remains useful for local/private helpers, but it is not the public
+cross-grain protocol model. The JavaScript class shape is not a stable schema
+that a legacy grain can compile against. It also means the app-object RPC path
+carries JSON-shaped values rather than native Cap'n Proto messages.
 
 ## Target Model
 
@@ -493,7 +494,8 @@ path:
 
 - the `.capnp` scanner is conservative and not a full compiler
 - generated bindings still serialize through current app-object RPC helpers
-- generated modules do not yet emit full TypeScript server/client types
+- generated modules did not emit schema-specific TypeScript server/client
+  declarations from the same compiled output
 - Powerbox descriptors, legacy interop, and browser schema modules need to be
   rooted in the same compiled schema metadata instead of separate prototype
   layers
@@ -1185,6 +1187,10 @@ Progress:
 - schema-specific TypeScript declarations can now be printed from
   `spk dev-isolate` for `capnp:` imports, keeping authoring types tied to the
   same compiler output as runtime modules
+- stale roadmap wording that described native schema RPC as only a future
+  target has been cleaned up; the remaining JavaScript app-object RPC text now
+  explicitly describes a private/local helper model rather than the public
+  cross-grain protocol surface
 
 ## Decisions
 
