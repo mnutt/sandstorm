@@ -498,7 +498,7 @@ declare module "sandstorm:capnp" {
   ): Promise<NativeCapnpConnectedClient<TClient>>;
 
   export type CapnpNativeInterface =
-    "unknown" | "webSession" | "apiSession" | "outboundHttpSession" | "appObject";
+    "unknown" | "webSession" | "apiSession" | "outboundHttpSession";
 
   export interface CapnpNativeCapabilitySlot {
     nativeInterface: CapnpNativeInterface;

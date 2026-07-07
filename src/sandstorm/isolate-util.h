@@ -24,64 +24,6 @@
 
 namespace sandstorm {
 
-struct OwnedIsolateObjectCallArgs {
-  kj::Own<capnp::MallocMessageBuilder> message;
-
-  capnp::List<IsolateObjectCallValue>::Reader getArgs();
-};
-
-struct OwnedIsolateObjectCallResult {
-  kj::Own<capnp::MallocMessageBuilder> message;
-
-  IsolateObjectCallResult::Reader getResult();
-};
-
-struct OwnedWorkerAppObjectCall {
-  kj::String method;
-  OwnedIsolateObjectCallArgs args;
-};
-
-class IsolateObjectCallTarget {
-public:
-  virtual ~IsolateObjectCallTarget() noexcept(false) {}
-
-  virtual kj::Promise<OwnedIsolateObjectCallResult> call(
-      kj::String method, OwnedIsolateObjectCallArgs args) = 0;
-  virtual kj::Promise<bool> drop();
-};
-
-class WorkerAppObjectJsonCapabilityAdapter {
-public:
-  virtual ~WorkerAppObjectJsonCapabilityAdapter() noexcept(false) {}
-
-  virtual kj::Maybe<IsolateObjectCapability::Client> findCapability(kj::StringPtr id) = 0;
-  virtual kj::String storeCapability(IsolateObjectCapability::Client capability) = 0;
-};
-
-OwnedIsolateObjectCallArgs copyIsolateObjectCallArgs(
-    capnp::List<IsolateObjectCallValue>::Reader source);
-void copyIsolateObjectCallValue(
-    IsolateObjectCallValue::Reader source, IsolateObjectCallValue::Builder target);
-void copyIsolateObjectCallResult(
-    IsolateObjectCallResult::Reader source, IsolateObjectCallResult::Builder target);
-IsolateObjectCapability::Client makeIsolateObjectCapability(
-    kj::Own<IsolateObjectCallTarget> target);
-kj::Own<IsolateObjectCallTarget> makeImportedIsolateObjectCallTarget(
-    IsolateObjectCapability::Client capability);
-kj::Promise<OwnedIsolateObjectCallResult> callIsolateObjectCapability(
-    IsolateObjectCapability::Client capability, kj::StringPtr method,
-    capnp::List<IsolateObjectCallValue>::Reader args);
-OwnedWorkerAppObjectCall parseWorkerAppObjectCallJson(
-    kj::ArrayPtr<const kj::byte> body, WorkerAppObjectJsonCapabilityAdapter& adapter,
-    size_t maxDataBytes);
-kj::String renderWorkerAppObjectCallJson(
-    kj::StringPtr method, capnp::List<IsolateObjectCallValue>::Reader args,
-    WorkerAppObjectJsonCapabilityAdapter& adapter);
-OwnedIsolateObjectCallResult parseWorkerAppObjectResultJson(
-    kj::ArrayPtr<const kj::byte> body, WorkerAppObjectJsonCapabilityAdapter& adapter,
-    size_t maxDataBytes);
-kj::String renderWorkerAppObjectResultJson(
-    IsolateObjectCallResult::Reader result, WorkerAppObjectJsonCapabilityAdapter& adapter);
 bool isCanonicalPackagePath(kj::StringPtr path);
 kj::String isolateStorageKeyFromUrl(kj::StringPtr url);
 bool isValidIsolateStorageKey(kj::StringPtr key);

@@ -1220,6 +1220,11 @@ Progress:
   `sandstorm:capnweb-source`, or `capnweb`; `sandstorm:api` no longer exports
   `RpcTarget`, `AppRpcTarget`, `api.export()`, `api.withExport()`,
   `api.exportDurable()`, or `Capability.rpc`
+- the supervisor's internal generic app-object transport has been removed:
+  `isolate-supervisor-internal.capnp` no longer defines
+  `IsolateObjectCapability`, route-backed object app refs are no longer
+  restored, and the Sandstorm API binding no longer advertises or handles
+  `powerbox.nativeAppRpcCall`
 
 ## Decisions
 

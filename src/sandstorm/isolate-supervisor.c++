@@ -168,7 +168,6 @@ enum class ClaimedCapabilityKind {
   TIED,
   ROUTE_BACKED_WEB_SESSION,
   ROUTE_BACKED_API_SESSION,
-  ROUTE_BACKED_APP_OBJECT,
   NATIVE_CAPNP_EXPORT,
 };
 
@@ -183,7 +182,6 @@ enum class ClaimedCapabilityNativeInterface {
   WEB_SESSION,
   API_SESSION,
   OUTBOUND_HTTP_SESSION,
-  APP_OBJECT,
 };
 
 kj::StringPtr claimedCapabilityKindName(ClaimedCapabilityKind kind) {
@@ -202,8 +200,6 @@ kj::StringPtr claimedCapabilityKindName(ClaimedCapabilityKind kind) {
       return "routeBackedWebSession";
     case ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION:
       return "routeBackedApiSession";
-    case ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT:
-      return "routeBackedAppObject";
     case ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT:
       return "nativeCapnpExport";
   }
@@ -233,8 +229,6 @@ kj::StringPtr claimedCapabilityNativeInterfaceName(
       return "apiSession";
     case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
       return "outboundHttpSession";
-    case ClaimedCapabilityNativeInterface::APP_OBJECT:
-      return "appObject";
   }
   KJ_UNREACHABLE;
 }
@@ -261,7 +255,6 @@ bool claimedCapabilitySupportsWebFetch(ClaimedCapabilityNativeInterface nativeIn
     case ClaimedCapabilityNativeInterface::API_SESSION:
       return true;
     case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
-    case ClaimedCapabilityNativeInterface::APP_OBJECT:
       return false;
   }
   KJ_UNREACHABLE;
@@ -275,20 +268,6 @@ bool claimedCapabilitySupportsOutboundHttpFetch(
       return true;
     case ClaimedCapabilityNativeInterface::WEB_SESSION:
     case ClaimedCapabilityNativeInterface::API_SESSION:
-    case ClaimedCapabilityNativeInterface::APP_OBJECT:
-      return false;
-  }
-  KJ_UNREACHABLE;
-}
-
-bool claimedCapabilitySupportsAppObjectCall(ClaimedCapabilityNativeInterface nativeInterface) {
-  switch (nativeInterface) {
-    case ClaimedCapabilityNativeInterface::APP_OBJECT:
-      return true;
-    case ClaimedCapabilityNativeInterface::UNKNOWN:
-    case ClaimedCapabilityNativeInterface::WEB_SESSION:
-    case ClaimedCapabilityNativeInterface::API_SESSION:
-    case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
       return false;
   }
   KJ_UNREACHABLE;
@@ -347,11 +326,9 @@ struct ClaimedCapabilityStats {
   uint webSessionNativeCount = 0;
   uint apiSessionNativeCount = 0;
   uint outboundHttpNativeCount = 0;
-  uint appObjectNativeCount = 0;
   uint unknownNativeCount = 0;
   uint routeBackedWebSessionCount = 0;
   uint routeBackedApiSessionCount = 0;
-  uint routeBackedAppObjectCount = 0;
   uint powerboxClaimCount = 0;
   uint powerboxOfferCount = 0;
   uint restoredCount = 0;
@@ -512,9 +489,6 @@ public:
         case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
           ++stats.outboundHttpNativeCount;
           break;
-        case ClaimedCapabilityNativeInterface::APP_OBJECT:
-          ++stats.appObjectNativeCount;
-          break;
         case ClaimedCapabilityNativeInterface::UNKNOWN:
           ++stats.unknownNativeCount;
           break;
@@ -526,9 +500,6 @@ public:
           break;
         case ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION:
           ++stats.routeBackedApiSessionCount;
-          break;
-        case ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT:
-          ++stats.routeBackedAppObjectCount;
           break;
         case ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT:
           break;
@@ -2960,7 +2931,6 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
 enum class RouteBackedCapabilityType {
   WEB,
   API,
-  OBJECT,
   NATIVE_CAPNP_EXPORT,
 };
 
@@ -2970,8 +2940,6 @@ kj::StringPtr routeBackedCapabilityTypeToken(RouteBackedCapabilityType type) {
       return "web";
     case RouteBackedCapabilityType::API:
       return "api";
-    case RouteBackedCapabilityType::OBJECT:
-      return "object";
     case RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT:
       return "nativeCapnpExport";
   }
@@ -2983,8 +2951,6 @@ RouteBackedCapabilityType parseRouteBackedCapabilityType(kj::StringPtr value) {
     return RouteBackedCapabilityType::WEB;
   } else if (value == "api") {
     return RouteBackedCapabilityType::API;
-  } else if (value == "object") {
-    return RouteBackedCapabilityType::OBJECT;
   } else if (value == "nativeCapnpExport") {
     return RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT;
   } else {
@@ -3413,293 +3379,6 @@ private:
   }
 };
 
-class ClaimedIsolateObjectCapability final: public IsolatePersistentObjectCapability::Server {
-public:
-  ClaimedIsolateObjectCapability(kj::Own<IsolateSessionRegistry> sessions,
-      kj::StringPtr id, IsolateObjectCapability::Client cap)
-      : sessions(kj::mv(sessions)), id(kj::heapString(id)), cap(kj::mv(cap)) {}
-
-  kj::Promise<void> call(CallContext context) override {
-    auto params = context.getParams();
-    return callIsolateObjectCapability(cap, params.getMethod(), params.getArgs())
-        .then([context](OwnedIsolateObjectCallResult&& result) mutable {
-      copyIsolateObjectCallResult(result.getResult(), context.getResults().initResult());
-    });
-  }
-
-  kj::Promise<void> drop(DropContext context) override {
-    auto req = cap.dropRequest();
-    return req.send()
-        .then([this, context](auto result) mutable {
-      context.getResults().setReleased(result.getReleased());
-      sessions->dropClaimedCapability(id);
-    });
-  }
-
-  kj::Promise<void> dup(DupContext context) override {
-    auto req = cap.dupRequest();
-    return req.send().then([this, context](auto result) mutable {
-      auto duplicatedId = sessions->storeClaimedCapability(
-          result.getCapability(),
-          makeImportedClaimedCapabilityMetadata(
-            ClaimedCapabilityKind::UNKNOWN, ClaimedCapabilityNativeInterface::APP_OBJECT));
-      KJ_IF_MAYBE(duplicatedCap, sessions->findClaimedCapability(duplicatedId)) {
-        context.getResults().setCapability(IsolateObjectCapability::Client(
-            kj::heap<ClaimedIsolateObjectCapability>(
-              kj::addRef(*sessions), duplicatedId,
-              duplicatedCap->template castAs<IsolateObjectCapability>())));
-      }
-    });
-  }
-
-  kj::Promise<void> save(SaveContext context) override {
-    auto request = cap.castAs<SystemPersistent>().saveRequest();
-    request.setSealFor(context.getParams().getSealFor());
-    return request.send().then([context](auto result) mutable {
-      context.getResults().setSturdyRef(result.getSturdyRef());
-    });
-  }
-
-  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
-    auto request = cap.castAs<SystemPersistent>().addRequirementsRequest();
-    request.setRequirements(context.getParams().getRequirements());
-    request.setObserver(context.getParams().getObserver());
-    return request.send().then([context](auto result) mutable {
-      context.getResults().setCap(result.getCap());
-    });
-  }
-
-private:
-  kj::Own<IsolateSessionRegistry> sessions;
-  kj::String id;
-  IsolateObjectCapability::Client cap;
-};
-
-class ClaimedCapabilityWorkerAppObjectAdapter final: public WorkerAppObjectJsonCapabilityAdapter {
-public:
-  explicit ClaimedCapabilityWorkerAppObjectAdapter(IsolateSessionRegistry& sessions)
-      : sessions(sessions) {}
-
-  kj::Maybe<IsolateObjectCapability::Client> findCapability(kj::StringPtr id) override {
-    KJ_IF_MAYBE(metadata, sessions.findClaimedCapabilityMetadata(id)) {
-      KJ_REQUIRE(claimedCapabilitySupportsAppObjectCall(metadata->nativeInterface),
-          "claimed capability cannot be used as native app RPC argument",
-          claimedCapabilityNativeInterfaceName(metadata->nativeInterface));
-    }
-    KJ_IF_MAYBE(cap, sessions.findClaimedCapability(id)) {
-      return IsolateObjectCapability::Client(kj::heap<ClaimedIsolateObjectCapability>(
-          kj::addRef(sessions), id, cap->castAs<IsolateObjectCapability>()));
-    }
-    return nullptr;
-  }
-
-  kj::String storeCapability(IsolateObjectCapability::Client capability) override {
-    return sessions.storeClaimedCapability(
-        kj::mv(capability),
-        makeImportedClaimedCapabilityMetadata(
-          ClaimedCapabilityKind::UNKNOWN, ClaimedCapabilityNativeInterface::APP_OBJECT));
-  }
-
-private:
-  IsolateSessionRegistry& sessions;
-};
-
-struct RouteBackedObjectCapabilityState final: public kj::Refcounted {
-  kj::String pathPrefix;
-  kj::Maybe<kj::String> claimedId;
-  kj::Own<RouteBackedRequirementState> requirementState =
-      kj::refcounted<RouteBackedRequirementState>();
-};
-
-class RouteBackedIsolateObjectCapability final
-    : public IsolatePersistentObjectCapability::Server {
-public:
-  RouteBackedIsolateObjectCapability(
-      kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
-      kj::Own<RouteBackedObjectCapabilityState> state, bool persistent,
-      kj::Maybe<kj::Array<const byte>> parentToken = nullptr)
-      : state(kj::mv(state)),
-        persistent(persistent),
-        parentToken(kj::mv(parentToken)),
-        runtimeConfig(kj::addRef(*config)),
-        runtimeHost(kj::addRef(*host)),
-        runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host))) {}
-
-  kj::Promise<void> call(CallContext context) override {
-    auto params = context.getParams();
-    auto adapter = kj::heap<ClaimedCapabilityWorkerAppObjectAdapter>(*runtimeHost->sessions);
-    auto body = renderWorkerAppObjectCallJson(
-        params.getMethod(), params.getArgs(), *adapter);
-
-    FetchRequest request;
-    request.method = FetchMethod::POST;
-    request.path = kj::str(state->pathPrefix, "/native-app-rpc-call");
-    request.mimeType = kj::heapString("application/json; charset=utf-8");
-    request.encoding = kj::heapString("");
-    request.expectedBodySize = body.size();
-    request.body = kj::heapArray<byte>(body.asBytes());
-    addHeader(request, "content-type", "application/json; charset=utf-8");
-    addHeader(request, "host", "sandbox");
-
-    return runtime->fetch(kj::mv(request))
-        .then([context, adapter = kj::mv(adapter)](FetchResponse&& response) mutable {
-      auto result = parseWorkerAppObjectResultJson(
-          response.body.asPtr(), *adapter, MAX_API_BINDING_REQUEST_BYTES);
-      copyIsolateObjectCallResult(result.getResult(), context.getResults().initResult());
-    });
-  }
-
-  kj::Promise<void> drop(DropContext context) override {
-    KJ_IF_MAYBE(id, state->claimedId) {
-      KJ_IF_MAYBE(dropped, runtimeHost->sessions->dropClaimedCapability(*id)) {
-        KJ_IF_MAYBE(dropNotifyPath, dropped->dropNotifyPath) {
-          context.getResults().setReleased(true);
-          FetchRequest request;
-          request.method = FetchMethod::POST;
-          request.path = toHttpRequestTarget(kj::str(*dropNotifyPath, "/__sandstorm_dispose"));
-          request.mimeType = kj::heapString("application/json; charset=utf-8");
-          request.encoding = kj::heapString("");
-          auto body = kj::StringPtr("{}");
-          request.expectedBodySize = body.size();
-          request.body = kj::heapArray<byte>(body.asBytes());
-          addHeader(request, "content-type", "application/json; charset=utf-8");
-          addHeader(request, "host", "sandbox");
-          state->claimedId = nullptr;
-          return runtime->fetch(kj::mv(request)).ignoreResult()
-              .catch_([](kj::Exception&& exception) {
-            KJ_LOG(WARNING, "Isolate route-backed object capability drop notification threw.",
-                exception);
-          });
-        }
-      }
-      state->claimedId = nullptr;
-    }
-    context.getResults().setReleased(false);
-    return kj::READY_NOW;
-  }
-
-  kj::Promise<void> dup(DupContext context) override {
-    KJ_IF_MAYBE(id, state->claimedId) {
-      KJ_IF_MAYBE(duplicatedId, runtimeHost->sessions->duplicateClaimedCapability(*id)) {
-        auto duplicatedState = kj::refcounted<RouteBackedObjectCapabilityState>();
-        duplicatedState->pathPrefix = kj::heapString(state->pathPrefix);
-        duplicatedState->claimedId = kj::heapString(*duplicatedId);
-        duplicatedState->requirementState = kj::addRef(*state->requirementState);
-        context.getResults().setCapability(IsolateObjectCapability::Client(
-            kj::heap<RouteBackedIsolateObjectCapability>(
-              kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
-              kj::mv(duplicatedState), persistent)));
-        return kj::READY_NOW;
-      }
-    }
-
-    KJ_FAIL_REQUIRE("unknown route-backed isolate object capability");
-  }
-
-  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
-    auto params = context.getParams();
-    if (params.getRequirements().size() > 0) {
-      state->requirementState->requirements.add(newOwnCapnp(params.getRequirements()));
-    }
-
-    auto observer = params.getObserver();
-    auto req = observer.dropWhenRevokedRequest();
-    req.setHandle(kj::heap<RouteBackedRevokerHandle>(
-        kj::addRef(*state->requirementState)));
-    state->requirementState->observers.add(kj::mv(observer));
-
-    return req.send().ignoreResult().then([this, context]() mutable {
-      context.getResults().setCap(this->thisCap().castAs<SystemPersistent>());
-    });
-  }
-
-  kj::Promise<void> save(SaveContext context) override {
-    KJ_REQUIRE(persistent, "isolate route-backed object capability is not persistent");
-    KJ_REQUIRE(!state->requirementState->revoked,
-        "isolate route-backed object capability requirements have been revoked");
-    auto params = context.getParams();
-    KJ_IF_MAYBE(parent, parentToken) {
-      auto request = runtimeHost->sandstormCore.makeChildTokenRequest();
-      request.setParent(*parent);
-      request.setOwner(params.getSealFor());
-      request.adoptRequirements(collectRequirements(capnp::Orphanage::getForMessageContaining(
-          SandstormCore::MakeChildTokenParams::Builder(request))));
-      return request.send().then([context](auto result) mutable {
-        context.getResults().setSturdyRef(result.getToken());
-      });
-    } else {
-      auto payload = kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX,
-          routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT), "\n", state->pathPrefix);
-
-      capnp::MallocMessageBuilder appRefMessage;
-      auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
-      appRef.setAs<capnp::Data>(payload.asBytes());
-
-      auto request = runtimeHost->sandstormCore.makeTokenRequest();
-      request.getRef().setAppRef(appRef.asReader());
-      request.setOwner(params.getSealFor());
-      request.adoptRequirements(collectRequirements(capnp::Orphanage::getForMessageContaining(
-          SandstormCore::MakeTokenParams::Builder(request))));
-      return request.send().then([context](auto result) mutable {
-        context.getResults().setSturdyRef(result.getToken());
-      });
-    }
-  }
-
-private:
-  kj::Own<RouteBackedObjectCapabilityState> state;
-  bool persistent;
-  kj::Maybe<kj::Array<const byte>> parentToken;
-  kj::Own<IsolateRuntimeConfig> runtimeConfig;
-  kj::Own<IsolateRuntimeHost> runtimeHost;
-  kj::Own<IsolateRuntimeAdapter> runtime;
-
-  capnp::Orphan<capnp::List<MembraneRequirement>> collectRequirements(
-      capnp::Orphanage orphanage) {
-    if (state->requirementState->requirements.size() == 0) {
-      return {};
-    }
-
-    kj::Vector<capnp::List<MembraneRequirement>::Reader> parts(
-        state->requirementState->requirements.size());
-    for (auto& requirement: state->requirementState->requirements) {
-      if (requirement.size() > 0) {
-        parts.add(requirement);
-      }
-    }
-
-    if (parts.size() > 0) {
-      return orphanage.newOrphanConcat(parts.asPtr());
-    }
-    return {};
-  }
-};
-
-struct RouteBackedObjectCapability {
-  IsolateObjectCapability::Client cap;
-  kj::Own<RouteBackedObjectCapabilityState> state;
-};
-
-RouteBackedObjectCapability makeRouteBackedObjectCapabilityWithState(
-    kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
-    kj::StringPtr pathPrefix, bool persistent,
-    kj::Maybe<kj::Array<const byte>> parentToken = nullptr) {
-  auto state = kj::refcounted<RouteBackedObjectCapabilityState>();
-  state->pathPrefix = kj::heapString(pathPrefix);
-  auto cap = kj::heap<RouteBackedIsolateObjectCapability>(
-      kj::mv(config), kj::mv(host), kj::addRef(*state), persistent, kj::mv(parentToken));
-  return RouteBackedObjectCapability { kj::mv(cap), kj::mv(state) };
-}
-
-IsolateObjectCapability::Client makeRouteBackedObjectCapability(
-    kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
-    kj::StringPtr pathPrefix, bool persistent,
-    kj::Maybe<kj::Array<const byte>> parentToken = nullptr) {
-  auto object = makeRouteBackedObjectCapabilityWithState(
-      kj::mv(config), kj::mv(host), pathPrefix, persistent, kj::mv(parentToken));
-  return kj::mv(object.cap);
-}
-
 capnp::Capability::Client makeRouteBackedSessionCapability(
     kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
     RouteBackedCapabilityType capabilityType, kj::StringPtr pathPrefix, bool persistent,
@@ -3715,8 +3394,6 @@ capnp::Capability::Client makeRouteBackedSessionCapability(
           kj::mv(config), kj::mv(host), pathPrefix, SessionKind::NORMAL,
           SessionMetadata(), persistent, kj::refcounted<RouteBackedRequirementState>(),
           kj::mv(parentToken));
-    case RouteBackedCapabilityType::OBJECT:
-      KJ_FAIL_REQUIRE("route-backed object capabilities are not session capabilities");
     case RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT:
       KJ_FAIL_REQUIRE("native Cap'n Proto export capabilities are not session capabilities");
   }
@@ -5589,7 +5266,7 @@ private:
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", "
         "\"bindings\", \"permissions\", \"capnp.bridgeInfo\", \"capnp.call\", "
         "\"powerbox.claim\", \"powerbox.fetch\", "
-        "\"powerbox.outboundHttpFetch\", \"powerbox.nativeAppRpcCall\", "
+        "\"powerbox.outboundHttpFetch\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
         "\"capabilities.webSession\", \"capabilities.apiSession\", "
@@ -5747,8 +5424,6 @@ private:
         return capnp::typeId<IsolateApiSession>();
       case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
         return capnp::typeId<OutboundHttpSession>();
-      case ClaimedCapabilityNativeInterface::APP_OBJECT:
-        return capnp::typeId<IsolateObjectCapability>();
       case ClaimedCapabilityNativeInterface::UNKNOWN:
         return 0;
     }
@@ -5763,8 +5438,6 @@ private:
         return "sandstorm.ApiSession";
       case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
         return "sandstorm.OutboundHttpSession";
-      case ClaimedCapabilityNativeInterface::APP_OBJECT:
-        return "sandstorm.IsolateObjectCapability";
       case ClaimedCapabilityNativeInterface::UNKNOWN:
         return "";
     }
@@ -5873,11 +5546,9 @@ private:
         "  \"webSessionNativeCount\": ", stats.webSessionNativeCount, ",\n"
         "  \"apiSessionNativeCount\": ", stats.apiSessionNativeCount, ",\n"
         "  \"outboundHttpNativeCount\": ", stats.outboundHttpNativeCount, ",\n"
-        "  \"appObjectNativeCount\": ", stats.appObjectNativeCount, ",\n"
         "  \"unknownNativeCount\": ", stats.unknownNativeCount, ",\n"
         "  \"routeBackedWebSessionCount\": ", stats.routeBackedWebSessionCount, ",\n"
         "  \"routeBackedApiSessionCount\": ", stats.routeBackedApiSessionCount, ",\n"
-        "  \"routeBackedAppObjectCount\": ", stats.routeBackedAppObjectCount, ",\n"
         "  \"powerboxClaimCount\": ", stats.powerboxClaimCount, ",\n"
         "  \"powerboxOfferCount\": ", stats.powerboxOfferCount, ",\n"
         "  \"restoredCount\": ", stats.restoredCount, ",\n"
@@ -6241,10 +5912,6 @@ private:
 
   capnp::Capability::Client makeRouteBackedCapability(
       RouteBackedCapabilityType capabilityType, kj::StringPtr pathPrefix, bool persistent) {
-    if (capabilityType == RouteBackedCapabilityType::OBJECT) {
-      return makeRouteBackedObjectCapability(
-          kj::addRef(config), kj::addRef(host), pathPrefix, persistent);
-    }
     return makeRouteBackedSessionCapability(capabilityType, pathPrefix, persistent);
   }
 
@@ -6260,10 +5927,6 @@ private:
       case RouteBackedCapabilityType::API:
         kind = ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION;
         nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
-        break;
-      case RouteBackedCapabilityType::OBJECT:
-        kind = ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT;
-        nativeInterface = ClaimedCapabilityNativeInterface::APP_OBJECT;
         break;
       case RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT:
         KJ_FAIL_REQUIRE("native Cap'n Proto export capabilities are not route-backed metadata");
@@ -6319,22 +5982,11 @@ private:
       }
     }
     auto metadata = makeRouteBackedClaimedCapabilityMetadata(capabilityType, pathPrefix, persistent);
-    kj::String capId;
-    if (capabilityType == RouteBackedCapabilityType::OBJECT) {
-      auto object = makeRouteBackedObjectCapabilityWithState(
-          kj::addRef(config), kj::addRef(host), pathPrefix, persistent);
-      capId = dropNotifyPath == nullptr
-          ? host.sessions->storeClaimedCapability(kj::mv(object.cap), kj::mv(metadata))
-          : host.sessions->storeClaimedCapability(kj::mv(object.cap), kj::mv(metadata),
-              kj::mv(KJ_ASSERT_NONNULL(dropNotifyPath)));
-      object.state->claimedId = kj::heapString(capId);
-    } else {
-      auto cap = makeRouteBackedCapability(capabilityType, pathPrefix, persistent);
-      capId = dropNotifyPath == nullptr
-          ? host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata))
-          : host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata),
-              kj::mv(KJ_ASSERT_NONNULL(dropNotifyPath)));
-    }
+    auto cap = makeRouteBackedCapability(capabilityType, pathPrefix, persistent);
+    auto capId = dropNotifyPath == nullptr
+        ? host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata))
+        : host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata),
+            kj::mv(KJ_ASSERT_NONNULL(dropNotifyPath)));
     return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
 
@@ -6381,53 +6033,6 @@ private:
     });
   }
 
-  kj::Promise<void> callWorkerAppObjectCapability(
-      kj::StringPtr url, kj::Array<byte> bodyBytes, kj::HttpService::Response& response) {
-    auto ids = findIsolateQueryParams(url, "id");
-    if (ids.size() != 1 || ids[0].size() == 0) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n"
-          "  \"error\": \"expected exactly one capability id\"\n}\n"));
-    }
-
-    KJ_IF_MAYBE(metadata, host.sessions->findClaimedCapabilityMetadata(ids[0])) {
-      if (!claimedCapabilitySupportsAppObjectCall(metadata->nativeInterface)) {
-        return sendJson(response, 400, "Bad Request", renderError(kj::str(
-            "claimed capability native interface ",
-            claimedCapabilityNativeInterfaceName(metadata->nativeInterface),
-            " cannot be used with powerbox.nativeAppRpcCall")));
-      }
-    }
-
-    KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(ids[0])) {
-      ClaimedCapabilityWorkerAppObjectAdapter adapter(*host.sessions);
-      kj::Maybe<OwnedWorkerAppObjectCall> parsedCall;
-      try {
-        parsedCall = parseWorkerAppObjectCallJson(
-            bodyBytes.asPtr(), adapter, MAX_API_BINDING_REQUEST_BYTES);
-      } catch (kj::Exception& exception) {
-        return sendJson(response, 400, "Bad Request", renderError(
-            kj::str("invalid native app RPC call envelope: ", exception.getDescription())));
-      }
-
-      auto call = kj::mv(KJ_ASSERT_NONNULL(parsedCall));
-      auto object = cap->castAs<IsolateObjectCapability>();
-      auto args = call.args.getArgs();
-      return callIsolateObjectCapability(object, call.method, args)
-          .then([this, &response](OwnedIsolateObjectCallResult&& result) mutable {
-        ClaimedCapabilityWorkerAppObjectAdapter adapter(*host.sessions);
-        return sendJson(
-            response, 200, "OK", renderWorkerAppObjectResultJson(result.getResult(), adapter));
-      }).catch_([this, &response](kj::Exception&& exception) mutable {
-        return sendJson(response, 502, "Bad Gateway", renderError(
-            kj::str("native app RPC call failed: ", exception.getDescription())));
-      });
-    } else {
-      return sendJson(response, 404, "Not Found", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
-    }
-  }
-
   kj::Promise<void> dropNativeCapnpBridgeCapability(
       NativeCapnpCapabilitySlot::Reader target, kj::HttpService::Response& response) {
     auto id = kj::heapString(target.getId());
@@ -6442,18 +6047,6 @@ private:
             .catch_([](kj::Exception&& exception) {
           KJ_LOG(WARNING, "Native Cap'n Proto bridge drop notification threw.", exception);
         }).then([this, &response]() mutable {
-          return sendNativeCapnpBridgeBytes(response, 200, "OK",
-              encodeNativeCapnpBridgeAcknowledgedResponse());
-        });
-      } else if (dropped->metadata.nativeInterface == ClaimedCapabilityNativeInterface::APP_OBJECT &&
-          !dropped->metadata.hasDropNotify) {
-        auto req = dropped->cap.castAs<IsolateObjectCapability>().dropRequest();
-        return req.send().then([this, &response](auto result) mutable {
-          (void)result;
-          return sendNativeCapnpBridgeBytes(response, 200, "OK",
-              encodeNativeCapnpBridgeAcknowledgedResponse());
-        }).catch_([this, &response](kj::Exception&& exception) {
-          KJ_LOG(WARNING, "Native Cap'n Proto bridge object capability drop threw.", exception);
           return sendNativeCapnpBridgeBytes(response, 200, "OK",
               encodeNativeCapnpBridgeAcknowledgedResponse());
         });
@@ -7273,10 +6866,6 @@ private:
           hasMetadataEnvelope = true;
           type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API);
           break;
-        case ClaimedCapabilityNativeInterface::APP_OBJECT:
-          hasMetadataEnvelope = true;
-          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT);
-          break;
         case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
           hasMetadataEnvelope = true;
           type = "outboundHttp";
@@ -7288,7 +6877,6 @@ private:
       switch (info->kind) {
         case ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION:
         case ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION:
-        case ClaimedCapabilityKind::ROUTE_BACKED_APP_OBJECT:
           pathPrefix = kj::heapString(info->pathPrefix);
           break;
         case ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT:
@@ -7373,8 +6961,6 @@ private:
           nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
         } else if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API)) {
           nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
-        } else if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::OBJECT)) {
-          nativeInterface = ClaimedCapabilityNativeInterface::APP_OBJECT;
         } else if (type == "outboundHttp") {
           nativeInterface = ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION;
         } else if (type != "unknown") {
@@ -7751,21 +7337,6 @@ private:
       return sendBadRequest(response, *error);
     }
 
-    KJ_IF_MAYBE(metadata, host.sessions->findClaimedCapabilityMetadata(id)) {
-      if (metadata->nativeInterface == ClaimedCapabilityNativeInterface::APP_OBJECT) {
-        KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
-          auto request = cap->castAs<IsolateObjectCapability>().dupRequest();
-          return request.send().then([this, &response](auto result) mutable {
-            auto capId = host.sessions->storeClaimedCapability(
-                result.getCapability(),
-                makeImportedClaimedCapabilityMetadata(
-                  ClaimedCapabilityKind::UNKNOWN, ClaimedCapabilityNativeInterface::APP_OBJECT));
-            return sendJson(response, 200, "OK", renderClaimedCapability(capId));
-          });
-        }
-      }
-    }
-
     KJ_IF_MAYBE(duplicatedId, host.sessions->duplicateClaimedCapability(id)) {
       return sendJson(response, 200, "OK", renderClaimedCapability(*duplicatedId));
     } else {
@@ -7831,22 +7402,6 @@ private:
         }).then([this, &response]() mutable {
           return sendJson(response, 200, "OK", kj::heapString(
               "{\n  \"ok\": true,\n  \"released\": true\n}\n"));
-        });
-      } else if (dropped->metadata.nativeInterface == ClaimedCapabilityNativeInterface::APP_OBJECT &&
-          dropped->metadata.hasDropNotify) {
-        return sendJson(response, 200, "OK", kj::heapString(
-            "{\n  \"ok\": true,\n  \"released\": false\n}\n"));
-      } else if (dropped->metadata.nativeInterface == ClaimedCapabilityNativeInterface::APP_OBJECT) {
-        auto req = dropped->cap.castAs<IsolateObjectCapability>().dropRequest();
-        return req.send().then([this, &response](auto result) mutable {
-          return sendJson(response, 200, "OK", kj::str(
-              "{\n  \"ok\": true,\n  \"released\": ",
-              result.getReleased() ? "true" : "false",
-              "\n}\n"));
-        }).catch_([this, &response](kj::Exception&& exception) {
-          KJ_LOG(WARNING, "Isolate object capability drop threw.", exception);
-          return sendJson(response, 200, "OK", kj::heapString(
-              "{\n  \"ok\": true,\n  \"released\": false\n}\n"));
         });
       } else {
         return sendJson(response, 200, "OK", kj::heapString(
@@ -8263,11 +7818,7 @@ public:
         if (params.getParentToken().size() > 0) {
           parentToken = kj::heapArray<const byte>(params.getParentToken());
         }
-        if (routeRef.type == RouteBackedCapabilityType::OBJECT) {
-          context.getResults().setCap(makeRouteBackedObjectCapability(
-              kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
-              routeRef.pathPrefix, true, kj::mv(parentToken)));
-        } else if (routeRef.type == RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT) {
+        if (routeRef.type == RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT) {
           context.getResults().setCap(makeNativeCapnpExportPersistentCapability(
               kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
               routeRef.nativeCapnpExportId, routeRef.nativeCapnpExportInterfaceId,
