@@ -18,11 +18,14 @@
 
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
+const crypto = require("node:crypto");
 const { constants } = require("node:fs");
 const fs = require("node:fs/promises");
 const http = require("node:http");
+const net = require("node:net");
 const path = require("node:path");
 const test = require("node:test");
+const { pathToFileURL } = require("node:url");
 
 const REPO_DIR = path.resolve(__dirname, "..");
 const REPO_TMP_DIR = path.join(REPO_DIR, "tmp");
@@ -296,6 +299,347 @@ async function requestJson(socketPath, requestPath, options = {}) {
     ...response,
     json: JSON.parse(response.body),
   };
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timeout;
+  return Promise.race([
+    promise,
+    new Promise((resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timeout));
+}
+
+async function startUnixSocketHttpProxy(socketPath) {
+  const server = http.createServer((clientReq, clientRes) => {
+    const upstream = http.request({
+      socketPath,
+      path: clientReq.url,
+      method: clientReq.method,
+      headers: clientReq.headers,
+    }, (res) => {
+      clientRes.writeHead(res.statusCode, res.statusMessage, res.headers);
+      res.pipe(clientRes);
+    });
+    upstream.on("error", (err) => {
+      if (!clientRes.headersSent) {
+        clientRes.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
+      }
+      clientRes.end(err.message);
+    });
+    clientReq.pipe(upstream);
+  });
+
+  server.on("upgrade", (req, socket, head) => {
+    const upstream = net.createConnection(socketPath);
+    const fail = (err) => {
+      try {
+        socket.destroy(err);
+      } catch (_) {}
+      try {
+        upstream.destroy(err);
+      } catch (_) {}
+    };
+    upstream.on("error", fail);
+    socket.on("error", fail);
+    upstream.on("connect", () => {
+      const headers = [`GET ${req.url} HTTP/${req.httpVersion}`];
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        headers.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+      }
+      headers.push("", "");
+      upstream.write(headers.join("\r\n"));
+      if (head.length > 0) {
+        upstream.write(head);
+      }
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolve, reject) => {
+      server.close((err) => err ? reject(err) : resolve());
+    }),
+  };
+}
+
+function makeUnixSocketWebSocket(socketPath, options = {}) {
+  return class UnixSocketWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
+    static _instances = new Set();
+
+    static terminateAllForTest() {
+      for (const webSocket of this._instances) {
+        webSocket._terminateForTest();
+      }
+      this._instances.clear();
+    }
+
+    constructor(url) {
+      this.url = String(url);
+      this.binaryType = "blob";
+      this.readyState = UnixSocketWebSocket.CONNECTING;
+      this._listeners = new Map();
+      this._buffer = Buffer.alloc(0);
+      this._handshakeComplete = false;
+      this._socket = net.createConnection(socketPath);
+      this.constructor._instances.add(this);
+      this._socket.on("connect", () => this._writeHandshake());
+      this._socket.on("data", (chunk) => this._receive(chunk));
+      this._socket.on("error", (error) => this._fail(error));
+      this._socket.on("close", () => this._closeFromSocket());
+    }
+
+    addEventListener(type, callback) {
+      if (typeof callback !== "function") return;
+      const listeners = this._listeners.get(type) || new Set();
+      listeners.add(callback);
+      this._listeners.set(type, listeners);
+    }
+
+    removeEventListener(type, callback) {
+      this._listeners.get(type)?.delete(callback);
+    }
+
+    send(data) {
+      if (this.readyState !== UnixSocketWebSocket.OPEN) {
+        throw new Error("WebSocket is not open");
+      }
+      const payload = Buffer.isBuffer(data)
+        ? data
+        : data instanceof ArrayBuffer
+          ? Buffer.from(data)
+          : ArrayBuffer.isView(data)
+            ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+            : Buffer.from(String(data));
+      this._socket.write(this._frame(payload, 0x2));
+    }
+
+    close() {
+      if (this.readyState === UnixSocketWebSocket.CLOSED ||
+          this.readyState === UnixSocketWebSocket.CLOSING) {
+        return;
+      }
+      this.readyState = UnixSocketWebSocket.CLOSING;
+      if (this._handshakeComplete) {
+        try {
+          this._socket.write(this._frame(Buffer.alloc(0), 0x8));
+        } catch (_) {}
+      }
+      this._socket.end();
+    }
+
+    _dispatch(type, event = {}) {
+      const fullEvent = { type, target: this, currentTarget: this, ...event };
+      const propertyHandler = this[`on${type}`];
+      if (typeof propertyHandler === "function") {
+        propertyHandler.call(this, fullEvent);
+      }
+      for (const listener of this._listeners.get(type) || []) {
+        listener.call(this, fullEvent);
+      }
+    }
+
+    _writeHandshake() {
+      const url = new URL(this.url);
+      const key = crypto.randomBytes(16).toString("base64");
+      const pathAndQuery = options.rewritePath
+        ? options.rewritePath(`${url.pathname}${url.search}`)
+        : `${url.pathname}${url.search}`;
+      this._socket.write([
+        `GET ${pathAndQuery} HTTP/1.1`,
+        "Host: sandstorm",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Key: ${key}`,
+        "Sec-WebSocket-Version: 13",
+        "",
+        "",
+      ].join("\r\n"));
+    }
+
+    _receive(chunk) {
+      this._buffer = Buffer.concat([this._buffer, chunk]);
+      if (!this._handshakeComplete) {
+        const headerEnd = this._buffer.indexOf("\r\n\r\n");
+        if (headerEnd < 0) return;
+        const header = this._buffer.slice(0, headerEnd).toString("latin1");
+        this._buffer = this._buffer.slice(headerEnd + 4);
+        if (!/^HTTP\/1\.[01] 101\b/.test(header)) {
+          this._fail(new Error(header.split("\r\n")[0] || "WebSocket upgrade failed"));
+          return;
+        }
+        this._handshakeComplete = true;
+        this.readyState = UnixSocketWebSocket.OPEN;
+        this._dispatch("open");
+      }
+      this._readFrames();
+    }
+
+    _readFrames() {
+      for (;;) {
+        if (this._buffer.length < 2) return;
+        const opcode = this._buffer[0] & 0x0f;
+        let payloadLength = this._buffer[1] & 0x7f;
+        let headerLength = 2;
+        if (payloadLength === 126) {
+          if (this._buffer.length < 4) return;
+          payloadLength = this._buffer.readUInt16BE(2);
+          headerLength = 4;
+        } else if (payloadLength === 127) {
+          if (this._buffer.length < 10) return;
+          const high = this._buffer.readUInt32BE(2);
+          const low = this._buffer.readUInt32BE(6);
+          payloadLength = high * 0x100000000 + low;
+          headerLength = 10;
+        }
+        if (this._buffer.length < headerLength + payloadLength) return;
+        const payload = this._buffer.slice(headerLength, headerLength + payloadLength);
+        this._buffer = this._buffer.slice(headerLength + payloadLength);
+
+        if (opcode === 0x8) {
+          this.close();
+          return;
+        } else if (opcode === 0x9) {
+          this._socket.write(this._frame(payload, 0xa));
+        } else if (opcode === 0x2) {
+          const data = this.binaryType === "arraybuffer"
+            ? payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength)
+            : new Uint8Array(payload);
+          this._dispatch("message", { data });
+        }
+      }
+    }
+
+    _frame(payload, opcode) {
+      const mask = crypto.randomBytes(4);
+      let header;
+      if (payload.length < 126) {
+        header = Buffer.alloc(2);
+        header[1] = 0x80 | payload.length;
+      } else if (payload.length <= 0xffff) {
+        header = Buffer.alloc(4);
+        header[1] = 0x80 | 126;
+        header.writeUInt16BE(payload.length, 2);
+      } else {
+        header = Buffer.alloc(10);
+        header[1] = 0x80 | 127;
+        header.writeUInt32BE(Math.floor(payload.length / 0x100000000), 2);
+        header.writeUInt32BE(payload.length >>> 0, 6);
+      }
+      header[0] = 0x80 | opcode;
+      const masked = Buffer.alloc(payload.length);
+      for (let i = 0; i < payload.length; ++i) {
+        masked[i] = payload[i] ^ mask[i % 4];
+      }
+      return Buffer.concat([header, mask, masked]);
+    }
+
+    _fail(error) {
+      this._dispatch("error", { error });
+      this.close();
+    }
+
+    _closeFromSocket() {
+      this.constructor._instances.delete(this);
+      if (this.readyState === UnixSocketWebSocket.CLOSED) return;
+      this.readyState = UnixSocketWebSocket.CLOSED;
+      this._dispatch("close", { code: 1000 });
+    }
+
+    _terminateForTest() {
+      this.readyState = UnixSocketWebSocket.CLOSED;
+      this._socket.removeAllListeners();
+      this._socket.unref();
+    }
+  };
+}
+
+const STATIC_IMPORT_SPECIFIER =
+    /\b(from\s*["']|import\s*["'])(\/[^"']+|\.{1,2}\/[^"']+)(["'])/g;
+
+async function importServedBrowserModule(baseUrl, outputDir, entryPath) {
+  const materialized = new Map();
+
+  function normalizeServedPath(servedPath, importerPath = "/") {
+    const resolved = servedPath.startsWith("/")
+      ? new URL(servedPath, baseUrl)
+      : new URL(servedPath, new URL(importerPath, baseUrl));
+    if (resolved.origin !== baseUrl) {
+      throw new Error(`refusing to import external browser module ${resolved.href}`);
+    }
+    return resolved.pathname;
+  }
+
+  function localPathForServedPath(servedPath) {
+    let relativePath = servedPath.slice(1);
+    if (!relativePath.endsWith(".js") && !relativePath.endsWith(".mjs")) {
+      relativePath += ".mjs";
+    }
+    return path.join(outputDir, relativePath);
+  }
+
+  async function materialize(servedPath) {
+    const normalized = normalizeServedPath(servedPath);
+    if (materialized.has(normalized)) {
+      return materialized.get(normalized);
+    }
+
+    const promise = (async () => {
+      const response = await fetch(new URL(normalized, baseUrl));
+      if (!response.ok) {
+        throw new Error(
+          `browser module ${normalized} failed with ${response.status}: ` +
+          await response.text());
+      }
+
+      const source = await response.text();
+      const imports = [...source.matchAll(STATIC_IMPORT_SPECIFIER)].map((match) => match[2]);
+      const replacements = new Map();
+      for (const specifier of imports) {
+        const dependencyPath = normalizeServedPath(specifier, normalized);
+        replacements.set(
+          specifier,
+          pathToFileURL(localPathForServedPath(dependencyPath)).href);
+        materialize(dependencyPath).catch(() => {});
+      }
+
+      const rewritten = source.replace(
+        STATIC_IMPORT_SPECIFIER,
+        (match, prefix, specifier, suffix) =>
+          `${prefix}${replacements.get(specifier) || specifier}${suffix}`);
+      const localPath = localPathForServedPath(normalized);
+      await fs.mkdir(path.dirname(localPath), { recursive: true });
+      await fs.writeFile(localPath, rewritten);
+      return pathToFileURL(localPath).href;
+    })();
+
+    materialized.set(normalized, promise);
+    return promise;
+  }
+
+  const entryModule = await materialize(entryPath);
+  for (;;) {
+    const pending = [...materialized.values()];
+    await Promise.all(pending);
+    if (pending.length === materialized.size) break;
+  }
+  return import(entryModule);
 }
 
 async function stopChild(child, options = {}) {
@@ -2456,6 +2800,11 @@ test("isolate supervisor integration suite", {
     assert.equal(servedNativeBridgeSchemaModule.statusCode, 200);
     assert.match(servedNativeBridgeSchemaModule.body, /NativeCapnpBridgeRequest/);
 
+    const servedNativeSchemaDependency = await requestUnixSocket(
+      fixture.workerdSocket, "/__sandstorm/capnp/sandstorm/grain.capnp");
+    assert.equal(servedNativeSchemaDependency.statusCode, 200);
+    assert.match(servedNativeSchemaDependency.body, /export class UiView/);
+
     const servedNativeBrowserCapnpRuntime = await requestUnixSocket(
       fixture.workerdSocket, "/capnp-es/index.mjs");
     assert.equal(servedNativeBrowserCapnpRuntime.statusCode, 200);
@@ -2487,6 +2836,91 @@ test("isolate supervisor integration suite", {
     assert.equal(browserNativeCapnpRpcSession.statusCode, 426);
     assert.equal(browserNativeCapnpRpcSession.json.ok, false);
     assert.match(browserNativeCapnpRpcSession.json.error, /WebSocket upgrade/);
+
+    const browserProxy = await startUnixSocketHttpProxy(fixture.workerdSocket);
+    const browserModuleDir =
+      await fs.mkdtemp(path.join(fixture.workdir, "browser-native-capnp-"));
+    const hadLocation = Object.hasOwn(globalThis, "location");
+    const previousLocation = globalThis.location;
+    const hadWebSocket = Object.hasOwn(globalThis, "WebSocket");
+    const previousWebSocket = globalThis.WebSocket;
+    const BrowserWebSocket = makeUnixSocketWebSocket(fixture.sandstormApiSocket, {
+      rewritePath(pathAndQuery) {
+        return pathAndQuery.replace(
+          /^\/__sandstorm\/native-capnp\/rpc-session\b/,
+          "/capnp/rpc-session");
+      },
+    });
+    try {
+      Object.defineProperty(globalThis, "location", {
+        value: new URL(`${browserProxy.baseUrl}/`),
+        configurable: true,
+      });
+      Object.defineProperty(globalThis, "WebSocket", {
+        value: BrowserWebSocket,
+        configurable: true,
+      });
+      const browserNativeCapnp = await withTimeout(importServedBrowserModule(
+        browserProxy.baseUrl,
+        browserModuleDir,
+        "/__sandstorm/native-capnp/client.js"), 5000,
+        "browser native Cap'n Proto client module import timed out");
+      const browserWebSessionSchema = await withTimeout(importServedBrowserModule(
+        browserProxy.baseUrl,
+        browserModuleDir,
+        "/__sandstorm/capnp/sandstorm/web-session.capnp.js"), 5000,
+        "browser WebSession schema module import timed out");
+      const browserWebSessionCapability = await requestJson(
+        fixture.sandstormApiSocket,
+        "/capabilities/web-session?pathPrefix=/native-capnp-bridge-target",
+        { method: "POST" });
+      assert.equal(browserWebSessionCapability.statusCode, 200, browserWebSessionCapability.body);
+      assert.equal(browserWebSessionCapability.json.ok, true);
+      const browserWebSession = browserNativeCapnp.connectBrowserNativeCapnp({
+        id: browserWebSessionCapability.json.id,
+        interfaceId: "0xa8e9655582dcde6f",
+        interfaceName: "sandstorm.WebSession",
+        kind: "receiverHosted",
+      }, browserWebSessionSchema.WebSession, {
+        connectionId: `browser-native-capnp-${browserWebSessionCapability.json.id}`,
+      });
+      const browserGeneratedResponse = await withTimeout(browserWebSession.get({
+        path: "/generated-client?from=browser",
+        context: {},
+        ignoreBody: false,
+      }), 5000, "browser native Cap'n Proto WebSession.get() timed out");
+      const browserGeneratedBody = browserGeneratedResponse.content.body;
+      const browserGeneratedBytes =
+        typeof browserGeneratedBody.bytes.toUint8Array === "function"
+          ? browserGeneratedBody.bytes.toUint8Array()
+          : browserGeneratedBody.bytes;
+      assert.deepEqual(JSON.parse(new TextDecoder().decode(browserGeneratedBytes)), {
+        ok: true,
+        source: "native-capnp-generated-websession",
+        method: "GET",
+        pathname: "/native-capnp-bridge-target/generated-client",
+        search: "?from=browser",
+      });
+    } finally {
+      BrowserWebSocket.terminateAllForTest();
+      if (hadLocation) {
+        Object.defineProperty(globalThis, "location", {
+          value: previousLocation,
+          configurable: true,
+        });
+      } else {
+        delete globalThis.location;
+      }
+      if (hadWebSocket) {
+        Object.defineProperty(globalThis, "WebSocket", {
+          value: previousWebSocket,
+          configurable: true,
+        });
+      } else {
+        delete globalThis.WebSocket;
+      }
+      await browserProxy.close();
+    }
 
     const appInterfaceDescriptor = await requestJson(
       fixture.sandstormApiSocket,
