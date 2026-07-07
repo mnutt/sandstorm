@@ -3266,22 +3266,20 @@ private:
   static kj::String devIsolateCapnpEsSpecifierForSchemaImport(
       kj::StringPtr importerSpecifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
       kj::StringPtr importSpecifier) {
+    (void)resolvedPath;
+    (void)rootDir;
     if (importSpecifier.startsWith("/sandstorm/")) {
       return kj::str("capnp:", importSpecifier);
     }
 
-    if (importerSpecifier.startsWith("capnp:/sandstorm/")) {
-      auto importerPath = importerSpecifier.slice(strlen("capnp:"));
-      auto slash = toStdString(importerPath).rfind('/');
-      KJ_REQUIRE(slash != std::string::npos,
-          "Internal error: expected absolute capnp Sandstorm schema specifier.",
-          importerSpecifier);
-      auto joined = normalizeDevIsolatePath(
-          kj::str(importerPath.slice(0, slash + 1), importSpecifier));
-      return kj::str("capnp:", joined);
-    }
-
-    return devIsolateCapnpEsSpecifierForPath(resolvedPath, rootDir);
+    KJ_REQUIRE(importerSpecifier.startsWith("capnp:"),
+        "Internal error: expected capnp schema specifier.", importerSpecifier);
+    auto importerPath = importerSpecifier.slice(strlen("capnp:"));
+    auto slash = toStdString(importerPath).rfind('/');
+    auto importerDir = slash == std::string::npos ? kj::heapString("") :
+        kj::str(importerPath.slice(0, slash + 1));
+    return kj::str("capnp:",
+        normalizeDevIsolateSpecifierPath(kj::str(importerDir, importSpecifier)));
   }
 
   static kj::String devIsolateCapnpEsRuntimePath(
@@ -3325,6 +3323,53 @@ private:
     std::string normalized = absolute ? "/" : "";
     for (size_t i = 0; i < parts.size(); ++i) {
       if (i > 0) normalized += "/";
+      normalized += parts[i];
+    }
+    return kj::heapString(normalized.c_str());
+  }
+
+  static kj::String normalizeDevIsolateSpecifierPath(kj::StringPtr path) {
+    auto pathStd = toStdString(path);
+    std::vector<std::string> parts;
+    uint leadingParents = 0;
+    bool absolute = !pathStd.empty() && pathStd[0] == '/';
+    size_t start = 0;
+    while (start <= pathStd.size()) {
+      auto slash = pathStd.find('/', start);
+      auto end = slash == std::string::npos ? pathStd.size() : slash;
+      auto part = pathStd.substr(start, end - start);
+      if (part.empty() || part == ".") {
+        // Skip.
+      } else if (part == "..") {
+        if (!parts.empty()) {
+          parts.pop_back();
+        } else {
+          KJ_REQUIRE(!absolute, "Schema import escaped its root.", path);
+          ++leadingParents;
+        }
+      } else {
+        parts.push_back(part);
+      }
+      if (slash == std::string::npos) break;
+      start = slash + 1;
+    }
+
+    std::string normalized;
+    if (absolute) {
+      normalized = "/";
+    } else if (leadingParents == 0) {
+      normalized = "./";
+    } else {
+      for (uint i = 0; i < leadingParents; ++i) {
+        normalized += "../";
+      }
+    }
+
+    for (size_t i = 0; i < parts.size(); ++i) {
+      if ((absolute && i > 0) || (!absolute && normalized.size() > 0 &&
+          normalized[normalized.size() - 1] != '/')) {
+        normalized += "/";
+      }
       normalized += parts[i];
     }
     return kj::heapString(normalized.c_str());
@@ -4566,6 +4611,15 @@ private:
     return kj::str(mapping.sourcePaths[0]);
   }
 
+  kj::String resolvePackSourceRoot() {
+    auto candidate = sourceDir == nullptr ? kj::str(".") : kj::str(sourceDir);
+    char* resolved = realpath(candidate.cStr(), nullptr);
+    KJ_REQUIRE(resolved != nullptr, "Could not resolve package source root.",
+        candidate, strerror(errno));
+    KJ_DEFER(free(resolved));
+    return kj::heapString(resolved);
+  }
+
   PackIsolateModuleSpec copyPackIsolateModuleSpec(
       spk::Manifest::IsolateConfig::Module::Builder module) {
     PackIsolateModuleSpec result;
@@ -4626,7 +4680,8 @@ private:
   }
 
   bool collectPackCapnpImportsFromModule(
-      kj::StringPtr packagePath, kj::Vector<DevIsolateModule>& generatedModules,
+      kj::StringPtr packagePath, kj::StringPtr rootDir,
+      kj::Vector<DevIsolateModule>& generatedModules,
       std::map<std::string, std::string>& capnpEsImports) {
     auto maybeRealPath = trySourcePathForPackagePath(packagePath);
     KJ_IF_MAYBE(realPath, maybeRealPath) {
@@ -4647,9 +4702,9 @@ private:
               specifier);
         } else if (isCapnpImport(specifier)) {
           auto resolvedImport = resolveDevIsolateCapnpEsImport(
-              importerDir, importerDir, specifier);
+              importerDir, rootDir, specifier);
           addDevIsolateCapnpEsModule(
-              specifier, resolvedImport, importerDir, generatedModules, capnpEsImports);
+              specifier, resolvedImport, rootDir, generatedModules, capnpEsImports);
           found = true;
         }
       }
@@ -4666,6 +4721,7 @@ private:
     std::set<std::string> existingModuleNames;
     kj::Vector<DevIsolateModule> generatedModules;
     std::map<std::string, std::string> capnpEsImports;
+    auto rootDir = resolvePackSourceRoot();
 
     for (auto i: kj::indices(oldModuleList)) {
       auto module = oldModuleList[i];
@@ -4673,11 +4729,11 @@ private:
       existingModuleNames.insert(toStdString(spec.name));
       if (spec.type == DevIsolateModuleType::ES_MODULE) {
         collectPackCapnpImportsFromModule(
-            spec.sourcePath, generatedModules, capnpEsImports);
+            spec.sourcePath, rootDir, generatedModules, capnpEsImports);
       }
       oldModules.add(kj::mv(spec));
     }
-    addDevIsolatePlatformCapnpEsModules(sourceDir, generatedModules, capnpEsImports);
+    addDevIsolatePlatformCapnpEsModules(rootDir, generatedModules, capnpEsImports);
 
     kj::Vector<DevIsolateModule> modulesToAppend;
     for (auto& generated: generatedModules) {

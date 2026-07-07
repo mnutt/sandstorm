@@ -1085,6 +1085,10 @@ Progress:
   modules as `spk dev-isolate`, stores them under
   `__sandstorm_isolate_runtime/capnp-es-generated`, and serializes an
   augmented isolate module list into `sandstorm-manifest`
+- packaged `capnp:` imports now resolve against the package source root while
+  still using the importing module for relative paths, so a worker in `src/`
+  can import schemas from sibling directories such as
+  `capnp:../schemas/greeter.capnp`
 - generated `capnp:` app-object compatibility modules have been removed:
   `spk dev-isolate` and `spk pack` now materialize schema code only for
   `capnp:` imports, reject old `capnp-es:` isolate imports with a clear error,
