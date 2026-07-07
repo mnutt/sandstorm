@@ -1262,17 +1262,17 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(body.capnpEs.bridgeLifecycle, {
       dropRequest: {
         protocolVersion: 0,
-        which: 1,
+        which: 0,
         targetId: body.sandstormApi.nativeCapnpBridge.targetId,
       },
       saveRequest: {
         protocolVersion: 0,
-        which: 2,
+        which: 1,
         targetId: body.sandstormApi.nativeCapnpBridge.targetId,
       },
       restoreRequest: {
         protocolVersion: 0,
-        which: 3,
+        which: 2,
         token: "native-bridge-saved-token",
         expectedInterfaceId: "a8e9655582dcde6f",
         expectedInterfaceName: "sandstorm.WebSession",

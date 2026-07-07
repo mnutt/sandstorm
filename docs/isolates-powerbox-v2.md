@@ -1209,6 +1209,10 @@ Progress:
 - the private native bridge schema and JS helpers no longer define the removed
   RPC request envelope; WebSocket is now the only native Cap'n Proto RPC
   transport surface, while `/capnp/lifecycle` carries lifecycle requests only
+- the private native bridge schema no longer reserves obsolete direct-call
+  union slots; the checked-in `@mnutt/capnp-es` bridge bindings were
+  regenerated so the lifecycle envelope contains only drop, save, restore, and
+  their responses
 - the public isolate helper module set no longer includes `sandstorm:rpc`,
   `sandstorm:capnweb-source`, or `capnweb`; `sandstorm:api` no longer exports
   `RpcTarget`, `AppRpcTarget`, `api.export()`, `api.withExport()`,

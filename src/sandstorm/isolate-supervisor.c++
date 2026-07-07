@@ -5326,9 +5326,7 @@ private:
         "  \"error\": \"native Cap'n Proto bridge transport is not enabled\",\n"
         "  \"request\": {\n"
         "    \"kind\": "));
-    if (request.isObsoleteCall()) {
-      appendJsonString(json, "obsoleteCall");
-    } else if (request.isDrop()) {
+    if (request.isDrop()) {
       appendJsonString(json, "drop");
     } else if (request.isSave()) {
       appendJsonString(json, "save");
@@ -6100,11 +6098,7 @@ private:
             "unsupported native Cap'n Proto bridge protocol version: ",
             request.getProtocolVersion()), binaryResponse);
       }
-      if (request.isObsoleteCall()) {
-        return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
-            "native Cap'n Proto direct call envelopes are obsolete; use the WebSocket RPC session",
-            binaryResponse);
-      } else if (request.isDrop() && request.hasDrop()) {
+      if (request.isDrop() && request.hasDrop()) {
         auto target = request.getDrop().getTarget();
         if (target.getId().size() == 0) {
           return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
