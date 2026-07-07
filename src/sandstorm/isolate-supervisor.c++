@@ -5096,6 +5096,8 @@ private:
   IsolateRuntimeHost& host;
   bool powerboxOnly;
 
+  class NativeCapnpBridgeController final {
+  private:
   class NativeCapnpBridgeRpcMessageStream final: public capnp::MessageStream {
   public:
     void receive(kj::Array<capnp::word> words) {
@@ -5415,6 +5417,88 @@ private:
     return nullptr;
   }
 
+  public:
+    bool hasRpcSession(kj::StringPtr connectionId) {
+      auto key = nativeCapnpBridgeRpcSessionKey(connectionId);
+      return nativeCapnpBridgeRpcSessions.find(key) != nativeCapnpBridgeRpcSessions.end() ||
+          nativeCapnpBridgeWebSocketRpcSessions.find(key) !=
+              nativeCapnpBridgeWebSocketRpcSessions.end();
+    }
+
+    kj::Maybe<uint64_t> getRpcSessionMessageCount(kj::StringPtr connectionId) {
+      KJ_IF_MAYBE(session, findNativeCapnpBridgeRpcSession(connectionId)) {
+        return session->receivedMessageCount;
+      }
+
+      return nullptr;
+    }
+
+    uint dropRpcSessionsForTarget(kj::StringPtr targetId) {
+      return dropNativeCapnpBridgeRpcSessionsForTarget(targetId);
+    }
+
+    kj::Maybe<kj::String> registerRpcSession(
+        NativeCapnpBridgeRpcMessage::Reader rpc, capnp::Capability::Client targetCap) {
+      return registerNativeCapnpBridgeRpcSession(rpc, kj::mv(targetCap));
+    }
+
+    kj::Promise<kj::Array<byte>> dispatchRpcMessage(
+        NativeCapnpBridgeRpcMessage::Reader rpc, capnp::rpc::Message::Which rpcMessageKind) {
+      KJ_IF_MAYBE(session, findNativeCapnpBridgeRpcSession(rpc.getConnectionId())) {
+        session->stream.receive(copyRpcMessageWords(rpc.getMessage().getMessage()));
+        if (!rpcMessageExpectsResponse(rpcMessageKind)) {
+          return kj::heapArray<byte>(0);
+        }
+
+        return session->stream.takeOutgoingMessage();
+      }
+
+      return KJ_EXCEPTION(FAILED, "native Cap'n Proto bridge RPC session is missing");
+    }
+
+    kj::Promise<void> openWebSocketRpcSession(kj::Own<kj::WebSocket> webSocket,
+        kj::StringPtr connectionId, kj::String targetId, uint64_t interfaceId,
+        kj::String interfaceName, capnp::Capability::Client targetCap) {
+      auto key = nativeCapnpBridgeRpcSessionKey(connectionId);
+      auto inserted = nativeCapnpBridgeWebSocketRpcSessions.emplace(std::move(key),
+          kj::heap<NativeCapnpBridgeWebSocketRpcSession>(
+            kj::mv(webSocket), kj::mv(targetId), interfaceId, kj::mv(interfaceName),
+            kj::mv(targetCap)));
+      KJ_ASSERT(inserted.second);
+
+      auto sessionKey = inserted.first->first;
+      auto& session = *inserted.first->second;
+      return session.network.onDisconnect()
+          .then([this, sessionKey]() mutable {
+        nativeCapnpBridgeWebSocketRpcSessions.erase(sessionKey);
+      }).catch_([this, sessionKey](kj::Exception&& exception) mutable {
+        nativeCapnpBridgeWebSocketRpcSessions.erase(sessionKey);
+        return kj::Promise<void>(kj::mv(exception));
+      });
+    }
+
+  private:
+    kj::Array<capnp::word> copyRpcMessageWords(kj::ArrayPtr<const byte> bytes) {
+      KJ_REQUIRE(bytes.size() % sizeof(capnp::word) == 0,
+          "native Cap'n Proto bridge RPC message is not word-aligned");
+      auto words = kj::heapArray<capnp::word>(bytes.size() / sizeof(capnp::word));
+      memcpy(words.begin(), bytes.begin(), bytes.size());
+      return words;
+    }
+
+    bool rpcMessageExpectsResponse(capnp::rpc::Message::Which which) {
+      switch (which) {
+        case capnp::rpc::Message::BOOTSTRAP:
+        case capnp::rpc::Message::CALL:
+          return true;
+        default:
+          return false;
+      }
+    }
+  };
+
+  NativeCapnpBridgeController nativeCapnpBridge;
+
   kj::Maybe<kj::String> readNativeCapnpRpcSessionParam(
       kj::StringPtr url, kj::StringPtr name, kj::StringPtr errorMessage, kj::String& output) {
     return readSingleNonEmptyQueryParam(url, name, errorMessage, output);
@@ -5465,10 +5549,7 @@ private:
           "native Cap'n Proto RPC session interface id is invalid"));
     }
 
-    auto key = nativeCapnpBridgeRpcSessionKey(connectionId);
-    if (nativeCapnpBridgeRpcSessions.find(key) != nativeCapnpBridgeRpcSessions.end() ||
-        nativeCapnpBridgeWebSocketRpcSessions.find(key) !=
-            nativeCapnpBridgeWebSocketRpcSessions.end()) {
+    if (nativeCapnpBridge.hasRpcSession(connectionId)) {
       return sendJson(response, 409, "Conflict", renderError(
           "native Cap'n Proto RPC session connection id is already in use"));
     }
@@ -5476,21 +5557,8 @@ private:
     KJ_IF_MAYBE(targetCap, host.sessions->findClaimedCapability(targetId)) {
       kj::HttpHeaders responseHeaders(headerTable);
       auto webSocket = response.acceptWebSocket(responseHeaders);
-      auto inserted = nativeCapnpBridgeWebSocketRpcSessions.emplace(std::move(key),
-          kj::heap<NativeCapnpBridgeWebSocketRpcSession>(
-            kj::mv(webSocket), kj::mv(targetId), interfaceId, kj::mv(interfaceName),
-            *targetCap));
-      KJ_ASSERT(inserted.second);
-
-      auto sessionKey = inserted.first->first;
-      auto& session = *inserted.first->second;
-      return session.network.onDisconnect()
-          .then([this, sessionKey]() mutable {
-        nativeCapnpBridgeWebSocketRpcSessions.erase(sessionKey);
-      }).catch_([this, sessionKey](kj::Exception&& exception) mutable {
-        nativeCapnpBridgeWebSocketRpcSessions.erase(sessionKey);
-        return kj::Promise<void>(kj::mv(exception));
-      });
+      return nativeCapnpBridge.openWebSocketRpcSession(kj::mv(webSocket), connectionId,
+          kj::mv(targetId), interfaceId, kj::mv(interfaceName), *targetCap);
     } else {
       return sendJson(response, 404, "Not Found", renderError(
           "unknown native Cap'n Proto bridge target capability"));
@@ -5977,9 +6045,10 @@ private:
       appendNativeCapnpBridgeTargetJson(json, target);
       json.addAll(kj::StringPtr(",\n    "));
       appendJsonField(json, "connectionId", rpc.getConnectionId());
-      KJ_IF_MAYBE(session, findNativeCapnpBridgeRpcSession(rpc.getConnectionId())) {
+      KJ_IF_MAYBE(messageCount, nativeCapnpBridge.getRpcSessionMessageCount(
+          rpc.getConnectionId())) {
         json.addAll(kj::StringPtr(",\n    \"rpcSessionMessageCount\": "));
-        json.addAll(kj::str(session->receivedMessageCount));
+        json.addAll(kj::str(*messageCount));
       }
       json.addAll(kj::StringPtr(",\n    \"messageBytes\": "));
       json.addAll(kj::str(message.getMessage().size()));
@@ -6725,7 +6794,7 @@ private:
       NativeCapnpCapabilitySlot::Reader target, kj::HttpService::Response& response) {
     auto id = kj::heapString(target.getId());
     KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(id)) {
-      auto droppedSessions = dropNativeCapnpBridgeRpcSessionsForTarget(id);
+      auto droppedSessions = nativeCapnpBridge.dropRpcSessionsForTarget(id);
       if (droppedSessions > 0) {
         KJ_LOG(INFO, "Dropped native Cap'n Proto bridge RPC sessions for capability.",
             id, droppedSessions);
@@ -6815,46 +6884,27 @@ private:
     }
   }
 
-  kj::Array<capnp::word> copyNativeCapnpBridgeRpcMessageWords(kj::ArrayPtr<const byte> bytes) {
-    KJ_REQUIRE(bytes.size() % sizeof(capnp::word) == 0,
-        "native Cap'n Proto bridge RPC message is not word-aligned");
-    auto words = kj::heapArray<capnp::word>(bytes.size() / sizeof(capnp::word));
-    memcpy(words.begin(), bytes.begin(), bytes.size());
-    return words;
-  }
-
-  bool nativeCapnpBridgeRpcMessageExpectsResponse(capnp::rpc::Message::Which which) {
-    switch (which) {
-      case capnp::rpc::Message::BOOTSTRAP:
-      case capnp::rpc::Message::CALL:
-        return true;
-      default:
-        return false;
-    }
-  }
-
   kj::Promise<void> dispatchNativeCapnpBridgeRpc(
       NativeCapnpBridgeRpcMessage::Reader rpc, capnp::rpc::Message::Which rpcMessageKind,
       kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(session, findNativeCapnpBridgeRpcSession(rpc.getConnectionId())) {
-      session->stream.receive(copyNativeCapnpBridgeRpcMessageWords(rpc.getMessage().getMessage()));
-      if (!nativeCapnpBridgeRpcMessageExpectsResponse(rpcMessageKind)) {
+    if (!nativeCapnpBridge.hasRpcSession(rpc.getConnectionId())) {
+      return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+          "native Cap'n Proto bridge RPC session is missing", true);
+    }
+
+    return nativeCapnpBridge.dispatchRpcMessage(rpc, rpcMessageKind)
+        .then([this, &response](kj::Array<byte>&& outgoingMessage) mutable {
+      if (outgoingMessage.size() == 0) {
         return sendNativeCapnpBridgeBytes(response, 200, "OK",
             encodeNativeCapnpBridgeResultResponse(kj::ArrayPtr<const byte>()));
       }
 
-      return session->stream.takeOutgoingMessage().then(
-          [this, &response](kj::Array<byte>&& outgoingMessage) mutable {
-        return sendNativeCapnpBridgeBytes(response, 200, "OK",
-            encodeNativeCapnpBridgeResultResponse(outgoingMessage));
-      }).catch_([this, &response](kj::Exception&& exception) mutable {
-        return sendNativeCapnpBridgeException(response, 502, "Bad Gateway", "failed", kj::str(
-            "native Cap'n Proto bridge RPC dispatch failed: ", exception.getDescription()));
-      });
-    } else {
-      return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
-          "native Cap'n Proto bridge RPC session is missing", true);
-    }
+      return sendNativeCapnpBridgeBytes(response, 200, "OK",
+          encodeNativeCapnpBridgeResultResponse(outgoingMessage));
+    }).catch_([this, &response](kj::Exception&& exception) mutable {
+      return sendNativeCapnpBridgeException(response, 502, "Bad Gateway", "failed", kj::str(
+          "native Cap'n Proto bridge RPC dispatch failed: ", exception.getDescription()));
+    });
   }
 
   kj::Promise<void> callNativeCapnpBridge(
@@ -6950,7 +7000,7 @@ private:
                 "invalid native Cap'n Proto bridge RPC message: ", exception.getDescription()),
                 binaryResponse);
           }
-          KJ_IF_MAYBE(error, registerNativeCapnpBridgeRpcSession(rpc, *targetCap)) {
+          KJ_IF_MAYBE(error, nativeCapnpBridge.registerRpcSession(rpc, *targetCap)) {
             return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
                 *error, binaryResponse);
           }
