@@ -91,6 +91,24 @@ _sandstorm_embed_isolate_js(
 _sandstorm_embed_isolate_js(
   "${CMAKE_CURRENT_SOURCE_DIR}/isolate/rpc.js" rpc ISOLATE_RPC_HELPER_SOURCE)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(_capnp_es_runtime_header
+  "${CMAKE_BINARY_DIR}/generated/sandstorm/isolate/capnp-es.js.h")
+add_custom_command(
+  OUTPUT "${_capnp_es_runtime_header}"
+  COMMAND "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/cmake/EmbedCapnpEsRuntime.py"
+    "${_capnp_es_runtime_header}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/isolate/capnp-es/runtime-modules.txt"
+    "${CMAKE_BINARY_DIR}/capnp-es-npm/node_modules/@mnutt/capnp-es/dist"
+  DEPENDS
+    "${CMAKE_BINARY_DIR}/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/isolate/capnp-es/runtime-modules.txt"
+    "${PROJECT_SOURCE_DIR}/cmake/EmbedCapnpEsRuntime.py"
+  COMMENT "Embedding the capnp-es isolate runtime"
+  VERBATIM)
+list(APPEND _isolate_generated_headers "${_capnp_es_runtime_header}")
+
 add_library(sandstorm_schemas STATIC
   ${_sandstorm_schema_sources}
   ${_sandstorm_schema_headers})

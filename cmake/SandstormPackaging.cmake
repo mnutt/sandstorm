@@ -15,22 +15,26 @@ function(sandstorm_add_packaging_targets)
   else()
     set(_capnp_es_compiler "${_capnp_es_npm_compiler}")
     set(_capnp_es_compiler_deps "${_capnp_es_npm_compiler}")
-    add_custom_command(
-      OUTPUT "${_capnp_es_npm_compiler}"
+  endif()
+  add_custom_command(
+    OUTPUT "${_capnp_es_npm_compiler}"
       COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_capnp_es_work_dir}"
       COMMAND "${CMAKE_COMMAND}" -E make_directory "${_capnp_es_work_dir}"
       COMMAND "${CMAKE_COMMAND}" -E copy
-        "${_capnp_es_package_dir}/package.json" "${_capnp_es_work_dir}/package.json"
+        "${_capnp_es_package_dir}/package.json"
+        "${_capnp_es_package_dir}/package-lock.json"
+        "${_capnp_es_work_dir}"
       COMMAND "${CMAKE_COMMAND}" -E env
         "PATH=${SANDSTORM_METEOR_DEV_BUNDLE}/bin:$ENV{PATH}"
-        "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/npm" install
-          --no-fund --no-save --prefix "${_capnp_es_work_dir}"
+        "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/npm" ci
+          --no-fund --prefix "${_capnp_es_work_dir}"
       COMMAND "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node" -e
         "const v=require('${_capnp_es_work_dir}/node_modules/@mnutt/capnp-es/package.json').version;if(v!=='${SANDSTORM_CAPNP_ES_NPM_VERSION}')process.exit(1)"
-      DEPENDS "${_capnp_es_package_dir}/package.json"
+      DEPENDS
+        "${_capnp_es_package_dir}/package.json"
+        "${_capnp_es_package_dir}/package-lock.json"
       COMMENT "Installing the capnp-es compiler from npm"
-      VERBATIM)
-  endif()
+    VERBATIM)
 
   function(_sandstorm_add_isolate_test_package target capnp_file key_file asset_dir)
     set(_source "${PROJECT_SOURCE_DIR}/src/sandstorm/test-app")

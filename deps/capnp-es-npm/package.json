@@ -1,6 +1,7 @@
 {
   "private": true,
   "dependencies": {
-    "@mnutt/capnp-es": "0.2.2"
+    "@mnutt/capnp-es": "0.2.2",
+    "typescript": "5.9.3"
   }
 }

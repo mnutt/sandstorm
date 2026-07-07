@@ -1200,10 +1200,10 @@ Progress:
   under `deps/capnp-es-npm` instead of Matthew's adjacent personal checkout;
   `CAPNP_ES_COMPILER_MODULE` remains an override for local runtime/compiler
   development
-- the browser/workerd runtime subset is still checked in under
-  `src/sandstorm/isolate/capnp-es` because Ekam currently embeds those source
-  files into `capnp-es.js.h`; removing that snapshot requires a separate build
-  boundary change so Ekam can consume npm-installed runtime files directly
+- the browser/workerd runtime subset is no longer checked in as copied
+  `@mnutt/capnp-es` chunk files; Ekam now embeds `capnp-es.js.h` from the
+  pinned npm install under `tmp/capnp-es-npm`, with a small tracked runtime
+  entrypoint manifest and a package lock for reproducible installs
 - native bridge cleanup has started inside `isolate-supervisor.c++`: an unused
   duplicate native export RPC session cache was removed, and native bridge RPC
   session maps, message-stream mutation, WebSocket lifetime cleanup, and
