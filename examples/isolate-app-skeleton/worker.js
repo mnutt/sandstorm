@@ -1,30 +1,22 @@
-import { AppRpcTarget, sandstorm, validate } from "sandstorm:api";
+import { sandstorm } from "sandstorm:api";
 import { renderSkeletonPage } from "./ui.js";
 
-class AppApi extends AppRpcTarget {
-  hello(name = "there") {
-    name = validate.optional(name, "there", validate.string, "name", {
-      maxLength: 80,
-    });
-    const session = this.api.session();
-    return {
-      greeting: `Hello, ${name}!`,
-      user: session.user.displayName || "anonymous user",
-      permissions: session.permissions,
-    };
-  }
+function hello(api, name) {
+  const session = api.session();
+  const safeName = String(name || "there").slice(0, 80);
+  return {
+    greeting: `Hello, ${safeName}!`,
+    user: session.user.displayName || "anonymous user",
+    permissions: session.permissions,
+  };
+}
 
-  session() {
-    return this.api.session();
-  }
-
-  async increment() {
-    const store = this.api.storage();
-    const current = Number(await store.get("skeleton-counter") || "0");
-    const next = current + 1;
-    await store.put("skeleton-counter", String(next));
-    return { value: next };
-  }
+async function increment(api) {
+  const store = api.storage();
+  const current = Number(await store.get("skeleton-counter") || "0");
+  const next = current + 1;
+  await store.put("skeleton-counter", String(next));
+  return { value: next };
 }
 
 export default {
@@ -35,8 +27,17 @@ export default {
     const systemRoute = await api.serveSystemRoutes();
     if (systemRoute) return systemRoute;
 
-    const rpcRoute = api.serveRpc(() => new AppApi(request, env));
-    if (rpcRoute) return rpcRoute;
+    if (url.pathname === "/hello") {
+      return Response.json(hello(api, url.searchParams.get("name")));
+    }
+
+    if (url.pathname === "/session") {
+      return Response.json(api.session());
+    }
+
+    if (request.method === "POST" && url.pathname === "/increment") {
+      return Response.json(await increment(api));
+    }
 
     if (url.pathname === "/health") {
       const session = api.session();

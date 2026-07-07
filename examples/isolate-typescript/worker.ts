@@ -1,25 +1,19 @@
 /// <reference path="./sandstorm-isolate.d.ts" />
 
-import { AppRpcTarget, sandstorm, validate } from "sandstorm:api";
-import type { SandstormEnv, SessionInfo } from "sandstorm:api";
+import { sandstorm, validate } from "sandstorm:api";
+import type { SandstormApi, SandstormEnv, SessionInfo } from "sandstorm:api";
 
 interface Env extends SandstormEnv {
   STORAGE: SandstormEnv["STORAGE"];
 }
 
-class DemoApi extends AppRpcTarget<Env> {
-  session(): SessionInfo {
-    return this.api.session();
-  }
-
-  async increment(step: number = 1): Promise<{ value: number }> {
-    const amount = validate.integer(step, "step", { min: 1, max: 100 });
-    const store = this.api.storage();
-    const current = Number(await store.get("typescript-counter") || "0");
-    const value = current + amount;
-    await store.put("typescript-counter", String(value));
-    return { value };
-  }
+async function increment(api: SandstormApi, step: number = 1): Promise<{ value: number }> {
+  const amount = validate.integer(step, "step", { min: 1, max: 100 });
+  const store = api.storage();
+  const current = Number(await store.get("typescript-counter") || "0");
+  const value = current + amount;
+  await store.put("typescript-counter", String(value));
+  return { value };
 }
 
 function html(): string {
@@ -67,9 +61,15 @@ function html(): string {
       <pre id="output">Ready.</pre>
     </main>
     <script type="module">
-      import { newSandstormRpcSession } from "./rpc-client.js";
-
       const output = document.querySelector("#output");
+
+      async function jsonFetch(url, options) {
+        const response = await fetch(url, options);
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        return response.json();
+      }
 
       async function run(callback) {
         output.textContent = "calling...";
@@ -82,13 +82,11 @@ function html(): string {
       }
 
       document.querySelector("#session").addEventListener("click", () => run(async () => {
-        using rpc = newSandstormRpcSession();
-        return await rpc.session();
+        return jsonFetch("/session");
       }));
 
       document.querySelector("#increment").addEventListener("click", () => run(async () => {
-        using rpc = newSandstormRpcSession();
-        return await rpc.increment(1);
+        return jsonFetch("/increment?step=1", { method: "POST" });
       }));
     </script>
   </body>
@@ -101,8 +99,15 @@ export default {
     const systemRoute = await api.serveSystemRoutes();
     if (systemRoute) return systemRoute;
 
-    const rpcRoute = api.serveRpc(() => new DemoApi(request, env));
-    if (rpcRoute) return rpcRoute;
+    const url = new URL(request.url);
+    if (url.pathname === "/session") {
+      const session: SessionInfo = api.session();
+      return Response.json(session);
+    }
+
+    if (request.method === "POST" && url.pathname === "/increment") {
+      return Response.json(await increment(api, Number(url.searchParams.get("step") || "1")));
+    }
 
     return new Response(html(), {
       headers: { "content-type": "text/html; charset=utf-8" },

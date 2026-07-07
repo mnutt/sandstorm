@@ -9,13 +9,13 @@ spk dev-isolate --title "Isolate App Skeleton" examples/isolate-app-skeleton/wor
 This example is the current recommended structure for an isolate app that wants
 normal page routes plus Sandstorm helpers:
 
-1. Import `sandstorm`, `AppRpcTarget`, and `validate` from `sandstorm:api`.
+1. Import `sandstorm` from `sandstorm:api`.
 2. Create `const api = sandstorm(request, env)` at the top of `fetch()`.
 3. Serve conventional Sandstorm helper routes first with
    `api.serveSystemRoutes()`.
-4. Serve Cap'n Web RPC routes with
-   `api.serveRpc(...)`.
-5. Handle normal app routes.
+4. Handle normal app routes.
 
-The example exposes a small RPC API at `/rpc`, serves the browser client at
-`/rpc-client.js`, reads Sandstorm session metadata, and uses isolate storage.
+The example exposes small fetch endpoints for session metadata and storage,
+then renders a browser UI that calls those endpoints with ordinary `fetch()`.
+Public cross-grain protocols should use schema-first `capnp:` imports; this
+example is intentionally just a minimal HTTP-shaped app skeleton.

@@ -2,7 +2,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild worker.ts --bundle --format=esm --platform=browser --target=es2022 --external:sandstorm:api --external:sandstorm:rpc --external:capnweb --banner:js=\"// Generated from worker.ts with npm run build.\" --outfile=worker.js",
+    "build": "esbuild worker.ts --bundle --format=esm --platform=browser --target=es2022 --external:sandstorm:api --banner:js=\"// Generated from worker.ts with npm run build.\" --outfile=worker.js",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

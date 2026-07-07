@@ -54,7 +54,7 @@ export function renderSkeletonPage() {
       <h1>Isolate App Skeleton</h1>
       <p>
         A small Worker app with page routes, Sandstorm session metadata,
-        storage, and a Cap'n Web RPC endpoint.
+        storage, and conventional fetch endpoints.
       </p>
 
       <div class="controls">
@@ -69,8 +69,6 @@ export function renderSkeletonPage() {
     </main>
 
     <script type="module">
-      import { newSandstormRpcSession } from "./rpc-client.js";
-
       const output = document.querySelector("#output");
       const name = document.querySelector("#name");
 
@@ -87,24 +85,28 @@ export function renderSkeletonPage() {
         }
       }
 
+      async function jsonFetch(url, options) {
+        const response = await fetch(url, options);
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        return response.json();
+      }
+
       document.querySelector("#hello").addEventListener("click", () => run(async () => {
-        using rpc = newSandstormRpcSession();
-        return await rpc.hello(name.value);
+        return jsonFetch("/hello?name=" + encodeURIComponent(name.value));
       }));
 
       document.querySelector("#session").addEventListener("click", () => run(async () => {
-        using rpc = newSandstormRpcSession();
-        return await rpc.session();
+        return jsonFetch("/session");
       }));
 
       document.querySelector("#increment").addEventListener("click", () => run(async () => {
-        using rpc = newSandstormRpcSession();
-        return await rpc.increment();
+        return jsonFetch("/increment", { method: "POST" });
       }));
 
       document.querySelector("#health").addEventListener("click", () => run(async () => {
-        const response = await fetch("/health");
-        return response.json();
+        return jsonFetch("/health");
       }));
     </script>
   </body>
