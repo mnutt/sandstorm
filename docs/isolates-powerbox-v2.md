@@ -1015,7 +1015,9 @@ Progress:
 - the isolate test app now exposes an ad hoc
   `/native-capnp-performance-benchmark` route comparing generic JavaScript
   object RPC against native `capnp-es` generated clients in the same
-  supervisor. It reports direct in-memory calls, live exported calls,
+  supervisor. Generic JavaScript object RPC is reported both with the
+  same-isolate shortcut and with an explicit supervisor-routed transport so
+  local dispatch savings are visible separately. It reports direct in-memory calls, live exported calls,
   restore-once/live-handle reuse, restore-per-call, concurrent outstanding
   calls, capability results, capability arguments, generated `WebSession`
   calls, typed stream-capability return, and fetch data-plane throughput. The

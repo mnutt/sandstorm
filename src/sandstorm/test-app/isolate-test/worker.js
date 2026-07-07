@@ -1205,7 +1205,13 @@ export default {
         cleanup.push(() => jsCapability.drop());
         savedTokens.push(jsDurableExport.token);
         const jsRpc = jsCapability.rpc;
+        const jsRpcViaSupervisor = createCapabilityNativeAppRpcStub(jsCapability, {
+          fetcher: env.SANDSTORM_API,
+          route: (slot) =>
+            `http://sandstorm/powerbox/native-app-rpc-call?id=${encodeURIComponent(slot.id)}`,
+        }).rpc;
         await jsRpc.hello({ name: "warmup" });
+        await jsRpcViaSupervisor.hello({ name: "warmup" });
 
         const nativeCapability = await exportNativeCapnp(api, NativeGreeter, nativeTarget, {
           interfaceName: "NativeGreeter",
@@ -1220,7 +1226,15 @@ export default {
         const jsRestoredCapability = await api.restore(jsSavedToken);
         cleanup.push(() => jsRestoredCapability.drop());
         const jsRestoredRpc = jsRestoredCapability.rpc;
+        const jsRestoredRpcViaSupervisor = createCapabilityNativeAppRpcStub(
+          jsRestoredCapability,
+          {
+            fetcher: env.SANDSTORM_API,
+            route: (slot) =>
+              `http://sandstorm/powerbox/native-app-rpc-call?id=${encodeURIComponent(slot.id)}`,
+          }).rpc;
         await jsRestoredRpc.hello({ name: "warmup" });
+        await jsRestoredRpcViaSupervisor.hello({ name: "warmup" });
 
         const nativeSavedToken = await nativeClient.save({
           label: "Native capnp benchmark greeter",
@@ -1267,11 +1281,17 @@ export default {
             }),
           },
           liveExported: {
-            genericJs: await benchmarkTimedRounds({
+            genericJsLocal: await benchmarkTimedRounds({
               calls: iterations,
               rounds,
               warmupCalls: warmup,
               fn: (i) => jsRpc.hello({ name: `live-${i}` }),
+            }),
+            genericJsViaSupervisor: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: (i) => jsRpcViaSupervisor.hello({ name: `live-supervisor-${i}` }),
             }),
             nativeCapnpEs: await benchmarkTimedRounds({
               calls: iterations,
@@ -1281,11 +1301,19 @@ export default {
             }),
           },
           restoredLive: {
-            genericJs: await benchmarkTimedRounds({
+            genericJsLocal: await benchmarkTimedRounds({
               calls: iterations,
               rounds,
               warmupCalls: warmup,
               fn: (i) => jsRestoredRpc.hello({ name: `restored-${i}` }),
+            }),
+            genericJsViaSupervisor: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: (i) => jsRestoredRpcViaSupervisor.hello({
+                name: `restored-supervisor-${i}`,
+              }),
             }),
             nativeCapnpEs: await benchmarkTimedRounds({
               calls: iterations,
@@ -1295,7 +1323,7 @@ export default {
             }),
           },
           restorePerCall: {
-            genericJs: await benchmarkTimedRounds({
+            genericJsLocal: await benchmarkTimedRounds({
               calls: restoreIterations,
               rounds,
               warmupCalls: restoreWarmup,
@@ -1303,6 +1331,25 @@ export default {
                 const restored = await api.restore(jsSavedToken);
                 try {
                   return await restored.rpc.hello({ name: `restore-each-${i}` });
+                } finally {
+                  await restored.drop();
+                }
+              },
+            }),
+            genericJsViaSupervisor: await benchmarkTimedRounds({
+              calls: restoreIterations,
+              rounds,
+              warmupCalls: restoreWarmup,
+              fn: async (i) => {
+                const restored = await api.restore(jsSavedToken);
+                try {
+                  const restoredRpc = createCapabilityNativeAppRpcStub(restored, {
+                    fetcher: env.SANDSTORM_API,
+                    route: (slot) =>
+                      `http://sandstorm/powerbox/native-app-rpc-call?id=${
+                        encodeURIComponent(slot.id)}`,
+                  }).rpc;
+                  return await restoredRpc.hello({ name: `restore-each-supervisor-${i}` });
                 } finally {
                   await restored.drop();
                 }
@@ -1331,12 +1378,19 @@ export default {
             }),
           },
           concurrentOutstanding: {
-            genericJs: await benchmarkConcurrentRounds({
+            genericJsLocal: await benchmarkConcurrentRounds({
               batches: concurrentBatches,
               rounds,
               concurrency,
               warmupBatches,
               fn: (i) => jsRpc.hello({ name: `concurrent-${i}` }),
+            }),
+            genericJsViaSupervisor: await benchmarkConcurrentRounds({
+              batches: concurrentBatches,
+              rounds,
+              concurrency,
+              warmupBatches,
+              fn: (i) => jsRpcViaSupervisor.hello({ name: `concurrent-supervisor-${i}` }),
             }),
             nativeCapnpEs: await benchmarkConcurrentRounds({
               batches: concurrentBatches,
@@ -1347,7 +1401,7 @@ export default {
             }),
           },
           capabilityResult: {
-            genericJs: await benchmarkTimedRounds({
+            genericJsLocal: await benchmarkTimedRounds({
               calls: iterations,
               rounds,
               warmupCalls: warmup,
@@ -1355,6 +1409,26 @@ export default {
                 const child = await jsRpc.makeGreeter({ prefix: "generic js child" });
                 try {
                   return await child.rpc.hello({ name: `child-${i}` });
+                } finally {
+                  await child.drop();
+                }
+              },
+            }),
+            genericJsViaSupervisor: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: async (i) => {
+                const child =
+                    await jsRpcViaSupervisor.makeGreeter({ prefix: "generic js child" });
+                try {
+                  const childViaSupervisor = createCapabilityNativeAppRpcStub(child, {
+                    fetcher: env.SANDSTORM_API,
+                    route: (slot) =>
+                      `http://sandstorm/powerbox/native-app-rpc-call?id=${
+                        encodeURIComponent(slot.id)}`,
+                  }).rpc;
+                  return await childViaSupervisor.hello({ name: `child-supervisor-${i}` });
                 } finally {
                   await child.drop();
                 }
@@ -1377,7 +1451,7 @@ export default {
             }),
           },
           capabilityArgument: {
-            genericJs: await benchmarkTimedRounds({
+            genericJsLocal: await benchmarkTimedRounds({
               calls: iterations,
               rounds,
               warmupCalls: warmup,
@@ -1385,6 +1459,22 @@ export default {
                 const child = await jsRpc.makeGreeter({ prefix: "generic js argument" });
                 try {
                   return await jsRpc.greetWith(child, { name: `argument-${i}` });
+                } finally {
+                  await child.drop();
+                }
+              },
+            }),
+            genericJsViaSupervisor: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: async (i) => {
+                const child =
+                    await jsRpcViaSupervisor.makeGreeter({ prefix: "generic js argument" });
+                try {
+                  return await jsRpcViaSupervisor.greetWith(child, {
+                    name: `argument-supervisor-${i}`,
+                  });
                 } finally {
                   await child.drop();
                 }
