@@ -88,6 +88,16 @@ function benchmarkInteger(searchParams, name, defaultValue, maxValue) {
   return Math.min(Math.floor(value), maxValue);
 }
 
+function benchmarkIntegerList(searchParams, name, defaultValues, maxValue) {
+  const raw = searchParams.get(name);
+  const values = raw ? raw.split(",") : defaultValues;
+  return Array.from(new Set(values.map((value) => {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 1) return null;
+    return Math.min(Math.floor(number), maxValue);
+  }).filter((value) => value !== null)));
+}
+
 function benchmarkNow() {
   return performance.now();
 }
@@ -116,6 +126,128 @@ function benchmarkLast(value) {
   }
 
   return { type: Object.prototype.toString.call(value) };
+}
+
+function benchmarkPercentile(sorted, percentile) {
+  if (sorted.length === 0) return 0;
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((percentile / 100) * sorted.length) - 1));
+  return sorted[index];
+}
+
+function benchmarkDistribution(values) {
+  if (values.length === 0) {
+    return {
+      min: 0,
+      median: 0,
+      p90: 0,
+      p99: 0,
+      max: 0,
+      stddev: 0,
+    };
+  }
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => {
+    const delta = value - mean;
+    return sum + (delta * delta);
+  }, 0) / values.length;
+  return {
+    min: sorted[0],
+    median: benchmarkPercentile(sorted, 50),
+    p90: benchmarkPercentile(sorted, 90),
+    p99: benchmarkPercentile(sorted, 99),
+    max: sorted[sorted.length - 1],
+    stddev: Math.sqrt(variance),
+  };
+}
+
+async function benchmarkTimedRounds({ calls, rounds, warmupCalls = 0, fn }) {
+  for (let i = 0; i < warmupCalls; ++i) {
+    await fn(-i - 1);
+  }
+
+  const roundCalls = Math.max(1, Math.floor(calls / rounds));
+  const actualRounds = Math.max(1, Math.floor(calls / roundCalls));
+  const roundMs = [];
+  const perCallMs = [];
+  const start = benchmarkNow();
+  let last = null;
+  let callIndex = 0;
+  for (let round = 0; round < actualRounds; ++round) {
+    const roundStart = benchmarkNow();
+    for (let i = 0; i < roundCalls; ++i) {
+      last = await fn(callIndex++);
+    }
+    const elapsed = benchmarkNow() - roundStart;
+    roundMs.push(elapsed);
+    perCallMs.push(elapsed / roundCalls);
+  }
+
+  const totalMs = benchmarkNow() - start;
+  const actualCalls = actualRounds * roundCalls;
+  return {
+    calls: actualCalls,
+    warmupCalls,
+    rounds: actualRounds,
+    callsPerRound: roundCalls,
+    totalMs,
+    avgMs: actualCalls === 0 ? 0 : totalMs / actualCalls,
+    perCallMs: benchmarkDistribution(perCallMs),
+    roundMs: benchmarkDistribution(roundMs),
+    last: benchmarkLast(last),
+  };
+}
+
+async function benchmarkConcurrentRounds({
+  batches,
+  rounds,
+  concurrency,
+  warmupBatches = 0,
+  fn,
+}) {
+  for (let batch = 0; batch < warmupBatches; ++batch) {
+    await Promise.all(Array.from(
+      { length: concurrency },
+      (_, index) => fn(-((batch * concurrency) + index) - 1)));
+  }
+
+  const roundBatches = Math.max(1, Math.floor(batches / rounds));
+  const actualRounds = Math.max(1, Math.floor(batches / roundBatches));
+  const roundMs = [];
+  const perCallMs = [];
+  const start = benchmarkNow();
+  let last = null;
+  let callIndex = 0;
+  for (let round = 0; round < actualRounds; ++round) {
+    const roundStart = benchmarkNow();
+    for (let batch = 0; batch < roundBatches; ++batch) {
+      const results = await Promise.all(Array.from(
+        { length: concurrency },
+        () => fn(callIndex++)));
+      last = results[results.length - 1];
+    }
+    const elapsed = benchmarkNow() - roundStart;
+    roundMs.push(elapsed);
+    perCallMs.push(elapsed / (roundBatches * concurrency));
+  }
+
+  const totalMs = benchmarkNow() - start;
+  const calls = actualRounds * roundBatches * concurrency;
+  return {
+    calls,
+    warmupCalls: warmupBatches * concurrency,
+    rounds: actualRounds,
+    batchesPerRound: roundBatches,
+    concurrency,
+    totalMs,
+    avgMs: calls === 0 ? 0 : totalMs / calls,
+    perCallMs: benchmarkDistribution(perCallMs),
+    roundMs: benchmarkDistribution(roundMs),
+    last: benchmarkLast(last),
+  };
 }
 
 async function benchmarkSequential(calls, fn) {
@@ -987,13 +1119,23 @@ export default {
     }
 
     if (url.pathname === "/native-capnp-performance-benchmark") {
-      const iterations = benchmarkInteger(url.searchParams, "iterations", 25, 500);
+      const iterations = benchmarkInteger(url.searchParams, "iterations", 25, 20000);
+      const warmup = benchmarkInteger(url.searchParams, "warmup", 10, 5000);
+      const rounds = benchmarkInteger(url.searchParams, "rounds", 5, 50);
       const concurrency = benchmarkInteger(url.searchParams, "concurrency", 8, 64);
       const concurrentBatches = benchmarkInteger(
-        url.searchParams, "batches", Math.max(1, Math.ceil(iterations / concurrency)), 200);
-      const restoreIterations = benchmarkInteger(url.searchParams, "restoreIterations", 3, 50);
-      const dataPlaneBytes = benchmarkInteger(
-        url.searchParams, "bytes", 128 * 1024, 8 * 1024 * 1024);
+        url.searchParams, "batches", Math.max(1, Math.ceil(iterations / concurrency)), 5000);
+      const warmupBatches = benchmarkInteger(
+        url.searchParams, "warmupBatches", Math.max(1, Math.ceil(warmup / concurrency)), 1000);
+      const restoreIterations = benchmarkInteger(url.searchParams, "restoreIterations", 3, 2000);
+      const restoreWarmup = benchmarkInteger(url.searchParams, "restoreWarmup", 1, 100);
+      const payloadRounds = benchmarkInteger(url.searchParams, "payloadRounds", 3, 20);
+      const payloadWarmup = benchmarkInteger(url.searchParams, "payloadWarmup", 1, 5);
+      const dataPlaneByteSizes = benchmarkIntegerList(
+        url.searchParams,
+        "bytes",
+        [128 * 1024, 1024 * 1024, 8 * 1024 * 1024],
+        MAX_TEST_DOWNLOAD_BYTES);
       const cleanup = [];
       const savedTokens = [];
 
@@ -1111,170 +1253,275 @@ export default {
 
         const metrics = {
           direct: {
-            genericJs: await benchmarkSequential(iterations, (i) =>
-              jsDirectTarget.hello({ name: `direct-${i}` })),
-            nativeCapnpEs: await benchmarkSequential(iterations, (i) =>
-              nativeDirectClient.hello({ name: `direct-${i}` })),
+            genericJs: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: (i) => jsDirectTarget.hello({ name: `direct-${i}` }),
+            }),
+            nativeCapnpEs: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: (i) => nativeDirectClient.hello({ name: `direct-${i}` }),
+            }),
           },
           liveExported: {
-            genericJs: await benchmarkSequential(iterations, (i) =>
-              jsRpc.hello({ name: `live-${i}` })),
-            nativeCapnpEs: await benchmarkSequential(iterations, (i) =>
-              nativeClient.hello({ name: `live-${i}` })),
+            genericJs: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: (i) => jsRpc.hello({ name: `live-${i}` }),
+            }),
+            nativeCapnpEs: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: (i) => nativeClient.hello({ name: `live-${i}` }),
+            }),
           },
           restoredLive: {
-            genericJs: await benchmarkSequential(iterations, (i) =>
-              jsRestoredRpc.hello({ name: `restored-${i}` })),
-            nativeCapnpEs: await benchmarkSequential(iterations, (i) =>
-              nativeRestoredClient.hello({ name: `restored-${i}` })),
+            genericJs: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: (i) => jsRestoredRpc.hello({ name: `restored-${i}` }),
+            }),
+            nativeCapnpEs: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: (i) => nativeRestoredClient.hello({ name: `restored-${i}` }),
+            }),
           },
           restorePerCall: {
-            genericJs: await benchmarkSequential(restoreIterations, async (i) => {
-              const restored = await api.restore(jsSavedToken);
-              try {
-                return await restored.rpc.hello({ name: `restore-each-${i}` });
-              } finally {
-                await restored.drop();
-              }
+            genericJs: await benchmarkTimedRounds({
+              calls: restoreIterations,
+              rounds,
+              warmupCalls: restoreWarmup,
+              fn: async (i) => {
+                const restored = await api.restore(jsSavedToken);
+                try {
+                  return await restored.rpc.hello({ name: `restore-each-${i}` });
+                } finally {
+                  await restored.drop();
+                }
+              },
             }),
-            nativeCapnpEs: await benchmarkSequential(restoreIterations, async (i) => {
-              const restored = await restoreNativeCapnp(
-                api,
-                nativeSavedToken,
-                NativeGreeter,
-                {
-                  connectionId: `native-capnp-benchmark-restore-each-${i}-${nativeCapability.id}`,
-                  interfaceName: "NativeGreeter",
-                });
-              try {
-                return await restored.hello({ name: `restore-each-${i}` });
-              } finally {
-                await restored.drop();
-              }
+            nativeCapnpEs: await benchmarkTimedRounds({
+              calls: restoreIterations,
+              rounds,
+              warmupCalls: restoreWarmup,
+              fn: async (i) => {
+                const restored = await restoreNativeCapnp(
+                  api,
+                  nativeSavedToken,
+                  NativeGreeter,
+                  {
+                    connectionId:
+                      `native-capnp-benchmark-restore-each-${i}-${nativeCapability.id}`,
+                    interfaceName: "NativeGreeter",
+                  });
+                try {
+                  return await restored.hello({ name: `restore-each-${i}` });
+                } finally {
+                  await restored.drop();
+                }
+              },
             }),
           },
           concurrentOutstanding: {
-            genericJs: await benchmarkConcurrent(concurrentBatches, concurrency, (i) =>
-              jsRpc.hello({ name: `concurrent-${i}` })),
-            nativeCapnpEs: await benchmarkConcurrent(concurrentBatches, concurrency, (i) =>
-              nativeClient.hello({ name: `concurrent-${i}` })),
+            genericJs: await benchmarkConcurrentRounds({
+              batches: concurrentBatches,
+              rounds,
+              concurrency,
+              warmupBatches,
+              fn: (i) => jsRpc.hello({ name: `concurrent-${i}` }),
+            }),
+            nativeCapnpEs: await benchmarkConcurrentRounds({
+              batches: concurrentBatches,
+              rounds,
+              concurrency,
+              warmupBatches,
+              fn: (i) => nativeClient.hello({ name: `concurrent-${i}` }),
+            }),
           },
           capabilityResult: {
-            genericJs: await benchmarkSequential(iterations, async (i) => {
-              const child = await jsRpc.makeGreeter({ prefix: "generic js child" });
-              try {
-                return await child.rpc.hello({ name: `child-${i}` });
-              } finally {
-                await child.drop();
-              }
-            }),
-            nativeCapnpEs: await benchmarkSequential(iterations, async (i) => {
-              const child = await nativeClient.makeGreeter({ prefix: "native capnp child" });
-              try {
-                return await child.greeter.hello({ name: `child-${i}` });
-              } finally {
-                if (typeof child.greeter.drop === "function") {
-                  await child.greeter.drop();
+            genericJs: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: async (i) => {
+                const child = await jsRpc.makeGreeter({ prefix: "generic js child" });
+                try {
+                  return await child.rpc.hello({ name: `child-${i}` });
+                } finally {
+                  await child.drop();
                 }
-              }
+              },
+            }),
+            nativeCapnpEs: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: async (i) => {
+                const child = await nativeClient.makeGreeter({ prefix: "native capnp child" });
+                try {
+                  return await child.greeter.hello({ name: `child-${i}` });
+                } finally {
+                  if (typeof child.greeter.drop === "function") {
+                    await child.greeter.drop();
+                  }
+                }
+              },
             }),
           },
           capabilityArgument: {
-            genericJs: await benchmarkSequential(iterations, async (i) => {
-              const child = await jsRpc.makeGreeter({ prefix: "generic js argument" });
-              try {
-                return await jsRpc.greetWith(child, { name: `argument-${i}` });
-              } finally {
-                await child.drop();
-              }
-            }),
-            nativeCapnpEs: await benchmarkSequential(iterations, async (i) => {
-              const child = await nativeClient.makeGreeter({ prefix: "native capnp argument" });
-              try {
-                return await nativeClient.greetWith({
-                  greeter: child.greeter,
-                  name: `argument-${i}`,
-                });
-              } finally {
-                if (typeof child.greeter.drop === "function") {
-                  await child.greeter.drop();
+            genericJs: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: async (i) => {
+                const child = await jsRpc.makeGreeter({ prefix: "generic js argument" });
+                try {
+                  return await jsRpc.greetWith(child, { name: `argument-${i}` });
+                } finally {
+                  await child.drop();
                 }
-              }
+              },
+            }),
+            nativeCapnpEs: await benchmarkTimedRounds({
+              calls: iterations,
+              rounds,
+              warmupCalls: warmup,
+              fn: async (i) => {
+                const child = await nativeClient.makeGreeter({ prefix: "native capnp argument" });
+                try {
+                  return await nativeClient.greetWith({
+                    greeter: child.greeter,
+                    name: `argument-${i}`,
+                  });
+                } finally {
+                  if (typeof child.greeter.drop === "function") {
+                    await child.greeter.drop();
+                  }
+                }
+              },
             }),
           },
         };
 
-        const webSessionGetStart = benchmarkNow();
         let webSessionGetLast = null;
-        for (let i = 0; i < iterations; ++i) {
-          webSessionGetLast = await generatedWebSession.get({
-            path: "/generated-client",
-            context: {},
-            ignoreBody: false,
-          });
-        }
-        const webSessionGet = benchmarkSummary(webSessionGetStart, iterations);
+        const webSessionGet = await benchmarkTimedRounds({
+          calls: iterations,
+          rounds,
+          warmupCalls: warmup,
+          fn: async () => {
+            webSessionGetLast = await generatedWebSession.get({
+              path: "/generated-client",
+              context: {},
+              ignoreBody: false,
+            });
+            return webSessionGetLast;
+          },
+        });
         const webSessionGetContent = webSessionGetLast?._isContent ?
           webSessionGetLast.content : null;
         metrics.nativeWebSessionGet = {
-          calls: webSessionGet.calls,
-          totalMs: webSessionGet.totalMs,
-          avgMs: webSessionGet.avgMs,
+          ...webSessionGet,
           lastWhich: typeof webSessionGetLast?.which === "function" ?
             webSessionGetLast.which() : null,
           lastStatusCode: webSessionGetContent?.statusCode ?? null,
           lastBodyWhich: typeof webSessionGetContent?.body?.which === "function" ?
             webSessionGetContent.body.which() : null,
         };
+        delete metrics.nativeWebSessionGet.last;
 
-        const streamStart = benchmarkNow();
-        const streamResponse = await generatedWebSession.get({
-          path: "/generated-client-stream",
-          context: {},
-          ignoreBody: false,
+        const streamResult = await benchmarkTimedRounds({
+          calls: Math.min(iterations, 100),
+          rounds: Math.min(rounds, 10),
+          warmupCalls: Math.min(warmup, 10),
+          fn: async () => {
+            const streamResponse = await generatedWebSession.get({
+              path: "/generated-client-stream",
+              context: {},
+              ignoreBody: false,
+            });
+            const streamBody = streamResponse.content.body;
+            await streamBody.stream.ping();
+            return {
+              message: `${streamResponse.content.statusCode}:${streamBody.which()}:` +
+                `${typeof streamBody.stream.ping === "function"}`,
+            };
+          },
         });
-        const streamBody = streamResponse.content.body;
-        await streamBody.stream.ping();
-        const streamMs = benchmarkNow() - streamStart;
 
-        const fetchStart = benchmarkNow();
-        const fetchResponse = await routeBackedWebSession.fetch(`/download?bytes=${dataPlaneBytes}`);
-        const fetchBody = new Uint8Array(await fetchResponse.arrayBuffer());
-        const fetchMs = benchmarkNow() - fetchStart;
-        metrics.fetchDataPlane = {
-          bytes: fetchBody.byteLength,
-          checksum: checksum(fetchBody),
-          status: fetchResponse.status,
-          totalMs: fetchMs,
-          mibPerSecond: fetchMs === 0 ? null :
-            (fetchBody.byteLength / (1024 * 1024)) / (fetchMs / 1000),
-        };
+        metrics.fetchDataPlane = [];
+        for (const dataPlaneBytes of dataPlaneByteSizes) {
+          for (let i = 0; i < payloadWarmup; ++i) {
+            const warmupResponse =
+                await routeBackedWebSession.fetch(`/download?bytes=${dataPlaneBytes}`);
+            await warmupResponse.arrayBuffer();
+          }
+
+          const transferMs = [];
+          const mibPerSecond = [];
+          let status = null;
+          let bodyBytes = 0;
+          let bodyChecksum = 0;
+          const totalStart = benchmarkNow();
+          for (let i = 0; i < payloadRounds; ++i) {
+            const fetchStart = benchmarkNow();
+            const fetchResponse =
+                await routeBackedWebSession.fetch(`/download?bytes=${dataPlaneBytes}`);
+            const fetchBody = new Uint8Array(await fetchResponse.arrayBuffer());
+            const fetchMs = benchmarkNow() - fetchStart;
+            transferMs.push(fetchMs);
+            mibPerSecond.push(fetchMs === 0 ? 0 :
+              (fetchBody.byteLength / (1024 * 1024)) / (fetchMs / 1000));
+            status = fetchResponse.status;
+            bodyBytes = fetchBody.byteLength;
+            bodyChecksum = checksum(fetchBody);
+          }
+
+          metrics.fetchDataPlane.push({
+            bytes: bodyBytes,
+            warmupTransfers: payloadWarmup,
+            transfers: payloadRounds,
+            status,
+            checksum: bodyChecksum,
+            totalMs: benchmarkNow() - totalStart,
+            transferMs: benchmarkDistribution(transferMs),
+            mibPerSecond: benchmarkDistribution(mibPerSecond),
+          });
+        }
 
         return Response.json({
           ok: true,
           type: "nativeCapnpPerformanceBenchmark",
           parameters: {
             iterations,
+            warmup,
+            rounds,
             concurrency,
             concurrentBatches,
+            warmupBatches,
             restoreIterations,
-            dataPlaneBytes,
+            restoreWarmup,
+            payloadWarmup,
+            payloadRounds,
+            dataPlaneByteSizes,
           },
           notes: {
             scope: "same isolate/supervisor test app; use repeated runs for representative data",
             timing: "ad hoc characterization only; no CI thresholds",
+            distribution: "perCallMs percentiles are based on per-round batch averages, not individual call latency samples",
             promisePipelining: "capnp-es generated methods currently expose Promise-returning calls, but no JS promise-pipeline API is exposed by this helper layer",
             streaming: "large bytes are measured through fetch; typed WebSession stream support is characterized by obtaining and pinging the returned stream capability",
           },
           metrics,
           streaming: {
-            nativeWebSessionStream: {
-              statusCode: streamResponse.content.statusCode,
-              bodyWhich: streamBody.which(),
-              handleClient: typeof streamBody.stream.ping === "function",
-              pinged: true,
-              totalMs: streamMs,
-            },
+            nativeWebSessionStream: streamResult,
           },
         });
       } catch (error) {

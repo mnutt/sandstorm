@@ -1020,8 +1020,12 @@ Progress:
   calls, capability results, capability arguments, generated `WebSession`
   calls, typed stream-capability return, and fetch data-plane throughput. The
   route intentionally returns characterization data rather than CI timing
-  assertions. Useful query knobs are `iterations`, `concurrency`, `batches`,
-  `restoreIterations`, and `bytes`.
+  assertions. Useful query knobs are `iterations`, `warmup`, `rounds`,
+  `concurrency`, `batches`, `warmupBatches`, `restoreIterations`,
+  `restoreWarmup`, `payloadRounds`, `payloadWarmup`, and comma-separated
+  `bytes`. RPC percentile fields are computed over per-round batch averages,
+  not individual call samples, to keep timing overhead from dominating
+  sub-millisecond calls.
 - current characterization boundary: generated `capnp-es` calls can have
   multiple outstanding calls in flight, but the helper layer does not expose a
   JavaScript promise-pipelining API yet. Large binary payloads should continue
