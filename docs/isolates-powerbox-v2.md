@@ -1159,6 +1159,11 @@ Progress:
   browser bridge, `fetch()`/`WebSession` remains the streamable data-plane
   surface, and JavaScript-defined object RPC is private/local rather than the
   public protocol layer
+- native generated-client conformance now runs the same `NativeGreeter`
+  scenario against a direct local `capnp-es` server client and a Sandstorm
+  exported/WebSocket-bridged client, covering plain calls, promised-answer
+  returned-capability calls, resolved returned capabilities, and
+  capability-as-argument calls
 
 ## Decisions
 
