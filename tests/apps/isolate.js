@@ -75,19 +75,3 @@ module.exports["Test isolate grain health and storage after restart"] = function
         .assert.textContains("#read-result", "read: persisted across restart");
     });
 };
-
-module.exports["Test isolate browser to worker RPC"] = function (browser) {
-  installAndOpenIsolateTestApp(browser)
-    .grainFrame()
-    .execute(function () {
-      window.location.href = "/browser-rpc-test";
-    })
-    .waitForElementVisible("#run-rpc", medium_wait)
-    .click("#run-rpc")
-    .waitForElementVisible("#rpc-result", medium_wait)
-    .assert.textContains("#rpc-result", "\"ok\":true")
-    .assert.textContains("#rpc-result", "\"first\":{\"value\":2}")
-    .assert.textContains("#rpc-result", "\"childValue\":{\"value\":5}")
-    .assert.textContains("#rpc-result", "\"parentValue\":{\"value\":5}")
-    .assert.textContains("#rpc-result", "\"current\":{\"value\":2}");
-};

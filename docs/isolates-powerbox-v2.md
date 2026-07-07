@@ -1231,6 +1231,9 @@ Progress:
   TypeScript examples now use fetch-shaped routes, and
   `docs/developing/isolate-grains.md` now documents the native `capnp:` and
   browser-client model instead of the removed Cap'n Web helper stack
+- the isolate integration test app no longer serves browser RPC, native app
+  RPC codec/route, app-object callback, or object-capability self-test
+  endpoints; the browser Powerbox fixture now uses the native client helper
 
 ## Decisions
 
