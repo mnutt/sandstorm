@@ -4754,9 +4754,6 @@ export default {
         await apiHelper.nativeCapnpBridgeCallBytes(nativeCapnpBridgeRpcRequest.message);
     const decodedNativeCapnpBridgeBinaryRpc =
         decodeNativeCapnpBridgeResponse(nativeCapnpBridgeBinaryRpc.body);
-    const nativeCapnpBridgeBinaryRpcMessage =
-        new CapnpEsMessage(decodedNativeCapnpBridgeBinaryRpc.result.value.message, false)
-            .getRoot(CapnpRpcMessage);
     class NativeCapnpBridgeFixtureClient {
       constructor(client) {
         this.client = client;
@@ -5178,7 +5175,7 @@ export default {
           dropRequest: nativeCapnpBridgeDrop.request,
           saveRequest: nativeCapnpBridgeSave.request,
           restoreRequest: nativeCapnpBridgeRestore.request,
-          rpcRequest: nativeCapnpBridgeRpcRoute.request,
+          rpcRouteError: nativeCapnpBridgeRpcRoute.error,
           binaryRoute: {
             ok: nativeCapnpBridgeBinaryCall.ok,
             status: nativeCapnpBridgeBinaryCall.status,
@@ -5194,10 +5191,6 @@ export default {
             bytes: nativeCapnpBridgeBinaryRpc.body.byteLength,
             which: decodedNativeCapnpBridgeBinaryRpc.which,
             exception: decodedNativeCapnpBridgeBinaryRpc.exception,
-            rpcMessageKind: nativeCapnpBridgeBinaryRpcMessage.which(),
-            rpcAnswerId: nativeCapnpBridgeBinaryRpcMessage.return.answerId,
-            rpcResultCapCount:
-                nativeCapnpBridgeBinaryRpcMessage.return.results.capTable.length,
           },
           connectedClient: {
             isFixtureClient: nativeCapnpConnectedClient instanceof NativeCapnpBridgeFixtureClient,

@@ -1209,6 +1209,10 @@ Progress:
   session maps, message-stream mutation, WebSocket lifetime cleanup, and
   legacy RPC queue dispatch now live behind a dedicated controller instead of
   being spread across the general Sandstorm API binding service
+- `/capnp/call` is now lifecycle-only for native bridge save, restore, and
+  drop envelopes; POSTed native RPC envelopes are rejected with a WebSocket RPC
+  session error, removing the stale fetch-shaped in-memory RPC fallback from
+  the supervisor
 
 ## Decisions
 
