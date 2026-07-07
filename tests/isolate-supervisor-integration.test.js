@@ -1330,23 +1330,19 @@ test("isolate supervisor integration suite", {
       nativeTransport: true,
       nativeRpc: true,
       nativeRpcWebSocket: true,
-      nativeCalls: false,
       nativeExports: true,
-      capabilitySlots: false,
     });
     assert.deepEqual(
       body.sandstormApi.helperCapnpBridgeInfo,
       body.sandstormApi.capnpBridgeInfo);
-    assert.equal(body.sandstormApi.capnpBridgeNegotiation.available, false);
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.available, true);
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.protocolSupported, true);
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.protocolVersion, 0);
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.nativeTransport, true);
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.nativeRpc, true);
-    assert.equal(body.sandstormApi.capnpBridgeNegotiation.reason, "missing features");
-    assert.deepEqual(body.sandstormApi.capnpBridgeNegotiation.missingFeatures, [
-      "nativeCalls",
-      "capabilitySlots",
-    ]);
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.nativeExports, true);
+    assert.equal(body.sandstormApi.capnpBridgeNegotiation.reason, "");
+    assert.deepEqual(body.sandstormApi.capnpBridgeNegotiation.missingFeatures, []);
     assert.deepEqual(
       body.sandstormApi.capnpBridgeNegotiation.info,
       body.sandstormApi.capnpBridgeInfo);
@@ -2352,9 +2348,7 @@ test("isolate supervisor integration suite", {
       nativeTransport: true,
       nativeRpc: true,
       nativeRpcWebSocket: true,
-      nativeCalls: false,
       nativeExports: true,
-      capabilitySlots: false,
     });
 
     const capnpCall = await requestJson(fixture.sandstormApiSocket, "/capnp/call", {

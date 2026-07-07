@@ -244,9 +244,7 @@ declare module "sandstorm:api" {
     nativeTransport: boolean;
     nativeRpc: boolean;
     nativeRpcWebSocket: boolean;
-    nativeCalls: boolean;
     nativeExports: boolean;
-    capabilitySlots: boolean;
   }
 
   export interface NativeCapnpBridgeResponse {

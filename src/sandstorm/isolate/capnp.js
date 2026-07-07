@@ -16,9 +16,7 @@ const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
   "nativeTransport",
   "nativeRpc",
   "nativeRpcWebSocket",
-  "nativeCalls",
   "nativeExports",
-  "capabilitySlots",
 ]);
 
 const NATIVE_CAPNP_EXPORT_SESSION_PREFIX = "/__sandstorm/native-capnp/export-sessions";
@@ -82,9 +80,7 @@ function invalidNativeCapnpBridgeInfo(reason, info) {
     nativeTransport: false,
     nativeRpc: false,
     nativeRpcWebSocket: false,
-    nativeCalls: false,
     nativeExports: false,
-    capabilitySlots: false,
     missingFeatures: Object.freeze([]),
     reason,
     info,
@@ -128,9 +124,7 @@ export function negotiateNativeCapnpBridgeInfo(info, options = {}) {
     nativeTransport,
     nativeRpc: info.nativeRpc === true,
     nativeRpcWebSocket: info.nativeRpcWebSocket === true,
-    nativeCalls: info.nativeCalls === true,
     nativeExports: info.nativeExports === true,
-    capabilitySlots: info.capabilitySlots === true,
     missingFeatures: Object.freeze(missingFeatures),
     reason,
     info,
