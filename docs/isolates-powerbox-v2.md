@@ -1036,12 +1036,15 @@ Progress:
 - native `capnp-es` RPC now defaults to a persistent WebSocket-backed Cap'n
   Proto RPC session instead of routing every RPC message through
   `/capnp/call`; callers can still force the previous fetch transport with
-  `transport: "fetch"` for comparison/debugging. An ad hoc 10k-call,
-  1k-warmup, 5-round benchmark measured live native WebSocket RPC at about
-  0.13ms/call, old native fetch RPC at about 0.34ms/call, and generic
-  JavaScript RPC via supervisor at about 0.26ms/call; with 16 outstanding
-  calls, native WebSocket RPC measured about 0.085ms/call vs old native fetch
-  RPC at about 0.31ms/call.
+  `transport: "fetch"` for comparison/debugging. Browser generated clients use
+  the same WebSocket RPC session through
+  `/__sandstorm/native-capnp/rpc-session`, while keeping the browser-facing
+  authority boundary rooted in Sandstorm capability handles instead of service
+  binding names. An ad hoc 10k-call, 1k-warmup, 5-round benchmark measured live
+  native WebSocket RPC at about 0.13ms/call, old native fetch RPC at about
+  0.34ms/call, and generic JavaScript RPC via supervisor at about 0.26ms/call;
+  with 16 outstanding calls, native WebSocket RPC measured about 0.085ms/call
+  vs old native fetch RPC at about 0.31ms/call.
 
 ### Phase 7: Packaging, Publishing, And Migration
 

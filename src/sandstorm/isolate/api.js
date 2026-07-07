@@ -2565,6 +2565,29 @@ async function serveBrowserSystemRoute(request, env) {
     });
   }
 
+  if (url.pathname === "/__sandstorm/native-capnp/rpc-session" &&
+      request.method === "GET") {
+    const headers = {};
+    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      headers.Upgrade = "websocket";
+    }
+
+    const response = await env.SANDSTORM_API.fetch(
+      `http://sandstorm/capnp/rpc-session${url.search}`, { headers });
+    if (response.webSocket) {
+      return new Response(null, { status: 101, webSocket: response.webSocket });
+    }
+
+    return new Response(await response.text(), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: {
+        "content-type": response.headers.get("content-type") ||
+          "application/json; charset=utf-8",
+      },
+    });
+  }
+
   if (url.pathname === "/__sandstorm/native-capnp/call" && request.method === "POST") {
     const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/call", {
       method: "POST",
@@ -3997,9 +4020,79 @@ export async function nativeCapnpBridgeCallBytes(message) {
   };
 }
 
+async function nativeCapnpBrowserMessageBytes(data) {
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    return new Uint8Array(await data.arrayBuffer());
+  }
+  return nativeCapnpMessageBytes(data);
+}
+
+export function browserNativeCapnpRpcSessionUrl(target, connectionId) {
+  const normalizedTarget = normalizeNativeCapnpCapabilitySlot(target);
+  const normalizedConnectionId = normalizeConnectionId(connectionId);
+  const url = new URL(
+    "/__sandstorm/native-capnp/rpc-session",
+    globalThis.location?.href || "http://sandstorm/");
+  if (url.protocol === "https:") {
+    url.protocol = "wss:";
+  } else if (url.protocol === "http:") {
+    url.protocol = "ws:";
+  }
+  url.searchParams.set("id", normalizedTarget.id);
+  url.searchParams.set("interfaceId", String(normalizedTarget.interfaceId ?? 0n));
+  url.searchParams.set("interfaceName", normalizedTarget.interfaceName);
+  url.searchParams.set("connectionId", normalizedConnectionId);
+  return url;
+}
+
+export function openBrowserNativeCapnpRpcSession(target, connectionId) {
+  const url = browserNativeCapnpRpcSessionUrl(target, connectionId);
+  return new Promise((resolve, reject) => {
+    const webSocket = new WebSocket(url.href);
+    let settled = false;
+    webSocket.binaryType = "arraybuffer";
+
+    function cleanup() {
+      webSocket.removeEventListener("open", onOpen);
+      webSocket.removeEventListener("error", onError);
+      webSocket.removeEventListener("close", onClose);
+    }
+
+    function fail(error) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    }
+
+    function onOpen() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(webSocket);
+    }
+
+    function onError() {
+      fail(new NativeCapnpBridgeUnavailableError(
+        "native Cap'n Proto browser WebSocket RPC session failed"));
+    }
+
+    function onClose(event) {
+      fail(new NativeCapnpBridgeUnavailableError(
+        "native Cap'n Proto browser WebSocket RPC session closed before opening" +
+        (event?.code ? " with code " + event.code : "")));
+    }
+
+    webSocket.addEventListener("open", onOpen);
+    webSocket.addEventListener("error", onError);
+    webSocket.addEventListener("close", onClose);
+  });
+}
+
 export const browserNativeCapnpApi = Object.freeze({
   capnpBridgeInfo: nativeCapnpBridgeInfo,
   nativeCapnpBridgeCallBytes,
+  openBrowserNativeCapnpRpcSession,
 });
 
 const nativeCapnpPowerboxDescriptorCache = new Map();
@@ -4216,8 +4309,79 @@ export class BrowserNativeCapnpBridgeTransport extends DeferredTransport {
   }
 }
 
+export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTransport {
+  #webSocket = null;
+  #openPromise = null;
+  #sendQueue = Promise.resolve();
+
+  constructor(target, options = {}) {
+    super();
+    this.target = normalizeNativeCapnpCapabilitySlot(target);
+    this.connectionId = normalizeConnectionId(options.connectionId);
+    this.connection = null;
+  }
+
+  sendMessage(message) {
+    if (this.closed) {
+      throw new NativeCapnpBridgeUnavailableError(
+        "native Cap'n Proto browser WebSocket RPC transport is closed");
+    }
+
+    const bytes = nativeCapnpRootMessageBytes(message);
+    this.#sendQueue = this.#sendQueue
+      .then(async () => {
+        const webSocket = await this.#open();
+        webSocket.send(bytes);
+      })
+      .catch((error) => this.abort(error));
+  }
+
+  abort(error) {
+    if (this.connection && !this.connection.closed) {
+      this.connection.shutdown(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    this.close(error);
+  }
+
+  close(error) {
+    if (this.closed) return;
+    try {
+      this.#webSocket?.close(error === undefined ? 1000 : 1011);
+    } catch (_) {}
+    super.close(error);
+  }
+
+  async #open() {
+    if (this.#webSocket) {
+      return this.#webSocket;
+    }
+
+    if (!this.#openPromise) {
+      this.#openPromise = openBrowserNativeCapnpRpcSession(
+        this.target, this.connectionId).then((webSocket) => {
+        webSocket.addEventListener("message", async (event) => {
+          try {
+            this.resolve(await nativeCapnpBrowserMessageBytes(event.data));
+          } catch (error) {
+            this.abort(error);
+          }
+        });
+        webSocket.addEventListener("close", () => this.close());
+        webSocket.addEventListener("error", (event) => this.abort(event.error || event));
+        this.#webSocket = webSocket;
+        return webSocket;
+      });
+    }
+
+    return await this.#openPromise;
+  }
+}
+
 export function createBrowserNativeCapnpConnection(target, options = {}) {
-  const transport = new BrowserNativeCapnpBridgeTransport(target, options);
+  const transport = options.transport === "fetch" || typeof WebSocket !== "function"
+    ? new BrowserNativeCapnpBridgeTransport(target, options)
+    : new BrowserNativeCapnpBridgeWebSocketTransport(target, options);
   const connection = new Conn(transport, options.finalize);
   transport.connection = connection;
   return Object.assign(connection, { transport });
