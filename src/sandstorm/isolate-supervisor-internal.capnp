@@ -9,14 +9,11 @@ using NativeCapnpBridgeRequest =
     import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeRequest;
 using NativeCapnpBridgeResponse =
     import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeResponse;
-using NativeCapnpBridgeCall = import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeCall;
-using NativeCapnpBridgeResult = import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeResult;
 using NativeCapnpBridgeDrop = import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeDrop;
 using NativeCapnpBridgeSave = import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeSave;
 using NativeCapnpBridgeRestore =
     import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeRestore;
 using NativeCapnpBridgeSaved = import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeSaved;
-using NativeCapnpPayload = import "isolate-native-capnp-bridge.capnp".NativeCapnpPayload;
 using NativeCapnpCapabilitySlot =
     import "isolate-native-capnp-bridge.capnp".NativeCapnpCapabilitySlot;
 using NativeCapnpCapabilitySlotKind =

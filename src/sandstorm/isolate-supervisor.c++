@@ -5328,8 +5328,8 @@ private:
         "  \"error\": \"native Cap'n Proto bridge transport is not enabled\",\n"
         "  \"request\": {\n"
         "    \"kind\": "));
-    if (request.isCall()) {
-      appendJsonString(json, "call");
+    if (request.isObsoleteCall()) {
+      appendJsonString(json, "obsoleteCall");
     } else if (request.isDrop()) {
       appendJsonString(json, "drop");
     } else if (request.isSave()) {
@@ -5343,23 +5343,7 @@ private:
         "    \"protocolVersion\": "));
     json.addAll(kj::str(request.getProtocolVersion()));
 
-    if (request.isCall()) {
-      auto call = request.getCall();
-      auto target = call.getTarget();
-      auto params = call.getParams();
-      json.addAll(kj::StringPtr(",\n    "));
-      appendNativeCapnpBridgeTargetJson(json, target);
-      json.addAll(kj::StringPtr(",\n    "));
-      appendJsonField(json, "interfaceId", kj::str("0x", kj::hex(call.getInterfaceId())));
-      json.addAll(kj::StringPtr(",\n    \"methodOrdinal\": "));
-      json.addAll(kj::str(call.getMethodOrdinal()));
-      json.addAll(kj::StringPtr(",\n    "));
-      appendJsonField(json, "methodName", call.getMethodName());
-      json.addAll(kj::StringPtr(",\n    \"paramsBytes\": "));
-      json.addAll(kj::str(params.getMessage().size()));
-      json.addAll(kj::StringPtr(",\n    \"capabilityCount\": "));
-      json.addAll(kj::str(params.getCapabilities().size()));
-    } else if (request.isDrop()) {
+    if (request.isDrop()) {
       auto drop = request.getDrop();
       json.addAll(kj::StringPtr(",\n    "));
       appendNativeCapnpBridgeTargetJson(json, drop.getTarget());
@@ -5398,19 +5382,6 @@ private:
     exception.setType(type);
     exception.setReason(reason);
     exception.setTrace(trace);
-
-    auto words = capnp::messageToFlatArray(message);
-    return kj::heapArray<byte>(words.asBytes());
-  }
-
-  kj::Array<byte> encodeNativeCapnpBridgeResultResponse(kj::ArrayPtr<const byte> resultBytes) {
-    capnp::MallocMessageBuilder message;
-    auto response = message.initRoot<NativeCapnpBridgeResponse>();
-    response.setProtocolVersion(NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION);
-    auto payload = response.initResult().initValue();
-    auto resultMessage = payload.initMessage(resultBytes.size());
-    memcpy(resultMessage.begin(), resultBytes.begin(), resultBytes.size());
-    payload.initCapabilities(0);
 
     auto words = capnp::messageToFlatArray(message);
     return kj::heapArray<byte>(words.asBytes());
@@ -6131,26 +6102,10 @@ private:
             "unsupported native Cap'n Proto bridge protocol version: ",
             request.getProtocolVersion()), binaryResponse);
       }
-      if (request.isCall() && request.hasCall()) {
-        auto call = request.getCall();
-        if (!call.hasTarget()) {
-          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
-              "native Cap'n Proto bridge call request is missing target", binaryResponse);
-        }
-        if (!call.hasParams()) {
-          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
-              "native Cap'n Proto bridge call request is missing params", binaryResponse);
-        }
-
-        auto target = call.getTarget();
-        if (target.getId().size() == 0) {
-          return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
-              "native Cap'n Proto bridge call request target id is empty", binaryResponse);
-        }
-        if (host.sessions->findClaimedCapability(target.getId()) == nullptr) {
-          return sendNativeCapnpBridgeError(response, 404, "Not Found", "failed",
-              "unknown native Cap'n Proto bridge target capability", binaryResponse);
-        }
+      if (request.isObsoleteCall()) {
+        return sendNativeCapnpBridgeError(response, 400, "Bad Request", "failed",
+            "native Cap'n Proto direct call envelopes are obsolete; use the WebSocket RPC session",
+            binaryResponse);
       } else if (request.isDrop() && request.hasDrop()) {
         auto target = request.getDrop().getTarget();
         if (target.getId().size() == 0) {

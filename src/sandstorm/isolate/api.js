@@ -2469,27 +2469,6 @@ function readNativeCapnpCapabilitySlot(slot) {
   });
 }
 
-function writeNativeCapnpPayload(target, { message = new Uint8Array(), capabilities = [] } = {}) {
-  const bytes = nativeCapnpMessageBytes(message);
-  target._initMessage(bytes.byteLength).copyBuffer(bytes);
-  const slots = target._initCapabilities(capabilities.length);
-  for (let index = 0; index < capabilities.length; index++) {
-    writeNativeCapnpCapabilitySlot(slots.get(index), capabilities[index]);
-  }
-}
-
-function readNativeCapnpPayload(payload) {
-  const capabilities = [];
-  const slots = payload.capabilities;
-  for (let index = 0; index < slots.length; index++) {
-    capabilities.push(readNativeCapnpCapabilitySlot(slots.get(index)));
-  }
-  return Object.freeze({
-    message: payload.message.toUint8Array(),
-    capabilities: Object.freeze(capabilities),
-  });
-}
-
 function normalizeConnectionId(connectionId) {
   if (typeof connectionId === "string" && connectionId.length > 0) return connectionId;
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -2538,29 +2517,6 @@ export function decodeNativeCapnpBridgeResponse(message) {
   }
 
   switch (response.which()) {
-    case NativeCapnpBridgeResponse.RESULT: {
-      const result = response.result;
-      switch (result.which()) {
-        case result.constructor.VALUE:
-          return Object.freeze({ which: "result", result: Object.freeze({
-            which: "value",
-            value: readNativeCapnpPayload(result.value),
-          }) });
-        case result.constructor.EXCEPTION:
-          return Object.freeze({ which: "result", result: Object.freeze({
-            which: "exception",
-            exception: Object.freeze({
-              type: result.exception.type,
-              reason: result.exception.reason,
-              trace: result.exception.trace,
-            }),
-          }) });
-        case result.constructor.CANCELED:
-          return Object.freeze({ which: "result", result: Object.freeze({ which: "canceled" }) });
-        default:
-          throw new NativeCapnpBridgeProtocolError("unknown native bridge result response");
-      }
-    }
     case NativeCapnpBridgeResponse.CAPABILITY:
       return Object.freeze({
         which: "capability",
