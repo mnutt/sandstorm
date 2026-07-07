@@ -4411,6 +4411,9 @@ export default {
         };
       },
       async makeGreeter(params) {
+        if (params.prefix === "native export pipelined greeter") {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
         const greeter = new NativeGreeter.Server({
           async hello(helloParams) {
             return {
@@ -4446,11 +4449,21 @@ export default {
       const nativeExportGreeterHello = await nativeExportGreeterClient.hello({
         name: "isolate schema",
       });
+      const nativeExportGreeterPipeline = nativeExportGreeterClient.makeGreeter({
+        prefix: "native export pipelined greeter",
+      });
+      const nativeExportGreeterPipelinedHello =
+          await nativeExportGreeterPipeline.getGreeter().hello({
+            name: "before makeGreeter resolves",
+          });
+      const nativeExportGreeterResolved = await nativeExportGreeterPipeline;
       const nativeExportGreeterInfo = await nativeExportGreeter.info();
       const nativeExportGreeterDrop = await nativeExportGreeter.drop();
       nativeExportGreeterResult = {
         ok: true,
         message: nativeExportGreeterHello.message,
+        pipelinedMessage: nativeExportGreeterPipelinedHello.message,
+        resolvedGreeter: typeof nativeExportGreeterResolved.greeter?.hello === "function",
         info: nativeExportGreeterInfo,
         drop: nativeExportGreeterDrop,
       };

@@ -1029,10 +1029,11 @@ Progress:
   not individual call samples, to keep timing overhead from dominating
   sub-millisecond calls.
 - current characterization boundary: generated `capnp-es` calls can have
-  multiple outstanding calls in flight, but the helper layer does not expose a
-  JavaScript promise-pipelining API yet. Large binary payloads should continue
-  to use fetch/data-plane paths; typed RPC can carry byte bodies, but fetch is
-  the measured streaming path.
+  multiple outstanding calls in flight, and generated result promises expose
+  typed pipeline accessors for interface result fields, so callers can call a
+  returned capability before the parent result resolves. Large binary payloads
+  should continue to use fetch/data-plane paths; typed RPC can carry byte
+  bodies, but fetch is the measured streaming path.
 - native `capnp-es` RPC now defaults to a persistent WebSocket-backed Cap'n
   Proto RPC session instead of routing every RPC message through
   `/capnp/call`; callers can still force the previous fetch transport with
@@ -1045,6 +1046,9 @@ Progress:
   0.34ms/call, and generic JavaScript RPC via supervisor at about 0.26ms/call;
   with 16 outstanding calls, native WebSocket RPC measured about 0.085ms/call
   vs old native fetch RPC at about 0.31ms/call.
+- the isolate supervisor integration suite now exercises native Cap'n Proto
+  promised-answer pipelining over the Sandstorm WebSocket bridge by calling an
+  interface returned from `makeGreeter()` before awaiting that method's result.
 
 ### Phase 7: Packaging, Publishing, And Migration
 
