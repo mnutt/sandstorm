@@ -34,7 +34,6 @@ import {
 import {
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
-  NativeCapnpBridgeTransport,
   NativeCapnpStreamTransport,
   connectNativeCapnp,
   createNativeCapnpBridge,
@@ -4374,7 +4373,7 @@ export default {
       requiredFeatures: ["nativeCalls", "capabilitySlots"],
     });
     const capnpBridgeRpcNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
-      requiredFeatures: ["nativeRpc"],
+      requiredFeatures: ["nativeRpc", "nativeRpcWebSocket"],
     });
     const nativeExportClientToServer = new TransformStream();
     const nativeExportServerToClient = new TransformStream();
@@ -4610,8 +4609,6 @@ export default {
     nativeCapnpRpcMessage.initRoot(CapnpRpcMessage)._initBootstrap().questionId = 123;
     const nativeCapnpBridgeRpcConnectionId =
         `native-capnp-fixture-rpc-${nativeCapnpTarget.id}`;
-    const nativeCapnpBridgeTransportConnectionId =
-        `native-capnp-fixture-transport-${nativeCapnpTarget.id}`;
     const nativeCapnpBridgeRpcRequest = makeNativeCapnpBridgeRpcRequest({
       target: {
         id: nativeCapnpTarget.id,
@@ -4761,10 +4758,6 @@ export default {
     const nativeCapnpBridgeBinaryRpcMessage =
         new CapnpEsMessage(decodedNativeCapnpBridgeBinaryRpc.result.value.message, false)
             .getRoot(CapnpRpcMessage);
-    const nativeCapnpBridgeTransport =
-        new NativeCapnpBridgeTransport(apiHelper, nativeCapnpTarget, {
-          connectionId: nativeCapnpBridgeTransportConnectionId,
-        });
     class NativeCapnpBridgeFixtureClient {
       constructor(client) {
         this.client = client;
@@ -4892,41 +4885,6 @@ export default {
       };
     } catch (error) {
       nativeCapnpGeneratedDropError = `${error.name}: ${error.message}`;
-    }
-    let nativeCapnpBridgeTransportError = "";
-    let nativeCapnpBridgeTransportMessage = null;
-    let nativeCapnpBridgeTransportCall = null;
-    nativeCapnpBridgeTransport.sendMessage(nativeCapnpRpcMessage.getRoot(CapnpRpcMessage));
-    try {
-      const message = await nativeCapnpBridgeTransport.recvMessage();
-      nativeCapnpBridgeTransportMessage = {
-        which: message.which(),
-        answerId: message.return.answerId,
-      };
-
-      const nativeCapnpCallMessage = new CapnpEsMessage();
-      const nativeCapnpCall =
-          nativeCapnpCallMessage.initRoot(CapnpRpcMessage)._initCall();
-      nativeCapnpCall.questionId = 124;
-      nativeCapnpCall.interfaceId = 0xa8e9655582dcde6fn;
-      nativeCapnpCall.methodId = 2;
-      nativeCapnpCall.noPromisePipelining = true;
-      nativeCapnpCall._initTarget().importedCap = 0;
-      nativeCapnpCall._initParams()._initCapTable(0);
-      nativeCapnpCall._initSendResultsTo().caller = true;
-
-      nativeCapnpBridgeTransport.sendMessage(
-        nativeCapnpCallMessage.getRoot(CapnpRpcMessage));
-      const callMessage = await nativeCapnpBridgeTransport.recvMessage();
-      nativeCapnpBridgeTransportCall = {
-        which: callMessage.which(),
-        answerId: callMessage.return.answerId,
-        returnWhich: callMessage.return.which(),
-        exceptionType: callMessage.return.exception.type,
-        exceptionReasonLength: callMessage.return.exception.reason.length,
-      };
-    } catch (error) {
-      nativeCapnpBridgeTransportError = error.name;
     }
     let nativeCapnpLifecycleBinary = null;
     if (url.searchParams.has("nativeLifecycle")) {
@@ -5242,9 +5200,6 @@ export default {
             rpcResultCapCount:
                 nativeCapnpBridgeBinaryRpcMessage.return.results.capTable.length,
           },
-          transportError: nativeCapnpBridgeTransportError,
-          transportMessage: nativeCapnpBridgeTransportMessage,
-          transportCall: nativeCapnpBridgeTransportCall,
           connectedClient: {
             isFixtureClient: nativeCapnpConnectedClient instanceof NativeCapnpBridgeFixtureClient,
             hasBootstrapClient: Boolean(nativeCapnpConnectedClient.client),

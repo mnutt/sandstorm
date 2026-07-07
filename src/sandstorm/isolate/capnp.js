@@ -804,96 +804,6 @@ function nativeCapnpBridgeExceptionError(message, context) {
   return new NativeCapnpBridgeUnavailableError(message, context);
 }
 
-export class NativeCapnpBridgeTransport extends CapnpEsDeferredTransport {
-  #sendQueue = Promise.resolve();
-
-  constructor(api, target, options = {}) {
-    super();
-    if (!api || typeof api.nativeCapnpBridgeCallBytes !== "function") {
-      throw new NativeCapnpBridgeProtocolError(
-        "NativeCapnpBridgeTransport requires api.nativeCapnpBridgeCallBytes()");
-    }
-    if (!target || typeof target !== "object" || typeof target.id !== "string") {
-      throw new NativeCapnpBridgeProtocolError(
-        "NativeCapnpBridgeTransport requires a Sandstorm capability target");
-    }
-
-    this.api = api;
-    this.target = normalizeNativeCapnpCapabilitySlot(target);
-    this.connectionId = normalizeNativeCapnpBridgeConnectionId(options.connectionId);
-    this.capabilities = Object.freeze([...(options.capabilities || [])]);
-    this.connection = null;
-  }
-
-  sendMessage(message) {
-    if (this.closed) {
-      throw new NativeCapnpBridgeUnavailableError("native Cap'n Proto transport is closed", {
-        target: this.target,
-      });
-    }
-
-    this.#sendQueue = this.#sendQueue
-      .then(() => this.#sendMessage(message))
-      .catch((error) => this.abort(error));
-  }
-
-  abort(error) {
-    if (this.connection && !this.connection.closed) {
-      this.connection.shutdown(error instanceof Error ? error : new Error(String(error)));
-      return;
-    }
-
-    this.close(error);
-  }
-
-  async #sendMessage(message) {
-    const request = makeNativeCapnpBridgeRpcRequest({
-      target: this.target,
-      message,
-      capabilities: this.capabilities,
-      connectionId: this.connectionId,
-    });
-    const response = await this.api.nativeCapnpBridgeCallBytes(request.message);
-    if (!response || typeof response !== "object" || !(response.body instanceof Uint8Array)) {
-      throw new NativeCapnpBridgeProtocolError(
-        "native Cap'n Proto transport returned an invalid response",
-        { target: this.target, response });
-    }
-
-    const decoded = decodeNativeCapnpBridgeResponse(response.body);
-    if (decoded.which === "exception") {
-      throw nativeCapnpBridgeExceptionError(
-        decoded.exception.reason || "native Cap'n Proto transport failed",
-        { target: this.target, response, decoded });
-    }
-    if (decoded.which !== "result") {
-      throw new NativeCapnpBridgeProtocolError(
-        `native Cap'n Proto transport returned unexpected ${decoded.which} response`,
-        { target: this.target, response, decoded });
-    }
-
-    switch (decoded.result.which) {
-      case "value":
-        if (decoded.result.value.message.byteLength > 0) {
-          this.resolve(decoded.result.value.message);
-        }
-        return;
-      case "exception":
-        throw nativeCapnpBridgeExceptionError(
-          decoded.result.exception.reason || "native Cap'n Proto transport call failed",
-          { target: this.target, response, decoded });
-      case "canceled":
-        throw nativeCapnpBridgeExceptionError(
-          "native Cap'n Proto transport call was canceled",
-          { target: this.target, response, decoded });
-      default:
-        throw new NativeCapnpBridgeProtocolError(
-          "native Cap'n Proto transport returned an unknown result response",
-          { target: this.target, response, decoded });
-    }
-  }
-}
-
 export class NativeCapnpBridgeWebSocketRpcTransport extends CapnpEsDeferredTransport {
   #webSocket = null;
   #openPromise = null;
@@ -1142,11 +1052,11 @@ export class NativeCapnpWebSocketTransport extends CapnpEsDeferredTransport {
 }
 
 export function createNativeCapnpBridgeConnection(api, target, options = {}) {
-  const useWebSocket = options.transport !== "fetch" &&
-    typeof api?.nativeCapnpBridgeOpenRpcSession === "function";
-  const transport = useWebSocket
-    ? new NativeCapnpBridgeWebSocketRpcTransport(api, target, options)
-    : new NativeCapnpBridgeTransport(api, target, options);
+  if (typeof api?.nativeCapnpBridgeOpenRpcSession !== "function") {
+    throw new NativeCapnpBridgeUnavailableError(
+      "native Cap'n Proto RPC requires api.nativeCapnpBridgeOpenRpcSession()");
+  }
+  const transport = new NativeCapnpBridgeWebSocketRpcTransport(api, target, options);
   const conn = new CapnpEsConn(transport, options.finalize);
   transport.connection = conn;
   return Object.assign(conn, { transport });
@@ -1320,7 +1230,9 @@ export async function restoreNativeCapnp(api, token, InterfaceClass, options = {
     throw new TypeError("restoreNativeCapnp() requires a capnp-es generated interface class");
   }
 
-  const negotiation = await negotiateNativeCapnpBridge(api, { requiredFeatures: ["nativeRpc"] });
+  const negotiation = await negotiateNativeCapnpBridge(api, {
+    requiredFeatures: ["nativeRpc", "nativeRpcWebSocket"],
+  });
   if (!negotiation.available) {
     throw new NativeCapnpBridgeUnavailableError(
       `native Cap'n Proto RPC transport is unavailable for restore: ` +
