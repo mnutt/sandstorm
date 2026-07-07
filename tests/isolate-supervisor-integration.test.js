@@ -938,6 +938,24 @@ test("spk dev-isolate prints generated capnp modules", async (t) => {
   assert.match(generatedComplex.stdout, /export class Complex\$Server extends \$\.Server/);
   assert.match(generatedComplex.stdout, /export class Complex extends \$\.Interface/);
 
+  const generatedComplexDeclaration = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-generated-declaration", "capnp:./complex.capnp",
+    workerPath,
+  ], options);
+  assert.match(
+    generatedComplexDeclaration.stdout,
+    /from "\.\/greeter\.capnp";/);
+  assert.match(
+    generatedComplexDeclaration.stdout,
+    /from "\.\/sandstorm\/web-session\.capnp";/);
+  assert.match(generatedComplexDeclaration.stdout, /export declare class Item extends/);
+  assert.match(generatedComplexDeclaration.stdout, /export declare class Complex\$Client \{/);
+  assert.match(
+    generatedComplexDeclaration.stdout,
+    /export declare class Complex\$Server extends \$\.Server/);
+  assert.match(generatedComplexDeclaration.stdout, /export declare class Complex extends/);
+
   const generatedSandstormWeb = await runCommand(SPK_BIN, [
     "dev-isolate",
     "--print-generated-module", "capnp:/sandstorm/web-session.capnp",

@@ -563,6 +563,10 @@ Progress:
   interfaces
 - the hand-written `makeCapnpInterfaceBinding()` API and `capnp:*` declaration
   surface have been removed; schema-defined protocols use `capnp:` only
+- `spk dev-isolate --print-generated-declaration <capnp:...>` now emits the
+  TypeScript declaration generated from the same compiled schema path as the
+  runtime module, giving authors schema-specific types without requiring a
+  separately installed native `capnp` compiler
 
 Deliverables:
 
@@ -1178,6 +1182,9 @@ Progress:
 - generated schema coverage now includes imports, nested structs/enums, lists,
   and multiple capability-valued method parameters/results in the
   `spk dev-isolate` integration path
+- schema-specific TypeScript declarations can now be printed from
+  `spk dev-isolate` for `capnp:` imports, keeping authoring types tied to the
+  same compiler output as runtime modules
 
 ## Decisions
 
