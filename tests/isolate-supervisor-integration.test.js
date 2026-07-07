@@ -331,33 +331,6 @@ async function startUnixSocketHttpProxy(socketPath) {
     clientReq.pipe(upstream);
   });
 
-  server.on("upgrade", (req, socket, head) => {
-    const upstream = net.createConnection(socketPath);
-    const fail = (err) => {
-      try {
-        socket.destroy(err);
-      } catch (_) {}
-      try {
-        upstream.destroy(err);
-      } catch (_) {}
-    };
-    upstream.on("error", fail);
-    socket.on("error", fail);
-    upstream.on("connect", () => {
-      const headers = [`GET ${req.url} HTTP/${req.httpVersion}`];
-      for (let i = 0; i < req.rawHeaders.length; i += 2) {
-        headers.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
-      }
-      headers.push("", "");
-      upstream.write(headers.join("\r\n"));
-      if (head.length > 0) {
-        upstream.write(head);
-      }
-      upstream.pipe(socket);
-      socket.pipe(upstream);
-    });
-  });
-
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
