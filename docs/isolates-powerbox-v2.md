@@ -1012,6 +1012,21 @@ Progress:
   cached by descriptor endpoint/options in the isolate API helper; generated
   worker and browser bindings also cache schema-derived app-interface
   descriptors and return cloned results so app code cannot mutate cached state
+- the isolate test app now exposes an ad hoc
+  `/native-capnp-performance-benchmark` route comparing generic JavaScript
+  object RPC against native `capnp-es` generated clients in the same
+  supervisor. It reports direct in-memory calls, live exported calls,
+  restore-once/live-handle reuse, restore-per-call, concurrent outstanding
+  calls, capability results, capability arguments, generated `WebSession`
+  calls, typed stream-capability return, and fetch data-plane throughput. The
+  route intentionally returns characterization data rather than CI timing
+  assertions. Useful query knobs are `iterations`, `concurrency`, `batches`,
+  `restoreIterations`, and `bytes`.
+- current characterization boundary: generated `capnp-es` calls can have
+  multiple outstanding calls in flight, but the helper layer does not expose a
+  JavaScript promise-pipelining API yet. Large binary payloads should continue
+  to use fetch/data-plane paths; typed RPC can carry byte bodies, but fetch is
+  the measured streaming path.
 
 ### Phase 7: Packaging, Publishing, And Migration
 
