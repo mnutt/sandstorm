@@ -158,6 +158,20 @@ using rpc = newSandstormRpcSession();
 return rpc.session(); // Wrong: the session is disposed before the call resolves.
 ```
 
+For schema-specific native Cap'n Proto types, generate declarations from the
+same `capnp:` schema imports that `spk dev-isolate` uses at runtime:
+
+```sh
+spk dev-isolate \
+  --print-generated-declaration capnp:./greeter.capnp \
+  worker.js > greeter.capnp.d.ts
+```
+
+Run this once for each schema module you want TypeScript to type-check. Keep
+the emitted `.capnp.d.ts` files next to the corresponding `.capnp` files so
+imports such as `capnp:./greeter.capnp` and generated relative schema imports
+resolve consistently in editor and CI builds.
+
 Do not point `spk dev-isolate` at `.ts` files. The command expects JavaScript
 modules that `workerd` can load directly. For the first isolate runtime
 iteration, TypeScript transpilation is intentionally outside `spk

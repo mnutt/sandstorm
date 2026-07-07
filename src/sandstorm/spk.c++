@@ -2014,6 +2014,7 @@ private:
   kj::String devIsolateCompatibilityDate = kj::heapString("2025-01-01");
   bool devIsolatePrintManifestJson = false;
   kj::String devIsolatePrintGeneratedModule = nullptr;
+  kj::String devIsolatePrintGeneratedDeclaration = nullptr;
   struct DevIsolateServiceBinding {
     kj::String name;
     kj::String service;
@@ -2030,6 +2031,10 @@ private:
     kj::String specifier;
     kj::String interfaceName;
     uint64_t interfaceId;
+  };
+  enum class DevIsolateCapnpEsOutputKind {
+    JS,
+    DTS,
   };
   kj::Vector<DevIsolateServiceBinding> devIsolateServiceBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateTextBindings;
@@ -2141,6 +2146,9 @@ private:
         .addOptionWithArg({"print-generated-module"},
             KJ_BIND_METHOD(*this, setDevIsolatePrintGeneratedModule), "<specifier>",
             "Print a generated isolate support module by import specifier and exit.")
+        .addOptionWithArg({"print-generated-declaration"},
+            KJ_BIND_METHOD(*this, setDevIsolatePrintGeneratedDeclaration), "<specifier>",
+            "Print a generated TypeScript declaration for a capnp: schema import and exit.")
         .expectArg("<worker.js>", KJ_BIND_METHOD(*this, setDevIsolateWorkerPath))
         .callAfterParsing(KJ_BIND_METHOD(*this, doDevIsolate))
         .build();
@@ -2163,21 +2171,33 @@ private:
   }
 
   kj::MainBuilder::Validity enableDevIsolatePrintManifestJson() {
-    if (devIsolatePrintGeneratedModule != nullptr) {
-      return "cannot use --print-manifest-json with --print-generated-module";
+    if (devIsolatePrintGeneratedModule != nullptr ||
+        devIsolatePrintGeneratedDeclaration != nullptr) {
+      return "cannot use --print-manifest-json with generated module output options";
     }
     devIsolatePrintManifestJson = true;
     return true;
   }
 
   kj::MainBuilder::Validity setDevIsolatePrintGeneratedModule(kj::StringPtr specifier) {
-    if (devIsolatePrintManifestJson) {
-      return "cannot use --print-generated-module with --print-manifest-json";
+    if (devIsolatePrintManifestJson || devIsolatePrintGeneratedDeclaration != nullptr) {
+      return "cannot combine generated module output options";
     }
     if (specifier.size() == 0) {
       return "generated module specifier must not be empty";
     }
     devIsolatePrintGeneratedModule = kj::heapString(specifier);
+    return true;
+  }
+
+  kj::MainBuilder::Validity setDevIsolatePrintGeneratedDeclaration(kj::StringPtr specifier) {
+    if (devIsolatePrintManifestJson || devIsolatePrintGeneratedModule != nullptr) {
+      return "cannot combine generated module output options";
+    }
+    if (specifier.size() == 0) {
+      return "generated declaration specifier must not be empty";
+    }
+    devIsolatePrintGeneratedDeclaration = kj::heapString(specifier);
     return true;
   }
 
@@ -2482,6 +2502,9 @@ private:
     if (devIsolatePrintGeneratedModule != nullptr) {
       return printDevIsolateGeneratedModule();
     }
+    if (devIsolatePrintGeneratedDeclaration != nullptr) {
+      return printDevIsolateGeneratedDeclaration(rootDir);
+    }
 
     if (devIsolatePrintManifestJson) {
       return printDevIsolateManifestJson();
@@ -2533,6 +2556,28 @@ private:
     }
 
     return kj::str("generated module not found: ", devIsolatePrintGeneratedModule);
+  }
+
+  kj::MainBuilder::Validity printDevIsolateGeneratedDeclaration(kj::StringPtr rootDir) {
+    if (devIsolatePrintGeneratedDeclaration.startsWith("capnp-es:")) {
+      return "`capnp-es:` isolate schema imports have been renamed; use `capnp:`";
+    }
+    if (!devIsolatePrintGeneratedDeclaration.startsWith("capnp:")) {
+      return "generated declaration specifier must be a capnp: schema import";
+    }
+
+    auto resolvedPath = resolveDevIsolateCapnpEsImport(
+        rootDir, rootDir, devIsolatePrintGeneratedDeclaration);
+    auto content = generateDevIsolateCapnpEsOutput(
+        resolvedPath, rootDir, DevIsolateCapnpEsOutputKind::DTS);
+    auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
+    auto schemaImports = scanCapnpImports(source);
+    content = rewriteDevIsolateCapnpEsImports(
+        kj::mv(content), devIsolatePrintGeneratedDeclaration, resolvedPath, rootDir,
+        schemaImports.asPtr());
+    kj::FdOutputStream(STDOUT_FILENO).write(content.begin(), content.size());
+    context.exit();
+    return true;
   }
 
   enum class DevIsolateModuleType {
@@ -3085,7 +3130,8 @@ private:
     }
 
     auto runtimePath = devIsolateCapnpEsRuntimePath(specifier, resolvedPath, rootDir);
-    auto content = generateDevIsolateCapnpEsModule(resolvedPath, rootDir);
+    auto content = generateDevIsolateCapnpEsOutput(
+        resolvedPath, rootDir, DevIsolateCapnpEsOutputKind::JS);
     content = rewriteDevIsolateCapnpEsRuntimeImports(kj::mv(content), specifier);
     content = rewriteDevIsolateCapnpEsImports(
         kj::mv(content), specifier, resolvedPath, rootDir, schemaImports.asPtr());
@@ -4335,8 +4381,8 @@ private:
     }
   }
 
-  static kj::String generateDevIsolateCapnpEsModule(
-      kj::StringPtr resolvedPath, kj::StringPtr rootDir) {
+  static kj::String generateDevIsolateCapnpEsOutput(
+      kj::StringPtr resolvedPath, kj::StringPtr rootDir, DevIsolateCapnpEsOutputKind kind) {
     auto compilerModule = getenv("SANDSTORM_CAPNP_ES_COMPILER_MODULE");
     KJ_REQUIRE(compilerModule != nullptr && strlen(compilerModule) > 0,
         "`capnp-es:` isolate imports require SANDSTORM_CAPNP_ES_COMPILER_MODULE to point at "
@@ -4363,15 +4409,20 @@ private:
     auto nodeOutPipe = Pipe::make();
     auto nodeErrPipe = Pipe::make();
     auto compilerModulePtr = kj::StringPtr(compilerModule);
+    auto extension = kind == DevIsolateCapnpEsOutputKind::DTS ? ".d.ts" : ".js";
+    kj::StringPtr formatOption = kind == DevIsolateCapnpEsOutputKind::DTS ? "dts" : "js";
     kj::StringPtr script =
         "const chunks = [];\n"
         "for await (const chunk of process.stdin) chunks.push(chunk);\n"
         "const { compileAll } = await import(process.argv[1]);\n"
         "const sourcePath = process.argv[2];\n"
-        "const basename = sourcePath.split('/').pop().replace(/\\.capnp$/, '.js');\n"
-        "const expectedPath = sourcePath.replace(/\\.capnp$/, '.js');\n"
+        "const extension = process.argv[3];\n"
+        "const format = process.argv[4];\n"
+        "const basename = sourcePath.split('/').pop().replace(/\\.capnp$/, extension);\n"
+        "const expectedPath = sourcePath.replace(/\\.capnp$/, extension);\n"
         "const { files } = await compileAll(Buffer.concat(chunks), {\n"
-        "  js: true,\n"
+        "  js: format === 'js',\n"
+        "  dts: format === 'dts',\n"
         "  tsconfig: { noCheck: true }\n"
         "});\n"
         "let content = files.get(expectedPath);\n"
@@ -4390,7 +4441,8 @@ private:
         "}\n"
         "process.stdout.write(content);\n";
     Subprocess::Options nodeOptions({
-        "node", "--input-type=module", "-e", script, compilerModulePtr, resolvedPath});
+        "node", "--input-type=module", "-e", script, compilerModulePtr, resolvedPath,
+        extension, formatOption});
     nodeOptions.stdin = nodeInPipe.readEnd;
     nodeOptions.stdout = nodeOutPipe.writeEnd;
     nodeOptions.stderr = nodeErrPipe.writeEnd;
