@@ -3,7 +3,7 @@ import {
   exportNativeCapnp,
   nativeCapnpPowerboxDescriptor,
 } from "sandstorm:capnp";
-import { File, FileStore } from "capnp-es:./file-store.capnp";
+import { File, FileStore } from "capnp:./file-store.capnp";
 
 const encoder = new TextEncoder();
 

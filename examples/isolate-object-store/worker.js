@@ -1,7 +1,7 @@
 import { sandstorm } from "sandstorm:api";
 import { connectNativeCapnp } from "sandstorm:capnp";
-import { ObjectStore } from "capnp-es:./object-store.capnp";
-import { WebSession } from "capnp-es:/sandstorm/web-session.capnp";
+import { ObjectStore } from "capnp:./object-store.capnp";
+import { WebSession } from "capnp:/sandstorm/web-session.capnp";
 
 const OBJECTS = Object.freeze({
   photos: Object.freeze({

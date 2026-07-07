@@ -1,9 +1,9 @@
 import message from "message.txt";
 import metadata from "metadata.json";
 import { Message as CapnpEsMessage } from "@mnutt/capnp-es";
-import { NativeGreeter } from "capnp-es:./native-greeter.capnp";
+import { NativeGreeter } from "capnp:./native-greeter.capnp";
 import { Message as CapnpRpcMessage } from "@mnutt/capnp/rpc.mjs";
-import { WebSession } from "capnp-es:/sandstorm/web-session.capnp";
+import { WebSession } from "capnp:/sandstorm/web-session.capnp";
 import {
   AppRpcTarget,
   Capability,

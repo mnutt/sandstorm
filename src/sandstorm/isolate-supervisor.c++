@@ -940,11 +940,11 @@ kj::String capnpEsRuntimePath(kj::StringPtr moduleName) {
 }
 
 kj::String capnpEsSchemeRuntimeSpecifier(kj::StringPtr moduleName) {
-  return kj::str("capnp-es:/", capnpEsRuntimePath(moduleName));
+  return kj::str("capnp:/", capnpEsRuntimePath(moduleName));
 }
 
 kj::String capnpEsSchemeRelativeRuntimeSpecifier(kj::StringPtr moduleName) {
-  return kj::str("capnp-es:./", capnpEsRuntimePath(moduleName));
+  return kj::str("capnp:./", capnpEsRuntimePath(moduleName));
 }
 
 void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
@@ -5073,7 +5073,7 @@ public:
         return sendJson(response, 200, "OK", renderBindings());
       } else if (route == "/capnp/bridge-info") {
         return sendJson(response, 200, "OK", renderCapnpBridgeInfo());
-      } else if (route == "/capnp-es/browser-module") {
+      } else if (route == "/capnp/browser-module") {
         return browserCapnpEsModule(path, response);
       } else if (route == "/permissions") {
         return sendJson(response, 200, "OK", renderPermissions());
@@ -8567,9 +8567,9 @@ private:
     if (path.endsWith(".capnp.js")) {
       auto schemaPath = path.slice(0, path.size() - strlen(".js"));
       if (schemaPath.startsWith(kj::StringPtr("sandstorm/"))) {
-        return kj::str("capnp-es:/", schemaPath);
+        return kj::str("capnp:/", schemaPath);
       }
-      return kj::str("capnp-es:./", schemaPath);
+      return kj::str("capnp:./", schemaPath);
     }
 
     if (path.startsWith(kj::StringPtr("capnp-es/")) && path.endsWith(kj::StringPtr(".mjs"))) {

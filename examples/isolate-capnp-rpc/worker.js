@@ -1,7 +1,7 @@
 import { sandstorm } from "sandstorm:api";
 import { exportNativeCapnp } from "sandstorm:capnp";
-import { Greeting } from "capnp-es:./greeting.capnp";
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeting } from "capnp:./greeting.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 
 function makeGreeting(message) {
   return new Greeting.Server({

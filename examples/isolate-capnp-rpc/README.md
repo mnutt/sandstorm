@@ -6,10 +6,10 @@ Run:
 spk dev-isolate --title "Isolate Capnp RPC" examples/isolate-capnp-rpc/worker.js
 ```
 
-This example uses a native `capnp-es:` import:
+This example uses a native `capnp:` import:
 
 ```js
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 ```
 
 `spk dev-isolate` generates `@mnutt/capnp-es` classes from the schema. The
@@ -24,11 +24,11 @@ protocols and legacy grain interop.
 
 TypeScript declarations for the native helpers live in
 `src/sandstorm/isolate/capnp.d.ts`. Schema-specific declarations come from the
-generated `capnp-es` module:
+generated `capnp:` schema module:
 
 ```ts
 import { exportNativeCapnp } from "sandstorm:capnp";
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 
 interface GreeterMethods {
   hello(request?: { name?: string }): Promise<{ message: string }>;
