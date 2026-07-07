@@ -3320,6 +3320,8 @@ test("isolate supervisor integration suite", {
       fixture.workerdSocket, "/__sandstorm/native-capnp/client.js");
     assert.equal(browserNativeCapnpClient.statusCode, 200);
     assert.match(browserNativeCapnpClient.body, /connectBrowserNativeCapnp/);
+    assert.match(browserNativeCapnpClient.body, /BrowserNativeCapnpBridgeWebSocketTransport/);
+    assert.match(browserNativeCapnpClient.body, /__sandstorm\/native-capnp\/rpc-session/);
     assert.match(browserNativeCapnpClient.body, /nativeCapnpPowerboxDescriptor/);
     assert.match(browserNativeCapnpClient.body, /requestBrowserNativeCapnp/);
     assert.match(browserNativeCapnpClient.body, /claimBrowserNativeCapnpToken/);
@@ -3327,6 +3329,14 @@ test("isolate supervisor integration suite", {
     assert.match(
       browserNativeCapnpClient.body,
       /from "\/__sandstorm\/capnp-es\/sandstorm\/isolate-native-capnp-bridge\.capnp\.js"/);
+
+    const browserNativeCapnpRpcSession = await requestJson(
+      fixture.workerdSocket,
+      "/__sandstorm/native-capnp/rpc-session" +
+        "?id=missing&interfaceId=0&interfaceName=Missing&connectionId=test");
+    assert.equal(browserNativeCapnpRpcSession.statusCode, 426);
+    assert.equal(browserNativeCapnpRpcSession.json.ok, false);
+    assert.match(browserNativeCapnpRpcSession.json.error, /WebSocket upgrade/);
 
     const appInterfaceDescriptor = await requestJson(
       fixture.sandstormApiSocket,
