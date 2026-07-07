@@ -43,6 +43,9 @@ export function requestPowerbox(query, options = {}) {
   const rpcId = typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
     : `sandstorm-powerbox-${Date.now()}-${Math.random()}`;
+  const targetOrigin = options.targetOrigin || "*";
+  const expectedOrigin = options.expectedOrigin || (
+    targetOrigin === "*" ? undefined : targetOrigin);
 
   return new Promise((resolve, reject) => {
     function cleanup() {
@@ -50,6 +53,8 @@ export function requestPowerbox(query, options = {}) {
     }
 
     function onMessage(event) {
+      if (event.source !== window.parent) return;
+      if (expectedOrigin !== undefined && event.origin !== expectedOrigin) return;
       const data = event.data || {};
       if (data.rpcId !== rpcId) return;
 
@@ -77,7 +82,7 @@ export function requestPowerbox(query, options = {}) {
 
     window.parent.postMessage({
       powerboxRequest,
-    }, "*");
+    }, targetOrigin);
   });
 }
 
@@ -394,6 +399,9 @@ export function requestPowerbox(query, options = {}) {
   const rpcId = typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
     : \`sandstorm-powerbox-\${Date.now()}-\${Math.random()}\`;
+  const targetOrigin = options.targetOrigin || "*";
+  const expectedOrigin = options.expectedOrigin || (
+    targetOrigin === "*" ? undefined : targetOrigin);
 
   return new Promise((resolve, reject) => {
     function cleanup() {
@@ -401,6 +409,8 @@ export function requestPowerbox(query, options = {}) {
     }
 
     function onMessage(event) {
+      if (event.source !== window.parent) return;
+      if (expectedOrigin !== undefined && event.origin !== expectedOrigin) return;
       const data = event.data || {};
       if (data.rpcId !== rpcId) return;
 
@@ -428,7 +438,7 @@ export function requestPowerbox(query, options = {}) {
 
     window.parent.postMessage({
       powerboxRequest,
-    }, "*");
+    }, targetOrigin);
   });
 }
 
