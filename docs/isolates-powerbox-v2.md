@@ -663,9 +663,8 @@ Deliverables:
 - legacy grains can call isolate-defined capabilities
 - isolates can call legacy grain capabilities
 - capability slots cross the bridge safely
-- non-appObject capability slots returned by app-object compatibility calls can
-  cross supervisor boundaries through the native bridge, rather than the
-  temporary `IsolateObjectCapability` JSON route
+- native capability slots returned by schema-defined calls can cross supervisor
+  boundaries through the native bridge
 - membranes, save, restore, drop, and revocation continue to work
 
 This is the main interop milestone.
@@ -1228,6 +1227,10 @@ Progress:
 - the API Powerbox example/test apps no longer expose app-object feed or LLM
   provider flows, and browser examples now import the native Cap'n Proto client
   route instead of the removed `/rpc-client.js` helper
+- obsolete JavaScript object-RPC examples were removed, the app skeleton and
+  TypeScript examples now use fetch-shaped routes, and
+  `docs/developing/isolate-grains.md` now documents the native `capnp:` and
+  browser-client model instead of the removed Cap'n Web helper stack
 
 ## Decisions
 
