@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "dependencies": {
+    "@mnutt/capnp-es": "0.2.2"
+  }
+}

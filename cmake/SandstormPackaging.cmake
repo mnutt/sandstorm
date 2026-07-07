@@ -5,6 +5,33 @@ function(sandstorm_add_packaging_targets)
   set(_spk_stage "${_package_dir}/spk-stage")
   file(MAKE_DIRECTORY "${_package_dir}")
 
+  set(_capnp_es_package_dir "${PROJECT_SOURCE_DIR}/deps/capnp-es-npm")
+  set(_capnp_es_work_dir "${CMAKE_BINARY_DIR}/capnp-es-npm")
+  set(_capnp_es_npm_compiler
+    "${_capnp_es_work_dir}/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs")
+  if(SANDSTORM_CAPNP_ES_COMPILER_MODULE)
+    set(_capnp_es_compiler "${SANDSTORM_CAPNP_ES_COMPILER_MODULE}")
+    set(_capnp_es_compiler_deps "${SANDSTORM_CAPNP_ES_COMPILER_MODULE}")
+  else()
+    set(_capnp_es_compiler "${_capnp_es_npm_compiler}")
+    set(_capnp_es_compiler_deps "${_capnp_es_npm_compiler}")
+    add_custom_command(
+      OUTPUT "${_capnp_es_npm_compiler}"
+      COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_capnp_es_work_dir}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${_capnp_es_work_dir}"
+      COMMAND "${CMAKE_COMMAND}" -E copy
+        "${_capnp_es_package_dir}/package.json" "${_capnp_es_work_dir}/package.json"
+      COMMAND "${CMAKE_COMMAND}" -E env
+        "PATH=${SANDSTORM_METEOR_DEV_BUNDLE}/bin:$ENV{PATH}"
+        "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/npm" install
+          --no-fund --no-save --prefix "${_capnp_es_work_dir}"
+      COMMAND "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node" -e
+        "const v=require('${_capnp_es_work_dir}/node_modules/@mnutt/capnp-es/package.json').version;if(v!=='${SANDSTORM_CAPNP_ES_NPM_VERSION}')process.exit(1)"
+      DEPENDS "${_capnp_es_package_dir}/package.json"
+      COMMENT "Installing the capnp-es compiler from npm"
+      VERBATIM)
+  endif()
+
   function(_sandstorm_add_isolate_test_package target capnp_file key_file asset_dir)
     set(_source "${PROJECT_SOURCE_DIR}/src/sandstorm/test-app")
     set(_stage "${_spk_stage}/sandstorm/${target}")
@@ -114,7 +141,7 @@ function(sandstorm_add_packaging_targets)
   add_custom_command(
     OUTPUT "${_isolate_test_app_spk}"
     COMMAND "${CMAKE_COMMAND}" -E env
-      "SANDSTORM_CAPNP_ES_COMPILER_MODULE=${SANDSTORM_CAPNP_ES_COMPILER_MODULE}"
+      "SANDSTORM_CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
       "$<TARGET_FILE:spk>" pack
       -k "${_isolate_test_app_source}/isolate-test-app.key"
       -I "${PROJECT_SOURCE_DIR}/src"
@@ -126,6 +153,7 @@ function(sandstorm_add_packaging_targets)
       spk
       "${_isolate_test_app_stage_capnp}"
       "${_isolate_test_app_source}/isolate-test-app.key"
+      "${_capnp_es_compiler_deps}"
     COMMENT "Packing isolate-test-app.spk"
     VERBATIM)
   add_custom_target(isolate-test-app-spk DEPENDS "${_isolate_test_app_spk}")
@@ -148,6 +176,7 @@ function(sandstorm_add_packaging_targets)
       "SPK_BIN=$<TARGET_FILE:spk>"
       "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
       "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
+      "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
       "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
       "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
     DEPENDS
@@ -169,6 +198,7 @@ function(sandstorm_add_packaging_targets)
       "SPK_BIN=$<TARGET_FILE:spk>"
       "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
       "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
+      "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
       "ISOLATE_STRESS_64M=1"
       "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
       "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
@@ -196,6 +226,7 @@ function(sandstorm_add_packaging_targets)
         "SPK_BIN=$<TARGET_FILE:spk>"
         "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
         "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
+        "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
         "ISOLATE_SYSCALL_TRACE_DIR=${_isolate_trace_dir}"
         "ISOLATE_SYSCALL_TRACE_PROFILE=representative"
         "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
