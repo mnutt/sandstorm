@@ -989,15 +989,18 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
   });
 
   const appDir = path.join(fixtureRoot, "app");
-  await fs.mkdir(appDir);
+  const appSrcDir = path.join(appDir, "src");
+  const appSchemaDir = path.join(appDir, "schemas");
+  await fs.mkdir(appSrcDir, { recursive: true });
+  await fs.mkdir(appSchemaDir, { recursive: true });
   await fs.copyFile(
     path.join(REPO_DIR, "examples/isolate-capnp-rpc/greeter.capnp"),
-    path.join(appDir, "greeter.capnp"));
+    path.join(appSchemaDir, "greeter.capnp"));
   await fs.copyFile(
     path.join(REPO_DIR, "examples/isolate-capnp-rpc/greeting.capnp"),
-    path.join(appDir, "greeting.capnp"));
-  await fs.writeFile(path.join(appDir, "worker.js"), [
-    "import { Greeter } from \"capnp:./greeter.capnp\";",
+    path.join(appSchemaDir, "greeting.capnp"));
+  await fs.writeFile(path.join(appSrcDir, "worker.js"), [
+    "import { Greeter } from \"capnp:../schemas/greeter.capnp\";",
     "export default { fetch() { return Response.json({ name: Greeter.name, interfaceId: Greeter._capnp.typeIdHex }); } };",
     "",
   ].join("\n"));
@@ -1026,7 +1029,7 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     "    compatibilityDate = \"2025-01-01\",",
     "    compatibilityFlags = [],",
     "    modules = [",
-    "      ( name = \"worker.js\", esModulePath = \"app/worker.js\" )",
+    "      ( name = \"worker.js\", esModulePath = \"app/src/worker.js\" )",
     "    ],",
     "    bindings = [],",
     "    bridgeConfig = ( viewInfo = .viewInfo )",
@@ -1049,7 +1052,7 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     "  sourceMap = (",
     "    searchPath = [ ( packagePath = \"app\", sourcePath = \"app\" ) ]",
     "  ),",
-    "  alwaysInclude = [ \"sandstorm-manifest\", \"app/worker.js\" ]",
+    "  alwaysInclude = [ \"sandstorm-manifest\", \"app/src/worker.js\" ]",
     ");",
     "",
   ].join("\n"));
@@ -1073,13 +1076,14 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
   await runCommand(SPK_BIN, ["unpack", spkPath, unpackDir], { cwd: REPO_DIR });
 
   const greeterPath = path.join(
-    unpackDir, "__sandstorm_isolate_runtime/capnp-es-generated/greeter.js");
+    unpackDir, "__sandstorm_isolate_runtime/capnp-es-generated/app/schemas/greeter.js");
   const greetingPath = path.join(
-    unpackDir, "__sandstorm_isolate_runtime/capnp-es-generated/greeting.js");
+    unpackDir, "__sandstorm_isolate_runtime/capnp-es-generated/app/schemas/greeting.js");
   await requireFile(greeterPath, "spk pack should generate the imported schema module.");
   await requireFile(greetingPath, "spk pack should generate transitive schema imports.");
   const greeterSource = await fs.readFile(greeterPath, "utf8");
   assert.match(greeterSource, /from "\/capnp-es\/index\.mjs";/);
+  assert.match(greeterSource, /from "\.\/greeting\.capnp";/);
   assert.match(greeterSource, /export class Greeter extends/);
 
   const manifestBytes = await fs.readFile(path.join(unpackDir, "sandstorm-manifest"));
@@ -1097,17 +1101,17 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
   const modules = new Map(
     manifest.continueCommand.isolate.modules.map((module) => [module.name, module]));
 
-  assert.equal(modules.get("worker.js").esModulePath, "app/worker.js");
+  assert.equal(modules.get("worker.js").esModulePath, "app/src/worker.js");
   assert.equal(
-    modules.get("capnp:./greeter.capnp").esModulePath,
-    "__sandstorm_isolate_runtime/capnp-es-generated/greeter.js");
+    modules.get("capnp:../schemas/greeter.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/app/schemas/greeter.js");
   assert.equal(
-    modules.get("capnp:./greeting.capnp").esModulePath,
-    "__sandstorm_isolate_runtime/capnp-es-generated/greeting.js");
-  assert.equal(modules.has("capnp-es:./greeter.capnp"), false);
-  assert.equal(modules.has("capnp-es:./greeting.capnp"), false);
-  assert.equal(modules.has("sandstorm:browser-capnp:./greeter.capnp"), false);
-  assert.equal(modules.has("sandstorm:browser-capnp:./greeting.capnp"), false);
+    modules.get("capnp:../schemas/greeting.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/app/schemas/greeting.js");
+  assert.equal(modules.has("capnp-es:../schemas/greeter.capnp"), false);
+  assert.equal(modules.has("capnp-es:../schemas/greeting.capnp"), false);
+  assert.equal(modules.has("sandstorm:browser-capnp:../schemas/greeter.capnp"), false);
+  assert.equal(modules.has("sandstorm:browser-capnp:../schemas/greeting.capnp"), false);
   assert.equal(
     String(manifest.continueCommand.isolate.bridgeConfig.viewInfo.matchRequests[0].tags[0].id),
     BigInt("0x85d0f155d6c54b6d").toString());
