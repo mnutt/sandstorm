@@ -70,23 +70,6 @@ declare module "sandstorm:capnp" {
     capabilities?: readonly NativeCapnpCapabilitySlot[],
   ): NativeCapnpPayload;
 
-  export interface NativeCapnpBridgeMethodMetadata {
-    readonly interfaceId: bigint | number | string;
-    readonly interfaceName?: string;
-    readonly methodOrdinal: number;
-    readonly methodName: string;
-  }
-
-  export interface NativeCapnpBridgeCallRequestOptions {
-    readonly target: NativeCapnpCapabilitySlot;
-    readonly method: NativeCapnpBridgeMethodMetadata;
-    readonly payload?: NativeCapnpPayload;
-  }
-
-  export function makeNativeCapnpBridgeCallRequest(
-    options?: NativeCapnpBridgeCallRequestOptions,
-  ): NativeCapnpPayload;
-
   export interface NativeCapnpBridgeTargetRequestOptions {
     readonly target: NativeCapnpCapabilitySlot;
   }
@@ -119,14 +102,6 @@ declare module "sandstorm:capnp" {
     readonly trace?: string;
   }
 
-  export interface NativeCapnpBridgeResultResponseOptions {
-    readonly payload?: NativeCapnpPayload;
-  }
-
-  export function makeNativeCapnpBridgeResultResponse(
-    options?: NativeCapnpBridgeResultResponseOptions,
-  ): NativeCapnpPayload;
-
   export function makeNativeCapnpBridgeExceptionResponse(
     exception?: NativeCapnpBridgeException,
   ): NativeCapnpPayload;
@@ -146,14 +121,6 @@ declare module "sandstorm:capnp" {
   ): unknown;
 
   export type DecodedNativeCapnpBridgeResponse =
-    | {
-        readonly protocolVersion: 0;
-        readonly which: "result";
-        readonly result:
-          | { readonly which: "value"; readonly value: NativeCapnpPayload }
-          | { readonly which: "exception"; readonly exception: Required<NativeCapnpBridgeException> }
-          | { readonly which: "canceled" };
-      }
     | {
         readonly protocolVersion: 0;
         readonly which: "capability";
@@ -178,23 +145,10 @@ declare module "sandstorm:capnp" {
     message: Uint8Array | ArrayBuffer | ArrayBufferView,
   ): DecodedNativeCapnpBridgeResponse;
 
-  export interface NativeCapnpBridgeCallOptions {
-    readonly target: Capability;
-    readonly binding: NativeCapnpGeneratedInterface<any>;
-    readonly methodName: string;
-    readonly params?: { toUint8Array(): Uint8Array } | Uint8Array | ArrayBuffer | ArrayBufferView;
-    readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
-  }
-
   export interface NativeCapnpBridge {
     readonly negotiation: NativeCapnpBridgeNegotiation;
     readonly available: boolean;
     readonly protocolVersion: 0;
-    makePayload(
-      message?: { toUint8Array(): Uint8Array } | Uint8Array | ArrayBuffer | ArrayBufferView,
-      capabilities?: readonly NativeCapnpCapabilitySlot[],
-    ): NativeCapnpPayload;
-    call(options: NativeCapnpBridgeCallOptions): Promise<NativeCapnpPayload>;
     drop(options: { readonly target: Capability }): Promise<void>;
     save(options: { readonly target: Capability }): Promise<string>;
     restore(options: {

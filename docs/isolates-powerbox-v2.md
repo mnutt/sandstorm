@@ -713,37 +713,32 @@ Progress:
 - isolate runtime bundles the browser-safe `@mnutt/capnp-es` ESM runtime as
   built-in modules; this is the selected JS-side Cap'n Proto encoder/runtime
   for native bridge work
-- `sandstorm:capnp` exposes native bridge client scaffolding and Cap'n
-  Proto payload normalization around `@mnutt/capnp-es`, while still failing
-  calls with a stable unavailable error until the supervisor transport exists
-- supervisor exposes a disabled `POST /capnp/call` route with a structured
-  native bridge response envelope, giving JS clients a stable endpoint before
-  native dispatch is enabled
-- `sandstorm:api` exposes `nativeCapnpBridgeCall()` as the narrow JS helper
-  for posting to that route, and the native bridge client will use it once
-  negotiation enables native calls
+- `sandstorm:capnp` exposes native bridge lifecycle helpers around
+  `@mnutt/capnp-es`; generated schema RPC clients use the WebSocket Cap'n
+  Proto RPC session transport rather than posting method calls to
+  `/capnp/call`
+- supervisor exposes `POST /capnp/call` only for native bridge lifecycle
+  envelopes: save, restore, and drop. The direct method-call/result envelope
+  prototype has been removed.
+- `sandstorm:api` exposes `nativeCapnpBridgeCall()` as the narrow lifecycle
+  helper for posting to that route; generated RPC clients use
+  `nativeCapnpBridgeOpenRpcSession()`
 - isolate runtime bundles generated `@mnutt/capnp-es` bindings for the native
-  bridge envelope as `sandstorm:native-capnp-bridge`; `sandstorm:capnp` can now
-  encode and test-decode full native bridge call request messages containing
-  the target capability slot, interface ID, method ordinal/name, params bytes,
-  and payload capability slots
-- the disabled supervisor `/capnp/call` route now parses and validates the
-  native bridge request envelope before returning its stable unimplemented
-  response, so C++ and isolate JS agree on the initial wire format before any
-  native capability dispatch is enabled
-- the disabled supervisor `/capnp/call` route now rejects bridge calls whose
-  target id is not an already-claimed Sandstorm capability handle, preserving
-  the object-capability authority boundary before native dispatch is enabled
-- `sandstorm:capnp` can now encode and decode native bridge response envelopes
-  for result payloads and exceptions, giving generated clients a typed response
-  format to target before `/capnp/call` returns binary native results
+  bridge envelope as `sandstorm:native-capnp-bridge`; `sandstorm:capnp` can
+  encode and test-decode lifecycle request/response envelopes without exposing
+  a second RPC transport
+- the supervisor `/capnp/call` route parses and validates lifecycle envelopes
+  and rejects unknown target ids that are not already-claimed Sandstorm
+  capability handles, preserving the object-capability authority boundary
+- `sandstorm:capnp` can now encode and decode native bridge lifecycle response
+  envelopes for saved tokens, restored capabilities, acknowledgements, and
+  exceptions
 - `/capnp/call` now has an opt-in binary response path using
-  `Accept: application/octet-stream`; disabled/failed bridge calls can return a
+  `Accept: application/octet-stream`; failed lifecycle operations can return a
   serialized `NativeCapnpBridgeResponse.exception` envelope, while the default
   JSON diagnostics remain available
-- `createNativeCapnpBridge().call()` now uses the binary API helper when bridge
-  negotiation succeeds and returns decoded result payloads, or maps response
-  exception/canceled envelopes to JS errors
+- `createNativeCapnpBridge()` is lifecycle-only; schema method calls go through
+  `connectNativeCapnp()` and the native WebSocket RPC session
 - `sandstorm:capnp` can encode save, restore, and drop native bridge lifecycle
   requests plus acknowledged/saved/capability responses; the disabled
   supervisor route now parses and validates those lifecycle variants before
@@ -805,10 +800,9 @@ Progress:
   `/capnp/*` runtime schemas, and generate Sandstorm-owned `/sandstorm/*`
   schema dependencies under explicit `capnp:/sandstorm/...` module names
 - bridge feature negotiation now distinguishes the working binary `rpc`
-  transport from the still-disabled direct method-call envelope:
-  `/capnp/bridge-info` advertises `nativeTransport` and `nativeRpc`, while
-  `nativeCalls`, `nativeExports`, and cross-envelope `capabilitySlots` remain
-  false until those paths are implemented
+  transport from lifecycle-only `/capnp/call`: `/capnp/bridge-info`
+  advertises `nativeTransport` and `nativeRpc`, while `nativeCalls` remains
+  false because the direct method-call envelope was removed
 - `sandstorm:capnp` now exposes `saveNativeCapnp()` and `restoreNativeCapnp()`;
   restore negotiates the native RPC bridge, restores a durable token through
   Sandstorm's lifecycle route, and returns a live generated `@mnutt/capnp-es`

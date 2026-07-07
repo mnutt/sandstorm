@@ -21,15 +21,12 @@ import {
   decodeNativeCapnpBridgeResponse,
   exportNativeCapnp,
   makeNativeCapnpBridgeAcknowledgedResponse,
-  makeNativeCapnpBridgeCallRequest,
   makeNativeCapnpBridgeCapabilityResponse,
   makeNativeCapnpBridgeDropRequest,
   makeNativeCapnpBridgeExceptionResponse,
-  makeNativeCapnpBridgeResultResponse,
   makeNativeCapnpBridgeRestoreRequest,
   makeNativeCapnpBridgeSaveRequest,
   makeNativeCapnpBridgeSavedResponse,
-  makeNativeCapnpPayload,
   negotiateNativeCapnpBridge,
   nativeCapnpPowerboxDescriptor,
   nativeCapnpPowerboxDescriptorInfo,
@@ -1929,44 +1926,6 @@ export default {
     const nativeCapnpTarget = await apiHelper.webSession({
       pathPrefix: "/native-capnp-bridge-target",
     });
-    const nativeCapnpPayload = makeNativeCapnpPayload(new CapnpEsMessage(), [
-      {
-        id: "argument-capability",
-        interfaceId: "0xb66316217ceedb1b",
-        interfaceName: "NativeGreeter",
-        kind: "senderHosted",
-      },
-    ]);
-    const nativeCapnpBridgeRequest = makeNativeCapnpBridgeCallRequest({
-      target: {
-        id: nativeCapnpTarget.id,
-        interfaceId: "0xa8e9655582dcde6f",
-        interfaceName: "sandstorm.WebSession",
-        kind: "receiverHosted",
-      },
-      method: {
-        interfaceId: "0xa8e9655582dcde6f",
-        interfaceName: "sandstorm.WebSession",
-        methodOrdinal: 2,
-        methodName: "get",
-      },
-      payload: nativeCapnpPayload,
-    });
-    const unknownNativeCapnpBridgeRequest = makeNativeCapnpBridgeCallRequest({
-      target: {
-        id: "unknown-target-capability",
-        interfaceId: "0xa8e9655582dcde6f",
-        interfaceName: "sandstorm.WebSession",
-        kind: "receiverHosted",
-      },
-      method: {
-        interfaceId: "0xa8e9655582dcde6f",
-        interfaceName: "sandstorm.WebSession",
-        methodOrdinal: 2,
-        methodName: "get",
-      },
-      payload: nativeCapnpPayload,
-    });
     const nativeCapnpBridgeDropRequest = makeNativeCapnpBridgeDropRequest({
       target: {
         id: nativeCapnpTarget.id,
@@ -1988,23 +1947,12 @@ export default {
       expectedInterfaceId: "0xa8e9655582dcde6f",
       expectedInterfaceName: "sandstorm.WebSession",
     });
-    const nativeCapnpBridgeRequestRoot =
-        readNativeCapnpBridgeRequest(nativeCapnpBridgeRequest.message);
-    const nativeCapnpBridgeRequestCall = nativeCapnpBridgeRequestRoot.call;
-    const nativeCapnpBridgeRequestParams = nativeCapnpBridgeRequestCall.params;
     const nativeCapnpBridgeDropRequestRoot =
         readNativeCapnpBridgeRequest(nativeCapnpBridgeDropRequest.message);
     const nativeCapnpBridgeSaveRequestRoot =
         readNativeCapnpBridgeRequest(nativeCapnpBridgeSaveRequest.message);
     const nativeCapnpBridgeRestoreRequestRoot =
         readNativeCapnpBridgeRequest(nativeCapnpBridgeRestoreRequest.message);
-    const nativeCapnpBridgeResultResponse = makeNativeCapnpBridgeResultResponse({
-      payload: nativeCapnpPayload,
-    });
-    const decodedNativeCapnpBridgeResultResponse =
-        decodeNativeCapnpBridgeResponse(nativeCapnpBridgeResultResponse.message);
-    const nativeCapnpBridgeResultValue = decodedNativeCapnpBridgeResultResponse.result.value;
-    const nativeCapnpBridgeResultCapability = nativeCapnpBridgeResultValue.capabilities[0];
     const nativeCapnpBridgeExceptionResponse = makeNativeCapnpBridgeExceptionResponse({
       type: "unimplemented",
       reason: "fixture exception",
@@ -2031,11 +1979,8 @@ export default {
     });
     const decodedNativeCapnpBridgeCapabilityResponse =
         decodeNativeCapnpBridgeResponse(nativeCapnpBridgeCapabilityResponse.message);
-    const nativeCapnpBridge = await createNativeCapnpBridge(apiHelper, {
-      requiredFeatures: ["nativeCalls", "capabilitySlots"],
-    });
+    const nativeCapnpBridge = await createNativeCapnpBridge(apiHelper);
     const nativeCapnpBridgeClientResponses = [
-      nativeCapnpBridgeResultResponse,
       nativeCapnpBridgeAcknowledgedResponse,
       nativeCapnpBridgeSavedResponse,
       nativeCapnpBridgeCapabilityResponse,
@@ -2048,6 +1993,8 @@ export default {
         minProtocolVersion: 0,
         maxProtocolVersion: 0,
         nativeTransport: true,
+        nativeRpc: true,
+        nativeRpcWebSocket: true,
         nativeCalls: true,
         nativeExports: false,
         capabilitySlots: true,
@@ -2059,23 +2006,8 @@ export default {
         body: nativeCapnpBridgeClientResponses.shift().message,
       }),
     }, {
-      requiredFeatures: ["nativeCalls", "capabilitySlots"],
+      requiredFeatures: [],
     });
-    const nativeCapnpBridgeClientCallResult = await nativeCapnpBridgeClient.call({
-      target: nativeCapnpTarget,
-      binding: {
-        interfaceName: "sandstorm.WebSession",
-        schema: {
-          interfaceId: "0xa8e9655582dcde6f",
-          interfaceName: "sandstorm.WebSession",
-          methodIds: { get: 2 },
-        },
-      },
-      methodName: "get",
-      params: new CapnpEsMessage(),
-    });
-    const nativeCapnpBridgeClientCallCapability =
-        nativeCapnpBridgeClientCallResult.capabilities[0];
     const nativeCapnpBridgeClientDropResult = await nativeCapnpBridgeClient.drop({
       target: nativeCapnpTarget,
     });
@@ -2093,18 +2025,12 @@ export default {
         },
       },
     });
-    const nativeCapnpBridgeCall =
-        await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeRequest.message);
     const nativeCapnpBridgeDrop =
         await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeDropRequest.message);
     const nativeCapnpBridgeSave =
         await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeSaveRequest.message);
     const nativeCapnpBridgeRestore =
         await apiHelper.nativeCapnpBridgeCall(nativeCapnpBridgeRestoreRequest.message);
-    const nativeCapnpBridgeBinaryCall =
-        await apiHelper.nativeCapnpBridgeCallBytes(nativeCapnpBridgeRequest.message);
-    const decodedNativeCapnpBridgeBinaryCall =
-        decodeNativeCapnpBridgeResponse(nativeCapnpBridgeBinaryCall.body);
     class NativeCapnpBridgeFixtureClient {
       constructor(client) {
         this.client = client;
@@ -2309,14 +2235,15 @@ export default {
         },
       };
     }
-    const unknownNativeCapnpBridgeCall =
-        await apiHelper.nativeCapnpBridgeCall(unknownNativeCapnpBridgeRequest.message);
-    let nativeCapnpBridgeCallError = "";
-    try {
-      await nativeCapnpBridge.call();
-    } catch (error) {
-      nativeCapnpBridgeCallError = error.name;
-    }
+    const unknownNativeCapnpBridgeDrop =
+        await apiHelper.nativeCapnpBridgeCall(makeNativeCapnpBridgeDropRequest({
+          target: {
+            id: "unknown-target-capability",
+            interfaceId: "0xa8e9655582dcde6f",
+            interfaceName: "sandstorm.WebSession",
+            kind: "receiverHosted",
+          },
+        }).message);
 
     const storagePut = await (await env.STORAGE.fetch("http://storage/fixture", {
       method: "PUT",
@@ -2340,44 +2267,6 @@ export default {
       jsonBinding: env.JSON_BINDING,
       capnpEs: {
         messageBytes: new CapnpEsMessage().toUint8Array().byteLength,
-        payloadBytes: nativeCapnpPayload.message.byteLength,
-        bridgeRequestBytes: nativeCapnpBridgeRequest.message.byteLength,
-        bridgeRequest: {
-          protocolVersion: nativeCapnpBridgeRequestRoot.protocolVersion,
-          which: nativeCapnpBridgeRequestRoot.which(),
-          target: {
-            id: nativeCapnpBridgeRequestCall.target.id,
-            interfaceId: nativeCapnpBridgeRequestCall.target.interfaceId.toString(16),
-            interfaceName: nativeCapnpBridgeRequestCall.target.interfaceName,
-            kind: nativeCapnpBridgeRequestCall.target.kind,
-          },
-          interfaceId: nativeCapnpBridgeRequestCall.interfaceId.toString(16),
-          methodOrdinal: nativeCapnpBridgeRequestCall.methodOrdinal,
-          methodName: nativeCapnpBridgeRequestCall.methodName,
-          paramsBytes: nativeCapnpBridgeRequestParams.message.toUint8Array().byteLength,
-          capabilityCount: nativeCapnpBridgeRequestParams.capabilities.length,
-          firstCapability: {
-            id: nativeCapnpBridgeRequestParams.capabilities.get(0).id,
-            interfaceId: nativeCapnpBridgeRequestParams.capabilities.get(0)
-                .interfaceId.toString(16),
-            interfaceName: nativeCapnpBridgeRequestParams.capabilities.get(0).interfaceName,
-            kind: nativeCapnpBridgeRequestParams.capabilities.get(0).kind,
-          },
-        },
-        bridgeResultResponse: {
-          bytes: nativeCapnpBridgeResultResponse.message.byteLength,
-          protocolVersion: decodedNativeCapnpBridgeResultResponse.protocolVersion,
-          which: decodedNativeCapnpBridgeResultResponse.which,
-          resultWhich: decodedNativeCapnpBridgeResultResponse.result.which,
-          valueBytes: nativeCapnpBridgeResultValue.message.byteLength,
-          capabilityCount: nativeCapnpBridgeResultValue.capabilities.length,
-          firstCapability: {
-            id: nativeCapnpBridgeResultCapability.id,
-            interfaceId: nativeCapnpBridgeResultCapability.interfaceId.toString(16),
-            interfaceName: nativeCapnpBridgeResultCapability.interfaceName,
-            kind: nativeCapnpBridgeResultCapability.kind,
-          },
-        },
         bridgeExceptionResponse: {
           bytes: nativeCapnpBridgeExceptionResponse.message.byteLength,
           protocolVersion: decodedNativeCapnpBridgeExceptionResponse.protocolVersion,
@@ -2425,16 +2314,8 @@ export default {
             },
           },
         },
-        bridgeClientCall: {
+        bridgeClientLifecycle: {
           available: nativeCapnpBridgeClient.available,
-          resultBytes: nativeCapnpBridgeClientCallResult.message.byteLength,
-          capabilityCount: nativeCapnpBridgeClientCallResult.capabilities.length,
-          firstCapability: {
-            id: nativeCapnpBridgeClientCallCapability.id,
-            interfaceId: nativeCapnpBridgeClientCallCapability.interfaceId.toString(16),
-            interfaceName: nativeCapnpBridgeClientCallCapability.interfaceName,
-            kind: nativeCapnpBridgeClientCallCapability.kind,
-          },
           dropResult: nativeCapnpBridgeClientDropResult ?? null,
           savedToken: nativeCapnpBridgeClientSaveResult,
           restoredCapability: {
@@ -2482,20 +2363,9 @@ export default {
           available: nativeCapnpBridge.available,
           protocolVersion: nativeCapnpBridge.protocolVersion,
           targetId: nativeCapnpTarget.id,
-          callError: nativeCapnpBridgeCallError,
-          routeError: nativeCapnpBridgeCall.error,
-          routeRequest: nativeCapnpBridgeCall.request,
           dropRequest: nativeCapnpBridgeDrop.request,
           saveRequest: nativeCapnpBridgeSave.request,
           restoreRequest: nativeCapnpBridgeRestore.request,
-          binaryRoute: {
-            ok: nativeCapnpBridgeBinaryCall.ok,
-            status: nativeCapnpBridgeBinaryCall.status,
-            contentType: nativeCapnpBridgeBinaryCall.contentType,
-            bytes: nativeCapnpBridgeBinaryCall.body.byteLength,
-            which: decodedNativeCapnpBridgeBinaryCall.which,
-            exception: decodedNativeCapnpBridgeBinaryCall.exception,
-          },
           connectedClient: {
             isFixtureClient: nativeCapnpConnectedClient instanceof NativeCapnpBridgeFixtureClient,
             hasBootstrapClient: Boolean(nativeCapnpConnectedClient.client),
@@ -2518,7 +2388,7 @@ export default {
             drop: nativeCapnpGeneratedDropResult,
           },
           lifecycleBinary: nativeCapnpLifecycleBinary,
-          unknownTargetError: unknownNativeCapnpBridgeCall.error,
+          unknownTargetError: unknownNativeCapnpBridgeDrop.error,
         },
       },
       storage: {

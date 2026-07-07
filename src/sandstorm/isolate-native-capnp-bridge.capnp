@@ -5,14 +5,14 @@ $import "/capnp/c++.capnp".namespace("sandstorm");
 struct NativeCapnpBridgeRequest @0xa9d7cd8e6cc2b4e9 {
   # Versioned isolate-to-supervisor native Cap'n Proto bridge envelope.
   #
-  # This is intentionally separate from IsolateObjectCapability. App-object RPC
-  # is private/local helper plumbing, while this envelope is for generated
-  # schema bindings that encode real Cap'n Proto params/results.
+  # Generated schema RPC uses the WebSocket Cap'n Proto RPC session transport.
+  # This envelope is lifecycle-only: save, restore, and drop operations for
+  # already-held Sandstorm capability handles.
 
   protocolVersion @0 :UInt32;
 
   union {
-    call @1 :NativeCapnpBridgeCall;
+    obsoleteCall @1 :Void;
     drop @2 :NativeCapnpBridgeDrop;
     save @3 :NativeCapnpBridgeSave;
     restore @4 :NativeCapnpBridgeRestore;
@@ -23,27 +23,11 @@ struct NativeCapnpBridgeResponse @0xc1ef5dce7db1a7f1 {
   protocolVersion @0 :UInt32;
 
   union {
-    result @1 :NativeCapnpBridgeResult;
+    obsoleteResult @1 :Void;
     capability @2 :NativeCapnpCapabilitySlot;
     saved @3 :NativeCapnpBridgeSaved;
     acknowledged @4 :Void;
     exception @5 :NativeCapnpBridgeException;
-  }
-}
-
-struct NativeCapnpBridgeCall @0xaed23d9f61f0f103 {
-  target @0 :NativeCapnpCapabilitySlot;
-  interfaceId @1 :UInt64;
-  methodOrdinal @2 :UInt16;
-  methodName @3 :Text;
-  params @4 :NativeCapnpPayload;
-}
-
-struct NativeCapnpBridgeResult @0x86b05ed9b18ef1ce {
-  union {
-    value @0 :NativeCapnpPayload;
-    exception @1 :NativeCapnpBridgeException;
-    canceled @2 :Void;
   }
 }
 
@@ -63,13 +47,6 @@ struct NativeCapnpBridgeRestore @0xc35dd976b9efc866 {
 
 struct NativeCapnpBridgeSaved @0xe7a0b85c446da212 {
   token @0 :Text;
-}
-
-struct NativeCapnpPayload @0xb146c9fcd6929328 {
-  # Encoded Cap'n Proto message bytes plus the ordered capability table used by
-  # that message. The supervisor, not isolate JS, owns the live native handles.
-  message @0 :Data;
-  capabilities @1 :List(NativeCapnpCapabilitySlot);
 }
 
 struct NativeCapnpCapabilitySlot @0xf3fc15de30f50d47 {
