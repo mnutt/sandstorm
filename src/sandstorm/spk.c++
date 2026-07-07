@@ -2165,7 +2165,7 @@ private:
         .addOptionWithArg({"app-interface"}, KJ_BIND_METHOD(*this, addDevIsolateAppInterface),
             "<capnp-specifier>#<Interface>",
             "Advertise a schema-defined app capability through ViewInfo.matchRequests. For "
-            "example: --app-interface capnp-es:./greeter.capnp#Greeter")
+            "example: --app-interface capnp:./greeter.capnp#Greeter")
         .addOption({"print-manifest-json"}, KJ_BIND_METHOD(*this, enableDevIsolatePrintManifestJson),
             "Print the generated dynamic isolate manifest as JSON and exit without mounting or "
             "connecting to a Sandstorm server.")
@@ -2322,7 +2322,7 @@ private:
 
     auto schemaSpecifier = kj::heapString(spec.slice(0, hash));
     if (!schemaSpecifier.startsWith("capnp:") && !schemaSpecifier.startsWith("capnp-es:")) {
-      schemaSpecifier = kj::str("capnp-es:", schemaSpecifier);
+      schemaSpecifier = kj::str("capnp:", schemaSpecifier);
     }
 
     return DevIsolateAppInterface {
@@ -2343,10 +2343,11 @@ private:
   static kj::String resolveCapnpAbiSchemaPath(
       kj::StringPtr rootDir, kj::StringPtr specifier) {
     kj::StringPtr pathSpecifier = specifier;
-    if (specifier.startsWith("capnp:")) {
+    if (specifier.startsWith("capnp-es:")) {
+      KJ_FAIL_REQUIRE("`capnp-es:` ABI schema specifiers have been renamed; use `capnp:` "
+          "or a plain .capnp path.", specifier);
+    } else if (specifier.startsWith("capnp:")) {
       pathSpecifier = specifier.slice(strlen("capnp:"));
-    } else if (specifier.startsWith("capnp-es:")) {
-      pathSpecifier = specifier.slice(strlen("capnp-es:"));
     }
 
     KJ_REQUIRE(pathSpecifier.endsWith(".capnp"),
@@ -2370,10 +2371,10 @@ private:
       kj::StringPtr rootDir, const DevIsolateAppInterface& appInterface) {
     auto importerDir = rootDir;
     kj::String resolvedPath = nullptr;
-    if (appInterface.specifier.startsWith("capnp:")) {
-      KJ_FAIL_REQUIRE("`capnp:` app interfaces have been removed; use `capnp-es:`.",
+    if (appInterface.specifier.startsWith("capnp-es:")) {
+      KJ_FAIL_REQUIRE("`capnp-es:` app interfaces have been renamed; use `capnp:`.",
           appInterface.specifier);
-    } else if (appInterface.specifier.startsWith("capnp-es:")) {
+    } else if (appInterface.specifier.startsWith("capnp:")) {
       resolvedPath = resolveDevIsolateCapnpEsImport(importerDir, rootDir, appInterface.specifier);
     } else {
       KJ_FAIL_REQUIRE("Internal error: unsupported app interface schema specifier.",
@@ -2543,8 +2544,8 @@ private:
   }
 
   kj::MainBuilder::Validity printDevIsolateGeneratedModule() {
-    if (devIsolatePrintGeneratedModule.startsWith("capnp:")) {
-      return "`capnp:` isolate schema imports have been removed; use `capnp-es:`";
+    if (devIsolatePrintGeneratedModule.startsWith("capnp-es:")) {
+      return "`capnp-es:` isolate schema imports have been renamed; use `capnp:`";
     }
 
     auto modules = collectDevIsolateModules();
@@ -2622,10 +2623,10 @@ private:
 
       auto importerDir = dirnameForPath(realPath);
       for (auto& specifier: imports) {
-        if (isCapnpImport(specifier)) {
-          KJ_FAIL_REQUIRE("`capnp:` isolate schema imports have been removed; use `capnp-es:`.",
+        if (isCapnpEsImport(specifier)) {
+          KJ_FAIL_REQUIRE("`capnp-es:` isolate schema imports have been renamed; use `capnp:`.",
               specifier);
-        } else if (isCapnpEsImport(specifier)) {
+        } else if (isCapnpImport(specifier)) {
           auto resolvedImport = resolveDevIsolateCapnpEsImport(
               importerDir, rootDir, specifier);
           addDevIsolateCapnpEsModule(
@@ -2773,11 +2774,11 @@ private:
   }
 
   kj::String capnpEsSchemeRuntimeSpecifier(kj::StringPtr moduleName) {
-    return kj::str("capnp-es:/", capnpEsRuntimePath(moduleName));
+    return kj::str("capnp:/", capnpEsRuntimePath(moduleName));
   }
 
   kj::String capnpEsSchemeRelativeRuntimeSpecifier(kj::StringPtr moduleName) {
-    return kj::str("capnp-es:./", capnpEsRuntimePath(moduleName));
+    return kj::str("capnp:./", capnpEsRuntimePath(moduleName));
   }
 
   void writeDevIsolateSupportFile(kj::StringPtr dir, kj::StringPtr name, kj::StringPtr content) {
@@ -3049,18 +3050,18 @@ private:
 
   static kj::String resolveDevIsolateCapnpEsImport(
       kj::StringPtr importerDir, kj::StringPtr rootDir, kj::StringPtr specifier) {
-    KJ_REQUIRE(specifier.startsWith("capnp-es:"), "Internal error: expected capnp-es import.",
+    KJ_REQUIRE(specifier.startsWith("capnp:"), "Internal error: expected capnp import.",
         specifier);
-    auto pathSpecifier = specifier.slice(strlen("capnp-es:"));
+    auto pathSpecifier = specifier.slice(strlen("capnp:"));
     KJ_REQUIRE(pathSpecifier.endsWith(".capnp"),
-        "`capnp-es:` isolate imports must point to a .capnp schema.", specifier);
+        "`capnp:` isolate imports must point to a .capnp schema.", specifier);
 
     if (pathSpecifier.startsWith("/sandstorm/")) {
       return resolveDevIsolateSandstormSchemaImport(pathSpecifier);
     }
 
     KJ_REQUIRE(isRelativeImport(pathSpecifier),
-        "`capnp-es:` isolate imports must use a relative schema path or /sandstorm schema path.",
+        "`capnp:` isolate imports must use a relative schema path or /sandstorm schema path.",
         specifier);
     return resolveDevIsolateImport(importerDir, rootDir, pathSpecifier);
   }
@@ -3089,7 +3090,7 @@ private:
     auto existing = capnpEsImports.find(specifierStd);
     if (existing != capnpEsImports.end()) {
       KJ_REQUIRE(existing->second == resolvedStd,
-          "`capnp-es:` isolate import specifier resolves to multiple schemas. "
+          "`capnp:` isolate import specifier resolves to multiple schemas. "
           "Use distinct import specifiers until import rewriting is implemented.",
           specifier, existing->second, resolvedPath);
       return;
@@ -3097,7 +3098,7 @@ private:
     capnpEsImports.insert(std::make_pair(specifierStd, resolvedStd));
 
     KJ_REQUIRE(devIsolateSupportDir != nullptr,
-        "`capnp-es:` isolate imports require the generated dev-isolate support directory.");
+        "`capnp:` isolate imports require the generated dev-isolate support directory.");
 
     auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
     auto schemaImports = scanCapnpImports(source);
@@ -3136,7 +3137,7 @@ private:
       return;
     }
 
-    kj::StringPtr bridgeSpecifier = "capnp-es:/sandstorm/isolate-native-capnp-bridge.capnp";
+    kj::StringPtr bridgeSpecifier = "capnp:/sandstorm/isolate-native-capnp-bridge.capnp";
     auto bridgePath = resolveDevIsolateCapnpEsImport(rootDir, rootDir, bridgeSpecifier);
     addDevIsolateCapnpEsModule(bridgeSpecifier, bridgePath, rootDir, modules, capnpEsImports);
   }
@@ -3165,10 +3166,10 @@ private:
 
   static kj::String resolveDevIsolateSandstormSchemaImport(kj::StringPtr specifier) {
     KJ_REQUIRE(specifier.startsWith("/sandstorm/"),
-        "`capnp-es:` absolute schema imports must use /sandstorm or /capnp.",
+        "`capnp:` absolute schema imports must use /sandstorm or /capnp.",
         specifier);
     KJ_REQUIRE(specifier.endsWith(".capnp"),
-        "`capnp-es:` isolate schema imports must point to .capnp files.", specifier);
+        "`capnp:` isolate schema imports must point to .capnp files.", specifier);
 
     auto candidate = kj::str("src", specifier);
     char* resolved = realpath(candidate.cStr(), nullptr);
@@ -3185,14 +3186,14 @@ private:
     }
 
     KJ_REQUIRE(isDevIsolateLocalCapnpSchemaImport(specifier),
-        "`capnp-es:` isolate schema imports must use local paths, /sandstorm, or /capnp.",
+        "`capnp:` isolate schema imports must use local paths, /sandstorm, or /capnp.",
         specifier);
     KJ_REQUIRE(specifier.endsWith(".capnp"),
-        "`capnp-es:` isolate schema imports must point to .capnp files.", specifier);
+        "`capnp:` isolate schema imports must point to .capnp files.", specifier);
 
     auto candidate = kj::str(importerDir, '/', specifier);
     char* resolved = realpath(candidate.cStr(), nullptr);
-    KJ_REQUIRE(resolved != nullptr, "Could not resolve capnp-es schema import.",
+    KJ_REQUIRE(resolved != nullptr, "Could not resolve capnp schema import.",
         specifier, candidate, strerror(errno));
     KJ_DEFER(free(resolved));
     auto resolvedPath = kj::heapString(resolved);
@@ -3206,7 +3207,7 @@ private:
     KJ_DEFER(free(sandstormRootRaw));
     auto sandstormRoot = kj::heapString(sandstormRootRaw);
     KJ_REQUIRE(isPathUnderRoot(resolvedPath, sandstormRoot),
-        "`capnp-es:` isolate schema imports must stay under the entrypoint directory or "
+        "`capnp:` isolate schema imports must stay under the entrypoint directory or "
         "Sandstorm's own schema tree.",
         specifier, resolvedPath);
     return kj::mv(resolvedPath);
@@ -3221,25 +3222,25 @@ private:
   static kj::String devIsolateCapnpEsSpecifierForPath(kj::StringPtr resolvedPath,
                                                       kj::StringPtr rootDir) {
     auto moduleName = moduleNameForDevIsolatePath(resolvedPath, rootDir);
-    return kj::str("capnp-es:./", moduleName);
+    return kj::str("capnp:./", moduleName);
   }
 
   static kj::String devIsolateCapnpEsSpecifierForSchemaImport(
       kj::StringPtr importerSpecifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir,
       kj::StringPtr importSpecifier) {
     if (importSpecifier.startsWith("/sandstorm/")) {
-      return kj::str("capnp-es:", importSpecifier);
+      return kj::str("capnp:", importSpecifier);
     }
 
-    if (importerSpecifier.startsWith("capnp-es:/sandstorm/")) {
-      auto importerPath = importerSpecifier.slice(strlen("capnp-es:"));
+    if (importerSpecifier.startsWith("capnp:/sandstorm/")) {
+      auto importerPath = importerSpecifier.slice(strlen("capnp:"));
       auto slash = toStdString(importerPath).rfind('/');
       KJ_REQUIRE(slash != std::string::npos,
-          "Internal error: expected absolute capnp-es Sandstorm schema specifier.",
+          "Internal error: expected absolute capnp Sandstorm schema specifier.",
           importerSpecifier);
       auto joined = normalizeDevIsolatePath(
           kj::str(importerPath.slice(0, slash + 1), importSpecifier));
-      return kj::str("capnp-es:", joined);
+      return kj::str("capnp:", joined);
     }
 
     return devIsolateCapnpEsSpecifierForPath(resolvedPath, rootDir);
@@ -3247,8 +3248,8 @@ private:
 
   static kj::String devIsolateCapnpEsRuntimePath(
       kj::StringPtr specifier, kj::StringPtr resolvedPath, kj::StringPtr rootDir) {
-    if (specifier.startsWith("capnp-es:/")) {
-      auto schemaPath = specifier.slice(strlen("capnp-es:/"));
+    if (specifier.startsWith("capnp:/")) {
+      auto schemaPath = specifier.slice(strlen("capnp:/"));
       KJ_REQUIRE(schemaPath.endsWith(".capnp"), "Internal error: expected .capnp module.",
           specifier);
       return kj::str("capnp-es-generated/",
@@ -3349,9 +3350,9 @@ private:
   }
 
   static kj::String capnpEsSpecifierKey(kj::StringPtr specifier) {
-    KJ_REQUIRE(specifier.startsWith("capnp-es:"), "Internal error: expected capnp-es module.",
+    KJ_REQUIRE(specifier.startsWith("capnp:"), "Internal error: expected capnp module.",
         specifier);
-    auto path = specifier.slice(strlen("capnp-es:"));
+    auto path = specifier.slice(strlen("capnp:"));
     if (path.startsWith("/")) {
       path = path.slice(1);
     } else if (path.startsWith("./")) {
@@ -4720,10 +4721,10 @@ private:
       bool found = false;
 
       for (auto& specifier: imports) {
-        if (isCapnpImport(specifier)) {
-          KJ_FAIL_REQUIRE("`capnp:` isolate schema imports have been removed; use `capnp-es:`.",
+        if (isCapnpEsImport(specifier)) {
+          KJ_FAIL_REQUIRE("`capnp-es:` isolate schema imports have been renamed; use `capnp:`.",
               specifier);
-        } else if (isCapnpEsImport(specifier)) {
+        } else if (isCapnpImport(specifier)) {
           auto resolvedImport = resolveDevIsolateCapnpEsImport(
               importerDir, importerDir, specifier);
           addDevIsolateCapnpEsModule(

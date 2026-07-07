@@ -103,7 +103,7 @@ const CAPNP_ES_RUNTIME_MODULES = [
 ];
 const CAPNP_ES_SCHEME_RUNTIME_MODULES = Array.from(new Map(CAPNP_ES_RUNTIME_MODULES.map(
   ([, sourcePath]) => [
-    `capnp-es:/${sourcePath.replace("__sandstorm_isolate_runtime/", "")}`,
+    `capnp:/${sourcePath.replace("__sandstorm_isolate_runtime/", "")}`,
     sourcePath,
   ])));
 const CAPNP_ES_PATH_RUNTIME_MODULES = Array.from(new Map(CAPNP_ES_RUNTIME_MODULES.map(
@@ -113,36 +113,36 @@ const CAPNP_ES_PATH_RUNTIME_MODULES = Array.from(new Map(CAPNP_ES_RUNTIME_MODULE
   ])));
 const CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES = Array.from(new Map(CAPNP_ES_RUNTIME_MODULES.map(
   ([, sourcePath]) => [
-    `capnp-es:./${sourcePath.replace("__sandstorm_isolate_runtime/", "")}`,
+    `capnp:./${sourcePath.replace("__sandstorm_isolate_runtime/", "")}`,
     sourcePath,
   ])));
 const CAPNP_ES_GENERATED_SCHEMA_MODULES = [
   [
-    "capnp-es:/sandstorm/util.capnp",
+    "capnp:/sandstorm/util.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/util.js",
   ],
   [
-    "capnp-es:/sandstorm/powerbox.capnp",
+    "capnp:/sandstorm/powerbox.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/powerbox.js",
   ],
   [
-    "capnp-es:/sandstorm/identity.capnp",
+    "capnp:/sandstorm/identity.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/identity.js",
   ],
   [
-    "capnp-es:/sandstorm/activity.capnp",
+    "capnp:/sandstorm/activity.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/activity.js",
   ],
   [
-    "capnp-es:/sandstorm/grain.capnp",
+    "capnp:/sandstorm/grain.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/grain.js",
   ],
   [
-    "capnp-es:/sandstorm/web-session.capnp",
+    "capnp:/sandstorm/web-session.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js",
   ],
   [
-    "capnp-es:/sandstorm/isolate-native-capnp-bridge.capnp",
+    "capnp:/sandstorm/isolate-native-capnp-bridge.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/isolate-native-capnp-bridge.js",
   ],
 ];
@@ -584,7 +584,7 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
     "dev-isolate",
     "--print-manifest-json",
     "--title", "Capnp Manifest Test",
-    "--app-interface", "capnp-es:./greeter.capnp#Greeter",
+    "--app-interface", "capnp:./greeter.capnp#Greeter",
     workerPath,
   ], {
     env: {
@@ -604,13 +604,13 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
     BigInt("0x85d0f155d6c54b6d").toString());
   assert.equal(modules.get("worker.js").esModulePath, "__sandstorm_dev_isolate_app/worker.js");
   assert.equal(
-    modules.get("capnp-es:./greeter.capnp").esModulePath,
+    modules.get("capnp:./greeter.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/greeter.js");
   assert.equal(
-    modules.get("capnp-es:./greeting.capnp").esModulePath,
+    modules.get("capnp:./greeting.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/greeting.js");
-  assert.equal(modules.has("capnp:./greeter.capnp"), false);
-  assert.equal(modules.has("capnp:./greeting.capnp"), false);
+  assert.equal(modules.has("capnp-es:./greeter.capnp"), false);
+  assert.equal(modules.has("capnp-es:./greeting.capnp"), false);
   assert.equal(modules.get("sandstorm:api").esModulePath, "__sandstorm_isolate_runtime/api.js");
   assert.equal(modules.get("sandstorm:rpc").esModulePath, "__sandstorm_isolate_runtime/rpc.js");
   assert.equal(
@@ -652,7 +652,7 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
 
   const generated = await runCommand(SPK_BIN, [
     "dev-isolate",
-    "--print-generated-module", "capnp-es:./greeter.capnp",
+    "--print-generated-module", "capnp:./greeter.capnp",
     workerPath,
   ], {
     env: {
@@ -669,7 +669,7 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
   await assert.rejects(
     runCommand(SPK_BIN, [
       "dev-isolate",
-      "--print-generated-module", "capnp:./greeter.capnp",
+      "--print-generated-module", "capnp-es:./greeter.capnp",
       workerPath,
     ], {
       env: {
@@ -677,7 +677,7 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
         SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
       },
     }),
-    /`capnp:` isolate schema imports have been removed; use `capnp-es:`/);
+    /`capnp-es:` isolate schema imports have been renamed; use `capnp:`/);
 });
 
 test("spk powerbox-descriptor emits schema interface descriptors", async () => {
@@ -693,18 +693,18 @@ test("spk powerbox-descriptor emits schema interface descriptors", async () => {
   const json = JSON.parse((await runCommand(SPK_BIN, [
     "powerbox-descriptor",
     "--format", "json",
-    "capnp-es:./greeter.capnp#Greeter",
+    "capnp:./greeter.capnp#Greeter",
   ], options)).stdout);
   assert.equal(json.type, "packedPowerboxDescriptor");
   assert.equal(json.descriptor, base64);
   assert.equal(json.interfaceId, "0x85d0f155d6c54b6d");
   assert.equal(json.interfaceName, "Greeter");
-  assert.equal(json.schema, "capnp-es:./greeter.capnp");
+  assert.equal(json.schema, "capnp:./greeter.capnp");
 
   const capnp = (await runCommand(SPK_BIN, [
     "powerbox-descriptor",
     "--format", "capnp",
-    "capnp-es:./greeter.capnp#Greeter",
+    "capnp:./greeter.capnp#Greeter",
   ], options)).stdout.trim();
   assert.equal(capnp, "(tags = [(id = 0x85d0f155d6c54b6d)])");
 });
@@ -717,12 +717,12 @@ test("spk capnp-abi dumps schema interface metadata", async () => {
   const dumped = await runCommand(SPK_BIN, [
     "capnp-abi",
     "--interface", "Greeter",
-    "capnp-es:./greeter.capnp",
+    "capnp:./greeter.capnp",
   ], options);
   const abi = JSON.parse(dumped.stdout);
 
   assert.equal(abi.format, "sandstorm-capnp-abi-v1");
-  assert.equal(abi.schema, "capnp-es:./greeter.capnp");
+  assert.equal(abi.schema, "capnp:./greeter.capnp");
   assert.equal(abi.interfaces.length, 1);
   assert.equal(abi.interfaces[0].name, "Greeter");
   assert.equal(abi.interfaces[0].interfaceId, "0x85d0f155d6c54b6d");
@@ -745,7 +745,7 @@ test("spk capnp-abi dumps schema interface metadata", async () => {
     "capnp-abi",
     "--interface", "Greeter",
     "--check", baselinePath,
-    "capnp-es:./greeter.capnp",
+    "capnp:./greeter.capnp",
   ], options);
   assert.match(check.stdout, /Cap'n Proto ABI compatible/);
 
@@ -757,12 +757,19 @@ test("spk capnp-abi dumps schema interface metadata", async () => {
       "capnp-abi",
       "--interface", "Greeter",
       "--check", incompatiblePath,
-      "capnp-es:./greeter.capnp",
+      "capnp:./greeter.capnp",
     ], options),
     /changed ID/);
+
+  await assert.rejects(
+    runCommand(SPK_BIN, [
+      "capnp-abi",
+      "capnp-es:./greeter.capnp",
+    ], options),
+    /`capnp-es:` ABI schema specifiers have been renamed; use `capnp:`/);
 });
 
-test("spk dev-isolate prints generated capnp-es modules", async (t) => {
+test("spk dev-isolate prints generated capnp modules", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   try {
     await requireFile(
@@ -799,9 +806,9 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
   ].join("\n"));
   const workerPath = path.join(fixtureRoot, "worker.js");
   await fs.writeFile(workerPath, [
-    "import * as greeter from \"capnp-es:./greeter.capnp\";",
-    "import * as standard from \"capnp-es:./uses-standard.capnp\";",
-    "import * as web from \"capnp-es:./uses-web.capnp\";",
+    "import * as greeter from \"capnp:./greeter.capnp\";",
+    "import * as standard from \"capnp:./uses-standard.capnp\";",
+    "import * as web from \"capnp:./uses-web.capnp\";",
     "void standard;",
     "void web;",
     "export default { fetch() { return Response.json(Object.keys(greeter)); } };",
@@ -824,31 +831,31 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
     manifest.continueCommand.isolate.modules.map((module) => [module.name, module]));
 
   assert.equal(
-    modules.get("capnp-es:./greeter.capnp").esModulePath,
+    modules.get("capnp:./greeter.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/greeter.js");
   assert.equal(
-    modules.get("capnp-es:./greeting.capnp").esModulePath,
+    modules.get("capnp:./greeting.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/greeting.js");
   assert.equal(
-    modules.get("capnp-es:./uses-standard.capnp").esModulePath,
+    modules.get("capnp:./uses-standard.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/uses-standard.js");
   assert.equal(
-    modules.get("capnp-es:./uses-web.capnp").esModulePath,
+    modules.get("capnp:./uses-web.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/uses-web.js");
   assert.equal(
-    modules.get("capnp-es:/sandstorm/web-session.capnp").esModulePath,
+    modules.get("capnp:/sandstorm/web-session.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js");
   assert.equal(
-    modules.get("capnp-es:/sandstorm/grain.capnp").esModulePath,
+    modules.get("capnp:/sandstorm/grain.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/grain.js");
   assert.equal(
-    modules.get("capnp-es:/sandstorm/util.capnp").esModulePath,
+    modules.get("capnp:/sandstorm/util.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/util.js");
-  assert.equal(modules.has("capnp-es:/capnp/stream.capnp"), false);
+  assert.equal(modules.has("capnp:/capnp/stream.capnp"), false);
 
   const generated = await runCommand(SPK_BIN, [
     "dev-isolate",
-    "--print-generated-module", "capnp-es:./greeter.capnp",
+    "--print-generated-module", "capnp:./greeter.capnp",
     workerPath,
   ], options);
   assert.match(
@@ -860,7 +867,7 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
 
   const generatedStandard = await runCommand(SPK_BIN, [
     "dev-isolate",
-    "--print-generated-module", "capnp-es:./uses-standard.capnp",
+    "--print-generated-module", "capnp:./uses-standard.capnp",
     workerPath,
   ], options);
   assert.match(
@@ -869,7 +876,7 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
 
   const generatedWeb = await runCommand(SPK_BIN, [
     "dev-isolate",
-    "--print-generated-module", "capnp-es:./uses-web.capnp",
+    "--print-generated-module", "capnp:./uses-web.capnp",
     workerPath,
   ], options);
   assert.match(
@@ -878,7 +885,7 @@ test("spk dev-isolate prints generated capnp-es modules", async (t) => {
 
   const generatedSandstormWeb = await runCommand(SPK_BIN, [
     "dev-isolate",
-    "--print-generated-module", "capnp-es:/sandstorm/web-session.capnp",
+    "--print-generated-module", "capnp:/sandstorm/web-session.capnp",
     workerPath,
   ], options);
   assert.match(
@@ -917,7 +924,7 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     path.join(REPO_DIR, "examples/isolate-capnp-rpc/greeting.capnp"),
     path.join(appDir, "greeting.capnp"));
   await fs.writeFile(path.join(appDir, "worker.js"), [
-    "import { Greeter } from \"capnp-es:./greeter.capnp\";",
+    "import { Greeter } from \"capnp:./greeter.capnp\";",
     "export default { fetch() { return Response.json({ name: Greeter.name, interfaceId: Greeter._capnp.typeIdHex }); } };",
     "",
   ].join("\n"));
@@ -1019,13 +1026,13 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
 
   assert.equal(modules.get("worker.js").esModulePath, "app/worker.js");
   assert.equal(
-    modules.get("capnp-es:./greeter.capnp").esModulePath,
+    modules.get("capnp:./greeter.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/greeter.js");
   assert.equal(
-    modules.get("capnp-es:./greeting.capnp").esModulePath,
+    modules.get("capnp:./greeting.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/greeting.js");
-  assert.equal(modules.has("capnp:./greeter.capnp"), false);
-  assert.equal(modules.has("capnp:./greeting.capnp"), false);
+  assert.equal(modules.has("capnp-es:./greeter.capnp"), false);
+  assert.equal(modules.has("capnp-es:./greeting.capnp"), false);
   assert.equal(modules.has("sandstorm:browser-capnp:./greeter.capnp"), false);
   assert.equal(modules.has("sandstorm:browser-capnp:./greeting.capnp"), false);
   assert.equal(
@@ -1051,7 +1058,7 @@ test("isolate supervisor integration suite", {
         ["worker.js", "esModule"],
         ["message.txt", "text"],
         ["metadata.json", "json"],
-        ["capnp-es:./native-greeter.capnp", "esModule"],
+        ["capnp:./native-greeter.capnp", "esModule"],
         ...CAPNP_ES_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule"]),
         ["capnweb", "esModule"],
         ["sandstorm:capnweb-source", "text"],
@@ -3301,7 +3308,7 @@ test("isolate supervisor integration suite", {
         ["worker.js", "esModule", true],
         ["message.txt", "text", false],
         ["metadata.json", "json", false],
-        ["capnp-es:./native-greeter.capnp", "esModule", false],
+        ["capnp:./native-greeter.capnp", "esModule", false],
         ...CAPNP_ES_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule", false]),
         ["capnweb", "esModule", false],
         ["sandstorm:capnweb-source", "text", false],
@@ -3315,14 +3322,14 @@ test("isolate supervisor integration suite", {
         ...CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
       ]);
 
-    const removedBrowserCapnpModule = await requestUnixSocket(
+    const removedBrowserCapnpEsModule = await requestUnixSocket(
       fixture.sandstormApiSocket,
-      "/capnp/browser-module?path=native-greeter.capnp.js");
-    assert.equal(removedBrowserCapnpModule.statusCode, 404);
+      "/capnp-es/browser-module?path=native-greeter.capnp.js");
+    assert.equal(removedBrowserCapnpEsModule.statusCode, 404);
 
     const nativeBrowserCapnpModule = await requestUnixSocket(
       fixture.sandstormApiSocket,
-      "/capnp-es/browser-module?path=native-greeter.capnp.js");
+      "/capnp/browser-module?path=native-greeter.capnp.js");
     assert.equal(nativeBrowserCapnpModule.statusCode, 200);
     assert.match(
       String(nativeBrowserCapnpModule.headers["content-type"] || ""),
@@ -3332,7 +3339,7 @@ test("isolate supervisor integration suite", {
 
     const nativeBrowserCapnpRuntime = await requestUnixSocket(
       fixture.sandstormApiSocket,
-      "/capnp-es/browser-module?path=capnp-es%2Findex.mjs");
+      "/capnp/browser-module?path=capnp-es%2Findex.mjs");
     assert.equal(nativeBrowserCapnpRuntime.statusCode, 200);
     assert.match(
       String(nativeBrowserCapnpRuntime.headers["content-type"] || ""),
@@ -3340,13 +3347,13 @@ test("isolate supervisor integration suite", {
     assert.match(nativeBrowserCapnpRuntime.body, /\bMessage\b/);
 
     const servedNativeBrowserCapnpModule = await requestUnixSocket(
-      fixture.workerdSocket, "/__sandstorm/capnp-es/native-greeter.capnp.js");
+      fixture.workerdSocket, "/__sandstorm/capnp/native-greeter.capnp.js");
     assert.equal(servedNativeBrowserCapnpModule.statusCode, 200);
     assert.match(servedNativeBrowserCapnpModule.body, /export class NativeGreeter/);
 
     const servedNativeBridgeSchemaModule = await requestUnixSocket(
       fixture.workerdSocket,
-      "/__sandstorm/capnp-es/sandstorm/isolate-native-capnp-bridge.capnp.js");
+      "/__sandstorm/capnp/sandstorm/isolate-native-capnp-bridge.capnp.js");
     assert.equal(servedNativeBridgeSchemaModule.statusCode, 200);
     assert.match(servedNativeBridgeSchemaModule.body, /NativeCapnpBridgeRequest/);
 
@@ -3374,7 +3381,7 @@ test("isolate supervisor integration suite", {
     assert.match(browserNativeCapnpClient.body, /from "\/capnp-es\/index\.mjs"/);
     assert.match(
       browserNativeCapnpClient.body,
-      /from "\/__sandstorm\/capnp-es\/sandstorm\/isolate-native-capnp-bridge\.capnp\.js"/);
+      /from "\/__sandstorm\/capnp\/sandstorm\/isolate-native-capnp-bridge\.capnp\.js"/);
 
     const browserNativeCapnpRpcSession = await requestJson(
       fixture.workerdSocket,

@@ -5,7 +5,7 @@ Run:
 ```sh
 spk dev-isolate \
   --title "File Store RPC" \
-  --app-interface capnp-es:./file-store.capnp#FileStore \
+  --app-interface capnp:./file-store.capnp#FileStore \
   examples/isolate-file-store-rpc/worker.js
 ```
 
@@ -27,7 +27,7 @@ The app exposes the same capability in two Sandstorm ways:
 The public protocol is in `file-store.capnp`; the isolate code imports it with:
 
 ```js
-import { File, FileStore } from "capnp-es:./file-store.capnp";
+import { File, FileStore } from "capnp:./file-store.capnp";
 ```
 
 For a packaged app, advertise the same provider through the normal
@@ -35,7 +35,7 @@ For a packaged app, advertise the same provider through the normal
 from the schema:
 
 ```sh
-spk powerbox-descriptor --format capnp capnp-es:./file-store.capnp#FileStore
+spk powerbox-descriptor --format capnp capnp:./file-store.capnp#FileStore
 # (tags = [(id = 0x9e13c3025dcd3d36)])
 ```
 

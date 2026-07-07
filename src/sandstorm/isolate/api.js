@@ -2607,11 +2607,11 @@ async function serveBrowserSystemRoute(request, env) {
     });
   }
 
-  const capnpEsPrefix = "/__sandstorm/capnp-es/";
-  if (url.pathname.startsWith(capnpEsPrefix) && request.method === "GET") {
-    const path = url.pathname.slice(capnpEsPrefix.length);
+  const capnpPrefix = "/__sandstorm/capnp/";
+  if (url.pathname.startsWith(capnpPrefix) && request.method === "GET") {
+    const path = url.pathname.slice(capnpPrefix.length);
     const response = await env.SANDSTORM_API.fetch(
-      `http://sandstorm/capnp-es/browser-module?path=${encodeURIComponent(path)}`);
+      `http://sandstorm/capnp/browser-module?path=${encodeURIComponent(path)}`);
     return new Response(await response.text(), {
       status: response.status,
       statusText: response.statusText,
@@ -2625,7 +2625,7 @@ async function serveBrowserSystemRoute(request, env) {
   if (url.pathname.startsWith("/capnp-es/") && request.method === "GET") {
     const path = url.pathname.slice(1);
     const response = await env.SANDSTORM_API.fetch(
-      `http://sandstorm/capnp-es/browser-module?path=${encodeURIComponent(path)}`);
+      `http://sandstorm/capnp/browser-module?path=${encodeURIComponent(path)}`);
     return new Response(await response.text(), {
       status: response.status,
       statusText: response.statusText,
@@ -3685,7 +3685,7 @@ import {
   NativeCapnpBridgeRequest,
   NativeCapnpBridgeResponse,
   NativeCapnpCapabilitySlotKind,
-} from "/__sandstorm/capnp-es/sandstorm/isolate-native-capnp-bridge.capnp.js";
+} from "/__sandstorm/capnp/sandstorm/isolate-native-capnp-bridge.capnp.js";
 
 export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
 

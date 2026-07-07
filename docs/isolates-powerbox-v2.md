@@ -111,7 +111,7 @@ interface Greeter {
 // worker.js
 import { sandstorm } from "sandstorm:api";
 import { exportNativeCapnp } from "sandstorm:capnp";
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 
 const greeter = {
   async hello({ name }) {
@@ -147,7 +147,7 @@ local names.
 
 ```js
 // ui.js
-import { Greeter } from "/__sandstorm/capnp-es/greeter.capnp.js";
+import { Greeter } from "/__sandstorm/capnp/greeter.capnp.js";
 import { requestBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
 
 const { client: greeter } = await requestBrowserNativeCapnp(Greeter, {
@@ -170,7 +170,7 @@ streaming APIs should stay fetch-shaped instead of becoming RPC calls.
 // caller-worker.js
 import { sandstorm } from "sandstorm:api";
 import { restoreNativeCapnp } from "sandstorm:capnp";
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 
 export default {
   async fetch(request, env) {
@@ -199,7 +199,7 @@ capability handle is what the generated `Greeter` stub calls.
 
 ```js
 import { connectNativeCapnp, nativeCapnpPowerboxDescriptor } from "sandstorm:capnp";
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 
 const descriptor = await nativeCapnpPowerboxDescriptor(env, Greeter, {
   interfaceName: "Greeter",
@@ -240,7 +240,7 @@ implementation to a native Cap'n Proto server object.
 Generated bindings should also provide an in-memory transport:
 
 ```js
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 
 test("hello", async () => {
   const greeter = new Greeter.Server({
@@ -285,7 +285,7 @@ interface ObjectStore {
 Isolate caller:
 
 ```js
-import { ObjectStore } from "capnp-es:./object-store.capnp";
+import { ObjectStore } from "capnp:./object-store.capnp";
 import { restoreNativeCapnp } from "sandstorm:capnp";
 
 const store = await restoreNativeCapnp(api, token, ObjectStore, {
@@ -311,12 +311,12 @@ must be able to return a capability whose native interface is fetch-shaped,
 app-object-shaped, or another public Cap'n Proto interface. The current
 prototype is narrower than that.
 
-## `capnp-es:` Imports
+## `capnp:` Imports
 
 Authors should be able to write:
 
 ```js
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 ```
 
 The import is package-time syntax. Workerd does not need to parse `.capnp`
@@ -325,7 +325,7 @@ files at runtime.
 The `spk dev-isolate` and package build flow should:
 
 1. scan JavaScript imports
-2. detect `capnp-es:` specifiers
+2. detect `capnp:` specifiers
 3. resolve the `.capnp` file relative to the importing module
 4. run Sandstorm-bundled schema/codegen tooling
 5. add generated ES modules to the isolate module list
@@ -350,7 +350,7 @@ import {
   exportNativeCapnp,
   nativeCapnpPowerboxDescriptor,
 } from "sandstorm:capnp";
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 
 const exported = await exportNativeCapnp(api, Greeter, methods);
 const client = connectNativeCapnp(api, capability, Greeter);
@@ -513,7 +513,7 @@ Progress:
 - the isolate Cap'n Proto RPC example is split across imported schemas, and
   the isolate supervisor integration test covers generated cross-schema
   metadata.
-- `spk dev-isolate` can now discover `capnp-es:` schema imports and generate
+- `spk dev-isolate` can now discover `capnp:` schema imports and generate
   raw `@mnutt/capnp-es` JavaScript modules through a configured compiler
   module, preserving source-relative module paths for schema imports.
 
@@ -551,13 +551,13 @@ Sandstorm helper functions.
 
 Progress:
 
-- generated `capnp-es:` modules expose native `Interface.Client` and
+- generated `capnp:` modules expose native `Interface.Client` and
   `Interface.Server` classes plus `_capnp` metadata such as `typeIdHex`
 - `sandstorm:capnp` exposes native helper functions for exporting, connecting,
   saving, restoring, and deriving Powerbox descriptors from generated
   interfaces
 - the hand-written `makeCapnpInterfaceBinding()` API and `capnp:*` declaration
-  surface have been removed; schema-defined protocols use `capnp-es:` only
+  surface have been removed; schema-defined protocols use `capnp:` only
 
 Deliverables:
 
@@ -596,7 +596,7 @@ Progress:
 - native `capnp-es` generated clients and servers can pass capability slots
   through Sandstorm's native bridge
 - generated modules can import Sandstorm schemas such as
-  `capnp-es:/sandstorm/web-session.capnp`
+  `capnp:/sandstorm/web-session.capnp`
 - the object-store example shows an RPC control plane returning a generated
   `WebSession` client for fetch-shaped data-plane reads
 
@@ -779,7 +779,7 @@ Progress:
   integration fixture also sends a real RPC `call` after bootstrap and receives
   the native C++ exception `return`, proving calls are reaching the target
   Sandstorm capability through the per-connection RPC session
-- `spk dev-isolate` now has an explicit raw `capnp-es:` import path backed by
+- `spk dev-isolate` now has an explicit raw `capnp:` import path backed by
   `SANDSTORM_CAPNP_ES_COMPILER_MODULE`, so isolate tooling can materialize the
   generated JS classes that the native bridge will use without replacing the
   current `capnp:` app-object compatibility wrapper yet
@@ -792,10 +792,10 @@ Progress:
   shape used by the compiler hook, including standard generated schema modules
   such as `@mnutt/capnp-es/capnp/stream` while preserving the older
   `@mnutt/capnp/rpc.mjs` alias used by existing tests
-- raw `capnp-es:` generated modules now rewrite generated schema imports to
+- raw `capnp:` generated modules now rewrite generated schema imports to
   stable workerd module specifiers, follow relative app schemas, skip bundled
   `/capnp/*` runtime schemas, and generate Sandstorm-owned `/sandstorm/*`
-  schema dependencies under explicit `capnp-es:/sandstorm/...` module names
+  schema dependencies under explicit `capnp:/sandstorm/...` module names
 - bridge feature negotiation now distinguishes the working binary `rpc`
   transport from the still-disabled direct method-call envelope:
   `/capnp/bridge-info` advertises `nativeTransport` and `nativeRpc`, while
@@ -808,7 +808,7 @@ Progress:
 - generated clients returned by `connectNativeCapnp()` now fall back to native
   lifecycle save/drop requests when their underlying Sandstorm capability is a
   bare restored bridge slot rather than a richer JS capability object
-- packaged isolates can now import `capnp-es:/sandstorm/web-session.capnp`,
+- packaged isolates can now import `capnp:/sandstorm/web-session.capnp`,
   connect a generated `WebSession` client to a route-backed Sandstorm
   capability with `connectNativeCapnp()`, call `get()`, and decode the typed
   `Response.content.body.bytes` result across the restricted native RPC bridge
@@ -840,12 +840,12 @@ Progress:
   generated `@mnutt/capnp-es` server, and the integration fixture exports a
   generated `WebSession` implementation that can be fetched through the claimed
   Sandstorm capability
-- generated `capnp-es:` modules and Sandstorm's native bridge helpers now share
+- generated `capnp:` modules and Sandstorm's native bridge helpers now share
   the same bundled `@mnutt/capnp-es` runtime module identity, so generated
   server registrations populate the `Registry` instance used by native RPC
   dispatch
 - generated schema runtime imports now canonicalize through `/capnp-es/...`
-  module specifiers, avoiding workerd's `capnp-es:` scheme-relative resolution
+  module specifiers, avoiding workerd's `capnp:` scheme-relative resolution
   split; the integration fixture exports an isolate-defined `NativeGreeter`
   server and calls it back over the native supervisor bridge
 - native isolate exports can now be saved as durable supervisor-owned
@@ -924,7 +924,7 @@ Implementation work:
 Progress:
 
 - the supervisor and browser system routes can now serve native browser
-  `capnp-es` schema modules through `/__sandstorm/capnp-es/...` and the bundled
+  `capnp-es` schema modules through `/__sandstorm/capnp/...` and the bundled
   `@mnutt/capnp-es` runtime imports through `/capnp-es/...`, giving browser
   code loadable native modules before Powerbox/browser transport wiring
 - browser system routes now expose `/__sandstorm/native-capnp/bridge-info` and
@@ -1068,14 +1068,14 @@ Deliverables:
 
 Progress:
 
-- normal `spk pack` now scans packaged isolate ES modules for `capnp-es:`
+- normal `spk pack` now scans packaged isolate ES modules for `capnp:`
   schema imports, generates the same rewritten `@mnutt/capnp-es` support
   modules as `spk dev-isolate`, stores them under
   `__sandstorm_isolate_runtime/capnp-es-generated`, and serializes an
   augmented isolate module list into `sandstorm-manifest`
 - generated `capnp:` app-object compatibility modules have been removed:
   `spk dev-isolate` and `spk pack` now materialize schema code only for
-  `capnp-es:` imports, reject old `capnp:` isolate imports with a clear error,
+  `capnp:` imports, reject old `capnp-es:` isolate imports with a clear error,
   and no longer include the virtual `capnp:/...` wrapper support modules
 - native worker helpers now expose `nativeCapnpPowerboxDescriptor(env,
   InterfaceClass)` and `nativeCapnpPowerboxDescriptorInfo(...)`, backed by the
@@ -1141,7 +1141,7 @@ Exit criteria:
 
 Progress:
 
-- `docs/developing/isolate-grains.md` now presents `capnp-es:` generated
+- `docs/developing/isolate-grains.md` now presents `capnp:` generated
   modules plus `exportNativeCapnp()` / `restoreNativeCapnp()` as the schema
   authoring path for native cross-grain and legacy interop
 - generated `capnp:` schema-shaped app-object bindings are removed instead of
@@ -1149,12 +1149,12 @@ Progress:
   remains only for current helper/UI internals pending a separate cleanup
 - the hand-written `makeCapnpInterfaceBinding()` helper and `capnp:*`
   TypeScript declaration surface have also been removed, so app authors do not
-  have a second schema-shaped app-object API alongside native `capnp-es`
+  have a second schema-shaped app-object API alongside native `capnp:`
 - unreleased Cap'n Web and app-object browser RPC prototype schema transports
   have been removed instead of kept as compatibility fallbacks; `fetch()`
   remains supported for HTTP-shaped and large data-plane capabilities
 - `docs/developing/isolate-grains.md` now separates the stable transport
-  model: public typed cross-grain protocols use `capnp-es:` native schema RPC,
+  model: public typed cross-grain protocols use `capnp:` native schema RPC,
   browser generated clients use served native modules plus the restricted
   browser bridge, `fetch()`/`WebSession` remains the streamable data-plane
   surface, and JavaScript-defined object RPC is private/local rather than the
@@ -1164,6 +1164,12 @@ Progress:
   exported/WebSocket-bridged client, covering plain calls, promised-answer
   returned-capability calls, resolved returned capabilities, and
   capability-as-argument calls
+- `spk capnp-abi` accepts `capnp:` or plain `.capnp` schema inputs and rejects
+  the old `capnp-es:` public schema specifier spelling
+- the public isolate schema import spelling is now `capnp:` everywhere:
+  `spk dev-isolate`, `spk pack`, app-interface descriptors, ABI tooling,
+  worker examples, and browser-served schema modules use `capnp:` while
+  `capnp-es` remains only the bundled JavaScript runtime/generator name
 
 ## Decisions
 
@@ -1190,9 +1196,10 @@ Progress:
 Use schema-first public protocols:
 
 - `.capnp` is the source of truth for cross-grain interfaces.
-- `capnp-es:` imports provide native generated clients and servers for public
+- `capnp:` imports provide native generated clients and servers for public
   cross-grain interfaces.
-- `capnp:` generated app-object schema imports are removed; use `capnp-es:`.
+- generated app-object schema imports are removed; use native `capnp:` schema
+  modules.
 - Sandstorm tooling bundles the compiler/generator used by packaged isolates.
 - Isolates receive typed generated stubs and server adapters.
 - Legacy grains see ordinary Cap'n Proto interfaces.

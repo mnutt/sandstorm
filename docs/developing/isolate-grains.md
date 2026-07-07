@@ -164,26 +164,26 @@ iteration, TypeScript transpilation is intentionally outside `spk
 dev-isolate`; use an app-local build step such as the `esbuild` example above
 and pass the generated `.js` file to `spk`.
 
-`spk dev-isolate` supports `capnp-es:` schema imports. These imports generate
+`spk dev-isolate` supports `capnp:` schema imports. These imports generate
 native `@mnutt/capnp-es` classes for public cross-grain Cap'n Proto
 interfaces, legacy grain interop, and typed calls over Sandstorm's native
 bridge.
 
 Because isolate grains have not shipped as a stable runtime, Sandstorm does
 not need to preserve older browser/app-object schema transports for backwards
-compatibility. Public schema-defined RPC should use native `capnp-es:` modules
+compatibility. Public schema-defined RPC should use native `capnp:` modules
 directly. `fetch()` remains the public shape for HTTP-like APIs and large
 data-plane transfers.
 
 ### Native Cap'n Proto modules
 
-Use `capnp-es:` imports when the capability is a public schema-defined
+Use `capnp:` imports when the capability is a public schema-defined
 interface that other isolate grains or legacy Cap'n Proto grains should call:
 
 ```js
 import { sandstorm } from "sandstorm:api";
 import { exportNativeCapnp, restoreNativeCapnp } from "sandstorm:capnp";
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 
 const greeterTarget = {
   async hello({ name = "world" } = {}) {
@@ -238,7 +238,7 @@ schema and interface name:
 
 ```sh
 spk dev-isolate \
-  --app-interface capnp-es:./greeter.capnp#Greeter \
+  --app-interface capnp:./greeter.capnp#Greeter \
   worker.js
 ```
 
@@ -247,7 +247,7 @@ For packaged isolate apps, put the same descriptor in the normal
 derive the pasteable descriptor from the schema, avoiding hand-copied type IDs:
 
 ```sh
-spk powerbox-descriptor --format capnp capnp-es:./greeter.capnp#Greeter
+spk powerbox-descriptor --format capnp capnp:./greeter.capnp#Greeter
 # (tags = [(id = 0x85d0f155d6c54b6d)])
 ```
 
@@ -266,7 +266,7 @@ For CI, `spk capnp-abi` dumps the public interface metadata that should remain
 stable across compatible app updates:
 
 ```sh
-spk capnp-abi capnp-es:./greeter.capnp > greeter.capnp-abi.json
+spk capnp-abi capnp:./greeter.capnp > greeter.capnp-abi.json
 ```
 
 The JSON includes interface IDs, method ordinals, generated parameter/result
@@ -274,7 +274,7 @@ struct IDs, and source-level parameter/result field names and types. Commit the
 dump, then check future schema changes in CI:
 
 ```sh
-spk capnp-abi --check greeter.capnp-abi.json capnp-es:./greeter.capnp
+spk capnp-abi --check greeter.capnp-abi.json capnp:./greeter.capnp
 ```
 
 The check rejects removed interfaces, changed interface IDs, removed methods,
@@ -284,17 +284,17 @@ methods, or appended fields is allowed.
 
 ### Browser schema modules
 
-Worker modules import public schemas with `capnp-es:`:
+Worker modules import public schemas with `capnp:`:
 
 ```js
-import { Greeter } from "capnp-es:./greeter.capnp";
+import { Greeter } from "capnp:./greeter.capnp";
 ```
 
 Browser modules should import the generated native module served by the
 isolate helper routes, plus Sandstorm's native browser client helper:
 
 ```js
-import { Greeter } from "/__sandstorm/capnp-es/greeter.capnp.js";
+import { Greeter } from "/__sandstorm/capnp/greeter.capnp.js";
 import { requestBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
 
 const { client } = await requestBrowserNativeCapnp(Greeter, {
@@ -319,15 +319,15 @@ Powerbox request/claim flow and then connect a generated `capnp-es` client over
 the restricted native browser bridge.
 
 If browser code is bundled, keep Sandstorm-served URLs external. A browser
-bundler should not try to resolve `capnp-es:` or compile `.capnp` files itself
+bundler should not try to resolve `capnp:` or compile `.capnp` files itself
 unless the app has its own matching plugin. For shared source that imports
-`capnp-es:./greeter.capnp`, configure the browser build to rewrite that
-specifier to `/__sandstorm/capnp-es/greeter.capnp.js`; keep `/capnp-es/...`
+`capnp:./greeter.capnp`, configure the browser build to rewrite that
+specifier to `/__sandstorm/capnp/greeter.capnp.js`; keep `/capnp-es/...`
 runtime imports and `/__sandstorm/native-capnp/client.js` external.
 
 The served browser modules are generated from schemas discovered in the
 isolate worker module graph. If a schema is used only by frontend code, import
-it from the worker as well using `capnp-es:` or otherwise make it part of the
+it from the worker as well using `capnp:` or otherwise make it part of the
 packaged isolate module graph so `spk dev-isolate` and `spk pack` know to
 generate the native browser module.
 
@@ -335,9 +335,9 @@ generate the native browser module.
 
 Use schema-defined native Cap'n Proto for public typed protocols:
 
-- Worker code imports generated interfaces with `capnp-es:`.
+- Worker code imports generated interfaces with `capnp:`.
 - Browser code imports the corresponding served module from
-  `/__sandstorm/capnp-es/...`.
+  `/__sandstorm/capnp/...`.
 - Worker and browser generated clients use the native `capnp-es` RPC transport
   over Sandstorm capability handles.
 - Generated result promises expose typed accessors for returned interface
@@ -618,7 +618,7 @@ browser code, and pass the same packed descriptor as `descriptor` when the
 provider calls `fulfillRequest()` with the capability it wants to return.
 For a schema-defined app interface, `spk powerbox-descriptor` can produce the
 same packed descriptor at package/development time, while native browser
-helpers can derive request descriptors from served `capnp-es` modules.
+helpers can derive request descriptors from served `capnp:` schema modules.
 
 Worker code cannot directly open the Powerbox picker. Sandstorm's underlying
 `SessionContext.request()` operation is not implemented; use browser

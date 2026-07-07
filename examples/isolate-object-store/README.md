@@ -18,7 +18,7 @@ const response = await object.object.get({
 });
 ```
 
-The isolate imports `ObjectStore` with `capnp-es:` and imports Sandstorm's
-`WebSession` schema with `capnp-es:/sandstorm/web-session.capnp`. In browser or
+The isolate imports `ObjectStore` with `capnp:` and imports Sandstorm's
+`WebSession` schema with `capnp:/sandstorm/web-session.capnp`. In browser or
 HTTP-shaped flows, the same object route can still be served over ordinary
 `fetch()`.
