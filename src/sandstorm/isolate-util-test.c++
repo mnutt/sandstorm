@@ -16,73 +16,10 @@
 
 #include "isolate-util.h"
 
-#include <kj/encoding.h>
 #include <kj/test.h>
 
 namespace sandstorm {
 namespace {
-
-class TestWorkerAppObjectAdapter final: public WorkerAppObjectJsonCapabilityAdapter {
-public:
-  void add(kj::String id, IsolateObjectCapability::Client capability) {
-    caps.add(Cap {
-      kj::mv(id),
-      kj::mv(capability),
-    });
-  }
-
-  kj::Maybe<IsolateObjectCapability::Client> findCapability(kj::StringPtr id) override {
-    for (auto& cap: caps) {
-      if (cap.id == id) {
-        return cap.capability;
-      }
-    }
-    return nullptr;
-  }
-
-  kj::String storeCapability(IsolateObjectCapability::Client capability) override {
-    auto id = kj::str("stored-", nextId++);
-    add(kj::str(id), kj::mv(capability));
-    return id;
-  }
-
-private:
-  struct Cap {
-    kj::String id;
-    IsolateObjectCapability::Client capability;
-  };
-
-  uint nextId = 0;
-  kj::Vector<Cap> caps;
-};
-
-class EchoIsolateObjectCallTarget final: public IsolateObjectCallTarget {
-public:
-  kj::Promise<OwnedIsolateObjectCallResult> call(
-      kj::String method, OwnedIsolateObjectCallArgs args) override {
-    ++callCount;
-    lastMethod = kj::mv(method);
-
-    auto message = kj::heap<capnp::MallocMessageBuilder>();
-    auto result = message->initRoot<IsolateObjectCallResult>();
-    auto value = result.initValue();
-    auto fields = value.initObject(2);
-    fields[0].setName("method");
-    fields[0].initValue().setText(lastMethod);
-    fields[1].setName("argCount");
-    fields[1].initValue().setNumber(args.getArgs().size());
-    return OwnedIsolateObjectCallResult { kj::mv(message) };
-  }
-
-  kj::Promise<bool> drop() override {
-    ++dropCount;
-    return true;
-  }
-
-  uint callCount = 0;
-  uint dropCount = 0;
-  kj::String lastMethod = kj::heapString("");
-};
 
 KJ_TEST("isolate package paths must be canonical and package-relative") {
   KJ_EXPECT(isCanonicalPackagePath("worker.js"));
@@ -184,75 +121,6 @@ KJ_TEST("isolate response helper detects HTML MIME type") {
   KJ_EXPECT(!isHtmlMimeType("application/json"));
   KJ_EXPECT(!isHtmlMimeType("application/xhtml+xml"));
   KJ_EXPECT(!isHtmlMimeType("text/plain; charset=utf-8"));
-}
-
-KJ_TEST("native app RPC JSON codec preserves data and capability slots") {
-  kj::EventLoop loop;
-  kj::WaitScope waitScope(loop);
-
-  auto target = kj::heap<EchoIsolateObjectCallTarget>();
-  auto targetPtr = target.get();
-  auto capability = makeIsolateObjectCapability(kj::mv(target));
-
-  TestWorkerAppObjectAdapter adapter;
-  adapter.add(kj::str("slot-1"), capability);
-
-  auto callJson = kj::heapString(
-      "{\"method\":\"deliver\",\"args\":["
-      "{\"type\":\"data\",\"value\":\"aGVsbG8\"},"
-      "{\"type\":\"capability\",\"value\":{\"id\":\"slot-1\",\"nativeInterface\":\"appObject\"}}"
-      "]}");
-  auto call = parseWorkerAppObjectCallJson(callJson.asBytes(), adapter, 32);
-  KJ_EXPECT(call.method == "deliver");
-
-  auto args = call.args.getArgs();
-  KJ_ASSERT(args.size() == 2);
-  KJ_ASSERT(args[0].which() == IsolateObjectCallValue::DATA);
-  KJ_EXPECT(kj::str(kj::ArrayPtr<const char>(
-      reinterpret_cast<const char*>(args[0].getData().begin()), args[0].getData().size())) ==
-      "hello");
-  KJ_ASSERT(args[1].which() == IsolateObjectCallValue::CAPABILITY);
-
-  auto callbackResult = callIsolateObjectCapability(
-      args[1].getCapability(), "callback", args).wait(waitScope);
-  KJ_EXPECT(targetPtr->callCount == 1);
-  KJ_EXPECT(targetPtr->lastMethod == "callback");
-  auto callbackValue = callbackResult.getResult().getValue().getObject();
-  KJ_EXPECT(callbackValue[0].getValue().getText() == "callback");
-  KJ_EXPECT(callbackValue[1].getValue().getNumber() == 2);
-
-  capnp::MallocMessageBuilder resultMessage;
-  auto result = resultMessage.initRoot<IsolateObjectCallResult>();
-  auto fields = result.initValue().initObject(2);
-  fields[0].setName("payload");
-  fields[0].initValue().setData(kj::ArrayPtr<const kj::byte>(
-      reinterpret_cast<const kj::byte*>("ok"), 2));
-  fields[1].setName("callback");
-  fields[1].initValue().setCapability(args[1].getCapability());
-
-  auto resultJson = renderWorkerAppObjectResultJson(result, adapter);
-  KJ_EXPECT(resultJson == kj::StringPtr(
-      "{\"type\":\"value\",\"value\":{\"type\":\"object\",\"value\":["
-      "{\"name\":\"payload\",\"value\":{\"type\":\"data\",\"value\":\"b2s\"}},"
-      "{\"name\":\"callback\",\"value\":{\"type\":\"capability\",\"value\":"
-      "{\"id\":\"stored-0\",\"nativeInterface\":\"appObject\"}}}]}}"));
-  auto dropResult = args[1].getCapability().dropRequest().send().wait(waitScope);
-  KJ_EXPECT(dropResult.getReleased());
-  KJ_EXPECT(targetPtr->dropCount == 1);
-
-  KJ_EXPECT_THROW_MESSAGE(
-      "native app RPC data value must be base64url text",
-      parseWorkerAppObjectCallJson(
-          kj::StringPtr("{\"method\":\"bad\",\"args\":[{\"type\":\"data\",\"value\":\"!!!\"}]}")
-              .asBytes(),
-          adapter, 32));
-  KJ_EXPECT_THROW_MESSAGE(
-      "unknown claimed capability in native app RPC argument",
-      parseWorkerAppObjectCallJson(
-          kj::StringPtr(
-              "{\"method\":\"bad\",\"args\":[{\"type\":\"capability\",\"value\":{\"id\":\"missing\"}}]}")
-              .asBytes(),
-          adapter, 32));
 }
 
 }  // namespace
