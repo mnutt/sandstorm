@@ -1249,13 +1249,6 @@ test("isolate supervisor integration suite", {
       handleClient: true,
       pinged: true,
     });
-    assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.drop.afterDropStatus, 404);
-    assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.drop.afterDropOk, false);
-    assert.deepEqual(body.sandstormApi.nativeCapnpBridge.generatedClient.drop.afterDropException, {
-      type: "failed",
-      reason: "unknown native Cap'n Proto bridge target capability",
-      trace: "",
-    });
     assert.match(
       body.sandstormApi.nativeCapnpBridge.generatedClient.drop.generatedCallAfterDropError,
       /NativeCapnpBridgeUnavailableError: unknown native Cap'n Proto bridge target capability/);
@@ -1323,22 +1316,6 @@ test("isolate supervisor integration suite", {
         token: "native-bridge-saved-token",
         expectedInterfaceId: "a8e9655582dcde6f",
         expectedInterfaceName: "sandstorm.WebSession",
-      },
-      rpcRequest: {
-        protocolVersion: 0,
-        which: 4,
-        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
-        targetInterfaceId: "a8e9655582dcde6f",
-        targetInterfaceName: "sandstorm.WebSession",
-        connectionId: `native-capnp-fixture-rpc-${body.sandstormApi.nativeCapnpBridge.targetId}`,
-        messageBytes: 48,
-        capabilityCount: 1,
-        firstCapability: {
-          id: "rpc-argument-capability",
-          interfaceId: "d7a322498a996313",
-          interfaceName: "sandstorm.IsolateObjectCapability",
-          kind: 0,
-        },
       },
       acknowledgedResponse: {
         bytes: body.capnpEs.bridgeLifecycle.acknowledgedResponse.bytes,
@@ -1614,7 +1591,6 @@ test("isolate supervisor integration suite", {
         expectedInterfaceId: "0xa8e9655582dcde6f",
         expectedInterfaceName: "sandstorm.WebSession",
       },
-      rpcRouteError: "native Cap'n Proto bridge RPC requires WebSocket RPC session",
       binaryRoute: {
         ok: false,
         status: 501,
@@ -1624,18 +1600,6 @@ test("isolate supervisor integration suite", {
         exception: {
           type: "unimplemented",
           reason: "native Cap'n Proto bridge transport is not enabled",
-          trace: "",
-        },
-      },
-      rpcBinaryRoute: {
-        ok: false,
-        status: 501,
-        contentType: "application/octet-stream",
-        bytes: body.sandstormApi.nativeCapnpBridge.rpcBinaryRoute.bytes,
-        which: "exception",
-        exception: {
-          type: "unimplemented",
-          reason: "native Cap'n Proto bridge RPC requires WebSocket RPC session",
           trace: "",
         },
       },
@@ -1688,14 +1652,6 @@ test("isolate supervisor integration suite", {
           generatedCallAfterDropError:
               body.sandstormApi.nativeCapnpBridge.generatedClient.drop
                   .generatedCallAfterDropError,
-          afterDropStatus: 404,
-          afterDropOk: false,
-          afterDropWhich: "exception",
-          afterDropException: {
-            type: "failed",
-            reason: "unknown native Cap'n Proto bridge target capability",
-            trace: "",
-          },
         },
       },
       lifecycleBinary: {
@@ -1746,7 +1702,6 @@ test("isolate supervisor integration suite", {
       unknownTargetError: "unknown native Cap'n Proto bridge target capability",
     });
     assert.ok(body.sandstormApi.nativeCapnpBridge.binaryRoute.bytes > 0);
-    assert.ok(body.sandstormApi.nativeCapnpBridge.rpcBinaryRoute.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.bytes > 0);
     assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.drop.bytes > 0);

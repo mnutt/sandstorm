@@ -3892,25 +3892,6 @@ function normalizeConnectionId(connectionId) {
     Math.random().toString(36).slice(2);
 }
 
-function makeNativeCapnpBridgeRpcRequest({
-  target,
-  message,
-  capabilities = [],
-  connectionId,
-} = {}) {
-  const envelope = new Message();
-  const request = envelope.initRoot(NativeCapnpBridgeRequest);
-  request.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
-  const rpc = request._initRpc();
-  writeNativeCapnpCapabilitySlot(rpc._initTarget(), target);
-  writeNativeCapnpPayload(rpc._initMessage(), {
-    message: nativeCapnpRootMessageBytes(message),
-    capabilities,
-  });
-  rpc.connectionId = normalizeConnectionId(connectionId);
-  return envelope;
-}
-
 function makeNativeCapnpBridgeRestoreRequest(token, InterfaceClass, options = {}) {
   if (typeof token !== "string" || token.length === 0) {
     throw new TypeError("restoreBrowserNativeCapnp() requires a non-empty token");
