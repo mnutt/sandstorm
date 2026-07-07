@@ -1131,14 +1131,11 @@ prototype layers.
 
 Deliverables:
 
-- decide whether current JavaScript-defined app-object RPC remains supported
-  as a private/local convenience
 - remove obsolete scanner/generator code
 - remove compatibility shims that are no longer needed
 - document which transports are stable public API
 - add conformance tests shared by:
   - local transport
-  - current app-object transport, if retained
   - native bridge
   - browser bridge
 
@@ -1154,8 +1151,8 @@ Progress:
   modules plus `exportNativeCapnp()` / `restoreNativeCapnp()` as the schema
   authoring path for native cross-grain and legacy interop
 - generated `capnp:` schema-shaped app-object bindings are removed instead of
-  retained as a compatibility fallback; JavaScript-defined app-object RPC
-  remains only for current helper/UI internals pending a separate cleanup
+  retained as a compatibility fallback; JavaScript-defined app-object RPC is
+  not part of the isolate helper surface
 - the hand-written `makeCapnpInterfaceBinding()` helper and `capnp:*`
   TypeScript declaration surface have also been removed, so app authors do not
   have a second schema-shaped app-object API alongside native `capnp:`

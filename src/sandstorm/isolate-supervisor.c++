@@ -5264,7 +5264,7 @@ private:
         "  \"ok\": true,\n"
         "  \"binding\": \"sandstormApi\",\n"
         "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", "
-        "\"bindings\", \"permissions\", \"capnp.bridgeInfo\", \"capnp.call\", "
+        "\"bindings\", \"permissions\", \"capnp.bridgeInfo\", \"capnp.lifecycle\", "
         "\"powerbox.claim\", \"powerbox.fetch\", "
         "\"powerbox.outboundHttpFetch\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
