@@ -4775,8 +4775,13 @@ export default {
       const dropResult = await nativeCapnpDropWebSession.drop();
       let generatedCallAfterDropError = "";
       try {
+        const nativeCapnpDroppedWebSession = connectNativeCapnp(
+          apiHelper,
+          nativeCapnpDropTarget,
+          WebSession,
+          { connectionId: `native-capnp-fixture-drop-after-${nativeCapnpDropTarget.id}` });
         await Promise.race([
-          nativeCapnpDropWebSession.get({
+          nativeCapnpDroppedWebSession.get({
             path: "/generated-client",
             context: {},
             ignoreBody: false,

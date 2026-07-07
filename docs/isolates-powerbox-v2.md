@@ -1033,6 +1033,15 @@ Progress:
   JavaScript promise-pipelining API yet. Large binary payloads should continue
   to use fetch/data-plane paths; typed RPC can carry byte bodies, but fetch is
   the measured streaming path.
+- native `capnp-es` RPC now defaults to a persistent WebSocket-backed Cap'n
+  Proto RPC session instead of routing every RPC message through
+  `/capnp/call`; callers can still force the previous fetch transport with
+  `transport: "fetch"` for comparison/debugging. An ad hoc 10k-call,
+  1k-warmup, 5-round benchmark measured live native WebSocket RPC at about
+  0.13ms/call, old native fetch RPC at about 0.34ms/call, and generic
+  JavaScript RPC via supervisor at about 0.26ms/call; with 16 outstanding
+  calls, native WebSocket RPC measured about 0.085ms/call vs old native fetch
+  RPC at about 0.31ms/call.
 
 ### Phase 7: Packaging, Publishing, And Migration
 
