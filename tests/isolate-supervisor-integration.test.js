@@ -1415,6 +1415,9 @@ test("isolate supervisor integration suite", {
       greeter: {
         ok: true,
         message: "native export greeter hello isolate schema",
+        pipelinedMessage:
+            "native export pipelined greeter before makeGreeter resolves",
+        resolvedGreeter: true,
         info: {
           ok: true,
           type: "capabilityInfo",
