@@ -7422,8 +7422,10 @@ private:
       return nullptr;
     }
 
-    if (path.endsWith(".capnp.js")) {
-      auto schemaPath = path.slice(0, path.size() - strlen(".js"));
+    if (path.endsWith(".capnp.js") || path.endsWith(".capnp")) {
+      auto schemaPath = path.endsWith(".capnp.js")
+          ? path.slice(0, path.size() - strlen(".js"))
+          : path;
       if (schemaPath.startsWith(kj::StringPtr("sandstorm/"))) {
         return kj::str("capnp:/", schemaPath);
       }

@@ -1178,6 +1178,12 @@ Progress:
 - generated schema coverage now includes imports, nested structs/enums, lists,
   and multiple capability-valued method parameters/results in the
   `spk dev-isolate` integration path
+- browser generated-client conformance now imports the supervisor-served
+  browser helper and `sandstorm.WebSession` schema modules, connects a
+  generated client over the native WebSocket RPC session, and calls a
+  route-backed `WebSession`; the browser module route also serves generated
+  `.capnp` dependency specifiers as JavaScript so emitted schema imports load
+  without a second browser-only rewrite
 - schema-specific TypeScript declarations can now be printed from
   `spk dev-isolate` for `capnp:` imports, keeping authoring types tied to the
   same compiler output as runtime modules
