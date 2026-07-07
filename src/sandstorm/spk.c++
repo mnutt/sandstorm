@@ -2601,11 +2601,6 @@ private:
         rootDir, rootDir, devIsolatePrintGeneratedDeclaration);
     auto content = generateDevIsolateCapnpEsOutput(
         resolvedPath, rootDir, DevIsolateCapnpEsOutputKind::DTS);
-    auto source = readAll(raiiOpen(resolvedPath, O_RDONLY | O_CLOEXEC));
-    auto schemaImports = scanCapnpImports(source);
-    content = rewriteDevIsolateCapnpEsImports(
-        kj::mv(content), devIsolatePrintGeneratedDeclaration, resolvedPath, rootDir,
-        schemaImports.asPtr());
     kj::FdOutputStream(STDOUT_FILENO).write(content.begin(), content.size());
     context.exit();
     return true;
@@ -3163,9 +3158,6 @@ private:
     auto runtimePath = devIsolateCapnpEsRuntimePath(specifier, resolvedPath, rootDir);
     auto content = generateDevIsolateCapnpEsOutput(
         resolvedPath, rootDir, DevIsolateCapnpEsOutputKind::JS);
-    content = rewriteDevIsolateCapnpEsRuntimeImports(kj::mv(content), specifier);
-    content = rewriteDevIsolateCapnpEsImports(
-        kj::mv(content), specifier, resolvedPath, rootDir, schemaImports.asPtr());
     writeDevIsolateGeneratedSupportFile(devIsolateSupportDir, runtimePath, content);
 
     modules.add(DevIsolateModule {
@@ -3336,178 +3328,6 @@ private:
       normalized += parts[i];
     }
     return kj::heapString(normalized.c_str());
-  }
-
-  static kj::String replaceCapnpExtensionWithJs(kj::StringPtr path) {
-    KJ_REQUIRE(path.endsWith(".capnp"), "Internal error: expected .capnp path.", path);
-    return kj::str(path.slice(0, path.size() - strlen(".capnp")), ".js");
-  }
-
-  static std::vector<std::string> splitPathComponents(std::string path) {
-    std::vector<std::string> result;
-    size_t start = 0;
-    while (start <= path.size()) {
-      auto slash = path.find('/', start);
-      auto end = slash == std::string::npos ? path.size() : slash;
-      if (end > start) {
-        result.push_back(path.substr(start, end - start));
-      }
-      if (slash == std::string::npos) break;
-      start = slash + 1;
-    }
-    return result;
-  }
-
-  static kj::String relativeJsImportSpecifier(kj::StringPtr fromGeneratedKey,
-                                              kj::StringPtr toGeneratedKey) {
-    auto fromStd = toStdString(fromGeneratedKey);
-    auto toStd = toStdString(toGeneratedKey);
-    auto fromSlash = fromStd.rfind('/');
-    auto fromDir = fromSlash == std::string::npos ? std::string() : fromStd.substr(0, fromSlash);
-    auto fromParts = splitPathComponents(fromDir);
-    auto toParts = splitPathComponents(toStd);
-
-    size_t common = 0;
-    while (common < fromParts.size() && common < toParts.size() &&
-           fromParts[common] == toParts[common]) {
-      ++common;
-    }
-
-    std::vector<std::string> resultParts;
-    for (size_t i = common; i < fromParts.size(); ++i) {
-      resultParts.push_back("..");
-    }
-    for (size_t i = common; i < toParts.size(); ++i) {
-      resultParts.push_back(toParts[i]);
-    }
-
-    std::string result;
-    for (size_t i = 0; i < resultParts.size(); ++i) {
-      if (i > 0) result += "/";
-      result += resultParts[i];
-    }
-    if (result.empty()) {
-      result = ".";
-    }
-    if (result[0] != '.') {
-      result = "./" + result;
-    }
-    return kj::heapString(result.c_str());
-  }
-
-  static kj::String capnpEsSpecifierKey(kj::StringPtr specifier) {
-    KJ_REQUIRE(specifier.startsWith("capnp:"), "Internal error: expected capnp module.",
-        specifier);
-    auto path = specifier.slice(strlen("capnp:"));
-    if (path.startsWith("/")) {
-      path = path.slice(1);
-    } else if (path.startsWith("./")) {
-      path = path.slice(2);
-    }
-    return kj::heapString(path);
-  }
-
-  kj::String capnpEsRuntimeImportSpecifier(
-      kj::StringPtr importerSpecifier, kj::StringPtr runtimeModuleName) {
-    (void)importerSpecifier;
-    return kj::str("/", capnpEsRuntimePath(runtimeModuleName));
-  }
-
-  static kj::String relativeCapnpEsImportSpecifier(kj::StringPtr fromSpecifier,
-                                                   kj::StringPtr toSpecifier) {
-    return relativeJsImportSpecifier(
-        capnpEsSpecifierKey(fromSpecifier), capnpEsSpecifierKey(toSpecifier));
-  }
-
-  static kj::String capnpEsGeneratedKeyForSourcePath(kj::StringPtr resolvedPath) {
-    auto jsPath = replaceCapnpExtensionWithJs(resolvedPath);
-    char* cwdRaw = getcwd(nullptr, 0);
-    KJ_REQUIRE(cwdRaw != nullptr, "Could not resolve current directory.", strerror(errno));
-    KJ_DEFER(free(cwdRaw));
-    auto cwd = kj::StringPtr(cwdRaw);
-    if (isPathUnderRoot(jsPath, cwd)) {
-      auto pathStd = toStdString(jsPath);
-      auto cwdStd = toStdString(cwd);
-      return kj::heapString(pathStd.substr(cwdStd.size() + 1).c_str());
-    }
-
-    if (jsPath.startsWith("/")) {
-      return kj::heapString(jsPath.slice(1));
-    }
-    return jsPath;
-  }
-
-  static kj::String capnpEsGeneratedImportSpecifierForSchemaImport(
-      kj::StringPtr resolvedPath, kj::StringPtr importSpecifier) {
-    if (importSpecifier.startsWith("/sandstorm/")) {
-      auto fromKey = capnpEsGeneratedKeyForSourcePath(resolvedPath);
-      auto toKey = replaceCapnpExtensionWithJs(importSpecifier.slice(1));
-      return relativeJsImportSpecifier(fromKey, toKey);
-    }
-
-    auto jsImport = replaceCapnpExtensionWithJs(importSpecifier);
-    if (isRelativeImport(jsImport)) {
-      return jsImport;
-    }
-    return kj::str("./", jsImport);
-  }
-
-  static kj::String replaceAll(kj::StringPtr input, kj::StringPtr needle,
-                               kj::StringPtr replacement) {
-    auto inputStd = toStdString(input);
-    auto needleStd = toStdString(needle);
-    auto replacementStd = toStdString(replacement);
-    KJ_REQUIRE(!needleStd.empty(), "Internal error: empty replacement needle.");
-
-    std::string result;
-    size_t pos = 0;
-    for (;;) {
-      auto match = inputStd.find(needleStd, pos);
-      if (match == std::string::npos) {
-        result.append(inputStd, pos, std::string::npos);
-        break;
-      }
-      result.append(inputStd, pos, match - pos);
-      result += replacementStd;
-      pos = match + needleStd.size();
-    }
-    return kj::heapString(result.c_str());
-  }
-
-  kj::String rewriteDevIsolateCapnpEsRuntimeImports(
-      kj::String content, kj::StringPtr importerSpecifier) {
-    for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
-      auto quotedRuntimeName = kj::str("\"", runtimeModule.name, "\"");
-      auto quotedPathRuntimeName = kj::str(
-          "\"", capnpEsRuntimeImportSpecifier(importerSpecifier, runtimeModule.name), "\"");
-      content = replaceAll(content, quotedRuntimeName, quotedPathRuntimeName);
-    }
-
-    return kj::mv(content);
-  }
-
-  static kj::String rewriteDevIsolateCapnpEsImports(
-      kj::String content, kj::StringPtr specifier, kj::StringPtr resolvedPath,
-      kj::StringPtr rootDir, kj::ArrayPtr<DevCapnpImport> schemaImports) {
-    auto importerDir = dirnameForPath(resolvedPath);
-    for (auto& schemaImport: schemaImports) {
-      if (isDevIsolateCapnpEsRuntimeSchemaImport(schemaImport.specifier)) {
-        continue;
-      }
-
-      auto importedPath = resolveDevIsolateCapnpEsSchemaImport(
-          importerDir, rootDir, schemaImport.specifier);
-      auto importedSpecifier = devIsolateCapnpEsSpecifierForSchemaImport(
-          specifier, importedPath, rootDir, schemaImport.specifier);
-      auto generatedSpecifier = capnpEsGeneratedImportSpecifierForSchemaImport(
-          resolvedPath, schemaImport.specifier);
-      auto quotedGeneratedSpecifier = kj::str("\"", generatedSpecifier, "\"");
-      auto quotedImportedSpecifier = kj::str(
-          "\"", relativeCapnpEsImportSpecifier(specifier, importedSpecifier), "\"");
-      content = replaceAll(content, quotedGeneratedSpecifier, quotedImportedSpecifier);
-    }
-
-    return kj::mv(content);
   }
 
   static kj::String devIsolateCapnpGeneratedFileName(kj::StringPtr resolvedPath) {
@@ -4443,18 +4263,67 @@ private:
     auto extension = kind == DevIsolateCapnpEsOutputKind::DTS ? ".d.ts" : ".js";
     kj::StringPtr formatOption = kind == DevIsolateCapnpEsOutputKind::DTS ? "dts" : "js";
     kj::StringPtr script =
+        "import path from 'node:path';\n"
         "const chunks = [];\n"
         "for await (const chunk of process.stdin) chunks.push(chunk);\n"
         "const { compileAll } = await import(process.argv[1]);\n"
         "const sourcePath = process.argv[2];\n"
         "const extension = process.argv[3];\n"
         "const format = process.argv[4];\n"
+        "const rootDir = path.resolve(process.argv[5]);\n"
         "const basename = sourcePath.split('/').pop().replace(/\\.capnp$/, extension);\n"
         "const expectedPath = sourcePath.replace(/\\.capnp$/, extension);\n"
+        "function runtimeModuleSpecifier(moduleName) {\n"
+        "  if (moduleName === '@mnutt/capnp-es') return '/capnp-es/index.mjs';\n"
+        "  if (moduleName === '@mnutt/capnp/rpc.mjs') return '/capnp-es/capnp/rpc.mjs';\n"
+        "  if (moduleName.startsWith('@mnutt/capnp-es/')) {\n"
+        "    const relative = moduleName.slice('@mnutt/capnp-es/'.length);\n"
+        "    return '/capnp-es/' + relative + (relative.endsWith('.mjs') ? '' : '.mjs');\n"
+        "  }\n"
+        "  if (moduleName.startsWith('@mnutt/shared/')) {\n"
+        "    return '/capnp-es/shared/' + moduleName.slice('@mnutt/shared/'.length);\n"
+        "  }\n"
+        "  if (moduleName.startsWith('@mnutt/')) {\n"
+        "    return '/capnp-es/' + moduleName.slice('@mnutt/'.length);\n"
+        "  }\n"
+        "  return moduleName;\n"
+        "}\n"
+        "function capnpSpecifierKey(specifier) {\n"
+        "  let key = specifier.startsWith('capnp:') ? specifier.slice('capnp:'.length) : specifier;\n"
+        "  if (key.startsWith('/')) key = key.slice(1);\n"
+        "  if (key.startsWith('./')) key = key.slice(2);\n"
+        "  return key;\n"
+        "}\n"
+        "function capnpSpecifierForTsPath(tsPath) {\n"
+        "  const capnpPath = tsPath.replace(/\\.ts$/, '.capnp');\n"
+        "  const absolutePath = path.resolve(capnpPath);\n"
+        "  const relativeToRoot = path.relative(rootDir, absolutePath);\n"
+        "  if (relativeToRoot && !relativeToRoot.startsWith('..') && !path.isAbsolute(relativeToRoot)) {\n"
+        "    return 'capnp:./' + relativeToRoot.split(path.sep).join('/');\n"
+        "  }\n"
+        "  if (capnpPath.startsWith('sandstorm/')) return 'capnp:/' + capnpPath;\n"
+        "  if (capnpPath.startsWith('/sandstorm/')) return 'capnp:' + capnpPath;\n"
+        "  if (path.isAbsolute(capnpPath)) return 'capnp:/' + path.basename(capnpPath);\n"
+        "  return 'capnp:./' + capnpPath;\n"
+        "}\n"
+        "function relativeCapnpSpecifier(fromSpecifier, toSpecifier) {\n"
+        "  const fromKey = capnpSpecifierKey(fromSpecifier);\n"
+        "  const toKey = capnpSpecifierKey(toSpecifier);\n"
+        "  let relative = path.posix.relative(path.posix.dirname(fromKey), toKey);\n"
+        "  if (relative === '') relative = '.';\n"
+        "  if (!relative.startsWith('.')) relative = './' + relative;\n"
+        "  return relative;\n"
+        "}\n"
         "const { files } = await compileAll(Buffer.concat(chunks), {\n"
         "  js: format === 'js',\n"
         "  dts: format === 'dts',\n"
-        "  tsconfig: { noCheck: true }\n"
+        "  tsconfig: { noCheck: true },\n"
+        "  moduleSpecifier(context) {\n"
+        "    if (context.kind === 'runtime') return runtimeModuleSpecifier(context.originalSpecifier);\n"
+        "    return relativeCapnpSpecifier(\n"
+        "      capnpSpecifierForTsPath(context.fromPath),\n"
+        "      capnpSpecifierForTsPath(context.toPath));\n"
+        "  }\n"
         "});\n"
         "let content = files.get(expectedPath);\n"
         "if (content === undefined) {\n"
@@ -4473,7 +4342,7 @@ private:
         "process.stdout.write(content);\n";
     Subprocess::Options nodeOptions({
         "node", "--input-type=module", "-e", script, compilerModulePtr, resolvedPath,
-        extension, formatOption});
+        extension, formatOption, rootDir});
     nodeOptions.stdin = nodeInPipe.readEnd;
     nodeOptions.stdout = nodeOutPipe.writeEnd;
     nodeOptions.stderr = nodeErrPipe.writeEnd;
