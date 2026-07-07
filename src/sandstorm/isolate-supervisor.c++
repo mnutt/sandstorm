@@ -5286,9 +5286,7 @@ private:
         "  \"nativeTransport\": true,\n"
         "  \"nativeRpc\": true,\n"
         "  \"nativeRpcWebSocket\": true,\n"
-        "  \"nativeCalls\": false,\n"
-        "  \"nativeExports\": true,\n"
-        "  \"capabilitySlots\": false\n"
+        "  \"nativeExports\": true\n"
         "}\n");
   }
 

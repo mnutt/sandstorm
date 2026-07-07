@@ -1750,7 +1750,7 @@ export default {
     const apiHelper = sandstorm(request, env);
     const helperCapnpBridgeInfo = await apiHelper.capnpBridgeInfo();
     const capnpBridgeNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
-      requiredFeatures: ["nativeCalls", "capabilitySlots"],
+      requiredFeatures: ["nativeExports"],
     });
     const capnpBridgeRpcNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeRpc", "nativeRpcWebSocket"],
@@ -1995,9 +1995,7 @@ export default {
         nativeTransport: true,
         nativeRpc: true,
         nativeRpcWebSocket: true,
-        nativeCalls: true,
         nativeExports: false,
-        capabilitySlots: true,
       }),
       nativeCapnpBridgeCallBytes: async () => ({
         ok: true,

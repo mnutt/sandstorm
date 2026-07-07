@@ -801,8 +801,9 @@ Progress:
   schema dependencies under explicit `capnp:/sandstorm/...` module names
 - bridge feature negotiation now distinguishes the working binary `rpc`
   transport from lifecycle-only `/capnp/call`: `/capnp/bridge-info`
-  advertises `nativeTransport` and `nativeRpc`, while `nativeCalls` remains
-  false because the direct method-call envelope was removed
+  advertises `nativeTransport`, `nativeRpc`, `nativeRpcWebSocket`, and
+  `nativeExports`; the removed direct method-call envelope no longer has a
+  feature flag
 - `sandstorm:capnp` now exposes `saveNativeCapnp()` and `restoreNativeCapnp()`;
   restore negotiates the native RPC bridge, restores a durable token through
   Sandstorm's lifecycle route, and returns a live generated `@mnutt/capnp-es`
@@ -866,8 +867,7 @@ Progress:
 - native RPC cap tables now have focused interop coverage on the test
   `NativeGreeter` interface: legacy C++ calls a greeter capability returned by
   an isolate export, and isolate JS calls a greeter capability returned by the
-  fake legacy C++ greeter; this is separate from the still-disabled direct
-  bridge-envelope `capabilitySlots` feature
+  fake legacy C++ greeter
 - native export saved tokens are now covered through restore and revocation:
   after a saved isolate-defined `NativeGreeter` token is used from isolate JS
   and from the C++ harness, the integration suite revokes the token and asserts
