@@ -1225,6 +1225,9 @@ Progress:
   `IsolateObjectCapability`, route-backed object app refs are no longer
   restored, and the Sandstorm API binding no longer advertises or handles
   `powerbox.nativeAppRpcCall`
+- the API Powerbox example/test apps no longer expose app-object feed or LLM
+  provider flows, and browser examples now import the native Cap'n Proto client
+  route instead of the removed `/rpc-client.js` helper
 
 ## Decisions
 

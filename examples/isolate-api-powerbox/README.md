@@ -7,15 +7,14 @@ spk dev-isolate --title "Isolate API Powerbox" examples/isolate-api-powerbox/wor
 ```
 
 Open the grain and choose "Connect API". The browser calls Sandstorm's
-`requestApiCapability()` helper, which fetches a packed `ApiSession` descriptor
-from the worker, runs Sandstorm's existing Powerbox `postMessage` flow, and
-claims the returned request token through the worker's conventional
-`/__sandstorm/powerbox/claim` route. The worker then saves the browser result
-by calling `api.powerbox().claim(...)`, `cap.save(...)`, and
-`api.storage().put(...)`. The URL and scopes are editable; the worker serves
-both the descriptor and claim route with
-`sandstorm(request, env).serveSystemRoutes()`, so the descriptor and
-claim plumbing do not have to be hand-coded in browser code.
+native browser Cap'n Proto client, which builds a packed `ApiSession`
+descriptor, runs Sandstorm's existing Powerbox `postMessage` flow, and sends
+the returned request token back to the worker. The worker then saves the browser
+result by calling `api.powerbox().claim(...)`, `cap.save(...)`, and
+`api.storage().put(...)`. The URL and scopes are editable; the worker serves the
+native client and claim route with `sandstorm(request, env).serveSystemRoutes()`,
+so the descriptor and claim plumbing do not have to be hand-coded in browser
+code.
 
 The equivalent server-side claim step is:
 
