@@ -944,11 +944,11 @@ Progress:
   browser code can request a user-mediated app-interface capability, claim the
   returned token through Sandstorm's normal claim route, and receive a generated
   `capnp-es` client without going through the old app-object browser transport
-- the unreleased `sandstorm:browser-capnp:*` companion module generator,
-  `__sandstorm_isolate_runtime/capnp-browser` package output,
-  `/capnp/browser-module` supervisor route, and `/__sandstorm/capnp/...`
-  browser route have been removed; browser schema RPC now uses served
-  `capnp-es` modules plus `/__sandstorm/native-capnp/client.js`
+- the unreleased `sandstorm:browser-capnp:*` companion module generator and
+  `__sandstorm_isolate_runtime/capnp-browser` package output have been
+  removed; browser schema RPC now uses the native module-serving routes
+  (`/__sandstorm/capnp/...` and `/capnp-es/...`) plus
+  `/__sandstorm/native-capnp/client.js`
 
 Powerbox work:
 
