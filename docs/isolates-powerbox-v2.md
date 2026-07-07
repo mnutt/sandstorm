@@ -1153,10 +1153,12 @@ Progress:
 - unreleased Cap'n Web and app-object browser RPC prototype schema transports
   have been removed instead of kept as compatibility fallbacks; `fetch()`
   remains supported for HTTP-shaped and large data-plane capabilities
-
-## Open Questions
-
-- How much Cap'n Proto pipelining can be exposed cleanly in JavaScript?
+- `docs/developing/isolate-grains.md` now separates the stable transport
+  model: public typed cross-grain protocols use `capnp-es:` native schema RPC,
+  browser generated clients use served native modules plus the restricted
+  browser bridge, `fetch()`/`WebSession` remains the streamable data-plane
+  surface, and JavaScript-defined object RPC is private/local rather than the
+  public protocol layer
 
 ## Decisions
 
@@ -1175,6 +1177,8 @@ Progress:
   shipped, there is no fallback/backwards-compatibility transport to preserve.
 - `fetch()` remains the right public surface for HTTP-shaped APIs and large
   data-plane flows.
+- Generated `capnp-es` result promises should expose typed promise-pipelining
+  accessors for interface result fields where the schema supports it.
 
 ## Recommended Direction
 
