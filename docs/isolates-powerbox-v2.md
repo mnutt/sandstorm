@@ -1204,6 +1204,11 @@ Progress:
   `src/sandstorm/isolate/capnp-es` because Ekam currently embeds those source
   files into `capnp-es.js.h`; removing that snapshot requires a separate build
   boundary change so Ekam can consume npm-installed runtime files directly
+- native bridge cleanup has started inside `isolate-supervisor.c++`: an unused
+  duplicate native export RPC session cache was removed, and native bridge RPC
+  session maps, message-stream mutation, WebSocket lifetime cleanup, and
+  legacy RPC queue dispatch now live behind a dedicated controller instead of
+  being spread across the general Sandstorm API binding service
 
 ## Decisions
 
