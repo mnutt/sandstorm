@@ -723,7 +723,6 @@ declare module "sandstorm:api" {
     nativeCalls: boolean;
     nativeExports: boolean;
     capabilitySlots: boolean;
-    fallbackTransport: "appObjectRpc";
   }
 
   export interface NativeCapnpBridgeResponse {

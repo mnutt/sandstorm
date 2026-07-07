@@ -24,7 +24,6 @@ declare module "sandstorm:capnp" {
     readonly nativeCalls: boolean;
     readonly nativeExports: boolean;
     readonly capabilitySlots: boolean;
-    readonly fallbackTransport: string;
     readonly missingFeatures: readonly NativeCapnpBridgeFeature[];
     readonly reason: string;
     readonly info: unknown;
