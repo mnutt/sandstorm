@@ -1,16 +1,7 @@
 declare module "sandstorm:api" {
-  import type { RpcTarget, RpcSessionOptions } from "capnweb";
-  export { RpcTarget } from "capnweb";
-  export {
-    SANDSTORM_CAPNWEB_VERSION,
-    SANDSTORM_RPC_VERSION,
-  } from "sandstorm:rpc";
-
   export const SANDSTORM_API_VERSION: 0;
   export const SANDSTORM_HELPER_VERSIONS: {
     readonly api: 0;
-    readonly rpc: 0;
-    readonly capnweb: "0.8.0";
   };
 
   export interface Fetcher {
@@ -23,22 +14,6 @@ declare module "sandstorm:api" {
     STORAGE: Fetcher;
     [binding: string]: unknown;
   }
-
-  export class AppRpcTarget<Env extends SandstormEnv = SandstormEnv> extends RpcTarget {
-    protected readonly request: Request;
-    protected readonly env: Env;
-    protected get api(): SandstormApi;
-    constructor(request: Request, env: Env);
-  }
-
-  export interface ServeRpcOptions extends RpcSessionOptions {
-    rpcPath?: string;
-    clientScriptPath?: string;
-  }
-
-  export type RpcTargetSource<T extends RpcTarget = RpcTarget> =
-    | T
-    | (() => T | Promise<T>);
 
   export class ValidationError extends Error {}
   export class UnsupportedCapabilityError extends Error {
@@ -55,21 +30,10 @@ declare module "sandstorm:api" {
     constructor(message: string, details?: unknown);
   }
 
-  export interface StringValidationOptions {
-    minLength?: number;
-    maxLength?: number;
-  }
-
-  export interface NumberValidationOptions {
-    coerce?: boolean;
-    min?: number;
-    max?: number;
-  }
-
   export interface Validator {
-    string(value: unknown, name?: string, options?: StringValidationOptions): string;
-    number(value: unknown, name?: string, options?: NumberValidationOptions): number;
-    integer(value: unknown, name?: string, options?: NumberValidationOptions): number;
+    string(value: unknown, name?: string, options?: { minLength?: number; maxLength?: number }): string;
+    number(value: unknown, name?: string, options?: { coerce?: boolean; min?: number; max?: number }): number;
+    integer(value: unknown, name?: string, options?: { coerce?: boolean; min?: number; max?: number }): number;
     optional<T>(
       value: unknown,
       fallback: T,
@@ -109,24 +73,27 @@ declare module "sandstorm:api" {
     type: "apiSession";
     canonicalUrl: string;
     oauthScopes: string[];
+    descriptor: string;
   }
-
-  export type OutboundHttpMethod =
-    | "GET"
-    | "POST"
-    | "PUT"
-    | "PATCH"
-    | "DELETE"
-    | "HEAD"
-    | "OPTIONS";
 
   export interface OutboundHttpDescriptorInfo {
     type: "outboundHttp";
     baseUrl: string;
-    methods: OutboundHttpMethod[];
+    methods: string[];
+    descriptor: string;
   }
 
-  export type PowerboxDescriptorInfo = ApiSessionDescriptorInfo | OutboundHttpDescriptorInfo;
+  export interface AppInterfaceDescriptorInfo {
+    type: "appInterface";
+    interfaceId: string;
+    interfaceName?: string;
+    descriptor: string;
+  }
+
+  export type PowerboxDescriptorInfo =
+    | ApiSessionDescriptorInfo
+    | OutboundHttpDescriptorInfo
+    | AppInterfaceDescriptorInfo;
 
   export interface OfferedCapabilityInfo {
     id: string;
@@ -134,173 +101,25 @@ declare module "sandstorm:api" {
     descriptor?: PowerboxDescriptorInfo;
   }
 
-  export type JsonValue =
-    | null
-    | boolean
-    | number
-    | string
-    | JsonValue[]
-    | { [key: string]: JsonValue };
-
-  export type CapabilityCallValue =
-    | JsonValue
-    | CapabilityHandle
-    | CapabilityCallValue[]
-    | { [key: string]: CapabilityCallValue };
-
-  export interface NativeCapabilitySlot {
-    type: "nativeCapabilitySlot";
-    id: string;
-    nativeInterface?: string;
+  export interface StorageApi {
+    put(key: string, value: string | Uint8Array | unknown): Promise<unknown>;
+    putJson(key: string, value: unknown): Promise<unknown>;
+    get(key: string): Promise<string | undefined>;
+    getBytes(key: string): Promise<Uint8Array | undefined>;
+    getJson<T = unknown>(key: string): Promise<T | undefined>;
+    head(key: string): Promise<{ ok: boolean; status: number; bytes: string | null }>;
+    delete(key: string): Promise<unknown>;
+    list(): Promise<unknown>;
   }
 
-  export type NativeAppRpcPlainValue =
-    | null
-    | boolean
-    | number
-    | string
-    | ArrayBuffer
-    | ArrayBufferView
-    | NativeCapabilitySlot
-    | NativeAppRpcPlainValue[]
-    | { [key: string]: NativeAppRpcPlainValue };
-
-  export type NativeAppRpcSerializableValue =
-    | NativeAppRpcPlainValue
-    | Capability;
-
-  export type NativeAppRpcHydratedValue<TCapability = NativeCapabilitySlot> =
-    | null
-    | boolean
-    | number
-    | string
-    | Uint8Array
-    | TCapability
-    | NativeAppRpcHydratedValue<TCapability>[]
-    | { [key: string]: NativeAppRpcHydratedValue<TCapability> };
-
-  export type NativeAppRpcValueEnvelope =
-    | { type: "null" }
-    | { type: "bool"; value: boolean }
-    | { type: "number"; value: number }
-    | { type: "text"; value: string }
-    | { type: "data"; value: string }
-    | { type: "list"; value: NativeAppRpcValueEnvelope[] }
-    | { type: "object"; value: Array<{ name: string; value: NativeAppRpcValueEnvelope }> }
-    | { type: "capability"; value: { id: string; nativeInterface?: string } };
-
-  export interface NativeAppRpcCallEnvelope {
-    method: string;
-    args: NativeAppRpcValueEnvelope[];
-  }
-
-  export type NativeAppRpcResultEnvelope =
-    | { type: "value"; value: NativeAppRpcValueEnvelope }
-    | {
-        type: "exception";
-        value: {
-          name: string;
-          message: string;
-          stack: string;
-        };
-      };
-
-  export interface NativeAppRpcSerializationOptions {
-    name?: string;
-    exportCapabilitySlot?: (
-      value: RpcTarget | Capability,
-      context: { name: string },
-    ) => NativeCapabilitySlot | Promise<NativeCapabilitySlot>;
-  }
-
-  export interface NativeAppRpcHydrationOptions<TCapability = NativeCapabilitySlot> {
-    name?: string;
-    resolveCapabilitySlot?: (
-      slot: NativeCapabilitySlot,
-      context: { name: string },
-    ) => TCapability;
-  }
-
-  export interface NativeAppRpcStubOptions<TCapability = NativeCapabilitySlot>
-      extends NativeAppRpcSerializationOptions, NativeAppRpcHydrationOptions<TCapability> {
-    release?: (slot: NativeCapabilitySlot) => unknown | Promise<unknown>;
-  }
-
-  export interface CapabilityRpcOptions<TCapability = NativeCapabilitySlot>
-      extends NativeAppRpcStubOptions<TCapability> {
-    checkInfo?: boolean;
-    transport?: NativeAppRpcTransport;
-    fetcher?: Fetcher;
-    route?: string | ((slot: NativeCapabilitySlot) => string);
-  }
-
-  export type NativeAppRpcTransport = (
-    slot: NativeCapabilitySlot,
-    call: NativeAppRpcCallEnvelope,
-  ) => NativeAppRpcResultEnvelope | Promise<NativeAppRpcResultEnvelope>;
-
-  export type StorageValue = string | Uint8Array | JsonValue;
-
-  export interface StorageInfo {
-    ok: boolean;
-    status?: number;
-    body?: string;
-    bytes?: number;
-    error?: string;
-  }
-
-  export interface StorageListResult {
-    ok: boolean;
-    keys: Array<{
-      name: string;
-      bytes: number;
-    }>;
-    totalBytes: number;
-    error?: string;
-  }
-
-  export interface CapabilityHandle {
-    ok: true;
-    type: "capability";
-    id: string;
-  }
-
-  export type CapabilityKind =
-    | "unknown"
-    | "powerboxClaim"
-    | "powerboxOffer"
-    | "restored"
-    | "tied"
-    | "routeBackedWebSession"
-    | "routeBackedApiSession";
-
-  export type CapabilityResidence =
-    | "unknown"
-    | "localExport"
-    | "imported";
-
-  export type CapabilityNativeInterface =
-    | "unknown"
-    | "webSession"
-    | "apiSession"
-    | "outboundHttpSession"
-    | "appObject";
-
-  export interface CapabilityInfo {
-    ok: true;
-    type: "capabilityInfo";
-    id: string;
-    kind: CapabilityKind;
-    residence: CapabilityResidence;
-    nativeInterface: CapabilityNativeInterface;
-    pathPrefix: string;
-    persistent: boolean;
-    hasDropNotify: boolean;
-    dropNotifyRefCount: number;
-    supportsWebFetch: boolean;
-    supportsOutboundHttpFetch: boolean;
-    hasNativeCapability: boolean;
-    liveForwardable: boolean;
+  export interface WebSessionCapabilityOptions {
+    pathPrefix?: string;
+    prefix?: string;
+    persistent?: boolean;
+    dropNotifyPath?: string;
+    title?: string | { defaultText: string };
+    label?: string | { defaultText: string };
+    description?: string | { defaultText: string };
   }
 
   export interface SaveCapabilityOptions {
@@ -308,408 +127,113 @@ declare module "sandstorm:api" {
     saveLabel?: string | { defaultText: string };
   }
 
-  export interface DurableObjectCapabilityOptions extends SaveCapabilityOptions {
-    label: string | { defaultText: string };
-    storageKey?: string;
-    key?: string;
-  }
-
-  export interface DurableObjectCapabilityTargetOptions
-      extends DurableObjectCapabilityOptions, Required<Pick<ObjectCapabilityOptions, "id">> {}
-
-  export interface SessionCapabilityOptions {
-    title?: string | { defaultText: string };
-    displayTitle?: string | { defaultText: string };
-    verbPhrase?: string | { defaultText: string };
-    displayVerbPhrase?: string | { defaultText: string };
-    description?: string | { defaultText: string };
-    displayDescription?: string | { defaultText: string };
-    label?: string | { defaultText: string };
-    requiredPermissions?: string[];
-    apiSession?: {
-      canonicalUrl: string;
-      oauthScopes?: string[];
-    };
-    apiSessionDescriptor?: {
-      canonicalUrl: string;
-      oauthScopes?: string[];
-    };
-    outboundHttp?: {
-      baseUrl: string;
-      methods?: OutboundHttpMethod[];
-    };
-    outboundHttpDescriptor?: {
-      baseUrl: string;
-      methods?: OutboundHttpMethod[];
-    };
-    descriptor?: string;
-    powerboxDescriptor?: string;
-    nativeInterface?: "unknown" | "webSession" | "apiSession" | "outboundHttpSession" | "appObject";
-  }
-
-  export interface WebSessionCapabilityOptions {
-    pathPrefix?: string;
-    prefix?: string;
-    persistent?: boolean;
-  }
-
-  export interface ObjectCapabilityOptions {
-    id?: string;
-  }
-
-  export type DurableCapabilityRegistry = Record<
-    string,
-    RpcTarget | ((request: Request, env: SandstormEnv) => RpcTarget | Promise<RpcTarget>)
-  >;
-
-  export interface SandstormOptions {
-    capabilities?: DurableCapabilityRegistry;
-  }
-
-  export interface DurableObjectCapabilityResult {
-    ok: true;
-    id: string;
-    storageKey?: string;
-    registered: boolean;
-    restored: boolean;
-    capability: Capability;
-    token: string;
-  }
-
-  export type NativeAppRpcProxy<T extends object = Record<string, (...args: any[]) => unknown>> = {
-    [K in keyof T]: T[K] extends (...args: infer Args) => infer Result
-      ? (...args: Args) => Promise<Awaited<Result>>
-      : never;
-  };
-
-  export interface Capability extends CapabilityHandle {
-    /**
-     * Fetch through a WebSession, ApiSession, or OutboundHttpSession capability.
-     *
-     * WebSession and ApiSession capabilities accept only relative app paths such
-     * as "/path?query". OutboundHttpSession capabilities accept only relative
-     * outbound paths such as "v1/resource" or "/v1/resource"; the powerbox
-     * descriptor supplies the origin.
-     */
-    fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
-    call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
-    readonly rpc: NativeAppRpcProxy<Record<string, (...args: any[]) => unknown>>;
-    info(options?: { refresh?: boolean }): Promise<CapabilityInfo | null>;
-    dup(): Promise<Capability>;
-    save(options?: SaveCapabilityOptions): Promise<string>;
-    drop(): Promise<{ ok: true }>;
-    offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
-    fulfillRequest(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
-    tieToUser(request: Request, options?: SessionCapabilityOptions): Promise<Capability>;
-    [Symbol.dispose](): void;
-  }
-
   export class Capability {
     readonly ok: true;
     readonly type: "capability";
     readonly id: string;
+    readonly env: SandstormEnv;
     constructor(env: SandstormEnv, id: string);
-    /**
-     * Fetch through a WebSession, ApiSession, or OutboundHttpSession capability.
-     *
-     * WebSession and ApiSession capabilities accept only relative app paths such
-     * as "/path?query". OutboundHttpSession capabilities accept only relative
-     * outbound paths such as "v1/resource" or "/v1/resource"; the powerbox
-     * descriptor supplies the origin.
-     */
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
-    call<T = unknown>(method: string, ...args: CapabilityCallValue[]): Promise<T>;
-    readonly rpc: NativeAppRpcProxy<Record<string, (...args: any[]) => unknown>>;
-    info(options?: { refresh?: boolean }): Promise<CapabilityInfo | null>;
-    dup(): Promise<Capability>;
+    info(options?: { refresh?: boolean }): Promise<unknown>;
     save(options?: SaveCapabilityOptions): Promise<string>;
-    drop(): Promise<{ ok: true }>;
-    offer(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
-    fulfillRequest(request: Request, options?: SessionCapabilityOptions): Promise<{ ok: true }>;
-    tieToUser(request: Request, options?: SessionCapabilityOptions): Promise<Capability>;
-    [Symbol.dispose](): void;
-    toJSON(): CapabilityHandle;
-  }
-
-  export class NativeAppRpcStub<
-    T extends object = Record<string, (...args: any[]) => unknown>,
-    TCapability = NativeCapabilitySlot,
-  > {
-    readonly slot: NativeCapabilitySlot;
-    constructor(
-      slot: Pick<NativeCapabilitySlot, "id"> & Partial<Pick<NativeCapabilitySlot, "nativeInterface">>,
-      transport: NativeAppRpcTransport,
-      options?: NativeAppRpcStubOptions<TCapability>,
-    );
-    call<TResult = unknown>(
-      method: string,
-      ...args: NativeAppRpcSerializableValue[]
-    ): Promise<TResult>;
+    dup(): Promise<Capability>;
     drop(): Promise<unknown>;
-    readonly rpc: NativeAppRpcProxy<T>;
-    toJSON(): NativeCapabilitySlot;
+    offer(request: Request, options?: PowerboxOfferOptions): Promise<unknown>;
+    fulfillRequest(request: Request, options?: PowerboxFulfillOptions): Promise<unknown>;
+    tieToUser(request: Request, options?: PowerboxTieOptions): Promise<unknown>;
+    toJSON(): { ok: true; type: "capability"; id: string };
   }
 
-  export interface ClaimRequestOptions {
+  export interface PowerboxRequestResult {
+    token?: string;
+    capability?: Capability | { id: string };
+    descriptor?: unknown;
+  }
+
+  export interface PowerboxClaimOptions {
     requiredPermissions?: string[];
-    apiSession?: {
-      canonicalUrl: string;
-      oauthScopes?: string[];
-    };
-    apiSessionDescriptor?: {
-      canonicalUrl: string;
-      oauthScopes?: string[];
-    };
-    outboundHttp?: {
-      baseUrl: string;
-      methods?: OutboundHttpMethod[];
-    };
-    outboundHttpDescriptor?: {
-      baseUrl: string;
-      methods?: OutboundHttpMethod[];
-    };
+    apiSession?: unknown;
+    apiSessionDescriptor?: unknown;
+    outboundHttp?: unknown;
+    outboundHttpDescriptor?: unknown;
+    appInterface?: unknown;
+    appInterfaceDescriptor?: unknown;
     descriptor?: string;
     powerboxDescriptor?: string;
+    nativeInterface?: "unknown" | "webSession" | "apiSession" | "outboundHttpSession";
   }
 
-  export type PowerboxRequestResult =
-    | string
-    | {
-      token?: string;
-      capability?: CapabilityHandle;
-    };
-
-  export interface ApiSessionPowerboxRequestOptions extends ClaimRequestOptions {
-    canonicalUrl: string;
-    oauthScopes?: string[];
-  }
-
-  export interface ApiSessionPowerboxRequestWrapperOptions extends ClaimRequestOptions {
-    apiSession?: ApiSessionPowerboxRequestOptions;
-    apiSessionDescriptor?: ApiSessionPowerboxRequestOptions;
-  }
-
-  export type ApiSessionPowerboxOptions =
-    | ApiSessionPowerboxRequestOptions
-    | ApiSessionPowerboxRequestWrapperOptions;
-
-  export interface OutboundHttpPowerboxRequestOptions extends ClaimRequestOptions {
-    baseUrl: string;
-    methods?: OutboundHttpMethod[];
-  }
-
-  export interface OutboundHttpPowerboxRequestWrapperOptions extends ClaimRequestOptions {
-    outboundHttp?: OutboundHttpPowerboxRequestOptions;
-    outboundHttpDescriptor?: OutboundHttpPowerboxRequestOptions;
-  }
-
-  export type OutboundHttpPowerboxOptions =
-    | OutboundHttpPowerboxRequestOptions
-    | OutboundHttpPowerboxRequestWrapperOptions;
-
-  export interface StorageApi {
-    put(key: string, value: StorageValue): Promise<StorageInfo>;
-    putJson(key: string, value: JsonValue): Promise<StorageInfo>;
-    get(key: string): Promise<string | undefined>;
-    getBytes(key: string): Promise<Uint8Array | undefined>;
-    getJson<T = unknown>(key: string): Promise<T | undefined>;
-    head(key: string): Promise<{ ok: boolean; status: number; bytes: string | null }>;
-    delete(key: string): Promise<StorageInfo>;
-    list(): Promise<StorageListResult>;
-  }
-
-  export interface PowerboxApi {
-    apiSessionDescriptor(options: ApiSessionPowerboxOptions): Promise<string>;
-    outboundHttpDescriptor(options: OutboundHttpPowerboxOptions): Promise<string>;
-    claim(
-      result: string | PowerboxRequestResult,
-      options?: ClaimRequestOptions,
-    ): Promise<Capability>;
-    offered(): OfferedCapabilityInfo | undefined;
-    offer(
-      capability: CapabilityHandle | string,
-      options?: SessionCapabilityOptions,
-    ): Promise<{ ok: true }>;
-    fulfillRequest(
-      capability: CapabilityHandle | string,
-      options?: SessionCapabilityOptions,
-    ): Promise<{ ok: true }>;
-    tieToUser(
-      capability: CapabilityHandle | string,
-      options?: SessionCapabilityOptions,
-    ): Promise<Capability>;
-  }
-
-  export type PowerboxGrantQuery =
-    | null
-    | string
-    | string[]
-    | { descriptor?: string; descriptors?: string[] }
-    | ApiSessionPowerboxOptions
-    | OutboundHttpPowerboxOptions
-    | {
-        apiSession?: ApiSessionPowerboxRequestOptions;
-        apiSessionDescriptor?: ApiSessionPowerboxRequestOptions;
-        outboundHttp?: OutboundHttpPowerboxRequestOptions;
-        outboundHttpDescriptor?: OutboundHttpPowerboxRequestOptions;
-      };
-
-  export interface PowerboxGrantSpec {
-    id?: string;
+  export interface PowerboxOfferOptions extends PowerboxClaimOptions {
     title?: string | { defaultText: string };
     label?: string | { defaultText: string };
     description?: string | { defaultText: string };
-    storageKey?: string;
-    key?: string;
-    query?: PowerboxGrantQuery;
-    descriptor?: string;
-    descriptors?: string[];
-    powerboxDescriptor?: string;
-    apiSession?: ApiSessionPowerboxRequestOptions;
-    apiSessionDescriptor?: ApiSessionPowerboxRequestOptions;
-    outboundHttp?: OutboundHttpPowerboxRequestOptions;
-    outboundHttpDescriptor?: OutboundHttpPowerboxRequestOptions;
-    saveLabel?: string | { defaultText: string };
+  }
+  export interface PowerboxFulfillOptions extends PowerboxOfferOptions {}
+  export interface PowerboxTieOptions {
     requiredPermissions?: string[];
-    claimOptions?: ClaimRequestOptions;
-    save?: SaveCapabilityOptions;
-    test?: (capability: Capability) => unknown | Promise<unknown>;
   }
 
-  export interface PowerboxGrantsOptions {
-    routePrefix?: string;
-    prefix?: string;
-    grants: Record<string, PowerboxGrantSpec> | PowerboxGrantSpec[];
+  export interface PowerboxApi {
+    apiSessionDescriptor(options?: unknown): Promise<string>;
+    outboundHttpDescriptor(options?: unknown): Promise<string>;
+    appInterfaceDescriptor(options?: unknown): Promise<string>;
+    claim(result: string | PowerboxRequestResult, options?: PowerboxClaimOptions): Promise<Capability>;
+    offered(): OfferedCapabilityInfo | undefined;
+    offer(capability: Capability, options?: PowerboxOfferOptions): Promise<unknown>;
+    fulfillRequest(capability: Capability, options?: PowerboxFulfillOptions): Promise<unknown>;
+    tieToUser(capability: Capability, options?: PowerboxTieOptions): Promise<unknown>;
   }
 
   export interface PowerboxFulfillmentOptions {
     routePrefix?: string;
     prefix?: string;
-    title: string | { defaultText: string };
-    description?: string | { defaultText: string };
-    buttonLabel?: string | { defaultText: string };
-    capability: () =>
-      | Capability
-      | DurableObjectCapabilityResult
-      | Promise<Capability | DurableObjectCapabilityResult>;
-    fulfill: SessionCapabilityOptions;
-  }
-
-  export interface PowerboxFulfillmentResult {
-    ok: true;
-    fulfill: { ok: true };
-    capability: CapabilityHandle;
+    title?: string;
+    description?: string;
+    buttonLabel?: string;
+    capability(): Capability | { capability: Capability } | Promise<Capability | { capability: Capability }>;
+    fulfill: PowerboxFulfillOptions;
   }
 
   export interface PowerboxFulfillmentApi {
-    fulfill(request?: Request): Promise<PowerboxFulfillmentResult>;
+    fulfill(request?: Request): Promise<unknown>;
     serve(request?: Request): Promise<Response | null>;
   }
 
-  export interface PublicPowerboxGrant {
-    id: string;
-    title: string;
-    description: string;
-    storageKey: string;
-    query: PowerboxGrantQuery;
-    saveLabel: { defaultText: string };
-    requiredPermissions: string[];
-    connected: boolean;
+  export interface PowerboxGrantSpec {
+    id?: string;
+    title?: string;
+    label?: string;
+    description?: string;
+    storageKey?: string;
+    key?: string;
+    query?: unknown;
+    descriptor?: string;
+    descriptors?: string[];
+    powerboxDescriptor?: string;
+    apiSession?: unknown;
+    apiSessionDescriptor?: unknown;
+    outboundHttp?: unknown;
+    outboundHttpDescriptor?: unknown;
+    requiredPermissions?: string[];
+    claimOptions?: PowerboxClaimOptions;
+    save?: SaveCapabilityOptions;
+    saveLabel?: string | { defaultText: string };
+    test?: (capability: Capability) => unknown | Promise<unknown>;
   }
 
-  export interface PowerboxGrantStatus {
-    ok: true;
-    id: string;
-    title: string;
-    description: string;
-    storageKey: string;
-    connected: boolean;
-  }
-
-  export interface PowerboxGrantsConfig {
-    ok: true;
-    routePrefix: string;
-    grants: PublicPowerboxGrant[];
-  }
-
-  export interface PowerboxGrantClaimResult {
-    ok: true;
-    id: string;
-    storageKey: string;
-    status: PowerboxGrantStatus;
-    test?: unknown;
-  }
-
-  export interface PowerboxGrantRevokeResult {
-    ok: true;
-    id: string;
-    storageKey: string;
-    revoked: boolean;
-    revoke?: { ok: true };
-    deleted: StorageInfo;
-    status: PowerboxGrantStatus;
-  }
-
-  export interface PowerboxGrantsStatusResult {
-    ok: true;
-    statuses: PowerboxGrantStatus[];
-  }
-
-  export interface PowerboxGrantStatusResult {
-    ok: true;
-    status: PowerboxGrantStatus;
-  }
+  export type PowerboxGrantsOptions =
+    | Record<string, PowerboxGrantSpec>
+    | { routePrefix?: string; prefix?: string; grants: Record<string, PowerboxGrantSpec> | PowerboxGrantSpec[] };
 
   export interface PowerboxGrantsApi {
-    config(): Promise<PowerboxGrantsConfig>;
-    status(): Promise<PowerboxGrantsStatusResult>;
-    status(id: string): Promise<PowerboxGrantStatusResult>;
-    claim(id: string, result: string | PowerboxRequestResult): Promise<PowerboxGrantClaimResult>;
-    revoke(id: string): Promise<PowerboxGrantRevokeResult>;
+    config(): Promise<unknown>;
+    status(id?: string): Promise<unknown>;
+    claim(id: string, result: string | PowerboxRequestResult): Promise<unknown>;
+    revoke(id: string): Promise<unknown>;
     use<T>(id: string, fn: (capability: Capability) => T | Promise<T>): Promise<T>;
     token(id: string): Promise<string | undefined>;
     serve(request?: Request): Promise<Response | null>;
   }
-
-  export interface SandstormApiTarget extends RpcTarget {
-    session(): SessionInfo;
-    status(): Promise<unknown>;
-    capabilities(): Promise<unknown>;
-    runtime(): Promise<unknown>;
-    modules(): Promise<unknown>;
-    bindings(): Promise<unknown>;
-    capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
-    nativeCapnpBridgeCall(body?: BodyInit): Promise<NativeCapnpBridgeResponse>;
-    nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<NativeCapnpBridgeByteResponse>;
-    nativeCapnpBridgeOpenRpcSession(
-      target: { id: string; interfaceId?: bigint | number | string; interfaceName?: string },
-      connectionId: string,
-    ): Promise<WebSocket>;
-    nativeCapnpExport(registration: NativeCapnpExportRegistration): Promise<Capability>;
-    storage(): StorageApiTarget;
-    powerbox(): PowerboxApiTarget;
-    webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
-    apiSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
-    restore(token: string): Promise<Capability>;
-    revoke(token: string): Promise<{ ok: true }>;
-    use<T>(
-      token: string,
-      fn: (capability: Capability) => T | Promise<T>,
-    ): Promise<T>;
-    "export"(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<Capability>;
-    withExport<T>(
-      target: RpcTarget,
-      fn: (capability: Capability) => T | Promise<T>,
-      options?: ObjectCapabilityOptions,
-    ): Promise<T>;
-    exportDurable(
-      target: RpcTarget,
-      options: DurableObjectCapabilityTargetOptions,
-    ): Promise<DurableObjectCapabilityResult>;
-  }
-
-  export interface StorageApiTarget extends RpcTarget, StorageApi {}
-  export interface PowerboxApiTarget extends RpcTarget, PowerboxApi {}
 
   export interface CapnpBridgeInfo {
     ok: true;
@@ -730,23 +254,7 @@ declare module "sandstorm:api" {
     type: "nativeCapnpBridgeResponse";
     protocolVersion: 0;
     error?: string;
-    request?: {
-      kind: "call";
-      protocolVersion: 0;
-      targetId: string;
-      targetInterfaceId: string;
-      targetInterfaceName: string;
-      interfaceId: string;
-      methodOrdinal: number;
-      methodName: string;
-      paramsBytes: number;
-      capabilityCount: number;
-    };
-    exception?: {
-      type: string;
-      reason: string;
-      trace: string;
-    };
+    exception?: { type: string; reason: string; trace: string };
   }
 
   export interface NativeCapnpBridgeByteResponse {
@@ -785,30 +293,10 @@ declare module "sandstorm:api" {
     apiSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
     restore(token: string): Promise<Capability>;
     revoke(token: string): Promise<{ ok: true }>;
-    use<T>(
-      token: string,
-      fn: (capability: Capability) => T | Promise<T>,
-    ): Promise<T>;
-    export(target: RpcTarget, options?: ObjectCapabilityOptions): Promise<Capability>;
-    withExport<T>(
-      target: RpcTarget,
-      fn: (capability: Capability) => T | Promise<T>,
-      options?: ObjectCapabilityOptions,
-    ): Promise<T>;
-    exportDurable(target: RpcTarget, options: DurableObjectCapabilityTargetOptions):
-      Promise<DurableObjectCapabilityResult>;
-    exportDurable(id: string, options: DurableObjectCapabilityOptions):
-      Promise<DurableObjectCapabilityResult>;
+    use<T>(token: string, fn: (capability: Capability) => T | Promise<T>): Promise<T>;
     powerboxFulfillment(options: PowerboxFulfillmentOptions): PowerboxFulfillmentApi;
     powerboxGrants(options: PowerboxGrantsOptions): PowerboxGrantsApi;
     serveSystemRoutes(): Promise<Response | null>;
-    apiTarget(): SandstormApiTarget;
-    rpcClientScript(): string;
-    rpcResponse(target: RpcTarget, options?: RpcSessionOptions): Response | Promise<Response>;
-    serveRpc(
-      target: RpcTargetSource,
-      options?: ServeRpcOptions,
-    ): Response | Promise<Response | null> | null;
   }
 
   export function storage(env: SandstormEnv): StorageApi;
@@ -824,7 +312,6 @@ declare module "sandstorm:api" {
     options: PowerboxFulfillmentOptions,
   ): PowerboxFulfillmentApi;
   export function getSession(request: Request): SessionInfo;
-  export function apiTarget(request: Request, env: SandstormEnv): SandstormApiTarget;
   export function servePowerboxDescriptors(
     request: Request,
     env: SandstormEnv,
@@ -833,89 +320,6 @@ declare module "sandstorm:api" {
     request: Request,
     env: SandstormEnv,
   ): Promise<Response | null>;
-  export function rpcClientScript(): string;
-  export function rpcResponse(
-    request: Request,
-    target: RpcTarget,
-    options?: RpcSessionOptions,
-  ): Response | Promise<Response>;
-  export function serveRpc(
-    request: Request,
-    target: RpcTargetSource,
-    options?: ServeRpcOptions,
-  ): Response | Promise<Response | null> | null;
-  export function nativeCapabilitySlot(
-    id: string,
-    options?: { nativeInterface?: string },
-  ): NativeCapabilitySlot;
-  export function serializeNativeAppRpcValue(
-    value: NativeAppRpcPlainValue,
-    options?: string | NativeAppRpcSerializationOptions,
-  ): NativeAppRpcValueEnvelope;
-  export function serializeNativeAppRpcValueAsync(
-    value: NativeAppRpcSerializableValue,
-    options?: string | NativeAppRpcSerializationOptions,
-  ): Promise<NativeAppRpcValueEnvelope>;
-  export function hydrateNativeAppRpcValue<TCapability = NativeCapabilitySlot>(
-    value: NativeAppRpcValueEnvelope,
-    options?: string | NativeAppRpcHydrationOptions<TCapability>,
-  ): NativeAppRpcHydratedValue<TCapability>;
-  export function serializeNativeAppRpcCall(
-    method: string,
-    args?: NativeAppRpcPlainValue[],
-  ): NativeAppRpcCallEnvelope;
-  export function serializeNativeAppRpcCallAsync(
-    method: string,
-    args?: NativeAppRpcSerializableValue[],
-    options?: NativeAppRpcSerializationOptions,
-  ): Promise<NativeAppRpcCallEnvelope>;
-  export function hydrateNativeAppRpcCall(
-    call: NativeAppRpcCallEnvelope,
-    options?: string | NativeAppRpcHydrationOptions,
-  ): { method: string; args: NativeAppRpcHydratedValue[] };
-  export function hydrateNativeAppRpcCall<TCapability>(
-    call: NativeAppRpcCallEnvelope,
-    options: NativeAppRpcHydrationOptions<TCapability>,
-  ): { method: string; args: NativeAppRpcHydratedValue<TCapability>[] };
-  export function serializeNativeAppRpcResult(
-    value: NativeAppRpcPlainValue,
-  ): NativeAppRpcResultEnvelope;
-  export function serializeNativeAppRpcResultAsync(
-    value: NativeAppRpcSerializableValue | RpcTarget,
-    options?: NativeAppRpcSerializationOptions,
-  ): Promise<NativeAppRpcResultEnvelope>;
-  export function serializeNativeAppRpcException(error: unknown): NativeAppRpcResultEnvelope;
-  export function hydrateNativeAppRpcResult<TCapability = NativeCapabilitySlot>(
-    result: NativeAppRpcResultEnvelope,
-    options?: string | NativeAppRpcHydrationOptions<TCapability>,
-  ): NativeAppRpcHydratedValue<TCapability>;
-  export function dispatchNativeAppRpcCall(
-    target: object,
-    call: NativeAppRpcCallEnvelope,
-    options?: NativeAppRpcSerializationOptions & NativeAppRpcHydrationOptions,
-  ): Promise<NativeAppRpcResultEnvelope>;
-  export function createNativeAppRpcStub<
-    T extends object = Record<string, (...args: any[]) => unknown>,
-    TCapability = NativeCapabilitySlot,
-  >(
-    slot: Pick<NativeCapabilitySlot, "id"> & Partial<Pick<NativeCapabilitySlot, "nativeInterface">>,
-    transport: NativeAppRpcTransport,
-    options?: NativeAppRpcStubOptions<TCapability>,
-  ): NativeAppRpcStub<T, TCapability>;
-  export function createNativeAppRpcFetchTransport(
-    fetcher: Fetcher,
-    route: string | ((slot: NativeCapabilitySlot) => string),
-  ): NativeAppRpcTransport;
-  export function createCapabilityNativeAppRpcStub<
-    T extends object = Record<string, (...args: any[]) => unknown>,
-    TCapability = Capability,
-  >(
-    capability: Capability,
-    options?: CapabilityRpcOptions<TCapability>,
-  ): NativeAppRpcStub<T, TCapability>;
-  export function sandstorm(
-    request: Request,
-    env: SandstormEnv,
-    options?: SandstormOptions,
-  ): SandstormApi;
+  export function nativeCapnpBrowserClientScript(): string;
+  export function sandstorm(request: Request, env: SandstormEnv): SandstormApi;
 }

@@ -5,30 +5,11 @@ import { NativeGreeter } from "capnp:./native-greeter.capnp";
 import { Message as CapnpRpcMessage } from "@mnutt/capnp/rpc.mjs";
 import { WebSession } from "capnp:/sandstorm/web-session.capnp";
 import {
-  AppRpcTarget,
   Capability,
-  RpcTarget,
   SANDSTORM_API_VERSION,
-  SANDSTORM_CAPNWEB_VERSION,
   SANDSTORM_HELPER_VERSIONS,
-  SANDSTORM_RPC_VERSION,
-  createCapabilityNativeAppRpcStub,
-  createNativeAppRpcFetchTransport,
-  createNativeAppRpcStub,
-  dispatchNativeAppRpcCall,
-  hydrateNativeAppRpcCall,
-  hydrateNativeAppRpcResult,
-  hydrateNativeAppRpcValue,
-  nativeCapabilitySlot,
   sandstorm,
   serveSystemRoutes,
-  serializeNativeAppRpcCall,
-  serializeNativeAppRpcCallAsync,
-  serializeNativeAppRpcException,
-  serializeNativeAppRpcResult,
-  serializeNativeAppRpcResultAsync,
-  serializeNativeAppRpcValueAsync,
-  serializeNativeAppRpcValue,
   powerbox as sandstormPowerbox,
 } from "sandstorm:api";
 import {
@@ -63,6 +44,8 @@ const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm
 const retainedMailFeedCallbacks = new Map();
 const retainedEventReceivers = new Map();
 let powerboxFulfillmentDurableSerial = 0;
+
+class RemovedObjectRpcTarget {}
 
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
@@ -273,7 +256,7 @@ async function benchmarkConcurrent(batches, concurrency, fn) {
   });
 }
 
-class BenchmarkGreeterCapability extends RpcTarget {
+class BenchmarkGreeterCapability extends RemovedObjectRpcTarget {
   #prefix;
 
   constructor(prefix = "generic js hello") {
@@ -343,7 +326,7 @@ async function runNativeGreeterConformance(client, {
   };
 }
 
-class CounterCapability extends RpcTarget {
+class CounterCapability extends RemovedObjectRpcTarget {
   #value = 0;
   #retained = null;
 
@@ -427,12 +410,12 @@ class CounterCapability extends RpcTarget {
   }
 }
 
-class AppRpcTargetSelfTest extends AppRpcTarget {
+class AppRpcTargetSelfTest extends RemovedObjectRpcTarget {
   summary() {
     const session = this.api.session();
     const storage = this.api.storage();
     return {
-      targetClass: this instanceof RpcTarget,
+      targetClass: this instanceof RemovedObjectRpcTarget,
       pathname: new URL(this.request.url).pathname,
       hasStorage: Boolean(storage),
       sessionType: session.sessionType,
@@ -441,7 +424,7 @@ class AppRpcTargetSelfTest extends AppRpcTarget {
   }
 }
 
-class EventReceiver extends RpcTarget {
+class EventReceiver extends RemovedObjectRpcTarget {
   #events = [];
 
   onMailEvent(event) {
@@ -462,7 +445,7 @@ class EventReceiver extends RpcTarget {
   }
 }
 
-class ThrowingEventReceiver extends RpcTarget {
+class ThrowingEventReceiver extends RemovedObjectRpcTarget {
   onMailEvent(event) {
     throw new Error(`throwing receiver saw ${event.subject}`);
   }
@@ -472,7 +455,7 @@ class ThrowingEventReceiver extends RpcTarget {
   }
 }
 
-class MailFeedCapability extends RpcTarget {
+class MailFeedCapability extends RemovedObjectRpcTarget {
   async subscribe(receiver) {
     const result = await receiver.call("onMailEvent", {
       subject: "phase-3-live-callback",
@@ -695,15 +678,12 @@ function renderBrowserRpcPage() {
 export default {
   async fetch(request, env, ctx) {
     const api = sandstorm(request, env);
-    const internalResponse = api.serveRpc(() => new CounterCapability(), {
-      clientScriptPath: "/__sandstorm/test-rpc-client.js",
-      rpcPath: "/__sandstorm/test-rpc",
-    });
-    if (internalResponse) return internalResponse;
-
     const url = new URL(request.url);
     const systemResponse = await api.serveSystemRoutes();
     if (systemResponse) return systemResponse;
+    if (url.pathname.startsWith("/__sandstorm/")) {
+      return new Response("not found", { status: 404 });
+    }
 
     const headers = {};
     for (const [name, value] of request.headers) {
@@ -2056,27 +2036,22 @@ export default {
             const parsed = new URL(String(input));
             if (parsed.pathname === "/capabilities/claimed") {
               const id = parsed.searchParams.get("id");
-              const appObject = id === "mock-app-object";
               return Response.json({
                 ok: true,
                 type: "capabilityInfo",
                 id,
                 kind: "powerboxClaim",
                 residence: "imported",
-                nativeInterface: appObject ? "appObject" : "outboundHttpSession",
+                nativeInterface: "outboundHttpSession",
                 pathPrefix: "",
                 persistent: true,
                 hasDropNotify: false,
                 dropNotifyRefCount: 0,
                 supportsWebFetch: false,
-                supportsOutboundHttpFetch: !appObject,
+                supportsOutboundHttpFetch: true,
                 hasNativeCapability: true,
                 liveForwardable: true,
               });
-            }
-            if (parsed.pathname === "/powerbox/native-app-rpc-call") {
-              return Response.json(await dispatchNativeAppRpcCall(
-                nativeRpcTarget, JSON.parse(String(init?.body || "{}"))));
             }
             if (parsed.pathname === "/powerbox/outbound-http-fetch") {
               return Response.json({
@@ -2111,103 +2086,12 @@ export default {
         header: outboundFetchResponse.headers.get("x-mock-outbound"),
         body: await outboundFetchResponse.json(),
       };
-      const appObjectCapability = new Capability(mockEnv, "mock-app-object");
-      let appObjectFetchError = null;
-      try {
-        await appObjectCapability.fetch("/should-not-fetch");
-      } catch (error) {
-        appObjectFetchError = {
-          name: String(error?.name || "Error"),
-          message: String(error?.message || error),
-        };
-      }
-      let appObjectOutboundError = null;
-      try {
-        await appObjectCapability.fetch("v1/test");
-      } catch (error) {
-        appObjectOutboundError = {
-          name: String(error?.name || "Error"),
-          message: String(error?.message || error),
-        };
-      }
-
-      const nativeRpcTransportCalls = [];
-      const nativeRpcTarget = {
-        deliver(subject, callback, options) {
-          return { subject, callback, options };
-        },
-      };
-      const appObjectNativeRpc = createCapabilityNativeAppRpcStub(appObjectCapability, {
-        transport: async (transportSlot, call) => {
-          nativeRpcTransportCalls.push({ slot: transportSlot, call });
-          return dispatchNativeAppRpcCall(nativeRpcTarget, call);
-        },
-      }).rpc;
-      const appObjectNativeValue = await appObjectNativeRpc.deliver(
-        "native-subject",
-        nativeCapabilitySlot("native-callback", { nativeInterface: "appObject" }),
-        { urgent: true });
-      const defaultNativeRpc = appObjectCapability.rpc;
-      const defaultNativeRpcValue = await defaultNativeRpc.deliver(
-        "default-subject", { urgent: false });
-      const defaultCallValue = await appObjectCapability.call(
-        "deliver", "call-subject", { urgent: true });
-      const nonAppObjectResultSlot = await createCapabilityNativeAppRpcStub(appObjectCapability, {
-        transport: async () => ({
-          type: "value",
-          value: {
-            type: "capability",
-            value: { id: "web-session-slot", nativeInterface: "webSession" },
-          },
-        }),
-      }).rpc.deliver("non-app-object-result-slot");
-
-      const helperNativeRpcStub = createCapabilityNativeAppRpcStub(appObjectCapability, {
-        checkInfo: false,
-        transport: async (transportSlot, call) => {
-          nativeRpcTransportCalls.push({ slot: transportSlot, call });
-          return dispatchNativeAppRpcCall(nativeRpcTarget, call);
-        },
-        release() {
-          return { ok: true, released: "mock-app-object" };
-        },
-      });
-      const helperNativeSlot = helperNativeRpcStub.slot;
-      const helperNativeDrop = await helperNativeRpcStub.drop();
-
-      const wrongNativeRpcTransportCalls = [];
-      let wrongNativeRpcError = null;
-      try {
-        await createCapabilityNativeAppRpcStub(capability, {
-          transport: async (transportSlot, call) => {
-            wrongNativeRpcTransportCalls.push({ slot: transportSlot, call });
-            return dispatchNativeAppRpcCall(nativeRpcTarget, call);
-          },
-        }).rpc.deliver("wrong-interface");
-      } catch (error) {
-        wrongNativeRpcError = {
-          name: String(error?.name || "Error"),
-          message: String(error?.message || error),
-        };
-      }
 
       return Response.json({
         ok: true,
         calls,
         fetchError,
         outboundFetch,
-        appObjectFetchError,
-        appObjectOutboundError,
-        nativeRpcTransportCalls,
-        appObjectNativeSlot: appObjectNativeRpc.slot,
-        appObjectNativeValue,
-        defaultNativeRpcValue,
-        defaultCallValue,
-        nonAppObjectResultSlot,
-        helperNativeSlot,
-        helperNativeDrop,
-        wrongNativeRpcTransportCalls,
-        wrongNativeRpcError,
       });
     }
 
@@ -2823,9 +2707,8 @@ export default {
       });
 
       const page = await grants.serve(new Request("http://app/grant-ui-test"));
-      const client = await grants.serve(new Request("http://app/grant-ui-test/client.js"));
-      const rpcClient = await grants.serve(new Request("http://app/grant-ui-test/rpc-client.js"));
-      const rpcClientText = await rpcClient.text();
+      const grantClient = await grants.serve(new Request("http://app/grant-ui-test/client.js"));
+      const grantClientText = await grantClient.clone().text();
       const configBefore = await (await grants.serve(
         new Request("http://app/grant-ui-test/config"))).json();
       const statusBefore = await (await grants.serve(
@@ -2863,17 +2746,10 @@ export default {
           hasElement: (await page.text()).includes("sandstorm-powerbox-grant"),
         },
         client: {
-          status: client.status,
-          contentType: client.headers.get("content-type"),
-          hasRequestGrant: (await client.text()).includes("requestGrant"),
-        },
-        rpcClient: {
-          status: rpcClient.status,
-          contentType: rpcClient.headers.get("content-type"),
-          hasRequestPowerbox: rpcClientText.includes("requestPowerbox"),
-          hasBrowserCapnp: rpcClientText.includes("connectBrowserCapnp"),
-          hasBrowserCapnpInterfaceBinding: rpcClientText.includes("makeBrowserCapnpInterfaceBinding"),
-          hasBrowserCapnpRequestCapability: rpcClientText.includes("requestCapability"),
+          status: grantClient.status,
+          contentType: grantClient.headers.get("content-type"),
+          hasRequestPowerbox: grantClientText.includes("requestPowerbox"),
+          importsNativeClient: grantClientText.includes("/__sandstorm/native-capnp/client.js"),
         },
         configBefore,
         statusBefore,
@@ -2913,23 +2789,6 @@ export default {
         capability: () => fulfillmentApi.webSession({ pathPrefix: "/browser-powerbox-shared" }),
         fulfill: fulfillOptions(),
       });
-      const object = fulfillmentApi.powerboxFulfillment({
-        routePrefix: "/fulfillment-object-test",
-        title: "Powerbox fulfillment app object",
-        buttonLabel: "Use helper app object",
-        capability: () => fulfillmentApi.export(new CounterCapability()),
-        fulfill: fulfillOptions(),
-      });
-      const durable = fulfillmentApi.powerboxFulfillment({
-        routePrefix: "/fulfillment-durable-test",
-        title: "Powerbox fulfillment durable app object",
-        buttonLabel: "Use helper durable app object",
-        capability: () => fulfillmentApi.exportDurable(new CounterCapability(), {
-          id: `powerbox-fulfillment-durable-${++powerboxFulfillmentDurableSerial}`,
-          label: "Powerbox fulfillment durable app object",
-        }),
-        fulfill: fulfillOptions(),
-      });
       const throwing = fulfillmentApi.powerboxFulfillment({
         routePrefix: "/fulfillment-error-test",
         title: "Powerbox fulfillment error",
@@ -2947,14 +2806,6 @@ export default {
       const webFulfill = runFulfill
         ? await web.serve(helperRequest(
           "/__sandstorm/powerbox-fulfillment/fulfill", { method: "POST" }))
-        : null;
-      const objectFulfill = runFulfill
-        ? await object.serve(helperRequest(
-          "/fulfillment-object-test/fulfill", { method: "POST" }))
-        : null;
-      const durableFulfill = runFulfill
-        ? await durable.serve(helperRequest(
-          "/fulfillment-durable-test/fulfill", { method: "POST" }))
         : null;
       const errorFulfill = await throwing.serve(helperRequest(
         "/fulfillment-error-test/fulfill", { method: "POST" }));
@@ -2981,14 +2832,8 @@ export default {
           status: webFulfill.status,
           body: await webFulfill.json(),
         },
-        objectFulfill: objectFulfill && {
-          status: objectFulfill.status,
-          body: await objectFulfill.json(),
-        },
-        durableFulfill: durableFulfill && {
-          status: durableFulfill.status,
-          body: await durableFulfill.json(),
-        },
+        objectFulfill: null,
+        durableFulfill: null,
         errorFulfill: {
           status: errorFulfill.status,
           body: await errorFulfill.json(),
@@ -4548,8 +4393,8 @@ export default {
     const nativeCapnpPayload = makeNativeCapnpPayload(new CapnpEsMessage(), [
       {
         id: "argument-capability",
-        interfaceId: "0xd7a322498a996313",
-        interfaceName: "sandstorm.IsolateObjectCapability",
+        interfaceId: "0xb66316217ceedb1b",
+        interfaceName: "NativeGreeter",
         kind: "senderHosted",
       },
     ]);
@@ -5063,13 +4908,10 @@ export default {
       },
       helperVersions: {
         api: SANDSTORM_API_VERSION,
-        rpc: SANDSTORM_RPC_VERSION,
-        capnweb: SANDSTORM_CAPNWEB_VERSION,
         capnp: SANDSTORM_CAPNP_VERSION,
         capnpNativeBridge: SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
         aggregate: SANDSTORM_HELPER_VERSIONS,
       },
-      appRpcTarget: new AppRpcTargetSelfTest(request, env).summary(),
       sandstormApi: {
         status: apiStatus,
         capabilities: apiCapabilities,

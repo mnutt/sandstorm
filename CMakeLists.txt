@@ -33,8 +33,6 @@ set(SANDSTORM_WORKERD_NPM_VERSION 1.20260610.1 CACHE STRING
   "npm workerd version bundled for isolate grains")
 set(SANDSTORM_WORKERD_BIN "" CACHE FILEPATH
   "Optional prebuilt workerd binary to bundle instead of installing from npm")
-set(SANDSTORM_CAPNWEB_NPM_VERSION 0.8.0 CACHE STRING
-  "npm capnweb version embedded for isolate grains")
 set(SANDSTORM_CAPNP_ES_NPM_VERSION 0.2.2 CACHE STRING
   "npm @mnutt/capnp-es version used for isolate schema generation")
 set(SANDSTORM_CAPNP_ES_COMPILER_MODULE "" CACHE FILEPATH

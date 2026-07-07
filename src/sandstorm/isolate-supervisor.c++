@@ -22,11 +22,9 @@
 #include "version.h"
 
 #include <sandstorm/isolate/api.js.h>
-#include <sandstorm/isolate/capnweb.js.h>
 #include <sandstorm/isolate/capnp-es.js.h>
 #include <sandstorm/isolate/capnp.js.h>
 #include <sandstorm/isolate/native-capnp-bridge.js.h>
-#include <sandstorm/isolate/rpc.js.h>
 
 #include <capnp/message.h>
 #include <capnp/compat/json.h>
@@ -251,8 +249,6 @@ kj::Maybe<ClaimedCapabilityNativeInterface> claimedCapabilityNativeInterfaceFrom
     return ClaimedCapabilityNativeInterface::API_SESSION;
   } else if (name == "outboundHttpSession") {
     return ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION;
-  } else if (name == "appObject") {
-    return ClaimedCapabilityNativeInterface::APP_OBJECT;
   } else {
     return nullptr;
   }
@@ -948,12 +944,6 @@ kj::String capnpEsSchemeRelativeRuntimeSpecifier(kj::StringPtr moduleName) {
 }
 
 void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
-  addGeneratedIsolateModule(config, "capnweb", IsolateRuntimeConfig::ModuleType::ES_MODULE,
-      CAPNWEB_SOURCE);
-  addGeneratedIsolateModule(config, "sandstorm:capnweb-source",
-      IsolateRuntimeConfig::ModuleType::TEXT, CAPNWEB_SOURCE);
-  addGeneratedIsolateModule(config, "sandstorm:rpc", IsolateRuntimeConfig::ModuleType::ES_MODULE,
-      ISOLATE_RPC_HELPER_SOURCE);
   addGeneratedIsolateModule(config, "sandstorm:api", IsolateRuntimeConfig::ModuleType::ES_MODULE,
       ISOLATE_API_HELPER_SOURCE);
   addGeneratedIsolateModule(config, "sandstorm:capnp", IsolateRuntimeConfig::ModuleType::ES_MODULE,
@@ -5025,8 +5015,6 @@ public:
       } else if (methodName == "POST" && route == "/powerbox/outbound-http-fetch") {
         return fetchOutboundHttpCapability(
             path, kj::mv(outboundHeaderValues), kj::mv(bodyBytes), response);
-      } else if (methodName == "POST" && route == "/powerbox/native-app-rpc-call") {
-        return callWorkerAppObjectCapability(path, kj::mv(bodyBytes), response);
       } else if (methodName == "POST" && route == "/capnp/call") {
         return callNativeCapnpBridge(
             kj::mv(bodyBytes), response, accept == "application/octet-stream");
@@ -5040,8 +5028,6 @@ public:
         return createRouteBackedCapability(path, response, RouteBackedCapabilityType::WEB);
       } else if (methodName == "POST" && route == "/capabilities/api-session") {
         return createRouteBackedCapability(path, response, RouteBackedCapabilityType::API);
-      } else if (methodName == "POST" && route == "/capabilities/app-object") {
-        return createRouteBackedCapability(path, response, RouteBackedCapabilityType::OBJECT);
       } else if (methodName == "POST" && route == "/capabilities/native-capnp-export") {
         return createNativeCapnpExportCapability(path, response);
       }

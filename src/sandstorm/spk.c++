@@ -38,11 +38,9 @@
 #include <sandstorm/powerbox.capnp.h>
 #include <sandstorm/appid-replacements.capnp.h>
 #include <sandstorm/isolate/api.js.h>
-#include <sandstorm/isolate/capnweb.js.h>
 #include <sandstorm/isolate/capnp-es.js.h>
 #include <sandstorm/isolate/capnp.js.h>
 #include <sandstorm/isolate/native-capnp-bridge.js.h>
-#include <sandstorm/isolate/rpc.js.h>
 #include <stdlib.h>
 #include <dirent.h>
 #include <set>
@@ -2770,10 +2768,8 @@ private:
     writeDevIsolateSupportFile(path, "placeholder.js",
         "export default { fetch() { return new Response(\"dev isolate manifest not mounted\", "
         "{ status: 500 }); } };\n");
-    writeDevIsolateSupportFile(path, "capnweb.js", CAPNWEB_SOURCE);
     writeDevIsolateSupportFile(path, "capnp.js", ISOLATE_CAPNP_HELPER_SOURCE);
     writeDevIsolateSupportFile(path, "api.js", ISOLATE_API_HELPER_SOURCE);
-    writeDevIsolateSupportFile(path, "rpc.js", ISOLATE_RPC_HELPER_SOURCE);
     writeDevIsolateSupportFile(
         path, "native-capnp-bridge.js", ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE);
     std::set<std::string> writtenCapnpEsRuntimePaths;
@@ -2888,7 +2884,7 @@ private:
     isolate.initCompatibilityFlags(0);
 
     auto moduleList = isolate.initModules(
-        modules.size() + 6 + (4 * ISOLATE_CAPNP_ES_MODULE_COUNT));
+        modules.size() + 3 + (4 * ISOLATE_CAPNP_ES_MODULE_COUNT));
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2914,18 +2910,9 @@ private:
       }
     }
     auto helperIndex = modules.size();
-    auto capnwebModule = moduleList[helperIndex++];
-    capnwebModule.setName("capnweb");
-    capnwebModule.setEsModulePath("__sandstorm_isolate_runtime/capnweb.js");
-    auto capnwebSourceModule = moduleList[helperIndex++];
-    capnwebSourceModule.setName("sandstorm:capnweb-source");
-    capnwebSourceModule.setTextPath("__sandstorm_isolate_runtime/capnweb.js");
     auto helperModule = moduleList[helperIndex++];
     helperModule.setName("sandstorm:api");
     helperModule.setEsModulePath("__sandstorm_isolate_runtime/api.js");
-    auto rpcHelperModule = moduleList[helperIndex++];
-    rpcHelperModule.setName("sandstorm:rpc");
-    rpcHelperModule.setEsModulePath("__sandstorm_isolate_runtime/rpc.js");
     auto capnpHelperModule = moduleList[helperIndex++];
     capnpHelperModule.setName("sandstorm:capnp");
     capnpHelperModule.setEsModulePath("__sandstorm_isolate_runtime/capnp.js");

@@ -38,22 +38,22 @@ Sandstorm capabilities and Powerbox, not through ambient service names.
   app-specific data-plane endpoints.
 - Preserve compatibility with unreleased isolate prototypes.
 
-## Current App-Object Model
+## Removed App-Object Model
 
-Isolate app-object RPC is JavaScript-defined and fetch-shaped at the runtime
-boundary:
+The pre-release isolate prototype exposed JavaScript-defined app-object RPC at
+the runtime boundary:
 
-- App code exports JavaScript objects.
-- Calls are serialized by Sandstorm's isolate helper code.
-- The isolate calls supervisor helper routes such as
-  `/powerbox/native-app-rpc-call`.
-- The supervisor owns native capability handles.
-- App-object RPC can dispatch locally for some local object capabilities.
+- app code exported JavaScript objects
+- calls were serialized by Sandstorm's isolate helper code
+- isolate code called supervisor helper routes such as
+  `/powerbox/native-app-rpc-call`
+- the supervisor owned native capability handles
+- app-object RPC could dispatch locally for some local object capabilities
 
-This model remains useful for local/private helpers, but it is not the public
-cross-grain protocol model. The JavaScript class shape is not a stable schema
-that a legacy grain can compile against. It also means the app-object RPC path
-carries JSON-shaped values rather than native Cap'n Proto messages.
+That surface is not the public cross-grain protocol model and is being removed
+rather than preserved as a compatibility layer. The JavaScript class shape is not
+a stable schema that a legacy grain can compile against, and the app-object RPC
+path carries JSON-shaped values rather than native Cap'n Proto messages.
 
 ## Target Model
 
@@ -1216,6 +1216,10 @@ Progress:
 - the private native bridge schema and JS helpers no longer define the removed
   RPC request envelope; WebSocket is now the only native Cap'n Proto RPC
   transport surface, while `/capnp/call` carries lifecycle requests only
+- the public isolate helper module set no longer includes `sandstorm:rpc`,
+  `sandstorm:capnweb-source`, or `capnweb`; `sandstorm:api` no longer exports
+  `RpcTarget`, `AppRpcTarget`, `api.export()`, `api.withExport()`,
+  `api.exportDurable()`, or `Capability.rpc`
 
 ## Decisions
 
