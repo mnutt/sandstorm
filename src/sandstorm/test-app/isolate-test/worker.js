@@ -1606,7 +1606,7 @@ export default {
             scope: "same isolate/supervisor test app; use repeated runs for representative data",
             timing: "ad hoc characterization only; no CI thresholds",
             distribution: "perCallMs percentiles are based on per-round batch averages, not individual call latency samples",
-            promisePipelining: "capnp-es generated methods currently expose Promise-returning calls, but no JS promise-pipeline API is exposed by this helper layer",
+            promisePipelining: "capnp-es generated result promises expose typed accessors for interface result fields; the integration suite covers promised-answer calls over the native WebSocket bridge",
             streaming: "large bytes are measured through fetch; typed WebSession stream support is characterized by obtaining and pinging the returned stream capability",
           },
           metrics,

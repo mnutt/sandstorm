@@ -331,6 +331,30 @@ it from the worker as well using `capnp-es:` or otherwise make it part of the
 packaged isolate module graph so `spk dev-isolate` and `spk pack` know to
 generate the native browser module.
 
+### Stable transport model
+
+Use schema-defined native Cap'n Proto for public typed protocols:
+
+- Worker code imports generated interfaces with `capnp-es:`.
+- Browser code imports the corresponding served module from
+  `/__sandstorm/capnp-es/...`.
+- Worker and browser generated clients use the native `capnp-es` RPC transport
+  over Sandstorm capability handles.
+- Generated result promises expose typed accessors for returned interface
+  fields, so promise-pipelined calls such as
+  `client.open(...).getObject().stat(...)` can be issued before the parent
+  result resolves.
+
+Use `fetch()`/`WebSession`-shaped capabilities for HTTP APIs, app UI, and large
+byte streams. This keeps the data plane streamable and matches browser and
+legacy Sandstorm HTTP API behavior.
+
+JavaScript-defined object RPC through `RpcTarget`, `AppRpcTarget`, and
+`api.serveRpc()` remains useful for isolate-local helpers, UI callbacks, and
+prototype internals. Do not use it as the public cross-grain protocol surface
+for new isolate apps; publish public cross-grain protocols as `.capnp`
+interfaces instead.
+
 ## Compatibility dates and flags
 
 Isolate manifests include a `compatibilityDate` and optional
