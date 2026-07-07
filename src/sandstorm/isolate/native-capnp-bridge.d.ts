@@ -10,9 +10,9 @@ export type NativeCapnpBridgeRequest_Which = (typeof NativeCapnpBridgeRequest_Wh
 /**
 * Versioned isolate-to-supervisor native Cap'n Proto bridge envelope.
 *
-* This is intentionally separate from IsolateObjectCapability: app-object RPC
-* remains the compatibility fallback, while this envelope is for generated
-* schema bindings that can encode real Cap'n Proto params/results.
+* This is intentionally separate from IsolateObjectCapability. App-object RPC
+* is private/local helper plumbing, while this envelope is for generated
+* schema bindings that encode real Cap'n Proto params/results.
 *
 */
 export declare class NativeCapnpBridgeRequest extends $.Struct {
