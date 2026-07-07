@@ -488,15 +488,15 @@ Previously implemented, then removed or superseded:
 - typed capability clients can be passed back as arguments
 - examples show a schema-defined isolate capability
 
-The limitations that motivated removal:
+The limitations that motivated replacing the prototype with the native schema
+path:
 
 - the `.capnp` scanner is conservative and not a full compiler
 - generated bindings still serialize through current app-object RPC helpers
-- there is no native Cap'n Proto wire encoding for isolate calls yet
 - generated modules do not yet emit full TypeScript server/client types
-- Powerbox descriptors are not generated from schema
-- legacy non-isolate grains cannot yet call these isolate-defined interfaces
-- browsers cannot yet import the same generated schema module
+- Powerbox descriptors, legacy interop, and browser schema modules need to be
+  rooted in the same compiled schema metadata instead of separate prototype
+  layers
 
 ### Phase 1: Real Schema Compilation
 
@@ -516,6 +516,11 @@ Progress:
 - `spk dev-isolate` can now discover `capnp:` schema imports and generate
   raw `@mnutt/capnp-es` JavaScript modules through a configured compiler
   module, preserving source-relative module paths for schema imports.
+- generated-module conformance now covers a representative schema with
+  relative imports, `/sandstorm/*` imports, nested structs, nested enums, lists,
+  and multiple capability-valued parameters/results, ensuring the public
+  `capnp:` import path exercises real compiled schema output rather than the
+  removed scanner metadata path.
 
 Deliverables:
 
@@ -1170,6 +1175,9 @@ Progress:
   `spk dev-isolate`, `spk pack`, app-interface descriptors, ABI tooling,
   worker examples, and browser-served schema modules use `capnp:` while
   `capnp-es` remains only the bundled JavaScript runtime/generator name
+- generated schema coverage now includes imports, nested structs/enums, lists,
+  and multiple capability-valued method parameters/results in the
+  `spk dev-isolate` integration path
 
 ## Decisions
 
