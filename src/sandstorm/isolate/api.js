@@ -1,45 +1,13 @@
-import { RpcTarget, newWorkersRpcResponse } from "capnweb";
-import {
-  SANDSTORM_CAPNWEB_VERSION,
-  SANDSTORM_RPC_VERSION,
-  browserClientScript,
-} from "sandstorm:rpc";
 import { serveNativeCapnpExportSession } from "sandstorm:capnp";
-
-export { RpcTarget } from "capnweb";
-export { SANDSTORM_CAPNWEB_VERSION, SANDSTORM_RPC_VERSION } from "sandstorm:rpc";
 
 export const SANDSTORM_API_VERSION = 0;
 export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
   api: SANDSTORM_API_VERSION,
-  rpc: SANDSTORM_RPC_VERSION,
-  capnweb: SANDSTORM_CAPNWEB_VERSION,
 });
 
-export class AppRpcTarget extends RpcTarget {
-  #api;
-
-  constructor(request, env) {
-    super();
-    this.request = request;
-    this.env = env;
-  }
-
-  get api() {
-    if (!this.#api) {
-      this.#api = sandstorm(this.request, this.env);
-    }
-    return this.#api;
-  }
-}
-
-const OBJECT_CAPABILITY_PREFIX = "/__sandstorm/object-capabilities";
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";
 const POWERBOX_FULFILLMENT_PREFIX = "/__sandstorm/powerbox-fulfillment";
-const exportedObjectTargets = new Map();
-const exportedObjectCapabilityIds = new Map();
-const objectCapabilityIds = new Map();
 const capabilityMetadata = new Map();
 
 function header(request, name) {
@@ -345,731 +313,6 @@ function isPlainObject(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
-function bytesToBase64Url(bytes) {
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.slice(i, i + 0x8000));
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-function base64UrlToBytes(value, name = "data") {
-  const text = validate.string(value, name, { minLength: 0 });
-  if (!/^[A-Za-z0-9_-]*$/.test(text)) {
-    throw new ValidationError(`${name} must be base64url text`);
-  }
-
-  const normalized = text.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; ++i) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-export function nativeCapabilitySlot(id, options = {}) {
-  const slot = {
-    type: "nativeCapabilitySlot",
-    id: validate.string(id, "native capability slot id", { minLength: 1, maxLength: 256 }),
-  };
-  if (options.nativeInterface !== undefined && options.nativeInterface !== null) {
-    slot.nativeInterface = validate.string(
-      options.nativeInterface, "native capability slot nativeInterface", { minLength: 1 });
-  }
-  return Object.freeze(slot);
-}
-
-function nativeAppRpcObjectFieldName(value, name = "field name") {
-  const fieldName = validate.string(value, name, { maxLength: 1024 });
-  if (fieldName === "__proto__" || fieldName === "constructor" || fieldName === "prototype") {
-    throw new ValidationError(`${name} is reserved`);
-  }
-  return fieldName;
-}
-
-function nativeAppRpcSerializationContext(options = "value", defaultName = "value") {
-  if (typeof options === "string") {
-    return { name: options };
-  }
-  if (options === undefined || options === null) {
-    return { name: defaultName };
-  }
-  if (!isPlainObject(options)) {
-    failValidation("native app RPC serialization options", "an object", options);
-  }
-  const context = {
-    name: options.name === undefined
-      ? defaultName
-      : validate.string(options.name, "native app RPC serialization options name"),
-    exportReturnedRpcTargets: options.exportReturnedRpcTargets === true,
-  };
-  if (options.exportCapabilitySlot !== undefined && options.exportCapabilitySlot !== null) {
-    if (typeof options.exportCapabilitySlot !== "function") {
-      failValidation(
-        "native app RPC serialization options exportCapabilitySlot", "a function",
-        options.exportCapabilitySlot);
-    }
-    context.exportCapabilitySlot = options.exportCapabilitySlot;
-  }
-  return context;
-}
-
-function nativeAppRpcSerializationChild(context, name) {
-  return {
-    name,
-    exportCapabilitySlot: context.exportCapabilitySlot,
-    exportReturnedRpcTargets: context.exportReturnedRpcTargets === true,
-  };
-}
-
-function validateNativeCapabilitySlotEnvelope(value, name) {
-  const slot = {
-    id: validate.string(value.id, `${name}.id`, { minLength: 1, maxLength: 256 }),
-  };
-  if (value.nativeInterface !== undefined && value.nativeInterface !== null) {
-    slot.nativeInterface = validate.string(
-      value.nativeInterface, `${name}.nativeInterface`, { minLength: 1 });
-  }
-  return { type: "capability", value: slot };
-}
-
-export function serializeNativeAppRpcValue(value, options = "value") {
-  const context = nativeAppRpcSerializationContext(options);
-  const name = context.name;
-  if (value === null || value === undefined) {
-    return { type: "null" };
-  }
-  if (typeof value === "boolean") {
-    return { type: "bool", value };
-  }
-  if (typeof value === "number") {
-    return { type: "number", value: validate.number(value, name) };
-  }
-  if (typeof value === "string") {
-    return { type: "text", value };
-  }
-  if (value instanceof ArrayBuffer) {
-    return { type: "data", value: bytesToBase64Url(new Uint8Array(value)) };
-  }
-  if (ArrayBuffer.isView(value)) {
-    return {
-      type: "data",
-      value: bytesToBase64Url(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)),
-    };
-  }
-  if (Array.isArray(value)) {
-    return {
-      type: "list",
-      value: value.map((item, index) =>
-        serializeNativeAppRpcValue(item, nativeAppRpcSerializationChild(context, `${name}[${index}]`))),
-    };
-  }
-  if (value && typeof value === "object" && value.type === "nativeCapabilitySlot") {
-    return validateNativeCapabilitySlotEnvelope(value, name);
-  }
-  if (value instanceof RpcTarget || value instanceof Capability) {
-    throw new ValidationError(
-      `${name} must be explicitly exported with api.export() before native app RPC serialization`);
-  }
-  if (!isPlainObject(value)) {
-    failValidation(name, "a native app RPC value", value);
-  }
-
-  const fields = [];
-  for (const [key, item] of Object.entries(value)) {
-    const fieldName = nativeAppRpcObjectFieldName(key, `${name} field name`);
-    fields.push({
-      name: fieldName,
-      value: serializeNativeAppRpcValue(
-        item, nativeAppRpcSerializationChild(context, `${name}.${fieldName}`)),
-    });
-  }
-  return { type: "object", value: fields };
-}
-
-export async function serializeNativeAppRpcValueAsync(value, options = "value") {
-  const context = nativeAppRpcSerializationContext(options);
-  const name = context.name;
-  if (value instanceof RpcTarget) {
-    if (!context.exportReturnedRpcTargets || !context.exportCapabilitySlot) {
-      throw new ValidationError(
-        `${name} must be explicitly exported with api.export() before native app RPC serialization`);
-    }
-    const slot = await context.exportCapabilitySlot(value, { name });
-    return validateNativeCapabilitySlotEnvelope(
-      nativeCapabilitySlot(slot?.id, { nativeInterface: slot?.nativeInterface }), name);
-  }
-  if (value instanceof Capability) {
-    if (!context.exportCapabilitySlot) {
-      throw new ValidationError(
-        `${name} must be exported to a native capability slot before native app RPC serialization`);
-    }
-    const slot = await context.exportCapabilitySlot(value, { name });
-    return validateNativeCapabilitySlotEnvelope(
-      nativeCapabilitySlot(slot?.id, { nativeInterface: slot?.nativeInterface }), name);
-  }
-  if (Array.isArray(value)) {
-    return {
-      type: "list",
-      value: await Promise.all(value.map((item, index) =>
-        serializeNativeAppRpcValueAsync(
-          item, nativeAppRpcSerializationChild(context, `${name}[${index}]`)))),
-    };
-  }
-  if (value && typeof value === "object" &&
-      value.type !== "nativeCapabilitySlot" &&
-      !(value instanceof ArrayBuffer) &&
-      !ArrayBuffer.isView(value)) {
-    if (!isPlainObject(value)) {
-      return serializeNativeAppRpcValue(value, context);
-    }
-
-    const fields = [];
-    for (const [key, item] of Object.entries(value)) {
-      const fieldName = nativeAppRpcObjectFieldName(key, `${name} field name`);
-      fields.push({
-        name: fieldName,
-        value: await serializeNativeAppRpcValueAsync(
-          item, nativeAppRpcSerializationChild(context, `${name}.${fieldName}`)),
-      });
-    }
-    return { type: "object", value: fields };
-  }
-  return serializeNativeAppRpcValue(value, context);
-}
-
-function nativeAppRpcHydrationContext(options = "value", defaultName = "value") {
-  if (typeof options === "string") {
-    return { name: options };
-  }
-  if (options === undefined || options === null) {
-    return { name: defaultName };
-  }
-  if (!isPlainObject(options)) {
-    failValidation("native app RPC hydration options", "an object", options);
-  }
-  const context = {
-    name: options.name === undefined
-      ? defaultName
-      : validate.string(options.name, "native app RPC hydration options name"),
-  };
-  if (options.resolveCapabilitySlot !== undefined && options.resolveCapabilitySlot !== null) {
-    if (typeof options.resolveCapabilitySlot !== "function") {
-      failValidation(
-        "native app RPC hydration options resolveCapabilitySlot", "a function",
-        options.resolveCapabilitySlot);
-    }
-    context.resolveCapabilitySlot = options.resolveCapabilitySlot;
-  }
-  return context;
-}
-
-function nativeAppRpcHydrationChild(context, name) {
-  return {
-    name,
-    resolveCapabilitySlot: context.resolveCapabilitySlot,
-  };
-}
-
-export function hydrateNativeAppRpcValue(value, options = "value") {
-  const context = nativeAppRpcHydrationContext(options);
-  const name = context.name;
-  if (!value || typeof value !== "object" || typeof value.type !== "string") {
-    throw new ValidationError(`${name} must be a native app RPC value envelope`);
-  }
-
-  switch (value.type) {
-    case "null":
-      return null;
-    case "bool":
-      if (typeof value.value !== "boolean") {
-        failValidation(`${name}.value`, "a boolean", value.value);
-      }
-      return value.value;
-    case "number":
-      return validate.number(value.value, `${name}.value`);
-    case "text":
-      return validate.string(value.value, `${name}.value`);
-    case "data":
-      return base64UrlToBytes(value.value, `${name}.value`);
-    case "list": {
-      if (!Array.isArray(value.value)) {
-        failValidation(`${name}.value`, "an array", value.value);
-      }
-      return value.value.map((item, index) =>
-        hydrateNativeAppRpcValue(item, nativeAppRpcHydrationChild(context, `${name}[${index}]`)));
-    }
-    case "object": {
-      if (!Array.isArray(value.value)) {
-        failValidation(`${name}.value`, "an array of fields", value.value);
-      }
-      const result = {};
-      const seen = new Set();
-      for (const [index, field] of value.value.entries()) {
-        if (!field || typeof field !== "object") {
-          failValidation(`${name}.value[${index}]`, "a field object", field);
-        }
-        const key = nativeAppRpcObjectFieldName(field.name, `${name}.value[${index}].name`);
-        if (seen.has(key)) {
-          throw new ValidationError(`${name}.value contains duplicate field: ${key}`);
-        }
-        seen.add(key);
-        result[key] = hydrateNativeAppRpcValue(
-          field.value, nativeAppRpcHydrationChild(context, `${name}.${key}`));
-      }
-      return result;
-    }
-    case "capability": {
-      if (!value.value || typeof value.value !== "object") {
-        failValidation(`${name}.value`, "a native capability slot", value.value);
-      }
-      const slot = nativeCapabilitySlot(value.value.id, {
-        nativeInterface: value.value.nativeInterface,
-      });
-      if (context.resolveCapabilitySlot) {
-        return context.resolveCapabilitySlot(slot, { name });
-      }
-      return slot;
-    }
-    default:
-      throw new ValidationError(`${name}.type is unsupported: ${value.type}`);
-  }
-}
-
-export function serializeNativeAppRpcCall(method, args = []) {
-  method = capabilityMethodName(method);
-  args = capabilityArgs(args).map((arg, index) =>
-    serializeNativeAppRpcValue(arg, `args[${index}]`));
-  return { method, args };
-}
-
-export async function serializeNativeAppRpcCallAsync(method, args = [], options = {}) {
-  method = capabilityMethodName(method);
-  const context = nativeAppRpcSerializationContext(options, "call");
-  args = await Promise.all(capabilityArgs(args).map((arg, index) =>
-    serializeNativeAppRpcValueAsync(
-      arg, nativeAppRpcSerializationChild(context, `${context.name}.args[${index}]`))));
-  return { method, args };
-}
-
-export function hydrateNativeAppRpcCall(call, options = "call") {
-  const context = nativeAppRpcHydrationContext(options, "call");
-  const name = context.name;
-  if (!call || typeof call !== "object") {
-    failValidation(name, "a native app RPC call envelope", call);
-  }
-
-  return {
-    method: capabilityMethodName(call.method, `${name}.method`),
-    args: capabilityArgs(call.args || [], `${name}.args`)
-      .map((arg, index) => hydrateNativeAppRpcValue(
-        arg, nativeAppRpcHydrationChild(context, `${name}.args[${index}]`))),
-  };
-}
-
-export function serializeNativeAppRpcResult(value) {
-  return {
-    type: "value",
-    value: serializeNativeAppRpcValue(value, "result"),
-  };
-}
-
-export async function serializeNativeAppRpcResultAsync(value, options = {}) {
-  return {
-    type: "value",
-    value: await serializeNativeAppRpcValueAsync(value, {
-      ...nativeAppRpcSerializationContext(options, "result"),
-      name: "result",
-      exportReturnedRpcTargets: true,
-    }),
-  };
-}
-
-export function serializeNativeAppRpcException(error) {
-  return {
-    type: "exception",
-    value: {
-      name: String(error?.name || "Error"),
-      message: String(error?.message || error),
-      stack: String(error?.stack || ""),
-    },
-  };
-}
-
-export function hydrateNativeAppRpcResult(result, options = "result") {
-  const context = nativeAppRpcHydrationContext(options, "result");
-  const name = context.name;
-  if (!result || typeof result !== "object" || typeof result.type !== "string") {
-    throw new ValidationError(`${name} must be a native app RPC result envelope`);
-  }
-
-  switch (result.type) {
-    case "value":
-      return hydrateNativeAppRpcValue(
-        result.value, nativeAppRpcHydrationChild(context, `${name}.value`));
-    case "exception": {
-      const exception = result.value || {};
-      const errorName = validate.string(exception.name || "Error", `${name}.value.name`);
-      const message = validate.string(exception.message || "", `${name}.value.message`);
-      const stack = validate.string(exception.stack || "", `${name}.value.stack`);
-      throw new CapabilityCallError(message, {
-        name: errorName,
-        stack,
-        nativeAppRpcResult: result,
-      });
-    }
-    default:
-      throw new ValidationError(`${name}.type is unsupported: ${result.type}`);
-  }
-}
-
-export async function dispatchNativeAppRpcCall(target, call, options = {}) {
-  if (!target || typeof target !== "object") {
-    throw new ValidationError("native app RPC target must be an object");
-  }
-
-  const { method, args } = hydrateNativeAppRpcCall(call, options);
-  const func = target[method];
-  if (typeof func !== "function") {
-    return serializeNativeAppRpcException({
-      name: "NoSuchMethod",
-      message: `RPC method not found: ${method}`,
-    });
-  }
-
-  try {
-    return serializeNativeAppRpcResultAsync(await func.apply(target, args), options);
-  } catch (error) {
-    return serializeNativeAppRpcException(error);
-  }
-}
-
-const NATIVE_APP_RPC_STUB_OWN_PROPERTIES = new Set([
-  "slot",
-  "call",
-  "drop",
-  "rpc",
-  "toJSON",
-]);
-
-export class NativeAppRpcStub {
-  #slot;
-  #transport;
-  #serializationOptions;
-  #hydrationOptions;
-  #release;
-  #beginCall;
-  #dropPromise;
-  #rpc;
-
-  constructor(slot, transport, options = {}) {
-    if (typeof transport !== "function") {
-      throw new ValidationError("native app RPC transport must be a function");
-    }
-
-    this.#slot = nativeCapabilitySlot(slot?.id, {
-      nativeInterface: slot?.nativeInterface,
-    });
-    this.#transport = transport;
-    this.#serializationOptions = nativeAppRpcSerializationContext(options, "call");
-    this.#hydrationOptions = nativeAppRpcHydrationContext(options, "result");
-    if (options?.beginCall !== undefined && options.beginCall !== null) {
-      if (typeof options.beginCall !== "function") {
-        failValidation("native app RPC stub beginCall", "a function", options.beginCall);
-      }
-      this.#beginCall = options.beginCall;
-    }
-    if (options?.release !== undefined && options.release !== null) {
-      if (typeof options.release !== "function") {
-        failValidation("native app RPC stub release", "a function", options.release);
-      }
-      this.#release = options.release;
-    }
-  }
-
-  get slot() {
-    return this.#slot;
-  }
-
-  async call(method, ...args) {
-    if (this.#dropPromise) {
-      throw new CapabilityCallError("native app RPC stub has been dropped");
-    }
-    const callState = this.#beginCall?.();
-    const serializationOptions = callState?.serializationOptions ?? this.#serializationOptions;
-    try {
-      const call = await serializeNativeAppRpcCallAsync(method, args, serializationOptions);
-      const result = await this.#transport(this.#slot, call);
-      return hydrateNativeAppRpcResult(result, this.#hydrationOptions);
-    } finally {
-      await callState?.finish?.();
-    }
-  }
-
-  drop() {
-    if (!this.#dropPromise) {
-      this.#dropPromise = Promise.resolve(this.#release?.(this.#slot))
-        .then((result) => result ?? { ok: true });
-    }
-    return this.#dropPromise;
-  }
-
-  get rpc() {
-    if (!this.#rpc) {
-      this.#rpc = createNativeAppRpcProxy(this);
-    }
-    return this.#rpc;
-  }
-
-  toJSON() {
-    return this.#slot;
-  }
-}
-
-function createNativeAppRpcProxy(stub) {
-  return new Proxy(stub, {
-    get(target, prop, receiver) {
-      if (typeof prop !== "string" ||
-          NATIVE_APP_RPC_STUB_OWN_PROPERTIES.has(prop) ||
-          prop in target) {
-        const value = Reflect.get(target, prop, target);
-        return typeof value === "function" ? value.bind(target) : value;
-      }
-      if (prop === "then") {
-        return undefined;
-      }
-      return async (...args) => target.call(prop, ...args);
-    },
-  });
-}
-
-export function createNativeAppRpcStub(slot, transport, options) {
-  return new NativeAppRpcStub(slot, transport, options);
-}
-
-export function createNativeAppRpcFetchTransport(fetcher, route) {
-  if (!fetcher || typeof fetcher.fetch !== "function") {
-    throw new ValidationError("native app RPC fetch transport requires a fetcher");
-  }
-  if (typeof route !== "string" && typeof route !== "function") {
-    throw new ValidationError("native app RPC fetch transport route must be a string or function");
-  }
-
-  return async (slot, call) => {
-    const url = typeof route === "function" ? route(slot) : route;
-    let response;
-    try {
-      response = await fetcher.fetch(validate.string(url, "native app RPC route"), {
-        method: "POST",
-        headers: { "content-type": "application/json; charset=utf-8" },
-        body: JSON.stringify(call),
-      });
-    } catch (error) {
-      throw new DisconnectedCapabilityError("native app RPC transport disconnected", {
-        cause: error,
-      });
-    }
-    const text = await response.text();
-    let result;
-    try {
-      result = text.length > 0 ? JSON.parse(text) : {};
-    } catch (error) {
-      throw new CapabilityCallError(
-        `native app RPC transport returned non-JSON response with status ${response.status}`,
-        { status: response.status, body: text });
-    }
-
-    if (!result || typeof result !== "object" || typeof result.type !== "string") {
-      throw new CapabilityCallError(
-        `native app RPC transport returned invalid response with status ${response.status}`,
-        { status: response.status, body: result });
-    }
-
-    if (!response.ok) {
-      throw new CapabilityCallError(
-        `native app RPC transport failed with status ${response.status}`,
-        { status: response.status, body: result });
-    }
-
-    return result;
-  };
-}
-
-async function requireNativeAppRpcCapability(capability) {
-  const info = await capabilityInfo(capability.env, capability);
-  if (!capabilitySupportsAppObjectCall(info)) {
-    const nativeInterface = info?.nativeInterface || "unknown";
-    throw new UnsupportedCapabilityError(
-      nativeInterface,
-      "rpc",
-      `Capability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
-  }
-}
-
-function capabilitySupportsAppObjectCall(info) {
-  return info?.nativeInterface === "appObject";
-}
-
-function localObjectCapabilityId(info) {
-  const prefix = `${OBJECT_CAPABILITY_PREFIX}/`;
-  const pathPrefix = info?.pathPrefix;
-  if (typeof pathPrefix !== "string" || !pathPrefix.startsWith(prefix)) {
-    return undefined;
-  }
-
-  const rest = pathPrefix.slice(prefix.length);
-  if (rest.length === 0 || rest.includes("/")) {
-    return undefined;
-  }
-  return decodeURIComponent(rest);
-}
-
-async function dispatchLocalObjectCapabilityNativeAppRpc(capability, info, call) {
-  const objectId = localObjectCapabilityId(info);
-  if (!objectId) {
-    return undefined;
-  }
-
-  const target = exportedObjectTargets.get(objectId);
-  if (!target) {
-    return undefined;
-  }
-
-  return dispatchNativeAppRpcCall(target, call, {
-    exportCapabilitySlot: (value, context) =>
-      exportCapabilityNativeAppRpcSlot(capability.env, value, context),
-    resolveCapabilitySlot: (slot) => new Capability(capability.env, slot.id),
-  });
-}
-
-async function exportCapabilityNativeAppRpcSlot(
-    env, value, context, temporaryCapabilities) {
-  if (value instanceof RpcTarget) {
-    const capability = await createObjectCapability(env, value, { persistent: false });
-    temporaryCapabilities?.push(capability);
-    return nativeCapabilitySlot(capability.id, { nativeInterface: "appObject" });
-  }
-
-  if (value instanceof Capability) {
-    const info = await capabilityInfo(env, value);
-    return nativeCapabilitySlot(value.id, {
-      nativeInterface: info?.nativeInterface || "unknown",
-    });
-  }
-
-  failValidation(context.name, "an app-defined RPC capability", value);
-}
-
-async function releaseTemporaryNativeAppRpcCapabilities(temporaryCapabilities) {
-  const errors = [];
-  for (const capability of temporaryCapabilities.splice(0).reverse()) {
-    try {
-      await capability.drop();
-    } catch (error) {
-      errors.push(error);
-    }
-  }
-
-  if (errors.length > 0) {
-    throw new CapabilityCallError("failed to release temporary app-defined RPC capabilities", {
-      errors,
-    });
-  }
-}
-
-function capabilityNativeAppRpcSlotValue(env, slot) {
-  return new Capability(env, slot.id);
-}
-
-async function callCapabilityWithNativeAppRpc(capability, method, args) {
-  const stub = createCapabilityNativeAppRpcStub(capability, {
-    checkInfo: false,
-    resolveCapabilitySlot: (slot) =>
-      capabilityNativeAppRpcSlotValue(capability.env, slot),
-  });
-  return await stub.call(method, ...args);
-}
-
-export function createCapabilityNativeAppRpcStub(capability, options = {}) {
-  if (!(capability instanceof Capability)) {
-    failValidation("native app RPC capability", "a Capability", capability);
-  }
-  if (!isPlainObject(options)) {
-    failValidation("native app RPC capability options", "an object", options);
-  }
-
-  let transport = options.transport;
-  if (transport !== undefined && transport !== null && typeof transport !== "function") {
-    failValidation("native app RPC capability transport", "a function", transport);
-  }
-  const useLocalObjectRoute = transport === undefined && options.fetcher === undefined;
-  if (transport === undefined && options.fetcher !== undefined) {
-    transport = createNativeAppRpcFetchTransport(options.fetcher, options.route);
-  } else if (transport === undefined && capability.env?.SANDSTORM_API) {
-    transport = createNativeAppRpcFetchTransport(
-      capability.env.SANDSTORM_API,
-      (slot) => `http://sandstorm/powerbox/native-app-rpc-call?id=${encodeURIComponent(slot.id)}`);
-  }
-
-  const checkedTransport = async (slot, call) => {
-    let info;
-    if (options.checkInfo !== false) {
-      info = await capabilityInfo(capability.env, capability);
-      if (!capabilitySupportsAppObjectCall(info)) {
-        const nativeInterface = info?.nativeInterface || "unknown";
-        throw new UnsupportedCapabilityError(
-          nativeInterface,
-          "rpc",
-          `Capability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
-      }
-    } else if (useLocalObjectRoute) {
-      info = await capabilityInfo(capability.env, capability);
-    }
-
-    if (useLocalObjectRoute) {
-      const localResult =
-        await dispatchLocalObjectCapabilityNativeAppRpc(capability, info, call);
-      if (localResult !== undefined) {
-        return localResult;
-      }
-    }
-
-    if (!transport) {
-      throw new CapabilityCallError(
-        "app-defined RPC transport for capabilities is not connected");
-    }
-    return transport(slot, call);
-  };
-
-  const resolveCapabilitySlot = options.resolveCapabilitySlot ??
-    ((slot) => capabilityNativeAppRpcSlotValue(capability.env, slot));
-
-  return createNativeAppRpcStub(
-    nativeCapabilitySlot(capability.id, { nativeInterface: "appObject" }),
-    checkedTransport,
-    {
-      ...options,
-      resolveCapabilitySlot,
-      beginCall: () => {
-        const temporaryCapabilities = [];
-        return {
-          serializationOptions: {
-            ...options,
-            exportCapabilitySlot: options.exportCapabilitySlot ??
-              ((value, context) => exportCapabilityNativeAppRpcSlot(
-                capability.env, value, context, temporaryCapabilities)),
-          },
-          finish: async () => {
-            await releaseTemporaryNativeAppRpcCapabilities(temporaryCapabilities);
-          },
-        };
-      },
-      release: options.release ?? (() => capability.drop()),
-    });
-}
-
 function storageUrl(key = "") {
   return `http://storage/${encodeURIComponent(key === "" ? "" : validate.storageKey(key))}`;
 }
@@ -1171,7 +414,6 @@ function capabilityId(value, name = "capability") {
 
 export class Capability {
   #env;
-  #rpc;
 
   constructor(env, id) {
     this.#env = env;
@@ -1188,17 +430,6 @@ export class Capability {
     return fetchCapability(this.#env, this, input, init);
   }
 
-  call(method, ...args) {
-    return callCapability(this, method, args);
-  }
-
-  get rpc() {
-    if (!this.#rpc) {
-      this.#rpc = createCapabilityNativeAppRpcStub(this).rpc;
-    }
-    return this.#rpc;
-  }
-
   info(options = {}) {
     return capabilityInfo(this.#env, this, options);
   }
@@ -1212,17 +443,9 @@ export class Capability {
   }
 
   async drop() {
-    const metadata = capabilityMetadata.get(this.id);
-    const objectId = objectCapabilityIds.get(this.id);
     const result = await postPowerbox(
       this.#env, `powerbox/drop?id=${encodeURIComponent(this.id)}`);
     forgetCapabilityHandle(this.id);
-    if (metadata?.transientObjectCapability && result?.released === true && objectId) {
-      const ids = exportedObjectCapabilityIds.get(objectId);
-      if (!ids || ids.size === 0) {
-        disposeExportedObjectTarget(objectId);
-      }
-    }
     return result;
   }
 
@@ -1458,7 +681,6 @@ const CLAIM_NATIVE_INTERFACES = new Set([
   "webSession",
   "apiSession",
   "outboundHttpSession",
-  "appObject",
 ]);
 const powerboxDescriptorInfoCache = new Map();
 
@@ -1486,7 +708,7 @@ function claimNativeInterfaceParams(options = {}) {
   });
   if (!CLAIM_NATIVE_INTERFACES.has(nativeInterface)) {
     throw new ValidationError(
-      "nativeInterface must be one of unknown, webSession, apiSession, outboundHttpSession, appObject");
+      "nativeInterface must be one of unknown, webSession, apiSession, outboundHttpSession");
   }
   return [["nativeInterface", nativeInterface]];
 }
@@ -1517,13 +739,6 @@ function powerboxDescriptorParams(options = {}) {
 
 async function saveCapabilityRecord(env, capability, options = {}) {
   const rawId = capabilityId(capability);
-  const metadata = capabilityMetadata.get(rawId);
-  if (metadata?.transientObjectCapability) {
-    throw new Error(
-      "JavaScript object capabilities are transient and cannot be saved yet. " +
-      "Use api.exportDurable() when an exported object needs a durable token.");
-  }
-
   const id = encodeURIComponent(rawId);
   const label = encodeURIComponent(saveLabel(options));
   return savedCapabilityRecord(await postPowerbox(env, `powerbox/save?id=${id}&label=${label}`));
@@ -1533,24 +748,13 @@ async function saveCapability(env, capability, options = {}) {
   return (await saveCapabilityRecord(env, capability, options)).token;
 }
 
-function duplicateLocalCapabilityMetadata(metadata) {
-  if (!metadata?.transientObjectCapability) {
-    return undefined;
-  }
-  return { transientObjectCapability: true };
-}
-
 async function duplicateCapability(env, capability) {
   const sourceId = capabilityId(capability);
   const duplicated = wrapCapability(
     env, await postPowerbox(env, `powerbox/dup?id=${encodeURIComponent(sourceId)}`));
-  const metadata = duplicateLocalCapabilityMetadata(capabilityMetadata.get(sourceId));
-  if (metadata) {
+  const metadata = capabilityMetadata.get(sourceId);
+  if (metadata !== undefined) {
     capabilityMetadata.set(duplicated.id, metadata);
-  }
-  const objectId = objectCapabilityIds.get(sourceId);
-  if (objectId) {
-    rememberObjectCapabilityHandle(objectId, duplicated.id);
   }
   return duplicated;
 }
@@ -1868,7 +1072,7 @@ function powerboxGrantClaimDescriptorOptions(spec) {
   if (spec.descriptor !== undefined || spec.powerboxDescriptor !== undefined) {
     return {
       descriptor: spec.powerboxDescriptor ?? spec.descriptor,
-      nativeInterface: spec.nativeInterface ?? "appObject",
+      ...(spec.nativeInterface === undefined ? {} : { nativeInterface: spec.nativeInterface }),
     };
   }
   if (spec.apiSession !== undefined || spec.apiSessionDescriptor !== undefined) {
@@ -2137,8 +1341,10 @@ export function powerboxFulfillment(request, env, options = {}) {
 }
 
 function powerboxGrantClientScript(prefix) {
-  const rpcClientPath = `${prefix}/rpc-client.js`;
-  return `import { inspectPowerboxQuery, requestPowerbox } from ${JSON.stringify(rpcClientPath)};
+  return `import {
+  inspectPowerboxQuery,
+  requestPowerbox,
+} from "/__sandstorm/native-capnp/client.js";
 
 const ROUTE_PREFIX = ${JSON.stringify(prefix)};
 
@@ -2499,12 +1705,6 @@ export function powerboxGrants(request, env, options = {}) {
           });
         }
 
-        if (url.pathname === `${prefix}/rpc-client.js` && routeRequest.method === "GET") {
-          return new Response(rpcClientScript(), {
-            headers: { "content-type": "text/javascript; charset=utf-8" },
-          });
-        }
-
         if (url.pathname === `${prefix}/config` && routeRequest.method === "GET") {
           return Response.json(await powerboxGrantConfig(env, grants, prefix));
         }
@@ -2533,18 +1733,11 @@ export function powerboxGrants(request, env, options = {}) {
 export async function serveSystemRoutes(request, env) {
   return await serveBrowserSystemRoute(request, env) ||
     await serveNativeCapnpExportSession(request, { env }) ||
-    await servePowerboxDescriptors(request, env) ||
-    await serveObjectCapability(request, env);
+    await servePowerboxDescriptors(request, env);
 }
 
 async function serveBrowserSystemRoute(request, env) {
   const url = new URL(request.url);
-
-  if (url.pathname === "/__sandstorm/rpc-client.js" && request.method === "GET") {
-    return new Response(rpcClientScript(), {
-      headers: { "content-type": "text/javascript; charset=utf-8" },
-    });
-  }
 
   if (url.pathname === "/__sandstorm/native-capnp/client.js" && request.method === "GET") {
     return new Response(nativeCapnpBrowserClientScript(), {
@@ -2698,326 +1891,8 @@ async function createApiSessionCapability(env, options = {}) {
       env, `capabilities/api-session?pathPrefix=${pathPrefix}&persistent=${persistent}`));
 }
 
-async function createAppObjectCapability(env, options = {}) {
-  const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
-  const persistent = webSessionPersistent(options) ? "true" : "false";
-  const dropNotifyPath = webSessionDropNotifyPath(options);
-  const notifyQuery = dropNotifyPath === undefined
-    ? ""
-    : `&dropNotifyPath=${encodeURIComponent(dropNotifyPath)}`;
-  return wrapCapability(
-    env, await postSandstorm(
-      env, `capabilities/app-object?pathPrefix=${pathPrefix}&persistent=${persistent}` +
-        notifyQuery));
-}
-
-function capabilityMethodName(value, name = "method") {
-  const method = validate.string(value, name, { minLength: 1, maxLength: 256 });
-  if (method === "constructor" || method === "prototype" || method === "__proto__") {
-    throw new ValidationError(`${name} is not callable`);
-  }
-  if (method === "then") {
-    throw new ValidationError(`${name} is reserved`);
-  }
-  return method;
-}
-
-function capabilityArgs(value, name = "args") {
-  if (!Array.isArray(value)) {
-    throw new ValidationError(`${name} must be an array`);
-  }
-  return value;
-}
-
-function objectCapabilityId(options = {}) {
-  if (options.id === undefined || options.id === null) {
-    return typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  }
-
-  return explicitObjectCapabilityId(options.id);
-}
-
-function explicitObjectCapabilityId(value, name = "object capability id") {
-  const id = validate.string(value, name, {
-    minLength: 1,
-    maxLength: 256,
-  });
-  if (!/^[A-Za-z0-9._~-]+$/.test(id)) {
-    throw new ValidationError(
-      "object capability id may only contain URL-safe letters, digits, '.', '_', '~', and '-'");
-  }
-  return id;
-}
-
-function requiredObjectCapabilityId(options = {}) {
-  if (options.id === undefined || options.id === null) {
-    throw new ValidationError("registered object capabilities require an explicit id");
-  }
-  return explicitObjectCapabilityId(options.id);
-}
-
-function objectCapabilityPersistent(options = {}) {
-  if (options.persistent === undefined || options.persistent === null) {
-    return false;
-  }
-  if (typeof options.persistent !== "boolean") {
-    throw new ValidationError("persistent must be a boolean");
-  }
-  if (options.persistent && (options.id === undefined || options.id === null)) {
-    throw new ValidationError("persistent object capabilities require an explicit id");
-  }
-  return options.persistent;
-}
-
-function objectCapabilityPathPrefix(id) {
-  return `${OBJECT_CAPABILITY_PREFIX}/${encodeURIComponent(id)}`;
-}
-
-function registerObjectCapabilityTarget(target, options = {}) {
-  if (!target || typeof target !== "object") {
-    throw new ValidationError("capability target must be an object");
-  }
-
-  const id = requiredObjectCapabilityId(options);
-  const existing = exportedObjectTargets.get(id);
-  if (existing === target) {
-    return {
-      ok: true,
-      id,
-      pathPrefix: objectCapabilityPathPrefix(id),
-      registered: false,
-    };
-  }
-  if (existing) {
-    throw new ValidationError(`object capability id is already registered: ${id}`);
-  }
-
-  exportedObjectTargets.set(id, target);
-  return {
-    ok: true,
-    id,
-    pathPrefix: objectCapabilityPathPrefix(id),
-    registered: true,
-  };
-}
-
-function durableCapabilityRegistry(registry = {}) {
-  if (registry === undefined || registry === null) {
-    return new Map();
-  }
-  if (!isPlainObject(registry)) {
-    failValidation("durable capability registry", "an object", registry);
-  }
-
-  const result = new Map();
-  for (const [rawId, source] of Object.entries(registry)) {
-    const id = explicitObjectCapabilityId(rawId, "durable capability registry id");
-    result.set(id, source);
-  }
-  return result;
-}
-
-async function durableCapabilityRegistryTarget(request, env, registry, id) {
-  if (!registry?.has(id)) {
-    return undefined;
-  }
-
-  const source = registry.get(id);
-  return typeof source === "function" ? await source(request, env) : source;
-}
-
-async function ensureDurableCapabilityRegistryTarget(request, env, registry, id) {
-  const target = exportedObjectTargets.get(id) ||
-    await durableCapabilityRegistryTarget(request, env, registry, id);
-  if (!target) {
-    return undefined;
-  }
-
-  registerObjectCapabilityTarget(target, { id });
-  return target;
-}
-
-async function createObjectCapability(env, target, options = {}) {
-  if (!target || typeof target !== "object") {
-    throw new ValidationError("capability target must be an object");
-  }
-
-  const persistent = objectCapabilityPersistent(options);
-  const id = objectCapabilityId(options);
-  const registration = registerObjectCapabilityTarget(target, { id });
-  if (!persistent && !registration.registered) {
-    throw new ValidationError(
-      "already registered object capability IDs can only be minted with api.exportDurable()");
-  }
-
-  try {
-    const pathPrefix = objectCapabilityPathPrefix(id);
-    const capability = await createAppObjectCapability(env, {
-      pathPrefix,
-      ...(persistent ? {} : { dropNotifyPath: pathPrefix }),
-      persistent,
-    });
-    rememberObjectCapabilityHandle(id, capability.id);
-    if (!persistent) {
-      capabilityMetadata.set(capability.id, { transientObjectCapability: true });
-    }
-    return capability;
-  } catch (error) {
-    if (registration.registered) {
-      exportedObjectTargets.delete(id);
-      forgetObjectCapabilityHandles(id);
-    }
-    throw error;
-  }
-}
-
-function publicObjectCapabilityOptions(options = {}) {
-  const normalized = options ?? {};
-  if (normalized.persistent !== undefined && normalized.persistent !== null) {
-    throw new ValidationError(
-      "api.export() always creates transient object capabilities; use api.exportDurable() " +
-      "when an exported object needs a durable token.");
-  }
-  return { ...normalized, persistent: false };
-}
-
-async function exportObjectCapability(env, target, options = {}) {
-  return createObjectCapability(env, target, publicObjectCapabilityOptions(options));
-}
-
-async function callCapability(capability, method, args = []) {
-  method = capabilityMethodName(method);
-  args = capabilityArgs(args);
-  const info = await capabilityInfo(capability.env, capability);
-  if (capabilitySupportsAppObjectCall(info)) {
-    return callCapabilityWithNativeAppRpc(capability, method, args);
-  }
-
-  const nativeInterface = info?.nativeInterface || "unknown";
-  throw new UnsupportedCapabilityError(
-    nativeInterface,
-    "rpc",
-    `Capability nativeInterface ${nativeInterface} cannot be used with app-defined RPC`);
-}
-
-function disposeExportedObjectTarget(id) {
-  const target = exportedObjectTargets.get(id);
-  if (!target) {
-    return false;
-  }
-
-  exportedObjectTargets.delete(id);
-  forgetObjectCapabilityHandles(id);
-
-  const disposer = target[Symbol.dispose];
-  if (typeof disposer === "function") {
-    disposer.call(target);
-  }
-
-  return true;
-}
-
-function missingDurableCapabilityMessage(id) {
-  return `durable capability id is not registered: ${id}. ` +
-    "Restore the capabilities registry entry, migrate the saved token, or revoke it.";
-}
-
-function missingDurableCapabilityError(id) {
-  return {
-    name: "MissingDurableCapability",
-    message: missingDurableCapabilityMessage(id),
-  };
-}
-
-function rememberObjectCapabilityHandle(objectId, capabilityId) {
-  let ids = exportedObjectCapabilityIds.get(objectId);
-  if (!ids) {
-    ids = new Set();
-    exportedObjectCapabilityIds.set(objectId, ids);
-  }
-  ids.add(capabilityId);
-  objectCapabilityIds.set(capabilityId, objectId);
-}
-
 function forgetCapabilityHandle(capabilityId) {
   capabilityMetadata.delete(capabilityId);
-  const objectId = objectCapabilityIds.get(capabilityId);
-  if (!objectId) {
-    return;
-  }
-
-  objectCapabilityIds.delete(capabilityId);
-  const ids = exportedObjectCapabilityIds.get(objectId);
-  if (ids) {
-    ids.delete(capabilityId);
-    if (ids.size === 0) {
-      exportedObjectCapabilityIds.delete(objectId);
-    }
-  }
-}
-
-function forgetObjectCapabilityHandles(objectId) {
-  const ids = exportedObjectCapabilityIds.get(objectId);
-  if (!ids) {
-    return;
-  }
-
-  for (const capabilityId of ids) {
-    capabilityMetadata.delete(capabilityId);
-    objectCapabilityIds.delete(capabilityId);
-  }
-  exportedObjectCapabilityIds.delete(objectId);
-}
-
-async function serveObjectCapability(request, env, registry = undefined) {
-  const url = new URL(request.url);
-  if (!url.pathname.startsWith(`${OBJECT_CAPABILITY_PREFIX}/`)) {
-    return null;
-  }
-
-  const rest = url.pathname.slice(OBJECT_CAPABILITY_PREFIX.length + 1);
-  const slash = rest.indexOf("/");
-  const id = slash < 0 ? rest : rest.slice(0, slash);
-  const action = slash < 0 ? "" : rest.slice(slash + 1);
-  const objectId = decodeURIComponent(id);
-  const target = await ensureDurableCapabilityRegistryTarget(request, env, registry, objectId);
-  if (!target) {
-    const error = missingDurableCapabilityError(objectId);
-    if (request.method === "POST" && action === "native-app-rpc-call") {
-      return Response.json(serializeNativeAppRpcException(error), { status: 404 });
-    }
-    return Response.json({
-      ok: false,
-      type: "missingDurableCapability",
-      id: objectId,
-      error: error.message,
-    }, { status: 404 });
-  }
-
-  if (request.method === "POST" && action === "__sandstorm_dispose") {
-    const disposed = disposeExportedObjectTarget(objectId);
-    return Response.json({ ok: true, disposed });
-  }
-
-  if (request.method === "POST" && action === "native-app-rpc-call") {
-    try {
-      return Response.json(await dispatchNativeAppRpcCall(target, await request.json(), {
-        exportCapabilitySlot: (value, context) =>
-          exportCapabilityNativeAppRpcSlot(env, value, context),
-        resolveCapabilitySlot: (slot) => new Capability(env, slot.id),
-      }));
-    } catch (error) {
-      const status = error instanceof ValidationError ? 400 : 500;
-      return Response.json(serializeNativeAppRpcException(error), { status });
-    }
-  }
-
-  return Response.json({
-    ok: false,
-    error: "unsupported exported object capability request",
-  }, { status: 405 });
 }
 
 function savedCapabilityToken(value, name = "token") {
@@ -3116,8 +1991,8 @@ async function fetchCapability(env, capability, input, init = {}) {
       nativeInterface,
       "fetch",
       `cap.fetch() is only for WebSession, ApiSession, and OutboundHttpSession capabilities; ` +
-      `nativeInterface ${nativeInterface} cannot be fetched. Use cap.rpc or cap.call() ` +
-      `for app-defined RPC capabilities`);
+      `nativeInterface ${nativeInterface} cannot be fetched. Use a generated capnp: client ` +
+      `for typed RPC capabilities`);
   }
 
   let request;
@@ -3204,7 +2079,7 @@ async function fetchOutboundHttpSession(capability, input, init = {}, info = und
       nativeInterface,
       "fetch",
       `cap.fetch() on OutboundHttpSession capabilities cannot use nativeInterface ` +
-      `${nativeInterface}; use app-defined RPC for appObject capabilities`);
+      `${nativeInterface}; use a generated capnp: client for typed RPC capabilities`);
   }
 
   const { request, path } = outboundHttpSessionRequest(input, init);
@@ -3282,80 +2157,6 @@ async function validateRequiredPermissions(env, names) {
       `unknown required permission: ${unknown[0]}; this app defines permissions: ` +
       `${declaredNames.length > 0 ? declaredNames.join(", ") : "(none)"}. ` +
       "requiredPermissions must use names from this app's viewInfo.permissions.");
-  }
-}
-
-function durableObjectCapabilityStorageKey(options = {}) {
-  const key = options.storageKey ?? options.key;
-  return key === undefined || key === null ? undefined : validate.storageKey(key, "storageKey");
-}
-
-async function durableObjectCapability(env, target, options = {}) {
-  const id = requiredObjectCapabilityId(options);
-  const registration = registerObjectCapabilityTarget(target, { id });
-  const key = durableObjectCapabilityStorageKey(options);
-  if (key !== undefined) {
-    const storedToken = await storage(env).get(key);
-    if (storedToken) {
-      return {
-        ok: true,
-        id,
-        storageKey: key,
-        registered: registration.registered,
-        restored: true,
-        capability: await restoreCapabilityToken(env, storedToken),
-        token: storedToken,
-      };
-    }
-  }
-
-  const capability = await createObjectCapability(env, target, {
-    id,
-    persistent: true,
-  });
-  const token = await saveCapability(env, capability, options);
-  if (key !== undefined) {
-    await storage(env).put(key, token);
-    return {
-      ok: true,
-      id,
-      storageKey: key,
-      registered: registration.registered,
-      restored: false,
-      capability,
-      token,
-    };
-  }
-
-  return {
-    ok: true,
-    id,
-    registered: registration.registered,
-    restored: false,
-    capability,
-    token,
-  };
-}
-
-function publicDurableCapabilityResult(result) {
-  return result;
-}
-
-async function exportDurableCapability(env, target, options = {}) {
-  requiredSaveLabel(options, "exportDurable label");
-  return publicDurableCapabilityResult(await durableObjectCapability(env, target, options));
-}
-
-async function withExportedCapability(env, target, fn, options = {}) {
-  if (typeof fn !== "function") {
-    failValidation("withExport callback", "a function", fn);
-  }
-
-  const capability = await exportObjectCapability(env, target, options);
-  try {
-    return await fn(capability);
-  } finally {
-    await capability.drop();
   }
 }
 
@@ -3478,200 +2279,6 @@ export function getSession(request) {
       descriptor: jsonHeader(request, "x-sandstorm-offer-descriptor"),
     },
   };
-}
-
-class StorageRpcTarget extends RpcTarget {
-  #env;
-
-  constructor(env) {
-    super();
-    this.#env = env;
-  }
-
-  put(key, value) {
-    return storage(this.#env).put(key, value);
-  }
-
-  putJson(key, value) {
-    return storage(this.#env).putJson(key, value);
-  }
-
-  get(key) {
-    return storage(this.#env).get(key);
-  }
-
-  getBytes(key) {
-    return storage(this.#env).getBytes(key);
-  }
-
-  getJson(key) {
-    return storage(this.#env).getJson(key);
-  }
-
-  head(key) {
-    return storage(this.#env).head(key);
-  }
-
-  delete(key) {
-    return storage(this.#env).delete(key);
-  }
-
-  list() {
-    return storage(this.#env).list();
-  }
-}
-
-class PowerboxRpcTarget extends RpcTarget {
-  #request;
-  #env;
-
-  constructor(request, env) {
-    super();
-    this.#request = request;
-    this.#env = env;
-  }
-
-  async apiSessionDescriptor(options) {
-    return powerbox(this.#request, this.#env).apiSessionDescriptor(options || {});
-  }
-
-  async outboundHttpDescriptor(options) {
-    return powerbox(this.#request, this.#env).outboundHttpDescriptor(options || {});
-  }
-
-  async claim(result, options) {
-    return powerbox(this.#request, this.#env).claim(result, options || {});
-  }
-
-  offered() {
-    return powerbox(this.#request, this.#env).offered();
-  }
-
-  async offer() {
-    if (arguments.length < 1) {
-      unsupportedPowerbox("offer");
-    }
-    return powerbox(this.#request, this.#env).offer(arguments[0], arguments[1] || {});
-  }
-
-  async fulfillRequest() {
-    if (arguments.length < 1) {
-      unsupportedPowerbox("fulfillRequest");
-    }
-    return powerbox(this.#request, this.#env).fulfillRequest(arguments[0], arguments[1] || {});
-  }
-
-  async tieToUser() {
-    if (arguments.length < 1) {
-      unsupportedPowerbox("tieToUser");
-    }
-    return powerbox(this.#request, this.#env).tieToUser(arguments[0], arguments[1] || {});
-  }
-
-}
-
-class SandstormRpcTarget extends RpcTarget {
-  #request;
-  #env;
-
-  constructor(request, env) {
-    super();
-    this.#request = request;
-    this.#env = env;
-  }
-
-  session() {
-    return getSession(this.#request);
-  }
-
-  status() {
-    return callSandstorm(this.#env, "status");
-  }
-
-  capabilities() {
-    return callSandstorm(this.#env, "capabilities");
-  }
-
-  runtime() {
-    return callSandstorm(this.#env, "runtime");
-  }
-
-  modules() {
-    return callSandstorm(this.#env, "modules");
-  }
-
-  bindings() {
-    return callSandstorm(this.#env, "bindings");
-  }
-
-  capnpBridgeInfo() {
-    return callSandstorm(this.#env, "capnp/bridge-info");
-  }
-
-  nativeCapnpBridgeCall(body) {
-    return callNativeCapnpBridge(this.#env, body);
-  }
-
-  nativeCapnpBridgeCallBytes(body) {
-    return callNativeCapnpBridgeBytes(this.#env, body);
-  }
-
-  nativeCapnpBridgeOpenRpcSession(target, connectionId) {
-    return openNativeCapnpBridgeRpcSession(this.#env, target, connectionId);
-  }
-
-  nativeCapnpExport(registration) {
-    return createNativeCapnpExportCapability(this.#env, registration);
-  }
-
-  storage() {
-    return new StorageRpcTarget(this.#env);
-  }
-
-  powerbox() {
-    return new PowerboxRpcTarget(this.#request, this.#env);
-  }
-
-  webSession(options = {}) {
-    return createWebSessionCapability(this.#env, options);
-  }
-
-  apiSession(options = {}) {
-    return createApiSessionCapability(this.#env, options);
-  }
-
-  restore(token) {
-    return restoreCapabilityToken(this.#env, token);
-  }
-
-  revoke(token) {
-    return revokeCapabilityToken(this.#env, token);
-  }
-
-  use(token, fn) {
-    return useCapabilityToken(this.#env, token, fn);
-  }
-
-  ["export"](target, options = {}) {
-    return exportObjectCapability(this.#env, target, options);
-  }
-
-  withExport(target, fn, options = {}) {
-    return withExportedCapability(this.#env, target, fn, options);
-  }
-
-  exportDurable(target, options = {}) {
-    return exportDurableCapability(this.#env, target, options);
-  }
-
-}
-
-export function apiTarget(request, env) {
-  return new SandstormRpcTarget(request, env);
-}
-
-export function rpcClientScript() {
-  return browserClientScript();
 }
 
 export function nativeCapnpBrowserClientScript() {
@@ -4122,6 +2729,116 @@ export async function nativeCapnpPowerboxDescriptorInfo(InterfaceClass, options 
   return fetchNativeCapnpPowerboxDescriptorInfo(InterfaceClass, options);
 }
 
+function validatePackedPowerboxDescriptor(descriptor, label = "descriptor") {
+  if (typeof descriptor !== "string" || descriptor.length === 0) {
+    throw new TypeError(label + " must be a non-empty packed Powerbox descriptor string");
+  }
+  if (descriptor.length % 4 === 1 || !/^[A-Za-z0-9_-]+$/.test(descriptor)) {
+    throw new TypeError(label + " must be base64url packed Powerbox descriptor text");
+  }
+  return descriptor;
+}
+
+async function fetchPowerboxDescriptorInfo(path, params) {
+  const url = new URL(path, globalThis.location?.href || "http://sandstorm/");
+  for (const [name, value] of params) {
+    url.searchParams.append(name, value);
+  }
+  const response = await fetch(url);
+  const result = await readJsonResponse(response);
+  if (!response.ok || !result.ok) {
+    throw new NativeCapnpBridgeUnavailableError(
+      result.error || "Powerbox descriptor request failed with " + response.status,
+      { response, result });
+  }
+  validatePackedPowerboxDescriptor(result.descriptor);
+  return result;
+}
+
+export async function apiSessionPowerboxDescriptorInfo(options = {}) {
+  const descriptor = options.apiSession ?? options.apiSessionDescriptor ?? options;
+  const params = [];
+  if (descriptor.canonicalUrl !== undefined) {
+    params.push(["canonicalUrl", String(descriptor.canonicalUrl)]);
+  }
+  for (const scope of descriptor.oauthScopes || []) {
+    params.push(["oauthScope", String(scope)]);
+  }
+  return fetchPowerboxDescriptorInfo("/__sandstorm/powerbox/api-session-descriptor", params);
+}
+
+export async function apiSessionPowerboxDescriptor(options = {}) {
+  return (await apiSessionPowerboxDescriptorInfo(options)).descriptor;
+}
+
+export async function outboundHttpPowerboxDescriptorInfo(options = {}) {
+  const descriptor = options.outboundHttp ?? options.outboundHttpDescriptor ?? options;
+  const params = [["baseUrl", String(descriptor.baseUrl || "")]];
+  for (const method of descriptor.methods || []) {
+    params.push(["method", String(method)]);
+  }
+  return fetchPowerboxDescriptorInfo("/__sandstorm/powerbox/outbound-http-descriptor", params);
+}
+
+export async function outboundHttpPowerboxDescriptor(options = {}) {
+  return (await outboundHttpPowerboxDescriptorInfo(options)).descriptor;
+}
+
+function providerQueryFromOptions(options = {}) {
+  const query = options.descriptors ?? options.descriptor;
+  if (query === undefined || query === null) {
+    throw new Error("Powerbox provider query requires descriptor or descriptors");
+  }
+  if (typeof query === "string") {
+    return [validatePackedPowerboxDescriptor(query)];
+  }
+  if (!Array.isArray(query)) {
+    throw new Error("Powerbox provider descriptors must be a string or an array");
+  }
+  return query.map((descriptor, index) =>
+    validatePackedPowerboxDescriptor(descriptor, "provider descriptor " + index));
+}
+
+export async function inspectPowerboxQuery(query) {
+  if (query && typeof query === "object" && !Array.isArray(query) &&
+      (query.baseUrl || query.outboundHttp || query.outboundHttpDescriptor)) {
+    const descriptorInfo = await outboundHttpPowerboxDescriptorInfo(
+      query.outboundHttp ?? query.outboundHttpDescriptor ?? query);
+    return {
+      ok: true,
+      type: "powerboxQueryInspection",
+      descriptorCount: 1,
+      descriptors: [{ index: 0, ...descriptorInfo }],
+    };
+  }
+
+  if (query && typeof query === "object" && !Array.isArray(query) &&
+      (query.canonicalUrl || query.apiSession || query.apiSessionDescriptor)) {
+    const descriptorInfo = await apiSessionPowerboxDescriptorInfo(
+      query.apiSession ?? query.apiSessionDescriptor ?? query);
+    return {
+      ok: true,
+      type: "powerboxQueryInspection",
+      descriptorCount: 1,
+      descriptors: [{ index: 0, ...descriptorInfo }],
+    };
+  }
+
+  const descriptors = typeof query === "string" || Array.isArray(query)
+    ? providerQueryFromOptions({ descriptor: query })
+    : providerQueryFromOptions(query || {});
+  return {
+    ok: true,
+    type: "powerboxQueryInspection",
+    descriptorCount: descriptors.length,
+    descriptors: descriptors.map((descriptor, index) => ({
+      index,
+      type: "packedPowerboxDescriptor",
+      descriptor,
+    })),
+  };
+}
+
 export function requestPowerbox(query, options = {}) {
   const browserWindow = globalThis.window;
   if (!browserWindow || !browserWindow.parent) {
@@ -4359,64 +3076,7 @@ export async function dropBrowserNativeCapnp(target) {
 `;
 }
 
-export function rpcResponse(request, target, options) {
-  return newWorkersRpcResponse(request, target, options);
-}
-
-function resolveRpcTarget(target) {
-  return typeof target === "function" ? target() : target;
-}
-
-export function serveRpc(request, target, options = {}) {
-  const url = new URL(request.url);
-  const {
-    clientScriptPath = "/rpc-client.js",
-    rpcPath = "/rpc",
-    ...rpcOptions
-  } = options;
-  if (url.pathname === clientScriptPath) {
-    return new Response(rpcClientScript(), {
-      headers: { "content-type": "text/javascript; charset=utf-8" },
-    });
-  }
-
-  if (url.pathname === rpcPath) {
-    return Promise.resolve(resolveRpcTarget(target))
-      .then((resolvedTarget) => rpcResponse(request, resolvedTarget, rpcOptions));
-  }
-
-  return null;
-}
-
-function isObjectCapabilityRequest(request) {
-  return new URL(request.url).pathname.startsWith(`${OBJECT_CAPABILITY_PREFIX}/`);
-}
-
-function isPowerboxDescriptorRequest(request) {
-  return new URL(request.url).pathname.startsWith(`${POWERBOX_DESCRIPTOR_PREFIX}/`);
-}
-
-function isNativeCapnpExportSessionRequest(request) {
-  return new URL(request.url).pathname.startsWith("/__sandstorm/native-capnp/export-sessions/");
-}
-
-export function sandstorm(request, env, options = {}) {
-  const durableRegistry = durableCapabilityRegistry(options.capabilities);
-
-  const exportDurable = async (targetOrId, durableOptions = {}) => {
-    if (typeof targetOrId === "string") {
-      const id = explicitObjectCapabilityId(targetOrId);
-      const target = exportedObjectTargets.get(id) ||
-        await durableCapabilityRegistryTarget(request, env, durableRegistry, id);
-      if (!target) {
-        throw new ValidationError(missingDurableCapabilityMessage(id));
-      }
-      return exportDurableCapability(env, target, { ...durableOptions, id });
-    }
-
-    return exportDurableCapability(env, targetOrId, durableOptions);
-  };
-
+export function sandstorm(request, env) {
   return {
     session: () => getSession(request),
     status: () => callSandstorm(env, "status"),
@@ -4437,27 +3097,10 @@ export function sandstorm(request, env, options = {}) {
     restore: (token) => restoreCapabilityToken(env, token),
     revoke: (token) => revokeCapabilityToken(env, token),
     use: (token, fn) => useCapabilityToken(env, token, fn),
-    export: (target, options = {}) => exportObjectCapability(env, target, options),
-    withExport: (target, fn, options = {}) => withExportedCapability(env, target, fn, options),
-    exportDurable,
     powerboxFulfillment: (options = {}) => powerboxFulfillment(request, env, options),
     powerboxGrants: (options = {}) => powerboxGrants(request, env, options),
     serveSystemRoutes: async () => await serveBrowserSystemRoute(request, env) ||
       await serveNativeCapnpExportSession(request, { env }) ||
-      await servePowerboxDescriptors(request, env) ||
-      await serveObjectCapability(request, env, durableRegistry),
-    apiTarget: () => apiTarget(request, env),
-    rpcClientScript: () => rpcClientScript(),
-    rpcResponse: (target, options) => rpcResponse(request, target, options),
-    serveRpc: (target, options) => {
-      if (isNativeCapnpExportSessionRequest(request) ||
-          isPowerboxDescriptorRequest(request) ||
-          isObjectCapabilityRequest(request)) {
-        return (async () => await serveNativeCapnpExportSession(request, { env }) ||
-          await servePowerboxDescriptors(request, env) ||
-          await serveObjectCapability(request, env, durableRegistry))();
-      }
-      return serveRpc(request, target, options);
-    },
+      await servePowerboxDescriptors(request, env),
   };
 }

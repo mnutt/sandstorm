@@ -27,8 +27,6 @@ EKAM=ekam
 WORKERD_NPM_VERSION=1.20260610.1
 WORKERD_NPM_PACKAGE_DIR=deps/workerd-npm
 WORKERD_BIN=
-CAPNWEB_NPM_VERSION=0.8.0
-CAPNWEB_NPM_PACKAGE_DIR=deps/capnweb-npm
 CAPNP_ES_NPM_VERSION=0.2.2
 CAPNP_ES_NPM_PACKAGE_DIR=deps/capnp-es-npm
 CAPNP_ES_NPM_COMPILER_MODULE=$(abspath tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs)
@@ -327,26 +325,6 @@ verify-workerd-runtime: bin/workerd tmp/.workerd-npm
 		test "$$(bin/workerd --version)" = "workerd $$expected_version"
 
 # ====================================================================
-# fetch capnweb
-
-tmp/.capnweb-npm: $(CAPNWEB_NPM_PACKAGE_DIR)/package.json \
-    $(wildcard $(CAPNWEB_NPM_PACKAGE_DIR)/package-lock.json)
-	@$(call color,installing npm capnweb)
-	rm -rf tmp/capnweb-npm
-	@mkdir -p tmp/capnweb-npm
-	cp $(CAPNWEB_NPM_PACKAGE_DIR)/package.json tmp/capnweb-npm/package.json
-	@if test -e $(CAPNWEB_NPM_PACKAGE_DIR)/package-lock.json; then cp $(CAPNWEB_NPM_PACKAGE_DIR)/package-lock.json tmp/capnweb-npm/package-lock.json; fi
-	cd tmp/capnweb-npm && if test -e package-lock.json; then PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm ci --no-fund; else PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund --no-save; fi
-	@test "$$(cd tmp/capnweb-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./node_modules/capnweb/package.json").version')" = "$(CAPNWEB_NPM_VERSION)"
-	@test -e tmp/capnweb-npm/node_modules/capnweb/dist/index.js
-	@touch $@
-
-src/sandstorm/isolate/capnweb.js: tmp/.capnweb-npm
-	@$(call color,updating capnweb helper)
-	@mkdir -p $(dir $@)
-	cp tmp/capnweb-npm/node_modules/capnweb/dist/index.js $@
-
-# ====================================================================
 # fetch capnp-es
 
 tmp/.capnp-es-npm: $(CAPNP_ES_NPM_PACKAGE_DIR)/package.json \
@@ -371,7 +349,7 @@ tmp/ekam-bin: tmp/.deps
 	    (cd deps/ekam && $(MAKE) bin/ekam-bootstrap && \
 	     cd ../.. && ln -s ../deps/ekam/bin/ekam-bootstrap tmp/ekam-bin)
 
-tmp/.ekam-run: tmp/ekam-bin tmp/.capnp-es-npm src/sandstorm/* src/sandstorm/isolate/* src/sandstorm/isolate/capnweb.js tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/libsodium/.libs/libsodium.a | deps/llvm-build
+tmp/.ekam-run: tmp/ekam-bin tmp/.capnp-es-npm src/sandstorm/* src/sandstorm/isolate/* tmp/.deps deps/boringssl/build/libssl.a deps/libsodium/build/src/libsodium/.libs/libsodium.a | deps/llvm-build
 	@$(call color,building sandstorm with ekam)
 	@CC="$(CC)" CXX="$(CXX)" CFLAGS="$(CFLAGS2)" CXXFLAGS="$(CXXFLAGS2)" \
 	    LIBS="$(LIBS2)" NODEJS=$(NODEJS) tmp/ekam-bin -j$(PARALLEL)

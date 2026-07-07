@@ -1935,52 +1935,6 @@ public:
     KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
     KJ_REQUIRE(sessionContextRef.tieCount == 1, sessionContextRef.tieCount);
 
-    auto appObjectClaimRequest = session.getRequest();
-    appObjectClaimRequest.setPath(
-        "/claim-powerbox?token=websession%2Ftest%2Btoken%3D%3D"
-        "&requiredPermission=view&nativeInterface=appObject"
-        "&helperClaim=true&save=true&restore=true&dropSaved=true"
-        "&label=WebSession%20saved%20capability");
-    appObjectClaimRequest.setIgnoreBody(false);
-    auto appObjectClaimContext = appObjectClaimRequest.initContext();
-    appObjectClaimContext.setResponseStream(kj::heap<IgnoreByteStream>());
-    appObjectClaimContext.initCookies(0);
-    appObjectClaimContext.initAccept(0);
-    appObjectClaimContext.initAcceptEncoding(0);
-    appObjectClaimContext.initAdditionalHeaders(0);
-
-    auto appObjectClaimResponse = appObjectClaimRequest.send().wait(io.waitScope);
-    auto appObjectClaimDebugBody = responseDebugBody(appObjectClaimResponse);
-    KJ_REQUIRE(appObjectClaimResponse.which() == WebSession::Response::CONTENT,
-        appObjectClaimDebugBody);
-    auto appObjectClaimContent = appObjectClaimResponse.getContent();
-    KJ_REQUIRE(appObjectClaimContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
-    KJ_REQUIRE(appObjectClaimContent.getBody().which() ==
-        WebSession::Response::Content::Body::BYTES);
-    auto appObjectClaimBody = kj::str(appObjectClaimContent.getBody().getBytes().asChars());
-    KJ_REQUIRE(contains(appObjectClaimBody, "\"ok\":true"), appObjectClaimBody);
-    KJ_REQUIRE(contains(appObjectClaimBody, "\"claimInfo\":{\"status\":200,\"body\":{\"ok\":true,"
-        "\"type\":\"claimedCapabilityInfo\""), appObjectClaimBody);
-    KJ_REQUIRE(contains(appObjectClaimBody, "\"kind\":\"powerboxClaim\""),
-        appObjectClaimBody);
-    KJ_REQUIRE(contains(appObjectClaimBody, "\"nativeInterface\":\"appObject\""),
-        appObjectClaimBody);
-    KJ_REQUIRE(contains(appObjectClaimBody, "\"save\":{\"status\":200,\"body\":{\"ok\":true"),
-        appObjectClaimBody);
-    KJ_REQUIRE(!contains(appObjectClaimBody,
-        "\"token\":\"d2Vic2Vzc2lvbi1zYXZlZC10b2tlbg\""),
-        appObjectClaimBody);
-    KJ_REQUIRE(contains(appObjectClaimBody,
-        "\"restore\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"capability\""),
-        appObjectClaimBody);
-    KJ_REQUIRE(contains(appObjectClaimBody, "\"kind\":\"restored\""), appObjectClaimBody);
-    KJ_REQUIRE(contains(appObjectClaimBody, "\"dropSaved\":{\"status\":200,\"body\":{\"ok\":true}}"),
-        appObjectClaimBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
-    KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 2, sessionContextRef.restoreCount);
-    KJ_REQUIRE(sessionContextRef.tokenDropCount == 2, sessionContextRef.tokenDropCount);
-
     auto outboundRequest = session.getRequest();
     outboundRequest.setPath("/outbound-http-helper-self-test");
     outboundRequest.setIgnoreBody(false);
@@ -2037,10 +1991,10 @@ public:
     KJ_REQUIRE(contains(outboundBody,
         "\"dropRestored\":{\"ok\":true,\"released\":false}"), outboundBody);
     KJ_REQUIRE(contains(outboundBody, "\"dropSaved\":{\"ok\":true}"), outboundBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
-    KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 3, sessionContextRef.restoreCount);
-    KJ_REQUIRE(sessionContextRef.tokenDropCount == 3, sessionContextRef.tokenDropCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 2, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 2, sessionContextRef.tokenDropCount);
 
     auto storageHelperRequest = session.getRequest();
     storageHelperRequest.setPath("/powerbox-storage-helper-self-test");
@@ -2112,10 +2066,10 @@ public:
         "\"afterDrop\":{\"ok\":true,\"storageKey\":\"powerbox-storage-helper-token\","
         "\"found\":false"),
         storageHelperBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 4, sessionContextRef.claimCount);
-    KJ_REQUIRE(sessionContextRef.saveCount == 4, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 6, sessionContextRef.restoreCount);
-    KJ_REQUIRE(sessionContextRef.tokenDropCount == 5, sessionContextRef.tokenDropCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 5, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
 
     auto exportRequest = session.getRequest();
     exportRequest.setPath("/export-web-session");
@@ -2139,88 +2093,6 @@ public:
     KJ_REQUIRE(contains(exportBody,
         "\"capability\":{\"ok\":true,\"type\":\"capability\",\"id\":\""),
         exportBody);
-
-    auto objectActionsRequest = session.getRequest();
-    objectActionsRequest.setPath("/object-capability-self-test?sessionActions=true");
-    objectActionsRequest.setIgnoreBody(false);
-    auto objectActionsContext = objectActionsRequest.initContext();
-    objectActionsContext.setResponseStream(kj::heap<IgnoreByteStream>());
-    objectActionsContext.initCookies(0);
-    objectActionsContext.initAccept(0);
-    objectActionsContext.initAcceptEncoding(0);
-    objectActionsContext.initAdditionalHeaders(0);
-
-    auto objectActionsResponse = objectActionsRequest.send().wait(io.waitScope);
-    auto objectActionsDebugBody = responseDebugBody(objectActionsResponse);
-    KJ_REQUIRE(objectActionsResponse.which() == WebSession::Response::CONTENT,
-        objectActionsDebugBody);
-    auto objectActionsContent = objectActionsResponse.getContent();
-    KJ_REQUIRE(objectActionsContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
-    KJ_REQUIRE(objectActionsContent.getBody().which() ==
-        WebSession::Response::Content::Body::BYTES);
-    auto objectActionsBody = kj::str(objectActionsContent.getBody().getBytes().asChars());
-    KJ_REQUIRE(contains(objectActionsBody, "\"ok\":true"), objectActionsBody);
-    KJ_REQUIRE(contains(objectActionsBody, "\"childClass\":true"), objectActionsBody);
-    KJ_REQUIRE(contains(objectActionsBody, "\"sessionActions\":{\"offer\":{\"ok\":true}"),
-        objectActionsBody);
-    KJ_REQUIRE(contains(objectActionsBody, "\"fulfill\":{\"ok\":true}"), objectActionsBody);
-    KJ_REQUIRE(contains(objectActionsBody, "\"tie\":{\"ok\":true,\"capabilityClass\":true"),
-        objectActionsBody);
-    KJ_REQUIRE(contains(objectActionsBody,
-        "\"dropTied\":{\"ok\":true,\"released\":false}"), objectActionsBody);
-    KJ_REQUIRE(contains(objectActionsBody,
-        "\"drop\":{\"ok\":true,\"released\":true}"), objectActionsBody);
-    KJ_REQUIRE(sessionContextRef.offerCount == 2, sessionContextRef.offerCount);
-    KJ_REQUIRE(sessionContextRef.fulfillCount == 2, sessionContextRef.fulfillCount);
-    KJ_REQUIRE(sessionContextRef.tieCount == 2, sessionContextRef.tieCount);
-
-    auto descriptorActionsRequest = session.getRequest();
-    descriptorActionsRequest.setPath(
-        "/object-capability-self-test?sessionActions=true&apiDescriptor=true");
-    descriptorActionsRequest.setIgnoreBody(false);
-    auto descriptorActionsContext = descriptorActionsRequest.initContext();
-    descriptorActionsContext.setResponseStream(kj::heap<IgnoreByteStream>());
-    descriptorActionsContext.initCookies(0);
-    descriptorActionsContext.initAccept(0);
-    descriptorActionsContext.initAcceptEncoding(0);
-    descriptorActionsContext.initAdditionalHeaders(0);
-
-    auto descriptorActionsResponse = descriptorActionsRequest.send().wait(io.waitScope);
-    auto descriptorActionsDebugBody = responseDebugBody(descriptorActionsResponse);
-    KJ_REQUIRE(descriptorActionsResponse.which() == WebSession::Response::CONTENT,
-        descriptorActionsDebugBody);
-    auto descriptorActionsContent = descriptorActionsResponse.getContent();
-    KJ_REQUIRE(descriptorActionsContent.getStatusCode() == WebSession::Response::SuccessCode::OK);
-    KJ_REQUIRE(sessionContextRef.offerCount == 3, sessionContextRef.offerCount);
-    KJ_REQUIRE(sessionContextRef.fulfillCount == 3, sessionContextRef.fulfillCount);
-    KJ_REQUIRE(sessionContextRef.tieCount == 3, sessionContextRef.tieCount);
-    KJ_REQUIRE(sessionContextRef.apiDescriptorCount == 2, sessionContextRef.apiDescriptorCount);
-
-    auto providerDescriptorActionsRequest = session.getRequest();
-    providerDescriptorActionsRequest.setPath(
-        "/object-capability-self-test?sessionActions=true&providerDescriptor=true");
-    providerDescriptorActionsRequest.setIgnoreBody(false);
-    auto providerDescriptorActionsContext = providerDescriptorActionsRequest.initContext();
-    providerDescriptorActionsContext.setResponseStream(kj::heap<IgnoreByteStream>());
-    providerDescriptorActionsContext.initCookies(0);
-    providerDescriptorActionsContext.initAccept(0);
-    providerDescriptorActionsContext.initAcceptEncoding(0);
-    providerDescriptorActionsContext.initAdditionalHeaders(0);
-
-    auto providerDescriptorActionsResponse =
-        providerDescriptorActionsRequest.send().wait(io.waitScope);
-    auto providerDescriptorActionsDebugBody =
-        responseDebugBody(providerDescriptorActionsResponse);
-    KJ_REQUIRE(providerDescriptorActionsResponse.which() == WebSession::Response::CONTENT,
-        providerDescriptorActionsDebugBody);
-    auto providerDescriptorActionsContent = providerDescriptorActionsResponse.getContent();
-    KJ_REQUIRE(providerDescriptorActionsContent.getStatusCode() ==
-        WebSession::Response::SuccessCode::OK);
-    KJ_REQUIRE(sessionContextRef.offerCount == 4, sessionContextRef.offerCount);
-    KJ_REQUIRE(sessionContextRef.fulfillCount == 4, sessionContextRef.fulfillCount);
-    KJ_REQUIRE(sessionContextRef.tieCount == 4, sessionContextRef.tieCount);
-    KJ_REQUIRE(sessionContextRef.providerDescriptorCount == 2,
-        sessionContextRef.providerDescriptorCount);
 
     auto fulfillmentHelperRequest = session.getRequest();
     fulfillmentHelperRequest.setPath("/powerbox-fulfillment-helper-self-test?fulfill=true");
@@ -2252,18 +2124,14 @@ public:
         "\"webFulfill\":{\"status\":200,\"body\":{\"ok\":true,"
         "\"fulfill\":{\"ok\":true},\"capability\":{\"ok\":true,\"type\":\"capability\""),
         fulfillmentHelperBody);
-    KJ_REQUIRE(contains(fulfillmentHelperBody,
-        "\"objectFulfill\":{\"status\":200,\"body\":{\"ok\":true,"
-        "\"fulfill\":{\"ok\":true},\"capability\":{\"ok\":true,\"type\":\"capability\""),
+    KJ_REQUIRE(contains(fulfillmentHelperBody, "\"objectFulfill\":null"),
         fulfillmentHelperBody);
-    KJ_REQUIRE(contains(fulfillmentHelperBody,
-        "\"durableFulfill\":{\"status\":200,\"body\":{\"ok\":true,"
-        "\"fulfill\":{\"ok\":true},\"capability\":{\"ok\":true,\"type\":\"capability\""),
+    KJ_REQUIRE(contains(fulfillmentHelperBody, "\"durableFulfill\":null"),
         fulfillmentHelperBody);
     KJ_REQUIRE(contains(fulfillmentHelperBody,
         "\"errorFulfill\":{\"status\":400,\"body\":{\"ok\":false"),
         fulfillmentHelperBody);
-    KJ_REQUIRE(sessionContextRef.fulfillCount == 7, sessionContextRef.fulfillCount);
+    KJ_REQUIRE(sessionContextRef.fulfillCount == 2, sessionContextRef.fulfillCount);
 
     auto offerSessionContext = kj::heap<FakeSessionContext>();
     auto& offerSessionContextRef = *offerSessionContext;
@@ -2355,10 +2223,10 @@ public:
     KJ_REQUIRE(contains(badClaimBody,
         "requiredPermissions must use names from this app's viewInfo.permissions"),
         badClaimBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 4, sessionContextRef.claimCount);
-    KJ_REQUIRE(sessionContextRef.saveCount == 4, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 12, sessionContextRef.restoreCount);
-    KJ_REQUIRE(sessionContextRef.tokenDropCount == 8, sessionContextRef.tokenDropCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 5, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
 
     auto standardClaimRequest = session.postRequest();
     standardClaimRequest.setPath("/__sandstorm/powerbox/claim");
@@ -2386,7 +2254,7 @@ public:
     KJ_REQUIRE(contains(standardClaimBody, "\"ok\":true"), standardClaimBody);
     KJ_REQUIRE(contains(standardClaimBody, "\"capability\":{\"ok\":true"), standardClaimBody);
     KJ_REQUIRE(contains(standardClaimBody, "\"type\":\"capability\""), standardClaimBody);
-    KJ_REQUIRE(sessionContextRef.claimCount == 5, sessionContextRef.claimCount);
+    KJ_REQUIRE(sessionContextRef.claimCount == 4, sessionContextRef.claimCount);
 
     supervisor.syncStorageRequest().send().wait(io.waitScope);
     KJ_REQUIRE(sessionContextRef.grainSizeReportCount == 1,
