@@ -34,7 +34,8 @@ const SPK_PATH = process.env.ISOLATE_TEST_SPK ||
 const WEBSESSION_CLIENT_BIN = process.env.ISOLATE_WEBSESSION_CLIENT ||
   path.join(REPO_DIR, "tmp/sandstorm/isolate-websession-client");
 const CAPNP_ES_COMPILER_MODULE = process.env.CAPNP_ES_COMPILER_MODULE ||
-  path.resolve(REPO_DIR, "../../personal/capnp-es/dist/compiler/index.mjs");
+  path.join(REPO_DIR,
+    "tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs");
 const STRACE_BIN = process.env.STRACE_BIN || "strace";
 const SYSCALL_TRACE_DIR = process.env.ISOLATE_SYSCALL_TRACE_DIR || "";
 const SYSCALL_TRACE_PROFILE = process.env.ISOLATE_SYSCALL_TRACE_PROFILE || "";

@@ -1196,6 +1196,14 @@ Progress:
   target has been cleaned up; the remaining JavaScript app-object RPC text now
   explicitly describes a private/local helper model rather than the public
   cross-grain protocol surface
+- `@mnutt/capnp-es` compiler resolution now defaults to a pinned npm package
+  under `deps/capnp-es-npm` instead of Matthew's adjacent personal checkout;
+  `CAPNP_ES_COMPILER_MODULE` remains an override for local runtime/compiler
+  development
+- the browser/workerd runtime subset is still checked in under
+  `src/sandstorm/isolate/capnp-es` because Ekam currently embeds those source
+  files into `capnp-es.js.h`; removing that snapshot requires a separate build
+  boundary change so Ekam can consume npm-installed runtime files directly
 
 ## Decisions
 

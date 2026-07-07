@@ -29,7 +29,16 @@ WORKERD_NPM_PACKAGE_DIR=deps/workerd-npm
 WORKERD_BIN=
 CAPNWEB_NPM_VERSION=0.8.0
 CAPNWEB_NPM_PACKAGE_DIR=deps/capnweb-npm
-CAPNP_ES_COMPILER_MODULE?=$(abspath ../../personal/capnp-es/dist/compiler/index.mjs)
+CAPNP_ES_NPM_VERSION=0.2.2
+CAPNP_ES_NPM_PACKAGE_DIR=deps/capnp-es-npm
+CAPNP_ES_NPM_COMPILER_MODULE=$(abspath tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs)
+CAPNP_ES_COMPILER_MODULE?=$(CAPNP_ES_NPM_COMPILER_MODULE)
+
+ifeq ($(CAPNP_ES_COMPILER_MODULE),$(CAPNP_ES_NPM_COMPILER_MODULE))
+CAPNP_ES_COMPILER_MODULE_DEPS=tmp/.capnp-es-npm
+else
+CAPNP_ES_COMPILER_MODULE_DEPS=
+endif
 
 # You generally should not modify this.
 # TODO(cleanup): -fPIC is unfortunate since most of our code is static binaries
@@ -338,6 +347,21 @@ src/sandstorm/isolate/capnweb.js: tmp/.capnweb-npm
 	cp tmp/capnweb-npm/node_modules/capnweb/dist/index.js $@
 
 # ====================================================================
+# fetch capnp-es
+
+tmp/.capnp-es-npm: $(CAPNP_ES_NPM_PACKAGE_DIR)/package.json \
+    $(wildcard $(CAPNP_ES_NPM_PACKAGE_DIR)/package-lock.json)
+	@$(call color,installing npm capnp-es)
+	rm -rf tmp/capnp-es-npm
+	@mkdir -p tmp/capnp-es-npm
+	cp $(CAPNP_ES_NPM_PACKAGE_DIR)/package.json tmp/capnp-es-npm/package.json
+	@if test -e $(CAPNP_ES_NPM_PACKAGE_DIR)/package-lock.json; then cp $(CAPNP_ES_NPM_PACKAGE_DIR)/package-lock.json tmp/capnp-es-npm/package-lock.json; fi
+	cd tmp/capnp-es-npm && if test -e package-lock.json; then PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm ci --no-fund; else PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund --no-save; fi
+	@test "$$(cd tmp/capnp-es-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./node_modules/@mnutt/capnp-es/package.json").version')" = "$(CAPNP_ES_NPM_VERSION)"
+	@test -e "$(CAPNP_ES_NPM_COMPILER_MODULE)"
+	@touch $@
+
+# ====================================================================
 # Ekam bootstrap and C++ binaries
 
 tmp/ekam-bin: tmp/.deps
@@ -522,7 +546,7 @@ test-app-dev: tmp/.ekam-run
 	@cp src/sandstorm/test-app/*.html tmp/sandstorm/test-app
 	spk dev -Isrc -Itmp -ptmp/sandstorm/test-app/test-app.capnp:pkgdef
 
-tests/assets/isolate-test-app.spk: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
+tests/assets/isolate-test-app.spk: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
 	@mkdir -p tests/assets
 	@mkdir -p tmp/sandstorm/isolate-test-app
 	@cp src/sandstorm/test-app/isolate-test-app.capnp tmp/sandstorm/isolate-test-app/isolate-test-app.capnp
@@ -539,7 +563,8 @@ isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capn
 	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
 	spk dev -Isrc -Itmp -ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef
 
-isolate-supervisor-integration-test: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+isolate-supervisor-integration-test: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+	CAPNP_ES_COMPILER_MODULE=$(CAPNP_ES_COMPILER_MODULE) \
 	$(NODEJS) tests/isolate-supervisor-integration.test.js
 
 isolate-supervisor-stress-test: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
