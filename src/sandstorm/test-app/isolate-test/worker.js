@@ -303,6 +303,48 @@ class BenchmarkGreeterCapability extends RpcTarget {
   }
 }
 
+async function runNativeGreeterConformance(client, {
+  helloName,
+  childPrefix,
+  pipelinedName,
+  resolvedName,
+  greetName,
+} = {}) {
+  const hello = await client.hello({
+    name: helloName || "conformance",
+  });
+  const pending = client.makeGreeter({
+    prefix: childPrefix || "conformance child",
+  });
+  const pipelinedHello = await pending.getGreeter().hello({
+    name: pipelinedName || "before parent resolves",
+  });
+  const resolved = await pending;
+  const resolvedHello = await resolved.greeter.hello({
+    name: resolvedName || "after parent resolves",
+  });
+  const greeted = await client.greetWith({
+    greeter: resolved.greeter,
+    name: greetName || "argument",
+  });
+
+  return {
+    hello: {
+      message: hello.message,
+    },
+    pipelined: {
+      message: pipelinedHello.message,
+    },
+    resolved: {
+      hasClient: typeof resolved.greeter?.hello === "function",
+      message: resolvedHello.message,
+    },
+    argument: {
+      message: greeted.message,
+    },
+  };
+}
+
 class CounterCapability extends RpcTarget {
   #value = 0;
   #retained = null;
@@ -4446,24 +4488,42 @@ export default {
         nativeExportGreeter,
         NativeGreeter,
         { connectionId: `native-capnp-export-greeter-${nativeExportGreeter.id}` });
-      const nativeExportGreeterHello = await nativeExportGreeterClient.hello({
-        name: "isolate schema",
-      });
-      const nativeExportGreeterPipeline = nativeExportGreeterClient.makeGreeter({
-        prefix: "native export pipelined greeter",
-      });
-      const nativeExportGreeterPipelinedHello =
-          await nativeExportGreeterPipeline.getGreeter().hello({
-            name: "before makeGreeter resolves",
-          });
-      const nativeExportGreeterResolved = await nativeExportGreeterPipeline;
+      const nativeExportGreeterDirect = new NativeGreeter.Server(
+        nativeExportGreeterTarget).client();
+      const nativeExportGreeterDirectConformance = await runNativeGreeterConformance(
+        nativeExportGreeterDirect, {
+          helloName: "direct schema",
+          childPrefix: "native export direct greeter",
+          pipelinedName: "before direct makeGreeter resolves",
+          resolvedName: "after direct makeGreeter resolves",
+          greetName: "direct client",
+        });
+      const nativeExportGreeterBridgeConformance = await runNativeGreeterConformance(
+        nativeExportGreeterClient, {
+          helloName: "isolate schema",
+          childPrefix: "native export pipelined greeter",
+          pipelinedName: "before makeGreeter resolves",
+          resolvedName: "after makeGreeter resolves",
+          greetName: "bridge client",
+        });
+      const nativeExportGreeterHello = {
+        message: nativeExportGreeterBridgeConformance.hello.message,
+      };
+      const nativeExportGreeterPipelinedHello = {
+        message: nativeExportGreeterBridgeConformance.pipelined.message,
+      };
       const nativeExportGreeterInfo = await nativeExportGreeter.info();
       const nativeExportGreeterDrop = await nativeExportGreeter.drop();
       nativeExportGreeterResult = {
         ok: true,
         message: nativeExportGreeterHello.message,
         pipelinedMessage: nativeExportGreeterPipelinedHello.message,
-        resolvedGreeter: typeof nativeExportGreeterResolved.greeter?.hello === "function",
+        resolvedGreeter: nativeExportGreeterBridgeConformance.resolved.hasClient,
+        argumentMessage: nativeExportGreeterBridgeConformance.argument.message,
+        conformance: {
+          direct: nativeExportGreeterDirectConformance,
+          bridge: nativeExportGreeterBridgeConformance,
+        },
         info: nativeExportGreeterInfo,
         drop: nativeExportGreeterDrop,
       };

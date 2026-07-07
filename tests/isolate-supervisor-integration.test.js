@@ -1418,6 +1418,49 @@ test("isolate supervisor integration suite", {
         pipelinedMessage:
             "native export pipelined greeter before makeGreeter resolves",
         resolvedGreeter: true,
+        argumentMessage:
+            "native export greeter called native export pipelined greeter " +
+            "bridge client from native export self-test",
+        conformance: {
+          direct: {
+            hello: {
+              message: "native export greeter hello direct schema",
+            },
+            pipelined: {
+              message:
+                  "native export direct greeter before direct makeGreeter resolves",
+            },
+            resolved: {
+              hasClient: true,
+              message:
+                  "native export direct greeter after direct makeGreeter resolves",
+            },
+            argument: {
+              message:
+                  "native export greeter called native export direct greeter " +
+                  "direct client from native export self-test",
+            },
+          },
+          bridge: {
+            hello: {
+              message: "native export greeter hello isolate schema",
+            },
+            pipelined: {
+              message:
+                  "native export pipelined greeter before makeGreeter resolves",
+            },
+            resolved: {
+              hasClient: true,
+              message:
+                  "native export pipelined greeter after makeGreeter resolves",
+            },
+            argument: {
+              message:
+                  "native export greeter called native export pipelined greeter " +
+                  "bridge client from native export self-test",
+            },
+          },
+        },
         info: {
           ok: true,
           type: "capabilityInfo",
