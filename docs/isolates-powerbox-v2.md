@@ -1213,6 +1213,9 @@ Progress:
   drop envelopes; POSTed native RPC envelopes are rejected with a WebSocket RPC
   session error, removing the stale fetch-shaped in-memory RPC fallback from
   the supervisor
+- the private native bridge schema and JS helpers no longer define the removed
+  RPC request envelope; WebSocket is now the only native Cap'n Proto RPC
+  transport surface, while `/capnp/call` carries lifecycle requests only
 
 ## Decisions
 

@@ -473,34 +473,6 @@ class NativeCapnpStreamFrameDecoder {
   }
 }
 
-export function makeNativeCapnpBridgeRpcRequest({
-  target,
-  message,
-  capabilities = [],
-  connectionId,
-} = {}) {
-  if (!target || typeof target !== "object" || typeof target.id !== "string") {
-    throw new NativeCapnpBridgeProtocolError(
-      "native bridge RPC request target must be a Sandstorm capability handle");
-  }
-  if (!message) {
-    throw new NativeCapnpBridgeProtocolError("native bridge RPC request requires a message");
-  }
-
-  const bridgePayload =
-      makeNativeCapnpPayload(nativeCapnpRootMessageBytes(message), capabilities);
-  const envelope = new CapnpEsMessage();
-  const request = envelope.initRoot(NativeCapnpBridgeRequest);
-  request.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
-
-  const rpc = request._initRpc();
-  writeNativeCapnpCapabilitySlot(rpc._initTarget(), normalizeNativeCapnpCapabilitySlot(target));
-  writeNativeCapnpPayload(rpc._initMessage(), bridgePayload);
-  rpc.connectionId = normalizeNativeCapnpBridgeConnectionId(connectionId);
-
-  return makeNativeCapnpPayload(envelope);
-}
-
 export function readNativeCapnpBridgeRequest(message) {
   const bytes = nativeCapnpMessageBytes(message);
   return new CapnpEsMessage(bytes, false).getRoot(NativeCapnpBridgeRequest);

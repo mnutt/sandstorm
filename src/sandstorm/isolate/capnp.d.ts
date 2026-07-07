@@ -109,23 +109,6 @@ declare module "sandstorm:capnp" {
     options?: NativeCapnpBridgeRestoreRequestOptions,
   ): NativeCapnpPayload;
 
-  export interface NativeCapnpBridgeRpcRequestOptions {
-    readonly target: NativeCapnpCapabilitySlot;
-    readonly message: { toUint8Array(): Uint8Array } | {
-      readonly segment?: {
-        readonly id?: number;
-        readonly message?: { toUint8Array(): Uint8Array };
-      };
-      readonly byteOffset?: number;
-    } | Uint8Array | ArrayBuffer | ArrayBufferView;
-    readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
-    readonly connectionId?: string;
-  }
-
-  export function makeNativeCapnpBridgeRpcRequest(
-    options?: NativeCapnpBridgeRpcRequestOptions,
-  ): NativeCapnpPayload;
-
   export function readNativeCapnpBridgeRequest(
     message: Uint8Array | ArrayBuffer | ArrayBufferView,
   ): unknown;
