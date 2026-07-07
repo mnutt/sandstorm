@@ -12,8 +12,8 @@ This example uses a native `capnp:` import:
 import { Greeter } from "capnp:./greeter.capnp";
 ```
 
-`spk dev-isolate` generates `@mnutt/capnp-es` classes from the schema. The
-worker uses those classes to:
+`spk dev-isolate` generates native `capnp:` schema modules backed by the
+bundled `capnp-es` runtime. The worker uses those generated classes to:
 
 - create a local test client with `new Greeter.Server(methods).client()`
 - export a Sandstorm capability with `exportNativeCapnp(api, Greeter, methods)`

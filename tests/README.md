@@ -47,8 +47,8 @@ The isolate Powerbox examples have a focused target:
 
 This builds the isolate example apps and runs `tests/apps/isolate-examples.js`
 against a local Sandstorm instance. The test file covers browser-mediated
-Powerbox selection, saved provider tokens, app-object RPC callbacks, durable
-callback tokens, and returned child/session capabilities.
+Powerbox selection, saved provider tokens, native `capnp:` browser helpers,
+durable capability tokens, and returned child/session capabilities.
 
 When running `tests/apps/isolate-examples.js` directly, set
 `ISOLATE_API_POWERBOX_TEST_SPK` or `ISOLATE_API_PROVIDER_TEST_SPK` to use
