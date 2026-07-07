@@ -2755,9 +2755,6 @@ private:
     if (moduleName == "@mnutt/capnp-es") {
       return kj::heapString("capnp-es/index.mjs");
     }
-    if (moduleName == "@mnutt/capnp/rpc.mjs") {
-      return kj::heapString("capnp-es/capnp/rpc.mjs");
-    }
 
     kj::StringPtr capnpEsPrefix = "@mnutt/capnp-es/";
     if (moduleName.startsWith(capnpEsPrefix)) {
@@ -2853,7 +2850,7 @@ private:
     isolate.initCompatibilityFlags(0);
 
     auto moduleList = isolate.initModules(
-        modules.size() + 3 + (4 * ISOLATE_CAPNP_ES_MODULE_COUNT));
+        modules.size() + 3 + (3 * ISOLATE_CAPNP_ES_MODULE_COUNT));
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2888,12 +2885,6 @@ private:
     auto nativeCapnpBridgeModule = moduleList[helperIndex++];
     nativeCapnpBridgeModule.setName("sandstorm:native-capnp-bridge");
     nativeCapnpBridgeModule.setEsModulePath("__sandstorm_isolate_runtime/native-capnp-bridge.js");
-    for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
-      auto module = moduleList[helperIndex++];
-      module.setName(runtimeModule.name);
-      module.setEsModulePath(kj::str(
-          "__sandstorm_isolate_runtime/", capnpEsRuntimePath(runtimeModule.name)));
-    }
     for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
       auto module = moduleList[helperIndex++];
       module.setName(capnpEsSchemeRuntimeSpecifier(runtimeModule.name));
@@ -4276,7 +4267,6 @@ private:
         "const expectedPath = sourcePath.replace(/\\.capnp$/, extension);\n"
         "function runtimeModuleSpecifier(moduleName) {\n"
         "  if (moduleName === '@mnutt/capnp-es') return '/capnp-es/index.mjs';\n"
-        "  if (moduleName === '@mnutt/capnp/rpc.mjs') return '/capnp-es/capnp/rpc.mjs';\n"
         "  if (moduleName.startsWith('@mnutt/capnp-es/')) {\n"
         "    const relative = moduleName.slice('@mnutt/capnp-es/'.length);\n"
         "    return '/capnp-es/' + relative + (relative.endsWith('.mjs') ? '' : '.mjs');\n"

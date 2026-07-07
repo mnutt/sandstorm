@@ -2,7 +2,6 @@
 # Format: <importable module name> <path under package dist/>
 @mnutt/capnp-es index.mjs
 @mnutt/capnp-es/capnp/persistent capnp/persistent.mjs
-@mnutt/capnp/rpc.mjs capnp/rpc.mjs
 @mnutt/capnp-es/capnp/rpc capnp/rpc.mjs
 @mnutt/capnp-es/capnp/rpc-twoparty capnp/rpc-twoparty.mjs
 @mnutt/capnp-es/capnp/schema capnp/schema.mjs
