@@ -681,6 +681,10 @@ declare module "sandstorm:api" {
     capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
     nativeCapnpBridgeCall(body?: BodyInit): Promise<NativeCapnpBridgeResponse>;
     nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<NativeCapnpBridgeByteResponse>;
+    nativeCapnpBridgeOpenRpcSession(
+      target: { id: string; interfaceId?: bigint | number | string; interfaceName?: string },
+      connectionId: string,
+    ): Promise<WebSocket>;
     nativeCapnpExport(registration: NativeCapnpExportRegistration): Promise<Capability>;
     storage(): StorageApiTarget;
     powerbox(): PowerboxApiTarget;
@@ -715,6 +719,7 @@ declare module "sandstorm:api" {
     maxProtocolVersion: 0;
     nativeTransport: boolean;
     nativeRpc: boolean;
+    nativeRpcWebSocket: boolean;
     nativeCalls: boolean;
     nativeExports: boolean;
     capabilitySlots: boolean;
@@ -770,6 +775,10 @@ declare module "sandstorm:api" {
     capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
     nativeCapnpBridgeCall(body?: BodyInit): Promise<NativeCapnpBridgeResponse>;
     nativeCapnpBridgeCallBytes(body?: BodyInit): Promise<NativeCapnpBridgeByteResponse>;
+    nativeCapnpBridgeOpenRpcSession(
+      target: { id: string; interfaceId?: bigint | number | string; interfaceName?: string },
+      connectionId: string,
+    ): Promise<WebSocket>;
     nativeCapnpExport(registration: NativeCapnpExportRegistration): Promise<Capability>;
     storage(): StorageApi;
     powerbox(): PowerboxApi;

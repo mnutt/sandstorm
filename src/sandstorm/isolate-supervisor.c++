@@ -4975,6 +4975,10 @@ public:
     });
     KJ_LOG(WARNING, "Isolate Sandstorm API binding received request.", methodName, path);
 
+    if (!powerboxOnly && methodName == "GET" && route == "/capnp/rpc-session") {
+      return openNativeCapnpBridgeRpcSession(path, headers, response);
+    }
+
     kj::Vector<FetchHeader> outboundHeaderValues;
     if (methodName == "POST" && route == "/powerbox/outbound-http-fetch") {
       headers.forEach([&](kj::StringPtr name, kj::StringPtr value) {
@@ -5211,15 +5215,140 @@ private:
 
     NativeCapnpBridgeRpcSession(
         NativeCapnpBridgeRpcMessage::Reader rpc, capnp::Capability::Client bootstrap)
-        : targetId(kj::heapString(rpc.getTarget().getId())),
-          targetInterfaceId(rpc.getTarget().getInterfaceId()),
-          targetInterfaceName(kj::heapString(rpc.getTarget().getInterfaceName())),
+        : NativeCapnpBridgeRpcSession(
+            kj::heapString(rpc.getTarget().getId()),
+            rpc.getTarget().getInterfaceId(),
+            kj::heapString(rpc.getTarget().getInterfaceName()),
+            kj::mv(bootstrap)) {}
+
+    NativeCapnpBridgeRpcSession(kj::String targetId, uint64_t targetInterfaceId,
+        kj::String targetInterfaceName, capnp::Capability::Client bootstrap)
+        : targetId(kj::mv(targetId)),
+          targetInterfaceId(targetInterfaceId),
+          targetInterfaceName(kj::mv(targetInterfaceName)),
           receivedMessageCount(1),
           network(stream, capnp::rpc::twoparty::Side::SERVER),
           rpcSystem(capnp::makeRpcServer(network, kj::mv(bootstrap))) {}
   };
 
   std::map<std::string, kj::Own<NativeCapnpBridgeRpcSession>> nativeCapnpBridgeRpcSessions;
+
+  class NativeCapnpBridgeWebSocketMessageStream final: public capnp::MessageStream {
+  public:
+    explicit NativeCapnpBridgeWebSocketMessageStream(kj::Own<kj::WebSocket> webSocket)
+        : webSocket(kj::mv(webSocket)) {}
+
+    kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> tryReadMessage(
+        kj::ArrayPtr<kj::AutoCloseFd> fdSpace,
+        capnp::ReaderOptions options = capnp::ReaderOptions(),
+        kj::ArrayPtr<capnp::word> scratchSpace = nullptr) override {
+      (void)fdSpace;
+      return webSocket->receive(kj::WebSocket::SUGGESTED_MAX_MESSAGE_SIZE)
+          .then([options, scratchSpace](kj::WebSocket::Message&& message) mutable
+              -> kj::Maybe<capnp::MessageReaderAndFds> {
+        KJ_SWITCH_ONEOF(message) {
+          KJ_CASE_ONEOF(text, kj::String) {
+            KJ_FAIL_REQUIRE("native Cap'n Proto bridge WebSocket received text frame", text);
+          }
+          KJ_CASE_ONEOF(bytes, kj::Array<byte>) {
+            kj::ArrayInputStream input(bytes);
+            auto reader = kj::heap<capnp::InputStreamMessageReader>(input, options, scratchSpace);
+            capnp::MessageReaderAndFds result { kj::mv(reader), nullptr };
+            return kj::Maybe<capnp::MessageReaderAndFds>(kj::mv(result));
+          }
+          KJ_CASE_ONEOF(close, kj::WebSocket::Close) {
+            (void)close;
+            return nullptr;
+          }
+        }
+        KJ_UNREACHABLE;
+      });
+    }
+
+    kj::Promise<void> writeMessage(kj::ArrayPtr<const int> fds,
+        kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) override {
+      if (fds.size() > 0) {
+        return KJ_EXCEPTION(UNIMPLEMENTED,
+            "native Cap'n Proto bridge WebSocket does not support file descriptors");
+      }
+
+      auto data = serializeMessageSegments(segments);
+      auto fork = writeQueue.then([this, data = kj::mv(data)]() mutable {
+        return webSocket->send(data.asPtr()).attach(kj::mv(data));
+      }).fork();
+      writeQueue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+    kj::Promise<void> writeMessages(
+        kj::ArrayPtr<kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>>> messages) override {
+      kj::Vector<kj::Array<byte>> serialized;
+      for (auto message: messages) {
+        serialized.add(serializeMessageSegments(message));
+      }
+      auto fork = writeQueue.then([this, serialized = serialized.releaseAsArray()]() mutable {
+        auto webSocketPtr = webSocket.get();
+        kj::Promise<void> result = kj::READY_NOW;
+        for (auto& message: serialized) {
+          result = result.then([webSocketPtr, data = kj::mv(message)]() mutable {
+            return webSocketPtr->send(data.asPtr()).attach(kj::mv(data));
+          });
+        }
+        return kj::mv(result).attach(kj::mv(serialized));
+      }).fork();
+      writeQueue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+    kj::Maybe<int> getSendBufferSize() override {
+      return nullptr;
+    }
+
+    kj::Promise<void> end() override {
+      auto fork = writeQueue.then([this]() {
+        return webSocket->close(1000, "native Cap'n Proto bridge RPC session ended");
+      }).fork();
+      writeQueue = fork.addBranch();
+      return fork.addBranch();
+    }
+
+  private:
+    kj::Own<kj::WebSocket> webSocket;
+    kj::Promise<void> writeQueue = kj::READY_NOW;
+
+    kj::Array<byte> serializeMessageSegments(
+        kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) {
+      kj::VectorOutputStream output;
+      capnp::writeMessage(output, segments);
+      auto data = output.getArray();
+      auto result = kj::heapArray<byte>(data.size());
+      memcpy(result.begin(), data.begin(), data.size());
+      return result;
+    }
+  };
+
+  struct NativeCapnpBridgeWebSocketRpcSession {
+    kj::String targetId;
+    uint64_t targetInterfaceId = 0;
+    kj::String targetInterfaceName;
+
+    NativeCapnpBridgeWebSocketMessageStream stream;
+    capnp::TwoPartyVatNetwork network;
+    capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
+
+    NativeCapnpBridgeWebSocketRpcSession(kj::Own<kj::WebSocket> webSocket,
+        kj::String targetId, uint64_t targetInterfaceId, kj::String targetInterfaceName,
+        capnp::Capability::Client bootstrap)
+        : targetId(kj::mv(targetId)),
+          targetInterfaceId(targetInterfaceId),
+          targetInterfaceName(kj::mv(targetInterfaceName)),
+          stream(kj::mv(webSocket)),
+          network(stream, capnp::rpc::twoparty::Side::SERVER),
+          rpcSystem(capnp::makeRpcServer(network, kj::mv(bootstrap))) {}
+  };
+
+  std::map<std::string, kj::Own<NativeCapnpBridgeWebSocketRpcSession>>
+      nativeCapnpBridgeWebSocketRpcSessions;
 
   class NativeCapnpExportEntropySource final: public kj::EntropySource {
   public:
@@ -5492,6 +5621,16 @@ private:
       }
     }
 
+    for (auto iter = nativeCapnpBridgeWebSocketRpcSessions.begin();
+         iter != nativeCapnpBridgeWebSocketRpcSessions.end();) {
+      if (iter->second->targetId == targetId) {
+        iter = nativeCapnpBridgeWebSocketRpcSessions.erase(iter);
+        ++dropped;
+      } else {
+        ++iter;
+      }
+    }
+
     return dropped;
   }
 
@@ -5523,6 +5662,88 @@ private:
 
     ++value.receivedMessageCount;
     return nullptr;
+  }
+
+  kj::Maybe<kj::String> readNativeCapnpRpcSessionParam(
+      kj::StringPtr url, kj::StringPtr name, kj::StringPtr errorMessage, kj::String& output) {
+    return readSingleNonEmptyQueryParam(url, name, errorMessage, output);
+  }
+
+  kj::Promise<void> openNativeCapnpBridgeRpcSession(
+      kj::StringPtr url, const kj::HttpHeaders& requestHeaders,
+      kj::HttpService::Response& response) {
+    if (!requestHeaders.isWebSocket()) {
+      return sendJson(response, 426, "Upgrade Required", kj::heapString(
+          "{\n  \"ok\": false,\n"
+          "  \"error\": \"native Cap'n Proto RPC sessions require WebSocket upgrade\"\n}\n"));
+    }
+
+    kj::String targetId;
+    kj::String interfaceIdText;
+    kj::String interfaceName;
+    kj::String connectionId;
+    KJ_IF_MAYBE(error, readNativeCapnpRpcSessionParam(
+        url, "id", "native Cap'n Proto RPC session target id is missing", targetId)) {
+      return sendJson(response, 400, "Bad Request", renderError(*error));
+    }
+    KJ_IF_MAYBE(error, readNativeCapnpRpcSessionParam(
+        url, "interfaceId", "native Cap'n Proto RPC session interface id is missing",
+        interfaceIdText)) {
+      return sendJson(response, 400, "Bad Request", renderError(*error));
+    }
+    auto interfaceNames = findIsolateQueryParams(url, "interfaceName");
+    if (interfaceNames.size() > 1) {
+      return sendJson(response, 400, "Bad Request", renderError(
+          "native Cap'n Proto RPC session interface name appears more than once"));
+    } else if (interfaceNames.size() == 1) {
+      interfaceName = kj::mv(interfaceNames[0]);
+    } else {
+      interfaceName = kj::heapString("");
+    }
+    KJ_IF_MAYBE(error, readNativeCapnpRpcSessionParam(
+        url, "connectionId", "native Cap'n Proto RPC session connection id is missing",
+        connectionId)) {
+      return sendJson(response, 400, "Bad Request", renderError(*error));
+    }
+
+    uint64_t interfaceId;
+    KJ_IF_MAYBE(parsed, parseNativeCapnpExportInterfaceId(interfaceIdText)) {
+      interfaceId = *parsed;
+    } else {
+      return sendJson(response, 400, "Bad Request", renderError(
+          "native Cap'n Proto RPC session interface id is invalid"));
+    }
+
+    auto key = nativeCapnpBridgeRpcSessionKey(connectionId);
+    if (nativeCapnpBridgeRpcSessions.find(key) != nativeCapnpBridgeRpcSessions.end() ||
+        nativeCapnpBridgeWebSocketRpcSessions.find(key) !=
+            nativeCapnpBridgeWebSocketRpcSessions.end()) {
+      return sendJson(response, 409, "Conflict", renderError(
+          "native Cap'n Proto RPC session connection id is already in use"));
+    }
+
+    KJ_IF_MAYBE(targetCap, host.sessions->findClaimedCapability(targetId)) {
+      kj::HttpHeaders responseHeaders(headerTable);
+      auto webSocket = response.acceptWebSocket(responseHeaders);
+      auto inserted = nativeCapnpBridgeWebSocketRpcSessions.emplace(std::move(key),
+          kj::heap<NativeCapnpBridgeWebSocketRpcSession>(
+            kj::mv(webSocket), kj::mv(targetId), interfaceId, kj::mv(interfaceName),
+            *targetCap));
+      KJ_ASSERT(inserted.second);
+
+      auto sessionKey = inserted.first->first;
+      auto& session = *inserted.first->second;
+      return session.network.onDisconnect()
+          .then([this, sessionKey]() mutable {
+        nativeCapnpBridgeWebSocketRpcSessions.erase(sessionKey);
+      }).catch_([this, sessionKey](kj::Exception&& exception) mutable {
+        nativeCapnpBridgeWebSocketRpcSessions.erase(sessionKey);
+        return kj::Promise<void>(kj::mv(exception));
+      });
+    } else {
+      return sendJson(response, 404, "Not Found", renderError(
+          "unknown native Cap'n Proto bridge target capability"));
+    }
   }
 
   kj::Maybe<kj::String> readSingleNonEmptyQueryParam(kj::StringPtr url, kj::StringPtr name,
@@ -5812,6 +6033,7 @@ private:
         "  \"maxProtocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
         "  \"nativeTransport\": true,\n"
         "  \"nativeRpc\": true,\n"
+        "  \"nativeRpcWebSocket\": true,\n"
         "  \"nativeCalls\": false,\n"
         "  \"nativeExports\": true,\n"
         "  \"capabilitySlots\": false,\n"
