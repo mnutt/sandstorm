@@ -2335,7 +2335,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimed"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimedStats"));
     assert.ok(capabilities.json.capabilities.includes("capnp.bridgeInfo"));
-    assert.ok(capabilities.json.capabilities.includes("capnp.call"));
+    assert.ok(capabilities.json.capabilities.includes("capnp.lifecycle"));
 
     const capnpBridgeInfo = await requestJson(fixture.sandstormApiSocket, "/capnp/bridge-info");
     assert.equal(capnpBridgeInfo.statusCode, 200, capnpBridgeInfo.body);
