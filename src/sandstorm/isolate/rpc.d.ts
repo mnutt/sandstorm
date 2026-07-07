@@ -26,6 +26,8 @@ declare module "sandstorm:rpc" {
     query?: string[] | null,
     options?: {
       saveLabel?: { defaultText: string };
+      targetOrigin?: string;
+      expectedOrigin?: string;
     },
   ): Promise<{ token: string; descriptor?: string }>;
   export function claimPowerboxToken(
@@ -46,6 +48,8 @@ declare module "sandstorm:rpc" {
     query?: string[] | null,
     options?: {
       saveLabel?: { defaultText: string };
+      targetOrigin?: string;
+      expectedOrigin?: string;
       claimUrl?: string;
       requiredPermissions?: string[];
       apiSession?: unknown;

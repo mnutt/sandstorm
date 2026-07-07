@@ -4151,6 +4151,9 @@ export function requestPowerbox(query, options = {}) {
     ? globalThis.crypto.randomUUID()
     : "sandstorm-powerbox-" + Date.now().toString(36) + "-" +
       Math.random().toString(36).slice(2);
+  const targetOrigin = options.targetOrigin || "*";
+  const expectedOrigin = options.expectedOrigin || (
+    targetOrigin === "*" ? undefined : targetOrigin);
 
   return new Promise((resolve, reject) => {
     function cleanup() {
@@ -4159,6 +4162,7 @@ export function requestPowerbox(query, options = {}) {
 
     function onMessage(event) {
       if (event.source !== browserWindow.parent) return;
+      if (expectedOrigin !== undefined && event.origin !== expectedOrigin) return;
       const data = event.data || {};
       if (data.rpcId !== rpcId) return;
 
@@ -4182,7 +4186,7 @@ export function requestPowerbox(query, options = {}) {
       powerboxRequest.saveLabel = options.saveLabel;
     }
 
-    browserWindow.parent.postMessage({ powerboxRequest }, options.targetOrigin || "*");
+    browserWindow.parent.postMessage({ powerboxRequest }, targetOrigin);
   });
 }
 
