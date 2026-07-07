@@ -793,8 +793,7 @@ Progress:
   plus connection metadata attached
 - the bundled `@mnutt/capnp-es` runtime has been refreshed to the local runtime
   shape used by the compiler hook, including standard generated schema modules
-  such as `@mnutt/capnp-es/capnp/stream` while preserving the older
-  `@mnutt/capnp/rpc.mjs` alias used by existing tests
+  such as `@mnutt/capnp-es/capnp/stream`
 - raw `capnp:` generated modules now rewrite generated schema imports to
   stable workerd module specifiers, follow relative app schemas, skip bundled
   `/capnp/*` runtime schemas, and generate Sandstorm-owned `/sandstorm/*`
@@ -1229,6 +1228,13 @@ Progress:
 - the isolate integration test app no longer serves browser RPC, native app
   RPC codec/route, app-object callback, or object-capability self-test
   endpoints; the browser Powerbox fixture now uses the native client helper
+- the obsolete `@mnutt/capnp/rpc.mjs` runtime alias has been removed from
+  Sandstorm's embedded `capnp-es` module table; isolate code should use
+  path-style `capnp-es/...` modules or generated `capnp:/capnp-es/...` imports
+- isolate runtime modules are no longer registered under scoped `@mnutt/...`
+  names inside workerd; Sandstorm helper code uses the path-style
+  `capnp-es/...` modules and generated schema modules use canonical
+  `capnp:/capnp-es/...` imports
 
 ## Decisions
 

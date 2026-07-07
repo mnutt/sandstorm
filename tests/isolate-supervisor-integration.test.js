@@ -48,7 +48,6 @@ const CAPNP_ES_RUNTIME_MODULES = [
     "@mnutt/capnp-es/capnp/persistent",
     "__sandstorm_isolate_runtime/capnp-es/capnp/persistent.mjs",
   ],
-  ["@mnutt/capnp/rpc.mjs", "__sandstorm_isolate_runtime/capnp-es/capnp/rpc.mjs"],
   [
     "@mnutt/capnp-es/capnp/rpc",
     "__sandstorm_isolate_runtime/capnp-es/capnp/rpc.mjs",
@@ -625,8 +624,8 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
   assert.equal(modules.has("capnp:/capnweb.js"), false);
   assert.equal(modules.has("capnp:/sandstorm/capnp.js"), false);
   assert.equal(modules.has("capnp:/sandstorm/native-capnp-bridge.js"), false);
-  for (const [name, esModulePath] of CAPNP_ES_RUNTIME_MODULES) {
-    assert.equal(modules.get(name).esModulePath, esModulePath);
+  for (const [name] of CAPNP_ES_RUNTIME_MODULES) {
+    assert.equal(modules.has(name), false);
   }
   for (const [name, esModulePath] of CAPNP_ES_SCHEME_RUNTIME_MODULES) {
     assert.equal(modules.get(name).esModulePath, esModulePath);
@@ -1142,7 +1141,6 @@ test("isolate supervisor integration suite", {
         ["sandstorm:api", "esModule"],
         ["sandstorm:capnp", "esModule"],
         ["sandstorm:native-capnp-bridge", "esModule"],
-        ...CAPNP_ES_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
         ...CAPNP_ES_SCHEME_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
         ...CAPNP_ES_PATH_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
         ...CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
@@ -2309,7 +2307,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.json.mainModule, "worker.js");
     assert.equal(
       runtime.json.moduleCount,
-      7 + CAPNP_ES_GENERATED_SCHEMA_MODULES.length + CAPNP_ES_RUNTIME_MODULES.length +
+      7 + CAPNP_ES_GENERATED_SCHEMA_MODULES.length +
           CAPNP_ES_SCHEME_RUNTIME_MODULES.length + CAPNP_ES_PATH_RUNTIME_MODULES.length +
           CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.length);
     assert.equal(runtime.json.bindingCount, 6);
@@ -2418,7 +2416,6 @@ test("isolate supervisor integration suite", {
         ["sandstorm:api", "esModule", false],
         ["sandstorm:capnp", "esModule", false],
         ["sandstorm:native-capnp-bridge", "esModule", false],
-        ...CAPNP_ES_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
         ...CAPNP_ES_SCHEME_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
         ...CAPNP_ES_PATH_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
         ...CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),

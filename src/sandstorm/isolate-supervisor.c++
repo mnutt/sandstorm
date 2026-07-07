@@ -883,9 +883,6 @@ kj::String capnpEsRuntimePath(kj::StringPtr moduleName) {
   if (moduleName == "@mnutt/capnp-es") {
     return kj::heapString("capnp-es/index.mjs");
   }
-  if (moduleName == "@mnutt/capnp/rpc.mjs") {
-    return kj::heapString("capnp-es/capnp/rpc.mjs");
-  }
 
   kj::StringPtr capnpEsPrefix = "@mnutt/capnp-es/";
   if (moduleName.startsWith(capnpEsPrefix)) {
@@ -921,10 +918,6 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
       ISOLATE_CAPNP_HELPER_SOURCE);
   addGeneratedIsolateModule(config, "sandstorm:native-capnp-bridge",
       IsolateRuntimeConfig::ModuleType::ES_MODULE, ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE);
-  for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
-    addGeneratedIsolateModule(
-        config, module.name, IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);
-  }
   for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
     addGeneratedIsolateModule(config, capnpEsSchemeRuntimeSpecifier(module.name),
         IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);

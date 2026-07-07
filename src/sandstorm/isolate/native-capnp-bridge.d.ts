@@ -1,4 +1,4 @@
-import * as $ from "@mnutt/capnp-es";
+import * as $ from "capnp-es/index.mjs";
 export declare const _capnpFileId = 14104530756441332801n;
 export declare const NativeCapnpBridgeRequest_Which: {
     readonly DROP: 0;
