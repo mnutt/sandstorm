@@ -1569,7 +1569,7 @@ test("isolate supervisor integration suite", {
     });
     assert.match(
       body.sandstormApi.nativeCapnpBridge.generatedClient.drop.generatedCallAfterDropError,
-      /NativeCapnpBridgeUnavailableError: unknown native Cap'n Proto bridge target capability/);
+      /isolate bridge claimed capability ID not found/);
     assert.deepEqual(body.capnpEs.payload, {
       bytes: body.capnpEs.messageBytes,
       capabilities: [
@@ -1835,7 +1835,8 @@ test("isolate supervisor integration suite", {
         hasBootstrapClient: true,
         targetId: body.sandstormApi.nativeCapnpBridge.targetId,
         connectionId:
-            `native-capnp-fixture-connect-${body.sandstormApi.nativeCapnpBridge.targetId}`,
+            `native-capnp-fixture-connect-${
+              body.sandstormApi.nativeCapnpBridge.targetId}-bootstrap`,
         hasDrop: true,
         hasSave: true,
       },
@@ -1848,7 +1849,8 @@ test("isolate supervisor integration suite", {
         dropError: "",
         targetId: body.sandstormApi.nativeCapnpBridge.targetId,
         connectionId:
-            `native-capnp-fixture-generated-${body.sandstormApi.nativeCapnpBridge.targetId}`,
+            `native-capnp-fixture-generated-${
+              body.sandstormApi.nativeCapnpBridge.targetId}-bootstrap`,
         response: {
           responseWhich: 1,
           content: true,
@@ -1871,7 +1873,7 @@ test("isolate supervisor integration suite", {
           targetId: body.sandstormApi.nativeCapnpBridge.generatedClient.drop.targetId,
           connectionId:
               `native-capnp-fixture-drop-${
-                body.sandstormApi.nativeCapnpBridge.generatedClient.drop.targetId}`,
+                body.sandstormApi.nativeCapnpBridge.generatedClient.drop.targetId}-bootstrap`,
           dropResult: {
             ok: true,
             released: true,

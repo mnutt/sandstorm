@@ -729,6 +729,59 @@ export function createNativeCapnpBridgeConnection(api, target, options = {}) {
   return Object.assign(conn, { transport });
 }
 
+function createNativeCapnpBootstrapClaimedClient(api, target, InterfaceClass, options = {}) {
+  if (typeof api?.nativeCapnpBridgeOpenBootstrapSession !== "function" ||
+      !target || typeof target.id !== "string" || target.id.length === 0) {
+    return null;
+  }
+
+  const connectionId = options.connectionId === undefined
+    ? undefined
+    : `${normalizeNativeCapnpBridgeConnectionId(options.connectionId)}-bootstrap`;
+  const bridge = connectIsolateBridge(api, {
+    connectionId,
+    finalize: options.finalize,
+  });
+
+  try {
+    const claimed = bridge.getClaimedCapability({ id: target.id });
+    const cap = typeof claimed?.getCap === "function"
+      ? claimed.getCap()
+      : claimed?.pipeline?.getPipeline(CapnpEsInterface, 0).client();
+    if (!cap) {
+      bridge.close();
+      return null;
+    }
+
+    const client = new InterfaceClass.Client(
+      nativeCapnpClientReference(cap, "claimed capability pipeline"));
+    if (!client || typeof client !== "object") {
+      throw new NativeCapnpBridgeProtocolError(
+        "capnp-es generated interface did not produce a client object");
+    }
+
+    return Object.assign(client, {
+      capability: target,
+      connection: bridge.connection,
+      transport: bridge.transport,
+      drop: async (...args) => {
+        bridge.close();
+        return typeof target.drop === "function" ? await target.drop(...args) : undefined;
+      },
+      save: (...args) => {
+        if (typeof target.save !== "function") {
+          throw new NativeCapnpBridgeProtocolError(
+            "connectNativeCapnp().save() requires a Sandstorm capability handle with save()");
+        }
+        return target.save(...args);
+      },
+    });
+  } catch (error) {
+    bridge.close(error);
+    throw error;
+  }
+}
+
 export class IsolateBridgeWebSocketRpcTransport extends CapnpEsDeferredTransport {
   #webSocket = null;
   #openPromise = null;
@@ -1038,6 +1091,12 @@ export async function restoreNativeCapnpViaBootstrap(api, token, InterfaceClass,
 export function connectNativeCapnp(api, target, InterfaceClass, options = {}) {
   if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
     throw new TypeError("connectNativeCapnp() requires a capnp-es generated interface class");
+  }
+
+  const bootstrapClient = createNativeCapnpBootstrapClaimedClient(
+    api, target, InterfaceClass, options);
+  if (bootstrapClient) {
+    return bootstrapClient;
   }
 
   const connection = createNativeCapnpBridgeConnection(api, target, options);
