@@ -3,6 +3,7 @@ import { exportNativeCapnp } from "sandstorm:capnp";
 import { BrowserCounter } from "capnp:./browser-counter.capnp";
 
 let value = 0;
+let exportedCounter = null;
 
 const counterMethods = {
   async read() {
@@ -21,18 +22,12 @@ const counterMethods = {
 };
 
 async function exportCounter(api) {
-  return await exportNativeCapnp(api, BrowserCounter, counterMethods, {
-    interfaceName: "BrowserCounter",
-  });
-}
-
-async function callCounter(method, params = {}) {
-  const counter = new BrowserCounter.Server(counterMethods).client();
-  try {
-    return await counter[method](params);
-  } finally {
-    await counter.drop?.();
+  if (!exportedCounter) {
+    exportedCounter = await exportNativeCapnp(api, BrowserCounter, counterMethods, {
+      interfaceName: "BrowserCounter",
+    });
   }
+  return exportedCounter;
 }
 
 function renderPage() {
@@ -114,18 +109,22 @@ function renderPage() {
     </main>
 
     <script type="module">
+      import { BrowserCounter } from "/__sandstorm/capnp/browser-counter.capnp.js";
+      import { connectBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
+
       const valueOutput = document.querySelector("#value");
       const amountInput = document.querySelector("#amount");
       const incrementButton = document.querySelector("#increment");
       const resetButton = document.querySelector("#reset");
       const log = document.querySelector("#log");
+      let counter = null;
 
       function show(result, operation) {
         valueOutput.value = String(result.value);
         log.textContent = JSON.stringify({
           operation,
           value: result.value,
-          transport: "server-native-capnp",
+          transport: "browser-native-capnp",
         }, null, 2);
       }
 
@@ -148,19 +147,22 @@ function renderPage() {
       }
 
       async function requestCounter(operation, params = {}) {
-        const response = await fetch("/counter/" + operation, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(params),
-        });
-        const result = await response.json();
-        if (!response.ok || !result.ok) {
-          throw new Error(result.error || "counter request failed");
+        if (!counter || typeof counter[operation] !== "function") {
+          throw new Error("counter capability is not connected");
         }
-        return result.value;
+        return await counter[operation](params);
       }
 
       async function connect() {
+        const response = await fetch("/counter-capability", { method: "POST" });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error(result.error || "counter capability request failed");
+        }
+
+        counter = connectBrowserNativeCapnp(result.capability, BrowserCounter, {
+          connectionId: "browser-counter-" + result.capability.id,
+        });
         show(await requestCounter("read"), "read");
         incrementButton.disabled = false;
         resetButton.disabled = false;
@@ -189,24 +191,11 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === "/counter-capability" && request.method === "POST") {
-      const capability = await exportCounter(api);
+      const counter = await exportCounter(api);
       return Response.json({
         ok: true,
-        capability,
-        info: await capability.info(),
-      });
-    }
-
-    if (url.pathname.startsWith("/counter/") && request.method === "POST") {
-      const operation = url.pathname.slice("/counter/".length);
-      const params = await request.json().catch(() => ({}));
-      if (!["read", "increment", "reset"].includes(operation)) {
-        return Response.json({ ok: false, error: "unknown counter operation" }, { status: 404 });
-      }
-
-      return Response.json({
-        ok: true,
-        value: await callCounter(operation, params),
+        capability: counter.capability,
+        info: await counter.info(),
       });
     }
 

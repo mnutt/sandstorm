@@ -18,8 +18,8 @@ Use `examples/isolate-capnp-rpc`, `examples/isolate-file-store-rpc`, and
 `examples/isolate-object-store` when starting a typed public capability. Use
 `examples/isolate-app-skeleton`, `examples/isolate-counter`, and
 `examples/isolate-streaming` for HTTP-shaped app routes. Use
-`examples/isolate-browser-capnp` for a browser UI backed by server-side native
-Cap'n Proto calls.
+`examples/isolate-browser-capnp` for a browser UI that calls an id-backed
+native Cap'n Proto capability directly.
 Use `examples/isolate-capability-provider`, `examples/isolate-api-powerbox`,
 and `examples/isolate-browser-powerbox` for WebSession/ApiSession lifecycle
 and Powerbox flows.
