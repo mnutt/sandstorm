@@ -122,21 +122,37 @@ channel and delegates save/drop to capability methods when present. The
 integration suite asserts that lifecycle is no longer advertised, old
 lifecycle calls are rejected, and the removed browser schema module is absent.
 
+**Progress, 2026-07-08:** `exportNativeCapnp()` no longer registers a
+supervisor export ID or opens a per-export callback session. It now returns a
+local capnp-es server client; `.save()` passes that client over the isolate
+bridge to `SandstormApi.save()`, which persists app-defined exports through
+the classic `AppPersistent.save()` / `MainView.restore/drop()` app-ref model.
+The `/capabilities/native-capnp-export` route,
+`SupervisorObjectId.nativeCapnpExport`, and JS export-session routes are gone.
+Integration tests cover direct local calls, save/restore through app refs,
+re-save, bootstrap restore, explicit drop, and C++ interop for the saved
+export.
+
 **Delete** (all anchors per the architecture review):
 
 - Done: the lifecycle envelope: `POST /capnp/lifecycle` and the
   `NativeCapnpBridgeRequest/Response/Drop/Save/Restore/Saved` structs.
+- Done: the native export registration and persistence family:
+  `/capabilities/native-capnp-export`,
+  `SupervisorObjectId.nativeCapnpExport`, and the JS
+  `/__sandstorm/native-capnp/export-sessions/...` callback routes.
 - The authority-bearing POST routes on `SandstormApiBindingService`
   (`/powerbox/claim-request`, `/powerbox/save`, `/powerbox/restore`,
   `/powerbox/dup`, `/powerbox/drop`, `/powerbox/drop-saved`,
   `/powerbox/offer`, `/powerbox/fulfill-request`, `/powerbox/tie-to-user`,
-  `/powerbox/fetch`, `/powerbox/outbound-http-fetch`,
-  `/capabilities/native-capnp-export`).
+  `/powerbox/fetch`, `/powerbox/outbound-http-fetch`).
   Read-only GET metadata routes stay.
 - `IsolateSessionRegistry`'s string-ID claimed-capability table, drop groups,
   and drop-notify machinery (the RPC release protocol replaces them).
-- Per-export HTTP-transport RPC sessions (`NativeCapnpExportRpcSession`,
-  `NativeCapnpExportHttpMessageStream`, per-export session paths).
+- Per-export HTTP-transport RPC sessions. The native-export registration
+  endpoint and JS export-session paths are gone; remaining
+  `NativeCapnpExport*` C++ names are the worker `MainView` RPC socket plumbing
+  and should be renamed as that code is simplified.
 **Keep as HTTP:** inbound WebSession→sidecar fetch (workerd's native
 ingress), `STORAGE` binding, read-only metadata GETs.
 

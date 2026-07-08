@@ -18,11 +18,12 @@ const opened = await store.openFile({ path: "docs/intro.txt" });
 const bytes = await opened.file.read();
 ```
 
-The app exposes the same capability in two Sandstorm ways:
+The app exposes the local capability metadata for inspection:
 
-- `POST /offer-file-store` offers a `FileStore` capability to the current user.
-- `/powerbox/file-store` serves a fulfillment page for incoming Powerbox
-  requests.
+- `GET /self-test` exercises the generated `FileStore` and returned `File`
+  clients locally.
+- `POST /export-file-store` exports a local `FileStore` capnp-es client and
+  returns its metadata plus the generated Powerbox descriptor.
 
 The public protocol is in `file-store.capnp`; the isolate code imports it with:
 
@@ -39,11 +40,14 @@ spk powerbox-descriptor --format capnp capnp:./file-store.capnp#FileStore
 # (tags = [(id = 0x9e13c3025dcd3d36)])
 ```
 
-and put that descriptor in `ViewInfo.matchRequests`.
+and put that descriptor in `ViewInfo.matchRequests`. Native Powerbox
+fulfillment for local capnp-es exports is intentionally not shown here while the
+isolate native bridge is being collapsed onto the single capnp RPC channel.
 
 This example keeps directory listing and small file reads in typed RPC. For
 large file contents, prefer the object-store pattern in
 `examples/isolate-object-store`, where Cap'n Proto RPC selects the object and a
 returned `WebSession` capability carries the byte stream. The same `FileStore`
 schema can be imported by isolate code, browser code served by Sandstorm's
-native client helper, or legacy Cap'n Proto grains.
+native client helper, or legacy Cap'n Proto grains once the holder has received
+the capability through Sandstorm's normal capability flow.

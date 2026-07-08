@@ -196,7 +196,13 @@ export default {
       const capability = await exportNativeCapnp(api, Greeter, greeterTarget, {
         interfaceName: "Greeter",
       });
-      return Response.json({ capability });
+      return Response.json({
+        ok: true,
+        info: await capability.info(),
+        // JSON contains metadata only. The capability itself must be passed
+        // over Cap'n Proto RPC or saved through Sandstorm.
+        capability,
+      });
     }
 
     if (url.pathname === "/call-saved-greeter") {
@@ -215,8 +221,16 @@ export default {
 ```
 
 The native bridge still uses Sandstorm capability handles as the authority
-source. An isolate can connect to or restore only capabilities it already
-holds through Powerbox, durable restore, or an explicit export result; it does
+source. `exportNativeCapnp()` returns a generated `capnp-es` client backed by
+the isolate's local server object. JSON serialization of that client is only
+inspection metadata, not authority. To hand the capability to another caller,
+pass it through Cap'n Proto RPC, fulfill a Sandstorm Powerbox request with it,
+or save a durable token with `.save()` when the schema implements
+`Grain.AppPersistent` and the app can restore the returned object ID through
+`MainView.restore()`.
+
+An isolate can connect to or restore only capabilities it already holds
+through Powerbox, durable restore, or Cap'n Proto capability passing. It does
 not get access to a raw Cap'n Proto vat network.
 
 Low-level helpers such as `NativeCapnpBridgeWebSocketRpcTransport` and

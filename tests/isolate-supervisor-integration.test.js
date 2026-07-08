@@ -1571,7 +1571,7 @@ test("isolate supervisor integration suite", {
       capabilities: [
         {
           id: body.sandstormApi.nativeCapnpBridge.targetId,
-          interfaceId: "a8e9655582dcde6f",
+          interfaceId: "a50711a14d35a8ce",
           interfaceName: "sandstorm.WebSession",
           kind: "receiverHosted",
         },
@@ -1636,55 +1636,19 @@ test("isolate supervisor integration suite", {
         echoBootstrap: true,
         echoQuestionId: 77,
       },
-      capability: {
-        ok: true,
-        idType: "string",
-        info: {
-          ok: true,
-          type: "capabilityInfo",
-          id: body.sandstormApi.nativeCapnpExport.capability.info.id,
-          kind: "nativeCapnpExport",
-          residence: "localExport",
-          nativeInterface: "unknown",
-          pathPrefix: "",
-          persistent: true,
-          hasDropNotify: false,
-          dropNotifyRefCount: 0,
-          supportsWebFetch: true,
-          supportsOutboundHttpFetch: true,
-          hasNativeCapability: true,
-          liveForwardable: true,
-        },
-        drop: {
-          ok: true,
-          released: false,
-        },
-      },
       webSession: {
         ok: true,
         status: 200,
         contentType: "text/plain; charset=utf-8",
-        text: "native export websession get native-export-websession?from=fetch",
+        text: "native export websession get native-export-websession?from=rpc",
         info: {
           ok: true,
-          type: "capabilityInfo",
-          id: body.sandstormApi.nativeCapnpExport.webSession.info.id,
-          kind: "nativeCapnpExport",
-          residence: "localExport",
-          nativeInterface: "unknown",
-          pathPrefix: "",
-          persistent: true,
-          hasDropNotify: false,
-          dropNotifyRefCount: 0,
-          supportsWebFetch: true,
-          supportsOutboundHttpFetch: true,
-          hasNativeCapability: true,
-          liveForwardable: true,
+          type: "nativeCapnpCapability",
+          kind: "localExport",
+          interfaceId: "0xa50711a14d35a8ce",
+          interfaceName: "sandstorm.WebSession",
         },
-        drop: {
-          ok: true,
-          released: false,
-        },
+        drop: null,
       },
       greeter: {
         ok: true,
@@ -1736,7 +1700,7 @@ test("isolate supervisor integration suite", {
           },
           restored: {
             hello: {
-              message: "native export greeter hello restored schema",
+              message: "classic native greeter native-export-greeter hello restored schema",
             },
             pipelined: {
               message:
@@ -1749,13 +1713,15 @@ test("isolate supervisor integration suite", {
             },
             argument: {
               message:
-                  "native export greeter called native export restored greeter " +
-                  "restored client from native export self-test",
+                  "classic native greeter native-export-greeter called " +
+                  "native export restored greeter restored client from " +
+                  "classic native greeter native-export-greeter",
             },
           },
           bootstrapRestored: {
             hello: {
-              message: "native export greeter hello bootstrap restored schema",
+              message:
+                  "classic native greeter native-export-greeter hello bootstrap restored schema",
             },
             pipelined: {
               message:
@@ -1770,8 +1736,9 @@ test("isolate supervisor integration suite", {
             },
             argument: {
               message:
-                  "native export greeter called native export bootstrap restored greeter " +
-                  "bootstrap restored client from native export self-test",
+                  "classic native greeter native-export-greeter called " +
+                  "native export bootstrap restored greeter bootstrap restored client from " +
+                  "classic native greeter native-export-greeter",
             },
           },
         },
@@ -1780,20 +1747,16 @@ test("isolate supervisor integration suite", {
           kind: "rpcImport",
           interfaceId: "b66316217ceedb1b",
           interfaceName: "NativeGreeter",
-          connectionId:
-              `native-capnp-export-greeter-restored-${
-                body.sandstormApi.nativeCapnpExport.greeter.info.id}`,
-          bridgeTransportKind: "webSocketRpc",
+          connectionId: "native-capnp-export-greeter-restored",
           transportKind: "isolateBridgeWebSocketRpc",
           connectionIsNull: false,
+          dropResult: null,
         },
         bootstrapRestored: {
           savedTokenType: "string",
           savedTokenLength:
               body.sandstormApi.nativeCapnpExport.greeter.bootstrapRestored.savedTokenLength,
-          connectionId:
-              `native-capnp-export-greeter-bootstrap-${
-                body.sandstormApi.nativeCapnpExport.greeter.info.id}`,
+          connectionId: "native-capnp-export-greeter-bootstrap",
           transportKind: "isolateBridgeWebSocketRpc",
           capabilityKind: "rpcImport",
           interfaceId: "b66316217ceedb1b",
@@ -1803,24 +1766,12 @@ test("isolate supervisor integration suite", {
         },
         info: {
           ok: true,
-          type: "capabilityInfo",
-          id: body.sandstormApi.nativeCapnpExport.greeter.info.id,
-          kind: "nativeCapnpExport",
-          residence: "localExport",
-          nativeInterface: "unknown",
-          pathPrefix: "",
-          persistent: true,
-          hasDropNotify: false,
-          dropNotifyRefCount: 0,
-          supportsWebFetch: true,
-          supportsOutboundHttpFetch: true,
-          hasNativeCapability: true,
-          liveForwardable: true,
+          type: "nativeCapnpCapability",
+          kind: "localExport",
+          interfaceId: "0xb66316217ceedb1b",
+          interfaceName: "NativeGreeter",
         },
-        drop: {
-          ok: true,
-          released: false,
-        },
+        drop: null,
       },
       classicGreeter: {
         ok: true,
@@ -1860,13 +1811,6 @@ test("isolate supervisor integration suite", {
           connectionIsNull: false,
         },
         drop: null,
-      },
-      unknownRoute: {
-        status: 404,
-        body: {
-          ok: false,
-          error: "unknown native Cap'n Proto export target",
-        },
       },
     });
     assert.deepEqual(body.sandstormApi.nativeCapnpBridge, {
@@ -2647,6 +2591,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("permissions"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.webSession"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.apiSession"));
+    assert.ok(!capabilities.json.capabilities.includes("capabilities.nativeCapnpExport"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimed"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimedStats"));
     assert.ok(capabilities.json.capabilities.includes("capnp.bridgeInfo"));
@@ -2833,7 +2778,7 @@ test("isolate supervisor integration suite", {
       assert.equal(browserWebSessionCapability.json.ok, true);
       const browserWebSession = browserNativeCapnp.connectBrowserNativeCapnp({
         id: browserWebSessionCapability.json.id,
-        interfaceId: "0xa8e9655582dcde6f",
+        interfaceId: "0xa50711a14d35a8ce",
         interfaceName: "sandstorm.WebSession",
         kind: "receiverHosted",
       }, browserWebSessionSchema.WebSession, {

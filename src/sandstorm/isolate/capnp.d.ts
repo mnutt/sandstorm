@@ -182,49 +182,41 @@ declare module "sandstorm:capnp" {
     },
   ): unknown;
 
-  export interface NativeCapnpExportRegistration {
-    readonly id: string;
-    readonly InterfaceClass: NativeCapnpGeneratedInterface<object> & {
-      readonly Server: new (target: object) => unknown;
-    };
-    readonly target: object;
-    readonly interfaceMetadata: {
-      readonly interfaceId: bigint | number | string;
+  export interface NativeCapnpExportedClient {
+    readonly capability: {
+      readonly kind: "localExport";
+      readonly interfaceId: bigint;
       readonly interfaceName: string;
     };
-    readonly path: string;
-  }
-
-  export function registerNativeCapnpExport(
-    InterfaceClass: NativeCapnpGeneratedInterface<object> & {
-      readonly Server: new (target: object) => unknown;
-    },
-    target: object,
-    options?: {
-      readonly id?: string;
-      readonly interfaceId?: bigint | number | string;
-      readonly interfaceName?: string;
-      readonly schema?: {
-        readonly interfaceId?: bigint | number | string;
-        readonly interfaceName?: string;
-      };
-    },
-  ): NativeCapnpExportRegistration;
-
-  export function unregisterNativeCapnpExport(id: string): boolean;
-
-  export function serveNativeCapnpExportSession(
-    request: Request,
-    options?: {
-      readonly registry?: Map<string, NativeCapnpExportRegistration>;
+    readonly connection: null;
+    readonly transport: null;
+    drop(): undefined;
+    info(): Promise<{
+      readonly ok: true;
+      readonly type: "nativeCapnpCapability";
+      readonly kind: "localExport";
+      readonly interfaceId: string;
+      readonly interfaceName: string;
+    }>;
+    save(options?: {
+      readonly label?: string | { readonly defaultText: string };
+      readonly saveLabel?: string | { readonly defaultText: string };
+      readonly connectionId?: string;
       readonly finalize?: unknown;
-    },
-  ): Promise<Response | null>;
+    }): Promise<string>;
+    toJSON(): {
+      readonly ok: true;
+      readonly type: "nativeCapnpCapability";
+      readonly kind: "localExport";
+      readonly interfaceId: string;
+      readonly interfaceName: string;
+    };
+  }
 
   export function exportNativeCapnp<TClient extends object>(
     api: {
       capnpBridgeInfo(): Promise<unknown>;
-      nativeCapnpExport(registration: NativeCapnpExportRegistration): Promise<Capability>;
+      nativeCapnpBridgeOpenBootstrapSession(connectionId: string): Promise<WebSocket>;
     },
     InterfaceClass: NativeCapnpGeneratedInterface<TClient> & {
       readonly Server: new (target: object) => unknown;
@@ -244,7 +236,7 @@ declare module "sandstorm:capnp" {
         };
       };
     },
-  ): Promise<Capability>;
+  ): Promise<TClient & NativeCapnpExportedClient>;
 
   export interface NativeCapnpGeneratedInterface<TClient extends object> {
     readonly Client: new (client: unknown) => TClient;

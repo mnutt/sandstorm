@@ -152,10 +152,9 @@ function renderPage() {
   </head>
   <body>
     <h1>File Store RPC</h1>
-    <form method="post" action="/offer-file-store">
-      <button type="submit">Offer file-store capability</button>
+    <form method="post" action="/export-file-store">
+      <button type="submit">Export file-store capability</button>
     </form>
-    <p><a href="/powerbox/file-store">Powerbox fulfillment page</a></p>
     <p><a href="/self-test">Run local self-test</a></p>
   </body>
 </html>`;
@@ -195,36 +194,17 @@ export default {
       });
     }
 
-    if (url.pathname === "/offer-file-store" && request.method === "POST") {
+    if (url.pathname === "/export-file-store" && request.method === "POST") {
       const capability = await exportNativeCapnp(api, FileStore, makeFileStore(), {
         interfaceName: "FileStore",
       });
-      return Response.json(await capability.offer(request, {
-        title: "File store",
-        verbPhrase: "can browse and read files",
-        description: "RPC access to this grain's example file directory.",
+      return Response.json({
+        ok: true,
+        capability,
+        info: await capability.info(),
         descriptor: await descriptor(env),
-      }));
+      });
     }
-
-    const fulfillment = api.powerboxFulfillment({
-      routePrefix: "/powerbox/file-store",
-      title: "File store",
-      description: "RPC access to this grain's example file directory.",
-      buttonLabel: "Use this file store",
-      capability: () => exportNativeCapnp(api, FileStore, makeFileStore(), {
-        interfaceName: "FileStore",
-      }),
-      fulfill: {
-        title: "File store",
-        verbPhrase: "can browse and read files",
-        description: "RPC access to this grain's example file directory.",
-        descriptor: await descriptor(env),
-      },
-    });
-
-    const fulfilled = await fulfillment.serve(request);
-    if (fulfilled) return fulfilled;
 
     return new Response(renderPage(), {
       headers: { "content-type": "text/html; charset=utf-8" },

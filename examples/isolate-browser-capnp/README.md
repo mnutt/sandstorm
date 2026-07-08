@@ -6,8 +6,9 @@ Run:
 spk dev-isolate --title "Browser Capnp Counter" examples/isolate-browser-capnp/worker.js
 ```
 
-This example is a work-in-progress test case for browser code speaking native
-Cap'n Proto RPC directly to a Sandstorm capability.
+This example is a work-in-progress test case for generated `capnp:` code in an
+isolate with a browser UI. The browser drives the counter through ordinary HTTP
+routes, and those routes call a server-side native Cap'n Proto client.
 
 The worker defines and exports a `BrowserCounter` capability with:
 
@@ -16,14 +17,7 @@ import { exportNativeCapnp } from "sandstorm:capnp";
 import { BrowserCounter } from "capnp:./browser-counter.capnp";
 ```
 
-The page then imports the browser bridge and generated schema module:
-
-```js
-import { connectBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
-import { BrowserCounter } from "/__sandstorm/capnp/browser-counter.capnp.js";
-```
-
-`POST /counter-capability` exports the server-side counter and returns a native
-capability slot with the generated interface id and name. The browser passes
-that slot to `connectBrowserNativeCapnp()` and calls `read()`, `increment()`,
-and `reset()` over the native WebSocket-backed Cap'n Proto bridge.
+`POST /counter-capability` exports the server-side counter and returns metadata
+for the local export. Direct browser-to-local-export RPC is intentionally not
+used here while native exports are being normalized around AppPersistent
+app-ref persistence and the single capnp RPC channel.

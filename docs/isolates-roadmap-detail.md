@@ -539,13 +539,14 @@ Deletion should be explicit and verified by grep/tests.
 
 Must delete or stop compiling:
 
-- `/capnp/lifecycle`
-- lifecycle request/response structs
+- Done: `/capnp/lifecycle`
+- Done: lifecycle request/response structs
+- Done: `/capabilities/native-capnp-export`
+- Done: JS per-export callback session routes
 - authority-bearing `/powerbox/*` POST routes
-- `/capabilities/native-capnp-export`
 - claimed-capability table used as authority
 - drop groups and live-handle drop-notify machinery
-- per-export callback sessions
+- remaining C++ per-export callback/session plumbing
 - local-dispatch lease structs, authorization minting, and WeakMap fast path
 
 May keep:
@@ -562,7 +563,8 @@ Exit criteria:
 - Integration tests pass.
 - Examples pass.
 - `rg "/capnp/lifecycle|NativeCapnpBridgeRequest|native-capnp-export|localDispatch"` returns no
-  authority path.
+  authority path, except non-authority test names or migration notes while the
+  current phase is in progress.
 - There is one worker-supervisor authority connection.
 - Hostile-worker fuzzing covers WebSocket frame parsing, Cap'n Proto segment
   framing, and bootstrap parameter validation.

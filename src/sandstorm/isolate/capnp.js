@@ -3,6 +3,7 @@ import {
   DeferredTransport as CapnpEsDeferredTransport,
   Interface as CapnpEsInterface,
   Message as CapnpEsMessage,
+  utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
 import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
 
@@ -16,12 +17,28 @@ const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
   "nativeExports",
 ]);
 
-const NATIVE_CAPNP_EXPORT_SESSION_PREFIX = "/__sandstorm/native-capnp/export-sessions";
-const nativeCapnpExportTargets = new Map();
 const appInterfacePowerboxDescriptorCache = new Map();
 
 function cloneJsonValue(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function initLocalizedText(builder, value) {
+  if (value && typeof value.defaultText === "string") {
+    builder.defaultText = value.defaultText;
+  }
+}
+
+function initSandstormApiSaveParams(params, cap, label) {
+  const client = cap?.client ?? cap;
+  if (!client) {
+    throw new TypeError("SandstormApi.save() requires a Cap'n Proto capability");
+  }
+
+  CapnpEsUtils.setInterfacePointer(
+    params.segment.message.addCap(client),
+    CapnpEsUtils.getPointer(0, params));
+  initLocalizedText(params._initLabel(), label);
 }
 
 async function readJsonResponse(response) {
@@ -253,11 +270,6 @@ export function nativeCapnpSavedTokenData(token) {
     return nativeCapnpBase64UrlDecode(lines[3], "saved capability token sturdy ref");
   }
 
-  if (lines[0] === "isolate-saved-capability-v2" && lines.length >= 7 &&
-      lines[1] === "nativeCapnpExport") {
-    return nativeCapnpBase64UrlDecode(lines[6], "saved capability token sturdy ref");
-  }
-
   return decoded;
 }
 
@@ -304,14 +316,6 @@ function normalizeNativeCapnpBridgeConnectionId(connectionId = makeNativeCapnpBr
     throw new TypeError("native Cap'n Proto bridge connection id must be a non-empty string");
   }
   return connectionId;
-}
-
-function nativeCapnpExportId(options = {}) {
-  return normalizeNativeCapnpBridgeConnectionId(options.id);
-}
-
-function nativeCapnpExportSessionPath(id) {
-  return `${NATIVE_CAPNP_EXPORT_SESSION_PREFIX}/${encodeURIComponent(id)}`;
 }
 
 export function makeNativeCapnpPayload(message = new CapnpEsMessage(), capabilities = []) {
@@ -859,103 +863,81 @@ export function createNativeCapnpExportSession(
   });
 }
 
-export function registerNativeCapnpExport(InterfaceClass, target, options = {}) {
-  validateNativeCapnpGeneratedInterface(InterfaceClass, "registerNativeCapnpExport()");
-  if (!target || typeof target !== "object") {
-    throw new TypeError("registerNativeCapnpExport() requires a server target object");
-  }
-
-  const id = nativeCapnpExportId(options);
-  const existing = nativeCapnpExportTargets.get(id);
-  if (existing && existing.target !== target) {
-    throw new NativeCapnpBridgeProtocolError(
-      `native Cap'n Proto export id is already registered: ${id}`);
-  }
-
-  const entry = Object.freeze({
-    id,
-    InterfaceClass,
-    target,
-    interfaceMetadata: nativeCapnpInterfaceMetadata(InterfaceClass, options),
-    path: nativeCapnpExportSessionPath(id),
-  });
-  nativeCapnpExportTargets.set(id, entry);
-  return entry;
-}
-
-export function unregisterNativeCapnpExport(id) {
-  return nativeCapnpExportTargets.delete(id);
-}
-
-export async function serveNativeCapnpExportSession(request, options = {}) {
-  const url = new URL(request.url);
-  if (!url.pathname.startsWith(`${NATIVE_CAPNP_EXPORT_SESSION_PREFIX}/`)) {
-    return null;
-  }
-  const id = decodeURIComponent(
-    url.pathname.slice(NATIVE_CAPNP_EXPORT_SESSION_PREFIX.length + 1));
-  const registry = options.registry || nativeCapnpExportTargets;
-  const entry = registry.get(id);
-  if (!entry) {
-    return Response.json(
-      { ok: false, error: "unknown native Cap'n Proto export target" },
-      { status: 404 });
-  }
-
-  if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
-    if (request.method !== "GET") {
-      return Response.json({ ok: false, error: "method not allowed" }, { status: 405 });
-    }
-
-    const pair = new WebSocketPair();
-    const server = pair[0];
-    server.accept();
-    createNativeCapnpExportSession(entry.InterfaceClass, entry.target, {
-      webSocket: server,
-      finalize: options.finalize,
-    });
-    return new Response(null, {
-      status: 101,
-      webSocket: pair[1],
-    });
-  }
-
-  if (request.method !== "POST") {
-    return Response.json({ ok: false, error: "method not allowed" }, { status: 405 });
-  }
-  if (!request.body) {
-    return Response.json(
-      { ok: false, error: "native Cap'n Proto export session requires a request stream" },
-      { status: 400 });
-  }
-
-  const responseStream = new TransformStream();
-  createNativeCapnpExportSession(entry.InterfaceClass, entry.target, {
-    readable: request.body,
-    writable: responseStream.writable,
-    finalize: options.finalize,
-  });
-  return new Response(responseStream.readable, {
-    headers: { "content-type": "application/octet-stream" },
-  });
-}
-
 export async function exportNativeCapnp(api, InterfaceClass, target, options = {}) {
   validateNativeCapnpGeneratedInterface(InterfaceClass, "exportNativeCapnp()");
-  if (!api || typeof api.capnpBridgeInfo !== "function" ||
-      typeof api.nativeCapnpExport !== "function") {
+  if (!api || typeof api.capnpBridgeInfo !== "function") {
     throw new TypeError("exportNativeCapnp() requires a Sandstorm API object");
   }
 
-  const negotiation = await negotiateNativeCapnpBridge(api, { requiredFeatures: ["nativeExports"] });
+  if (!target || typeof target !== "object") {
+    throw new TypeError("exportNativeCapnp() requires a server target object");
+  }
+
+  const interfaceMetadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
+  const negotiation = await negotiateNativeCapnpBridge(api, {
+    requiredFeatures: ["nativeRpc", "nativeRpcWebSocket"],
+  });
   if (!negotiation.available) {
     throw new NativeCapnpBridgeUnavailableError(
       `native Cap'n Proto exports are unavailable: ${negotiation.reason || "unavailable"}`,
-      { negotiation, interfaceMetadata: nativeCapnpInterfaceMetadata(InterfaceClass, options) });
+      { negotiation, interfaceMetadata });
   }
 
-  const registration = registerNativeCapnpExport(InterfaceClass, target, options);
-  return await api.nativeCapnpExport(registration);
+  const server = new InterfaceClass.Server(target);
+  const client = server.client();
+  const capability = Object.freeze({
+    kind: "localExport",
+    interfaceId: interfaceMetadata.interfaceId,
+    interfaceName: interfaceMetadata.interfaceName,
+  });
+  const publicInterfaceId = nativeCapnpInterfaceIdHex(interfaceMetadata.interfaceId);
+
+  return Object.assign(client, {
+    capability,
+    connection: null,
+    transport: null,
+    drop: () => {
+      server.close?.();
+      return undefined;
+    },
+    info: async () => ({
+      ok: true,
+      type: "nativeCapnpCapability",
+      kind: "localExport",
+      interfaceId: publicInterfaceId,
+      interfaceName: interfaceMetadata.interfaceName,
+    }),
+    save: async (saveOptions = {}) => {
+      const bridge = connectIsolateBridge(api, {
+        connectionId: saveOptions.connectionId,
+        finalize: saveOptions.finalize,
+      });
+      try {
+        const result = await bridge.getSandstormApi({});
+        const sandstormApi = result.api;
+        if (!sandstormApi || typeof sandstormApi.save !== "function") {
+          throw new NativeCapnpBridgeProtocolError(
+            "isolate bridge returned an invalid SandstormApi capability");
+        }
+
+        const saved = await sandstormApi.save((params) => {
+          initSandstormApiSaveParams(params, client, nativeCapnpSaveLabel(saveOptions));
+        });
+        bridge.close();
+        return nativeCapnpSavedTokenText(saved.token);
+      } catch (error) {
+        bridge.close(error);
+        throw error;
+      }
+    },
+    toJSON: () => ({
+      ok: true,
+      type: "nativeCapnpCapability",
+      kind: "localExport",
+      interfaceId: publicInterfaceId,
+      interfaceName: interfaceMetadata.interfaceName,
+    }),
+  });
 }
 
 function nativeCapnpSaveLabel(options = {}) {
