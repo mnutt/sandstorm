@@ -74,6 +74,16 @@ suite covers successful `SandstormApi` bootstrap plus a rejected missing
 session-context lookup. The old lifecycle envelope and authority POST routes
 still exist and remain the next Phase 1 deletion/migration work.
 
+**Progress, 2026-07-08:** `sandstorm:capnp` also exposes
+`restoreNativeCapnpViaBootstrap()`, an explicit migration helper that restores
+durable native capability tokens by calling `SandstormApi.restore()` over the
+isolate bridge bootstrap and wraps the returned RPC import with the generated
+capnp-es client. The isolate integration suite now runs native Greeter
+conformance through this path, verifies pipelining/returned capabilities, and
+checks that the restored live handle can be saved again. The default
+`restoreNativeCapnp()` still uses the lifecycle envelope until the remaining
+capability helpers are ported.
+
 **Delete** (all anchors per the architecture review):
 
 - The lifecycle envelope: `POST /capnp/lifecycle` and the
