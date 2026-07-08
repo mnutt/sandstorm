@@ -2189,13 +2189,6 @@ test("isolate supervisor integration suite", {
       { method: "POST" });
     assert.equal(dropRestored.statusCode, 200, dropRestored.body);
     assert.equal(dropRestored.json.ok, true);
-
-    const dropSaved = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/drop-saved?token=${encodeURIComponent(saved.json.token)}`,
-      { method: "POST" });
-    assert.equal(dropSaved.statusCode, 200, dropSaved.body);
-    assert.equal(dropSaved.json.ok, true);
   });
 
   await t.test("saves and restores route-backed WebSession capabilities from isolate JS", async () => {
@@ -2370,13 +2363,6 @@ test("isolate supervisor integration suite", {
       { method: "POST" });
     assert.equal(dropRestored.statusCode, 200, dropRestored.body);
     assert.equal(dropRestored.json.ok, true);
-
-    const dropSaved = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/drop-saved?token=${encodeURIComponent(saved.json.token)}`,
-      { method: "POST" });
-    assert.equal(dropSaved.statusCode, 200, dropSaved.body);
-    assert.equal(dropSaved.json.ok, true);
   });
 
   await t.test("saves and restores route-backed ApiSession capabilities from isolate JS", async () => {
@@ -2940,27 +2926,6 @@ test("isolate supervisor integration suite", {
       { method: "POST" });
     assert.equal(invalidRestoreToken.statusCode, 400);
     assert.equal(invalidRestoreToken.json.ok, false);
-
-    const missingDropSaved = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/drop-saved",
-      { method: "POST" });
-    assert.equal(missingDropSaved.statusCode, 400);
-    assert.equal(missingDropSaved.json.ok, false);
-
-    const duplicateDropSavedToken = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/drop-saved?token=one&token=two",
-      { method: "POST" });
-    assert.equal(duplicateDropSavedToken.statusCode, 400);
-    assert.equal(duplicateDropSavedToken.json.ok, false);
-
-    const invalidDropSavedToken = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/drop-saved?token=not%40base64url",
-      { method: "POST" });
-    assert.equal(invalidDropSavedToken.statusCode, 400);
-    assert.equal(invalidDropSavedToken.json.ok, false);
 
     const duplicateDropId = await requestJson(
       fixture.sandstormApiSocket,

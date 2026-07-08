@@ -244,7 +244,7 @@ prototype mechanisms:
 | `/powerbox/claim-request` POST route | `SessionContext.claimRequest()` over RPC |
 | `/powerbox/save` POST route | `SandstormApi.save()` over RPC |
 | `/powerbox/restore` POST route | `SandstormApi.restore()` over RPC |
-| `/powerbox/drop-saved` POST route | `SandstormApi.drop()` over RPC |
+| Done: `/powerbox/drop-saved` POST route | `SandstormApi.drop()` over RPC |
 | `/powerbox/drop` POST route for live handles | Cap'n Proto release/drop of the live reference |
 | Done: `/powerbox/dup` POST route | Ordinary JS references to the same client; RPC cap table handles lifetime |
 | `/powerbox/offer` POST route | `SessionContext.offer()` over RPC |
@@ -543,8 +543,8 @@ Must delete or stop compiling:
 - Done: lifecycle request/response structs
 - Done: `/capabilities/native-capnp-export`
 - Done: JS per-export callback session routes
-- authority-bearing `/powerbox/*` POST routes, except `/powerbox/dup` which is
-  deleted
+- authority-bearing `/powerbox/*` POST routes, except `/powerbox/dup` and
+  `/powerbox/drop-saved` which are deleted
 - claimed-capability table used as authority
 - Done: drop groups and live-handle drop-notify machinery
 - remaining C++ per-export callback/session plumbing

@@ -1612,20 +1612,10 @@ export default {
       }
       let dropSaved = null;
       if (restoreToken && url.searchParams.get("dropSaved") === "true") {
-        if (savedToken) {
-          dropSaved = {
-            status: 200,
-            body: await sandstorm(request, env).revoke(restoreToken),
-          };
-        } else {
-          const dropSavedResponse = await env.SANDSTORM_API.fetch(
-            `http://sandstorm/powerbox/drop-saved?token=${encodeURIComponent(restoreToken)}`,
-            { method: "POST" });
-          dropSaved = {
-            status: dropSavedResponse.status,
-            body: await dropSavedResponse.json(),
-          };
-        }
+        dropSaved = {
+          status: 200,
+          body: await sandstorm(request, env).revoke(restoreToken),
+        };
       }
       return Response.json({
         ok: claimResponseOk,
