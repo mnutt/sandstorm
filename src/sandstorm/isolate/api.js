@@ -1,4 +1,13 @@
-import { serveNativeCapnpExportSession } from "sandstorm:capnp";
+import {
+  createNativeCapnpExportSession,
+  serveNativeCapnpExportSession,
+} from "sandstorm:capnp";
+import {
+  Interface as CapnpEsInterface,
+  Message as CapnpEsMessage,
+  utils as CapnpEsUtils,
+} from "capnp-es/index.mjs";
+import { MainView } from "/sandstorm/grain.capnp";
 
 export const SANDSTORM_API_VERSION = 0;
 export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
@@ -8,7 +17,24 @@ export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";
 const POWERBOX_FULFILLMENT_PREFIX = "/__sandstorm/powerbox-fulfillment";
+const MAIN_VIEW_RPC_SESSION_PATH = "/__sandstorm/main-view/rpc-session";
 const capabilityMetadata = new Map();
+
+function capnpCapabilityPointer(capability) {
+  if (capability && capability.segment && typeof capability.byteOffset === "number") {
+    return capability;
+  }
+
+  const client = capability?.client ?? capability;
+  if (!client) {
+    throw new TypeError("mainView.restore() must return a Cap'n Proto capability");
+  }
+
+  const message = new CapnpEsMessage();
+  const pointer = new CapnpEsInterface(message.getSegment(0), 0);
+  CapnpEsUtils.setInterfacePointer(message.addCap(client), pointer);
+  return pointer;
+}
 
 function header(request, name) {
   return request.headers.get(name) || "";
@@ -1760,8 +1786,75 @@ export function powerboxGrants(request, env, options = {}) {
   };
 }
 
-export async function serveSystemRoutes(request, env) {
+function normalizeMainViewHandlers(options = {}) {
+  const mainView = options.mainView ?? options;
+  if (!mainView || typeof mainView !== "object") {
+    return {};
+  }
+  return mainView;
+}
+
+function mainViewRpcTarget(request, env, options = {}) {
+  const handlers = normalizeMainViewHandlers(options);
+  return {
+    async restore(params) {
+      if (typeof handlers.restore !== "function") {
+        throw new UnsupportedCapabilityError("mainView", "restore");
+      }
+
+      const restored = await handlers.restore(params.objectId, {
+        request,
+        env,
+        params,
+      });
+      const cap = restored && typeof restored === "object" && restored.cap !== undefined ?
+        restored.cap :
+        restored;
+      return { cap: capnpCapabilityPointer(cap) };
+    },
+
+    async drop(params) {
+      if (typeof handlers.drop !== "function") {
+        return undefined;
+      }
+
+      return await handlers.drop(params.objectId, {
+        request,
+        env,
+        params,
+      });
+    },
+  };
+}
+
+async function serveMainViewRpcSession(request, env, options = {}) {
+  const url = new URL(request.url);
+  if (url.pathname !== MAIN_VIEW_RPC_SESSION_PATH) {
+    return null;
+  }
+
+  if (request.method !== "GET" ||
+      request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+    return Response.json({ ok: false, error: "main view RPC requires WebSocket" }, {
+      status: 426,
+    });
+  }
+
+  const pair = new WebSocketPair();
+  const server = pair[0];
+  server.accept();
+  createNativeCapnpExportSession(MainView, mainViewRpcTarget(request, env, options), {
+    webSocket: server,
+  });
+  return new Response(null, {
+    status: 101,
+    webSocket: pair[1],
+  });
+}
+
+export async function serveSystemRoutes(request, env, options = {}) {
   return await serveBrowserSystemRoute(request, env) ||
+    await serveMainViewRpcSession(request, env, options) ||
     await serveNativeCapnpExportSession(request, { env }) ||
     await servePowerboxDescriptors(request, env);
 }
@@ -3087,8 +3180,6 @@ export function sandstorm(request, env) {
     use: (token, fn) => useCapabilityToken(env, token, fn),
     powerboxFulfillment: (options = {}) => powerboxFulfillment(request, env, options),
     powerboxGrants: (options = {}) => powerboxGrants(request, env, options),
-    serveSystemRoutes: async () => await serveBrowserSystemRoute(request, env) ||
-      await serveNativeCapnpExportSession(request, { env }) ||
-      await servePowerboxDescriptors(request, env),
+    serveSystemRoutes: async (options = {}) => await serveSystemRoutes(request, env, options),
   };
 }

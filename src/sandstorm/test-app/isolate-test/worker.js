@@ -1,7 +1,13 @@
 import message from "message.txt";
 import metadata from "metadata.json";
-import { Message as CapnpEsMessage } from "capnp-es/index.mjs";
-import { NativeGreeter } from "capnp:./native-greeter.capnp";
+import {
+  Message as CapnpEsMessage,
+  utils as CapnpEsUtils,
+} from "capnp-es/index.mjs";
+import {
+  NativeGreeter,
+  NativeGreeterObjectId,
+} from "capnp:./native-greeter.capnp";
 import { Message as CapnpRpcMessage } from "capnp-es/capnp/rpc.mjs";
 import { WebSession } from "capnp:/sandstorm/web-session.capnp";
 import {
@@ -30,6 +36,7 @@ import {
   negotiateNativeCapnpBridge,
   nativeCapnpPowerboxDescriptor,
   nativeCapnpPowerboxDescriptorInfo,
+  nativeCapnpSavedTokenText,
   readNativeCapnpBridgeRequest,
   restoreNativeCapnp,
   restoreNativeCapnpViaBootstrap,
@@ -39,6 +46,54 @@ import {
 
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
 const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
+
+function makeNativeGreeterObjectId(id) {
+  const message = new CapnpEsMessage();
+  const objectId = message.initRoot(NativeGreeterObjectId);
+  objectId.id = id;
+  return objectId;
+}
+
+function readNativeGreeterObjectId(objectId) {
+  return CapnpEsUtils.getAs(NativeGreeterObjectId, objectId).id;
+}
+
+function makePersistentNativeGreeterTarget(id) {
+  return {
+    async save() {
+      return {
+        objectId: makeNativeGreeterObjectId(id),
+        label: { defaultText: `native greeter ${id}` },
+      };
+    },
+
+    async hello(params) {
+      return {
+        message: `classic native greeter ${id} hello ${params.name}`,
+      };
+    },
+
+    async makeGreeter(params) {
+      const greeter = new NativeGreeter.Server({
+        async hello(helloParams) {
+          return {
+            message: `${params.prefix} ${helloParams.name}`,
+          };
+        },
+      }).client();
+      return { greeter };
+    },
+
+    async greetWith(params) {
+      const hello = await params.greeter.hello({
+        name: `${params.name} from classic native greeter ${id}`,
+      });
+      return {
+        message: `classic native greeter ${id} called ${hello.message}`,
+      };
+    },
+  };
+}
 
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
@@ -233,7 +288,17 @@ export default {
   async fetch(request, env, ctx) {
     const api = sandstorm(request, env);
     const url = new URL(request.url);
-    const systemResponse = await api.serveSystemRoutes();
+    const systemResponse = await api.serveSystemRoutes({
+      mainView: {
+        async restore(objectId) {
+          return new NativeGreeter.Server(
+            makePersistentNativeGreeterTarget(readNativeGreeterObjectId(objectId))).client();
+        },
+        async drop(objectId) {
+          readNativeGreeterObjectId(objectId);
+        },
+      },
+    });
     if (systemResponse) return systemResponse;
     if (url.pathname.startsWith("/__sandstorm/")) {
       return new Response("not found", { status: 404 });
@@ -690,6 +755,12 @@ export default {
       const api = sandstorm(request, env);
       const id = url.searchParams.get("id") || undefined;
       const target = {
+        async save() {
+          return {
+            objectId: makeNativeGreeterObjectId(id || "cross-supervisor-native-greeter"),
+            label: { defaultText: "cross supervisor native greeter" },
+          };
+        },
         async hello(params) {
           return {
             message: `cross supervisor native hello ${params.name}`,
@@ -1832,6 +1903,12 @@ export default {
       };
     }
     const nativeExportGreeterTarget = {
+      async save() {
+        return {
+          objectId: makeNativeGreeterObjectId("native-export-greeter"),
+          label: { defaultText: "native export greeter" },
+        };
+      },
       async hello(params) {
         return {
           message: `native export greeter hello ${params.name}`,
@@ -2020,6 +2097,67 @@ export default {
         stack: error.stack,
       };
     }
+
+    let classicNativeGreeterResult;
+    try {
+      const classicId = "fixture-classic-native-greeter";
+      const classicLocalClient = new NativeGreeter.Server(
+        makePersistentNativeGreeterTarget(classicId)).client();
+      const classicBridge = connectIsolateBridge(apiHelper, {
+        connectionId: "classic-native-greeter-save",
+      });
+      let classicSavedToken;
+      try {
+        const sandstormApiResult = await classicBridge.getSandstormApi({});
+        const saved = await sandstormApiResult.api.save((params) => {
+          CapnpEsUtils.setInterfacePointer(
+            params.segment.message.addCap(classicLocalClient.client),
+            CapnpEsUtils.getPointer(0, params));
+          params._initLabel().defaultText = "classic native greeter";
+        });
+        classicSavedToken = nativeCapnpSavedTokenText(saved.token);
+      } finally {
+        classicBridge.close();
+      }
+
+      const classicRestored = await restoreNativeCapnp(
+        apiHelper,
+        classicSavedToken,
+        NativeGreeter,
+        {
+          interfaceName: "NativeGreeter",
+          connectionId: "classic-native-greeter-restored",
+        });
+      const classicConformance = await runNativeGreeterConformance(classicRestored, {
+        helloName: "restored schema",
+        childPrefix: "classic restored greeter",
+        pipelinedName: "before classic restored makeGreeter resolves",
+        resolvedName: "after classic restored makeGreeter resolves",
+        greetName: "restored client",
+      });
+      const classicResavedToken = await classicRestored.save({
+        label: "resaved classic native greeter",
+      });
+      const classicDrop = await classicRestored.drop();
+      classicNativeGreeterResult = {
+        ok: true,
+        savedTokenType: typeof classicSavedToken,
+        savedTokenLength: classicSavedToken.length,
+        resavedTokenType: typeof classicResavedToken,
+        resavedTokenLength: classicResavedToken.length,
+        conformance: classicConformance,
+        restored: nativeConnectedClientInfo(classicRestored),
+        drop: classicDrop ?? null,
+      };
+    } catch (error) {
+      classicNativeGreeterResult = {
+        ok: false,
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+      };
+    }
+
     const nativeExportUnknownRouteResponse = await serveSystemRoutes(new Request(
       "http://sandstorm/__sandstorm/native-capnp/export-sessions/missing-export", {
         method: "POST",
@@ -2498,6 +2636,7 @@ export default {
           },
           webSession: nativeExportWebSessionResult,
           greeter: nativeExportGreeterResult,
+          classicGreeter: classicNativeGreeterResult,
           unknownRoute: nativeExportUnknownRoute,
         },
         nativeCapnpBridge: {

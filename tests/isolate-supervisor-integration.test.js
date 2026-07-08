@@ -153,6 +153,14 @@ const CAPNP_ES_GENERATED_SCHEMA_MODULES = [
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/isolate-bridge.js",
   ],
 ];
+const FIXTURE_GENERATED_SCHEMA_MODULES = [
+  ...CAPNP_ES_GENERATED_SCHEMA_MODULES.slice(0, 5),
+  [
+    "capnp:./native-greeter.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/native-greeter.js",
+  ],
+  ...CAPNP_ES_GENERATED_SCHEMA_MODULES.slice(5),
+];
 
 function formatOutput(stdout, stderr) {
   const out = stdout.join("");
@@ -1242,7 +1250,7 @@ test("spk dev-isolate prints generated capnp modules", async (t) => {
   ], options);
   assert.match(
     generatedWeb.stdout,
-    /from "\.\/sandstorm\/web-session\.capnp";/);
+    /from "\/sandstorm\/web-session\.capnp";/);
 
   const generatedComplex = await runCommand(SPK_BIN, [
     "dev-isolate",
@@ -1254,7 +1262,7 @@ test("spk dev-isolate prints generated capnp modules", async (t) => {
     /from "\.\/greeter\.capnp";/);
   assert.match(
     generatedComplex.stdout,
-    /from "\.\/sandstorm\/web-session\.capnp";/);
+    /from "\/sandstorm\/web-session\.capnp";/);
   assert.match(generatedComplex.stdout, /export class Item extends/);
   assert.match(generatedComplex.stdout, /export class Complex\$Client \{/);
   assert.match(generatedComplex.stdout, /export class Complex\$Server extends \$\.Server/);
@@ -1270,7 +1278,7 @@ test("spk dev-isolate prints generated capnp modules", async (t) => {
     /from "\.\/greeter\.capnp";/);
   assert.match(
     generatedComplexDeclaration.stdout,
-    /from "\.\/sandstorm\/web-session\.capnp";/);
+    /from "\/sandstorm\/web-session\.capnp";/);
   assert.match(generatedComplexDeclaration.stdout, /export declare class Item extends/);
   assert.match(generatedComplexDeclaration.stdout, /export declare class Complex\$Client \{/);
   assert.match(
@@ -1457,8 +1465,7 @@ test("isolate supervisor integration suite", {
         ["worker.js", "esModule"],
         ["message.txt", "text"],
         ["metadata.json", "json"],
-        ["capnp:./native-greeter.capnp", "esModule"],
-        ...CAPNP_ES_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule"]),
+        ...FIXTURE_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule"]),
         ["sandstorm:api", "esModule"],
         ["sandstorm:capnp", "esModule"],
         ["sandstorm:native-capnp-bridge", "esModule"],
@@ -1896,6 +1903,45 @@ test("isolate supervisor integration suite", {
           ok: true,
           released: false,
         },
+      },
+      classicGreeter: {
+        ok: true,
+        savedTokenType: "string",
+        savedTokenLength:
+            body.sandstormApi.nativeCapnpExport.classicGreeter.savedTokenLength,
+        resavedTokenType: "string",
+        resavedTokenLength:
+            body.sandstormApi.nativeCapnpExport.classicGreeter.resavedTokenLength,
+        conformance: {
+          hello: {
+            message:
+                "classic native greeter fixture-classic-native-greeter hello restored schema",
+          },
+          pipelined: {
+            message:
+                "classic restored greeter before classic restored makeGreeter resolves",
+          },
+          resolved: {
+            hasClient: true,
+            message:
+                "classic restored greeter after classic restored makeGreeter resolves",
+          },
+          argument: {
+            message:
+                "classic native greeter fixture-classic-native-greeter called " +
+                "classic restored greeter restored client from classic native greeter " +
+                "fixture-classic-native-greeter",
+          },
+        },
+        restored: {
+          kind: "rpcImport",
+          interfaceId: "b66316217ceedb1b",
+          interfaceName: "NativeGreeter",
+          connectionId: "classic-native-greeter-restored",
+          transportKind: "isolateBridgeWebSocketRpc",
+          connectionIsNull: false,
+        },
+        drop: null,
       },
       unknownRoute: {
         status: 404,
@@ -2730,7 +2776,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.json.mainModule, "worker.js");
     assert.equal(
       runtime.json.moduleCount,
-      7 + CAPNP_ES_GENERATED_SCHEMA_MODULES.length +
+      6 + FIXTURE_GENERATED_SCHEMA_MODULES.length +
           CAPNP_ES_SCHEME_RUNTIME_MODULES.length + CAPNP_ES_PATH_RUNTIME_MODULES.length +
           CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.length);
     assert.equal(runtime.json.bindingCount, 6);
@@ -2834,8 +2880,7 @@ test("isolate supervisor integration suite", {
         ["worker.js", "esModule", true],
         ["message.txt", "text", false],
         ["metadata.json", "json", false],
-        ["capnp:./native-greeter.capnp", "esModule", false],
-        ...CAPNP_ES_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule", false]),
+        ...FIXTURE_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule", false]),
         ["sandstorm:api", "esModule", false],
         ["sandstorm:capnp", "esModule", false],
         ["sandstorm:native-capnp-bridge", "esModule", false],

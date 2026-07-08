@@ -108,6 +108,14 @@ falls back to `SystemPersistent.save()` only for the existing supervisor-owned
 route-backed/native capabilities while their persistence formats are migrated
 to `MainView.restore/drop()` or explicit supervisor object variants.
 
+**Progress, 2026-07-08:** Non-route `SupervisorObjectId.appRef` restores and
+drops now call the worker's `MainView.restore/drop()` over a native capnp
+WebSocket session, so isolate-defined `AppPersistent` capabilities can be
+saved, restored, called, re-saved, and dropped through the classic app object
+model. The integration fixture now covers a schema-defined `NativeGreeter`
+object ID through that path; route-backed WebSession/ApiSession app refs still
+use their existing supervisor-owned compatibility path.
+
 **Delete** (all anchors per the architecture review):
 
 - The lifecycle envelope: `POST /capnp/lifecycle` and the

@@ -4419,6 +4419,7 @@ private:
         "  return 'capnp:./' + capnpPath;\n"
         "}\n"
         "function relativeCapnpSpecifier(fromSpecifier, toSpecifier) {\n"
+        "  if (toSpecifier.startsWith('capnp:/')) return toSpecifier.slice('capnp:'.length);\n"
         "  const fromKey = capnpSpecifierKey(fromSpecifier);\n"
         "  const toKey = capnpSpecifierKey(toSpecifier);\n"
         "  let relative = path.posix.relative(path.posix.dirname(fromKey), toKey);\n"

@@ -101,6 +101,8 @@ namespace {
 
 constexpr const char* ISOLATE_ROUTE_BACKED_APP_REF_PREFIX =
     "sandstorm-isolate-route-backed-v1\n";
+constexpr const char* ISOLATE_MAIN_VIEW_RPC_SESSION_PATH =
+    "/__sandstorm/main-view/rpc-session";
 constexpr uint64_t CAPNP_PERSISTENT_INTERFACE_ID = 0xc8cb212fcd9f5691ull;
 constexpr uint64_t SYSTEM_PERSISTENT_INTERFACE_ID = 0xc38cedd77cbed5b4ull;
 
@@ -1248,13 +1250,13 @@ kj::String bindingBundleFileName(size_t index) {
   return kj::str("binding-", index, ".bin");
 }
 
-void appendWorkerdModule(
-    kj::Vector<char>& result, IsolateRuntimeConfig::Module& module, kj::StringPtr fileName) {
+void appendWorkerdModuleEntry(kj::Vector<char>& result, kj::StringPtr name,
+    IsolateRuntimeConfig::ModuleType type, kj::StringPtr fileName) {
   result.addAll(kj::StringPtr("          ( name = "));
-  appendCapnpString(result, module.name);
+  appendCapnpString(result, name);
   result.addAll(kj::StringPtr(", "));
 
-  switch (module.type) {
+  switch (type) {
     case IsolateRuntimeConfig::ModuleType::ES_MODULE:
       result.addAll(kj::StringPtr("esModule"));
       break;
@@ -1278,6 +1280,11 @@ void appendWorkerdModule(
   result.addAll(kj::StringPtr(" = embed "));
   appendCapnpString(result, kj::str("modules/", fileName));
   result.addAll(kj::StringPtr(" )"));
+}
+
+void appendWorkerdModule(
+    kj::Vector<char>& result, IsolateRuntimeConfig::Module& module, kj::StringPtr fileName) {
+  appendWorkerdModuleEntry(result, module.name, module.type, fileName);
 }
 
 bool isWorkerdDirectBinding(IsolateRuntimeConfig::Binding& binding) {
@@ -1390,9 +1397,15 @@ void appendWorkerdConfig(
     if (needsComma) {
       result.addAll(kj::StringPtr(",\n"));
     }
-    appendWorkerdModule(result, config.modules[index],
-        moduleBundleFileName(index, config.modules[index].type));
+    auto& module = config.modules[index];
+    auto fileName = moduleBundleFileName(index, module.type);
+    appendWorkerdModule(result, module, fileName);
     needsComma = true;
+    if (module.name.startsWith("capnp:/sandstorm/")) {
+      result.addAll(kj::StringPtr(",\n"));
+      appendWorkerdModuleEntry(result,
+          module.name.slice(strlen("capnp:/")), module.type, fileName);
+    }
   };
 
   for (auto i: kj::indices(config.modules)) {
@@ -3085,12 +3098,21 @@ RouteBackedCapabilityRef parseRouteBackedCapabilityRef(kj::StringPtr payload) {
   }
 }
 
-RouteBackedCapabilityRef parseRouteBackedCapabilityAppRef(capnp::Data::Reader appRef) {
-  auto text = kj::StringPtr(appRef.asChars().begin(), appRef.size());
-  auto prefix = kj::StringPtr(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX);
-  KJ_REQUIRE(text.startsWith(prefix), "unknown isolate app-ref format");
-  return parseRouteBackedCapabilityRef(
-      kj::StringPtr(text.begin() + prefix.size(), text.size() - prefix.size()));
+kj::Maybe<RouteBackedCapabilityRef> tryParseRouteBackedCapabilityAppRef(
+    capnp::AnyPointer::Reader appRef) {
+  try {
+    auto data = appRef.getAs<capnp::Data>();
+    auto text = kj::StringPtr(data.asChars().begin(), data.size());
+    auto prefix = kj::StringPtr(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX);
+    if (!text.startsWith(prefix)) {
+      return nullptr;
+    }
+
+    return parseRouteBackedCapabilityRef(
+        kj::StringPtr(text.begin() + prefix.size(), text.size() - prefix.size()));
+  } catch (kj::Exception& exception) {
+    return nullptr;
+  }
 }
 
 template <typename InternalSession>
@@ -3646,6 +3668,71 @@ struct NativeCapnpExportRpcSession {
     vatId.setSide(capnp::rpc::twoparty::Side::SERVER);
     cap = rpcSystem.bootstrap(vatId);
   }
+};
+
+kj::Own<NativeCapnpExportRpcSession> newIsolateMainViewRpcSession(
+    kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
+    kj::HttpHeaderTable& headerTable) {
+  return kj::heap<NativeCapnpExportRpcSession>(
+      kj::mv(config), kj::mv(host), headerTable,
+      kj::heapString("mainView"), kj::heapString(ISOLATE_MAIN_VIEW_RPC_SESSION_PATH),
+      capnp::typeId<MainView<>>(), kj::heapString("sandstorm.MainView"));
+}
+
+class IsolateMainViewRestoredCapability final: public SystemPersistent::Server {
+public:
+  IsolateMainViewRestoredCapability(kj::Own<IsolateRuntimeHost> host,
+      kj::Own<NativeCapnpExportRpcSession> session, capnp::Capability::Client cap,
+      kj::Maybe<kj::Array<const byte>> parentToken = nullptr)
+      : host(kj::mv(host)),
+        session(kj::mv(session)),
+        cap(kj::mv(cap)),
+        parentToken(kj::mv(parentToken)) {}
+
+  DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
+      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer> context) override {
+    if (interfaceId == SYSTEM_PERSISTENT_INTERFACE_ID ||
+        interfaceId == CAPNP_PERSISTENT_INTERFACE_ID) {
+      return SystemPersistent::Server::dispatchCall(interfaceId, methodId, context);
+    }
+
+    capnp::AnyPointer::Reader params = context.getParams();
+    auto request = cap.typelessRequest(interfaceId, methodId, params.targetSize());
+    request.set(params);
+    auto promise = request.send().then([context](auto&& response) mutable -> kj::Promise<void> {
+      context.initResults(response.targetSize()).set(response);
+      return kj::READY_NOW;
+    });
+    return { kj::mv(promise), false };
+  }
+
+  kj::Promise<void> save(SaveContext context) override {
+    auto owner = newOwnCapnp(context.getParams().getSealFor());
+    KJ_IF_MAYBE(parent, parentToken) {
+      auto request = host->sandstormCore.makeChildTokenRequest();
+      request.setParent(*parent);
+      request.setOwner(owner);
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setSturdyRef(result.getToken());
+      });
+    }
+
+    auto appRequest = cap.castAs<AppPersistent<>>().saveRequest();
+    return appRequest.send().then([this, context, KJ_MVCAP(owner)](auto result) mutable {
+      auto request = host->sandstormCore.makeTokenRequest();
+      request.getRef().setAppRef(result.getObjectId());
+      request.setOwner(owner);
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setSturdyRef(result.getToken());
+      });
+    });
+  }
+
+private:
+  kj::Own<IsolateRuntimeHost> host;
+  kj::Own<NativeCapnpExportRpcSession> session;
+  capnp::Capability::Client cap;
+  kj::Maybe<kj::Array<const byte>> parentToken;
 };
 
 kj::String nativeCapnpExportSessionPath(kj::StringPtr exportId);
@@ -8060,22 +8147,35 @@ public:
     switch (objectId.which()) {
       case SupervisorObjectId<>::APP_REF: {
         auto params = context.getParams();
-        auto routeRef = parseRouteBackedCapabilityAppRef(objectId.getAppRef().getAs<capnp::Data>());
         kj::Maybe<kj::Array<const byte>> parentToken = nullptr;
         if (params.getParentToken().size() > 0) {
           parentToken = kj::heapArray<const byte>(params.getParentToken());
         }
-        if (routeRef.type == RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT) {
-          context.getResults().setCap(makeNativeCapnpExportPersistentCapability(
-              kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
-              routeRef.nativeCapnpExportId, routeRef.nativeCapnpExportInterfaceId,
-              routeRef.nativeCapnpExportInterfaceName, kj::mv(parentToken)));
-        } else {
-          context.getResults().setCap(makeRouteBackedSessionCapability(
-              kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
-              routeRef.type, routeRef.pathPrefix, true, kj::mv(parentToken)));
+
+        KJ_IF_MAYBE(routeRef, tryParseRouteBackedCapabilityAppRef(objectId.getAppRef())) {
+          if (routeRef->type == RouteBackedCapabilityType::NATIVE_CAPNP_EXPORT) {
+            context.getResults().setCap(makeNativeCapnpExportPersistentCapability(
+                kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
+                routeRef->nativeCapnpExportId, routeRef->nativeCapnpExportInterfaceId,
+                routeRef->nativeCapnpExportInterfaceName, kj::mv(parentToken)));
+          } else {
+            context.getResults().setCap(makeRouteBackedSessionCapability(
+                kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
+                routeRef->type, routeRef->pathPrefix, true, kj::mv(parentToken)));
+          }
+          return kj::READY_NOW;
         }
-        return kj::READY_NOW;
+
+        auto session = newIsolateMainViewRpcSession(
+            kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), runtimeHost->headerTable);
+        auto request = KJ_ASSERT_NONNULL(session->cap).castAs<MainView<>>().restoreRequest();
+        request.setObjectId(objectId.getAppRef());
+        return request.send().then(
+            [this, context, session = kj::mv(session), parentToken = kj::mv(parentToken)](
+                auto result) mutable {
+          context.getResults().setCap(kj::heap<IsolateMainViewRestoredCapability>(
+              kj::addRef(*runtimeHost), kj::mv(session), result.getCap(), kj::mv(parentToken)));
+        });
       }
       case SupervisorObjectId<>::NATIVE_CAPNP_EXPORT: {
         auto params = context.getParams();
@@ -8100,9 +8200,18 @@ public:
   kj::Promise<void> drop(DropContext context) override {
     auto objectId = context.getParams().getRef();
     switch (objectId.which()) {
-      case SupervisorObjectId<>::APP_REF:
-        parseRouteBackedCapabilityAppRef(objectId.getAppRef().getAs<capnp::Data>());
-        return kj::READY_NOW;
+      case SupervisorObjectId<>::APP_REF: {
+        KJ_IF_MAYBE(routeRef, tryParseRouteBackedCapabilityAppRef(objectId.getAppRef())) {
+          (void)routeRef;
+          return kj::READY_NOW;
+        }
+
+        auto session = newIsolateMainViewRpcSession(
+            kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), runtimeHost->headerTable);
+        auto request = KJ_ASSERT_NONNULL(session->cap).castAs<MainView<>>().dropRequest();
+        request.setObjectId(objectId.getAppRef());
+        return request.send().ignoreResult().attach(kj::mv(session));
+      }
       case SupervisorObjectId<>::NATIVE_CAPNP_EXPORT:
         return kj::READY_NOW;
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
