@@ -10,6 +10,7 @@ import {
   utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
 import { MainView } from "/sandstorm/grain.capnp";
+import { PowerboxDescriptor } from "/sandstorm/powerbox.capnp";
 
 export const SANDSTORM_API_VERSION = 0;
 export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
@@ -593,17 +594,19 @@ function displayTitle(options = {}) {
     256);
 }
 
-function sessionDisplayInfoParams(options = {}) {
-  const result = [["title", displayTitle(options)]];
+function sessionDisplayInfo(options = {}) {
+  const result = {
+    title: { defaultText: displayTitle(options) },
+  };
   const verbPhrase = displayText(
     options, ["verbPhrase", "displayVerbPhrase"], undefined, "verbPhrase");
   if (verbPhrase !== undefined) {
-    result.push(["verbPhrase", verbPhrase]);
+    result.verbPhrase = { defaultText: verbPhrase };
   }
   const description = displayText(
     options, ["description", "displayDescription"], undefined, "description");
   if (description !== undefined) {
-    result.push(["description", description]);
+    result.description = { defaultText: description };
   }
   return result;
 }
@@ -835,6 +838,36 @@ function powerboxDescriptorParams(options = {}) {
   }
 }
 
+function decodePackedPowerboxDescriptor(descriptor) {
+  return new CapnpEsMessage(
+    base64UrlDecodeBytes(validatePackedPowerboxDescriptor(descriptor, "descriptor")))
+    .getRoot(PowerboxDescriptor);
+}
+
+async function sessionActionDescriptor(env, options = {}) {
+  const params = powerboxDescriptorParams(options);
+  const descriptorType = params.find(([name]) => name === "descriptor")?.[1] || "";
+  switch (descriptorType) {
+    case "":
+      return { tags: [] };
+    case "packed": {
+      const packed = params.find(([name]) => name === "packedPowerboxDescriptor")?.[1];
+      return decodePackedPowerboxDescriptor(packed);
+    }
+    case "apiSession":
+      return decodePackedPowerboxDescriptor(
+        (await apiSessionPowerboxDescriptorInfo(env, options)).descriptor);
+    case "outboundHttp":
+      return decodePackedPowerboxDescriptor(
+        (await outboundHttpPowerboxDescriptorInfo(env, options)).descriptor);
+    case "appInterface":
+      return decodePackedPowerboxDescriptor(
+        (await appInterfacePowerboxDescriptorInfo(env, options)).descriptor);
+    default:
+      throw new ValidationError(`unsupported powerbox descriptor type: ${descriptorType}`);
+  }
+}
+
 async function saveCapabilityRecord(env, capability, options = {}) {
   const rawId = capabilityId(capability);
   const label = saveLabel(options);
@@ -868,22 +901,81 @@ async function saveCapability(env, capability, options = {}) {
 
 async function sessionPowerboxAction(env, request, endpoint, capability, options = {}) {
   const requiredPermissions = permissionNames(options);
-  await validateRequiredPermissions(env, requiredPermissions);
+  const permissions = await requiredPermissionSet(env, requiredPermissions);
+  const sessionId = sessionIdForPowerbox(request);
+  const id = capabilityId(capability);
+  const displayInfo = sessionDisplayInfo(options);
+  const descriptor = endpoint === "tie-to-user"
+    ? null
+    : await sessionActionDescriptor(env, options);
 
-  const params = new URLSearchParams({
-    sessionId: sessionIdForPowerbox(request),
-    id: capabilityId(capability),
+  return withIsolateBridgeRpc(env, async (bridge) => {
+    if (typeof bridge.getSessionContext !== "function") {
+      throw new Error("isolate bridge returned no session-context resolver");
+    }
+    if (typeof bridge.getClaimedCapability !== "function") {
+      throw new Error("isolate bridge returned no claimed-capability resolver");
+    }
+
+    const session = await bridge.getSessionContext({ sessionId });
+    if (!session?.context) {
+      throw new Error("isolate bridge returned no SessionContext capability");
+    }
+    const claimed = await bridge.getClaimedCapability({ id });
+    if (!claimed?.cap) {
+      throw new Error("isolate bridge returned no claimed capability");
+    }
+
+    switch (endpoint) {
+      case "offer":
+        await session.context.offer({
+          cap: claimed.cap,
+          requiredPermissions: permissions,
+          descriptor,
+          displayInfo,
+        });
+        return { ok: true };
+      case "fulfill-request":
+        await session.context.fulfillRequest({
+          cap: claimed.cap,
+          requiredPermissions: permissions,
+          descriptor,
+          displayInfo,
+        });
+        return { ok: true };
+      case "tie-to-user": {
+        if (typeof bridge.storeImportedCapability !== "function") {
+          throw new Error("isolate bridge returned no imported-capability store");
+        }
+
+        const tied = await session.context.tieToUser({
+          cap: claimed.cap,
+          requiredPermissions: permissions,
+          displayInfo,
+        });
+        if (!tied?.tiedCap) {
+          throw new Error("SessionContext.tieToUser() returned no capability");
+        }
+        const stored = await bridge.storeImportedCapability({
+          cap: tied.tiedCap,
+          kind: "tied",
+          nativeInterface: "unknown",
+          pathPrefix: "",
+        });
+        const tiedId = validate.string(stored.id, "tied capability id", {
+          minLength: 1,
+          maxLength: 4096,
+        });
+        cacheImportedCapabilityMetadata(tiedId, "tied", {
+          nativeInterface: "unknown",
+          pathPrefix: "",
+        });
+        return new Capability(env, tiedId);
+      }
+      default:
+        throw new Error(`unsupported session powerbox action: ${endpoint}`);
+    }
   });
-  for (const [name, value] of sessionDisplayInfoParams(options)) {
-    params.append(name, value);
-  }
-  for (const name of requiredPermissions) {
-    params.append("requiredPermission", name);
-  }
-  for (const [name, value] of powerboxDescriptorParams(options)) {
-    params.append(name, value);
-  }
-  return postPowerbox(env, `powerbox/${endpoint}?${params}`);
 }
 
 async function offerCapability(env, request, capability, options = {}) {
