@@ -2542,6 +2542,7 @@ private:
     auto generatedPkgdef = writeDevIsolatePkgdef(rootDir, devIsolateSupportDir);
     KJ_DEFER(unlink(generatedPkgdef.cStr()));
 
+    importPath.add(devIsolateSandstormSchemaIncludeDir());
     auto arg = kj::str(generatedPkgdef, ":pkgdef");
     KJ_IF_MAYBE(error, setPackageDef(arg).getError()) {
       return kj::str(generatedPkgdef, ": ", *error);
@@ -3148,8 +3149,7 @@ private:
   void addDevIsolatePlatformCapnpEsModules(
       kj::StringPtr rootDir, kj::Vector<DevIsolateModule>& modules,
       std::map<std::string, std::string>& capnpEsImports) {
-    auto compilerModule = getenv("SANDSTORM_CAPNP_ES_COMPILER_MODULE");
-    if (compilerModule == nullptr || strlen(compilerModule) == 0) {
+    if (devIsolateCapnpEsCompilerModule() == nullptr) {
       return;
     }
 
@@ -3187,7 +3187,7 @@ private:
     KJ_REQUIRE(specifier.endsWith(".capnp"),
         "`capnp:` isolate schema imports must point to .capnp files.", specifier);
 
-    auto candidate = kj::str("src", specifier);
+    auto candidate = kj::str(devIsolateSandstormSchemaIncludeDir(), specifier);
     char* resolved = realpath(candidate.cStr(), nullptr);
     KJ_REQUIRE(resolved != nullptr, "Could not resolve Sandstorm schema import.",
         specifier, candidate, strerror(errno));
@@ -3217,9 +3217,10 @@ private:
       return kj::mv(resolvedPath);
     }
 
-    char* sandstormRootRaw = realpath("src/sandstorm", nullptr);
+    auto sandstormRootPath = kj::str(devIsolateSandstormSchemaIncludeDir(), "/sandstorm");
+    char* sandstormRootRaw = realpath(sandstormRootPath.cStr(), nullptr);
     KJ_REQUIRE(sandstormRootRaw != nullptr, "Could not resolve Sandstorm schema root.",
-        strerror(errno));
+        sandstormRootPath, strerror(errno));
     KJ_DEFER(free(sandstormRootRaw));
     auto sandstormRoot = kj::heapString(sandstormRootRaw);
     KJ_REQUIRE(isPathUnderRoot(resolvedPath, sandstormRoot),
@@ -4255,18 +4256,95 @@ private:
     }
   }
 
+  static kj::Maybe<kj::String> realpathIfExists(kj::StringPtr path) {
+    char* resolved = realpath(path.cStr(), nullptr);
+    if (resolved == nullptr) return nullptr;
+    KJ_DEFER(free(resolved));
+    return kj::heapString(resolved);
+  }
+
+  static void addDevIsolateInstallHomeCandidates(
+      kj::Vector<kj::String>& candidates, kj::StringPtr suffix) {
+    char buf[PATH_MAX + 1];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return;
+
+    buf[n] = '\0';
+    auto exePath = kj::StringPtr(buf, n);
+    if (exePath.endsWith("/sandstorm")) {
+      auto installHome = kj::StringPtr(
+          exePath.begin(), exePath.size() - strlen("/sandstorm"));
+      candidates.add(kj::str(installHome, suffix));
+    } else if (exePath.endsWith("/bin/spk")) {
+      auto installHome = kj::StringPtr(
+          exePath.begin(), exePath.size() - strlen("/bin/spk"));
+      candidates.add(kj::str(installHome, suffix));
+    }
+  }
+
+  static kj::String devIsolateSandstormSchemaIncludeDir() {
+    kj::Vector<kj::String> candidates;
+    candidates.add(kj::heapString("src"));
+
+    addDevIsolateInstallHomeCandidates(candidates, "/src");
+    addDevIsolateInstallHomeCandidates(candidates, "/usr/include");
+
+    candidates.add(kj::heapString("/usr/local/include"));
+    candidates.add(kj::heapString("/usr/include"));
+
+    for (auto& candidate: candidates) {
+      KJ_IF_MAYBE(resolved, realpathIfExists(candidate)) {
+        auto packageSchema = kj::str(*resolved, "/sandstorm/package.capnp");
+        if (access(packageSchema.cStr(), R_OK) == 0) {
+          return kj::mv(*resolved);
+        }
+      }
+    }
+
+    KJ_FAIL_REQUIRE("Could not resolve Sandstorm schema include directory.");
+  }
+
+  static kj::Maybe<kj::String> devIsolateCapnpEsCompilerModule() {
+    auto compilerModule = getenv("SANDSTORM_CAPNP_ES_COMPILER_MODULE");
+    if (compilerModule != nullptr && strlen(compilerModule) > 0) {
+      return kj::heapString(compilerModule);
+    }
+
+    kj::Vector<kj::String> candidates;
+    candidates.add(kj::heapString(
+        "tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs"));
+    addDevIsolateInstallHomeCandidates(candidates,
+        "/tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs");
+    addDevIsolateInstallHomeCandidates(candidates,
+        "/usr/lib/capnp-es/dist/compiler/index.mjs");
+    candidates.add(kj::heapString("/usr/local/lib/capnp-es/dist/compiler/index.mjs"));
+    candidates.add(kj::heapString("/usr/lib/capnp-es/dist/compiler/index.mjs"));
+
+    for (auto& candidate: candidates) {
+      KJ_IF_MAYBE(resolved, realpathIfExists(candidate)) {
+        if (access(resolved->cStr(), R_OK) == 0) {
+          return kj::mv(*resolved);
+        }
+      }
+    }
+
+    return nullptr;
+  }
+
   static kj::String generateDevIsolateCapnpEsOutput(
       kj::StringPtr resolvedPath, kj::StringPtr rootDir, DevIsolateCapnpEsOutputKind kind) {
-    auto compilerModule = getenv("SANDSTORM_CAPNP_ES_COMPILER_MODULE");
-    KJ_REQUIRE(compilerModule != nullptr && strlen(compilerModule) > 0,
-        "`capnp-es:` isolate imports require SANDSTORM_CAPNP_ES_COMPILER_MODULE to point at "
-        "the @mnutt/capnp-es compiler module.");
+    auto compilerModule = devIsolateCapnpEsCompilerModule();
+    KJ_REQUIRE(compilerModule != nullptr,
+        "`capnp:` isolate schema imports require the @mnutt/capnp-es compiler module. "
+        "Install Sandstorm with bundled capnp-es support or set "
+        "SANDSTORM_CAPNP_ES_COMPILER_MODULE.");
 
     auto capnpcOutPipe = Pipe::make();
     auto capnpcErrPipe = Pipe::make();
     auto rootInclude = kj::str("-I", rootDir);
+    auto sandstormInclude = kj::str("-I", devIsolateSandstormSchemaIncludeDir());
     Subprocess::Options capnpcOptions({
-        "capnpc", "-o-", rootInclude, "-Isrc", "-I/usr/include", resolvedPath});
+        "capnpc", "-o-", rootInclude, sandstormInclude, "-I/usr/include", resolvedPath});
     capnpcOptions.stdout = capnpcOutPipe.writeEnd;
     capnpcOptions.stderr = capnpcErrPipe.writeEnd;
     Subprocess capnpc(kj::mv(capnpcOptions));
@@ -4282,7 +4360,13 @@ private:
     auto nodeInPipe = Pipe::make();
     auto nodeOutPipe = Pipe::make();
     auto nodeErrPipe = Pipe::make();
-    auto compilerModulePtr = kj::StringPtr(compilerModule);
+    kj::String compilerModulePath = nullptr;
+    KJ_IF_MAYBE(path, compilerModule) {
+      compilerModulePath = kj::mv(*path);
+    } else {
+      KJ_UNREACHABLE;
+    }
+    auto compilerModulePtr = kj::StringPtr(compilerModulePath);
     auto extension = kind == DevIsolateCapnpEsOutputKind::DTS ? ".d.ts" : ".js";
     kj::StringPtr formatOption = kind == DevIsolateCapnpEsOutputKind::DTS ? "dts" : "js";
     kj::StringPtr script =

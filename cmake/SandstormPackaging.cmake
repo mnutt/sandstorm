@@ -435,6 +435,7 @@ function(sandstorm_add_packaging_targets)
       "SANDSTORM_SHELL_BUILD_DIR=${CMAKE_BINARY_DIR}/shell-build"
       "SANDSTORM_BUNDLE_DIR=${_bundle_dir}"
       "SANDSTORM_WORK_DIR=${CMAKE_BINARY_DIR}/bundle-work"
+      "SANDSTORM_CAPNP_ES_NPM_DIR=${_capnp_es_work_dir}"
       "${PROJECT_SOURCE_DIR}/make-bundle.sh"
     COMMAND "${CMAKE_COMMAND}" -E compare_files
       "${_bundle_dir}/bin/workerd" "${CMAKE_BINARY_DIR}/bin/workerd"
@@ -444,6 +445,7 @@ function(sandstorm_add_packaging_targets)
       "${SANDSTORM_SHELL_BUILD_STAMP}"
       "${SANDSTORM_NATIVE_STAGE_STAMP}"
       verify-workerd-runtime
+      "${_capnp_es_npm_compiler}"
       "${PROJECT_SOURCE_DIR}/make-bundle.sh"
       "${PROJECT_SOURCE_DIR}/find-meteor-dev-bundle.sh"
       "${PROJECT_SOURCE_DIR}/localedata-C"
