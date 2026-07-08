@@ -89,6 +89,14 @@ lifecycle envelope restore helper is now exercised only by the explicit
 lifecycle compatibility fixture while the remaining save/drop/export
 migration work is still in progress.
 
+**Progress, 2026-07-08:** `connectNativeCapnp()` no longer consumes
+`NativeCapnpLocalDispatch` metadata or exposes a `localDirect` transport. Even
+same-supervisor native capability slots now use the same capnp RPC framing as
+cross-supervisor slots. The supervisor still emits the legacy local-dispatch
+field inside lifecycle-envelope responses for the explicit compatibility
+fixture; that producer and schema field remain part of the lifecycle-envelope
+deletion work below.
+
 **Delete** (all anchors per the architecture review):
 
 - The lifecycle envelope: `POST /capnp/lifecycle` and the

@@ -196,13 +196,6 @@ declare module "sandstorm:capnp" {
     close(error?: unknown): void;
   }
 
-  export interface NativeCapnpLocalDirectTransport {
-    readonly kind: "localDirect";
-    readonly connectionId: string;
-    readonly target: Required<NativeCapnpCapabilitySlot>;
-    close(error?: unknown): void;
-  }
-
   export class IsolateBridgeWebSocketRpcTransport {
     readonly kind: "isolateBridgeWebSocketRpc";
     readonly api: {
@@ -458,7 +451,6 @@ declare module "sandstorm:capnp" {
     readonly connection: unknown;
     readonly transport:
       NativeCapnpBridgeWebSocketRpcTransport |
-      NativeCapnpLocalDirectTransport |
       IsolateBridgeWebSocketRpcTransport;
     drop(): Promise<unknown> | unknown;
     save(...args: unknown[]): Promise<string> | string | undefined;
