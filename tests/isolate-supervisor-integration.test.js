@@ -2120,12 +2120,6 @@ test("isolate supervisor integration suite", {
     assert.equal(preconditionFailed.headers.etag, "\"capability-echo-etag\"");
     assert.equal(preconditionFailed.bodyBuffer.length, 0);
 
-    const drop = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/drop?id=${encodeURIComponent(capabilityId)}`,
-      { method: "POST" });
-    assert.equal(drop.statusCode, 200, drop.body);
-    assert.equal(drop.json.ok, true);
   });
 
   await t.test("saves and restores route-backed WebSession capabilities from isolate JS", async () => {
@@ -2236,12 +2230,6 @@ test("isolate supervisor integration suite", {
     assert.equal(fetched.json.pathname, "/api-exported/capability-echo");
     assert.equal(fetched.json.search, "?source=api-external");
 
-    const drop = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/drop?id=${encodeURIComponent(capabilityId)}`,
-      { method: "POST" });
-    assert.equal(drop.statusCode, 200, drop.body);
-    assert.equal(drop.json.ok, true);
   });
 
   await t.test("saves and restores route-backed ApiSession capabilities from isolate JS", async () => {
@@ -2735,20 +2723,6 @@ test("isolate supervisor integration suite", {
     });
     assert.equal(wrongMethod.statusCode, 405);
     assert.equal(wrongMethod.json.ok, false);
-
-    const missingDrop = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/drop?id=missing",
-      { method: "POST" });
-    assert.equal(missingDrop.statusCode, 404);
-    assert.equal(missingDrop.json.ok, false);
-
-    const duplicateDropId = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/drop?id=one&id=two",
-      { method: "POST" });
-    assert.equal(duplicateDropId.statusCode, 400);
-    assert.equal(duplicateDropId.json.ok, false);
 
     const apiDescriptor = await requestJson(
       fixture.sandstormApiSocket,

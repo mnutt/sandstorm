@@ -517,10 +517,7 @@ export class Capability {
   }
 
   async drop() {
-    const result = await postPowerbox(
-      this.#env, `powerbox/drop?id=${encodeURIComponent(this.id)}`);
-    forgetCapabilityHandle(this.id);
-    return result;
+    return dropCapability(this.#env, this);
   }
 
   offer(request, options = {}) {
@@ -897,6 +894,22 @@ async function saveCapabilityRecord(env, capability, options = {}) {
 
 async function saveCapability(env, capability, options = {}) {
   return (await saveCapabilityRecord(env, capability, options)).token;
+}
+
+async function dropCapability(env, capability) {
+  const id = capabilityId(capability);
+  return withIsolateBridgeRpc(env, async (bridge) => {
+    if (typeof bridge.dropClaimedCapability !== "function") {
+      throw new Error("isolate bridge returned no claimed-capability drop helper");
+    }
+
+    const result = await bridge.dropClaimedCapability({ id });
+    if (!result.released) {
+      throw new Error("unknown claimed capability");
+    }
+    forgetCapabilityHandle(id);
+    return { ok: true, released: true };
+  });
 }
 
 async function sessionPowerboxAction(env, request, endpoint, capability, options = {}) {
