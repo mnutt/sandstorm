@@ -2,6 +2,7 @@ import {
   connectIsolateBridge,
   createNativeCapnpServerSession,
   nativeCapnpSavedTokenData,
+  nativeCapnpSavedTokenText,
 } from "sandstorm:capnp";
 import {
   Interface as CapnpEsInterface,
@@ -57,6 +58,37 @@ function jsonHeader(request, name) {
   } catch (error) {
     throw new ValidationError(`${name} contained invalid JSON`);
   }
+}
+
+function base64UrlEncodeBytes(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; ++i) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlDecodeBytes(text, name = "base64url value") {
+  try {
+    const normalized = text.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; ++i) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch (error) {
+    throw new ValidationError(`${name} is not valid base64url`);
+  }
+}
+
+function base64UrlEncodeText(text) {
+  return base64UrlEncodeBytes(new TextEncoder().encode(text));
+}
+
+function base64UrlDecodeText(text, name = "base64url value") {
+  return new TextDecoder().decode(base64UrlDecodeBytes(text, name));
 }
 
 async function callSandstorm(env, path) {
@@ -215,26 +247,32 @@ function nativeCapnpBridgeApi(env) {
   };
 }
 
-async function withSandstormApiRpc(env, operation, options = {}) {
+async function withIsolateBridgeRpc(env, operation, options = {}) {
   const bridge = connectIsolateBridge(nativeCapnpBridgeApi(env), {
     connectionId: options.connectionId,
     finalize: options.finalize,
   });
 
   try {
-    const result = await bridge.getSandstormApi({});
-    const sandstormApi = result.api;
-    if (!sandstormApi || typeof sandstormApi !== "object") {
-      throw new Error("isolate bridge returned an invalid SandstormApi capability");
-    }
-
-    const value = await operation(sandstormApi);
+    const value = await operation(bridge);
     bridge.close();
     return value;
   } catch (error) {
     bridge.close(error);
     throw error;
   }
+}
+
+async function withSandstormApiRpc(env, operation, options = {}) {
+  return withIsolateBridgeRpc(env, async (bridge) => {
+    const result = await bridge.getSandstormApi({});
+    const sandstormApi = result.api;
+    if (!sandstormApi || typeof sandstormApi !== "object") {
+      throw new Error("isolate bridge returned an invalid SandstormApi capability");
+    }
+
+    return operation(sandstormApi, bridge);
+  }, options);
 }
 
 async function postPowerbox(env, path) {
@@ -774,9 +812,29 @@ function powerboxDescriptorParams(options = {}) {
 
 async function saveCapabilityRecord(env, capability, options = {}) {
   const rawId = capabilityId(capability);
-  const id = encodeURIComponent(rawId);
-  const label = encodeURIComponent(saveLabel(options));
-  return savedCapabilityRecord(await postPowerbox(env, `powerbox/save?id=${id}&label=${label}`));
+  const label = saveLabel(options);
+  const info = await capabilityInfo(env, capability);
+  return savedCapabilityRecord(await withSandstormApiRpc(env, async (sandstormApi, bridge) => {
+    if (typeof sandstormApi.save !== "function") {
+      throw new Error("isolate bridge returned a SandstormApi without save()");
+    }
+    if (typeof bridge.getClaimedCapability !== "function") {
+      throw new Error("isolate bridge returned no claimed-capability resolver");
+    }
+
+    const claimed = await bridge.getClaimedCapability({ id: rawId });
+    const saved = await sandstormApi.save({
+      cap: claimed.cap,
+      label: { defaultText: label },
+    });
+    return {
+      ok: true,
+      type: "savedCapability",
+      id: rawId,
+      token: encodeSavedCapabilityToken(saved.token, info || {}),
+      tokenEncoding: "base64url",
+    };
+  }));
 }
 
 async function saveCapability(env, capability, options = {}) {
@@ -1953,6 +2011,31 @@ function forgetCapabilityHandle(capabilityId) {
   capabilityMetadata.delete(capabilityId);
 }
 
+function capabilitySupportsWebFetch(nativeInterface) {
+  return nativeInterface !== "outboundHttpSession";
+}
+
+function capabilitySupportsOutboundHttpFetch(nativeInterface) {
+  return nativeInterface === "unknown" || nativeInterface === "outboundHttpSession";
+}
+
+function cacheRestoredCapabilityMetadata(id, metadata) {
+  capabilityMetadata.set(id, {
+    ok: true,
+    type: "claimedCapabilityInfo",
+    id,
+    kind: "restored",
+    residence: "imported",
+    nativeInterface: metadata.nativeInterface,
+    pathPrefix: metadata.pathPrefix,
+    persistent: true,
+    supportsWebFetch: capabilitySupportsWebFetch(metadata.nativeInterface),
+    supportsOutboundHttpFetch: capabilitySupportsOutboundHttpFetch(metadata.nativeInterface),
+    hasNativeCapability: true,
+    liveForwardable: true,
+  });
+}
+
 function savedCapabilityToken(value, name = "token") {
   if (typeof value === "string") {
     const token = validate.string(value, name, { minLength: 1, maxLength: 4096 });
@@ -1963,6 +2046,81 @@ function savedCapabilityToken(value, name = "token") {
   }
 
   throw new ValidationError(`${name} must be a saved capability token string`);
+}
+
+function savedCapabilityEnvelopeType(info = {}) {
+  switch (info.nativeInterface) {
+    case "webSession":
+      return "web";
+    case "apiSession":
+      return "api";
+    case "outboundHttpSession":
+      return "outboundHttp";
+    default:
+      return null;
+  }
+}
+
+function savedCapabilityEnvelopePathPrefix(info = {}) {
+  if (info.kind === "routeBackedWebSession" || info.kind === "routeBackedApiSession") {
+    return typeof info.pathPrefix === "string" ? info.pathPrefix : "";
+  }
+  return "";
+}
+
+function encodeSavedCapabilityToken(tokenData, info = {}) {
+  const sturdyRef = nativeCapnpSavedTokenText(tokenData);
+  const type = savedCapabilityEnvelopeType(info);
+  if (!type) {
+    return sturdyRef;
+  }
+
+  const payload = [
+    "isolate-saved-capability-v1",
+    type,
+    base64UrlEncodeText(savedCapabilityEnvelopePathPrefix(info)),
+    sturdyRef,
+  ].join("\n");
+  return base64UrlEncodeText(payload);
+}
+
+function savedCapabilityEnvelopeMetadata(token) {
+  const fallback = {
+    nativeInterface: "unknown",
+    pathPrefix: "",
+  };
+
+  const text = base64UrlDecodeText(token, "saved capability token");
+  const lines = text.split("\n");
+  if (lines[0] !== "isolate-saved-capability-v1") {
+    return fallback;
+  }
+  if (lines.length < 4) {
+    throw new ValidationError("saved capability token envelope is incomplete");
+  }
+
+  let nativeInterface;
+  switch (lines[1]) {
+    case "web":
+      nativeInterface = "webSession";
+      break;
+    case "api":
+      nativeInterface = "apiSession";
+      break;
+    case "outboundHttp":
+      nativeInterface = "outboundHttpSession";
+      break;
+    case "unknown":
+      nativeInterface = "unknown";
+      break;
+    default:
+      throw new ValidationError("saved capability token envelope has unknown capability type");
+  }
+
+  return {
+    nativeInterface,
+    pathPrefix: base64UrlDecodeText(lines[2], "saved capability token path prefix"),
+  };
 }
 
 function savedCapabilityRecord(value, name = "saved capability") {
@@ -2011,9 +2169,35 @@ function shouldForwardCapabilityFetchHeader(name) {
 }
 
 async function restoreCapabilityToken(env, token) {
-  const encodedToken = encodeURIComponent(savedCapabilityToken(token));
-  const capability = await postPowerbox(env, `powerbox/restore?token=${encodedToken}`);
-  return wrapCapability(env, capability);
+  const tokenText = savedCapabilityToken(token);
+  const metadata = savedCapabilityEnvelopeMetadata(tokenText);
+  return withSandstormApiRpc(env, async (sandstormApi, bridge) => {
+    if (typeof sandstormApi.restore !== "function") {
+      throw new Error("isolate bridge returned a SandstormApi without restore()");
+    }
+    if (typeof bridge.storeRestoredCapability !== "function") {
+      throw new Error("isolate bridge returned no restored-capability store");
+    }
+
+    const restored = await sandstormApi.restore({
+      token: nativeCapnpSavedTokenData(tokenText),
+    });
+    if (!restored?.cap) {
+      throw new Error("SandstormApi.restore() returned no capability");
+    }
+
+    const stored = await bridge.storeRestoredCapability({
+      cap: restored.cap,
+      nativeInterface: metadata.nativeInterface,
+      pathPrefix: metadata.pathPrefix,
+    });
+    const id = validate.string(stored.id, "restored capability id", {
+      minLength: 1,
+      maxLength: 4096,
+    });
+    cacheRestoredCapabilityMetadata(id, metadata);
+    return new Capability(env, id);
+  });
 }
 
 async function revokeCapabilityToken(env, token) {

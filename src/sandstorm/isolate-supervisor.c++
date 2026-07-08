@@ -4423,10 +4423,6 @@ public:
             "  \"error\": \"unknown Powerbox binding endpoint\"\n}\n"));
       } else if (methodName == "POST" && route == "/powerbox/claim-request") {
         return claimPowerboxRequest(path, response);
-      } else if (methodName == "POST" && route == "/powerbox/save") {
-        return savePowerboxCapability(path, response);
-      } else if (methodName == "POST" && route == "/powerbox/restore") {
-        return restorePowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop") {
         return dropPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fetch") {
@@ -4570,6 +4566,43 @@ private:
       } else {
         KJ_FAIL_REQUIRE("isolate bridge session ID not found", sessionId);
       }
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<void> getClaimedCapability(GetClaimedCapabilityContext context) override {
+      auto id = context.getParams().getId();
+      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
+        context.getResults().setCap(*cap);
+      } else {
+        KJ_FAIL_REQUIRE("isolate bridge claimed capability ID not found", id);
+      }
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<void> storeRestoredCapability(StoreRestoredCapabilityContext context) override {
+      auto params = context.getParams();
+      KJ_REQUIRE(params.hasCap(), "Cannot store a null restored capability.");
+
+      auto nativeInterfaceText = params.getNativeInterface();
+      auto nativeInterface = ClaimedCapabilityNativeInterface::UNKNOWN;
+      KJ_IF_MAYBE(parsed, claimedCapabilityNativeInterfaceFromName(nativeInterfaceText)) {
+        nativeInterface = *parsed;
+      } else {
+        KJ_FAIL_REQUIRE("invalid restored capability native interface", nativeInterfaceText);
+      }
+
+      auto pathPrefix = normalizeRouteBackedPathPrefix(params.getPathPrefix());
+      auto id = host.sessions->storeClaimedCapability(params.getCap(), ClaimedCapabilityMetadata {
+        ClaimedCapabilityKind::RESTORED,
+        ClaimedCapabilityResidence::IMPORTED,
+        nativeInterface,
+        kj::mv(pathPrefix),
+        kj::heapString(""),
+        true,
+        true,
+        true,
+      });
+      context.getResults().setId(id);
       return kj::READY_NOW;
     }
 
@@ -6174,19 +6207,6 @@ private:
     return kj::String(json.releaseAsArray());
   }
 
-  kj::String renderSavedCapability(kj::StringPtr capabilityId, kj::StringPtr token) {
-    kj::Vector<char> json;
-    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"type\": \"savedCapability\",\n  "));
-    appendJsonField(json, "id", capabilityId);
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "token", token);
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "tokenEncoding", "base64url");
-    json.addAll(kj::StringPtr("\n}\n"));
-    json.add('\0');
-    return kj::String(json.releaseAsArray());
-  }
-
   kj::Maybe<kj::Array<byte>> decodeBase64UrlText(kj::StringPtr token, size_t maxSize) {
     if (token.size() == 0 || token.size() > maxSize || token.size() % 4 == 1) {
       return nullptr;
@@ -6220,148 +6240,6 @@ private:
     }
 
     return kj::mv(decoded);
-  }
-
-  kj::Maybe<kj::Array<byte>> decodeSavedCapabilityToken(kj::StringPtr token) {
-    return decodeBase64UrlText(token, 4096);
-  }
-
-  struct DecodedSavedCapabilityToken {
-    kj::Array<byte> sturdyRef;
-    ClaimedCapabilityMetadata metadata;
-  };
-
-  kj::String encodeSavedCapabilityToken(
-      kj::ArrayPtr<const byte> sturdyRef, kj::Maybe<ClaimedCapabilityMetadata>& metadata) {
-    bool hasMetadataEnvelope = false;
-    kj::StringPtr type = "unknown";
-    kj::String pathPrefix = kj::heapString("");
-    KJ_IF_MAYBE(info, metadata) {
-      switch (info->nativeInterface) {
-        case ClaimedCapabilityNativeInterface::WEB_SESSION:
-          hasMetadataEnvelope = true;
-          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::WEB);
-          break;
-        case ClaimedCapabilityNativeInterface::API_SESSION:
-          hasMetadataEnvelope = true;
-          type = routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API);
-          break;
-        case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
-          hasMetadataEnvelope = true;
-          type = "outboundHttp";
-          break;
-        case ClaimedCapabilityNativeInterface::UNKNOWN:
-          break;
-      }
-
-      switch (info->kind) {
-        case ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION:
-        case ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION:
-          pathPrefix = kj::heapString(info->pathPrefix);
-          break;
-        default:
-          break;
-      }
-    }
-
-    if (!hasMetadataEnvelope) {
-      return kj::encodeBase64Url(sturdyRef);
-    }
-
-    auto encodedPathPrefix = kj::encodeBase64Url(pathPrefix.asBytes());
-    auto encodedSturdyRef = kj::encodeBase64Url(sturdyRef);
-    auto payload = kj::str(
-        "isolate-saved-capability-v1\n",
-        type, "\n",
-        encodedPathPrefix, "\n",
-        encodedSturdyRef);
-    return kj::encodeBase64Url(payload.asBytes());
-  }
-
-  kj::Maybe<kj::StringPtr> consumeLine(kj::StringPtr& text) {
-    KJ_IF_MAYBE(newline, text.findFirst('\n')) {
-      auto line = kj::StringPtr(text.begin(), *newline);
-      text = kj::StringPtr(text.begin() + *newline + 1, text.size() - *newline - 1);
-      return line;
-    } else {
-      return nullptr;
-    }
-  }
-
-  kj::Maybe<DecodedSavedCapabilityToken> decodeSavedCapabilityEnvelope(kj::StringPtr token) {
-    KJ_IF_MAYBE(decoded, decodeSavedCapabilityToken(token)) {
-      auto text = kj::StringPtr(decoded->asChars().begin(), decoded->size());
-      KJ_IF_MAYBE(version, consumeLine(text)) {
-        if (*version != "isolate-saved-capability-v1") {
-          return DecodedSavedCapabilityToken {
-            kj::mv(*decoded),
-            makeImportedClaimedCapabilityMetadata(ClaimedCapabilityKind::RESTORED),
-          };
-        }
-      } else {
-        return DecodedSavedCapabilityToken {
-          kj::mv(*decoded),
-          makeImportedClaimedCapabilityMetadata(ClaimedCapabilityKind::RESTORED),
-        };
-      }
-
-      kj::StringPtr type;
-      KJ_IF_MAYBE(parsedType, consumeLine(text)) {
-        type = *parsedType;
-      } else {
-        return nullptr;
-      }
-
-      kj::StringPtr encodedPathPrefix;
-      KJ_IF_MAYBE(parsedPathPrefix, consumeLine(text)) {
-        encodedPathPrefix = *parsedPathPrefix;
-      } else {
-        return nullptr;
-      }
-
-      kj::Array<byte> pathPrefixBytes = nullptr;
-      if (encodedPathPrefix.size() == 0) {
-        pathPrefixBytes = kj::heapArray<byte>(0);
-      } else KJ_IF_MAYBE(decodedPathPrefix, decodeBase64UrlText(encodedPathPrefix, 2048)) {
-        pathPrefixBytes = kj::mv(*decodedPathPrefix);
-      } else {
-        return nullptr;
-      }
-
-      KJ_IF_MAYBE(sturdyRef, decodeBase64UrlText(text, 4096)) {
-        auto pathPrefixText = kj::StringPtr(
-            pathPrefixBytes.asChars().begin(), pathPrefixBytes.size());
-        auto pathPrefix = normalizeRouteBackedPathPrefix(pathPrefixText);
-
-        ClaimedCapabilityNativeInterface nativeInterface =
-            ClaimedCapabilityNativeInterface::UNKNOWN;
-        if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::WEB)) {
-          nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
-        } else if (type == routeBackedCapabilityTypeToken(RouteBackedCapabilityType::API)) {
-          nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
-        } else if (type == "outboundHttp") {
-          nativeInterface = ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION;
-        } else if (type != "unknown") {
-          return nullptr;
-        }
-
-        return DecodedSavedCapabilityToken {
-          kj::mv(*sturdyRef),
-          ClaimedCapabilityMetadata {
-            ClaimedCapabilityKind::RESTORED,
-            ClaimedCapabilityResidence::IMPORTED,
-            nativeInterface,
-            kj::mv(pathPrefix),
-            kj::heapString(""),
-            true,
-            true,
-            true,
-          },
-        };
-      }
-    }
-
-    return nullptr;
   }
 
   kj::Promise<void> offerClaimedCapability(
@@ -6643,67 +6521,6 @@ private:
     uint64_t interfaceId = 0;
     KJ_IF_MAYBE(error, initAppInterfacePowerboxDescriptor(url, descriptor, interfaceId)) {
       KJ_FAIL_REQUIRE(*error);
-    }
-  }
-
-  kj::Promise<void> savePowerboxCapability(
-      kj::StringPtr url, kj::HttpService::Response& response) {
-    kj::String id = nullptr;
-    kj::Array<kj::String> labels = nullptr;
-    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
-        url, "id", "expected exactly one capability id", id)) {
-      return sendBadRequest(response, *error);
-    }
-    KJ_IF_MAYBE(error, readAtMostOneQueryParam(
-        url, "label", "expected at most one save label", labels)) {
-      return sendBadRequest(response, *error);
-    }
-
-    kj::StringPtr label = "Claimed Sandstorm capability";
-    if (labels.size() == 1) {
-      label = labels[0];
-      if (label.size() == 0 || label.size() > 256) {
-        return sendBadRequest(response, "save label must be 1-256 bytes");
-      }
-    }
-
-    KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
-      auto metadata = host.sessions->findClaimedCapabilityMetadata(id);
-      auto request = cap->castAs<SystemPersistent>().saveRequest();
-      auto owner = request.getSealFor().initGrain();
-      owner.setGrainId(host.grainId);
-      owner.getSaveLabel().setDefaultText(label);
-      return request.send().then(
-          [this, &response, capabilityId = kj::mv(id), metadata = kj::mv(metadata)]
-          (auto result) mutable {
-        auto token = encodeSavedCapabilityToken(result.getSturdyRef(), metadata);
-        return sendJson(response, 200, "OK", renderSavedCapability(capabilityId, token));
-      });
-    } else {
-      return sendJson(response, 404, "Not Found", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
-    }
-  }
-
-  kj::Promise<void> restorePowerboxCapability(
-      kj::StringPtr url, kj::HttpService::Response& response) {
-    kj::String tokenParam = nullptr;
-    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
-        url, "token", "expected exactly one saved capability token", tokenParam)) {
-      return sendBadRequest(response, *error);
-    }
-
-    KJ_IF_MAYBE(token, decodeSavedCapabilityEnvelope(tokenParam)) {
-      auto request = host.sandstormCore.restoreRequest();
-      request.setToken(token->sturdyRef.asPtr());
-      return request.send().then(
-          [this, &response, metadata = kj::mv(token->metadata)](auto result) mutable {
-        auto capId = host.sessions->storeClaimedCapability(
-            result.getCap(), kj::mv(metadata));
-        return sendJson(response, 200, "OK", renderClaimedCapability(capId));
-      });
-    } else {
-      return sendBadRequest(response, "invalid saved capability token");
     }
   }
 

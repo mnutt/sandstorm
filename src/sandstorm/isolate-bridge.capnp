@@ -16,4 +16,17 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
 
   getSessionContext @1 (sessionId :Text) -> (context :Grain.SessionContext);
   # Returns the standard SessionContext for a live same-grain session.
+
+  getClaimedCapability @2 (id :Text) -> (cap :Capability);
+  # Transitional helper while id-backed Capability handles still exist.
+  # Resolves a same-grain claimed-capability ID into a real capnp reference on
+  # this RPC connection so trusted JS can pass it to standard Sandstorm APIs.
+
+  storeRestoredCapability @3 (
+      cap :Capability,
+      nativeInterface :Text,
+      pathPrefix :Text) -> (id :Text);
+  # Transitional helper while id-backed Capability handles still exist.
+  # Stores a capability restored over the RPC connection in the same temporary
+  # claimed-capability registry used by fetch-shaped handles.
 }
