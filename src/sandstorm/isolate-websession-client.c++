@@ -24,7 +24,6 @@
 #include <sandstorm/api-session.capnp.h>
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
-#include <sandstorm/isolate-native-capnp-bridge.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
 #include <sandstorm/outbound-http-session-impl.capnp.h>
 #include <sandstorm/outbound-http-session.capnp.h>
@@ -45,10 +44,6 @@ constexpr const char* ISOLATE_ROUTE_BACKED_APP_REF_PREFIX =
     "sandstorm-isolate-route-backed-v1\n";
 constexpr uint64_t TEST_PROVIDER_TAG_ID = 0xdf9518c9479ddfcbull;
 
-static_assert(capnp::typeId<NativeCapnpBridgeRequest>() == 0xa9d7cd8e6cc2b4e9,
-    "NativeCapnpBridgeRequest schema ID changed");
-static_assert(capnp::typeId<NativeCapnpBridgeResponse>() == 0xc1ef5dce7db1a7f1,
-    "NativeCapnpBridgeResponse schema ID changed");
 static_assert(capnp::typeId<NativeGreeter>() == 0xb66316217ceedb1b,
     "NativeGreeter schema ID changed");
 
@@ -1693,7 +1688,7 @@ public:
         claimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 5, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 4, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 1, sessionContextRef.tokenDropCount);
     KJ_REQUIRE(sessionContextRef.offerCount == 1, sessionContextRef.offerCount);
     KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
@@ -1757,7 +1752,7 @@ public:
     KJ_REQUIRE(contains(outboundBody, "\"dropSaved\":{\"ok\":true}"), outboundBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 6, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 5, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 2, sessionContextRef.tokenDropCount);
 
     auto storageHelperRequest = session.getRequest();
@@ -1832,7 +1827,7 @@ public:
         storageHelperBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 9, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 8, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
 
     auto exportRequest = session.getRequest();
@@ -1989,7 +1984,7 @@ public:
         badClaimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 9, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 8, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
 
     auto standardClaimRequest = session.postRequest();

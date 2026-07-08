@@ -4,11 +4,6 @@ import {
   Interface as CapnpEsInterface,
   Message as CapnpEsMessage,
 } from "capnp-es/index.mjs";
-import {
-  NativeCapnpBridgeRequest,
-  NativeCapnpBridgeResponse,
-  NativeCapnpCapabilitySlotKind,
-} from "sandstorm:native-capnp-bridge";
 import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
 
 export const SANDSTORM_CAPNP_VERSION = 0;
@@ -345,120 +340,6 @@ function nativeCapnpInterfaceIdsEqual(a, b) {
   return nativeCapnpInterfaceId(a) === nativeCapnpInterfaceId(b);
 }
 
-function nativeCapnpSlotKind(kind) {
-  switch (kind) {
-    case "senderHosted":
-      return NativeCapnpCapabilitySlotKind.SENDER_HOSTED;
-    case "receiverHosted":
-      return NativeCapnpCapabilitySlotKind.RECEIVER_HOSTED;
-    case "savedToken":
-      return NativeCapnpCapabilitySlotKind.SAVED_TOKEN;
-    default:
-      throw new TypeError(`unknown native Cap'n Proto capability slot kind: ${kind}`);
-  }
-}
-
-function writeNativeCapnpCapabilitySlot(builder, slot) {
-  builder.id = slot.id;
-  builder.interfaceId = nativeCapnpInterfaceId(slot.interfaceId);
-  builder.interfaceName = slot.interfaceName;
-  builder.kind = nativeCapnpSlotKind(slot.kind);
-}
-
-function nativeCapnpSlotKindName(kind) {
-  switch (kind) {
-    case NativeCapnpCapabilitySlotKind.SENDER_HOSTED:
-      return "senderHosted";
-    case NativeCapnpCapabilitySlotKind.RECEIVER_HOSTED:
-      return "receiverHosted";
-    case NativeCapnpCapabilitySlotKind.SAVED_TOKEN:
-      return "savedToken";
-    default:
-      throw new NativeCapnpBridgeProtocolError(
-        `unknown native Cap'n Proto capability slot kind: ${kind}`);
-  }
-}
-
-function readNativeCapnpCapabilitySlot(slot) {
-  const capability = {
-    id: slot.id,
-    interfaceId: slot.interfaceId,
-    interfaceName: slot.interfaceName,
-    kind: nativeCapnpSlotKindName(slot.kind),
-  };
-
-  return Object.freeze(capability);
-}
-
-function writeNativeCapnpBridgeException(builder, exception = {}) {
-  builder.type = typeof exception.type === "string" ? exception.type : "failed";
-  builder.reason = typeof exception.reason === "string" ? exception.reason : "";
-  builder.trace = typeof exception.trace === "string" ? exception.trace : "";
-}
-
-function readNativeCapnpBridgeExceptionValue(exception) {
-  return Object.freeze({
-    type: exception.type,
-    reason: exception.reason,
-    trace: exception.trace,
-  });
-}
-
-function makeNativeCapnpBridgeTargetRequest(kind, target) {
-  if (!target || typeof target !== "object" || typeof target.id !== "string") {
-    throw new NativeCapnpBridgeProtocolError(
-      `native bridge ${kind} target must be a Sandstorm capability handle`);
-  }
-
-  const message = new CapnpEsMessage();
-  const request = message.initRoot(NativeCapnpBridgeRequest);
-  request.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
-
-  if (kind === "drop") {
-    writeNativeCapnpCapabilitySlot(
-      request._initDrop()._initTarget(), normalizeNativeCapnpCapabilitySlot(target));
-  } else if (kind === "save") {
-    writeNativeCapnpCapabilitySlot(
-      request._initSave()._initTarget(), normalizeNativeCapnpCapabilitySlot(target));
-  } else {
-    throw new NativeCapnpBridgeProtocolError(
-      `unknown native Cap'n Proto bridge target request kind: ${kind}`);
-  }
-
-  return makeNativeCapnpPayload(message);
-}
-
-export function makeNativeCapnpBridgeDropRequest({ target } = {}) {
-  return makeNativeCapnpBridgeTargetRequest("drop", target);
-}
-
-export function makeNativeCapnpBridgeSaveRequest({ target } = {}) {
-  return makeNativeCapnpBridgeTargetRequest("save", target);
-}
-
-export function makeNativeCapnpBridgeRestoreRequest({
-  token,
-  expectedInterfaceId = 0n,
-  expectedInterfaceName = "",
-} = {}) {
-  if (typeof token !== "string" || token.length === 0) {
-    throw new NativeCapnpBridgeProtocolError(
-      "native bridge restore request requires a non-empty token");
-  }
-
-  const message = new CapnpEsMessage();
-  const request = message.initRoot(NativeCapnpBridgeRequest);
-  request.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
-
-  const restore = request._initRestore();
-  restore.token = token;
-  restore.expectedInterfaceId = nativeCapnpInterfaceId(expectedInterfaceId);
-  restore.expectedInterfaceName =
-      typeof expectedInterfaceName === "string" ? expectedInterfaceName : "";
-
-  return makeNativeCapnpPayload(message);
-}
-
 function nativeCapnpRootMessageBytes(message) {
   if (message && typeof message === "object" && message.segment?.message) {
     if (message.segment.id === 0 && message.byteOffset === 0) {
@@ -537,95 +418,6 @@ class NativeCapnpStreamFrameDecoder {
   }
 }
 
-export function readNativeCapnpBridgeRequest(message) {
-  const bytes = nativeCapnpMessageBytes(message);
-  return new CapnpEsMessage(bytes, false).getRoot(NativeCapnpBridgeRequest);
-}
-
-export function makeNativeCapnpBridgeExceptionResponse(exception = {}) {
-  const message = new CapnpEsMessage();
-  const response = message.initRoot(NativeCapnpBridgeResponse);
-  response.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
-  writeNativeCapnpBridgeException(response._initException(), exception);
-  return makeNativeCapnpPayload(message);
-}
-
-export function makeNativeCapnpBridgeCapabilityResponse({ capability } = {}) {
-  const message = new CapnpEsMessage();
-  const response = message.initRoot(NativeCapnpBridgeResponse);
-  response.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
-  writeNativeCapnpCapabilitySlot(
-    response._initCapability(), normalizeNativeCapnpCapabilitySlot(capability));
-  return makeNativeCapnpPayload(message);
-}
-
-export function makeNativeCapnpBridgeSavedResponse({ token } = {}) {
-  if (typeof token !== "string" || token.length === 0) {
-    throw new NativeCapnpBridgeProtocolError(
-      "native bridge saved response requires a non-empty token");
-  }
-
-  const message = new CapnpEsMessage();
-  const response = message.initRoot(NativeCapnpBridgeResponse);
-  response.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
-  response._initSaved().token = token;
-  return makeNativeCapnpPayload(message);
-}
-
-export function makeNativeCapnpBridgeAcknowledgedResponse() {
-  const message = new CapnpEsMessage();
-  const response = message.initRoot(NativeCapnpBridgeResponse);
-  response.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
-  response.acknowledged = true;
-  return makeNativeCapnpPayload(message);
-}
-
-export function readNativeCapnpBridgeResponse(message) {
-  const bytes = nativeCapnpMessageBytes(message);
-  return new CapnpEsMessage(bytes, false).getRoot(NativeCapnpBridgeResponse);
-}
-
-function decodeNativeCapnpBridgeResponseInternal(message) {
-  const response = readNativeCapnpBridgeResponse(message);
-  if (response.protocolVersion !== SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION) {
-    throw new NativeCapnpBridgeProtocolError(
-      `unsupported native Cap'n Proto bridge response protocol version: ${response.protocolVersion}`);
-  }
-
-  switch (response.which()) {
-    case NativeCapnpBridgeResponse.CAPABILITY:
-      return Object.freeze({
-        protocolVersion: response.protocolVersion,
-        which: "capability",
-        capability: readNativeCapnpCapabilitySlot(response.capability),
-      });
-    case NativeCapnpBridgeResponse.SAVED:
-      return Object.freeze({
-        protocolVersion: response.protocolVersion,
-        which: "saved",
-        saved: Object.freeze({ token: response.saved.token }),
-      });
-    case NativeCapnpBridgeResponse.ACKNOWLEDGED:
-      return Object.freeze({
-        protocolVersion: response.protocolVersion,
-        which: "acknowledged",
-      });
-    case NativeCapnpBridgeResponse.EXCEPTION:
-      return Object.freeze({
-        protocolVersion: response.protocolVersion,
-        which: "exception",
-        exception: readNativeCapnpBridgeExceptionValue(response.exception),
-      });
-    default:
-      throw new NativeCapnpBridgeProtocolError(
-        `unknown native Cap'n Proto bridge response discriminant: ${response.which()}`);
-  }
-}
-
-export function decodeNativeCapnpBridgeResponse(message) {
-  return decodeNativeCapnpBridgeResponseInternal(message);
-}
-
 function nativeCapnpInterfaceMetadata(InterfaceClass, options = {}) {
   const schema = options.schema || options.binding?.schema ||
       InterfaceClass?.schema || InterfaceClass?.Client?.schema ||
@@ -671,81 +463,6 @@ export async function nativeCapnpPowerboxDescriptorInfo(env, InterfaceClass, opt
 export async function nativeCapnpPowerboxDescriptor(env, InterfaceClass, options = {}) {
   const result = await nativeCapnpPowerboxDescriptorInfo(env, InterfaceClass, options);
   return result.descriptor;
-}
-
-async function sendNativeCapnpBridgeEnvelope(api, request, context, expectedWhich) {
-  if (!api || typeof api.nativeCapnpBridgeLifecycleBytes !== "function") {
-    throw new NativeCapnpBridgeProtocolError(
-      "native bridge lifecycle requires api.nativeCapnpBridgeLifecycleBytes()");
-  }
-
-  const response = await api.nativeCapnpBridgeLifecycleBytes(request.message);
-  if (!response || typeof response !== "object" || !(response.body instanceof Uint8Array)) {
-    throw new NativeCapnpBridgeProtocolError("native bridge lifecycle returned an invalid response");
-  }
-
-  const decoded = decodeNativeCapnpBridgeResponseInternal(response.body);
-  if (decoded.which === "exception") {
-    throw new NativeCapnpBridgeUnavailableError(
-      decoded.exception.reason || "native Cap'n Proto bridge lifecycle failed",
-      { ...context, response, decoded });
-  }
-  if (decoded.which !== expectedWhich) {
-    throw new NativeCapnpBridgeProtocolError(
-      `native Cap'n Proto bridge returned unexpected ${decoded.which} response`,
-      { ...context, response, decoded });
-  }
-
-  return { response, decoded };
-}
-
-export async function createNativeCapnpBridge(api, options = {}) {
-  const negotiation = await negotiateNativeCapnpBridge(api, options);
-  const sendRequest = async (request, context, expectedWhich) => {
-    return sendNativeCapnpBridgeEnvelope(
-      api, request, { negotiation, ...context }, expectedWhich);
-  };
-
-  const requireAvailable = (operation) => {
-    if (!negotiation.available) {
-      throw new NativeCapnpBridgeUnavailableError(
-        `native Cap'n Proto bridge is unavailable for ${operation}: ` +
-            `${negotiation.reason || "unavailable"}`,
-        { negotiation });
-    }
-  };
-
-  return Object.freeze({
-    negotiation,
-    available: negotiation.available,
-    protocolVersion: negotiation.protocolVersion,
-
-    async drop({ target } = {}) {
-      requireAvailable("drop");
-      const request = makeNativeCapnpBridgeDropRequest({ target });
-      await sendRequest(request, { targetId: target.id }, "acknowledged");
-      return undefined;
-    },
-
-    async save({ target } = {}) {
-      requireAvailable("save");
-      const request = makeNativeCapnpBridgeSaveRequest({ target });
-      const { decoded } = await sendRequest(request, { targetId: target.id }, "saved");
-      return decoded.saved.token;
-    },
-
-    async restore({ token, binding } = {}) {
-      requireAvailable("restore");
-      const schema = binding?.schema || {};
-      const request = makeNativeCapnpBridgeRestoreRequest({
-        token,
-        expectedInterfaceId: schema.interfaceId || binding?.interfaceId || 0n,
-        expectedInterfaceName: schema.interfaceName || binding?.interfaceName || "",
-      });
-      const { decoded } = await sendRequest(request, { token, binding }, "capability");
-      return decoded.capability;
-    },
-  });
 }
 
 function nativeCapnpBridgeExceptionError(message, context) {
@@ -1241,19 +958,6 @@ export async function exportNativeCapnp(api, InterfaceClass, target, options = {
   return await api.nativeCapnpExport(registration);
 }
 
-export async function saveNativeCapnp(api, target) {
-  const request = makeNativeCapnpBridgeSaveRequest({ target });
-  const { decoded } = await sendNativeCapnpBridgeEnvelope(
-    api, request, { targetId: target?.id }, "saved");
-  return decoded.saved.token;
-}
-
-export async function dropNativeCapnp(api, target) {
-  const request = makeNativeCapnpBridgeDropRequest({ target });
-  await sendNativeCapnpBridgeEnvelope(api, request, { targetId: target?.id }, "acknowledged");
-  return undefined;
-}
-
 function nativeCapnpSaveLabel(options = {}) {
   const label = options.saveLabel ?? options.label;
   if (typeof label === "string") {
@@ -1367,12 +1071,17 @@ export function connectNativeCapnp(api, target, InterfaceClass, options = {}) {
     capability: target,
     connection,
     transport: connection.transport,
-    drop: (...args) => typeof target.drop === "function" ?
-      target.drop(...args) :
-      dropNativeCapnp(api, connection.transport.target),
-    save: (...args) => typeof target.save === "function" ?
-      target.save(...args) :
-      saveNativeCapnp(api, connection.transport.target),
+    drop: async (...args) => {
+      connection.transport.close();
+      return typeof target.drop === "function" ? await target.drop(...args) : undefined;
+    },
+    save: (...args) => {
+      if (typeof target.save !== "function") {
+        throw new NativeCapnpBridgeProtocolError(
+          "connectNativeCapnp().save() requires a Sandstorm capability handle with save()");
+      }
+      return target.save(...args);
+    },
   });
 }
 

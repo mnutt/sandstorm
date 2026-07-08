@@ -145,10 +145,6 @@ const CAPNP_ES_GENERATED_SCHEMA_MODULES = [
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js",
   ],
   [
-    "capnp:/sandstorm/isolate-native-capnp-bridge.capnp",
-    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/isolate-native-capnp-bridge.js",
-  ],
-  [
     "capnp:/sandstorm/isolate-bridge.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/isolate-bridge.js",
   ],
@@ -944,9 +940,6 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
   assert.equal(
     modules.get("sandstorm:capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp.js");
-  assert.equal(
-    modules.get("sandstorm:native-capnp-bridge").esModulePath,
-    "__sandstorm_isolate_runtime/native-capnp-bridge.js");
   assert.equal(modules.has("sandstorm:rpc"), false);
   assert.equal(modules.has("sandstorm:capnweb-source"), false);
   assert.equal(modules.has("capnweb"), false);
@@ -1468,7 +1461,6 @@ test("isolate supervisor integration suite", {
         ...FIXTURE_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule"]),
         ["sandstorm:api", "esModule"],
         ["sandstorm:capnp", "esModule"],
-        ["sandstorm:native-capnp-bridge", "esModule"],
         ...CAPNP_ES_SCHEME_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
         ...CAPNP_ES_PATH_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
         ...CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
@@ -1515,7 +1507,7 @@ test("isolate supervisor integration suite", {
   });
 
   await t.test("serves worker fetch requests through workerd", async () => {
-    const response = await requestJson(fixture.workerdSocket, "/?nativeLifecycle=true");
+    const response = await requestJson(fixture.workerdSocket, "/");
     assert.equal(response.statusCode, 200, response.body + formatOutput(
       fixture.stdout, fixture.stderr));
 
@@ -1530,20 +1522,6 @@ test("isolate supervisor integration suite", {
     assert.equal(body.capnpEs.messageBytes, 16);
     assert.equal(typeof body.sandstormApi.nativeCapnpBridge.targetId, "string");
     assert.ok(body.sandstormApi.nativeCapnpBridge.targetId.length > 0);
-    assert.equal(typeof body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.token, "string");
-    assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.token.length > 0);
-    assert.equal(
-      typeof body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.helperToken,
-      "string");
-    assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.helperToken.length > 0);
-    assert.equal(
-      typeof body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restoredClient.savedToken,
-      "string");
-    assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restoredClient.savedToken.length > 0);
-    assert.equal(
-      typeof body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id,
-      "string");
-    assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id.length > 0);
     assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.error, "");
     assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.streamError, "");
     assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.dropError, "");
@@ -1588,68 +1566,16 @@ test("isolate supervisor integration suite", {
     assert.match(
       body.sandstormApi.nativeCapnpBridge.generatedClient.drop.generatedCallAfterDropError,
       /NativeCapnpBridgeUnavailableError: unknown native Cap'n Proto bridge target capability/);
-    assert.ok(body.capnpEs.bridgeExceptionResponse.bytes > body.capnpEs.messageBytes);
-    assert.deepEqual(body.capnpEs.bridgeExceptionResponse, {
-      bytes: body.capnpEs.bridgeExceptionResponse.bytes,
-      protocolVersion: 0,
-      which: "exception",
-      exception: {
-        type: "unimplemented",
-        reason: "fixture exception",
-        trace: "fixture trace",
-      },
-    });
-    assert.deepEqual(body.capnpEs.bridgeLifecycle, {
-      dropRequest: {
-        protocolVersion: 0,
-        which: 0,
-        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
-      },
-      saveRequest: {
-        protocolVersion: 0,
-        which: 1,
-        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
-      },
-      restoreRequest: {
-        protocolVersion: 0,
-        which: 2,
-        token: "native-bridge-saved-token",
-        expectedInterfaceId: "a8e9655582dcde6f",
-        expectedInterfaceName: "sandstorm.WebSession",
-      },
-      acknowledgedResponse: {
-        bytes: body.capnpEs.bridgeLifecycle.acknowledgedResponse.bytes,
-        which: "acknowledged",
-      },
-      savedResponse: {
-        bytes: body.capnpEs.bridgeLifecycle.savedResponse.bytes,
-        which: "saved",
-        token: "native-bridge-saved-token",
-      },
-      capabilityResponse: {
-        bytes: body.capnpEs.bridgeLifecycle.capabilityResponse.bytes,
-        which: "capability",
-        capability: {
+    assert.deepEqual(body.capnpEs.payload, {
+      bytes: body.capnpEs.messageBytes,
+      capabilities: [
+        {
           id: body.sandstormApi.nativeCapnpBridge.targetId,
           interfaceId: "a8e9655582dcde6f",
           interfaceName: "sandstorm.WebSession",
           kind: "receiverHosted",
         },
-      },
-    });
-    assert.ok(body.capnpEs.bridgeLifecycle.acknowledgedResponse.bytes > 0);
-    assert.ok(body.capnpEs.bridgeLifecycle.savedResponse.bytes > 0);
-    assert.ok(body.capnpEs.bridgeLifecycle.capabilityResponse.bytes > 0);
-    assert.deepEqual(body.capnpEs.bridgeClientLifecycle, {
-      available: true,
-      dropResult: null,
-      savedToken: "native-bridge-saved-token",
-      restoredCapability: {
-        id: body.sandstormApi.nativeCapnpBridge.targetId,
-        interfaceId: "a8e9655582dcde6f",
-        interfaceName: "sandstorm.WebSession",
-        kind: "receiverHosted",
-      },
+      ],
     });
     assert.deepEqual(body.helperVersions, {
       api: 0,
@@ -1875,14 +1801,6 @@ test("isolate supervisor integration suite", {
           connectionIsNull: false,
           dropResult: null,
         },
-        legacyLifecycleRestore: {
-          restoreOk: true,
-          restoreStatus: 200,
-          decodedCapabilityKeys: ["id", "interfaceId", "interfaceName", "kind"],
-          decodedHasLocalDispatchProperty: false,
-          publicDecodedTransportKind: "webSocketRpc",
-          dropWhich: "acknowledged",
-        },
         info: {
           ok: true,
           type: "capabilityInfo",
@@ -1966,27 +1884,6 @@ test("isolate supervisor integration suite", {
             body.sandstormApi.nativeCapnpBridge.isolateBridgeBootstrap.missingSessionError,
       },
       targetId: body.sandstormApi.nativeCapnpBridge.targetId,
-      dropRequest: {
-        kind: "drop",
-        protocolVersion: 0,
-        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
-        targetInterfaceId: "0xa8e9655582dcde6f",
-        targetInterfaceName: "sandstorm.WebSession",
-      },
-      saveRequest: {
-        kind: "save",
-        protocolVersion: 0,
-        targetId: body.sandstormApi.nativeCapnpBridge.targetId,
-        targetInterfaceId: "0xa8e9655582dcde6f",
-        targetInterfaceName: "sandstorm.WebSession",
-      },
-      restoreRequest: {
-        kind: "restore",
-        protocolVersion: 0,
-        token: "native-bridge-saved-token",
-        expectedInterfaceId: "0xa8e9655582dcde6f",
-        expectedInterfaceName: "sandstorm.WebSession",
-      },
       connectedClient: {
         isFixtureClient: true,
         hasBootstrapClient: true,
@@ -2038,56 +1935,7 @@ test("isolate supervisor integration suite", {
                   .generatedCallAfterDropError,
         },
       },
-      lifecycleBinary: {
-        save: {
-          ok: true,
-          status: 200,
-          contentType: "application/octet-stream",
-          bytes: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.bytes,
-          which: "saved",
-          token: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.token,
-          helperToken: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.helperToken,
-        },
-        restoredClient: {
-          isFixtureClient: true,
-          hasBootstrapClient: true,
-          targetId: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restoredClient.targetId,
-          connectionId: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restoredClient
-              .connectionId,
-          bootstrap: {
-            which: 3,
-            answerId: 0,
-          },
-          savedToken: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restoredClient
-              .savedToken,
-          dropResult: null,
-        },
-        restore: {
-          ok: true,
-          status: 200,
-          contentType: "application/octet-stream",
-          bytes: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.bytes,
-          which: "capability",
-          capability: {
-            id: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.capability.id,
-            interfaceId: "a8e9655582dcde6f",
-            interfaceName: "sandstorm.WebSession",
-            kind: "receiverHosted",
-          },
-        },
-        drop: {
-          ok: true,
-          status: 200,
-          contentType: "application/octet-stream",
-          bytes: body.sandstormApi.nativeCapnpBridge.lifecycleBinary.drop.bytes,
-          which: "acknowledged",
-        },
-      },
-      unknownTargetError: "unknown native Cap'n Proto bridge target capability",
     });
-    assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.save.bytes > 0);
-    assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.restore.bytes > 0);
-    assert.ok(body.sandstormApi.nativeCapnpBridge.lifecycleBinary.drop.bytes > 0);
     assert.equal(body.storage.text, "stored from isolate");
     const apiPathResponse = await requestJson(fixture.workerdSocket, "/api/health?ignored=true");
     assert.equal(apiPathResponse.statusCode, 200);
@@ -2776,7 +2624,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.json.mainModule, "worker.js");
     assert.equal(
       runtime.json.moduleCount,
-      6 + FIXTURE_GENERATED_SCHEMA_MODULES.length +
+      5 + FIXTURE_GENERATED_SCHEMA_MODULES.length +
           CAPNP_ES_SCHEME_RUNTIME_MODULES.length + CAPNP_ES_PATH_RUNTIME_MODULES.length +
           CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.length);
     assert.equal(runtime.json.bindingCount, 6);
@@ -2802,7 +2650,7 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimed"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimedStats"));
     assert.ok(capabilities.json.capabilities.includes("capnp.bridgeInfo"));
-    assert.ok(capabilities.json.capabilities.includes("capnp.lifecycle"));
+    assert.ok(!capabilities.json.capabilities.includes("capnp.lifecycle"));
 
     const capnpBridgeInfo = await requestJson(fixture.sandstormApiSocket, "/capnp/bridge-info");
     assert.equal(capnpBridgeInfo.statusCode, 200, capnpBridgeInfo.body);
@@ -2822,28 +2670,14 @@ test("isolate supervisor integration suite", {
       method: "POST",
       body: "",
     });
-    assert.equal(capnpLifecycle.statusCode, 400, capnpLifecycle.body);
-    assert.deepEqual(capnpLifecycle.json, {
-      ok: false,
-      error: "native Cap'n Proto bridge request body is empty",
-    });
+    assert.equal(capnpLifecycle.statusCode, 405, capnpLifecycle.body);
+    assert.equal(capnpLifecycle.json.ok, false);
+    assert.match(capnpLifecycle.json.error, /method not allowed/);
 
     const browserCapnpBridgeInfo = await requestJson(
       fixture.workerdSocket, "/__sandstorm/native-capnp/bridge-info");
     assert.equal(browserCapnpBridgeInfo.statusCode, 200, browserCapnpBridgeInfo.body);
     assert.deepEqual(browserCapnpBridgeInfo.json, capnpBridgeInfo.json);
-
-    const browserCapnpLifecycle = await requestUnixSocket(
-      fixture.workerdSocket, "/__sandstorm/native-capnp/lifecycle", {
-        method: "POST",
-        headers: { "content-type": "application/octet-stream" },
-        body: "",
-      });
-    assert.equal(browserCapnpLifecycle.statusCode, 400, browserCapnpLifecycle.body);
-    assert.match(
-      String(browserCapnpLifecycle.headers["content-type"] || ""),
-      /application\/octet-stream/);
-    assert.ok(browserCapnpLifecycle.bodyBuffer.length > 0);
 
     const claimedStats = await requestJson(
       fixture.sandstormApiSocket, "/capabilities/claimed-stats");
@@ -2883,7 +2717,6 @@ test("isolate supervisor integration suite", {
         ...FIXTURE_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule", false]),
         ["sandstorm:api", "esModule", false],
         ["sandstorm:capnp", "esModule", false],
-        ["sandstorm:native-capnp-bridge", "esModule", false],
         ...CAPNP_ES_SCHEME_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
         ...CAPNP_ES_PATH_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
         ...CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
@@ -2921,8 +2754,7 @@ test("isolate supervisor integration suite", {
     const servedNativeBridgeSchemaModule = await requestUnixSocket(
       fixture.workerdSocket,
       "/__sandstorm/capnp/sandstorm/isolate-native-capnp-bridge.capnp.js");
-    assert.equal(servedNativeBridgeSchemaModule.statusCode, 200);
-    assert.match(servedNativeBridgeSchemaModule.body, /NativeCapnpBridgeRequest/);
+    assert.equal(servedNativeBridgeSchemaModule.statusCode, 404);
 
     const servedNativeSchemaDependency = await requestUnixSocket(
       fixture.workerdSocket, "/__sandstorm/capnp/sandstorm/grain.capnp");
@@ -2949,9 +2781,8 @@ test("isolate supervisor integration suite", {
     assert.match(browserNativeCapnpClient.body, /requestBrowserNativeCapnp/);
     assert.match(browserNativeCapnpClient.body, /claimBrowserNativeCapnpToken/);
     assert.match(browserNativeCapnpClient.body, /from "\/capnp-es\/index\.mjs"/);
-    assert.match(
-      browserNativeCapnpClient.body,
-      /from "\/__sandstorm\/capnp\/sandstorm\/isolate-native-capnp-bridge\.capnp\.js"/);
+    assert.doesNotMatch(browserNativeCapnpClient.body, /isolate-native-capnp-bridge/);
+    assert.doesNotMatch(browserNativeCapnpClient.body, /nativeCapnpBridgeLifecycle/);
 
     const browserNativeCapnpRpcSession = await requestJson(
       fixture.workerdSocket,

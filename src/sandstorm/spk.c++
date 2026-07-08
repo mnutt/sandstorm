@@ -40,7 +40,6 @@
 #include <sandstorm/isolate/api.js.h>
 #include <sandstorm/isolate/capnp-es.js.h>
 #include <sandstorm/isolate/capnp.js.h>
-#include <sandstorm/isolate/native-capnp-bridge.js.h>
 #include <stdlib.h>
 #include <dirent.h>
 #include <set>
@@ -2740,8 +2739,6 @@ private:
         "{ status: 500 }); } };\n");
     writeDevIsolateSupportFile(path, "capnp.js", ISOLATE_CAPNP_HELPER_SOURCE);
     writeDevIsolateSupportFile(path, "api.js", ISOLATE_API_HELPER_SOURCE);
-    writeDevIsolateSupportFile(
-        path, "native-capnp-bridge.js", ISOLATE_NATIVE_CAPNP_BRIDGE_SOURCE);
     std::set<std::string> writtenCapnpEsRuntimePaths;
     for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
       auto runtimePath = capnpEsRuntimePath(module.name);
@@ -2851,7 +2848,7 @@ private:
     isolate.initCompatibilityFlags(0);
 
     auto moduleList = isolate.initModules(
-        modules.size() + 3 + (3 * ISOLATE_CAPNP_ES_MODULE_COUNT));
+        modules.size() + 2 + (3 * ISOLATE_CAPNP_ES_MODULE_COUNT));
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2883,9 +2880,6 @@ private:
     auto capnpHelperModule = moduleList[helperIndex++];
     capnpHelperModule.setName("sandstorm:capnp");
     capnpHelperModule.setEsModulePath("__sandstorm_isolate_runtime/capnp.js");
-    auto nativeCapnpBridgeModule = moduleList[helperIndex++];
-    nativeCapnpBridgeModule.setName("sandstorm:native-capnp-bridge");
-    nativeCapnpBridgeModule.setEsModulePath("__sandstorm_isolate_runtime/native-capnp-bridge.js");
     for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
       auto module = moduleList[helperIndex++];
       module.setName(capnpEsSchemeRuntimeSpecifier(runtimeModule.name));
@@ -3121,10 +3115,6 @@ private:
     if (devIsolateCapnpEsCompilerModule() == nullptr) {
       return;
     }
-
-    kj::StringPtr bridgeSpecifier = "capnp:/sandstorm/isolate-native-capnp-bridge.capnp";
-    auto bridgePath = resolveDevIsolateCapnpEsImport(rootDir, rootDir, bridgeSpecifier);
-    addDevIsolateCapnpEsModule(bridgeSpecifier, bridgePath, rootDir, modules, capnpEsImports);
 
     kj::StringPtr isolateBridgeSpecifier = "capnp:/sandstorm/isolate-bridge.capnp";
     auto isolateBridgePath = resolveDevIsolateCapnpEsImport(

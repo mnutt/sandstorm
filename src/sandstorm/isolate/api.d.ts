@@ -247,21 +247,6 @@ declare module "sandstorm:api" {
     nativeExports: boolean;
   }
 
-  export interface NativeCapnpBridgeResponse {
-    ok: boolean;
-    type: "nativeCapnpBridgeResponse";
-    protocolVersion: 0;
-    error?: string;
-    exception?: { type: string; reason: string; trace: string };
-  }
-
-  export interface NativeCapnpBridgeByteResponse {
-    ok: boolean;
-    status: number;
-    contentType: string;
-    body: Uint8Array;
-  }
-
   export interface NativeCapnpExportRegistration {
     readonly id: string;
     readonly interfaceMetadata: {
@@ -301,8 +286,6 @@ declare module "sandstorm:api" {
     modules(): Promise<unknown>;
     bindings(): Promise<unknown>;
     capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
-    nativeCapnpBridgeLifecycle(body?: BodyInit): Promise<NativeCapnpBridgeResponse>;
-    nativeCapnpBridgeLifecycleBytes(body?: BodyInit): Promise<NativeCapnpBridgeByteResponse>;
     nativeCapnpBridgeOpenRpcSession(
       target: { id: string; interfaceId?: bigint | number | string; interfaceName?: string },
       connectionId: string,

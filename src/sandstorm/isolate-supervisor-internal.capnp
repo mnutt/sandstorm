@@ -5,21 +5,6 @@ $import "/capnp/c++.capnp".namespace("sandstorm");
 using WebSession = import "web-session.capnp".WebSession;
 using ApiSession = import "api-session.capnp".ApiSession;
 using SystemPersistent = import "supervisor.capnp".SystemPersistent;
-using NativeCapnpBridgeRequest =
-    import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeRequest;
-using NativeCapnpBridgeResponse =
-    import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeResponse;
-using NativeCapnpBridgeDrop = import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeDrop;
-using NativeCapnpBridgeSave = import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeSave;
-using NativeCapnpBridgeRestore =
-    import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeRestore;
-using NativeCapnpBridgeSaved = import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeSaved;
-using NativeCapnpCapabilitySlot =
-    import "isolate-native-capnp-bridge.capnp".NativeCapnpCapabilitySlot;
-using NativeCapnpCapabilitySlotKind =
-    import "isolate-native-capnp-bridge.capnp".NativeCapnpCapabilitySlotKind;
-using NativeCapnpBridgeException =
-    import "isolate-native-capnp-bridge.capnp".NativeCapnpBridgeException;
 
 interface IsolateWebSession @0xa8e9655582dcde6f extends(WebSession, SystemPersistent) {
   # Internal session interface returned by isolate-supervisor.

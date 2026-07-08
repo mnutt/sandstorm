@@ -68,112 +68,6 @@ declare module "sandstorm:capnp" {
     capabilities?: readonly NativeCapnpCapabilitySlot[],
   ): NativeCapnpPayload;
 
-  export interface NativeCapnpBridgeTargetRequestOptions {
-    readonly target: NativeCapnpCapabilitySlot;
-  }
-
-  export function makeNativeCapnpBridgeDropRequest(
-    options?: NativeCapnpBridgeTargetRequestOptions,
-  ): NativeCapnpPayload;
-
-  export function makeNativeCapnpBridgeSaveRequest(
-    options?: NativeCapnpBridgeTargetRequestOptions,
-  ): NativeCapnpPayload;
-
-  export interface NativeCapnpBridgeRestoreRequestOptions {
-    readonly token: string;
-    readonly expectedInterfaceId?: bigint | number | string;
-    readonly expectedInterfaceName?: string;
-  }
-
-  export function makeNativeCapnpBridgeRestoreRequest(
-    options?: NativeCapnpBridgeRestoreRequestOptions,
-  ): NativeCapnpPayload;
-
-  export function readNativeCapnpBridgeRequest(
-    message: Uint8Array | ArrayBuffer | ArrayBufferView,
-  ): unknown;
-
-  export interface NativeCapnpBridgeException {
-    readonly type: string;
-    readonly reason: string;
-    readonly trace?: string;
-  }
-
-  export function makeNativeCapnpBridgeExceptionResponse(
-    exception?: NativeCapnpBridgeException,
-  ): NativeCapnpPayload;
-
-  export function makeNativeCapnpBridgeCapabilityResponse(
-    options?: { readonly capability: NativeCapnpCapabilitySlot },
-  ): NativeCapnpPayload;
-
-  export function makeNativeCapnpBridgeSavedResponse(
-    options?: { readonly token: string },
-  ): NativeCapnpPayload;
-
-  export function makeNativeCapnpBridgeAcknowledgedResponse(): NativeCapnpPayload;
-
-  export function readNativeCapnpBridgeResponse(
-    message: Uint8Array | ArrayBuffer | ArrayBufferView,
-  ): unknown;
-
-  export type DecodedNativeCapnpBridgeResponse =
-    | {
-        readonly protocolVersion: 0;
-        readonly which: "capability";
-        readonly capability: Required<NativeCapnpCapabilitySlot>;
-      }
-    | {
-        readonly protocolVersion: 0;
-        readonly which: "saved";
-        readonly saved: { readonly token: string };
-      }
-    | {
-        readonly protocolVersion: 0;
-        readonly which: "acknowledged";
-      }
-    | {
-        readonly protocolVersion: 0;
-        readonly which: "exception";
-        readonly exception: Required<NativeCapnpBridgeException>;
-      };
-
-  export function decodeNativeCapnpBridgeResponse(
-    message: Uint8Array | ArrayBuffer | ArrayBufferView,
-  ): DecodedNativeCapnpBridgeResponse;
-
-  export interface NativeCapnpBridge {
-    readonly negotiation: NativeCapnpBridgeNegotiation;
-    readonly available: boolean;
-    readonly protocolVersion: 0;
-    drop(options: { readonly target: Capability }): Promise<void>;
-    save(options: { readonly target: Capability }): Promise<string>;
-    restore(options: {
-      readonly token: string;
-      readonly binding?: NativeCapnpGeneratedInterface<any>;
-    }): Promise<Required<NativeCapnpCapabilitySlot>>;
-  }
-
-  export function createNativeCapnpBridge(
-    api: {
-      capnpBridgeInfo(): Promise<unknown>;
-      nativeCapnpBridgeLifecycle?(body?: BodyInit): Promise<unknown>;
-      nativeCapnpBridgeLifecycleBytes?(body?: BodyInit): Promise<{
-        ok: boolean;
-        status: number;
-        contentType: string;
-        body: Uint8Array;
-      }>;
-      nativeCapnpBridgeOpenRpcSession?(
-        target: NativeCapnpCapabilitySlot,
-        connectionId: string,
-      ): Promise<WebSocket>;
-      nativeCapnpBridgeOpenBootstrapSession?(connectionId: string): Promise<WebSocket>;
-    },
-    options?: NativeCapnpBridgeNegotiationOptions,
-  ): Promise<NativeCapnpBridge>;
-
   export class NativeCapnpBridgeWebSocketRpcTransport {
     readonly kind: "webSocketRpc";
     readonly api: {
@@ -352,30 +246,6 @@ declare module "sandstorm:capnp" {
     },
   ): Promise<Capability>;
 
-  export function saveNativeCapnp(
-    api: {
-      nativeCapnpBridgeLifecycleBytes(body?: BodyInit): Promise<{
-        ok: boolean;
-        status: number;
-        contentType: string;
-        body: Uint8Array;
-      }>;
-    },
-    target: NativeCapnpCapabilitySlot,
-  ): Promise<string>;
-
-  export function dropNativeCapnp(
-    api: {
-      nativeCapnpBridgeLifecycleBytes(body?: BodyInit): Promise<{
-        ok: boolean;
-        status: number;
-        contentType: string;
-        body: Uint8Array;
-      }>;
-    },
-    target: NativeCapnpCapabilitySlot,
-  ): Promise<void>;
-
   export interface NativeCapnpGeneratedInterface<TClient extends object> {
     readonly Client: new (client: unknown) => TClient;
     readonly Server?: new (target: object) => { client(): TClient };
@@ -458,12 +328,6 @@ declare module "sandstorm:capnp" {
 
   export function connectNativeCapnp<TClient extends object>(
     api: {
-      nativeCapnpBridgeLifecycleBytes(body?: BodyInit): Promise<{
-        ok: boolean;
-        status: number;
-        contentType: string;
-        body: Uint8Array;
-      }>;
       nativeCapnpBridgeOpenRpcSession?(
         target: NativeCapnpCapabilitySlot,
         connectionId: string,
