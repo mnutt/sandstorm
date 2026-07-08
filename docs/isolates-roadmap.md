@@ -154,9 +154,12 @@ export.
 - Done: `/powerbox/claim-request`; `powerbox(request, env).claim(...)` now gets
   the session context through IsolateBridge and calls
   `SessionContext.claimRequest()` over Cap'n Proto RPC.
+- Done: `/powerbox/offer`, `/powerbox/fulfill-request`, and
+  `/powerbox/tie-to-user`; capability session actions now resolve the live
+  capability and call the corresponding `SessionContext` method over the
+  IsolateBridge RPC connection.
 - The authority-bearing POST routes on `SandstormApiBindingService`
-  (`/powerbox/drop`, `/powerbox/offer`, `/powerbox/fulfill-request`,
-  `/powerbox/tie-to-user`, `/powerbox/fetch`, `/powerbox/outbound-http-fetch`).
+  (`/powerbox/drop`, `/powerbox/fetch`, `/powerbox/outbound-http-fetch`).
   Read-only GET metadata routes stay.
 - `IsolateSessionRegistry`'s string-ID claimed-capability table (RPC cap-table
   references replace it).
