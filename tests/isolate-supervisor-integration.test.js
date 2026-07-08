@@ -453,6 +453,8 @@ function makeUnixSocketWebSocket(socketPath, options = {}) {
         "Connection: Upgrade",
         `Sec-WebSocket-Key: ${key}`,
         "Sec-WebSocket-Version: 13",
+        ...Object.entries(options.headers || {}).map(
+          ([name, value]) => `${name}: ${value}`),
         "",
         "",
       ].join("\r\n"));
@@ -2470,6 +2472,7 @@ test("isolate supervisor integration suite", {
     assert.match(browserNativeCapnpClient.body, /connectBrowserNativeCapnp/);
     assert.match(browserNativeCapnpClient.body, /BrowserIsolateBridge/);
     assert.match(browserNativeCapnpClient.body, /getClaimedCapability/);
+    assert.match(browserNativeCapnpClient.body, /claimPowerboxRequest/);
     assert.match(browserNativeCapnpClient.body, /BrowserNativeCapnpBridgeWebSocketTransport/);
     assert.match(browserNativeCapnpClient.body, /__sandstorm\/native-capnp\/rpc-session/);
     assert.match(browserNativeCapnpClient.body, /searchParams\.set\("bootstrap", "browser"\)/);
@@ -2480,6 +2483,7 @@ test("isolate supervisor integration suite", {
     assert.match(browserNativeCapnpClient.body, /from "\/capnp-es\/index\.mjs"/);
     assert.doesNotMatch(browserNativeCapnpClient.body, /isolate-native-capnp-bridge/);
     assert.doesNotMatch(browserNativeCapnpClient.body, /nativeCapnpBridgeLifecycle/);
+    assert.doesNotMatch(browserNativeCapnpClient.body, /\/__sandstorm\/powerbox\/claim/);
 
     const browserNativeCapnpRpcSession = await requestJson(
       fixture.workerdSocket,
@@ -2500,6 +2504,9 @@ test("isolate supervisor integration suite", {
         return pathAndQuery.replace(
           /^\/__sandstorm\/native-capnp\/rpc-session\b/,
           "/capnp/rpc-session");
+      },
+      headers: {
+        "X-Sandstorm-Session-Id": "missing-browser-native-capnp-session",
       },
     });
     try {
@@ -2528,6 +2535,15 @@ test("isolate supervisor integration suite", {
         browserModuleDir,
         "/__sandstorm/capnp/sandstorm/web-session.capnp.js"), 5000,
         "browser WebSession schema module import timed out");
+      await assert.rejects(
+        browserNativeCapnp.claimBrowserNativeCapnpToken(
+          "websession/test+token==",
+          browserWebSessionSchema.WebSession,
+          {
+            connectionId: "browser-native-capnp-claim-missing-session",
+            requiredPermissions: ["view"],
+          }),
+        /browser isolate bridge session ID not found/);
       const browserWebSessionCapability = await requestJson(
         fixture.workerdSocket,
         "/browser-native-web-session-capability");

@@ -216,6 +216,10 @@ bridge. Rebase it onto the Phase 1 channel:
 - Done: the browser WebSocket capnp session now uses `bootstrap=browser` and a
   `BrowserIsolateBridge` subset to resolve only previously handed capability
   IDs; it no longer opens a target-specific RPC session by URL.
+- Done: browser-native Powerbox token claim now uses
+  `BrowserIsolateBridge.claimPowerboxRequest()` over the same capnp WebSocket.
+  The worker browser system route forwards only the supervisor-injected
+  session ID header to bind that claim to the current browser session.
 - Powerbox flow stays browser-first: shell `postMessage` picker → token →
   browser (or worker) claims over its own channel. Worker-initiated Powerbox
   UI becomes a `SessionContext` method call whenever the shell supports it —

@@ -2009,6 +2009,10 @@ async function serveBrowserSystemRoute(request, env) {
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
       headers.Upgrade = "websocket";
     }
+    const sessionId = request.headers.get("x-sandstorm-session-id");
+    if (sessionId) {
+      headers["X-Sandstorm-Session-Id"] = sessionId;
+    }
 
     const response = await env.SANDSTORM_API.fetch(
       `http://sandstorm/capnp/rpc-session${url.search}`, { headers });
@@ -3753,42 +3757,75 @@ export function requestPowerbox(query, options = {}) {
   });
 }
 
-export async function claimPowerboxToken(token, options = {}) {
-  if (typeof token !== "string" || token.length === 0) {
-    throw new TypeError("claimPowerboxToken() requires a non-empty token");
+function browserRequiredPermissionNames(options = {}) {
+  const permissions = options.requiredPermissions ?? [];
+  if (!Array.isArray(permissions)) {
+    throw new TypeError("requiredPermissions must be an array");
   }
-  const {
-    claimUrl = "/__sandstorm/powerbox/claim",
-    requiredPermissions = [],
-  } = options;
-  const body = { token, requiredPermissions };
-  if (options.powerboxDescriptor !== undefined) {
-    body.powerboxDescriptor = options.powerboxDescriptor;
-  } else if (options.descriptor !== undefined) {
-    body.descriptor = options.descriptor;
-  }
-  if (options.nativeInterface !== undefined) {
-    body.nativeInterface = options.nativeInterface;
-  }
-
-  const response = await fetch(new URL(
-    claimUrl, globalThis.location?.href || "http://sandstorm/"), {
-    method: "POST",
-    headers: { "content-type": "application/json; charset=utf-8" },
-    body: JSON.stringify(body),
+  return permissions.map((permission, index) => {
+    if (typeof permission !== "string" || permission.length === 0) {
+      throw new TypeError("requiredPermissions[" + index + "] must be a non-empty string");
+    }
+    return permission;
   });
-  const result = await readJsonResponse(response);
-  if (!response.ok || !result.ok) {
-    throw new NativeCapnpBridgeUnavailableError(
-      result.error || "Powerbox claim failed with " + response.status,
-      { response, result });
+}
+
+function capnpCapabilityFromResult(result, name) {
+  if (typeof result?.getCap === "function") {
+    return result.getCap();
   }
-  return result.capability;
+  const pipeline = typeof result?.pipeline?.getPipeline === "function"
+    ? result.pipeline.getPipeline(CapnpEsInterface, 0)
+    : null;
+  return typeof pipeline?.client === "function" ? pipeline.client() : null;
+}
+
+function browserNativeCapnpClient(cap, InterfaceClass, name) {
+  return new InterfaceClass.Client(nativeCapnpClientReference(cap, name));
 }
 
 export async function claimBrowserNativeCapnpToken(token, InterfaceClass, options = {}) {
-  const capability = await claimPowerboxToken(token, options);
-  return nativeCapnpCapabilityForInterface(capability, InterfaceClass, options);
+  if (typeof token !== "string" || token.length === 0) {
+    throw new TypeError("claimBrowserNativeCapnpToken() requires a non-empty token");
+  }
+  if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
+    throw new TypeError("claimBrowserNativeCapnpToken() requires a capnp-es generated interface");
+  }
+  if (options.powerboxDescriptor !== undefined) {
+    validatePackedPowerboxDescriptor(options.powerboxDescriptor, "powerboxDescriptor");
+  } else if (options.descriptor !== undefined) {
+    validatePackedPowerboxDescriptor(options.descriptor, "descriptor");
+  }
+
+  const connection = createBrowserNativeCapnpConnection(options);
+  const bridge = connection.bootstrap(BrowserIsolateBridge);
+  try {
+    const claimed = await bridge.claimPowerboxRequest({
+      requestToken: token,
+      requiredPermissions: browserRequiredPermissionNames(options),
+    });
+    const cap = capnpCapabilityFromResult(claimed, "browser Powerbox claimed capability");
+    if (!cap) {
+      throw new NativeCapnpBridgeProtocolError(
+        "browser isolate bridge did not return a claimed Powerbox capability");
+    }
+    const metadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
+    const client = browserNativeCapnpClient(
+      cap, InterfaceClass, "browser Powerbox claimed capability");
+    return Object.freeze({
+      type: "browserNativeCapnpCapability",
+      interfaceId: metadata.interfaceId,
+      interfaceName: metadata.interfaceName,
+      kind: "receiverHosted",
+      cap,
+      client,
+      connection,
+      transport: connection.transport,
+    });
+  } catch (error) {
+    connection.transport.close();
+    throw error;
+  }
 }
 
 export async function requestBrowserNativeCapnpPowerbox(InterfaceClass, options = {}) {
@@ -3809,7 +3846,9 @@ export async function requestBrowserNativeCapnp(InterfaceClass, options = {}) {
   return Object.freeze({
     ...requested,
     capability,
-    client: connectBrowserNativeCapnp(capability, InterfaceClass, options),
+    client: capability.client,
+    connection: capability.connection,
+    transport: capability.transport,
   });
 }
 
@@ -3900,16 +3939,14 @@ export function connectBrowserNativeCapnp(target, InterfaceClass, options = {}) 
   const connection = createBrowserNativeCapnpConnection(options);
   const bridge = connection.bootstrap(BrowserIsolateBridge);
   const claimed = bridge.getClaimedCapability({ id: normalizedTarget.id });
-  const cap = typeof claimed?.getCap === "function"
-    ? claimed.getCap()
-    : claimed?.pipeline?.getPipeline(CapnpEsInterface, 0).client();
+  const cap = capnpCapabilityFromResult(claimed, "browser claimed capability pipeline");
   if (!cap) {
     connection.transport.close();
     throw new NativeCapnpBridgeProtocolError(
       "browser isolate bridge did not return a claimed capability pipeline");
   }
-  const client = new InterfaceClass.Client(
-    nativeCapnpClientReference(cap, "browser claimed capability pipeline"));
+  const client = browserNativeCapnpClient(
+    cap, InterfaceClass, "browser claimed capability pipeline");
   return Object.assign(client, {
     capability: normalizedTarget,
     connection,

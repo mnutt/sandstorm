@@ -48,4 +48,11 @@ interface BrowserIsolateBridge @0x93fb2746c97b5bea {
   # SandstormApi or SessionContext authority.
 
   getClaimedCapability @0 (id :Text) -> (cap :Capability);
+
+  claimPowerboxRequest @1 (requestToken :Text, requiredPermissions :List(Text))
+      -> (cap :Capability);
+  # Claims a browser Powerbox token against the current browser session. The
+  # supervisor resolves permission names against this app's ViewInfo and calls
+  # the standard SessionContext.claimRequest(); the browser never receives the
+  # full SessionContext authority.
 }
