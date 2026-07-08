@@ -241,7 +241,7 @@ prototype mechanisms:
 
 | Current mechanism | Replacement |
 | --- | --- |
-| `/powerbox/claim-request` POST route | `SessionContext.claimRequest()` over RPC |
+| Done: `/powerbox/claim-request` POST route | `SessionContext.claimRequest()` over RPC |
 | Done: `/powerbox/save` POST route | `SandstormApi.save()` over RPC |
 | Done: `/powerbox/restore` POST route | `SandstormApi.restore()` over RPC |
 | Done: `/powerbox/drop-saved` POST route | `SandstormApi.drop()` over RPC |
@@ -543,9 +543,9 @@ Must delete or stop compiling:
 - Done: lifecycle request/response structs
 - Done: `/capabilities/native-capnp-export`
 - Done: JS per-export callback session routes
-- authority-bearing `/powerbox/*` POST routes, except `/powerbox/dup`,
-  `/powerbox/save`, `/powerbox/restore`, and `/powerbox/drop-saved` which are
-  deleted
+- authority-bearing `/powerbox/*` POST routes, except `/powerbox/claim-request`,
+  `/powerbox/dup`, `/powerbox/save`, `/powerbox/restore`, and
+  `/powerbox/drop-saved` which are deleted
 - claimed-capability table used as authority
 - Done: drop groups and live-handle drop-notify machinery
 - remaining C++ per-export callback/session plumbing

@@ -204,6 +204,26 @@ kj::StringPtr claimedCapabilityKindName(ClaimedCapabilityKind kind) {
   KJ_UNREACHABLE;
 }
 
+kj::Maybe<ClaimedCapabilityKind> claimedCapabilityKindFromName(kj::StringPtr name) {
+  if (name == "unknown") {
+    return ClaimedCapabilityKind::UNKNOWN;
+  } else if (name == "powerboxClaim") {
+    return ClaimedCapabilityKind::POWERBOX_CLAIM;
+  } else if (name == "powerboxOffer") {
+    return ClaimedCapabilityKind::POWERBOX_OFFER;
+  } else if (name == "restored") {
+    return ClaimedCapabilityKind::RESTORED;
+  } else if (name == "tied") {
+    return ClaimedCapabilityKind::TIED;
+  } else if (name == "routeBackedWebSession") {
+    return ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION;
+  } else if (name == "routeBackedApiSession") {
+    return ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION;
+  } else {
+    return nullptr;
+  }
+}
+
 kj::StringPtr claimedCapabilityResidenceName(ClaimedCapabilityResidence residence) {
   switch (residence) {
     case ClaimedCapabilityResidence::UNKNOWN:
@@ -4421,8 +4441,6 @@ public:
         return sendJson(response, 404, "Not Found", kj::heapString(
             "{\n  \"ok\": false,\n"
             "  \"error\": \"unknown Powerbox binding endpoint\"\n}\n"));
-      } else if (methodName == "POST" && route == "/powerbox/claim-request") {
-        return claimPowerboxRequest(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop") {
         return dropPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fetch") {
@@ -4579,9 +4597,23 @@ private:
       return kj::READY_NOW;
     }
 
-    kj::Promise<void> storeRestoredCapability(StoreRestoredCapabilityContext context) override {
+    kj::Promise<void> storeImportedCapability(StoreImportedCapabilityContext context) override {
       auto params = context.getParams();
-      KJ_REQUIRE(params.hasCap(), "Cannot store a null restored capability.");
+      KJ_REQUIRE(params.hasCap(), "Cannot store a null imported capability.");
+
+      auto kindText = params.getKind();
+      ClaimedCapabilityKind kind;
+      KJ_IF_MAYBE(parsed, claimedCapabilityKindFromName(kindText)) {
+        kind = *parsed;
+      } else {
+        KJ_FAIL_REQUIRE("invalid imported capability kind", kindText);
+      }
+      KJ_REQUIRE(
+          kind == ClaimedCapabilityKind::POWERBOX_CLAIM ||
+          kind == ClaimedCapabilityKind::POWERBOX_OFFER ||
+          kind == ClaimedCapabilityKind::RESTORED ||
+          kind == ClaimedCapabilityKind::TIED,
+          "imported capability kind cannot be stored through isolate bridge", kindText);
 
       auto nativeInterfaceText = params.getNativeInterface();
       auto nativeInterface = ClaimedCapabilityNativeInterface::UNKNOWN;
@@ -4593,7 +4625,7 @@ private:
 
       auto pathPrefix = normalizeRouteBackedPathPrefix(params.getPathPrefix());
       auto id = host.sessions->storeClaimedCapability(params.getCap(), ClaimedCapabilityMetadata {
-        ClaimedCapabilityKind::RESTORED,
+        kind,
         ClaimedCapabilityResidence::IMPORTED,
         nativeInterface,
         kj::mv(pathPrefix),
@@ -5977,103 +6009,6 @@ private:
     } else {
       response.send(statusCode, "Error", headers, uint64_t(0));
       return kj::READY_NOW;
-    }
-  }
-
-  ClaimedCapabilityNativeInterface nativeInterfaceFromPowerboxDescriptorParams(
-      kj::StringPtr url) {
-    kj::Maybe<ClaimedCapabilityNativeInterface> explicitNativeInterface = nullptr;
-    auto nativeInterfaceNames = findIsolateQueryParams(url, "nativeInterface");
-    KJ_REQUIRE(nativeInterfaceNames.size() <= 1, "expected at most one nativeInterface");
-    if (nativeInterfaceNames.size() == 1) {
-      KJ_REQUIRE(nativeInterfaceNames[0].size() > 0, "nativeInterface must not be empty");
-      KJ_IF_MAYBE(nativeInterface, claimedCapabilityNativeInterfaceFromName(
-          nativeInterfaceNames[0])) {
-        explicitNativeInterface = *nativeInterface;
-      } else {
-        KJ_FAIL_REQUIRE("unsupported nativeInterface", nativeInterfaceNames[0]);
-      }
-    }
-
-    auto descriptorTypes = findIsolateQueryParams(url, "descriptor");
-    KJ_REQUIRE(descriptorTypes.size() <= 1, "expected at most one powerbox descriptor type");
-    if (descriptorTypes.size() == 0 || descriptorTypes[0].size() == 0) {
-      KJ_IF_MAYBE(nativeInterface, explicitNativeInterface) {
-        return *nativeInterface;
-      }
-      return ClaimedCapabilityNativeInterface::UNKNOWN;
-    }
-
-    capnp::MallocMessageBuilder message;
-    auto descriptor = message.initRoot<PowerboxDescriptor>();
-    if (descriptorTypes[0] == "apiSession") {
-      initApiSessionPowerboxDescriptor(url, descriptor);
-    } else if (descriptorTypes[0] == "outboundHttp") {
-      initOutboundHttpPowerboxDescriptor(url, descriptor);
-    } else if (descriptorTypes[0] == "appInterface") {
-      initAppInterfacePowerboxDescriptor(url, descriptor);
-    } else if (descriptorTypes[0] == "packed") {
-      initPackedPowerboxDescriptor(url, descriptor);
-    } else {
-      KJ_FAIL_REQUIRE("unsupported powerbox descriptor type", descriptorTypes[0]);
-    }
-
-    auto nativeInterface = nativeInterfaceFromPowerboxDescriptor(descriptor.asReader());
-    KJ_IF_MAYBE(explicitNativeInterfaceValue, explicitNativeInterface) {
-      if (nativeInterface != ClaimedCapabilityNativeInterface::UNKNOWN &&
-          nativeInterface != *explicitNativeInterfaceValue) {
-        KJ_FAIL_REQUIRE("nativeInterface conflicts with powerbox descriptor",
-            claimedCapabilityNativeInterfaceName(*explicitNativeInterfaceValue),
-            claimedCapabilityNativeInterfaceName(nativeInterface));
-      }
-      return *explicitNativeInterfaceValue;
-    }
-    return nativeInterface;
-  }
-
-  kj::Promise<void> claimPowerboxRequest(
-      kj::StringPtr url, kj::HttpService::Response& response) {
-    kj::String sessionId = nullptr;
-    kj::String token = nullptr;
-    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
-        url, "sessionId", "expected exactly one sessionId and token", sessionId)) {
-      return sendBadRequest(response, *error);
-    }
-    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
-        url, "token", "expected exactly one sessionId and token", token)) {
-      return sendBadRequest(response, *error);
-    }
-    auto nativeInterface = nativeInterfaceFromPowerboxDescriptorParams(url);
-
-    auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
-    auto permissionDefs = viewInfo.getPermissions();
-    auto permissionNames = findIsolateQueryParams(url, "requiredPermission");
-    for (auto& name: permissionNames) {
-      if (name.size() == 0) {
-        return sendJson(response, 400, "Bad Request",
-            renderError("missing required permission name"));
-      }
-    }
-
-    KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionId)) {
-      auto request = sessionContext->claimRequestRequest();
-      request.setRequestToken(token);
-      auto requiredPermissions = request.initRequiredPermissions(permissionDefs.size());
-      for (auto& name: permissionNames) {
-        KJ_IF_MAYBE(error, setRequiredPermission(name, requiredPermissions, permissionDefs)) {
-          return sendJson(response, 400, "Bad Request", renderError(*error));
-        }
-      }
-      return request.send().then(
-          [this, &response, nativeInterface](auto result) mutable {
-        auto capId = host.sessions->storeClaimedCapability(
-            result.getCap(), makeImportedClaimedCapabilityMetadata(
-              ClaimedCapabilityKind::POWERBOX_CLAIM, nativeInterface));
-        return sendJson(response, 200, "OK", renderClaimedCapability(capId));
-      });
-    } else {
-      return sendJson(response, 404, "Not Found", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"unknown isolate session\"\n}\n"));
     }
   }
 
