@@ -148,6 +148,10 @@ const CAPNP_ES_GENERATED_SCHEMA_MODULES = [
     "capnp:/sandstorm/isolate-bridge.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/isolate-bridge.js",
   ],
+  [
+    "capnp:/sandstorm/outbound-http-session.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/outbound-http-session.js",
+  ],
 ];
 const FIXTURE_GENERATED_SCHEMA_MODULES = [
   ...CAPNP_ES_GENERATED_SCHEMA_MODULES.slice(0, 5),
@@ -1901,9 +1905,9 @@ test("isolate supervisor integration suite", {
     assert.equal(powerboxProbe.json.statusEndpoint.status, 404);
     assert.equal(powerboxProbe.json.statusEndpoint.body.ok, false);
     assert.match(powerboxProbe.json.statusEndpoint.body.error, /Powerbox binding/);
-    assert.equal(powerboxProbe.json.powerboxEndpoint.status, 404);
-    assert.equal(powerboxProbe.json.powerboxEndpoint.body.ok, false);
-    assert.equal(powerboxProbe.json.powerboxEndpoint.body.error, "unknown claimed capability");
+    assert.equal(powerboxProbe.json.powerboxEndpoint.status, 200);
+    assert.equal(powerboxProbe.json.powerboxEndpoint.body.ok, true);
+    assert.equal(powerboxProbe.json.powerboxEndpoint.body.type, "packedPowerboxDescriptor");
 
     const permissionValidation = await requestJson(
       fixture.workerdSocket, "/required-permission-validation-self-test");
@@ -2026,53 +2030,6 @@ test("isolate supervisor integration suite", {
       liveForwardable: true,
     });
 
-    const wrongNativeFetch = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/outbound-http-fetch?id=${encodeURIComponent(capabilityId)}` +
-      `&method=GET&path=${encodeURIComponent("v1/test")}`,
-      { method: "POST" });
-    assert.equal(wrongNativeFetch.statusCode, 400, wrongNativeFetch.body);
-    assert.equal(wrongNativeFetch.json.ok, false);
-    assert.match(wrongNativeFetch.json.error, /native interface webSession/);
-    assert.match(wrongNativeFetch.json.error, /powerbox\.outboundHttpFetch/);
-
-    const fetched = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
-      `&method=GET&path=${encodeURIComponent("/capability-echo?source=external")}`,
-      { method: "POST" });
-    assert.equal(fetched.statusCode, 200, fetched.body);
-    assert.equal(fetched.json.ok, true);
-    assert.equal(fetched.json.source, "exported-web-session");
-    assert.equal(fetched.json.method, "GET");
-    assert.equal(fetched.json.pathname, "/exported/capability-echo");
-    assert.equal(fetched.json.search, "?source=external");
-    assert.equal(fetched.json.body, "");
-    assert.equal(fetched.json.bodyBytes, 0);
-    assert.equal(fetched.headers.etag, "\"capability-echo-etag\"");
-    assert.equal(fetched.headers["content-disposition"],
-      "attachment; filename=\"capability-echo.json\"");
-    assert.equal(fetched.headers["x-sandstorm-app-capability-response"], "present");
-
-    const posted = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
-      `&method=POST&path=${encodeURIComponent("/capability-echo?source=external-post")}`,
-      {
-        method: "POST",
-        headers: { "content-type": "text/plain; charset=utf-8" },
-        body: "hello through supervisor capability fetch",
-      });
-    assert.equal(posted.statusCode, 200, posted.body);
-    assert.equal(posted.json.ok, true);
-    assert.equal(posted.json.source, "exported-web-session");
-    assert.equal(posted.json.method, "POST");
-    assert.equal(posted.json.pathname, "/exported/capability-echo");
-    assert.equal(posted.json.search, "?source=external-post");
-    assert.equal(posted.json.body, "hello through supervisor capability fetch");
-    assert.equal(posted.json.bodyBytes, "hello through supervisor capability fetch".length);
-    assert.equal(posted.json.contentType, "text/plain; charset=utf-8");
-
     const prefixValidation = await requestJson(
       fixture.workerdSocket, "/route-prefix-validation-self-test");
     assert.equal(prefixValidation.statusCode, 200, prefixValidation.body);
@@ -2085,40 +2042,6 @@ test("isolate supervisor integration suite", {
     assert.match(
       prefixValidation.json.results.invalidPersistent.error,
       /persistent|boolean|500/);
-
-    const streamed = await requestUnixSocket(
-      fixture.sandstormApiSocket,
-      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
-      `&method=GET&path=${encodeURIComponent("/download?bytes=131072")}`,
-      { method: "POST" });
-    assert.equal(streamed.statusCode, 200, streamed.body);
-    assert.equal(streamed.headers["content-type"], "application/octet-stream");
-    assert.equal(streamed.headers["x-sandstorm-app-download-bytes"], "131072");
-    assert.equal(streamed.bodyBuffer.length, 131072);
-    assert.equal(streamed.headers["x-isolate-test-checksum"], undefined);
-    assert.equal(checksum(streamed.bodyBuffer), checksum(deterministicBytes(131072)));
-
-    const notModified = await requestUnixSocket(
-      fixture.sandstormApiSocket,
-      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
-      `&method=GET&path=${encodeURIComponent("/capability-echo?source=not-modified")}` +
-      `&headerName=${encodeURIComponent("if-none-match")}` +
-      `&headerValue=${encodeURIComponent("\"capability-echo-etag\"")}`,
-      { method: "POST" });
-    assert.equal(notModified.statusCode, 304, notModified.body);
-    assert.equal(notModified.headers.etag, "\"capability-echo-etag\"");
-    assert.equal(notModified.bodyBuffer.length, 0);
-
-    const preconditionFailed = await requestUnixSocket(
-      fixture.sandstormApiSocket,
-      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
-      `&method=GET&path=${encodeURIComponent("/capability-echo?source=precondition")}` +
-      `&headerName=${encodeURIComponent("if-match")}` +
-      `&headerValue=${encodeURIComponent("\"wrong-etag\"")}`,
-      { method: "POST" });
-    assert.equal(preconditionFailed.statusCode, 412, preconditionFailed.body);
-    assert.equal(preconditionFailed.headers.etag, "\"capability-echo-etag\"");
-    assert.equal(preconditionFailed.bodyBuffer.length, 0);
 
   });
 
@@ -2176,6 +2099,11 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.preconditionFailed.status, 412);
     assert.equal(selfTest.json.preconditionFailed.etag, "\"capability-echo-etag\"");
     assert.equal(selfTest.json.preconditionFailed.bodyBytes, 0);
+    assert.equal(selfTest.json.streamed.status, 200);
+    assert.equal(selfTest.json.streamed.contentType, "application/octet-stream");
+    assert.equal(selfTest.json.streamed.downloadBytes, "131072");
+    assert.equal(selfTest.json.streamed.bytes, 131072);
+    assert.equal(selfTest.json.streamed.checksum, checksum(deterministicBytes(131072)));
     assert.equal(selfTest.json.dropRestored.ok, true);
     assert.equal(selfTest.json.dropSaved.ok, true);
   });
@@ -2209,27 +2137,6 @@ test("isolate supervisor integration suite", {
       liveForwardable: true,
     });
 
-    const wrongNativeFetch = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/outbound-http-fetch?id=${encodeURIComponent(capabilityId)}` +
-      `&method=GET&path=${encodeURIComponent("v1/test")}`,
-      { method: "POST" });
-    assert.equal(wrongNativeFetch.statusCode, 400, wrongNativeFetch.body);
-    assert.equal(wrongNativeFetch.json.ok, false);
-    assert.match(wrongNativeFetch.json.error, /native interface apiSession/);
-    assert.match(wrongNativeFetch.json.error, /powerbox\.outboundHttpFetch/);
-
-    const fetched = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/fetch?id=${encodeURIComponent(capabilityId)}` +
-      `&method=GET&path=${encodeURIComponent("/capability-echo?source=api-external")}`,
-      { method: "POST" });
-    assert.equal(fetched.statusCode, 200, fetched.body);
-    assert.equal(fetched.json.ok, true);
-    assert.equal(fetched.json.source, "exported-api-session");
-    assert.equal(fetched.json.pathname, "/api-exported/capability-echo");
-    assert.equal(fetched.json.search, "?source=api-external");
-
   });
 
   await t.test("saves and restores route-backed ApiSession capabilities from isolate JS", async () => {
@@ -2253,6 +2160,36 @@ test("isolate supervisor integration suite", {
     assert.equal(selfTest.json.fetched.body.source, "exported-api-session");
     assert.equal(selfTest.json.fetched.body.pathname, "/api-exported/capability-echo");
     assert.equal(selfTest.json.fetched.body.search, "?source=api-js-restore");
+    assert.equal(selfTest.json.dropRestored.ok, true);
+    assert.equal(selfTest.json.dropSaved.ok, true);
+  });
+
+  await t.test("fetches restored OutboundHttpSession capabilities from isolate JS", async () => {
+    const selfTest = await requestJson(
+      fixture.workerdSocket, "/outbound-http-restore-self-test");
+    assert.equal(selfTest.statusCode, 200, selfTest.body + formatOutput(
+      fixture.stdout, fixture.stderr));
+    assert.equal(selfTest.json.ok, true);
+    assert.equal(selfTest.json.restoredClass, true);
+    assert.equal(selfTest.json.restored.type, "capability");
+    assert.equal(selfTest.json.restoredInfo.ok, true);
+    assert.equal(selfTest.json.restoredInfo.kind, "restored");
+    assert.equal(selfTest.json.restoredInfo.nativeInterface, "outboundHttpSession");
+    assert.equal(selfTest.json.restoredInfo.supportsWebFetch, false);
+    assert.equal(selfTest.json.restoredInfo.supportsOutboundHttpFetch, true);
+    assert.equal(selfTest.json.fetchError.name, "ValidationError");
+    assert.match(selfTest.json.fetchError.message, /OutboundHttpSession/);
+    assert.match(selfTest.json.fetchError.message, /capability descriptor supplies the origin/);
+    assert.equal(selfTest.json.unifiedFetch, true);
+    assert.equal(selfTest.json.status, 201);
+    assert.equal(selfTest.json.statusText, "Created");
+    assert.equal(selfTest.json.contentType, "application/json; charset=utf-8");
+    assert.equal(selfTest.json.outboundHeader, "yes");
+    assert.equal(selfTest.json.body.ok, true);
+    assert.equal(selfTest.json.body.source, "fake-outbound-http");
+    assert.equal(selfTest.json.body.path, "v1/chat/completions?model=test");
+    assert.equal(selfTest.json.body.authorization, "Bearer isolate-test");
+    assert.equal(selfTest.json.body.body, "hello");
     assert.equal(selfTest.json.dropRestored.ok, true);
     assert.equal(selfTest.json.dropSaved.ok, true);
   });
@@ -2423,9 +2360,9 @@ test("isolate supervisor integration suite", {
     assert.ok(!capabilities.json.capabilities.includes("powerbox.save"));
     assert.ok(!capabilities.json.capabilities.includes("powerbox.restore"));
     assert.ok(!capabilities.json.capabilities.includes("powerbox.dropSaved"));
+    assert.ok(!capabilities.json.capabilities.includes("powerbox.fetch"));
+    assert.ok(!capabilities.json.capabilities.includes("powerbox.outboundHttpFetch"));
     assert.ok(!capabilities.json.capabilities.includes("powerbox.drop"));
-    assert.ok(capabilities.json.capabilities.includes("powerbox.fetch"));
-    assert.ok(capabilities.json.capabilities.includes("powerbox.outboundHttpFetch"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.apiSessionDescriptor"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.outboundHttpDescriptor"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.offer"));
@@ -2697,21 +2634,10 @@ test("isolate supervisor integration suite", {
     assert.equal(nativeInterfaceValidation.json.ok, true);
     assert.deepEqual(nativeInterfaceValidation.json.calls, [
       "http://sandstorm/capabilities/claimed?id=mock-outbound",
-      "http://sandstorm/powerbox/outbound-http-fetch?id=mock-outbound&method=GET&path=v1%2Fmock-fetch%3Fcase%3Dnative-interface",
     ]);
     assert.equal(nativeInterfaceValidation.json.fetchError.name, "ValidationError");
     assert.match(nativeInterfaceValidation.json.fetchError.message, /OutboundHttpSession/);
     assert.match(nativeInterfaceValidation.json.fetchError.message, /capability descriptor supplies the origin/);
-    assert.deepEqual(nativeInterfaceValidation.json.outboundFetch, {
-      status: 202,
-      header: "present",
-      body: {
-        ok: true,
-        id: "mock-outbound",
-        method: "GET",
-        path: "v1/mock-fetch?case=native-interface",
-      },
-    });
 
     const missing = await requestJson(fixture.sandstormApiSocket, "/missing");
     assert.equal(missing.statusCode, 404);
@@ -2723,6 +2649,20 @@ test("isolate supervisor integration suite", {
     });
     assert.equal(wrongMethod.statusCode, 405);
     assert.equal(wrongMethod.json.ok, false);
+
+    const removedFetch = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/fetch?id=missing&method=GET&path=%2F",
+      { method: "POST" });
+    assert.equal(removedFetch.statusCode, 405);
+    assert.equal(removedFetch.json.ok, false);
+
+    const removedOutboundFetch = await requestJson(
+      fixture.sandstormApiSocket,
+      "/powerbox/outbound-http-fetch?id=missing&method=GET&path=v1%2Ftest",
+      { method: "POST" });
+    assert.equal(removedOutboundFetch.statusCode, 405);
+    assert.equal(removedOutboundFetch.json.ok, false);
 
     const apiDescriptor = await requestJson(
       fixture.sandstormApiSocket,

@@ -161,9 +161,10 @@ export.
 - Done: `/powerbox/drop`; `Capability.drop()` now releases the temporary
   claimed-capability registry entry through the private IsolateBridge RPC
   connection while id-backed helper handles still exist.
-- The authority-bearing POST routes on `SandstormApiBindingService`
-  (`/powerbox/fetch`, `/powerbox/outbound-http-fetch`).
-  Read-only GET metadata routes stay.
+- Done: `/powerbox/fetch` and `/powerbox/outbound-http-fetch`; `cap.fetch()`
+  now resolves the live claimed capability through the private IsolateBridge
+  RPC connection and calls `WebSession` / `OutboundHttpSession` methods
+  directly. Read-only GET metadata routes stay.
 - `IsolateSessionRegistry`'s string-ID claimed-capability table (RPC cap-table
   references replace it).
 - Done: the misleading per-export HTTP-transport names on the worker

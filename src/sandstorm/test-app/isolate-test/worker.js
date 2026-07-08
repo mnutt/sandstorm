@@ -9,6 +9,7 @@ import {
   NativeGreeterObjectId,
 } from "capnp:./native-greeter.capnp";
 import { Message as CapnpRpcMessage } from "capnp-es/capnp/rpc.mjs";
+import { ByteStream } from "capnp:/sandstorm/util.capnp";
 import { WebSession } from "capnp:/sandstorm/web-session.capnp";
 import {
   Capability,
@@ -111,6 +112,74 @@ function checksum(bytes) {
     sum = (sum + byte) >>> 0;
   }
   return sum;
+}
+
+function capnpDataBytes(value) {
+  if (!value) return new Uint8Array();
+  if (value instanceof Uint8Array) return value;
+  if (typeof value.toUint8Array === "function") return value.toUint8Array();
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return new Uint8Array(value);
+}
+
+function makeCollectingByteStream() {
+  const chunks = [];
+  let expectedSize = null;
+  let resolveDone;
+  let rejectDone;
+  let queue = Promise.resolve();
+  const done = new Promise((resolve, reject) => {
+    resolveDone = resolve;
+    rejectDone = reject;
+  });
+
+  function finish() {
+    let total = 0;
+    for (const chunk of chunks) total += chunk.byteLength;
+    if (expectedSize !== null && total !== expectedSize) {
+      throw new Error(`ByteStream size mismatch: expected ${expectedSize}, got ${total}`);
+    }
+
+    const body = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    resolveDone(body);
+  }
+
+  const client = new ByteStream.Server({
+    async write(params) {
+      const bytes = capnpDataBytes(params.data);
+      const copy = new Uint8Array(bytes.byteLength);
+      copy.set(bytes);
+      queue = queue.then(() => {
+        chunks.push(copy);
+      });
+      await queue;
+      return {};
+    },
+
+    async done() {
+      queue = queue.then(finish, (error) => {
+        rejectDone(error);
+        throw error;
+      });
+      await queue;
+      return {};
+    },
+
+    async expectSize(params) {
+      expectedSize = Number(params.size);
+      return {};
+    },
+  }).client();
+
+  return { client, done };
 }
 
 async function runNativeGreeterConformance(client, {
@@ -969,6 +1038,8 @@ export default {
           "/capability-echo?source=js-precondition", {
         headers: { "if-match": "\"wrong-etag\"" },
       });
+      const streamedResponse = await restored.fetch("/download?bytes=131072");
+      const streamedBytes = new Uint8Array(await streamedResponse.arrayBuffer());
       const dropRestored = await restored.drop();
       const dropSaved = await sandstorm(request, env).revoke(saved);
       return Response.json({
@@ -993,6 +1064,13 @@ export default {
           status: preconditionFailedResponse.status,
           etag: preconditionFailedResponse.headers.get("etag"),
           bodyBytes: (await preconditionFailedResponse.arrayBuffer()).byteLength,
+        },
+        streamed: {
+          status: streamedResponse.status,
+          contentType: streamedResponse.headers.get("content-type"),
+          bytes: streamedBytes.byteLength,
+          downloadBytes: streamedResponse.headers.get("x-sandstorm-app-download-bytes"),
+          checksum: checksum(streamedBytes),
         },
         dropRestored,
         dropSaved,
@@ -1120,6 +1198,51 @@ export default {
       });
     }
 
+    if (url.pathname === "/outbound-http-restore-self-test") {
+      const api = sandstorm(request, env);
+      // isolate-saved-capability-v1 envelope for the fake core token "outbound-http-saved-token".
+      const saved = "aXNvbGF0ZS1zYXZlZC1jYXBhYmlsaXR5LXYxCm91dGJvdW5kSHR0cAoKYjNWMF" +
+        "ltOTFibVF0YUhSMGNDMXpZWFpsWkMxMGIydGxiZw";
+      const restored = await api.restore(saved);
+      const restoredInfo = await restored.info();
+      let fetchError = null;
+      try {
+        await restored.fetch("https://api.example.test/v1/should-not-fetch");
+      } catch (error) {
+        fetchError = {
+          name: String(error?.name || "Error"),
+          message: String(error?.message || error),
+        };
+      }
+      const response = await restored.fetch("v1/chat/completions?model=test", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer isolate-test",
+          "content-type": "text/plain; charset=utf-8",
+        },
+        body: "hello",
+      });
+      const body = await response.json();
+      const dropRestored = await restored.drop();
+      const dropSaved = await api.revoke(saved);
+
+      return Response.json({
+        ok: true,
+        restoredClass: restored instanceof Capability,
+        restored: JSON.parse(JSON.stringify(restored)),
+        restoredInfo,
+        fetchError,
+        unifiedFetch: true,
+        status: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get("content-type"),
+        outboundHeader: response.headers.get("x-outbound-test"),
+        body,
+        dropRestored,
+        dropSaved,
+      });
+    }
+
     if (url.pathname === "/native-interface-validation-self-test") {
       const calls = [];
       const mockEnv = {
@@ -1144,19 +1267,6 @@ export default {
                 liveForwardable: true,
               });
             }
-            if (parsed.pathname === "/powerbox/outbound-http-fetch") {
-              return Response.json({
-                ok: true,
-                id: parsed.searchParams.get("id"),
-                method: parsed.searchParams.get("method"),
-                path: parsed.searchParams.get("path"),
-              }, {
-                status: 202,
-                headers: {
-                  "x-mock-outbound": "present",
-                },
-              });
-            }
             return Response.json({ ok: false, error: "unexpected mock fetch" }, { status: 500 });
           },
         },
@@ -1171,25 +1281,19 @@ export default {
           message: String(error?.message || error),
         };
       }
-      const outboundFetchResponse = await capability.fetch("v1/mock-fetch?case=native-interface");
-      const outboundFetch = {
-        status: outboundFetchResponse.status,
-        header: outboundFetchResponse.headers.get("x-mock-outbound"),
-        body: await outboundFetchResponse.json(),
-      };
 
       return Response.json({
         ok: true,
         calls,
         fetchError,
-        outboundFetch,
       });
     }
 
     if (url.pathname === "/powerbox-binding-probe") {
       const statusResponse = await env.POWERBOX.fetch("http://sandstorm/status");
-      const dropResponse = await env.POWERBOX.fetch(
-        "http://sandstorm/powerbox/fetch?id=missing&method=GET&path=%2F", { method: "POST" });
+      const descriptorResponse = await env.POWERBOX.fetch(
+        "http://sandstorm/powerbox/api-session-descriptor" +
+        "?apiCanonicalUrl=https%3A%2F%2Fapi.example.test");
       return Response.json({
         ok: true,
         statusEndpoint: {
@@ -1197,8 +1301,8 @@ export default {
           body: await statusResponse.json(),
         },
         powerboxEndpoint: {
-          status: dropResponse.status,
-          body: await dropResponse.json(),
+          status: descriptorResponse.status,
+          body: await descriptorResponse.json(),
         },
       });
     }
@@ -2134,9 +2238,12 @@ export default {
     }
 
     try {
+      const streamSink = makeCollectingByteStream();
       const generatedStreamResponse = await nativeCapnpGeneratedWebSession.get({
         path: "/generated-client-stream",
-        context: {},
+        context: {
+          responseStream: streamSink.client,
+        },
         ignoreBody: false,
       });
       const streamBody = generatedStreamResponse.content.body;

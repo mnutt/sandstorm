@@ -5,12 +5,16 @@ import {
   nativeCapnpSavedTokenText,
 } from "sandstorm:capnp";
 import {
+  dataBytes as CapnpEsDataBytes,
   Interface as CapnpEsInterface,
   Message as CapnpEsMessage,
   utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
 import { MainView } from "/sandstorm/grain.capnp";
+import { OutboundHttpSession } from "/sandstorm/outbound-http-session.capnp";
 import { PowerboxDescriptor } from "/sandstorm/powerbox.capnp";
+import { ByteStream } from "/sandstorm/util.capnp";
+import { WebSession } from "/sandstorm/web-session.capnp";
 
 export const SANDSTORM_API_VERSION = 0;
 export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
@@ -37,6 +41,32 @@ function capnpCapabilityPointer(capability) {
   const pointer = new CapnpEsInterface(message.getSegment(0), 0);
   CapnpEsUtils.setInterfacePointer(message.addCap(client), pointer);
   return pointer;
+}
+
+function capnpClientReference(value, name = "capability") {
+  if (value && typeof value.call === "function") {
+    return value;
+  }
+
+  if (value && typeof value.client?.call === "function") {
+    return value.client;
+  }
+
+  if (value && typeof value.getClient === "function") {
+    const client = value.getClient();
+    if (client && typeof client.call === "function") {
+      return client;
+    }
+  }
+
+  if (value && typeof CapnpEsInterface?.fromPointer === "function") {
+    const client = CapnpEsInterface.fromPointer(value)?.getClient();
+    if (client && typeof client.call === "function") {
+      return client;
+    }
+  }
+
+  throw new Error(`${name} is not a capnp-es client reference`);
 }
 
 function header(request, name) {
@@ -2292,10 +2322,528 @@ const CAPABILITY_FETCH_HEADER_PREFIXES = [
   "x-phabricator-",
 ];
 
+const MAX_CAPABILITY_FETCH_BODY_BYTES = 64 * 1024 * 1024;
+
 function shouldForwardCapabilityFetchHeader(name) {
   name = String(name).toLowerCase();
   return CAPABILITY_FETCH_HEADER_NAMES.has(name) ||
     CAPABILITY_FETCH_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
+function isValidCapabilityFetchHeaderName(name) {
+  name = String(name);
+  if (name.length === 0 || name.length > 256) return false;
+  return /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name);
+}
+
+function isValidCapabilityFetchHeaderValue(value) {
+  value = String(value);
+  if (value.length > 8192) return false;
+  for (let i = 0; i < value.length; ++i) {
+    const code = value.charCodeAt(i);
+    if ((code >= 0 && code < 0x20 && code !== 0x09) || code === 0x7f) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function capnpDataBytes(value) {
+  let bytes;
+  if (value instanceof Uint8Array) {
+    bytes = value;
+  } else if (value instanceof ArrayBuffer) {
+    bytes = new Uint8Array(value);
+  } else if (ArrayBuffer.isView(value)) {
+    bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  } else if (value && typeof value.toUint8Array === "function") {
+    bytes = value.toUint8Array();
+  } else {
+    bytes = CapnpEsDataBytes(value);
+  }
+  return new Uint8Array(bytes);
+}
+
+async function requestBodyBytes(request) {
+  if (request.method === "GET" || request.method === "HEAD" || request.body === null) {
+    return new Uint8Array();
+  }
+
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength > MAX_CAPABILITY_FETCH_BODY_BYTES) {
+    throw new ValidationError(
+      `claimed capability fetch request body exceeds maximum allowed size`);
+  }
+  return bytes;
+}
+
+function parseFetchETag(input) {
+  input = String(input).trim();
+  const result = { value: "", weak: false };
+  if (input.startsWith("W/")) {
+    input = input.slice(2);
+    result.weak = true;
+  }
+
+  if (!input.startsWith("\"") || !input.endsWith("\"") || input.length <= 1) {
+    throw new ValidationError(`claimed capability fetch ETag precondition is invalid`);
+  }
+
+  let escaped = false;
+  let value = "";
+  for (const c of input.slice(1, -1)) {
+    if (escaped) {
+      escaped = false;
+    } else if (c === "\"") {
+      throw new ValidationError(`claimed capability fetch ETag precondition is invalid`);
+    } else if (c === "\\") {
+      escaped = true;
+      continue;
+    }
+    value += c;
+  }
+  result.value = value;
+  return result;
+}
+
+function parseFetchETagList(value) {
+  const parts = String(value).split(",");
+  if (parts.length === 0) {
+    throw new ValidationError(`claimed capability fetch ETag precondition is empty`);
+  }
+  return parts.map(parseFetchETag);
+}
+
+function formatWebSessionETag(eTag) {
+  return `${eTag.weak ? "W/" : ""}"${eTag.value}"`;
+}
+
+function escapeHttpQuotedString(value) {
+  return String(value).replace(/[\\"]/g, "\\$&").replace(/[\r\n]/g, "_");
+}
+
+function appendValidatedHeader(headers, name, value) {
+  if (!isValidCapabilityFetchHeaderName(name) || !isValidCapabilityFetchHeaderValue(value)) {
+    return;
+  }
+  headers.append(name, value);
+}
+
+function webSessionSuccessStatus(code) {
+  switch (code) {
+    case WebSession.Response.SuccessCode.OK: return 200;
+    case WebSession.Response.SuccessCode.CREATED: return 201;
+    case WebSession.Response.SuccessCode.ACCEPTED: return 202;
+    case WebSession.Response.SuccessCode.NO_CONTENT: return 204;
+    case WebSession.Response.SuccessCode.PARTIAL_CONTENT: return 206;
+    case WebSession.Response.SuccessCode.MULTI_STATUS: return 207;
+    case WebSession.Response.SuccessCode.NOT_MODIFIED: return 304;
+    default: return 200;
+  }
+}
+
+function webSessionClientErrorStatus(code) {
+  switch (code) {
+    case WebSession.Response.ClientErrorCode.BAD_REQUEST: return 400;
+    case WebSession.Response.ClientErrorCode.FORBIDDEN: return 403;
+    case WebSession.Response.ClientErrorCode.NOT_FOUND: return 404;
+    case WebSession.Response.ClientErrorCode.METHOD_NOT_ALLOWED: return 405;
+    case WebSession.Response.ClientErrorCode.NOT_ACCEPTABLE: return 406;
+    case WebSession.Response.ClientErrorCode.CONFLICT: return 409;
+    case WebSession.Response.ClientErrorCode.GONE: return 410;
+    case WebSession.Response.ClientErrorCode.PRECONDITION_FAILED: return 412;
+    case WebSession.Response.ClientErrorCode.REQUEST_ENTITY_TOO_LARGE: return 413;
+    case WebSession.Response.ClientErrorCode.REQUEST_URI_TOO_LONG: return 414;
+    case WebSession.Response.ClientErrorCode.UNSUPPORTED_MEDIA_TYPE: return 415;
+    case WebSession.Response.ClientErrorCode.IM_ATEAPOT: return 418;
+    case WebSession.Response.ClientErrorCode.UNPROCESSABLE_ENTITY: return 422;
+    default: return 400;
+  }
+}
+
+function createCapabilityByteStream() {
+  let controller;
+  let finished = false;
+  let finishError;
+  let expectedBytes;
+  let receivedBytes = 0;
+  let resolveClosed;
+  const closed = new Promise((resolve) => {
+    resolveClosed = resolve;
+  });
+
+  const readable = new ReadableStream({
+    start(streamController) {
+      controller = streamController;
+    },
+
+    cancel(reason) {
+      const error = reason instanceof Error ? reason :
+        new Error("capability fetch response body was canceled");
+      finish(error);
+    },
+  });
+
+  function finish(error) {
+    if (finished) return;
+    finished = true;
+    finishError = error;
+    try {
+      if (error === undefined) {
+        controller.close();
+      } else {
+        controller.error(error);
+      }
+    } catch (_) {}
+    resolveClosed(error);
+  }
+
+  function fail(error) {
+    finish(error);
+    throw error;
+  }
+
+  const server = new ByteStream.Server({
+    async write(params) {
+      if (finished) {
+        if (finishError) throw finishError;
+        throw new Error("capability fetch response stream is closed");
+      }
+
+      const bytes = capnpDataBytes(params.data);
+      if (receivedBytes + bytes.byteLength > MAX_CAPABILITY_FETCH_BODY_BYTES) {
+        fail(new ValidationError(
+          `claimed capability fetch response body exceeds maximum allowed size`));
+      }
+      receivedBytes += bytes.byteLength;
+      if (expectedBytes !== undefined && receivedBytes > expectedBytes) {
+        fail(new ValidationError(
+          `claimed capability fetch response body exceeded the expected size`));
+      }
+
+      try {
+        controller.enqueue(bytes);
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
+      return {};
+    },
+
+    async done() {
+      if (expectedBytes !== undefined && receivedBytes !== expectedBytes) {
+        fail(new ValidationError(
+          `claimed capability fetch response body did not match the expected size`));
+      }
+      finish();
+      return {};
+    },
+
+    async expectSize(params) {
+      const size = typeof params.size === "bigint" ? params.size : BigInt(params.size || 0);
+      const remaining = BigInt(MAX_CAPABILITY_FETCH_BODY_BYTES - receivedBytes);
+      if (size > remaining) {
+        fail(new ValidationError(
+          `claimed capability fetch response body exceeds maximum allowed size`));
+      }
+      const nextExpectedBytes = receivedBytes + Number(size);
+      if (expectedBytes !== undefined && expectedBytes !== nextExpectedBytes) {
+        fail(new ValidationError(
+          `claimed capability fetch response body expected size changed`));
+      }
+      expectedBytes = nextExpectedBytes;
+      return {};
+    },
+  });
+
+  return {
+    client: server.client(),
+    readable,
+    closed,
+    finish,
+  };
+}
+
+function webSessionResponseHeaders(webResponse) {
+  const headers = new Headers();
+  for (const header of webResponse.additionalHeaders) {
+    appendValidatedHeader(headers, header.name, header.value);
+  }
+  return headers;
+}
+
+function addWebSessionContentHeaders(headers, content) {
+  headers.set("content-type", content.mimeType || "application/octet-stream");
+  if (content.encoding) headers.append("content-encoding", content.encoding);
+  if (content.language) headers.append("content-language", content.language);
+  if (content._hasETag()) headers.append("etag", formatWebSessionETag(content.eTag));
+  if (content.disposition._isDownload) {
+    headers.append("content-disposition",
+      `attachment; filename="${escapeHttpQuotedString(content.disposition.download)}"`);
+  }
+}
+
+function webSessionErrorResponse(error, status) {
+  const headers = new Headers();
+  if (typeof error._hasNonHtmlBody === "function" && error._hasNonHtmlBody()) {
+    const body = error.nonHtmlBody;
+    headers.set("content-type", body.mimeType || "application/octet-stream");
+    return new Response(capnpDataBytes(body.data), { status, statusText: "Error", headers });
+  } else if (error.descriptionHtml) {
+    headers.set("content-type", "text/html; charset=utf-8");
+    return new Response(error.descriptionHtml, { status, statusText: "Error", headers });
+  } else {
+    return new Response(null, { status, statusText: "Error", headers });
+  }
+}
+
+function responseFromWebSession(webResponse, bodyStream, fetchContext) {
+  switch (webResponse.which()) {
+    case WebSession.Response.CONTENT: {
+      const content = webResponse.content;
+      const headers = webSessionResponseHeaders(webResponse);
+      addWebSessionContentHeaders(headers, content);
+      const status = webSessionSuccessStatus(content.statusCode);
+      if (content.body._isStream) {
+        return {
+          response: new Response(bodyStream.readable, { status, statusText: "OK", headers }),
+          streaming: true,
+        };
+      }
+
+      bodyStream.finish();
+      const body = status === 204 || status === 304 ? null : capnpDataBytes(content.body.bytes);
+      return {
+        response: new Response(body, { status, statusText: "OK", headers }),
+        streaming: false,
+      };
+    }
+
+    case WebSession.Response.NO_CONTENT: {
+      bodyStream.finish();
+      const noContent = webResponse.noContent;
+      const headers = webSessionResponseHeaders(webResponse);
+      if (noContent._hasETag()) headers.append("etag", formatWebSessionETag(noContent.eTag));
+      return {
+        response: new Response(null, {
+          status: noContent.shouldResetForm ? 205 : 204,
+          statusText: "No Content",
+          headers,
+        }),
+        streaming: false,
+      };
+    }
+
+    case WebSession.Response.PRECONDITION_FAILED: {
+      bodyStream.finish();
+      const preconditionFailed = webResponse.preconditionFailed;
+      const headers = webSessionResponseHeaders(webResponse);
+      if (preconditionFailed._hasMatchingETag()) {
+        headers.append("etag", formatWebSessionETag(preconditionFailed.matchingETag));
+      }
+      return {
+        response: new Response(null, {
+          status: fetchContext.sendNotModifiedForPrecondition ? 304 : 412,
+          statusText: fetchContext.sendNotModifiedForPrecondition
+            ? "Not Modified"
+            : "Precondition Failed",
+          headers,
+        }),
+        streaming: false,
+      };
+    }
+
+    case WebSession.Response.REDIRECT: {
+      bodyStream.finish();
+      const redirect = webResponse.redirect;
+      const headers = webSessionResponseHeaders(webResponse);
+      headers.set("location", redirect.location);
+      const status = redirect.isPermanent
+        ? (redirect.switchToGet ? 301 : 308)
+        : (redirect.switchToGet ? 303 : 307);
+      return {
+        response: new Response(null, { status, statusText: "Redirect", headers }),
+        streaming: false,
+      };
+    }
+
+    case WebSession.Response.CLIENT_ERROR:
+      bodyStream.finish();
+      return {
+        response: webSessionErrorResponse(
+          webResponse.clientError,
+          webSessionClientErrorStatus(webResponse.clientError.statusCode)),
+        streaming: false,
+      };
+
+    case WebSession.Response.SERVER_ERROR:
+      bodyStream.finish();
+      return {
+        response: webSessionErrorResponse(webResponse.serverError, 500),
+        streaming: false,
+      };
+
+    default:
+      bodyStream.finish();
+      return {
+        response: Response.json({ ok: false, error: "unsupported WebSession response" }, {
+          status: 502,
+        }),
+        streaming: false,
+      };
+  }
+}
+
+function webSessionFetchContext(request, responseStream) {
+  let ifMatch = null;
+  let ifNoneMatch = null;
+  const additionalHeaders = [];
+
+  for (const [rawName, rawValue] of request.headers) {
+    const name = String(rawName).toLowerCase();
+    const value = String(rawValue);
+    if (name === "content-type" || !shouldForwardCapabilityFetchHeader(name)) {
+      continue;
+    }
+    if (!isValidCapabilityFetchHeaderName(name) || !isValidCapabilityFetchHeaderValue(value)) {
+      throw new ValidationError(`claimed capability fetch header is invalid`);
+    }
+
+    if (name === "if-match") {
+      if (ifMatch !== null) {
+        throw new ValidationError(`claimed capability fetch can only include one If-Match header`);
+      }
+      ifMatch = value;
+    } else if (name === "if-none-match") {
+      if (ifNoneMatch !== null) {
+        throw new ValidationError(
+          `claimed capability fetch can only include one If-None-Match header`);
+      }
+      ifNoneMatch = value;
+    } else {
+      additionalHeaders.push({ name, value });
+    }
+  }
+
+  let eTagPrecondition = { none: true };
+  let sendNotModifiedForPrecondition = false;
+  if (ifMatch !== null) {
+    const value = ifMatch.trim();
+    eTagPrecondition = value === "*"
+      ? { exists: true }
+      : { matchesOneOf: parseFetchETagList(value) };
+  } else if (ifNoneMatch !== null) {
+    const value = ifNoneMatch.trim();
+    sendNotModifiedForPrecondition = true;
+    eTagPrecondition = value === "*"
+      ? { doesntExist: true }
+      : { matchesNoneOf: parseFetchETagList(value) };
+  }
+
+  return {
+    context: {
+      cookies: [],
+      responseStream,
+      accept: [],
+      acceptEncoding: [],
+      eTagPrecondition,
+      additionalHeaders,
+    },
+    sendNotModifiedForPrecondition,
+  };
+}
+
+function normalizeWebSessionFetchPath(path) {
+  if (path.length > 8192) {
+    throw new ValidationError(`claimed capability fetch path is too long`);
+  }
+  let start = 0;
+  while (start < path.length && path[start] === "/") ++start;
+  return path.slice(start);
+}
+
+function outboundHttpSessionRequestMethod(method) {
+  switch (String(method).toUpperCase()) {
+    case "GET": return 0;
+    case "POST": return 1;
+    case "PUT": return 2;
+    case "PATCH": return 3;
+    case "DELETE": return 4;
+    case "HEAD": return 5;
+    case "OPTIONS": return 6;
+    default:
+      throw new ValidationError(`unsupported outbound HTTP method: ${method}`);
+  }
+}
+
+function shouldForwardOutboundHttpResponseHeader(name) {
+  if (!isValidCapabilityFetchHeaderName(name)) return false;
+  switch (String(name).toLowerCase()) {
+    case "connection":
+    case "content-length":
+    case "keep-alive":
+    case "te":
+    case "trailer":
+    case "transfer-encoding":
+    case "upgrade":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function normalizeOutboundHttpFetchPath(path) {
+  if (path.length > 8192) {
+    throw new ValidationError(`outbound HTTP fetch path is too long`);
+  }
+  if (path.startsWith("/")) {
+    throw new ValidationError(
+      `outbound HTTP fetch path must be relative to the granted base URL`);
+  }
+  if (path.includes("://")) {
+    throw new ValidationError(`outbound HTTP fetch path must not be an absolute URL`);
+  }
+
+  const pathOnly = path.split("?", 1)[0];
+  if (pathOnly.includes("#")) {
+    throw new ValidationError(`outbound HTTP fetch path must not contain a fragment`);
+  }
+  for (const segment of pathOnly.split("/")) {
+    if (segment === "." || segment === "..") {
+      throw new ValidationError(`outbound HTTP fetch path must not contain dot segments`);
+    }
+  }
+  for (let i = 0; i < path.length; ++i) {
+    const code = path.charCodeAt(i);
+    if (code === 0 || code === 0x0a || code === 0x0d) {
+      throw new ValidationError(`outbound HTTP fetch path contains invalid characters`);
+    }
+  }
+
+  return path;
+}
+
+function outboundHttpResponseHeaders(headersList) {
+  const headers = new Headers();
+  for (const header of headersList) {
+    if (shouldForwardOutboundHttpResponseHeader(header.name) &&
+        isValidCapabilityFetchHeaderValue(header.value)) {
+      headers.append(header.name, header.value);
+    }
+  }
+  return headers;
+}
+
+function safeOutboundHttpStatusText(statusText) {
+  statusText = String(statusText || "");
+  return statusText.length > 0 && statusText.length <= 128 &&
+      isValidCapabilityFetchHeaderValue(statusText)
+    ? statusText
+    : "OK";
+}
+
+function safeOutboundHttpStatus(statusCode) {
+  const status = Number(statusCode);
+  return Number.isInteger(status) && status >= 200 && status <= 599 ? status : 502;
 }
 
 async function restoreCapabilityToken(env, token) {
@@ -2390,35 +2938,73 @@ async function fetchCapability(env, capability, input, init = {}) {
       `such as "/path?query"; absolute URLs are rejected`);
   }
 
-  const params = new URLSearchParams({
-    id: capabilityId(capability),
-    method: request.method || "GET",
-    path: `${url.pathname}${url.search}`,
-  });
-  const headers = {};
-  const contentType = request.headers.get("content-type");
-  if (contentType !== null) {
-    headers["content-type"] = contentType;
-  }
-  for (const [name, value] of request.headers) {
-    if (name !== "content-type" && shouldForwardCapabilityFetchHeader(name)) {
-      params.append("headerName", name);
-      params.append("headerValue", value);
+  const id = capabilityId(capability);
+  const bridge = connectIsolateBridge(nativeCapnpBridgeApi(env));
+  let closeBridge = true;
+  try {
+    const claimed = await bridge.getClaimedCapability({ id });
+    if (!claimed?.cap) {
+      bridge.close();
+      return Response.json({ ok: false, error: "unknown claimed capability" }, { status: 404 });
+    }
+
+    const webSession = new WebSession.Client(
+      capnpClientReference(claimed.cap, "claimed WebSession capability"));
+    const bodyStream = createCapabilityByteStream();
+    const fetchContext = webSessionFetchContext(request, bodyStream.client);
+    const context = fetchContext.context;
+    const method = String(request.method || "GET").toLowerCase();
+    const path = normalizeWebSessionFetchPath(`${url.pathname}${url.search}`);
+    const bodyBytes = await requestBodyBytes(request);
+    const contentType = request.headers.get("content-type") || "";
+
+    let result;
+    if (method === "get" || method === "head") {
+      result = await webSession.get({ path, context, ignoreBody: method === "head" });
+    } else if (method === "post") {
+      result = await webSession.post({
+        path,
+        content: { mimeType: contentType, content: bodyBytes },
+        context,
+      });
+    } else if (method === "put") {
+      result = await webSession.put({
+        path,
+        content: { mimeType: contentType, content: bodyBytes },
+        context,
+      });
+    } else if (method === "patch") {
+      result = await webSession.patch({
+        path,
+        content: { mimeType: contentType, content: bodyBytes },
+        context,
+      });
+    } else if (method === "delete") {
+      result = await webSession.delete({ path, context });
+    } else {
+      bodyStream.finish();
+      return Response.json({
+        ok: false,
+        error: "claimed capability fetch method is not supported",
+      }, { status: 405 });
+    }
+
+    const converted = responseFromWebSession(result, bodyStream, fetchContext);
+    if (converted.streaming) {
+      closeBridge = false;
+      bodyStream.closed.then((error) => bridge.close(error));
+    }
+    return converted.response;
+  } catch (error) {
+    return Response.json({
+      ok: false,
+      error: `claimed capability fetch failed: ${error?.message || String(error)}`,
+    }, { status: 502 });
+  } finally {
+    if (closeBridge) {
+      bridge.close();
     }
   }
-
-  let body;
-  if (request.method !== "GET" && request.method !== "HEAD" && request.body !== null) {
-    body = await request.arrayBuffer();
-  }
-
-  return powerboxFetcher(env).fetch(
-    `http://sandstorm/powerbox/fetch?${params}`,
-    {
-      method: "POST",
-      headers,
-      body,
-    });
 }
 
 function outboundHttpSessionRequest(input, init = {}) {
@@ -2463,30 +3049,57 @@ async function fetchOutboundHttpSession(capability, input, init = {}, info = und
   }
 
   const { request, path } = outboundHttpSessionRequest(input, init);
-  const params = new URLSearchParams({
-    id: capabilityId(capability),
-    method: request.method || "GET",
-    path,
-  });
-  const headers = {};
-  let headerIndex = 0;
+  const id = capabilityId(capability);
+  const headers = [];
   for (const [name, value] of request.headers) {
-    params.append("headerName", name);
-    headers[`x-sandstorm-outbound-header-${headerIndex++}`] = value;
+    if (!isValidCapabilityFetchHeaderName(name) || !isValidCapabilityFetchHeaderValue(value)) {
+      throw new ValidationError(`outbound HTTP fetch header is invalid`);
+    }
+    headers.push({ name: String(name).toLowerCase(), value: String(value) });
   }
 
-  let body;
-  if (request.method !== "GET" && request.method !== "HEAD" && request.body !== null) {
-    body = await request.arrayBuffer();
-  }
+  const bridge = connectIsolateBridge(nativeCapnpBridgeApi(capability.env));
+  let closeBridge = true;
+  try {
+    const claimed = await bridge.getClaimedCapability({ id });
+    if (!claimed?.cap) {
+      bridge.close();
+      return Response.json({ ok: false, error: "unknown claimed capability" }, { status: 404 });
+    }
 
-  return powerboxFetcher(capability.env).fetch(
-    `http://sandstorm/powerbox/outbound-http-fetch?${params}`,
-    {
-      method: "POST",
+    const outbound = new OutboundHttpSession.Client(
+      capnpClientReference(claimed.cap, "claimed OutboundHttpSession capability"));
+    const bodyStream = createCapabilityByteStream();
+    const result = await outbound.request({
+      method: outboundHttpSessionRequestMethod(request.method || "GET"),
+      path: normalizeOutboundHttpFetchPath(path),
       headers,
-      body,
+      body: await requestBodyBytes(request),
+      responseStream: bodyStream.client,
     });
+    const status = safeOutboundHttpStatus(result.statusCode);
+    const emptyBody = status === 204 || status === 304;
+    if (emptyBody) {
+      bodyStream.finish();
+    } else {
+      closeBridge = false;
+      bodyStream.closed.then((error) => bridge.close(error));
+    }
+    return new Response(emptyBody ? null : bodyStream.readable, {
+      status,
+      statusText: safeOutboundHttpStatusText(result.statusText),
+      headers: outboundHttpResponseHeaders(result.headers),
+    });
+  } catch (error) {
+    return Response.json({
+      ok: false,
+      error: `outbound HTTP fetch failed: ${error?.message || String(error)}`,
+    }, { status: 502 });
+  } finally {
+    if (closeBridge) {
+      bridge.close();
+    }
+  }
 }
 
 function wrapCapability(env, capability) {

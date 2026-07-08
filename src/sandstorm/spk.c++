@@ -3147,11 +3147,15 @@ private:
       return;
     }
 
-    kj::StringPtr isolateBridgeSpecifier = "capnp:/sandstorm/isolate-bridge.capnp";
-    auto isolateBridgePath = resolveDevIsolateCapnpEsImport(
-        rootDir, rootDir, isolateBridgeSpecifier);
-    addDevIsolateCapnpEsModule(
-        isolateBridgeSpecifier, isolateBridgePath, rootDir, modules, capnpEsImports);
+    kj::StringPtr platformSpecifiers[] = {
+      "capnp:/sandstorm/isolate-bridge.capnp",
+      "capnp:/sandstorm/outbound-http-session.capnp",
+    };
+
+    for (auto specifier: platformSpecifiers) {
+      auto path = resolveDevIsolateCapnpEsImport(rootDir, rootDir, specifier);
+      addDevIsolateCapnpEsModule(specifier, path, rootDir, modules, capnpEsImports);
+    }
   }
 
   static kj::String resolveDevIsolateCapnpSchemaImport(
