@@ -136,7 +136,6 @@ declare module "sandstorm:api" {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     info(options?: { refresh?: boolean }): Promise<unknown>;
     save(options?: SaveCapabilityOptions): Promise<string>;
-    dup(): Promise<Capability>;
     drop(): Promise<unknown>;
     offer(request: Request, options?: PowerboxOfferOptions): Promise<unknown>;
     fulfillRequest(request: Request, options?: PowerboxFulfillOptions): Promise<unknown>;

@@ -443,10 +443,6 @@ export class Capability {
     return saveCapability(this.#env, this, options);
   }
 
-  dup() {
-    return duplicateCapability(this.#env, this);
-  }
-
   async drop() {
     const result = await postPowerbox(
       this.#env, `powerbox/drop?id=${encodeURIComponent(this.id)}`);
@@ -751,17 +747,6 @@ async function saveCapabilityRecord(env, capability, options = {}) {
 
 async function saveCapability(env, capability, options = {}) {
   return (await saveCapabilityRecord(env, capability, options)).token;
-}
-
-async function duplicateCapability(env, capability) {
-  const sourceId = capabilityId(capability);
-  const duplicated = wrapCapability(
-    env, await postPowerbox(env, `powerbox/dup?id=${encodeURIComponent(sourceId)}`));
-  const metadata = capabilityMetadata.get(sourceId);
-  if (metadata !== undefined) {
-    capabilityMetadata.set(duplicated.id, metadata);
-  }
-  return duplicated;
 }
 
 async function sessionPowerboxAction(env, request, endpoint, capability, options = {}) {

@@ -141,11 +141,13 @@ export.
   `/capabilities/native-capnp-export`,
   `SupervisorObjectId.nativeCapnpExport`, and the JS
   `/__sandstorm/native-capnp/export-sessions/...` callback routes.
+- Done: `/powerbox/dup`; apps can keep ordinary JS references to the same live
+  handle instead of asking the supervisor to mint another string ID.
 - The authority-bearing POST routes on `SandstormApiBindingService`
   (`/powerbox/claim-request`, `/powerbox/save`, `/powerbox/restore`,
-  `/powerbox/dup`, `/powerbox/drop`, `/powerbox/drop-saved`,
-  `/powerbox/offer`, `/powerbox/fulfill-request`, `/powerbox/tie-to-user`,
-  `/powerbox/fetch`, `/powerbox/outbound-http-fetch`).
+  `/powerbox/drop`, `/powerbox/drop-saved`, `/powerbox/offer`,
+  `/powerbox/fulfill-request`, `/powerbox/tie-to-user`, `/powerbox/fetch`,
+  `/powerbox/outbound-http-fetch`).
   Read-only GET metadata routes stay.
 - `IsolateSessionRegistry`'s string-ID claimed-capability table, drop groups,
   and drop-notify machinery (the RPC release protocol replaces them).
