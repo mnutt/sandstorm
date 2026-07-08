@@ -244,7 +244,6 @@ declare module "sandstorm:api" {
     nativeTransport: boolean;
     nativeRpc: boolean;
     nativeRpcWebSocket: boolean;
-    nativeExports: boolean;
   }
 
   export interface MainViewRouteContext {

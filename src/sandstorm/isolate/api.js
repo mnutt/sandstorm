@@ -1,5 +1,5 @@
 import {
-  createNativeCapnpExportSession,
+  createNativeCapnpServerSession,
 } from "sandstorm:capnp";
 import {
   Interface as CapnpEsInterface,
@@ -1792,7 +1792,7 @@ async function serveMainViewRpcSession(request, env, options = {}) {
   const pair = new WebSocketPair();
   const server = pair[0];
   server.accept();
-  createNativeCapnpExportSession(MainView, mainViewRpcTarget(request, env, options), {
+  createNativeCapnpServerSession(MainView, mainViewRpcTarget(request, env, options), {
     webSocket: server,
   });
   return new Response(null, {

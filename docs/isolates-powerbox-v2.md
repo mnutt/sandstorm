@@ -773,11 +773,11 @@ Progress:
   stable workerd module specifiers, follow relative app schemas, skip bundled
   `/capnp/*` runtime schemas, and generate Sandstorm-owned `/sandstorm/*`
   schema dependencies under explicit `capnp:/sandstorm/...` module names
-- bridge feature negotiation now distinguishes the working binary `rpc`
-  transport from deleted lifecycle/fetch prototypes: `/capnp/bridge-info`
-  advertises `nativeTransport`, `nativeRpc`, `nativeRpcWebSocket`, and
-  `nativeExports`; the removed direct method-call envelope no longer has a
-  feature flag
+- bridge feature negotiation distinguishes the working binary `rpc` transport
+  from deleted lifecycle/fetch/export-registration prototypes:
+  `/capnp/bridge-info` advertises `nativeTransport`, `nativeRpc`, and
+  `nativeRpcWebSocket`; the removed direct method-call envelope and
+  `nativeExports` export-registration flag no longer have feature flags
 - `sandstorm:capnp` now exposes `saveNativeCapnp()` and `restoreNativeCapnp()`;
   restore negotiates the native RPC bridge, restores a durable token through
   the isolate bridge bootstrap, and returns a live generated `@mnutt/capnp-es`
@@ -800,10 +800,10 @@ Progress:
 - Superseded by the single-channel export model: `sandstorm:capnp` had a JS
   half of native isolate exports where
   `NativeCapnpStreamTransport` pumps standard stream-framed Cap'n Proto RPC
-  messages over Web Streams, `createNativeCapnpExportSession()` hosts a
+  messages over Web Streams, `createNativeCapnpExportSession()` hosted a
   generated `@mnutt/capnp-es` server with `Conn.initMain()`, and
-  `exportNativeCapnp()` exposes the intended public helper while correctly
-  refusing until the supervisor advertises `nativeExports`
+  `exportNativeCapnp()` refused until the supervisor advertised the now-removed
+  `nativeExports` feature flag
 - Superseded by the single-channel export model: `sandstorm:api` routed
   `/__sandstorm/native-capnp/export-sessions/:id` through the native export
   registry, so the supervisor has a reserved binary Web Streams endpoint for
@@ -812,8 +812,7 @@ Progress:
   claimed native capability for a registered
   isolate export: `exportNativeCapnp()` registers the JS server target, calls
   `/capabilities/native-capnp-export`, and the C++ side keeps a live
-  `TwoPartyVatNetwork` client over the reserved Web Streams endpoint; bridge
-  negotiation now advertises `nativeExports`
+  `TwoPartyVatNetwork` client over the reserved Web Streams endpoint
 - Superseded by the single-channel export model: minted isolate exports used a
   C++ WebSocket transport on the normal native
   capability path: the supervisor opens the isolate export session, reaches the

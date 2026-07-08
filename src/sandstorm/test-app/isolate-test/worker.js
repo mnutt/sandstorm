@@ -1829,7 +1829,7 @@ export default {
     const apiHelper = sandstorm(request, env);
     const helperCapnpBridgeInfo = await apiHelper.capnpBridgeInfo();
     const capnpBridgeNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
-      requiredFeatures: ["nativeExports"],
+      requiredFeatures: ["nativeRpc", "nativeRpcWebSocket"],
     });
     const capnpBridgeRpcNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeRpc", "nativeRpcWebSocket"],
@@ -1969,7 +1969,7 @@ export default {
         NativeGreeter,
         {
           interfaceName: "NativeGreeter",
-          connectionId: "native-capnp-export-greeter-restored",
+          connectionId: "native-capnp-local-export-greeter-restored",
         });
       const nativeExportGreeterRestoredConformance = await runNativeGreeterConformance(
         nativeExportGreeterRestored, {
@@ -1988,7 +1988,7 @@ export default {
         NativeGreeter,
         {
           interfaceName: "NativeGreeter",
-          connectionId: "native-capnp-export-greeter-bootstrap",
+          connectionId: "native-capnp-local-export-greeter-bootstrap",
         });
       const nativeExportGreeterBootstrapRestoredConformance =
           await runNativeGreeterConformance(nativeExportGreeterBootstrapRestored, {
@@ -2309,7 +2309,7 @@ export default {
         helperCapnpBridgeInfo,
         capnpBridgeNegotiation,
         capnpBridgeRpcNegotiation,
-        nativeCapnpExport: {
+        nativeCapnpLocalExport: {
           stream: {
             serverBootstrap: nativeExportServerMessage.which() === CapnpRpcMessage.BOOTSTRAP,
             serverQuestionId: nativeExportServerMessage.bootstrap.questionId,

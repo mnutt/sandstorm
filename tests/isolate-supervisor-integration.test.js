@@ -1596,7 +1596,6 @@ test("isolate supervisor integration suite", {
       nativeTransport: true,
       nativeRpc: true,
       nativeRpcWebSocket: true,
-      nativeExports: true,
     });
     assert.deepEqual(
       body.sandstormApi.helperCapnpBridgeInfo,
@@ -1606,7 +1605,6 @@ test("isolate supervisor integration suite", {
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.protocolVersion, 0);
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.nativeTransport, true);
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.nativeRpc, true);
-    assert.equal(body.sandstormApi.capnpBridgeNegotiation.nativeExports, true);
     assert.equal(body.sandstormApi.capnpBridgeNegotiation.reason, "");
     assert.deepEqual(body.sandstormApi.capnpBridgeNegotiation.missingFeatures, []);
     assert.deepEqual(
@@ -1623,13 +1621,13 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(
       body.sandstormApi.capnpBridgeRpcNegotiation.info,
       body.sandstormApi.capnpBridgeInfo);
-    assert.equal(body.sandstormApi.nativeCapnpExport.webSession.ok, true,
-      JSON.stringify(body.sandstormApi.nativeCapnpExport.webSession, null, 2));
-    assert.equal(body.sandstormApi.nativeCapnpExport.greeter.ok, true,
-      JSON.stringify(body.sandstormApi.nativeCapnpExport.greeter, null, 2));
+    assert.equal(body.sandstormApi.nativeCapnpLocalExport.webSession.ok, true,
+      JSON.stringify(body.sandstormApi.nativeCapnpLocalExport.webSession, null, 2));
+    assert.equal(body.sandstormApi.nativeCapnpLocalExport.greeter.ok, true,
+      JSON.stringify(body.sandstormApi.nativeCapnpLocalExport.greeter, null, 2));
     assert.ok(
-      body.sandstormApi.nativeCapnpExport.greeter.bootstrapRestored.savedTokenLength > 0);
-    assert.deepEqual(body.sandstormApi.nativeCapnpExport, {
+      body.sandstormApi.nativeCapnpLocalExport.greeter.bootstrapRestored.savedTokenLength > 0);
+    assert.deepEqual(body.sandstormApi.nativeCapnpLocalExport, {
       stream: {
         serverBootstrap: true,
         serverQuestionId: 77,
@@ -1747,7 +1745,7 @@ test("isolate supervisor integration suite", {
           kind: "rpcImport",
           interfaceId: "b66316217ceedb1b",
           interfaceName: "NativeGreeter",
-          connectionId: "native-capnp-export-greeter-restored",
+          connectionId: "native-capnp-local-export-greeter-restored",
           transportKind: "isolateBridgeWebSocketRpc",
           connectionIsNull: false,
           dropResult: null,
@@ -1755,8 +1753,8 @@ test("isolate supervisor integration suite", {
         bootstrapRestored: {
           savedTokenType: "string",
           savedTokenLength:
-              body.sandstormApi.nativeCapnpExport.greeter.bootstrapRestored.savedTokenLength,
-          connectionId: "native-capnp-export-greeter-bootstrap",
+              body.sandstormApi.nativeCapnpLocalExport.greeter.bootstrapRestored.savedTokenLength,
+          connectionId: "native-capnp-local-export-greeter-bootstrap",
           transportKind: "isolateBridgeWebSocketRpc",
           capabilityKind: "rpcImport",
           interfaceId: "b66316217ceedb1b",
@@ -1777,10 +1775,10 @@ test("isolate supervisor integration suite", {
         ok: true,
         savedTokenType: "string",
         savedTokenLength:
-            body.sandstormApi.nativeCapnpExport.classicGreeter.savedTokenLength,
+            body.sandstormApi.nativeCapnpLocalExport.classicGreeter.savedTokenLength,
         resavedTokenType: "string",
         resavedTokenLength:
-            body.sandstormApi.nativeCapnpExport.classicGreeter.resavedTokenLength,
+            body.sandstormApi.nativeCapnpLocalExport.classicGreeter.resavedTokenLength,
         conformance: {
           hello: {
             message:
@@ -2608,7 +2606,6 @@ test("isolate supervisor integration suite", {
       nativeTransport: true,
       nativeRpc: true,
       nativeRpcWebSocket: true,
-      nativeExports: true,
     });
 
     const capnpLifecycle = await requestJson(fixture.sandstormApiSocket, "/capnp/lifecycle", {

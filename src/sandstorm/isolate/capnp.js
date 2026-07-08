@@ -14,7 +14,6 @@ const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
   "nativeTransport",
   "nativeRpc",
   "nativeRpcWebSocket",
-  "nativeExports",
 ]);
 
 const appInterfacePowerboxDescriptorCache = new Map();
@@ -94,7 +93,6 @@ function invalidNativeCapnpBridgeInfo(reason, info) {
     nativeTransport: false,
     nativeRpc: false,
     nativeRpcWebSocket: false,
-    nativeExports: false,
     missingFeatures: Object.freeze([]),
     reason,
     info,
@@ -138,7 +136,6 @@ export function negotiateNativeCapnpBridgeInfo(info, options = {}) {
     nativeTransport,
     nativeRpc: info.nativeRpc === true,
     nativeRpcWebSocket: info.nativeRpcWebSocket === true,
-    nativeExports: info.nativeExports === true,
     missingFeatures: Object.freeze(missingFeatures),
     reason,
     info,
@@ -844,11 +841,11 @@ function validateNativeCapnpGeneratedInterface(InterfaceClass, operation) {
   }
 }
 
-export function createNativeCapnpExportSession(
+export function createNativeCapnpServerSession(
     InterfaceClass, target, { readable, writable, webSocket, finalize } = {}) {
-  validateNativeCapnpGeneratedInterface(InterfaceClass, "createNativeCapnpExportSession()");
+  validateNativeCapnpGeneratedInterface(InterfaceClass, "createNativeCapnpServerSession()");
   if (!target || typeof target !== "object") {
-    throw new TypeError("createNativeCapnpExportSession() requires a server target object");
+    throw new TypeError("createNativeCapnpServerSession() requires a server target object");
   }
 
   const transport = webSocket
@@ -879,7 +876,8 @@ export async function exportNativeCapnp(api, InterfaceClass, target, options = {
   });
   if (!negotiation.available) {
     throw new NativeCapnpBridgeUnavailableError(
-      `native Cap'n Proto exports are unavailable: ${negotiation.reason || "unavailable"}`,
+      `native Cap'n Proto RPC is unavailable for local exports: ${
+        negotiation.reason || "unavailable"}`,
       { negotiation, interfaceMetadata });
   }
 
