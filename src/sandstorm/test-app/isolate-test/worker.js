@@ -1189,7 +1189,7 @@ export default {
     if (url.pathname === "/powerbox-binding-probe") {
       const statusResponse = await env.POWERBOX.fetch("http://sandstorm/status");
       const dropResponse = await env.POWERBOX.fetch(
-        "http://sandstorm/powerbox/drop?id=missing", { method: "POST" });
+        "http://sandstorm/powerbox/fetch?id=missing&method=GET&path=%2F", { method: "POST" });
       return Response.json({
         ok: true,
         statusEndpoint: {
@@ -1507,20 +1507,10 @@ export default {
         };
         if (restore.body.ok && restore.body.id) {
           restore.info = await claimedInfo(restore.body);
-          if (restoredCapability) {
-            dropRestored = {
-              status: 200,
-              body: await restoredCapability.drop(),
-            };
-          } else {
-            const dropRestoredResponse = await env.SANDSTORM_API.fetch(
-              `http://sandstorm/powerbox/drop?id=${encodeURIComponent(restore.body.id)}`,
-              { method: "POST" });
-            dropRestored = {
-              status: dropRestoredResponse.status,
-              body: await dropRestoredResponse.json(),
-            };
-          }
+          dropRestored = {
+            status: 200,
+            body: await restoredCapability.drop(),
+          };
         }
       }
       let fetched = null;
@@ -1565,20 +1555,10 @@ export default {
       }
       let drop = null;
       if (claim.ok && claim.id) {
-        if (typeof claim.drop === "function") {
-          drop = {
-            status: 200,
-            body: await claim.drop(),
-          };
-        } else {
-          const dropResponse = await env.SANDSTORM_API.fetch(
-            `http://sandstorm/powerbox/drop?id=${encodeURIComponent(claim.id)}`,
-            { method: "POST" });
-          drop = {
-            status: dropResponse.status,
-            body: await dropResponse.json(),
-          };
-        }
+        drop = {
+          status: 200,
+          body: await claim.drop(),
+        };
       }
       let dropSaved = null;
       if (restoreToken && url.searchParams.get("dropSaved") === "true") {

@@ -30,4 +30,8 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
   # Transitional helper while id-backed Capability handles still exist.
   # Stores a capability received over the RPC connection in the same temporary
   # claimed-capability registry used by fetch-shaped handles.
+
+  dropClaimedCapability @4 (id :Text) -> (released :Bool);
+  # Transitional helper while id-backed Capability handles still exist.
+  # Drops a temporary claimed-capability registry entry.
 }

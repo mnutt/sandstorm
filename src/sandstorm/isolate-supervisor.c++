@@ -4441,8 +4441,6 @@ public:
         return sendJson(response, 404, "Not Found", kj::heapString(
             "{\n  \"ok\": false,\n"
             "  \"error\": \"unknown Powerbox binding endpoint\"\n}\n"));
-      } else if (methodName == "POST" && route == "/powerbox/drop") {
-        return dropPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fetch") {
         return fetchClaimedCapability(path, contentType, kj::mv(bodyBytes), response);
       } else if (methodName == "POST" && route == "/powerbox/outbound-http-fetch") {
@@ -4629,6 +4627,17 @@ private:
         true,
       });
       context.getResults().setId(id);
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<void> dropClaimedCapability(DropClaimedCapabilityContext context) override {
+      auto id = context.getParams().getId();
+      KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(id)) {
+        (void)dropped;
+        context.getResults().setReleased(true);
+      } else {
+        context.getResults().setReleased(false);
+      }
       return kj::READY_NOW;
     }
 
@@ -6241,24 +6250,6 @@ private:
     uint64_t interfaceId = 0;
     KJ_IF_MAYBE(error, initAppInterfacePowerboxDescriptor(url, descriptor, interfaceId)) {
       KJ_FAIL_REQUIRE(*error);
-    }
-  }
-
-  kj::Promise<void> dropPowerboxCapability(
-      kj::StringPtr url, kj::HttpService::Response& response) {
-    kj::String id = nullptr;
-    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
-        url, "id", "expected exactly one capability id", id)) {
-      return sendBadRequest(response, *error);
-    }
-
-    KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(id)) {
-      (void)dropped;
-      return sendJson(response, 200, "OK", kj::heapString(
-          "{\n  \"ok\": true,\n  \"released\": true\n}\n"));
-    } else {
-      return sendJson(response, 404, "Not Found", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
     }
   }
 
