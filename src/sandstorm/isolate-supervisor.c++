@@ -4254,6 +4254,24 @@ private:
     IsolateRuntimeHost& host;
   };
 
+  class BrowserIsolateBridgeImpl final: public BrowserIsolateBridge::Server {
+  public:
+    explicit BrowserIsolateBridgeImpl(IsolateRuntimeHost& host): host(host) {}
+
+    kj::Promise<void> getClaimedCapability(GetClaimedCapabilityContext context) override {
+      auto id = context.getParams().getId();
+      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
+        context.getResults().setCap(*cap);
+      } else {
+        KJ_FAIL_REQUIRE("browser isolate bridge claimed capability ID not found", id);
+      }
+      return kj::READY_NOW;
+    }
+
+  private:
+    IsolateRuntimeHost& host;
+  };
+
   class NativeCapnpBridgeController final {
   private:
   class NativeCapnpBridgeWebSocketMessageStream final: public capnp::MessageStream {
@@ -4460,6 +4478,35 @@ private:
         kj::heapString(""), 0, kj::heapString("sandstorm.IsolateBridge"), kj::mv(bootstrap));
   }
 
+  kj::Promise<void> openBrowserIsolateBridgeBootstrapRpcSession(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    kj::String connectionId;
+    KJ_IF_MAYBE(error, readNativeCapnpRpcSessionParam(
+        url, "connectionId", "browser isolate bridge RPC session connection id is missing",
+        connectionId)) {
+      return sendJson(response, 400, "Bad Request", renderError(*error));
+    }
+
+    if (findIsolateQueryParams(url, "id").size() > 0 ||
+        findIsolateQueryParams(url, "interfaceId").size() > 0 ||
+        findIsolateQueryParams(url, "interfaceName").size() > 0) {
+      return sendJson(response, 400, "Bad Request", renderError(
+          "browser isolate bridge bootstrap sessions must not specify a target capability"));
+    }
+
+    if (nativeCapnpBridge.hasRpcSession(connectionId)) {
+      return sendJson(response, 409, "Conflict", renderError(
+          "browser isolate bridge RPC session connection id is already in use"));
+    }
+
+    kj::HttpHeaders responseHeaders(headerTable);
+    auto webSocket = response.acceptWebSocket(responseHeaders);
+    capnp::Capability::Client bootstrap = kj::heap<BrowserIsolateBridgeImpl>(host);
+    return nativeCapnpBridge.openWebSocketRpcSession(kj::mv(webSocket), connectionId,
+        kj::heapString(""), 0, kj::heapString("sandstorm.BrowserIsolateBridge"),
+        kj::mv(bootstrap));
+  }
+
   kj::Promise<void> openNativeCapnpBridgeRpcSession(
       kj::StringPtr url, const kj::HttpHeaders& requestHeaders,
       kj::HttpService::Response& response) {
@@ -4473,63 +4520,18 @@ private:
     if (bootstrapModes.size() > 1) {
       return sendJson(response, 400, "Bad Request", renderError(
           "native Cap'n Proto RPC session bootstrap mode appears more than once"));
-    } else if (bootstrapModes.size() == 1) {
-      if (bootstrapModes[0] != "worker") {
-        return sendJson(response, 400, "Bad Request", renderError(
-            "native Cap'n Proto RPC session bootstrap mode is invalid"));
-      }
+    } else if (bootstrapModes.size() == 0) {
+      return sendJson(response, 400, "Bad Request", renderError(
+          "native Cap'n Proto RPC session bootstrap mode is missing"));
+    }
+
+    if (bootstrapModes[0] == "worker") {
       return openIsolateBridgeBootstrapRpcSession(url, response);
-    }
-
-    kj::String targetId;
-    kj::String interfaceIdText;
-    kj::String interfaceName;
-    kj::String connectionId;
-    KJ_IF_MAYBE(error, readNativeCapnpRpcSessionParam(
-        url, "id", "native Cap'n Proto RPC session target id is missing", targetId)) {
-      return sendJson(response, 400, "Bad Request", renderError(*error));
-    }
-    KJ_IF_MAYBE(error, readNativeCapnpRpcSessionParam(
-        url, "interfaceId", "native Cap'n Proto RPC session interface id is missing",
-        interfaceIdText)) {
-      return sendJson(response, 400, "Bad Request", renderError(*error));
-    }
-    auto interfaceNames = findIsolateQueryParams(url, "interfaceName");
-    if (interfaceNames.size() > 1) {
-      return sendJson(response, 400, "Bad Request", renderError(
-          "native Cap'n Proto RPC session interface name appears more than once"));
-    } else if (interfaceNames.size() == 1) {
-      interfaceName = kj::mv(interfaceNames[0]);
-    } else {
-      interfaceName = kj::heapString("");
-    }
-    KJ_IF_MAYBE(error, readNativeCapnpRpcSessionParam(
-        url, "connectionId", "native Cap'n Proto RPC session connection id is missing",
-        connectionId)) {
-      return sendJson(response, 400, "Bad Request", renderError(*error));
-    }
-
-    uint64_t interfaceId;
-    KJ_IF_MAYBE(parsed, parseNativeCapnpInterfaceId(interfaceIdText)) {
-      interfaceId = *parsed;
+    } else if (bootstrapModes[0] == "browser") {
+      return openBrowserIsolateBridgeBootstrapRpcSession(url, response);
     } else {
       return sendJson(response, 400, "Bad Request", renderError(
-          "native Cap'n Proto RPC session interface id is invalid"));
-    }
-
-    if (nativeCapnpBridge.hasRpcSession(connectionId)) {
-      return sendJson(response, 409, "Conflict", renderError(
-          "native Cap'n Proto RPC session connection id is already in use"));
-    }
-
-    KJ_IF_MAYBE(targetCap, host.sessions->findClaimedCapability(targetId)) {
-      kj::HttpHeaders responseHeaders(headerTable);
-      auto webSocket = response.acceptWebSocket(responseHeaders);
-      return nativeCapnpBridge.openWebSocketRpcSession(kj::mv(webSocket), connectionId,
-          kj::mv(targetId), interfaceId, kj::mv(interfaceName), *targetCap);
-    } else {
-      return sendJson(response, 404, "Not Found", renderError(
-          "unknown native Cap'n Proto bridge target capability"));
+          "native Cap'n Proto RPC session bootstrap mode is invalid"));
     }
   }
 

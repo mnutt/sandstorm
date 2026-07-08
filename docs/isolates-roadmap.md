@@ -170,9 +170,11 @@ export.
   IsolateBridge RPC connection instead of local HTTP POST routes.
 - Done: worker-side `connectNativeCapnp()` now uses the IsolateBridge
   bootstrap channel and capnp-es pipelining to call id-backed capabilities;
-  the worker fallback target-specific WebSocket opener is gone. The
-  target-specific `/capnp/rpc-session?id=...` path remains only for the browser
-  bridge until Phase 2.
+  the worker fallback target-specific WebSocket opener is gone.
+- Done: browser-side `connectBrowserNativeCapnp()` now uses a browser-scoped
+  `BrowserIsolateBridge` bootstrap and capnp-es pipelining to call
+  capabilities explicitly handed to the browser session. The target-specific
+  `/capnp/rpc-session?id=...` authority path is gone.
 - Done: `/capabilities/claimed` and `/capabilities/claimed-stats`; helper
   handles now carry user-facing metadata locally instead of exposing the
   temporary claimed-capability registry through read-only HTTP lookups.
@@ -211,6 +213,9 @@ bridge. Rebase it onto the Phase 1 channel:
   subset: claim Powerbox tokens for the current session and use capabilities
   explicitly handed to that session. No blanket durable-token restore and no
   export registration.
+- Done: the browser WebSocket capnp session now uses `bootstrap=browser` and a
+  `BrowserIsolateBridge` subset to resolve only previously handed capability
+  IDs; it no longer opens a target-specific RPC session by URL.
 - Powerbox flow stays browser-first: shell `postMessage` picker → token →
   browser (or worker) claims over its own channel. Worker-initiated Powerbox
   UI becomes a `SessionContext` method call whenever the shell supports it —
