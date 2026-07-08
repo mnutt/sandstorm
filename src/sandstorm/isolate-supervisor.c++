@@ -377,22 +377,6 @@ public:
         createDropNotifyGroup(kj::mv(dropNotifyPath)));
   }
 
-  kj::Maybe<kj::String> duplicateClaimedCapability(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      kj::Maybe<kj::String> dropNotifyGroupId = nullptr;
-      KJ_IF_MAYBE(groupId, claimedCapabilities[*index].dropNotifyGroupId) {
-        retainDropNotifyGroup(*groupId);
-        dropNotifyGroupId = kj::heapString(*groupId);
-      }
-      return storeClaimedCapabilityInternal(
-          claimedCapabilities[*index].cap,
-          copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata),
-          kj::mv(dropNotifyGroupId));
-    }
-
-    return nullptr;
-  }
-
   struct DroppedClaimedCapability {
     capnp::Capability::Client cap;
     ClaimedCapabilityMetadata metadata;
@@ -4540,8 +4524,6 @@ public:
         return savePowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/restore") {
         return restorePowerboxCapability(path, response);
-      } else if (methodName == "POST" && route == "/powerbox/dup") {
-        return duplicatePowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop-saved") {
         return dropSavedPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop") {
@@ -6841,22 +6823,6 @@ private:
       });
     } else {
       return sendBadRequest(response, "invalid saved capability token");
-    }
-  }
-
-  kj::Promise<void> duplicatePowerboxCapability(
-      kj::StringPtr url, kj::HttpService::Response& response) {
-    kj::String id = nullptr;
-    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
-        url, "id", "expected exactly one capability id", id)) {
-      return sendBadRequest(response, *error);
-    }
-
-    KJ_IF_MAYBE(duplicatedId, host.sessions->duplicateClaimedCapability(id)) {
-      return sendJson(response, 200, "OK", renderClaimedCapability(*duplicatedId));
-    } else {
-      return sendJson(response, 404, "Not Found", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
     }
   }
 
