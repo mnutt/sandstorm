@@ -1807,6 +1807,9 @@ test("isolate supervisor integration suite", {
           connectionId:
               `native-capnp-export-greeter-restored-${
                 body.sandstormApi.nativeCapnpExport.greeter.info.id}`,
+          bridgeTransportKind: "webSocketRpc",
+          transportKind: "localDirect",
+          connectionIsNull: true,
           info: {
             ok: true,
             type: "claimedCapabilityInfo",
@@ -1840,6 +1843,7 @@ test("isolate supervisor integration suite", {
                 .rawAuthorizationLength,
           decodedCapabilityKeys: ["id", "interfaceId", "interfaceName", "kind"],
           decodedHasLocalDispatchProperty: false,
+          publicDecodedTransportKind: "webSocketRpc",
           dropWhich: "acknowledged",
         },
         info: {

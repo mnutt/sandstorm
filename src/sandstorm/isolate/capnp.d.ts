@@ -174,6 +174,7 @@ declare module "sandstorm:capnp" {
   ): Promise<NativeCapnpBridge>;
 
   export class NativeCapnpBridgeWebSocketRpcTransport {
+    readonly kind: "webSocketRpc";
     readonly api: {
       nativeCapnpBridgeOpenRpcSession(
         target: NativeCapnpCapabilitySlot,
@@ -191,6 +192,13 @@ declare module "sandstorm:capnp" {
     );
     sendMessage(message: unknown): void;
     recvMessage(): Promise<unknown>;
+    close(error?: unknown): void;
+  }
+
+  export interface NativeCapnpLocalDirectTransport {
+    readonly kind: "localDirect";
+    readonly connectionId: string;
+    readonly target: Required<NativeCapnpCapabilitySlot>;
     close(error?: unknown): void;
   }
 
@@ -323,6 +331,7 @@ declare module "sandstorm:capnp" {
 
   export interface NativeCapnpGeneratedInterface<TClient extends object> {
     readonly Client: new (client: unknown) => TClient;
+    readonly Server?: new (target: object) => { client(): TClient };
     readonly interfaceId?: bigint | number | string;
     readonly interfaceName?: string;
     readonly schema?: {
@@ -387,7 +396,7 @@ declare module "sandstorm:capnp" {
   export type NativeCapnpConnectedClient<TClient extends object> = TClient & {
     readonly capability: NativeCapnpCapabilitySlot;
     readonly connection: unknown;
-    readonly transport: NativeCapnpBridgeWebSocketRpcTransport;
+    readonly transport: NativeCapnpBridgeWebSocketRpcTransport | NativeCapnpLocalDirectTransport;
     drop(): Promise<unknown> | unknown;
     save(...args: unknown[]): Promise<string> | string | undefined;
   };
