@@ -2011,16 +2011,10 @@ test("isolate supervisor integration suite", {
     assert.equal(exported.json.capabilityClass, true);
     assert.equal(exported.json.capability.type, "capability");
     assert.equal(typeof exported.json.capability.id, "string");
-
-    const capabilityId = exported.json.capability.id;
-    const capabilityInfo = await requestJson(
-      fixture.sandstormApiSocket,
-      `/capabilities/claimed?id=${encodeURIComponent(capabilityId)}`);
-    assert.equal(capabilityInfo.statusCode, 200, capabilityInfo.body);
-    assert.deepEqual(capabilityInfo.json, {
+    assert.deepEqual(exported.json.info, {
       ok: true,
-      type: "claimedCapabilityInfo",
-      id: capabilityId,
+      type: "capabilityInfo",
+      id: exported.json.capability.id,
       kind: "routeBackedWebSession",
       residence: "localExport",
       nativeInterface: "webSession",
@@ -2118,16 +2112,10 @@ test("isolate supervisor integration suite", {
     assert.equal(exported.json.capabilityClass, true);
     assert.equal(exported.json.capability.type, "capability");
     assert.equal(typeof exported.json.capability.id, "string");
-
-    const capabilityId = exported.json.capability.id;
-    const capabilityInfo = await requestJson(
-      fixture.sandstormApiSocket,
-      `/capabilities/claimed?id=${encodeURIComponent(capabilityId)}`);
-    assert.equal(capabilityInfo.statusCode, 200, capabilityInfo.body);
-    assert.deepEqual(capabilityInfo.json, {
+    assert.deepEqual(exported.json.info, {
       ok: true,
-      type: "claimedCapabilityInfo",
-      id: capabilityId,
+      type: "capabilityInfo",
+      id: exported.json.capability.id,
       kind: "routeBackedApiSession",
       residence: "localExport",
       nativeInterface: "apiSession",
@@ -2374,8 +2362,8 @@ test("isolate supervisor integration suite", {
     assert.ok(!capabilities.json.capabilities.includes("capabilities.webSession"));
     assert.ok(!capabilities.json.capabilities.includes("capabilities.apiSession"));
     assert.ok(!capabilities.json.capabilities.includes("capabilities.nativeCapnpExport"));
-    assert.ok(capabilities.json.capabilities.includes("capabilities.claimed"));
-    assert.ok(capabilities.json.capabilities.includes("capabilities.claimedStats"));
+    assert.ok(!capabilities.json.capabilities.includes("capabilities.claimed"));
+    assert.ok(!capabilities.json.capabilities.includes("capabilities.claimedStats"));
     assert.ok(capabilities.json.capabilities.includes("capnp.bridgeInfo"));
     assert.ok(!capabilities.json.capabilities.includes("capnp.lifecycle"));
 
@@ -2404,25 +2392,6 @@ test("isolate supervisor integration suite", {
       fixture.workerdSocket, "/__sandstorm/native-capnp/bridge-info");
     assert.equal(browserCapnpBridgeInfo.statusCode, 200, browserCapnpBridgeInfo.body);
     assert.deepEqual(browserCapnpBridgeInfo.json, capnpBridgeInfo.json);
-
-    const claimedStats = await requestJson(
-      fixture.sandstormApiSocket, "/capabilities/claimed-stats");
-    assert.equal(claimedStats.statusCode, 200, claimedStats.body);
-    assert.equal(claimedStats.json.ok, true);
-    assert.equal(claimedStats.json.type, "claimedCapabilityStats");
-    assert.equal(typeof claimedStats.json.claimedCapabilityCount, "number");
-    assert.equal(typeof claimedStats.json.localExportCount, "number");
-    assert.equal(typeof claimedStats.json.importedCount, "number");
-    assert.equal(typeof claimedStats.json.webSessionNativeCount, "number");
-    assert.equal(typeof claimedStats.json.apiSessionNativeCount, "number");
-    assert.equal(typeof claimedStats.json.outboundHttpNativeCount, "number");
-    assert.equal(typeof claimedStats.json.unknownNativeCount, "number");
-    assert.equal(typeof claimedStats.json.routeBackedWebSessionCount, "number");
-    assert.equal(typeof claimedStats.json.routeBackedApiSessionCount, "number");
-    assert.equal(typeof claimedStats.json.powerboxClaimCount, "number");
-    assert.equal(typeof claimedStats.json.powerboxOfferCount, "number");
-    assert.equal(typeof claimedStats.json.restoredCount, "number");
-    assert.equal(typeof claimedStats.json.tiedCount, "number");
 
     const permissions = await requestJson(fixture.sandstormApiSocket, "/permissions");
     assert.equal(permissions.statusCode, 200);
@@ -2635,9 +2604,7 @@ test("isolate supervisor integration suite", {
       fixture.workerdSocket, "/native-interface-validation-self-test");
     assert.equal(nativeInterfaceValidation.statusCode, 200, nativeInterfaceValidation.body);
     assert.equal(nativeInterfaceValidation.json.ok, true);
-    assert.deepEqual(nativeInterfaceValidation.json.calls, [
-      "http://sandstorm/capabilities/claimed?id=mock-outbound",
-    ]);
+    assert.deepEqual(nativeInterfaceValidation.json.calls, []);
     assert.equal(nativeInterfaceValidation.json.fetchError.name, "ValidationError");
     assert.match(nativeInterfaceValidation.json.fetchError.message, /OutboundHttpSession/);
     assert.match(nativeInterfaceValidation.json.fetchError.message, /capability descriptor supplies the origin/);

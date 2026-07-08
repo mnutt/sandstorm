@@ -146,28 +146,13 @@ async function parseApiResponseBody(response) {
   }
 }
 
-async function queryCapabilityInfo(env, id) {
-  const response = await env.SANDSTORM_API.fetch(
-    `http://sandstorm/capabilities/claimed?id=${encodeURIComponent(id)}`);
-  const body = await parseApiResponseBody(response);
-  if (!response.ok || !body.ok) {
-    return null;
-  }
-  body.type = "capabilityInfo";
-  const metadata = capabilityMetadata.get(id) || {};
-  capabilityMetadata.set(id, { ...metadata, ...body });
-  return body;
-}
-
 async function capabilityInfo(env, capability, options = {}) {
   const id = capabilityId(capability);
-  if (!options.refresh) {
-    const cached = capabilityMetadata.get(id);
-    if (cached?.type === "capabilityInfo") {
-      return cached;
-    }
+  const cached = capabilityMetadata.get(id);
+  if (cached?.ok) {
+    return cached;
   }
-  return queryCapabilityInfo(env, id);
+  return null;
 }
 
 function powerboxFetcher(env) {
@@ -464,11 +449,14 @@ function capabilityId(value, name = "capability") {
 export class Capability {
   #env;
 
-  constructor(env, id) {
+  constructor(env, id, metadata = undefined) {
     this.#env = env;
     this.ok = true;
     this.type = "capability";
     this.id = validate.string(id, "capability.id", { minLength: 1, maxLength: 4096 });
+    if (metadata !== undefined && metadata !== null) {
+      cacheCapabilityMetadata(this.id, metadata);
+    }
   }
 
   get env() {
@@ -782,6 +770,17 @@ function claimNativeInterface(options = {}) {
   return explicit;
 }
 
+function offerDescriptorNativeInterface(descriptor) {
+  switch (descriptor?.type) {
+    case "apiSession":
+      return "apiSession";
+    case "outboundHttp":
+      return "outboundHttpSession";
+    default:
+      return "unknown";
+  }
+}
+
 function powerboxDescriptorParams(options = {}) {
   const apiSession = apiSessionDescriptorParams(options);
   const outboundHttp = outboundHttpDescriptorParams(options);
@@ -942,9 +941,6 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
         }
         const stored = await bridge.storeImportedCapability({
           cap: tied.tiedCap,
-          kind: "tied",
-          nativeInterface: "unknown",
-          pathPrefix: "",
         });
         const tiedId = validate.string(stored.id, "tied capability id", {
           minLength: 1,
@@ -2105,10 +2101,22 @@ async function createRouteBackedCapability(env, nativeInterface, options = {}) {
       pathPrefix,
       persistent,
     });
-    return new Capability(env, validate.string(result.id, "route-backed capability id", {
+    const id = validate.string(result.id, "route-backed capability id", {
       minLength: 1,
       maxLength: 4096,
-    }));
+    });
+    const kind = nativeInterface === "apiSession"
+      ? "routeBackedApiSession"
+      : "routeBackedWebSession";
+    return new Capability(env, id, {
+      kind,
+      residence: "localExport",
+      nativeInterface,
+      pathPrefix,
+      persistent,
+      hasNativeCapability: true,
+      liveForwardable: true,
+    });
   });
 }
 
@@ -2132,18 +2140,38 @@ function capabilitySupportsOutboundHttpFetch(nativeInterface) {
   return nativeInterface === "unknown" || nativeInterface === "outboundHttpSession";
 }
 
-function cacheImportedCapabilityMetadata(id, kind, metadata) {
+function cacheCapabilityMetadata(id, metadata = {}) {
+  const nativeInterface = metadata.nativeInterface || "unknown";
   capabilityMetadata.set(id, {
     ok: true,
-    type: "claimedCapabilityInfo",
+    type: "capabilityInfo",
     id,
+    kind: metadata.kind || "unknown",
+    residence: metadata.residence || "imported",
+    nativeInterface,
+    pathPrefix: typeof metadata.pathPrefix === "string" ? metadata.pathPrefix : "",
+    persistent: metadata.persistent !== undefined ? Boolean(metadata.persistent) : true,
+    supportsWebFetch: metadata.supportsWebFetch !== undefined
+      ? Boolean(metadata.supportsWebFetch)
+      : capabilitySupportsWebFetch(nativeInterface),
+    supportsOutboundHttpFetch: metadata.supportsOutboundHttpFetch !== undefined
+      ? Boolean(metadata.supportsOutboundHttpFetch)
+      : capabilitySupportsOutboundHttpFetch(nativeInterface),
+    hasNativeCapability: metadata.hasNativeCapability !== undefined
+      ? Boolean(metadata.hasNativeCapability)
+      : true,
+    liveForwardable: metadata.liveForwardable !== undefined
+      ? Boolean(metadata.liveForwardable)
+      : true,
+  });
+}
+
+function cacheImportedCapabilityMetadata(id, kind, metadata) {
+  cacheCapabilityMetadata(id, {
+    ...metadata,
     kind,
     residence: "imported",
-    nativeInterface: metadata.nativeInterface,
-    pathPrefix: metadata.pathPrefix,
     persistent: true,
-    supportsWebFetch: capabilitySupportsWebFetch(metadata.nativeInterface),
-    supportsOutboundHttpFetch: capabilitySupportsOutboundHttpFetch(metadata.nativeInterface),
     hasNativeCapability: true,
     liveForwardable: true,
   });
@@ -2819,9 +2847,6 @@ async function restoreCapabilityToken(env, token) {
 
     const stored = await bridge.storeImportedCapability({
       cap: restored.cap,
-      kind: "restored",
-      nativeInterface: metadata.nativeInterface,
-      pathPrefix: metadata.pathPrefix,
     });
     const id = validate.string(stored.id, "restored capability id", {
       minLength: 1,
@@ -3144,9 +3169,6 @@ export function powerbox(request, env) {
 
       const stored = await bridge.storeImportedCapability({
         cap: claimed.cap,
-        kind: "powerboxClaim",
-        nativeInterface,
-        pathPrefix: "",
       });
       const id = validate.string(stored.id, "claimed capability id", {
         minLength: 1,
@@ -3192,14 +3214,20 @@ export function powerbox(request, env) {
 
     offered() {
       const id = header(request, "x-sandstorm-offered-capability-id");
-      const capability = id ? new Capability(env, id) : undefined;
+      const descriptor = jsonHeader(request, "x-sandstorm-offer-descriptor");
+      const capability = id ? new Capability(env, id, {
+        kind: "powerboxOffer",
+        residence: "imported",
+        nativeInterface: offerDescriptorNativeInterface(descriptor),
+        pathPrefix: "",
+      }) : undefined;
       if (!capability) {
         return undefined;
       }
       return {
         capability,
         id: capability.id,
-        descriptor: jsonHeader(request, "x-sandstorm-offer-descriptor"),
+        descriptor,
       };
     },
 

@@ -161,196 +161,6 @@ kj::String makeOpaqueToken() {
   return kj::encodeBase64Url(bytes);
 }
 
-enum class ClaimedCapabilityKind {
-  UNKNOWN,
-  POWERBOX_CLAIM,
-  POWERBOX_OFFER,
-  RESTORED,
-  TIED,
-  ROUTE_BACKED_WEB_SESSION,
-  ROUTE_BACKED_API_SESSION,
-};
-
-enum class ClaimedCapabilityResidence {
-  UNKNOWN,
-  LOCAL_EXPORT,
-  IMPORTED,
-};
-
-enum class ClaimedCapabilityNativeInterface {
-  UNKNOWN,
-  WEB_SESSION,
-  API_SESSION,
-  OUTBOUND_HTTP_SESSION,
-};
-
-kj::StringPtr claimedCapabilityKindName(ClaimedCapabilityKind kind) {
-  switch (kind) {
-    case ClaimedCapabilityKind::UNKNOWN:
-      return "unknown";
-    case ClaimedCapabilityKind::POWERBOX_CLAIM:
-      return "powerboxClaim";
-    case ClaimedCapabilityKind::POWERBOX_OFFER:
-      return "powerboxOffer";
-    case ClaimedCapabilityKind::RESTORED:
-      return "restored";
-    case ClaimedCapabilityKind::TIED:
-      return "tied";
-    case ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION:
-      return "routeBackedWebSession";
-    case ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION:
-      return "routeBackedApiSession";
-  }
-  KJ_UNREACHABLE;
-}
-
-kj::Maybe<ClaimedCapabilityKind> claimedCapabilityKindFromName(kj::StringPtr name) {
-  if (name == "unknown") {
-    return ClaimedCapabilityKind::UNKNOWN;
-  } else if (name == "powerboxClaim") {
-    return ClaimedCapabilityKind::POWERBOX_CLAIM;
-  } else if (name == "powerboxOffer") {
-    return ClaimedCapabilityKind::POWERBOX_OFFER;
-  } else if (name == "restored") {
-    return ClaimedCapabilityKind::RESTORED;
-  } else if (name == "tied") {
-    return ClaimedCapabilityKind::TIED;
-  } else if (name == "routeBackedWebSession") {
-    return ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION;
-  } else if (name == "routeBackedApiSession") {
-    return ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION;
-  } else {
-    return nullptr;
-  }
-}
-
-kj::StringPtr claimedCapabilityResidenceName(ClaimedCapabilityResidence residence) {
-  switch (residence) {
-    case ClaimedCapabilityResidence::UNKNOWN:
-      return "unknown";
-    case ClaimedCapabilityResidence::LOCAL_EXPORT:
-      return "localExport";
-    case ClaimedCapabilityResidence::IMPORTED:
-      return "imported";
-  }
-  KJ_UNREACHABLE;
-}
-
-kj::StringPtr claimedCapabilityNativeInterfaceName(
-    ClaimedCapabilityNativeInterface nativeInterface) {
-  switch (nativeInterface) {
-    case ClaimedCapabilityNativeInterface::UNKNOWN:
-      return "unknown";
-    case ClaimedCapabilityNativeInterface::WEB_SESSION:
-      return "webSession";
-    case ClaimedCapabilityNativeInterface::API_SESSION:
-      return "apiSession";
-    case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
-      return "outboundHttpSession";
-  }
-  KJ_UNREACHABLE;
-}
-
-kj::Maybe<ClaimedCapabilityNativeInterface> claimedCapabilityNativeInterfaceFromName(
-    kj::StringPtr name) {
-  if (name == "unknown") {
-    return ClaimedCapabilityNativeInterface::UNKNOWN;
-  } else if (name == "webSession") {
-    return ClaimedCapabilityNativeInterface::WEB_SESSION;
-  } else if (name == "apiSession") {
-    return ClaimedCapabilityNativeInterface::API_SESSION;
-  } else if (name == "outboundHttpSession") {
-    return ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION;
-  } else {
-    return nullptr;
-  }
-}
-
-bool claimedCapabilitySupportsWebFetch(ClaimedCapabilityNativeInterface nativeInterface) {
-  switch (nativeInterface) {
-    case ClaimedCapabilityNativeInterface::UNKNOWN:
-    case ClaimedCapabilityNativeInterface::WEB_SESSION:
-    case ClaimedCapabilityNativeInterface::API_SESSION:
-      return true;
-    case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
-      return false;
-  }
-  KJ_UNREACHABLE;
-}
-
-bool claimedCapabilitySupportsOutboundHttpFetch(
-    ClaimedCapabilityNativeInterface nativeInterface) {
-  switch (nativeInterface) {
-    case ClaimedCapabilityNativeInterface::UNKNOWN:
-    case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
-      return true;
-    case ClaimedCapabilityNativeInterface::WEB_SESSION:
-    case ClaimedCapabilityNativeInterface::API_SESSION:
-      return false;
-  }
-  KJ_UNREACHABLE;
-}
-
-struct ClaimedCapabilityMetadata {
-  ClaimedCapabilityKind kind = ClaimedCapabilityKind::UNKNOWN;
-  ClaimedCapabilityResidence residence = ClaimedCapabilityResidence::UNKNOWN;
-  ClaimedCapabilityNativeInterface nativeInterface = ClaimedCapabilityNativeInterface::UNKNOWN;
-  kj::String pathPrefix = kj::heapString("");
-  kj::String localSupervisorId = kj::heapString("");
-  bool persistent = true;
-  bool hasNativeCapability = true;
-  bool liveForwardable = true;
-};
-
-ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
-    const ClaimedCapabilityMetadata& metadata) {
-  return ClaimedCapabilityMetadata {
-    metadata.kind,
-    metadata.residence,
-    metadata.nativeInterface,
-    kj::heapString(metadata.pathPrefix),
-    kj::heapString(metadata.localSupervisorId),
-    metadata.persistent,
-    metadata.hasNativeCapability,
-    metadata.liveForwardable,
-  };
-}
-
-ClaimedCapabilityMetadata makeImportedClaimedCapabilityMetadata(
-    ClaimedCapabilityKind kind,
-    ClaimedCapabilityNativeInterface nativeInterface = ClaimedCapabilityNativeInterface::UNKNOWN) {
-  return ClaimedCapabilityMetadata {
-    kind,
-    ClaimedCapabilityResidence::IMPORTED,
-    nativeInterface,
-    kj::heapString(""),
-    kj::heapString(""),
-    true,
-    true,
-    true,
-  };
-}
-
-struct ClaimedCapabilityInfo {
-  ClaimedCapabilityMetadata metadata;
-};
-
-struct ClaimedCapabilityStats {
-  uint claimedCapabilityCount = 0;
-  uint localExportCount = 0;
-  uint importedCount = 0;
-  uint webSessionNativeCount = 0;
-  uint apiSessionNativeCount = 0;
-  uint outboundHttpNativeCount = 0;
-  uint unknownNativeCount = 0;
-  uint routeBackedWebSessionCount = 0;
-  uint routeBackedApiSessionCount = 0;
-  uint powerboxClaimCount = 0;
-  uint powerboxOfferCount = 0;
-  uint restoredCount = 0;
-  uint tiedCount = 0;
-};
-
 class IsolateSessionRegistry final: public kj::Refcounted {
 public:
   kj::String registerSession(SessionContext::Client context) {
@@ -380,30 +190,20 @@ public:
     return nullptr;
   }
 
-  kj::String storeClaimedCapability(capnp::Capability::Client cap,
-      ClaimedCapabilityMetadata metadata = ClaimedCapabilityMetadata()) {
-    return storeClaimedCapabilityInternal(kj::mv(cap), kj::mv(metadata));
+  kj::String storeClaimedCapability(capnp::Capability::Client cap) {
+    return storeClaimedCapabilityInternal(kj::mv(cap));
   }
 
-  struct DroppedClaimedCapability {
-    capnp::Capability::Client cap;
-    ClaimedCapabilityMetadata metadata;
-  };
-
-  kj::Maybe<DroppedClaimedCapability> dropClaimedCapability(kj::StringPtr id) {
+  bool dropClaimedCapability(kj::StringPtr id) {
     KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      DroppedClaimedCapability result {
-        claimedCapabilities[*index].cap,
-        copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata),
-      };
       if (*index + 1 < claimedCapabilities.size()) {
         claimedCapabilities[*index] = kj::mv(claimedCapabilities.back());
       }
       claimedCapabilities.removeLast();
-      return kj::mv(result);
+      return true;
     }
 
-    return nullptr;
+    return false;
   }
 
   kj::Maybe<capnp::Capability::Client> findClaimedCapability(kj::StringPtr id) {
@@ -414,98 +214,12 @@ public:
     return nullptr;
   }
 
-  kj::Maybe<ClaimedCapabilityInfo> findClaimedCapabilityInfo(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      return ClaimedCapabilityInfo {
-        copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata),
-      };
-    }
-
-    return nullptr;
-  }
-
-  kj::Maybe<ClaimedCapabilityNativeInterface> findClaimedCapabilityNativeInterface(
-      kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      return claimedCapabilities[*index].metadata.nativeInterface;
-    }
-
-    return nullptr;
-  }
-
-  kj::Maybe<ClaimedCapabilityMetadata> findClaimedCapabilityMetadata(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      return copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata);
-    }
-
-    return nullptr;
-  }
-
-  ClaimedCapabilityStats getClaimedCapabilityStats() {
-    ClaimedCapabilityStats stats {
-      static_cast<uint>(claimedCapabilities.size()),
-    };
-    for (auto& capability: claimedCapabilities) {
-      switch (capability.metadata.residence) {
-        case ClaimedCapabilityResidence::LOCAL_EXPORT:
-          ++stats.localExportCount;
-          break;
-        case ClaimedCapabilityResidence::IMPORTED:
-          ++stats.importedCount;
-          break;
-        case ClaimedCapabilityResidence::UNKNOWN:
-          break;
-      }
-
-      switch (capability.metadata.nativeInterface) {
-        case ClaimedCapabilityNativeInterface::WEB_SESSION:
-          ++stats.webSessionNativeCount;
-          break;
-        case ClaimedCapabilityNativeInterface::API_SESSION:
-          ++stats.apiSessionNativeCount;
-          break;
-        case ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION:
-          ++stats.outboundHttpNativeCount;
-          break;
-        case ClaimedCapabilityNativeInterface::UNKNOWN:
-          ++stats.unknownNativeCount;
-          break;
-      }
-
-      switch (capability.metadata.kind) {
-        case ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION:
-          ++stats.routeBackedWebSessionCount;
-          break;
-        case ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION:
-          ++stats.routeBackedApiSessionCount;
-          break;
-        case ClaimedCapabilityKind::POWERBOX_CLAIM:
-          ++stats.powerboxClaimCount;
-          break;
-        case ClaimedCapabilityKind::POWERBOX_OFFER:
-          ++stats.powerboxOfferCount;
-          break;
-        case ClaimedCapabilityKind::RESTORED:
-          ++stats.restoredCount;
-          break;
-        case ClaimedCapabilityKind::TIED:
-          ++stats.tiedCount;
-          break;
-        case ClaimedCapabilityKind::UNKNOWN:
-          break;
-      }
-    }
-    return stats;
-  }
-
 private:
-  kj::String storeClaimedCapabilityInternal(capnp::Capability::Client cap,
-      ClaimedCapabilityMetadata metadata) {
+  kj::String storeClaimedCapabilityInternal(capnp::Capability::Client cap) {
     for (;;) {
       auto id = makeOpaqueToken();
       if (findClaimedCapabilityIndex(id) == nullptr) {
-        claimedCapabilities.add(ClaimedCapabilityRecord {
-            kj::heapString(id), cap, kj::mv(metadata) });
+        claimedCapabilities.add(ClaimedCapabilityRecord { kj::heapString(id), cap });
         return id;
       }
     }
@@ -519,7 +233,6 @@ private:
   struct ClaimedCapabilityRecord {
     kj::String id;
     capnp::Capability::Client cap;
-    ClaimedCapabilityMetadata metadata;
   };
 
   kj::Maybe<size_t> findSessionIndex(kj::StringPtr id) {
@@ -1703,34 +1416,6 @@ kj::String renderApiSessionDescriptorHeader(ApiSession::PowerboxTag::Reader tag)
   kj::Vector<char> json;
   appendApiSessionDescriptorJson(json, tag);
   return kj::encodeBase64Url(json.asPtr().asBytes());
-}
-
-ClaimedCapabilityNativeInterface nativeInterfaceFromPowerboxDescriptor(
-    PowerboxDescriptor::Reader descriptor) {
-  kj::Maybe<ClaimedCapabilityNativeInterface> result = nullptr;
-  for (auto tag: descriptor.getTags()) {
-    ClaimedCapabilityNativeInterface candidate;
-    if (tag.getId() == capnp::typeId<ApiSession>()) {
-      candidate = ClaimedCapabilityNativeInterface::API_SESSION;
-    } else if (tag.getId() == capnp::typeId<OutboundHttpSession>()) {
-      candidate = ClaimedCapabilityNativeInterface::OUTBOUND_HTTP_SESSION;
-    } else {
-      continue;
-    }
-
-    KJ_IF_MAYBE(existing, result) {
-      if (*existing != candidate) {
-        return ClaimedCapabilityNativeInterface::UNKNOWN;
-      }
-    } else {
-      result = candidate;
-    }
-  }
-
-  KJ_IF_MAYBE(nativeInterface, result) {
-    return *nativeInterface;
-  }
-  return ClaimedCapabilityNativeInterface::UNKNOWN;
 }
 
 void copyOfferDescriptor(SessionMetadata& result, PowerboxDescriptor::Reader descriptor) {
@@ -3637,10 +3322,8 @@ public:
         params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
         params.getTabId());
     sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
-    sessionMetadata.offeredCapabilityId = runtimeHost->sessions->storeClaimedCapability(
-        params.getOffer(), makeImportedClaimedCapabilityMetadata(
-          ClaimedCapabilityKind::POWERBOX_OFFER,
-          nativeInterfaceFromPowerboxDescriptor(params.getDescriptor())));
+    sessionMetadata.offeredCapabilityId =
+        runtimeHost->sessions->storeClaimedCapability(params.getOffer());
     copyOfferDescriptor(sessionMetadata, params.getDescriptor());
     context.getResults().setSession(kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::OFFER,
@@ -4424,10 +4107,6 @@ public:
         return appInterfacePowerboxDescriptor(path, response);
       } else if (route == "/capabilities") {
         return sendJson(response, 200, "OK", renderCapabilities());
-      } else if (route == "/capabilities/claimed") {
-        return claimedCapabilityInfo(path, response);
-      } else if (route == "/capabilities/claimed-stats") {
-        return sendJson(response, 200, "OK", renderClaimedCapabilityStats());
       } else if (route == "/runtime") {
         return sendJson(response, 200, "OK", renderRuntime());
       } else if (route == "/modules") {
@@ -4545,51 +4224,14 @@ private:
       auto params = context.getParams();
       KJ_REQUIRE(params.hasCap(), "Cannot store a null imported capability.");
 
-      auto kindText = params.getKind();
-      ClaimedCapabilityKind kind;
-      KJ_IF_MAYBE(parsed, claimedCapabilityKindFromName(kindText)) {
-        kind = *parsed;
-      } else {
-        KJ_FAIL_REQUIRE("invalid imported capability kind", kindText);
-      }
-      KJ_REQUIRE(
-          kind == ClaimedCapabilityKind::POWERBOX_CLAIM ||
-          kind == ClaimedCapabilityKind::POWERBOX_OFFER ||
-          kind == ClaimedCapabilityKind::RESTORED ||
-          kind == ClaimedCapabilityKind::TIED,
-          "imported capability kind cannot be stored through isolate bridge", kindText);
-
-      auto nativeInterfaceText = params.getNativeInterface();
-      auto nativeInterface = ClaimedCapabilityNativeInterface::UNKNOWN;
-      KJ_IF_MAYBE(parsed, claimedCapabilityNativeInterfaceFromName(nativeInterfaceText)) {
-        nativeInterface = *parsed;
-      } else {
-        KJ_FAIL_REQUIRE("invalid restored capability native interface", nativeInterfaceText);
-      }
-
-      auto pathPrefix = normalizeRouteBackedPathPrefix(params.getPathPrefix());
-      auto id = host.sessions->storeClaimedCapability(params.getCap(), ClaimedCapabilityMetadata {
-        kind,
-        ClaimedCapabilityResidence::IMPORTED,
-        nativeInterface,
-        kj::mv(pathPrefix),
-        kj::heapString(""),
-        true,
-        true,
-        true,
-      });
+      auto id = host.sessions->storeClaimedCapability(params.getCap());
       context.getResults().setId(id);
       return kj::READY_NOW;
     }
 
     kj::Promise<void> dropClaimedCapability(DropClaimedCapabilityContext context) override {
       auto id = context.getParams().getId();
-      KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(id)) {
-        (void)dropped;
-        context.getResults().setReleased(true);
-      } else {
-        context.getResults().setReleased(false);
-      }
+      context.getResults().setReleased(host.sessions->dropClaimedCapability(id));
       return kj::READY_NOW;
     }
 
@@ -4599,31 +4241,10 @@ private:
       auto capabilityType = routeBackedCapabilityTypeFromNativeInterface(
           params.getNativeInterface());
       auto pathPrefix = normalizeRouteBackedPathPrefix(params.getPathPrefix());
-      ClaimedCapabilityKind kind;
-      ClaimedCapabilityNativeInterface nativeInterface;
-      switch (capabilityType) {
-        case RouteBackedCapabilityType::WEB:
-          kind = ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION;
-          nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
-          break;
-        case RouteBackedCapabilityType::API:
-          kind = ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION;
-          nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
-          break;
-      }
 
       auto cap = makeRouteBackedSessionCapability(
           kj::addRef(config), kj::addRef(host), capabilityType, pathPrefix, params.getPersistent());
-      auto id = host.sessions->storeClaimedCapability(kj::mv(cap), ClaimedCapabilityMetadata {
-        kind,
-        ClaimedCapabilityResidence::LOCAL_EXPORT,
-        nativeInterface,
-        kj::mv(pathPrefix),
-        kj::heapString(config.workerdSocketPath),
-        params.getPersistent(),
-        true,
-        true,
-      });
+      auto id = host.sessions->storeClaimedCapability(kj::mv(cap));
       context.getResults().setId(id);
       return kj::READY_NOW;
     }
@@ -4988,8 +4609,7 @@ private:
         "\"bindings\", \"permissions\", \"capnp.bridgeInfo\", "
         "\"powerbox.claim\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
-        "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
-        "\"capabilities.claimed\", \"capabilities.claimedStats\"]\n"
+        "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\"]\n"
         "}\n");
   }
 
@@ -5005,78 +4625,6 @@ private:
         "  \"nativeRpc\": true,\n"
         "  \"nativeRpcWebSocket\": true\n"
         "}\n");
-  }
-
-  kj::String renderClaimedCapabilityStats() {
-    auto stats = host.sessions->getClaimedCapabilityStats();
-    return kj::str(
-        "{\n"
-        "  \"ok\": true,\n"
-        "  \"type\": \"claimedCapabilityStats\",\n"
-        "  \"claimedCapabilityCount\": ", stats.claimedCapabilityCount, ",\n"
-        "  \"localExportCount\": ", stats.localExportCount, ",\n"
-        "  \"importedCount\": ", stats.importedCount, ",\n"
-        "  \"webSessionNativeCount\": ", stats.webSessionNativeCount, ",\n"
-        "  \"apiSessionNativeCount\": ", stats.apiSessionNativeCount, ",\n"
-        "  \"outboundHttpNativeCount\": ", stats.outboundHttpNativeCount, ",\n"
-        "  \"unknownNativeCount\": ", stats.unknownNativeCount, ",\n"
-        "  \"routeBackedWebSessionCount\": ", stats.routeBackedWebSessionCount, ",\n"
-        "  \"routeBackedApiSessionCount\": ", stats.routeBackedApiSessionCount, ",\n"
-        "  \"powerboxClaimCount\": ", stats.powerboxClaimCount, ",\n"
-        "  \"powerboxOfferCount\": ", stats.powerboxOfferCount, ",\n"
-        "  \"restoredCount\": ", stats.restoredCount, ",\n"
-        "  \"tiedCount\": ", stats.tiedCount, "\n"
-        "}\n");
-  }
-
-  kj::String renderClaimedCapabilityInfo(kj::StringPtr id,
-      const ClaimedCapabilityInfo& info) {
-    auto& metadata = info.metadata;
-    kj::Vector<char> json;
-    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  "));
-    appendJsonField(json, "type", "claimedCapabilityInfo");
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "id", id);
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "kind", claimedCapabilityKindName(metadata.kind));
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "residence", claimedCapabilityResidenceName(metadata.residence));
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "nativeInterface",
-        claimedCapabilityNativeInterfaceName(metadata.nativeInterface));
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "pathPrefix", metadata.pathPrefix);
-    json.addAll(kj::StringPtr(",\n  \"persistent\": "));
-    json.addAll(metadata.persistent ? kj::StringPtr("true") : kj::StringPtr("false"));
-    json.addAll(kj::StringPtr(",\n  \"supportsWebFetch\": "));
-    json.addAll(claimedCapabilitySupportsWebFetch(metadata.nativeInterface)
-        ? kj::StringPtr("true") : kj::StringPtr("false"));
-    json.addAll(kj::StringPtr(",\n  \"supportsOutboundHttpFetch\": "));
-    json.addAll(claimedCapabilitySupportsOutboundHttpFetch(metadata.nativeInterface)
-        ? kj::StringPtr("true") : kj::StringPtr("false"));
-    json.addAll(kj::StringPtr(",\n  \"hasNativeCapability\": "));
-    json.addAll(metadata.hasNativeCapability ? kj::StringPtr("true") : kj::StringPtr("false"));
-    json.addAll(kj::StringPtr(",\n  \"liveForwardable\": "));
-    json.addAll(metadata.liveForwardable ? kj::StringPtr("true") : kj::StringPtr("false"));
-    json.addAll(kj::StringPtr("\n}\n"));
-    json.add('\0');
-    return kj::String(json.releaseAsArray());
-  }
-
-  kj::Promise<void> claimedCapabilityInfo(
-      kj::StringPtr url, kj::HttpService::Response& response) {
-    kj::String id = nullptr;
-    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
-        url, "id", "expected exactly one capability id", id)) {
-      return sendBadRequest(response, *error);
-    }
-
-    KJ_IF_MAYBE(info, host.sessions->findClaimedCapabilityInfo(id)) {
-      return sendJson(response, 200, "OK", renderClaimedCapabilityInfo(id, *info));
-    } else {
-      return sendJson(response, 404, "Not Found", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));
-    }
   }
 
   kj::String renderPermissions() {
@@ -5188,15 +4736,6 @@ private:
     kj::Vector<char> json;
     json.addAll(kj::StringPtr("{\n  \"ok\": false,\n  "));
     appendJsonField(json, "error", error);
-    json.addAll(kj::StringPtr("\n}\n"));
-    json.add('\0');
-    return kj::String(json.releaseAsArray());
-  }
-
-  kj::String renderClaimedCapability(kj::StringPtr capabilityId) {
-    kj::Vector<char> json;
-    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"type\": \"claimedCapability\",\n  "));
-    appendJsonField(json, "id", capabilityId);
     json.addAll(kj::StringPtr("\n}\n"));
     json.add('\0');
     return kj::String(json.releaseAsArray());

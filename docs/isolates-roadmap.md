@@ -164,7 +164,7 @@ export.
 - Done: `/powerbox/fetch` and `/powerbox/outbound-http-fetch`; `cap.fetch()`
   now resolves the live claimed capability through the private IsolateBridge
   RPC connection and calls `WebSession` / `OutboundHttpSession` methods
-  directly. Read-only GET metadata routes stay.
+  directly.
 - Done: `/capabilities/web-session` and `/capabilities/api-session`;
   route-backed capability creation now happens through the private
   IsolateBridge RPC connection instead of local HTTP POST routes.
@@ -173,6 +173,9 @@ export.
   the worker fallback target-specific WebSocket opener is gone. The
   target-specific `/capnp/rpc-session?id=...` path remains only for the browser
   bridge until Phase 2.
+- Done: `/capabilities/claimed` and `/capabilities/claimed-stats`; helper
+  handles now carry user-facing metadata locally instead of exposing the
+  temporary claimed-capability registry through read-only HTTP lookups.
 - `IsolateSessionRegistry`'s string-ID claimed-capability table (RPC cap-table
   references replace it).
 - Done: the misleading per-export HTTP-transport names on the worker
@@ -180,7 +183,8 @@ export.
   JS export-session paths were already gone; the remaining C++ session classes
   are now named for `MainView` RPC.
 **Keep as HTTP:** inbound WebSession→sidecar fetch (workerd's native
-ingress), `STORAGE` binding, read-only metadata GETs.
+ingress), `STORAGE` binding, and non-authority runtime/module/binding metadata
+GETs.
 
 **Test/migrate:** port the dev sidecar (§3.4 of the review) to speak the new
 bootstrap so the seam stays testable without workerd; migrate
