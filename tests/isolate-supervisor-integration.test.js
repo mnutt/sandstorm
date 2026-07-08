@@ -1694,6 +1694,8 @@ test("isolate supervisor integration suite", {
       JSON.stringify(body.sandstormApi.nativeCapnpExport.webSession, null, 2));
     assert.equal(body.sandstormApi.nativeCapnpExport.greeter.ok, true,
       JSON.stringify(body.sandstormApi.nativeCapnpExport.greeter, null, 2));
+    assert.ok(
+      body.sandstormApi.nativeCapnpExport.greeter.bootstrapRestored.savedTokenLength > 0);
     assert.deepEqual(body.sandstormApi.nativeCapnpExport, {
       stream: {
         serverBootstrap: true,
@@ -1818,6 +1820,27 @@ test("isolate supervisor integration suite", {
                   "restored client from native export self-test",
             },
           },
+          bootstrapRestored: {
+            hello: {
+              message: "native export greeter hello bootstrap restored schema",
+            },
+            pipelined: {
+              message:
+                  "native export bootstrap restored greeter " +
+                  "before bootstrap restored makeGreeter resolves",
+            },
+            resolved: {
+              hasClient: true,
+              message:
+                  "native export bootstrap restored greeter " +
+                  "after bootstrap restored makeGreeter resolves",
+            },
+            argument: {
+              message:
+                  "native export greeter called native export bootstrap restored greeter " +
+                  "bootstrap restored client from native export self-test",
+            },
+          },
         },
         restored: {
           savedTokenType: "string",
@@ -1844,6 +1867,20 @@ test("isolate supervisor integration suite", {
             hasNativeCapability: true,
             liveForwardable: true,
           },
+        },
+        bootstrapRestored: {
+          savedTokenType: "string",
+          savedTokenLength:
+              body.sandstormApi.nativeCapnpExport.greeter.bootstrapRestored.savedTokenLength,
+          connectionId:
+              `native-capnp-export-greeter-bootstrap-${
+                body.sandstormApi.nativeCapnpExport.greeter.info.id}`,
+          transportKind: "isolateBridgeWebSocketRpc",
+          capabilityKind: "rpcImport",
+          interfaceId: "b66316217ceedb1b",
+          interfaceName: "NativeGreeter",
+          connectionIsNull: false,
+          dropResult: null,
         },
         localDispatchLease: {
           restoreOk: true,

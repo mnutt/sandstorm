@@ -1672,7 +1672,7 @@ public:
         claimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 3, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 4, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 1, sessionContextRef.tokenDropCount);
     KJ_REQUIRE(sessionContextRef.offerCount == 1, sessionContextRef.offerCount);
     KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
@@ -1736,7 +1736,7 @@ public:
     KJ_REQUIRE(contains(outboundBody, "\"dropSaved\":{\"ok\":true}"), outboundBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 4, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 5, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 2, sessionContextRef.tokenDropCount);
 
     auto storageHelperRequest = session.getRequest();
@@ -1811,7 +1811,7 @@ public:
         storageHelperBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 7, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 8, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
 
     auto exportRequest = session.getRequest();
@@ -1968,7 +1968,7 @@ public:
         badClaimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 7, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 8, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
 
     auto standardClaimRequest = session.postRequest();

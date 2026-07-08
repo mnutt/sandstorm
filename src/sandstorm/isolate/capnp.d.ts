@@ -248,6 +248,14 @@ declare module "sandstorm:capnp" {
     },
   ): IsolateBridgeConnectedClient;
 
+  export function nativeCapnpSavedTokenData(
+    token: string | Uint8Array | ArrayBuffer | ArrayBufferView,
+  ): Uint8Array;
+
+  export function nativeCapnpSavedTokenText(
+    token: string | Uint8Array | ArrayBuffer | ArrayBufferView,
+  ): string;
+
   export class NativeCapnpStreamTransport {
     constructor(
       readable: ReadableStream<Uint8Array>,
@@ -439,10 +447,19 @@ declare module "sandstorm:capnp" {
     },
   ): Promise<string>;
 
+  export interface NativeCapnpRpcImportCapability {
+    readonly kind: "rpcImport";
+    readonly interfaceId: bigint | number | string;
+    readonly interfaceName: string;
+  }
+
   export type NativeCapnpConnectedClient<TClient extends object> = TClient & {
-    readonly capability: NativeCapnpCapabilitySlot;
+    readonly capability: NativeCapnpCapabilitySlot | NativeCapnpRpcImportCapability;
     readonly connection: unknown;
-    readonly transport: NativeCapnpBridgeWebSocketRpcTransport | NativeCapnpLocalDirectTransport;
+    readonly transport:
+      NativeCapnpBridgeWebSocketRpcTransport |
+      NativeCapnpLocalDirectTransport |
+      IsolateBridgeWebSocketRpcTransport;
     drop(): Promise<unknown> | unknown;
     save(...args: unknown[]): Promise<string> | string | undefined;
   };
@@ -491,6 +508,33 @@ declare module "sandstorm:capnp" {
       readonly finalize?: unknown;
       readonly interfaceId?: bigint | number | string;
       readonly interfaceName?: string;
+      readonly schema?: {
+        readonly interfaceId?: bigint | number | string;
+        readonly interfaceName?: string;
+      };
+      readonly binding?: {
+        readonly schema?: {
+          readonly interfaceId?: bigint | number | string;
+          readonly interfaceName?: string;
+        };
+      };
+    },
+  ): Promise<NativeCapnpConnectedClient<TClient>>;
+
+  export function restoreNativeCapnpViaBootstrap<TClient extends object>(
+    api: {
+      capnpBridgeInfo(): Promise<unknown>;
+      nativeCapnpBridgeOpenBootstrapSession?(connectionId: string): Promise<WebSocket>;
+    },
+    token: string | Uint8Array | ArrayBuffer | ArrayBufferView,
+    InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
+    options?: {
+      readonly connectionId?: string;
+      readonly finalize?: unknown;
+      readonly interfaceId?: bigint | number | string;
+      readonly interfaceName?: string;
+      readonly label?: string | object;
+      readonly saveLabel?: string | object;
       readonly schema?: {
         readonly interfaceId?: bigint | number | string;
         readonly interfaceName?: string;

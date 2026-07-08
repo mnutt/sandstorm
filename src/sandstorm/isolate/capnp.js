@@ -1,6 +1,7 @@
 import {
   Conn as CapnpEsConn,
   DeferredTransport as CapnpEsDeferredTransport,
+  Interface as CapnpEsInterface,
   Message as CapnpEsMessage,
 } from "capnp-es/index.mjs";
 import {
@@ -167,6 +168,111 @@ function nativeCapnpMessageBytes(message) {
     return message.toUint8Array();
   }
   throw new TypeError("native Cap'n Proto payload message must be capnp-es Message or bytes");
+}
+
+function nativeCapnpClientReference(value, name = "capability") {
+  if (value && typeof value.call === "function") {
+    return value;
+  }
+
+  if (value && typeof value.client?.call === "function") {
+    return value.client;
+  }
+
+  if (value && typeof value.getClient === "function") {
+    const client = value.getClient();
+    if (client && typeof client.call === "function") {
+      return client;
+    }
+  }
+
+  if (value && typeof CapnpEsInterface?.fromPointer === "function") {
+    const client = CapnpEsInterface.fromPointer(value)?.getClient();
+    if (client && typeof client.call === "function") {
+      return client;
+    }
+  }
+
+  throw new NativeCapnpBridgeProtocolError(`${name} is not a capnp-es client reference`);
+}
+
+function nativeCapnpBase64UrlDecode(text, name = "base64url value") {
+  if (typeof text !== "string" || text.length === 0 || text.length % 4 === 1 ||
+      !/^[A-Za-z0-9_-]+$/.test(text)) {
+    throw new TypeError(`${name} must be non-empty base64url text`);
+  }
+
+  const base64 = text.replace(/-/g, "+").replace(/_/g, "/") +
+    "=".repeat((4 - (text.length % 4)) % 4);
+  if (typeof globalThis.atob === "function") {
+    const binary = globalThis.atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; ++i) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  if (typeof globalThis.Buffer === "function") {
+    return new Uint8Array(globalThis.Buffer.from(base64, "base64"));
+  }
+
+  throw new NativeCapnpBridgeProtocolError("base64url decoding is unavailable");
+}
+
+function nativeCapnpBase64UrlEncode(bytes) {
+  bytes = nativeCapnpMessageBytes(bytes);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  let base64;
+  if (typeof globalThis.btoa === "function") {
+    base64 = globalThis.btoa(binary);
+  } else if (typeof globalThis.Buffer === "function") {
+    base64 = globalThis.Buffer.from(bytes).toString("base64");
+  } else {
+    throw new NativeCapnpBridgeProtocolError("base64url encoding is unavailable");
+  }
+
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function nativeCapnpUtf8(bytes) {
+  try {
+    return new TextDecoder().decode(bytes);
+  } catch (_) {
+    return "";
+  }
+}
+
+export function nativeCapnpSavedTokenData(token) {
+  if (typeof token !== "string") {
+    return nativeCapnpMessageBytes(token);
+  }
+
+  const decoded = nativeCapnpBase64UrlDecode(token, "saved capability token");
+  const text = nativeCapnpUtf8(decoded);
+  const lines = text.split("\n");
+  if (lines[0] === "isolate-saved-capability-v1" && lines.length >= 4) {
+    return nativeCapnpBase64UrlDecode(lines[3], "saved capability token sturdy ref");
+  }
+
+  if (lines[0] === "isolate-saved-capability-v2" && lines.length >= 7 &&
+      lines[1] === "nativeCapnpExport") {
+    return nativeCapnpBase64UrlDecode(lines[6], "saved capability token sturdy ref");
+  }
+
+  return decoded;
+}
+
+export function nativeCapnpSavedTokenText(token) {
+  if (typeof token === "string") {
+    return token;
+  }
+
+  return nativeCapnpBase64UrlEncode(token);
 }
 
 function normalizeNativeCapnpCapabilitySlot(slot) {
@@ -1176,6 +1282,103 @@ export async function dropNativeCapnp(api, target) {
   const request = makeNativeCapnpBridgeDropRequest({ target });
   await sendNativeCapnpBridgeEnvelope(api, request, { targetId: target?.id }, "acknowledged");
   return undefined;
+}
+
+function nativeCapnpSaveLabel(options = {}) {
+  const label = options.saveLabel ?? options.label;
+  if (typeof label === "string") {
+    return { defaultText: label };
+  } else if (label && typeof label === "object") {
+    return label;
+  } else {
+    return { defaultText: "native Cap'n Proto capability" };
+  }
+}
+
+export async function restoreNativeCapnpViaBootstrap(api, token, InterfaceClass, options = {}) {
+  if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
+    throw new TypeError(
+      "restoreNativeCapnpViaBootstrap() requires a capnp-es generated interface class");
+  }
+
+  const negotiation = await negotiateNativeCapnpBridge(api, {
+    requiredFeatures: ["nativeRpc", "nativeRpcWebSocket"],
+  });
+  if (!negotiation.available) {
+    throw new NativeCapnpBridgeUnavailableError(
+      `native Cap'n Proto RPC transport is unavailable for restore: ` +
+          `${negotiation.reason || "unavailable"}`,
+      { negotiation });
+  }
+
+  const interfaceMetadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
+  const bridge = connectIsolateBridge(api, {
+    connectionId: options.connectionId,
+    finalize: options.finalize,
+  });
+  let sandstormApi;
+  let restored;
+  try {
+    const result = await bridge.getSandstormApi({});
+    sandstormApi = result.api;
+    if (!sandstormApi || typeof sandstormApi.restore !== "function" ||
+        typeof sandstormApi.save !== "function") {
+      throw new NativeCapnpBridgeProtocolError(
+        "isolate bridge returned an invalid SandstormApi capability");
+    }
+
+    restored = await sandstormApi.restore({
+      token: nativeCapnpSavedTokenData(token),
+    });
+  } catch (error) {
+    bridge.close(error);
+    throw error;
+  }
+
+  const cap = restored?.cap;
+  if (!cap) {
+    const error = new NativeCapnpBridgeProtocolError(
+      "SandstormApi.restore() returned no capability");
+    bridge.close(error);
+    throw error;
+  }
+
+  let client;
+  try {
+    client = new InterfaceClass.Client(
+      nativeCapnpClientReference(cap, "SandstormApi.restore() capability"));
+  } catch (error) {
+    bridge.close(error);
+    throw error;
+  }
+  if (!client || typeof client !== "object") {
+    const error = new NativeCapnpBridgeProtocolError(
+      "capnp-es generated interface did not produce a client object");
+    bridge.close(error);
+    throw error;
+  }
+
+  const capability = Object.freeze({
+    kind: "rpcImport",
+    interfaceId: interfaceMetadata.interfaceId,
+    interfaceName: interfaceMetadata.interfaceName,
+  });
+  return Object.assign(client, {
+    capability,
+    connection: bridge.connection,
+    transport: bridge.transport,
+    drop: () => {
+      bridge.close();
+      return undefined;
+    },
+    save: async (saveOptions = {}) => {
+      const result = await sandstormApi.save({
+        cap,
+        label: nativeCapnpSaveLabel(saveOptions),
+      });
+      return nativeCapnpSavedTokenText(result.token);
+    },
+  });
 }
 
 function findNativeCapnpLocalDispatchEntry(target, InterfaceClass, options = {}) {

@@ -33,6 +33,7 @@ import {
   readNativeCapnpBridgeRequest,
   readNativeCapnpBridgeResponse,
   restoreNativeCapnp,
+  restoreNativeCapnpViaBootstrap,
   saveNativeCapnp,
   connectIsolateBridge,
 } from "sandstorm:capnp";
@@ -1947,6 +1948,28 @@ export default {
           resolvedName: "after restored makeGreeter resolves",
           greetName: "restored client",
         });
+      const nativeExportGreeterBootstrapRestored = await restoreNativeCapnpViaBootstrap(
+        apiHelper,
+        nativeExportGreeterSavedToken,
+        NativeGreeter,
+        {
+          interfaceName: "NativeGreeter",
+          connectionId: `native-capnp-export-greeter-bootstrap-${nativeExportGreeter.id}`,
+        });
+      const nativeExportGreeterBootstrapRestoredConformance =
+          await runNativeGreeterConformance(nativeExportGreeterBootstrapRestored, {
+            helloName: "bootstrap restored schema",
+            childPrefix: "native export bootstrap restored greeter",
+            pipelinedName: "before bootstrap restored makeGreeter resolves",
+            resolvedName: "after bootstrap restored makeGreeter resolves",
+            greetName: "bootstrap restored client",
+          });
+      const nativeExportGreeterBootstrapSavedToken =
+          await nativeExportGreeterBootstrapRestored.save({
+            label: "bootstrap-restored native export greeter",
+          });
+      const nativeExportGreeterBootstrapDrop =
+          await nativeExportGreeterBootstrapRestored.drop();
       const nativeExportGreeterRestoredInfoResponse = await env.SANDSTORM_API.fetch(
         `http://sandstorm/capabilities/claimed?id=${
           encodeURIComponent(nativeExportGreeterRestored.capability.id)}`);
@@ -1970,6 +1993,7 @@ export default {
           direct: nativeExportGreeterDirectConformance,
           bridge: nativeExportGreeterBridgeConformance,
           restored: nativeExportGreeterRestoredConformance,
+          bootstrapRestored: nativeExportGreeterBootstrapRestoredConformance,
         },
         restored: {
           savedTokenType: typeof nativeExportGreeterSavedToken,
@@ -1979,6 +2003,18 @@ export default {
           transportKind: nativeExportGreeterRestored.transport.kind,
           connectionIsNull: nativeExportGreeterRestored.connection === null,
           info: nativeExportGreeterRestoredInfo,
+        },
+        bootstrapRestored: {
+          savedTokenType: typeof nativeExportGreeterBootstrapSavedToken,
+          savedTokenLength: nativeExportGreeterBootstrapSavedToken.length,
+          connectionId: nativeExportGreeterBootstrapRestored.transport.connectionId,
+          transportKind: nativeExportGreeterBootstrapRestored.transport.kind,
+          capabilityKind: nativeExportGreeterBootstrapRestored.capability.kind,
+          interfaceId:
+              nativeExportGreeterBootstrapRestored.capability.interfaceId.toString(16),
+          interfaceName: nativeExportGreeterBootstrapRestored.capability.interfaceName,
+          connectionIsNull: nativeExportGreeterBootstrapRestored.connection === null,
+          dropResult: nativeExportGreeterBootstrapDrop ?? null,
         },
         localDispatchLease: {
           restoreOk: nativeExportGreeterLocalDispatchRestore.ok,
