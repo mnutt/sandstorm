@@ -1,5 +1,5 @@
 import { sandstorm } from "sandstorm:api";
-import { connectNativeCapnp } from "sandstorm:capnp";
+import { connectNativeCapnp, exportNativeCapnp } from "sandstorm:capnp";
 import { ObjectStore } from "capnp:./object-store.capnp";
 import { WebSession } from "capnp:/sandstorm/web-session.capnp";
 
@@ -95,6 +95,17 @@ export default {
     const url = new URL(request.url);
     const objectResponse = serveObject(url);
     if (objectResponse) return objectResponse;
+
+    if (url.pathname === "/export-object-store") {
+      const capability = await exportNativeCapnp(api, ObjectStore, makeObjectStore(api), {
+        interfaceName: "ObjectStore",
+      });
+      return Response.json({
+        ok: true,
+        capability,
+        info: await capability.info(),
+      });
+    }
 
     const store = new ObjectStore.Server(makeObjectStore(api)).client();
     const listing = await store.listObjects({

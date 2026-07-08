@@ -23,4 +23,7 @@ request. On a shell without a matching provider, the Powerbox picker will show
 no matching card and, in dev/test mode, display diagnostics.
 
 The important pattern is that the browser owns the user gesture and picker UI,
-while the worker owns durable token storage and later capability use.
+while the worker owns durable token storage and later capability use. This
+example requests an HTTP-shaped `ApiSession`; schema-defined app protocols use
+the same browser Powerbox lifecycle but build descriptors from generated
+`capnp:` interfaces with the native browser helper.

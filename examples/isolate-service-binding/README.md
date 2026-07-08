@@ -20,4 +20,6 @@ text and JSON bindings, plus the byte count and checksum of the binary
 This example uses `LOOPBACK=main` as a local development stand-in for
 same-workerd services and mocks. Do not use service binding names as
 cross-grain authority; production cross-grain access should go through
-Sandstorm capabilities such as Powerbox grants or saved capability tokens.
+Sandstorm capabilities such as Powerbox grants or saved capability tokens. For
+typed cross-grain calls, restore or claim a `capnp:` capability and use the
+generated native client rather than calling a raw binding name.

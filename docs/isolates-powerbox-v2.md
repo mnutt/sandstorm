@@ -1124,6 +1124,11 @@ Progress:
   current schema against a committed ABI dump, rejecting removed/changed
   interfaces, methods, ordinals, generated struct IDs, and existing fields while
   allowing additive interfaces, methods, and appended fields
+- the isolate examples under `examples/` have been refreshed around the current
+  model: HTTP-shaped apps and WebSession/ApiSession examples say when they are
+  intentionally fetch/data-plane shaped, native public protocols use `capnp:`
+  and `sandstorm:capnp`, and the object-store example now exports its
+  `ObjectStore` as a native Cap'n Proto Sandstorm capability
 
 Exit criteria:
 
