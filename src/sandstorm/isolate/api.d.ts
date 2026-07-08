@@ -275,10 +275,6 @@ declare module "sandstorm:api" {
     modules(): Promise<unknown>;
     bindings(): Promise<unknown>;
     capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
-    nativeCapnpBridgeOpenRpcSession(
-      target: { id: string; interfaceId?: bigint | number | string; interfaceName?: string },
-      connectionId: string,
-    ): Promise<WebSocket>;
     nativeCapnpBridgeOpenBootstrapSession(connectionId: string): Promise<WebSocket>;
     storage(): StorageApi;
     powerbox(): PowerboxApi;
