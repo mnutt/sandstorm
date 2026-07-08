@@ -295,17 +295,6 @@ async function withSandstormApiRpc(env, operation, options = {}) {
   }, options);
 }
 
-async function postPowerbox(env, path) {
-  const response = await powerboxFetcher(env).fetch(`http://sandstorm/${path}`, {
-    method: "POST",
-  });
-  const body = await parseApiResponseBody(response);
-  if (!response.ok || !body.ok) {
-    throw new Error(body.error || `Powerbox API ${path} failed with ${response.status}`);
-  }
-  return body;
-}
-
 export class ValidationError extends Error {
   constructor(message) {
     super(message);

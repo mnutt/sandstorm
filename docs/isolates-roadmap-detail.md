@@ -327,6 +327,11 @@ GET /capnp/rpc-session?id=...&interfaceId=...&connectionId=...
 The final state should delete the target-specific mode. The temporary dual
 mode should be tracked as migration debt.
 
+Progress: worker-side `connectNativeCapnp()` now resolves id-backed
+capabilities through the bootstrap connection and uses capnp-es pipelining for
+the returned capability slot. The target-specific mode remains for the browser
+bridge and as a fallback while Phase 2 is pending.
+
 Security checks:
 
 - The bootstrap WebSocket is reachable only through the supervisor-injected
