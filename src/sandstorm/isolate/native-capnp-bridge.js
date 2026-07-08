@@ -605,13 +605,12 @@ export class NativeCapnpCapabilitySlot extends $.Struct {
         id: "f3fc15de30f50d47",
         typeId: 0xf3fc15de30f50d47n,
         typeIdHex: "f3fc15de30f50d47",
-        size: new $.ObjectSize(16, 3),
+        size: new $.ObjectSize(16, 2),
         fields: [
             { name: "id", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
             { name: "interfaceId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 0, type: { kind: "uint64" } },
             { name: "interfaceName", codeOrder: 2, ordinal: 2, kind: "slot", offset: 1, type: { kind: "text" } },
-            { name: "kind", codeOrder: 3, ordinal: 3, kind: "slot", offset: 4, type: { kind: "enum", typeId: 0x874023c5caa9b3dfn, typeIdHex: "874023c5caa9b3df", displayName: "NativeCapnpCapabilitySlotKind" } },
-            { name: "localDispatch", codeOrder: 4, ordinal: 4, kind: "slot", offset: 2, type: { kind: "struct", typeId: 0x9c9d302760408885n, typeIdHex: "9c9d302760408885", displayName: "NativeCapnpLocalDispatch" } }
+            { name: "kind", codeOrder: 3, ordinal: 3, kind: "slot", offset: 4, type: { kind: "enum", typeId: 0x874023c5caa9b3dfn, typeIdHex: "874023c5caa9b3df", displayName: "NativeCapnpCapabilitySlotKind" } }
         ],
     };
     static _applyInit(target, value) {
@@ -640,17 +639,6 @@ export class NativeCapnpCapabilitySlot extends $.Struct {
                 target.kind = value;
             }
         }
-        {
-            const value = init["localDispatch"];
-            if (value !== undefined) {
-                if (value instanceof NativeCapnpLocalDispatch) {
-                    target.localDispatch = value;
-                }
-                else {
-                    NativeCapnpLocalDispatch._applyInit(target._initLocalDispatch(), value);
-                }
-            }
-        }
     }
     get id() {
         return $.utils.getText(0, this);
@@ -676,100 +664,7 @@ export class NativeCapnpCapabilitySlot extends $.Struct {
     set kind(value) {
         $.utils.setUint16(8, value, this);
     }
-    _adoptLocalDispatch(value) {
-        $.utils.adopt(value, $.utils.getPointer(2, this));
-    }
-    _disownLocalDispatch() {
-        return $.utils.disown(this.localDispatch);
-    }
-    get localDispatch() {
-        return $.utils.getStruct(2, NativeCapnpLocalDispatch, this);
-    }
-    _hasLocalDispatch() {
-        return !$.utils.isNull($.utils.getPointer(2, this));
-    }
-    _initLocalDispatch() {
-        return $.utils.initStructAt(2, NativeCapnpLocalDispatch, this);
-    }
-    set localDispatch(value) {
-        $.utils.copyFrom(value, $.utils.getPointer(2, this));
-    }
     toString() { return "NativeCapnpCapabilitySlot_" + super.toString(); }
-}
-/**
-* Opaque same-supervisor dispatch lease. The supervisor only includes this
-* after restoring or otherwise validating an actual Sandstorm capability.
-*
-* Isolate runtimes must treat this as trusted metadata from the bridge, not
-* app-provided authority. Raw export IDs are not sufficient to dispatch.
-*
-*/
-export class NativeCapnpLocalDispatch extends $.Struct {
-    static _capnp = {
-        displayName: "NativeCapnpLocalDispatch",
-        id: "9c9d302760408885",
-        typeId: 0x9c9d302760408885n,
-        typeIdHex: "9c9d302760408885",
-        size: new $.ObjectSize(8, 3),
-        fields: [
-            { name: "exportId", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
-            { name: "interfaceId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 0, type: { kind: "uint64" } },
-            { name: "interfaceName", codeOrder: 2, ordinal: 2, kind: "slot", offset: 1, type: { kind: "text" } },
-            { name: "authorization", codeOrder: 3, ordinal: 3, kind: "slot", offset: 2, type: { kind: "text" } }
-        ],
-    };
-    static _applyInit(target, value) {
-        const init = value;
-        {
-            const value = init["exportId"];
-            if (value !== undefined) {
-                target.exportId = value;
-            }
-        }
-        {
-            const value = init["interfaceId"];
-            if (value !== undefined) {
-                target.interfaceId = value;
-            }
-        }
-        {
-            const value = init["interfaceName"];
-            if (value !== undefined) {
-                target.interfaceName = value;
-            }
-        }
-        {
-            const value = init["authorization"];
-            if (value !== undefined) {
-                target.authorization = value;
-            }
-        }
-    }
-    get exportId() {
-        return $.utils.getText(0, this);
-    }
-    set exportId(value) {
-        $.utils.setText(0, value, this);
-    }
-    get interfaceId() {
-        return $.utils.getUint64(0, this);
-    }
-    set interfaceId(value) {
-        $.utils.setUint64(0, value, this);
-    }
-    get interfaceName() {
-        return $.utils.getText(1, this);
-    }
-    set interfaceName(value) {
-        $.utils.setText(1, value, this);
-    }
-    get authorization() {
-        return $.utils.getText(2, this);
-    }
-    set authorization(value) {
-        $.utils.setText(2, value, this);
-    }
-    toString() { return "NativeCapnpLocalDispatch_" + super.toString(); }
 }
 export const NativeCapnpCapabilitySlotKind = {
     SENDER_HOSTED: 0,

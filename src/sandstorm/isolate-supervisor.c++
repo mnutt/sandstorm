@@ -475,22 +475,6 @@ public:
     return nullptr;
   }
 
-  kj::Maybe<kj::String> issueNativeCapnpLocalDispatchAuthorization(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      auto& record = claimedCapabilities[*index];
-      KJ_IF_MAYBE(authorization, record.nativeCapnpLocalDispatchAuthorization) {
-        return kj::heapString(*authorization);
-      } else {
-        auto newAuthorization = makeOpaqueToken();
-        auto result = kj::heapString(newAuthorization);
-        record.nativeCapnpLocalDispatchAuthorization = kj::mv(newAuthorization);
-        return kj::mv(result);
-      }
-    }
-
-    return nullptr;
-  }
-
   ClaimedCapabilityStats getClaimedCapabilityStats() {
     ClaimedCapabilityStats stats {
       static_cast<uint>(claimedCapabilities.size()),
@@ -558,7 +542,7 @@ private:
       auto id = makeOpaqueToken();
       if (findClaimedCapabilityIndex(id) == nullptr) {
         claimedCapabilities.add(ClaimedCapabilityRecord {
-            kj::heapString(id), cap, kj::mv(metadata), kj::mv(dropNotifyGroupId), nullptr });
+            kj::heapString(id), cap, kj::mv(metadata), kj::mv(dropNotifyGroupId) });
         return id;
       }
     }
@@ -610,7 +594,6 @@ private:
     capnp::Capability::Client cap;
     ClaimedCapabilityMetadata metadata;
     kj::Maybe<kj::String> dropNotifyGroupId;
-    kj::Maybe<kj::String> nativeCapnpLocalDispatchAuthorization;
   };
 
   struct DropNotifyGroup {
@@ -5583,9 +5566,7 @@ private:
 
   void initNativeCapnpCapabilitySlot(NativeCapnpCapabilitySlot::Builder slot,
       kj::StringPtr id, ClaimedCapabilityNativeInterface nativeInterface,
-      uint64_t fallbackInterfaceId = 0, kj::StringPtr fallbackInterfaceName = "",
-      kj::Maybe<const ClaimedCapabilityMetadata&> localDispatchMetadata = nullptr,
-      kj::StringPtr localDispatchAuthorization = "") {
+      uint64_t fallbackInterfaceId = 0, kj::StringPtr fallbackInterfaceName = "") {
     auto interfaceId = nativeInterfaceTypeId(nativeInterface);
     auto interfaceName = nativeInterfaceBridgeName(nativeInterface);
     if (nativeInterface == ClaimedCapabilityNativeInterface::UNKNOWN) {
@@ -5597,17 +5578,6 @@ private:
     slot.setInterfaceId(interfaceId);
     slot.setInterfaceName(interfaceName);
     slot.setKind(NativeCapnpCapabilitySlotKind::RECEIVER_HOSTED);
-
-    KJ_IF_MAYBE(metadata, localDispatchMetadata) {
-      if (isSameSupervisorNativeCapnpExport(*metadata) &&
-          localDispatchAuthorization.size() > 0) {
-        auto localDispatch = slot.initLocalDispatch();
-        localDispatch.setExportId(metadata->nativeCapnpExportId);
-        localDispatch.setInterfaceId(metadata->nativeCapnpExportInterfaceId);
-        localDispatch.setInterfaceName(metadata->nativeCapnpExportInterfaceName);
-        localDispatch.setAuthorization(localDispatchAuthorization);
-      }
-    }
   }
 
   kj::Array<byte> encodeNativeCapnpBridgeAcknowledgedResponse() {
@@ -5632,15 +5602,13 @@ private:
 
   kj::Array<byte> encodeNativeCapnpBridgeCapabilityResponse(kj::StringPtr id,
       ClaimedCapabilityNativeInterface nativeInterface,
-      uint64_t fallbackInterfaceId = 0, kj::StringPtr fallbackInterfaceName = "",
-      kj::Maybe<const ClaimedCapabilityMetadata&> localDispatchMetadata = nullptr,
-      kj::StringPtr localDispatchAuthorization = "") {
+      uint64_t fallbackInterfaceId = 0, kj::StringPtr fallbackInterfaceName = "") {
     capnp::MallocMessageBuilder message;
     auto response = message.initRoot<NativeCapnpBridgeResponse>();
     response.setProtocolVersion(NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION);
     initNativeCapnpCapabilitySlot(
         response.initCapability(), id, nativeInterface, fallbackInterfaceId,
-        fallbackInterfaceName, localDispatchMetadata, localDispatchAuthorization);
+        fallbackInterfaceName);
 
     auto words = capnp::messageToFlatArray(message);
     return kj::heapArray<byte>(words.asBytes());
@@ -6249,19 +6217,10 @@ private:
           [this, &response, metadata = kj::mv(token->metadata), fallbackInterfaceId,
               fallbackInterfaceName = kj::mv(fallbackInterfaceName)](auto result) mutable {
         auto nativeInterface = metadata.nativeInterface;
-        auto responseMetadata = copyClaimedCapabilityMetadata(metadata);
         auto capId = host.sessions->storeClaimedCapability(result.getCap(), kj::mv(metadata));
-        kj::String localDispatchAuthorization = kj::heapString("");
-        if (isSameSupervisorNativeCapnpExport(responseMetadata)) {
-          KJ_IF_MAYBE(authorization,
-              host.sessions->issueNativeCapnpLocalDispatchAuthorization(capId)) {
-            localDispatchAuthorization = kj::mv(*authorization);
-          }
-        }
         return sendNativeCapnpBridgeBytes(response, 200, "OK",
             encodeNativeCapnpBridgeCapabilityResponse(
-              capId, nativeInterface, fallbackInterfaceId, fallbackInterfaceName,
-              responseMetadata, localDispatchAuthorization));
+              capId, nativeInterface, fallbackInterfaceId, fallbackInterfaceName));
       }).catch_([this, &response](kj::Exception&& exception) mutable {
         return sendNativeCapnpBridgeException(response, 502, "Bad Gateway", "failed", kj::str(
             "native Cap'n Proto bridge restore failed: ", exception.getDescription()));
