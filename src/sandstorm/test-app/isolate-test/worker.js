@@ -810,6 +810,10 @@ export default {
         greeter: returned.greeter,
         name: "isolate client",
       });
+      const infoResponse = await env.SANDSTORM_API.fetch(
+        `http://sandstorm/capabilities/claimed?id=${
+          encodeURIComponent(client.capability.id)}`);
+      const info = await infoResponse.json();
       const drop = await client.drop();
       const { id, interfaceId, interfaceName, kind } = client.capability;
       return Response.json({
@@ -829,6 +833,7 @@ export default {
         greeted: {
           message: greeted.message,
         },
+        info,
         dropResult: drop ?? null,
       });
     }

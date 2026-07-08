@@ -2566,6 +2566,22 @@ test("isolate supervisor integration suite", {
       greeted: {
         message: "legacy called legacy returned isolate client from legacy",
       },
+      info: {
+        ok: true,
+        type: "claimedCapabilityInfo",
+        id: selfTest.json.capability.id,
+        kind: "restored",
+        residence: "imported",
+        nativeInterface: "unknown",
+        pathPrefix: "",
+        persistent: true,
+        hasDropNotify: false,
+        dropNotifyRefCount: 0,
+        supportsWebFetch: true,
+        supportsOutboundHttpFetch: true,
+        hasNativeCapability: true,
+        liveForwardable: true,
+      },
       dropResult: null,
     });
   });
