@@ -1456,6 +1456,8 @@ export default {
         capabilityClass: claim instanceof Capability,
         json: JSON.parse(JSON.stringify(claim)),
       };
+      const actionCapability = claim instanceof Capability ? claim :
+        (claim?.ok && claim?.id ? new Capability(env, claim.id) : null);
       async function claimedInfo(capability) {
         if (!capability?.ok || !capability?.id) return null;
         const response = await env.SANDSTORM_API.fetch(
@@ -1468,31 +1470,20 @@ export default {
       const claimInfo = await claimedInfo(claim);
       let save = null;
       let savedToken = null;
-      if (claim.ok && claim.id && url.searchParams.get("save") === "true") {
+      if (actionCapability && url.searchParams.get("save") === "true") {
         const label = url.searchParams.get("label") || "Isolate test saved capability";
-        if (typeof claim.save === "function") {
-          savedToken = await claim.save({ label });
-          save = {
-            status: 200,
-            body: {
-              ok: true,
-              token: savedToken,
-            },
-            typed: {
-              savedToken: typeof savedToken === "string",
-              json: savedToken,
-            },
-          };
-        } else {
-          const saveResponse = await env.SANDSTORM_API.fetch(
-            `http://sandstorm/powerbox/save?id=${encodeURIComponent(claim.id)}` +
-            `&label=${encodeURIComponent(label)}`,
-            { method: "POST" });
-          save = {
-            status: saveResponse.status,
-            body: await saveResponse.json(),
-          };
-        }
+        savedToken = await actionCapability.save({ label });
+        save = {
+          status: 200,
+          body: {
+            ok: true,
+            token: savedToken,
+          },
+          typed: {
+            savedToken: typeof savedToken === "string",
+            json: savedToken,
+          },
+        };
       }
       let stored = null;
       if (save?.body?.ok && save.body.token && url.searchParams.get("store") === "true") {
@@ -1516,25 +1507,15 @@ export default {
       let restoredCapability = null;
       const restoreToken = stored?.token || save?.body?.token;
       if (restoreToken && url.searchParams.get("restore") === "true") {
-        if (savedToken) {
-          restoredCapability = await sandstorm(request, env).restore(restoreToken);
-          restore = {
-            status: 200,
-            body: restoredCapability,
-            typed: {
-              restoredClass: restoredCapability instanceof Capability,
-              json: JSON.parse(JSON.stringify(restoredCapability)),
-            },
-          };
-        } else {
-          const restoreResponse = await env.SANDSTORM_API.fetch(
-            `http://sandstorm/powerbox/restore?token=${encodeURIComponent(restoreToken)}`,
-            { method: "POST" });
-          restore = {
-            status: restoreResponse.status,
-            body: await restoreResponse.json(),
-          };
-        }
+        restoredCapability = await sandstorm(request, env).restore(restoreToken);
+        restore = {
+          status: 200,
+          body: restoredCapability,
+          typed: {
+            restoredClass: restoredCapability instanceof Capability,
+            json: JSON.parse(JSON.stringify(restoredCapability)),
+          },
+        };
         if (restore.body.ok && restore.body.id) {
           restore.info = await claimedInfo(restore.body);
           if (restoredCapability) {

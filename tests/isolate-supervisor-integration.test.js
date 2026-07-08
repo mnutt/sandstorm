@@ -2120,75 +2120,12 @@ test("isolate supervisor integration suite", {
     assert.equal(preconditionFailed.headers.etag, "\"capability-echo-etag\"");
     assert.equal(preconditionFailed.bodyBuffer.length, 0);
 
-    const saved = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/save?id=${encodeURIComponent(capabilityId)}` +
-      `&label=${encodeURIComponent("Route-backed WebSession")}`,
-      { method: "POST" });
-    assert.equal(saved.statusCode, 200, saved.body);
-    assert.equal(saved.json.ok, true);
-    assert.equal(saved.json.type, "savedCapability");
-    assert.equal(saved.json.id, capabilityId);
-    assert.equal(saved.json.tokenEncoding, "base64url");
-    assert.equal(typeof saved.json.token, "string");
-
     const drop = await requestJson(
       fixture.sandstormApiSocket,
       `/powerbox/drop?id=${encodeURIComponent(capabilityId)}`,
       { method: "POST" });
     assert.equal(drop.statusCode, 200, drop.body);
     assert.equal(drop.json.ok, true);
-
-    await fixture.restart();
-
-    const restored = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/restore?token=${encodeURIComponent(saved.json.token)}`,
-      { method: "POST" });
-    assert.equal(restored.statusCode, 200, restored.body);
-    assert.equal(restored.json.ok, true);
-    assert.equal(restored.json.type, "claimedCapability");
-    assert.equal(typeof restored.json.id, "string");
-
-    const restoredInfo = await requestJson(
-      fixture.sandstormApiSocket,
-      `/capabilities/claimed?id=${encodeURIComponent(restored.json.id)}`);
-    assert.equal(restoredInfo.statusCode, 200, restoredInfo.body);
-    assert.deepEqual(restoredInfo.json, {
-      ok: true,
-      type: "claimedCapabilityInfo",
-      id: restored.json.id,
-      kind: "restored",
-      residence: "imported",
-      nativeInterface: "webSession",
-      pathPrefix: "/exported",
-      persistent: true,
-      supportsWebFetch: true,
-      supportsOutboundHttpFetch: false,
-      hasNativeCapability: true,
-      liveForwardable: true,
-    });
-
-    const restoredFetch = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/fetch?id=${encodeURIComponent(restored.json.id)}` +
-      `&method=GET&path=${encodeURIComponent("/capability-echo?source=restored")}`,
-      { method: "POST" });
-    assert.equal(restoredFetch.statusCode, 200, restoredFetch.body);
-    assert.equal(restoredFetch.json.ok, true);
-    assert.equal(restoredFetch.json.pathname, "/exported/capability-echo");
-    assert.equal(restoredFetch.json.search, "?source=restored");
-    assert.equal(restoredFetch.headers.etag, "\"capability-echo-etag\"");
-    assert.equal(restoredFetch.headers["content-disposition"],
-      "attachment; filename=\"capability-echo.json\"");
-    assert.equal(restoredFetch.headers["x-sandstorm-app-capability-response"], "present");
-
-    const dropRestored = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/drop?id=${encodeURIComponent(restored.json.id)}`,
-      { method: "POST" });
-    assert.equal(dropRestored.statusCode, 200, dropRestored.body);
-    assert.equal(dropRestored.json.ok, true);
   });
 
   await t.test("saves and restores route-backed WebSession capabilities from isolate JS", async () => {
@@ -2299,70 +2236,12 @@ test("isolate supervisor integration suite", {
     assert.equal(fetched.json.pathname, "/api-exported/capability-echo");
     assert.equal(fetched.json.search, "?source=api-external");
 
-    const saved = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/save?id=${encodeURIComponent(capabilityId)}` +
-      `&label=${encodeURIComponent("Route-backed ApiSession")}`,
-      { method: "POST" });
-    assert.equal(saved.statusCode, 200, saved.body);
-    assert.equal(saved.json.ok, true);
-    assert.equal(saved.json.type, "savedCapability");
-    assert.equal(saved.json.id, capabilityId);
-    assert.equal(saved.json.tokenEncoding, "base64url");
-    assert.equal(typeof saved.json.token, "string");
-
     const drop = await requestJson(
       fixture.sandstormApiSocket,
       `/powerbox/drop?id=${encodeURIComponent(capabilityId)}`,
       { method: "POST" });
     assert.equal(drop.statusCode, 200, drop.body);
     assert.equal(drop.json.ok, true);
-
-    const restored = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/restore?token=${encodeURIComponent(saved.json.token)}`,
-      { method: "POST" });
-    assert.equal(restored.statusCode, 200, restored.body);
-    assert.equal(restored.json.ok, true);
-    assert.equal(restored.json.type, "claimedCapability");
-    assert.equal(typeof restored.json.id, "string");
-
-    const restoredInfo = await requestJson(
-      fixture.sandstormApiSocket,
-      `/capabilities/claimed?id=${encodeURIComponent(restored.json.id)}`);
-    assert.equal(restoredInfo.statusCode, 200, restoredInfo.body);
-    assert.deepEqual(restoredInfo.json, {
-      ok: true,
-      type: "claimedCapabilityInfo",
-      id: restored.json.id,
-      kind: "restored",
-      residence: "imported",
-      nativeInterface: "apiSession",
-      pathPrefix: "/api-exported",
-      persistent: true,
-      supportsWebFetch: true,
-      supportsOutboundHttpFetch: false,
-      hasNativeCapability: true,
-      liveForwardable: true,
-    });
-
-    const restoredFetch = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/fetch?id=${encodeURIComponent(restored.json.id)}` +
-      `&method=GET&path=${encodeURIComponent("/capability-echo?source=api-restored")}`,
-      { method: "POST" });
-    assert.equal(restoredFetch.statusCode, 200, restoredFetch.body);
-    assert.equal(restoredFetch.json.ok, true);
-    assert.equal(restoredFetch.json.source, "exported-api-session");
-    assert.equal(restoredFetch.json.pathname, "/api-exported/capability-echo");
-    assert.equal(restoredFetch.json.search, "?source=api-restored");
-
-    const dropRestored = await requestJson(
-      fixture.sandstormApiSocket,
-      `/powerbox/drop?id=${encodeURIComponent(restored.json.id)}`,
-      { method: "POST" });
-    assert.equal(dropRestored.statusCode, 200, dropRestored.body);
-    assert.equal(dropRestored.json.ok, true);
   });
 
   await t.test("saves and restores route-backed ApiSession capabilities from isolate JS", async () => {
@@ -2884,48 +2763,6 @@ test("isolate supervisor integration suite", {
       { method: "POST" });
     assert.equal(missingDrop.statusCode, 404);
     assert.equal(missingDrop.json.ok, false);
-
-    const missingSave = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/save?id=missing",
-      { method: "POST" });
-    assert.equal(missingSave.statusCode, 404);
-    assert.equal(missingSave.json.ok, false);
-
-    const duplicateSaveId = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/save?id=one&id=two",
-      { method: "POST" });
-    assert.equal(duplicateSaveId.statusCode, 400);
-    assert.equal(duplicateSaveId.json.ok, false);
-
-    const emptySaveLabel = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/save?id=missing&label=",
-      { method: "POST" });
-    assert.equal(emptySaveLabel.statusCode, 400);
-    assert.equal(emptySaveLabel.json.ok, false);
-
-    const missingRestore = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/restore",
-      { method: "POST" });
-    assert.equal(missingRestore.statusCode, 400);
-    assert.equal(missingRestore.json.ok, false);
-
-    const duplicateRestoreToken = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/restore?token=one&token=two",
-      { method: "POST" });
-    assert.equal(duplicateRestoreToken.statusCode, 400);
-    assert.equal(duplicateRestoreToken.json.ok, false);
-
-    const invalidRestoreToken = await requestJson(
-      fixture.sandstormApiSocket,
-      "/powerbox/restore?token=not%40base64url",
-      { method: "POST" });
-    assert.equal(invalidRestoreToken.statusCode, 400);
-    assert.equal(invalidRestoreToken.json.ok, false);
 
     const duplicateDropId = await requestJson(
       fixture.sandstormApiSocket,

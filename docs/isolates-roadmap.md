@@ -148,9 +148,11 @@ export.
   semantics should come from the RPC release protocol.
 - Done: `/powerbox/drop-saved`; `sandstorm(...).revoke(token)` now calls
   `SandstormApi.drop()` over the IsolateBridge bootstrap RPC connection.
+- Done: `/powerbox/save` and `/powerbox/restore`; id-backed helper handles now
+  resolve/store capabilities through the private IsolateBridge RPC connection
+  and call `SandstormApi.save()` / `SandstormApi.restore()`.
 - The authority-bearing POST routes on `SandstormApiBindingService`
-  (`/powerbox/claim-request`, `/powerbox/save`, `/powerbox/restore`,
-  `/powerbox/drop`, `/powerbox/offer`,
+  (`/powerbox/claim-request`, `/powerbox/drop`, `/powerbox/offer`,
   `/powerbox/fulfill-request`, `/powerbox/tie-to-user`, `/powerbox/fetch`,
   `/powerbox/outbound-http-fetch`).
   Read-only GET metadata routes stay.
