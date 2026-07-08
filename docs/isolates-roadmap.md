@@ -250,6 +250,12 @@ Do this while surface area is small and before any stability promise.
   `MainView.restore/drop()`. Route-backed WebSession/ApiSession capabilities
   are supervisor-implemented and should use explicit supervisor object
   variants, not string-prefixed app-ref envelopes.
+  - Done: `SupervisorObjectId.routeBackedSession` now stores route-backed
+    WebSession/ApiSession tokens as supervisor-owned typed object IDs.
+    `appRef` restores are reserved for app-defined objects, while route-backed
+    restore/drop dispatch directly in the isolate supervisor. The fake
+    SandstormCore used by `isolate-websession-client` preserves app refs and
+    route-backed refs as separate token kinds.
 - **capnp-es custody.** `@mnutt/capnp-es` must stop being a personal-fork npm
   dependency: upstream, vendor into the tree, or move to a `sandstorm-org`
   namespace with pinned integrity hashes in the build. The runtime is

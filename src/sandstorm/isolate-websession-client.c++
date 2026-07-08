@@ -40,8 +40,6 @@
 
 namespace sandstorm {
 
-constexpr const char* ISOLATE_ROUTE_BACKED_APP_REF_PREFIX =
-    "sandstorm-isolate-route-backed-v1\n";
 constexpr uint64_t TEST_PROVIDER_TAG_ID = 0xdf9518c9479ddfcbull;
 
 static_assert(capnp::typeId<NativeGreeter>() == 0xb66316217ceedb1b,
@@ -132,10 +130,6 @@ void expectRoutePathFailure(kj::WaitScope& waitScope, kj::Promise<void> promise)
     KJ_REQUIRE(contains(description, "route-backed capability request path"),
         description);
   }
-}
-
-kj::String makeRouteBackedSessionAppRef(kj::StringPtr type, kj::StringPtr pathPrefix) {
-  return kj::str(ISOLATE_ROUTE_BACKED_APP_REF_PREFIX, type, "\n", pathPrefix);
 }
 
 kj::String fakeCoreTokenStorePath(kj::StringPtr socketPath) {
@@ -484,7 +478,7 @@ public:
   uint routeBackedRequirementCount = 0;
   uint childTokenCount = 0;
   uint64_t lastGrainSizeBytes = 0;
-  kj::String lastRouteBackedAppRef;
+  kj::String lastRouteBackedRef;
   kj::String lastRouteBackedRequirement;
   kj::String lastChildTokenParent;
 
@@ -619,22 +613,25 @@ public:
         kj::heapString(token),
         kj::heapString(supervisorSocketPath),
         RouteBackedToken::Kind::APP_REF,
-        kj::heapArray<byte>(0)
+        kj::heapArray<byte>(0),
+        SupervisorObjectId<>::RouteBackedSession::Type::WEB,
+        kj::heapString(""),
     };
     switch (params.getRef().which()) {
-      case SupervisorObjectId<>::APP_REF: {
-        auto appRef = params.getRef().getAppRef();
-        tokenEntry.appRef = serializeAppRef(appRef);
-        try {
-          auto appRefData = appRef.getAs<capnp::Data>();
-          sessionContext.lastRouteBackedAppRef = kj::heapString(appRefData.asChars());
-        } catch (kj::Exception& exception) {
-          sessionContext.lastRouteBackedAppRef = kj::heapString("");
-        }
+      case SupervisorObjectId<>::APP_REF:
+        tokenEntry.appRef = serializeAppRef(params.getRef().getAppRef());
+        sessionContext.lastRouteBackedRef = kj::heapString("appRef");
+        break;
+      case SupervisorObjectId<>::ROUTE_BACKED_SESSION: {
+        auto routeRef = params.getRef().getRouteBackedSession();
+        tokenEntry.kind = RouteBackedToken::Kind::ROUTE_BACKED_SESSION;
+        tokenEntry.routeType = routeRef.getType();
+        tokenEntry.routePathPrefix = kj::heapString(routeRef.getPathPrefix());
+        sessionContext.lastRouteBackedRef = routeBackedSessionDebug(routeRef);
         break;
       }
       default:
-        KJ_FAIL_REQUIRE("fake SandstormCore only supports isolate app refs");
+        KJ_FAIL_REQUIRE("fake SandstormCore only supports isolate app refs and route-backed refs");
     }
     routeBackedTokens.add(kj::mv(tokenEntry));
     ++sessionContext.routeBackedTokenCount;
@@ -678,12 +675,15 @@ private:
   struct RouteBackedToken {
     enum class Kind {
       APP_REF,
+      ROUTE_BACKED_SESSION,
     };
 
     kj::String token;
     kj::String supervisorSocketPath;
     Kind kind;
     kj::Array<byte> appRef;
+    SupervisorObjectId<>::RouteBackedSession::Type routeType;
+    kj::String routePathPrefix;
   };
 
   struct SupervisorConnection {
@@ -727,8 +727,37 @@ private:
         kj::heapString(token.token),
         kj::heapString(token.supervisorSocketPath),
         token.kind,
-        kj::heapArray<byte>(token.appRef.asPtr())
+        kj::heapArray<byte>(token.appRef.asPtr()),
+        token.routeType,
+        kj::heapString(token.routePathPrefix)
     };
+  }
+
+  kj::StringPtr routeBackedSessionTypeDebug(
+      SupervisorObjectId<>::RouteBackedSession::Type type) {
+    switch (type) {
+      case SupervisorObjectId<>::RouteBackedSession::Type::WEB:
+        return "web";
+      case SupervisorObjectId<>::RouteBackedSession::Type::API:
+        return "api";
+    }
+    KJ_UNREACHABLE;
+  }
+
+  SupervisorObjectId<>::RouteBackedSession::Type parseRouteBackedSessionTypeDebug(
+      kj::StringPtr type) {
+    if (type == "web") {
+      return SupervisorObjectId<>::RouteBackedSession::Type::WEB;
+    } else if (type == "api") {
+      return SupervisorObjectId<>::RouteBackedSession::Type::API;
+    } else {
+      KJ_FAIL_REQUIRE("invalid fake core route-backed session type", type);
+    }
+  }
+
+  kj::String routeBackedSessionDebug(SupervisorObjectId<>::RouteBackedSession::Reader ref) {
+    return kj::str("routeBackedSession\n", routeBackedSessionTypeDebug(ref.getType()), "\n",
+        ref.getPathPrefix());
   }
 
   kj::Array<byte> serializeAppRef(capnp::AnyPointer::Reader appRef) {
@@ -754,6 +783,12 @@ private:
         kj::Array<capnp::word> words;
         auto appRefMessage = readSerializedAppRef(token.appRef.asPtr(), words);
         objectId.setAppRef(appRefMessage.getRoot<capnp::AnyPointer>());
+        break;
+      }
+      case RouteBackedToken::Kind::ROUTE_BACKED_SESSION: {
+        auto routeRef = objectId.initRouteBackedSession();
+        routeRef.setType(token.routeType);
+        routeRef.setPathPrefix(token.routePathPrefix);
         break;
       }
     }
@@ -808,18 +843,48 @@ private:
                   "invalid fake core token store supervisor path");
               rest = rest.slice(*secondTab + 1);
               KJ_IF_MAYBE(thirdTab, rest.findFirst('\t')) {
-                auto kind = rest.slice(0, *thirdTab);
+                auto kind = kj::StringPtr(rest.begin(), *thirdTab);
                 rest = rest.slice(*thirdTab + 1);
-                KJ_FAIL_REQUIRE("invalid fake core token store route-backed token kind", kind);
+                if (kind == "appRef") {
+                  KJ_REQUIRE(rest.findFirst('\t') == nullptr,
+                      "invalid fake core app-ref token fields");
+                  auto decodedAppRef = kj::decodeBase64(rest);
+                  KJ_REQUIRE(!decodedAppRef.hadErrors,
+                      "invalid fake core token store app-ref");
+                  routeBackedTokens.add(RouteBackedToken {
+                      kj::mv(token),
+                      kj::heapString(decodedSupervisorPath.asChars()),
+                      RouteBackedToken::Kind::APP_REF,
+                      kj::mv(decodedAppRef),
+                      SupervisorObjectId<>::RouteBackedSession::Type::WEB,
+                      kj::heapString(""),
+                  });
+                } else if (kind == "routeBackedSession") {
+                  KJ_IF_MAYBE(fourthTab, rest.findFirst('\t')) {
+                    auto typeName = kj::StringPtr(rest.begin(), *fourthTab);
+                    auto type = parseRouteBackedSessionTypeDebug(typeName);
+                    auto encodedPathPrefix = rest.slice(*fourthTab + 1);
+                    KJ_REQUIRE(encodedPathPrefix.findFirst('\t') == nullptr,
+                        "invalid fake core route-backed token fields");
+                    auto decodedPathPrefix = kj::decodeBase64(encodedPathPrefix);
+                    KJ_REQUIRE(!decodedPathPrefix.hadErrors,
+                        "invalid fake core token store route-backed path prefix");
+                    routeBackedTokens.add(RouteBackedToken {
+                        kj::mv(token),
+                        kj::heapString(decodedSupervisorPath.asChars()),
+                        RouteBackedToken::Kind::ROUTE_BACKED_SESSION,
+                        kj::heapArray<byte>(0),
+                        type,
+                        kj::heapString(decodedPathPrefix.asChars()),
+                    });
+                  } else {
+                    KJ_FAIL_REQUIRE("invalid fake core route-backed token fields", line);
+                  }
+                } else {
+                  KJ_FAIL_REQUIRE("invalid fake core token store route-backed token kind", kind);
+                }
               } else {
-                auto decodedAppRef = kj::decodeBase64(rest);
-                KJ_REQUIRE(!decodedAppRef.hadErrors, "invalid fake core token store app-ref");
-                routeBackedTokens.add(RouteBackedToken {
-                    kj::mv(token),
-                    kj::heapString(decodedSupervisorPath.asChars()),
-                    RouteBackedToken::Kind::APP_REF,
-                    kj::mv(decodedAppRef),
-                });
+                KJ_FAIL_REQUIRE("invalid fake core token store line", line);
               }
             } else {
               KJ_FAIL_REQUIRE("invalid fake core token store line", line);
@@ -844,8 +909,19 @@ private:
         content.add('\t');
         switch (token.kind) {
           case RouteBackedToken::Kind::APP_REF: {
+            content.addAll(kj::StringPtr("appRef"));
+            content.add('\t');
             auto encodedAppRef = kj::encodeBase64Url(token.appRef.asPtr());
             content.addAll(encodedAppRef);
+            break;
+          }
+          case RouteBackedToken::Kind::ROUTE_BACKED_SESSION: {
+            content.addAll(kj::StringPtr("routeBackedSession"));
+            content.add('\t');
+            content.addAll(routeBackedSessionTypeDebug(token.routeType));
+            content.add('\t');
+            auto encodedPathPrefix = kj::encodeBase64Url(token.routePathPrefix.asBytes());
+            content.addAll(encodedPathPrefix);
             break;
           }
         }
@@ -1015,19 +1091,16 @@ public:
     dropRequest.getRef().setWakeLockNotification(123);
     expectSupervisorRefFailure(io.waitScope, dropRequest.send().ignoreResult());
 
-    auto routeAppRef = makeRouteBackedSessionAppRef("web", "/exported");
-    capnp::MallocMessageBuilder appRefMessage;
-    auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
-    appRef.setAs<capnp::Data>(routeAppRef.asBytes());
-
     auto routeRestoreRequest = supervisor.restoreRequest();
-    routeRestoreRequest.getRef().setAppRef(appRef.asReader());
+    auto routeRestoreRef = routeRestoreRequest.getRef().initRouteBackedSession();
+    routeRestoreRef.setType(SupervisorObjectId<>::RouteBackedSession::Type::WEB);
+    routeRestoreRef.setPathPrefix("/exported");
     routeRestoreRequest.setParentToken(kj::StringPtr("parent-route-token").asBytes());
     auto restoredRouteSession = routeRestoreRequest.send().wait(io.waitScope)
         .getCap().castAs<WebSession>();
 
     auto routeRequest = restoredRouteSession.getRequest();
-    routeRequest.setPath("/capability-echo?source=supervisor-app-ref");
+    routeRequest.setPath("/capability-echo?source=supervisor-route-backed-ref");
     routeRequest.setIgnoreBody(false);
     auto routeContext = routeRequest.initContext();
     routeContext.setResponseStream(kj::heap<IgnoreByteStream>());
@@ -1046,7 +1119,8 @@ public:
     KJ_REQUIRE(contains(routeBody, "\"ok\":true"), routeBody);
     KJ_REQUIRE(contains(routeBody, "\"source\":\"exported-web-session\""), routeBody);
     KJ_REQUIRE(contains(routeBody, "\"pathname\":\"/exported/capability-echo\""), routeBody);
-    KJ_REQUIRE(contains(routeBody, "\"search\":\"?source=supervisor-app-ref\""), routeBody);
+    KJ_REQUIRE(contains(routeBody, "\"search\":\"?source=supervisor-route-backed-ref\""),
+        routeBody);
 
     auto routeSaveRequest = restoredRouteSession.castAs<SystemPersistent>().saveRequest();
     auto routeSaveOwner = routeSaveRequest.getSealFor().initGrain();
@@ -1072,7 +1146,9 @@ public:
     expectRoutePathFailure(io.waitScope, routeEscapeRequest.send().ignoreResult());
 
     auto routeDropRequest = supervisor.dropRequest();
-    routeDropRequest.getRef().setAppRef(appRef.asReader());
+    auto routeDropRef = routeDropRequest.getRef().initRouteBackedSession();
+    routeDropRef.setType(SupervisorObjectId<>::RouteBackedSession::Type::WEB);
+    routeDropRef.setPathPrefix("/exported");
     routeDropRequest.send().wait(io.waitScope);
 
     auto view = supervisor.getMainViewRequest().send().wait(io.waitScope).getView();
@@ -1095,9 +1171,8 @@ public:
     apiSaveOwner.setGrainId("api-session-grain");
     apiSaveOwner.getSaveLabel().setDefaultText("ApiSession save fixture");
     apiSaveRequest.send().wait(io.waitScope);
-    KJ_REQUIRE(contains(sessionContextRef.lastRouteBackedAppRef,
-        "sandstorm-isolate-route-backed-v1\napi\n/api/"),
-        sessionContextRef.lastRouteBackedAppRef);
+    KJ_REQUIRE(sessionContextRef.lastRouteBackedRef == "routeBackedSession\napi\n/api/",
+        sessionContextRef.lastRouteBackedRef);
 
     auto sessionRequest = view.newSessionRequest();
     auto userInfo = sessionRequest.initUserInfo();
