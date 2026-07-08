@@ -249,6 +249,14 @@ mkdir -p bundle/usr/include/{capnp,sandstorm}
 cp src/capnp/!(*test*).capnp bundle/usr/include/capnp
 cp src/sandstorm/!(*-internal).capnp bundle/usr/include/sandstorm
 
+# Copy over the pinned capnp-es compiler used by `spk dev-isolate` for capnp:
+# schema imports. Runtime modules are embedded into the C++ binaries, but dev
+# mode still needs the compiler to generate app-local schema modules.
+mkdir -p bundle/usr/lib/capnp-es
+cp -R tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist bundle/usr/lib/capnp-es/dist
+mkdir -p bundle/usr/lib/capnp-es/node_modules
+cp -R tmp/capnp-es-npm/node_modules/typescript bundle/usr/lib/capnp-es/node_modules/typescript
+
 # Copy over node-capnp. Keep this independent from the repo-level node_modules
 # directory, which may contain unrelated locally-installed npm tools.
 mkdir -p bundle/node_modules/capnp
