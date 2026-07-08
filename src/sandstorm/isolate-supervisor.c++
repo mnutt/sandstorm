@@ -153,6 +153,19 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::Vector<Binding> bindings;
 };
 
+enum class IsolateRuntimeTopology {
+  PER_GRAIN_SIDECAR,
+};
+
+kj::StringPtr isolateRuntimeTopologyName(IsolateRuntimeTopology topology) {
+  switch (topology) {
+    case IsolateRuntimeTopology::PER_GRAIN_SIDECAR:
+      return "perGrainSidecar";
+  }
+
+  KJ_UNREACHABLE;
+}
+
 kj::String makeOpaqueToken() {
   kj::Array<byte> bytes = kj::heapArray<byte>(18);
   kj::FdInputStream(raiiOpen("/dev/urandom", O_RDONLY)).read(bytes.begin(), bytes.size());
@@ -1108,6 +1121,9 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   appendJsonField(manifest, "mainModule", config.mainModule);
   manifest.addAll(kj::StringPtr(",\n  "));
   appendJsonField(manifest, "compatibilityDate", config.compatibilityDate);
+  manifest.addAll(kj::StringPtr(",\n  "));
+  appendJsonField(manifest, "topology",
+      isolateRuntimeTopologyName(IsolateRuntimeTopology::PER_GRAIN_SIDECAR));
 
   manifest.addAll(kj::StringPtr(",\n  \"compatibilityFlags\": ["));
   for (auto i: kj::indices(config.compatibilityFlags)) {
@@ -4936,6 +4952,9 @@ private:
     appendJsonField(json, "mainModule", config.mainModule);
     json.addAll(kj::StringPtr(",\n  "));
     appendJsonField(json, "compatibilityDate", config.compatibilityDate);
+    json.addAll(kj::StringPtr(",\n  "));
+    appendJsonField(json, "topology",
+        isolateRuntimeTopologyName(IsolateRuntimeTopology::PER_GRAIN_SIDECAR));
     json.addAll(kj::StringPtr(",\n  \"compatibilityFlags\": ["));
     for (auto i: kj::indices(config.compatibilityFlags)) {
       if (i > 0) json.addAll(kj::StringPtr(", "));
