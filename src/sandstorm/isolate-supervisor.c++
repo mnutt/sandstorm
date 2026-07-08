@@ -63,6 +63,7 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/time.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <time.h>
@@ -101,6 +102,111 @@ constexpr const char* ISOLATE_MAIN_VIEW_RPC_SESSION_PATH =
     "/__sandstorm/main-view/rpc-session";
 constexpr uint64_t CAPNP_PERSISTENT_INTERFACE_ID = 0xc8cb212fcd9f5691ull;
 constexpr uint64_t SYSTEM_PERSISTENT_INTERFACE_ID = 0xc38cedd77cbed5b4ull;
+
+volatile sig_atomic_t isolateSidecarPid = 0;
+volatile sig_atomic_t isolateKeepAlive = true;
+
+void isolateSupervisorLogSafely(const char* text) {
+  while (text[0] != '\0') {
+    ssize_t n = write(STDERR_FILENO, text, strlen(text));
+    if (n < 0) return;
+    text += n;
+  }
+}
+
+#define SANDSTORM_ISOLATE_LOG(text) \
+  isolateSupervisorLogSafely("** SANDSTORM ISOLATE SUPERVISOR: " text "\n")
+
+void killIsolateSidecar() {
+  pid_t pid = isolateSidecarPid;
+  if (pid != 0) {
+    kill(-pid, SIGTERM);
+    kill(pid, SIGTERM);
+    isolateSidecarPid = 0;
+  }
+}
+
+[[noreturn]] void killIsolateSidecarAndExit(int status) {
+  killIsolateSidecar();
+  _exit(status);
+}
+
+void isolateSupervisorSignalHandler(int signo) {
+  switch (signo) {
+    case SIGALRM:
+      if (isolateKeepAlive) {
+        SANDSTORM_ISOLATE_LOG("Grain still in use; staying up for now.");
+        isolateKeepAlive = false;
+        return;
+      }
+      SANDSTORM_ISOLATE_LOG("Grain no longer in use; shutting down.");
+      killIsolateSidecarAndExit(0);
+
+    case SIGINT:
+    case SIGTERM:
+      SANDSTORM_ISOLATE_LOG("Grain supervisor terminated by signal.");
+      killIsolateSidecarAndExit(0);
+
+    default:
+      SANDSTORM_ISOLATE_LOG("Grain supervisor crashed due to signal.");
+      killIsolateSidecarAndExit(1);
+  }
+}
+
+int ISOLATE_DEATH_SIGNALS[] = {
+  SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGFPE, SIGSEGV, SIGTERM, SIGUSR1, SIGUSR2, SIGBUS,
+  SIGPOLL, SIGPROF, SIGSYS, SIGTRAP, SIGVTALRM, SIGXCPU, SIGXFSZ, SIGSTKFLT, SIGPWR
+};
+
+void registerIsolateSupervisorSignalHandlers() {
+  struct sigaction action;
+  memset(&action, 0, sizeof(action));
+  action.sa_handler = &isolateSupervisorSignalHandler;
+  sigfillset(&action.sa_mask);
+
+  KJ_SYSCALL(sigaction(SIGALRM, &action, nullptr));
+  for (int signo: kj::ArrayPtr<int>(ISOLATE_DEATH_SIGNALS)) {
+    KJ_SYSCALL(sigaction(signo, &action, nullptr));
+  }
+
+  struct itimerval timer;
+  memset(&timer, 0, sizeof(timer));
+  timer.it_interval.tv_sec = 90;
+  timer.it_value.tv_sec = 90;
+  KJ_SYSCALL(setitimer(ITIMER_REAL, &timer, nullptr));
+}
+
+void keepAliveExistingIsolateSupervisor(kj::StringPtr varPath) {
+  auto ioContext = kj::setupAsyncIo();
+  auto addr = ioContext.provider->getNetwork()
+      .parseAddress(kj::str("unix:", varPath, "/socket"))
+      .wait(ioContext.waitScope);
+
+  kj::Own<kj::AsyncIoStream> connection;
+  KJ_IF_MAYBE(exception, kj::runCatchingExceptions([&]() {
+    connection = addr->connect().wait(ioContext.waitScope);
+  })) {
+    return;
+  }
+
+  capnp::TwoPartyVatNetwork vatNetwork(*connection, capnp::rpc::twoparty::Side::CLIENT);
+  auto client = capnp::makeRpcClient(vatNetwork);
+
+  capnp::MallocMessageBuilder message;
+  auto hostId = message.initRoot<capnp::rpc::twoparty::VatId>();
+  hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
+  auto supervisor = client.bootstrap(hostId).castAs<Supervisor>();
+
+  auto promise = supervisor.keepAliveRequest().send();
+  KJ_IF_MAYBE(exception, kj::runCatchingExceptions([&]() {
+    promise.wait(ioContext.waitScope);
+  })) {
+    return;
+  }
+
+  KJ_SYSCALL(write(STDOUT_FILENO, "Already running...\n", strlen("Already running...\n")));
+  _exit(0);
+}
 
 struct IsolateRuntimeConfig final: public kj::Refcounted {
   enum class ModuleType {
@@ -3369,6 +3475,7 @@ public:
       KJ_LOG(WARNING, "Started isolate sidecar process.",
           trustedWorkerdForLog, p->getPid(), runtimeConfig.workerdBundleDir,
           runtimeConfig.workerdSocketPath);
+      isolateSidecarPid = p->getPid();
     }
   }
 
@@ -3398,6 +3505,9 @@ public:
       if (waitResult == p->getPid()) {
         logExitStatus(status);
         p->notifyExited(status);
+        if (isolateSidecarPid == p->getPid()) {
+          isolateSidecarPid = 0;
+        }
         return false;
       }
 
@@ -3430,6 +3540,9 @@ public:
 
         KJ_LOG(WARNING, "Killing isolate sidecar process group after shutdown timeout.", pid);
         signalProcessGroup(pid, SIGKILL);
+      }
+      if (isolateSidecarPid == p->getPid()) {
+        isolateSidecarPid = 0;
       }
       process = nullptr;
     }
@@ -5321,6 +5434,8 @@ public:
   }
 
   kj::Promise<void> keepAlive(KeepAliveContext context) override {
+    isolateKeepAlive = true;
+
     auto params = context.getParams();
     if (params.hasCore()) {
       coreRedirector->setTarget(params.getCore());
@@ -5342,6 +5457,7 @@ public:
   }
 
   kj::Promise<void> shutdown(ShutdownContext context) override {
+    KJ_LOG(WARNING, "Isolate grain shutdown requested.");
     sidecar->stop();
     _exit(0);
   }
@@ -5848,6 +5964,9 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
     KJ_SYSCALL(close(log));
   }
 
+  keepAliveExistingIsolateSupervisor(varPath);
+  registerIsolateSupervisorSignalHandlers();
+
   auto runtimeConfig = loadIsolateRuntimeConfig(
       pkgPath, requestedMainModule, requestedCompatibilityDate);
 
@@ -5934,7 +6053,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
 
   KJ_LOG(WARNING, "Creating isolate supervisor listener.");
   auto listener = kj::heap<TwoPartyServerWithClientBootstrap>(
-      kj::mv(mainCap), kj::mv(coreRedirector), false);
+      kj::mv(mainCap), kj::mv(coreRedirector));
   KJ_LOG(WARNING, "Isolate supervisor listener created.");
 
   auto socketPath = kj::str(varPath, "/socket");
@@ -5953,7 +6072,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   KJ_SYSCALL(write(STDOUT_FILENO, "Listening...\n", strlen("Listening...\n")));
   KJ_LOG(WARNING, "Isolate supervisor socket is listening.", socketPath);
 
-  auto listenTask = listener->listen(kj::mv(serverPort));
+  auto listenTask = listener->listen(kj::mv(serverPort)).attach(kj::mv(listener));
   KJ_IF_MAYBE(apiTask, apiListenTask) {
     listenTask = listenTask.exclusiveJoin(kj::mv(*apiTask));
   }
