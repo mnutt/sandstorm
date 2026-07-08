@@ -192,41 +192,6 @@ async function callSandstormApi(env, path) {
   return body;
 }
 
-async function openNativeCapnpBridgeRpcSession(env, target, connectionId) {
-  if (!target || typeof target.id !== "string" || target.id.length === 0) {
-    throw new ValidationError("native Cap'n Proto RPC session requires a target capability id");
-  }
-  if (typeof connectionId !== "string" || connectionId.length === 0) {
-    throw new ValidationError("native Cap'n Proto RPC session requires a connection id");
-  }
-
-  const params = new URLSearchParams();
-  params.set("id", target.id);
-  params.set("interfaceId", String(target.interfaceId ?? 0n));
-  params.set("interfaceName", String(target.interfaceName ?? ""));
-  params.set("connectionId", connectionId);
-
-  const response = await env.SANDSTORM_API.fetch(
-    `http://sandstorm/capnp/rpc-session?${params}`, {
-      headers: { Upgrade: "websocket" },
-  });
-  if (!response.webSocket) {
-    const text = await response.text();
-    let message = `native Cap'n Proto RPC session failed with ${response.status}: ${text}`;
-    try {
-      const body = JSON.parse(text);
-      if (body && typeof body.error === "string" && body.error.length > 0) {
-        message = body.error;
-      }
-    } catch (_) {}
-
-    throw new NativeCapnpBridgeUnavailableError(`${message}; connectionId=${connectionId}`);
-  }
-
-  response.webSocket.accept();
-  return response.webSocket;
-}
-
 async function openNativeCapnpBridgeBootstrapSession(env, connectionId) {
   if (typeof connectionId !== "string" || connectionId.length === 0) {
     throw new ValidationError("isolate bridge RPC session requires a connection id");
@@ -260,8 +225,6 @@ async function openNativeCapnpBridgeBootstrapSession(env, connectionId) {
 function nativeCapnpBridgeApi(env) {
   return {
     capnpBridgeInfo: () => callSandstormApi(env, "capnp/bridge-info"),
-    nativeCapnpBridgeOpenRpcSession: (target, connectionId) =>
-      openNativeCapnpBridgeRpcSession(env, target, connectionId),
     nativeCapnpBridgeOpenBootstrapSession: (connectionId) =>
       openNativeCapnpBridgeBootstrapSession(env, connectionId),
   };
@@ -3901,8 +3864,6 @@ export function sandstorm(request, env) {
     modules: () => callSandstorm(env, "modules"),
     bindings: () => callSandstorm(env, "bindings"),
     capnpBridgeInfo: () => callSandstorm(env, "capnp/bridge-info"),
-    nativeCapnpBridgeOpenRpcSession: (target, connectionId) =>
-      openNativeCapnpBridgeRpcSession(env, target, connectionId),
     nativeCapnpBridgeOpenBootstrapSession: (connectionId) =>
       openNativeCapnpBridgeBootstrapSession(env, connectionId),
     storage: () => storage(env),

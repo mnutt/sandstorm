@@ -66,28 +66,6 @@ declare module "sandstorm:capnp" {
     capabilities?: readonly NativeCapnpCapabilitySlot[],
   ): NativeCapnpPayload;
 
-  export class NativeCapnpBridgeWebSocketRpcTransport {
-    readonly kind: "webSocketRpc";
-    readonly api: {
-      nativeCapnpBridgeOpenRpcSession(
-        target: NativeCapnpCapabilitySlot,
-        connectionId: string,
-      ): Promise<WebSocket>;
-    };
-    readonly target: Required<NativeCapnpCapabilitySlot>;
-    readonly connectionId: string;
-    constructor(
-      api: NativeCapnpBridgeWebSocketRpcTransport["api"],
-      target: NativeCapnpCapabilitySlot,
-      options?: {
-        readonly connectionId?: string;
-      },
-    );
-    sendMessage(message: unknown): void;
-    recvMessage(): Promise<unknown>;
-    close(error?: unknown): void;
-  }
-
   export class IsolateBridgeWebSocketRpcTransport {
     readonly kind: "isolateBridgeWebSocketRpc";
     readonly api: {
@@ -152,21 +130,6 @@ declare module "sandstorm:capnp" {
     recvMessage(): Promise<unknown>;
     close(error?: unknown): void;
   }
-
-  export function createNativeCapnpBridgeConnection(
-    api: {
-      nativeCapnpBridgeOpenRpcSession?(
-        target: NativeCapnpCapabilitySlot,
-        connectionId: string,
-      ): Promise<WebSocket>;
-    },
-    target: NativeCapnpCapabilitySlot,
-    options?: {
-      readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
-      readonly connectionId?: string;
-      readonly finalize?: unknown;
-    },
-  ): unknown;
 
   export function createNativeCapnpServerSession(
     InterfaceClass: NativeCapnpGeneratedInterface<object> & {
@@ -310,19 +273,14 @@ declare module "sandstorm:capnp" {
   export type NativeCapnpConnectedClient<TClient extends object> = TClient & {
     readonly capability: NativeCapnpCapabilitySlot | NativeCapnpRpcImportCapability;
     readonly connection: unknown;
-    readonly transport:
-      NativeCapnpBridgeWebSocketRpcTransport |
-      IsolateBridgeWebSocketRpcTransport;
+    readonly transport: IsolateBridgeWebSocketRpcTransport;
     drop(): Promise<unknown> | unknown;
     save(...args: unknown[]): Promise<string> | string | undefined;
   };
 
   export function connectNativeCapnp<TClient extends object>(
     api: {
-      nativeCapnpBridgeOpenRpcSession?(
-        target: NativeCapnpCapabilitySlot,
-        connectionId: string,
-      ): Promise<WebSocket>;
+      nativeCapnpBridgeOpenBootstrapSession(connectionId: string): Promise<WebSocket>;
     },
     target: NativeCapnpCapabilitySlot,
     InterfaceClass: NativeCapnpGeneratedInterface<TClient>,

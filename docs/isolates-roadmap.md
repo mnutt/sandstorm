@@ -170,8 +170,9 @@ export.
   IsolateBridge RPC connection instead of local HTTP POST routes.
 - Done: worker-side `connectNativeCapnp()` now uses the IsolateBridge
   bootstrap channel and capnp-es pipelining to call id-backed capabilities;
-  the target-specific `/capnp/rpc-session?id=...` path remains only as a
-  fallback and for the browser bridge until Phase 2.
+  the worker fallback target-specific WebSocket opener is gone. The
+  target-specific `/capnp/rpc-session?id=...` path remains only for the browser
+  bridge until Phase 2.
 - `IsolateSessionRegistry`'s string-ID claimed-capability table (RPC cap-table
   references replace it).
 - Done: the misleading per-export HTTP-transport names on the worker
