@@ -250,8 +250,8 @@ prototype mechanisms:
 | Done: `/powerbox/offer` POST route | `SessionContext.offer()` over RPC |
 | Done: `/powerbox/fulfill-request` POST route | `SessionContext.fulfillRequest()` over RPC |
 | Done: `/powerbox/tie-to-user` POST route | `SessionContext.tieToUser()` over RPC |
-| `/powerbox/fetch` POST route | Fetch sugar over a live `WebSession`/`ApiSession` RPC reference |
-| `/powerbox/outbound-http-fetch` POST route | Fetch sugar over a live `OutboundHttpSession` RPC reference |
+| Done: `/powerbox/fetch` POST route | Fetch sugar over a live `WebSession`/`ApiSession` RPC reference |
+| Done: `/powerbox/outbound-http-fetch` POST route | Fetch sugar over a live `OutboundHttpSession` RPC reference |
 | `/capnp/lifecycle` binary envelope | Ordinary methods over the authority RPC connection |
 | `NativeCapnpBridgeRequest/Response` lifecycle structs | Deleted or replaced by small bootstrap schema |
 | `IsolateSessionRegistry` claimed-capability string IDs | RPC cap-table references |
@@ -546,7 +546,8 @@ Must delete or stop compiling:
 - authority-bearing `/powerbox/*` POST routes, except `/powerbox/claim-request`,
   `/powerbox/dup`, `/powerbox/save`, `/powerbox/restore`, `/powerbox/drop-saved`,
   `/powerbox/offer`, `/powerbox/fulfill-request`, `/powerbox/tie-to-user`,
-  and `/powerbox/drop` which are deleted
+  `/powerbox/drop`, `/powerbox/fetch`, and `/powerbox/outbound-http-fetch`
+  which are deleted
 - claimed-capability table used as authority
 - Done: drop groups and live-handle drop-notify machinery
 - remaining C++ per-export callback/session plumbing
