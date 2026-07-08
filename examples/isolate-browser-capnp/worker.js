@@ -20,20 +20,19 @@ const counterMethods = {
   },
 };
 
-function counterSlot(capability) {
-  return {
-    ...capability,
-    interfaceId: `0x${BrowserCounter._capnp.typeIdHex}`,
-    interfaceName: "BrowserCounter",
-    kind: "receiverHosted",
-  };
-}
-
 async function exportCounter(api) {
-  const capability = await exportNativeCapnp(api, BrowserCounter, counterMethods, {
+  return await exportNativeCapnp(api, BrowserCounter, counterMethods, {
     interfaceName: "BrowserCounter",
   });
-  return counterSlot(capability);
+}
+
+async function callCounter(method, params = {}) {
+  const counter = new BrowserCounter.Server(counterMethods).client();
+  try {
+    return await counter[method](params);
+  } finally {
+    await counter.drop?.();
+  }
 }
 
 function renderPage() {
@@ -111,28 +110,22 @@ function renderPage() {
         <button id="increment" type="button" disabled>Increment</button>
         <button id="reset" type="button" disabled>Reset</button>
       </section>
-      <pre id="log">Connecting...</pre>
+      <pre id="log">Loading...</pre>
     </main>
 
     <script type="module">
-      import { connectBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
-      import { BrowserCounter } from "/__sandstorm/capnp/browser-counter.capnp.js";
-
       const valueOutput = document.querySelector("#value");
       const amountInput = document.querySelector("#amount");
       const incrementButton = document.querySelector("#increment");
       const resetButton = document.querySelector("#reset");
       const log = document.querySelector("#log");
 
-      let counter = null;
-
       function show(result, operation) {
         valueOutput.value = String(result.value);
         log.textContent = JSON.stringify({
           operation,
           value: result.value,
-          transport: "browser-native-capnp",
-          connectionId: counter.transport.connectionId,
+          transport: "server-native-capnp",
         }, null, 2);
       }
 
@@ -154,23 +147,28 @@ function renderPage() {
         }
       }
 
-      async function connect() {
-        const response = await fetch("/counter-capability", { method: "POST" });
+      async function requestCounter(operation, params = {}) {
+        const response = await fetch("/counter/" + operation, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(params),
+        });
         const result = await response.json();
         if (!response.ok || !result.ok) {
-          throw new Error(result.error || "failed to export counter capability");
+          throw new Error(result.error || "counter request failed");
         }
-        counter = connectBrowserNativeCapnp(result.capability, BrowserCounter, {
-          connectionId: "browser-counter-" + result.capability.id,
-        });
-        show(await counter.read(), "read");
+        return result.value;
+      }
+
+      async function connect() {
+        show(await requestCounter("read"), "read");
         incrementButton.disabled = false;
         resetButton.disabled = false;
       }
 
       incrementButton.addEventListener("click", () => call("increment", () =>
-        counter.increment({ amount: amount() })));
-      resetButton.addEventListener("click", () => call("reset", () => counter.reset()));
+        requestCounter("increment", { amount: amount() })));
+      resetButton.addEventListener("click", () => call("reset", () => requestCounter("reset")));
 
       try {
         await connect();
@@ -191,9 +189,24 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === "/counter-capability" && request.method === "POST") {
+      const capability = await exportCounter(api);
       return Response.json({
         ok: true,
-        capability: await exportCounter(api),
+        capability,
+        info: await capability.info(),
+      });
+    }
+
+    if (url.pathname.startsWith("/counter/") && request.method === "POST") {
+      const operation = url.pathname.slice("/counter/".length);
+      const params = await request.json().catch(() => ({}));
+      if (!["read", "increment", "reset"].includes(operation)) {
+        return Response.json({ ok: false, error: "unknown counter operation" }, { status: 404 });
+      }
+
+      return Response.json({
+        ok: true,
+        value: await callCounter(operation, params),
       });
     }
 

@@ -48,6 +48,18 @@ function readNativeGreeterObjectId(objectId) {
   return CapnpEsUtils.getAs(NativeGreeterObjectId, objectId).id;
 }
 
+function interfaceIdHex(interfaceId) {
+  if (typeof interfaceId === "bigint") {
+    return `0x${interfaceId.toString(16)}`;
+  } else if (typeof interfaceId === "number") {
+    return `0x${interfaceId.toString(16)}`;
+  } else if (typeof interfaceId === "string" && interfaceId.length > 0) {
+    return interfaceId.startsWith("0x") ? interfaceId : `0x${interfaceId}`;
+  } else {
+    return "0x0";
+  }
+}
+
 function makePersistentNativeGreeterTarget(id) {
   return {
     async save() {
@@ -1838,17 +1850,6 @@ export default {
     const nativeExportEchoMessage = await nativeExportClientTransport.recvMessage();
     nativeExportClientTransport.close();
     nativeExportServerTransport.close();
-    class NativeExportFixtureClient {}
-    class NativeExportFixtureServer {}
-    const nativeExportInterface = {
-      Client: NativeExportFixtureClient,
-      Server: NativeExportFixtureServer,
-      interfaceId: 0x9ea3c98729c78d51n,
-      interfaceName: "NativeExportFixture",
-    };
-    const nativeExportCapability = await exportNativeCapnp(apiHelper, nativeExportInterface, {});
-    const nativeExportCapabilityInfo = await nativeExportCapability.info();
-    const nativeExportCapabilityDrop = await nativeExportCapability.drop();
     const nativeExportWebSessionTarget = {
       async get(params) {
         const path = typeof params?.path === "string" ? params.path : "";
@@ -1872,17 +1873,23 @@ export default {
           interfaceId: WebSession.interfaceId ?? WebSession.Client?.interfaceId,
           interfaceName: "sandstorm.WebSession",
         });
-      const nativeExportWebSessionFetch =
-          await nativeExportWebSession.fetch("/native-export-websession?from=fetch");
+      const nativeExportWebSessionGet =
+          await nativeExportWebSession.get({ path: "native-export-websession?from=rpc" });
+      const nativeExportWebSessionBody = nativeExportWebSessionGet.content.body.bytes;
+      const nativeExportWebSessionBytes =
+          typeof nativeExportWebSessionBody.toUint8Array === "function" ?
+            nativeExportWebSessionBody.toUint8Array() : nativeExportWebSessionBody;
       const nativeExportWebSessionInfo = await nativeExportWebSession.info();
       const nativeExportWebSessionDrop = await nativeExportWebSession.drop();
       nativeExportWebSessionResult = {
         ok: true,
-        status: nativeExportWebSessionFetch.status,
-        contentType: nativeExportWebSessionFetch.headers.get("content-type"),
-        text: await nativeExportWebSessionFetch.text(),
+        status: nativeExportWebSessionGet.content.statusCode === WebSession.Response.SuccessCode.OK
+          ? 200
+          : String(nativeExportWebSessionGet.content.statusCode),
+        contentType: nativeExportWebSessionGet.content.mimeType,
+        text: new TextDecoder().decode(nativeExportWebSessionBytes),
         info: nativeExportWebSessionInfo,
-        drop: nativeExportWebSessionDrop,
+        drop: nativeExportWebSessionDrop ?? null,
       };
     } catch (error) {
       nativeExportWebSessionResult = {
@@ -1935,11 +1942,6 @@ export default {
         NativeGreeter,
         nativeExportGreeterTarget,
         { interfaceName: "NativeGreeter" });
-      const nativeExportGreeterClient = connectNativeCapnp(
-        apiHelper,
-        nativeExportGreeter,
-        NativeGreeter,
-        { connectionId: `native-capnp-export-greeter-${nativeExportGreeter.id}` });
       const nativeExportGreeterDirect = new NativeGreeter.Server(
         nativeExportGreeterTarget).client();
       const nativeExportGreeterDirectConformance = await runNativeGreeterConformance(
@@ -1951,7 +1953,7 @@ export default {
           greetName: "direct client",
         });
       const nativeExportGreeterBridgeConformance = await runNativeGreeterConformance(
-        nativeExportGreeterClient, {
+        nativeExportGreeter, {
           helloName: "isolate schema",
           childPrefix: "native export pipelined greeter",
           pipelinedName: "before makeGreeter resolves",
@@ -1967,7 +1969,7 @@ export default {
         NativeGreeter,
         {
           interfaceName: "NativeGreeter",
-          connectionId: `native-capnp-export-greeter-restored-${nativeExportGreeter.id}`,
+          connectionId: "native-capnp-export-greeter-restored",
         });
       const nativeExportGreeterRestoredConformance = await runNativeGreeterConformance(
         nativeExportGreeterRestored, {
@@ -1977,13 +1979,16 @@ export default {
           resolvedName: "after restored makeGreeter resolves",
           greetName: "restored client",
         });
+      const nativeExportGreeterRestoredInfo =
+          nativeConnectedClientInfo(nativeExportGreeterRestored);
+      const nativeExportGreeterRestoredDrop = await nativeExportGreeterRestored.drop();
       const nativeExportGreeterBootstrapRestored = await restoreNativeCapnpViaBootstrap(
         apiHelper,
         nativeExportGreeterSavedToken,
         NativeGreeter,
         {
           interfaceName: "NativeGreeter",
-          connectionId: `native-capnp-export-greeter-bootstrap-${nativeExportGreeter.id}`,
+          connectionId: "native-capnp-export-greeter-bootstrap",
         });
       const nativeExportGreeterBootstrapRestoredConformance =
           await runNativeGreeterConformance(nativeExportGreeterBootstrapRestored, {
@@ -2021,8 +2026,8 @@ export default {
         },
         restored: {
           savedTokenType: typeof nativeExportGreeterSavedToken,
-          bridgeTransportKind: nativeExportGreeterClient.transport.kind,
-          ...nativeConnectedClientInfo(nativeExportGreeterRestored),
+          ...nativeExportGreeterRestoredInfo,
+          dropResult: nativeExportGreeterRestoredDrop ?? null,
         },
         bootstrapRestored: {
           savedTokenType: typeof nativeExportGreeterBootstrapSavedToken,
@@ -2037,7 +2042,7 @@ export default {
           dropResult: nativeExportGreeterBootstrapDrop ?? null,
         },
         info: nativeExportGreeterInfo,
-        drop: nativeExportGreeterDrop,
+        drop: nativeExportGreeterDrop ?? null,
       };
     } catch (error) {
       nativeExportGreeterResult = {
@@ -2108,21 +2113,12 @@ export default {
       };
     }
 
-    const nativeExportUnknownRouteResponse = await serveSystemRoutes(new Request(
-      "http://sandstorm/__sandstorm/native-capnp/export-sessions/missing-export", {
-        method: "POST",
-        body: new Uint8Array(0),
-      }), env);
-    const nativeExportUnknownRoute = {
-      status: nativeExportUnknownRouteResponse.status,
-      body: await nativeExportUnknownRouteResponse.json(),
-    };
     const nativeCapnpTarget = await apiHelper.webSession({
       pathPrefix: "/native-capnp-bridge-target",
     });
     const nativeCapnpPayload = makeNativeCapnpPayload(new CapnpEsMessage(), [{
       id: nativeCapnpTarget.id,
-      interfaceId: "0xa8e9655582dcde6f",
+      interfaceId: interfaceIdHex(WebSession.interfaceId ?? WebSession.Client?.interfaceId),
       interfaceName: "sandstorm.WebSession",
       kind: "receiverHosted",
     }]);
@@ -2320,16 +2316,9 @@ export default {
             echoBootstrap: nativeExportEchoMessage.which() === CapnpRpcMessage.BOOTSTRAP,
             echoQuestionId: nativeExportEchoMessage.bootstrap.questionId,
           },
-          capability: {
-            ok: nativeExportCapability.ok,
-            idType: typeof nativeExportCapability.id,
-            info: nativeExportCapabilityInfo,
-            drop: nativeExportCapabilityDrop,
-          },
           webSession: nativeExportWebSessionResult,
           greeter: nativeExportGreeterResult,
           classicGreeter: classicNativeGreeterResult,
-          unknownRoute: nativeExportUnknownRoute,
         },
         nativeCapnpBridge: {
           available: capnpBridgeNegotiation.available,

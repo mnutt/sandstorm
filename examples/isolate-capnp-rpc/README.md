@@ -17,14 +17,16 @@ bundled `capnp-es` runtime and Sandstorm's restricted native RPC bridge. The
 worker uses those generated classes to:
 
 - create a local test client with `new Greeter.Server(methods).client()`
-- export a Sandstorm capability with `exportNativeCapnp(api, Greeter, methods)`
+- expose the same methods as a local Cap'n Proto capability with
+  `exportNativeCapnp(api, Greeter, methods)`
 - pass returned capabilities through normal Cap'n Proto RPC cap tables
 
 This is the native Cap'n Proto RPC path used for schema-defined isolate
 protocols, isolate-to-isolate calls, browser generated clients, and legacy
-grain interop. Authority still comes from Sandstorm capabilities: exported
-objects are held, offered, saved, restored, or claimed through the normal
-capability/Powerbox lifecycle.
+grain interop. Authority still comes from Sandstorm capabilities: the JSON
+returned by this demo route is metadata only, while real authority is passed as
+Cap'n Proto capability references or saved/restored through Sandstorm when the
+interface implements `Grain.AppPersistent`.
 
 TypeScript declarations for the native helpers live in
 `src/sandstorm/isolate/capnp.d.ts`. Schema-specific declarations come from the

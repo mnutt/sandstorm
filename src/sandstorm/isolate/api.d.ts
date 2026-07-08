@@ -247,14 +247,6 @@ declare module "sandstorm:api" {
     nativeExports: boolean;
   }
 
-  export interface NativeCapnpExportRegistration {
-    readonly id: string;
-    readonly interfaceMetadata: {
-      readonly interfaceId: bigint | number | string;
-      readonly interfaceName: string;
-    };
-  }
-
   export interface MainViewRouteContext {
     readonly request: Request;
     readonly env: SandstormEnv;
@@ -291,7 +283,6 @@ declare module "sandstorm:api" {
       connectionId: string,
     ): Promise<WebSocket>;
     nativeCapnpBridgeOpenBootstrapSession(connectionId: string): Promise<WebSocket>;
-    nativeCapnpExport(registration: NativeCapnpExportRegistration): Promise<Capability>;
     storage(): StorageApi;
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;

@@ -1,6 +1,5 @@
 import {
   createNativeCapnpExportSession,
-  serveNativeCapnpExportSession,
 } from "sandstorm:capnp";
 import {
   Interface as CapnpEsInterface,
@@ -167,7 +166,7 @@ async function openNativeCapnpBridgeRpcSession(env, target, connectionId) {
       }
     } catch (_) {}
 
-    throw new NativeCapnpBridgeUnavailableError(message);
+    throw new NativeCapnpBridgeUnavailableError(`${message}; connectionId=${connectionId}`);
   }
 
   response.webSocket.accept();
@@ -197,35 +196,11 @@ async function openNativeCapnpBridgeBootstrapSession(env, connectionId) {
       }
     } catch (_) {}
 
-    throw new NativeCapnpBridgeUnavailableError(message);
+    throw new NativeCapnpBridgeUnavailableError(`${message}; connectionId=${connectionId}`);
   }
 
   response.webSocket.accept();
   return response.webSocket;
-}
-
-async function createNativeCapnpExportCapability(env, registration) {
-  if (!registration || typeof registration !== "object") {
-    throw new ValidationError("native Cap'n Proto export registration must be an object");
-  }
-
-  const metadata = registration.interfaceMetadata || {};
-  const params = new URLSearchParams({
-    id: validate.string(registration.id, "native Cap'n Proto export id", {
-      minLength: 1,
-      maxLength: 256,
-    }),
-    interfaceId: validate.string(String(metadata.interfaceId), "native Cap'n Proto interfaceId", {
-      minLength: 1,
-      maxLength: 64,
-    }),
-    interfaceName: validate.string(metadata.interfaceName, "native Cap'n Proto interfaceName", {
-      minLength: 1,
-      maxLength: 512,
-    }),
-  });
-  return wrapCapability(
-    env, await postSandstorm(env, `capabilities/native-capnp-export?${params}`));
 }
 
 async function postPowerbox(env, path) {
@@ -1829,7 +1804,6 @@ async function serveMainViewRpcSession(request, env, options = {}) {
 export async function serveSystemRoutes(request, env, options = {}) {
   return await serveBrowserSystemRoute(request, env) ||
     await serveMainViewRpcSession(request, env, options) ||
-    await serveNativeCapnpExportSession(request, { env }) ||
     await servePowerboxDescriptors(request, env);
 }
 
@@ -2972,7 +2946,6 @@ export function sandstorm(request, env) {
       openNativeCapnpBridgeRpcSession(env, target, connectionId),
     nativeCapnpBridgeOpenBootstrapSession: (connectionId) =>
       openNativeCapnpBridgeBootstrapSession(env, connectionId),
-    nativeCapnpExport: (registration) => createNativeCapnpExportCapability(env, registration),
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, options),
