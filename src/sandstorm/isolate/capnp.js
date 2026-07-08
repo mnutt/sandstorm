@@ -1479,28 +1479,5 @@ export function connectNativeCapnp(api, target, InterfaceClass, options = {}) {
 }
 
 export async function restoreNativeCapnp(api, token, InterfaceClass, options = {}) {
-  if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
-    throw new TypeError("restoreNativeCapnp() requires a capnp-es generated interface class");
-  }
-
-  const negotiation = await negotiateNativeCapnpBridge(api, {
-    requiredFeatures: ["nativeRpc", "nativeRpcWebSocket"],
-  });
-  if (!negotiation.available) {
-    throw new NativeCapnpBridgeUnavailableError(
-      `native Cap'n Proto RPC transport is unavailable for restore: ` +
-          `${negotiation.reason || "unavailable"}`,
-      { negotiation });
-  }
-
-  const interfaceMetadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
-  const request = makeNativeCapnpBridgeRestoreRequest({
-    token,
-    expectedInterfaceId: interfaceMetadata.interfaceId,
-    expectedInterfaceName: interfaceMetadata.interfaceName,
-  });
-  const { decoded } = await sendNativeCapnpBridgeEnvelope(
-    api, request, { negotiation, token, interfaceMetadata }, "capability");
-
-  return connectNativeCapnp(api, decoded.capability, InterfaceClass, options);
+  return await restoreNativeCapnpViaBootstrap(api, token, InterfaceClass, options);
 }
