@@ -29,6 +29,10 @@ This is the intended replacement for ambient public network
 fetches: the isolate app only gets outbound API access after the user grants an
 `ApiSession` through Powerbox.
 
+This is an HTTP-shaped capability example. For typed app protocols, import a
+`.capnp` schema with `capnp:`, request or fulfill the generated descriptor, and
+call the resulting generated native client over Sandstorm's capability bridge.
+
 This example intentionally requests a placeholder API URL. On a development
 server without a matching provider or shell support for this request path, the
 page will show the returned platform error instead of a successful grant.

@@ -44,4 +44,6 @@ and put that descriptor in `ViewInfo.matchRequests`.
 This example keeps directory listing and small file reads in typed RPC. For
 large file contents, prefer the object-store pattern in
 `examples/isolate-object-store`, where Cap'n Proto RPC selects the object and a
-returned `WebSession` capability carries the byte stream.
+returned `WebSession` capability carries the byte stream. The same `FileStore`
+schema can be imported by isolate code, browser code served by Sandstorm's
+native client helper, or legacy Cap'n Proto grains.

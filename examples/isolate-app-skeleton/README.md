@@ -18,4 +18,6 @@ normal page routes plus Sandstorm helpers:
 The example exposes small fetch endpoints for session metadata and storage,
 then renders a browser UI that calls those endpoints with ordinary `fetch()`.
 Public cross-grain protocols should use schema-first `capnp:` imports; this
-example is intentionally just a minimal HTTP-shaped app skeleton.
+example is intentionally just a minimal HTTP-shaped app skeleton. Browser
+routes call the worker with ordinary `fetch()`, while Sandstorm helper routes
+are served by `api.serveSystemRoutes()`.

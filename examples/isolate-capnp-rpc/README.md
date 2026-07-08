@@ -13,14 +13,18 @@ import { Greeter } from "capnp:./greeter.capnp";
 ```
 
 `spk dev-isolate` generates native `capnp:` schema modules backed by the
-bundled `capnp-es` runtime. The worker uses those generated classes to:
+bundled `capnp-es` runtime and Sandstorm's restricted native RPC bridge. The
+worker uses those generated classes to:
 
 - create a local test client with `new Greeter.Server(methods).client()`
 - export a Sandstorm capability with `exportNativeCapnp(api, Greeter, methods)`
 - pass returned capabilities through normal Cap'n Proto RPC cap tables
 
 This is the native Cap'n Proto RPC path used for schema-defined isolate
-protocols and legacy grain interop.
+protocols, isolate-to-isolate calls, browser generated clients, and legacy
+grain interop. Authority still comes from Sandstorm capabilities: exported
+objects are held, offered, saved, restored, or claimed through the normal
+capability/Powerbox lifecycle.
 
 TypeScript declarations for the native helpers live in
 `src/sandstorm/isolate/capnp.d.ts`. Schema-specific declarations come from the
