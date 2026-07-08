@@ -1062,6 +1062,14 @@ Progress:
   the extra per-call hop after metadata proves the target is local. Integration
   coverage saves a native export, restores it, calls it through a generated
   client, and verifies the restored capability metadata.
+- groundwork for removing the remaining supervisor-to-workerd export WebSocket
+  is now in place: restoring a same-supervisor native export stores a
+  per-claimed-capability local-dispatch authorization and includes opaque local
+  dispatch metadata in the private native bridge capability slot. The public
+  decoded capability handle still exposes only the normal capability fields, so
+  raw export IDs are not treated as authority; integration coverage verifies
+  that the raw lease metadata appears only after restore and is not surfaced by
+  the public decoder.
 
 ### Phase 7: Packaging, Publishing, And Migration
 

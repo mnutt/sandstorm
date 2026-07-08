@@ -52,6 +52,20 @@ struct NativeCapnpCapabilitySlot @0xf3fc15de30f50d47 {
   interfaceId @1 :UInt64;
   interfaceName @2 :Text;
   kind @3 :NativeCapnpCapabilitySlotKind;
+  localDispatch @4 :NativeCapnpLocalDispatch;
+}
+
+struct NativeCapnpLocalDispatch @0x9c9d302760408885 {
+  # Opaque same-supervisor dispatch lease. The supervisor only includes this
+  # after restoring or otherwise validating an actual Sandstorm capability.
+  #
+  # Isolate runtimes must treat this as trusted metadata from the bridge, not
+  # app-provided authority. Raw export IDs are not sufficient to dispatch.
+
+  exportId @0 :Text;
+  interfaceId @1 :UInt64;
+  interfaceName @2 :Text;
+  authorization @3 :Text;
 }
 
 enum NativeCapnpCapabilitySlotKind @0x874023c5caa9b3df {
