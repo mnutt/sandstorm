@@ -489,18 +489,9 @@ declare module "sandstorm:capnp" {
   export function restoreNativeCapnp<TClient extends object>(
     api: {
       capnpBridgeInfo(): Promise<unknown>;
-      nativeCapnpBridgeLifecycleBytes(body?: BodyInit): Promise<{
-        ok: boolean;
-        status: number;
-        contentType: string;
-        body: Uint8Array;
-      }>;
-      nativeCapnpBridgeOpenRpcSession?(
-        target: NativeCapnpCapabilitySlot,
-        connectionId: string,
-      ): Promise<WebSocket>;
+      nativeCapnpBridgeOpenBootstrapSession?(connectionId: string): Promise<WebSocket>;
     },
-    token: string,
+    token: string | Uint8Array | ArrayBuffer | ArrayBufferView,
     InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
     options?: {
       readonly capabilities?: readonly NativeCapnpCapabilitySlot[];

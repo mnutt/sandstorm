@@ -1844,29 +1844,15 @@ test("isolate supervisor integration suite", {
         },
         restored: {
           savedTokenType: "string",
-          targetId: body.sandstormApi.nativeCapnpExport.greeter.restored.targetId,
+          kind: "rpcImport",
+          interfaceId: "b66316217ceedb1b",
+          interfaceName: "NativeGreeter",
           connectionId:
               `native-capnp-export-greeter-restored-${
                 body.sandstormApi.nativeCapnpExport.greeter.info.id}`,
           bridgeTransportKind: "webSocketRpc",
-          transportKind: "localDirect",
-          connectionIsNull: true,
-          info: {
-            ok: true,
-            type: "claimedCapabilityInfo",
-            id: body.sandstormApi.nativeCapnpExport.greeter.restored.targetId,
-            kind: "nativeCapnpExport",
-            residence: "localExport",
-            nativeInterface: "unknown",
-            pathPrefix: "",
-            persistent: true,
-            hasDropNotify: false,
-            dropNotifyRefCount: 0,
-            supportsWebFetch: true,
-            supportsOutboundHttpFetch: true,
-            hasNativeCapability: true,
-            liveForwardable: true,
-          },
+          transportKind: "isolateBridgeWebSocketRpc",
+          connectionIsNull: false,
         },
         bootstrapRestored: {
           savedTokenType: "string",
@@ -2640,14 +2626,15 @@ test("isolate supervisor integration suite", {
       `&name=${encodeURIComponent("isolate client")}`);
     assert.equal(selfTest.statusCode, 200, selfTest.body + formatOutput(
       fixture.stdout, fixture.stderr));
-    assert.equal(typeof selfTest.json.capability.id, "string");
     assert.deepEqual(selfTest.json, {
       ok: true,
       capability: {
-        id: selfTest.json.capability.id,
-        kind: "receiverHosted",
+        kind: "rpcImport",
         interfaceId: "b66316217ceedb1b",
         interfaceName: "NativeGreeter",
+        connectionId: `legacy-native-greeter-${savedToken.slice(0, 16)}`,
+        transportKind: "isolateBridgeWebSocketRpc",
+        connectionIsNull: false,
       },
       hello: {
         message: "legacy native hello isolate client",
@@ -2657,22 +2644,6 @@ test("isolate supervisor integration suite", {
       },
       greeted: {
         message: "legacy called legacy returned isolate client from legacy",
-      },
-      info: {
-        ok: true,
-        type: "claimedCapabilityInfo",
-        id: selfTest.json.capability.id,
-        kind: "restored",
-        residence: "imported",
-        nativeInterface: "unknown",
-        pathPrefix: "",
-        persistent: true,
-        hasDropNotify: false,
-        dropNotifyRefCount: 0,
-        supportsWebFetch: true,
-        supportsOutboundHttpFetch: true,
-        hasNativeCapability: true,
-        liveForwardable: true,
       },
       dropResult: null,
     });

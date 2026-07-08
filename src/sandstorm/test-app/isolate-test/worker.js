@@ -99,6 +99,22 @@ async function runNativeGreeterConformance(client, {
   };
 }
 
+function nativeConnectedClientInfo(client) {
+  const capability = client.capability || {};
+  const info = {
+    kind: capability.kind,
+    interfaceId: capability.interfaceId?.toString(16),
+    interfaceName: capability.interfaceName,
+    connectionId: client.transport?.connectionId,
+    transportKind: client.transport?.kind,
+    connectionIsNull: client.connection === null,
+  };
+  if (capability.id !== undefined) {
+    info.id = capability.id;
+  }
+  return info;
+}
+
 function renderBrowserPowerboxPage() {
   return `<!doctype html>
 <html>
@@ -766,15 +782,9 @@ export default {
         name: "client",
       });
       const drop = await client.drop();
-      const { id, interfaceId, interfaceName, kind } = client.capability;
       return Response.json({
         ok: true,
-        capability: {
-          id,
-          kind,
-          interfaceId: interfaceId.toString(16),
-          interfaceName,
-        },
+        capability: nativeConnectedClientInfo(client),
         savedToken: token,
         hello: {
           message: hello.message,
@@ -813,20 +823,10 @@ export default {
         greeter: returned.greeter,
         name: "isolate client",
       });
-      const infoResponse = await env.SANDSTORM_API.fetch(
-        `http://sandstorm/capabilities/claimed?id=${
-          encodeURIComponent(client.capability.id)}`);
-      const info = await infoResponse.json();
       const drop = await client.drop();
-      const { id, interfaceId, interfaceName, kind } = client.capability;
       return Response.json({
         ok: true,
-        capability: {
-          id,
-          kind,
-          interfaceId: interfaceId.toString(16),
-          interfaceName,
-        },
+        capability: nativeConnectedClientInfo(client),
         hello: {
           message: hello.message,
         },
@@ -836,7 +836,6 @@ export default {
         greeted: {
           message: greeted.message,
         },
-        info,
         dropResult: drop ?? null,
       });
     }
@@ -1970,11 +1969,6 @@ export default {
           });
       const nativeExportGreeterBootstrapDrop =
           await nativeExportGreeterBootstrapRestored.drop();
-      const nativeExportGreeterRestoredInfoResponse = await env.SANDSTORM_API.fetch(
-        `http://sandstorm/capabilities/claimed?id=${
-          encodeURIComponent(nativeExportGreeterRestored.capability.id)}`);
-      const nativeExportGreeterRestoredInfo =
-          await nativeExportGreeterRestoredInfoResponse.json();
       const nativeExportGreeterHello = {
         message: nativeExportGreeterBridgeConformance.hello.message,
       };
@@ -1997,12 +1991,8 @@ export default {
         },
         restored: {
           savedTokenType: typeof nativeExportGreeterSavedToken,
-          targetId: nativeExportGreeterRestored.capability.id,
-          connectionId: nativeExportGreeterRestored.transport.connectionId,
           bridgeTransportKind: nativeExportGreeterClient.transport.kind,
-          transportKind: nativeExportGreeterRestored.transport.kind,
-          connectionIsNull: nativeExportGreeterRestored.connection === null,
-          info: nativeExportGreeterRestoredInfo,
+          ...nativeConnectedClientInfo(nativeExportGreeterRestored),
         },
         bootstrapRestored: {
           savedTokenType: typeof nativeExportGreeterBootstrapSavedToken,
@@ -2314,9 +2304,17 @@ export default {
       };
       const nativeCapnpLifecycleHelperSavedToken =
           await saveNativeCapnp(apiHelper, nativeCapnpLifecycleTargetSlot);
-      const nativeCapnpLifecycleRestoredClient = await restoreNativeCapnp(
+      const nativeCapnpLifecycleHelperRestore =
+          await apiHelper.nativeCapnpBridgeLifecycleBytes(makeNativeCapnpBridgeRestoreRequest({
+            token: nativeCapnpLifecycleHelperSavedToken,
+            expectedInterfaceId: "0xa8e9655582dcde6f",
+            expectedInterfaceName: "sandstorm.WebSession",
+          }).message);
+      const decodedNativeCapnpLifecycleHelperRestore =
+          decodeNativeCapnpBridgeResponse(nativeCapnpLifecycleHelperRestore.body);
+      const nativeCapnpLifecycleRestoredClient = connectNativeCapnp(
         apiHelper,
-        nativeCapnpLifecycleHelperSavedToken,
+        decodedNativeCapnpLifecycleHelperRestore.capability,
         { Client: NativeCapnpBridgeFixtureClient },
         {
           interfaceId: "0xa8e9655582dcde6f",

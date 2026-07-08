@@ -80,9 +80,14 @@ durable native capability tokens by calling `SandstormApi.restore()` over the
 isolate bridge bootstrap and wraps the returned RPC import with the generated
 capnp-es client. The isolate integration suite now runs native Greeter
 conformance through this path, verifies pipelining/returned capabilities, and
-checks that the restored live handle can be saved again. The default
-`restoreNativeCapnp()` still uses the lifecycle envelope until the remaining
-capability helpers are ported.
+checks that the restored live handle can be saved again.
+
+**Progress, 2026-07-08:** `restoreNativeCapnp()` now defaults to the isolate
+bridge bootstrap restore path, so normal durable native capability restores
+return RPC imports carried by the single WebSocket RPC channel. The raw
+lifecycle envelope restore helper is now exercised only by the explicit
+lifecycle compatibility fixture while the remaining save/drop/export
+migration work is still in progress.
 
 **Delete** (all anchors per the architecture review):
 
