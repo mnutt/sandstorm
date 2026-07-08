@@ -3150,6 +3150,10 @@ private:
     kj::StringPtr platformSpecifiers[] = {
       "capnp:/sandstorm/isolate-bridge.capnp",
       "capnp:/sandstorm/outbound-http-session.capnp",
+      "capnp:/sandstorm/grain.capnp",
+      "capnp:/sandstorm/powerbox.capnp",
+      "capnp:/sandstorm/util.capnp",
+      "capnp:/sandstorm/web-session.capnp",
     };
 
     for (auto specifier: platformSpecifiers) {

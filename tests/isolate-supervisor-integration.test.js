@@ -999,6 +999,9 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
   assert.equal(
     modules.get("sandstorm:capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp.js");
+  assert.equal(
+    modules.get("capnp:/sandstorm/web-session.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js");
   assert.equal(modules.has("sandstorm:rpc"), false);
   assert.equal(modules.has("sandstorm:capnweb-source"), false);
   assert.equal(modules.has("capnweb"), false);
