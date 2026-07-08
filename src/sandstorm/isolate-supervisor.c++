@@ -44,6 +44,7 @@
 #include <sandstorm/api-session.capnp.h>
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
+#include <sandstorm/isolate-bridge.capnp.h>
 #include <sandstorm/isolate-native-capnp-bridge.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
 #include <sandstorm/outbound-http-session.capnp.h>
@@ -4787,6 +4788,63 @@ private:
   IsolateRuntimeHost& host;
   bool powerboxOnly;
 
+  class IsolateBridgeSandstormApi final: public SandstormApi<>::Server {
+  public:
+    explicit IsolateBridgeSandstormApi(IsolateRuntimeHost& host): host(host) {}
+
+    kj::Promise<void> save(SaveContext context) override {
+      auto args = context.getParams();
+      KJ_REQUIRE(args.hasCap(), "Cannot save a null capability.");
+      auto request = args.getCap().template castAs<SystemPersistent>().saveRequest();
+      auto owner = request.getSealFor().initGrain();
+      owner.setGrainId(host.grainId);
+      owner.setSaveLabel(args.getLabel());
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setToken(result.getSturdyRef());
+      });
+    }
+
+    kj::Promise<void> restore(RestoreContext context) override {
+      auto request = host.sandstormCore.restoreRequest();
+      request.setToken(context.getParams().getToken());
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setCap(result.getCap());
+      });
+    }
+
+    kj::Promise<void> drop(DropContext context) override {
+      auto request = host.sandstormCore.dropRequest();
+      request.setToken(context.getParams().getToken());
+      return request.send().ignoreResult();
+    }
+
+  private:
+    IsolateRuntimeHost& host;
+  };
+
+  class IsolateBridgeImpl final: public IsolateBridge::Server {
+  public:
+    explicit IsolateBridgeImpl(IsolateRuntimeHost& host): host(host) {}
+
+    kj::Promise<void> getSandstormApi(GetSandstormApiContext context) override {
+      context.getResults().setApi(kj::heap<IsolateBridgeSandstormApi>(host));
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<void> getSessionContext(GetSessionContextContext context) override {
+      auto sessionId = context.getParams().getSessionId();
+      KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionId)) {
+        context.getResults().setContext(*sessionContext);
+      } else {
+        KJ_FAIL_REQUIRE("isolate bridge session ID not found", sessionId);
+      }
+      return kj::READY_NOW;
+    }
+
+  private:
+    IsolateRuntimeHost& host;
+  };
+
   class NativeCapnpBridgeController final {
   private:
   class NativeCapnpBridgeWebSocketMessageStream final: public capnp::MessageStream {
@@ -4977,6 +5035,34 @@ private:
         metadata.nativeCapnpExportInterfaceName.size() > 0;
   }
 
+  kj::Promise<void> openIsolateBridgeBootstrapRpcSession(
+      kj::StringPtr url, kj::HttpService::Response& response) {
+    kj::String connectionId;
+    KJ_IF_MAYBE(error, readNativeCapnpRpcSessionParam(
+        url, "connectionId", "isolate bridge RPC session connection id is missing",
+        connectionId)) {
+      return sendJson(response, 400, "Bad Request", renderError(*error));
+    }
+
+    if (findIsolateQueryParams(url, "id").size() > 0 ||
+        findIsolateQueryParams(url, "interfaceId").size() > 0 ||
+        findIsolateQueryParams(url, "interfaceName").size() > 0) {
+      return sendJson(response, 400, "Bad Request", renderError(
+          "isolate bridge bootstrap sessions must not specify a target capability"));
+    }
+
+    if (nativeCapnpBridge.hasRpcSession(connectionId)) {
+      return sendJson(response, 409, "Conflict", renderError(
+          "isolate bridge RPC session connection id is already in use"));
+    }
+
+    kj::HttpHeaders responseHeaders(headerTable);
+    auto webSocket = response.acceptWebSocket(responseHeaders);
+    capnp::Capability::Client bootstrap = kj::heap<IsolateBridgeImpl>(host);
+    return nativeCapnpBridge.openWebSocketRpcSession(kj::mv(webSocket), connectionId,
+        kj::heapString(""), 0, kj::heapString("sandstorm.IsolateBridge"), kj::mv(bootstrap));
+  }
+
   kj::Promise<void> openNativeCapnpBridgeRpcSession(
       kj::StringPtr url, const kj::HttpHeaders& requestHeaders,
       kj::HttpService::Response& response) {
@@ -4984,6 +5070,18 @@ private:
       return sendJson(response, 426, "Upgrade Required", kj::heapString(
           "{\n  \"ok\": false,\n"
           "  \"error\": \"native Cap'n Proto RPC sessions require WebSocket upgrade\"\n}\n"));
+    }
+
+    auto bootstrapModes = findIsolateQueryParams(url, "bootstrap");
+    if (bootstrapModes.size() > 1) {
+      return sendJson(response, 400, "Bad Request", renderError(
+          "native Cap'n Proto RPC session bootstrap mode appears more than once"));
+    } else if (bootstrapModes.size() == 1) {
+      if (bootstrapModes[0] != "worker") {
+        return sendJson(response, 400, "Bad Request", renderError(
+            "native Cap'n Proto RPC session bootstrap mode is invalid"));
+      }
+      return openIsolateBridgeBootstrapRpcSession(url, response);
     }
 
     kj::String targetId;

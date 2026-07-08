@@ -3156,6 +3156,12 @@ private:
     kj::StringPtr bridgeSpecifier = "capnp:/sandstorm/isolate-native-capnp-bridge.capnp";
     auto bridgePath = resolveDevIsolateCapnpEsImport(rootDir, rootDir, bridgeSpecifier);
     addDevIsolateCapnpEsModule(bridgeSpecifier, bridgePath, rootDir, modules, capnpEsImports);
+
+    kj::StringPtr isolateBridgeSpecifier = "capnp:/sandstorm/isolate-bridge.capnp";
+    auto isolateBridgePath = resolveDevIsolateCapnpEsImport(
+        rootDir, rootDir, isolateBridgeSpecifier);
+    addDevIsolateCapnpEsModule(
+        isolateBridgeSpecifier, isolateBridgePath, rootDir, modules, capnpEsImports);
   }
 
   static kj::String resolveDevIsolateCapnpSchemaImport(

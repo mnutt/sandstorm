@@ -148,6 +148,10 @@ const CAPNP_ES_GENERATED_SCHEMA_MODULES = [
     "capnp:/sandstorm/isolate-native-capnp-bridge.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/isolate-native-capnp-bridge.js",
   ],
+  [
+    "capnp:/sandstorm/isolate-bridge.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/isolate-bridge.js",
+  ],
 ];
 
 function formatOutput(stdout, stderr) {
@@ -1537,6 +1541,20 @@ test("isolate supervisor integration suite", {
     assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.streamError, "");
     assert.equal(body.sandstormApi.nativeCapnpBridge.generatedClient.dropError, "");
     assert.equal(
+      body.sandstormApi.nativeCapnpBridge.isolateBridgeBootstrap.transportKind,
+      "isolateBridgeWebSocketRpc");
+    assert.equal(
+      body.sandstormApi.nativeCapnpBridge.isolateBridgeBootstrap.connectionId,
+      `isolate-bridge-bootstrap-${body.sandstormApi.nativeCapnpBridge.targetId}`);
+    assert.deepEqual(body.sandstormApi.nativeCapnpBridge.isolateBridgeBootstrap.sandstormApi, {
+      hasSave: true,
+      hasRestore: true,
+      hasDrop: true,
+    });
+    assert.match(
+      body.sandstormApi.nativeCapnpBridge.isolateBridgeBootstrap.missingSessionError,
+      /session ID not found/);
+    assert.equal(
       typeof body.sandstormApi.nativeCapnpBridge.generatedClient.response.bodyText,
       "string");
     assert.equal(
@@ -1882,6 +1900,17 @@ test("isolate supervisor integration suite", {
     assert.deepEqual(body.sandstormApi.nativeCapnpBridge, {
       available: true,
       protocolVersion: 0,
+      isolateBridgeBootstrap: {
+        transportKind: "isolateBridgeWebSocketRpc",
+        connectionId: `isolate-bridge-bootstrap-${body.sandstormApi.nativeCapnpBridge.targetId}`,
+        sandstormApi: {
+          hasSave: true,
+          hasRestore: true,
+          hasDrop: true,
+        },
+        missingSessionError:
+            body.sandstormApi.nativeCapnpBridge.isolateBridgeBootstrap.missingSessionError,
+      },
       targetId: body.sandstormApi.nativeCapnpBridge.targetId,
       dropRequest: {
         kind: "drop",

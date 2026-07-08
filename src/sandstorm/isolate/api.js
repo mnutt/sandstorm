@@ -174,6 +174,36 @@ async function openNativeCapnpBridgeRpcSession(env, target, connectionId) {
   return response.webSocket;
 }
 
+async function openNativeCapnpBridgeBootstrapSession(env, connectionId) {
+  if (typeof connectionId !== "string" || connectionId.length === 0) {
+    throw new ValidationError("isolate bridge RPC session requires a connection id");
+  }
+
+  const params = new URLSearchParams({
+    bootstrap: "worker",
+    connectionId,
+  });
+  const response = await env.SANDSTORM_API.fetch(
+    `http://sandstorm/capnp/rpc-session?${params}`, {
+      headers: { Upgrade: "websocket" },
+  });
+  if (!response.webSocket) {
+    const text = await response.text();
+    let message = `isolate bridge RPC session failed with ${response.status}: ${text}`;
+    try {
+      const body = JSON.parse(text);
+      if (body && typeof body.error === "string" && body.error.length > 0) {
+        message = body.error;
+      }
+    } catch (_) {}
+
+    throw new NativeCapnpBridgeUnavailableError(message);
+  }
+
+  response.webSocket.accept();
+  return response.webSocket;
+}
+
 async function createNativeCapnpExportCapability(env, registration) {
   if (!registration || typeof registration !== "object") {
     throw new ValidationError("native Cap'n Proto export registration must be an object");
@@ -3045,6 +3075,8 @@ export function sandstorm(request, env) {
     nativeCapnpBridgeLifecycleBytes: (body) => nativeCapnpBridgeLifecycleBytesForEnv(env, body),
     nativeCapnpBridgeOpenRpcSession: (target, connectionId) =>
       openNativeCapnpBridgeRpcSession(env, target, connectionId),
+    nativeCapnpBridgeOpenBootstrapSession: (connectionId) =>
+      openNativeCapnpBridgeBootstrapSession(env, connectionId),
     nativeCapnpExport: (registration) => createNativeCapnpExportCapability(env, registration),
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
