@@ -4256,7 +4256,9 @@ private:
 
   class BrowserIsolateBridgeImpl final: public BrowserIsolateBridge::Server {
   public:
-    explicit BrowserIsolateBridgeImpl(IsolateRuntimeHost& host): host(host) {}
+    BrowserIsolateBridgeImpl(IsolateRuntimeConfig& config, IsolateRuntimeHost& host,
+        kj::String sessionId)
+        : config(config), host(host), sessionId(kj::mv(sessionId)) {}
 
     kj::Promise<void> getClaimedCapability(GetClaimedCapabilityContext context) override {
       auto id = context.getParams().getId();
@@ -4268,8 +4270,49 @@ private:
       return kj::READY_NOW;
     }
 
+    kj::Promise<void> claimPowerboxRequest(ClaimPowerboxRequestContext context) override {
+      KJ_REQUIRE(sessionId.size() > 0,
+          "browser isolate bridge has no SessionContext for Powerbox claiming");
+
+      KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(sessionId)) {
+        auto params = context.getParams();
+        auto request = sessionContext->claimRequestRequest();
+        request.setRequestToken(params.getRequestToken());
+        auto permissionDefs = config.viewInfoMessage->getRoot<UiView::ViewInfo>()
+            .asReader().getPermissions();
+        initRequiredPermissions(
+            request.initRequiredPermissions(permissionDefs.size()), params.getRequiredPermissions());
+        return request.send().then([context](auto result) mutable {
+          context.getResults().setCap(result.getCap());
+        });
+      } else {
+        KJ_FAIL_REQUIRE("browser isolate bridge session ID not found", sessionId);
+      }
+    }
+
   private:
+    void initRequiredPermissions(
+        capnp::List<bool>::Builder permissions, capnp::List<capnp::Text>::Reader requiredNames) {
+      auto permissionDefs = config.viewInfoMessage->getRoot<UiView::ViewInfo>()
+          .asReader().getPermissions();
+      KJ_ASSERT(permissions.size() == permissionDefs.size());
+
+      for (auto requiredName: requiredNames) {
+        bool found = false;
+        for (auto i: kj::indices(permissionDefs)) {
+          if (requiredName == permissionDefs[i].getName()) {
+            permissions.set(i, true);
+            found = true;
+            break;
+          }
+        }
+        KJ_REQUIRE(found, "unknown required permission", requiredName);
+      }
+    }
+
+    IsolateRuntimeConfig& config;
     IsolateRuntimeHost& host;
+    kj::String sessionId;
   };
 
   class NativeCapnpBridgeController final {
@@ -4479,7 +4522,8 @@ private:
   }
 
   kj::Promise<void> openBrowserIsolateBridgeBootstrapRpcSession(
-      kj::StringPtr url, kj::HttpService::Response& response) {
+      kj::StringPtr url, const kj::HttpHeaders& requestHeaders,
+      kj::HttpService::Response& response) {
     kj::String connectionId;
     KJ_IF_MAYBE(error, readNativeCapnpRpcSessionParam(
         url, "connectionId", "browser isolate bridge RPC session connection id is missing",
@@ -4499,9 +4543,17 @@ private:
           "browser isolate bridge RPC session connection id is already in use"));
     }
 
+    kj::String sessionId;
+    KJ_IF_MAYBE(value, findRequestHeader(requestHeaders, "x-sandstorm-session-id")) {
+      sessionId = kj::mv(*value);
+    } else {
+      sessionId = kj::heapString("");
+    }
+
     kj::HttpHeaders responseHeaders(headerTable);
     auto webSocket = response.acceptWebSocket(responseHeaders);
-    capnp::Capability::Client bootstrap = kj::heap<BrowserIsolateBridgeImpl>(host);
+    capnp::Capability::Client bootstrap = kj::heap<BrowserIsolateBridgeImpl>(
+        config, host, kj::mv(sessionId));
     return nativeCapnpBridge.openWebSocketRpcSession(kj::mv(webSocket), connectionId,
         kj::heapString(""), 0, kj::heapString("sandstorm.BrowserIsolateBridge"),
         kj::mv(bootstrap));
@@ -4528,7 +4580,7 @@ private:
     if (bootstrapModes[0] == "worker") {
       return openIsolateBridgeBootstrapRpcSession(url, response);
     } else if (bootstrapModes[0] == "browser") {
-      return openBrowserIsolateBridgeBootstrapRpcSession(url, response);
+      return openBrowserIsolateBridgeBootstrapRpcSession(url, requestHeaders, response);
     } else {
       return sendJson(response, 400, "Bad Request", renderError(
           "native Cap'n Proto RPC session bootstrap mode is invalid"));
@@ -4544,6 +4596,34 @@ private:
 
     output = kj::mv(values[0]);
     return nullptr;
+  }
+
+  static bool httpHeaderNameEquals(kj::StringPtr left, kj::StringPtr right) {
+    if (left.size() != right.size()) {
+      return false;
+    }
+
+    for (auto i: kj::indices(left)) {
+      char l = left[i];
+      char r = right[i];
+      if ('A' <= l && l <= 'Z') l += 'a' - 'A';
+      if ('A' <= r && r <= 'Z') r += 'a' - 'A';
+      if (l != r) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static kj::Maybe<kj::String> findRequestHeader(
+      const kj::HttpHeaders& headers, kj::StringPtr name) {
+    kj::Maybe<kj::String> result = nullptr;
+    headers.forEach([&](kj::StringPtr headerName, kj::StringPtr value) {
+      if (result == nullptr && httpHeaderNameEquals(headerName, name)) {
+        result = kj::str(value);
+      }
+    });
+    return result;
   }
 
   kj::Maybe<kj::String> readAtMostOneQueryParam(kj::StringPtr url, kj::StringPtr name,

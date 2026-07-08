@@ -916,8 +916,9 @@ Progress:
 - the native browser helper now exposes schema-derived Powerbox descriptor
   helpers plus `requestBrowserNativeCapnp()` / `claimBrowserNativeCapnpToken()`;
   browser code can request a user-mediated app-interface capability, claim the
-  returned token through Sandstorm's normal claim route, and receive a generated
-  `capnp-es` client without going through the old app-object browser transport
+  returned token over the browser-scoped `BrowserIsolateBridge` capnp
+  bootstrap, and receive a generated `capnp-es` client without going through
+  the old app-object browser transport or the old browser-forwarded claim route
 - the unreleased `sandstorm:browser-capnp:*` companion module generator and
   `__sandstorm_isolate_runtime/capnp-browser` package output have been
   removed; browser schema RPC now uses the native module-serving routes
