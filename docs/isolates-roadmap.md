@@ -92,10 +92,14 @@ migration work is still in progress.
 **Progress, 2026-07-08:** `connectNativeCapnp()` no longer consumes
 `NativeCapnpLocalDispatch` metadata or exposes a `localDirect` transport. Even
 same-supervisor native capability slots now use the same capnp RPC framing as
-cross-supervisor slots. The supervisor still emits the legacy local-dispatch
-field inside lifecycle-envelope responses for the explicit compatibility
-fixture; that producer and schema field remain part of the lifecycle-envelope
-deletion work below.
+cross-supervisor slots.
+
+**Progress, 2026-07-08:** The local-dispatch lease is deleted from the
+lifecycle bridge schema and supervisor implementation. The
+`NativeCapnpLocalDispatch` struct, generated JS/DTS accessors,
+`issueNativeCapnpLocalDispatchAuthorization()`, and per-capability lease-token
+cache are gone; lifecycle restore fixtures now assert that restored capability
+slots are plain slots with no hidden local-dispatch property.
 
 **Delete** (all anchors per the architecture review):
 
@@ -112,12 +116,6 @@ deletion work below.
   and drop-notify machinery (the RPC release protocol replaces them).
 - Per-export HTTP-transport RPC sessions (`NativeCapnpExportRpcSession`,
   `NativeCapnpExportHttpMessageStream`, per-export session paths).
-- The local-dispatch lease: `NativeCapnpLocalDispatch`,
-  `issueNativeCapnpLocalDispatchAuthorization`, the trusted WeakMap. Its
-  use case (same-grain restore of own export) is temporarily served by
-  ordinary RPC reference shortening on the single connection, and later by
-  the Phase 4 fast path.
-
 **Keep as HTTP:** inbound WebSession→sidecar fetch (workerd's native
 ingress), `STORAGE` binding, read-only metadata GETs.
 

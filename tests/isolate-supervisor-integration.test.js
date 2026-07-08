@@ -1868,20 +1868,9 @@ test("isolate supervisor integration suite", {
           connectionIsNull: false,
           dropResult: null,
         },
-        localDispatchLease: {
+        legacyLifecycleRestore: {
           restoreOk: true,
           restoreStatus: 200,
-          rawHasLocalDispatch: true,
-          rawExportIdType: "string",
-          rawExportIdLength:
-              body.sandstormApi.nativeCapnpExport.greeter.localDispatchLease.rawExportIdLength,
-          rawExportIdEqualsCapabilityId: false,
-          rawInterfaceId: "b66316217ceedb1b",
-          rawInterfaceName: "NativeGreeter",
-          rawAuthorizationType: "string",
-          rawAuthorizationLength:
-              body.sandstormApi.nativeCapnpExport.greeter.localDispatchLease
-                .rawAuthorizationLength,
           decodedCapabilityKeys: ["id", "interfaceId", "interfaceName", "kind"],
           decodedHasLocalDispatchProperty: false,
           publicDecodedTransportKind: "webSocketRpc",
@@ -1916,10 +1905,6 @@ test("isolate supervisor integration suite", {
         },
       },
     });
-    assert.ok(
-      body.sandstormApi.nativeCapnpExport.greeter.localDispatchLease.rawExportIdLength > 0);
-    assert.ok(
-      body.sandstormApi.nativeCapnpExport.greeter.localDispatchLease.rawAuthorizationLength > 0);
     assert.deepEqual(body.sandstormApi.nativeCapnpBridge, {
       available: true,
       protocolVersion: 0,
