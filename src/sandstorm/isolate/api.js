@@ -139,32 +139,6 @@ async function callSandstormApi(env, path) {
   return body;
 }
 
-async function nativeCapnpBridgeLifecycle(env, body = new Uint8Array()) {
-  const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/lifecycle", {
-    method: "POST",
-    headers: { "content-type": "application/octet-stream" },
-    body,
-  });
-  return parseApiResponseBody(response);
-}
-
-async function nativeCapnpBridgeLifecycleBytesForEnv(env, body = new Uint8Array()) {
-  const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/lifecycle", {
-    method: "POST",
-    headers: {
-      "accept": "application/octet-stream",
-      "content-type": "application/octet-stream",
-    },
-    body,
-  });
-  return {
-    ok: response.ok,
-    status: response.status,
-    contentType: response.headers.get("content-type") || "",
-    body: new Uint8Array(await response.arrayBuffer()),
-  };
-}
-
 async function openNativeCapnpBridgeRpcSession(env, target, connectionId) {
   if (!target || typeof target.id !== "string" || target.id.length === 0) {
     throw new ValidationError("native Cap'n Proto RPC session requires a target capability id");
@@ -1904,25 +1878,6 @@ async function serveBrowserSystemRoute(request, env) {
     });
   }
 
-  if (url.pathname === "/__sandstorm/native-capnp/lifecycle" && request.method === "POST") {
-    const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/lifecycle", {
-      method: "POST",
-      headers: {
-        "accept": "application/octet-stream",
-        "content-type": "application/octet-stream",
-      },
-      body: request.body,
-    });
-    return new Response(await response.arrayBuffer(), {
-      status: response.status,
-      statusText: response.statusText,
-      headers: {
-        "content-type": response.headers.get("content-type") ||
-          "application/octet-stream",
-      },
-    });
-  }
-
   const capnpPrefix = "/__sandstorm/capnp/";
   if (url.pathname.startsWith(capnpPrefix) && request.method === "GET") {
     const path = url.pathname.slice(capnpPrefix.length);
@@ -2411,11 +2366,6 @@ import {
   DeferredTransport,
   Message,
 } from "/capnp-es/index.mjs";
-import {
-  NativeCapnpBridgeRequest,
-  NativeCapnpBridgeResponse,
-  NativeCapnpCapabilitySlotKind,
-} from "/__sandstorm/capnp/sandstorm/isolate-native-capnp-bridge.capnp.js";
 
 export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
 
@@ -2523,31 +2473,12 @@ function nativeCapnpInterfaceMetadata(InterfaceClass, options = {}) {
 
 function nativeCapnpSlotKind(kind = "receiverHosted") {
   switch (kind) {
-    case NativeCapnpCapabilitySlotKind.SENDER_HOSTED:
-    case NativeCapnpCapabilitySlotKind.RECEIVER_HOSTED:
-    case NativeCapnpCapabilitySlotKind.SAVED_TOKEN:
-      return kind;
     case "senderHosted":
-      return NativeCapnpCapabilitySlotKind.SENDER_HOSTED;
     case "receiverHosted":
-      return NativeCapnpCapabilitySlotKind.RECEIVER_HOSTED;
     case "savedToken":
-      return NativeCapnpCapabilitySlotKind.SAVED_TOKEN;
+      return kind;
     default:
       throw new TypeError("unknown native capability slot kind: " + kind);
-  }
-}
-
-function nativeCapnpSlotKindName(kind) {
-  switch (kind) {
-    case NativeCapnpCapabilitySlotKind.SENDER_HOSTED:
-      return "senderHosted";
-    case NativeCapnpCapabilitySlotKind.RECEIVER_HOSTED:
-      return "receiverHosted";
-    case NativeCapnpCapabilitySlotKind.SAVED_TOKEN:
-      return "savedToken";
-    default:
-      throw new NativeCapnpBridgeProtocolError("unknown native capability slot kind: " + kind);
   }
 }
 
@@ -2575,23 +2506,6 @@ function nativeCapnpCapabilityForInterface(capability, InterfaceClass, options =
   });
 }
 
-function writeNativeCapnpCapabilitySlot(target, slot) {
-  const normalized = normalizeNativeCapnpCapabilitySlot(slot);
-  target.id = normalized.id;
-  target.interfaceId = normalized.interfaceId;
-  target.interfaceName = normalized.interfaceName;
-  target.kind = normalized.kind;
-}
-
-function readNativeCapnpCapabilitySlot(slot) {
-  return Object.freeze({
-    id: slot.id,
-    interfaceId: slot.interfaceId,
-    interfaceName: slot.interfaceName,
-    kind: nativeCapnpSlotKindName(slot.kind),
-  });
-}
-
 function normalizeConnectionId(connectionId) {
   if (typeof connectionId === "string" && connectionId.length > 0) return connectionId;
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -2599,65 +2513,6 @@ function normalizeConnectionId(connectionId) {
   }
   return "browser-native-capnp-" + Date.now().toString(36) + "-" +
     Math.random().toString(36).slice(2);
-}
-
-function makeNativeCapnpBridgeRestoreRequest(token, InterfaceClass, options = {}) {
-  if (typeof token !== "string" || token.length === 0) {
-    throw new TypeError("restoreBrowserNativeCapnp() requires a non-empty token");
-  }
-  const schema = InterfaceClass?.schema || InterfaceClass?.Client?.schema ||
-    InterfaceClass?._capnp || InterfaceClass?.Client?._capnp || {};
-  const envelope = new Message();
-  const request = envelope.initRoot(NativeCapnpBridgeRequest);
-  request.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
-  const restore = request._initRestore();
-  restore.token = token;
-  restore.expectedInterfaceId = nativeCapnpInterfaceId(
-    options.interfaceId ?? schema.interfaceId ?? InterfaceClass?.interfaceId ?? 0n);
-  restore.expectedInterfaceName = options.interfaceName ?? schema.interfaceName ??
-    InterfaceClass?.interfaceName ?? "";
-  return envelope;
-}
-
-function makeNativeCapnpBridgeTargetRequest(which, target) {
-  const envelope = new Message();
-  const request = envelope.initRoot(NativeCapnpBridgeRequest);
-  request.protocolVersion = SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION;
-  const body = which === "save" ? request._initSave() : request._initDrop();
-  writeNativeCapnpCapabilitySlot(body._initTarget(), target);
-  return envelope;
-}
-
-export function readNativeCapnpBridgeResponse(message) {
-  return new Message(nativeCapnpMessageBytes(message), false).getRoot(NativeCapnpBridgeResponse);
-}
-
-export function decodeNativeCapnpBridgeResponse(message) {
-  const response = readNativeCapnpBridgeResponse(message);
-  if (response.protocolVersion !== SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION) {
-    throw new NativeCapnpBridgeProtocolError(
-      "unsupported native bridge protocol version: " + response.protocolVersion);
-  }
-
-  switch (response.which()) {
-    case NativeCapnpBridgeResponse.CAPABILITY:
-      return Object.freeze({
-        which: "capability",
-        capability: readNativeCapnpCapabilitySlot(response.capability),
-      });
-    case NativeCapnpBridgeResponse.SAVED:
-      return Object.freeze({ which: "saved", saved: Object.freeze({ token: response.saved.token }) });
-    case NativeCapnpBridgeResponse.ACKNOWLEDGED:
-      return Object.freeze({ which: "acknowledged" });
-    case NativeCapnpBridgeResponse.EXCEPTION:
-      return Object.freeze({ which: "exception", exception: Object.freeze({
-        type: response.exception.type,
-        reason: response.exception.reason,
-        trace: response.exception.trace,
-      }) });
-    default:
-      throw new NativeCapnpBridgeProtocolError("unknown native bridge response");
-  }
 }
 
 export async function nativeCapnpBridgeInfo() {
@@ -2668,23 +2523,6 @@ export async function nativeCapnpBridgeInfo() {
       result.error || "native bridge info request failed", { response, result });
   }
   return result;
-}
-
-export async function nativeCapnpBridgeLifecycleBytes(message) {
-  const response = await fetch("/__sandstorm/native-capnp/lifecycle", {
-    method: "POST",
-    headers: {
-      "accept": "application/octet-stream",
-      "content-type": "application/octet-stream",
-    },
-    body: nativeCapnpMessageBytes(message),
-  });
-  return {
-    ok: response.ok,
-    status: response.status,
-    contentType: response.headers.get("content-type") || "",
-    body: new Uint8Array(await response.arrayBuffer()),
-  };
 }
 
 async function nativeCapnpBrowserMessageBytes(data) {
@@ -2758,7 +2596,6 @@ export function openBrowserNativeCapnpRpcSession(target, connectionId) {
 
 export const browserNativeCapnpApi = Object.freeze({
   capnpBridgeInfo: nativeCapnpBridgeInfo,
-  nativeCapnpBridgeLifecycleBytes,
   openBrowserNativeCapnpRpcSession,
 });
 
@@ -3117,40 +2954,7 @@ export function connectBrowserNativeCapnp(target, InterfaceClass, options = {}) 
     capability: target,
     connection,
     transport: connection.transport,
-    save: () => saveBrowserNativeCapnp(connection.transport.target),
-    drop: () => dropBrowserNativeCapnp(connection.transport.target),
   });
-}
-
-async function sendNativeCapnpBridgeEnvelope(message, expectedWhich) {
-  const response = await nativeCapnpBridgeLifecycleBytes(message.toUint8Array());
-  const decoded = decodeNativeCapnpBridgeResponse(response.body);
-  if (decoded.which === "exception") {
-    throw new NativeCapnpBridgeUnavailableError(
-      decoded.exception.reason || "native bridge call failed", { response, decoded });
-  }
-  if (decoded.which !== expectedWhich) {
-    throw new NativeCapnpBridgeProtocolError(
-      "native bridge returned unexpected " + decoded.which, { response, decoded });
-  }
-  return decoded;
-}
-
-export async function restoreBrowserNativeCapnp(token, InterfaceClass, options = {}) {
-  const decoded = await sendNativeCapnpBridgeEnvelope(
-    makeNativeCapnpBridgeRestoreRequest(token, InterfaceClass, options), "capability");
-  return connectBrowserNativeCapnp(decoded.capability, InterfaceClass, options);
-}
-
-export async function saveBrowserNativeCapnp(target) {
-  const decoded = await sendNativeCapnpBridgeEnvelope(
-    makeNativeCapnpBridgeTargetRequest("save", target), "saved");
-  return decoded.saved.token;
-}
-
-export async function dropBrowserNativeCapnp(target) {
-  await sendNativeCapnpBridgeEnvelope(
-    makeNativeCapnpBridgeTargetRequest("drop", target), "acknowledged");
 }
 `;
 }
@@ -3164,8 +2968,6 @@ export function sandstorm(request, env) {
     modules: () => callSandstorm(env, "modules"),
     bindings: () => callSandstorm(env, "bindings"),
     capnpBridgeInfo: () => callSandstorm(env, "capnp/bridge-info"),
-    nativeCapnpBridgeLifecycle: (body) => nativeCapnpBridgeLifecycle(env, body),
-    nativeCapnpBridgeLifecycleBytes: (body) => nativeCapnpBridgeLifecycleBytesForEnv(env, body),
     nativeCapnpBridgeOpenRpcSession: (target, connectionId) =>
       openNativeCapnpBridgeRpcSession(env, target, connectionId),
     nativeCapnpBridgeOpenBootstrapSession: (connectionId) =>

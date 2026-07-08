@@ -71,8 +71,7 @@ request-scoped bootstrap (`getSandstormApi()` and `getSessionContext()`), and
 Cap'n Proto WebSocket RPC session. `sandstorm:capnp` exposes
 `connectIsolateBridge()` for trusted helper code, and the isolate integration
 suite covers successful `SandstormApi` bootstrap plus a rejected missing
-session-context lookup. The old lifecycle envelope and authority POST routes
-still exist and remain the next Phase 1 deletion/migration work.
+session-context lookup.
 
 **Progress, 2026-07-08:** `sandstorm:capnp` also exposes
 `restoreNativeCapnpViaBootstrap()`, an explicit migration helper that restores
@@ -84,10 +83,7 @@ checks that the restored live handle can be saved again.
 
 **Progress, 2026-07-08:** `restoreNativeCapnp()` now defaults to the isolate
 bridge bootstrap restore path, so normal durable native capability restores
-return RPC imports carried by the single WebSocket RPC channel. The raw
-lifecycle envelope restore helper is now exercised only by the explicit
-lifecycle compatibility fixture while the remaining save/drop/export
-migration work is still in progress.
+return RPC imports carried by the single WebSocket RPC channel.
 
 **Progress, 2026-07-08:** `connectNativeCapnp()` no longer consumes
 `NativeCapnpLocalDispatch` metadata or exposes a `localDirect` transport. Even
@@ -116,9 +112,19 @@ model. The integration fixture now covers a schema-defined `NativeGreeter`
 object ID through that path; route-backed WebSession/ApiSession app refs still
 use their existing supervisor-owned compatibility path.
 
+**Progress, 2026-07-08:** The native Cap'n Proto lifecycle envelope is
+deleted. `POST /capnp/lifecycle`, the browser-forwarded
+`/__sandstorm/native-capnp/lifecycle` route, the
+`NativeCapnpBridgeRequest/Response/Drop/Save/Restore/Saved` schema, and the
+generated `sandstorm:native-capnp-bridge` helper module are gone.
+`connectNativeCapnp()` now works with live RPC imports from the WebSocket
+channel and delegates save/drop to capability methods when present. The
+integration suite asserts that lifecycle is no longer advertised, old
+lifecycle calls are rejected, and the removed browser schema module is absent.
+
 **Delete** (all anchors per the architecture review):
 
-- The lifecycle envelope: `POST /capnp/lifecycle` and the
+- Done: the lifecycle envelope: `POST /capnp/lifecycle` and the
   `NativeCapnpBridgeRequest/Response/Drop/Save/Restore/Saved` structs.
 - The authority-bearing POST routes on `SandstormApiBindingService`
   (`/powerbox/claim-request`, `/powerbox/save`, `/powerbox/restore`,

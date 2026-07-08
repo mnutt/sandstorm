@@ -219,12 +219,12 @@ source. An isolate can connect to or restore only capabilities it already
 holds through Powerbox, durable restore, or an explicit export result; it does
 not get access to a raw Cap'n Proto vat network.
 
-Low-level helpers such as `NativeCapnpBridgeWebSocketRpcTransport`,
-`createNativeCapnpBridgeConnection()`, and bridge envelope encoders are
-available in `sandstorm:capnp` for generated-code plumbing and tests. App code
-should prefer `exportNativeCapnp()`, `restoreNativeCapnp()`,
-`connectNativeCapnp()`, `saveNativeCapnp()`, and client `.drop()` / `.save()`
-methods.
+Low-level helpers such as `NativeCapnpBridgeWebSocketRpcTransport` and
+`createNativeCapnpBridgeConnection()` are available in `sandstorm:capnp` for
+generated-code plumbing and tests. App code should prefer
+`exportNativeCapnp()`, `restoreNativeCapnp()`, `connectNativeCapnp()`, and
+the `.drop()` / `.save()` methods on returned clients or Sandstorm capability
+handles.
 
 To advertise a schema-defined capability from `spk dev-isolate`, pass the
 schema and interface name:
