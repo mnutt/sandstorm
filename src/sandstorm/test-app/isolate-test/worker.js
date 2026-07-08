@@ -423,6 +423,7 @@ export default {
         ok: true,
         capabilityClass: capability instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
+        info: await capability.info(),
       });
     }
 
@@ -776,6 +777,7 @@ export default {
         ok: true,
         capabilityClass: capability instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
+        info: await capability.info(),
       });
     }
 
@@ -830,6 +832,7 @@ export default {
         ok: true,
         capabilityClass: capability instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
+        info: await capability.info(),
       });
     }
 
@@ -1260,29 +1263,16 @@ export default {
         SANDSTORM_API: {
           async fetch(input, init) {
             calls.push(String(input));
-            const parsed = new URL(String(input));
-            if (parsed.pathname === "/capabilities/claimed") {
-              const id = parsed.searchParams.get("id");
-              return Response.json({
-                ok: true,
-                type: "capabilityInfo",
-                id,
-                kind: "powerboxClaim",
-                residence: "imported",
-                nativeInterface: "outboundHttpSession",
-                pathPrefix: "",
-                persistent: true,
-                supportsWebFetch: false,
-                supportsOutboundHttpFetch: true,
-                hasNativeCapability: true,
-                liveForwardable: true,
-              });
-            }
             return Response.json({ ok: false, error: "unexpected mock fetch" }, { status: 500 });
           },
         },
       };
-      const capability = new Capability(mockEnv, "mock-outbound");
+      const capability = new Capability(mockEnv, "mock-outbound", {
+        kind: "powerboxClaim",
+        residence: "imported",
+        nativeInterface: "outboundHttpSession",
+        pathPrefix: "",
+      });
       let fetchError = null;
       try {
         await capability.fetch("https://api.example.test/v1/should-not-fetch");
@@ -1563,12 +1553,10 @@ export default {
       const actionCapability = claim instanceof Capability ? claim :
         (claim?.ok && claim?.id ? new Capability(env, claim.id) : null);
       async function claimedInfo(capability) {
-        if (!capability?.ok || !capability?.id) return null;
-        const response = await env.SANDSTORM_API.fetch(
-          `http://sandstorm/capabilities/claimed?id=${encodeURIComponent(capability.id)}`);
+        if (!(capability instanceof Capability)) return null;
         return {
-          status: response.status,
-          body: await response.json(),
+          status: 200,
+          body: await capability.info(),
         };
       }
       const claimInfo = await claimedInfo(claim);

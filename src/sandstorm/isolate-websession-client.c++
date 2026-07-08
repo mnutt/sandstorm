@@ -1565,7 +1565,7 @@ public:
         claimBody);
     KJ_REQUIRE(contains(claimBody,
         "\"claimInfo\":{\"status\":200,\"body\":{\"ok\":true,"
-        "\"type\":\"claimedCapabilityInfo\""),
+        "\"type\":\"capabilityInfo\""),
         claimBody);
     KJ_REQUIRE(contains(claimBody, "\"kind\":\"powerboxClaim\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"residence\":\"imported\""), claimBody);
@@ -1581,7 +1581,7 @@ public:
         "\"restore\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"capability\""),
         claimBody);
     KJ_REQUIRE(contains(claimBody,
-        "\"info\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"claimedCapabilityInfo\""),
+        "\"info\":{\"status\":200,\"body\":{\"ok\":true,\"type\":\"capabilityInfo\""),
         claimBody);
     KJ_REQUIRE(contains(claimBody, "\"kind\":\"restored\""), claimBody);
     KJ_REQUIRE(contains(claimBody, "\"typed\":{\"restoredClass\":true"), claimBody);

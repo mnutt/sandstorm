@@ -22,11 +22,7 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
   # Resolves a same-grain claimed-capability ID into a real capnp reference on
   # this RPC connection so trusted JS can pass it to standard Sandstorm APIs.
 
-  storeImportedCapability @3 (
-      cap :Capability,
-      kind :Text,
-      nativeInterface :Text,
-      pathPrefix :Text) -> (id :Text);
+  storeImportedCapability @3 (cap :Capability) -> (id :Text);
   # Transitional helper while id-backed Capability handles still exist.
   # Stores a capability received over the RPC connection in the same temporary
   # claimed-capability registry used by fetch-shaped handles.

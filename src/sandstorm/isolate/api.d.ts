@@ -131,7 +131,7 @@ declare module "sandstorm:api" {
     readonly type: "capability";
     readonly id: string;
     readonly env: SandstormEnv;
-    constructor(env: SandstormEnv, id: string);
+    constructor(env: SandstormEnv, id: string, metadata?: unknown);
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     info(options?: { refresh?: boolean }): Promise<unknown>;
     save(options?: SaveCapabilityOptions): Promise<string>;
