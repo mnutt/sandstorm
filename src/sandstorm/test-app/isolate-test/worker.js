@@ -1885,6 +1885,35 @@ export default {
           resolvedName: "after makeGreeter resolves",
           greetName: "bridge client",
         });
+      const nativeExportGreeterSavedToken = await saveNativeCapnp(
+        apiHelper,
+        {
+          id: nativeExportGreeter.id,
+          interfaceId: `0x${NativeGreeter._capnp.typeIdHex}`,
+          interfaceName: "NativeGreeter",
+          kind: "receiverHosted",
+        });
+      const nativeExportGreeterRestored = await restoreNativeCapnp(
+        apiHelper,
+        nativeExportGreeterSavedToken,
+        NativeGreeter,
+        {
+          interfaceName: "NativeGreeter",
+          connectionId: `native-capnp-export-greeter-restored-${nativeExportGreeter.id}`,
+        });
+      const nativeExportGreeterRestoredConformance = await runNativeGreeterConformance(
+        nativeExportGreeterRestored, {
+          helloName: "restored schema",
+          childPrefix: "native export restored greeter",
+          pipelinedName: "before restored makeGreeter resolves",
+          resolvedName: "after restored makeGreeter resolves",
+          greetName: "restored client",
+        });
+      const nativeExportGreeterRestoredInfoResponse = await env.SANDSTORM_API.fetch(
+        `http://sandstorm/capabilities/claimed?id=${
+          encodeURIComponent(nativeExportGreeterRestored.capability.id)}`);
+      const nativeExportGreeterRestoredInfo =
+          await nativeExportGreeterRestoredInfoResponse.json();
       const nativeExportGreeterHello = {
         message: nativeExportGreeterBridgeConformance.hello.message,
       };
@@ -1902,6 +1931,13 @@ export default {
         conformance: {
           direct: nativeExportGreeterDirectConformance,
           bridge: nativeExportGreeterBridgeConformance,
+          restored: nativeExportGreeterRestoredConformance,
+        },
+        restored: {
+          savedTokenType: typeof nativeExportGreeterSavedToken,
+          targetId: nativeExportGreeterRestored.capability.id,
+          connectionId: nativeExportGreeterRestored.transport.connectionId,
+          info: nativeExportGreeterRestoredInfo,
         },
         info: nativeExportGreeterInfo,
         drop: nativeExportGreeterDrop,

@@ -1781,6 +1781,48 @@ test("isolate supervisor integration suite", {
                   "bridge client from native export self-test",
             },
           },
+          restored: {
+            hello: {
+              message: "native export greeter hello restored schema",
+            },
+            pipelined: {
+              message:
+                  "native export restored greeter before restored makeGreeter resolves",
+            },
+            resolved: {
+              hasClient: true,
+              message:
+                  "native export restored greeter after restored makeGreeter resolves",
+            },
+            argument: {
+              message:
+                  "native export greeter called native export restored greeter " +
+                  "restored client from native export self-test",
+            },
+          },
+        },
+        restored: {
+          savedTokenType: "string",
+          targetId: body.sandstormApi.nativeCapnpExport.greeter.restored.targetId,
+          connectionId:
+              `native-capnp-export-greeter-restored-${
+                body.sandstormApi.nativeCapnpExport.greeter.info.id}`,
+          info: {
+            ok: true,
+            type: "claimedCapabilityInfo",
+            id: body.sandstormApi.nativeCapnpExport.greeter.restored.targetId,
+            kind: "nativeCapnpExport",
+            residence: "localExport",
+            nativeInterface: "unknown",
+            pathPrefix: "",
+            persistent: true,
+            hasDropNotify: false,
+            dropNotifyRefCount: 0,
+            supportsWebFetch: true,
+            supportsOutboundHttpFetch: true,
+            hasNativeCapability: true,
+            liveForwardable: true,
+          },
         },
         info: {
           ok: true,
