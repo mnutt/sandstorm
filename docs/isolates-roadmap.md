@@ -143,14 +143,17 @@ export.
   `/__sandstorm/native-capnp/export-sessions/...` callback routes.
 - Done: `/powerbox/dup`; apps can keep ordinary JS references to the same live
   handle instead of asking the supervisor to mint another string ID.
+- Done: drop groups and live-handle drop-notify machinery. Dropping a live
+  claimed capability now only releases the local registry entry; remote release
+  semantics should come from the RPC release protocol.
 - The authority-bearing POST routes on `SandstormApiBindingService`
   (`/powerbox/claim-request`, `/powerbox/save`, `/powerbox/restore`,
   `/powerbox/drop`, `/powerbox/drop-saved`, `/powerbox/offer`,
   `/powerbox/fulfill-request`, `/powerbox/tie-to-user`, `/powerbox/fetch`,
   `/powerbox/outbound-http-fetch`).
   Read-only GET metadata routes stay.
-- `IsolateSessionRegistry`'s string-ID claimed-capability table, drop groups,
-  and drop-notify machinery (the RPC release protocol replaces them).
+- `IsolateSessionRegistry`'s string-ID claimed-capability table (RPC cap-table
+  references replace it).
 - Done: the misleading per-export HTTP-transport names on the worker
   `MainView` RPC socket plumbing. The native-export registration endpoint and
   JS export-session paths were already gone; the remaining C++ session classes

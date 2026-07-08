@@ -1870,7 +1870,7 @@ test("isolate supervisor integration suite", {
                 body.sandstormApi.nativeCapnpBridge.generatedClient.drop.targetId}`,
           dropResult: {
             ok: true,
-            released: false,
+            released: true,
           },
           generatedCallAfterDropError:
               body.sandstormApi.nativeCapnpBridge.generatedClient.drop
@@ -2020,8 +2020,6 @@ test("isolate supervisor integration suite", {
       nativeInterface: "webSession",
       pathPrefix: "/exported",
       persistent: true,
-      hasDropNotify: false,
-      dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: false,
       hasNativeCapability: true,
@@ -2083,10 +2081,10 @@ test("isolate supervisor integration suite", {
     assert.match(
       prefixValidation.json.results.dotSegmentPrefix.error,
       /pathPrefix|canonical|500/);
-    assert.equal(prefixValidation.json.results.siblingDropNotifyPath.ok, false);
+    assert.equal(prefixValidation.json.results.invalidPersistent.ok, false);
     assert.match(
-      prefixValidation.json.results.siblingDropNotifyPath.error,
-      /dropNotifyPath|400/);
+      prefixValidation.json.results.invalidPersistent.error,
+      /persistent|boolean|500/);
 
     const streamed = await requestUnixSocket(
       fixture.sandstormApiSocket,
@@ -2165,8 +2163,6 @@ test("isolate supervisor integration suite", {
       nativeInterface: "webSession",
       pathPrefix: "/exported",
       persistent: true,
-      hasDropNotify: false,
-      dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: false,
       hasNativeCapability: true,
@@ -2283,8 +2279,6 @@ test("isolate supervisor integration suite", {
       nativeInterface: "apiSession",
       pathPrefix: "/api-exported",
       persistent: true,
-      hasDropNotify: false,
-      dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: false,
       hasNativeCapability: true,
@@ -2353,8 +2347,6 @@ test("isolate supervisor integration suite", {
       nativeInterface: "apiSession",
       pathPrefix: "/api-exported",
       persistent: true,
-      hasDropNotify: false,
-      dropNotifyRefCount: 0,
       supportsWebFetch: true,
       supportsOutboundHttpFetch: false,
       hasNativeCapability: true,
@@ -2627,7 +2619,6 @@ test("isolate supervisor integration suite", {
     assert.equal(claimedStats.json.ok, true);
     assert.equal(claimedStats.json.type, "claimedCapabilityStats");
     assert.equal(typeof claimedStats.json.claimedCapabilityCount, "number");
-    assert.equal(typeof claimedStats.json.dropNotifyGroupCount, "number");
     assert.equal(typeof claimedStats.json.localExportCount, "number");
     assert.equal(typeof claimedStats.json.importedCount, "number");
     assert.equal(typeof claimedStats.json.webSessionNativeCount, "number");

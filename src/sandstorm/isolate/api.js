@@ -1899,25 +1899,12 @@ function webSessionPersistent(options = {}) {
   return options.persistent;
 }
 
-function webSessionDropNotifyPath(options = {}) {
-  if (options.dropNotifyPath === undefined || options.dropNotifyPath === null) {
-    return undefined;
-  }
-
-  return webSessionPathPrefix({ pathPrefix: options.dropNotifyPath });
-}
-
 async function createWebSessionCapability(env, options = {}) {
   const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
   const persistent = webSessionPersistent(options) ? "true" : "false";
-  const dropNotifyPath = webSessionDropNotifyPath(options);
-  const notifyQuery = dropNotifyPath === undefined
-    ? ""
-    : `&dropNotifyPath=${encodeURIComponent(dropNotifyPath)}`;
   return wrapCapability(
     env, await postSandstorm(
-      env, `capabilities/web-session?pathPrefix=${pathPrefix}&persistent=${persistent}` +
-        notifyQuery));
+      env, `capabilities/web-session?pathPrefix=${pathPrefix}&persistent=${persistent}`));
 }
 
 async function createApiSessionCapability(env, options = {}) {
