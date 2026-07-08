@@ -39,3 +39,13 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
   # Creates a route-backed WebSession or ApiSession capability without
   # exposing creation as an authority-bearing local HTTP route.
 }
+
+interface BrowserIsolateBridge @0x93fb2746c97b5bea {
+  # Bootstrap capability for browser-originated native Cap'n Proto sessions.
+  #
+  # This intentionally exposes only capabilities that the worker already handed
+  # to the current browser session by opaque id. It does not expose the worker
+  # SandstormApi or SessionContext authority.
+
+  getClaimedCapability @0 (id :Text) -> (cap :Capability);
+}

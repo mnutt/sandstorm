@@ -2468,8 +2468,11 @@ test("isolate supervisor integration suite", {
       fixture.workerdSocket, "/__sandstorm/native-capnp/client.js");
     assert.equal(browserNativeCapnpClient.statusCode, 200);
     assert.match(browserNativeCapnpClient.body, /connectBrowserNativeCapnp/);
+    assert.match(browserNativeCapnpClient.body, /BrowserIsolateBridge/);
+    assert.match(browserNativeCapnpClient.body, /getClaimedCapability/);
     assert.match(browserNativeCapnpClient.body, /BrowserNativeCapnpBridgeWebSocketTransport/);
     assert.match(browserNativeCapnpClient.body, /__sandstorm\/native-capnp\/rpc-session/);
+    assert.match(browserNativeCapnpClient.body, /searchParams\.set\("bootstrap", "browser"\)/);
     assert.match(browserNativeCapnpClient.body, /nativeCapnpPowerboxDescriptor/);
     assert.match(browserNativeCapnpClient.body, /inspectPowerboxQuery/);
     assert.match(browserNativeCapnpClient.body, /requestBrowserNativeCapnp/);
@@ -2480,8 +2483,7 @@ test("isolate supervisor integration suite", {
 
     const browserNativeCapnpRpcSession = await requestJson(
       fixture.workerdSocket,
-      "/__sandstorm/native-capnp/rpc-session" +
-        "?id=missing&interfaceId=0&interfaceName=Missing&connectionId=test");
+      "/__sandstorm/native-capnp/rpc-session?bootstrap=browser&connectionId=test");
     assert.equal(browserNativeCapnpRpcSession.statusCode, 426);
     assert.equal(browserNativeCapnpRpcSession.json.ok, false);
     assert.match(browserNativeCapnpRpcSession.json.error, /WebSocket upgrade/);
@@ -2514,6 +2516,13 @@ test("isolate supervisor integration suite", {
         browserModuleDir,
         "/__sandstorm/native-capnp/client.js"), 5000,
         "browser native Cap'n Proto client module import timed out");
+      const browserRpcUrl =
+        browserNativeCapnp.browserNativeCapnpRpcSessionUrl("browser-native-capnp-url-test");
+      assert.equal(browserRpcUrl.searchParams.get("bootstrap"), "browser");
+      assert.equal(browserRpcUrl.searchParams.get("connectionId"), "browser-native-capnp-url-test");
+      assert.equal(browserRpcUrl.searchParams.has("id"), false);
+      assert.equal(browserRpcUrl.searchParams.has("interfaceId"), false);
+      assert.equal(browserRpcUrl.searchParams.has("interfaceName"), false);
       const browserWebSessionSchema = await withTimeout(importServedBrowserModule(
         browserProxy.baseUrl,
         browserModuleDir,
