@@ -7,8 +7,7 @@ declare module "sandstorm:capnp" {
   export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION: 0;
 
   export type NativeCapnpBridgeFeature =
-    "nativeTransport" | "nativeRpc" | "nativeRpcWebSocket" |
-    "nativeExports";
+    "nativeTransport" | "nativeRpc" | "nativeRpcWebSocket";
 
   export interface NativeCapnpBridgeNegotiationOptions {
     requiredFeatures?: readonly NativeCapnpBridgeFeature[];
@@ -21,7 +20,6 @@ declare module "sandstorm:capnp" {
     readonly nativeTransport: boolean;
     readonly nativeRpc: boolean;
     readonly nativeRpcWebSocket: boolean;
-    readonly nativeExports: boolean;
     readonly missingFeatures: readonly NativeCapnpBridgeFeature[];
     readonly reason: string;
     readonly info: unknown;
@@ -170,19 +168,20 @@ declare module "sandstorm:capnp" {
     },
   ): unknown;
 
-  export function createNativeCapnpExportSession(
+  export function createNativeCapnpServerSession(
     InterfaceClass: NativeCapnpGeneratedInterface<object> & {
       readonly Server: new (target: object) => unknown;
     },
     target: object,
     options: {
-      readonly readable: ReadableStream<Uint8Array>;
-      readonly writable: WritableStream<Uint8Array>;
+      readonly readable?: ReadableStream<Uint8Array>;
+      readonly writable?: WritableStream<Uint8Array>;
+      readonly webSocket?: WebSocket;
       readonly finalize?: unknown;
     },
   ): unknown;
 
-  export interface NativeCapnpExportedClient {
+  export interface NativeCapnpLocalExportClient {
     readonly capability: {
       readonly kind: "localExport";
       readonly interfaceId: bigint;
@@ -236,7 +235,7 @@ declare module "sandstorm:capnp" {
         };
       };
     },
-  ): Promise<TClient & NativeCapnpExportedClient>;
+  ): Promise<TClient & NativeCapnpLocalExportClient>;
 
   export interface NativeCapnpGeneratedInterface<TClient extends object> {
     readonly Client: new (client: unknown) => TClient;

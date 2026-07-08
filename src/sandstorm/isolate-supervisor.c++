@@ -3364,36 +3364,36 @@ capnp::Capability::Client makeRouteBackedSessionCapability(
   KJ_UNREACHABLE;
 }
 
-class NativeCapnpExportEntropySource final: public kj::EntropySource {
+class IsolateMainViewRpcEntropySource final: public kj::EntropySource {
 public:
   void generate(kj::ArrayPtr<byte> buffer) override {
     randombytes_buf(buffer.begin(), buffer.size());
   }
 };
 
-struct NativeCapnpExportWebSocketState final: public kj::Refcounted {
+struct IsolateMainViewRpcWebSocketState final: public kj::Refcounted {
   kj::Own<kj::NetworkAddress> addr;
   kj::Own<kj::HttpClient> client;
   kj::Own<kj::WebSocket> webSocket;
 
-  NativeCapnpExportWebSocketState(kj::Own<kj::NetworkAddress>&& addr,
+  IsolateMainViewRpcWebSocketState(kj::Own<kj::NetworkAddress>&& addr,
       kj::Own<kj::HttpClient>&& client, kj::Own<kj::WebSocket>&& webSocket)
       : addr(kj::mv(addr)), client(kj::mv(client)), webSocket(kj::mv(webSocket)) {}
 };
 
-struct NativeCapnpExportFailedWebSocketState final: public kj::Refcounted {
+struct IsolateMainViewRpcFailedWebSocketState final: public kj::Refcounted {
   kj::Own<kj::NetworkAddress> addr;
   kj::Own<kj::HttpClient> client;
   kj::Own<kj::AsyncInputStream> body;
 
-  NativeCapnpExportFailedWebSocketState(kj::Own<kj::NetworkAddress>&& addr,
+  IsolateMainViewRpcFailedWebSocketState(kj::Own<kj::NetworkAddress>&& addr,
       kj::Own<kj::HttpClient>&& client, kj::Own<kj::AsyncInputStream>&& body)
       : addr(kj::mv(addr)), client(kj::mv(client)), body(kj::mv(body)) {}
 };
 
-class NativeCapnpExportHttpMessageStream final: public capnp::MessageStream {
+class IsolateMainViewRpcMessageStream final: public capnp::MessageStream {
 public:
-  NativeCapnpExportHttpMessageStream(kj::Own<IsolateRuntimeConfig> config,
+  IsolateMainViewRpcMessageStream(kj::Own<IsolateRuntimeConfig> config,
       kj::Own<IsolateRuntimeHost> host, kj::HttpHeaderTable& headerTable, kj::String path)
       : config(kj::mv(config)),
         host(kj::mv(host)),
@@ -3412,7 +3412,7 @@ public:
               -> kj::Maybe<capnp::MessageReaderAndFds> {
         KJ_SWITCH_ONEOF(message) {
           KJ_CASE_ONEOF(text, kj::String) {
-            KJ_FAIL_REQUIRE("native Cap'n Proto export session received a text WebSocket frame");
+            KJ_FAIL_REQUIRE("native Cap'n Proto MainView RPC session received a text WebSocket frame");
           }
           KJ_CASE_ONEOF(bytes, kj::Array<byte>) {
             kj::ArrayInputStream input(bytes);
@@ -3434,7 +3434,7 @@ public:
       kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) override {
     if (fds.size() > 0) {
       return KJ_EXCEPTION(UNIMPLEMENTED,
-          "native Cap'n Proto export sessions do not support file descriptors");
+          "native Cap'n Proto MainView RPC sessions do not support file descriptors");
     }
 
     auto data = serializeMessageSegments(segments);
@@ -3480,14 +3480,14 @@ public:
       KJ_IF_MAYBE(existing, started) {
         return existing->addBranch().then([this]() mutable -> kj::Promise<void> {
           KJ_IF_MAYBE(current, state) {
-            return (*current)->webSocket->close(1000, "native Cap'n Proto export session ended");
+            return (*current)->webSocket->close(1000, "native Cap'n Proto MainView RPC session ended");
           }
           return kj::READY_NOW;
         });
       }
 
       KJ_IF_MAYBE(current, state) {
-        return (*current)->webSocket->close(1000, "native Cap'n Proto export session ended");
+        return (*current)->webSocket->close(1000, "native Cap'n Proto MainView RPC session ended");
       }
       return kj::READY_NOW;
     }).fork();
@@ -3500,7 +3500,7 @@ private:
   kj::Own<IsolateRuntimeHost> host;
   kj::HttpHeaderTable& headerTable;
   kj::String path;
-  kj::Maybe<kj::Own<NativeCapnpExportWebSocketState>> state;
+  kj::Maybe<kj::Own<IsolateMainViewRpcWebSocketState>> state;
   kj::Maybe<kj::ForkedPromise<void>> started;
   kj::Promise<void> writeQueue = kj::READY_NOW;
 
@@ -3516,7 +3516,7 @@ private:
   kj::Promise<void> start() {
     return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
         .then([this](kj::Own<kj::NetworkAddress>&& addr) mutable {
-      static NativeCapnpExportEntropySource entropySource;
+      static IsolateMainViewRpcEntropySource entropySource;
       kj::HttpClientSettings settings;
       settings.entropySource = entropySource;
       auto client = kj::newHttpClient(host->timer, headerTable, *addr, settings);
@@ -3528,25 +3528,25 @@ private:
         if (response.statusCode != 101) {
           auto statusCode = response.statusCode;
           auto statusText = kj::str(response.statusText);
-          KJ_LOG(WARNING, "Native Cap'n Proto export WebSocket returned an unsuccessful status.",
+          KJ_LOG(WARNING, "MainView RPC WebSocket returned an unsuccessful status.",
               statusCode, statusText);
           KJ_SWITCH_ONEOF(response.webSocketOrBody) {
             KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
-              auto failed = kj::refcounted<NativeCapnpExportFailedWebSocketState>(
+              auto failed = kj::refcounted<IsolateMainViewRpcFailedWebSocketState>(
                   kj::mv(addr), kj::mv(client), kj::mv(body));
               return failed->body->readAllText()
                   .then([statusCode, statusText = kj::mv(statusText),
                       failed = kj::mv(failed)](kj::String&& bodyText) mutable {
                 (void)failed;
                 KJ_FAIL_REQUIRE(
-                    "native Cap'n Proto export WebSocket returned an unsuccessful status",
+                    "MainView RPC WebSocket returned an unsuccessful status",
                     statusCode, statusText, bodyText);
               });
             }
             KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
               (void)webSocket;
               KJ_FAIL_REQUIRE(
-                  "native Cap'n Proto export WebSocket returned an unsuccessful status",
+                  "MainView RPC WebSocket returned an unsuccessful status",
                   statusCode, statusText);
             }
           }
@@ -3554,10 +3554,10 @@ private:
         KJ_SWITCH_ONEOF(response.webSocketOrBody) {
           KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
             (void)body;
-            KJ_FAIL_REQUIRE("native Cap'n Proto export WebSocket did not upgrade");
+            KJ_FAIL_REQUIRE("MainView RPC WebSocket did not upgrade");
           }
           KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
-            state = kj::refcounted<NativeCapnpExportWebSocketState>(
+            state = kj::refcounted<IsolateMainViewRpcWebSocketState>(
                 kj::mv(addr), kj::mv(client), kj::mv(webSocket));
             return kj::READY_NOW;
           }
@@ -3578,21 +3578,21 @@ private:
   }
 };
 
-struct NativeCapnpExportRpcSession {
-  kj::String exportId;
+struct IsolateMainViewRpcSession {
+  kj::String sessionId;
   kj::String path;
   uint64_t interfaceId = 0;
   kj::String interfaceName;
 
-  NativeCapnpExportHttpMessageStream stream;
+  IsolateMainViewRpcMessageStream stream;
   capnp::TwoPartyVatNetwork network;
   capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
   kj::Maybe<capnp::Capability::Client> cap;
 
-  NativeCapnpExportRpcSession(kj::Own<IsolateRuntimeConfig> config,
+  IsolateMainViewRpcSession(kj::Own<IsolateRuntimeConfig> config,
       kj::Own<IsolateRuntimeHost> host, kj::HttpHeaderTable& headerTable,
-      kj::String exportId, kj::String path, uint64_t interfaceId, kj::String interfaceName)
-      : exportId(kj::mv(exportId)),
+      kj::String sessionId, kj::String path, uint64_t interfaceId, kj::String interfaceName)
+      : sessionId(kj::mv(sessionId)),
         path(kj::heapString(path)),
         interfaceId(interfaceId),
         interfaceName(kj::mv(interfaceName)),
@@ -3606,10 +3606,10 @@ struct NativeCapnpExportRpcSession {
   }
 };
 
-kj::Own<NativeCapnpExportRpcSession> newIsolateMainViewRpcSession(
+kj::Own<IsolateMainViewRpcSession> newIsolateMainViewRpcSession(
     kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
     kj::HttpHeaderTable& headerTable) {
-  return kj::heap<NativeCapnpExportRpcSession>(
+  return kj::heap<IsolateMainViewRpcSession>(
       kj::mv(config), kj::mv(host), headerTable,
       kj::heapString("mainView"), kj::heapString(ISOLATE_MAIN_VIEW_RPC_SESSION_PATH),
       capnp::typeId<MainView<>>(), kj::heapString("sandstorm.MainView"));
@@ -3618,7 +3618,7 @@ kj::Own<NativeCapnpExportRpcSession> newIsolateMainViewRpcSession(
 class IsolateMainViewRestoredCapability final: public SystemPersistent::Server {
 public:
   IsolateMainViewRestoredCapability(kj::Own<IsolateRuntimeHost> host,
-      kj::Own<NativeCapnpExportRpcSession> session, capnp::Capability::Client cap,
+      kj::Own<IsolateMainViewRpcSession> session, capnp::Capability::Client cap,
       kj::Maybe<kj::Array<const byte>> parentToken = nullptr)
       : host(kj::mv(host)),
         session(kj::mv(session)),
@@ -3666,7 +3666,7 @@ public:
 
 private:
   kj::Own<IsolateRuntimeHost> host;
-  kj::Own<NativeCapnpExportRpcSession> session;
+  kj::Own<IsolateMainViewRpcSession> session;
   capnp::Capability::Client cap;
   kj::Maybe<kj::Array<const byte>> parentToken;
 };
@@ -4950,7 +4950,7 @@ private:
     }
 
     uint64_t interfaceId;
-    KJ_IF_MAYBE(parsed, parseNativeCapnpExportInterfaceId(interfaceIdText)) {
+    KJ_IF_MAYBE(parsed, parseNativeCapnpInterfaceId(interfaceIdText)) {
       interfaceId = *parsed;
     } else {
       return sendJson(response, 400, "Bad Request", renderError(
@@ -4995,7 +4995,7 @@ private:
     return nullptr;
   }
 
-  kj::Maybe<uint64_t> parseNativeCapnpExportInterfaceId(kj::StringPtr value) {
+  kj::Maybe<uint64_t> parseNativeCapnpInterfaceId(kj::StringPtr value) {
     if (value.startsWith("0x") || value.startsWith("0X")) {
       return parseUInt64(kj::str(value.slice(2)), 16);
     }
@@ -5259,8 +5259,7 @@ private:
         "  \"maxProtocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
         "  \"nativeTransport\": true,\n"
         "  \"nativeRpc\": true,\n"
-        "  \"nativeRpcWebSocket\": true,\n"
-        "  \"nativeExports\": true\n"
+        "  \"nativeRpcWebSocket\": true\n"
         "}\n");
   }
 
@@ -6753,7 +6752,7 @@ private:
       return kj::str("appInterface descriptor requires exactly one interfaceId");
     }
 
-    KJ_IF_MAYBE(parsed, parseNativeCapnpExportInterfaceId(interfaceIds[0])) {
+    KJ_IF_MAYBE(parsed, parseNativeCapnpInterfaceId(interfaceIds[0])) {
       if (*parsed == 0) {
         return kj::str("appInterface descriptor interfaceId must not be zero");
       }

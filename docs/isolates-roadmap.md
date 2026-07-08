@@ -149,10 +149,10 @@ export.
   Read-only GET metadata routes stay.
 - `IsolateSessionRegistry`'s string-ID claimed-capability table, drop groups,
   and drop-notify machinery (the RPC release protocol replaces them).
-- Per-export HTTP-transport RPC sessions. The native-export registration
-  endpoint and JS export-session paths are gone; remaining
-  `NativeCapnpExport*` C++ names are the worker `MainView` RPC socket plumbing
-  and should be renamed as that code is simplified.
+- Done: the misleading per-export HTTP-transport names on the worker
+  `MainView` RPC socket plumbing. The native-export registration endpoint and
+  JS export-session paths were already gone; the remaining C++ session classes
+  are now named for `MainView` RPC.
 **Keep as HTTP:** inbound WebSession→sidecar fetch (workerd's native
 ingress), `STORAGE` binding, read-only metadata GETs.
 
