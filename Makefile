@@ -29,6 +29,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	isolate-supervisor-integration-test \
 	isolate-supervisor-stress-test \
 	isolate-supervisor-syscall-trace \
+	isolate-capnp-abi-check \
 	stage-native workerd verify-workerd-runtime shell-env shell-build shell-build-debug bundle \
 	test-app.spk test-app-spk test-app-dev app-index.spk app-index-spk app-index-dev \
 	tests/assets/isolate-test-app.spk isolate-test-app-spk isolate-test-app-dev \
@@ -94,6 +95,7 @@ $(eval $(call cmake_target,isolate-test-app-dev,isolate-test-app-dev))
 $(eval $(call cmake_target,isolate-supervisor-integration-test,isolate-supervisor-integration-test))
 $(eval $(call cmake_target,isolate-supervisor-stress-test,isolate-supervisor-stress-test))
 $(eval $(call cmake_target,isolate-supervisor-syscall-trace,isolate-supervisor-syscall-trace))
+$(eval $(call cmake_target,isolate-capnp-abi-check,isolate-capnp-abi-check))
 $(eval $(call cmake_target,tests/assets/isolate-api-powerbox-test-app.spk,isolate-api-powerbox-test-app-spk))
 $(eval $(call cmake_target,tests/assets/isolate-api-provider-test-app.spk,isolate-api-provider-test-app-spk))
 $(eval $(call cmake_target,app-index.spk,app-index-spk))

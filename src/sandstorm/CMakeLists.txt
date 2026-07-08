@@ -19,10 +19,12 @@ set(_sandstorm_schema_relative_paths
   hack-session.capnp
   identity-impl.capnp
   identity.capnp
+  isolate-bridge.capnp
   isolate-supervisor-internal.capnp
   ip.capnp
   mime.capnp
   package.capnp
+  outbound-http-session.capnp
   payments.capnp
   persistentuiview.capnp
   powerbox.capnp

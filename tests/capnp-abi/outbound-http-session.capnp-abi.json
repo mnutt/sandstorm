@@ -1,0 +1,29 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/outbound-http-session.capnp",
+  "interfaces": [
+    {
+      "name": "OutboundHttpSession",
+      "interfaceId": "0xbf91271b527d6f33",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "request",
+          "ordinal": 0,
+          "paramStructId": "0x8a3d2e553348b921",
+          "resultStructId": "0xb335e6279efdfe6e",
+          "params": [{"name": "method", "type": "Method"}, {"name": "path", "type": "Text"}, {"name": "headers", "type": "List"}, {"name": "body", "type": "Data"}, {"name": "responseStream", "type": "Util.ByteStream"}],
+          "results": []
+        },
+        {
+          "name": "requestStreaming",
+          "ordinal": 1,
+          "paramStructId": "0xc785e3bed3aeb0d7",
+          "resultStructId": "0xde8dd33ae5844d8d",
+          "params": [{"name": "method", "type": "Method"}, {"name": "path", "type": "Text"}, {"name": "headers", "type": "List"}, {"name": "responseStream", "type": "Util.ByteStream"}],
+          "results": [{"name": "requestStream", "type": "RequestStream"}]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/isolate-bridge.capnp",
+  "interfaces": [
+    {
+      "name": "IsolateBridge",
+      "interfaceId": "0xc4b06a6915ad0e3c",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "getSandstormApi",
+          "ordinal": 0,
+          "paramStructId": "0xd250ec60f9e4c9a4",
+          "resultStructId": "0xef470dde7f0583df",
+          "params": [],
+          "results": [{"name": "api", "type": "Grain.SandstormApi"}]
+        },
+        {
+          "name": "getSessionContext",
+          "ordinal": 1,
+          "paramStructId": "0x84b98ce22f09bb27",
+          "resultStructId": "0xde49998b39ea36c5",
+          "params": [{"name": "sessionId", "type": "Text"}],
+          "results": [{"name": "context", "type": "Grain.SessionContext"}]
+        },
+        {
+          "name": "getClaimedCapability",
+          "ordinal": 2,
+          "paramStructId": "0x82d2be2f6dea4844",
+          "resultStructId": "0x86e838c390b6babb",
+          "params": [{"name": "id", "type": "Text"}],
+          "results": [{"name": "cap", "type": "Capability"}]
+        },
+        {
+          "name": "storeImportedCapability",
+          "ordinal": 3,
+          "paramStructId": "0xd18f4cbc25be3b37",
+          "resultStructId": "0xc1957398fe2ffec9",
+          "params": [{"name": "cap", "type": "Capability"}],
+          "results": [{"name": "id", "type": "Text"}]
+        },
+        {
+          "name": "dropClaimedCapability",
+          "ordinal": 4,
+          "paramStructId": "0xbff115a6130293eb",
+          "resultStructId": "0xb3991ed299237e03",
+          "params": [{"name": "id", "type": "Text"}],
+          "results": [{"name": "released", "type": "Bool"}]
+        },
+        {
+          "name": "createRouteBackedCapability",
+          "ordinal": 5,
+          "paramStructId": "0xc726ffc691879ad8",
+          "resultStructId": "0xf32dbd7971e3b55d",
+          "params": [{"name": "nativeInterface", "type": "Text"}, {"name": "pathPrefix", "type": "Text"}, {"name": "persistent", "type": "Bool"}],
+          "results": [{"name": "id", "type": "Text"}]
+        }
+      ]
+    },
+    {
+      "name": "BrowserIsolateBridge",
+      "interfaceId": "0x93fb2746c97b5bea",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "getClaimedCapability",
+          "ordinal": 0,
+          "paramStructId": "0xef0670ac3654ad32",
+          "resultStructId": "0xdd3554252dd8763e",
+          "params": [{"name": "id", "type": "Text"}],
+          "results": [{"name": "cap", "type": "Capability"}]
+        },
+        {
+          "name": "claimPowerboxRequest",
+          "ordinal": 1,
+          "paramStructId": "0x9b553df74c3e723f",
+          "resultStructId": "0xa0a8c1829dde6035",
+          "params": [{"name": "requestToken", "type": "Text"}, {"name": "requiredPermissions", "type": "List"}],
+          "results": [{"name": "cap", "type": "Capability"}]
+        }
+      ]
+    }
+  ]
+}
