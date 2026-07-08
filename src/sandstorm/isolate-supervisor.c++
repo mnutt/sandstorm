@@ -2855,6 +2855,16 @@ RouteBackedCapabilityType parseRouteBackedCapabilityType(kj::StringPtr value) {
   }
 }
 
+RouteBackedCapabilityType routeBackedCapabilityTypeFromNativeInterface(kj::StringPtr value) {
+  if (value == "webSession") {
+    return RouteBackedCapabilityType::WEB;
+  } else if (value == "apiSession") {
+    return RouteBackedCapabilityType::API;
+  } else {
+    KJ_FAIL_REQUIRE("invalid route-backed capability native interface", value);
+  }
+}
+
 void requireNoRouteBackedDotSegments(kj::StringPtr path, kj::StringPtr description) {
   size_t end = path.size();
   KJ_IF_MAYBE(query, path.findFirst('?')) {
@@ -4397,10 +4407,6 @@ public:
         return sendJson(response, 404, "Not Found", kj::heapString(
             "{\n  \"ok\": false,\n"
             "  \"error\": \"unknown Powerbox binding endpoint\"\n}\n"));
-      } else if (methodName == "POST" && route == "/capabilities/web-session") {
-        return createRouteBackedCapability(path, response, RouteBackedCapabilityType::WEB);
-      } else if (methodName == "POST" && route == "/capabilities/api-session") {
-        return createRouteBackedCapability(path, response, RouteBackedCapabilityType::API);
       }
 
       if (methodName != "GET") {
@@ -4507,7 +4513,8 @@ private:
 
   class IsolateBridgeImpl final: public IsolateBridge::Server {
   public:
-    explicit IsolateBridgeImpl(IsolateRuntimeHost& host): host(host) {}
+    IsolateBridgeImpl(IsolateRuntimeConfig& config, IsolateRuntimeHost& host)
+        : config(config), host(host) {}
 
     kj::Promise<void> getSandstormApi(GetSandstormApiContext context) override {
       context.getResults().setApi(kj::heap<IsolateBridgeSandstormApi>(host));
@@ -4586,7 +4593,43 @@ private:
       return kj::READY_NOW;
     }
 
+    kj::Promise<void> createRouteBackedCapability(
+        CreateRouteBackedCapabilityContext context) override {
+      auto params = context.getParams();
+      auto capabilityType = routeBackedCapabilityTypeFromNativeInterface(
+          params.getNativeInterface());
+      auto pathPrefix = normalizeRouteBackedPathPrefix(params.getPathPrefix());
+      ClaimedCapabilityKind kind;
+      ClaimedCapabilityNativeInterface nativeInterface;
+      switch (capabilityType) {
+        case RouteBackedCapabilityType::WEB:
+          kind = ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION;
+          nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
+          break;
+        case RouteBackedCapabilityType::API:
+          kind = ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION;
+          nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
+          break;
+      }
+
+      auto cap = makeRouteBackedSessionCapability(
+          kj::addRef(config), kj::addRef(host), capabilityType, pathPrefix, params.getPersistent());
+      auto id = host.sessions->storeClaimedCapability(kj::mv(cap), ClaimedCapabilityMetadata {
+        kind,
+        ClaimedCapabilityResidence::LOCAL_EXPORT,
+        nativeInterface,
+        kj::mv(pathPrefix),
+        kj::heapString(config.workerdSocketPath),
+        params.getPersistent(),
+        true,
+        true,
+      });
+      context.getResults().setId(id);
+      return kj::READY_NOW;
+    }
+
   private:
+    IsolateRuntimeConfig& config;
     IsolateRuntimeHost& host;
   };
 
@@ -4791,7 +4834,7 @@ private:
 
     kj::HttpHeaders responseHeaders(headerTable);
     auto webSocket = response.acceptWebSocket(responseHeaders);
-    capnp::Capability::Client bootstrap = kj::heap<IsolateBridgeImpl>(host);
+    capnp::Capability::Client bootstrap = kj::heap<IsolateBridgeImpl>(config, host);
     return nativeCapnpBridge.openWebSocketRpcSession(kj::mv(webSocket), connectionId,
         kj::heapString(""), 0, kj::heapString("sandstorm.IsolateBridge"), kj::mv(bootstrap));
   }
@@ -4946,7 +4989,6 @@ private:
         "\"powerbox.claim\", "
         "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
         "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\", "
-        "\"capabilities.webSession\", \"capabilities.apiSession\", "
         "\"capabilities.claimed\", \"capabilities.claimedStats\"]\n"
         "}\n");
   }
@@ -5058,81 +5100,6 @@ private:
     json.addAll(kj::StringPtr("]\n}\n"));
     json.add('\0');
     return kj::String(json.releaseAsArray());
-  }
-
-  kj::String normalizeRouteBackedCapabilityPathPrefix(kj::StringPtr pathPrefix) {
-    return normalizeRouteBackedPathPrefix(pathPrefix);
-  }
-
-  capnp::Capability::Client makeRouteBackedSessionCapability(
-      RouteBackedCapabilityType capabilityType, kj::StringPtr pathPrefix, bool persistent) {
-    return sandstorm::makeRouteBackedSessionCapability(
-        kj::addRef(config), kj::addRef(host), capabilityType, pathPrefix, persistent);
-  }
-
-  capnp::Capability::Client makeRouteBackedCapability(
-      RouteBackedCapabilityType capabilityType, kj::StringPtr pathPrefix, bool persistent) {
-    return makeRouteBackedSessionCapability(capabilityType, pathPrefix, persistent);
-  }
-
-  ClaimedCapabilityMetadata makeRouteBackedClaimedCapabilityMetadata(
-      RouteBackedCapabilityType capabilityType, kj::StringPtr pathPrefix, bool persistent) {
-    ClaimedCapabilityKind kind;
-    ClaimedCapabilityNativeInterface nativeInterface;
-    switch (capabilityType) {
-      case RouteBackedCapabilityType::WEB:
-        kind = ClaimedCapabilityKind::ROUTE_BACKED_WEB_SESSION;
-        nativeInterface = ClaimedCapabilityNativeInterface::WEB_SESSION;
-        break;
-      case RouteBackedCapabilityType::API:
-        kind = ClaimedCapabilityKind::ROUTE_BACKED_API_SESSION;
-        nativeInterface = ClaimedCapabilityNativeInterface::API_SESSION;
-        break;
-    }
-
-    return ClaimedCapabilityMetadata {
-      kind,
-      ClaimedCapabilityResidence::LOCAL_EXPORT,
-      nativeInterface,
-      kj::heapString(pathPrefix),
-      kj::heapString(config.workerdSocketPath),
-      persistent,
-      true,
-      true,
-    };
-  }
-
-  kj::Promise<void> createRouteBackedCapability(
-      kj::StringPtr url, kj::HttpService::Response& response,
-      RouteBackedCapabilityType capabilityType) {
-    auto pathPrefixes = findIsolateRawQueryParams(url, "pathPrefix");
-    auto persistentParams = findIsolateQueryParams(url, "persistent");
-    if (pathPrefixes.size() > 1 || persistentParams.size() > 1) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n"
-          "  \"error\": \"expected at most one pathPrefix and persistent flag\"\n}\n"));
-    }
-
-    auto pathPrefix = pathPrefixes.size() == 1
-        ? normalizeRouteBackedCapabilityPathPrefix(pathPrefixes[0])
-        : kj::heapString("");
-    bool persistent = true;
-    if (persistentParams.size() == 1) {
-      auto value = kj::heapString(persistentParams[0]);
-      toLower(value);
-      if (value == "false" || value == "0") {
-        persistent = false;
-      } else if (value == "true" || value == "1") {
-        persistent = true;
-      } else {
-        return sendJson(response, 400, "Bad Request", renderError(
-            "persistent must be true or false"));
-      }
-    }
-    auto metadata = makeRouteBackedClaimedCapabilityMetadata(capabilityType, pathPrefix, persistent);
-    auto cap = makeRouteBackedCapability(capabilityType, pathPrefix, persistent);
-    auto capId = host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata));
-    return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
 
   kj::Promise<void> apiSessionPowerboxDescriptor(

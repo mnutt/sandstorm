@@ -252,6 +252,7 @@ prototype mechanisms:
 | Done: `/powerbox/tie-to-user` POST route | `SessionContext.tieToUser()` over RPC |
 | Done: `/powerbox/fetch` POST route | Fetch sugar over a live `WebSession`/`ApiSession` RPC reference |
 | Done: `/powerbox/outbound-http-fetch` POST route | Fetch sugar over a live `OutboundHttpSession` RPC reference |
+| Done: `/capabilities/web-session` and `/capabilities/api-session` POST routes | Route-backed capability creation over IsolateBridge RPC |
 | `/capnp/lifecycle` binary envelope | Ordinary methods over the authority RPC connection |
 | `NativeCapnpBridgeRequest/Response` lifecycle structs | Deleted or replaced by small bootstrap schema |
 | `IsolateSessionRegistry` claimed-capability string IDs | RPC cap-table references |
@@ -548,6 +549,7 @@ Must delete or stop compiling:
   `/powerbox/offer`, `/powerbox/fulfill-request`, `/powerbox/tie-to-user`,
   `/powerbox/drop`, `/powerbox/fetch`, and `/powerbox/outbound-http-fetch`
   which are deleted
+- Done: `/capabilities/web-session` and `/capabilities/api-session`
 - claimed-capability table used as authority
 - Done: drop groups and live-handle drop-notify machinery
 - remaining C++ per-export callback/session plumbing

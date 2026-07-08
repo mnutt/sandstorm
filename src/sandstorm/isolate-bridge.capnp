@@ -34,4 +34,12 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
   dropClaimedCapability @4 (id :Text) -> (released :Bool);
   # Transitional helper while id-backed Capability handles still exist.
   # Drops a temporary claimed-capability registry entry.
+
+  createRouteBackedCapability @5 (
+      nativeInterface :Text,
+      pathPrefix :Text,
+      persistent :Bool) -> (id :Text);
+  # Transitional helper while id-backed Capability handles still exist.
+  # Creates a route-backed WebSession or ApiSession capability without
+  # exposing creation as an authority-bearing local HTTP route.
 }

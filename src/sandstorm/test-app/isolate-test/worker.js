@@ -415,6 +415,17 @@ export default {
       });
     }
 
+    if (url.pathname === "/browser-native-web-session-capability") {
+      const capability = await api.webSession({
+        pathPrefix: "/native-capnp-bridge-target",
+      });
+      return Response.json({
+        ok: true,
+        capabilityClass: capability instanceof Capability,
+        capability: JSON.parse(JSON.stringify(capability)),
+      });
+    }
+
     if (url.pathname === "/browser-powerbox") {
       return new Response(renderBrowserPowerboxPage(), {
         headers: { "content-type": "text/html; charset=utf-8" },

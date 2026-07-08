@@ -165,6 +165,9 @@ export.
   now resolves the live claimed capability through the private IsolateBridge
   RPC connection and calls `WebSession` / `OutboundHttpSession` methods
   directly. Read-only GET metadata routes stay.
+- Done: `/capabilities/web-session` and `/capabilities/api-session`;
+  route-backed capability creation now happens through the private
+  IsolateBridge RPC connection instead of local HTTP POST routes.
 - `IsolateSessionRegistry`'s string-ID claimed-capability table (RPC cap-table
   references replace it).
 - Done: the misleading per-export HTTP-transport names on the worker

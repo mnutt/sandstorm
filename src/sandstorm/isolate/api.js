@@ -146,17 +146,6 @@ async function parseApiResponseBody(response) {
   }
 }
 
-async function postSandstorm(env, path) {
-  const response = await env.SANDSTORM_API.fetch(`http://sandstorm/${path}`, {
-    method: "POST",
-  });
-  const body = await parseApiResponseBody(response);
-  if (!response.ok || !body.ok) {
-    throw new Error(body.error || `Sandstorm API ${path} failed with ${response.status}`);
-  }
-  return body;
-}
-
 async function queryCapabilityInfo(env, id) {
   const response = await env.SANDSTORM_API.fetch(
     `http://sandstorm/capabilities/claimed?id=${encodeURIComponent(id)}`);
@@ -2151,20 +2140,32 @@ function webSessionPersistent(options = {}) {
   return options.persistent;
 }
 
+async function createRouteBackedCapability(env, nativeInterface, options = {}) {
+  const pathPrefix = webSessionPathPrefix(options);
+  const persistent = webSessionPersistent(options);
+  return withIsolateBridgeRpc(env, async (bridge) => {
+    if (typeof bridge.createRouteBackedCapability !== "function") {
+      throw new Error("isolate bridge returned no route-backed capability creator");
+    }
+
+    const result = await bridge.createRouteBackedCapability({
+      nativeInterface,
+      pathPrefix,
+      persistent,
+    });
+    return new Capability(env, validate.string(result.id, "route-backed capability id", {
+      minLength: 1,
+      maxLength: 4096,
+    }));
+  });
+}
+
 async function createWebSessionCapability(env, options = {}) {
-  const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
-  const persistent = webSessionPersistent(options) ? "true" : "false";
-  return wrapCapability(
-    env, await postSandstorm(
-      env, `capabilities/web-session?pathPrefix=${pathPrefix}&persistent=${persistent}`));
+  return createRouteBackedCapability(env, "webSession", options);
 }
 
 async function createApiSessionCapability(env, options = {}) {
-  const pathPrefix = encodeURIComponent(webSessionPathPrefix(options));
-  const persistent = webSessionPersistent(options) ? "true" : "false";
-  return wrapCapability(
-    env, await postSandstorm(
-      env, `capabilities/api-session?pathPrefix=${pathPrefix}&persistent=${persistent}`));
+  return createRouteBackedCapability(env, "apiSession", options);
 }
 
 function forgetCapabilityHandle(capabilityId) {

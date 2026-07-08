@@ -2369,8 +2369,8 @@ test("isolate supervisor integration suite", {
     assert.ok(capabilities.json.capabilities.includes("powerbox.fulfillRequest"));
     assert.ok(capabilities.json.capabilities.includes("powerbox.tieToUser"));
     assert.ok(capabilities.json.capabilities.includes("permissions"));
-    assert.ok(capabilities.json.capabilities.includes("capabilities.webSession"));
-    assert.ok(capabilities.json.capabilities.includes("capabilities.apiSession"));
+    assert.ok(!capabilities.json.capabilities.includes("capabilities.webSession"));
+    assert.ok(!capabilities.json.capabilities.includes("capabilities.apiSession"));
     assert.ok(!capabilities.json.capabilities.includes("capabilities.nativeCapnpExport"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimed"));
     assert.ok(capabilities.json.capabilities.includes("capabilities.claimedStats"));
@@ -2549,18 +2549,19 @@ test("isolate supervisor integration suite", {
         "/__sandstorm/capnp/sandstorm/web-session.capnp.js"), 5000,
         "browser WebSession schema module import timed out");
       const browserWebSessionCapability = await requestJson(
-        fixture.sandstormApiSocket,
-        "/capabilities/web-session?pathPrefix=/native-capnp-bridge-target",
-        { method: "POST" });
+        fixture.workerdSocket,
+        "/browser-native-web-session-capability");
       assert.equal(browserWebSessionCapability.statusCode, 200, browserWebSessionCapability.body);
       assert.equal(browserWebSessionCapability.json.ok, true);
+      assert.equal(browserWebSessionCapability.json.capabilityClass, true);
+      assert.equal(browserWebSessionCapability.json.capability.type, "capability");
       const browserWebSession = browserNativeCapnp.connectBrowserNativeCapnp({
-        id: browserWebSessionCapability.json.id,
+        id: browserWebSessionCapability.json.capability.id,
         interfaceId: "0xa50711a14d35a8ce",
         interfaceName: "sandstorm.WebSession",
         kind: "receiverHosted",
       }, browserWebSessionSchema.WebSession, {
-        connectionId: `browser-native-capnp-${browserWebSessionCapability.json.id}`,
+        connectionId: `browser-native-capnp-${browserWebSessionCapability.json.capability.id}`,
       });
       const browserGeneratedResponse = await withTimeout(browserWebSession.get({
         path: "/generated-client?from=browser",
@@ -2663,6 +2664,20 @@ test("isolate supervisor integration suite", {
       { method: "POST" });
     assert.equal(removedOutboundFetch.statusCode, 405);
     assert.equal(removedOutboundFetch.json.ok, false);
+
+    const removedWebSessionCreate = await requestJson(
+      fixture.sandstormApiSocket,
+      "/capabilities/web-session?pathPrefix=/removed",
+      { method: "POST" });
+    assert.equal(removedWebSessionCreate.statusCode, 405);
+    assert.equal(removedWebSessionCreate.json.ok, false);
+
+    const removedApiSessionCreate = await requestJson(
+      fixture.sandstormApiSocket,
+      "/capabilities/api-session?pathPrefix=/removed",
+      { method: "POST" });
+    assert.equal(removedApiSessionCreate.statusCode, 405);
+    assert.equal(removedApiSessionCreate.json.ok, false);
 
     const apiDescriptor = await requestJson(
       fixture.sandstormApiSocket,
