@@ -262,6 +262,13 @@ Do this while surface area is small and before any stability promise.
   supervisor-injected trusted-adjacent code; treat it like one.
 - **ABI discipline.** Extend `spk capnp-abi` checks to any new platform
   bootstrap schemas, not just app schemas.
+  - Done: `spk capnp-abi` now records immediate interface superclasses and
+    handles explicitly numbered interfaces, so platform schemas with
+    `interface Foo @... extends(...)` are checked accurately. The tracked
+    isolate platform ABI snapshots cover `isolate-bridge.capnp`,
+    `isolate-supervisor-internal.capnp`, and `outbound-http-session.capnp`,
+    and `make isolate-supervisor-integration-test` runs
+    `make isolate-capnp-abi-check` before the JS fixture.
 - Fuzz the supervisor-side `MessageStream` framing parsers and add
   differential capnp-es/KJ corpus and RPC conformance tests.
 

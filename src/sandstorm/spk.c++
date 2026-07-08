@@ -3721,12 +3721,44 @@ private:
     return nullptr;
   }
 
+  static bool scanCapnpInterfaceBodyStart(std::string const& source, size_t& pos) {
+    uint parenDepth = 0;
+    uint bracketDepth = 0;
+    while (pos < source.size()) {
+      skipCapnpWhitespaceAndComments(source, pos);
+      if (pos >= source.size()) break;
+
+      if (source[pos] == '"' || source[pos] == '\'') {
+        skipCapnpString(source, pos);
+      } else if (source[pos] == '(') {
+        ++parenDepth;
+        ++pos;
+      } else if (source[pos] == ')' && parenDepth > 0) {
+        --parenDepth;
+        ++pos;
+      } else if (source[pos] == '[') {
+        ++bracketDepth;
+        ++pos;
+      } else if (source[pos] == ']' && bracketDepth > 0) {
+        --bracketDepth;
+        ++pos;
+      } else if (source[pos] == '{' && parenDepth == 0 && bracketDepth == 0) {
+        return true;
+      } else if (source[pos] == ';' && parenDepth == 0 && bracketDepth == 0) {
+        return false;
+      } else {
+        ++pos;
+      }
+    }
+
+    return false;
+  }
+
   static kj::Vector<DevCapnpInterface::Method> scanCapnpInterfaceMethods(
       std::string const& source, size_t& pos, kj::StringPtr interfaceName) {
     kj::Vector<DevCapnpInterface::Method> methods;
     std::set<std::string> seen;
-    skipCapnpWhitespaceAndComments(source, pos);
-    if (pos >= source.size() || source[pos] != '{') {
+    if (!scanCapnpInterfaceBodyStart(source, pos)) {
       return methods;
     }
 
@@ -3809,8 +3841,14 @@ private:
     std::string resultStructId;
   };
 
+  struct DevCapnpParsedSuperclassMetadata {
+    std::string name;
+    std::string interfaceId;
+  };
+
   struct DevCapnpParsedInterfaceMetadata {
     std::string interfaceId;
+    std::vector<DevCapnpParsedSuperclassMetadata> superclasses;
     std::map<std::string, DevCapnpParsedMethodMetadata> methods;
   };
 
@@ -3841,6 +3879,12 @@ private:
           interfaceMetadata.interfaceId =
               toStdString(capnpInterfaceIdString(symbol->getProto().getId()));
           auto interfaceSchema = symbol->asInterface();
+          for (auto superclass: interfaceSchema.getSuperclasses()) {
+            interfaceMetadata.superclasses.push_back(DevCapnpParsedSuperclassMetadata {
+              toStdString(superclass.getProto().getDisplayName()),
+              toStdString(capnpInterfaceIdString(superclass.getProto().getId())),
+            });
+          }
           for (auto method: interfaceSchema.getMethods()) {
             auto proto = method.getProto();
             interfaceMetadata.methods.insert(std::make_pair(
@@ -3865,6 +3909,11 @@ private:
     std::string type;
   };
 
+  struct CapnpAbiSuperclass {
+    std::string name;
+    std::string interfaceId;
+  };
+
   struct CapnpAbiMethod {
     std::string name;
     uint ordinal;
@@ -3877,6 +3926,7 @@ private:
   struct CapnpAbiInterface {
     std::string name;
     std::string interfaceId;
+    std::vector<CapnpAbiSuperclass> superclasses;
     std::vector<CapnpAbiMethod> methods;
   };
 
@@ -3899,6 +3949,35 @@ private:
       json.add('}');
     }
     json.add(']');
+  }
+
+  static void appendCapnpAbiSuperclassesJson(
+      kj::Vector<char>& json, const std::vector<CapnpAbiSuperclass>& superclasses) {
+    json.add('[');
+    for (size_t i = 0; i < superclasses.size(); ++i) {
+      if (i > 0) {
+        json.addAll(kj::StringPtr(", "));
+      }
+      json.addAll(kj::StringPtr("{\"name\": "));
+      appendJsonQuoted(json, kj::StringPtr(superclasses[i].name));
+      json.addAll(kj::StringPtr(", \"interfaceId\": "));
+      appendJsonQuoted(json, kj::StringPtr(superclasses[i].interfaceId));
+      json.add('}');
+    }
+    json.add(']');
+  }
+
+  static kj::Maybe<capnp::JsonValue::Reader> findJsonField(
+      capnp::JsonValue::Reader value, kj::StringPtr name) {
+    if (value.which() != capnp::JsonValue::OBJECT) {
+      return nullptr;
+    }
+    for (auto field: value.getObject()) {
+      if (field.getName() == name) {
+        return field.getValue();
+      }
+    }
+    return nullptr;
   }
 
   static capnp::JsonValue::Reader requireJsonField(
@@ -3949,6 +4028,18 @@ private:
     return fields;
   }
 
+  static std::vector<CapnpAbiSuperclass> parseCapnpAbiSuperclassesJson(
+      capnp::JsonValue::Reader value, kj::StringPtr context) {
+    std::vector<CapnpAbiSuperclass> superclasses;
+    for (auto superclassValue: requireJsonArray(value, context)) {
+      superclasses.push_back(CapnpAbiSuperclass {
+        requireJsonString(requireJsonField(superclassValue, "name", context), context),
+        requireJsonString(requireJsonField(superclassValue, "interfaceId", context), context),
+      });
+    }
+    return superclasses;
+  }
+
   static CapnpAbiDump parseCapnpAbiJson(kj::StringPtr path) {
     auto text = readAll(raiiOpen(path, O_RDONLY | O_CLOEXEC));
     capnp::MallocMessageBuilder message;
@@ -3969,6 +4060,9 @@ private:
       interfaceDef.name = requireJsonString(requireJsonField(interfaceValue, "name", path), path);
       interfaceDef.interfaceId =
           requireJsonString(requireJsonField(interfaceValue, "interfaceId", path), path);
+      KJ_IF_MAYBE(superclasses, findJsonField(interfaceValue, "superclasses")) {
+        interfaceDef.superclasses = parseCapnpAbiSuperclassesJson(*superclasses, path);
+      }
 
       for (auto methodValue:
           requireJsonArray(requireJsonField(interfaceValue, "methods", path), path)) {
@@ -4026,6 +4120,12 @@ private:
       CapnpAbiInterface interfaceDump;
       interfaceDump.name = toStdString(interfaceDef.name);
       interfaceDump.interfaceId = found->second.interfaceId;
+      for (auto& superclass: found->second.superclasses) {
+        interfaceDump.superclasses.push_back(CapnpAbiSuperclass {
+          superclass.name,
+          superclass.interfaceId,
+        });
+      }
 
       for (auto& methodDef: interfaceDef.methods) {
         auto methodFound = found->second.methods.find(toStdString(methodDef.name));
@@ -4077,6 +4177,8 @@ private:
       appendJsonQuoted(json, kj::StringPtr(interfaceDef.name));
       json.addAll(kj::StringPtr(",\n      \"interfaceId\": "));
       appendJsonQuoted(json, kj::StringPtr(interfaceDef.interfaceId));
+      json.addAll(kj::StringPtr(",\n      \"superclasses\": "));
+      appendCapnpAbiSuperclassesJson(json, interfaceDef.superclasses);
       json.addAll(kj::StringPtr(",\n      \"methods\": ["));
 
       bool firstMethod = true;
@@ -4137,6 +4239,30 @@ private:
     }
   }
 
+  static void compareCapnpAbiSuperclasses(
+      kj::Vector<kj::String>& errors,
+      kj::StringPtr interfaceName,
+      const std::vector<CapnpAbiSuperclass>& baselineSuperclasses,
+      const std::vector<CapnpAbiSuperclass>& currentSuperclasses) {
+    if (currentSuperclasses.size() < baselineSuperclasses.size()) {
+      errors.add(kj::str("interface ", interfaceName, " removed superclasses: baseline had ",
+          baselineSuperclasses.size(), ", current has ", currentSuperclasses.size()));
+    }
+
+    auto count = baselineSuperclasses.size() < currentSuperclasses.size()
+        ? baselineSuperclasses.size()
+        : currentSuperclasses.size();
+    for (auto i = 0; i < count; ++i) {
+      auto& baseline = baselineSuperclasses[i];
+      auto& current = currentSuperclasses[i];
+      if (baseline.name != current.name || baseline.interfaceId != current.interfaceId) {
+        errors.add(kj::str("interface ", interfaceName, " changed superclass #", i,
+            ": expected ", baseline.name, " (", baseline.interfaceId, "), found ",
+            current.name, " (", current.interfaceId, ")"));
+      }
+    }
+  }
+
   static kj::Vector<kj::String> compareCapnpAbiDumps(
       const CapnpAbiDump& baseline, const CapnpAbiDump& current) {
     kj::Vector<kj::String> errors;
@@ -4156,6 +4282,8 @@ private:
         errors.add(kj::str("interface ", baselineInterface.name, " changed ID: expected ",
             baselineInterface.interfaceId, ", found ", currentInterface->second->interfaceId));
       }
+      compareCapnpAbiSuperclasses(errors, baselineInterface.name,
+          baselineInterface.superclasses, currentInterface->second->superclasses);
 
       std::map<std::string, const CapnpAbiMethod*> currentMethods;
       for (auto& methodDef: currentInterface->second->methods) {

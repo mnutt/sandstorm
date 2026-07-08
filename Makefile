@@ -149,12 +149,16 @@ IMAGES= \
     shell/public/restore-5D5D5D.svg
 
 CAPNP_SCHEMAS=$(filter-out src/capnp/test%.capnp,$(wildcard src/capnp/*.capnp))
+ISOLATE_CAPNP_ABI_BASELINES= \
+    tests/capnp-abi/isolate-bridge.capnp-abi.json \
+    tests/capnp-abi/isolate-supervisor-internal.capnp-abi.json \
+    tests/capnp-abi/outbound-http-session.capnp-abi.json
 
 # ====================================================================
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime isolate-capnp-abi-check
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -524,6 +528,17 @@ test-app-dev: tmp/.ekam-run
 	@cp src/sandstorm/test-app/*.html tmp/sandstorm/test-app
 	spk dev -Isrc -Itmp -ptmp/sandstorm/test-app/test-app.capnp:pkgdef
 
+isolate-capnp-abi-check: tmp/.ekam-run $(ISOLATE_CAPNP_ABI_BASELINES) \
+		src/sandstorm/isolate-bridge.capnp \
+		src/sandstorm/isolate-supervisor-internal.capnp \
+		src/sandstorm/outbound-http-session.capnp
+	bin/spk capnp-abi --check tests/capnp-abi/isolate-bridge.capnp-abi.json \
+		capnp:/sandstorm/isolate-bridge.capnp
+	bin/spk capnp-abi --check tests/capnp-abi/isolate-supervisor-internal.capnp-abi.json \
+		capnp:/sandstorm/isolate-supervisor-internal.capnp
+	bin/spk capnp-abi --check tests/capnp-abi/outbound-http-session.capnp-abi.json \
+		capnp:/sandstorm/outbound-http-session.capnp
+
 tests/assets/isolate-test-app.spk: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
 	@mkdir -p tests/assets
 	@mkdir -p tmp/sandstorm/isolate-test-app
@@ -541,7 +556,9 @@ isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capn
 	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
 	spk dev -Isrc -Itmp -ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef
 
-isolate-supervisor-integration-test: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
+isolate-supervisor-integration-test: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) \
+		isolate-capnp-abi-check tests/assets/isolate-test-app.spk \
+		tests/isolate-supervisor-integration.test.js
 	CAPNP_ES_COMPILER_MODULE=$(CAPNP_ES_COMPILER_MODULE) \
 	$(NODEJS) tests/isolate-supervisor-integration.test.js
 
