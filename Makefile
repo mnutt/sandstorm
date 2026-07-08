@@ -158,7 +158,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime isolate-capnp-abi-check
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -539,6 +539,17 @@ isolate-capnp-abi-check: tmp/.ekam-run $(ISOLATE_CAPNP_ABI_BASELINES) \
 	bin/spk capnp-abi --check tests/capnp-abi/outbound-http-session.capnp-abi.json \
 		capnp:/sandstorm/outbound-http-session.capnp
 
+isolate-capnp-corpus-test: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) \
+		tests/isolate-capnp-corpus.test.js tests/capnp-corpus/corpus.capnp
+	CAPNP_ES_COMPILER_MODULE=$(CAPNP_ES_COMPILER_MODULE) \
+	$(NODEJS) tests/isolate-capnp-corpus.test.js
+
+isolate-capnp-fuzz: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) \
+		tests/isolate-capnp-corpus.test.js tests/capnp-corpus/corpus.capnp
+	ISOLATE_CAPNP_CORPUS_EXTRA_CASES=$${ISOLATE_CAPNP_CORPUS_EXTRA_CASES:-1024} \
+	CAPNP_ES_COMPILER_MODULE=$(CAPNP_ES_COMPILER_MODULE) \
+	$(NODEJS) tests/isolate-capnp-corpus.test.js
+
 tests/assets/isolate-test-app.spk: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
 	@mkdir -p tests/assets
 	@mkdir -p tmp/sandstorm/isolate-test-app
@@ -557,7 +568,7 @@ isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capn
 	spk dev -Isrc -Itmp -ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef
 
 isolate-supervisor-integration-test: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) \
-		isolate-capnp-abi-check tests/assets/isolate-test-app.spk \
+		isolate-capnp-abi-check isolate-capnp-corpus-test tests/assets/isolate-test-app.spk \
 		tests/isolate-supervisor-integration.test.js
 	CAPNP_ES_COMPILER_MODULE=$(CAPNP_ES_COMPILER_MODULE) \
 	$(NODEJS) tests/isolate-supervisor-integration.test.js
