@@ -1,5 +1,7 @@
 import {
+  connectIsolateBridge,
   createNativeCapnpServerSession,
+  nativeCapnpSavedTokenData,
 } from "sandstorm:capnp";
 import {
   Interface as CapnpEsInterface,
@@ -201,6 +203,38 @@ async function openNativeCapnpBridgeBootstrapSession(env, connectionId) {
 
   response.webSocket.accept();
   return response.webSocket;
+}
+
+function nativeCapnpBridgeApi(env) {
+  return {
+    capnpBridgeInfo: () => callSandstormApi(env, "capnp/bridge-info"),
+    nativeCapnpBridgeOpenRpcSession: (target, connectionId) =>
+      openNativeCapnpBridgeRpcSession(env, target, connectionId),
+    nativeCapnpBridgeOpenBootstrapSession: (connectionId) =>
+      openNativeCapnpBridgeBootstrapSession(env, connectionId),
+  };
+}
+
+async function withSandstormApiRpc(env, operation, options = {}) {
+  const bridge = connectIsolateBridge(nativeCapnpBridgeApi(env), {
+    connectionId: options.connectionId,
+    finalize: options.finalize,
+  });
+
+  try {
+    const result = await bridge.getSandstormApi({});
+    const sandstormApi = result.api;
+    if (!sandstormApi || typeof sandstormApi !== "object") {
+      throw new Error("isolate bridge returned an invalid SandstormApi capability");
+    }
+
+    const value = await operation(sandstormApi);
+    bridge.close();
+    return value;
+  } catch (error) {
+    bridge.close(error);
+    throw error;
+  }
 }
 
 async function postPowerbox(env, path) {
@@ -1983,8 +2017,15 @@ async function restoreCapabilityToken(env, token) {
 }
 
 async function revokeCapabilityToken(env, token) {
-  const encodedToken = encodeURIComponent(savedCapabilityToken(token));
-  return postPowerbox(env, `powerbox/drop-saved?token=${encodedToken}`);
+  const tokenData = nativeCapnpSavedTokenData(savedCapabilityToken(token));
+  await withSandstormApiRpc(env, async (sandstormApi) => {
+    if (typeof sandstormApi.drop !== "function") {
+      throw new Error("isolate bridge returned a SandstormApi without drop()");
+    }
+
+    await sandstormApi.drop({ token: tokenData });
+  });
+  return { ok: true };
 }
 
 async function useCapabilityToken(env, token, fn) {

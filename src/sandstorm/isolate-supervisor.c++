@@ -4427,8 +4427,6 @@ public:
         return savePowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/restore") {
         return restorePowerboxCapability(path, response);
-      } else if (methodName == "POST" && route == "/powerbox/drop-saved") {
-        return dropSavedPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/drop") {
         return dropPowerboxCapability(path, response);
       } else if (methodName == "POST" && route == "/powerbox/fetch") {
@@ -6703,27 +6701,6 @@ private:
         auto capId = host.sessions->storeClaimedCapability(
             result.getCap(), kj::mv(metadata));
         return sendJson(response, 200, "OK", renderClaimedCapability(capId));
-      });
-    } else {
-      return sendBadRequest(response, "invalid saved capability token");
-    }
-  }
-
-  kj::Promise<void> dropSavedPowerboxCapability(
-      kj::StringPtr url, kj::HttpService::Response& response) {
-    kj::String tokenParam = nullptr;
-    KJ_IF_MAYBE(error, readSingleNonEmptyQueryParam(
-        url, "token", "expected exactly one saved capability token", tokenParam)) {
-      return sendBadRequest(response, *error);
-    }
-
-    KJ_IF_MAYBE(token, decodeSavedCapabilityEnvelope(tokenParam)) {
-      auto request = host.sandstormCore.dropRequest();
-      request.setToken(token->sturdyRef.asPtr());
-      return request.send().then(
-          [this, &response](auto result) mutable {
-        (void)result;
-        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
       });
     } else {
       return sendBadRequest(response, "invalid saved capability token");

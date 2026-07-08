@@ -146,9 +146,11 @@ export.
 - Done: drop groups and live-handle drop-notify machinery. Dropping a live
   claimed capability now only releases the local registry entry; remote release
   semantics should come from the RPC release protocol.
+- Done: `/powerbox/drop-saved`; `sandstorm(...).revoke(token)` now calls
+  `SandstormApi.drop()` over the IsolateBridge bootstrap RPC connection.
 - The authority-bearing POST routes on `SandstormApiBindingService`
   (`/powerbox/claim-request`, `/powerbox/save`, `/powerbox/restore`,
-  `/powerbox/drop`, `/powerbox/drop-saved`, `/powerbox/offer`,
+  `/powerbox/drop`, `/powerbox/offer`,
   `/powerbox/fulfill-request`, `/powerbox/tie-to-user`, `/powerbox/fetch`,
   `/powerbox/outbound-http-fetch`).
   Read-only GET metadata routes stay.
