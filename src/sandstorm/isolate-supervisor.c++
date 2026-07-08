@@ -4778,12 +4778,36 @@ private:
     kj::Promise<void> save(SaveContext context) override {
       auto args = context.getParams();
       KJ_REQUIRE(args.hasCap(), "Cannot save a null capability.");
-      auto request = args.getCap().template castAs<SystemPersistent>().saveRequest();
-      auto owner = request.getSealFor().initGrain();
-      owner.setGrainId(host.grainId);
-      owner.setSaveLabel(args.getLabel());
-      return request.send().then([context](auto result) mutable {
-        context.getResults().setToken(result.getSturdyRef());
+      auto cap = args.getCap();
+      auto appSaveLabel = newOwnCapnp(args.getLabel());
+      auto systemSaveLabel = newOwnCapnp(args.getLabel());
+
+      auto appRequest = cap.template castAs<AppPersistent<>>().saveRequest();
+      return appRequest.send().then(
+          [this, context, KJ_MVCAP(appSaveLabel)](auto result) mutable -> kj::Promise<void> {
+        auto request = host.sandstormCore.makeTokenRequest();
+        request.getRef().setAppRef(result.getObjectId());
+        auto owner = request.getOwner().initGrain();
+        owner.setGrainId(host.grainId);
+        owner.setSaveLabel(appSaveLabel);
+        return request.send().then([context](auto result) mutable {
+          context.getResults().setToken(result.getToken());
+        });
+      }, [this, context, cap, KJ_MVCAP(systemSaveLabel)](
+          kj::Exception&& exception) mutable -> kj::Promise<void> {
+        auto description = exception.getDescription();
+        if (exception.getType() != kj::Exception::Type::UNIMPLEMENTED &&
+            strstr(description.cStr(), "not implemented") == nullptr) {
+          throw kj::mv(exception);
+        }
+
+        auto request = cap.template castAs<SystemPersistent>().saveRequest();
+        auto owner = request.getSealFor().initGrain();
+        owner.setGrainId(host.grainId);
+        owner.setSaveLabel(systemSaveLabel);
+        return request.send().then([context](auto result) mutable {
+          context.getResults().setToken(result.getSturdyRef());
+        });
       });
     }
 

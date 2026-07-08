@@ -101,6 +101,13 @@ lifecycle bridge schema and supervisor implementation. The
 cache are gone; lifecycle restore fixtures now assert that restored capability
 slots are plain slots with no hidden local-dispatch property.
 
+**Progress, 2026-07-08:** `SandstormApi.save()` on the isolate bridge now
+tries the classic `AppPersistent.save()` path first and mints normal
+`SupervisorObjectId.appRef` tokens through `SandstormCore.makeToken()`. It
+falls back to `SystemPersistent.save()` only for the existing supervisor-owned
+route-backed/native capabilities while their persistence formats are migrated
+to `MainView.restore/drop()` or explicit supervisor object variants.
+
 **Delete** (all anchors per the architecture review):
 
 - The lifecycle envelope: `POST /capnp/lifecycle` and the
