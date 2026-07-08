@@ -771,10 +771,7 @@ async function cachedPowerboxDescriptorInfo(cacheKey, loader) {
   return cloneDescriptorJsonValue(result);
 }
 
-function claimNativeInterfaceParams(options = {}) {
-  if (options.nativeInterface === undefined || options.nativeInterface === null) {
-    return [];
-  }
+function explicitClaimNativeInterface(options = {}) {
   const nativeInterface = validate.string(options.nativeInterface, "nativeInterface", {
     minLength: 1,
     maxLength: 64,
@@ -783,7 +780,35 @@ function claimNativeInterfaceParams(options = {}) {
     throw new ValidationError(
       "nativeInterface must be one of unknown, webSession, apiSession, outboundHttpSession");
   }
-  return [["nativeInterface", nativeInterface]];
+  return nativeInterface;
+}
+
+function inferredClaimNativeInterface(options = {}) {
+  let inferred = "unknown";
+  if (options.apiSession !== undefined || options.apiSessionDescriptor !== undefined) {
+    inferred = "apiSession";
+  }
+  if (options.outboundHttp !== undefined || options.outboundHttpDescriptor !== undefined) {
+    if (inferred !== "unknown") {
+      throw new ValidationError("Powerbox options must specify only one descriptor type");
+    }
+    inferred = "outboundHttpSession";
+  }
+  return inferred;
+}
+
+function claimNativeInterface(options = {}) {
+  const inferred = inferredClaimNativeInterface(options);
+  if (options.nativeInterface === undefined || options.nativeInterface === null) {
+    return inferred;
+  }
+
+  const explicit = explicitClaimNativeInterface(options);
+  if (inferred !== "unknown" && explicit !== inferred) {
+    throw new ValidationError(
+      `nativeInterface ${explicit} conflicts with powerbox descriptor native interface ${inferred}`);
+  }
+  return explicit;
 }
 
 function powerboxDescriptorParams(options = {}) {
@@ -2019,12 +2044,12 @@ function capabilitySupportsOutboundHttpFetch(nativeInterface) {
   return nativeInterface === "unknown" || nativeInterface === "outboundHttpSession";
 }
 
-function cacheRestoredCapabilityMetadata(id, metadata) {
+function cacheImportedCapabilityMetadata(id, kind, metadata) {
   capabilityMetadata.set(id, {
     ok: true,
     type: "claimedCapabilityInfo",
     id,
-    kind: "restored",
+    kind,
     residence: "imported",
     nativeInterface: metadata.nativeInterface,
     pathPrefix: metadata.pathPrefix,
@@ -2175,7 +2200,7 @@ async function restoreCapabilityToken(env, token) {
     if (typeof sandstormApi.restore !== "function") {
       throw new Error("isolate bridge returned a SandstormApi without restore()");
     }
-    if (typeof bridge.storeRestoredCapability !== "function") {
+    if (typeof bridge.storeImportedCapability !== "function") {
       throw new Error("isolate bridge returned no restored-capability store");
     }
 
@@ -2186,8 +2211,9 @@ async function restoreCapabilityToken(env, token) {
       throw new Error("SandstormApi.restore() returned no capability");
     }
 
-    const stored = await bridge.storeRestoredCapability({
+    const stored = await bridge.storeImportedCapability({
       cap: restored.cap,
+      kind: "restored",
       nativeInterface: metadata.nativeInterface,
       pathPrefix: metadata.pathPrefix,
     });
@@ -2195,7 +2221,7 @@ async function restoreCapabilityToken(env, token) {
       minLength: 1,
       maxLength: 4096,
     });
-    cacheRestoredCapabilityMetadata(id, metadata);
+    cacheImportedCapabilityMetadata(id, "restored", metadata);
     return new Capability(env, id);
   });
 }
@@ -2392,9 +2418,7 @@ function permissionNames(options = {}) {
   });
 }
 
-async function validateRequiredPermissions(env, names) {
-  if (names.length === 0) return;
-
+async function requiredPermissionSet(env, names) {
   const declared = await callSandstormApi(env, "permissions");
   const declaredNames = Array.isArray(declared.permissions)
     ? declared.permissions.map((permission) => permission.name).filter((name) => typeof name === "string")
@@ -2407,29 +2431,59 @@ async function validateRequiredPermissions(env, names) {
       `${declaredNames.length > 0 ? declaredNames.join(", ") : "(none)"}. ` +
       "requiredPermissions must use names from this app's viewInfo.permissions.");
   }
+
+  const required = new Set(names);
+  return declaredNames.map((name) => required.has(name));
+}
+
+async function validateRequiredPermissions(env, names) {
+  if (names.length === 0) return;
+
+  await requiredPermissionSet(env, names);
 }
 
 export function powerbox(request, env) {
   const claimToken = async (token, options = {}) => {
     token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
     const requiredPermissions = permissionNames(options);
-    await validateRequiredPermissions(env, requiredPermissions);
-    const params = new URLSearchParams({
-      sessionId: sessionIdForPowerbox(request),
-      token,
+    const permissions = await requiredPermissionSet(env, requiredPermissions);
+    powerboxDescriptorParams(options);
+    const nativeInterface = claimNativeInterface(options);
+    const sessionId = sessionIdForPowerbox(request);
+
+    return withIsolateBridgeRpc(env, async (bridge) => {
+      if (typeof bridge.getSessionContext !== "function") {
+        throw new Error("isolate bridge returned no session-context resolver");
+      }
+      if (typeof bridge.storeImportedCapability !== "function") {
+        throw new Error("isolate bridge returned no imported-capability store");
+      }
+
+      const session = await bridge.getSessionContext({ sessionId });
+      if (!session?.context) {
+        throw new Error("isolate bridge returned no SessionContext capability");
+      }
+      const claimed = await session.context.claimRequest({
+        requestToken: token,
+        requiredPermissions: permissions,
+      });
+      if (!claimed?.cap) {
+        throw new Error("SessionContext.claimRequest() returned no capability");
+      }
+
+      const stored = await bridge.storeImportedCapability({
+        cap: claimed.cap,
+        kind: "powerboxClaim",
+        nativeInterface,
+        pathPrefix: "",
+      });
+      const id = validate.string(stored.id, "claimed capability id", {
+        minLength: 1,
+        maxLength: 4096,
+      });
+      cacheImportedCapabilityMetadata(id, "powerboxClaim", { nativeInterface, pathPrefix: "" });
+      return new Capability(env, id);
     });
-    for (const name of requiredPermissions) {
-      params.append("requiredPermission", name);
-    }
-    for (const [name, value] of powerboxDescriptorParams(options)) {
-      params.append(name, value);
-    }
-    for (const [name, value] of claimNativeInterfaceParams(options)) {
-      params.append(name, value);
-    }
-    const capability = await postPowerbox(env,
-      `powerbox/claim-request?${params}`);
-    return wrapCapability(env, capability);
   };
 
   return {

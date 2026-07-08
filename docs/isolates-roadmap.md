@@ -151,10 +151,12 @@ export.
 - Done: `/powerbox/save` and `/powerbox/restore`; id-backed helper handles now
   resolve/store capabilities through the private IsolateBridge RPC connection
   and call `SandstormApi.save()` / `SandstormApi.restore()`.
+- Done: `/powerbox/claim-request`; `powerbox(request, env).claim(...)` now gets
+  the session context through IsolateBridge and calls
+  `SessionContext.claimRequest()` over Cap'n Proto RPC.
 - The authority-bearing POST routes on `SandstormApiBindingService`
-  (`/powerbox/claim-request`, `/powerbox/drop`, `/powerbox/offer`,
-  `/powerbox/fulfill-request`, `/powerbox/tie-to-user`, `/powerbox/fetch`,
-  `/powerbox/outbound-http-fetch`).
+  (`/powerbox/drop`, `/powerbox/offer`, `/powerbox/fulfill-request`,
+  `/powerbox/tie-to-user`, `/powerbox/fetch`, `/powerbox/outbound-http-fetch`).
   Read-only GET metadata routes stay.
 - `IsolateSessionRegistry`'s string-ID claimed-capability table (RPC cap-table
   references replace it).

@@ -1421,37 +1421,26 @@ export default {
       const sessionId = request.headers.get("x-sandstorm-session-id") || "";
       const token = url.searchParams.get("token") || "";
       const requiredPermissions = url.searchParams.getAll("requiredPermission");
-      const permissionQuery = requiredPermissions
-        .map((permission) => `&requiredPermission=${encodeURIComponent(permission)}`)
-        .join("");
       const nativeInterface = url.searchParams.get("nativeInterface");
-      const nativeInterfaceQuery = nativeInterface === null
-        ? ""
-        : `&nativeInterface=${encodeURIComponent(nativeInterface)}`;
-      let claimResponseOk = false;
-      let claimResponseStatus = 500;
-      let claim;
-      if (url.searchParams.get("fetch") === "true" ||
-          url.searchParams.get("helperClaim") === "true") {
-        const claimOptions = {
-          requiredPermissions,
-        };
-        if (nativeInterface !== null) {
-          claimOptions.nativeInterface = nativeInterface;
-        }
-        claim = await sandstormPowerbox(request, env).claim(token, claimOptions);
-        claimResponseOk = true;
-        claimResponseStatus = 200;
-      } else {
-        const claimResponse = await env.SANDSTORM_API.fetch(
-          `http://sandstorm/powerbox/claim-request?` +
-          `sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token)}` +
-          permissionQuery + nativeInterfaceQuery,
-          { method: "POST" });
-        claimResponseOk = claimResponse.ok;
-        claimResponseStatus = claimResponse.status;
-        claim = await claimResponse.json();
+      const claimOptions = {
+        requiredPermissions,
+      };
+      if (nativeInterface !== null) {
+        claimOptions.nativeInterface = nativeInterface;
       }
+      let claim;
+      try {
+        claim = await sandstormPowerbox(request, env).claim(token, claimOptions);
+      } catch (error) {
+        return Response.json({
+          ok: false,
+          status: 400,
+          sessionId,
+          error: String(error?.message || error),
+        }, { status: 400 });
+      }
+      const claimResponseOk = true;
+      const claimResponseStatus = 200;
       const claimType = {
         capabilityClass: claim instanceof Capability,
         json: JSON.parse(JSON.stringify(claim)),
