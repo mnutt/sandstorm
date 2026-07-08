@@ -278,6 +278,10 @@ struct ClaimedCapabilityMetadata {
   ClaimedCapabilityResidence residence = ClaimedCapabilityResidence::UNKNOWN;
   ClaimedCapabilityNativeInterface nativeInterface = ClaimedCapabilityNativeInterface::UNKNOWN;
   kj::String pathPrefix = kj::heapString("");
+  kj::String localSupervisorId = kj::heapString("");
+  kj::String nativeCapnpExportId = kj::heapString("");
+  uint64_t nativeCapnpExportInterfaceId = 0;
+  kj::String nativeCapnpExportInterfaceName = kj::heapString("");
   bool persistent = true;
   bool hasDropNotify = false;
   bool hasNativeCapability = true;
@@ -291,6 +295,10 @@ ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
     metadata.residence,
     metadata.nativeInterface,
     kj::heapString(metadata.pathPrefix),
+    kj::heapString(metadata.localSupervisorId),
+    kj::heapString(metadata.nativeCapnpExportId),
+    metadata.nativeCapnpExportInterfaceId,
+    kj::heapString(metadata.nativeCapnpExportInterfaceName),
     metadata.persistent,
     metadata.hasDropNotify,
     metadata.hasNativeCapability,
@@ -305,6 +313,10 @@ ClaimedCapabilityMetadata makeImportedClaimedCapabilityMetadata(
     kind,
     ClaimedCapabilityResidence::IMPORTED,
     nativeInterface,
+    kj::heapString(""),
+    kj::heapString(""),
+    kj::heapString(""),
+    0,
     kj::heapString(""),
     true,
     false,
@@ -3784,12 +3796,18 @@ capnp::Capability::Client makeNativeCapnpExportPersistentCapability(
       kj::mv(config), kj::mv(host), exportId, interfaceId, interfaceName, kj::mv(parentToken)));
 }
 
-ClaimedCapabilityMetadata makeNativeCapnpExportClaimedCapabilityMetadata() {
+ClaimedCapabilityMetadata makeNativeCapnpExportClaimedCapabilityMetadata(
+    kj::StringPtr localSupervisorId, kj::StringPtr exportId,
+    uint64_t interfaceId, kj::StringPtr interfaceName) {
   return ClaimedCapabilityMetadata {
     ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT,
     ClaimedCapabilityResidence::LOCAL_EXPORT,
     ClaimedCapabilityNativeInterface::UNKNOWN,
     kj::heapString(""),
+    kj::heapString(localSupervisorId),
+    kj::heapString(exportId),
+    interfaceId,
+    kj::heapString(interfaceName),
     true,
     false,
     true,
@@ -4852,6 +4870,7 @@ private:
     kj::String targetId;
     uint64_t targetInterfaceId = 0;
     kj::String targetInterfaceName;
+    kj::Maybe<kj::Own<NativeCapnpExportRpcSession>> localNativeExportSession;
 
     NativeCapnpBridgeWebSocketMessageStream stream;
     capnp::TwoPartyVatNetwork network;
@@ -4859,10 +4878,12 @@ private:
 
     NativeCapnpBridgeWebSocketRpcSession(kj::Own<kj::WebSocket> webSocket,
         kj::String targetId, uint64_t targetInterfaceId, kj::String targetInterfaceName,
-        capnp::Capability::Client bootstrap)
+        capnp::Capability::Client bootstrap,
+        kj::Maybe<kj::Own<NativeCapnpExportRpcSession>> localNativeExportSession = nullptr)
         : targetId(kj::mv(targetId)),
           targetInterfaceId(targetInterfaceId),
           targetInterfaceName(kj::mv(targetInterfaceName)),
+          localNativeExportSession(kj::mv(localNativeExportSession)),
           stream(kj::mv(webSocket)),
           network(stream, capnp::rpc::twoparty::Side::SERVER),
           rpcSystem(capnp::makeRpcServer(network, kj::mv(bootstrap))) {}
@@ -4903,12 +4924,13 @@ private:
 
     kj::Promise<void> openWebSocketRpcSession(kj::Own<kj::WebSocket> webSocket,
         kj::StringPtr connectionId, kj::String targetId, uint64_t interfaceId,
-        kj::String interfaceName, capnp::Capability::Client targetCap) {
+        kj::String interfaceName, capnp::Capability::Client targetCap,
+        kj::Maybe<kj::Own<NativeCapnpExportRpcSession>> localNativeExportSession = nullptr) {
       auto key = nativeCapnpBridgeRpcSessionKey(connectionId);
       auto inserted = nativeCapnpBridgeWebSocketRpcSessions.emplace(std::move(key),
           kj::heap<NativeCapnpBridgeWebSocketRpcSession>(
             kj::mv(webSocket), kj::mv(targetId), interfaceId, kj::mv(interfaceName),
-            kj::mv(targetCap)));
+            kj::mv(targetCap), kj::mv(localNativeExportSession)));
       KJ_ASSERT(inserted.second);
 
       auto sessionKey = inserted.first->first;
@@ -4928,6 +4950,14 @@ private:
   kj::Maybe<kj::String> readNativeCapnpRpcSessionParam(
       kj::StringPtr url, kj::StringPtr name, kj::StringPtr errorMessage, kj::String& output) {
     return readSingleNonEmptyQueryParam(url, name, errorMessage, output);
+  }
+
+  bool isSameSupervisorNativeCapnpExport(const ClaimedCapabilityMetadata& metadata) {
+    return metadata.kind == ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT &&
+        metadata.residence == ClaimedCapabilityResidence::LOCAL_EXPORT &&
+        metadata.localSupervisorId == config.workerdSocketPath &&
+        metadata.nativeCapnpExportId.size() > 0 &&
+        metadata.nativeCapnpExportInterfaceName.size() > 0;
   }
 
   kj::Promise<void> openNativeCapnpBridgeRpcSession(
@@ -4981,10 +5011,27 @@ private:
     }
 
     KJ_IF_MAYBE(targetCap, host.sessions->findClaimedCapability(targetId)) {
+      capnp::Capability::Client bootstrap = *targetCap;
+      kj::Maybe<kj::Own<NativeCapnpExportRpcSession>> localNativeExportSession = nullptr;
+      KJ_IF_MAYBE(info, host.sessions->findClaimedCapabilityInfo(targetId)) {
+        auto& metadata = info->metadata;
+        if (isSameSupervisorNativeCapnpExport(metadata)) {
+          auto session = kj::heap<NativeCapnpExportRpcSession>(
+              kj::addRef(config), kj::addRef(host), headerTable,
+              kj::heapString(metadata.nativeCapnpExportId),
+              nativeCapnpExportSessionPath(metadata.nativeCapnpExportId),
+              metadata.nativeCapnpExportInterfaceId,
+              kj::heapString(metadata.nativeCapnpExportInterfaceName));
+          bootstrap = KJ_ASSERT_NONNULL(session->cap);
+          localNativeExportSession = kj::mv(session);
+        }
+      }
+
       kj::HttpHeaders responseHeaders(headerTable);
       auto webSocket = response.acceptWebSocket(responseHeaders);
       return nativeCapnpBridge.openWebSocketRpcSession(kj::mv(webSocket), connectionId,
-          kj::mv(targetId), interfaceId, kj::mv(interfaceName), *targetCap);
+          kj::mv(targetId), interfaceId, kj::mv(interfaceName), kj::mv(bootstrap),
+          kj::mv(localNativeExportSession));
     } else {
       return sendJson(response, 404, "Not Found", renderError(
           "unknown native Cap'n Proto bridge target capability"));
@@ -5897,6 +5944,10 @@ private:
       ClaimedCapabilityResidence::LOCAL_EXPORT,
       nativeInterface,
       kj::heapString(pathPrefix),
+      kj::heapString(config.workerdSocketPath),
+      kj::heapString(""),
+      0,
+      kj::heapString(""),
       persistent,
       false,
       true,
@@ -5980,12 +6031,18 @@ private:
 
     auto caps = makeNativeCapnpExportPersistentCapabilityWithNative(
         kj::addRef(config), kj::addRef(host), ids[0], interfaceId, interfaceNames[0]);
+    auto localSupervisorId = kj::heapString(config.workerdSocketPath);
+    auto exportId = kj::heapString(ids[0]);
+    auto interfaceName = kj::heapString(interfaceNames[0]);
     return caps.nativeCap.whenResolved()
         .then([this, &response, cap = kj::mv(caps.cap),
-            nativeCap = kj::mv(caps.nativeCap)]() mutable {
+            nativeCap = kj::mv(caps.nativeCap), localSupervisorId = kj::mv(localSupervisorId),
+            exportId = kj::mv(exportId), interfaceId, interfaceName = kj::mv(interfaceName)]
+            () mutable {
       (void)nativeCap;
       auto capId = host.sessions->storeClaimedCapability(
-          kj::mv(cap), makeNativeCapnpExportClaimedCapabilityMetadata());
+          kj::mv(cap), makeNativeCapnpExportClaimedCapabilityMetadata(
+            localSupervisorId, exportId, interfaceId, interfaceName));
       return sendJson(response, 200, "OK", renderClaimedCapability(capId));
     }).catch_([this, &response](kj::Exception&& exception) mutable {
       return sendJson(response, 502, "Bad Gateway", renderError(
@@ -6797,6 +6854,25 @@ private:
     kj::StringPtr type = "unknown";
     kj::String pathPrefix = kj::heapString("");
     KJ_IF_MAYBE(info, metadata) {
+      if (info->kind == ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT &&
+          info->nativeCapnpExportId.size() > 0 &&
+          info->nativeCapnpExportInterfaceName.size() > 0) {
+        auto encodedLocalSupervisorId = kj::encodeBase64Url(info->localSupervisorId.asBytes());
+        auto encodedExportId = kj::encodeBase64Url(info->nativeCapnpExportId.asBytes());
+        auto encodedInterfaceName =
+            kj::encodeBase64Url(info->nativeCapnpExportInterfaceName.asBytes());
+        auto encodedSturdyRef = kj::encodeBase64Url(sturdyRef);
+        auto payload = kj::str(
+            "isolate-saved-capability-v2\n",
+            "nativeCapnpExport\n",
+            encodedLocalSupervisorId, "\n",
+            encodedExportId, "\n",
+            info->nativeCapnpExportInterfaceId, "\n",
+            encodedInterfaceName, "\n",
+            encodedSturdyRef);
+        return kj::encodeBase64Url(payload.asBytes());
+      }
+
       switch (info->nativeInterface) {
         case ClaimedCapabilityNativeInterface::WEB_SESSION:
           hasMetadataEnvelope = true;
@@ -6854,7 +6930,109 @@ private:
     KJ_IF_MAYBE(decoded, decodeSavedCapabilityToken(token)) {
       auto text = kj::StringPtr(decoded->asChars().begin(), decoded->size());
       KJ_IF_MAYBE(version, consumeLine(text)) {
-        if (*version != "isolate-saved-capability-v1") {
+        if (*version == "isolate-saved-capability-v2") {
+          kj::StringPtr type;
+          KJ_IF_MAYBE(parsedType, consumeLine(text)) {
+            type = *parsedType;
+          } else {
+            return nullptr;
+          }
+
+          if (type != "nativeCapnpExport") {
+            return nullptr;
+          }
+
+          kj::StringPtr encodedLocalSupervisorId;
+          KJ_IF_MAYBE(parsedLocalSupervisorId, consumeLine(text)) {
+            encodedLocalSupervisorId = *parsedLocalSupervisorId;
+          } else {
+            return nullptr;
+          }
+
+          kj::StringPtr encodedExportId;
+          KJ_IF_MAYBE(parsedExportId, consumeLine(text)) {
+            encodedExportId = *parsedExportId;
+          } else {
+            return nullptr;
+          }
+
+          kj::StringPtr interfaceIdText;
+          KJ_IF_MAYBE(parsedInterfaceId, consumeLine(text)) {
+            interfaceIdText = *parsedInterfaceId;
+          } else {
+            return nullptr;
+          }
+
+          kj::StringPtr encodedInterfaceName;
+          KJ_IF_MAYBE(parsedInterfaceName, consumeLine(text)) {
+            encodedInterfaceName = *parsedInterfaceName;
+          } else {
+            return nullptr;
+          }
+
+          kj::Array<byte> localSupervisorIdBytes = nullptr;
+          kj::Array<byte> exportIdBytes = nullptr;
+          kj::Array<byte> interfaceNameBytes = nullptr;
+          if (encodedLocalSupervisorId.size() == 0) {
+            localSupervisorIdBytes = kj::heapArray<byte>(0);
+          } else KJ_IF_MAYBE(decoded, decodeBase64UrlText(encodedLocalSupervisorId, 2048)) {
+            localSupervisorIdBytes = kj::mv(*decoded);
+          } else {
+            return nullptr;
+          }
+          KJ_IF_MAYBE(decoded, decodeBase64UrlText(encodedExportId, 256)) {
+            exportIdBytes = kj::mv(*decoded);
+          } else {
+            return nullptr;
+          }
+          KJ_IF_MAYBE(decoded, decodeBase64UrlText(encodedInterfaceName, 512)) {
+            interfaceNameBytes = kj::mv(*decoded);
+          } else {
+            return nullptr;
+          }
+
+          uint64_t interfaceId = 0;
+          KJ_IF_MAYBE(parsed, parseNativeCapnpExportInterfaceId(kj::str(interfaceIdText))) {
+            interfaceId = *parsed;
+          } else {
+            return nullptr;
+          }
+
+          KJ_IF_MAYBE(sturdyRef, decodeBase64UrlText(text, 4096)) {
+            auto localSupervisorIdText = kj::StringPtr(
+                localSupervisorIdBytes.asChars().begin(), localSupervisorIdBytes.size());
+            auto exportIdText = kj::StringPtr(
+                exportIdBytes.asChars().begin(), exportIdBytes.size());
+            auto interfaceNameText = kj::StringPtr(
+                interfaceNameBytes.asChars().begin(), interfaceNameBytes.size());
+            if (exportIdText.size() == 0 || interfaceNameText.size() == 0) {
+              return nullptr;
+            }
+
+            auto residence = localSupervisorIdText == config.workerdSocketPath
+                ? ClaimedCapabilityResidence::LOCAL_EXPORT
+                : ClaimedCapabilityResidence::IMPORTED;
+            return DecodedSavedCapabilityToken {
+              kj::mv(*sturdyRef),
+              ClaimedCapabilityMetadata {
+                ClaimedCapabilityKind::NATIVE_CAPNP_EXPORT,
+                residence,
+                ClaimedCapabilityNativeInterface::UNKNOWN,
+                kj::heapString(""),
+                kj::heapString(localSupervisorIdText),
+                kj::heapString(exportIdText),
+                interfaceId,
+                kj::heapString(interfaceNameText),
+                true,
+                false,
+                true,
+                true,
+              },
+            };
+          }
+
+          return nullptr;
+        } else if (*version != "isolate-saved-capability-v1") {
           return DecodedSavedCapabilityToken {
             kj::mv(*decoded),
             makeImportedClaimedCapabilityMetadata(ClaimedCapabilityKind::RESTORED),
@@ -6914,6 +7092,10 @@ private:
             ClaimedCapabilityResidence::IMPORTED,
             nativeInterface,
             kj::mv(pathPrefix),
+            kj::heapString(""),
+            kj::heapString(""),
+            0,
+            kj::heapString(""),
             true,
             false,
             true,

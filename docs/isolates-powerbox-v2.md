@@ -1053,6 +1053,15 @@ Progress:
   generated-client helpers; `/capnp/lifecycle` remains for lifecycle envelopes such
   as save, restore, and drop, but generated RPC clients require the WebSocket
   RPC session transport.
+- native export saved tokens now carry same-supervisor identity and native
+  interface metadata. When restore validates a durable token and the resulting
+  live capability points back into the same supervisor, the WebSocket RPC
+  session bootstraps directly from the local native export session instead of
+  routing each generated call through the persistent wrapper bridge. Authority
+  and revocation still come from Sandstorm restore; the fast path only removes
+  the extra per-call hop after metadata proves the target is local. Integration
+  coverage saves a native export, restores it, calls it through a generated
+  client, and verifies the restored capability metadata.
 
 ### Phase 7: Packaging, Publishing, And Migration
 
