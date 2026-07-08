@@ -415,6 +415,13 @@ function makeUnixSocketWebSocket(socketPath, options = {}) {
       this._socket.write(this._frame(payload, 0x2));
     }
 
+    sendTextForTest(data) {
+      if (this.readyState !== UnixSocketWebSocket.OPEN) {
+        throw new Error("WebSocket is not open");
+      }
+      this._socket.write(this._frame(Buffer.from(String(data)), 0x1));
+    }
+
     close() {
       if (this.readyState === UnixSocketWebSocket.CLOSED ||
           this.readyState === UnixSocketWebSocket.CLOSING) {
@@ -555,6 +562,52 @@ function makeUnixSocketWebSocket(socketPath, options = {}) {
       this._socket.unref();
     }
   };
+}
+
+function waitForWebSocketOpen(webSocket, message = "WebSocket open timed out") {
+  if (webSocket.readyState === webSocket.constructor.OPEN) {
+    return Promise.resolve();
+  }
+
+  return withTimeout(new Promise((resolve, reject) => {
+    const cleanup = () => {
+      webSocket.removeEventListener("open", onOpen);
+      webSocket.removeEventListener("error", onError);
+      webSocket.removeEventListener("close", onClose);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (event) => {
+      cleanup();
+      reject(event.error || new Error("WebSocket failed before opening"));
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error("WebSocket closed before opening"));
+    };
+    webSocket.addEventListener("open", onOpen);
+    webSocket.addEventListener("error", onError);
+    webSocket.addEventListener("close", onClose);
+  }), 5000, message);
+}
+
+function waitForWebSocketClose(webSocket, message = "WebSocket close timed out") {
+  if (webSocket.readyState === webSocket.constructor.CLOSED) {
+    return Promise.resolve();
+  }
+
+  return withTimeout(new Promise((resolve) => {
+    const cleanup = () => {
+      webSocket.removeEventListener("close", onClose);
+    };
+    const onClose = () => {
+      cleanup();
+      resolve();
+    };
+    webSocket.addEventListener("close", onClose);
+  }), 5000, message);
 }
 
 const STATIC_IMPORT_SPECIFIER =
@@ -2060,6 +2113,56 @@ test("isolate supervisor integration suite", {
   if (REPRESENTATIVE_SYSCALL_TRACE) {
     return;
   }
+
+  await t.test("rejects malformed native capnp WebSocket frames", async () => {
+    const DirectWebSocket = makeUnixSocketWebSocket(fixture.sandstormApiSocket, {
+      headers: {
+        "X-Sandstorm-Session-Id": "malformed-native-capnp-session",
+      },
+    });
+    const malformedCases = [
+      {
+        name: "empty-binary",
+        send: (webSocket) => webSocket.send(Buffer.alloc(0)),
+      },
+      {
+        name: "short-segment-table",
+        send: (webSocket) => webSocket.send(Buffer.from([0, 0, 0, 0])),
+      },
+      {
+        name: "huge-segment-count",
+        send: (webSocket) => webSocket.send(Buffer.from([
+          0xff, 0xff, 0xff, 0xff,
+          0, 0, 0, 0,
+        ])),
+      },
+      {
+        name: "text-frame",
+        send: (webSocket) => webSocket.sendTextForTest("not a capnp message"),
+      },
+    ];
+
+    try {
+      for (const testCase of malformedCases) {
+        const webSocket = new DirectWebSocket(
+          `ws://sandstorm/capnp/rpc-session?bootstrap=browser&` +
+          `connectionId=malformed-${testCase.name}`);
+        await waitForWebSocketOpen(
+          webSocket,
+          `malformed native capnp WebSocket ${testCase.name} did not open`);
+        testCase.send(webSocket);
+        await waitForWebSocketClose(
+          webSocket,
+          `malformed native capnp WebSocket ${testCase.name} did not close`);
+      }
+    } finally {
+      DirectWebSocket.terminateAllForTest();
+    }
+
+    const runtime = await requestJson(fixture.sandstormApiSocket, "/runtime");
+    assert.equal(runtime.statusCode, 200, runtime.body);
+    assert.equal(runtime.json.ok, true);
+  });
 
   await t.test("exports route-backed WebSession capabilities", async () => {
     const exported = await requestJson(fixture.workerdSocket, "/export-web-session");

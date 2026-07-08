@@ -271,6 +271,11 @@ Do this while surface area is small and before any stability promise.
     `make isolate-capnp-abi-check` before the JS fixture.
 - Fuzz the supervisor-side `MessageStream` framing parsers and add
   differential capnp-es/KJ corpus and RPC conformance tests.
+  - Progress: the isolate integration fixture now opens native Cap'n Proto
+    WebSocket RPC sessions, sends malformed binary/text frames, verifies that
+    the session closes, and checks that the supervisor remains responsive.
+    This is not a full fuzz harness yet, but it covers the current
+    supervisor-side framing rejection path in the normal isolate test target.
 
 **Exit criteria:** one persistence format per family with a migration note;
 build reproducible without reaching into a personal npm namespace; fuzz
