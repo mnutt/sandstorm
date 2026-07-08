@@ -1511,6 +1511,7 @@ test("isolate supervisor integration suite", {
       await fs.readFile(path.join(fixture.runtimeDir, "runtime-manifest.json"), "utf8"));
     assert.equal(manifest.mainModule, "worker.js");
     assert.equal(manifest.compatibilityDate, "2025-01-01");
+    assert.equal(manifest.topology, "perGrainSidecar");
     assert.deepEqual(
       manifest.modules.map((module) => [module.name, module.type]),
       [
@@ -1646,6 +1647,7 @@ test("isolate supervisor integration suite", {
     });
     assert.equal(body.sandstormApi.status.ok, true);
     assert.equal(body.sandstormApi.runtime.mainModule, "worker.js");
+    assert.equal(body.sandstormApi.runtime.topology, "perGrainSidecar");
     assert.deepEqual(body.sandstormApi.capnpBridgeInfo, {
       ok: true,
       type: "capnpBridgeInfo",
@@ -2497,6 +2499,7 @@ test("isolate supervisor integration suite", {
     assert.equal(runtime.statusCode, 200);
     assert.equal(runtime.json.ok, true);
     assert.equal(runtime.json.mainModule, "worker.js");
+    assert.equal(runtime.json.topology, "perGrainSidecar");
     assert.equal(
       runtime.json.moduleCount,
       5 + FIXTURE_GENERATED_SCHEMA_MODULES.length +

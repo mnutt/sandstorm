@@ -330,6 +330,9 @@ Progress:
   package at once and verifies identical `STORAGE` keys resolve to distinct
   per-grain directories and values. This guards the storage-mediation invariant
   before the runtime topology changes.
+- The runtime manifest and `/runtime` Sandstorm API metadata now report the
+  current topology as `perGrainSidecar`, giving shared-host work an explicit
+  mode bit to assert against without changing launch behavior.
 
 **Exit criteria:** N example grains for one user run in one workerd with
 correct storage isolation; per-grain memory overhead measured and published;
