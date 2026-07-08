@@ -1929,6 +1929,7 @@ export default {
           : String(nativeExportWebSessionGet.content.statusCode),
         contentType: nativeExportWebSessionGet.content.mimeType,
         text: new TextDecoder().decode(nativeExportWebSessionBytes),
+        capability: nativeExportWebSession.capability,
         info: nativeExportWebSessionInfo,
         drop: nativeExportWebSessionDrop ?? null,
       };
@@ -2001,6 +2002,25 @@ export default {
           resolvedName: "after makeGreeter resolves",
           greetName: "bridge client",
         });
+      const nativeExportGreeterHandoff = connectNativeCapnp(
+        apiHelper,
+        nativeExportGreeter.capability,
+        NativeGreeter,
+        {
+          interfaceName: "NativeGreeter",
+          connectionId: "native-capnp-local-export-greeter-handoff",
+        });
+      const nativeExportGreeterHandoffConformance = await runNativeGreeterConformance(
+        nativeExportGreeterHandoff, {
+          helloName: "handoff schema",
+          childPrefix: "native export handoff greeter",
+          pipelinedName: "before handoff makeGreeter resolves",
+          resolvedName: "after handoff makeGreeter resolves",
+          greetName: "handoff client",
+        });
+      const nativeExportGreeterHandoffInfo =
+          nativeConnectedClientInfo(nativeExportGreeterHandoff);
+      const nativeExportGreeterHandoffDrop = await nativeExportGreeterHandoff.drop();
       const nativeExportGreeterSavedToken = await nativeExportGreeter.save({
         label: "native export greeter",
       });
@@ -2062,8 +2082,14 @@ export default {
         conformance: {
           direct: nativeExportGreeterDirectConformance,
           bridge: nativeExportGreeterBridgeConformance,
+          handoff: nativeExportGreeterHandoffConformance,
           restored: nativeExportGreeterRestoredConformance,
           bootstrapRestored: nativeExportGreeterBootstrapRestoredConformance,
+        },
+        capability: nativeExportGreeter.capability,
+        handoff: {
+          ...nativeExportGreeterHandoffInfo,
+          dropResult: nativeExportGreeterHandoffDrop ?? null,
         },
         restored: {
           savedTokenType: typeof nativeExportGreeterSavedToken,

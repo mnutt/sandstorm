@@ -220,6 +220,14 @@ bridge. Rebase it onto the Phase 1 channel:
   `BrowserIsolateBridge.claimPowerboxRequest()` over the same capnp WebSocket.
   The worker browser system route forwards only the supervisor-injected
   session ID header to bind that claim to the current browser session.
+- Done: local `exportNativeCapnp()` handles now include an id-backed
+  `receiverHosted` handoff slot for callers such as the browser. The worker
+  keeps the exporting IsolateBridge connection alive until `.drop()`, so the
+  slot is a live capnp reference rather than a raw local export name.
+- Done: `examples/isolate-browser-capnp` now imports the generated browser
+  schema module plus `/__sandstorm/native-capnp/client.js`, fetches one
+  handoff slot, and calls `read()`, `increment()`, and `reset()` over the
+  browser-scoped capnp WebSocket bridge.
 - Powerbox flow stays browser-first: shell `postMessage` picker → token →
   browser (or worker) claims over its own channel. Worker-initiated Powerbox
   UI becomes a `SessionContext` method call whenever the shell supports it —

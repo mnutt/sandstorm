@@ -28,15 +28,19 @@ function initLocalizedText(builder, value) {
   }
 }
 
-function initSandstormApiSaveParams(params, cap, label) {
+function initCapnpCapabilityParam(params, cap, name = "capability") {
   const client = cap?.client ?? cap;
   if (!client) {
-    throw new TypeError("SandstormApi.save() requires a Cap'n Proto capability");
+    throw new TypeError(`${name} must be a Cap'n Proto capability`);
   }
 
   CapnpEsUtils.setInterfacePointer(
-    params.segment.message.addCap(client),
+    params.segment.message.addCap(nativeCapnpClientReference(client, name)),
     CapnpEsUtils.getPointer(0, params));
+}
+
+function initSandstormApiSaveParams(params, cap, label) {
+  initCapnpCapabilityParam(params, cap, "SandstormApi.save() capability");
   initLocalizedText(params._initLabel(), label);
 }
 
@@ -829,25 +833,66 @@ export async function exportNativeCapnp(api, InterfaceClass, target, options = {
 
   const server = new InterfaceClass.Server(target);
   const client = server.client();
+  const publicInterfaceId = nativeCapnpInterfaceIdHex(interfaceMetadata.interfaceId);
+  const handoffBridge = connectIsolateBridge(api, {
+    connectionId: options.connectionId,
+    finalize: options.finalize,
+  });
+  let handoffId;
+  try {
+    const stored = await handoffBridge.storeImportedCapability((params) => {
+      initCapnpCapabilityParam(params, client, "local export capability");
+    });
+    if (!stored || typeof stored.id !== "string" || stored.id.length === 0) {
+      throw new NativeCapnpBridgeProtocolError(
+        "isolate bridge returned an invalid local export capability id");
+    }
+    handoffId = stored.id;
+  } catch (error) {
+    handoffBridge.close(error);
+    server.close?.();
+    throw error;
+  }
+
   const capability = Object.freeze({
-    kind: "localExport",
-    interfaceId: interfaceMetadata.interfaceId,
+    type: "capability",
+    id: handoffId,
+    kind: "receiverHosted",
+    residence: "localExport",
+    interfaceId: publicInterfaceId,
     interfaceName: interfaceMetadata.interfaceName,
   });
-  const publicInterfaceId = nativeCapnpInterfaceIdHex(interfaceMetadata.interfaceId);
+  let dropped = false;
+
+  async function dropLocalExport() {
+    if (dropped) {
+      return undefined;
+    }
+
+    dropped = true;
+    try {
+      await handoffBridge.dropClaimedCapability({ id: handoffId });
+      handoffBridge.close();
+    } catch (error) {
+      handoffBridge.close(error);
+      throw error;
+    } finally {
+      server.close?.();
+    }
+
+    return undefined;
+  }
 
   return Object.assign(client, {
     capability,
     connection: null,
     transport: null,
-    drop: () => {
-      server.close?.();
-      return undefined;
-    },
+    drop: dropLocalExport,
     info: async () => ({
       ok: true,
       type: "nativeCapnpCapability",
       kind: "localExport",
+      id: handoffId,
       interfaceId: publicInterfaceId,
       interfaceName: interfaceMetadata.interfaceName,
     }),
@@ -877,7 +922,9 @@ export async function exportNativeCapnp(api, InterfaceClass, target, options = {
     toJSON: () => ({
       ok: true,
       type: "nativeCapnpCapability",
-      kind: "localExport",
+      id: handoffId,
+      kind: "receiverHosted",
+      residence: "localExport",
       interfaceId: publicInterfaceId,
       interfaceName: interfaceMetadata.interfaceName,
     }),

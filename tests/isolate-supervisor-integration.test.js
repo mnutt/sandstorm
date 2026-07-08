@@ -1633,6 +1633,15 @@ test("isolate supervisor integration suite", {
       JSON.stringify(body.sandstormApi.nativeCapnpLocalExport.greeter, null, 2));
     assert.ok(
       body.sandstormApi.nativeCapnpLocalExport.greeter.bootstrapRestored.savedTokenLength > 0);
+    assert.equal(
+      body.sandstormApi.nativeCapnpLocalExport.webSession.capability.id,
+      body.sandstormApi.nativeCapnpLocalExport.webSession.info.id);
+    assert.equal(
+      body.sandstormApi.nativeCapnpLocalExport.greeter.capability.id,
+      body.sandstormApi.nativeCapnpLocalExport.greeter.info.id);
+    assert.equal(
+      body.sandstormApi.nativeCapnpLocalExport.greeter.handoff.id,
+      body.sandstormApi.nativeCapnpLocalExport.greeter.capability.id);
     assert.deepEqual(body.sandstormApi.nativeCapnpLocalExport, {
       stream: {
         serverBootstrap: true,
@@ -1645,10 +1654,19 @@ test("isolate supervisor integration suite", {
         status: 200,
         contentType: "text/plain; charset=utf-8",
         text: "native export websession get native-export-websession?from=rpc",
+        capability: {
+          type: "capability",
+          id: body.sandstormApi.nativeCapnpLocalExport.webSession.capability.id,
+          kind: "receiverHosted",
+          residence: "localExport",
+          interfaceId: "0xa50711a14d35a8ce",
+          interfaceName: "sandstorm.WebSession",
+        },
         info: {
           ok: true,
           type: "nativeCapnpCapability",
           kind: "localExport",
+          id: body.sandstormApi.nativeCapnpLocalExport.webSession.info.id,
           interfaceId: "0xa50711a14d35a8ce",
           interfaceName: "sandstorm.WebSession",
         },
@@ -1702,6 +1720,25 @@ test("isolate supervisor integration suite", {
                   "bridge client from native export self-test",
             },
           },
+          handoff: {
+            hello: {
+              message: "native export greeter hello handoff schema",
+            },
+            pipelined: {
+              message:
+                  "native export handoff greeter before handoff makeGreeter resolves",
+            },
+            resolved: {
+              hasClient: true,
+              message:
+                  "native export handoff greeter after handoff makeGreeter resolves",
+            },
+            argument: {
+              message:
+                  "native export greeter called native export handoff greeter " +
+                  "handoff client from native export self-test",
+            },
+          },
           restored: {
             hello: {
               message: "classic native greeter native-export-greeter hello restored schema",
@@ -1746,6 +1783,24 @@ test("isolate supervisor integration suite", {
             },
           },
         },
+        capability: {
+          type: "capability",
+          id: body.sandstormApi.nativeCapnpLocalExport.greeter.capability.id,
+          kind: "receiverHosted",
+          residence: "localExport",
+          interfaceId: "0xb66316217ceedb1b",
+          interfaceName: "NativeGreeter",
+        },
+        handoff: {
+          kind: "receiverHosted",
+          interfaceId: "0xb66316217ceedb1b",
+          interfaceName: "NativeGreeter",
+          connectionId: "native-capnp-local-export-greeter-handoff-bootstrap",
+          transportKind: "isolateBridgeWebSocketRpc",
+          connectionIsNull: false,
+          id: body.sandstormApi.nativeCapnpLocalExport.greeter.handoff.id,
+          dropResult: null,
+        },
         restored: {
           savedTokenType: "string",
           kind: "rpcImport",
@@ -1772,6 +1827,7 @@ test("isolate supervisor integration suite", {
           ok: true,
           type: "nativeCapnpCapability",
           kind: "localExport",
+          id: body.sandstormApi.nativeCapnpLocalExport.greeter.info.id,
           interfaceId: "0xb66316217ceedb1b",
           interfaceName: "NativeGreeter",
         },
