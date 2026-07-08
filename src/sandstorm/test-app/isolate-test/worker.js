@@ -34,6 +34,7 @@ import {
   readNativeCapnpBridgeResponse,
   restoreNativeCapnp,
   saveNativeCapnp,
+  connectIsolateBridge,
 } from "sandstorm:capnp";
 
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
@@ -2125,6 +2126,35 @@ export default {
         await apiHelper.nativeCapnpBridgeLifecycle(nativeCapnpBridgeSaveRequest.message);
     const nativeCapnpBridgeRestore =
         await apiHelper.nativeCapnpBridgeLifecycle(nativeCapnpBridgeRestoreRequest.message);
+    const isolateBridgeConnectionId = `isolate-bridge-bootstrap-${nativeCapnpTarget.id}`;
+    const isolateBridge = connectIsolateBridge(apiHelper, {
+      connectionId: isolateBridgeConnectionId,
+    });
+    let isolateBridgeBootstrap;
+    try {
+      const sandstormApiResult = await isolateBridge.getSandstormApi({});
+      let missingSessionError = "";
+      try {
+        await isolateBridge.getSessionContext({
+          sessionId: "missing-isolate-bridge-session",
+        });
+      } catch (error) {
+        missingSessionError = `${error?.name || ""}: ${error?.message || error}`;
+      }
+
+      isolateBridgeBootstrap = {
+        transportKind: isolateBridge.transport.kind,
+        connectionId: isolateBridge.transport.connectionId,
+        sandstormApi: {
+          hasSave: typeof sandstormApiResult.api?.save === "function",
+          hasRestore: typeof sandstormApiResult.api?.restore === "function",
+          hasDrop: typeof sandstormApiResult.api?.drop === "function",
+        },
+        missingSessionError,
+      };
+    } finally {
+      isolateBridge.close();
+    }
     class NativeCapnpBridgeFixtureClient {
       constructor(client) {
         this.client = client;
@@ -2456,6 +2486,7 @@ export default {
         nativeCapnpBridge: {
           available: nativeCapnpBridge.available,
           protocolVersion: nativeCapnpBridge.protocolVersion,
+          isolateBridgeBootstrap,
           targetId: nativeCapnpTarget.id,
           dropRequest: nativeCapnpBridgeDrop.request,
           saveRequest: nativeCapnpBridgeSave.request,

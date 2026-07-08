@@ -8,6 +8,7 @@ import {
   NativeCapnpBridgeResponse,
   NativeCapnpCapabilitySlotKind,
 } from "sandstorm:native-capnp-bridge";
+import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
 
 export const SANDSTORM_CAPNP_VERSION = 0;
 export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
@@ -932,6 +933,111 @@ export function createNativeCapnpBridgeConnection(api, target, options = {}) {
   const conn = new CapnpEsConn(transport, options.finalize);
   transport.connection = conn;
   return Object.assign(conn, { transport });
+}
+
+export class IsolateBridgeWebSocketRpcTransport extends CapnpEsDeferredTransport {
+  #webSocket = null;
+  #openPromise = null;
+  #sendQueue = Promise.resolve();
+
+  constructor(api, options = {}) {
+    super();
+    if (!api || typeof api.nativeCapnpBridgeOpenBootstrapSession !== "function") {
+      throw new NativeCapnpBridgeProtocolError(
+        "IsolateBridgeWebSocketRpcTransport requires " +
+        "api.nativeCapnpBridgeOpenBootstrapSession()");
+    }
+
+    this.api = api;
+    this.connectionId = normalizeNativeCapnpBridgeConnectionId(options.connectionId);
+    this.connection = null;
+    this.kind = "isolateBridgeWebSocketRpc";
+  }
+
+  sendMessage(message) {
+    if (this.closed) {
+      throw new NativeCapnpBridgeUnavailableError(
+        "isolate bridge WebSocket RPC transport is closed");
+    }
+
+    const bytes = nativeCapnpRootMessageBytes(message);
+    this.#sendQueue = this.#sendQueue
+      .then(async () => {
+        const webSocket = await this.#open();
+        webSocket.send(bytes);
+      })
+      .catch((error) => this.abort(error));
+  }
+
+  abort(error) {
+    if (this.connection && !this.connection.closed) {
+      this.connection.shutdown(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+
+    this.close(error);
+  }
+
+  close(error) {
+    if (this.closed) {
+      return;
+    }
+
+    try {
+      this.#webSocket?.close(error === undefined ? 1000 : 1011);
+    } catch (_) {}
+
+    super.close(error);
+  }
+
+  async #open() {
+    if (this.#webSocket) {
+      return this.#webSocket;
+    }
+
+    if (!this.#openPromise) {
+      this.#openPromise = this.api.nativeCapnpBridgeOpenBootstrapSession(
+        this.connectionId).then((webSocket) => {
+        if (!webSocket || typeof webSocket.send !== "function" ||
+            typeof webSocket.addEventListener !== "function") {
+          throw new NativeCapnpBridgeProtocolError(
+            "isolate bridge RPC session returned an invalid WebSocket");
+        }
+
+        webSocket.binaryType = "arraybuffer";
+        webSocket.addEventListener("message", (event) => {
+          try {
+            this.resolve(nativeCapnpMessageBytes(event.data));
+          } catch (error) {
+            this.abort(error);
+          }
+        });
+        webSocket.addEventListener("close", () => this.close());
+        webSocket.addEventListener("error", (event) => this.abort(event.error || event));
+        this.#webSocket = webSocket;
+        return webSocket;
+      });
+    }
+
+    return await this.#openPromise;
+  }
+}
+
+export function createIsolateBridgeConnection(api, options = {}) {
+  const transport = new IsolateBridgeWebSocketRpcTransport(api, options);
+  const connection = new CapnpEsConn(transport, options.finalize);
+  transport.connection = connection;
+  return Object.assign(connection, { transport });
+}
+
+export function connectIsolateBridge(api, options = {}) {
+  const connection = createIsolateBridgeConnection(api, options);
+  const bridge = connection.bootstrap(IsolateBridge);
+  return Object.assign(bridge, {
+    connection,
+    transport: connection.transport,
+    close: (...args) => connection.transport.close(...args),
+  });
 }
 
 function validateNativeCapnpGeneratedInterface(InterfaceClass, operation) {

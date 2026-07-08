@@ -169,6 +169,7 @@ declare module "sandstorm:capnp" {
         target: NativeCapnpCapabilitySlot,
         connectionId: string,
       ): Promise<WebSocket>;
+      nativeCapnpBridgeOpenBootstrapSession?(connectionId: string): Promise<WebSocket>;
     },
     options?: NativeCapnpBridgeNegotiationOptions,
   ): Promise<NativeCapnpBridge>;
@@ -201,6 +202,51 @@ declare module "sandstorm:capnp" {
     readonly target: Required<NativeCapnpCapabilitySlot>;
     close(error?: unknown): void;
   }
+
+  export class IsolateBridgeWebSocketRpcTransport {
+    readonly kind: "isolateBridgeWebSocketRpc";
+    readonly api: {
+      nativeCapnpBridgeOpenBootstrapSession(connectionId: string): Promise<WebSocket>;
+    };
+    readonly connectionId: string;
+    constructor(
+      api: IsolateBridgeWebSocketRpcTransport["api"],
+      options?: {
+        readonly connectionId?: string;
+      },
+    );
+    sendMessage(message: unknown): void;
+    recvMessage(): Promise<unknown>;
+    close(error?: unknown): void;
+  }
+
+  export function createIsolateBridgeConnection(
+    api: {
+      nativeCapnpBridgeOpenBootstrapSession?(connectionId: string): Promise<WebSocket>;
+    },
+    options?: {
+      readonly connectionId?: string;
+      readonly finalize?: unknown;
+    },
+  ): unknown;
+
+  export type IsolateBridgeConnectedClient = {
+    readonly connection: unknown;
+    readonly transport: IsolateBridgeWebSocketRpcTransport;
+    close(error?: unknown): void;
+    getSandstormApi(params?: unknown): unknown;
+    getSessionContext(params?: unknown): unknown;
+  };
+
+  export function connectIsolateBridge(
+    api: {
+      nativeCapnpBridgeOpenBootstrapSession?(connectionId: string): Promise<WebSocket>;
+    },
+    options?: {
+      readonly connectionId?: string;
+      readonly finalize?: unknown;
+    },
+  ): IsolateBridgeConnectedClient;
 
   export class NativeCapnpStreamTransport {
     constructor(

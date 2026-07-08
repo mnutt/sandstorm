@@ -65,6 +65,15 @@ compatibility with current prototype apps is explicitly a non-goal.
   channel. Merge `sandstorm:api` and `sandstorm:capnp` into one module while
   we're at it — the split reflects the transport split we're removing.
 
+**Progress, 2026-07-08:** `isolate-bridge.capnp` now defines the minimal
+request-scoped bootstrap (`getSandstormApi()` and `getSessionContext()`), and
+`GET /capnp/rpc-session?bootstrap=worker` serves it over the existing native
+Cap'n Proto WebSocket RPC session. `sandstorm:capnp` exposes
+`connectIsolateBridge()` for trusted helper code, and the isolate integration
+suite covers successful `SandstormApi` bootstrap plus a rejected missing
+session-context lookup. The old lifecycle envelope and authority POST routes
+still exist and remain the next Phase 1 deletion/migration work.
+
 **Delete** (all anchors per the architecture review):
 
 - The lifecycle envelope: `POST /capnp/lifecycle` and the
