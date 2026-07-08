@@ -2987,6 +2987,46 @@ test("isolate supervisor integration suite", {
       (entry) => entry.name === "persist-key" && entry.bytes === 16));
   });
 
+  await t.test("keeps storage isolated across isolate instances", async () => {
+    const secondary = await startIsolateFixture();
+    try {
+      const primaryStorageRoot = path.join(fixture.varDir, "isolate-storage");
+      const secondaryStorageRoot = path.join(secondary.varDir, "isolate-storage");
+      assert.notEqual(primaryStorageRoot, secondaryStorageRoot);
+
+      const primaryPut = await requestJson(fixture.storageSocket, "/shared-key", {
+        method: "PUT",
+        body: "primary grain value",
+      });
+      assert.equal(primaryPut.statusCode, 200, primaryPut.body);
+      assert.deepEqual(primaryPut.json, { ok: true, bytes: 19 });
+
+      const secondaryPut = await requestJson(secondary.storageSocket, "/shared-key", {
+        method: "PUT",
+        body: "secondary grain value",
+      });
+      assert.equal(secondaryPut.statusCode, 200, secondaryPut.body);
+      assert.deepEqual(secondaryPut.json, { ok: true, bytes: 21 });
+
+      const primaryGet = await requestUnixSocket(fixture.storageSocket, "/shared-key");
+      assert.equal(primaryGet.statusCode, 200, primaryGet.body);
+      assert.equal(primaryGet.body, "primary grain value");
+
+      const secondaryGet = await requestUnixSocket(secondary.storageSocket, "/shared-key");
+      assert.equal(secondaryGet.statusCode, 200, secondaryGet.body);
+      assert.equal(secondaryGet.body, "secondary grain value");
+
+      assert.equal(
+        await fs.readFile(path.join(primaryStorageRoot, "shared-key"), "utf8"),
+        "primary grain value");
+      assert.equal(
+        await fs.readFile(path.join(secondaryStorageRoot, "shared-key"), "utf8"),
+        "secondary grain value");
+    } finally {
+      await secondary.cleanup();
+    }
+  });
+
   await t.test("rejects non-allowlisted sidecar commands", async () => {
     const { workdir, pkgDir, varDir, isolateSupervisorBin } =
       await prepareIsolateWorkdir("iso-bad-cmd-");

@@ -324,6 +324,13 @@ prerequisite for the cross-grain fast path.
   grain as today. Isolate eviction severs that grain's RPC connections, which
   by invariant 3 is already well-defined (live handles die, tokens survive).
 
+Progress:
+
+- Added integration coverage that runs two isolate instances from the same app
+  package at once and verifies identical `STORAGE` keys resolve to distinct
+  per-grain directories and values. This guards the storage-mediation invariant
+  before the runtime topology changes.
+
 **Exit criteria:** N example grains for one user run in one workerd with
 correct storage isolation; per-grain memory overhead measured and published;
 per-grain sidecar mode still passes the full suite.
