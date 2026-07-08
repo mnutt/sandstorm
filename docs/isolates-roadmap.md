@@ -260,6 +260,9 @@ Do this while surface area is small and before any stability promise.
   dependency: upstream, vendor into the tree, or move to a `sandstorm-org`
   namespace with pinned integrity hashes in the build. The runtime is
   supervisor-injected trusted-adjacent code; treat it like one.
+  - Deferred: keep the exact pinned npm package and lockfile integrity for
+    now. The real fix is to move the package under Sandstorm organizational
+    custody when that is available.
 - **ABI discipline.** Extend `spk capnp-abi` checks to any new platform
   bootstrap schemas, not just app schemas.
   - Done: `spk capnp-abi` now records immediate interface superclasses and
@@ -276,10 +279,19 @@ Do this while surface area is small and before any stability promise.
     the session closes, and checks that the supervisor remains responsive.
     This is not a full fuzz harness yet, but it covers the current
     supervisor-side framing rejection path in the normal isolate test target.
+  - Done: `make isolate-capnp-corpus-test` replays deterministic capnp-es/KJ
+    encode/decode corpus cases for common struct field shapes, and
+    `make isolate-supervisor-integration-test` runs it before the real bridge
+    fixture. The bridge fixture is the RPC conformance path for pipelining,
+    returned capabilities, capability arguments, save/restore, browser calls,
+    and legacy C++ interop. `make isolate-capnp-fuzz` is the opt-in generated
+    corpus target for local or scheduled runs outside normal PR CI.
 
 **Exit criteria:** one persistence format per family with a migration note;
-build reproducible without reaching into a personal npm namespace; fuzz
-harness in CI.
+build reproducible without reaching into a personal npm namespace once
+Sandstorm-owned capnp-es custody is available; deterministic malformed-frame,
+capnp-es/KJ corpus, and RPC conformance tests in CI; opt-in generated-case
+fuzz target available outside normal CI.
 
 ---
 

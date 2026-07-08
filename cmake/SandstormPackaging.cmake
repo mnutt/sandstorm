@@ -188,6 +188,7 @@ function(sandstorm_add_packaging_targets)
       spk
       isolate-websession-client
       isolate-capnp-abi-check
+      isolate-capnp-corpus-test
       workerd
       isolate-test-app-spk
       "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
@@ -217,6 +218,38 @@ function(sandstorm_add_packaging_targets)
       "${PROJECT_SOURCE_DIR}/src/sandstorm/outbound-http-session.capnp"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     COMMENT "Checking isolate platform Cap'n Proto ABI baselines"
+    VERBATIM)
+
+  add_custom_target(isolate-capnp-corpus-test
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "CAPNP_BIN=$<TARGET_FILE:capnp_tool>"
+      "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
+      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-capnp-corpus.test.js"
+    DEPENDS
+      capnp_tool
+      "${_capnp_es_compiler_deps}"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-capnp-corpus.test.js"
+      "${PROJECT_SOURCE_DIR}/tests/capnp-corpus/corpus.capnp"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    COMMENT "Running deterministic isolate Cap'n Proto corpus tests"
+    VERBATIM)
+
+  add_custom_target(isolate-capnp-fuzz
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "CAPNP_BIN=$<TARGET_FILE:capnp_tool>"
+      "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
+      "ISOLATE_CAPNP_CORPUS_EXTRA_CASES=1024"
+      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-capnp-corpus.test.js"
+    DEPENDS
+      capnp_tool
+      "${_capnp_es_compiler_deps}"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-capnp-corpus.test.js"
+      "${PROJECT_SOURCE_DIR}/tests/capnp-corpus/corpus.capnp"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Running generated isolate Cap'n Proto corpus cases"
     VERBATIM)
 
   add_custom_target(isolate-supervisor-stress-test
