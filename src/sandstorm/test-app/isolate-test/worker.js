@@ -31,6 +31,7 @@ import {
   nativeCapnpPowerboxDescriptor,
   nativeCapnpPowerboxDescriptorInfo,
   readNativeCapnpBridgeRequest,
+  readNativeCapnpBridgeResponse,
   restoreNativeCapnp,
   saveNativeCapnp,
 } from "sandstorm:capnp";
@@ -1898,6 +1899,26 @@ export default {
           interfaceName: "NativeGreeter",
           kind: "receiverHosted",
         });
+      const nativeExportGreeterLocalDispatchRestore =
+          await apiHelper.nativeCapnpBridgeLifecycleBytes(makeNativeCapnpBridgeRestoreRequest({
+            token: nativeExportGreeterSavedToken,
+            expectedInterfaceId: `0x${NativeGreeter._capnp.typeIdHex}`,
+            expectedInterfaceName: "NativeGreeter",
+          }).message);
+      const rawNativeExportGreeterLocalDispatchRestore =
+          readNativeCapnpBridgeResponse(nativeExportGreeterLocalDispatchRestore.body);
+      const rawNativeExportGreeterLocalDispatch =
+          rawNativeExportGreeterLocalDispatchRestore.capability._hasLocalDispatch()
+            ? rawNativeExportGreeterLocalDispatchRestore.capability.localDispatch
+            : null;
+      const decodedNativeExportGreeterLocalDispatchRestore =
+          decodeNativeCapnpBridgeResponse(nativeExportGreeterLocalDispatchRestore.body);
+      const nativeExportGreeterLocalDispatchDrop =
+          await apiHelper.nativeCapnpBridgeLifecycleBytes(makeNativeCapnpBridgeDropRequest({
+            target: decodedNativeExportGreeterLocalDispatchRestore.capability,
+          }).message);
+      const decodedNativeExportGreeterLocalDispatchDrop =
+          decodeNativeCapnpBridgeResponse(nativeExportGreeterLocalDispatchDrop.body);
       const nativeExportGreeterRestored = await restoreNativeCapnp(
         apiHelper,
         nativeExportGreeterSavedToken,
@@ -1943,6 +1964,25 @@ export default {
           targetId: nativeExportGreeterRestored.capability.id,
           connectionId: nativeExportGreeterRestored.transport.connectionId,
           info: nativeExportGreeterRestoredInfo,
+        },
+        localDispatchLease: {
+          restoreOk: nativeExportGreeterLocalDispatchRestore.ok,
+          restoreStatus: nativeExportGreeterLocalDispatchRestore.status,
+          rawHasLocalDispatch:
+              rawNativeExportGreeterLocalDispatchRestore.capability._hasLocalDispatch(),
+          rawExportIdType: typeof rawNativeExportGreeterLocalDispatch?.exportId,
+          rawExportIdLength: rawNativeExportGreeterLocalDispatch?.exportId.length ?? 0,
+          rawExportIdEqualsCapabilityId: rawNativeExportGreeterLocalDispatch?.exportId ===
+              nativeExportGreeter.id,
+          rawInterfaceId: rawNativeExportGreeterLocalDispatch?.interfaceId.toString(16) ?? "",
+          rawInterfaceName: rawNativeExportGreeterLocalDispatch?.interfaceName ?? "",
+          rawAuthorizationType: typeof rawNativeExportGreeterLocalDispatch?.authorization,
+          rawAuthorizationLength: rawNativeExportGreeterLocalDispatch?.authorization.length ?? 0,
+          decodedCapabilityKeys: Object.keys(
+            decodedNativeExportGreeterLocalDispatchRestore.capability).sort(),
+          decodedHasLocalDispatchProperty: Object.prototype.hasOwnProperty.call(
+            decodedNativeExportGreeterLocalDispatchRestore.capability, "localDispatch"),
+          dropWhich: decodedNativeExportGreeterLocalDispatchDrop.which,
         },
         info: nativeExportGreeterInfo,
         drop: nativeExportGreeterDrop,

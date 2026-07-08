@@ -417,6 +417,18 @@ export declare class NativeCapnpCapabilitySlot extends $.Struct {
                 readonly typeIdHex: "874023c5caa9b3df";
                 readonly displayName: "NativeCapnpCapabilitySlotKind";
             };
+        }, {
+            readonly name: "localDispatch";
+            readonly codeOrder: 4;
+            readonly ordinal: 4;
+            readonly kind: "slot";
+            readonly offset: 2;
+            readonly type: {
+                readonly kind: "struct";
+                readonly typeId: 11285229186937030789n;
+                readonly typeIdHex: "9c9d302760408885";
+                readonly displayName: "NativeCapnpLocalDispatch";
+            };
         }];
     };
     static _applyInit(target: NativeCapnpCapabilitySlot, value: $.Init<NativeCapnpCapabilitySlot>): void;
@@ -428,6 +440,76 @@ export declare class NativeCapnpCapabilitySlot extends $.Struct {
     set interfaceName(value: string);
     get kind(): NativeCapnpCapabilitySlotKind;
     set kind(value: NativeCapnpCapabilitySlotKind);
+    _adoptLocalDispatch(value: $.Orphan<NativeCapnpLocalDispatch>): void;
+    _disownLocalDispatch(): $.Orphan<NativeCapnpLocalDispatch>;
+    get localDispatch(): NativeCapnpLocalDispatch;
+    _hasLocalDispatch(): boolean;
+    _initLocalDispatch(): NativeCapnpLocalDispatch;
+    set localDispatch(value: NativeCapnpLocalDispatch);
+    toString(): string;
+}
+/**
+* Opaque same-supervisor dispatch lease. The supervisor only includes this
+* after restoring or otherwise validating an actual Sandstorm capability.
+*
+* Isolate runtimes must treat this as trusted metadata from the bridge, not
+* app-provided authority. Raw export IDs are not sufficient to dispatch.
+*
+*/
+export declare class NativeCapnpLocalDispatch extends $.Struct {
+    static readonly _capnp: {
+        displayName: string;
+        id: string;
+        typeId: bigint;
+        typeIdHex: string;
+        size: any;
+        fields: readonly [{
+            readonly name: "exportId";
+            readonly codeOrder: 0;
+            readonly ordinal: 0;
+            readonly kind: "slot";
+            readonly offset: 0;
+            readonly type: {
+                readonly kind: "text";
+            };
+        }, {
+            readonly name: "interfaceId";
+            readonly codeOrder: 1;
+            readonly ordinal: 1;
+            readonly kind: "slot";
+            readonly offset: 0;
+            readonly type: {
+                readonly kind: "uint64";
+            };
+        }, {
+            readonly name: "interfaceName";
+            readonly codeOrder: 2;
+            readonly ordinal: 2;
+            readonly kind: "slot";
+            readonly offset: 1;
+            readonly type: {
+                readonly kind: "text";
+            };
+        }, {
+            readonly name: "authorization";
+            readonly codeOrder: 3;
+            readonly ordinal: 3;
+            readonly kind: "slot";
+            readonly offset: 2;
+            readonly type: {
+                readonly kind: "text";
+            };
+        }];
+    };
+    static _applyInit(target: NativeCapnpLocalDispatch, value: $.Init<NativeCapnpLocalDispatch>): void;
+    get exportId(): string;
+    set exportId(value: string);
+    get interfaceId(): bigint;
+    set interfaceId(value: bigint);
+    get interfaceName(): string;
+    set interfaceName(value: string);
+    get authorization(): string;
+    set authorization(value: string);
     toString(): string;
 }
 export declare const NativeCapnpCapabilitySlotKind: {
