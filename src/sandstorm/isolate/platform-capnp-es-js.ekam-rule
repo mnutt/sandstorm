@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+NODEJS=${NODEJS:-node}
+
+input="sandstorm/isolate/platform-capnp-es/schemas.txt"
+output="sandstorm/isolate/platform-capnp-es.js.h"
+
+if test $# = 0; then
+  echo "trigger canonical:${input}"
+  exit 0
+fi
+
+echo "findInput ${input}"
+read MANIFEST_DISK_FILE
+
+echo "newOutput ${output}"
+read OUTPUT_DISK_FILE
+
+python3 - "$OUTPUT_DISK_FILE" "$MANIFEST_DISK_FILE" "$NODEJS" <<'PY'
+import subprocess
+import sys
+from pathlib import Path
+
+output_path = sys.argv[1]
+manifest_path = Path(sys.argv[2]).resolve()
+nodejs = sys.argv[3]
+
+repo_root = None
+for parent in manifest_path.parents:
+    if (parent / "deps/capnp-es-npm/package.json").exists():
+        repo_root = parent
+        break
+if repo_root is None:
+    raise SystemExit(f"could not find repository root from {manifest_path}")
+
+compiler_module = repo_root / "tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs"
+if not compiler_module.exists():
+    raise SystemExit(
+        f"{compiler_module} does not exist; run `make tmp/.capnp-es-npm` before Ekam.")
+
+schema_specs = []
+for line in manifest_path.read_text(encoding="utf-8").splitlines():
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    if not line.startswith("sandstorm/") or not line.endswith(".capnp"):
+        raise ValueError(f"expected a sandstorm/*.capnp schema path in {manifest_path}: {line}")
+    schema_specs.append(line)
+
+if not schema_specs:
+    raise ValueError(f"no platform schemas listed in {manifest_path}")
+
+capnpc = subprocess.run(
+    ["capnpc", "-o-", "-I.", "-I/usr/include", *schema_specs],
+    cwd=repo_root / "src",
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+if capnpc.returncode != 0:
+    sys.stderr.write(capnpc.stderr.decode("utf-8", errors="replace"))
+    raise SystemExit(capnpc.returncode)
+
+node_script = r"""
+import path from 'node:path';
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const { compileAll } = await import(process.argv[1]);
+
+function runtimeModuleSpecifier(moduleName) {
+  if (moduleName === '@mnutt/capnp-es') return '/capnp-es/index.mjs';
+  if (moduleName.startsWith('@mnutt/capnp-es/')) {
+    const relative = moduleName.slice('@mnutt/capnp-es/'.length);
+    return '/capnp-es/' + relative + (relative.endsWith('.mjs') ? '' : '.mjs');
+  }
+  if (moduleName.startsWith('@mnutt/shared/')) {
+    return '/capnp-es/shared/' + moduleName.slice('@mnutt/shared/'.length);
+  }
+  if (moduleName.startsWith('@mnutt/')) {
+    return '/capnp-es/' + moduleName.slice('@mnutt/'.length);
+  }
+  return moduleName;
+}
+
+function relativeSchemaSpecifier(fromPath, toPath) {
+  const from = fromPath.replace(/\.ts$/, '.capnp');
+  const to = toPath.replace(/\.ts$/, '.capnp');
+  let relative = path.posix.relative(path.posix.dirname(from), to);
+  if (relative === '') relative = '.';
+  if (!relative.startsWith('.')) relative = './' + relative;
+  return relative;
+}
+
+const { files } = await compileAll(Buffer.concat(chunks), {
+  js: true,
+  tsconfig: { noCheck: true },
+  moduleSpecifier(context) {
+    if (context.kind === 'runtime') return runtimeModuleSpecifier(context.originalSpecifier);
+    return relativeSchemaSpecifier(context.fromPath, context.toPath);
+  }
+});
+
+process.stdout.write(JSON.stringify([...files.entries()]));
+"""
+
+node = subprocess.run(
+    [nodejs, "--input-type=module", "-e", node_script, str(compiler_module)],
+    input=capnpc.stdout,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+if node.returncode != 0:
+    sys.stderr.write(node.stderr.decode("utf-8", errors="replace"))
+    raise SystemExit(node.returncode)
+
+import json
+generated_files = dict(json.loads(node.stdout.decode("utf-8")))
+
+module_records = []
+for schema in schema_specs:
+    generated_path = schema.removesuffix(".capnp") + ".js"
+    try:
+        source = generated_files[generated_path]
+    except KeyError:
+        raise SystemExit(
+            f"capnp-es compiler did not emit expected platform module {generated_path}; "
+            f"emitted: {', '.join(sorted(generated_files))}")
+    module_records.append((
+        "capnp:/" + schema,
+        "capnp-es-generated/" + generated_path,
+        source.encode("utf-8"),
+    ))
+
+def escape_chunk(chunk):
+    out = []
+    for b in chunk:
+        if b == 0x0a:
+            out.append(r"\n")
+        elif b == 0x0d:
+            out.append(r"\r")
+        elif b == 0x09:
+            out.append(r"\t")
+        elif b == 0x22:
+            out.append(r"\"")
+        elif b == 0x5c:
+            out.append(r"\\")
+        elif 0x20 <= b <= 0x7e:
+            out.append(chr(b))
+        else:
+            out.append("\\x%02x" % b)
+    return "".join(out)
+
+with open(output_path, "w", encoding="utf-8") as out:
+    out.write("// Generated from Sandstorm platform schemas with the pinned @mnutt/capnp-es. Do not edit.\n")
+    out.write("#pragma once\n\n")
+    out.write("namespace sandstorm {\n\n")
+    out.write("struct IsolatePlatformCapnpEsModuleSource {\n")
+    out.write("  const char* name;\n")
+    out.write("  const char* runtimePath;\n")
+    out.write("  const char* source;\n")
+    out.write("};\n\n")
+
+    source_names = []
+    for i, (_name, _runtime_path, data) in enumerate(module_records):
+        source_name = "ISOLATE_PLATFORM_CAPNP_ES_SOURCE_%u" % i
+        source_names.append(source_name)
+        out.write("static constexpr const char %s[] =\n" % source_name)
+        for offset in range(0, len(data), 100):
+            out.write("    \"")
+            out.write(escape_chunk(data[offset:offset + 100]))
+            out.write("\"\n")
+        out.write("    ;\n\n")
+
+    out.write("static constexpr IsolatePlatformCapnpEsModuleSource "
+              "ISOLATE_PLATFORM_CAPNP_ES_MODULES[] = {\n")
+    for (module_name, runtime_path, _data), source_name in zip(module_records, source_names):
+        out.write("  { \"")
+        out.write(module_name)
+        out.write("\", \"")
+        out.write(runtime_path)
+        out.write("\", ")
+        out.write(source_name)
+        out.write(" },\n")
+    out.write("};\n\n")
+    out.write("static constexpr uint ISOLATE_PLATFORM_CAPNP_ES_MODULE_COUNT = %u;\n\n" %
+              len(module_records))
+    out.write("}  // namespace sandstorm\n")
+PY

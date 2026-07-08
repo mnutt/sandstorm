@@ -133,6 +133,21 @@ Integration tests cover direct local calls, save/restore through app refs,
 re-save, bootstrap restore, explicit drop, and C++ interop for the saved
 export.
 
+**Progress, 2026-07-08:** Per-grain isolate sidecars now follow the classic
+supervisor warm-reuse lifecycle while that backend still exists. Startup first
+probes an existing supervisor socket and sends `keepAlive()` instead of
+launching another workerd; `keepAlive()` resets the idle timer and refreshes
+the core redirector from backend connections. This removes the accidental
+full workerd cold start on repeated WebSession requests before Phase 4
+replaces per-grain sidecars entirely.
+
+**Progress, 2026-07-08:** Sandstorm platform capnp-es modules are now part of
+the embedded isolate support bundle. `spk dev-isolate` and `spk pack` seed
+`capnp:/sandstorm/...` imports from build-generated sources instead of
+running `capnpc` and the capnp-es compiler for every dev package. Simple
+isolate apps that only import `sandstorm:api` no longer need the capnp-es
+compiler on the dev-startup path.
+
 **Delete** (all anchors per the architecture review):
 
 - Done: the lifecycle envelope: `POST /capnp/lifecycle` and the

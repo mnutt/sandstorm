@@ -38,14 +38,25 @@ const emailLinkWithInlineStyle = function (url, text) {
 
 // Force-shutdown dev apps whenever their packages change.
 Meteor.startup(() => {
-  const shutdownApp = async (appId) => {
+  const shutdownApp = async (appId, options = {}) => {
+    const selector = { appId: appId };
+    if (options.exceptPackageId) {
+      selector.packageId = { $ne: options.exceptPackageId };
+    }
+
     const grains = await globalDb.collections.grains.find(
-        { appId: appId }, { fields: { oldUsers: 0 } }).fetchAsync();
+        selector, { fields: { oldUsers: 0 } }).fetchAsync();
     grains.forEach((grain) => {
       getGlobalBackend().shutdownGrain(grain._id, grain.userId).catch((err) => {
         console.error("Error shutting down grain:", err);
       });
     });
+  };
+
+  const devPackageRuntimeChanged = (newDevPackage, oldDevPackage) => {
+    return oldDevPackage.appId !== newDevPackage.appId ||
+        oldDevPackage.mountProc !== newDevPackage.mountProc ||
+        !_.isEqual(oldDevPackage.manifest, newDevPackage.manifest);
   };
 
   globalDb.collections.devPackages.find().observeAsync({
@@ -56,6 +67,10 @@ Meteor.startup(() => {
     },
 
     changed(newDevPackage, oldDevPackage) {
+      if (!devPackageRuntimeChanged(newDevPackage, oldDevPackage)) {
+        return;
+      }
+
       shutdownApp(oldDevPackage.appId).catch((err) => {
         console.error("Error shutting down app grains:", err);
       });
@@ -67,7 +82,7 @@ Meteor.startup(() => {
     },
 
     added(devPackage) {
-      shutdownApp(devPackage.appId).catch((err) => {
+      shutdownApp(devPackage.appId, { exceptPackageId: devPackage._id }).catch((err) => {
         console.error("Error shutting down app grains:", err);
       });
     },
