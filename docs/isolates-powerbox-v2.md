@@ -1070,6 +1070,14 @@ Progress:
   raw export IDs are not treated as authority; integration coverage verifies
   that the raw lease metadata appears only after restore and is not surfaced by
   the public decoder.
+- same-isolate native export fast path is now implemented in the generated
+  client helper. A restored capability can bypass the supervisor/workerd RPC
+  connection only when trusted restore metadata resolves to an export registered
+  in the current isolate's local native export registry and the requested
+  interface matches. Public-decoded handles, cross-isolate exports, and
+  unregistered local-dispatch metadata continue to use the WebSocket-backed
+  native Cap'n Proto RPC transport. Integration coverage verifies both the
+  local-direct transport and the public-decode fallback to WebSocket framing.
 
 ### Phase 7: Packaging, Publishing, And Migration
 

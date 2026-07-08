@@ -1913,6 +1913,17 @@ export default {
             : null;
       const decodedNativeExportGreeterLocalDispatchRestore =
           decodeNativeCapnpBridgeResponse(nativeExportGreeterLocalDispatchRestore.body);
+      const nativeExportGreeterPublicDecodedClient = connectNativeCapnp(
+        apiHelper,
+        decodedNativeExportGreeterLocalDispatchRestore.capability,
+        NativeGreeter,
+        {
+          interfaceName: "NativeGreeter",
+          connectionId: `native-capnp-export-greeter-public-decoded-${nativeExportGreeter.id}`,
+        });
+      const nativeExportGreeterPublicDecodedTransportKind =
+          nativeExportGreeterPublicDecodedClient.transport.kind;
+      nativeExportGreeterPublicDecodedClient.transport.close();
       const nativeExportGreeterLocalDispatchDrop =
           await apiHelper.nativeCapnpBridgeLifecycleBytes(makeNativeCapnpBridgeDropRequest({
             target: decodedNativeExportGreeterLocalDispatchRestore.capability,
@@ -1963,6 +1974,9 @@ export default {
           savedTokenType: typeof nativeExportGreeterSavedToken,
           targetId: nativeExportGreeterRestored.capability.id,
           connectionId: nativeExportGreeterRestored.transport.connectionId,
+          bridgeTransportKind: nativeExportGreeterClient.transport.kind,
+          transportKind: nativeExportGreeterRestored.transport.kind,
+          connectionIsNull: nativeExportGreeterRestored.connection === null,
           info: nativeExportGreeterRestoredInfo,
         },
         localDispatchLease: {
@@ -1982,6 +1996,7 @@ export default {
             decodedNativeExportGreeterLocalDispatchRestore.capability).sort(),
           decodedHasLocalDispatchProperty: Object.prototype.hasOwnProperty.call(
             decodedNativeExportGreeterLocalDispatchRestore.capability, "localDispatch"),
+          publicDecodedTransportKind: nativeExportGreeterPublicDecodedTransportKind,
           dropWhich: decodedNativeExportGreeterLocalDispatchDrop.which,
         },
         info: nativeExportGreeterInfo,
