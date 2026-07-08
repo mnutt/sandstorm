@@ -910,6 +910,7 @@ async function startIsolateFixture(options = {}) {
       workdir,
       pkgDir,
       varDir,
+      isolateSupervisorBin,
       runtimeDir,
       supervisorSocket,
       workerdSocket,
@@ -1553,6 +1554,27 @@ test("isolate supervisor integration suite", {
       fixture.stderr, /Isolate sidecar entered .*namespaces\./);
     assert.match(log, /Isolate sidecar entered minimal mount root\./);
     assert.match(log, /Started isolate sidecar process\./);
+  });
+
+  await t.test("reuses an already-running isolate supervisor", async () => {
+    const existingStartCount = (fixture.stderr.join("")
+        .match(/Started isolate sidecar process\./g) || []).length;
+    const result = await runCommand(fixture.isolateSupervisorBin, [
+      "--stdio",
+      "--pkg", fixture.pkgDir,
+      "--var", fixture.varDir,
+      "isolate-test-app",
+      "isolate-integration",
+      "workerd",
+      "serve",
+      "${SANDSTORM_ISOLATE_WORKERD_CONFIG}",
+      "sandstormConfig",
+    ]);
+
+    assert.match(result.stdout, /Already running\.\.\./);
+    assert.equal(
+      (fixture.stderr.join("").match(/Started isolate sidecar process\./g) || []).length,
+      existingStartCount);
   });
 
   await t.test("serves requests through the supervisor WebSession interface", async () => {
