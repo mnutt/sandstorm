@@ -255,7 +255,7 @@ prototype mechanisms:
 | `/capnp/lifecycle` binary envelope | Ordinary methods over the authority RPC connection |
 | `NativeCapnpBridgeRequest/Response` lifecycle structs | Deleted or replaced by small bootstrap schema |
 | `IsolateSessionRegistry` claimed-capability string IDs | RPC cap-table references |
-| Drop groups and drop-notify for live handle release | RPC release protocol and host-owned revokers |
+| Done: drop groups and drop-notify for live handle release | RPC release protocol and host-owned revokers |
 | Per-export callback RPC sessions | Worker passes server capability over the same connection |
 | Local-dispatch lease and trusted WeakMap | RPC reference identity now; transferred-buffer fast path later |
 
@@ -546,7 +546,7 @@ Must delete or stop compiling:
 - authority-bearing `/powerbox/*` POST routes, except `/powerbox/dup` which is
   deleted
 - claimed-capability table used as authority
-- drop groups and live-handle drop-notify machinery
+- Done: drop groups and live-handle drop-notify machinery
 - remaining C++ per-export callback/session plumbing
 - local-dispatch lease structs, authorization minting, and WeakMap fast path
 

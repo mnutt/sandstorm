@@ -278,7 +278,6 @@ struct ClaimedCapabilityMetadata {
   kj::String pathPrefix = kj::heapString("");
   kj::String localSupervisorId = kj::heapString("");
   bool persistent = true;
-  bool hasDropNotify = false;
   bool hasNativeCapability = true;
   bool liveForwardable = true;
 };
@@ -292,7 +291,6 @@ ClaimedCapabilityMetadata copyClaimedCapabilityMetadata(
     kj::heapString(metadata.pathPrefix),
     kj::heapString(metadata.localSupervisorId),
     metadata.persistent,
-    metadata.hasDropNotify,
     metadata.hasNativeCapability,
     metadata.liveForwardable,
   };
@@ -308,7 +306,6 @@ ClaimedCapabilityMetadata makeImportedClaimedCapabilityMetadata(
     kj::heapString(""),
     kj::heapString(""),
     true,
-    false,
     true,
     true,
   };
@@ -316,12 +313,10 @@ ClaimedCapabilityMetadata makeImportedClaimedCapabilityMetadata(
 
 struct ClaimedCapabilityInfo {
   ClaimedCapabilityMetadata metadata;
-  uint dropNotifyRefCount = 0;
 };
 
 struct ClaimedCapabilityStats {
   uint claimedCapabilityCount = 0;
-  uint dropNotifyGroupCount = 0;
   uint localExportCount = 0;
   uint importedCount = 0;
   uint webSessionNativeCount = 0;
@@ -367,20 +362,12 @@ public:
 
   kj::String storeClaimedCapability(capnp::Capability::Client cap,
       ClaimedCapabilityMetadata metadata = ClaimedCapabilityMetadata()) {
-    return storeClaimedCapabilityInternal(kj::mv(cap), kj::mv(metadata), nullptr);
-  }
-
-  kj::String storeClaimedCapability(capnp::Capability::Client cap,
-      ClaimedCapabilityMetadata metadata, kj::String dropNotifyPath) {
-    metadata.hasDropNotify = true;
-    return storeClaimedCapabilityInternal(kj::mv(cap), kj::mv(metadata),
-        createDropNotifyGroup(kj::mv(dropNotifyPath)));
+    return storeClaimedCapabilityInternal(kj::mv(cap), kj::mv(metadata));
   }
 
   struct DroppedClaimedCapability {
     capnp::Capability::Client cap;
     ClaimedCapabilityMetadata metadata;
-    kj::Maybe<kj::String> dropNotifyPath;
   };
 
   kj::Maybe<DroppedClaimedCapability> dropClaimedCapability(kj::StringPtr id) {
@@ -388,11 +375,7 @@ public:
       DroppedClaimedCapability result {
         claimedCapabilities[*index].cap,
         copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata),
-        nullptr,
       };
-      KJ_IF_MAYBE(groupId, claimedCapabilities[*index].dropNotifyGroupId) {
-        result.dropNotifyPath = releaseDropNotifyGroup(*groupId);
-      }
       if (*index + 1 < claimedCapabilities.size()) {
         claimedCapabilities[*index] = kj::mv(claimedCapabilities.back());
       }
@@ -413,17 +396,8 @@ public:
 
   kj::Maybe<ClaimedCapabilityInfo> findClaimedCapabilityInfo(kj::StringPtr id) {
     KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      uint dropNotifyRefCount = 0;
-      KJ_IF_MAYBE(groupId, claimedCapabilities[*index].dropNotifyGroupId) {
-        KJ_IF_MAYBE(groupIndex, findDropNotifyGroupIndex(*groupId)) {
-          dropNotifyRefCount = dropNotifyGroups[*groupIndex].refcount;
-        } else {
-          KJ_FAIL_REQUIRE("isolate claimed capability drop-notify group is missing");
-        }
-      }
       return ClaimedCapabilityInfo {
         copyClaimedCapabilityMetadata(claimedCapabilities[*index].metadata),
-        dropNotifyRefCount,
       };
     }
 
@@ -450,7 +424,6 @@ public:
   ClaimedCapabilityStats getClaimedCapabilityStats() {
     ClaimedCapabilityStats stats {
       static_cast<uint>(claimedCapabilities.size()),
-      static_cast<uint>(dropNotifyGroups.size()),
     };
     for (auto& capability: claimedCapabilities) {
       switch (capability.metadata.residence) {
@@ -507,50 +480,14 @@ public:
 
 private:
   kj::String storeClaimedCapabilityInternal(capnp::Capability::Client cap,
-      ClaimedCapabilityMetadata metadata, kj::Maybe<kj::String> dropNotifyGroupId) {
+      ClaimedCapabilityMetadata metadata) {
     for (;;) {
       auto id = makeOpaqueToken();
       if (findClaimedCapabilityIndex(id) == nullptr) {
         claimedCapabilities.add(ClaimedCapabilityRecord {
-            kj::heapString(id), cap, kj::mv(metadata), kj::mv(dropNotifyGroupId) });
+            kj::heapString(id), cap, kj::mv(metadata) });
         return id;
       }
-    }
-  }
-
-  kj::String createDropNotifyGroup(kj::String dropNotifyPath) {
-    for (;;) {
-      auto id = makeOpaqueToken();
-      if (findDropNotifyGroupIndex(id) == nullptr) {
-        dropNotifyGroups.add(DropNotifyGroup { kj::heapString(id), kj::mv(dropNotifyPath), 1 });
-        return id;
-      }
-    }
-  }
-
-  void retainDropNotifyGroup(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findDropNotifyGroupIndex(id)) {
-      ++dropNotifyGroups[*index].refcount;
-    } else {
-      KJ_FAIL_REQUIRE("isolate claimed capability drop-notify group is missing");
-    }
-  }
-
-  kj::Maybe<kj::String> releaseDropNotifyGroup(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findDropNotifyGroupIndex(id)) {
-      KJ_REQUIRE(dropNotifyGroups[*index].refcount > 0);
-      --dropNotifyGroups[*index].refcount;
-      if (dropNotifyGroups[*index].refcount == 0) {
-        auto dropNotifyPath = kj::mv(dropNotifyGroups[*index].dropNotifyPath);
-        if (*index + 1 < dropNotifyGroups.size()) {
-          dropNotifyGroups[*index] = kj::mv(dropNotifyGroups.back());
-        }
-        dropNotifyGroups.removeLast();
-        return kj::mv(dropNotifyPath);
-      }
-      return nullptr;
-    } else {
-      KJ_FAIL_REQUIRE("isolate claimed capability drop-notify group is missing");
     }
   }
 
@@ -563,13 +500,6 @@ private:
     kj::String id;
     capnp::Capability::Client cap;
     ClaimedCapabilityMetadata metadata;
-    kj::Maybe<kj::String> dropNotifyGroupId;
-  };
-
-  struct DropNotifyGroup {
-    kj::String id;
-    kj::Maybe<kj::String> dropNotifyPath;
-    uint refcount;
   };
 
   kj::Maybe<size_t> findSessionIndex(kj::StringPtr id) {
@@ -594,17 +524,6 @@ private:
 
   kj::Vector<SessionRecord> sessions;
   kj::Vector<ClaimedCapabilityRecord> claimedCapabilities;
-  kj::Vector<DropNotifyGroup> dropNotifyGroups;
-
-  kj::Maybe<size_t> findDropNotifyGroupIndex(kj::StringPtr id) {
-    for (auto i: kj::indices(dropNotifyGroups)) {
-      if (dropNotifyGroups[i].id == id) {
-        return i;
-      }
-    }
-
-    return nullptr;
-  }
 };
 
 struct IsolateRuntimeHost final: public kj::Refcounted {
@@ -2982,22 +2901,6 @@ kj::String normalizeRouteBackedRequestPath(kj::StringPtr path) {
   return kj::heapString(path);
 }
 
-bool routeBackedPathIsWithinPrefix(kj::StringPtr path, kj::StringPtr prefix) {
-  if (prefix.size() == 0) {
-    return true;
-  }
-  if (prefix == "/") {
-    return path.startsWith("/");
-  }
-  if (path == prefix) {
-    return true;
-  }
-  if (prefix.endsWith("/")) {
-    return path.startsWith(prefix);
-  }
-  return path.size() > prefix.size() && path.startsWith(prefix) && path[prefix.size()] == '/';
-}
-
 struct RouteBackedCapabilityRef {
   RouteBackedCapabilityType type;
   kj::String pathPrefix;
@@ -5252,7 +5155,6 @@ private:
         "  \"ok\": true,\n"
         "  \"type\": \"claimedCapabilityStats\",\n"
         "  \"claimedCapabilityCount\": ", stats.claimedCapabilityCount, ",\n"
-        "  \"dropNotifyGroupCount\": ", stats.dropNotifyGroupCount, ",\n"
         "  \"localExportCount\": ", stats.localExportCount, ",\n"
         "  \"importedCount\": ", stats.importedCount, ",\n"
         "  \"webSessionNativeCount\": ", stats.webSessionNativeCount, ",\n"
@@ -5287,10 +5189,6 @@ private:
     appendJsonField(json, "pathPrefix", metadata.pathPrefix);
     json.addAll(kj::StringPtr(",\n  \"persistent\": "));
     json.addAll(metadata.persistent ? kj::StringPtr("true") : kj::StringPtr("false"));
-    json.addAll(kj::StringPtr(",\n  \"hasDropNotify\": "));
-    json.addAll(metadata.hasDropNotify ? kj::StringPtr("true") : kj::StringPtr("false"));
-    json.addAll(kj::StringPtr(",\n  \"dropNotifyRefCount\": "));
-    json.addAll(kj::str(info.dropNotifyRefCount));
     json.addAll(kj::StringPtr(",\n  \"supportsWebFetch\": "));
     json.addAll(claimedCapabilitySupportsWebFetch(metadata.nativeInterface)
         ? kj::StringPtr("true") : kj::StringPtr("false"));
@@ -5649,7 +5547,6 @@ private:
       kj::heapString(pathPrefix),
       kj::heapString(config.workerdSocketPath),
       persistent,
-      false,
       true,
       true,
     };
@@ -5660,25 +5557,15 @@ private:
       RouteBackedCapabilityType capabilityType) {
     auto pathPrefixes = findIsolateRawQueryParams(url, "pathPrefix");
     auto persistentParams = findIsolateQueryParams(url, "persistent");
-    auto dropNotifyPaths = findIsolateRawQueryParams(url, "dropNotifyPath");
-    if (pathPrefixes.size() > 1 || persistentParams.size() > 1 || dropNotifyPaths.size() > 1) {
+    if (pathPrefixes.size() > 1 || persistentParams.size() > 1) {
       return sendJson(response, 400, "Bad Request", kj::heapString(
           "{\n  \"ok\": false,\n"
-          "  \"error\": \"expected at most one pathPrefix, persistent flag, and dropNotifyPath\"\n}\n"));
+          "  \"error\": \"expected at most one pathPrefix and persistent flag\"\n}\n"));
     }
 
     auto pathPrefix = pathPrefixes.size() == 1
         ? normalizeRouteBackedCapabilityPathPrefix(pathPrefixes[0])
         : kj::heapString("");
-    kj::Maybe<kj::String> dropNotifyPath = nullptr;
-    if (dropNotifyPaths.size() == 1 && dropNotifyPaths[0].size() > 0) {
-      auto notifyPath = normalizeRouteBackedCapabilityPathPrefix(dropNotifyPaths[0]);
-      if (!routeBackedPathIsWithinPrefix(notifyPath, pathPrefix)) {
-        return sendJson(response, 400, "Bad Request", renderError(
-            "dropNotifyPath must be within pathPrefix"));
-      }
-      dropNotifyPath = kj::mv(notifyPath);
-    }
     bool persistent = true;
     if (persistentParams.size() == 1) {
       auto value = kj::heapString(persistentParams[0]);
@@ -5694,10 +5581,7 @@ private:
     }
     auto metadata = makeRouteBackedClaimedCapabilityMetadata(capabilityType, pathPrefix, persistent);
     auto cap = makeRouteBackedCapability(capabilityType, pathPrefix, persistent);
-    auto capId = dropNotifyPath == nullptr
-        ? host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata))
-        : host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata),
-            kj::mv(KJ_ASSERT_NONNULL(dropNotifyPath)));
+    auto capId = host.sessions->storeClaimedCapability(kj::mv(cap), kj::mv(metadata));
     return sendJson(response, 200, "OK", renderClaimedCapability(capId));
   }
 
@@ -6472,7 +6356,6 @@ private:
             kj::mv(pathPrefix),
             kj::heapString(""),
             true,
-            false,
             true,
             true,
           },
@@ -6847,26 +6730,6 @@ private:
     }
   }
 
-  kj::Promise<void> notifyDroppedClaimedCapability(kj::String dropNotifyPath) {
-    FetchRequest request;
-    request.method = FetchMethod::POST;
-    request.path = toHttpRequestTarget(kj::str(dropNotifyPath, "/__sandstorm_dispose"));
-    addHeader(request, "host", "sandbox");
-    addHeader(request, "content-type", "application/json; charset=utf-8");
-    auto body = kj::StringPtr("{}");
-    request.body = kj::heapArray<byte>(body.asBytes());
-
-    auto runtime = kj::heap<WorkerdRuntimeAdapter>(kj::addRef(config), kj::addRef(host));
-    return runtime->fetch(kj::mv(request))
-        .then([runtime = kj::mv(runtime), dropNotifyPath = kj::mv(dropNotifyPath)](
-            FetchResponse&& result) mutable {
-      if (result.statusCode < 200 || result.statusCode >= 300) {
-        KJ_LOG(WARNING, "Isolate claimed capability drop notification failed.",
-            dropNotifyPath, result.statusCode);
-      }
-    });
-  }
-
   kj::Promise<void> dropPowerboxCapability(
       kj::StringPtr url, kj::HttpService::Response& response) {
     kj::String id = nullptr;
@@ -6876,18 +6739,9 @@ private:
     }
 
     KJ_IF_MAYBE(dropped, host.sessions->dropClaimedCapability(id)) {
-      KJ_IF_MAYBE(dropNotifyPath, dropped->dropNotifyPath) {
-        return notifyDroppedClaimedCapability(kj::mv(*dropNotifyPath))
-            .catch_([](kj::Exception&& exception) {
-          KJ_LOG(WARNING, "Isolate claimed capability drop notification threw.", exception);
-        }).then([this, &response]() mutable {
-          return sendJson(response, 200, "OK", kj::heapString(
-              "{\n  \"ok\": true,\n  \"released\": true\n}\n"));
-        });
-      } else {
-        return sendJson(response, 200, "OK", kj::heapString(
-            "{\n  \"ok\": true,\n  \"released\": false\n}\n"));
-      }
+      (void)dropped;
+      return sendJson(response, 200, "OK", kj::heapString(
+          "{\n  \"ok\": true,\n  \"released\": true\n}\n"));
     } else {
       return sendJson(response, 404, "Not Found", kj::heapString(
           "{\n  \"ok\": false,\n  \"error\": \"unknown claimed capability\"\n}\n"));

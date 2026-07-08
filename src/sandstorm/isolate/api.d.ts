@@ -116,7 +116,6 @@ declare module "sandstorm:api" {
     pathPrefix?: string;
     prefix?: string;
     persistent?: boolean;
-    dropNotifyPath?: string;
     title?: string | { defaultText: string };
     label?: string | { defaultText: string };
     description?: string | { defaultText: string };

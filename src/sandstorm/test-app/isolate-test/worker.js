@@ -716,11 +716,11 @@ export default {
       try {
         await sandstorm(request, env).webSession({
           pathPrefix: "/exported",
-          dropNotifyPath: "/exported-sibling",
+          persistent: "yes",
         });
-        results.siblingDropNotifyPath = { ok: true };
+        results.invalidPersistent = { ok: true };
       } catch (error) {
-        results.siblingDropNotifyPath = {
+        results.invalidPersistent = {
           ok: false,
           error: String(error?.message || error),
         };
@@ -1138,8 +1138,6 @@ export default {
                 nativeInterface: "outboundHttpSession",
                 pathPrefix: "",
                 persistent: true,
-                hasDropNotify: false,
-                dropNotifyRefCount: 0,
                 supportsWebFetch: false,
                 supportsOutboundHttpFetch: true,
                 hasNativeCapability: true,
