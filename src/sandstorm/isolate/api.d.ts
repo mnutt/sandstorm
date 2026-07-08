@@ -270,6 +270,29 @@ declare module "sandstorm:api" {
     };
   }
 
+  export interface MainViewRouteContext {
+    readonly request: Request;
+    readonly env: SandstormEnv;
+    readonly params: unknown;
+  }
+
+  export interface MainViewRouteHandlers {
+    restore?(
+      objectId: unknown,
+      context: MainViewRouteContext,
+    ): unknown | { cap: unknown } | Promise<unknown | { cap: unknown }>;
+    drop?(
+      objectId: unknown,
+      context: MainViewRouteContext,
+    ): unknown | Promise<unknown>;
+  }
+
+  export interface SystemRouteOptions {
+    mainView?: MainViewRouteHandlers;
+    restore?: MainViewRouteHandlers["restore"];
+    drop?: MainViewRouteHandlers["drop"];
+  }
+
   export interface SandstormApi {
     session(): SessionInfo;
     status(): Promise<unknown>;
@@ -295,7 +318,7 @@ declare module "sandstorm:api" {
     use<T>(token: string, fn: (capability: Capability) => T | Promise<T>): Promise<T>;
     powerboxFulfillment(options: PowerboxFulfillmentOptions): PowerboxFulfillmentApi;
     powerboxGrants(options: PowerboxGrantsOptions): PowerboxGrantsApi;
-    serveSystemRoutes(): Promise<Response | null>;
+    serveSystemRoutes(options?: SystemRouteOptions): Promise<Response | null>;
   }
 
   export function storage(env: SandstormEnv): StorageApi;
@@ -318,6 +341,7 @@ declare module "sandstorm:api" {
   export function serveSystemRoutes(
     request: Request,
     env: SandstormEnv,
+    options?: SystemRouteOptions,
   ): Promise<Response | null>;
   export function nativeCapnpBrowserClientScript(): string;
   export function sandstorm(request: Request, env: SandstormEnv): SandstormApi;

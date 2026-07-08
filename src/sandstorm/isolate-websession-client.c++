@@ -15,6 +15,7 @@
 // limitations under the License.
 
 #include <capnp/rpc-twoparty.h>
+#include <capnp/serialize.h>
 #include <kj/async-io.h>
 #include <kj/debug.h>
 #include <kj/encoding.h>
@@ -630,9 +631,14 @@ public:
     };
     switch (params.getRef().which()) {
       case SupervisorObjectId<>::APP_REF: {
-        auto appRef = params.getRef().getAppRef().getAs<capnp::Data>();
-        tokenEntry.appRef = kj::heapArray<byte>(appRef.begin(), appRef.end());
-        sessionContext.lastRouteBackedAppRef = kj::heapString(appRef.asChars());
+        auto appRef = params.getRef().getAppRef();
+        tokenEntry.appRef = serializeAppRef(appRef);
+        try {
+          auto appRefData = appRef.getAs<capnp::Data>();
+          sessionContext.lastRouteBackedAppRef = kj::heapString(appRefData.asChars());
+        } catch (kj::Exception& exception) {
+          sessionContext.lastRouteBackedAppRef = kj::heapString("");
+        }
         break;
       }
       case SupervisorObjectId<>::NATIVE_CAPNP_EXPORT: {
@@ -749,14 +755,29 @@ private:
     };
   }
 
+  kj::Array<byte> serializeAppRef(capnp::AnyPointer::Reader appRef) {
+    capnp::MallocMessageBuilder message;
+    message.setRoot(appRef);
+    auto words = capnp::messageToFlatArray(message);
+    return kj::heapArray<byte>(words.asBytes());
+  }
+
+  capnp::FlatArrayMessageReader readSerializedAppRef(
+      kj::ArrayPtr<const byte> appRef, kj::Array<capnp::word>& words) {
+    KJ_REQUIRE(appRef.size() % sizeof(capnp::word) == 0,
+        "invalid fake core serialized app-ref size");
+    words = kj::heapArray<capnp::word>(appRef.size() / sizeof(capnp::word));
+    memcpy(words.begin(), appRef.begin(), appRef.size());
+    return capnp::FlatArrayMessageReader(words.asPtr());
+  }
+
   void setRouteBackedTokenObjectId(
       SupervisorObjectId<>::Builder objectId, const RouteBackedToken& token) {
     switch (token.kind) {
       case RouteBackedToken::Kind::APP_REF: {
-        capnp::MallocMessageBuilder appRefMessage;
-        auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
-        appRef.setAs<capnp::Data>(token.appRef.asPtr());
-        objectId.setAppRef(appRef.asReader());
+        kj::Array<capnp::word> words;
+        auto appRefMessage = readSerializedAppRef(token.appRef.asPtr(), words);
+        objectId.setAppRef(appRefMessage.getRoot<capnp::AnyPointer>());
         break;
       }
       case RouteBackedToken::Kind::NATIVE_CAPNP_EXPORT: {
@@ -1672,7 +1693,7 @@ public:
         claimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 1, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 1, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 4, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 5, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 1, sessionContextRef.tokenDropCount);
     KJ_REQUIRE(sessionContextRef.offerCount == 1, sessionContextRef.offerCount);
     KJ_REQUIRE(sessionContextRef.fulfillCount == 1, sessionContextRef.fulfillCount);
@@ -1736,7 +1757,7 @@ public:
     KJ_REQUIRE(contains(outboundBody, "\"dropSaved\":{\"ok\":true}"), outboundBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 2, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 2, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 5, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 6, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 2, sessionContextRef.tokenDropCount);
 
     auto storageHelperRequest = session.getRequest();
@@ -1811,7 +1832,7 @@ public:
         storageHelperBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 8, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 9, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
 
     auto exportRequest = session.getRequest();
@@ -1968,7 +1989,7 @@ public:
         badClaimBody);
     KJ_REQUIRE(sessionContextRef.claimCount == 3, sessionContextRef.claimCount);
     KJ_REQUIRE(sessionContextRef.saveCount == 3, sessionContextRef.saveCount);
-    KJ_REQUIRE(sessionContextRef.restoreCount == 8, sessionContextRef.restoreCount);
+    KJ_REQUIRE(sessionContextRef.restoreCount == 9, sessionContextRef.restoreCount);
     KJ_REQUIRE(sessionContextRef.tokenDropCount == 4, sessionContextRef.tokenDropCount);
 
     auto standardClaimRequest = session.postRequest();
