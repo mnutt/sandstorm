@@ -121,18 +121,6 @@ const CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES = Array.from(new Map(CAPNP_ES_RUN
   ])));
 const CAPNP_ES_GENERATED_SCHEMA_MODULES = [
   [
-    "capnp:/sandstorm/util.capnp",
-    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/util.js",
-  ],
-  [
-    "capnp:/sandstorm/powerbox.capnp",
-    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/powerbox.js",
-  ],
-  [
-    "capnp:/sandstorm/identity.capnp",
-    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/identity.js",
-  ],
-  [
     "capnp:/sandstorm/activity.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/activity.js",
   ],
@@ -141,8 +129,8 @@ const CAPNP_ES_GENERATED_SCHEMA_MODULES = [
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/grain.js",
   ],
   [
-    "capnp:/sandstorm/web-session.capnp",
-    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js",
+    "capnp:/sandstorm/identity.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/identity.js",
   ],
   [
     "capnp:/sandstorm/isolate-bridge.capnp",
@@ -152,14 +140,25 @@ const CAPNP_ES_GENERATED_SCHEMA_MODULES = [
     "capnp:/sandstorm/outbound-http-session.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/outbound-http-session.js",
   ],
+  [
+    "capnp:/sandstorm/powerbox.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/powerbox.js",
+  ],
+  [
+    "capnp:/sandstorm/util.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/util.js",
+  ],
+  [
+    "capnp:/sandstorm/web-session.capnp",
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js",
+  ],
 ];
 const FIXTURE_GENERATED_SCHEMA_MODULES = [
-  ...CAPNP_ES_GENERATED_SCHEMA_MODULES.slice(0, 5),
   [
     "capnp:./native-greeter.capnp",
     "__sandstorm_isolate_runtime/capnp-es-generated/native-greeter.js",
   ],
-  ...CAPNP_ES_GENERATED_SCHEMA_MODULES.slice(5),
+  ...CAPNP_ES_GENERATED_SCHEMA_MODULES,
 ];
 
 function formatOutput(stdout, stderr) {

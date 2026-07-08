@@ -40,6 +40,7 @@
 #include <sandstorm/isolate/api.js.h>
 #include <sandstorm/isolate/capnp-es.js.h>
 #include <sandstorm/isolate/capnp.js.h>
+#include <sandstorm/isolate/platform-capnp-es.js.h>
 #include <stdlib.h>
 #include <dirent.h>
 #include <set>
@@ -2624,6 +2625,7 @@ private:
     kj::Vector<DevIsolateModule> modules;
     std::set<std::string> seen;
     std::map<std::string, std::string> capnpEsImports;
+    registerDevIsolatePlatformCapnpEsImports(rootDir, capnpEsImports);
     collectDevIsolateModule(
         devIsolateWorkerPath, rootDir, modules, seen, capnpEsImports);
     addDevIsolatePlatformCapnpEsModules(rootDir, modules, capnpEsImports);
@@ -2776,6 +2778,9 @@ private:
       if (writtenCapnpEsRuntimePaths.insert(toStdString(runtimePath)).second) {
         writeDevIsolateSupportFile(path, runtimePath, module.source);
       }
+    }
+    for (auto& module: ISOLATE_PLATFORM_CAPNP_ES_MODULES) {
+      writeDevIsolateGeneratedSupportFile(path, module.runtimePath, module.source);
     }
     return path;
   }
@@ -3140,25 +3145,39 @@ private:
     });
   }
 
+  void registerDevIsolatePlatformCapnpEsImport(
+      kj::StringPtr rootDir, kj::StringPtr specifier,
+      std::map<std::string, std::string>& capnpEsImports) {
+    auto path = resolveDevIsolateCapnpEsImport(rootDir, rootDir, specifier);
+    auto specifierStd = toStdString(specifier);
+    auto resolvedStd = toStdString(path);
+    auto existing = capnpEsImports.find(specifierStd);
+    if (existing != capnpEsImports.end()) {
+      KJ_REQUIRE(existing->second == resolvedStd,
+          "`capnp:` isolate platform import specifier resolves to multiple schemas.",
+          specifier, existing->second, path);
+      return;
+    }
+    capnpEsImports.insert(std::make_pair(specifierStd, resolvedStd));
+  }
+
+  void registerDevIsolatePlatformCapnpEsImports(
+      kj::StringPtr rootDir, std::map<std::string, std::string>& capnpEsImports) {
+    for (auto& module: ISOLATE_PLATFORM_CAPNP_ES_MODULES) {
+      registerDevIsolatePlatformCapnpEsImport(rootDir, module.name, capnpEsImports);
+    }
+  }
+
   void addDevIsolatePlatformCapnpEsModules(
       kj::StringPtr rootDir, kj::Vector<DevIsolateModule>& modules,
       std::map<std::string, std::string>& capnpEsImports) {
-    if (devIsolateCapnpEsCompilerModule() == nullptr) {
-      return;
-    }
-
-    kj::StringPtr platformSpecifiers[] = {
-      "capnp:/sandstorm/isolate-bridge.capnp",
-      "capnp:/sandstorm/outbound-http-session.capnp",
-      "capnp:/sandstorm/grain.capnp",
-      "capnp:/sandstorm/powerbox.capnp",
-      "capnp:/sandstorm/util.capnp",
-      "capnp:/sandstorm/web-session.capnp",
-    };
-
-    for (auto specifier: platformSpecifiers) {
-      auto path = resolveDevIsolateCapnpEsImport(rootDir, rootDir, specifier);
-      addDevIsolateCapnpEsModule(specifier, path, rootDir, modules, capnpEsImports);
+    for (auto& module: ISOLATE_PLATFORM_CAPNP_ES_MODULES) {
+      registerDevIsolatePlatformCapnpEsImport(rootDir, module.name, capnpEsImports);
+      modules.add(DevIsolateModule {
+        kj::heapString(module.name),
+        kj::str("__sandstorm_isolate_runtime/", module.runtimePath),
+        DevIsolateModuleType::ES_MODULE
+      });
     }
   }
 
@@ -4777,6 +4796,9 @@ private:
     kj::String path = kj::heapString("/tmp/sandstorm-pack-isolate-runtime-XXXXXX");
     KJ_REQUIRE(mkdtemp(path.begin()) != nullptr, "mkdtemp() failed", path, strerror(errno));
     KJ_SYSCALL(mkdir(kj::str(path, "/capnp-es-generated").cStr(), 0700));
+    for (auto& module: ISOLATE_PLATFORM_CAPNP_ES_MODULES) {
+      writeDevIsolateGeneratedSupportFile(path, module.runtimePath, module.source);
+    }
     return path;
   }
 
@@ -4916,6 +4938,7 @@ private:
     kj::Vector<DevIsolateModule> generatedModules;
     std::map<std::string, std::string> capnpEsImports;
     auto rootDir = resolvePackSourceRoot();
+    registerDevIsolatePlatformCapnpEsImports(rootDir, capnpEsImports);
 
     for (auto i: kj::indices(oldModuleList)) {
       auto module = oldModuleList[i];
