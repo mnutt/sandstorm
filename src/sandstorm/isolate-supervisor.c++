@@ -5689,10 +5689,16 @@ public:
       case kj::HttpMethod::HEAD:
         return head(kj::mv(path), response);
       case kj::HttpMethod::PUT:
-        return readAllBytesAtMost(requestBody, MAX_STORAGE_VALUE_BYTES,
-            "isolate storage value exceeds maximum allowed size")
+        return requestBody.readAllBytes(MAX_STORAGE_VALUE_BYTES + 2)
             .then([this, key = kj::mv(key), path = kj::mv(path), &response]
                 (kj::Array<byte>&& body) mutable {
+          if (body.size() > MAX_STORAGE_VALUE_BYTES) {
+            return sendJson(response, 413, "Payload Too Large", kj::str(
+                "{\n  \"ok\": false,\n"
+                "  \"error\": \"isolate storage value exceeds maximum allowed size\",\n"
+                "  \"maxBytes\": ", MAX_STORAGE_VALUE_BYTES, "\n}\n"));
+          }
+
           if (!storagePathIsMissingOrRegular(path)) {
             return sendJson(response, 409, "Conflict", kj::heapString(
                 "{\n  \"ok\": false,\n"
