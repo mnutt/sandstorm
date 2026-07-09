@@ -2348,8 +2348,10 @@ private:
         ? kj::heapString(pathSpecifier)
         : kj::str(rootDir, '/', pathSpecifier);
     char* resolved = realpath(candidate.cStr(), nullptr);
-    KJ_REQUIRE(resolved != nullptr, "Could not resolve Cap'n Proto ABI dump schema.",
-        specifier, candidate, strerror(errno));
+    if (resolved == nullptr) {
+      KJ_FAIL_REQUIRE("Could not resolve Cap'n Proto ABI dump schema.",
+          specifier, candidate, strerror(errno));
+    }
     KJ_DEFER(free(resolved));
     return kj::heapString(resolved);
   }
@@ -2606,7 +2608,9 @@ private:
                                std::set<std::string>& seen,
                                std::map<std::string, std::string>& capnpEsImports) {
     char* resolved = realpath(path.cStr(), nullptr);
-    KJ_REQUIRE(resolved != nullptr, "Could not resolve isolate module path.", path, strerror(errno));
+    if (resolved == nullptr) {
+      KJ_FAIL_REQUIRE("Could not resolve isolate module path.", path, strerror(errno));
+    }
     KJ_DEFER(free(resolved));
     auto realPath = kj::heapString(resolved);
     auto realPathStd = toStdString(realPath);
@@ -3026,8 +3030,9 @@ private:
 
     auto candidate = kj::str(importerDir, '/', specifier);
     char* resolved = realpath(candidate.cStr(), nullptr);
-    KJ_REQUIRE(resolved != nullptr, "Could not resolve isolate import.", specifier, candidate,
-        strerror(errno));
+    if (resolved == nullptr) {
+      KJ_FAIL_REQUIRE("Could not resolve isolate import.", specifier, candidate, strerror(errno));
+    }
     KJ_DEFER(free(resolved));
     auto resolvedPath = kj::heapString(resolved);
     KJ_REQUIRE(isPathUnderRoot(resolvedPath, rootDir),
@@ -3181,8 +3186,10 @@ private:
 
     auto candidate = kj::str(devIsolateSandstormSchemaIncludeDir(), specifier);
     char* resolved = realpath(candidate.cStr(), nullptr);
-    KJ_REQUIRE(resolved != nullptr, "Could not resolve Sandstorm schema import.",
-        specifier, candidate, strerror(errno));
+    if (resolved == nullptr) {
+      KJ_FAIL_REQUIRE("Could not resolve Sandstorm schema import.",
+          specifier, candidate, strerror(errno));
+    }
     KJ_DEFER(free(resolved));
     return kj::heapString(resolved);
   }
@@ -3201,8 +3208,10 @@ private:
 
     auto candidate = kj::str(importerDir, '/', specifier);
     char* resolved = realpath(candidate.cStr(), nullptr);
-    KJ_REQUIRE(resolved != nullptr, "Could not resolve capnp schema import.",
-        specifier, candidate, strerror(errno));
+    if (resolved == nullptr) {
+      KJ_FAIL_REQUIRE("Could not resolve capnp schema import.",
+          specifier, candidate, strerror(errno));
+    }
     KJ_DEFER(free(resolved));
     auto resolvedPath = kj::heapString(resolved);
     if (isPathUnderRoot(resolvedPath, rootDir)) {
@@ -3211,8 +3220,10 @@ private:
 
     auto sandstormRootPath = kj::str(devIsolateSandstormSchemaIncludeDir(), "/sandstorm");
     char* sandstormRootRaw = realpath(sandstormRootPath.cStr(), nullptr);
-    KJ_REQUIRE(sandstormRootRaw != nullptr, "Could not resolve Sandstorm schema root.",
-        sandstormRootPath, strerror(errno));
+    if (sandstormRootRaw == nullptr) {
+      KJ_FAIL_REQUIRE("Could not resolve Sandstorm schema root.", sandstormRootPath,
+          strerror(errno));
+    }
     KJ_DEFER(free(sandstormRootRaw));
     auto sandstormRoot = kj::heapString(sandstormRootRaw);
     KJ_REQUIRE(isPathUnderRoot(resolvedPath, sandstormRoot),
@@ -3890,6 +3901,9 @@ private:
     if (access("src/sandstorm/web-session.capnp", R_OK) == 0) {
       importPath.add(kj::heapString("src"));
     }
+    KJ_IF_MAYBE(sandstormInclude, tryDevIsolateSandstormSchemaIncludeDir()) {
+      importPath.add(kj::mv(*sandstormInclude));
+    }
     importPath.add(kj::heapString("/usr/local/include"));
     importPath.add(kj::heapString("/usr/include"));
     auto importPathPtrs = KJ_MAP(p, importPath) -> kj::StringPtr { return p; };
@@ -4402,7 +4416,7 @@ private:
     }
   }
 
-  static kj::String devIsolateSandstormSchemaIncludeDir() {
+  static kj::Maybe<kj::String> tryDevIsolateSandstormSchemaIncludeDir() {
     kj::Vector<kj::String> candidates;
     candidates.add(kj::heapString("src"));
 
@@ -4419,6 +4433,14 @@ private:
           return kj::mv(*resolved);
         }
       }
+    }
+
+    return nullptr;
+  }
+
+  static kj::String devIsolateSandstormSchemaIncludeDir() {
+    KJ_IF_MAYBE(includeDir, tryDevIsolateSandstormSchemaIncludeDir()) {
+      return kj::mv(*includeDir);
     }
 
     KJ_FAIL_REQUIRE("Could not resolve Sandstorm schema include directory.");
@@ -4799,8 +4821,9 @@ private:
   kj::String resolvePackSourceRoot() {
     auto candidate = sourceDir == nullptr ? kj::str(".") : kj::str(sourceDir);
     char* resolved = realpath(candidate.cStr(), nullptr);
-    KJ_REQUIRE(resolved != nullptr, "Could not resolve package source root.",
-        candidate, strerror(errno));
+    if (resolved == nullptr) {
+      KJ_FAIL_REQUIRE("Could not resolve package source root.", candidate, strerror(errno));
+    }
     KJ_DEFER(free(resolved));
     return kj::heapString(resolved);
   }
@@ -4871,8 +4894,10 @@ private:
     auto maybeRealPath = trySourcePathForPackagePath(packagePath);
     KJ_IF_MAYBE(realPath, maybeRealPath) {
       char* resolvedModuleRaw = realpath(realPath->cStr(), nullptr);
-      KJ_REQUIRE(resolvedModuleRaw != nullptr, "Could not resolve isolate module.",
-          packagePath, *realPath, strerror(errno));
+      if (resolvedModuleRaw == nullptr) {
+        KJ_FAIL_REQUIRE("Could not resolve isolate module.", packagePath, *realPath,
+            strerror(errno));
+      }
       KJ_DEFER(free(resolvedModuleRaw));
       auto resolvedModule = kj::StringPtr(resolvedModuleRaw);
 
