@@ -80,36 +80,36 @@ const CAPNP_ES_RUNTIME_MODULES = [
     "__sandstorm_isolate_runtime/capnp-es/capnp/ts.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.jIzw5uss.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.jIzw5uss.mjs",
+    "@mnutt/shared/capnp-es.-eBPt7Ee.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.-eBPt7Ee.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.Da9bkTPj.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.Da9bkTPj.mjs",
+    "@mnutt/shared/capnp-es.ujbiBnSV.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.ujbiBnSV.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.Da2a44Ii.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.Da2a44Ii.mjs",
+    "@mnutt/shared/capnp-es.Bh8zPymV.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.Bh8zPymV.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.CKgVaTmi.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.CKgVaTmi.mjs",
+    "@mnutt/shared/capnp-es.iq9U7f6E.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.iq9U7f6E.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.iydqJhtG.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.iydqJhtG.mjs",
+    "@mnutt/shared/capnp-es.DlrkfTBx.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.DlrkfTBx.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.2NJr_hdR.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.2NJr_hdR.mjs",
+    "@mnutt/shared/capnp-es.S5efx5db.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.S5efx5db.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.VoaMMsf2.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.VoaMMsf2.mjs",
+    "@mnutt/shared/capnp-es.HHDlMVVz.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.HHDlMVVz.mjs",
   ],
   [
-    "@mnutt/shared/capnp-es.BLGTYa4t.mjs",
-    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.BLGTYa4t.mjs",
+    "@mnutt/shared/capnp-es.B14jf117.mjs",
+    "__sandstorm_isolate_runtime/capnp-es/shared/capnp-es.B14jf117.mjs",
   ],
 ];
 const CAPNP_ES_SCHEME_RUNTIME_MODULES = Array.from(new Map(CAPNP_ES_RUNTIME_MODULES.map(
@@ -1071,6 +1071,85 @@ toolchainTest("spk dev-isolate prints manifests and native generated capnp modul
       },
     }),
     /`capnp-es:` isolate schema imports have been renamed; use `capnp:`/);
+});
+
+toolchainTest("spk dev-isolate resolves app-interface schemas outside the repo", async (t) => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+  try {
+    await requireFile(
+      CAPNP_ES_COMPILER_MODULE,
+      "Set CAPNP_ES_COMPILER_MODULE to the @mnutt/capnp-es compiler module.");
+  } catch (err) {
+    t.skip(err.message);
+    return;
+  }
+
+  await fs.mkdir(REPO_TMP_DIR, { recursive: true });
+  const fixtureRoot = await fs.mkdtemp(path.join(REPO_TMP_DIR, "dev-isolate-app-interface-"));
+  t.after(async () => {
+    await fs.rm(fixtureRoot, { recursive: true, force: true });
+  });
+
+  await fs.writeFile(path.join(fixtureRoot, "object-store.capnp"), [
+    "@0x91bd68a6d056c2a1;",
+    "using Grain = import \"/sandstorm/grain.capnp\";",
+    "",
+    "struct UploadTargetObjectId {",
+    "  type @0 :Text;",
+    "}",
+    "",
+    "interface UploadTarget extends(Grain.AppPersistent(UploadTargetObjectId)) {",
+    "  put @0 (key :Text) -> (etag :Text);",
+    "}",
+    "",
+  ].join("\n"));
+  await fs.writeFile(path.join(fixtureRoot, "worker.js"), [
+    "import { UploadTarget } from \"capnp:./object-store.capnp\";",
+    "export default { fetch() { return Response.json({ id: String(UploadTarget.interfaceId) }); } };",
+    "",
+  ].join("\n"));
+
+  const options = {
+    cwd: fixtureRoot,
+    env: {
+      ...process.env,
+      SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
+    },
+  };
+  const { stdout } = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-manifest-json",
+    "--title", "Object Store",
+    "--app-interface", "capnp:./object-store.capnp#UploadTarget",
+    "worker.js",
+  ], options);
+  const manifest = JSON.parse(stdout);
+  const modules = new Map(
+    manifest.continueCommand.isolate.modules.map((module) => [module.name, module]));
+
+  assert.equal(manifest.continueCommand.isolate.mainModule, "worker.js");
+  assert.equal(
+    modules.get("capnp:./object-store.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/object-store.js");
+  assert.equal(
+    modules.get("capnp:/sandstorm/grain.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/grain.js");
+  assert.equal(
+    String(manifest.continueCommand.isolate.bridgeConfig.viewInfo.matchRequests[0].tags[0].id),
+    BigInt("0x970c38b4ce585d56").toString());
+
+  await assert.rejects(
+    runCommand(SPK_BIN, [
+      "dev-isolate",
+      "--print-manifest-json",
+      "--app-interface", "capnp:./missing/object-store.capnp#UploadTarget",
+      "worker.js",
+    ], options),
+    (err) => {
+      assert.match(err.message, /Could not resolve isolate import/);
+      assert.doesNotMatch(err.message, /Received signal #11|Segmentation fault/);
+      return true;
+    });
 });
 
 toolchainTest("spk powerbox-descriptor emits schema interface descriptors", async () => {
