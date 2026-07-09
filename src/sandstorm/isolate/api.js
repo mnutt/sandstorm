@@ -76,6 +76,13 @@ function capnpCapabilityPointer(capability) {
 }
 
 function capnpClientReference(value, name = "capability") {
+  if (value && typeof value[CAPNP_CLIENT_SYMBOL] === "function") {
+    const client = value[CAPNP_CLIENT_SYMBOL]();
+    if (client && typeof client.call === "function") {
+      return client;
+    }
+  }
+
   if (value && typeof value.call === "function") {
     return value;
   }
@@ -520,6 +527,10 @@ function capabilityCapnpClient(value, name = "capability") {
     return value._capnpClient(name);
   }
 
+  if (value && typeof value[CAPNP_CLIENT_SYMBOL] === "function") {
+    return capnpClientReference(value, name);
+  }
+
   if (value && typeof value === "object" && typeof value.call === "function") {
     return value;
   }
@@ -536,6 +547,25 @@ function capabilityBridge(value) {
     return value._bridge();
   }
   throw new ValidationError("operation requires a live capability handle");
+}
+
+function sessionActionCapability(env, capability, name = "session action capability") {
+  const cap = capabilityCapnpClient(capability, name);
+  if (capability instanceof Capability) {
+    return {
+      cap,
+      bridge: capability._bridge(),
+      temporaryBridge: false,
+    };
+  }
+
+  return {
+    cap,
+    bridge: connectIsolateBridge(nativeCapnpBridgeApi(env), {
+      connectionId: makeLiveCapabilityId("session-action"),
+    }),
+    temporaryBridge: true,
+  };
 }
 
 export class Capability {
@@ -1038,10 +1068,10 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
   const descriptor = endpoint === "tie-to-user"
     ? null
     : await sessionActionDescriptor(env, options);
-  const bridge = capabilityBridge(capability);
-  const cap = capabilityCapnpClient(capability, "session action capability");
+  const actionCapability = sessionActionCapability(env, capability);
+  const { bridge, cap, temporaryBridge } = actionCapability;
 
-  return (async () => {
+  try {
     if (typeof bridge.getSessionContext !== "function") {
       throw new Error("isolate bridge returned no session-context resolver");
     }
@@ -1059,6 +1089,7 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
           initPowerboxDescriptorParam(params, descriptor);
           initPowerboxDisplayInfoParam(params, displayInfo);
         });
+        if (temporaryBridge) bridge.close();
         return { ok: true };
       case "fulfill-request":
         await session.context.fulfillRequest((params) => {
@@ -1067,6 +1098,7 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
           initPowerboxDescriptorParam(params, descriptor);
           initPowerboxDisplayInfoParam(params, displayInfo);
         });
+        if (temporaryBridge) bridge.close();
         return { ok: true };
       case "tie-to-user": {
         const tiedPromise = session.context.tieToUser((params) => {
@@ -1090,7 +1122,10 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
       default:
         throw new Error(`unsupported session powerbox action: ${endpoint}`);
     }
-  })();
+  } catch (error) {
+    if (temporaryBridge) bridge.close(error);
+    throw error;
+  }
 }
 
 async function offerCapability(env, request, capability, options = {}) {
@@ -1602,11 +1637,25 @@ function powerboxFulfillmentPage(options, prefix) {
 }
 
 function normalizePowerboxFulfillmentCapability(env, value) {
-  const capability = wrapCapability(env, value && typeof value === "object" && value.capability
+  const raw = value && typeof value === "object" &&
+      typeof value[CAPNP_CLIENT_SYMBOL] !== "function" && value.capability
     ? value.capability
-    : value);
-  const id = capabilityId(capability, "Powerbox fulfillment capability");
-  return { capability, handle: { ok: true, type: "capability", id } };
+    : value;
+  const capability = wrapCapability(env, raw);
+  if (capability instanceof Capability ||
+      (capability && typeof capability === "object" &&
+        (capability.type === "capability" || capability.type === "claimedCapability"))) {
+    const id = capabilityId(capability, "Powerbox fulfillment capability");
+    return { capability, handle: { ok: true, type: "capability", id } };
+  }
+
+  capabilityCapnpClient(capability, "Powerbox fulfillment capability");
+  return {
+    capability,
+    handle: capability && typeof capability.toJSON === "function"
+      ? capability.toJSON()
+      : { ok: true, type: "nativeCapnpCapability" },
+  };
 }
 
 export function powerboxFulfillment(request, env, options = {}) {

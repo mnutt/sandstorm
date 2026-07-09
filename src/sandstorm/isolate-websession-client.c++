@@ -421,10 +421,17 @@ public:
     KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
     KJ_REQUIRE(params.getRequiredPermissions()[0]);
     validateDescriptor(params.getDescriptor());
-    validateDisplayInfo(params.getDisplayInfo(),
-        "WebSession offered capability",
-        "can use offered capability",
-        "Offered capability description");
+    if (params.getDisplayInfo().getTitle().getDefaultText() == "NativeGreeter offered capability") {
+      validateDisplayInfo(params.getDisplayInfo(),
+          "NativeGreeter offered capability",
+          "can use native offered capability",
+          "Native offered capability description");
+    } else {
+      validateDisplayInfo(params.getDisplayInfo(),
+          "WebSession offered capability",
+          "can use offered capability",
+          "Offered capability description");
+    }
     ++offerCount;
     return kj::READY_NOW;
   }
@@ -449,10 +456,18 @@ public:
     KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
     KJ_REQUIRE(params.getRequiredPermissions()[0]);
     validateDescriptor(params.getDescriptor());
-    validateDisplayInfo(params.getDisplayInfo(),
-        "WebSession fulfilled capability",
-        "can use fulfilled capability",
-        "Fulfilled capability description");
+    if (params.getDisplayInfo().getTitle().getDefaultText() ==
+        "NativeGreeter fulfilled capability") {
+      validateDisplayInfo(params.getDisplayInfo(),
+          "NativeGreeter fulfilled capability",
+          "can use native fulfilled capability",
+          "Native fulfilled capability description");
+    } else {
+      validateDisplayInfo(params.getDisplayInfo(),
+          "WebSession fulfilled capability",
+          "can use fulfilled capability",
+          "Fulfilled capability description");
+    }
     ++fulfillCount;
     return kj::READY_NOW;
   }
@@ -481,6 +496,7 @@ public:
   uint tieCount = 0;
   uint apiDescriptorCount = 0;
   uint providerDescriptorCount = 0;
+  uint nativeGreeterDescriptorCount = 0;
   uint grainSizeReportCount = 0;
   uint routeBackedTokenCount = 0;
   uint routeBackedRequirementCount = 0;
@@ -510,6 +526,11 @@ private:
     KJ_REQUIRE(tags.size() == 1);
     if (tags[0].getId() == TEST_PROVIDER_TAG_ID) {
       ++providerDescriptorCount;
+      return;
+    }
+
+    if (tags[0].getId() == capnp::typeId<NativeGreeter>()) {
+      ++nativeGreeterDescriptorCount;
       return;
     }
 
@@ -1906,6 +1927,13 @@ public:
         "\"webFulfill\":{\"status\":200,\"body\":{\"ok\":true,"
         "\"fulfill\":{\"ok\":true},\"capability\":{\"ok\":true,\"type\":\"capability\""),
         fulfillmentHelperBody);
+    KJ_REQUIRE(contains(fulfillmentHelperBody,
+        "\"nativeFulfill\":{\"status\":200,\"body\":{\"ok\":true,"
+        "\"fulfill\":{\"ok\":true},\"capability\":{\"ok\":true,"
+        "\"type\":\"nativeCapnpCapability\""),
+        fulfillmentHelperBody);
+    KJ_REQUIRE(contains(fulfillmentHelperBody, "\"interfaceName\":\"NativeGreeter\""),
+        fulfillmentHelperBody);
     KJ_REQUIRE(contains(fulfillmentHelperBody, "\"objectFulfill\":null"),
         fulfillmentHelperBody);
     KJ_REQUIRE(contains(fulfillmentHelperBody, "\"durableFulfill\":null"),
@@ -1913,7 +1941,41 @@ public:
     KJ_REQUIRE(contains(fulfillmentHelperBody,
         "\"errorFulfill\":{\"status\":400,\"body\":{\"ok\":false"),
         fulfillmentHelperBody);
-    KJ_REQUIRE(sessionContextRef.fulfillCount == 2, sessionContextRef.fulfillCount);
+    KJ_REQUIRE(sessionContextRef.fulfillCount == 3, sessionContextRef.fulfillCount);
+
+    auto nativeSessionActionRequest = session.getRequest();
+    nativeSessionActionRequest.setPath("/native-powerbox-session-action-self-test");
+    nativeSessionActionRequest.setIgnoreBody(false);
+    auto nativeSessionActionContext = nativeSessionActionRequest.initContext();
+    nativeSessionActionContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    nativeSessionActionContext.initCookies(0);
+    nativeSessionActionContext.initAccept(0);
+    nativeSessionActionContext.initAcceptEncoding(0);
+    nativeSessionActionContext.initAdditionalHeaders(0);
+
+    auto nativeSessionActionResponse = nativeSessionActionRequest.send().wait(io.waitScope);
+    auto nativeSessionActionDebugBody = responseDebugBody(nativeSessionActionResponse);
+    KJ_REQUIRE(nativeSessionActionResponse.which() == WebSession::Response::CONTENT,
+        nativeSessionActionDebugBody);
+    auto nativeSessionActionContent = nativeSessionActionResponse.getContent();
+    KJ_REQUIRE(nativeSessionActionContent.getStatusCode() ==
+        WebSession::Response::SuccessCode::OK);
+    KJ_REQUIRE(nativeSessionActionContent.getBody().which() ==
+        WebSession::Response::Content::Body::BYTES);
+    auto nativeSessionActionBody =
+        kj::str(nativeSessionActionContent.getBody().getBytes().asChars());
+    KJ_REQUIRE(contains(nativeSessionActionBody, "\"ok\":true"), nativeSessionActionBody);
+    KJ_REQUIRE(contains(nativeSessionActionBody,
+        "classic native greeter native-powerbox-session-action-greeter hello session-action"),
+        nativeSessionActionBody);
+    KJ_REQUIRE(contains(nativeSessionActionBody, "\"fulfill\":{\"ok\":true}"),
+        nativeSessionActionBody);
+    KJ_REQUIRE(contains(nativeSessionActionBody, "\"offer\":{\"ok\":true}"),
+        nativeSessionActionBody);
+    KJ_REQUIRE(contains(nativeSessionActionBody, "\"type\":\"nativeCapnpCapability\""),
+        nativeSessionActionBody);
+    KJ_REQUIRE(sessionContextRef.fulfillCount == 4, sessionContextRef.fulfillCount);
+    KJ_REQUIRE(sessionContextRef.offerCount == 2, sessionContextRef.offerCount);
 
     auto offerSessionContext = kj::heap<FakeSessionContext>();
     auto& offerSessionContextRef = *offerSessionContext;
