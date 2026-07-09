@@ -163,6 +163,8 @@ declare module "sandstorm:api" {
     descriptor?: unknown;
   }
 
+  export type LiveCapability = Capability | object;
+
   export interface PowerboxClaimOptions {
     requiredPermissions?: string[];
     apiSession?: unknown;
@@ -192,9 +194,9 @@ declare module "sandstorm:api" {
     appInterfaceDescriptor(options?: unknown): Promise<string>;
     claim(result: string | PowerboxRequestResult, options?: PowerboxClaimOptions): Promise<Capability>;
     offered(): Promise<OfferedCapabilityInfo | undefined>;
-    offer(capability: Capability, options?: PowerboxOfferOptions): Promise<unknown>;
-    fulfillRequest(capability: Capability, options?: PowerboxFulfillOptions): Promise<unknown>;
-    tieToUser(capability: Capability, options?: PowerboxTieOptions): Promise<unknown>;
+    offer(capability: LiveCapability, options?: PowerboxOfferOptions): Promise<unknown>;
+    fulfillRequest(capability: LiveCapability, options?: PowerboxFulfillOptions): Promise<unknown>;
+    tieToUser(capability: LiveCapability, options?: PowerboxTieOptions): Promise<unknown>;
   }
 
   export interface PowerboxFulfillmentOptions {
@@ -203,7 +205,8 @@ declare module "sandstorm:api" {
     title?: string;
     description?: string;
     buttonLabel?: string;
-    capability(): Capability | { capability: Capability } | Promise<Capability | { capability: Capability }>;
+    capability(): LiveCapability | { capability: LiveCapability } |
+        Promise<LiveCapability | { capability: LiveCapability }>;
     fulfill: PowerboxFulfillOptions;
   }
 

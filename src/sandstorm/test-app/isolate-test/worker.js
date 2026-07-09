@@ -1482,6 +1482,25 @@ export default {
         },
         fulfill: fulfillOptions(),
       });
+      const nativeDescriptor = await nativeCapnpPowerboxDescriptor(
+        env, NativeGreeter, { interfaceName: "NativeGreeter" });
+      const native = fulfillmentApi.powerboxFulfillment({
+        routePrefix: "/native-fulfillment-test",
+        title: "Powerbox fulfillment NativeGreeter",
+        buttonLabel: "Use native greeter",
+        capability: () => exportNativeCapnp(
+          fulfillmentApi,
+          NativeGreeter,
+          makePersistentNativeGreeterTarget("native-powerbox-helper-greeter"),
+          { interfaceName: "NativeGreeter" }),
+        fulfill: {
+          title: "NativeGreeter fulfilled capability",
+          verbPhrase: "can use native fulfilled capability",
+          description: "Native fulfilled capability description",
+          requiredPermissions: ["view"],
+          descriptor: nativeDescriptor,
+        },
+      });
 
       const page = await web.serve(helperRequest("/__sandstorm/powerbox-fulfillment"));
       const client = await web.serve(helperRequest("/__sandstorm/powerbox-fulfillment/client.js"));
@@ -1490,6 +1509,10 @@ export default {
       const webFulfill = runFulfill
         ? await web.serve(helperRequest(
           "/__sandstorm/powerbox-fulfillment/fulfill", { method: "POST" }))
+        : null;
+      const nativeFulfill = runFulfill
+        ? await native.serve(helperRequest(
+          "/native-fulfillment-test/fulfill", { method: "POST" }))
         : null;
       const errorFulfill = await throwing.serve(helperRequest(
         "/fulfillment-error-test/fulfill", { method: "POST" }));
@@ -1516,6 +1539,10 @@ export default {
           status: webFulfill.status,
           body: await webFulfill.json(),
         },
+        nativeFulfill: nativeFulfill && {
+          status: nativeFulfill.status,
+          body: await nativeFulfill.json(),
+        },
         objectFulfill: null,
         durableFulfill: null,
         errorFulfill: {
@@ -1523,6 +1550,53 @@ export default {
           body: await errorFulfill.json(),
         },
       });
+    }
+
+    if (url.pathname === "/native-powerbox-session-action-self-test") {
+      const api = sandstorm(request, env);
+      try {
+        const descriptor = await nativeCapnpPowerboxDescriptor(
+          env, NativeGreeter, { interfaceName: "NativeGreeter" });
+        const greeter = await exportNativeCapnp(
+          api,
+          NativeGreeter,
+          makePersistentNativeGreeterTarget("native-powerbox-session-action-greeter"),
+          { interfaceName: "NativeGreeter" });
+
+        const hello = await greeter.hello({ name: "session-action" });
+        try {
+          const fulfill = await api.powerbox().fulfillRequest(greeter, {
+            title: "NativeGreeter fulfilled capability",
+            verbPhrase: "can use native fulfilled capability",
+            description: "Native fulfilled capability description",
+            requiredPermissions: ["view"],
+            descriptor,
+          });
+          const offer = await api.powerbox().offer(greeter, {
+            title: "NativeGreeter offered capability",
+            verbPhrase: "can use native offered capability",
+            description: "Native offered capability description",
+            requiredPermissions: ["view"],
+            descriptor,
+          });
+
+          return Response.json({
+            ok: true,
+            hello: { message: hello.message },
+            fulfill,
+            offer,
+            info: await greeter.info(),
+          });
+        } finally {
+          await greeter.drop();
+        }
+      } catch (error) {
+        return Response.json({
+          ok: false,
+          error: error?.message || String(error),
+          stack: error?.stack || "",
+        }, { status: 500 });
+      }
     }
 
     if (url.pathname === "/native-capnp-descriptor-self-test") {

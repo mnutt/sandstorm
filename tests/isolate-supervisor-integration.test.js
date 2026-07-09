@@ -2133,6 +2133,7 @@ runtimeTest("isolate supervisor integration suite", {
     assert.equal(powerboxFulfillment.json.unknown.status, 404);
     assert.equal(powerboxFulfillment.json.outsideIsNull, true);
     assert.equal(powerboxFulfillment.json.webFulfill, null);
+    assert.equal(powerboxFulfillment.json.nativeFulfill, null);
     assert.equal(powerboxFulfillment.json.objectFulfill, null);
     assert.equal(powerboxFulfillment.json.durableFulfill, null);
     assert.equal(powerboxFulfillment.json.errorFulfill.status, 400);
