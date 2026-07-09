@@ -1096,7 +1096,7 @@ void testNativeGreeterToken(kj::WaitScope& waitScope, SandstormCore::Client core
       0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
   };
   auto inspectDataRequest = greeter.inspectDataRequest();
-  inspectDataRequest.setContent(dataBytes);
+  inspectDataRequest.setContent(kj::arrayPtr(dataBytes, sizeof(dataBytes)));
   auto inspectData = inspectDataRequest.send().wait(waitScope);
   KJ_REQUIRE(inspectData.getByteCount() == sizeof(dataBytes), inspectData.getByteCount());
   KJ_REQUIRE(inspectData.getChecksum() == checksum(kj::arrayPtr(dataBytes, sizeof(dataBytes))),

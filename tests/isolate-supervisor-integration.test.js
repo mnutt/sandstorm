@@ -3091,6 +3091,17 @@ runtimeTest("isolate supervisor integration suite", {
     }
     assert.ok(usageIndex.json.totalBytes >= usageTotalBytes + 17);
 
+    const tooLarge = await requestJson(fixture.storageSocket, "/too-large", {
+      method: "PUT",
+      body: Buffer.alloc(1024 * 1024 + 1),
+    });
+    assert.equal(tooLarge.statusCode, 413);
+    assert.deepEqual(tooLarge.json, {
+      ok: false,
+      error: "isolate storage value exceeds maximum allowed size",
+      maxBytes: 1024 * 1024,
+    });
+
     for (const entry of usageEntries) {
       const usageDeleted = await requestJson(fixture.storageSocket, `/${entry.key}`, {
         method: "DELETE",
