@@ -244,6 +244,15 @@ function deterministicBytes(size) {
   return result;
 }
 
+const NATIVE_GREETER_DATA_EXPECTATION = {
+  byteCount: 16,
+  checksum: checksum(Buffer.from([
+    0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70,
+    0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
+  ])),
+  firstEightHex: "0000001466747970",
+};
+
 async function isSocket(socketPath) {
   try {
     const stat = await fs.stat(socketPath);
@@ -1881,6 +1890,7 @@ runtimeTest("isolate supervisor integration suite", {
                   "native export greeter called native export direct greeter " +
                   "direct client from native export self-test",
             },
+            data: NATIVE_GREETER_DATA_EXPECTATION,
           },
           bridge: {
             hello: {
@@ -1900,6 +1910,7 @@ runtimeTest("isolate supervisor integration suite", {
                   "native export greeter called native export pipelined greeter " +
                   "bridge client from native export self-test",
             },
+            data: NATIVE_GREETER_DATA_EXPECTATION,
           },
           handoff: {
             hello: {
@@ -1919,6 +1930,7 @@ runtimeTest("isolate supervisor integration suite", {
                   "native export greeter called native export handoff greeter " +
                   "handoff client from native export self-test",
             },
+            data: NATIVE_GREETER_DATA_EXPECTATION,
           },
           restored: {
             hello: {
@@ -1939,6 +1951,7 @@ runtimeTest("isolate supervisor integration suite", {
                   "native export restored greeter restored client from " +
                   "classic native greeter native-export-greeter",
             },
+            data: NATIVE_GREETER_DATA_EXPECTATION,
           },
           bootstrapRestored: {
             hello: {
@@ -1962,6 +1975,7 @@ runtimeTest("isolate supervisor integration suite", {
                   "native export bootstrap restored greeter bootstrap restored client from " +
                   "classic native greeter native-export-greeter",
             },
+            data: NATIVE_GREETER_DATA_EXPECTATION,
           },
         },
         capability: {
@@ -2043,6 +2057,7 @@ runtimeTest("isolate supervisor integration suite", {
                 "classic restored greeter restored client from classic native greeter " +
                 "fixture-classic-native-greeter",
           },
+          data: NATIVE_GREETER_DATA_EXPECTATION,
         },
         restored: {
           kind: "rpcImport",
