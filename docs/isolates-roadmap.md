@@ -178,6 +178,12 @@ compiler on the dev-startup path.
   `Capability` handles. App code can fulfill a request with
   `api.powerbox().fulfillRequest(exportedClient, ...)`; the helper opens only
   the trusted `SessionContext` bridge and passes the existing capnp reference.
+- Done: raw isolate-native session action capabilities are wrapped by the
+  supervisor as Sandstorm-internal `SystemPersistent` capabilities before they
+  are handed to legacy `SessionContext.offer()` / `fulfillRequest()`. The
+  wrapper translates legacy saves into the app's `AppPersistent.save()` plus
+  `SandstormCore.makeToken()` while blocking direct external calls to
+  `AppPersistent.save()`.
 - Done: `/powerbox/drop`; `Capability.drop()` now releases the worker's live
   RPC handle and its retained IsolateBridge connection. Worker-side id-backed
   helper handles are gone; browser handoff ids are explicit browser slots.
