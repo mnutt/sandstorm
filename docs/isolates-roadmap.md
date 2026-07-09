@@ -247,8 +247,10 @@ bridge. Rebase it onto the Phase 1 channel:
   browser (or worker) claims over its own channel. Worker-initiated Powerbox
   UI becomes a `SessionContext` method call whenever the shell supports it —
   no new transport needed.
-- Delete the bespoke restricted-bridge plumbing that Phase 1 didn't already
-  subsume.
+- Done: the bespoke restricted-bridge plumbing that Phase 1 didn't already
+  subsume is gone. The old `/__sandstorm/rpc-client.js` surface is tested as
+  absent, browser Powerbox claims use the browser capnp bootstrap, and the
+  browser client has no fetch-to-supervisor authority calls.
 
 **Exit criteria:** `examples/isolate-browser-capnp` and
 `isolate-browser-powerbox` run on the unified channel; the browser client
@@ -275,9 +277,9 @@ Do this while surface area is small and before any stability promise.
   dependency: upstream, vendor into the tree, or move to a `sandstorm-org`
   namespace with pinned integrity hashes in the build. The runtime is
   supervisor-injected trusted-adjacent code; treat it like one.
-  - Deferred: keep the exact pinned npm package and lockfile integrity for
-    now. The real fix is to move the package under Sandstorm organizational
-    custody when that is available.
+  - Deferred: keep the exact pinned `@mnutt/capnp-es@0.3.0` npm package and
+    lockfile integrity for now. The real fix is to move the package under
+    Sandstorm organizational custody when that is available.
 - **ABI discipline.** Extend `spk capnp-abi` checks to any new platform
   bootstrap schemas, not just app schemas.
   - Done: `spk capnp-abi` now records immediate interface superclasses and
