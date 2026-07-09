@@ -60,13 +60,12 @@ declare module "sandstorm:api" {
       sessionId: string;
       tabId: string;
       basePath: string;
-      offeredCapabilityId: string;
       host: string;
       forwardedProto: string;
       userAgent: string;
       acceptableLanguages: string[];
     };
-    offer: OfferedCapabilityInfo;
+    offer: SessionOfferInfo;
   }
 
   export interface ApiSessionDescriptorInfo {
@@ -98,6 +97,10 @@ declare module "sandstorm:api" {
   export interface OfferedCapabilityInfo {
     id: string;
     capability?: Capability;
+    descriptor?: PowerboxDescriptorInfo;
+  }
+
+  export interface SessionOfferInfo {
     descriptor?: PowerboxDescriptorInfo;
   }
 
@@ -139,12 +142,24 @@ declare module "sandstorm:api" {
     offer(request: Request, options?: PowerboxOfferOptions): Promise<unknown>;
     fulfillRequest(request: Request, options?: PowerboxFulfillOptions): Promise<unknown>;
     tieToUser(request: Request, options?: PowerboxTieOptions): Promise<unknown>;
+    browserHandoff(options?: {
+      nativeInterface?: string;
+      request?: Request;
+      sessionId?: string;
+    }): Promise<{
+      ok: true;
+      type: "capability";
+      id: string;
+      kind: "receiverHosted";
+      residence: "browserHandoff";
+      nativeInterface: string;
+    }>;
     toJSON(): { ok: true; type: "capability"; id: string };
   }
 
   export interface PowerboxRequestResult {
     token?: string;
-    capability?: Capability | { id: string };
+    capability?: Capability;
     descriptor?: unknown;
   }
 
@@ -176,7 +191,7 @@ declare module "sandstorm:api" {
     outboundHttpDescriptor(options?: unknown): Promise<string>;
     appInterfaceDescriptor(options?: unknown): Promise<string>;
     claim(result: string | PowerboxRequestResult, options?: PowerboxClaimOptions): Promise<Capability>;
-    offered(): OfferedCapabilityInfo | undefined;
+    offered(): Promise<OfferedCapabilityInfo | undefined>;
     offer(capability: Capability, options?: PowerboxOfferOptions): Promise<unknown>;
     fulfillRequest(capability: Capability, options?: PowerboxFulfillOptions): Promise<unknown>;
     tieToUser(capability: Capability, options?: PowerboxTieOptions): Promise<unknown>;

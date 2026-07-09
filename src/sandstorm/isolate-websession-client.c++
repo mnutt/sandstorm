@@ -1932,8 +1932,10 @@ public:
     auto offerBody = kj::str(offerContent.getBody().getBytes().asChars());
     KJ_REQUIRE(contains(offerBody, "\"ok\":true"), offerBody);
     KJ_REQUIRE(contains(offerBody, "\"sessionType\":\"offer\""), offerBody);
-    KJ_REQUIRE(contains(offerBody, "\"offeredCapabilityId\":\""), offerBody);
     KJ_REQUIRE(contains(offerBody, "\"offeredClass\":true"), offerBody);
+    KJ_REQUIRE(contains(offerBody,
+        "\"offered\":{\"ok\":true,\"type\":\"capability\",\"id\":\"powerboxOffer-"),
+        offerBody);
     KJ_REQUIRE(contains(offerBody,
         "\"descriptor\":{\"type\":\"apiSession\","
         "\"canonicalUrl\":\"https://api.offer-session.test/v1\","

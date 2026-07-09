@@ -194,7 +194,7 @@ export default {
       const counter = await exportCounter(api);
       return Response.json({
         ok: true,
-        capability: counter.capability,
+        capability: await counter.browserHandoff({ request }),
         info: await counter.info(),
       });
     }

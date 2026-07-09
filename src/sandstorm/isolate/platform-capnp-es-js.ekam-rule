@@ -15,12 +15,24 @@ fi
 echo "findInput ${input}"
 read MANIFEST_DISK_FILE
 
+while IFS= read -r line <&3; do
+  line="${line%%#*}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  if test -z "$line"; then
+    continue
+  fi
+  echo "findInput ${line}"
+  read _SCHEMA_DISK_FILE
+done 3< "$MANIFEST_DISK_FILE"
+
 echo "newOutput ${output}"
 read OUTPUT_DISK_FILE
 
 python3 - "$OUTPUT_DISK_FILE" "$MANIFEST_DISK_FILE" "$NODEJS" <<'PY'
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 output_path = sys.argv[1]
@@ -52,8 +64,14 @@ for line in manifest_path.read_text(encoding="utf-8").splitlines():
 if not schema_specs:
     raise ValueError(f"no platform schemas listed in {manifest_path}")
 
+extra_includes = [
+    include for include in os.environ.get("CAPNP_ES_EXTRA_INCLUDE", "").split(":")
+    if include
+]
+
 capnpc = subprocess.run(
-    ["capnpc", "-o-", "-I.", "-I/usr/include", *schema_specs],
+    ["capnpc", "-o-", *[f"-I{include}" for include in extra_includes],
+     "-I.", "-I/usr/include", *schema_specs],
     cwd=repo_root / "src",
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,

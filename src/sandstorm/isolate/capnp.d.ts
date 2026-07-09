@@ -152,6 +152,19 @@ declare module "sandstorm:capnp" {
     };
     readonly connection: null;
     readonly transport: null;
+    browserHandoff(options?: {
+      readonly request?: Request;
+      readonly sessionId?: string;
+      readonly connectionId?: string;
+      readonly finalize?: unknown;
+    }): Promise<{
+      readonly type: "capability";
+      readonly id: string;
+      readonly kind: "receiverHosted";
+      readonly residence: "browserHandoff";
+      readonly interfaceId: string;
+      readonly interfaceName: string;
+    }>;
     drop(): undefined;
     info(): Promise<{
       readonly ok: true;

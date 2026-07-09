@@ -281,10 +281,19 @@ kj::String makeOpaqueToken() {
 class IsolateSessionRegistry final: public kj::Refcounted {
 public:
   kj::String registerSession(SessionContext::Client context) {
+    return registerSession(kj::mv(context), nullptr);
+  }
+
+  kj::String registerOfferSession(SessionContext::Client context, capnp::Capability::Client offer) {
+    return registerSession(kj::mv(context), kj::mv(offer));
+  }
+
+  kj::String registerSession(
+      SessionContext::Client context, kj::Maybe<capnp::Capability::Client> offeredCapability) {
     for (;;) {
       auto id = makeOpaqueToken();
       if (findSessionIndex(id) == nullptr) {
-        sessions.add(SessionRecord { kj::heapString(id), context });
+        sessions.add(SessionRecord { kj::heapString(id), context, kj::mv(offeredCapability) });
         return id;
       }
     }
@@ -307,36 +316,53 @@ public:
     return nullptr;
   }
 
-  kj::String storeClaimedCapability(capnp::Capability::Client cap) {
-    return storeClaimedCapabilityInternal(kj::mv(cap));
+  kj::Maybe<capnp::Capability::Client> findOfferedCapability(kj::StringPtr sessionId) {
+    KJ_IF_MAYBE(index, findSessionIndex(sessionId)) {
+      KJ_IF_MAYBE(cap, sessions[*index].offeredCapability) {
+        return *cap;
+      }
+    }
+
+    return nullptr;
   }
 
-  bool dropClaimedCapability(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      if (*index + 1 < claimedCapabilities.size()) {
-        claimedCapabilities[*index] = kj::mv(claimedCapabilities.back());
+  kj::String storeBrowserHandoffCapability(
+      kj::StringPtr sessionId, capnp::Capability::Client cap) {
+    KJ_REQUIRE(sessionId.size() > 0, "browser handoff requires a session ID");
+    return storeBrowserHandoffCapabilityInternal(sessionId, kj::mv(cap));
+  }
+
+  bool dropBrowserHandoffCapability(kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findBrowserHandoffCapabilityIndex(id)) {
+      if (*index + 1 < browserHandoffCapabilities.size()) {
+        browserHandoffCapabilities[*index] = kj::mv(browserHandoffCapabilities.back());
       }
-      claimedCapabilities.removeLast();
+      browserHandoffCapabilities.removeLast();
       return true;
     }
 
     return false;
   }
 
-  kj::Maybe<capnp::Capability::Client> findClaimedCapability(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findClaimedCapabilityIndex(id)) {
-      return claimedCapabilities[*index].cap;
+  kj::Maybe<capnp::Capability::Client> findBrowserHandoffCapability(
+      kj::StringPtr sessionId, kj::StringPtr id) {
+    KJ_IF_MAYBE(index, findBrowserHandoffCapabilityIndex(id)) {
+      if (browserHandoffCapabilities[*index].sessionId == sessionId) {
+        return browserHandoffCapabilities[*index].cap;
+      }
     }
 
     return nullptr;
   }
 
 private:
-  kj::String storeClaimedCapabilityInternal(capnp::Capability::Client cap) {
+  kj::String storeBrowserHandoffCapabilityInternal(
+      kj::StringPtr sessionId, capnp::Capability::Client cap) {
     for (;;) {
       auto id = makeOpaqueToken();
-      if (findClaimedCapabilityIndex(id) == nullptr) {
-        claimedCapabilities.add(ClaimedCapabilityRecord { kj::heapString(id), cap });
+      if (findBrowserHandoffCapabilityIndex(id) == nullptr) {
+        browserHandoffCapabilities.add(BrowserHandoffCapabilityRecord {
+          kj::heapString(id), kj::heapString(sessionId), cap });
         return id;
       }
     }
@@ -345,10 +371,12 @@ private:
   struct SessionRecord {
     kj::String id;
     SessionContext::Client context;
+    kj::Maybe<capnp::Capability::Client> offeredCapability;
   };
 
-  struct ClaimedCapabilityRecord {
+  struct BrowserHandoffCapabilityRecord {
     kj::String id;
+    kj::String sessionId;
     capnp::Capability::Client cap;
   };
 
@@ -362,9 +390,9 @@ private:
     return nullptr;
   }
 
-  kj::Maybe<size_t> findClaimedCapabilityIndex(kj::StringPtr id) {
-    for (auto i: kj::indices(claimedCapabilities)) {
-      if (claimedCapabilities[i].id == id) {
+  kj::Maybe<size_t> findBrowserHandoffCapabilityIndex(kj::StringPtr id) {
+    for (auto i: kj::indices(browserHandoffCapabilities)) {
+      if (browserHandoffCapabilities[i].id == id) {
         return i;
       }
     }
@@ -373,7 +401,7 @@ private:
   }
 
   kj::Vector<SessionRecord> sessions;
-  kj::Vector<ClaimedCapabilityRecord> claimedCapabilities;
+  kj::Vector<BrowserHandoffCapabilityRecord> browserHandoffCapabilities;
 };
 
 struct IsolateRuntimeHost final: public kj::Refcounted {
@@ -1390,7 +1418,6 @@ struct SessionMetadata {
   kj::String userPicture;
   kj::String userPronouns;
   kj::String permissions;
-  kj::String offeredCapabilityId;
   kj::String offerDescriptorJson;
 };
 
@@ -2957,10 +2984,6 @@ private:
     if (sessionMetadata.sessionId.size() > 0) {
       addHeader(request, "x-sandstorm-session-id", sessionMetadata.sessionId);
     }
-    if (sessionMetadata.offeredCapabilityId.size() > 0) {
-      addHeader(request, "x-sandstorm-offered-capability-id",
-          sessionMetadata.offeredCapabilityId);
-    }
     if (sessionMetadata.offerDescriptorJson.size() > 0) {
       addHeader(request, "x-sandstorm-offer-descriptor", sessionMetadata.offerDescriptorJson);
     }
@@ -3412,9 +3435,8 @@ public:
     auto sessionMetadata = copySessionMetadata(
         params.getSessionParams().getAs<WebSession::Params>(), params.getUserInfo(), viewInfo,
         params.getTabId());
-    sessionMetadata.sessionId = runtimeHost->sessions->registerSession(params.getContext());
-    sessionMetadata.offeredCapabilityId =
-        runtimeHost->sessions->storeClaimedCapability(params.getOffer());
+    sessionMetadata.sessionId = runtimeHost->sessions->registerOfferSession(
+        params.getContext(), params.getOffer());
     copyOfferDescriptor(sessionMetadata, params.getDescriptor());
     context.getResults().setSession(kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), "", SessionKind::OFFER,
@@ -4308,28 +4330,28 @@ private:
       return kj::READY_NOW;
     }
 
-    kj::Promise<void> getClaimedCapability(GetClaimedCapabilityContext context) override {
-      auto id = context.getParams().getId();
-      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
+    kj::Promise<void> getOfferedCapability(GetOfferedCapabilityContext context) override {
+      auto sessionId = context.getParams().getSessionId();
+      KJ_IF_MAYBE(cap, host.sessions->findOfferedCapability(sessionId)) {
+        context.getResults().setFound(true);
         context.getResults().setCap(*cap);
-      } else {
-        KJ_FAIL_REQUIRE("isolate bridge claimed capability ID not found", id);
       }
       return kj::READY_NOW;
     }
 
-    kj::Promise<void> storeImportedCapability(StoreImportedCapabilityContext context) override {
+    kj::Promise<void> createBrowserHandoff(CreateBrowserHandoffContext context) override {
       auto params = context.getParams();
-      KJ_REQUIRE(params.hasCap(), "Cannot store a null imported capability.");
+      KJ_REQUIRE(params.hasCap(), "Cannot hand off a null browser capability.");
 
-      auto id = host.sessions->storeClaimedCapability(params.getCap());
+      auto id = host.sessions->storeBrowserHandoffCapability(
+          params.getSessionId(), params.getCap());
       context.getResults().setId(id);
       return kj::READY_NOW;
     }
 
-    kj::Promise<void> dropClaimedCapability(DropClaimedCapabilityContext context) override {
+    kj::Promise<void> dropBrowserHandoff(DropBrowserHandoffContext context) override {
       auto id = context.getParams().getId();
-      context.getResults().setReleased(host.sessions->dropClaimedCapability(id));
+      context.getResults().setReleased(host.sessions->dropBrowserHandoffCapability(id));
       return kj::READY_NOW;
     }
 
@@ -4342,8 +4364,7 @@ private:
 
       auto cap = makeRouteBackedSessionCapability(
           kj::addRef(config), kj::addRef(host), capabilityType, pathPrefix, params.getPersistent());
-      auto id = host.sessions->storeClaimedCapability(kj::mv(cap));
-      context.getResults().setId(id);
+      context.getResults().setCap(kj::mv(cap));
       return kj::READY_NOW;
     }
 
@@ -4358,12 +4379,14 @@ private:
         kj::String sessionId)
         : config(config), host(host), sessionId(kj::mv(sessionId)) {}
 
-    kj::Promise<void> getClaimedCapability(GetClaimedCapabilityContext context) override {
+    kj::Promise<void> getHandoffCapability(GetHandoffCapabilityContext context) override {
+      KJ_REQUIRE(sessionId.size() > 0,
+          "browser isolate bridge has no SessionContext for handoff resolution");
       auto id = context.getParams().getId();
-      KJ_IF_MAYBE(cap, host.sessions->findClaimedCapability(id)) {
+      KJ_IF_MAYBE(cap, host.sessions->findBrowserHandoffCapability(sessionId, id)) {
         context.getResults().setCap(*cap);
       } else {
-        KJ_FAIL_REQUIRE("browser isolate bridge claimed capability ID not found", id);
+        KJ_FAIL_REQUIRE("browser isolate bridge handoff capability ID not found", id);
       }
       return kj::READY_NOW;
     }

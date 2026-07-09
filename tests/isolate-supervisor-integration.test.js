@@ -1649,7 +1649,7 @@ test("isolate supervisor integration suite", {
     });
     assert.match(
       body.sandstormApi.nativeCapnpBridge.generatedClient.drop.generatedCallAfterDropError,
-      /isolate bridge claimed capability ID not found/);
+      /not a live RPC capability|live Sandstorm capability/);
     assert.deepEqual(body.capnpEs.payload, {
       bytes: body.capnpEs.messageBytes,
       capabilities: [
@@ -1874,9 +1874,7 @@ test("isolate supervisor integration suite", {
           kind: "receiverHosted",
           interfaceId: "0xb66316217ceedb1b",
           interfaceName: "NativeGreeter",
-          connectionId: "native-capnp-local-export-greeter-handoff-bootstrap",
-          transportKind: "isolateBridgeWebSocketRpc",
-          connectionIsNull: false,
+          connectionIsNull: true,
           id: body.sandstormApi.nativeCapnpLocalExport.greeter.handoff.id,
           dropResult: null,
         },
@@ -1894,7 +1892,7 @@ test("isolate supervisor integration suite", {
           savedTokenType: "string",
           savedTokenLength:
               body.sandstormApi.nativeCapnpLocalExport.greeter.bootstrapRestored.savedTokenLength,
-          connectionId: "native-capnp-local-export-greeter-bootstrap",
+          connectionId: body.sandstormApi.nativeCapnpLocalExport.greeter.bootstrapRestored.connectionId,
           transportKind: "isolateBridgeWebSocketRpc",
           capabilityKind: "rpcImport",
           interfaceId: "b66316217ceedb1b",
@@ -1971,9 +1969,7 @@ test("isolate supervisor integration suite", {
         isFixtureClient: true,
         hasBootstrapClient: true,
         targetId: body.sandstormApi.nativeCapnpBridge.targetId,
-        connectionId:
-            `native-capnp-fixture-connect-${
-              body.sandstormApi.nativeCapnpBridge.targetId}-bootstrap`,
+        connectionIsNull: true,
         hasDrop: true,
         hasSave: true,
       },
@@ -1985,9 +1981,7 @@ test("isolate supervisor integration suite", {
         dropOk: true,
         dropError: "",
         targetId: body.sandstormApi.nativeCapnpBridge.targetId,
-        connectionId:
-            `native-capnp-fixture-generated-${
-              body.sandstormApi.nativeCapnpBridge.targetId}-bootstrap`,
+        connectionIsNull: true,
         response: {
           responseWhich: 1,
           content: true,
@@ -2008,9 +2002,7 @@ test("isolate supervisor integration suite", {
         },
         drop: {
           targetId: body.sandstormApi.nativeCapnpBridge.generatedClient.drop.targetId,
-          connectionId:
-              `native-capnp-fixture-drop-${
-                body.sandstormApi.nativeCapnpBridge.generatedClient.drop.targetId}-bootstrap`,
+          connectionId: null,
           dropResult: {
             ok: true,
             released: true,
@@ -2657,7 +2649,7 @@ test("isolate supervisor integration suite", {
     assert.equal(browserNativeCapnpClient.statusCode, 200);
     assert.match(browserNativeCapnpClient.body, /connectBrowserNativeCapnp/);
     assert.match(browserNativeCapnpClient.body, /BrowserIsolateBridge/);
-    assert.match(browserNativeCapnpClient.body, /getClaimedCapability/);
+    assert.match(browserNativeCapnpClient.body, /getHandoffCapability/);
     assert.match(browserNativeCapnpClient.body, /claimPowerboxRequest/);
     assert.match(browserNativeCapnpClient.body, /BrowserNativeCapnpBridgeWebSocketTransport/);
     assert.match(browserNativeCapnpClient.body, /__sandstorm\/native-capnp\/rpc-session/);
@@ -2732,7 +2724,11 @@ test("isolate supervisor integration suite", {
         /browser isolate bridge session ID not found/);
       const browserWebSessionCapability = await requestJson(
         fixture.workerdSocket,
-        "/browser-native-web-session-capability");
+        "/browser-native-web-session-capability", {
+          headers: {
+            "X-Sandstorm-Session-Id": "missing-browser-native-capnp-session",
+          },
+        });
       assert.equal(browserWebSessionCapability.statusCode, 200, browserWebSessionCapability.body);
       assert.equal(browserWebSessionCapability.json.ok, true);
       assert.equal(browserWebSessionCapability.json.capabilityClass, true);

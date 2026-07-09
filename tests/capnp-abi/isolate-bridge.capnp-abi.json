@@ -24,23 +24,23 @@
           "results": [{"name": "context", "type": "Grain.SessionContext"}]
         },
         {
-          "name": "getClaimedCapability",
+          "name": "getOfferedCapability",
           "ordinal": 2,
           "paramStructId": "0x82d2be2f6dea4844",
           "resultStructId": "0x86e838c390b6babb",
-          "params": [{"name": "id", "type": "Text"}],
-          "results": [{"name": "cap", "type": "Capability"}]
+          "params": [{"name": "sessionId", "type": "Text"}],
+          "results": [{"name": "found", "type": "Bool"}, {"name": "cap", "type": "Capability"}]
         },
         {
-          "name": "storeImportedCapability",
+          "name": "createBrowserHandoff",
           "ordinal": 3,
           "paramStructId": "0xd18f4cbc25be3b37",
           "resultStructId": "0xc1957398fe2ffec9",
-          "params": [{"name": "cap", "type": "Capability"}],
+          "params": [{"name": "cap", "type": "Capability"}, {"name": "sessionId", "type": "Text"}],
           "results": [{"name": "id", "type": "Text"}]
         },
         {
-          "name": "dropClaimedCapability",
+          "name": "dropBrowserHandoff",
           "ordinal": 4,
           "paramStructId": "0xbff115a6130293eb",
           "resultStructId": "0xb3991ed299237e03",
@@ -53,7 +53,7 @@
           "paramStructId": "0xc726ffc691879ad8",
           "resultStructId": "0xf32dbd7971e3b55d",
           "params": [{"name": "nativeInterface", "type": "Text"}, {"name": "pathPrefix", "type": "Text"}, {"name": "persistent", "type": "Bool"}],
-          "results": [{"name": "id", "type": "Text"}]
+          "results": [{"name": "cap", "type": "Capability"}]
         }
       ]
     },
@@ -63,7 +63,7 @@
       "superclasses": [],
       "methods": [
         {
-          "name": "getClaimedCapability",
+          "name": "getHandoffCapability",
           "ordinal": 0,
           "paramStructId": "0xef0670ac3654ad32",
           "resultStructId": "0xdd3554252dd8763e",
