@@ -180,15 +180,13 @@ function(sandstorm_add_packaging_targets)
       "SPK_BIN=$<TARGET_FILE:spk>"
       "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
       "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
-      "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
+      "ISOLATE_SUPERVISOR_TEST_SCOPE=runtime"
       "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
       "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
     DEPENDS
       sandstorm
       spk
       isolate-websession-client
-      isolate-capnp-abi-check
-      isolate-capnp-corpus-test
       workerd
       isolate-test-app-spk
       "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
@@ -252,6 +250,32 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Running generated isolate Cap'n Proto corpus cases"
     VERBATIM)
 
+  add_custom_target(isolate-capnp-toolchain-test
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
+      "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
+      "SPK_BIN=$<TARGET_FILE:spk>"
+      "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
+      "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
+      "ISOLATE_SUPERVISOR_TEST_SCOPE=toolchain"
+      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
+    DEPENDS
+      sandstorm
+      spk
+      isolate-websession-client
+      isolate-capnp-abi-check
+      isolate-capnp-corpus-test
+      "${_capnp_es_compiler_deps}"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Running isolate Cap'n Proto toolchain tests"
+    VERBATIM)
+
+  add_custom_target(isolate-test
+    DEPENDS isolate-capnp-toolchain-test isolate-supervisor-integration-test)
+
   add_custom_target(isolate-supervisor-stress-test
     COMMAND "${CMAKE_COMMAND}" -E env
       "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
@@ -259,8 +283,8 @@ function(sandstorm_add_packaging_targets)
       "SPK_BIN=$<TARGET_FILE:spk>"
       "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
       "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
-      "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
       "ISOLATE_STRESS_64M=1"
+      "ISOLATE_SUPERVISOR_TEST_SCOPE=runtime"
       "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
       "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
     DEPENDS
@@ -287,9 +311,9 @@ function(sandstorm_add_packaging_targets)
         "SPK_BIN=$<TARGET_FILE:spk>"
         "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
         "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
-        "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
         "ISOLATE_SYSCALL_TRACE_DIR=${_isolate_trace_dir}"
         "ISOLATE_SYSCALL_TRACE_PROFILE=representative"
+        "ISOLATE_SUPERVISOR_TEST_SCOPE=runtime"
         "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
         "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
       COMMAND "${CMAKE_COMMAND}" -E echo
