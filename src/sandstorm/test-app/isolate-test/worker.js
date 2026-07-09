@@ -96,6 +96,15 @@ function makePersistentNativeGreeterTarget(id) {
         message: `classic native greeter ${id} called ${hello.message}`,
       };
     },
+
+    async inspectData(params) {
+      const bytes = capnpDataBytes(params.content);
+      return {
+        byteCount: BigInt(bytes.byteLength),
+        checksum: checksum(bytes),
+        firstEightHex: firstEightHex(bytes),
+      };
+    },
   };
 }
 
@@ -113,6 +122,11 @@ function checksum(bytes) {
     sum = (sum + byte) >>> 0;
   }
   return sum;
+}
+
+function firstEightHex(bytes) {
+  return Array.from(bytes.slice(0, 8), (byte) =>
+    byte.toString(16).padStart(2, "0")).join("");
 }
 
 function capnpDataBytes(value) {
@@ -207,6 +221,13 @@ async function runNativeGreeterConformance(client, {
     greeter: resolved.greeter,
     name: greetName || "argument",
   });
+  const dataBytes = new Uint8Array([
+    0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70,
+    0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
+  ]);
+  const data = await client.inspectData({
+    content: dataBytes,
+  });
 
   return {
     hello: {
@@ -221,6 +242,11 @@ async function runNativeGreeterConformance(client, {
     },
     argument: {
       message: greeted.message,
+    },
+    data: {
+      byteCount: Number(data.byteCount),
+      checksum: data.checksum,
+      firstEightHex: data.firstEightHex,
     },
   };
 }
@@ -904,6 +930,14 @@ export default {
             message: `isolate called ${hello.message}`,
           };
         },
+        async inspectData(params) {
+          const bytes = capnpDataBytes(params.content);
+          return {
+            byteCount: BigInt(bytes.byteLength),
+            checksum: checksum(bytes),
+            firstEightHex: firstEightHex(bytes),
+          };
+        },
       };
       const capability = await exportNativeCapnp(api, NativeGreeter, target, {
         id,
@@ -969,6 +1003,13 @@ export default {
         greeter: returned.greeter,
         name: "client",
       });
+      const dataBytes = new Uint8Array([
+        0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70,
+        0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
+      ]);
+      const data = await client.inspectData({
+        content: dataBytes,
+      });
       const drop = await client.drop();
       return Response.json({
         ok: true,
@@ -982,6 +1023,11 @@ export default {
         },
         greeted: {
           message: greeted.message,
+        },
+        data: {
+          byteCount: Number(data.byteCount),
+          checksum: data.checksum,
+          firstEightHex: data.firstEightHex,
         },
         dropResult: drop ?? null,
       });
@@ -2083,6 +2129,14 @@ export default {
         });
         return {
           message: `native export greeter called ${hello.message}`,
+        };
+      },
+      async inspectData(params) {
+        const bytes = capnpDataBytes(params.content);
+        return {
+          byteCount: BigInt(bytes.byteLength),
+          checksum: checksum(bytes),
+          firstEightHex: firstEightHex(bytes),
         };
       },
     };

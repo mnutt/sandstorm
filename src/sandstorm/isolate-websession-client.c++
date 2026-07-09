@@ -94,6 +94,17 @@ uint checksum(kj::ArrayPtr<const byte> data) {
   return result;
 }
 
+kj::String firstEightHex(kj::ArrayPtr<const byte> data) {
+  constexpr char HEX[] = "0123456789abcdef";
+  auto size = kj::min(data.size(), static_cast<size_t>(8));
+  auto result = kj::heapArray<char>(size * 2 + 1);
+  for (auto i: kj::zeroTo(size)) {
+    result[i * 2] = HEX[data[i] >> 4];
+    result[i * 2 + 1] = HEX[data[i] & 0x0f];
+  }
+  return kj::heapString(kj::StringPtr(result.begin(), size * 2));
+}
+
 uint checksumPattern(uint64_t size) {
   constexpr uint64_t cycleSum = 32640;
   uint64_t cycles = size / 256;
@@ -373,6 +384,15 @@ public:
     return helloRequest.send().then([context](auto hello) mutable {
       context.getResults().setMessage(kj::str("legacy called ", hello.getMessage()));
     });
+  }
+
+  kj::Promise<void> inspectData(InspectDataContext context) override {
+    auto content = context.getParams().getContent();
+    auto results = context.getResults();
+    results.setByteCount(content.size());
+    results.setChecksum(checksum(content));
+    results.setFirstEightHex(firstEightHex(content));
+    return kj::READY_NOW;
   }
 
 private:
@@ -1070,6 +1090,19 @@ void testNativeGreeterToken(kj::WaitScope& waitScope, SandstormCore::Client core
   KJ_REQUIRE(
       greetWithMessage == "isolate called isolate returned legacy c++ client from isolate export",
       greetWithMessage);
+
+  byte dataBytes[] = {
+      0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70,
+      0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00,
+  };
+  auto inspectDataRequest = greeter.inspectDataRequest();
+  inspectDataRequest.setContent(dataBytes);
+  auto inspectData = inspectDataRequest.send().wait(waitScope);
+  KJ_REQUIRE(inspectData.getByteCount() == sizeof(dataBytes), inspectData.getByteCount());
+  KJ_REQUIRE(inspectData.getChecksum() == checksum(kj::arrayPtr(dataBytes, sizeof(dataBytes))),
+      inspectData.getChecksum());
+  KJ_REQUIRE(inspectData.getFirstEightHex() == "0000001466747970",
+      inspectData.getFirstEightHex());
 
   auto saveRequest = greeter.castAs<SystemPersistent>().saveRequest();
   auto owner = saveRequest.getSealFor().initGrain();
