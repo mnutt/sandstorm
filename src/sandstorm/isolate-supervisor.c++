@@ -5171,6 +5171,103 @@ private:
     return nullptr;
   }
 
+  static kj::Maybe<kj::String> browserCapnpEsImportSpecifier(kj::StringPtr specifier) {
+    if (specifier.startsWith(kj::StringPtr("/sandstorm/")) &&
+        specifier.endsWith(kj::StringPtr(".capnp"))) {
+      return kj::str("/__sandstorm/capnp", specifier);
+    }
+
+    if (specifier.startsWith(kj::StringPtr("capnp:/sandstorm/")) &&
+        specifier.endsWith(kj::StringPtr(".capnp"))) {
+      return kj::str("/__sandstorm/capnp/",
+          specifier.slice(strlen("capnp:/")));
+    }
+
+    return nullptr;
+  }
+
+  static kj::Maybe<size_t> findSubstring(kj::StringPtr text, kj::StringPtr pattern) {
+    if (pattern.size() == 0) {
+      return size_t(0);
+    }
+
+    if (pattern.size() > text.size()) {
+      return nullptr;
+    }
+
+    for (size_t i = 0; i <= text.size() - pattern.size(); ++i) {
+      if (memcmp(text.begin() + i, pattern.begin(), pattern.size()) == 0) {
+        return i;
+      }
+    }
+
+    return nullptr;
+  }
+
+  static void appendBrowserCapnpEsModuleLine(kj::Vector<char>& out, kj::StringPtr line) {
+    size_t quotePos = line.size();
+    KJ_IF_MAYBE(fromPos, findSubstring(line, " from \"")) {
+      quotePos = *fromPos + strlen(" from ");
+    } else KJ_IF_MAYBE(fromPos, findSubstring(line, " from '")) {
+      quotePos = *fromPos + strlen(" from ");
+    } else if (line.startsWith(kj::StringPtr("import \"")) ||
+        line.startsWith(kj::StringPtr("import '"))) {
+      quotePos = strlen("import ");
+    }
+
+    if (quotePos >= line.size()) {
+      out.addAll(line);
+      return;
+    }
+
+    char quote = line[quotePos];
+    if (quote != '"' && quote != '\'') {
+      out.addAll(line);
+      return;
+    }
+
+    size_t specifierStart = quotePos + 1;
+    size_t specifierEnd = specifierStart;
+    while (specifierEnd < line.size() && line[specifierEnd] != quote) {
+      ++specifierEnd;
+    }
+    if (specifierEnd >= line.size()) {
+      out.addAll(line);
+      return;
+    }
+
+    auto specifierSlice = line.slice(specifierStart, specifierEnd);
+    kj::StringPtr specifier(specifierSlice.begin(), specifierSlice.size());
+    KJ_IF_MAYBE(rewritten, browserCapnpEsImportSpecifier(specifier)) {
+      out.addAll(line.slice(0, specifierStart));
+      out.addAll(*rewritten);
+      out.addAll(line.slice(specifierEnd));
+    } else {
+      out.addAll(line);
+    }
+  }
+
+  static kj::Array<byte> rewriteBrowserCapnpEsModuleImports(kj::ArrayPtr<const byte> content) {
+    kj::StringPtr source(reinterpret_cast<const char*>(content.begin()), content.size());
+    kj::Vector<char> out(content.size() + 64);
+    size_t lineStart = 0;
+    while (lineStart < source.size()) {
+      size_t lineEnd = source.size();
+      KJ_IF_MAYBE(newline, source.slice(lineStart).findFirst('\n')) {
+        lineEnd = lineStart + *newline + 1;
+      }
+      auto lineSlice = source.slice(lineStart, lineEnd);
+      appendBrowserCapnpEsModuleLine(out,
+          kj::StringPtr(lineSlice.begin(), lineSlice.size()));
+      lineStart = lineEnd;
+    }
+
+    auto chars = out.releaseAsArray();
+    auto bytes = kj::heapArray<byte>(chars.size());
+    memcpy(bytes.begin(), chars.begin(), chars.size());
+    return bytes;
+  }
+
   kj::Promise<void> browserCapnpEsModule(kj::StringPtr url, kj::HttpService::Response& response) {
     auto paths = findIsolateRawQueryParams(url, "path");
     if (paths.size() != 1) {
@@ -5185,7 +5282,7 @@ private:
           kj::HttpHeaders responseHeaders(headerTable);
           responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "text/javascript; charset=utf-8");
           return sendBytes(response, 200, "OK", kj::mv(responseHeaders),
-              kj::heapArray<byte>(module.content.asPtr()));
+              rewriteBrowserCapnpEsModuleImports(module.content.asPtr()));
         }
       }
 

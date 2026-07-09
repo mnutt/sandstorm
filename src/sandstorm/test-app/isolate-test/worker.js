@@ -37,6 +37,7 @@ import {
 
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
 const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
+let browserNativeLocalExportGreeter = null;
 
 function makeNativeGreeterObjectId(id) {
   const message = new CapnpEsMessage();
@@ -431,30 +432,32 @@ export default {
     }
 
     if (url.pathname === "/browser-native-local-export-capability") {
-      const greeter = await exportNativeCapnp(api, NativeGreeter, {
-        async save() {
-          return {
-            objectId: makeNativeGreeterObjectId("browser-native-local-export-greeter"),
-            label: { defaultText: "browser native local export greeter" },
-          };
-        },
-        async hello(params) {
-          return {
-            message: `browser native local export hello ${params.name}`,
-          };
-        },
-      }, {
-        interfaceName: "NativeGreeter",
-      });
+      if (!browserNativeLocalExportGreeter) {
+        browserNativeLocalExportGreeter = await exportNativeCapnp(api, NativeGreeter, {
+          async save() {
+            return {
+              objectId: makeNativeGreeterObjectId("browser-native-local-export-greeter"),
+              label: { defaultText: "browser native local export greeter" },
+            };
+          },
+          async hello(params) {
+            return {
+              message: `browser native local export hello ${params.name}`,
+            };
+          },
+        }, {
+          interfaceName: "NativeGreeter",
+        });
+      }
+      const greeter = browserNativeLocalExportGreeter;
       const browserHandoff = await greeter.browserHandoff({ request });
       const info = await greeter.info();
-      const drop = await greeter.drop();
       return Response.json({
         ok: true,
         hasBrowserHandoff: typeof greeter.browserHandoff === "function",
         capability: browserHandoff,
         info,
-        drop: drop ?? null,
+        drop: null,
       });
     }
 
