@@ -38,6 +38,21 @@ function objectInfo(key, object) {
   };
 }
 
+function jsonObjectInfo(info) {
+  return {
+    key: info.key,
+    size: Number(info.size),
+    contentType: info.contentType,
+  };
+}
+
+function jsonObjectListing(listing) {
+  return {
+    objects: Array.from(listing.objects || []).map(jsonObjectInfo),
+    nextCursor: listing.nextCursor,
+  };
+}
+
 function makeObjectStore(api) {
   return {
     async listObjects({ bucket = "", prefix = "", cursor = "" } = {}) {
@@ -102,7 +117,6 @@ export default {
       });
       return Response.json({
         ok: true,
-        capability,
         info: await capability.info(),
       });
     }
@@ -130,7 +144,7 @@ export default {
       ok: true,
       interfaceName: "ObjectStore",
       interfaceId: `0x${ObjectStore._capnp.typeIdHex}`,
-      listing,
+      listing: jsonObjectListing(listing),
       object: {
         statusCode: content.statusCode,
         contentType: content.mimeType,

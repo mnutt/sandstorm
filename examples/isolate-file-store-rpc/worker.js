@@ -71,6 +71,32 @@ function statPath(path) {
   throw new Error(`not found: ${path}`);
 }
 
+function jsonEntry(entry) {
+  return {
+    name: entry.name,
+    path: entry.path,
+    kind: entry.kind,
+    size: Number(entry.size),
+    contentType: entry.contentType,
+  };
+}
+
+function jsonListing(listing) {
+  return {
+    entries: Array.from(listing.entries || []).map(jsonEntry),
+  };
+}
+
+function jsonStat(stat) {
+  return {
+    entry: jsonEntry(stat.entry),
+  };
+}
+
+function bytesFromData(data) {
+  return typeof data?.toUint8Array === "function" ? data.toUint8Array() : data;
+}
+
 function listDirectory(path) {
   path = normalizePath(path);
   const prefix = directoryPrefix(path);
@@ -182,14 +208,14 @@ export default {
       const read = await opened.file.read();
       return Response.json({
         ok: true,
-        interfaceName: FileStore.interfaceName,
-        methodNames: FileStore.methodNames,
-        root,
-        docs,
-        stat,
+        interfaceName: FileStore.interfaceName || "FileStore",
+        methodNames: Array.from(FileStore.methodNames || []),
+        root: jsonListing(root),
+        docs: jsonListing(docs),
+        stat: jsonStat(stat),
         read: {
           contentType: read.contentType,
-          text: new TextDecoder().decode(read.content),
+          text: new TextDecoder().decode(bytesFromData(read.content)),
         },
       });
     }
@@ -200,7 +226,6 @@ export default {
       });
       return Response.json({
         ok: true,
-        capability,
         info: await capability.info(),
         descriptor: await descriptor(env),
       });
