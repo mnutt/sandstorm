@@ -419,10 +419,13 @@ export default {
       const capability = await api.webSession({
         pathPrefix: "/native-capnp-bridge-target",
       });
+      const browserHandoff = await capability.browserHandoff({
+        nativeInterface: "webSession",
+      });
       return Response.json({
         ok: true,
         capabilityClass: capability instanceof Capability,
-        capability: JSON.parse(JSON.stringify(capability)),
+        capability: browserHandoff,
         info: await capability.info(),
       });
     }
@@ -686,7 +689,7 @@ export default {
     if (url.pathname === "/offer-session") {
       const api = sandstorm(request, env);
       const powerbox = sandstormPowerbox(request, env);
-      const offered = powerbox.offered();
+      const offered = await powerbox.offered();
       const capability = offered?.capability;
       let fetched = null;
       let drop = null;
@@ -703,7 +706,6 @@ export default {
       return Response.json({
         ok: Boolean(capability),
         sessionType: request.headers.get("x-sandstorm-session-type"),
-        offeredCapabilityId: request.headers.get("x-sandstorm-offered-capability-id"),
         offeredClass: capability instanceof Capability,
         sessionOffer: api.session().offer,
         offeredInfo: offered ? {
@@ -1373,12 +1375,7 @@ export default {
       const capability = await grantApi.webSession({
         pathPrefix: "/browser-powerbox-shared",
       });
-      const claim = await (await grants.serve(new Request(
-        "http://app/grant-ui-test/grants/shared/claim", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ capability }),
-        }))).json();
+      const claim = await grants.claim("shared", { capability });
 
       const token = await grants.token("shared");
       const used = await grants.use("shared", async (restored) => {
@@ -2049,7 +2046,7 @@ export default {
         NativeGreeter,
         {
           interfaceName: "NativeGreeter",
-          connectionId: "native-capnp-local-export-greeter-bootstrap",
+          connectionId: `native-capnp-local-export-greeter-bootstrap-${crypto.randomUUID()}`,
         });
       const nativeExportGreeterBootstrapRestoredConformance =
           await runNativeGreeterConformance(nativeExportGreeterBootstrapRestored, {
@@ -2099,8 +2096,8 @@ export default {
         bootstrapRestored: {
           savedTokenType: typeof nativeExportGreeterBootstrapSavedToken,
           savedTokenLength: nativeExportGreeterBootstrapSavedToken.length,
-          connectionId: nativeExportGreeterBootstrapRestored.transport.connectionId,
-          transportKind: nativeExportGreeterBootstrapRestored.transport.kind,
+          connectionId: nativeExportGreeterBootstrapRestored.transport?.connectionId ?? null,
+          transportKind: nativeExportGreeterBootstrapRestored.transport?.kind ?? null,
           capabilityKind: nativeExportGreeterBootstrapRestored.capability.kind,
           interfaceId:
               nativeExportGreeterBootstrapRestored.capability.interfaceId.toString(16),
@@ -2324,7 +2321,7 @@ export default {
       }
       nativeCapnpGeneratedDropResult = {
         targetId: nativeCapnpDropTarget.id,
-        connectionId: nativeCapnpDropWebSession.transport.connectionId,
+        connectionId: nativeCapnpDropWebSession.transport?.connectionId ?? null,
         dropResult: dropResult ?? null,
         generatedCallAfterDropError,
       };
@@ -2399,7 +2396,9 @@ export default {
             isFixtureClient: nativeCapnpConnectedClient instanceof NativeCapnpBridgeFixtureClient,
             hasBootstrapClient: Boolean(nativeCapnpConnectedClient.client),
             targetId: nativeCapnpConnectedClient.capability.id,
-            connectionId: nativeCapnpConnectedClient.transport.connectionId,
+            connectionId: nativeCapnpConnectedClient.transport?.connectionId,
+            transportKind: nativeCapnpConnectedClient.transport?.kind,
+            connectionIsNull: nativeCapnpConnectedClient.connection === null,
             hasDrop: typeof nativeCapnpConnectedClient.drop === "function",
             hasSave: typeof nativeCapnpConnectedClient.save === "function",
           },
@@ -2411,7 +2410,9 @@ export default {
             dropOk: nativeCapnpGeneratedDropError === "",
             dropError: nativeCapnpGeneratedDropError,
             targetId: nativeCapnpGeneratedWebSession.capability.id,
-            connectionId: nativeCapnpGeneratedWebSession.transport.connectionId,
+            connectionId: nativeCapnpGeneratedWebSession.transport?.connectionId,
+            transportKind: nativeCapnpGeneratedWebSession.transport?.kind,
+            connectionIsNull: nativeCapnpGeneratedWebSession.connection === null,
             response: nativeCapnpGeneratedClientResult,
             stream: nativeCapnpGeneratedStreamResult,
             drop: nativeCapnpGeneratedDropResult,

@@ -159,13 +159,13 @@ compiler on the dev-startup path.
 - Done: `/powerbox/dup`; apps can keep ordinary JS references to the same live
   handle instead of asking the supervisor to mint another string ID.
 - Done: drop groups and live-handle drop-notify machinery. Dropping a live
-  claimed capability now only releases the local registry entry; remote release
-  semantics should come from the RPC release protocol.
+  claimed capability now releases the worker's owned RPC reference/bridge;
+  remote release semantics come from the RPC release protocol.
 - Done: `/powerbox/drop-saved`; `sandstorm(...).revoke(token)` now calls
   `SandstormApi.drop()` over the IsolateBridge bootstrap RPC connection.
-- Done: `/powerbox/save` and `/powerbox/restore`; id-backed helper handles now
-  resolve/store capabilities through the private IsolateBridge RPC connection
-  and call `SandstormApi.save()` / `SandstormApi.restore()`.
+- Done: `/powerbox/save` and `/powerbox/restore`; helper handles now carry
+  live RPC references and call `SandstormApi.save()` / `SandstormApi.restore()`
+  through the private IsolateBridge RPC connection.
 - Done: `/powerbox/claim-request`; `powerbox(request, env).claim(...)` now gets
   the session context through IsolateBridge and calls
   `SessionContext.claimRequest()` over Cap'n Proto RPC.
@@ -173,19 +173,18 @@ compiler on the dev-startup path.
   `/powerbox/tie-to-user`; capability session actions now resolve the live
   capability and call the corresponding `SessionContext` method over the
   IsolateBridge RPC connection.
-- Done: `/powerbox/drop`; `Capability.drop()` now releases the temporary
-  claimed-capability registry entry through the private IsolateBridge RPC
-  connection while id-backed helper handles still exist.
+- Done: `/powerbox/drop`; `Capability.drop()` now releases the worker's live
+  RPC handle and its retained IsolateBridge connection. Worker-side id-backed
+  helper handles are gone; browser handoff ids are explicit browser slots.
 - Done: `/powerbox/fetch` and `/powerbox/outbound-http-fetch`; `cap.fetch()`
-  now resolves the live claimed capability through the private IsolateBridge
-  RPC connection and calls `WebSession` / `OutboundHttpSession` methods
-  directly.
+  now calls `WebSession` / `OutboundHttpSession` methods directly on the live
+  RPC capability.
 - Done: `/capabilities/web-session` and `/capabilities/api-session`;
   route-backed capability creation now happens through the private
   IsolateBridge RPC connection instead of local HTTP POST routes.
-- Done: worker-side `connectNativeCapnp()` now uses the IsolateBridge
-  bootstrap channel and capnp-es pipelining to call id-backed capabilities;
-  the worker fallback target-specific WebSocket opener is gone.
+- Done: worker-side `connectNativeCapnp()` now accepts live capability refs and
+  uses capnp-es directly; the worker fallback target-specific WebSocket opener
+  is gone.
 - Done: browser-side `connectBrowserNativeCapnp()` now uses a browser-scoped
   `BrowserIsolateBridge` bootstrap and capnp-es pipelining to call
   capabilities explicitly handed to the browser session. The target-specific
@@ -193,8 +192,9 @@ compiler on the dev-startup path.
 - Done: `/capabilities/claimed` and `/capabilities/claimed-stats`; helper
   handles now carry user-facing metadata locally instead of exposing the
   temporary claimed-capability registry through read-only HTTP lookups.
-- `IsolateSessionRegistry`'s string-ID claimed-capability table (RPC cap-table
-  references replace it).
+- Done: `IsolateSessionRegistry`'s worker string-ID claimed-capability table.
+  Worker capabilities now hold live RPC refs; the registry only keeps scoped
+  browser handoff slots and session-scoped offer state.
 - Done: the misleading per-export HTTP-transport names on the worker
   `MainView` RPC socket plumbing. The native-export registration endpoint and
   JS export-session paths were already gone; the remaining C++ session classes
@@ -235,10 +235,10 @@ bridge. Rebase it onto the Phase 1 channel:
   `BrowserIsolateBridge.claimPowerboxRequest()` over the same capnp WebSocket.
   The worker browser system route forwards only the supervisor-injected
   session ID header to bind that claim to the current browser session.
-- Done: local `exportNativeCapnp()` handles now include an id-backed
-  `receiverHosted` handoff slot for callers such as the browser. The worker
-  keeps the exporting IsolateBridge connection alive until `.drop()`, so the
-  slot is a live capnp reference rather than a raw local export name.
+- Done: local `exportNativeCapnp()` handles now keep a live capnp client for
+  worker-side use and expose `browserHandoff({ request })` for explicit,
+  session-scoped browser slots. No browser slot is minted until a request
+  hands one to that browser session.
 - Done: `examples/isolate-browser-capnp` now imports the generated browser
   schema module plus `/__sandstorm/native-capnp/client.js`, fetches one
   handoff slot, and calls `read()`, `increment()`, and `reset()` over the
