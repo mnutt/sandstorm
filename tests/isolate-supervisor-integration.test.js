@@ -2169,6 +2169,7 @@ runtimeTest("isolate supervisor integration suite", {
       nested: { ok: true },
     });
     assert.equal(storageHelper.json.missingBytes, undefined);
+    assert.match(storageHelper.json.invalidKeyError, /key is not a valid storage key/);
     assert.equal(storageHelper.json.deletedBytes.ok, true);
     assert.equal(storageHelper.json.deletedJson.ok, true);
 

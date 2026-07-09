@@ -1353,6 +1353,12 @@ export default {
       });
       const readJson = await store.getJson("helper-json");
       const missingBytes = await store.getBytes("helper-missing");
+      let invalidKeyError = "";
+      try {
+        await store.get("helper:invalid");
+      } catch (error) {
+        invalidKeyError = error.message || String(error);
+      }
       const deletedBytes = await store.delete("helper-bytes");
       const deletedJson = await store.delete("helper-json");
 
@@ -1366,6 +1372,7 @@ export default {
         putJson,
         readJson,
         missingBytes,
+        invalidKeyError,
         deletedBytes,
         deletedJson,
       });
