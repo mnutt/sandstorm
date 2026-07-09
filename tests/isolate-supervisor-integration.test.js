@@ -1138,6 +1138,18 @@ toolchainTest("spk dev-isolate resolves app-interface schemas outside the repo",
     String(manifest.continueCommand.isolate.bridgeConfig.viewInfo.matchRequests[0].tags[0].id),
     BigInt("0x970c38b4ce585d56").toString());
 
+  const generated = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-generated-module", "capnp:./object-store.capnp",
+    "worker.js",
+  ], options);
+  assert.match(
+    generated.stdout,
+    /from "\/sandstorm\/grain\.capnp";/);
+  assert.doesNotMatch(
+    generated.stdout,
+    /from "\.\/sandstorm\/grain\.capnp";/);
+
   await assert.rejects(
     runCommand(SPK_BIN, [
       "dev-isolate",
