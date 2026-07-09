@@ -403,7 +403,7 @@ export const validate = {
 
   storageKey(value, name = "key") {
     const key = this.string(value, name, { minLength: 1, maxLength: 128 });
-    if (key.startsWith(".") || key.includes("/") || key.includes("..")) {
+    if (key.startsWith(".") || key.includes("..") || !/^[A-Za-z0-9_.-]+$/.test(key)) {
       throw new ValidationError(`${name} is not a valid storage key`);
     }
     return key;
