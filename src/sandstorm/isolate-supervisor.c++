@@ -3008,24 +3008,43 @@ RouteBackedCapabilityType routeBackedCapabilityType<IsolateApiSession>() {
   return RouteBackedCapabilityType::API;
 }
 
-struct RouteBackedRequirementState final: public kj::Refcounted {
+struct PersistentRequirementState final: public kj::Refcounted {
   bool revoked = false;
   kj::Vector<OwnCapnp<capnp::List<MembraneRequirement>>> requirements;
   kj::Vector<SystemPersistent::RevocationObserver::Client> observers;
 };
 
-class RouteBackedRevokerHandle final: public Handle::Server {
+class PersistentRevokerHandle final: public Handle::Server {
 public:
-  explicit RouteBackedRevokerHandle(kj::Own<RouteBackedRequirementState> state)
+  explicit PersistentRevokerHandle(kj::Own<PersistentRequirementState> state)
       : state(kj::mv(state)) {}
 
-  ~RouteBackedRevokerHandle() noexcept(false) {
+  ~PersistentRevokerHandle() noexcept(false) {
     state->revoked = true;
   }
 
 private:
-  kj::Own<RouteBackedRequirementState> state;
+  kj::Own<PersistentRequirementState> state;
 };
+
+capnp::Orphan<capnp::List<MembraneRequirement>> collectPersistentRequirements(
+    PersistentRequirementState& state, capnp::Orphanage orphanage) {
+  if (state.requirements.size() == 0) {
+    return {};
+  }
+
+  kj::Vector<capnp::List<MembraneRequirement>::Reader> parts(state.requirements.size());
+  for (auto& requirement: state.requirements) {
+    if (requirement.size() > 0) {
+      parts.add(requirement);
+    }
+  }
+
+  if (parts.size() > 0) {
+    return orphanage.newOrphanConcat(parts.asPtr());
+  }
+  return {};
+}
 
 template <typename InternalSession>
 class IsolateRouteBackedSessionImpl final: public InternalSession::Server {
@@ -3034,8 +3053,8 @@ public:
       kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
       kj::StringPtr pathPrefix = "", SessionKind sessionKind = SessionKind::NORMAL,
       SessionMetadata&& sessionMetadata = SessionMetadata(), bool persistent = true,
-      kj::Own<RouteBackedRequirementState> requirementState =
-          kj::refcounted<RouteBackedRequirementState>(),
+      kj::Own<PersistentRequirementState> requirementState =
+          kj::refcounted<PersistentRequirementState>(),
       kj::Maybe<kj::Array<const byte>> parentToken = nullptr)
       : pathPrefix(kj::heapString(pathPrefix)),
         sessionKind(sessionKind),
@@ -3150,7 +3169,7 @@ public:
 
     auto observer = params.getObserver();
     auto req = observer.dropWhenRevokedRequest();
-    req.setHandle(kj::heap<RouteBackedRevokerHandle>(kj::addRef(*requirementState)));
+    req.setHandle(kj::heap<PersistentRevokerHandle>(kj::addRef(*requirementState)));
     requirementState->observers.add(kj::mv(observer));
 
     return req.send().ignoreResult().then([this, context]() mutable {
@@ -3167,8 +3186,9 @@ public:
       auto request = runtimeHost->sandstormCore.makeChildTokenRequest();
       request.setParent(*parent);
       request.setOwner(params.getSealFor());
-      request.adoptRequirements(collectRequirements(capnp::Orphanage::getForMessageContaining(
-          SandstormCore::MakeChildTokenParams::Builder(request))));
+      request.adoptRequirements(collectPersistentRequirements(*requirementState,
+          capnp::Orphanage::getForMessageContaining(
+              SandstormCore::MakeChildTokenParams::Builder(request))));
       return request.send().then([context](auto result) mutable {
         context.getResults().setSturdyRef(result.getToken());
       });
@@ -3178,8 +3198,9 @@ public:
       routeRef.setType(routeBackedCapabilityObjectIdType(capabilityType()));
       routeRef.setPathPrefix(pathPrefix);
       request.setOwner(params.getSealFor());
-      request.adoptRequirements(collectRequirements(capnp::Orphanage::getForMessageContaining(
-          SandstormCore::MakeTokenParams::Builder(request))));
+      request.adoptRequirements(collectPersistentRequirements(*requirementState,
+          capnp::Orphanage::getForMessageContaining(
+              SandstormCore::MakeTokenParams::Builder(request))));
       return request.send().then([context](auto result) mutable {
         context.getResults().setSturdyRef(result.getToken());
       });
@@ -3191,33 +3212,13 @@ private:
   SessionKind sessionKind;
   SessionMetadata sessionMetadata;
   bool persistent;
-  kj::Own<RouteBackedRequirementState> requirementState;
+  kj::Own<PersistentRequirementState> requirementState;
   kj::Maybe<kj::Array<const byte>> parentToken;
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
   kj::Own<IsolateRuntimeAdapter> runtime;
 
   RouteBackedCapabilityType capabilityType() { return routeBackedCapabilityType<InternalSession>(); }
-
-  capnp::Orphan<capnp::List<MembraneRequirement>> collectRequirements(
-      capnp::Orphanage orphanage) {
-    if (requirementState->requirements.size() == 0) {
-      return {};
-    }
-
-    kj::Vector<capnp::List<MembraneRequirement>::Reader> parts(
-        requirementState->requirements.size());
-    for (auto& requirement: requirementState->requirements) {
-      if (requirement.size() > 0) {
-        parts.add(requirement);
-      }
-    }
-
-    if (parts.size() > 0) {
-      return orphanage.newOrphanConcat(parts.asPtr());
-    }
-    return {};
-  }
 
   kj::String prefixedPath(kj::StringPtr path) {
     auto normalizedPath = normalizeRouteBackedRequestPath(path);
@@ -3302,12 +3303,12 @@ capnp::Capability::Client makeRouteBackedSessionCapability(
     case RouteBackedCapabilityType::WEB:
       return kj::heap<IsolateRouteBackedSessionImpl<IsolateWebSession>>(
           kj::mv(config), kj::mv(host), pathPrefix, SessionKind::NORMAL,
-          SessionMetadata(), persistent, kj::refcounted<RouteBackedRequirementState>(),
+          SessionMetadata(), persistent, kj::refcounted<PersistentRequirementState>(),
           kj::mv(parentToken));
     case RouteBackedCapabilityType::API:
       return kj::heap<IsolateRouteBackedSessionImpl<IsolateApiSession>>(
           kj::mv(config), kj::mv(host), pathPrefix, SessionKind::NORMAL,
-          SessionMetadata(), persistent, kj::refcounted<RouteBackedRequirementState>(),
+          SessionMetadata(), persistent, kj::refcounted<PersistentRequirementState>(),
           kj::mv(parentToken));
   }
   KJ_UNREACHABLE;
@@ -3568,11 +3569,14 @@ class IsolateMainViewRestoredCapability final: public SystemPersistent::Server {
 public:
   IsolateMainViewRestoredCapability(kj::Own<IsolateRuntimeHost> host,
       kj::Own<IsolateMainViewRpcSession> session, capnp::Capability::Client cap,
-      kj::Maybe<kj::Array<const byte>> parentToken = nullptr)
+      kj::Maybe<kj::Array<const byte>> parentToken = nullptr,
+      kj::Own<PersistentRequirementState> requirementState =
+          kj::refcounted<PersistentRequirementState>())
       : host(kj::mv(host)),
         session(kj::mv(session)),
         cap(kj::mv(cap)),
-        parentToken(kj::mv(parentToken)) {}
+        parentToken(kj::mv(parentToken)),
+        requirementState(kj::mv(requirementState)) {}
 
   DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
       capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer> context) override {
@@ -3583,6 +3587,8 @@ public:
     if (interfaceId == APP_PERSISTENT_INTERFACE_ID) {
       KJ_UNIMPLEMENTED("can't call AppPersistent.save() from outside isolate grain");
     }
+    KJ_REQUIRE(!requirementState->revoked,
+        "isolate app capability requirements have been revoked");
 
     capnp::AnyPointer::Reader params = context.getParams();
     auto request = cap.typelessRequest(interfaceId, methodId, params.targetSize());
@@ -3594,12 +3600,33 @@ public:
     return { kj::mv(promise), false };
   }
 
+  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
+    auto params = context.getParams();
+    if (params.getRequirements().size() > 0) {
+      requirementState->requirements.add(newOwnCapnp(params.getRequirements()));
+    }
+
+    auto observer = params.getObserver();
+    auto req = observer.dropWhenRevokedRequest();
+    req.setHandle(kj::heap<PersistentRevokerHandle>(kj::addRef(*requirementState)));
+    requirementState->observers.add(kj::mv(observer));
+
+    return req.send().ignoreResult().then([this, context]() mutable {
+      context.getResults().setCap(this->thisCap().castAs<SystemPersistent>());
+    });
+  }
+
   kj::Promise<void> save(SaveContext context) override {
+    KJ_REQUIRE(!requirementState->revoked,
+        "isolate app capability requirements have been revoked");
     auto owner = newOwnCapnp(context.getParams().getSealFor());
     KJ_IF_MAYBE(parent, parentToken) {
       auto request = host->sandstormCore.makeChildTokenRequest();
       request.setParent(*parent);
       request.setOwner(owner);
+      request.adoptRequirements(collectPersistentRequirements(*requirementState,
+          capnp::Orphanage::getForMessageContaining(
+              SandstormCore::MakeChildTokenParams::Builder(request))));
       return request.send().then([context](auto result) mutable {
         context.getResults().setSturdyRef(result.getToken());
       });
@@ -3610,6 +3637,9 @@ public:
       auto request = host->sandstormCore.makeTokenRequest();
       request.getRef().setAppRef(result.getObjectId());
       request.setOwner(owner);
+      request.adoptRequirements(collectPersistentRequirements(*requirementState,
+          capnp::Orphanage::getForMessageContaining(
+              SandstormCore::MakeTokenParams::Builder(request))));
       return request.send().then([context](auto result) mutable {
         context.getResults().setSturdyRef(result.getToken());
       });
@@ -3621,14 +3651,18 @@ private:
   kj::Own<IsolateMainViewRpcSession> session;
   capnp::Capability::Client cap;
   kj::Maybe<kj::Array<const byte>> parentToken;
+  kj::Own<PersistentRequirementState> requirementState;
 };
 
 class IsolateAppPersistentCapability final: public SystemPersistent::Server {
 public:
   IsolateAppPersistentCapability(kj::Own<IsolateRuntimeHost> host,
-      capnp::Capability::Client cap)
+      capnp::Capability::Client cap,
+      kj::Own<PersistentRequirementState> requirementState =
+          kj::refcounted<PersistentRequirementState>())
       : host(kj::mv(host)),
-        cap(kj::mv(cap)) {}
+        cap(kj::mv(cap)),
+        requirementState(kj::mv(requirementState)) {}
 
   DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
       capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer> context) override {
@@ -3639,6 +3673,8 @@ public:
     if (interfaceId == APP_PERSISTENT_INTERFACE_ID) {
       KJ_UNIMPLEMENTED("can't call AppPersistent.save() from outside isolate grain");
     }
+    KJ_REQUIRE(!requirementState->revoked,
+        "isolate app capability requirements have been revoked");
 
     capnp::AnyPointer::Reader params = context.getParams();
     auto request = cap.typelessRequest(interfaceId, methodId, params.targetSize());
@@ -3650,13 +3686,34 @@ public:
     return { kj::mv(promise), false };
   }
 
+  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
+    auto params = context.getParams();
+    if (params.getRequirements().size() > 0) {
+      requirementState->requirements.add(newOwnCapnp(params.getRequirements()));
+    }
+
+    auto observer = params.getObserver();
+    auto req = observer.dropWhenRevokedRequest();
+    req.setHandle(kj::heap<PersistentRevokerHandle>(kj::addRef(*requirementState)));
+    requirementState->observers.add(kj::mv(observer));
+
+    return req.send().ignoreResult().then([this, context]() mutable {
+      context.getResults().setCap(this->thisCap().castAs<SystemPersistent>());
+    });
+  }
+
   kj::Promise<void> save(SaveContext context) override {
+    KJ_REQUIRE(!requirementState->revoked,
+        "isolate app capability requirements have been revoked");
     auto owner = newOwnCapnp(context.getParams().getSealFor());
     auto appRequest = cap.castAs<AppPersistent<>>().saveRequest();
     return appRequest.send().then([this, context, KJ_MVCAP(owner)](auto result) mutable {
       auto request = host->sandstormCore.makeTokenRequest();
       request.getRef().setAppRef(result.getObjectId());
       request.setOwner(owner);
+      request.adoptRequirements(collectPersistentRequirements(*requirementState,
+          capnp::Orphanage::getForMessageContaining(
+              SandstormCore::MakeTokenParams::Builder(request))));
       return request.send().then([context](auto result) mutable {
         context.getResults().setSturdyRef(result.getToken());
       });
@@ -3666,6 +3723,7 @@ public:
 private:
   kj::Own<IsolateRuntimeHost> host;
   capnp::Capability::Client cap;
+  kj::Own<PersistentRequirementState> requirementState;
 };
 
 class IsolateUiViewImpl final: public UiView::Server {

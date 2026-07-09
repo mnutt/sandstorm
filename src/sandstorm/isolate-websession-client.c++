@@ -427,10 +427,18 @@ public:
           "NativeGreeter offered capability",
           "can use native offered capability",
           "Native offered capability description");
-      auto request = params.getCap().castAs<SystemPersistent>().saveRequest();
-      request.getSealFor().initClientPowerboxOffer().setSessionId("fake-offer-session");
-      return request.send().then([this, context](auto result) mutable {
+      auto addRequest = params.getCap().castAs<SystemPersistent>().addRequirementsRequest();
+      addRequest.initRequirements(1)[0].setTokenValid("fake-native-offer-requirement");
+      addRequest.setObserver(kj::heap<FakeRevocationObserver>(dropWhenRevokedCount));
+      return addRequest.send().then([this, context](auto addResult) mutable {
+        auto request = addResult.getCap().saveRequest();
+        request.getSealFor().initClientPowerboxOffer().setSessionId("fake-offer-session");
+        return request.send();
+      }).then([this, context](auto result) mutable {
         KJ_REQUIRE(result.getSturdyRef().size() > 0);
+        KJ_REQUIRE(routeBackedRequirementCount == 1, routeBackedRequirementCount);
+        KJ_REQUIRE(lastRouteBackedRequirement == "fake-native-offer-requirement",
+            lastRouteBackedRequirement);
         ++offerSaveCount;
         ++offerCount;
       });
@@ -470,10 +478,18 @@ public:
           "NativeGreeter fulfilled capability",
           "can use native fulfilled capability",
           "Native fulfilled capability description");
-      auto request = params.getCap().castAs<SystemPersistent>().saveRequest();
-      request.getSealFor().initClientPowerboxRequest().setSessionId("fake-request-session");
-      return request.send().then([this, context](auto result) mutable {
+      auto addRequest = params.getCap().castAs<SystemPersistent>().addRequirementsRequest();
+      addRequest.initRequirements(1)[0].setTokenValid("fake-native-fulfill-requirement");
+      addRequest.setObserver(kj::heap<FakeRevocationObserver>(dropWhenRevokedCount));
+      return addRequest.send().then([this, context](auto addResult) mutable {
+        auto request = addResult.getCap().saveRequest();
+        request.getSealFor().initClientPowerboxRequest().setSessionId("fake-request-session");
+        return request.send();
+      }).then([this, context](auto result) mutable {
         KJ_REQUIRE(result.getSturdyRef().size() > 0);
+        KJ_REQUIRE(routeBackedRequirementCount == 1, routeBackedRequirementCount);
+        KJ_REQUIRE(lastRouteBackedRequirement == "fake-native-fulfill-requirement",
+            lastRouteBackedRequirement);
         ++fulfillSaveCount;
         ++fulfillCount;
       });
@@ -510,6 +526,7 @@ public:
   uint fulfillCount = 0;
   uint offerSaveCount = 0;
   uint fulfillSaveCount = 0;
+  uint dropWhenRevokedCount = 0;
   uint tieCount = 0;
   uint apiDescriptorCount = 0;
   uint providerDescriptorCount = 0;
@@ -856,6 +873,7 @@ private:
       RestoreContext context) {
     auto request = supervisor.restoreRequest();
     setRouteBackedTokenObjectId(request.getRef(), token);
+    request.setParentToken(token.token.asBytes());
     return request.send().then([context](auto result) mutable {
       context.getResults().setCap(result.getCap());
     });
@@ -876,6 +894,7 @@ private:
 
         auto request = supervisor.restoreRequest();
         setRouteBackedTokenObjectId(request.getRef(), token);
+        request.setParentToken(token.token.asBytes());
         return request.send().then([context](auto result) mutable {
           context.getResults().setCap(result.getCap());
         }).attach(kj::mv(token));
@@ -1015,10 +1034,18 @@ kj::String responseDebugBody(WebSession::Response::Reader response) {
 }
 
 void testNativeGreeterToken(kj::WaitScope& waitScope, SandstormCore::Client core,
-    kj::StringPtr token) {
+    FakeSessionContext& sessionContext, kj::StringPtr token) {
   auto restoreRequest = core.restoreRequest();
   restoreRequest.setToken(token.asBytes());
   auto greeter = restoreRequest.send().wait(waitScope).getCap().castAs<NativeGreeter>();
+
+  uint dropWhenRevokedCount = 0;
+  auto addRequirementsRequest = greeter.castAs<SystemPersistent>().addRequirementsRequest();
+  addRequirementsRequest.initRequirements(1)[0].setTokenValid(
+      "native-greeter-legacy-client-requirement");
+  addRequirementsRequest.setObserver(kj::heap<FakeRevocationObserver>(dropWhenRevokedCount));
+  greeter = addRequirementsRequest.send().wait(waitScope).getCap().castAs<NativeGreeter>();
+  KJ_REQUIRE(dropWhenRevokedCount == 1, dropWhenRevokedCount);
 
   auto helloRequest = greeter.helloRequest();
   helloRequest.setName("legacy c++ client");
@@ -1050,6 +1077,9 @@ void testNativeGreeterToken(kj::WaitScope& waitScope, SandstormCore::Client core
   owner.getSaveLabel().setDefaultText("Native greeter legacy client fixture");
   auto savedToken = saveRequest.send().wait(waitScope).getSturdyRef();
   KJ_REQUIRE(savedToken.size() > 0);
+  KJ_REQUIRE(sessionContext.childTokenCount == 1, sessionContext.childTokenCount);
+  KJ_REQUIRE(sessionContext.lastRouteBackedRequirement ==
+      "native-greeter-legacy-client-requirement", sessionContext.lastRouteBackedRequirement);
 }
 
 class IsolateWebSessionClientMain {
@@ -1126,7 +1156,7 @@ public:
     fakeCoreRef.setSupervisor(supervisor);
 
     if (nativeGreeterToken != nullptr) {
-      testNativeGreeterToken(io.waitScope, fakeCoreClient, nativeGreeterToken);
+      testNativeGreeterToken(io.waitScope, fakeCoreClient, sessionContextRef, nativeGreeterToken);
       return true;
     }
 
