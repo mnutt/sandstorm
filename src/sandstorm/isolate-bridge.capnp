@@ -36,6 +36,12 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
       persistent :Bool) -> (cap :Capability);
   # Creates a route-backed WebSession or ApiSession capability without
   # exposing creation as an authority-bearing local HTTP route.
+
+  wrapAppPersistentCapability @6 (cap :Capability) -> (cap :Capability);
+  # Wraps an app-realm capability that implements Grain.AppPersistent as a
+  # Sandstorm-internal SystemPersistent capability. App JS should continue to
+  # implement AppPersistent; this bridge performs the realm translation needed
+  # when passing app-hosted capabilities to legacy SessionContext APIs.
 }
 
 interface BrowserIsolateBridge @0x93fb2746c97b5bea {
