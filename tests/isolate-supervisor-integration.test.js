@@ -2630,6 +2630,10 @@ test("isolate supervisor integration suite", {
       fixture.workerdSocket, "/__sandstorm/capnp/native-greeter.capnp.js");
     assert.equal(servedNativeBrowserCapnpModule.statusCode, 200);
     assert.match(servedNativeBrowserCapnpModule.body, /export class NativeGreeter/);
+    assert.match(
+      servedNativeBrowserCapnpModule.body,
+      /from "\/__sandstorm\/capnp\/sandstorm\/grain\.capnp"/);
+    assert.doesNotMatch(servedNativeBrowserCapnpModule.body, /from "\/sandstorm\//);
 
     const servedNativeBridgeSchemaModule = await requestUnixSocket(
       fixture.workerdSocket,
@@ -2719,6 +2723,11 @@ test("isolate supervisor integration suite", {
         browserModuleDir,
         "/__sandstorm/capnp/sandstorm/web-session.capnp.js"), 5000,
         "browser WebSession schema module import timed out");
+      const browserNativeGreeterSchema = await withTimeout(importServedBrowserModule(
+        browserProxy.baseUrl,
+        browserModuleDir,
+        "/__sandstorm/capnp/native-greeter.capnp.js"), 5000,
+        "browser NativeGreeter schema module import timed out");
       await assert.rejects(
         browserNativeCapnp.claimBrowserNativeCapnpToken(
           "websession/test+token==",
@@ -2753,6 +2762,18 @@ test("isolate supervisor integration suite", {
       assert.equal(browserLocalExportCapability.json.hasBrowserHandoff, true);
       assert.equal(browserLocalExportCapability.json.capability.type, "capability");
       assert.equal(browserLocalExportCapability.json.capability.residence, "browserHandoff");
+      const browserLocalExportGreeter = browserNativeCapnp.connectBrowserNativeCapnp(
+        browserLocalExportCapability.json.capability,
+        browserNativeGreeterSchema.NativeGreeter,
+        {
+          connectionId: `browser-native-capnp-${browserLocalExportCapability.json.capability.id}`,
+        });
+      const browserLocalExportHello = await withTimeout(browserLocalExportGreeter.hello({
+        name: "browser",
+      }), 5000, "browser native Cap'n Proto local export hello() timed out");
+      assert.equal(
+        browserLocalExportHello.message,
+        "browser native local export hello browser");
       const browserWebSession = browserNativeCapnp.connectBrowserNativeCapnp({
         id: browserWebSessionCapability.json.capability.id,
         interfaceId: "0xa50711a14d35a8ce",
