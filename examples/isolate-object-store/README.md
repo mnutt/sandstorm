@@ -3,7 +3,10 @@
 Run:
 
 ```sh
-spk dev-isolate --title "Isolate Object Store" examples/isolate-object-store/worker.js
+spk dev-isolate \
+  --title "Isolate Object Store" \
+  --app-interface capnp:./object-store.capnp#ObjectStore \
+  examples/isolate-object-store/worker.js
 ```
 
 This example uses native Cap'n Proto RPC for the object-store control plane and
@@ -25,7 +28,7 @@ HTTP-shaped flows, the same object route can still be served over ordinary
 
 The root route runs an in-process self-test. `GET /export-object-store` exports
 the same object-store server as a Sandstorm native Cap'n Proto capability with
-`exportNativeCapnp()`. Once another isolate, browser generated client, or
-legacy grain receives that capability through Sandstorm's capability system, it
-can call `listObjects()` and `openObject()` with the same generated schema
-bindings.
+`exportNativeCapnp()` and returns JSON-safe metadata for inspection. Once
+another isolate, browser generated client, or legacy grain receives that
+capability through Sandstorm's capability system, it can call `listObjects()`
+and `openObject()` with the same generated schema bindings.
