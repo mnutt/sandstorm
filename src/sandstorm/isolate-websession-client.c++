@@ -1232,6 +1232,7 @@ public:
     KJ_REQUIRE(contains(body, "\"x-sandstorm-tab-id\":\"77656273657373696f6e2d746162\""), body);
     KJ_REQUIRE(contains(body, "\"if-none-match\":\"\\\"cached-etag\\\", W/\\\"weak-cached-etag\\\"\""),
         body);
+    KJ_REQUIRE(contains(body, "\"browserHandoff\":{\"hasMethod\":true}"), body);
     KJ_REQUIRE(!contains(body, "\"cookie\""), body);
 
     auto downloadStreamServer = kj::heap<CollectByteStream>();

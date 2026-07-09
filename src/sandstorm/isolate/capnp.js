@@ -668,10 +668,11 @@ function createNativeCapnpBootstrapClaimedClient(api, target, InterfaceClass, op
       "capnp-es generated interface did not produce a client object");
   }
 
-  return Object.assign(client, {
+  return attachNativeCapnpClientHelpers(client, {
     capability: target,
     connection: null,
     transport: null,
+    [CAPNP_CLIENT_SYMBOL]: () => cap,
     drop: async (...args) =>
       typeof target.drop === "function" ? await target.drop(...args) : undefined,
     save: (...args) => {
@@ -796,6 +797,19 @@ function validateNativeCapnpGeneratedInterface(InterfaceClass, operation) {
   }
 }
 
+function attachNativeCapnpClientHelpers(client, helpers) {
+  const own = (prop) => Object.prototype.hasOwnProperty.call(helpers, prop);
+  return new Proxy(client, {
+    get(target, prop) {
+      if (own(prop)) return helpers[prop];
+      return Reflect.get(target, prop, target);
+    },
+    has(target, prop) {
+      return own(prop) || Reflect.has(target, prop);
+    },
+  });
+}
+
 export function createNativeCapnpServerSession(
     InterfaceClass, target, { readable, writable, webSocket, finalize } = {}) {
   validateNativeCapnpGeneratedInterface(InterfaceClass, "createNativeCapnpServerSession()");
@@ -910,10 +924,11 @@ export async function exportNativeCapnp(api, InterfaceClass, target, options = {
     }
   }
 
-  return Object.assign(client, {
+  return attachNativeCapnpClientHelpers(client, {
     capability,
     connection: null,
     transport: null,
+    [CAPNP_CLIENT_SYMBOL]: () => client,
     browserHandoff: browserHandoffLocalExport,
     drop: dropLocalExport,
     info: async () => ({
@@ -1039,10 +1054,11 @@ export async function restoreNativeCapnpViaBootstrap(api, token, InterfaceClass,
     interfaceId: interfaceMetadata.interfaceId,
     interfaceName: interfaceMetadata.interfaceName,
   });
-  return Object.assign(client, {
+  return attachNativeCapnpClientHelpers(client, {
     capability,
     connection: bridge.connection,
     transport: bridge.transport,
+    [CAPNP_CLIENT_SYMBOL]: () => cap,
     drop: () => {
       bridge.close();
       return undefined;

@@ -430,6 +430,34 @@ export default {
       });
     }
 
+    if (url.pathname === "/browser-native-local-export-capability") {
+      const greeter = await exportNativeCapnp(api, NativeGreeter, {
+        async save() {
+          return {
+            objectId: makeNativeGreeterObjectId("browser-native-local-export-greeter"),
+            label: { defaultText: "browser native local export greeter" },
+          };
+        },
+        async hello(params) {
+          return {
+            message: `browser native local export hello ${params.name}`,
+          };
+        },
+      }, {
+        interfaceName: "NativeGreeter",
+      });
+      const browserHandoff = await greeter.browserHandoff({ request });
+      const info = await greeter.info();
+      const drop = await greeter.drop();
+      return Response.json({
+        ok: true,
+        hasBrowserHandoff: typeof greeter.browserHandoff === "function",
+        capability: browserHandoff,
+        info,
+        drop: drop ?? null,
+      });
+    }
+
     if (url.pathname === "/browser-powerbox") {
       return new Response(renderBrowserPowerboxPage(), {
         headers: { "content-type": "text/html; charset=utf-8" },
@@ -2084,6 +2112,9 @@ export default {
           bootstrapRestored: nativeExportGreeterBootstrapRestoredConformance,
         },
         capability: nativeExportGreeter.capability,
+        browserHandoff: {
+          hasMethod: typeof nativeExportGreeter.browserHandoff === "function",
+        },
         handoff: {
           ...nativeExportGreeterHandoffInfo,
           dropResult: nativeExportGreeterHandoffDrop ?? null,

@@ -1710,6 +1710,9 @@ test("isolate supervisor integration suite", {
       JSON.stringify(body.sandstormApi.nativeCapnpLocalExport.webSession, null, 2));
     assert.equal(body.sandstormApi.nativeCapnpLocalExport.greeter.ok, true,
       JSON.stringify(body.sandstormApi.nativeCapnpLocalExport.greeter, null, 2));
+    assert.equal(
+      body.sandstormApi.nativeCapnpLocalExport.greeter.browserHandoff.hasMethod,
+      true);
     assert.ok(
       body.sandstormApi.nativeCapnpLocalExport.greeter.bootstrapRestored.savedTokenLength > 0);
     assert.equal(
@@ -1869,6 +1872,9 @@ test("isolate supervisor integration suite", {
           residence: "localExport",
           interfaceId: "0xb66316217ceedb1b",
           interfaceName: "NativeGreeter",
+        },
+        browserHandoff: {
+          hasMethod: true,
         },
         handoff: {
           kind: "receiverHosted",
@@ -2733,6 +2739,20 @@ test("isolate supervisor integration suite", {
       assert.equal(browserWebSessionCapability.json.ok, true);
       assert.equal(browserWebSessionCapability.json.capabilityClass, true);
       assert.equal(browserWebSessionCapability.json.capability.type, "capability");
+      const browserLocalExportCapability = await requestJson(
+        fixture.workerdSocket,
+        "/browser-native-local-export-capability", {
+          headers: {
+            "X-Sandstorm-Session-Id": "missing-browser-native-capnp-session",
+          },
+        });
+      assert.equal(browserLocalExportCapability.statusCode, 200,
+        browserLocalExportCapability.body);
+      assert.equal(browserLocalExportCapability.json.ok, true,
+        browserLocalExportCapability.body);
+      assert.equal(browserLocalExportCapability.json.hasBrowserHandoff, true);
+      assert.equal(browserLocalExportCapability.json.capability.type, "capability");
+      assert.equal(browserLocalExportCapability.json.capability.residence, "browserHandoff");
       const browserWebSession = browserNativeCapnp.connectBrowserNativeCapnp({
         id: browserWebSessionCapability.json.capability.id,
         interfaceId: "0xa50711a14d35a8ce",
