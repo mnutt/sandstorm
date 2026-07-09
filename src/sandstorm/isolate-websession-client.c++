@@ -160,6 +160,14 @@ public:
   }
 };
 
+class IgnoreWebSocketStream final: public WebSession::WebSocketStream::Server {
+public:
+  kj::Promise<void> sendBytes(SendBytesContext context) override {
+    (void)context;
+    return kj::READY_NOW;
+  }
+};
+
 class CollectByteStream final: public ByteStream::Server {
 public:
   kj::Promise<void> write(WriteContext context) override {
@@ -1194,6 +1202,23 @@ public:
     sessionRequest.setTabId(kj::StringPtr("websession-tab").asBytes());
 
     auto session = sessionRequest.send().wait(io.waitScope).getSession().castAs<WebSession>();
+
+    auto browserNativeWebSocketRequest = session.openWebSocketRequest();
+    browserNativeWebSocketRequest.setPath(
+        "/__sandstorm/native-capnp/rpc-session?bootstrap=browser"
+        "&connectionId=websession-client-browser-native");
+    auto browserNativeWebSocketContext = browserNativeWebSocketRequest.initContext();
+    browserNativeWebSocketContext.setResponseStream(kj::heap<IgnoreByteStream>());
+    browserNativeWebSocketContext.initCookies(0);
+    browserNativeWebSocketContext.initAccept(0);
+    browserNativeWebSocketContext.initAcceptEncoding(0);
+    browserNativeWebSocketContext.initAdditionalHeaders(0);
+    browserNativeWebSocketRequest.initProtocol(0);
+    browserNativeWebSocketRequest.setClientStream(kj::heap<IgnoreWebSocketStream>());
+    auto browserNativeWebSocketResponse =
+        browserNativeWebSocketRequest.send().wait(io.waitScope);
+    KJ_REQUIRE(browserNativeWebSocketResponse.getProtocol().size() == 0);
+    KJ_REQUIRE(browserNativeWebSocketResponse.hasServerStream());
 
     auto getRequest = session.getRequest();
     getRequest.setPath("/");

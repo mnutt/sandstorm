@@ -243,6 +243,10 @@ bridge. Rebase it onto the Phase 1 channel:
   schema module plus `/__sandstorm/native-capnp/client.js`, fetches one
   handoff slot, and calls `read()`, `increment()`, and `reset()` over the
   browser-scoped capnp WebSocket bridge.
+- Done: real `WebSession.openWebSocket()` calls now forward to the workerd
+  sidecar as raw WebSocket upgrade streams, so browser-native capnp RPC works
+  through the normal Sandstorm WebSession boundary rather than only through
+  direct supervisor binding routes.
 - Powerbox flow stays browser-first: shell `postMessage` picker → token →
   browser (or worker) claims over its own channel. Worker-initiated Powerbox
   UI becomes a `SessionContext` method call whenever the shell supports it —
@@ -296,6 +300,10 @@ Do this while surface area is small and before any stability promise.
     the session closes, and checks that the supervisor remains responsive.
     This is not a full fuzz harness yet, but it covers the current
     supervisor-side framing rejection path in the normal isolate test target.
+  - Done: the WebSession client fixture opens a browser-scoped native capnp
+    WebSocket through `WebSession.openWebSocket()` and then tears it down
+    without sending RPC frames, covering the upgrade path and no-frame
+    disconnect cleanup.
   - Done: `make isolate-capnp-corpus-test` replays deterministic capnp-es/KJ
     encode/decode corpus cases for common struct field shapes, and
     `make isolate-supervisor-integration-test` runs it before the real bridge

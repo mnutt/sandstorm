@@ -76,6 +76,7 @@
 #include <sched.h>
 #include <map>
 #include <queue>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -146,6 +147,18 @@ void isolateSupervisorSignalHandler(int signo) {
     case SIGTERM:
       SANDSTORM_ISOLATE_LOG("Grain supervisor terminated by signal.");
       killIsolateSidecarAndExit(0);
+
+    case SIGABRT:
+      SANDSTORM_ISOLATE_LOG("Grain supervisor crashed due to SIGABRT.");
+      killIsolateSidecarAndExit(1);
+
+    case SIGSEGV:
+      SANDSTORM_ISOLATE_LOG("Grain supervisor crashed due to SIGSEGV.");
+      killIsolateSidecarAndExit(1);
+
+    case SIGSYS:
+      SANDSTORM_ISOLATE_LOG("Grain supervisor crashed due to SIGSYS.");
+      killIsolateSidecarAndExit(1);
 
     default:
       SANDSTORM_ISOLATE_LOG("Grain supervisor crashed due to signal.");
@@ -1678,6 +1691,188 @@ kj::Promise<void> pumpAtMost(kj::AsyncInputStream& input, ByteStream::Client str
   });
 }
 
+struct IsolateWebSocketUpgradeResponse {
+  kj::Vector<kj::String> protocols;
+  kj::Array<byte> remainder;
+};
+
+kj::Maybe<size_t> findHttpHeaderEnd(kj::ArrayPtr<const byte> bytes) {
+  for (size_t i = 3; i < bytes.size(); ++i) {
+    if (bytes[i - 3] == '\r' && bytes[i - 2] == '\n' &&
+        bytes[i - 1] == '\r' && bytes[i] == '\n') {
+      return i + 1;
+    }
+  }
+
+  return nullptr;
+}
+
+void requireNoHttpLineBreaks(kj::StringPtr value, kj::StringPtr description) {
+  KJ_REQUIRE(value.findFirst('\r') == nullptr && value.findFirst('\n') == nullptr,
+      description, value);
+}
+
+bool headerNameEquals(kj::StringPtr actual, kj::StringPtr expectedLowercase) {
+  auto normalized = kj::str(actual);
+  toLower(normalized);
+  return normalized == expectedLowercase;
+}
+
+kj::Array<byte> renderSidecarWebSocketUpgradeRequest(FetchRequest& request) {
+  requireNoHttpLineBreaks(request.path, "isolate WebSocket path contains a line break");
+
+  kj::Vector<char> result;
+  auto add = [&](kj::StringPtr text) {
+    result.addAll(text.asArray());
+  };
+
+  add("GET ");
+  add(request.path);
+  add(" HTTP/1.1\r\n");
+  add("Upgrade: websocket\r\n");
+  add("Connection: Upgrade\r\n");
+  add("Sec-WebSocket-Key: mj9i153gxeYNlGDoKdoXOQ==\r\n");
+  add("Sec-WebSocket-Version: 13\r\n");
+
+  for (auto& header: request.headers) {
+    requireNoHttpLineBreaks(header.name, "isolate WebSocket header name contains a line break");
+    requireNoHttpLineBreaks(header.value, "isolate WebSocket header value contains a line break");
+
+    if (headerNameEquals(header.name, "upgrade") ||
+        headerNameEquals(header.name, "connection") ||
+        headerNameEquals(header.name, "sec-websocket-key") ||
+        headerNameEquals(header.name, "sec-websocket-version")) {
+      continue;
+    }
+
+    add(header.name);
+    add(": ");
+    add(header.value);
+    add("\r\n");
+  }
+
+  add("\r\n");
+  return kj::heapArray<byte>(result.asPtr().asBytes());
+}
+
+class IsolateWebSocketUpgradeParser final: public kj::Refcounted {
+public:
+  kj::Promise<IsolateWebSocketUpgradeResponse> read(kj::AsyncInputStream& stream) {
+    return stream.tryRead(scratch, 1, sizeof(scratch))
+        .then([this, &stream](size_t amount) mutable
+            -> kj::Promise<IsolateWebSocketUpgradeResponse> {
+      KJ_REQUIRE(amount > 0, "isolate sidecar closed before WebSocket upgrade response");
+      bytes.addAll(kj::arrayPtr(scratch, amount));
+      KJ_REQUIRE(bytes.size() <= 65536,
+          "isolate sidecar WebSocket upgrade response headers are too large");
+
+      KJ_IF_MAYBE(headerEnd, findHttpHeaderEnd(bytes.asPtr())) {
+        return parse(*headerEnd);
+      }
+
+      return read(stream);
+    });
+  }
+
+private:
+  byte scratch[4096];
+  kj::Vector<byte> bytes;
+
+  IsolateWebSocketUpgradeResponse parse(size_t headerEnd) {
+    auto headerText = bytes.asPtr().slice(0, headerEnd).asChars();
+    auto lines = split(headerText, '\n');
+    KJ_REQUIRE(lines.size() > 0, "isolate sidecar WebSocket response was empty");
+
+    auto status = trim(lines[0]);
+    KJ_REQUIRE(status.startsWith("HTTP/1.") &&
+        (status == "HTTP/1.0 101" || status.startsWith("HTTP/1.0 101 ") ||
+         status == "HTTP/1.1 101" || status.startsWith("HTTP/1.1 101 ")),
+        "isolate sidecar did not upgrade WebSocket", status);
+
+    IsolateWebSocketUpgradeResponse result;
+    for (size_t i = 1; i < lines.size(); ++i) {
+      auto line = trim(lines[i]);
+      if (line.size() == 0) {
+        continue;
+      }
+
+      KJ_IF_MAYBE(colon, line.findFirst(':')) {
+        auto name = trim(line.slice(0, *colon));
+        toLower(name);
+        if (name == "sec-websocket-protocol") {
+          auto value = line.slice(*colon + 1, line.size());
+          for (auto part: split(value, ',')) {
+            auto protocol = trim(part);
+            if (protocol.size() > 0) {
+              result.protocols.add(kj::mv(protocol));
+            }
+          }
+        }
+      }
+    }
+
+    result.remainder = kj::heapArray<byte>(bytes.asPtr().slice(headerEnd, bytes.size()));
+    return kj::mv(result);
+  }
+};
+
+class IsolateRawWebSocketPump final: public WebSession::WebSocketStream::Server,
+                                    private kj::TaskSet::ErrorHandler {
+public:
+  IsolateRawWebSocketPump(kj::Own<kj::AsyncIoStream> sidecarStream,
+      WebSession::WebSocketStream::Client callerStream, kj::Array<byte> initialBytes)
+      : sidecarStream(kj::mv(sidecarStream)),
+        callerStream(kj::mv(callerStream)),
+        tasks(*this) {
+    if (initialBytes.size() > 0) {
+      sendData(initialBytes);
+    }
+    pumpSidecarToCaller();
+  }
+
+protected:
+  kj::Promise<void> sendBytes(SendBytesContext context) override {
+    auto fork = upstream.then([this, context]() mutable {
+      auto message = context.getParams().getMessage();
+      return sidecarStream->write(message.begin(), message.size());
+    }).fork();
+    upstream = fork.addBranch();
+    return fork.addBranch();
+  }
+
+private:
+  kj::Own<kj::AsyncIoStream> sidecarStream;
+  WebSession::WebSocketStream::Client callerStream;
+  kj::Promise<void> upstream = kj::READY_NOW;
+  kj::TaskSet tasks;
+  byte buffer[4096];
+
+  void pumpSidecarToCaller() {
+    tasks.add(sidecarStream->tryRead(buffer, 1, sizeof(buffer))
+        .then([this](size_t amount) mutable {
+      if (amount > 0) {
+        sendData(kj::arrayPtr(buffer, amount));
+        pumpSidecarToCaller();
+      } else {
+        callerStream = nullptr;
+      }
+    }));
+  }
+
+  void sendData(kj::ArrayPtr<const byte> data) {
+    auto request = callerStream.sendBytesRequest(
+        capnp::MessageSize { data.size() / sizeof(capnp::word) + 8, 0 });
+    request.setMessage(data);
+    tasks.add(request.send());
+  }
+
+  void taskFailed(kj::Exception&& exception) override {
+    if (exception.getType() != kj::Exception::Type::DISCONNECTED) {
+      KJ_LOG(WARNING, "Isolate WebSession WebSocket pump failed.", exception);
+    }
+  }
+};
+
 void addHeader(FetchRequest& request, kj::StringPtr name, kj::StringPtr value) {
   FetchHeader header;
   header.name = kj::heapString(name);
@@ -2164,6 +2359,9 @@ class IsolateRuntimeAdapter {
 public:
   virtual ~IsolateRuntimeAdapter() noexcept(false) {}
   virtual kj::Promise<FetchResponse> fetch(FetchRequest&& request) = 0;
+  virtual kj::Promise<void> openWebSocket(FetchRequest&& request,
+      WebSession::WebSocketStream::Client clientStream,
+      WebSession::OpenWebSocketResults::Builder results) = 0;
   virtual kj::Own<WebSession::RequestStream::Server> startRequestStream(
       FetchRequest&& request, ByteStream::Client responseStream) = 0;
 };
@@ -2184,6 +2382,13 @@ public:
     }
 
     return fetchPlaceholder(kj::mv(request), "sidecar endpoint not configured");
+  }
+
+  kj::Promise<void> openWebSocket(FetchRequest&& request,
+      WebSession::WebSocketStream::Client clientStream,
+      WebSession::OpenWebSocketResults::Builder results) override {
+    KJ_REQUIRE(isSidecarSocketAvailable(), "isolate sidecar socket is not available");
+    return openWebSocketFromSidecar(kj::mv(request), kj::mv(clientStream), results);
   }
 
   kj::Own<WebSession::RequestStream::Server> startRequestStream(
@@ -2544,6 +2749,39 @@ private:
     });
   }
 
+  kj::Promise<void> openWebSocketFromSidecar(FetchRequest&& request,
+      WebSession::WebSocketStream::Client clientStream,
+      WebSession::OpenWebSocketResults::Builder results) {
+    KJ_LOG(WARNING, "Forwarding isolate WebSocket request to sidecar.", request.path);
+    return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
+        .then([this, request = kj::mv(request), clientStream = kj::mv(clientStream), results](
+            kj::Own<kj::NetworkAddress>&& addr) mutable -> kj::Promise<void> {
+      auto rawRequest = renderSidecarWebSocketUpgradeRequest(request);
+      return addr->connect()
+          .then([rawRequest = kj::mv(rawRequest), clientStream = kj::mv(clientStream), results](
+              kj::Own<kj::AsyncIoStream>&& stream) mutable {
+        auto& streamRef = *stream;
+        return streamRef.write(rawRequest.begin(), rawRequest.size())
+            .attach(kj::mv(rawRequest))
+            .then([stream = kj::mv(stream), clientStream = kj::mv(clientStream), results]()
+                mutable {
+          auto parser = kj::refcounted<IsolateWebSocketUpgradeParser>();
+          return parser->read(*stream)
+              .then([stream = kj::mv(stream), clientStream = kj::mv(clientStream), results](
+                  IsolateWebSocketUpgradeResponse&& upgrade) mutable {
+            auto protocols = upgrade.protocols.asPtr();
+            auto protocolList = results.initProtocol(protocols.size());
+            for (auto i: kj::indices(protocols)) {
+              protocolList.set(i, protocols[i]);
+            }
+            results.setServerStream(kj::heap<IsolateRawWebSocketPump>(
+                kj::mv(stream), kj::mv(clientStream), kj::mv(upgrade.remainder)));
+          }).attach(kj::mv(parser));
+        });
+      });
+    });
+  }
+
   kj::Promise<FetchResponse> fetchPlaceholder(
       FetchRequest&& request, kj::StringPtr runtimeState) {
     if (request.method == FetchMethod::GET || request.method == FetchMethod::HEAD) {
@@ -2865,6 +3103,22 @@ public:
     context.getResults().setStream(runtime->startRequestStream(
         kj::mv(request), params.getContext().getResponseStream()));
     return kj::READY_NOW;
+  }
+
+  kj::Promise<void> openWebSocket(
+      typename InternalSession::Server::OpenWebSocketContext context) override {
+    auto params = context.getParams();
+    auto request = makeFetchRequest(FetchMethod::GET, prefixedPath(params.getPath()),
+        params.getContext());
+    auto protocols = params.getProtocol();
+    if (protocols.size() > 0) {
+      addHeader(request, "sec-websocket-protocol", kj::strArray(protocols, ", "));
+    }
+    addSessionHeaders(request);
+    KJ_LOG(WARNING, "Handling isolate WebSession WebSocket request.",
+        request.path, sessionKindName(sessionKind));
+    return runtime->openWebSocket(
+        kj::mv(request), params.getClientStream(), context.getResults());
   }
 
   kj::Promise<void> delete_(typename InternalSession::Server::DeleteContext context) override {
@@ -4030,6 +4284,7 @@ void setupSidecarSeccomp(bool logSeccompViolations) {
     SCMP_SYS(munmap),
     SCMP_SYS(newfstatat),
     SCMP_SYS(openat),
+    SCMP_SYS(pipe2),
     SCMP_SYS(pkey_alloc),
     SCMP_SYS(poll),
     SCMP_SYS(pread64),
@@ -4047,6 +4302,7 @@ void setupSidecarSeccomp(bool logSeccompViolations) {
     SCMP_SYS(set_tid_address),
     SCMP_SYS(setsockopt),
     SCMP_SYS(sigaltstack),
+    SCMP_SYS(splice),
     SCMP_SYS(umask),
     SCMP_SYS(uname),
     SCMP_SYS(write),
@@ -4533,77 +4789,47 @@ private:
   };
 
   struct NativeCapnpBridgeWebSocketRpcSession {
-    kj::String targetId;
-    uint64_t targetInterfaceId = 0;
-    kj::String targetInterfaceName;
-
     NativeCapnpBridgeWebSocketMessageStream stream;
     capnp::TwoPartyVatNetwork network;
     capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
 
     NativeCapnpBridgeWebSocketRpcSession(kj::Own<kj::WebSocket> webSocket,
-        kj::String targetId, uint64_t targetInterfaceId, kj::String targetInterfaceName,
         capnp::Capability::Client bootstrap)
-        : targetId(kj::mv(targetId)),
-          targetInterfaceId(targetInterfaceId),
-          targetInterfaceName(kj::mv(targetInterfaceName)),
-          stream(kj::mv(webSocket)),
+        : stream(kj::mv(webSocket)),
           network(stream, capnp::rpc::twoparty::Side::SERVER),
           rpcSystem(capnp::makeRpcServer(network, kj::mv(bootstrap))) {}
   };
 
-  std::map<std::string, kj::Own<NativeCapnpBridgeWebSocketRpcSession>>
-      nativeCapnpBridgeWebSocketRpcSessions;
+  std::set<std::string> nativeCapnpBridgeWebSocketRpcSessionIds;
 
   std::string nativeCapnpBridgeRpcSessionKey(kj::StringPtr connectionId) {
     return std::string(connectionId.begin(), connectionId.size());
   }
 
-  uint dropNativeCapnpBridgeRpcSessionsForTarget(kj::StringPtr targetId) {
-    uint dropped = 0;
-    for (auto iter = nativeCapnpBridgeWebSocketRpcSessions.begin();
-         iter != nativeCapnpBridgeWebSocketRpcSessions.end();) {
-      if (iter->second->targetId == targetId) {
-        iter = nativeCapnpBridgeWebSocketRpcSessions.erase(iter);
-        ++dropped;
-      } else {
-        ++iter;
-      }
-    }
-
-    return dropped;
-  }
-
   public:
     bool hasRpcSession(kj::StringPtr connectionId) {
       auto key = nativeCapnpBridgeRpcSessionKey(connectionId);
-      return nativeCapnpBridgeWebSocketRpcSessions.find(key) !=
-          nativeCapnpBridgeWebSocketRpcSessions.end();
-    }
-
-    uint dropRpcSessionsForTarget(kj::StringPtr targetId) {
-      return dropNativeCapnpBridgeRpcSessionsForTarget(targetId);
+      return nativeCapnpBridgeWebSocketRpcSessionIds.find(key) !=
+          nativeCapnpBridgeWebSocketRpcSessionIds.end();
     }
 
     kj::Promise<void> openWebSocketRpcSession(kj::Own<kj::WebSocket> webSocket,
-        kj::StringPtr connectionId, kj::String targetId, uint64_t interfaceId,
-        kj::String interfaceName, capnp::Capability::Client targetCap) {
+        kj::StringPtr connectionId, capnp::Capability::Client bootstrap) {
       auto key = nativeCapnpBridgeRpcSessionKey(connectionId);
-      auto inserted = nativeCapnpBridgeWebSocketRpcSessions.emplace(std::move(key),
-          kj::heap<NativeCapnpBridgeWebSocketRpcSession>(
-            kj::mv(webSocket), kj::mv(targetId), interfaceId, kj::mv(interfaceName),
-            kj::mv(targetCap)));
+      auto inserted = nativeCapnpBridgeWebSocketRpcSessionIds.insert(key);
       KJ_ASSERT(inserted.second);
 
-      auto sessionKey = inserted.first->first;
-      auto& session = *inserted.first->second;
-      return session.network.onDisconnect()
-          .then([this, sessionKey]() mutable {
-        nativeCapnpBridgeWebSocketRpcSessions.erase(sessionKey);
-      }).catch_([this, sessionKey](kj::Exception&& exception) mutable {
-        nativeCapnpBridgeWebSocketRpcSessions.erase(sessionKey);
+      auto sessionKey = *inserted.first;
+      auto session = kj::heap<NativeCapnpBridgeWebSocketRpcSession>(
+          kj::mv(webSocket), kj::mv(bootstrap));
+      auto disconnect = session->network.onDisconnect();
+      return disconnect.then([this, sessionKey]() mutable {
+        nativeCapnpBridgeWebSocketRpcSessionIds.erase(sessionKey);
+      }).catch_([this, sessionKey](kj::Exception&& exception) mutable
+          -> kj::Promise<void> {
+        nativeCapnpBridgeWebSocketRpcSessionIds.erase(sessionKey);
         return kj::Promise<void>(kj::mv(exception));
-      });
+      }).attach(kj::mv(session));
     }
   };
 
@@ -4639,7 +4865,7 @@ private:
     auto webSocket = response.acceptWebSocket(responseHeaders);
     capnp::Capability::Client bootstrap = kj::heap<IsolateBridgeImpl>(config, host);
     return nativeCapnpBridge.openWebSocketRpcSession(kj::mv(webSocket), connectionId,
-        kj::heapString(""), 0, kj::heapString("sandstorm.IsolateBridge"), kj::mv(bootstrap));
+        kj::mv(bootstrap));
   }
 
   kj::Promise<void> openBrowserIsolateBridgeBootstrapRpcSession(
@@ -4676,7 +4902,6 @@ private:
     capnp::Capability::Client bootstrap = kj::heap<BrowserIsolateBridgeImpl>(
         config, host, kj::mv(sessionId));
     return nativeCapnpBridge.openWebSocketRpcSession(kj::mv(webSocket), connectionId,
-        kj::heapString(""), 0, kj::heapString("sandstorm.BrowserIsolateBridge"),
         kj::mv(bootstrap));
   }
 
