@@ -44,7 +44,6 @@ export default {
       });
       return Response.json({
         ok: true,
-        capability,
         info: await capability.info(),
       });
     }
@@ -71,11 +70,21 @@ export default {
       ok: true,
       interfaceName: Greeter.interfaceName || "Greeter",
       interfaceId: `0x${Greeter._capnp.typeIdHex}`,
-      result,
-      greetingResult,
-      formalGreetingResult,
-      casualGreetingResult,
-      useGreetingResult,
+      result: {
+        message: result.message,
+      },
+      greetingResult: {
+        message: greetingResult.message,
+      },
+      formalGreetingResult: {
+        message: formalGreetingResult.message,
+      },
+      casualGreetingResult: {
+        message: casualGreetingResult.message,
+      },
+      useGreetingResult: {
+        message: useGreetingResult.message,
+      },
     });
   },
 };
