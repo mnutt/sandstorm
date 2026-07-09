@@ -173,6 +173,11 @@ compiler on the dev-startup path.
   `/powerbox/tie-to-user`; capability session actions now resolve the live
   capability and call the corresponding `SessionContext` method over the
   IsolateBridge RPC connection.
+- Done: `sandstorm:api` Powerbox session actions now accept generated native
+  capnp clients returned by `exportNativeCapnp()` in addition to generic
+  `Capability` handles. App code can fulfill a request with
+  `api.powerbox().fulfillRequest(exportedClient, ...)`; the helper opens only
+  the trusted `SessionContext` bridge and passes the existing capnp reference.
 - Done: `/powerbox/drop`; `Capability.drop()` now releases the worker's live
   RPC handle and its retained IsolateBridge connection. Worker-side id-backed
   helper handles are gone; browser handoff ids are explicit browser slots.
