@@ -556,6 +556,7 @@ function sessionActionCapability(env, capability, name = "session action capabil
       cap,
       bridge: capability._bridge(),
       temporaryBridge: false,
+      wrapAppPersistent: false,
     };
   }
 
@@ -565,7 +566,27 @@ function sessionActionCapability(env, capability, name = "session action capabil
       connectionId: makeLiveCapabilityId("session-action"),
     }),
     temporaryBridge: true,
+    wrapAppPersistent: true,
   };
+}
+
+async function wrapSessionActionCapability(actionCapability) {
+  const { bridge, cap, wrapAppPersistent } = actionCapability;
+  if (!wrapAppPersistent) return cap;
+  if (typeof bridge.wrapAppPersistentCapability !== "function") {
+    throw new Error("isolate bridge returned no app-persistent capability wrapper");
+  }
+
+  const wrappedPromise = bridge.wrapAppPersistentCapability((params) => {
+    initCapnpCapabilityParam(params, cap, "app-persistent session action capability");
+  });
+  const wrappedCap = capnpCapabilityFromResult(
+    wrappedPromise, "wrapped app-persistent session action capability");
+  if (!wrappedCap) {
+    throw new Error("isolate bridge returned no wrapped app-persistent capability");
+  }
+  await wrappedPromise;
+  return wrappedCap;
 }
 
 export class Capability {
@@ -1069,9 +1090,11 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
     ? null
     : await sessionActionDescriptor(env, options);
   const actionCapability = sessionActionCapability(env, capability);
-  const { bridge, cap, temporaryBridge } = actionCapability;
+  const { bridge, temporaryBridge } = actionCapability;
 
   try {
+    const cap = await wrapSessionActionCapability(actionCapability);
+
     if (typeof bridge.getSessionContext !== "function") {
       throw new Error("isolate bridge returned no session-context resolver");
     }

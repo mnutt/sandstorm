@@ -103,6 +103,7 @@ constexpr const char* ISOLATE_MAIN_VIEW_RPC_SESSION_PATH =
     "/__sandstorm/main-view/rpc-session";
 constexpr uint64_t CAPNP_PERSISTENT_INTERFACE_ID = 0xc8cb212fcd9f5691ull;
 constexpr uint64_t SYSTEM_PERSISTENT_INTERFACE_ID = 0xc38cedd77cbed5b4ull;
+constexpr uint64_t APP_PERSISTENT_INTERFACE_ID = 0xaffa789add8747b8ull;
 
 volatile sig_atomic_t isolateSidecarPid = 0;
 volatile sig_atomic_t isolateKeepAlive = true;
@@ -3579,6 +3580,9 @@ public:
         interfaceId == CAPNP_PERSISTENT_INTERFACE_ID) {
       return SystemPersistent::Server::dispatchCall(interfaceId, methodId, context);
     }
+    if (interfaceId == APP_PERSISTENT_INTERFACE_ID) {
+      KJ_UNIMPLEMENTED("can't call AppPersistent.save() from outside isolate grain");
+    }
 
     capnp::AnyPointer::Reader params = context.getParams();
     auto request = cap.typelessRequest(interfaceId, methodId, params.targetSize());
@@ -3617,6 +3621,51 @@ private:
   kj::Own<IsolateMainViewRpcSession> session;
   capnp::Capability::Client cap;
   kj::Maybe<kj::Array<const byte>> parentToken;
+};
+
+class IsolateAppPersistentCapability final: public SystemPersistent::Server {
+public:
+  IsolateAppPersistentCapability(kj::Own<IsolateRuntimeHost> host,
+      capnp::Capability::Client cap)
+      : host(kj::mv(host)),
+        cap(kj::mv(cap)) {}
+
+  DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
+      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer> context) override {
+    if (interfaceId == SYSTEM_PERSISTENT_INTERFACE_ID ||
+        interfaceId == CAPNP_PERSISTENT_INTERFACE_ID) {
+      return SystemPersistent::Server::dispatchCall(interfaceId, methodId, context);
+    }
+    if (interfaceId == APP_PERSISTENT_INTERFACE_ID) {
+      KJ_UNIMPLEMENTED("can't call AppPersistent.save() from outside isolate grain");
+    }
+
+    capnp::AnyPointer::Reader params = context.getParams();
+    auto request = cap.typelessRequest(interfaceId, methodId, params.targetSize());
+    request.set(params);
+    auto promise = request.send().then([context](auto&& response) mutable -> kj::Promise<void> {
+      context.initResults(response.targetSize()).set(response);
+      return kj::READY_NOW;
+    });
+    return { kj::mv(promise), false };
+  }
+
+  kj::Promise<void> save(SaveContext context) override {
+    auto owner = newOwnCapnp(context.getParams().getSealFor());
+    auto appRequest = cap.castAs<AppPersistent<>>().saveRequest();
+    return appRequest.send().then([this, context, KJ_MVCAP(owner)](auto result) mutable {
+      auto request = host->sandstormCore.makeTokenRequest();
+      request.getRef().setAppRef(result.getObjectId());
+      request.setOwner(owner);
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setSturdyRef(result.getToken());
+      });
+    });
+  }
+
+private:
+  kj::Own<IsolateRuntimeHost> host;
+  capnp::Capability::Client cap;
 };
 
 class IsolateUiViewImpl final: public UiView::Server {
@@ -4621,6 +4670,15 @@ private:
       auto cap = makeRouteBackedSessionCapability(
           kj::addRef(config), kj::addRef(host), capabilityType, pathPrefix, params.getPersistent());
       context.getResults().setCap(kj::mv(cap));
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<void> wrapAppPersistentCapability(
+        WrapAppPersistentCapabilityContext context) override {
+      auto params = context.getParams();
+      KJ_REQUIRE(params.hasCap(), "Cannot wrap a null app-persistent capability.");
+      context.getResults().setCap(kj::heap<IsolateAppPersistentCapability>(
+          kj::addRef(host), params.getCap()));
       return kj::READY_NOW;
     }
 

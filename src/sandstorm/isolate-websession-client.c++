@@ -421,11 +421,19 @@ public:
     KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
     KJ_REQUIRE(params.getRequiredPermissions()[0]);
     validateDescriptor(params.getDescriptor());
-    if (params.getDisplayInfo().getTitle().getDefaultText() == "NativeGreeter offered capability") {
+    auto title = params.getDisplayInfo().getTitle().getDefaultText();
+    if (title == "NativeGreeter offered capability") {
       validateDisplayInfo(params.getDisplayInfo(),
           "NativeGreeter offered capability",
           "can use native offered capability",
           "Native offered capability description");
+      auto request = params.getCap().castAs<SystemPersistent>().saveRequest();
+      request.getSealFor().initClientPowerboxOffer().setSessionId("fake-offer-session");
+      return request.send().then([this, context](auto result) mutable {
+        KJ_REQUIRE(result.getSturdyRef().size() > 0);
+        ++offerSaveCount;
+        ++offerCount;
+      });
     } else {
       validateDisplayInfo(params.getDisplayInfo(),
           "WebSession offered capability",
@@ -456,12 +464,19 @@ public:
     KJ_REQUIRE(params.getRequiredPermissions().size() == 1);
     KJ_REQUIRE(params.getRequiredPermissions()[0]);
     validateDescriptor(params.getDescriptor());
-    if (params.getDisplayInfo().getTitle().getDefaultText() ==
-        "NativeGreeter fulfilled capability") {
+    auto title = params.getDisplayInfo().getTitle().getDefaultText();
+    if (title == "NativeGreeter fulfilled capability") {
       validateDisplayInfo(params.getDisplayInfo(),
           "NativeGreeter fulfilled capability",
           "can use native fulfilled capability",
           "Native fulfilled capability description");
+      auto request = params.getCap().castAs<SystemPersistent>().saveRequest();
+      request.getSealFor().initClientPowerboxRequest().setSessionId("fake-request-session");
+      return request.send().then([this, context](auto result) mutable {
+        KJ_REQUIRE(result.getSturdyRef().size() > 0);
+        ++fulfillSaveCount;
+        ++fulfillCount;
+      });
     } else {
       validateDisplayInfo(params.getDisplayInfo(),
           "WebSession fulfilled capability",
@@ -493,6 +508,8 @@ public:
   uint offerCount = 0;
   uint requestCount = 0;
   uint fulfillCount = 0;
+  uint offerSaveCount = 0;
+  uint fulfillSaveCount = 0;
   uint tieCount = 0;
   uint apiDescriptorCount = 0;
   uint providerDescriptorCount = 0;
@@ -632,8 +649,19 @@ public:
   kj::Promise<void> makeToken(MakeTokenContext context) override {
     auto params = context.getParams();
     auto owner = params.getOwner();
-    KJ_REQUIRE(owner.which() == ApiTokenOwner::GRAIN);
-    KJ_REQUIRE(owner.getGrain().getGrainId().size() > 0);
+    switch (owner.which()) {
+      case ApiTokenOwner::GRAIN:
+        KJ_REQUIRE(owner.getGrain().getGrainId().size() > 0);
+        break;
+      case ApiTokenOwner::CLIENT_POWERBOX_REQUEST:
+        KJ_REQUIRE(owner.getClientPowerboxRequest().getSessionId().size() > 0);
+        break;
+      case ApiTokenOwner::CLIENT_POWERBOX_OFFER:
+        KJ_REQUIRE(owner.getClientPowerboxOffer().getSessionId().size() > 0);
+        break;
+      default:
+        KJ_FAIL_REQUIRE("fake SandstormCore makeToken received unsupported owner");
+    }
     auto requirements = params.getRequirements();
 
     loadRouteBackedTokens();
@@ -1942,6 +1970,7 @@ public:
         "\"errorFulfill\":{\"status\":400,\"body\":{\"ok\":false"),
         fulfillmentHelperBody);
     KJ_REQUIRE(sessionContextRef.fulfillCount == 3, sessionContextRef.fulfillCount);
+    KJ_REQUIRE(sessionContextRef.fulfillSaveCount == 1, sessionContextRef.fulfillSaveCount);
 
     auto nativeSessionActionRequest = session.getRequest();
     nativeSessionActionRequest.setPath("/native-powerbox-session-action-self-test");
@@ -1976,6 +2005,8 @@ public:
         nativeSessionActionBody);
     KJ_REQUIRE(sessionContextRef.fulfillCount == 4, sessionContextRef.fulfillCount);
     KJ_REQUIRE(sessionContextRef.offerCount == 2, sessionContextRef.offerCount);
+    KJ_REQUIRE(sessionContextRef.fulfillSaveCount == 2, sessionContextRef.fulfillSaveCount);
+    KJ_REQUIRE(sessionContextRef.offerSaveCount == 1, sessionContextRef.offerSaveCount);
 
     auto offerSessionContext = kj::heap<FakeSessionContext>();
     auto& offerSessionContextRef = *offerSessionContext;
