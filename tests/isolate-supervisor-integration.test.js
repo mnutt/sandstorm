@@ -44,6 +44,14 @@ const SYSCALL_TRACE_DIR = process.env.ISOLATE_SYSCALL_TRACE_DIR || "";
 const SYSCALL_TRACE_PROFILE = process.env.ISOLATE_SYSCALL_TRACE_PROFILE || "";
 const REPRESENTATIVE_SYSCALL_TRACE = SYSCALL_TRACE_PROFILE === "representative";
 const STRESS_64M = process.env.ISOLATE_STRESS_64M === "1";
+const TEST_SCOPE = process.env.ISOLATE_SUPERVISOR_TEST_SCOPE || "all";
+if (!["all", "toolchain", "runtime"].includes(TEST_SCOPE)) {
+  throw new Error(`invalid ISOLATE_SUPERVISOR_TEST_SCOPE: ${TEST_SCOPE}`);
+}
+const RUN_TOOLCHAIN_TESTS = TEST_SCOPE === "all" || TEST_SCOPE === "toolchain";
+const RUN_RUNTIME_TESTS = TEST_SCOPE === "all" || TEST_SCOPE === "runtime";
+const toolchainTest = RUN_TOOLCHAIN_TESTS ? test : test.skip;
+const runtimeTest = RUN_RUNTIME_TESTS ? test : test.skip;
 const TEST_TIMEOUT_MS = SYSCALL_TRACE_DIR || STRESS_64M ? 180000 : 30000;
 const CAPNP_ES_RUNTIME_MODULES = [
   ["@mnutt/capnp-es", "__sandstorm_isolate_runtime/capnp-es/index.mjs"],
@@ -952,7 +960,7 @@ async function startIsolateFixture(options = {}) {
   }
 }
 
-test("spk dev-isolate prints manifests and native generated capnp modules", async (t) => {
+toolchainTest("spk dev-isolate prints manifests and native generated capnp modules", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   try {
     await requireFile(
@@ -1065,7 +1073,7 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
     /`capnp-es:` isolate schema imports have been renamed; use `capnp:`/);
 });
 
-test("spk powerbox-descriptor emits schema interface descriptors", async () => {
+toolchainTest("spk powerbox-descriptor emits schema interface descriptors", async () => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
 
   const options = { cwd: path.join(REPO_DIR, "examples/isolate-capnp-rpc") };
@@ -1094,7 +1102,7 @@ test("spk powerbox-descriptor emits schema interface descriptors", async () => {
   assert.equal(capnp, "(tags = [(id = 0x85d0f155d6c54b6d)])");
 });
 
-test("spk capnp-abi dumps schema interface metadata", async () => {
+toolchainTest("spk capnp-abi dumps schema interface metadata", async () => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   await fs.mkdir(REPO_TMP_DIR, { recursive: true });
 
@@ -1154,7 +1162,7 @@ test("spk capnp-abi dumps schema interface metadata", async () => {
     /`capnp-es:` ABI schema specifiers have been renamed; use `capnp:`/);
 });
 
-test("spk dev-isolate prints generated capnp modules", async (t) => {
+toolchainTest("spk dev-isolate prints generated capnp modules", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   try {
     await requireFile(
@@ -1355,7 +1363,7 @@ test("spk dev-isolate prints generated capnp modules", async (t) => {
   assert.match(generatedSandstormWeb.stdout, /from "\/capnp-es\/index\.mjs";/);
 });
 
-test("spk pack materializes generated capnp modules for packaged isolates", async (t) => {
+toolchainTest("spk pack materializes generated capnp modules for packaged isolates", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   await requireExecutable(CAPNP_BIN, "Build the project first, e.g. make fast.");
   try {
@@ -1503,7 +1511,7 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
 
 });
 
-test("isolate supervisor integration suite", {
+runtimeTest("isolate supervisor integration suite", {
   timeout: TEST_TIMEOUT_MS,
 }, async (t) => {
   const fixture = await startIsolateFixture();

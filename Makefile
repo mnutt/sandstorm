@@ -158,7 +158,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -567,14 +567,23 @@ isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capn
 	@cp -R src/sandstorm/test-app/isolate-test tmp/sandstorm/isolate-test-app/isolate-test
 	spk dev -Isrc -Itmp -ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef
 
-isolate-supervisor-integration-test: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) \
-		isolate-capnp-abi-check isolate-capnp-corpus-test tests/assets/isolate-test-app.spk \
+isolate-capnp-toolchain-test: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) \
+		isolate-capnp-abi-check isolate-capnp-corpus-test \
 		tests/isolate-supervisor-integration.test.js
 	CAPNP_ES_COMPILER_MODULE=$(CAPNP_ES_COMPILER_MODULE) \
+	ISOLATE_SUPERVISOR_TEST_SCOPE=toolchain \
 	$(NODEJS) tests/isolate-supervisor-integration.test.js
 
+isolate-supervisor-integration-test: tmp/.ekam-run tests/assets/isolate-test-app.spk \
+		tests/isolate-supervisor-integration.test.js
+	ISOLATE_SUPERVISOR_TEST_SCOPE=runtime \
+	$(NODEJS) tests/isolate-supervisor-integration.test.js
+
+isolate-test: isolate-capnp-toolchain-test isolate-supervisor-integration-test
+
 isolate-supervisor-stress-test: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
-	ISOLATE_STRESS_64M=1 $(NODEJS) tests/isolate-supervisor-integration.test.js
+	ISOLATE_STRESS_64M=1 ISOLATE_SUPERVISOR_TEST_SCOPE=runtime \
+	$(NODEJS) tests/isolate-supervisor-integration.test.js
 
 isolate-supervisor-syscall-trace: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
 	@command -v strace >/dev/null || (echo "strace is required for this target" >&2; exit 1)
@@ -582,6 +591,7 @@ isolate-supervisor-syscall-trace: tmp/.ekam-run tests/assets/isolate-test-app.sp
 	@mkdir -p tmp/isolate-syscall-trace
 	ISOLATE_SYSCALL_TRACE_DIR=$(CURDIR)/tmp/isolate-syscall-trace \
 		ISOLATE_SYSCALL_TRACE_PROFILE=representative \
+		ISOLATE_SUPERVISOR_TEST_SCOPE=runtime \
 		$(NODEJS) tests/isolate-supervisor-integration.test.js
 	@echo "wrote syscall traces to tmp/isolate-syscall-trace"
 	@echo "workerd exec traces:"
