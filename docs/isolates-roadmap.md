@@ -298,6 +298,13 @@ Do this while surface area is small and before any stability promise.
     `isolate-supervisor-internal.capnp`, and `outbound-http-session.capnp`,
     and `make isolate-supervisor-integration-test` runs
     `make isolate-capnp-abi-check` before the JS fixture.
+- **Dev tooling:** `spk dev-isolate --app-interface` must work from ordinary
+  app directories and fail cleanly on invalid paths.
+  - Done: app-interface metadata parsing now uses the same Sandstorm schema
+    include discovery as generated capnp modules, so tutorial-style schemas
+    importing `/sandstorm/grain.capnp` work outside the Sandstorm repo. Failed
+    `realpath()` lookups now report validation errors instead of formatting a
+    null pointer, and the toolchain suite covers both paths.
 - Fuzz the supervisor-side `MessageStream` framing parsers and add
   differential capnp-es/KJ corpus and RPC conformance tests.
   - Progress: the isolate integration fixture now opens native Cap'n Proto
