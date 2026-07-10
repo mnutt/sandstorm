@@ -554,6 +554,34 @@ export function makeNativeCapnpPayload(message = new CapnpEsMessage(), capabilit
   });
 }
 
+function validateNativeCapnpGeneratedStruct(StructClass, operation) {
+  if (!StructClass || typeof StructClass !== "function") {
+    throw new TypeError(`${operation} requires a capnp-es generated struct class`);
+  }
+}
+
+export function makeCapnpStruct(StructClass, value = {}) {
+  validateNativeCapnpGeneratedStruct(StructClass, "makeCapnpStruct()");
+
+  const message = new CapnpEsMessage();
+  const root = message.initRoot(StructClass);
+  if (value !== undefined && value !== null) {
+    if (typeof StructClass._applyInit === "function") {
+      StructClass._applyInit(root, value);
+    } else if (typeof value === "object") {
+      Object.assign(root, value);
+    } else {
+      throw new TypeError("makeCapnpStruct() value must be an object");
+    }
+  }
+  return root;
+}
+
+export function readCapnpStruct(StructClass, value) {
+  validateNativeCapnpGeneratedStruct(StructClass, "readCapnpStruct()");
+  return CapnpEsUtils.getAs(StructClass, value);
+}
+
 function nativeCapnpInterfaceId(value) {
   if (typeof value === "bigint") {
     return value;

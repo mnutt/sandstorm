@@ -66,6 +66,21 @@ declare module "sandstorm:capnp" {
     capabilities?: readonly NativeCapnpCapabilitySlot[],
   ): NativeCapnpPayload;
 
+  export interface NativeCapnpGeneratedStruct<TStruct extends object> {
+    new (...args: any[]): TStruct;
+    readonly _applyInit?: (builder: TStruct, value: unknown) => void;
+  }
+
+  export function makeCapnpStruct<TStruct extends object>(
+    StructClass: NativeCapnpGeneratedStruct<TStruct>,
+    value?: unknown,
+  ): TStruct;
+
+  export function readCapnpStruct<TStruct extends object>(
+    StructClass: NativeCapnpGeneratedStruct<TStruct>,
+    value: unknown,
+  ): TStruct;
+
   export class IsolateBridgeWebSocketRpcTransport {
     readonly kind: "isolateBridgeWebSocketRpc";
     readonly api: {
