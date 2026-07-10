@@ -27,11 +27,13 @@ import {
   connectNativeCapnp,
   exportNativeCapnp,
   makeNativeCapnpPayload,
+  makeCapnpStruct,
   negotiateNativeCapnpBridge,
   nativeCapnpPowerboxDescriptor,
   nativeCapnpPowerboxDescriptorInfo,
   nativeCapnpSavedTokenText,
   pipeReadableToByteStream,
+  readCapnpStruct,
   restoreNativeCapnp,
   restoreNativeCapnpViaBootstrap,
   connectIsolateBridge,
@@ -43,14 +45,11 @@ const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm
 let browserNativeLocalExportGreeter = null;
 
 function makeNativeGreeterObjectId(id) {
-  const message = new CapnpEsMessage();
-  const objectId = message.initRoot(NativeGreeterObjectId);
-  objectId.id = id;
-  return objectId;
+  return makeCapnpStruct(NativeGreeterObjectId, { id });
 }
 
 function readNativeGreeterObjectId(objectId) {
-  return CapnpEsUtils.getAs(NativeGreeterObjectId, objectId).id;
+  return readCapnpStruct(NativeGreeterObjectId, objectId).id;
 }
 
 function interfaceIdHex(interfaceId) {
@@ -2588,6 +2587,12 @@ export default {
     const storageMissing = await env.STORAGE.fetch("http://storage/fixture");
     const storageIndexAfterDelete = await (await env.STORAGE.fetch("http://storage/")).json();
     const byteStreamAdapterResult = await runByteStreamAdapterSelfTest();
+    const nativeCapnpStructHelperObjectId =
+        makeNativeGreeterObjectId("native-capnp-struct-helper");
+    const nativeCapnpStructHelperResult = {
+      id: readNativeGreeterObjectId(nativeCapnpStructHelperObjectId),
+      hasSegment: Boolean(nativeCapnpStructHelperObjectId.segment),
+    };
 
     return Response.json({
       ok: true,
@@ -2599,6 +2604,7 @@ export default {
       jsonBinding: env.JSON_BINDING,
       capnpEs: {
         messageBytes: new CapnpEsMessage().toUint8Array().byteLength,
+        structHelper: nativeCapnpStructHelperResult,
         payload: {
           bytes: nativeCapnpPayload.message.byteLength,
           capabilities: nativeCapnpPayload.capabilities.map((capability) => ({
