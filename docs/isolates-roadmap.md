@@ -311,6 +311,14 @@ Do this while surface area is small and before any stability promise.
     importing `/sandstorm/grain.capnp` work outside the Sandstorm repo. Failed
     `realpath()` lookups now report validation errors instead of formatting a
     null pointer, and the toolchain suite covers both paths.
+- **App-author streaming ergonomics:** schema-defined upload/download
+  capabilities should not require hand-written `Util.ByteStream` method loops
+  for ordinary Web Stream sources and sinks.
+  - Done: `sandstorm:capnp` now exposes `writableFromByteStream()`,
+    `byteStreamFromWritable()`, and `pipeReadableToByteStream()`. The isolate
+    integration fixture covers all three helpers, and the external
+    object-store/upload tutorial uses them for provider-side `WritableStream`
+    implementation and worker-side file uploads.
 - Fuzz the supervisor-side `MessageStream` framing parsers and add
   differential capnp-es/KJ corpus and RPC conformance tests.
   - Progress: the isolate integration fixture now opens native Cap'n Proto
