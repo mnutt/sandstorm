@@ -23,6 +23,7 @@ import {
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
   NativeCapnpStreamTransport,
+  byteStreamFromWritable,
   connectNativeCapnp,
   exportNativeCapnp,
   makeNativeCapnpPayload,
@@ -30,9 +31,11 @@ import {
   nativeCapnpPowerboxDescriptor,
   nativeCapnpPowerboxDescriptorInfo,
   nativeCapnpSavedTokenText,
+  pipeReadableToByteStream,
   restoreNativeCapnp,
   restoreNativeCapnpViaBootstrap,
   connectIsolateBridge,
+  writableFromByteStream,
 } from "sandstorm:capnp";
 
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
@@ -140,6 +143,19 @@ function capnpDataBytes(value) {
   return new Uint8Array(value);
 }
 
+function concatByteChunks(chunks) {
+  let total = 0;
+  for (const chunk of chunks) total += chunk.byteLength;
+
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
 function makeCollectingByteStream() {
   const chunks = [];
   let expectedSize = null;
@@ -195,6 +211,69 @@ function makeCollectingByteStream() {
   }).client();
 
   return { client, done };
+}
+
+async function runByteStreamAdapterSelfTest() {
+  const pipeSink = makeCollectingByteStream();
+  await pipeReadableToByteStream(new ReadableStream({
+    start(controller) {
+      controller.enqueue(makeBytes(7));
+      controller.enqueue(makeBytes(5));
+      controller.close();
+    },
+  }), pipeSink.client, { size: 12n, chunkSize: 5 });
+  const pipedBytes = await pipeSink.done;
+
+  const writableSink = makeCollectingByteStream();
+  const writer = writableFromByteStream(writableSink.client, {
+    size: 6n,
+    chunkSize: 4,
+  }).getWriter();
+  await writer.write(makeBytes(6));
+  await writer.close();
+  const writableBytes = await writableSink.done;
+
+  const writableChunks = [];
+  let expectedRemaining = null;
+  let closed = false;
+  const byteStream = byteStreamFromWritable(new WritableStream({
+    write(chunk) {
+      const copy = new Uint8Array(chunk.byteLength);
+      copy.set(chunk);
+      writableChunks.push(copy);
+    },
+
+    close() {
+      closed = true;
+    },
+  }), {
+    chunkSize: 4,
+    onExpectSize(remaining) {
+      expectedRemaining = remaining;
+    },
+  });
+  await byteStream.expectSize({ size: 9n });
+  await byteStream.write({ data: makeBytes(9) });
+  await byteStream.done();
+  const byteStreamBytes = concatByteChunks(writableChunks);
+
+  return {
+    pipeTo: {
+      bytes: pipedBytes.byteLength,
+      checksum: checksum(pipedBytes),
+    },
+    writableFromByteStream: {
+      bytes: writableBytes.byteLength,
+      checksum: checksum(writableBytes),
+    },
+    byteStreamFromWritable: {
+      expectedRemaining: expectedRemaining?.toString() ?? null,
+      closed,
+      chunks: writableChunks.length,
+      bytes: byteStreamBytes.byteLength,
+      checksum: checksum(byteStreamBytes),
+    },
+  };
 }
 
 async function runNativeGreeterConformance(client, {
@@ -2508,6 +2587,7 @@ export default {
         await (await env.STORAGE.fetch("http://storage/fixture", { method: "DELETE" })).json();
     const storageMissing = await env.STORAGE.fetch("http://storage/fixture");
     const storageIndexAfterDelete = await (await env.STORAGE.fetch("http://storage/")).json();
+    const byteStreamAdapterResult = await runByteStreamAdapterSelfTest();
 
     return Response.json({
       ok: true,
@@ -2551,6 +2631,7 @@ export default {
             serverQuestionId: nativeExportServerMessage.bootstrap.questionId,
             echoBootstrap: nativeExportEchoMessage.which() === CapnpRpcMessage.BOOTSTRAP,
             echoQuestionId: nativeExportEchoMessage.bootstrap.questionId,
+            adapters: byteStreamAdapterResult,
           },
           webSession: nativeExportWebSessionResult,
           greeter: nativeExportGreeterResult,

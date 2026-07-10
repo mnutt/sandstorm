@@ -119,6 +119,60 @@ declare module "sandstorm:capnp" {
     token: string | Uint8Array | ArrayBuffer | ArrayBufferView,
   ): string;
 
+  export type ByteStreamChunk =
+    Uint8Array |
+    ArrayBuffer |
+    ArrayBufferView |
+    { toUint8Array(): Uint8Array } |
+    { copyToUint8Array(): Uint8Array };
+
+  export interface ByteStreamLike {
+    write(params: {
+      readonly data: ByteStreamChunk;
+    }): Promise<unknown> | unknown;
+    done(params?: unknown): Promise<unknown> | unknown;
+    expectSize?(params: {
+      readonly size: bigint | number;
+    }): Promise<unknown> | unknown;
+    drop?(reason?: unknown): Promise<unknown> | unknown;
+  }
+
+  export interface WritableFromByteStreamOptions {
+    readonly size?: bigint | number;
+    readonly chunkSize?: number;
+  }
+
+  export interface ByteStreamFromWritableOptions {
+    readonly chunkSize?: number;
+    readonly onExpectSize?: (
+      remaining: bigint,
+      context: {
+        readonly expectedSize: bigint;
+        readonly bytesWritten: bigint;
+      },
+    ) => Promise<void> | void;
+  }
+
+  export interface PipeReadableToByteStreamOptions extends WritableFromByteStreamOptions {
+    readonly pipeTo?: StreamPipeOptions;
+  }
+
+  export function writableFromByteStream(
+    stream: ByteStreamLike,
+    options?: WritableFromByteStreamOptions,
+  ): WritableStream<ByteStreamChunk>;
+
+  export function byteStreamFromWritable(
+    writable: WritableStream<Uint8Array>,
+    options?: ByteStreamFromWritableOptions,
+  ): ByteStreamLike;
+
+  export function pipeReadableToByteStream(
+    readable: ReadableStream<ByteStreamChunk>,
+    stream: ByteStreamLike,
+    options?: PipeReadableToByteStreamOptions,
+  ): Promise<void>;
+
   export class NativeCapnpStreamTransport {
     constructor(
       readable: ReadableStream<Uint8Array>,

@@ -6,6 +6,7 @@ import {
   utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
 import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
+import { ByteStream } from "capnp:/sandstorm/util.capnp";
 
 export const SANDSTORM_CAPNP_VERSION = 0;
 export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
@@ -18,6 +19,7 @@ const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
 
 const CAPNP_CLIENT_SYMBOL = Symbol.for("sandstorm.capnp.client");
 const appInterfacePowerboxDescriptorCache = new Map();
+const DEFAULT_BYTE_STREAM_CHUNK_BYTES = 256 * 1024;
 
 function cloneJsonValue(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -271,6 +273,200 @@ function nativeCapnpUtf8(bytes) {
   } catch (_) {
     return "";
   }
+}
+
+function byteStreamChunkBytes(chunk) {
+  if (chunk instanceof Uint8Array) {
+    return chunk;
+  } else if (chunk instanceof ArrayBuffer) {
+    return new Uint8Array(chunk);
+  } else if (ArrayBuffer.isView(chunk)) {
+    return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  } else if (chunk && typeof chunk.toUint8Array === "function") {
+    return chunk.toUint8Array();
+  } else if (chunk && typeof chunk.copyToUint8Array === "function") {
+    return chunk.copyToUint8Array();
+  } else {
+    throw new TypeError("ByteStream chunks must be Uint8Array or ArrayBuffer values");
+  }
+}
+
+function copyByteStreamChunk(chunk) {
+  const bytes = byteStreamChunkBytes(chunk);
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy;
+}
+
+function normalizeByteStreamChunkSize(value) {
+  const result = value === undefined ? DEFAULT_BYTE_STREAM_CHUNK_BYTES : Number(value);
+  if (!Number.isSafeInteger(result) || result <= 0) {
+    throw new TypeError("ByteStream chunkSize must be a positive safe integer");
+  }
+  return result;
+}
+
+function normalizeByteStreamSize(value, name = "size") {
+  if (typeof value === "bigint") {
+    if (value < 0n) throw new TypeError(`ByteStream ${name} must be non-negative`);
+    return value;
+  }
+
+  const result = Number(value);
+  if (!Number.isSafeInteger(result) || result < 0) {
+    throw new TypeError(`ByteStream ${name} must be a non-negative safe integer`);
+  }
+  return BigInt(result);
+}
+
+async function writeChunksToByteStream(stream, bytes, chunkSize) {
+  for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+    await stream.write({
+      data: bytes.slice(offset, Math.min(offset + chunkSize, bytes.byteLength)),
+    });
+  }
+}
+
+function expectByteStreamClient(stream) {
+  if (!stream || typeof stream.write !== "function" || typeof stream.done !== "function") {
+    throw new TypeError("expected a sandstorm.util.ByteStream client");
+  }
+  return stream;
+}
+
+export function writableFromByteStream(stream, options = {}) {
+  stream = expectByteStreamClient(stream);
+  const chunkSize = normalizeByteStreamChunkSize(options.chunkSize);
+  let closed = false;
+
+  return new WritableStream({
+    async start() {
+      if (options.size !== undefined && typeof stream.expectSize === "function") {
+        try {
+          await stream.expectSize({ size: normalizeByteStreamSize(options.size) });
+        } catch (_) {
+          // ByteStream.expectSize() is advisory; callers ignore failures and let done()
+          // report any actual write-size mismatch.
+        }
+      }
+    },
+
+    async write(chunk) {
+      if (closed) {
+        throw new TypeError("ByteStream writable is closed");
+      }
+      await writeChunksToByteStream(stream, byteStreamChunkBytes(chunk), chunkSize);
+    },
+
+    async close() {
+      if (closed) return;
+      closed = true;
+      await stream.done();
+    },
+
+    async abort(reason) {
+      closed = true;
+      if (typeof stream.drop === "function") {
+        await stream.drop(reason);
+      }
+    },
+  });
+}
+
+export function byteStreamFromWritable(writable, options = {}) {
+  if (!writable || typeof writable.getWriter !== "function") {
+    throw new TypeError("byteStreamFromWritable() requires a WritableStream");
+  }
+
+  const chunkSize = normalizeByteStreamChunkSize(options.chunkSize);
+  const writer = writable.getWriter();
+  let queue = Promise.resolve();
+  let expectedBytes = null;
+  let bytesWritten = 0n;
+  let doneCalled = false;
+  let failed = null;
+
+  function enqueue(step) {
+    const run = queue.then(async () => {
+      if (failed) throw failed;
+      try {
+        return await step();
+      } catch (error) {
+        failed = error;
+        try {
+          await writer.abort(error);
+        } catch (_) {}
+        releaseWriter();
+        throw error;
+      }
+    });
+    queue = run.catch(() => {});
+    return run;
+  }
+
+  function releaseWriter() {
+    try {
+      writer.releaseLock();
+    } catch (_) {}
+  }
+
+  return new ByteStream.Server({
+    async write({ data }) {
+      const bytes = copyByteStreamChunk(data);
+      return await enqueue(async () => {
+        if (doneCalled) throw new Error("ByteStream.write() called after done()");
+        for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+          const chunk = bytes.slice(offset, Math.min(offset + chunkSize, bytes.byteLength));
+          await writer.write(chunk);
+          bytesWritten += BigInt(chunk.byteLength);
+          if (expectedBytes !== null && bytesWritten > expectedBytes) {
+            throw new Error("ByteStream.write() exceeded expected size");
+          }
+        }
+        return {};
+      });
+    },
+
+    async done() {
+      return await enqueue(async () => {
+        if (doneCalled) throw new Error("ByteStream.done() called twice");
+        doneCalled = true;
+        if (expectedBytes !== null && bytesWritten !== expectedBytes) {
+          throw new Error("ByteStream.done() called before expected size was written");
+        }
+        await writer.close();
+        releaseWriter();
+        return {};
+      });
+    },
+
+    async expectSize({ size }) {
+      return await enqueue(async () => {
+        const remaining = normalizeByteStreamSize(size, "expected size");
+        const nextExpectedBytes = bytesWritten + remaining;
+        if (expectedBytes !== null && expectedBytes !== nextExpectedBytes) {
+          throw new Error("ByteStream.expectSize() changed the expected size");
+        }
+        expectedBytes = nextExpectedBytes;
+        if (typeof options.onExpectSize === "function") {
+          await options.onExpectSize(remaining, {
+            expectedSize: expectedBytes,
+            bytesWritten,
+          });
+        }
+        return {};
+      });
+    },
+  }).client();
+}
+
+export function pipeReadableToByteStream(readable, stream, options = {}) {
+  if (!readable || typeof readable.pipeTo !== "function") {
+    throw new TypeError("pipeReadableToByteStream() requires a ReadableStream");
+  }
+
+  const { pipeTo, ...writableOptions } = options;
+  return readable.pipeTo(writableFromByteStream(stream, writableOptions), pipeTo || {});
 }
 
 export function nativeCapnpSavedTokenData(token) {

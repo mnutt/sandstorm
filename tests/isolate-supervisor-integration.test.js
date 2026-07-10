@@ -1838,6 +1838,23 @@ runtimeTest("isolate supervisor integration suite", {
         serverQuestionId: 77,
         echoBootstrap: true,
         echoQuestionId: 77,
+        adapters: {
+          pipeTo: {
+            bytes: 12,
+            checksum: 31,
+          },
+          writableFromByteStream: {
+            bytes: 6,
+            checksum: 15,
+          },
+          byteStreamFromWritable: {
+            expectedRemaining: "9",
+            closed: true,
+            chunks: 3,
+            bytes: 9,
+            checksum: 36,
+          },
+        },
       },
       webSession: {
         ok: true,
