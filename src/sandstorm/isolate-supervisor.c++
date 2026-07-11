@@ -16,6 +16,7 @@
 
 #include "isolate-supervisor.h"
 
+#include "isolate-capnp-framing.h"
 #include "isolate-util.h"
 #include "sandbox.h"
 #include "util.h"
@@ -3365,9 +3366,7 @@ public:
             KJ_FAIL_REQUIRE("native Cap'n Proto MainView RPC session received a text WebSocket frame");
           }
           KJ_CASE_ONEOF(bytes, kj::Array<byte>) {
-            kj::ArrayInputStream input(bytes);
-            auto reader = kj::heap<capnp::InputStreamMessageReader>(
-                input, options, scratchSpace);
+            auto reader = parseIsolateCapnpRpcFrame(bytes, options, scratchSpace);
             return capnp::MessageReaderAndFds { kj::mv(reader), nullptr };
           }
           KJ_CASE_ONEOF(close, kj::WebSocket::Close) {
@@ -4828,8 +4827,7 @@ private:
             KJ_FAIL_REQUIRE("native Cap'n Proto bridge WebSocket received text frame", text);
           }
           KJ_CASE_ONEOF(bytes, kj::Array<byte>) {
-            kj::ArrayInputStream input(bytes);
-            auto reader = kj::heap<capnp::InputStreamMessageReader>(input, options, scratchSpace);
+            auto reader = parseIsolateCapnpRpcFrame(bytes, options, scratchSpace);
             capnp::MessageReaderAndFds result { kj::mv(reader), nullptr };
             return kj::Maybe<capnp::MessageReaderAndFds>(kj::mv(result));
           }
