@@ -334,8 +334,11 @@ Do this while surface area is small and before any stability promise.
   - Progress: the isolate integration fixture now opens native Cap'n Proto
     WebSocket RPC sessions, sends malformed binary/text frames, verifies that
     the session closes, and checks that the supervisor remains responsive.
-    This is not a full fuzz harness yet, but it covers the current
-    supervisor-side framing rejection path in the normal isolate test target.
+    The two supervisor MessageStream implementations now share the parser
+    exercised by a native KJ test. That test round-trips a valid RPC bootstrap
+    frame, checks explicit malformed segment tables, and deterministically
+    feeds 4,096 generated malformed frames through the production parser with
+    bounded traversal and nesting limits.
   - Done: the WebSession client fixture opens a browser-scoped native capnp
     WebSocket through `WebSession.openWebSocket()` and then tears it down
     without sending RPC frames, covering the upgrade path and no-frame
