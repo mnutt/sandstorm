@@ -18,14 +18,14 @@ worker uses those generated classes to:
 
 - create a local test client with `new Greeter.Server(methods).client()`
 - expose the same methods as a local Cap'n Proto capability with
-  `exportNativeCapnp(api, Greeter, methods)`
+  `exportCapnp(api, Greeter, methods)`
 - pass returned capabilities through normal Cap'n Proto RPC cap tables
 
 This is the native Cap'n Proto RPC path used for schema-defined isolate
 protocols, isolate-to-isolate calls, browser generated clients, and legacy
-grain interop. Authority still comes from Sandstorm capabilities: the JSON
-returned by this demo route is metadata only, while real authority is passed as
-Cap'n Proto capability references or saved/restored through Sandstorm when the
+grain interop. Authority still comes from Sandstorm capabilities: the export
+route returns a durable string token, while live authority is passed as Cap'n
+Proto capability references or saved/restored through Sandstorm when the
 interface implements `Grain.AppPersistent`.
 
 TypeScript declarations for the native helpers live in
@@ -33,16 +33,13 @@ TypeScript declarations for the native helpers live in
 generated `capnp:` schema module:
 
 ```ts
-import { exportNativeCapnp } from "sandstorm:capnp";
+import { exportCapnp } from "sandstorm:capnp";
 import { Greeter } from "capnp:./greeter.capnp";
 
-interface GreeterMethods {
-  hello(request?: { name?: string }): Promise<{ message: string }>;
-}
-
-const client = new Greeter.Server({
+const exported = await exportCapnp(api, Greeter, {
   async hello({ name = "world" } = {}) {
     return { message: `Hello, ${name}` };
   },
-} satisfies GreeterMethods).client();
+});
+await exported.client.hello({ name: "local" });
 ```

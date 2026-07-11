@@ -1,5 +1,5 @@
 import { sandstorm } from "sandstorm:api";
-import { connectNativeCapnp, exportNativeCapnp } from "sandstorm:capnp";
+import { capnpClient, exportCapnp } from "sandstorm:capnp";
 import { ObjectStore } from "capnp:./object-store.capnp";
 import { WebSession } from "capnp:/sandstorm/web-session.capnp";
 
@@ -73,9 +73,7 @@ function makeObjectStore(api) {
       }
       const capability = await api.webSession({ pathPrefix: objectPath(bucket, key) });
       return {
-        object: connectNativeCapnp(api, capability, WebSession, {
-          connectionId: `object-store-${bucket}-${key}`,
-        }),
+        object: capnpClient(WebSession, capability),
       };
     },
   };
@@ -112,12 +110,10 @@ export default {
     if (objectResponse) return objectResponse;
 
     if (url.pathname === "/export-object-store") {
-      const capability = await exportNativeCapnp(api, ObjectStore, makeObjectStore(api), {
-        interfaceName: "ObjectStore",
-      });
+      const exported = await exportCapnp(api, ObjectStore, makeObjectStore(api));
       return Response.json({
         ok: true,
-        info: await capability.info(),
+        token: await exported.save({ label: "ObjectStore" }),
       });
     }
 

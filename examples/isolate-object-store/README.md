@@ -28,7 +28,7 @@ HTTP-shaped flows, the same object route can still be served over ordinary
 
 The root route runs an in-process self-test. `GET /export-object-store` exports
 the same object-store server as a Sandstorm native Cap'n Proto capability with
-`exportNativeCapnp()` and returns JSON-safe metadata for inspection. Once
+`exportCapnp()` and returns a durable string token. Once
 another isolate, browser generated client, or legacy grain receives that
 capability through Sandstorm's capability system, it can call `listObjects()`
 and `openObject()` with the same generated schema bindings.

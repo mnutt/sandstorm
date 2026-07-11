@@ -1017,6 +1017,9 @@ toolchainTest("spk dev-isolate prints manifests and native generated capnp modul
     modules.get("sandstorm:capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp.js");
   assert.equal(
+    modules.get("sandstorm-internal:capnp-runtime").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-runtime.js");
+  assert.equal(
     modules.get("capnp:/sandstorm/web-session.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js");
   assert.equal(modules.has("sandstorm:rpc"), false);
@@ -1632,6 +1635,7 @@ runtimeTest("isolate supervisor integration suite", {
         ...FIXTURE_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule"]),
         ["sandstorm:api", "esModule"],
         ["sandstorm:capnp", "esModule"],
+        ["sandstorm-internal:capnp-runtime", "esModule"],
         ...CAPNP_ES_SCHEME_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
         ...CAPNP_ES_PATH_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
         ...CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
@@ -1862,12 +1866,12 @@ runtimeTest("isolate supervisor integration suite", {
         contentType: "text/plain; charset=utf-8",
         text: "native export websession get native-export-websession?from=rpc",
         capability: {
-          type: "capability",
+          ok: true,
+          type: "nativeCapnpCapability",
           id: body.sandstormApi.nativeCapnpLocalExport.webSession.capability.id,
-          kind: "receiverHosted",
-          residence: "localExport",
+          kind: "localExport",
           interfaceId: "0xa50711a14d35a8ce",
-          interfaceName: "sandstorm.WebSession",
+          interfaceName: "WebSession",
         },
         info: {
           ok: true,
@@ -1875,7 +1879,7 @@ runtimeTest("isolate supervisor integration suite", {
           kind: "localExport",
           id: body.sandstormApi.nativeCapnpLocalExport.webSession.info.id,
           interfaceId: "0xa50711a14d35a8ce",
-          interfaceName: "sandstorm.WebSession",
+          interfaceName: "WebSession",
         },
         drop: null,
       },
@@ -1996,10 +2000,10 @@ runtimeTest("isolate supervisor integration suite", {
           },
         },
         capability: {
-          type: "capability",
+          ok: true,
+          type: "nativeCapnpCapability",
           id: body.sandstormApi.nativeCapnpLocalExport.greeter.capability.id,
-          kind: "receiverHosted",
-          residence: "localExport",
+          kind: "localExport",
           interfaceId: "0xb66316217ceedb1b",
           interfaceName: "NativeGreeter",
         },
@@ -2007,8 +2011,8 @@ runtimeTest("isolate supervisor integration suite", {
           hasMethod: true,
         },
         handoff: {
-          kind: "receiverHosted",
-          interfaceId: "0xb66316217ceedb1b",
+          kind: "localExport",
+          interfaceId: "b66316217ceedb1b",
           interfaceName: "NativeGreeter",
           connectionIsNull: true,
           id: body.sandstormApi.nativeCapnpLocalExport.greeter.handoff.id,
@@ -2019,9 +2023,8 @@ runtimeTest("isolate supervisor integration suite", {
           kind: "rpcImport",
           interfaceId: "b66316217ceedb1b",
           interfaceName: "NativeGreeter",
-          connectionId: "native-capnp-local-export-greeter-restored",
-          transportKind: "isolateBridgeWebSocketRpc",
-          connectionIsNull: false,
+          connectionIsNull: true,
+          id: body.sandstormApi.nativeCapnpLocalExport.greeter.restored.id,
           dropResult: null,
         },
         bootstrapRestored: {
@@ -2029,11 +2032,11 @@ runtimeTest("isolate supervisor integration suite", {
           savedTokenLength:
               body.sandstormApi.nativeCapnpLocalExport.greeter.bootstrapRestored.savedTokenLength,
           connectionId: body.sandstormApi.nativeCapnpLocalExport.greeter.bootstrapRestored.connectionId,
-          transportKind: "isolateBridgeWebSocketRpc",
+          transportKind: null,
           capabilityKind: "rpcImport",
           interfaceId: "b66316217ceedb1b",
           interfaceName: "NativeGreeter",
-          connectionIsNull: false,
+          connectionIsNull: true,
           dropResult: null,
         },
         info: {
@@ -2080,9 +2083,8 @@ runtimeTest("isolate supervisor integration suite", {
           kind: "rpcImport",
           interfaceId: "b66316217ceedb1b",
           interfaceName: "NativeGreeter",
-          connectionId: "classic-native-greeter-restored",
-          transportKind: "isolateBridgeWebSocketRpc",
-          connectionIsNull: false,
+          connectionIsNull: true,
+          id: body.sandstormApi.nativeCapnpLocalExport.classicGreeter.restored.id,
         },
         drop: null,
       },
@@ -2140,10 +2142,7 @@ runtimeTest("isolate supervisor integration suite", {
         drop: {
           targetId: body.sandstormApi.nativeCapnpBridge.generatedClient.drop.targetId,
           connectionId: null,
-          dropResult: {
-            ok: true,
-            released: true,
-          },
+          dropResult: null,
           generatedCallAfterDropError:
               body.sandstormApi.nativeCapnpBridge.generatedClient.drop
                   .generatedCallAfterDropError,
@@ -2374,7 +2373,7 @@ runtimeTest("isolate supervisor integration suite", {
     assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
     assert.match(selfTest.json.wrongOutboundError.message, /WebSession and ApiSession/);
     assert.match(selfTest.json.wrongOutboundError.message, /absolute URLs are rejected/);
-    assert.equal(selfTest.json.dropOriginal.ok, true);
+    assert.equal(selfTest.json.dropOriginal, null);
     assert.equal(selfTest.json.fetched.status, 200);
     assert.equal(selfTest.json.fetched.headers.etag, "\"capability-echo-etag\"");
     assert.equal(selfTest.json.fetched.headers.contentDisposition,
@@ -2418,7 +2417,7 @@ runtimeTest("isolate supervisor integration suite", {
     assert.equal(selfTest.json.streamed.downloadBytes, "131072");
     assert.equal(selfTest.json.streamed.bytes, 131072);
     assert.equal(selfTest.json.streamed.checksum, checksum(deterministicBytes(131072)));
-    assert.equal(selfTest.json.dropRestored.ok, true);
+    assert.equal(selfTest.json.dropRestored, null);
     assert.equal(selfTest.json.dropSaved.ok, true);
   });
 
@@ -2462,13 +2461,13 @@ runtimeTest("isolate supervisor integration suite", {
     assert.equal(selfTest.json.wrongOutboundError.name, "ValidationError");
     assert.match(selfTest.json.wrongOutboundError.message, /WebSession and ApiSession/);
     assert.match(selfTest.json.wrongOutboundError.message, /absolute URLs are rejected/);
-    assert.equal(selfTest.json.dropOriginal.ok, true);
+    assert.equal(selfTest.json.dropOriginal, null);
     assert.equal(selfTest.json.fetched.status, 200);
     assert.equal(selfTest.json.fetched.body.ok, true);
     assert.equal(selfTest.json.fetched.body.source, "exported-api-session");
     assert.equal(selfTest.json.fetched.body.pathname, "/api-exported/capability-echo");
     assert.equal(selfTest.json.fetched.body.search, "?source=api-js-restore");
-    assert.equal(selfTest.json.dropRestored.ok, true);
+    assert.equal(selfTest.json.dropRestored, null);
     assert.equal(selfTest.json.dropSaved.ok, true);
   });
 
@@ -2498,7 +2497,7 @@ runtimeTest("isolate supervisor integration suite", {
     assert.equal(selfTest.json.body.path, "v1/chat/completions?model=test");
     assert.equal(selfTest.json.body.authorization, "Bearer isolate-test");
     assert.equal(selfTest.json.body.body, "hello");
-    assert.equal(selfTest.json.dropRestored.ok, true);
+    assert.equal(selfTest.json.dropRestored, null);
     assert.equal(selfTest.json.dropSaved.ok, true);
   });
 
@@ -2543,9 +2542,8 @@ runtimeTest("isolate supervisor integration suite", {
         kind: "rpcImport",
         interfaceId: "b66316217ceedb1b",
         interfaceName: "NativeGreeter",
-        connectionId: `legacy-native-greeter-${savedToken.slice(0, 16)}`,
-        transportKind: "isolateBridgeWebSocketRpc",
-        connectionIsNull: false,
+        connectionIsNull: true,
+        id: selfTest.json.capability.id,
       },
       hello: {
         message: "legacy native hello isolate client",
@@ -2657,7 +2655,7 @@ runtimeTest("isolate supervisor integration suite", {
     assert.equal(runtime.json.topology, "perGrainSidecar");
     assert.equal(
       runtime.json.moduleCount,
-      5 + FIXTURE_GENERATED_SCHEMA_MODULES.length +
+      6 + FIXTURE_GENERATED_SCHEMA_MODULES.length +
           CAPNP_ES_SCHEME_RUNTIME_MODULES.length + CAPNP_ES_PATH_RUNTIME_MODULES.length +
           CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.length);
     assert.equal(runtime.json.bindingCount, 6);
@@ -2730,6 +2728,7 @@ runtimeTest("isolate supervisor integration suite", {
         ...FIXTURE_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule", false]),
         ["sandstorm:api", "esModule", false],
         ["sandstorm:capnp", "esModule", false],
+        ["sandstorm-internal:capnp-runtime", "esModule", false],
         ...CAPNP_ES_SCHEME_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
         ...CAPNP_ES_PATH_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
         ...CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),

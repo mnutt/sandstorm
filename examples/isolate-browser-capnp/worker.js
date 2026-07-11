@@ -1,5 +1,5 @@
 import { sandstorm, validate } from "sandstorm:api";
-import { exportNativeCapnp } from "sandstorm:capnp";
+import { exportCapnp } from "sandstorm:capnp";
 import { BrowserCounter } from "capnp:./browser-counter.capnp";
 
 let value = 0;
@@ -23,9 +23,7 @@ const counterMethods = {
 
 async function exportCounter(api) {
   if (!exportedCounter) {
-    exportedCounter = await exportNativeCapnp(api, BrowserCounter, counterMethods, {
-      interfaceName: "BrowserCounter",
-    });
+    exportedCounter = await exportCapnp(api, BrowserCounter, counterMethods);
   }
   return exportedCounter;
 }
@@ -194,8 +192,7 @@ export default {
       const counter = await exportCounter(api);
       return Response.json({
         ok: true,
-        capability: await counter.browserHandoff({ request }),
-        info: await counter.info(),
+        capability: await counter.browserHandoff(request),
       });
     }
 

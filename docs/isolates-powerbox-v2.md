@@ -111,7 +111,7 @@ interface Greeter {
 ```js
 // worker.js
 import { sandstorm } from "sandstorm:api";
-import { exportNativeCapnp } from "sandstorm:capnp";
+import { exportCapnp } from "sandstorm:capnp";
 import { Greeter } from "capnp:./greeter.capnp";
 
 const greeter = {
@@ -124,9 +124,8 @@ export default {
   async fetch(request, env) {
     const api = sandstorm(request, env);
     if (new URL(request.url).pathname === "/export-greeter") {
-      return Response.json(await exportNativeCapnp(api, Greeter, greeter, {
-        interfaceName: "Greeter",
-      }));
+      const exported = await exportCapnp(api, Greeter, greeter);
+      return Response.json({ token: await exported.save({ label: "Greeter" }) });
     }
 
     return new Response(`
@@ -170,7 +169,7 @@ streaming APIs should stay fetch-shaped instead of becoming RPC calls.
 ```js
 // caller-worker.js
 import { sandstorm } from "sandstorm:api";
-import { restoreNativeCapnp } from "sandstorm:capnp";
+import { capnpClient } from "sandstorm:capnp";
 import { Greeter } from "capnp:./greeter.capnp";
 
 export default {
@@ -180,14 +179,13 @@ export default {
       return new Response("Greeter is not connected", { status: 409 });
     }
 
-    const greeter = await restoreNativeCapnp(sandstorm(request, env), token, Greeter, {
-      interfaceName: "Greeter",
-    });
+    const capability = await sandstorm(request, env).restore(token);
     try {
+      const greeter = capnpClient(Greeter, capability);
       const { message } = await greeter.hello({ name: "other isolate" });
       return Response.json({ message });
     } finally {
-      await greeter.drop();
+      await capability.drop();
     }
   },
 };
@@ -199,19 +197,17 @@ capability handle is what the generated `Greeter` stub calls.
 ### Obtaining And Saving The Capability
 
 ```js
-import { connectNativeCapnp, nativeCapnpPowerboxDescriptor } from "sandstorm:capnp";
+import { capnpClient } from "sandstorm:capnp";
 import { Greeter } from "capnp:./greeter.capnp";
 
-const descriptor = await nativeCapnpPowerboxDescriptor(env, Greeter, {
-  interfaceName: "Greeter",
-});
+const descriptor = await api.powerbox().appInterfaceDescriptor(Greeter);
 
 const cap = await api.powerbox().claim(requestTokenFromBrowser, {
   descriptor,
   requiredPermissions: ["view"],
 });
 try {
-  const greeter = connectNativeCapnp(api, cap, Greeter, { interfaceName: "Greeter" });
+  const greeter = capnpClient(Greeter, cap);
   const { message } = await greeter.hello({ name: "setup check" });
 
   const token = await cap.save({ label: "Greeter service" });
@@ -287,11 +283,10 @@ Isolate caller:
 
 ```js
 import { ObjectStore } from "capnp:./object-store.capnp";
-import { restoreNativeCapnp } from "sandstorm:capnp";
+import { capnpClient } from "sandstorm:capnp";
 
-const store = await restoreNativeCapnp(api, token, ObjectStore, {
-  interfaceName: "ObjectStore",
-});
+const capability = await api.restore(token);
+const store = capnpClient(ObjectStore, capability);
 
 const listing = await store.listObjects({
   bucket: "photos",
@@ -347,31 +342,30 @@ Generated bindings should expose a small, predictable surface:
 
 ```js
 import {
-  connectNativeCapnp,
-  exportNativeCapnp,
-  nativeCapnpPowerboxDescriptor,
+  capnpClient,
+  exportCapnp,
 } from "sandstorm:capnp";
 import { Greeter } from "capnp:./greeter.capnp";
 
-const exported = await exportNativeCapnp(api, Greeter, methods);
-const client = connectNativeCapnp(api, capability, Greeter);
+const exported = await exportCapnp(api, Greeter, methods);
+const client = capnpClient(Greeter, capability);
 const localClient = new Greeter.Server(methods).client();
-const descriptor = await nativeCapnpPowerboxDescriptor(env, Greeter);
+const descriptor = await api.powerbox().appInterfaceDescriptor(Greeter);
 const interfaceId = Greeter._capnp.typeIdHex;
 ```
 
-`exportNativeCapnp()` creates a local generated capability client backed by a
-`capnp-es` server class and app-supplied method object. Passing that authority
+`exportCapnp()` creates a dedicated export handle backed by a `capnp-es` server
+class and app-supplied method object. Its generated client is `.client`. Passing that authority
 to other callers still happens through Cap'n Proto capability references or
 Sandstorm save/restore, not through the helper's JSON metadata.
 
-`connectNativeCapnp()` wraps an existing Sandstorm capability handle with a
-generated client.
+`capnpClient()` creates a non-owning generated client view of an existing
+Sandstorm capability handle.
 
 `new Interface.Server(methods).client()` creates an in-memory client for tests.
 
-`nativeCapnpPowerboxDescriptor()` creates the descriptor needed to request a
-compatible capability from generated metadata.
+`PowerboxApi.appInterfaceDescriptor()` creates the descriptor needed to request
+a compatible capability from generated metadata.
 
 Generated TypeScript types should be emitted from the same schema:
 
@@ -466,6 +460,10 @@ cannot remove the authority boundary, revocation semantics, or the need to
 dispatch through a live capability handle.
 
 ## Staged Plan
+
+The progress log below is superseded implementation history. Names shown there
+describe prototype APIs that were removed by the final TypeScript API cleanup;
+the current public surface is documented above.
 
 ### Removed Prototype Slice: Fetch-Shaped App-Object Bindings
 
@@ -574,10 +572,10 @@ Progress:
 
 Deliverables:
 
-- finalize `exportNativeCapnp()`
-- finalize `connectNativeCapnp()`
-- finalize `restoreNativeCapnp()`
-- finalize `nativeCapnpPowerboxDescriptor()`
+- finalize local schema exports
+- finalize non-owning typed capability views
+- finalize restore through `sandstorm:api`
+- finalize generated-metadata Powerbox descriptors
 - expose generated interface IDs through `_capnp` metadata
 - document the generated `capnp-es` metadata shape consumed by Sandstorm
 - define client and server TypeScript types

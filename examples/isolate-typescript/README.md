@@ -13,11 +13,14 @@ cd ../..
 spk dev-isolate --title "TypeScript Isolate" examples/isolate-typescript/worker.js
 ```
 
-`worker.ts` imports values and types from `sandstorm:api`. The build script
+`worker.ts` imports values and types from `sandstorm:api`, then exports the
+generated `TypedCounter` using an inferred
+`ServerTargetFor<typeof TypedCounter>` implementation. The build script
 marks Sandstorm-provided modules as external, so imports such as
 `sandstorm:api` remain in `worker.js` for the isolate runtime to resolve.
-Typed public capabilities can also import `sandstorm:capnp` and generated
-`capnp:` schema modules; keep those imports external in the same way.
+The checked-in `typed-counter.d.ts` is generated from `typed-counter.capnp` by
+the pinned capnp-es compiler, so strict typechecking validates RPC parameters,
+results, and the complete server implementation.
 
 The checked-in `worker.js` is the generated output for convenience. Rebuild it
 after editing `worker.ts`.

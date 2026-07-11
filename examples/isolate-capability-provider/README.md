@@ -42,5 +42,5 @@ The ApiSession button exercises the same lifecycle for:
 These route-backed capabilities are Sandstorm capabilities. Other holders see a
 normal `WebSession` or `ApiSession`; the isolate supervisor translates calls
 back into Worker `fetch()` requests. For a typed public app protocol, define a
-`.capnp` interface and export it with `exportNativeCapnp()` instead of routing
+`.capnp` interface and export it with `exportCapnp()` instead of routing
 method calls through HTTP paths.

@@ -23,6 +23,7 @@
 
 #include <sandstorm/isolate/api.js.h>
 #include <sandstorm/isolate/capnp-es.js.h>
+#include <sandstorm/isolate/capnp-runtime.js.h>
 #include <sandstorm/isolate/capnp.js.h>
 
 #include <capnp/message.h>
@@ -710,6 +711,8 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
       ISOLATE_API_HELPER_SOURCE);
   addGeneratedIsolateModule(config, "sandstorm:capnp", IsolateRuntimeConfig::ModuleType::ES_MODULE,
       ISOLATE_CAPNP_HELPER_SOURCE);
+  addGeneratedIsolateModule(config, "sandstorm-internal:capnp-runtime",
+      IsolateRuntimeConfig::ModuleType::ES_MODULE, ISOLATE_CAPNP_RUNTIME_SOURCE);
   for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
     addGeneratedIsolateModule(config, capnpEsSchemeRuntimeSpecifier(module.name),
         IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);

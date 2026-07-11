@@ -1,164 +1,114 @@
 declare module "sandstorm:capnp" {
   import type {
     Capability,
+    SandstormApi,
+    SaveCapabilityOptions,
   } from "sandstorm:api";
 
-  export const SANDSTORM_CAPNP_VERSION: 0;
-  export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION: 0;
-
-  export type NativeCapnpBridgeFeature =
-    "nativeTransport" | "nativeRpc" | "nativeRpcWebSocket";
-
-  export interface NativeCapnpBridgeNegotiationOptions {
-    requiredFeatures?: readonly NativeCapnpBridgeFeature[];
+  export interface CapnpInterfaceMetadata {
+    readonly typeId: bigint;
+    readonly typeIdHex: string;
+    readonly displayName: string;
   }
 
-  export interface NativeCapnpBridgeNegotiation {
-    readonly available: boolean;
-    readonly protocolSupported: boolean;
-    readonly protocolVersion: 0;
-    readonly nativeTransport: boolean;
-    readonly nativeRpc: boolean;
-    readonly nativeRpcWebSocket: boolean;
-    readonly missingFeatures: readonly NativeCapnpBridgeFeature[];
-    readonly reason: string;
-    readonly info: unknown;
+  export interface CapnpClientInterface {
+    readonly Client: abstract new (...args: any[]) => object;
+    readonly _capnp: CapnpInterfaceMetadata;
   }
 
-  export function negotiateNativeCapnpBridgeInfo(
-    info: unknown,
-    options?: NativeCapnpBridgeNegotiationOptions,
-  ): NativeCapnpBridgeNegotiation;
-
-  export function negotiateNativeCapnpBridge(
-    api: { capnpBridgeInfo(): Promise<unknown> },
-    options?: NativeCapnpBridgeNegotiationOptions,
-  ): Promise<NativeCapnpBridgeNegotiation>;
-
-  export class NativeCapnpBridgeUnavailableError extends Error {
-    readonly name: "NativeCapnpBridgeUnavailableError";
-    readonly details: unknown;
-    constructor(message: string, details?: unknown);
+  export interface CapnpServerInterface extends CapnpClientInterface {
+    readonly Server: abstract new (...args: any[]) => { client(): object };
   }
 
-  export class NativeCapnpBridgeProtocolError extends Error {
-    readonly name: "NativeCapnpBridgeProtocolError";
-    readonly details: unknown;
-    constructor(message: string, details?: unknown);
+  export interface CapnpStructClass {
+    readonly _applyInit: (builder: any, value: any) => void;
+    new (...args: any[]): object;
   }
 
-  export type NativeCapnpCapabilitySlotKind = "senderHosted" | "receiverHosted" | "savedToken";
+  export type ClientFor<I extends CapnpClientInterface> = InstanceType<I["Client"]>;
+  export type ServerTargetFor<I extends CapnpServerInterface> =
+    ConstructorParameters<I["Server"]>[0];
+  export type StructInitFor<S extends CapnpStructClass> = Parameters<S["_applyInit"]>[1];
 
-  export interface NativeCapnpCapabilitySlot {
+  /**
+   * Creates a non-owning schema view of a live Sandstorm capability. The returned
+   * client does not own or extend the capability lifetime; its caller must drop the
+   * original Capability when finished.
+   */
+  export function capnpClient<I extends CapnpClientInterface>(
+    InterfaceClass: I,
+    capability: Capability,
+  ): ClientFor<I>;
+
+  export interface CapnpBrowserHandoff {
+    readonly type: "capability";
     readonly id: string;
-    readonly interfaceId?: bigint | number | string;
-    readonly interfaceName?: string;
-    readonly kind?: NativeCapnpCapabilitySlotKind;
+    readonly kind: "receiverHosted";
+    readonly residence: "browserHandoff";
+    readonly interfaceId: string;
+    readonly interfaceName: string;
   }
 
-  export interface NativeCapnpPayload {
-    readonly message: Uint8Array;
-    readonly capabilities: readonly Required<NativeCapnpCapabilitySlot>[];
+  /** Owns a local exported server and its generated client until drop() is called. */
+  export interface CapnpExport<TClient> {
+    readonly client: TClient;
+
+    /** Persists this authority and returns its durable string token. */
+    save(options?: SaveCapabilityOptions): Promise<string>;
+
+    /** Releases the local server. This operation is idempotent. */
+    drop(): Promise<void>;
+
+    /**
+     * Transfers this authority to the browser session identified by request. The
+     * request must belong to a live Sandstorm WebSession.
+     */
+    browserHandoff(request: Request): Promise<CapnpBrowserHandoff>;
   }
 
-  export function makeNativeCapnpPayload(
-    message?: { toUint8Array(): Uint8Array } | Uint8Array | ArrayBuffer | ArrayBufferView,
-    capabilities?: readonly NativeCapnpCapabilitySlot[],
-  ): NativeCapnpPayload;
+  /** Exports a generated server target as live local Cap'n Proto authority. */
+  export function exportCapnp<I extends CapnpServerInterface>(
+    api: SandstormApi,
+    InterfaceClass: I,
+    target: ServerTargetFor<I>,
+  ): Promise<CapnpExport<ClientFor<I>>>;
 
-  export interface NativeCapnpGeneratedStruct<TStruct extends object> {
-    new (...args: any[]): TStruct;
-    readonly _applyInit?: (builder: TStruct, value: unknown) => void;
-  }
+  /** Creates a new generated struct and applies its inferred Init<T> value. */
+  export function createCapnpStruct<S extends CapnpStructClass>(
+    StructClass: S,
+    value?: StructInitFor<S>,
+  ): InstanceType<S>;
 
-  export function makeCapnpStruct<TStruct extends object>(
-    StructClass: NativeCapnpGeneratedStruct<TStruct>,
-    value?: unknown,
-  ): TStruct;
-
-  export function readCapnpStruct<TStruct extends object>(
-    StructClass: NativeCapnpGeneratedStruct<TStruct>,
+  /** Reads an unknown pointer value as the requested generated struct type. */
+  export function readCapnpStruct<S extends CapnpStructClass>(
+    StructClass: S,
     value: unknown,
-  ): TStruct;
-
-  export class IsolateBridgeWebSocketRpcTransport {
-    readonly kind: "isolateBridgeWebSocketRpc";
-    readonly api: {
-      nativeCapnpBridgeOpenBootstrapSession(connectionId: string): Promise<WebSocket>;
-    };
-    readonly connectionId: string;
-    constructor(
-      api: IsolateBridgeWebSocketRpcTransport["api"],
-      options?: {
-        readonly connectionId?: string;
-      },
-    );
-    sendMessage(message: unknown): void;
-    recvMessage(): Promise<unknown>;
-    close(error?: unknown): void;
-  }
-
-  export function createIsolateBridgeConnection(
-    api: {
-      nativeCapnpBridgeOpenBootstrapSession?(connectionId: string): Promise<WebSocket>;
-    },
-    options?: {
-      readonly connectionId?: string;
-      readonly finalize?: unknown;
-    },
-  ): unknown;
-
-  export type IsolateBridgeConnectedClient = {
-    readonly connection: unknown;
-    readonly transport: IsolateBridgeWebSocketRpcTransport;
-    close(error?: unknown): void;
-    getSandstormApi(params?: unknown): unknown;
-    getSessionContext(params?: unknown): unknown;
-  };
-
-  export function connectIsolateBridge(
-    api: {
-      nativeCapnpBridgeOpenBootstrapSession?(connectionId: string): Promise<WebSocket>;
-    },
-    options?: {
-      readonly connectionId?: string;
-      readonly finalize?: unknown;
-    },
-  ): IsolateBridgeConnectedClient;
-
-  export function nativeCapnpSavedTokenData(
-    token: string | Uint8Array | ArrayBuffer | ArrayBufferView,
-  ): Uint8Array;
-
-  export function nativeCapnpSavedTokenText(
-    token: string | Uint8Array | ArrayBuffer | ArrayBufferView,
-  ): string;
+  ): InstanceType<S>;
 
   export type ByteStreamChunk =
-    Uint8Array |
-    ArrayBuffer |
-    ArrayBufferView |
-    { toUint8Array(): Uint8Array } |
-    { copyToUint8Array(): Uint8Array };
+    | Uint8Array
+    | ArrayBuffer
+    | ArrayBufferView
+    | { toUint8Array(): Uint8Array }
+    | { copyToUint8Array(): Uint8Array };
 
-  export interface ByteStreamLike {
-    write(params: {
-      readonly data: ByteStreamChunk;
-    }): Promise<unknown> | unknown;
+  /** Narrow generated sandstorm.util.ByteStream client contract. */
+  export interface ByteStreamClient {
+    write(params: { readonly data: ByteStreamChunk }): Promise<unknown> | unknown;
     done(params?: unknown): Promise<unknown> | unknown;
-    expectSize?(params: {
-      readonly size: bigint | number;
-    }): Promise<unknown> | unknown;
+    expectSize?(params: { readonly size: bigint | number }): Promise<unknown> | unknown;
     drop?(reason?: unknown): Promise<unknown> | unknown;
   }
 
   export interface WritableFromByteStreamOptions {
+    /** Total number of bytes that will be written. */
     readonly size?: bigint | number;
     readonly chunkSize?: number;
   }
 
   export interface ByteStreamFromWritableOptions {
     readonly chunkSize?: number;
+    /** `remaining` is the number of bytes expected after bytes already written. */
     readonly onExpectSize?: (
       remaining: bigint,
       context: {
@@ -168,269 +118,28 @@ declare module "sandstorm:capnp" {
     ) => Promise<void> | void;
   }
 
-  export interface PipeReadableToByteStreamOptions extends WritableFromByteStreamOptions {
-    readonly pipeTo?: StreamPipeOptions;
-  }
-
+  /**
+   * Adapts a ByteStream client to a WritableStream. close() calls done(); abort()
+   * drops the ByteStream capability when the generated client supports drop().
+   */
   export function writableFromByteStream(
-    stream: ByteStreamLike,
+    stream: ByteStreamClient,
     options?: WritableFromByteStreamOptions,
   ): WritableStream<ByteStreamChunk>;
 
+  /**
+   * Adapts a WritableStream to a ByteStream client. done() closes and releases the
+   * writer; write/size failures abort it and release the writer lock.
+   */
   export function byteStreamFromWritable(
     writable: WritableStream<Uint8Array>,
     options?: ByteStreamFromWritableOptions,
-  ): ByteStreamLike;
+  ): ByteStreamClient;
 
-  export function pipeReadableToByteStream(
-    readable: ReadableStream<ByteStreamChunk>,
-    stream: ByteStreamLike,
-    options?: PipeReadableToByteStreamOptions,
-  ): Promise<void>;
-
-  export class NativeCapnpStreamTransport {
-    constructor(
-      readable: ReadableStream<Uint8Array>,
-      writable: WritableStream<Uint8Array>,
-      options?: { readonly connection?: unknown },
-    );
-    attachConnection(connection: unknown): void;
-    sendMessage(message: unknown): void;
-    recvMessage(): Promise<unknown>;
-    close(error?: unknown): void;
-  }
-
-  export function createNativeCapnpServerSession(
-    InterfaceClass: NativeCapnpGeneratedInterface<object> & {
-      readonly Server: new (target: object) => unknown;
-    },
-    target: object,
-    options: {
-      readonly readable?: ReadableStream<Uint8Array>;
-      readonly writable?: WritableStream<Uint8Array>;
-      readonly webSocket?: WebSocket;
-      readonly finalize?: unknown;
-    },
-  ): unknown;
-
-  export interface NativeCapnpLocalExportClient {
-    readonly capability: {
-      readonly kind: "localExport";
-      readonly interfaceId: bigint;
-      readonly interfaceName: string;
-    };
-    readonly connection: null;
-    readonly transport: null;
-    browserHandoff(options?: {
-      readonly request?: Request;
-      readonly sessionId?: string;
-      readonly connectionId?: string;
-      readonly finalize?: unknown;
-    }): Promise<{
-      readonly type: "capability";
-      readonly id: string;
-      readonly kind: "receiverHosted";
-      readonly residence: "browserHandoff";
-      readonly interfaceId: string;
-      readonly interfaceName: string;
-    }>;
-    drop(): undefined;
-    info(): Promise<{
-      readonly ok: true;
-      readonly type: "nativeCapnpCapability";
-      readonly kind: "localExport";
-      readonly interfaceId: string;
-      readonly interfaceName: string;
-    }>;
-    save(options?: {
-      readonly label?: string | { readonly defaultText: string };
-      readonly saveLabel?: string | { readonly defaultText: string };
-      readonly connectionId?: string;
-      readonly finalize?: unknown;
-    }): Promise<string>;
-    toJSON(): {
-      readonly ok: true;
-      readonly type: "nativeCapnpCapability";
-      readonly kind: "localExport";
-      readonly interfaceId: string;
-      readonly interfaceName: string;
-    };
-  }
-
-  export function exportNativeCapnp<TClient extends object>(
-    api: {
-      capnpBridgeInfo(): Promise<unknown>;
-      nativeCapnpBridgeOpenBootstrapSession(connectionId: string): Promise<WebSocket>;
-    },
-    InterfaceClass: NativeCapnpGeneratedInterface<TClient> & {
-      readonly Server: new (target: object) => unknown;
-    },
-    target: object,
-    options?: {
-      readonly interfaceId?: bigint | number | string;
-      readonly interfaceName?: string;
-      readonly schema?: {
-        readonly interfaceId?: bigint | number | string;
-        readonly interfaceName?: string;
-      };
-      readonly binding?: {
-        readonly schema?: {
-          readonly interfaceId?: bigint | number | string;
-          readonly interfaceName?: string;
-        };
-      };
-    },
-  ): Promise<TClient & NativeCapnpLocalExportClient>;
-
-  export interface NativeCapnpGeneratedInterface<TClient extends object> {
-    readonly Client: new (client: unknown) => TClient;
-    readonly Server?: new (target: object) => { client(): TClient };
-    readonly interfaceId?: bigint | number | string;
-    readonly interfaceName?: string;
-    readonly schema?: {
-      readonly interfaceId?: bigint | number | string;
-      readonly interfaceName?: string;
-    };
-    readonly _capnp?: {
-      readonly displayName?: string;
-      readonly typeId?: bigint;
-      readonly typeIdHex?: string;
-    };
-  }
-
-  export interface NativeCapnpPowerboxDescriptorInfo {
-    readonly ok: true;
-    readonly type: "packedPowerboxDescriptor";
-    readonly descriptor: string;
-    readonly decoded: {
-      readonly interfaceId: string;
-      readonly interfaceName: string;
-    };
-  }
-
-  export function nativeCapnpPowerboxDescriptorInfo<TClient extends object>(
-    env: { readonly SANDSTORM_API: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> } },
-    InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
-    options?: {
-      readonly interfaceId?: bigint | number | string;
-      readonly interfaceName?: string;
-      readonly schema?: {
-        readonly interfaceId?: bigint | number | string;
-        readonly interfaceName?: string;
-      };
-      readonly binding?: {
-        readonly schema?: {
-          readonly interfaceId?: bigint | number | string;
-          readonly interfaceName?: string;
-        };
-      };
-    },
-  ): Promise<NativeCapnpPowerboxDescriptorInfo>;
-
-  export function nativeCapnpPowerboxDescriptor<TClient extends object>(
-    env: { readonly SANDSTORM_API: { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> } },
-    InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
-    options?: {
-      readonly interfaceId?: bigint | number | string;
-      readonly interfaceName?: string;
-      readonly schema?: {
-        readonly interfaceId?: bigint | number | string;
-        readonly interfaceName?: string;
-      };
-      readonly binding?: {
-        readonly schema?: {
-          readonly interfaceId?: bigint | number | string;
-          readonly interfaceName?: string;
-        };
-      };
-    },
-  ): Promise<string>;
-
-  export interface NativeCapnpRpcImportCapability {
-    readonly kind: "rpcImport";
-    readonly interfaceId: bigint | number | string;
-    readonly interfaceName: string;
-  }
-
-  export type NativeCapnpConnectedClient<TClient extends object> = TClient & {
-    readonly capability: NativeCapnpCapabilitySlot | NativeCapnpRpcImportCapability;
-    readonly connection: unknown;
-    readonly transport: IsolateBridgeWebSocketRpcTransport;
-    drop(): Promise<unknown> | unknown;
-    save(...args: unknown[]): Promise<string> | string | undefined;
-  };
-
-  export function connectNativeCapnp<TClient extends object>(
-    api: {
-      nativeCapnpBridgeOpenBootstrapSession(connectionId: string): Promise<WebSocket>;
-    },
-    target: NativeCapnpCapabilitySlot,
-    InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
-    options?: {
-      readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
-      readonly connectionId?: string;
-      readonly finalize?: unknown;
-    },
-  ): NativeCapnpConnectedClient<TClient>;
-
-  export function restoreNativeCapnp<TClient extends object>(
-    api: {
-      capnpBridgeInfo(): Promise<unknown>;
-      nativeCapnpBridgeOpenBootstrapSession?(connectionId: string): Promise<WebSocket>;
-    },
-    token: string | Uint8Array | ArrayBuffer | ArrayBufferView,
-    InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
-    options?: {
-      readonly capabilities?: readonly NativeCapnpCapabilitySlot[];
-      readonly connectionId?: string;
-      readonly finalize?: unknown;
-      readonly interfaceId?: bigint | number | string;
-      readonly interfaceName?: string;
-      readonly schema?: {
-        readonly interfaceId?: bigint | number | string;
-        readonly interfaceName?: string;
-      };
-      readonly binding?: {
-        readonly schema?: {
-          readonly interfaceId?: bigint | number | string;
-          readonly interfaceName?: string;
-        };
-      };
-    },
-  ): Promise<NativeCapnpConnectedClient<TClient>>;
-
-  export function restoreNativeCapnpViaBootstrap<TClient extends object>(
-    api: {
-      capnpBridgeInfo(): Promise<unknown>;
-      nativeCapnpBridgeOpenBootstrapSession?(connectionId: string): Promise<WebSocket>;
-    },
-    token: string | Uint8Array | ArrayBuffer | ArrayBufferView,
-    InterfaceClass: NativeCapnpGeneratedInterface<TClient>,
-    options?: {
-      readonly connectionId?: string;
-      readonly finalize?: unknown;
-      readonly interfaceId?: bigint | number | string;
-      readonly interfaceName?: string;
-      readonly label?: string | object;
-      readonly saveLabel?: string | object;
-      readonly schema?: {
-        readonly interfaceId?: bigint | number | string;
-        readonly interfaceName?: string;
-      };
-      readonly binding?: {
-        readonly schema?: {
-          readonly interfaceId?: bigint | number | string;
-          readonly interfaceName?: string;
-        };
-      };
-    },
-  ): Promise<NativeCapnpConnectedClient<TClient>>;
-
-  export type CapnpNativeInterface =
-    "unknown" | "webSession" | "apiSession" | "outboundHttpSession";
-
-  export interface CapnpNativeCapabilitySlot {
-    nativeInterface: CapnpNativeInterface;
-    fetch?: boolean;
+  /** The isolate runtime cannot provide the requested Cap'n Proto operation. */
+  export class CapnpUnavailableError extends Error {
+    readonly name: "CapnpUnavailableError";
+    readonly details: unknown;
+    constructor(message: string, details?: unknown);
   }
 }

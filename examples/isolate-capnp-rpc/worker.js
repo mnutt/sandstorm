@@ -1,5 +1,5 @@
 import { sandstorm } from "sandstorm:api";
-import { exportNativeCapnp } from "sandstorm:capnp";
+import { exportCapnp } from "sandstorm:capnp";
 import { Greeting } from "capnp:./greeting.capnp";
 import { Greeter } from "capnp:./greeter.capnp";
 
@@ -39,12 +39,10 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === "/export-greeter") {
-      const capability = await exportNativeCapnp(api, Greeter, greeterMethods, {
-        interfaceName: "Greeter",
-      });
+      const exported = await exportCapnp(api, Greeter, greeterMethods);
       return Response.json({
         ok: true,
-        info: await capability.info(),
+        token: await exported.save({ label: "Greeter" }),
       });
     }
 

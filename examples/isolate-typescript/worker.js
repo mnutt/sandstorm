@@ -2,6 +2,8 @@
 
 // worker.ts
 import { sandstorm, validate } from "sandstorm:api";
+import { exportCapnp } from "sandstorm:capnp";
+import { TypedCounter } from "capnp:./typed-counter.capnp";
 async function increment(api, step = 1) {
   const amount = validate.integer(step, "step", { min: 1, max: 100 });
   const store = api.storage();
@@ -9,6 +11,13 @@ async function increment(api, step = 1) {
   const value = current + amount;
   await store.put("typescript-counter", String(value));
   return { value };
+}
+function typedCounter(api) {
+  return {
+    async increment({ step }) {
+      return increment(api, step);
+    }
+  };
 }
 function html() {
   return `<!doctype html>
@@ -98,6 +107,13 @@ var worker_default = {
     }
     if (request.method === "POST" && url.pathname === "/increment") {
       return Response.json(await increment(api, Number(url.searchParams.get("step") || "1")));
+    }
+    if (request.method === "POST" && url.pathname === "/export-counter") {
+      const exported = await exportCapnp(api, TypedCounter, typedCounter(api));
+      return Response.json({
+        ok: true,
+        token: await exported.save({ label: "Typed counter" })
+      });
     }
     return new Response(html(), {
       headers: { "content-type": "text/html; charset=utf-8" }
