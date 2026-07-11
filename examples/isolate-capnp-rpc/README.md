@@ -29,11 +29,12 @@ Proto capability references or saved/restored through Sandstorm when the
 interface implements `Grain.AppPersistent`.
 
 TypeScript declarations for the native helpers live in
+`src/sandstorm/isolate/api.d.ts` and its native-helper augmentation in
 `src/sandstorm/isolate/capnp.d.ts`. Schema-specific declarations come from the
 generated `capnp:` schema module:
 
 ```ts
-import { exportCapnp } from "sandstorm:capnp";
+import { exportCapnp } from "sandstorm:api";
 import { Greeter } from "capnp:./greeter.capnp";
 
 const exported = await exportCapnp(api, Greeter, {

@@ -14,7 +14,7 @@ browser native Cap'n Proto WebSocket bridge.
 The worker defines and exports a `BrowserCounter` capability with:
 
 ```js
-import { exportCapnp } from "sandstorm:capnp";
+import { exportCapnp } from "sandstorm:api";
 import { BrowserCounter } from "capnp:./browser-counter.capnp";
 ```
 

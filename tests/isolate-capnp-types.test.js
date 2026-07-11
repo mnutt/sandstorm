@@ -49,28 +49,24 @@ async function readable(file) {
   }
 }
 
-test("sandstorm:capnp exposes exactly the intended public values", async (t) => {
-  const temp = await fs.mkdtemp(path.join(REPO_DIR, "tmp/isolate-capnp-namespace-"));
-  t.after(() => fs.rm(temp, { recursive: true, force: true }));
+test("sandstorm:api exports exactly the intended public Cap'n Proto values", async () => {
   const names = [
     "CapnpUnavailableError",
     "byteStreamFromWritable",
     "capnpClient",
     "createCapnpStruct",
     "exportCapnp",
+    "pipeReadableToByteStream",
     "readCapnpStruct",
     "writableFromByteStream",
   ];
-  const internal = path.join(temp, "internal.mjs");
-  await fs.writeFile(internal, names.map((name) => name === "CapnpUnavailableError"
-    ? `export class ${name} extends Error {}`
-    : `export const ${name} = () => {};`).join("\n"));
   const source = await fs.readFile(
-    path.join(REPO_DIR, "src/sandstorm/isolate/capnp.js"), "utf8");
-  await fs.writeFile(path.join(temp, "public.mjs"), source.replace(
-    '"sandstorm-internal:capnp-runtime"', JSON.stringify(pathToFileURL(internal).href)));
-  const namespace = await import(pathToFileURL(path.join(temp, "public.mjs")).href);
-  assert.deepEqual(Object.keys(namespace).sort(), names.sort());
+    path.join(REPO_DIR, "src/sandstorm/isolate/api.js"), "utf8");
+  const match = source.match(
+    /export\s*\{([^}]*)\}\s*from\s*"sandstorm-internal:capnp-runtime";/);
+  assert.ok(match, "sandstorm:api must re-export Cap'n Proto helpers from the internal runtime");
+  const exportedNames = match[1].split(",").map((name) => name.trim()).filter(Boolean);
+  assert.deepEqual(exportedNames.sort(), names.sort());
 });
 
 test("generated Cap'n Proto types enforce the Sandstorm API contract", async (t) => {
@@ -110,19 +106,28 @@ interface Collision {
     path.join(temp, "capnp.d.ts"));
   await fs.writeFile(path.join(temp, "usage.ts"), `
 import { Collision, Profile } from "./contract.js";
-import type { Capability, SandstormApi } from "sandstorm:api";
 import {
   capnpClient,
   createCapnpStruct,
   exportCapnp,
-} from "sandstorm:capnp";
-import type { ServerTargetFor } from "sandstorm:capnp";
+  pipeReadableToByteStream,
+} from "sandstorm:api";
+import type {
+  ByteStreamClient,
+  Capability,
+  SandstormApi,
+  ServerTargetFor,
+} from "sandstorm:api";
 // @ts-expect-error internal bridge exports are not public
-import { connectIsolateBridge } from "sandstorm:capnp";
+import { connectIsolateBridge } from "sandstorm:api";
 
 declare const api: SandstormApi;
 declare const capability: Capability;
+declare const readable: ReadableStream<Uint8Array>;
+declare const byteStream: ByteStreamClient;
 declare const token: string;
+
+const piped: Promise<void> = pipeReadableToByteStream(readable, byteStream, { size: 4n });
 
 const client = capnpClient(Collision, capability);
 client.save({ value: "save" });
@@ -148,6 +153,7 @@ const descriptor: Promise<string> = api.powerbox().appInterfaceDescriptor(Collis
 // @ts-expect-error durable tokens are strings, not byte arrays
 api.restore(new Uint8Array());
 void savedCapability;
+void piped;
 void descriptor;
 void restored;
 void revoked;

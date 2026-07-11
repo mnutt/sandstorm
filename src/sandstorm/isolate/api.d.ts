@@ -1,9 +1,4 @@
 declare module "sandstorm:api" {
-  import type {
-    CapnpClientInterface,
-    CapnpExport,
-  } from "sandstorm:capnp";
-
   export const SANDSTORM_API_VERSION: 0;
   export const SANDSTORM_HELPER_VERSIONS: {
     readonly api: 0;

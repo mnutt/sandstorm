@@ -1013,9 +1013,7 @@ toolchainTest("spk dev-isolate prints manifests and native generated capnp modul
   assert.equal(modules.has("capnp-es:./greeter.capnp"), false);
   assert.equal(modules.has("capnp-es:./greeting.capnp"), false);
   assert.equal(modules.get("sandstorm:api").esModulePath, "__sandstorm_isolate_runtime/api.js");
-  assert.equal(
-    modules.get("sandstorm:capnp").esModulePath,
-    "__sandstorm_isolate_runtime/capnp.js");
+  assert.equal(modules.has("sandstorm:capnp"), false);
   assert.equal(
     modules.get("sandstorm-internal:capnp-runtime").esModulePath,
     "__sandstorm_isolate_runtime/capnp-runtime.js");
@@ -1634,7 +1632,6 @@ runtimeTest("isolate supervisor integration suite", {
         ["metadata.json", "json"],
         ...FIXTURE_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule"]),
         ["sandstorm:api", "esModule"],
-        ["sandstorm:capnp", "esModule"],
         ["sandstorm-internal:capnp-runtime", "esModule"],
         ...CAPNP_ES_SCHEME_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
         ...CAPNP_ES_PATH_RUNTIME_MODULES.map(([name]) => [name, "esModule"]),
@@ -1843,7 +1840,7 @@ runtimeTest("isolate supervisor integration suite", {
         echoBootstrap: true,
         echoQuestionId: 77,
         adapters: {
-          pipeTo: {
+          pipeReadableToByteStream: {
             bytes: 12,
             checksum: 31,
           },
@@ -2655,7 +2652,7 @@ runtimeTest("isolate supervisor integration suite", {
     assert.equal(runtime.json.topology, "perGrainSidecar");
     assert.equal(
       runtime.json.moduleCount,
-      6 + FIXTURE_GENERATED_SCHEMA_MODULES.length +
+      5 + FIXTURE_GENERATED_SCHEMA_MODULES.length +
           CAPNP_ES_SCHEME_RUNTIME_MODULES.length + CAPNP_ES_PATH_RUNTIME_MODULES.length +
           CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.length);
     assert.equal(runtime.json.bindingCount, 6);
@@ -2727,7 +2724,6 @@ runtimeTest("isolate supervisor integration suite", {
         ["metadata.json", "json", false],
         ...FIXTURE_GENERATED_SCHEMA_MODULES.map(([name]) => [name, "esModule", false]),
         ["sandstorm:api", "esModule", false],
-        ["sandstorm:capnp", "esModule", false],
         ["sandstorm-internal:capnp-runtime", "esModule", false],
         ...CAPNP_ES_SCHEME_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),
         ...CAPNP_ES_PATH_RUNTIME_MODULES.map(([name]) => [name, "esModule", false]),

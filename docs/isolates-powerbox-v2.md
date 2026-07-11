@@ -110,8 +110,7 @@ interface Greeter {
 
 ```js
 // worker.js
-import { sandstorm } from "sandstorm:api";
-import { exportCapnp } from "sandstorm:capnp";
+import { exportCapnp, sandstorm } from "sandstorm:api";
 import { Greeter } from "capnp:./greeter.capnp";
 
 const greeter = {
@@ -168,8 +167,7 @@ streaming APIs should stay fetch-shaped instead of becoming RPC calls.
 
 ```js
 // caller-worker.js
-import { sandstorm } from "sandstorm:api";
-import { capnpClient } from "sandstorm:capnp";
+import { capnpClient, sandstorm } from "sandstorm:api";
 import { Greeter } from "capnp:./greeter.capnp";
 
 export default {
@@ -197,7 +195,7 @@ capability handle is what the generated `Greeter` stub calls.
 ### Obtaining And Saving The Capability
 
 ```js
-import { capnpClient } from "sandstorm:capnp";
+import { capnpClient } from "sandstorm:api";
 import { Greeter } from "capnp:./greeter.capnp";
 
 const descriptor = await api.powerbox().appInterfaceDescriptor(Greeter);
@@ -283,7 +281,7 @@ Isolate caller:
 
 ```js
 import { ObjectStore } from "capnp:./object-store.capnp";
-import { capnpClient } from "sandstorm:capnp";
+import { capnpClient } from "sandstorm:api";
 
 const capability = await api.restore(token);
 const store = capnpClient(ObjectStore, capability);
@@ -344,7 +342,7 @@ Generated bindings should expose a small, predictable surface:
 import {
   capnpClient,
   exportCapnp,
-} from "sandstorm:capnp";
+} from "sandstorm:api";
 import { Greeter } from "capnp:./greeter.capnp";
 
 const exported = await exportCapnp(api, Greeter, methods);
@@ -560,7 +558,7 @@ Progress:
 
 - generated `capnp:` modules expose native `Interface.Client` and
   `Interface.Server` classes plus `_capnp` metadata such as `typeIdHex`
-- `sandstorm:capnp` exposes native helper functions for exporting, connecting,
+- `sandstorm:api` exposes native helper functions for exporting, connecting,
   saving, restoring, and deriving Powerbox descriptors from generated
   interfaces
 - the hand-written `makeCapnpInterfaceBinding()` API and `capnp:*` declaration
@@ -1097,7 +1095,7 @@ Progress:
 - the isolate examples under `examples/` have been refreshed around the current
   model: HTTP-shaped apps and WebSession/ApiSession examples say when they are
   intentionally fetch/data-plane shaped, native public protocols use `capnp:`
-  and `sandstorm:capnp`, and the object-store example now exports its
+  and `sandstorm:api`, and the object-store example now exports its
   `ObjectStore` as a native Cap'n Proto Sandstorm capability
 
 Exit criteria:

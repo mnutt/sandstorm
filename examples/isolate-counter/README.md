@@ -12,4 +12,4 @@ module, JSON metadata, and text data, then persists a counter with
 
 It does not expose a public cross-grain protocol. If another grain should call
 an app-defined typed API, define that API in a `.capnp` file and export it with
-`sandstorm:capnp` as shown in `examples/isolate-capnp-rpc`.
+the Cap'n Proto helpers in `sandstorm:api` as shown in `examples/isolate-capnp-rpc`.

@@ -1,9 +1,12 @@
 /// <reference path="./sandstorm-isolate.d.ts" />
 
-import { sandstorm, validate } from "sandstorm:api";
-import type { SandstormApi, SandstormEnv, SessionInfo } from "sandstorm:api";
-import { exportCapnp } from "sandstorm:capnp";
-import type { ServerTargetFor } from "sandstorm:capnp";
+import { exportCapnp, sandstorm, validate } from "sandstorm:api";
+import type {
+  SandstormApi,
+  SandstormEnv,
+  ServerTargetFor,
+  SessionInfo,
+} from "sandstorm:api";
 import { TypedCounter } from "capnp:./typed-counter.capnp";
 
 interface Env extends SandstormEnv {

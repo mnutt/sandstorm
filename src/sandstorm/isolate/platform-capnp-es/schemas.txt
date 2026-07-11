@@ -1,6 +1,6 @@
 # Sandstorm platform schemas embedded as generated capnp-es modules for isolate apps.
 #
-# Keep this as the complete closure needed by sandstorm:api and sandstorm:capnp.
+# Keep this as the complete closure needed by sandstorm:api.
 sandstorm/activity.capnp
 sandstorm/grain.capnp
 sandstorm/identity.capnp
