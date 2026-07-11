@@ -1,4 +1,4 @@
-// Internal Cap'n Proto bridge runtime. Application code must use sandstorm:capnp.
+// Internal Cap'n Proto bridge runtime. Application code must use sandstorm:api.
 import {
   Conn as CapnpEsConn,
   DeferredTransport as CapnpEsDeferredTransport,
@@ -311,6 +311,13 @@ export function writableFromByteStream(stream, options = {}) {
       }
     },
   });
+}
+
+export function pipeReadableToByteStream(readable, stream, options = {}) {
+  if (!readable || typeof readable.pipeTo !== "function") {
+    throw new TypeError("pipeReadableToByteStream() requires a ReadableStream");
+  }
+  return readable.pipeTo(writableFromByteStream(stream, options));
 }
 
 export function byteStreamFromWritable(writable, options = {}) {

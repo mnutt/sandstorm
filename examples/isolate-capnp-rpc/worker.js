@@ -1,5 +1,4 @@
-import { sandstorm } from "sandstorm:api";
-import { exportCapnp } from "sandstorm:capnp";
+import { exportCapnp, sandstorm } from "sandstorm:api";
 import { Greeting } from "capnp:./greeting.capnp";
 import { Greeter } from "capnp:./greeter.capnp";
 

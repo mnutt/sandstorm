@@ -1,7 +1,7 @@
-import { sandstorm } from "sandstorm:api";
 import {
   exportCapnp,
-} from "sandstorm:capnp";
+  sandstorm,
+} from "sandstorm:api";
 import { File, FileStore } from "capnp:./file-store.capnp";
 
 const encoder = new TextEncoder();

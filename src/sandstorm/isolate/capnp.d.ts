@@ -1,10 +1,6 @@
-declare module "sandstorm:capnp" {
-  import type {
-    Capability,
-    SandstormApi,
-    SaveCapabilityOptions,
-  } from "sandstorm:api";
-
+// Split physically to keep the native helper declarations manageable, but
+// augment the single public application module.
+declare module "sandstorm:api" {
   export interface CapnpInterfaceMetadata {
     readonly typeId: bigint;
     readonly typeIdHex: string;
@@ -126,6 +122,13 @@ declare module "sandstorm:capnp" {
     stream: ByteStreamClient,
     options?: WritableFromByteStreamOptions,
   ): WritableStream<ByteStreamChunk>;
+
+  /** Pipes a ReadableStream into a ByteStream client and completes it. */
+  export function pipeReadableToByteStream(
+    readable: ReadableStream<ByteStreamChunk>,
+    stream: ByteStreamClient,
+    options?: WritableFromByteStreamOptions,
+  ): Promise<void>;
 
   /**
    * Adapts a WritableStream to a ByteStream client. done() closes and releases the

@@ -1,5 +1,4 @@
-import { sandstorm } from "sandstorm:api";
-import { capnpClient, exportCapnp } from "sandstorm:capnp";
+import { capnpClient, exportCapnp, sandstorm } from "sandstorm:api";
 import { ObjectStore } from "capnp:./object-store.capnp";
 import { WebSession } from "capnp:/sandstorm/web-session.capnp";
 

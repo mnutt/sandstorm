@@ -1,8 +1,7 @@
 // Generated from worker.ts with npm run build.
 
 // worker.ts
-import { sandstorm, validate } from "sandstorm:api";
-import { exportCapnp } from "sandstorm:capnp";
+import { exportCapnp, sandstorm, validate } from "sandstorm:api";
 import { TypedCounter } from "capnp:./typed-counter.capnp";
 async function increment(api, step = 1) {
   const amount = validate.integer(step, "step", { min: 1, max: 100 });

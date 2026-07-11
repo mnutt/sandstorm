@@ -18,6 +18,19 @@ import { PowerboxDescriptor, PowerboxDisplayInfo } from "/sandstorm/powerbox.cap
 import { ByteStream } from "/sandstorm/util.capnp";
 import { WebSession } from "/sandstorm/web-session.capnp";
 
+// Cap'n Proto is part of the same application-facing API surface. Keep the
+// transport implementation private while exposing the schema helpers here.
+export {
+  CapnpUnavailableError,
+  byteStreamFromWritable,
+  capnpClient,
+  createCapnpStruct,
+  exportCapnp,
+  pipeReadableToByteStream,
+  readCapnpStruct,
+  writableFromByteStream,
+} from "sandstorm-internal:capnp-runtime";
+
 export const SANDSTORM_API_VERSION = 0;
 export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
   api: SANDSTORM_API_VERSION,

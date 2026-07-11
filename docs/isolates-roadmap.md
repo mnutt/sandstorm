@@ -151,6 +151,13 @@ running `capnpc` and the capnp-es compiler for every dev package. Simple
 isolate apps that only import `sandstorm:api` no longer need the capnp-es
 compiler on the dev-startup path.
 
+**Progress, 2026-07-11:** The application-facing `sandstorm:capnp` module is
+merged into `sandstorm:api`. Cap'n Proto export, client-view, struct, and byte
+stream helpers are re-exported by `sandstorm:api`; dev and packaged manifests
+no longer inject a second public helper module. Examples, TypeScript contracts,
+and integration fixtures use the unified import while transport internals
+remain isolated in `sandstorm-internal:capnp-runtime`.
+
 **Delete** (all anchors per the architecture review):
 
 - Done: the lifecycle envelope: `POST /capnp/lifecycle` and the
@@ -317,7 +324,7 @@ Do this while surface area is small and before any stability promise.
 - **App-author streaming ergonomics:** schema-defined upload/download
   capabilities should not require hand-written `Util.ByteStream` method loops
   for ordinary Web Stream sources and sinks.
-  - Done: `sandstorm:capnp` now exposes `writableFromByteStream()`,
+  - Done: `sandstorm:api` now exposes `writableFromByteStream()`,
     `byteStreamFromWritable()`, and `pipeReadableToByteStream()`. The isolate
     integration fixture covers all three helpers, and the external
     object-store/upload tutorial uses them for provider-side `WritableStream`

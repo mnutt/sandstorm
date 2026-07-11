@@ -15,18 +15,17 @@ import {
   Capability,
   SANDSTORM_API_VERSION,
   SANDSTORM_HELPER_VERSIONS,
-  sandstorm,
-  serveSystemRoutes,
-  powerbox as sandstormPowerbox,
-} from "sandstorm:api";
-import {
   byteStreamFromWritable,
   capnpClient,
   createCapnpStruct,
   exportCapnp,
+  pipeReadableToByteStream,
+  powerbox as sandstormPowerbox,
   readCapnpStruct,
+  sandstorm,
+  serveSystemRoutes,
   writableFromByteStream,
-} from "sandstorm:capnp";
+} from "sandstorm:api";
 import {
   CAPNP_CLIENT_SYMBOL,
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
@@ -294,13 +293,13 @@ function makeCollectingByteStream() {
 
 async function runByteStreamAdapterSelfTest() {
   const pipeSink = makeCollectingByteStream();
-  await new ReadableStream({
+  await pipeReadableToByteStream(new ReadableStream({
     start(controller) {
       controller.enqueue(makeBytes(7));
       controller.enqueue(makeBytes(5));
       controller.close();
     },
-  }).pipeTo(writableFromByteStream(pipeSink.client, { size: 12n, chunkSize: 5 }));
+  }), pipeSink.client, { size: 12n, chunkSize: 5 });
   const pipedBytes = await pipeSink.done;
 
   const writableSink = makeCollectingByteStream();
@@ -337,7 +336,7 @@ async function runByteStreamAdapterSelfTest() {
   const byteStreamBytes = concatByteChunks(writableChunks);
 
   return {
-    pipeTo: {
+    pipeReadableToByteStream: {
       bytes: pipedBytes.byteLength,
       checksum: checksum(pipedBytes),
     },

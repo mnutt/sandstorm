@@ -27,7 +27,7 @@ These pieces may change without a backwards-compatibility shim:
 
 - the `spk dev-isolate` command and generated package layout
 - `Manifest.Command.isolate` and related package schema fields
-- injected helper modules such as `sandstorm:api` and `sandstorm:capnp`
+- the injected `sandstorm:api` helper module
 - JavaScript helper names, method signatures, and return shapes
 - supervisor-local helper endpoints behind `SANDSTORM_API`, `POWERBOX`, and
   `STORAGE`
@@ -66,11 +66,10 @@ or hidden in-process object references.
 
 ## TypeScript Authoring
 
-Sandstorm ships TypeScript declarations for the injected isolate helper
-modules:
+Sandstorm ships TypeScript declarations for the injected isolate helper module:
 
-- `src/sandstorm/isolate/api.d.ts` for `sandstorm:api`
-- `src/sandstorm/isolate/capnp.d.ts` for `sandstorm:capnp` native helpers
+- `src/sandstorm/isolate/api.d.ts` for the core `sandstorm:api` surface
+- `src/sandstorm/isolate/capnp.d.ts` for its native Cap'n Proto helper augmentation
 
 These declarations describe the runtime APIs that `workerd` receives from
 Sandstorm. They do not imply that Sandstorm transpiles TypeScript source yet.
@@ -174,8 +173,7 @@ Use `capnp:` imports when the capability is a public schema-defined interface
 that other isolate grains or legacy Cap'n Proto grains should call:
 
 ```js
-import { sandstorm } from "sandstorm:api";
-import { capnpClient, exportCapnp } from "sandstorm:capnp";
+import { capnpClient, exportCapnp, sandstorm } from "sandstorm:api";
 import { Greeter } from "capnp:./greeter.capnp";
 
 const greeterTarget = {
@@ -229,7 +227,7 @@ through Powerbox, durable restore, or Cap'n Proto capability passing. It does
 not get access to a raw Cap'n Proto vat network.
 
 Connection negotiation, transport, token encoding, and RPC framing are runtime
-details and are not exported by `sandstorm:capnp`.
+details and are not exported by `sandstorm:api`.
 
 To advertise a schema-defined capability from `spk dev-isolate`, pass the
 schema and interface name:
@@ -520,5 +518,5 @@ explicit bindings, storage, or app code.
 While isolate grains are experimental, compatibility dates and flags are
 recorded and forwarded to workerd, but they do not yet imply a stable public
 compatibility guarantee for the Sandstorm-specific helper APIs. The
-pre-release policy above still applies to `sandstorm:api`, `sandstorm:capnp`,
-the generated package layout, and supervisor-local helper endpoints.
+pre-release policy above still applies to `sandstorm:api`, the generated package
+layout, and supervisor-local helper endpoints.

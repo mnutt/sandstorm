@@ -1,5 +1,4 @@
-import { sandstorm, validate } from "sandstorm:api";
-import { exportCapnp } from "sandstorm:capnp";
+import { exportCapnp, sandstorm, validate } from "sandstorm:api";
 import { BrowserCounter } from "capnp:./browser-counter.capnp";
 
 let value = 0;
