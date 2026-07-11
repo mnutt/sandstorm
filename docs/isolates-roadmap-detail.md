@@ -2,6 +2,10 @@
 
 **Status:** Draft for architecture review.
 
+Prototype helper names in migration examples are retained as superseded
+history. The current application API is documented in
+`docs/developing/isolate-grains.md`.
+
 **Audience:** Reviewers evaluating the proposed direction before the isolate
 runtime becomes a stable Sandstorm contract.
 

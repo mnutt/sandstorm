@@ -39,6 +39,7 @@
 #include <sandstorm/appid-replacements.capnp.h>
 #include <sandstorm/isolate/api.js.h>
 #include <sandstorm/isolate/capnp-es.js.h>
+#include <sandstorm/isolate/capnp-runtime.js.h>
 #include <sandstorm/isolate/capnp.js.h>
 #include <sandstorm/isolate/platform-capnp-es.js.h>
 #include <stdlib.h>
@@ -2775,6 +2776,7 @@ private:
         "export default { fetch() { return new Response(\"dev isolate manifest not mounted\", "
         "{ status: 500 }); } };\n");
     writeDevIsolateSupportFile(path, "capnp.js", ISOLATE_CAPNP_HELPER_SOURCE);
+    writeDevIsolateSupportFile(path, "capnp-runtime.js", ISOLATE_CAPNP_RUNTIME_SOURCE);
     writeDevIsolateSupportFile(path, "api.js", ISOLATE_API_HELPER_SOURCE);
     std::set<std::string> writtenCapnpEsRuntimePaths;
     for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
@@ -2888,7 +2890,7 @@ private:
     isolate.initCompatibilityFlags(0);
 
     auto moduleList = isolate.initModules(
-        modules.size() + 2 + (3 * ISOLATE_CAPNP_ES_MODULE_COUNT));
+        modules.size() + 3 + (3 * ISOLATE_CAPNP_ES_MODULE_COUNT));
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2920,6 +2922,9 @@ private:
     auto capnpHelperModule = moduleList[helperIndex++];
     capnpHelperModule.setName("sandstorm:capnp");
     capnpHelperModule.setEsModulePath("__sandstorm_isolate_runtime/capnp.js");
+    auto capnpRuntimeModule = moduleList[helperIndex++];
+    capnpRuntimeModule.setName("sandstorm-internal:capnp-runtime");
+    capnpRuntimeModule.setEsModulePath("__sandstorm_isolate_runtime/capnp-runtime.js");
     for (auto& runtimeModule: ISOLATE_CAPNP_ES_MODULES) {
       auto module = moduleList[helperIndex++];
       module.setName(capnpEsSchemeRuntimeSpecifier(runtimeModule.name));

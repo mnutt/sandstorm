@@ -1,7 +1,6 @@
 import { sandstorm } from "sandstorm:api";
 import {
-  exportNativeCapnp,
-  nativeCapnpPowerboxDescriptor,
+  exportCapnp,
 } from "sandstorm:capnp";
 import { File, FileStore } from "capnp:./file-store.capnp";
 
@@ -186,8 +185,8 @@ function renderPage() {
 </html>`;
 }
 
-async function descriptor(env) {
-  return nativeCapnpPowerboxDescriptor(env, FileStore, { interfaceName: "FileStore" });
+async function descriptor(api) {
+  return api.powerbox().appInterfaceDescriptor(FileStore);
 }
 
 export default {
@@ -221,13 +220,11 @@ export default {
     }
 
     if (url.pathname === "/export-file-store" && request.method === "POST") {
-      const capability = await exportNativeCapnp(api, FileStore, makeFileStore(), {
-        interfaceName: "FileStore",
-      });
+      const exported = await exportCapnp(api, FileStore, makeFileStore());
       return Response.json({
         ok: true,
-        info: await capability.info(),
-        descriptor: await descriptor(env),
+        token: await exported.save({ label: "FileStore" }),
+        descriptor: await descriptor(api),
       });
     }
 

@@ -111,6 +111,7 @@ async function compileCorpusModule(t) {
   const { compileAll } = await import(pathToFileURL(CAPNP_ES_COMPILER_MODULE).href);
   const { files } = await compileAll(codegen.stdout, {
     js: true,
+    dts: true,
     tsconfig: { noCheck: true },
     moduleSpecifier(context) {
       if (context.kind === "runtime") {
@@ -125,6 +126,10 @@ async function compileCorpusModule(t) {
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
     await fs.writeFile(outputPath, content);
   }
+
+  const declaration = await fs.readFile(
+    path.join(outputDir, CORPUS_SCHEMA.replace(/\.capnp$/, ".d.ts")), "utf8");
+  assert.match(declaration, /static _applyInit\(/);
 
   const generated = await import(pathToFileURL(
     path.join(outputDir, CORPUS_SCHEMA.replace(/\.capnp$/, ".js"))).href);

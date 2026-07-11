@@ -4,6 +4,9 @@
 describes the current state on branch `isolates-v2`; this document describes
 where the feature needs to go and in what order.
 
+Dated progress entries retain prototype API names as superseded history; see
+`docs/developing/isolate-grains.md` for the current application API.
+
 ## Target state
 
 Agreed direction, in one paragraph: every caller of a grain's native

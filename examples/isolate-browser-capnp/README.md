@@ -14,7 +14,7 @@ browser native Cap'n Proto WebSocket bridge.
 The worker defines and exports a `BrowserCounter` capability with:
 
 ```js
-import { exportNativeCapnp } from "sandstorm:capnp";
+import { exportCapnp } from "sandstorm:capnp";
 import { BrowserCounter } from "capnp:./browser-counter.capnp";
 ```
 
@@ -26,6 +26,6 @@ import { connectBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
 ```
 
 `POST /counter-capability` exports the server-side counter once per isolate
-instance and returns the JSON-safe handoff slot. The browser passes that slot to
+instance and calls `exported.browserHandoff(request)`. The browser passes that slot to
 `connectBrowserNativeCapnp()` and then calls `read()`, `increment()`, and
 `reset()` directly as Cap'n Proto RPC methods.

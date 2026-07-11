@@ -18,12 +18,12 @@ const opened = await store.openFile({ path: "docs/intro.txt" });
 const bytes = await opened.file.read();
 ```
 
-The app exposes the local capability metadata for inspection:
+The app exposes a durable capability token:
 
 - `GET /self-test` exercises the generated `FileStore` and returned `File`
   clients locally.
-- `POST /export-file-store` exports a local `FileStore` capnp-es client and
-  returns its metadata plus the generated Powerbox descriptor.
+- `POST /export-file-store` exports and saves a local `FileStore`, then returns
+  its token plus the generated Powerbox descriptor.
 
 The public protocol is in `file-store.capnp`; the isolate code imports it with:
 

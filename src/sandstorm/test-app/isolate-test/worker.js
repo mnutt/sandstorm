@@ -20,32 +20,112 @@ import {
   powerbox as sandstormPowerbox,
 } from "sandstorm:api";
 import {
+  byteStreamFromWritable,
+  capnpClient,
+  createCapnpStruct,
+  exportCapnp,
+  readCapnpStruct,
+  writableFromByteStream,
+} from "sandstorm:capnp";
+import {
+  CAPNP_CLIENT_SYMBOL,
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
   NativeCapnpStreamTransport,
-  byteStreamFromWritable,
-  connectNativeCapnp,
-  exportNativeCapnp,
   makeNativeCapnpPayload,
-  makeCapnpStruct,
   negotiateNativeCapnpBridge,
-  nativeCapnpPowerboxDescriptor,
-  nativeCapnpPowerboxDescriptorInfo,
   nativeCapnpSavedTokenText,
-  pipeReadableToByteStream,
-  readCapnpStruct,
-  restoreNativeCapnp,
-  restoreNativeCapnpViaBootstrap,
   connectIsolateBridge,
-  writableFromByteStream,
-} from "sandstorm:capnp";
+} from "sandstorm-internal:capnp-runtime";
 
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
 const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
 let browserNativeLocalExportGreeter = null;
 
+function fixtureExportInfo(InterfaceClass, id = undefined) {
+  return {
+    ok: true,
+    type: "nativeCapnpCapability",
+    kind: "localExport",
+    ...(id === undefined ? {} : { id }),
+    interfaceId: `0x${InterfaceClass._capnp.typeIdHex}`,
+    interfaceName: InterfaceClass._capnp.displayName,
+  };
+}
+
+async function exportFixtureCapnp(api, InterfaceClass, target) {
+  const exported = await exportCapnp(api, InterfaceClass, target);
+  const id = `fixture-export-${crypto.randomUUID()}`;
+  const capability = Object.freeze({
+    id,
+    kind: "localExport",
+    interfaceId: InterfaceClass._capnp.typeId,
+    interfaceName: InterfaceClass._capnp.displayName,
+    [CAPNP_CLIENT_SYMBOL]: exported[CAPNP_CLIENT_SYMBOL],
+    save: exported.save.bind(exported),
+    drop: async () => undefined,
+    toJSON: () => fixtureExportInfo(InterfaceClass, id),
+  });
+  return new Proxy(exported.client, {
+    get(client, property) {
+      if (property === CAPNP_CLIENT_SYMBOL) return exported[property];
+      if (property === "capability") return capability;
+      if (property === "connection" || property === "transport") return null;
+      if (property === "browserHandoff") {
+        return (options) => exported.browserHandoff(options?.request ?? options);
+      }
+      if (property === "drop" || property === "save") return exported[property].bind(exported);
+      if (property === "info") return async () => fixtureExportInfo(InterfaceClass, id);
+      if (property === "toJSON") return () => fixtureExportInfo(InterfaceClass, id);
+      return Reflect.get(client, property, client);
+    },
+  });
+}
+
+function viewFixtureCapability(_api, capability, InterfaceClass) {
+  const client = InterfaceClass?._capnp
+    ? capnpClient(InterfaceClass, capability)
+    : new InterfaceClass.Client(capability[CAPNP_CLIENT_SYMBOL]());
+  const metadata = InterfaceClass?._capnp
+    ? Object.freeze({
+        id: capability.id,
+        kind: capability.kind ?? "rpcImport",
+        interfaceId: InterfaceClass._capnp.typeId,
+        interfaceName: InterfaceClass._capnp.displayName,
+      })
+    : capability;
+  return new Proxy(client, {
+    get(target, property) {
+      if (property === "capability") return metadata;
+      if (property === "connection" || property === "transport") return null;
+      if (property === "drop" || property === "save") {
+        return capability[property]?.bind(capability);
+      }
+      return Reflect.get(target, property, target);
+    },
+  });
+}
+
+async function restoreFixtureCapability(api, token, InterfaceClass) {
+  return viewFixtureCapability(api, await api.restore(token), InterfaceClass);
+}
+
+async function fixturePowerboxDescriptorInfo(env, InterfaceClass) {
+  const params = new URLSearchParams({
+    interfaceId: `0x${InterfaceClass._capnp.typeIdHex}`,
+    interfaceName: InterfaceClass._capnp.displayName,
+  });
+  const response = await env.SANDSTORM_API.fetch(
+    `http://sandstorm/powerbox/app-interface-descriptor?${params}`);
+  return response.json();
+}
+
+async function fixturePowerboxDescriptor(env, InterfaceClass) {
+  return (await fixturePowerboxDescriptorInfo(env, InterfaceClass)).descriptor;
+}
+
 function makeNativeGreeterObjectId(id) {
-  return makeCapnpStruct(NativeGreeterObjectId, { id });
+  return createCapnpStruct(NativeGreeterObjectId, { id });
 }
 
 function readNativeGreeterObjectId(objectId) {
@@ -214,13 +294,13 @@ function makeCollectingByteStream() {
 
 async function runByteStreamAdapterSelfTest() {
   const pipeSink = makeCollectingByteStream();
-  await pipeReadableToByteStream(new ReadableStream({
+  await new ReadableStream({
     start(controller) {
       controller.enqueue(makeBytes(7));
       controller.enqueue(makeBytes(5));
       controller.close();
     },
-  }), pipeSink.client, { size: 12n, chunkSize: 5 });
+  }).pipeTo(writableFromByteStream(pipeSink.client, { size: 12n, chunkSize: 5 }));
   const pipedBytes = await pipeSink.done;
 
   const writableSink = makeCollectingByteStream();
@@ -537,7 +617,7 @@ export default {
 
     if (url.pathname === "/browser-native-local-export-capability") {
       if (!browserNativeLocalExportGreeter) {
-        browserNativeLocalExportGreeter = await exportNativeCapnp(api, NativeGreeter, {
+        browserNativeLocalExportGreeter = await exportFixtureCapnp(api, NativeGreeter, {
           async save() {
             return {
               objectId: makeNativeGreeterObjectId("browser-native-local-export-greeter"),
@@ -597,11 +677,11 @@ export default {
       const body = await request.json();
       const capability = await api.powerbox().claim(body);
       const saved = await capability.save({ label: "Isolate browser Powerbox test" });
-      const dropOriginal = await capability.drop();
+      const dropOriginal = (await capability.drop()) ?? null;
       const restored = await api.restore(saved);
       const restoredResponse = await restored.fetch("/value?source=browser-powerbox");
       const restoredBody = await restoredResponse.json();
-      const dropRestored = await restored.drop();
+      const dropRestored = (await restored.drop()) ?? null;
       const dropSaved = await api.revoke(saved);
       return Response.json({
         ok: true,
@@ -836,7 +916,7 @@ export default {
           status: fetchedResponse.status,
           body: await fetchedResponse.json(),
         };
-        drop = await capability.drop();
+        drop = (await capability.drop()) ?? null;
       }
       return Response.json({
         ok: Boolean(capability),
@@ -1017,7 +1097,7 @@ export default {
           };
         },
       };
-      const capability = await exportNativeCapnp(api, NativeGreeter, target, {
+      const capability = await exportFixtureCapnp(api, NativeGreeter, target, {
         id,
         interfaceName: "NativeGreeter",
       });
@@ -1038,7 +1118,7 @@ export default {
       const api = sandstorm(request, env);
       if (url.searchParams.get("expectRestoreFailure") === "true") {
         try {
-          const unexpectedClient = await restoreNativeCapnp(api, token, NativeGreeter, {
+          const unexpectedClient = await restoreFixtureCapability(api, token, NativeGreeter, {
             connectionId: `cross-grain-native-greeter-revoked-${token.slice(0, 16)}`,
             interfaceName: "NativeGreeter",
           });
@@ -1064,7 +1144,7 @@ export default {
         }
       }
 
-      const client = await restoreNativeCapnp(api, token, NativeGreeter, {
+      const client = await restoreFixtureCapability(api, token, NativeGreeter, {
         connectionId: `cross-grain-native-greeter-${token.slice(0, 16)}`,
         interfaceName: "NativeGreeter",
       });
@@ -1118,7 +1198,7 @@ export default {
       }
 
       const api = sandstorm(request, env);
-      const client = await restoreNativeCapnp(api, token, NativeGreeter, {
+      const client = await restoreFixtureCapability(api, token, NativeGreeter, {
         connectionId: `legacy-native-greeter-${token.slice(0, 16)}`,
         interfaceName: "NativeGreeter",
       });
@@ -1166,7 +1246,7 @@ export default {
         };
       }
       const saved = await capability.save({ label: "Route-backed WebSession fixture" });
-      const dropOriginal = await capability.drop();
+      const dropOriginal = (await capability.drop()) ?? null;
       const restored = await sandstorm(request, env).restore(saved);
       const fetchedResponse = await restored.fetch("/capability-echo?source=js-restore", {
         headers: {
@@ -1211,7 +1291,7 @@ export default {
       });
       const streamedResponse = await restored.fetch("/download?bytes=131072");
       const streamedBytes = new Uint8Array(await streamedResponse.arrayBuffer());
-      const dropRestored = await restored.drop();
+      const dropRestored = (await restored.drop()) ?? null;
       const dropSaved = await sandstorm(request, env).revoke(saved);
       return Response.json({
         ok: true,
@@ -1262,14 +1342,14 @@ export default {
         };
       }
       const saved = await capability.save({ label: "Route-backed ApiSession fixture" });
-      const dropOriginal = await capability.drop();
+      const dropOriginal = (await capability.drop()) ?? null;
       const restored = await sandstorm(request, env).restore(saved);
       const fetchedResponse = await restored.fetch("/capability-echo?source=api-js-restore");
       const fetched = {
         status: fetchedResponse.status,
         body: await fetchedResponse.json(),
       };
-      const dropRestored = await restored.drop();
+      const dropRestored = (await restored.drop()) ?? null;
       const dropSaved = await sandstorm(request, env).revoke(saved);
       return Response.json({
         ok: true,
@@ -1342,7 +1422,7 @@ export default {
         body: "hello",
       });
       const restoredBody = await restoredResponse.json();
-      const dropRestored = await restored.drop();
+      const dropRestored = (await restored.drop()) ?? null;
       const dropSaved = await api.revoke(saved);
 
       return Response.json({
@@ -1365,7 +1445,7 @@ export default {
         },
         dropRestored,
         dropSaved,
-        drop: await capability.drop(),
+        drop: (await capability.drop()) ?? null,
       });
     }
 
@@ -1394,7 +1474,7 @@ export default {
         body: "hello",
       });
       const body = await response.json();
-      const dropRestored = await restored.drop();
+      const dropRestored = (await restored.drop()) ?? null;
       const dropSaved = await api.revoke(saved);
 
       return Response.json({
@@ -1613,13 +1693,13 @@ export default {
         },
         fulfill: fulfillOptions(),
       });
-      const nativeDescriptor = await nativeCapnpPowerboxDescriptor(
+      const nativeDescriptor = await fixturePowerboxDescriptor(
         env, NativeGreeter, { interfaceName: "NativeGreeter" });
       const native = fulfillmentApi.powerboxFulfillment({
         routePrefix: "/native-fulfillment-test",
         title: "Powerbox fulfillment NativeGreeter",
         buttonLabel: "Use native greeter",
-        capability: () => exportNativeCapnp(
+        capability: () => exportFixtureCapnp(
           fulfillmentApi,
           NativeGreeter,
           makePersistentNativeGreeterTarget("native-powerbox-helper-greeter"),
@@ -1686,9 +1766,9 @@ export default {
     if (url.pathname === "/native-powerbox-session-action-self-test") {
       const api = sandstorm(request, env);
       try {
-        const descriptor = await nativeCapnpPowerboxDescriptor(
+        const descriptor = await fixturePowerboxDescriptor(
           env, NativeGreeter, { interfaceName: "NativeGreeter" });
-        const greeter = await exportNativeCapnp(
+        const greeter = await exportFixtureCapnp(
           api,
           NativeGreeter,
           makePersistentNativeGreeterTarget("native-powerbox-session-action-greeter"),
@@ -1731,15 +1811,15 @@ export default {
     }
 
     if (url.pathname === "/native-capnp-descriptor-self-test") {
-      const powerboxDescriptorInfo = await nativeCapnpPowerboxDescriptorInfo(
+      const powerboxDescriptorInfo = await fixturePowerboxDescriptorInfo(
         env, NativeGreeter, { interfaceName: "NativeGreeter" });
-      const powerboxDescriptor = await nativeCapnpPowerboxDescriptor(
+      const powerboxDescriptor = await fixturePowerboxDescriptor(
         env, NativeGreeter, { interfaceName: "NativeGreeter" });
-      const cachedPowerboxDescriptorInfo = await nativeCapnpPowerboxDescriptorInfo(
+      const cachedPowerboxDescriptorInfo = await fixturePowerboxDescriptorInfo(
         env, NativeGreeter, { interfaceName: "NativeGreeter" });
       cachedPowerboxDescriptorInfo.decoded.interfaceName = "mutated cached descriptor";
       const cachedPowerboxDescriptorInfoAfterMutation =
-        await nativeCapnpPowerboxDescriptorInfo(
+        await fixturePowerboxDescriptorInfo(
           env, NativeGreeter, { interfaceName: "NativeGreeter" });
 
       return Response.json({
@@ -1845,7 +1925,7 @@ export default {
           restore.info = await claimedInfo(restore.body);
           dropRestored = {
             status: 200,
-            body: await restoredCapability.drop(),
+            body: (await restoredCapability.drop()) ?? null,
           };
         }
       }
@@ -1887,13 +1967,13 @@ export default {
           json: JSON.parse(JSON.stringify(tiedCapability)),
           info: await claimedInfo(tiedCapability),
         };
-        dropTied = await tiedCapability.drop();
+        dropTied = (await tiedCapability.drop()) ?? null;
       }
       let drop = null;
       if (claim.ok && claim.id) {
         drop = {
           status: 200,
-          body: await claim.drop(),
+          body: (await claim.drop()) ?? null,
         };
       }
       let dropSaved = null;
@@ -2009,7 +2089,7 @@ export default {
         requiredPermissions: ["view"],
       });
       const originalFetch = await claimed.capability.fetch("/capability-echo?source=helper-original");
-      const dropOriginal = await claimed.capability.drop();
+      const dropOriginal = (await claimed.capability.drop()) ?? null;
       const fetchViaStoredTokenResult =
         await fetchViaStoredToken(storageKey, "/capability-echo?source=helper-fetch-saved");
       const restored = await restoreTokenFromStorage(storageKey);
@@ -2022,7 +2102,7 @@ export default {
           status: restoredResponse.status,
           body: await restoredResponse.json(),
         };
-        dropRestored = await restored.capability.drop();
+        dropRestored = (await restored.capability.drop()) ?? null;
       }
 
       const handleStorageKey = "powerbox-storage-helper-handle-token";
@@ -2039,8 +2119,8 @@ export default {
         pathPrefix: "/exported",
       });
       const claimAlias = await helper.claim({ capability: aliasSource });
-      const dropHandleClaimed = await handleClaimed.capability.drop();
-      const dropClaimAlias = await claimAlias.drop();
+      const dropHandleClaimed = (await handleClaimed.capability.drop()) ?? null;
+      const dropClaimAlias = (await claimAlias.drop()) ?? null;
       const handleFetchSaved =
         await fetchViaStoredToken(handleStorageKey, "/capability-echo?source=helper-handle-fetch");
       const dropHandleSaved = await revokeTokenFromStorage(handleStorageKey);
@@ -2139,7 +2219,7 @@ export default {
     };
     let nativeExportWebSessionResult;
     try {
-      const nativeExportWebSession = await exportNativeCapnp(
+      const nativeExportWebSession = await exportFixtureCapnp(
         apiHelper,
         WebSession,
         nativeExportWebSessionTarget,
@@ -2220,7 +2300,7 @@ export default {
     };
     let nativeExportGreeterResult;
     try {
-      const nativeExportGreeter = await exportNativeCapnp(
+      const nativeExportGreeter = await exportFixtureCapnp(
         apiHelper,
         NativeGreeter,
         nativeExportGreeterTarget,
@@ -2243,7 +2323,7 @@ export default {
           resolvedName: "after makeGreeter resolves",
           greetName: "bridge client",
         });
-      const nativeExportGreeterHandoff = connectNativeCapnp(
+      const nativeExportGreeterHandoff = viewFixtureCapability(
         apiHelper,
         nativeExportGreeter.capability,
         NativeGreeter,
@@ -2265,7 +2345,7 @@ export default {
       const nativeExportGreeterSavedToken = await nativeExportGreeter.save({
         label: "native export greeter",
       });
-      const nativeExportGreeterRestored = await restoreNativeCapnp(
+      const nativeExportGreeterRestored = await restoreFixtureCapability(
         apiHelper,
         nativeExportGreeterSavedToken,
         NativeGreeter,
@@ -2284,7 +2364,7 @@ export default {
       const nativeExportGreeterRestoredInfo =
           nativeConnectedClientInfo(nativeExportGreeterRestored);
       const nativeExportGreeterRestoredDrop = await nativeExportGreeterRestored.drop();
-      const nativeExportGreeterBootstrapRestored = await restoreNativeCapnpViaBootstrap(
+      const nativeExportGreeterBootstrapRestored = await restoreFixtureCapability(
         apiHelper,
         nativeExportGreeterSavedToken,
         NativeGreeter,
@@ -2386,7 +2466,7 @@ export default {
         classicBridge.close();
       }
 
-      const classicRestored = await restoreNativeCapnp(
+      const classicRestored = await restoreFixtureCapability(
         apiHelper,
         classicSavedToken,
         NativeGreeter,
@@ -2467,12 +2547,12 @@ export default {
         this.client = client;
       }
     }
-    const nativeCapnpConnectedClient = connectNativeCapnp(
+    const nativeCapnpConnectedClient = viewFixtureCapability(
       apiHelper,
       nativeCapnpTarget,
       { Client: NativeCapnpBridgeFixtureClient },
       { connectionId: `native-capnp-fixture-connect-${nativeCapnpTarget.id}` });
-    const nativeCapnpGeneratedWebSession = connectNativeCapnp(
+    const nativeCapnpGeneratedWebSession = viewFixtureCapability(
       apiHelper,
       nativeCapnpTarget,
       WebSession,
@@ -2535,7 +2615,7 @@ export default {
       const nativeCapnpDropTarget = await apiHelper.webSession({
         pathPrefix: "/native-capnp-bridge-target",
       });
-      const nativeCapnpDropWebSession = connectNativeCapnp(
+      const nativeCapnpDropWebSession = viewFixtureCapability(
         apiHelper,
         nativeCapnpDropTarget,
         WebSession,
@@ -2548,7 +2628,7 @@ export default {
       const dropResult = await nativeCapnpDropWebSession.drop();
       let generatedCallAfterDropError = "";
       try {
-        const nativeCapnpDroppedWebSession = connectNativeCapnp(
+        const nativeCapnpDroppedWebSession = viewFixtureCapability(
           apiHelper,
           nativeCapnpDropTarget,
           WebSession,

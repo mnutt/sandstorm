@@ -1,4 +1,9 @@
 declare module "sandstorm:api" {
+  import type {
+    CapnpClientInterface,
+    CapnpExport,
+  } from "sandstorm:capnp";
+
   export const SANDSTORM_API_VERSION: 0;
   export const SANDSTORM_HELPER_VERSIONS: {
     readonly api: 0;
@@ -126,19 +131,19 @@ declare module "sandstorm:api" {
 
   export interface SaveCapabilityOptions {
     label?: string | { defaultText: string };
-    saveLabel?: string | { defaultText: string };
   }
 
   export class Capability {
+    private readonly __sandstormCapabilityBrand: void;
+    private constructor();
     readonly ok: true;
     readonly type: "capability";
     readonly id: string;
     readonly env: SandstormEnv;
-    constructor(env: SandstormEnv, id: string, metadata?: unknown);
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
     info(options?: { refresh?: boolean }): Promise<unknown>;
     save(options?: SaveCapabilityOptions): Promise<string>;
-    drop(): Promise<unknown>;
+    drop(): Promise<void>;
     offer(request: Request, options?: PowerboxOfferOptions): Promise<unknown>;
     fulfillRequest(request: Request, options?: PowerboxFulfillOptions): Promise<unknown>;
     tieToUser(request: Request, options?: PowerboxTieOptions): Promise<unknown>;
@@ -163,7 +168,7 @@ declare module "sandstorm:api" {
     descriptor?: unknown;
   }
 
-  export type LiveCapability = Capability | object;
+  export type LiveCapability = Capability | CapnpExport<object>;
 
   export interface PowerboxClaimOptions {
     requiredPermissions?: string[];
@@ -191,7 +196,7 @@ declare module "sandstorm:api" {
   export interface PowerboxApi {
     apiSessionDescriptor(options?: unknown): Promise<string>;
     outboundHttpDescriptor(options?: unknown): Promise<string>;
-    appInterfaceDescriptor(options?: unknown): Promise<string>;
+    appInterfaceDescriptor<I extends CapnpClientInterface>(InterfaceClass: I): Promise<string>;
     claim(result: string | PowerboxRequestResult, options?: PowerboxClaimOptions): Promise<Capability>;
     offered(): Promise<OfferedCapabilityInfo | undefined>;
     offer(capability: LiveCapability, options?: PowerboxOfferOptions): Promise<unknown>;
@@ -233,7 +238,6 @@ declare module "sandstorm:api" {
     requiredPermissions?: string[];
     claimOptions?: PowerboxClaimOptions;
     save?: SaveCapabilityOptions;
-    saveLabel?: string | { defaultText: string };
     test?: (capability: Capability) => unknown | Promise<unknown>;
   }
 
@@ -249,17 +253,6 @@ declare module "sandstorm:api" {
     use<T>(id: string, fn: (capability: Capability) => T | Promise<T>): Promise<T>;
     token(id: string): Promise<string | undefined>;
     serve(request?: Request): Promise<Response | null>;
-  }
-
-  export interface CapnpBridgeInfo {
-    ok: true;
-    type: "capnpBridgeInfo";
-    protocolVersion: 0;
-    minProtocolVersion: 0;
-    maxProtocolVersion: 0;
-    nativeTransport: boolean;
-    nativeRpc: boolean;
-    nativeRpcWebSocket: boolean;
   }
 
   export interface MainViewRouteContext {
@@ -292,8 +285,6 @@ declare module "sandstorm:api" {
     runtime(): Promise<unknown>;
     modules(): Promise<unknown>;
     bindings(): Promise<unknown>;
-    capnpBridgeInfo(): Promise<CapnpBridgeInfo>;
-    nativeCapnpBridgeOpenBootstrapSession(connectionId: string): Promise<WebSocket>;
     storage(): StorageApi;
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;

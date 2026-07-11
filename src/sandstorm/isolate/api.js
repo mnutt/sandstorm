@@ -1,9 +1,11 @@
 import {
+  CAPNP_CLIENT_SYMBOL,
   connectIsolateBridge,
   createNativeCapnpServerSession,
+  nativeCapnpInterfaceMetadata,
   nativeCapnpSavedTokenData,
   nativeCapnpSavedTokenText,
-} from "sandstorm:capnp";
+} from "sandstorm-internal:capnp-runtime";
 import {
   dataBytes as CapnpEsDataBytes,
   Interface as CapnpEsInterface,
@@ -25,7 +27,6 @@ const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";
 const POWERBOX_FULFILLMENT_PREFIX = "/__sandstorm/powerbox-fulfillment";
 const MAIN_VIEW_RPC_SESSION_PATH = "/__sandstorm/main-view/rpc-session";
-const CAPNP_CLIENT_SYMBOL = Symbol.for("sandstorm.capnp.client");
 const capabilityMetadata = new Map();
 const capabilityBridgeRefs = new WeakMap();
 let nextCapabilityId = 0;
@@ -708,7 +709,7 @@ export class Capability {
 }
 
 function saveLabel(options = {}) {
-  let label = options.label ?? options.saveLabel ?? "Sandstorm capability";
+  let label = options.label ?? "Sandstorm capability";
   if (label && typeof label === "object" && typeof label.defaultText === "string") {
     label = label.defaultText;
   }
@@ -716,7 +717,7 @@ function saveLabel(options = {}) {
 }
 
 function requiredSaveLabel(options = {}, context = "label") {
-  let label = options.label ?? options.saveLabel;
+  let label = options.label;
   if (label && typeof label === "object" && typeof label.defaultText === "string") {
     label = label.defaultText;
   }
@@ -1078,7 +1079,7 @@ async function dropCapability(env, capability) {
   } else {
     forgetCapabilityHandle(id);
   }
-  return { ok: true, released: true };
+  return undefined;
 }
 
 async function sessionPowerboxAction(env, request, endpoint, capability, options = {}) {
@@ -1472,7 +1473,7 @@ function normalizePowerboxGrant(id, spec) {
   });
   const saveOptions = {
     ...(spec.save || {}),
-    label: (spec.save && (spec.save.label ?? spec.save.saveLabel)) ?? spec.saveLabel ?? spec.label ?? title,
+    label: spec.save?.label ?? spec.label ?? title,
   };
   requiredSaveLabel(saveOptions, `grants.${grantId}.save.label`);
 
@@ -1483,7 +1484,7 @@ function normalizePowerboxGrant(id, spec) {
     storageKey,
     query: publicPowerboxGrantQuery(spec),
     saveLabel: normalizePowerboxGrantSaveLabel(
-      spec.saveLabel, title, `grants.${grantId}.saveLabel`),
+      saveOptions.label, title, `grants.${grantId}.save.label`),
     requiredPermissions,
     saveOptions,
     claimOptions: {
@@ -1675,9 +1676,7 @@ function normalizePowerboxFulfillmentCapability(env, value) {
   capabilityCapnpClient(capability, "Powerbox fulfillment capability");
   return {
     capability,
-    handle: capability && typeof capability.toJSON === "function"
-      ? capability.toJSON()
-      : { ok: true, type: "nativeCapnpCapability" },
+    handle: { ok: true, type: "capabilityTransferred" },
   };
 }
 
@@ -3429,8 +3428,15 @@ export function powerbox(request, env) {
       return outboundHttpPowerboxDescriptor(env, options);
     },
 
-    async appInterfaceDescriptor(options = {}) {
-      return appInterfacePowerboxDescriptor(env, options);
+    async appInterfaceDescriptor(InterfaceClass) {
+      const metadata = nativeCapnpInterfaceMetadata(
+        InterfaceClass, "PowerboxApi.appInterfaceDescriptor()");
+      return appInterfacePowerboxDescriptor(env, {
+        appInterface: {
+          interfaceId: metadata.interfaceIdHex,
+          interfaceName: metadata.interfaceName,
+        },
+      });
     },
 
     async claim(result, options = {}) {

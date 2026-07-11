@@ -2,6 +2,9 @@
 
 import { sandstorm, validate } from "sandstorm:api";
 import type { SandstormApi, SandstormEnv, SessionInfo } from "sandstorm:api";
+import { exportCapnp } from "sandstorm:capnp";
+import type { ServerTargetFor } from "sandstorm:capnp";
+import { TypedCounter } from "capnp:./typed-counter.capnp";
 
 interface Env extends SandstormEnv {
   STORAGE: SandstormEnv["STORAGE"];
@@ -14,6 +17,14 @@ async function increment(api: SandstormApi, step: number = 1): Promise<{ value: 
   const value = current + amount;
   await store.put("typescript-counter", String(value));
   return { value };
+}
+
+function typedCounter(api: SandstormApi): ServerTargetFor<typeof TypedCounter> {
+  return {
+    async increment({ step }) {
+      return increment(api, step);
+    },
+  };
 }
 
 function html(): string {
@@ -107,6 +118,14 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/increment") {
       return Response.json(await increment(api, Number(url.searchParams.get("step") || "1")));
+    }
+
+    if (request.method === "POST" && url.pathname === "/export-counter") {
+      const exported = await exportCapnp(api, TypedCounter, typedCounter(api));
+      return Response.json({
+        ok: true,
+        token: await exported.save({ label: "Typed counter" }),
+      });
     }
 
     return new Response(html(), {
