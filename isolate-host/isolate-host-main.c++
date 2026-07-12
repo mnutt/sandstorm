@@ -99,11 +99,22 @@ class UnixHttpWorkerInterface final: public workerd::WorkerInterface {
   kj::Own<kj::HttpService> service;
 };
 
+// Transitional transport used only while the host-owned HTTP adapters are being built. The
+// channel owns the directory capability represented in its /proc path, so an evicted grain can
+// never have its descriptor number rebound to another grain. Do not add socket servers around
+// this path: the final Phase 4 transport is an in-process HttpService tied to HostedState.
 class UnixHttpChannel final: public workerd::IoChannelFactory::SubrequestChannel,
                              public kj::AtomicRefcounted {
  public:
-  UnixHttpChannel(kj::Network& network, kj::Timer& timer, kj::String address)
-      : network(network), timer(timer), address(kj::mv(address)) {}
+  UnixHttpChannel(kj::Network& network, kj::Timer& timer,
+      int sourceGrainDirFd, kj::StringPtr socketName)
+      : network(network), timer(timer) {
+    KJ_SYSCALL(grainDirFd = fcntl(sourceGrainDirFd, F_DUPFD_CLOEXEC, 0));
+    address = kj::str("unix:/proc/self/fd/", grainDirFd,
+        "/isolate-runtime/", socketName);
+  }
+
+  ~UnixHttpChannel() noexcept { close(grainDirFd); }
 
   kj::Own<workerd::WorkerInterface> startRequest(
       workerd::IoChannelFactory::SubrequestMetadata) override {
@@ -125,6 +136,7 @@ class UnixHttpChannel final: public workerd::IoChannelFactory::SubrequestChannel
  private:
   kj::Network& network;
   kj::Timer& timer;
+  int grainDirFd;
   kj::String address;
 };
 
@@ -232,11 +244,10 @@ LoadedWorkerSource loadWorkerSource(
             break;
           default: KJ_UNREACHABLE;
         }
-        auto address = kj::str("unix:/proc/self/fd/", grainDirFd,
-            "/isolate-runtime/", socketName);
         env.setProperty(kj::str(binding.getName()),
             workerd::Frankenvalue::fromDirectCapability(
-                kj::atomicRefcounted<UnixHttpChannel>(network, timer, kj::mv(address))));
+                kj::atomicRefcounted<UnixHttpChannel>(
+                    network, timer, grainDirFd, socketName)));
         break;
       }
       case IsolateWorkerSource::Binding::SERVICE:

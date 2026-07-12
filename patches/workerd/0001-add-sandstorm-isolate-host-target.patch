@@ -242,12 +242,15 @@ diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
 index 742a5d3..77111df 100644
 --- a/src/workerd/server/server.c++
 +++ b/src/workerd/server/server.c++
-@@ -4450,4 +4450,19 @@ class Server::WorkerLoaderNamespace::WorkerStubImpl final: public WorkerStubChan
+@@ -4450,4 +4450,22 @@ class Server::WorkerLoaderNamespace::WorkerStubImpl final: public WorkerStubChan
          .compileBindings = [env = kj::mv(source.env)](
              jsg::Lock& js, const Worker::Api& api, v8::Local<v8::Object> target) mutable {
 -          env.populateJsObject(js, jsg::JsObject(target));
 +          Frankenvalue::DirectCapabilityMaterializer materialize =
 +              [&js, &api](Frankenvalue::CapTableEntry& entry) {
++            // Dynamic-worker env construction has already rewritten every supported direct
++            // capability into an IoChannelCapTableEntry. Keep this downcast and the synthetic
++            // one-element global in sync with that rewrite and WorkerdApi's Fetcher compiler.
 +            auto& channel = kj::downcast<IoChannelCapTableEntry>(entry);
 +            WorkerdApi::Global global{
 +              .name = kj::str("capability"),
