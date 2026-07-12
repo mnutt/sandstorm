@@ -26,6 +26,8 @@ LIBS=
 EKAM=ekam
 WORKERD_NPM_VERSION=1.20260610.1
 WORKERD_SOURCE_COMMIT=ea5e86d22f16996a3d8fdb8922c34eb7e8711cd3
+BAZEL_VERSION=9.1.0
+BAZEL_LINUX_X86_64_SHA256=a667454f3f4f8878df8199136b82c199f6ada8477b337fae3b1ef854f01e4e2f
 WORKERD_NPM_PACKAGE_DIR=deps/workerd-npm
 WORKERD_BIN=
 CAPNP_ES_NPM_VERSION=0.3.0
@@ -159,7 +161,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-host isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -331,6 +333,31 @@ verify-workerd-runtime: bin/workerd tmp/.workerd-npm
 
 verify-workerd-source:
 	@test "$$(git -C deps/workerd rev-parse HEAD)" = "$(WORKERD_SOURCE_COMMIT)"
+
+tmp/bazel-$(BAZEL_VERSION):
+	@$(call color,downloading Bazel $(BAZEL_VERSION))
+	curl --proto '=https' --tlsv1.2 -L --fail \
+		https://github.com/bazelbuild/bazel/releases/download/$(BAZEL_VERSION)/bazel-$(BAZEL_VERSION)-linux-x86_64 \
+		-o $@.download
+	@echo "$(BAZEL_LINUX_X86_64_SHA256)  $@.download" | sha256sum --check
+	mv $@.download $@
+	chmod +x $@
+
+tmp/.workerd-embed-source: deps/workerd src/sandstorm/isolate-host-main.c++ \
+		patches/workerd/0001-add-sandstorm-isolate-host-target.patch
+	rm -rf tmp/workerd-embed
+	cp -a deps/workerd tmp/workerd-embed
+	cp src/sandstorm/isolate-host-main.c++ \
+		tmp/workerd-embed/src/workerd/server/sandstorm-isolate-host.c++
+	cd tmp/workerd-embed && patch -p1 < ../../patches/workerd/0001-add-sandstorm-isolate-host-target.patch
+	@touch $@
+
+bin/isolate-host: tmp/bazel-$(BAZEL_VERSION) tmp/.workerd-embed-source
+	cd tmp/workerd-embed && ../../tmp/bazel-$(BAZEL_VERSION) build --config=release \
+		//src/workerd/server:sandstorm-isolate-host
+	cp tmp/workerd-embed/bazel-bin/src/workerd/server/sandstorm-isolate-host $@
+
+isolate-host: bin/isolate-host
 
 # ====================================================================
 # fetch capnp-es
