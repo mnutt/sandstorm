@@ -12,9 +12,16 @@
           "ordinal": 0,
           "paramStructId": "0xb5a7ca26b34ff476",
           "resultStructId": "0x8fdf1a99638978ff",
-          "params": [{"name": "grainId", "type": "Text"}],
+          "params": [{"name": "grainId", "type": "Text"}, {"name": "services", "type": "IsolateBindingServices"}],
           "results": [{"name": "grain", "type": "HostedIsolate"}]
         }
+      ]
+    },
+    {
+      "name": "IsolateBindingServices",
+      "interfaceId": "0xd8b8ffcb9dbf83ea",
+      "superclasses": [],
+      "methods": [
       ]
     },
     {
