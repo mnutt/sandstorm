@@ -7,7 +7,9 @@
 
 #include <workerd/server/sandstorm-isolate-host.capnp.h>
 #include <workerd/server/sandstorm-isolate-worker-source.capnp.h>
+#include <workerd/io/actor-cache.h>
 #include <workerd/io/compatibility-date.h>
+#include <workerd/io/limit-enforcer.h>
 #include <workerd/jsg/setup.h>
 #include <workerd/util/stream-utils.h>
 
@@ -26,10 +28,229 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
 namespace sandstorm {
 namespace {
 
 constexpr kj::StringPtr LOADER_NAMESPACE = "sandstorm-grains"_kj;
+
+// These are host policy rather than workerd embedding API. Keep them conservative until the
+// Phase 4 measurements give us enough data to make them configurable per account/app.
+constexpr size_t ISOLATE_OLD_HEAP_LIMIT = 64 * 1024 * 1024;
+constexpr size_t ISOLATE_YOUNG_HEAP_LIMIT = 16 * 1024 * 1024;
+constexpr size_t BUFFERING_LIMIT = 16 * 1024 * 1024;
+constexpr uint MAX_SUBREQUESTS = 64;
+constexpr auto REQUEST_JS_LIMIT = std::chrono::milliseconds(250);
+constexpr auto STARTUP_JS_LIMIT = std::chrono::seconds(5);
+
+class JsWatchdogScope final {
+ public:
+  JsWatchdogScope(v8::Isolate& isolate,
+      std::atomic<int64_t>& remainingNanos,
+      std::atomic<bool>& exceeded)
+      : isolate(isolate),
+        remainingNanos(remainingNanos),
+        exceeded(exceeded),
+        started(std::chrono::steady_clock::now()),
+        watchdog([this]() { run(); }) {}
+
+  ~JsWatchdogScope() noexcept {
+    {
+      std::lock_guard lock(mutex);
+      canceled = true;
+    }
+    wake.notify_one();
+    watchdog.join();
+
+    auto elapsed = std::chrono::steady_clock::now() - started;
+    remainingNanos.fetch_sub(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count(),
+        std::memory_order_relaxed);
+  }
+
+ private:
+  void run() {
+    auto budget = std::chrono::nanoseconds(
+        kj::max<int64_t>(0, remainingNanos.load(std::memory_order_relaxed)));
+    std::unique_lock lock(mutex);
+    if (!wake.wait_for(lock, budget, [this]() { return canceled; })) {
+      exceeded.store(true, std::memory_order_release);
+      isolate.TerminateExecution();
+    }
+  }
+
+  v8::Isolate& isolate;
+  std::atomic<int64_t>& remainingNanos;
+  std::atomic<bool>& exceeded;
+  std::chrono::steady_clock::time_point started;
+  std::mutex mutex;
+  std::condition_variable wake;
+  bool canceled = false;
+  std::thread watchdog;
+};
+
+class SandstormIsolateLimitEnforcer final: public workerd::IsolateLimitEnforcer {
+ public:
+  v8::Isolate::CreateParams getCreateParams() override {
+    v8::Isolate::CreateParams result;
+    result.constraints.set_max_old_generation_size_in_bytes(ISOLATE_OLD_HEAP_LIMIT);
+    result.constraints.set_max_young_generation_size_in_bytes(ISOLATE_YOUNG_HEAP_LIMIT);
+    return result;
+  }
+
+  void customizeIsolate(v8::Isolate* isolate) override {
+    isolateForHeapLimit = isolate;
+    isolate->AddNearHeapLimitCallback(onNearHeapLimit, this);
+  }
+
+  workerd::ActorCacheSharedLruOptions getActorCacheLruOptions() override {
+    return {.softLimit = 16 * (1ull << 20),
+      .hardLimit = 128 * (1ull << 20),
+      .staleTimeout = 30 * kj::SECONDS,
+      .dirtyListByteLimit = 8 * (1ull << 20),
+      .maxKeysPerRpc = 128,
+      .neverFlush = true};
+  }
+
+  kj::Own<void> enterStartupJs(workerd::jsg::Lock& lock,
+      kj::OneOf<kj::Exception, kj::Duration>& limitErrorOrTime) const override {
+    return enterLimitedJs(lock, limitErrorOrTime, STARTUP_JS_LIMIT);
+  }
+  kj::Own<void> enterStartupPython(workerd::jsg::Lock& lock,
+      kj::OneOf<kj::Exception, kj::Duration>& limitErrorOrTime) const override {
+    return enterLimitedJs(lock, limitErrorOrTime, STARTUP_JS_LIMIT);
+  }
+  kj::Own<void> enterDynamicImportJs(workerd::jsg::Lock& lock,
+      kj::OneOf<kj::Exception, kj::Duration>& limitErrorOrTime) const override {
+    return enterLimitedJs(lock, limitErrorOrTime, STARTUP_JS_LIMIT);
+  }
+  kj::Own<void> enterLoggingJs(workerd::jsg::Lock&,
+      kj::OneOf<kj::Exception, kj::Duration>&) const override {
+    return {};
+  }
+  kj::Own<void> enterInspectorJs(workerd::jsg::Lock&,
+      kj::OneOf<kj::Exception, kj::Duration>&) const override {
+    return {};
+  }
+  void completedRequest(kj::StringPtr) const override {}
+  bool exitJs(workerd::jsg::Lock&) const override {
+    return heapLimitExceeded.load(std::memory_order_acquire);
+  }
+  void reportMetrics(workerd::IsolateObserver&) const override {}
+  bool hasExcessivelyExceededHeapLimit() const override {
+    return heapLimitExceeded.load(std::memory_order_acquire);
+  }
+  const workerd::TrackedWasmInstanceList& getTrackedWasmInstances() const override {
+    return trackedWasmInstances;
+  }
+  size_t getBlobSizeLimit() const override { return BUFFERING_LIMIT; }
+
+ private:
+  static size_t onNearHeapLimit(void* data, size_t currentLimit, size_t) {
+    auto& self = *static_cast<SandstormIsolateLimitEnforcer*>(data);
+    self.heapLimitExceeded.store(true, std::memory_order_release);
+    self.isolateForHeapLimit->TerminateExecution();
+    // Give V8 enough headroom to unwind the terminated execution without turning this into a
+    // process-fatal OOM. exitJs() then condemns this isolate.
+    return currentLimit + 8 * 1024 * 1024;
+  }
+
+  class StartupScope final {
+   public:
+    StartupScope(v8::Isolate& isolate,
+        kj::OneOf<kj::Exception, kj::Duration>& result,
+        std::chrono::nanoseconds limit)
+        : result(result),
+          remainingNanos(limit.count()),
+          watchdog(kj::heap<JsWatchdogScope>(isolate, remainingNanos, exceeded)) {}
+    ~StartupScope() noexcept {
+      watchdog = nullptr;
+      if (exceeded.load(std::memory_order_acquire)) {
+        result = 5 * kj::SECONDS;
+      }
+    }
+   private:
+    kj::OneOf<kj::Exception, kj::Duration>& result;
+    std::atomic<int64_t> remainingNanos;
+    std::atomic<bool> exceeded = false;
+    kj::Own<JsWatchdogScope> watchdog;
+  };
+
+  static kj::Own<void> enterLimitedJs(workerd::jsg::Lock& lock,
+      kj::OneOf<kj::Exception, kj::Duration>& result,
+      std::chrono::nanoseconds limit) {
+    return kj::heap<StartupScope>(*lock.v8Isolate, result, limit);
+  }
+
+  workerd::TrackedWasmInstanceList trackedWasmInstances;
+  std::atomic<bool> heapLimitExceeded = false;
+  v8::Isolate* isolateForHeapLimit = nullptr;
+};
+
+class SandstormRequestLimitEnforcer final: public workerd::LimitEnforcer {
+ public:
+  explicit SandstormRequestLimitEnforcer(kj::Timer& timer): timer(timer), remainingNanos(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(REQUEST_JS_LIMIT).count()) {}
+
+  kj::Own<void> enterJs(workerd::jsg::Lock& lock, workerd::IoContext&) override {
+    requireLimitsNotExceeded();
+    return kj::heap<JsWatchdogScope>(*lock.v8Isolate, remainingNanos, exceeded);
+  }
+  void topUpActor() override {}
+  void newSubrequest(bool) override {
+    JSG_REQUIRE(++subrequests <= MAX_SUBREQUESTS, Error, "subrequest limit exceeded");
+  }
+  void newKvRequest(KvOpType) override { newSubrequest(false); }
+  void newAnalyticsEngineRequest() override { newSubrequest(false); }
+  kj::Promise<void> limitDrain() override { return timer.afterDelay(30 * kj::SECONDS); }
+  kj::Promise<void> limitScheduled() override { return timer.afterDelay(15 * kj::MINUTES); }
+  kj::Duration getAlarmLimit() override { return 15 * kj::MINUTES; }
+  size_t getBufferingLimit() override { return BUFFERING_LIMIT; }
+  kj::Maybe<workerd::EventOutcome> getLimitsExceeded() override {
+    if (exceeded.load(std::memory_order_acquire)) return workerd::EventOutcome::EXCEEDED_CPU;
+    return kj::none;
+  }
+  kj::Promise<void> onLimitsExceeded() override { return kj::NEVER_DONE; }
+  void setCpuLimitNearlyExceededCallback(kj::Function<void(void)>) override {}
+  void requireLimitsNotExceeded() override {
+    JSG_REQUIRE(!exceeded.load(std::memory_order_acquire), Error, "CPU limit exceeded");
+  }
+  void reportMetrics(workerd::RequestObserver&) override {}
+  kj::Duration consumeTimeElapsedForPeriodicLogging() override { return 0 * kj::SECONDS; }
+  size_t getSqliteMemoryUsage() const override { return 0; }
+
+ private:
+  kj::Timer& timer;
+  std::atomic<int64_t> remainingNanos;
+  std::atomic<bool> exceeded = false;
+  uint subrequests = 0;
+};
+
+class SandstormLimitEnforcerFactory final:
+    public workerd::server::Server::LimitEnforcerFactory {
+ public:
+  explicit SandstormLimitEnforcerFactory(kj::Timer& timer): timer(timer) {}
+
+  kj::Maybe<kj::Own<workerd::IsolateLimitEnforcer>> newIsolateLimitEnforcer(
+      kj::StringPtr, bool isDynamic) override {
+    if (!isDynamic) return kj::none;
+    return kj::heap<SandstormIsolateLimitEnforcer>();
+  }
+
+  kj::Maybe<kj::Own<workerd::LimitEnforcer>> newRequestLimitEnforcer(
+      kj::StringPtr, bool isDynamic) override {
+    if (!isDynamic) return kj::none;
+    return kj::heap<SandstormRequestLimitEnforcer>(timer);
+  }
+
+ private:
+  kj::Timer& timer;
+};
 
 class SystemEntropySource final: public kj::EntropySource {
  public:
@@ -1080,6 +1301,7 @@ int main(int argc, char** argv) {
   auto defaultPlatform = workerd::jsg::defaultPlatform(0);
   workerd::server::WorkerdPlatform v8Platform(*defaultPlatform);
   workerd::jsg::V8System v8System(v8Platform, {}, defaultPlatform.get());
+  sandstorm::SandstormLimitEnforcerFactory limitEnforcers(io.provider->getTimer());
   workerd::server::Server runtime(*filesystem,
       io.provider->getTimer(),
       kj::systemPreciseMonotonicClock(),
@@ -1087,6 +1309,7 @@ int main(int argc, char** argv) {
       entropy,
       workerd::Worker::LoggingOptions(workerd::Worker::ConsoleMode::STDOUT),
       [](kj::String error) { KJ_FAIL_REQUIRE("embedded workerd configuration error", error); });
+  runtime.setLimitEnforcerFactory(limitEnforcers);
   runtime.allowExperimental();
   capnp::MallocMessageBuilder runtimeConfig;
   sandstorm::initRuntimeConfig(runtimeConfig);
