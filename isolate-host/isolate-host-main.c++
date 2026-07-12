@@ -17,6 +17,8 @@
 #include <capnp/serialize-packed.h>
 #include <kj/async-io.h>
 #include <kj/map.h>
+#include <kj/mutex.h>
+#include <kj/thread.h>
 
 #include <fcntl.h>
 #include <dirent.h>
@@ -56,8 +58,32 @@ class BundleErrorReporter final: public workerd::Worker::ValidationErrorReporter
   kj::Vector<kj::String> errors;
 };
 
+struct DecodedModule {
+  kj::String name;
+  IsolateWorkerSource::Module::Which type;
+  size_t contentSize;
+  kj::Array<kj::byte> content;
+};
+
+struct DecodedBinding {
+  kj::String name;
+  IsolateWorkerSource::Binding::Which type;
+  kj::String value;
+};
+
+struct DecodedWorkerBundle final: public kj::AtomicRefcounted {
+  explicit DecodedWorkerBundle(kj::AutoCloseFd grainDir): grainDir(kj::mv(grainDir)) {}
+
+  kj::AutoCloseFd grainDir;
+  kj::String mainModule;
+  kj::String compatibilityDate;
+  kj::Array<kj::String> compatibilityFlags;
+  kj::Array<DecodedModule> modules;
+  kj::Array<DecodedBinding> bindings;
+};
+
 struct BundleBacking final: public kj::AtomicRefcounted {
-  kj::Own<capnp::PackedFdMessageReader> source;
+  kj::Own<DecodedWorkerBundle> decoded;
   capnp::MallocMessageBuilder compatibility;
 };
 
@@ -553,7 +579,7 @@ class LegacyHttpServiceAdapter final: public capnp::HttpService::Server {
   kj::Own<kj::HttpService> service;
 };
 
-LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerTable) {
+kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::AutoCloseFd grainDir) {
   static constexpr uint64_t MAX_BUNDLE_FILE_BYTES = 16 * 1024 * 1024;
   static constexpr uint64_t MAX_TRAVERSAL_WORDS = 4 * 1024 * 1024;
   static constexpr size_t MAX_MODULES = 1024;
@@ -564,9 +590,18 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerT
   static constexpr size_t MAX_NAME_BYTES = 256;
 
   int runtimeFd;
-  KJ_SYSCALL(runtimeFd = openat(grainDirFd, "isolate-runtime",
+  KJ_SYSCALL(runtimeFd = openat(grainDir, "isolate-runtime",
       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
   kj::AutoCloseFd runtimeDir(runtimeFd);
+
+  int manifestFd;
+  KJ_SYSCALL(manifestFd = openat(runtimeDir, "runtime-manifest.json",
+      O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
+  kj::AutoCloseFd manifest(manifestFd);
+  struct stat manifestStats;
+  KJ_SYSCALL(fstat(manifest, &manifestStats));
+  KJ_REQUIRE(S_ISREG(manifestStats.st_mode), "runtime manifest is not a regular file");
+
   int sourceFd;
   KJ_SYSCALL(sourceFd = openat(runtimeDir, "worker-source.capnp.bin",
       O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
@@ -577,13 +612,11 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerT
   KJ_REQUIRE(sourceStats.st_size > 0 && sourceStats.st_size <= MAX_BUNDLE_FILE_BYTES,
       "worker source bundle exceeds size limit", sourceStats.st_size, MAX_BUNDLE_FILE_BYTES);
 
-  auto backing = kj::atomicRefcounted<BundleBacking>();
   capnp::ReaderOptions readerOptions;
   readerOptions.traversalLimitInWords = MAX_TRAVERSAL_WORDS;
   readerOptions.nestingLimit = 32;
-  backing->source = kj::heap<capnp::PackedFdMessageReader>(
-      kj::AutoCloseFd(sourceFd), readerOptions);
-  auto bundle = backing->source->getRoot<IsolateWorkerSource>();
+  capnp::PackedFdMessageReader reader(kj::AutoCloseFd(sourceFd), readerOptions);
+  auto bundle = reader.getRoot<IsolateWorkerSource>();
   KJ_REQUIRE(bundle.getFormatVersion() == 1,
       "unsupported worker source format version", bundle.getFormatVersion());
   KJ_REQUIRE(bundle.getMainModule().size() > 0 &&
@@ -599,10 +632,17 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerT
   auto inputModules = bundle.getModules();
   KJ_REQUIRE(inputModules.size() > 0 && inputModules.size() <= MAX_MODULES,
       "invalid worker module count", inputModules.size(), MAX_MODULES);
+  auto result = kj::atomicRefcounted<DecodedWorkerBundle>(kj::mv(grainDir));
+  result->mainModule = kj::str(bundle.getMainModule());
+  result->compatibilityDate = kj::str(bundle.getCompatibilityDate());
+  result->compatibilityFlags = KJ_MAP(flag, bundle.getCompatibilityFlags()) {
+    return kj::str(flag);
+  };
+
   kj::HashSet<kj::String> moduleNames;
   bool foundMainModule = false;
   size_t totalModuleBytes = 0;
-  auto modules = kj::heapArrayBuilder<workerd::WorkerSource::Module>(inputModules.size());
+  auto modules = kj::heapArrayBuilder<DecodedModule>(inputModules.size());
   for (auto input: inputModules) {
     KJ_REQUIRE(input.getName().size() > 0 && input.getName().size() <= MAX_NAME_BYTES,
         "invalid worker module name length", input.getName().size());
@@ -610,56 +650,45 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerT
         "worker bundle has a duplicate module name", input.getName());
     moduleNames.insert(kj::str(input.getName()));
     if (input.getName() == bundle.getMainModule()) foundMainModule = true;
-    workerd::WorkerSource::Module output{.name = input.getName()};
-    size_t moduleBytes = 0;
+    capnp::Data::Reader content;
     switch (input.which()) {
       case IsolateWorkerSource::Module::ES_MODULE:
-        moduleBytes = input.getEsModule().size();
-        output.content = workerd::WorkerSource::EsModule{input.getEsModule().asChars(), kj::none};
+        content = input.getEsModule();
         break;
       case IsolateWorkerSource::Module::COMMON_JS_MODULE:
-        {
-        auto body = input.getCommonJsModule().asChars();
-        moduleBytes = body.size();
-        output.content = workerd::WorkerSource::CommonJsModule{
-          kj::StringPtr(body.begin(), body.size()), kj::none};
+        content = input.getCommonJsModule();
         break;
-        }
       case IsolateWorkerSource::Module::TEXT:
-        {
-        auto body = input.getText().asChars();
-        moduleBytes = body.size();
-        output.content = workerd::WorkerSource::TextModule{
-          kj::StringPtr(body.begin(), body.size())};
+        content = input.getText();
         break;
-        }
       case IsolateWorkerSource::Module::DATA:
-        moduleBytes = input.getData().size();
-        output.content = workerd::WorkerSource::DataModule{input.getData()};
+        content = input.getData();
         break;
       case IsolateWorkerSource::Module::WASM:
-        moduleBytes = input.getWasm().size();
-        output.content = workerd::WorkerSource::WasmModule{input.getWasm()};
+        content = input.getWasm();
         break;
       case IsolateWorkerSource::Module::JSON:
-        {
-        auto body = input.getJson().asChars();
-        moduleBytes = body.size();
-        output.content = workerd::WorkerSource::JsonModule{
-          kj::StringPtr(body.begin(), body.size())};
+        content = input.getJson();
         break;
-        }
     }
+    size_t moduleBytes = content.size();
     KJ_REQUIRE(moduleBytes <= MAX_MODULE_BYTES,
         "worker module exceeds size limit", input.getName(), moduleBytes, MAX_MODULE_BYTES);
     totalModuleBytes += moduleBytes;
     KJ_REQUIRE(totalModuleBytes <= MAX_TOTAL_MODULE_BYTES,
         "worker modules exceed aggregate size limit", totalModuleBytes, MAX_TOTAL_MODULE_BYTES);
-    modules.add(kj::mv(output));
+    auto ownedContent = kj::heapArray<kj::byte>(content.size() + 1);
+    ownedContent.slice(0, content.size()).copyFrom(content);
+    ownedContent[content.size()] = 0;
+    modules.add(DecodedModule{
+      .name = kj::str(input.getName()),
+      .type = input.which(),
+      .contentSize = content.size(),
+      .content = kj::mv(ownedContent),
+    });
   }
   KJ_REQUIRE(foundMainModule, "worker bundle main module is not present", bundle.getMainModule());
 
-  workerd::Frankenvalue env;
   kj::HashSet<kj::String> bindingNames;
   auto inputBindings = bundle.getBindings();
   KJ_REQUIRE(inputBindings.size() <= MAX_BINDINGS,
@@ -672,58 +701,124 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerT
         totalBindingBytes, MAX_TOTAL_BINDING_BYTES);
   };
   capnp::JsonCodec json;
+  auto bindings = kj::heapArrayBuilder<DecodedBinding>(inputBindings.size());
   for (auto binding: inputBindings) {
     KJ_REQUIRE(binding.getName().size() > 0 && binding.getName().size() <= MAX_NAME_BYTES,
         "invalid worker binding name length", binding.getName().size());
     KJ_REQUIRE(bindingNames.find(binding.getName()) == kj::none,
         "worker bundle has a duplicate binding name", binding.getName());
     bindingNames.insert(kj::str(binding.getName()));
-    capnp::MallocMessageBuilder jsonMessage;
-    auto jsonValue = jsonMessage.initRoot<capnp::json::Value>();
+    capnp::Data::Reader value;
     switch (binding.which()) {
       case IsolateWorkerSource::Binding::TEXT: {
-        auto text = binding.getText().asChars();
-        accountBindingBytes(text.size());
-        jsonValue.setString(kj::StringPtr(text.begin(), text.size()));
-        env.setProperty(kj::str(binding.getName()),
-            workerd::Frankenvalue::fromJson(json.encode(jsonValue.asReader())));
+        value = binding.getText();
+        accountBindingBytes(value.size());
         break;
       }
       case IsolateWorkerSource::Binding::JSON: {
-        auto text = binding.getJson().asChars();
-        accountBindingBytes(text.size());
-        json.decode(text, jsonValue);
-        env.setProperty(kj::str(binding.getName()),
-            workerd::Frankenvalue::fromJson(json.encode(jsonValue.asReader())));
+        value = binding.getJson();
+        accountBindingBytes(value.size());
+        capnp::MallocMessageBuilder jsonMessage;
+        json.decode(value.asChars(), jsonMessage.initRoot<capnp::json::Value>());
         break;
       }
       case IsolateWorkerSource::Binding::DATA:
         KJ_FAIL_REQUIRE("shared host does not yet support data bindings", binding.getName());
       case IsolateWorkerSource::Binding::SANDSTORM_API:
       case IsolateWorkerSource::Binding::STORAGE:
-      case IsolateWorkerSource::Binding::POWERBOX: {
-        env.setProperty(kj::str(binding.getName()),
-            workerd::Frankenvalue::fromDirectCapability(
-                kj::refcounted<HttpServiceChannel>(
-                    kj::refcounted<BindingHttpService>(
-                        grainDirFd, headerTable, kj::str(binding.getName()),
-                        binding.which() == IsolateWorkerSource::Binding::STORAGE))));
+      case IsolateWorkerSource::Binding::POWERBOX:
         break;
-      }
       case IsolateWorkerSource::Binding::SERVICE:
         KJ_FAIL_REQUIRE("shared host does not yet support service bindings", binding.getName());
     }
+    bindings.add(DecodedBinding{
+      .name = kj::str(binding.getName()),
+      .type = binding.which(),
+      .value = kj::heapString(value.asChars()),
+    });
+  }
+  result->modules = modules.finish();
+  result->bindings = bindings.finish();
+  return result;
+}
+
+LoadedWorkerSource buildWorkerSource(int grainDirFd,
+    kj::HttpHeaderTable& headerTable,
+    kj::Own<DecodedWorkerBundle> decoded) {
+  auto backing = kj::atomicRefcounted<BundleBacking>();
+  backing->decoded = kj::mv(decoded);
+  auto& bundle = *backing->decoded;
+
+  auto modules = kj::heapArrayBuilder<workerd::WorkerSource::Module>(bundle.modules.size());
+  for (auto& input: bundle.modules) {
+    workerd::WorkerSource::Module output{.name = input.name};
+    kj::StringPtr chars(
+        reinterpret_cast<const char*>(input.content.begin()), input.contentSize);
+    switch (input.type) {
+      case IsolateWorkerSource::Module::ES_MODULE:
+        output.content = workerd::WorkerSource::EsModule{chars, kj::none};
+        break;
+      case IsolateWorkerSource::Module::COMMON_JS_MODULE:
+        output.content = workerd::WorkerSource::CommonJsModule{chars, kj::none};
+        break;
+      case IsolateWorkerSource::Module::TEXT:
+        output.content = workerd::WorkerSource::TextModule{chars};
+        break;
+      case IsolateWorkerSource::Module::DATA:
+        output.content = workerd::WorkerSource::DataModule{
+          input.content.slice(0, input.contentSize)};
+        break;
+      case IsolateWorkerSource::Module::WASM:
+        output.content = workerd::WorkerSource::WasmModule{
+          input.content.slice(0, input.contentSize)};
+        break;
+      case IsolateWorkerSource::Module::JSON:
+        output.content = workerd::WorkerSource::JsonModule{chars};
+        break;
+    }
+    modules.add(kj::mv(output));
+  }
+
+  workerd::Frankenvalue env;
+  capnp::JsonCodec json;
+  for (auto& binding: bundle.bindings) {
+    switch (binding.type) {
+      case IsolateWorkerSource::Binding::TEXT: {
+        capnp::MallocMessageBuilder jsonMessage;
+        auto jsonValue = jsonMessage.initRoot<capnp::json::Value>();
+        jsonValue.setString(binding.value);
+        env.setProperty(kj::str(binding.name),
+            workerd::Frankenvalue::fromJson(json.encode(jsonValue.asReader())));
+        break;
+      }
+      case IsolateWorkerSource::Binding::JSON:
+        env.setProperty(kj::str(binding.name),
+            workerd::Frankenvalue::fromJson(kj::str(binding.value)));
+        break;
+      case IsolateWorkerSource::Binding::SANDSTORM_API:
+      case IsolateWorkerSource::Binding::STORAGE:
+      case IsolateWorkerSource::Binding::POWERBOX:
+        env.setProperty(kj::str(binding.name),
+            workerd::Frankenvalue::fromDirectCapability(
+                kj::refcounted<HttpServiceChannel>(
+                    kj::refcounted<BindingHttpService>(
+                        grainDirFd, headerTable, kj::str(binding.name),
+                        binding.type == IsolateWorkerSource::Binding::STORAGE))));
+        break;
+      case IsolateWorkerSource::Binding::DATA:
+      case IsolateWorkerSource::Binding::SERVICE:
+        KJ_UNREACHABLE;
+    }
   }
   auto compatibility = backing->compatibility.initRoot<workerd::CompatibilityFlags>();
-  auto inputFlags = bundle.getCompatibilityFlags();
-  auto flags = KJ_MAP(flag, inputFlags) { return kj::str(flag); };
+  auto flags = KJ_MAP(flag, bundle.compatibilityFlags) { return kj::str(flag); };
   BundleErrorReporter reporter;
-  workerd::compileCompatibilityFlags(bundle.getCompatibilityDate(), flags, compatibility,
+  workerd::compileCompatibilityFlags(bundle.compatibilityDate, flags, compatibility,
       reporter, true, workerd::CompatibilityDateValidation::CODE_VERSION);
   reporter.requireValid();
 
   workerd::WorkerSource source(workerd::WorkerSource::ModulesSource{
-    .mainModule = bundle.getMainModule(),
+    .mainModule = bundle.mainModule,
     .modules = modules.finish(),
     .capnpSchemas = {},
     .isPython = false,
@@ -742,6 +837,94 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerT
   };
   return {kj::mv(sourceResult), kj::mv(backing)};
 }
+
+class AdmissionWorker {
+ public:
+  AdmissionWorker(): thread([this]() noexcept { run(); }) {
+    auto lock = shared.lockExclusive();
+    lock.wait([](const Shared& state) { return state.executor != kj::none; });
+  }
+
+  ~AdmissionWorker() noexcept(false) {
+    auto executor = getExecutor();
+    executor->executeSync([this]() {
+      auto lock = shared.lockExclusive();
+      KJ_ASSERT(lock->shutdownFulfiller != nullptr);
+      lock->shutdownFulfiller->fulfill();
+      lock->shutdownFulfiller = nullptr;
+    });
+  }
+
+  kj::Promise<kj::Own<DecodedWorkerBundle>> admit(
+      int sourceGrainRootFd, kj::String grainId) {
+    int grainRootFd;
+    KJ_SYSCALL(grainRootFd = fcntl(sourceGrainRootFd, F_DUPFD_CLOEXEC, 0));
+    auto executor = getExecutor();
+    return executor->executeAsync(
+        [grainRoot = kj::AutoCloseFd(grainRootFd), grainId = kj::mv(grainId)]() mutable {
+      auto& clock = kj::systemPreciseMonotonicClock();
+      auto started = clock.now();
+      int grainDirFd;
+      KJ_SYSCALL(grainDirFd = openat(grainRoot, grainId.cStr(),
+          O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainId);
+      auto result = decodeWorkerBundle(kj::AutoCloseFd(grainDirFd));
+      KJ_REQUIRE(clock.now() - started <= 5 * kj::SECONDS,
+          "worker admission exceeded its five-second deadline");
+      return result;
+    });
+  }
+
+ private:
+  struct Shared {
+    kj::Maybe<kj::Own<const kj::Executor>> executor;
+    kj::PromiseFulfiller<void>* shutdownFulfiller = nullptr;
+  };
+
+  kj::MutexGuarded<Shared> shared;
+  kj::Thread thread;
+
+  kj::Own<const kj::Executor> getExecutor() {
+    auto lock = shared.lockExclusive();
+    return KJ_ASSERT_NONNULL(lock->executor)->addRef();
+  }
+
+  void run() noexcept {
+    kj::EventLoop eventLoop;
+    kj::WaitScope waitScope(eventLoop);
+    auto shutdown = kj::newPromiseAndFulfiller<void>();
+    {
+      auto lock = shared.lockExclusive();
+      lock->executor = kj::getCurrentThreadExecutor().addRef();
+      lock->shutdownFulfiller = shutdown.fulfiller.get();
+    }
+    shutdown.promise.wait(waitScope);
+    auto lock = shared.lockExclusive();
+    lock->executor = kj::none;
+  }
+};
+
+class AdmissionPool {
+ public:
+  AdmissionPool() {
+    workers.add(kj::heap<AdmissionWorker>());
+    workers.add(kj::heap<AdmissionWorker>());
+  }
+
+  kj::Promise<kj::Own<DecodedWorkerBundle>> admit(int grainRootFd, kj::String grainId) {
+    KJ_REQUIRE(outstanding < MAX_OUTSTANDING,
+        "worker admission queue is full", outstanding, MAX_OUTSTANDING);
+    ++outstanding;
+    auto& worker = *workers[nextWorker++ % workers.size()];
+    return worker.admit(grainRootFd, kj::mv(grainId))
+        .attach(kj::defer([this]() { --outstanding; }));
+  }
+
+ private:
+  static constexpr size_t MAX_OUTSTANDING = 16;
+  kj::Vector<kj::Own<AdmissionWorker>> workers;
+  size_t nextWorker = 0;
+  size_t outstanding = 0;
+};
 
 void initRuntimeConfig(capnp::MallocMessageBuilder& message) {
   auto config = message.initRoot<workerd::server::config::Config>();
@@ -834,48 +1017,48 @@ class IsolateHostImpl final: public IsolateHost::Server {
     KJ_REQUIRE(context.getParams().hasServices(), "missing per-grain binding services");
 
     KJ_IF_SOME(existing, grains.find(grainId)) {
-      if (!existing->running) grains.erase(grainId);
+      if (existing->running) {
+        context.getResults().setGrain(
+            kj::heap<HostedIsolateImpl>(existing.addRef(), streamFactory));
+        return kj::READY_NOW;
+      }
+      grains.erase(grainId);
     }
 
-    auto& state = grains.findOrCreate(grainId, [&]() -> decltype(grains)::Entry {
-      int grainFd;
-      KJ_SYSCALL(grainFd = openat(grainRootFd, grainId.cStr(),
-          O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainId);
-      kj::AutoCloseFd grainDir(grainFd);
+    auto services = context.getParams().getServices();
 
-      int runtimeFd;
-      KJ_SYSCALL(runtimeFd = openat(grainDir, "isolate-runtime",
-          O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainId);
-      kj::AutoCloseFd runtimeDir(runtimeFd);
+    return admissionPool.admit(grainRootFd, kj::str(grainId)).then(
+        [this, context, grainId = kj::str(grainId),
+            services = kj::mv(services)](kj::Own<DecodedWorkerBundle> decoded) mutable {
+      KJ_IF_SOME(existing, grains.find(grainId)) {
+        if (existing->running) {
+          context.getResults().setGrain(
+              kj::heap<HostedIsolateImpl>(existing.addRef(), streamFactory));
+          return;
+        }
+        grains.erase(grainId);
+      }
 
-      int manifestFd;
-      KJ_SYSCALL(manifestFd = openat(runtimeDir, "runtime-manifest.json",
-          O_RDONLY | O_NOFOLLOW | O_CLOEXEC), grainId);
-      kj::AutoCloseFd manifest(manifestFd);
-      struct stat manifestStat;
-      KJ_SYSCALL(fstat(manifest, &manifestStat), grainId);
-      KJ_REQUIRE(S_ISREG(manifestStat.st_mode), "runtime manifest is not a regular file", grainId);
-
-      auto ownedGrainId = kj::heapString(grainId);
-      auto source = loadWorkerSource(
-          grainDir.get(), runtime.getHttpHeaderTableForEmbedding());
+      auto grainDir = kj::mv(decoded->grainDir);
+      auto source = buildWorkerSource(grainDir.get(),
+          runtime.getHttpHeaderTableForEmbedding(), kj::mv(decoded));
       auto worker = runtime.loadDynamicWorker(LOADER_NAMESPACE, kj::str(grainId),
           [source = kj::mv(source.source), backing = kj::mv(source.backing)]() mutable {
         return source.clone(kj::atomicAddRef(*backing));
       });
-      return {kj::heapString(grainId),
-        kj::rc<HostedState>(runtime, kj::mv(ownedGrainId), grainDir.release(),
-            context.getParams().getServices(), kj::mv(worker))};
+      auto state = kj::rc<HostedState>(runtime, kj::str(grainId), grainDir.release(),
+          kj::mv(services), kj::mv(worker));
+      context.getResults().setGrain(
+          kj::heap<HostedIsolateImpl>(state.addRef(), streamFactory));
+      grains.insert(kj::mv(grainId), kj::mv(state));
     });
-    state->running = true;
-    context.getResults().setGrain(kj::heap<HostedIsolateImpl>(state.addRef(), streamFactory));
-    return kj::READY_NOW;
   }
 
  private:
   workerd::server::Server& runtime;
   capnp::ByteStreamFactory& streamFactory;
   int grainRootFd;
+  AdmissionPool admissionPool;
   kj::HashMap<kj::String, kj::Rc<HostedState>> grains;
 };
 

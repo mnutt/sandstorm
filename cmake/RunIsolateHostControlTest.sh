@@ -20,6 +20,12 @@ printf '{}\n' > "$grain_root/missingsource/isolate-runtime/runtime-manifest.json
 printf '{}\n' > "$grain_root/invalidjson/isolate-runtime/runtime-manifest.json"
 printf '{}\n' > "$grain_root/unsupportedversion/isolate-runtime/runtime-manifest.json"
 printf '{}\n' > "$grain_root/oversizedbundle/isolate-runtime/runtime-manifest.json"
+for i in $(seq -w 0 15); do
+  mkdir -p "$grain_root/admission$i/isolate-runtime"
+  printf '{}\n' > "$grain_root/admission$i/isolate-runtime/runtime-manifest.json"
+  mkfifo "$grain_root/admission$i/isolate-runtime/worker-source.capnp.bin"
+done
+mkdir -p "$grain_root/admission-overload"
 ln -s testgrain123 "$grain_root/linkgrain123"
 
 "$host" "$socket" "$grain_root" &
