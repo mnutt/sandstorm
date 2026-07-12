@@ -40,6 +40,9 @@ int main(int argc, char** argv) {
   auto script = kj::StringPtr(R"JS(
 export default {
   async fetch(request, env) {
+    if (new URL(request.url).pathname === "/cpu-loop") {
+      while (true) {}
+    }
     if (new URL(request.url).pathname === "/storage-test") {
       if (request.headers.get("X-Sandstorm-Ingress-Test") !== "ingress-ok") {
         return new Response("missing ingress header", { status: 400 });
@@ -71,6 +74,32 @@ export default {
   KJ_SYSCALL(sourceFd = open(sourcePath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
   capnp::writePackedMessageToFd(sourceFd, sourceMessage);
   close(sourceFd);
+  auto cpuSourcePath = kj::str(argv[2], "/cpugrain123/isolate-runtime/worker-source.capnp.bin");
+  int cpuSourceFd;
+  KJ_SYSCALL(cpuSourceFd = open(
+      cpuSourcePath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
+  capnp::writePackedMessageToFd(cpuSourceFd, sourceMessage);
+  close(cpuSourceFd);
+
+  capnp::MallocMessageBuilder memorySourceMessage;
+  auto memorySource = memorySourceMessage.initRoot<sandstorm::IsolateWorkerSource>();
+  memorySource.setFormatVersion(1);
+  memorySource.setMainModule("main.js");
+  memorySource.setCompatibilityDate("2026-06-10");
+  auto memoryModule = memorySource.initModules(1)[0];
+  memoryModule.setName("main.js");
+  memoryModule.setEsModule(kj::StringPtr(R"JS(
+const allocations = [];
+while (true) allocations.push(new Array(1024 * 1024).fill(allocations.length));
+export default { fetch() { return new Response("memory limit failed"); } };
+)JS").asBytes());
+  auto memorySourcePath = kj::str(
+      argv[2], "/memorygrain123/isolate-runtime/worker-source.capnp.bin");
+  int memorySourceFd;
+  KJ_SYSCALL(memorySourceFd = open(
+      memorySourcePath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
+  capnp::writePackedMessageToFd(memorySourceFd, memorySourceMessage);
+  close(memorySourceFd);
 
   capnp::MallocMessageBuilder invalidMessage;
   auto invalidSource = invalidMessage.initRoot<sandstorm::IsolateWorkerSource>();
@@ -137,6 +166,57 @@ export default {
       "hosted worker response header was not preserved");
   KJ_REQUIRE(httpResponse.body->readAllText().wait(waitScope) == "shared-storage-ok",
       "hosted worker did not round-trip through its storage binding");
+
+  auto cpuStart = host.startGrainRequest();
+  cpuStart.setGrainId("cpugrain123");
+  cpuStart.setServices(services);
+  auto cpuGrain = cpuStart.send().wait(waitScope).getGrain();
+  auto cpuHttp = cpuGrain.getHttpServiceRequest().send().wait(waitScope);
+  auto cpuService = httpFactory.capnpToKj(cpuHttp.getService());
+  auto cpuClient = kj::newHttpClient(*cpuService);
+  kj::HttpHeaders cpuHeaders(*headerTable);
+  auto cpuRequest = cpuClient->request(
+      kj::HttpMethod::GET, "https://grain.invalid/cpu-loop", cpuHeaders);
+  bool cpuRejected = false;
+  auto cpuFailure = kj::runCatchingExceptions([&]() {
+    auto response = cpuRequest.response.wait(waitScope);
+    cpuRejected = response.statusCode >= 500;
+  });
+  if (cpuFailure != nullptr) cpuRejected = true;
+  KJ_REQUIRE(cpuRejected, "CPU watchdog did not terminate the worker request");
+
+  // A condemned grain must not stall or poison unrelated isolates in the shared process.
+  kj::HttpHeaders neighborHeaders(*headerTable);
+  auto neighborRequest = httpClient->request(
+      kj::HttpMethod::GET, "https://grain.invalid/", neighborHeaders);
+  auto neighborResponse = neighborRequest.response.wait(waitScope);
+  KJ_REQUIRE(neighborResponse.statusCode == 200,
+      "CPU watchdog affected an unrelated worker", neighborResponse.statusCode);
+  KJ_REQUIRE(neighborResponse.body->readAllText().wait(waitScope) == "ok",
+      "unrelated worker returned the wrong response after watchdog termination");
+  cpuGrain.stopRequest().send().wait(waitScope);
+
+  sandstorm::expectFailure([&]() {
+    auto memoryStart = host.startGrainRequest();
+    memoryStart.setGrainId("memorygrain123");
+    memoryStart.setServices(services);
+    auto memoryGrain = memoryStart.send().wait(waitScope).getGrain();
+    auto memoryHttp = memoryGrain.getHttpServiceRequest().send().wait(waitScope);
+    auto memoryService = httpFactory.capnpToKj(memoryHttp.getService());
+    auto memoryClient = kj::newHttpClient(*memoryService);
+    kj::HttpHeaders memoryHeaders(*headerTable);
+    auto memoryRequest = memoryClient->request(
+        kj::HttpMethod::GET, "https://grain.invalid/", memoryHeaders);
+    auto memoryResponse = memoryRequest.response.wait(waitScope);
+    KJ_REQUIRE(memoryResponse.statusCode < 500, "memory-bound worker request rejected");
+  });
+
+  kj::HttpHeaders postMemoryHeaders(*headerTable);
+  auto postMemoryRequest = httpClient->request(
+      kj::HttpMethod::GET, "https://grain.invalid/", postMemoryHeaders);
+  auto postMemoryResponse = postMemoryRequest.response.wait(waitScope);
+  KJ_REQUIRE(postMemoryResponse.statusCode == 200,
+      "heap-limit termination affected an unrelated worker", postMemoryResponse.statusCode);
   grain.stopRequest().send().wait(waitScope);
 
   sandstorm::expectFailure([&]() {
