@@ -2,7 +2,7 @@ diff --git a/src/workerd/server/BUILD.bazel b/src/workerd/server/BUILD.bazel
 index b5a07e1..a4c345e 100644
 --- a/src/workerd/server/BUILD.bazel
 +++ b/src/workerd/server/BUILD.bazel
-@@ -82,6 +82,26 @@ wd_cc_binary(
+@@ -82,6 +82,32 @@ wd_cc_binary(
      ],
  )
 -
@@ -14,6 +14,7 @@ index b5a07e1..a4c345e 100644
 +    visibility = ["//visibility:public"],
 +    deps = [
 +        ":sandstorm-isolate-host_capnp",
++        ":sandstorm-isolate-worker-source_capnp",
 +        ":server",
 +        ":v8-platform-impl",
 +        "//src/workerd/jsg",
@@ -24,6 +25,11 @@ index b5a07e1..a4c345e 100644
 +
 +wd_capnp_library(
 +    src = "sandstorm-isolate-host.capnp",
++    visibility = [":__pkg__"],
++)
++
++wd_capnp_library(
++    src = "sandstorm-isolate-worker-source.capnp",
 +    visibility = [":__pkg__"],
 +)
 +

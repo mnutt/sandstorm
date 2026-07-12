@@ -42,6 +42,9 @@ function(sandstorm_install_native)
     COMMAND "${CMAKE_COMMAND}" -E copy
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host.capnp"
       "${_workerd_embed_dir}/src/workerd/server/sandstorm-isolate-host.capnp"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-worker-source.capnp"
+      "${_workerd_embed_dir}/src/workerd/server/sandstorm-isolate-worker-source.capnp"
     COMMAND "${CMAKE_COMMAND}" -E chdir "${_workerd_embed_dir}"
       "${SANDSTORM_PATCH_EXECUTABLE}" -p1 -i "${_workerd_patch}"
     COMMAND "${CMAKE_COMMAND}" -E touch "${_workerd_embed_stamp}"
@@ -50,6 +53,7 @@ function(sandstorm_install_native)
       "${PROJECT_SOURCE_DIR}/deps/workerd"
       "${PROJECT_SOURCE_DIR}/isolate-host/isolate-host-main.c++"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host.capnp"
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-worker-source.capnp"
       "${_workerd_patch}"
     COMMENT "Preparing the embedded workerd host source"
     VERBATIM)

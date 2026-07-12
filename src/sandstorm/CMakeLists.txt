@@ -22,6 +22,7 @@ set(_sandstorm_schema_relative_paths
   isolate-bridge.capnp
   isolate-host.capnp
   isolate-supervisor-internal.capnp
+  isolate-worker-source.capnp
   ip.capnp
   mime.capnp
   package.capnp

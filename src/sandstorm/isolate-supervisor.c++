@@ -46,6 +46,7 @@
 #include <sandstorm/identity.capnp.h>
 #include <sandstorm/isolate-bridge.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
+#include <sandstorm/isolate-worker-source.capnp.h>
 #include <sandstorm/outbound-http-session.capnp.h>
 #include <sandstorm/package.capnp.h>
 #include <sandstorm/powerbox.capnp.h>
@@ -1323,6 +1324,46 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   manifest.add('\0');
   auto manifestText = kj::String(manifest.releaseAsArray());
   writeFile(kj::str(bundleDir, "/runtime-manifest.json"), manifestText.asBytes());
+
+  capnp::MallocMessageBuilder sourceMessage;
+  auto source = sourceMessage.initRoot<IsolateWorkerSource>();
+  source.setMainModule(config.mainModule);
+  source.setCompatibilityDate(config.compatibilityDate);
+  auto flags = source.initCompatibilityFlags(config.compatibilityFlags.size());
+  for (auto i: kj::indices(config.compatibilityFlags)) flags.set(i, config.compatibilityFlags[i]);
+  auto modules = source.initModules(config.modules.size());
+  for (auto i: kj::indices(config.modules)) {
+    auto& input = config.modules[i];
+    auto output = modules[i];
+    output.setName(input.name);
+    switch (input.type) {
+      case IsolateRuntimeConfig::ModuleType::ES_MODULE: output.setEsModule(input.content); break;
+      case IsolateRuntimeConfig::ModuleType::COMMON_JS_MODULE:
+        output.setCommonJsModule(input.content); break;
+      case IsolateRuntimeConfig::ModuleType::TEXT: output.setText(input.content); break;
+      case IsolateRuntimeConfig::ModuleType::DATA: output.setData(input.content); break;
+      case IsolateRuntimeConfig::ModuleType::WASM: output.setWasm(input.content); break;
+      case IsolateRuntimeConfig::ModuleType::JSON: output.setJson(input.content); break;
+    }
+  }
+  auto bindings = source.initBindings(config.bindings.size());
+  for (auto i: kj::indices(config.bindings)) {
+    auto& input = config.bindings[i];
+    auto output = bindings[i];
+    output.setName(input.name);
+    switch (input.type) {
+      case IsolateRuntimeConfig::BindingType::TEXT: output.setText(input.value); break;
+      case IsolateRuntimeConfig::BindingType::DATA: output.setData(input.value); break;
+      case IsolateRuntimeConfig::BindingType::JSON: output.setJson(input.value); break;
+      case IsolateRuntimeConfig::BindingType::SANDSTORM_API: output.setSandstormApi(); break;
+      case IsolateRuntimeConfig::BindingType::STORAGE: output.setStorage(); break;
+      case IsolateRuntimeConfig::BindingType::POWERBOX: output.setPowerbox(); break;
+      case IsolateRuntimeConfig::BindingType::SERVICE: output.setService(input.serviceName); break;
+    }
+  }
+  kj::VectorOutputStream sourceBytes;
+  capnp::writePackedMessage(sourceBytes, sourceMessage);
+  writeFile(kj::str(bundleDir, "/worker-source.capnp.bin"), sourceBytes.getArray());
 
   kj::Vector<char> workerdConfig;
   appendWorkerdConfig(workerdConfig, config, socketPath);

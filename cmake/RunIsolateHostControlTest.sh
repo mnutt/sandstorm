@@ -11,7 +11,9 @@ rm -f "$socket"
 rm -rf "$grain_root"
 mkdir -p "$grain_root/testgrain123/isolate-runtime"
 mkdir -p "$grain_root/missingmanifest/isolate-runtime"
+mkdir -p "$grain_root/missingsource/isolate-runtime"
 printf '{}\n' > "$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"
+printf '{}\n' > "$grain_root/missingsource/isolate-runtime/runtime-manifest.json"
 ln -s testgrain123 "$grain_root/linkgrain123"
 
 "$host" "$socket" "$grain_root" &
@@ -33,4 +35,4 @@ for _attempt in $(seq 1 100); do
 done
 
 [[ -S "$socket" ]]
-"$client" "$socket"
+"$client" "$socket" "$grain_root"
