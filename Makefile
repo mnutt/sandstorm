@@ -32,7 +32,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	isolate-capnp-abi-check \
 	isolate-capnp-corpus-test isolate-capnp-fuzz \
 	isolate-capnp-toolchain-test isolate-test \
-	stage-native workerd verify-workerd-runtime shell-env shell-build shell-build-debug bundle \
+	stage-native workerd verify-workerd-runtime verify-workerd-source shell-env shell-build shell-build-debug bundle \
 	test-app.spk test-app-spk test-app-dev app-index.spk app-index-spk app-index-dev \
 	tests/assets/isolate-test-app.spk isolate-test-app-spk isolate-test-app-dev \
 	tests/assets/isolate-api-powerbox-test-app.spk \
@@ -84,6 +84,7 @@ $(eval $(call cmake_target,installer-test,installer-test))
 $(eval $(call cmake_target,stage-native,stage-native))
 $(eval $(call cmake_target,workerd,workerd))
 $(eval $(call cmake_target,verify-workerd-runtime,verify-workerd-runtime))
+$(eval $(call cmake_target,verify-workerd-source,verify-workerd-source))
 $(eval $(call cmake_target,shell-env,shell-env))
 $(eval $(call cmake_target,shell-build,shell-build))
 $(eval $(call cmake_target,shell-build-debug,shell-build-debug))

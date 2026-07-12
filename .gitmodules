@@ -22,3 +22,6 @@
 	path = deps/clang
 	url = https://chromium.googlesource.com/chromium/src/tools/clang.git
 	branch = main
+[submodule "deps/workerd"]
+	path = deps/workerd
+	url = https://github.com/cloudflare/workerd.git

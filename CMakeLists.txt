@@ -31,6 +31,8 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(SANDSTORM_BUILD 0 CACHE STRING "Sandstorm release build number")
 set(SANDSTORM_WORKERD_NPM_VERSION 1.20260610.1 CACHE STRING
   "npm workerd version bundled for isolate grains")
+set(SANDSTORM_WORKERD_SOURCE_COMMIT ea5e86d22f16996a3d8fdb8922c34eb7e8711cd3
+  CACHE STRING "Pinned workerd source commit")
 set(SANDSTORM_WORKERD_BIN "" CACHE FILEPATH
   "Optional prebuilt workerd binary to bundle instead of installing from npm")
 set(SANDSTORM_CAPNP_ES_NPM_VERSION 0.3.0 CACHE STRING

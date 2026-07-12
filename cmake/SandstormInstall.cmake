@@ -1,6 +1,18 @@
 include(GNUInstallDirs)
+find_package(Git REQUIRED)
 
 function(sandstorm_install_native)
+  add_custom_target(verify-workerd-source
+    COMMAND "${CMAKE_COMMAND}"
+      "-DGIT=${GIT_EXECUTABLE}"
+      "-DREPOSITORY=${PROJECT_SOURCE_DIR}/deps/workerd"
+      "-DEXPECTED=${SANDSTORM_WORKERD_SOURCE_COMMIT}"
+      -P "${PROJECT_SOURCE_DIR}/cmake/VerifyGitHead.cmake"
+    DEPENDS
+      "${PROJECT_SOURCE_DIR}/deps/workerd"
+      "${PROJECT_SOURCE_DIR}/cmake/VerifyGitHead.cmake"
+    COMMENT "Verifying the pinned workerd source checkout"
+    VERBATIM)
   set(_native_targets
     sandstorm
     spk
