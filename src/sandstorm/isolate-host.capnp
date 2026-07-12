@@ -9,8 +9,14 @@ interface IsolateHost @0xb15098c984fb8f32 {
   # isolate supervisors in that domain. The host derives package, runtime, socket, and storage paths
   # from its server-configured roots plus this grain ID; callers never supply filesystem paths.
 
-  startGrain @0 (grainId :Text) -> (grain :HostedIsolate);
+  startGrain @0 (grainId :Text, services :IsolateBindingServices) -> (grain :HostedIsolate);
   # Instantiate or retain the named grain's worker. Repeated calls for the same grain are idempotent.
+  # `services` is a freshly attenuated capability for this grain, never a backend-wide interface.
+}
+
+interface IsolateBindingServices @0xd8b8ffcb9dbf83ea {
+  # Authority used by host-owned SANDSTORM_API and POWERBOX adapters. Methods are added here only
+  # when an adapter needs a narrowly-scoped per-grain operation. Storage remains host-local.
 }
 
 interface HostedIsolate @0xae62f18e41ff24cb {

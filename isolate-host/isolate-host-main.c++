@@ -309,15 +309,17 @@ struct HostedState final: public kj::Refcounted {
   HostedState(workerd::server::Server& runtime,
       kj::String grainId,
       int grainDirFd,
+      IsolateBindingServices::Client bindingServices,
       kj::Own<workerd::WorkerStubChannel> worker)
       : runtime(runtime), grainId(kj::mv(grainId)), grainDirFd(grainDirFd),
-        worker(kj::mv(worker)) {}
+        bindingServices(kj::mv(bindingServices)), worker(kj::mv(worker)) {}
 
   ~HostedState() noexcept { close(grainDirFd); }
 
   workerd::server::Server& runtime;
   kj::String grainId;
   int grainDirFd;
+  IsolateBindingServices::Client bindingServices;
   kj::Own<workerd::WorkerStubChannel> worker;
   bool running = true;
 };
@@ -333,6 +335,7 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
 
   kj::Promise<void> stop(StopContext context) override {
     state->runtime.evictDynamicWorker(LOADER_NAMESPACE, state->grainId);
+    state->bindingServices = IsolateBindingServices::Client(nullptr);
     state->running = false;
     return kj::READY_NOW;
   }
@@ -351,6 +354,7 @@ class IsolateHostImpl final: public IsolateHost::Server {
   kj::Promise<void> startGrain(StartGrainContext context) override {
     auto grainId = context.getParams().getGrainId();
     KJ_REQUIRE(isValidGrainId(grainId), "invalid grain ID");
+    KJ_REQUIRE(context.getParams().hasServices(), "missing per-grain binding services");
 
     KJ_IF_SOME(existing, grains.find(grainId)) {
       if (!existing->running) grains.erase(grainId);
@@ -382,7 +386,8 @@ class IsolateHostImpl final: public IsolateHost::Server {
         return source.clone(kj::atomicAddRef(*backing));
       });
       return {kj::heapString(grainId),
-        kj::rc<HostedState>(runtime, kj::mv(ownedGrainId), grainDir.release(), kj::mv(worker))};
+        kj::rc<HostedState>(runtime, kj::mv(ownedGrainId), grainDir.release(),
+            context.getParams().getServices(), kj::mv(worker))};
     });
     state->running = true;
     context.getResults().setGrain(kj::heap<HostedIsolateImpl>(state.addRef()));

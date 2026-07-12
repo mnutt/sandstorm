@@ -17,6 +17,8 @@
 namespace sandstorm {
 namespace {
 
+class BindingServicesImpl final: public IsolateBindingServices::Server {};
+
 void expectFailure(kj::Function<void()> operation) {
   auto exception = kj::runCatchingExceptions(kj::mv(operation));
   KJ_REQUIRE(exception != nullptr, "host operation unexpectedly succeeded");
@@ -67,9 +69,12 @@ int main(int argc, char** argv) {
   capnp::EzRpcClient rpc(kj::str("unix:", argv[1]));
   auto& waitScope = rpc.getWaitScope();
   auto host = rpc.getMain<sandstorm::IsolateHost>();
+  sandstorm::IsolateBindingServices::Client services =
+      kj::heap<sandstorm::BindingServicesImpl>();
 
   auto start = host.startGrainRequest();
   start.setGrainId("testgrain123");
+  start.setServices(services);
   auto grain = start.send().wait(waitScope).getGrain();
   grain.keepAliveRequest().send().wait(waitScope);
   grain.stopRequest().send().wait(waitScope);
@@ -80,6 +85,7 @@ int main(int argc, char** argv) {
 
   auto restart = host.startGrainRequest();
   restart.setGrainId("testgrain123");
+  restart.setServices(services);
   auto restartedGrain = restart.send().wait(waitScope).getGrain();
   restartedGrain.keepAliveRequest().send().wait(waitScope);
   sandstorm::expectFailure([&]() {
@@ -89,26 +95,31 @@ int main(int argc, char** argv) {
   sandstorm::expectFailure([&]() {
     auto invalid = host.startGrainRequest();
     invalid.setGrainId("../escape");
+    invalid.setServices(services);
     invalid.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
     auto symlink = host.startGrainRequest();
     symlink.setGrainId("linkgrain123");
+    symlink.setServices(services);
     symlink.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
     auto incomplete = host.startGrainRequest();
     incomplete.setGrainId("missingmanifest");
+    incomplete.setServices(services);
     incomplete.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
     auto incomplete = host.startGrainRequest();
     incomplete.setGrainId("missingsource");
+    incomplete.setServices(services);
     incomplete.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
     auto invalid = host.startGrainRequest();
     invalid.setGrainId("invalidjson");
+    invalid.setServices(services);
     invalid.send().wait(waitScope);
   });
 
