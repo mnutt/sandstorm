@@ -440,6 +440,11 @@ Progress:
   the cache entry, matching upstream restart semantics; restarting a stopped
   grain creates a new stub while capabilities to the old hosted-grain wrapper
   remain stopped.
+- Worker-source translation now validates non-empty and unique module/binding
+  names, requires the declared main module to exist, and translates text and
+  strictly parsed JSON bindings into the dynamic worker environment. Malformed
+  JSON is rejected synchronously by `startGrain()`; binary-data and
+  capability-backed service bindings remain explicitly fail-closed.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead
