@@ -37,7 +37,7 @@ function(sandstorm_install_native)
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${PROJECT_SOURCE_DIR}/deps/workerd" "${_workerd_embed_dir}"
     COMMAND "${CMAKE_COMMAND}" -E copy
-      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host-main.c++"
+      "${PROJECT_SOURCE_DIR}/isolate-host/isolate-host-main.c++"
       "${_workerd_embed_dir}/src/workerd/server/sandstorm-isolate-host.c++"
     COMMAND "${CMAKE_COMMAND}" -E chdir "${_workerd_embed_dir}"
       "${SANDSTORM_PATCH_EXECUTABLE}" -p1 -i "${_workerd_patch}"
@@ -45,7 +45,7 @@ function(sandstorm_install_native)
     DEPENDS
       verify-workerd-source
       "${PROJECT_SOURCE_DIR}/deps/workerd"
-      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host-main.c++"
+      "${PROJECT_SOURCE_DIR}/isolate-host/isolate-host-main.c++"
       "${_workerd_patch}"
     COMMENT "Preparing the embedded workerd host source"
     VERBATIM)
@@ -57,7 +57,9 @@ function(sandstorm_install_native)
       //src/workerd/server:sandstorm-isolate-host
     COMMAND "${CMAKE_COMMAND}" -E copy
       "${_workerd_embed_dir}/bazel-bin/src/workerd/server/sandstorm-isolate-host"
-      "${_isolate_host_bin}"
+      "${_isolate_host_bin}.new"
+    COMMAND "${CMAKE_COMMAND}" -E rename
+      "${_isolate_host_bin}.new" "${_isolate_host_bin}"
     WORKING_DIRECTORY "${_workerd_embed_dir}"
     DEPENDS "${_bazel}" "${_workerd_embed_stamp}"
     COMMENT "Building the embedded workerd isolate host"
