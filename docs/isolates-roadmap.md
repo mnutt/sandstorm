@@ -420,6 +420,14 @@ Progress:
   isolate cache and startup machinery while giving Sandstorm lifecycle RPC a
   real per-grain eviction operation; no general workerd configuration API is
   made public.
+- Treat the downstream workerd patch as a staging area for upstream embedding
+  APIs, not as Sandstorm's policy layer. Propose the loader/eviction seam and
+  non-serializable native `Frankenvalue` capability seam upstream, prioritizing
+  review or simplification of the `compileBindings` channel materializer. Keep
+  limits, watchdogs, logging, and eviction policy in Sandstorm-owned code or
+  general upstream APIs. Reassess the embedding boundary if those features
+  require continued semantic edits to workerd internals or patch growth stops
+  being small relative to the runtime being reused.
 - `isolate-host` now initializes one in-process V8/workerd `Server` with a
   private named-worker loader namespace and keeps it alive alongside the
   Cap'n Proto control listener. The bootstrap service is reachable only on an
@@ -447,7 +455,11 @@ Progress:
   service bindings remain explicitly fail-closed.
 - Sandstorm API, storage, and powerbox bindings now materialize as ordinary
   workerd `Fetcher` objects backed by per-grain Unix-socket channels. The host
-  derives each socket beneath the already-confined grain descriptor, and a
+  derives each socket beneath a duplicated, channel-owned grain descriptor, so
+  eviction cannot turn a reused descriptor number into cross-grain authority.
+  The path transport is transitional: dispatch adapters will instead be
+  host-owned in-process HTTP services tied to grain state, avoiding repeated
+  filesystem traversal and preserving the Phase 4 density goal. A
   narrow non-serializable `Frankenvalue` capability constructor lets the
   dynamic loader preserve the typed channel until the destination worker's V8
   context exists. This establishes the native per-worker routing primitive;
@@ -464,6 +476,10 @@ Progress:
 - The runtime manifest and `/runtime` Sandstorm API metadata now report the
   current topology as `perGrainSidecar`, giving shared-host work an explicit
   mode bit to assert against without changing launch behavior.
+- Still deferred but required before the shared topology exits Phase 4:
+  per-grain worker limits and watchdog policy, grain-tagged logs rather than
+  global stdout-only attribution, keepalive-driven eviction, and published
+  per-grain memory measurements.
 
 **Exit criteria:** N example grains for one user run in one workerd with
 correct storage isolation; per-grain memory overhead measured and published;
