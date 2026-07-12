@@ -1,5 +1,6 @@
 include(GNUInstallDirs)
 find_package(Git REQUIRED)
+find_program(SANDSTORM_PATCH_EXECUTABLE NAMES patch REQUIRED)
 
 function(sandstorm_install_native)
   add_custom_target(verify-workerd-source
@@ -13,6 +14,55 @@ function(sandstorm_install_native)
       "${PROJECT_SOURCE_DIR}/cmake/VerifyGitHead.cmake"
     COMMENT "Verifying the pinned workerd source checkout"
     VERBATIM)
+
+  set(_bazel "${CMAKE_BINARY_DIR}/tools/bazel-${SANDSTORM_BAZEL_VERSION}")
+  add_custom_command(
+    OUTPUT "${_bazel}"
+    COMMAND "${CMAKE_COMMAND}"
+      "-DURL=https://github.com/bazelbuild/bazel/releases/download/${SANDSTORM_BAZEL_VERSION}/bazel-${SANDSTORM_BAZEL_VERSION}-linux-x86_64"
+      "-DOUTPUT=${_bazel}"
+      "-DSHA256=${SANDSTORM_BAZEL_LINUX_X86_64_SHA256}"
+      -P "${PROJECT_SOURCE_DIR}/cmake/DownloadVerified.cmake"
+    DEPENDS "${PROJECT_SOURCE_DIR}/cmake/DownloadVerified.cmake"
+    COMMENT "Downloading Bazel ${SANDSTORM_BAZEL_VERSION}"
+    VERBATIM)
+
+  set(_workerd_embed_dir "${CMAKE_BINARY_DIR}/workerd-embed")
+  set(_workerd_embed_stamp "${_workerd_embed_dir}/.sandstorm-source.stamp")
+  set(_workerd_patch
+    "${PROJECT_SOURCE_DIR}/patches/workerd/0001-add-sandstorm-isolate-host-target.patch")
+  add_custom_command(
+    OUTPUT "${_workerd_embed_stamp}"
+    COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_workerd_embed_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+      "${PROJECT_SOURCE_DIR}/deps/workerd" "${_workerd_embed_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host-main.c++"
+      "${_workerd_embed_dir}/src/workerd/server/sandstorm-isolate-host.c++"
+    COMMAND "${CMAKE_COMMAND}" -E chdir "${_workerd_embed_dir}"
+      "${SANDSTORM_PATCH_EXECUTABLE}" -p1 -i "${_workerd_patch}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${_workerd_embed_stamp}"
+    DEPENDS
+      verify-workerd-source
+      "${PROJECT_SOURCE_DIR}/deps/workerd"
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host-main.c++"
+      "${_workerd_patch}"
+    COMMENT "Preparing the embedded workerd host source"
+    VERBATIM)
+
+  set(_isolate_host_bin "${CMAKE_BINARY_DIR}/bin/isolate-host")
+  add_custom_command(
+    OUTPUT "${_isolate_host_bin}"
+    COMMAND "${_bazel}" build --config=release
+      //src/workerd/server:sandstorm-isolate-host
+    COMMAND "${CMAKE_COMMAND}" -E copy
+      "${_workerd_embed_dir}/bazel-bin/src/workerd/server/sandstorm-isolate-host"
+      "${_isolate_host_bin}"
+    WORKING_DIRECTORY "${_workerd_embed_dir}"
+    DEPENDS "${_bazel}" "${_workerd_embed_stamp}"
+    COMMENT "Building the embedded workerd isolate host"
+    VERBATIM)
+  add_custom_target(isolate-host DEPENDS "${_isolate_host_bin}")
   set(_native_targets
     sandstorm
     spk

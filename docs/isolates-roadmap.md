@@ -395,6 +395,10 @@ Progress:
   lives in `deps/workerd` at commit `ea5e86d2`, and
   `make verify-workerd-source` prevents the native host and packaged runtime
   from silently drifting to different releases.
+- `make isolate-host` now builds a Sandstorm-owned native executable against
+  workerd's in-process `Server` library. The build uses a checksum-pinned Bazel
+  binary and a patched copy under `tmp`, leaving the upstream source submodule
+  pristine; the resulting `bin/isolate-host` has no Bazel runtime dependency.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead
