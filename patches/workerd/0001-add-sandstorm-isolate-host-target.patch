@@ -2,7 +2,7 @@ diff --git a/src/workerd/server/BUILD.bazel b/src/workerd/server/BUILD.bazel
 index b5a07e1..a4c345e 100644
 --- a/src/workerd/server/BUILD.bazel
 +++ b/src/workerd/server/BUILD.bazel
-@@ -82,6 +82,32 @@ wd_cc_binary(
+@@ -82,6 +82,33 @@ wd_cc_binary(
      ],
  )
 -
@@ -19,6 +19,7 @@ index b5a07e1..a4c345e 100644
 +        ":v8-platform-impl",
 +        "//src/workerd/jsg",
 +        "@capnp-cpp//src/capnp:capnp-rpc",
++        "@capnp-cpp//src/capnp/compat:json",
 +        "@capnp-cpp//src/kj:kj-async",
 +    ],
 +)

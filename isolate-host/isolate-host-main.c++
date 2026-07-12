@@ -11,6 +11,7 @@
 #include <workerd/jsg/setup.h>
 
 #include <capnp/rpc-twoparty.h>
+#include <capnp/compat/json.h>
 #include <capnp/serialize-packed.h>
 #include <kj/async-io.h>
 #include <kj/map.h>
@@ -75,8 +76,16 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd) {
   backing->source = kj::heap<capnp::PackedFdMessageReader>(kj::AutoCloseFd(sourceFd));
   auto bundle = backing->source->getRoot<IsolateWorkerSource>();
   auto inputModules = bundle.getModules();
+  KJ_REQUIRE(inputModules.size() > 0, "worker bundle has no modules");
+  kj::HashSet<kj::String> moduleNames;
+  bool foundMainModule = false;
   auto modules = kj::heapArrayBuilder<workerd::WorkerSource::Module>(inputModules.size());
   for (auto input: inputModules) {
+    KJ_REQUIRE(input.getName().size() > 0, "worker bundle has an empty module name");
+    KJ_REQUIRE(moduleNames.find(input.getName()) == kj::none,
+        "worker bundle has a duplicate module name", input.getName());
+    moduleNames.insert(kj::str(input.getName()));
+    if (input.getName() == bundle.getMainModule()) foundMainModule = true;
     workerd::WorkerSource::Module output{.name = input.getName()};
     switch (input.which()) {
       case IsolateWorkerSource::Module::ES_MODULE:
@@ -112,9 +121,42 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd) {
     }
     modules.add(kj::mv(output));
   }
+  KJ_REQUIRE(foundMainModule, "worker bundle main module is not present", bundle.getMainModule());
 
-  KJ_REQUIRE(bundle.getBindings().size() == 0,
-      "shared host does not yet support runtime bindings");
+  workerd::Frankenvalue env;
+  kj::HashSet<kj::String> bindingNames;
+  capnp::JsonCodec json;
+  for (auto binding: bundle.getBindings()) {
+    KJ_REQUIRE(binding.getName().size() > 0, "worker bundle has an empty binding name");
+    KJ_REQUIRE(bindingNames.find(binding.getName()) == kj::none,
+        "worker bundle has a duplicate binding name", binding.getName());
+    bindingNames.insert(kj::str(binding.getName()));
+    capnp::MallocMessageBuilder jsonMessage;
+    auto jsonValue = jsonMessage.initRoot<capnp::json::Value>();
+    switch (binding.which()) {
+      case IsolateWorkerSource::Binding::TEXT: {
+        auto text = binding.getText().asChars();
+        jsonValue.setString(kj::StringPtr(text.begin(), text.size()));
+        env.setProperty(kj::str(binding.getName()),
+            workerd::Frankenvalue::fromJson(json.encode(jsonValue.asReader())));
+        break;
+      }
+      case IsolateWorkerSource::Binding::JSON: {
+        auto text = binding.getJson().asChars();
+        json.decode(text, jsonValue);
+        env.setProperty(kj::str(binding.getName()),
+            workerd::Frankenvalue::fromJson(json.encode(jsonValue.asReader())));
+        break;
+      }
+      case IsolateWorkerSource::Binding::DATA:
+        KJ_FAIL_REQUIRE("shared host does not yet support data bindings", binding.getName());
+      case IsolateWorkerSource::Binding::SANDSTORM_API:
+      case IsolateWorkerSource::Binding::STORAGE:
+      case IsolateWorkerSource::Binding::POWERBOX:
+      case IsolateWorkerSource::Binding::SERVICE:
+        KJ_FAIL_REQUIRE("shared host does not yet support service bindings", binding.getName());
+    }
+  }
   auto compatibility = backing->compatibility.initRoot<workerd::CompatibilityFlags>();
   auto inputFlags = bundle.getCompatibilityFlags();
   auto flags = KJ_MAP(flag, inputFlags) { return kj::str(flag); };
@@ -134,7 +176,7 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd) {
     .source = kj::mv(source),
     .compatibilityFlags = compatibility.asReader(),
     .limits = kj::none,
-    .env = workerd::Frankenvalue(),
+    .env = kj::mv(env),
     .globalOutbound = kj::none,
     .tails = {},
     .streamingTails = {},

@@ -35,11 +35,33 @@ int main(int argc, char** argv) {
   module.setName("main.js");
   auto script = kj::StringPtr("export default { fetch() { return new Response('ok'); } };");
   module.setEsModule(script.asBytes());
+  auto bindings = source.initBindings(2);
+  bindings[0].setName("MESSAGE");
+  bindings[0].setText(kj::StringPtr("hello").asBytes());
+  bindings[1].setName("SETTINGS");
+  bindings[1].setJson(kj::StringPtr("{\"enabled\":true}").asBytes());
   auto sourcePath = kj::str(argv[2], "/testgrain123/isolate-runtime/worker-source.capnp.bin");
   int sourceFd;
   KJ_SYSCALL(sourceFd = open(sourcePath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
   capnp::writePackedMessageToFd(sourceFd, sourceMessage);
   close(sourceFd);
+
+  capnp::MallocMessageBuilder invalidMessage;
+  auto invalidSource = invalidMessage.initRoot<sandstorm::IsolateWorkerSource>();
+  invalidSource.setMainModule("main.js");
+  invalidSource.setCompatibilityDate("2026-06-10");
+  auto invalidModule = invalidSource.initModules(1)[0];
+  invalidModule.setName("main.js");
+  invalidModule.setEsModule(script.asBytes());
+  auto invalidBinding = invalidSource.initBindings(1)[0];
+  invalidBinding.setName("BROKEN");
+  invalidBinding.setJson(kj::StringPtr("{not-json}").asBytes());
+  auto invalidPath = kj::str(argv[2], "/invalidjson/isolate-runtime/worker-source.capnp.bin");
+  int invalidFd;
+  KJ_SYSCALL(invalidFd = open(
+      invalidPath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
+  capnp::writePackedMessageToFd(invalidFd, invalidMessage);
+  close(invalidFd);
   capnp::EzRpcClient rpc(kj::str("unix:", argv[1]));
   auto& waitScope = rpc.getWaitScope();
   auto host = rpc.getMain<sandstorm::IsolateHost>();
@@ -81,6 +103,11 @@ int main(int argc, char** argv) {
     auto incomplete = host.startGrainRequest();
     incomplete.setGrainId("missingsource");
     incomplete.send().wait(waitScope);
+  });
+  sandstorm::expectFailure([&]() {
+    auto invalid = host.startGrainRequest();
+    invalid.setGrainId("invalidjson");
+    invalid.send().wait(waitScope);
   });
 
   return 0;
