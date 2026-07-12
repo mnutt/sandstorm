@@ -420,13 +420,23 @@ private:
   kj::Vector<BrowserHandoffCapabilityRecord> browserHandoffCapabilities;
 };
 
+class IsolateRuntimeAdapter;
+class IsolateRuntimeAdapterFactory: public kj::Refcounted {
+public:
+  virtual ~IsolateRuntimeAdapterFactory() noexcept(false);
+  virtual kj::Own<IsolateRuntimeAdapter> make(
+      kj::Own<IsolateRuntimeConfig> config, kj::Own<struct IsolateRuntimeHost> host) = 0;
+};
+
 struct IsolateRuntimeHost final: public kj::Refcounted {
   IsolateRuntimeHost(
       kj::Network& network, kj::Timer& timer, kj::StringPtr grainId,
-      SandstormCore::Client sandstormCore)
+      SandstormCore::Client sandstormCore,
+      kj::Own<IsolateRuntimeAdapterFactory> runtimeAdapterFactory)
       : network(network), timer(timer), grainId(kj::heapString(grainId)),
         sandstormCore(kj::mv(sandstormCore)),
-        sessions(kj::refcounted<IsolateSessionRegistry>()) {}
+        sessions(kj::refcounted<IsolateSessionRegistry>()),
+        runtimeAdapterFactory(kj::mv(runtimeAdapterFactory)) {}
 
   kj::Network& network;
   kj::Timer& timer;
@@ -434,6 +444,7 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
   SandstormCore::Client sandstormCore;
   kj::HttpHeaderTable headerTable;
   kj::Own<IsolateSessionRegistry> sessions;
+  kj::Own<IsolateRuntimeAdapterFactory> runtimeAdapterFactory;
 };
 
 IsolateRuntimeConfig::ModuleType getModuleType(
@@ -2410,6 +2421,8 @@ public:
       FetchRequest&& request, ByteStream::Client responseStream) = 0;
 };
 
+IsolateRuntimeAdapterFactory::~IsolateRuntimeAdapterFactory() noexcept(false) = default;
+
 class WorkerdRuntimeAdapter final: public IsolateRuntimeAdapter {
 public:
   WorkerdRuntimeAdapter(kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host)
@@ -2875,6 +2888,14 @@ private:
   }
 };
 
+class WorkerdRuntimeAdapterFactory final: public IsolateRuntimeAdapterFactory {
+public:
+  kj::Own<IsolateRuntimeAdapter> make(
+      kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host) override {
+    return kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host));
+  }
+};
+
 kj::Own<WebSession::RequestStream::Server> WorkerdRuntimeAdapter::startRequestStream(
     FetchRequest&& request, ByteStream::Client responseStream) {
   KJ_REQUIRE(isSidecarSocketAvailable(), "isolate sidecar socket is not available");
@@ -3107,7 +3128,7 @@ public:
         parentToken(kj::mv(parentToken)),
         runtimeConfig(kj::addRef(*config)),
         runtimeHost(kj::addRef(*host)),
-        runtime(kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host))) {}
+        runtime(runtimeHost->runtimeAdapterFactory->make(kj::mv(config), kj::mv(host))) {}
 
   ~IsolateRouteBackedSessionImpl() noexcept(false) {
     if (sessionMetadata.sessionId.size() > 0) {
@@ -6514,7 +6535,8 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   KJ_LOG(WARNING, "Isolate supervisor core redirector created.");
 
   auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
-      ioContext.provider->getNetwork(), ioContext.provider->getTimer(), grainId, coreCap);
+      ioContext.provider->getNetwork(), ioContext.provider->getTimer(), grainId, coreCap,
+      kj::refcounted<WorkerdRuntimeAdapterFactory>());
   kj::Maybe<kj::Promise<void>> apiListenTask = nullptr;
   kj::Maybe<kj::Promise<void>> powerboxListenTask = nullptr;
   kj::Maybe<kj::Promise<void>> storageListenTask = nullptr;
