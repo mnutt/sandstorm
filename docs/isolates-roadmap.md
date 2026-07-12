@@ -420,6 +420,13 @@ Progress:
   isolate cache and startup machinery while giving Sandstorm lifecycle RPC a
   real per-grain eviction operation; no general workerd configuration API is
   made public.
+- `isolate-host` now initializes one in-process V8/workerd `Server` with a
+  private named-worker loader namespace and keeps it alive alongside the
+  Cap'n Proto control listener. The bootstrap service is reachable only on an
+  ephemeral loopback listener; Sandstorm requests do not traverse it. Host
+  `stop()` calls workerd's explicit eviction path, so the remaining bridge to
+  real grain execution is runtime-bundle translation and request routing, not
+  process or V8 lifecycle setup.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead
