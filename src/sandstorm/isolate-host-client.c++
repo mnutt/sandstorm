@@ -39,6 +39,16 @@ int main(int argc, char** argv) {
     invalid.setGrainId("../escape");
     invalid.send().wait(waitScope);
   });
+  sandstorm::expectFailure([&]() {
+    auto symlink = host.startGrainRequest();
+    symlink.setGrainId("linkgrain123");
+    symlink.send().wait(waitScope);
+  });
+  sandstorm::expectFailure([&]() {
+    auto incomplete = host.startGrainRequest();
+    incomplete.setGrainId("missingmanifest");
+    incomplete.send().wait(waitScope);
+  });
 
   return 0;
 }

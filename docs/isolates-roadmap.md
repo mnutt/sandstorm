@@ -409,6 +409,11 @@ Progress:
   Sandstorm's existing toolchain verifies cross-toolchain wire compatibility,
   start/keepAlive/stop behavior, stopped-handle rejection, and rejection of a
   path-traversal grain ID via `make isolate-host-control-test`.
+- The host receives the grain root once at process startup and resolves each
+  validated grain beneath an open root directory descriptor. It retains a
+  descriptor for the selected grain and requires a regular runtime manifest,
+  using `openat()` plus `O_NOFOLLOW` at trust boundaries so neither RPC input
+  nor a grain-directory symlink can redirect worker loading outside that root.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead

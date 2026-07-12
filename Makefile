@@ -366,9 +366,15 @@ isolate-host: bin/isolate-host
 
 isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 	@socket="$(PWD)/tmp/isolate-host-control-test.sock"; \
+		grain_root="$(PWD)/tmp/isolate-host-control-test-grains"; \
 		rm -f "$$socket"; \
-		bin/isolate-host "$$socket" & host_pid=$$!; \
-		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"' EXIT; \
+		rm -rf "$$grain_root"; \
+		mkdir -p "$$grain_root/testgrain123/isolate-runtime"; \
+		mkdir -p "$$grain_root/missingmanifest/isolate-runtime"; \
+		printf '{}\n' > "$$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"; \
+		ln -s testgrain123 "$$grain_root/linkgrain123"; \
+		bin/isolate-host "$$socket" "$$grain_root" & host_pid=$$!; \
+		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"; rm -rf "$$grain_root"' EXIT; \
 		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
 		test -S "$$socket"; \
 		tmp/sandstorm/isolate-host-client "$$socket"
