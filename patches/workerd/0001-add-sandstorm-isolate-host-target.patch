@@ -5,7 +5,8 @@ index b5a07e1..a4c345e 100644
 @@ -82,6 +82,24 @@ wd_cc_binary(
      ],
  )
- 
+-
++
 +wd_cc_binary(
 +    name = "sandstorm-isolate-host",
 +    srcs = ["sandstorm-isolate-host.c++"],
@@ -27,3 +28,70 @@ index b5a07e1..a4c345e 100644
  wd_cc_library(
      name = "alarm-scheduler",
      srcs = [
+diff --git a/src/workerd/server/server.h b/src/workerd/server/server.h
+index e30d846..8f3e351 100644
+--- a/src/workerd/server/server.h
++++ b/src/workerd/server/server.h
+@@ -108,6 +108,16 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
+       kj::StringPtr servicePattern = "*"_kj,
+       kj::StringPtr entrypointPattern = "*"_kj);
+-
++
++  // Sandstorm's shared host uses workerd's loader cache directly. The loader namespace must
++  // already have been declared by the server config passed to run().
++  kj::Own<WorkerStubChannel> loadDynamicWorker(kj::StringPtr loaderNamespace,
++      kj::String workerName,
++      kj::Function<kj::Promise<DynamicWorkerSource>()> fetchSource);
++
++  // Immediately unlinks a named worker and removes it from the loader cache. Existing channels
++  // fail; a later load of the same name constructs a fresh worker.
++  void evictDynamicWorker(kj::StringPtr loaderNamespace, kj::StringPtr workerName);
++
+   struct Durable {
+     kj::String uniqueKey;
+     bool isEvictable;
+diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
+index 46a1746..742a5d3 100644
+--- a/src/workerd/server/server.c++
++++ b/src/workerd/server/server.c++
+@@ -4284,8 +4284,10 @@
+   void removeIsolate(kj::StringPtr name) {
+     // This is called by abortIsolate()
+     isolates.erase(name);
+   }
+-
++
++  void evictIsolate(kj::StringPtr name);
++
+  private:
+   Server& server;
+   kj::String namespaceName;
+@@ -4611,6 +4613,27 @@
+   };
+ };
+-
++
++void Server::WorkerLoaderNamespace::evictIsolate(kj::StringPtr name) {
++  KJ_IF_SOME(isolate, isolates.find(name)) {
++    isolate->unlink();
++    isolates.erase(name);
++  }
++}
++
++kj::Own<WorkerStubChannel> Server::loadDynamicWorker(kj::StringPtr loaderNamespace,
++    kj::String workerName,
++    kj::Function<kj::Promise<DynamicWorkerSource>()> fetchSource) {
++  auto& loader = KJ_REQUIRE_NONNULL(workerLoaderNamespaces.find(loaderNamespace),
++      "worker loader namespace is not configured", loaderNamespace);
++  return loader->loadIsolate(kj::mv(workerName), kj::mv(fetchSource));
++}
++
++void Server::evictDynamicWorker(kj::StringPtr loaderNamespace, kj::StringPtr workerName) {
++  auto& loader = KJ_REQUIRE_NONNULL(workerLoaderNamespaces.find(loaderNamespace),
++      "worker loader namespace is not configured", loaderNamespace);
++  loader->evictIsolate(workerName);
++}
++
+ void Server::unlinkWorkerLoaders() {
+   for (auto& loader: workerLoaderNamespaces) {
+     loader.value->unlink();
