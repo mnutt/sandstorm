@@ -1,6 +1,7 @@
 @0xe912b22cf61cd218;
 
 $import "/capnp/c++.capnp".namespace("sandstorm");
+using Http = import "/capnp/compat/http-over-capnp.capnp";
 
 interface IsolateHost @0xb15098c984fb8f32 {
   # Account-scoped control plane for the shared workerd host.
@@ -25,4 +26,8 @@ interface HostedIsolate @0xae62f18e41ff24cb {
 
   stop @1 ();
   # Evict this worker. Existing live RPC and HTTP connections fail; durable tokens remain valid.
+
+  getHttpService @2 () -> (service :Http.HttpService);
+  # Returns this grain's worker ingress as a streaming HTTP capability. Possession of this
+  # HostedIsolate capability, rather than a grain ID or bearer token, authorizes ingress.
 }
