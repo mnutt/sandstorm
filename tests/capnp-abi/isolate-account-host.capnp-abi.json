@@ -1,0 +1,21 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/isolate-account-host.capnp",
+  "interfaces": [
+    {
+      "name": "IsolateAccountHost",
+      "interfaceId": "0xe40e7159805f5d41",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "startGrain",
+          "ordinal": 0,
+          "paramStructId": "0xca6f6fc400821553",
+          "resultStructId": "0x94a997dfc3b8aa70",
+          "params": [{"name": "grainId", "type": "Text"}, {"name": "packageId", "type": "Text"}, {"name": "mainModule", "type": "Text"}, {"name": "compatibilityDate", "type": "Text"}, {"name": "isNew", "type": "Bool"}, {"name": "core", "type": "SandstormCore"}],
+          "results": [{"name": "supervisor", "type": "Supervisor"}]
+        }
+      ]
+    }
+  ]
+}

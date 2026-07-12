@@ -195,8 +195,31 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Running isolate supervisor integration tests"
     VERBATIM)
 
+  add_custom_target(isolate-account-host-integration-test
+    COMMAND bash "${PROJECT_SOURCE_DIR}/cmake/RunIsolateAccountHostIntegrationTest.sh"
+      "${CMAKE_BINARY_DIR}/bin/isolate-host"
+      "$<TARGET_FILE:sandstorm>"
+      "$<TARGET_FILE:spk>"
+      "$<TARGET_FILE:isolate-account-host-client>"
+      "${_isolate_test_app_spk}"
+      "${CMAKE_BINARY_DIR}/isolate-account-host-test"
+    DEPENDS
+      isolate-host
+      sandstorm
+      spk
+      isolate-account-host-client
+      isolate-test-app-spk
+      "${PROJECT_SOURCE_DIR}/cmake/RunIsolateAccountHostIntegrationTest.sh"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Running account-scoped isolate host integration tests"
+    VERBATIM)
+
   set(_isolate_abi_dir "${PROJECT_SOURCE_DIR}/tests/capnp-abi")
   add_custom_target(isolate-capnp-abi-check
+    COMMAND "$<TARGET_FILE:spk>" capnp-abi --check
+      "${_isolate_abi_dir}/isolate-account-host.capnp-abi.json"
+      "capnp:/sandstorm/isolate-account-host.capnp"
     COMMAND "$<TARGET_FILE:spk>" capnp-abi --check
       "${_isolate_abi_dir}/isolate-bridge.capnp-abi.json"
       "capnp:/sandstorm/isolate-bridge.capnp"
@@ -211,11 +234,13 @@ function(sandstorm_add_packaging_targets)
       "capnp:/sandstorm/outbound-http-session.capnp"
     DEPENDS
       spk
+      "${_isolate_abi_dir}/isolate-account-host.capnp-abi.json"
       "${_isolate_abi_dir}/isolate-bridge.capnp-abi.json"
       "${_isolate_abi_dir}/isolate-host.capnp-abi.json"
       "${_isolate_abi_dir}/isolate-supervisor-internal.capnp-abi.json"
       "${_isolate_abi_dir}/outbound-http-session.capnp-abi.json"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-bridge.capnp"
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-account-host.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-supervisor-internal.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/outbound-http-session.capnp"

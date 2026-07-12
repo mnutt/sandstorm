@@ -19,6 +19,7 @@ set(_sandstorm_schema_relative_paths
   hack-session.capnp
   identity-impl.capnp
   identity.capnp
+  isolate-account-host.capnp
   isolate-bridge.capnp
   isolate-host.capnp
   isolate-supervisor-internal.capnp
@@ -162,6 +163,7 @@ sandstorm_add_executable(spk spk-standalone.c++)
 
 sandstorm_add_executable(isolate-websession-client isolate-websession-client.c++)
 sandstorm_add_executable(isolate-host-client isolate-host-client.c++)
+sandstorm_add_executable(isolate-account-host-client isolate-account-host-client.c++)
 
 sandstorm_add_executable(sandstorm-http-bridge sandstorm-http-bridge.c++)
 sandstorm_make_static(sandstorm-http-bridge)
