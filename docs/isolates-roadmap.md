@@ -414,6 +414,12 @@ Progress:
   descriptor for the selected grain and requires a regular runtime manifest,
   using `openat()` plus `O_NOFOLLOW` at trust boundaries so neither RPC input
   nor a grain-directory symlink can redirect worker loading outside that root.
+- The embedded workerd patch now exposes a deliberately small native loader
+  seam: load a named worker from an already-configured loader namespace, or
+  explicitly unlink and evict that worker. This reuses workerd's existing
+  isolate cache and startup machinery while giving Sandstorm lifecycle RPC a
+  real per-grain eviction operation; no general workerd configuration API is
+  made public.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead
