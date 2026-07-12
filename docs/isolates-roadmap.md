@@ -404,6 +404,11 @@ Progress:
   and returns a `HostedIsolate` lifecycle capability with `keepAlive()` and
   `stop()`. Package, runtime, socket, and storage paths are derived by the host
   from trusted roots rather than supplied over the per-grain control call.
+- `bin/isolate-host` now serves that lifecycle contract over a Unix socket and
+  keeps account-local grain state in one long-lived process. A client built by
+  Sandstorm's existing toolchain verifies cross-toolchain wire compatibility,
+  start/keepAlive/stop behavior, stopped-handle rejection, and rejection of a
+  path-traversal grain ID via `make isolate-host-control-test`.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead

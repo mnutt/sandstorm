@@ -39,6 +39,9 @@ function(sandstorm_install_native)
     COMMAND "${CMAKE_COMMAND}" -E copy
       "${PROJECT_SOURCE_DIR}/isolate-host/isolate-host-main.c++"
       "${_workerd_embed_dir}/src/workerd/server/sandstorm-isolate-host.c++"
+    COMMAND "${CMAKE_COMMAND}" -E copy
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host.capnp"
+      "${_workerd_embed_dir}/src/workerd/server/sandstorm-isolate-host.capnp"
     COMMAND "${CMAKE_COMMAND}" -E chdir "${_workerd_embed_dir}"
       "${SANDSTORM_PATCH_EXECUTABLE}" -p1 -i "${_workerd_patch}"
     COMMAND "${CMAKE_COMMAND}" -E touch "${_workerd_embed_stamp}"
@@ -46,6 +49,7 @@ function(sandstorm_install_native)
       verify-workerd-source
       "${PROJECT_SOURCE_DIR}/deps/workerd"
       "${PROJECT_SOURCE_DIR}/isolate-host/isolate-host-main.c++"
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host.capnp"
       "${_workerd_patch}"
     COMMENT "Preparing the embedded workerd host source"
     VERBATIM)
@@ -65,6 +69,17 @@ function(sandstorm_install_native)
     COMMENT "Building the embedded workerd isolate host"
     VERBATIM)
   add_custom_target(isolate-host DEPENDS "${_isolate_host_bin}")
+  add_custom_target(isolate-host-control-test
+    COMMAND bash "${PROJECT_SOURCE_DIR}/cmake/RunIsolateHostControlTest.sh"
+      "${_isolate_host_bin}"
+      "$<TARGET_FILE:isolate-host-client>"
+      "${CMAKE_BINARY_DIR}/isolate-host-control-test.sock"
+    DEPENDS
+      isolate-host
+      isolate-host-client
+      "${PROJECT_SOURCE_DIR}/cmake/RunIsolateHostControlTest.sh"
+    COMMENT "Testing the shared isolate host control plane"
+    VERBATIM)
   set(_native_targets
     sandstorm
     spk

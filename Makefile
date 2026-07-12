@@ -29,6 +29,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	isolate-supervisor-integration-test \
 	isolate-supervisor-stress-test \
 	isolate-supervisor-syscall-trace \
+	isolate-host-control-test \
 	isolate-capnp-abi-check \
 	isolate-capnp-corpus-test isolate-capnp-fuzz \
 	isolate-capnp-toolchain-test isolate-test \
@@ -86,6 +87,7 @@ $(eval $(call cmake_target,workerd,workerd))
 $(eval $(call cmake_target,verify-workerd-runtime,verify-workerd-runtime))
 $(eval $(call cmake_target,verify-workerd-source,verify-workerd-source))
 $(eval $(call cmake_target,isolate-host,isolate-host))
+$(eval $(call cmake_target,isolate-host-control-test,isolate-host-control-test))
 $(eval $(call cmake_target,shell-env,shell-env))
 $(eval $(call cmake_target,shell-build,shell-build))
 $(eval $(call cmake_target,shell-build-debug,shell-build-debug))
