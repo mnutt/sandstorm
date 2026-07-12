@@ -63,12 +63,43 @@ struct LoadedWorkerSource {
   kj::Own<BundleBacking> backing;
 };
 
-class UnixHttpWorkerInterface final: public workerd::WorkerInterface {
+class SharedHttpService: public kj::HttpService, public kj::AtomicRefcounted {
  public:
-  UnixHttpWorkerInterface(kj::Timer& timer, kj::Own<kj::NetworkAddress> address)
-      : address(kj::mv(address)), headerTable(headerTableBuilder.build()),
-        client(kj::newHttpClient(timer, *headerTable, *this->address)),
-        service(kj::newHttpService(*client)) {}
+  virtual ~SharedHttpService() noexcept = default;
+};
+
+class BindingHttpService final: public SharedHttpService {
+ public:
+  BindingHttpService(int sourceGrainDirFd, kj::String bindingName)
+      : bindingName(kj::mv(bindingName)), headerTable(headerTableBuilder.build()) {
+    KJ_SYSCALL(grainDirFd = fcntl(sourceGrainDirFd, F_DUPFD_CLOEXEC, 0));
+  }
+
+  ~BindingHttpService() noexcept { close(grainDirFd); }
+
+  kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr url,
+      const kj::HttpHeaders& headers, kj::AsyncInputStream& requestBody,
+      kj::HttpService::Response& response) override {
+    auto body = kj::str("{\n  \"ok\": false,\n  \"error\": \"shared-host ",
+        bindingName, " adapter is not connected\"\n}\n");
+    kj::HttpHeaders responseHeaders(*headerTable);
+    responseHeaders.setPtr(
+        kj::HttpHeaderId::CONTENT_TYPE, "application/json; charset=utf-8"_kj);
+    auto stream = response.send(501, "Not Implemented", responseHeaders, body.size());
+    return stream->write(body.asBytes()).attach(kj::mv(stream), kj::mv(body));
+  }
+
+ private:
+  int grainDirFd;
+  kj::String bindingName;
+  kj::HttpHeaderTable::Builder headerTableBuilder;
+  kj::Own<kj::HttpHeaderTable> headerTable;
+};
+
+class HttpServiceWorkerInterface final: public workerd::WorkerInterface {
+ public:
+  explicit HttpServiceWorkerInterface(kj::Own<SharedHttpService> service)
+      : service(kj::mv(service)) {}
 
   kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr url,
       const kj::HttpHeaders& headers, kj::AsyncInputStream& requestBody,
@@ -92,56 +123,33 @@ class UnixHttpWorkerInterface final: public workerd::WorkerInterface {
   }
 
  private:
-  kj::Own<kj::NetworkAddress> address;
-  kj::HttpHeaderTable::Builder headerTableBuilder;
-  kj::Own<kj::HttpHeaderTable> headerTable;
-  kj::Own<kj::HttpClient> client;
-  kj::Own<kj::HttpService> service;
+  kj::Own<SharedHttpService> service;
 };
 
-// Transitional transport used only while the host-owned HTTP adapters are being built. The
-// channel owns the directory capability represented in its /proc path, so an evicted grain can
-// never have its descriptor number rebound to another grain. Do not add socket servers around
-// this path: the final Phase 4 transport is an in-process HttpService tied to HostedState.
-class UnixHttpChannel final: public workerd::IoChannelFactory::SubrequestChannel,
-                             public kj::AtomicRefcounted {
+class HttpServiceChannel final: public workerd::IoChannelFactory::SubrequestChannel,
+                                public kj::AtomicRefcounted {
  public:
-  UnixHttpChannel(kj::Network& network, kj::Timer& timer,
-      int sourceGrainDirFd, kj::StringPtr socketName)
-      : network(network), timer(timer) {
-    KJ_SYSCALL(grainDirFd = fcntl(sourceGrainDirFd, F_DUPFD_CLOEXEC, 0));
-    address = kj::str("unix:/proc/self/fd/", grainDirFd,
-        "/isolate-runtime/", socketName);
-  }
-
-  ~UnixHttpChannel() noexcept { close(grainDirFd); }
+  explicit HttpServiceChannel(kj::Own<SharedHttpService> service)
+      : service(kj::mv(service)) {}
 
   kj::Own<workerd::WorkerInterface> startRequest(
       workerd::IoChannelFactory::SubrequestMetadata) override {
-    return workerd::newPromisedWorkerInterface(
-        network.parseAddress(address, 0).then([self = kj::atomicAddRef(*this)](
-            kj::Own<kj::NetworkAddress> parsed) mutable -> kj::Own<workerd::WorkerInterface> {
-      return kj::heap<UnixHttpWorkerInterface>(self->timer, kj::mv(parsed));
-    }));
+    return kj::heap<HttpServiceWorkerInterface>(kj::atomicAddRef(*service));
   }
 
   void requireAllowsTransfer() override {
-    KJ_FAIL_REQUIRE("Sandstorm Unix HTTP bindings cannot be transferred");
+    KJ_FAIL_REQUIRE("Sandstorm in-process HTTP bindings cannot be transferred");
   }
   kj::OneOf<kj::Array<kj::byte>, kj::Promise<kj::Array<kj::byte>>> getTokenMaybeSync(
       workerd::IoChannelFactory::ChannelTokenUsage) override {
-    KJ_FAIL_REQUIRE("Sandstorm Unix HTTP bindings cannot be tokenized");
+    KJ_FAIL_REQUIRE("Sandstorm in-process HTTP bindings cannot be tokenized");
   }
 
  private:
-  kj::Network& network;
-  kj::Timer& timer;
-  int grainDirFd;
-  kj::String address;
+  kj::Own<SharedHttpService> service;
 };
 
-LoadedWorkerSource loadWorkerSource(
-    int grainDirFd, kj::Network& network, kj::Timer& timer) {
+LoadedWorkerSource loadWorkerSource(int grainDirFd) {
   int runtimeFd;
   KJ_SYSCALL(runtimeFd = openat(grainDirFd, "isolate-runtime",
       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
@@ -231,23 +239,11 @@ LoadedWorkerSource loadWorkerSource(
       case IsolateWorkerSource::Binding::SANDSTORM_API:
       case IsolateWorkerSource::Binding::STORAGE:
       case IsolateWorkerSource::Binding::POWERBOX: {
-        kj::StringPtr socketName;
-        switch (binding.which()) {
-          case IsolateWorkerSource::Binding::SANDSTORM_API:
-            socketName = "sandstorm-api.sock";
-            break;
-          case IsolateWorkerSource::Binding::STORAGE:
-            socketName = "sandstorm-storage.sock";
-            break;
-          case IsolateWorkerSource::Binding::POWERBOX:
-            socketName = "sandstorm-powerbox.sock";
-            break;
-          default: KJ_UNREACHABLE;
-        }
         env.setProperty(kj::str(binding.getName()),
             workerd::Frankenvalue::fromDirectCapability(
-                kj::atomicRefcounted<UnixHttpChannel>(
-                    network, timer, grainDirFd, socketName)));
+                kj::atomicRefcounted<HttpServiceChannel>(
+                    kj::atomicRefcounted<BindingHttpService>(
+                        grainDirFd, kj::str(binding.getName())))));
         break;
       }
       case IsolateWorkerSource::Binding::SERVICE:
@@ -347,9 +343,8 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
 
 class IsolateHostImpl final: public IsolateHost::Server {
  public:
-  IsolateHostImpl(workerd::server::Server& runtime,
-      kj::Network& network, kj::Timer& timer, int grainRootFd)
-      : runtime(runtime), network(network), timer(timer), grainRootFd(grainRootFd) {}
+  IsolateHostImpl(workerd::server::Server& runtime, int grainRootFd)
+      : runtime(runtime), grainRootFd(grainRootFd) {}
 
   ~IsolateHostImpl() noexcept { close(grainRootFd); }
 
@@ -381,7 +376,7 @@ class IsolateHostImpl final: public IsolateHost::Server {
       KJ_REQUIRE(S_ISREG(manifestStat.st_mode), "runtime manifest is not a regular file", grainId);
 
       auto ownedGrainId = kj::heapString(grainId);
-      auto source = loadWorkerSource(grainDir.get(), network, timer);
+      auto source = loadWorkerSource(grainDir.get());
       auto worker = runtime.loadDynamicWorker(LOADER_NAMESPACE, kj::str(grainId),
           [source = kj::mv(source.source), backing = kj::mv(source.backing)]() mutable {
         return source.clone(kj::atomicAddRef(*backing));
@@ -396,8 +391,6 @@ class IsolateHostImpl final: public IsolateHost::Server {
 
  private:
   workerd::server::Server& runtime;
-  kj::Network& network;
-  kj::Timer& timer;
   int grainRootFd;
   kj::HashMap<kj::String, kj::Rc<HostedState>> grains;
 };
@@ -437,7 +430,6 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(!runtimeTask.poll(io.waitScope), "embedded workerd runtime stopped during startup");
 
   capnp::TwoPartyServer controlServer(
-      kj::heap<sandstorm::IsolateHostImpl>(runtime,
-          io.provider->getNetwork(), io.provider->getTimer(), grainRootFd));
+      kj::heap<sandstorm::IsolateHostImpl>(runtime, grainRootFd));
   controlServer.listen(*listener).exclusiveJoin(kj::mv(runtimeTask)).wait(io.waitScope);
 }
