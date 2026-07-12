@@ -6259,6 +6259,9 @@ kj::MainFunc IsolateSupervisorMain::getMain() {
       .addOptionWithArg({"isolate-compatibility-date"},
                         KJ_BIND_METHOD(*this, setIsolateCompatibilityDate), "<date>",
                         "Record the selected isolate command compatibility date.")
+      .addOptionWithArg({"isolate-trust-domain"},
+                        KJ_BIND_METHOD(*this, setIsolateTrustDomain), "<account-id>",
+                        "Select the server-controlled account trust domain for shared hosting.")
       .addOption({"proc"}, []() { return true; },
                  "Accepted for compatibility with supervisor launch flags.")
       .addOption({"stdio"}, [this]() { keepStdio = true; return true; },
@@ -6331,6 +6334,15 @@ kj::MainBuilder::Validity IsolateSupervisorMain::setIsolateCompatibilityDate(
   return true;
 }
 
+kj::MainBuilder::Validity IsolateSupervisorMain::setIsolateTrustDomain(kj::StringPtr trustDomain) {
+  if (trustDomain.size() < 8 || trustDomain.startsWith(".") ||
+      trustDomain.findFirst('/') != nullptr) {
+    return "Invalid isolate trust domain.";
+  }
+  isolateTrustDomain = kj::heapString(trustDomain);
+  return true;
+}
+
 kj::MainBuilder::Validity IsolateSupervisorMain::addEnv(kj::StringPtr arg) {
   environment.add(kj::heapString(arg));
   return true;
@@ -6377,6 +6389,8 @@ kj::String IsolateSupervisorMain::realPath(kj::StringPtr path) {
 }
 
 kj::MainBuilder::Validity IsolateSupervisorMain::run() {
+  KJ_REQUIRE(isolateTrustDomain != nullptr,
+      "isolate supervisor requires a server-controlled trust domain");
   if (pkgPath == nullptr) pkgPath = kj::str("/var/sandstorm/apps/", appName);
   if (varPath == nullptr) varPath = kj::str("/var/sandstorm/grains/", grainId);
 
@@ -6438,7 +6452,8 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   prepareRuntimeBundleAsSandboxUser(varPath, *runtimeConfig, sandboxUid);
 
   KJ_LOG(WARNING, "Starting isolate supervisor with workerd adapter skeleton.",
-      grainId, pkgPath, runtimeConfig->mainModule, runtimeConfig->compatibilityDate,
+      grainId, isolateTrustDomain, pkgPath,
+      runtimeConfig->mainModule, runtimeConfig->compatibilityDate,
       runtimeConfig->compatibilityFlags.size(), runtimeConfig->modules.size(),
       runtimeConfig->bindings.size(), runtimeConfig->workerdBundleDir,
       runtimeConfig->workerdSocketPath);

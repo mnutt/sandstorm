@@ -108,7 +108,8 @@ private:
   class PackageUploadStreamImpl;
   class FileUploadStream;
 
-  kj::Promise<Supervisor::Client> bootGrain(kj::StringPtr grainId, kj::StringPtr packageId,
+  kj::Promise<Supervisor::Client> bootGrain(kj::StringPtr ownerId, kj::StringPtr grainId,
+      kj::StringPtr packageId,
       spk::Manifest::Command::Reader command, bool isNew, bool devMode, bool mountProce,
       bool isRetry);
 

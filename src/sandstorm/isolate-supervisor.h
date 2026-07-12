@@ -43,6 +43,7 @@ public:
   kj::MainBuilder::Validity setUid(kj::StringPtr arg);
   kj::MainBuilder::Validity setIsolateMainModule(kj::StringPtr mainModule);
   kj::MainBuilder::Validity setIsolateCompatibilityDate(kj::StringPtr compatibilityDate);
+  kj::MainBuilder::Validity setIsolateTrustDomain(kj::StringPtr trustDomain);
   kj::MainBuilder::Validity addEnv(kj::StringPtr arg);
   kj::MainBuilder::Validity addRuntimeArg(kj::StringPtr arg);
   kj::MainBuilder::Validity run();
@@ -56,6 +57,7 @@ private:
   kj::String varPath;
   kj::String isolateMainModule;
   kj::String isolateCompatibilityDate;
+  kj::String isolateTrustDomain;
   kj::Vector<kj::String> environment;
   kj::Vector<kj::String> runtimeArgs;
   bool isNew = false;

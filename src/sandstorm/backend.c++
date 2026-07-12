@@ -73,7 +73,7 @@ void BackendImpl::taskFailed(kj::Exception&& exception) {
 // =======================================================================================
 
 kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
-    kj::StringPtr grainId, kj::StringPtr packageId,
+    kj::StringPtr ownerId, kj::StringPtr grainId, kj::StringPtr packageId,
     spk::Manifest::Command::Reader command, bool isNew, bool devMode, bool mountProc,
     bool isRetry) {
   auto iter = supervisors.find(grainId);
@@ -82,7 +82,8 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
       KJ_CASE_ONEOF(g, BackingUpGrain) {
         // Wait until it's done backing up, and try again.
         return g.promise.addBranch().then([=]() {
-            return bootGrain(grainId, packageId, command, isNew, devMode, mountProc, isRetry);
+            return bootGrain(ownerId, grainId, packageId,
+                command, isNew, devMode, mountProc, isRetry);
         });
       }
       KJ_CASE_ONEOF(g, StartingGrain) {
@@ -109,7 +110,8 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
               // re-run.
               KJ_ASSERT(!isRetry, "retry supervisor startup logic failed");
               return kj::evalLater([=]() mutable {
-                return bootGrain(grainId, packageId, command, isNew, devMode, mountProc, true);
+                return bootGrain(ownerId, grainId, packageId,
+                    command, isNew, devMode, mountProc, true);
               });
             } else {
               return kj::mv(exception);
@@ -163,6 +165,8 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
 
   if (useIsolateRuntime) {
     auto isolateConfig = command.getIsolate();
+    argv.add(kj::heapString("--isolate-trust-domain"));
+    argv.add(kj::heapString(ownerId));
     argv.add(kj::heapString("--isolate-main-module"));
     argv.add(kj::heapString(isolateConfig.getMainModule()));
 
@@ -306,7 +310,7 @@ kj::Promise<void> BackendImpl::ping(PingContext context) {
 
 kj::Promise<void> BackendImpl::startGrain(StartGrainContext context) {
   auto params = context.getParams();
-  return bootGrain(validateId(params.getGrainId()),
+  return bootGrain(validateId(params.getOwnerId()), validateId(params.getGrainId()),
                    validateId(params.getPackageId()), params.getCommand(),
                    params.getIsNew(), params.getDevMode(), params.getMountProc(), false)
       .then([context](Supervisor::Client client) mutable {
