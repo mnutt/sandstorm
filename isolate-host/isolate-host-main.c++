@@ -6,9 +6,12 @@
 #include "v8-platform-impl.h"
 
 #include <workerd/server/sandstorm-isolate-host.capnp.h>
+#include <workerd/server/sandstorm-isolate-worker-source.capnp.h>
+#include <workerd/io/compatibility-date.h>
 #include <workerd/jsg/setup.h>
 
 #include <capnp/rpc-twoparty.h>
+#include <capnp/serialize-packed.h>
 #include <kj/async-io.h>
 #include <kj/map.h>
 
@@ -32,6 +35,108 @@ class SystemEntropySource final: public kj::EntropySource {
     }
   }
 };
+
+class BundleErrorReporter final: public workerd::Worker::ValidationErrorReporter {
+ public:
+  void addError(kj::String error) override { errors.add(kj::mv(error)); }
+  void addEntrypoint(kj::Maybe<kj::StringPtr>, kj::Array<kj::String>) override {}
+  void addActorClass(kj::StringPtr) override {}
+  void addWorkflowClass(kj::StringPtr, kj::Array<kj::String>) override {}
+
+  void requireValid() {
+    KJ_REQUIRE(errors.empty(), "invalid worker compatibility settings",
+        kj::strArray(errors, "; "));
+  }
+
+ private:
+  kj::Vector<kj::String> errors;
+};
+
+struct BundleBacking final {
+  kj::Own<capnp::PackedFdMessageReader> source;
+  capnp::MallocMessageBuilder compatibility;
+};
+
+workerd::DynamicWorkerSource loadWorkerSource(int grainDirFd) {
+  int runtimeFd;
+  KJ_SYSCALL(runtimeFd = openat(grainDirFd, "isolate-runtime",
+      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+  kj::AutoCloseFd runtimeDir(runtimeFd);
+  int sourceFd;
+  KJ_SYSCALL(sourceFd = openat(runtimeDir, "worker-source.capnp.bin",
+      O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
+
+  auto backing = kj::heap<BundleBacking>();
+  backing->source = kj::heap<capnp::PackedFdMessageReader>(kj::AutoCloseFd(sourceFd));
+  auto bundle = backing->source->getRoot<IsolateWorkerSource>();
+  auto inputModules = bundle.getModules();
+  auto modules = kj::heapArrayBuilder<workerd::WorkerSource::Module>(inputModules.size());
+  for (auto input: inputModules) {
+    workerd::WorkerSource::Module output{.name = input.getName()};
+    switch (input.which()) {
+      case IsolateWorkerSource::Module::ES_MODULE:
+        output.content = workerd::WorkerSource::EsModule{input.getEsModule().asChars(), kj::none};
+        break;
+      case IsolateWorkerSource::Module::COMMON_JS_MODULE:
+        {
+        auto body = input.getCommonJsModule().asChars();
+        output.content = workerd::WorkerSource::CommonJsModule{
+          kj::StringPtr(body.begin(), body.size()), kj::none};
+        break;
+        }
+      case IsolateWorkerSource::Module::TEXT:
+        {
+        auto body = input.getText().asChars();
+        output.content = workerd::WorkerSource::TextModule{
+          kj::StringPtr(body.begin(), body.size())};
+        break;
+        }
+      case IsolateWorkerSource::Module::DATA:
+        output.content = workerd::WorkerSource::DataModule{input.getData()};
+        break;
+      case IsolateWorkerSource::Module::WASM:
+        output.content = workerd::WorkerSource::WasmModule{input.getWasm()};
+        break;
+      case IsolateWorkerSource::Module::JSON:
+        {
+        auto body = input.getJson().asChars();
+        output.content = workerd::WorkerSource::JsonModule{
+          kj::StringPtr(body.begin(), body.size())};
+        break;
+        }
+    }
+    modules.add(kj::mv(output));
+  }
+
+  KJ_REQUIRE(bundle.getBindings().size() == 0,
+      "shared host does not yet support runtime bindings");
+  auto compatibility = backing->compatibility.initRoot<workerd::CompatibilityFlags>();
+  auto inputFlags = bundle.getCompatibilityFlags();
+  auto flags = KJ_MAP(flag, inputFlags) { return kj::str(flag); };
+  BundleErrorReporter reporter;
+  workerd::compileCompatibilityFlags(bundle.getCompatibilityDate(), flags, compatibility,
+      reporter, true, workerd::CompatibilityDateValidation::CODE_VERSION);
+  reporter.requireValid();
+
+  workerd::WorkerSource source(workerd::WorkerSource::ModulesSource{
+    .mainModule = bundle.getMainModule(),
+    .modules = modules.finish(),
+    .capnpSchemas = {},
+    .isPython = false,
+    .pythonMemorySnapshot = kj::none,
+  });
+  return {
+    .source = kj::mv(source),
+    .compatibilityFlags = compatibility.asReader(),
+    .limits = kj::none,
+    .env = workerd::Frankenvalue(),
+    .globalOutbound = kj::none,
+    .tails = {},
+    .streamingTails = {},
+    .ownContent = kj::mv(backing),
+    .ownContentIsRpcResponse = false,
+  };
+}
 
 void initRuntimeConfig(capnp::MallocMessageBuilder& message) {
   auto config = message.initRoot<workerd::server::config::Config>();
@@ -60,14 +165,19 @@ bool isValidGrainId(kj::StringPtr id) {
 }
 
 struct HostedState final: public kj::Refcounted {
-  HostedState(workerd::server::Server& runtime, kj::String grainId, int grainDirFd)
-      : runtime(runtime), grainId(kj::mv(grainId)), grainDirFd(grainDirFd) {}
+  HostedState(workerd::server::Server& runtime,
+      kj::String grainId,
+      int grainDirFd,
+      kj::Own<workerd::WorkerStubChannel> worker)
+      : runtime(runtime), grainId(kj::mv(grainId)), grainDirFd(grainDirFd),
+        worker(kj::mv(worker)) {}
 
   ~HostedState() noexcept { close(grainDirFd); }
 
   workerd::server::Server& runtime;
   kj::String grainId;
   int grainDirFd;
+  kj::Own<workerd::WorkerStubChannel> worker;
   bool running = true;
 };
 
@@ -121,8 +231,11 @@ class IsolateHostImpl final: public IsolateHost::Server {
       KJ_REQUIRE(S_ISREG(manifestStat.st_mode), "runtime manifest is not a regular file", grainId);
 
       auto ownedGrainId = kj::heapString(grainId);
+      auto source = loadWorkerSource(grainDir.get());
+      auto worker = runtime.loadDynamicWorker(LOADER_NAMESPACE, kj::str(grainId),
+          [source = kj::mv(source)]() mutable { return kj::mv(source); });
       return {kj::heapString(grainId),
-        kj::rc<HostedState>(runtime, kj::mv(ownedGrainId), grainDir.release())};
+        kj::rc<HostedState>(runtime, kj::mv(ownedGrainId), grainDir.release(), kj::mv(worker))};
     });
     state->running = true;
     context.getResults().setGrain(kj::heap<HostedIsolateImpl>(state.addRef()));

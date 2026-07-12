@@ -346,6 +346,7 @@ tmp/bazel-$(BAZEL_VERSION):
 
 tmp/.workerd-embed-source: deps/workerd isolate-host/isolate-host-main.c++ \
 		src/sandstorm/isolate-host.capnp \
+		src/sandstorm/isolate-worker-source.capnp \
 		patches/workerd/0001-add-sandstorm-isolate-host-target.patch
 	rm -rf tmp/workerd-embed
 	cp -a --reflink=auto deps/workerd tmp/workerd-embed
@@ -353,6 +354,8 @@ tmp/.workerd-embed-source: deps/workerd isolate-host/isolate-host-main.c++ \
 		tmp/workerd-embed/src/workerd/server/sandstorm-isolate-host.c++
 	cp src/sandstorm/isolate-host.capnp \
 		tmp/workerd-embed/src/workerd/server/sandstorm-isolate-host.capnp
+	cp src/sandstorm/isolate-worker-source.capnp \
+		tmp/workerd-embed/src/workerd/server/sandstorm-isolate-worker-source.capnp
 	cd tmp/workerd-embed && patch -p1 < ../../patches/workerd/0001-add-sandstorm-isolate-host-target.patch
 	@touch $@
 
@@ -371,13 +374,15 @@ isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 		rm -rf "$$grain_root"; \
 		mkdir -p "$$grain_root/testgrain123/isolate-runtime"; \
 		mkdir -p "$$grain_root/missingmanifest/isolate-runtime"; \
+		mkdir -p "$$grain_root/missingsource/isolate-runtime"; \
 		printf '{}\n' > "$$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"; \
+		printf '{}\n' > "$$grain_root/missingsource/isolate-runtime/runtime-manifest.json"; \
 		ln -s testgrain123 "$$grain_root/linkgrain123"; \
 		bin/isolate-host "$$socket" "$$grain_root" & host_pid=$$!; \
 		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"; rm -rf "$$grain_root"' EXIT; \
 		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
 		test -S "$$socket"; \
-		tmp/sandstorm/isolate-host-client "$$socket"
+		tmp/sandstorm/isolate-host-client "$$socket" "$$grain_root"
 
 # ====================================================================
 # fetch capnp-es

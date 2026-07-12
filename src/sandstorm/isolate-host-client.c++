@@ -3,10 +3,16 @@
 // Licensed under the Apache License, Version 2.0.
 
 #include "isolate-host.capnp.h"
+#include "isolate-worker-source.capnp.h"
 
 #include <capnp/ez-rpc.h>
+#include <capnp/message.h>
+#include <capnp/serialize-packed.h>
 #include <kj/debug.h>
 #include <kj/function.h>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace sandstorm {
 namespace {
@@ -20,7 +26,20 @@ void expectFailure(kj::Function<void()> operation) {
 }  // namespace sandstorm
 
 int main(int argc, char** argv) {
-  KJ_REQUIRE(argc == 2, "usage: isolate-host-client <control-socket-path>");
+  KJ_REQUIRE(argc == 3, "usage: isolate-host-client <control-socket-path> <grain-root-path>");
+  capnp::MallocMessageBuilder sourceMessage;
+  auto source = sourceMessage.initRoot<sandstorm::IsolateWorkerSource>();
+  source.setMainModule("main.js");
+  source.setCompatibilityDate("2026-06-10");
+  auto module = source.initModules(1)[0];
+  module.setName("main.js");
+  auto script = kj::StringPtr("export default { fetch() { return new Response('ok'); } };");
+  module.setEsModule(script.asBytes());
+  auto sourcePath = kj::str(argv[2], "/testgrain123/isolate-runtime/worker-source.capnp.bin");
+  int sourceFd;
+  KJ_SYSCALL(sourceFd = open(sourcePath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
+  capnp::writePackedMessageToFd(sourceFd, sourceMessage);
+  close(sourceFd);
   capnp::EzRpcClient rpc(kj::str("unix:", argv[1]));
   auto& waitScope = rpc.getWaitScope();
   auto host = rpc.getMain<sandstorm::IsolateHost>();
@@ -47,6 +66,11 @@ int main(int argc, char** argv) {
   sandstorm::expectFailure([&]() {
     auto incomplete = host.startGrainRequest();
     incomplete.setGrainId("missingmanifest");
+    incomplete.send().wait(waitScope);
+  });
+  sandstorm::expectFailure([&]() {
+    auto incomplete = host.startGrainRequest();
+    incomplete.setGrainId("missingsource");
     incomplete.send().wait(waitScope);
   });
 

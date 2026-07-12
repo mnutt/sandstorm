@@ -427,6 +427,13 @@ Progress:
   `stop()` calls workerd's explicit eviction path, so the remaining bridge to
   real grain execution is runtime-bundle translation and request routing, not
   process or V8 lifecycle setup.
+- The supervisor now emits a Sandstorm-owned packed Cap'n Proto worker-source
+  bundle alongside its human-readable manifest and per-grain workerd config.
+  The shared host reads that file through the already-confined grain directory,
+  compiles compatibility flags, translates every supported module kind into a
+  `DynamicWorkerSource`, and enters workerd's named isolate cache. Module-only
+  workers load without expanding the upstream patch; binding translation and
+  routing remain before the shared topology can replace the sidecar.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead
