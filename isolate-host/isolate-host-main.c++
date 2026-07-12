@@ -63,7 +63,73 @@ struct LoadedWorkerSource {
   kj::Own<BundleBacking> backing;
 };
 
-LoadedWorkerSource loadWorkerSource(int grainDirFd) {
+class UnixHttpWorkerInterface final: public workerd::WorkerInterface {
+ public:
+  UnixHttpWorkerInterface(kj::Timer& timer, kj::Own<kj::NetworkAddress> address)
+      : address(kj::mv(address)), headerTable(headerTableBuilder.build()),
+        client(kj::newHttpClient(timer, *headerTable, *this->address)),
+        service(kj::newHttpService(*client)) {}
+
+  kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr url,
+      const kj::HttpHeaders& headers, kj::AsyncInputStream& requestBody,
+      kj::HttpService::Response& response) override {
+    return service->request(method, url, headers, requestBody, response);
+  }
+  kj::Promise<void> connect(kj::StringPtr host, const kj::HttpHeaders& headers,
+      kj::AsyncIoStream& connection, ConnectResponse& response,
+      kj::HttpConnectSettings settings) override {
+    return service->connect(host, headers, connection, response, kj::mv(settings));
+  }
+  kj::Promise<void> prewarm(kj::StringPtr) override { return kj::READY_NOW; }
+  kj::Promise<ScheduledResult> runScheduled(kj::Date, kj::StringPtr) override {
+    KJ_FAIL_REQUIRE("Unix HTTP bindings do not support scheduled events");
+  }
+  kj::Promise<AlarmResult> runAlarm(kj::Date, uint32_t) override {
+    KJ_FAIL_REQUIRE("Unix HTTP bindings do not support alarm events");
+  }
+  kj::Promise<CustomEvent::Result> customEvent(kj::Own<CustomEvent> event) override {
+    return event->notSupported().attach(kj::mv(event));
+  }
+
+ private:
+  kj::Own<kj::NetworkAddress> address;
+  kj::HttpHeaderTable::Builder headerTableBuilder;
+  kj::Own<kj::HttpHeaderTable> headerTable;
+  kj::Own<kj::HttpClient> client;
+  kj::Own<kj::HttpService> service;
+};
+
+class UnixHttpChannel final: public workerd::IoChannelFactory::SubrequestChannel,
+                             public kj::AtomicRefcounted {
+ public:
+  UnixHttpChannel(kj::Network& network, kj::Timer& timer, kj::String address)
+      : network(network), timer(timer), address(kj::mv(address)) {}
+
+  kj::Own<workerd::WorkerInterface> startRequest(
+      workerd::IoChannelFactory::SubrequestMetadata) override {
+    return workerd::newPromisedWorkerInterface(
+        network.parseAddress(address, 0).then([self = kj::atomicAddRef(*this)](
+            kj::Own<kj::NetworkAddress> parsed) mutable -> kj::Own<workerd::WorkerInterface> {
+      return kj::heap<UnixHttpWorkerInterface>(self->timer, kj::mv(parsed));
+    }));
+  }
+
+  void requireAllowsTransfer() override {
+    KJ_FAIL_REQUIRE("Sandstorm Unix HTTP bindings cannot be transferred");
+  }
+  kj::OneOf<kj::Array<kj::byte>, kj::Promise<kj::Array<kj::byte>>> getTokenMaybeSync(
+      workerd::IoChannelFactory::ChannelTokenUsage) override {
+    KJ_FAIL_REQUIRE("Sandstorm Unix HTTP bindings cannot be tokenized");
+  }
+
+ private:
+  kj::Network& network;
+  kj::Timer& timer;
+  kj::String address;
+};
+
+LoadedWorkerSource loadWorkerSource(
+    int grainDirFd, kj::Network& network, kj::Timer& timer) {
   int runtimeFd;
   KJ_SYSCALL(runtimeFd = openat(grainDirFd, "isolate-runtime",
       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
@@ -152,7 +218,27 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd) {
         KJ_FAIL_REQUIRE("shared host does not yet support data bindings", binding.getName());
       case IsolateWorkerSource::Binding::SANDSTORM_API:
       case IsolateWorkerSource::Binding::STORAGE:
-      case IsolateWorkerSource::Binding::POWERBOX:
+      case IsolateWorkerSource::Binding::POWERBOX: {
+        kj::StringPtr socketName;
+        switch (binding.which()) {
+          case IsolateWorkerSource::Binding::SANDSTORM_API:
+            socketName = "sandstorm-api.sock";
+            break;
+          case IsolateWorkerSource::Binding::STORAGE:
+            socketName = "sandstorm-storage.sock";
+            break;
+          case IsolateWorkerSource::Binding::POWERBOX:
+            socketName = "sandstorm-powerbox.sock";
+            break;
+          default: KJ_UNREACHABLE;
+        }
+        auto address = kj::str("unix:/proc/self/fd/", grainDirFd,
+            "/isolate-runtime/", socketName);
+        env.setProperty(kj::str(binding.getName()),
+            workerd::Frankenvalue::fromDirectCapability(
+                kj::atomicRefcounted<UnixHttpChannel>(network, timer, kj::mv(address))));
+        break;
+      }
       case IsolateWorkerSource::Binding::SERVICE:
         KJ_FAIL_REQUIRE("shared host does not yet support service bindings", binding.getName());
     }
@@ -250,8 +336,9 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
 
 class IsolateHostImpl final: public IsolateHost::Server {
  public:
-  IsolateHostImpl(workerd::server::Server& runtime, int grainRootFd)
-      : runtime(runtime), grainRootFd(grainRootFd) {}
+  IsolateHostImpl(workerd::server::Server& runtime,
+      kj::Network& network, kj::Timer& timer, int grainRootFd)
+      : runtime(runtime), network(network), timer(timer), grainRootFd(grainRootFd) {}
 
   ~IsolateHostImpl() noexcept { close(grainRootFd); }
 
@@ -283,7 +370,7 @@ class IsolateHostImpl final: public IsolateHost::Server {
       KJ_REQUIRE(S_ISREG(manifestStat.st_mode), "runtime manifest is not a regular file", grainId);
 
       auto ownedGrainId = kj::heapString(grainId);
-      auto source = loadWorkerSource(grainDir.get());
+      auto source = loadWorkerSource(grainDir.get(), network, timer);
       auto worker = runtime.loadDynamicWorker(LOADER_NAMESPACE, kj::str(grainId),
           [source = kj::mv(source.source), backing = kj::mv(source.backing)]() mutable {
         return source.clone(kj::atomicAddRef(*backing));
@@ -298,6 +385,8 @@ class IsolateHostImpl final: public IsolateHost::Server {
 
  private:
   workerd::server::Server& runtime;
+  kj::Network& network;
+  kj::Timer& timer;
   int grainRootFd;
   kj::HashMap<kj::String, kj::Rc<HostedState>> grains;
 };
@@ -337,6 +426,7 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(!runtimeTask.poll(io.waitScope), "embedded workerd runtime stopped during startup");
 
   capnp::TwoPartyServer controlServer(
-      kj::heap<sandstorm::IsolateHostImpl>(runtime, grainRootFd));
+      kj::heap<sandstorm::IsolateHostImpl>(runtime,
+          io.provider->getNetwork(), io.provider->getTimer(), grainRootFd));
   controlServer.listen(*listener).exclusiveJoin(kj::mv(runtimeTask)).wait(io.waitScope);
 }

@@ -101,3 +101,165 @@ index 46a1746..742a5d3 100644
  void Server::unlinkWorkerLoaders() {
    for (auto& loader: workerLoaderNamespaces) {
      loader.value->unlink();
+diff --git a/src/workerd/io/frankenvalue.h b/src/workerd/io/frankenvalue.h
+index 4a0d9e4..98670aa 100644
+--- a/src/workerd/io/frankenvalue.h
++++ b/src/workerd/io/frankenvalue.h
+@@ -47,5 +47,8 @@ class Frankenvalue {
+   static Frankenvalue fromJs(jsg::Lock& js, jsg::JsValue value);
+-
++
+   // Like toJs() but add the properties to an existing object. Throws if the `Frankenvalue` does
+   // not represent an object. This is used to populate `env` in particular.
+   void populateJsObject(jsg::Lock& js, jsg::JsObject target);
++  using DirectCapabilityMaterializer = kj::Function<jsg::JsValue(CapTableEntry&)>;
++  void populateJsObject(
++      jsg::Lock& js, jsg::JsObject target, DirectCapabilityMaterializer& materializer);
+@@ -53,4 +56,8 @@ class Frankenvalue {
+   // Construct a Frankenvalue from JSON.
+   static Frankenvalue fromJson(kj::String json);
+-
++
++  // Construct a non-serializable value which materializes one owned capability under the
++  // destination worker's active V8 context.
++  static Frankenvalue fromDirectCapability(kj::Own<CapTableEntry> capability);
++
+   // Add a property to the value, represented as another Frankenvalue. This is how you "stitch
+@@ -160,6 +170,7 @@ class Frankenvalue {
+   struct V8Serialized {
+     kj::Array<byte> data;
+   };
+-  kj::OneOf<EmptyObject, Json, V8Serialized> value;
++  struct DirectCapability {};
++  kj::OneOf<EmptyObject, Json, V8Serialized, DirectCapability> value;
+-
++
+   struct Property;
+diff --git a/src/workerd/io/frankenvalue.c++ b/src/workerd/io/frankenvalue.c++
+index 85b7ee4..9e02831 100644
+--- a/src/workerd/io/frankenvalue.c++
++++ b/src/workerd/io/frankenvalue.c++
+@@ -16,4 +16,7 @@ Frankenvalue Frankenvalue::cloneImpl() const {
+     KJ_CASE_ONEOF(v8Serialized, V8Serialized) {
+       result.value = V8Serialized{kj::heapArray(v8Serialized.data.asPtr())};
+     }
++    KJ_CASE_ONEOF(_, DirectCapability) {
++      result.value = DirectCapability{};
++    }
+   }
+@@ -73,2 +76,4 @@ void Frankenvalue::toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTable
+ void Frankenvalue::toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTableSize) {
++  KJ_REQUIRE(!value.is<DirectCapability>(),
++      "direct Frankenvalue capabilities cannot be serialized");
+   KJ_SWITCH_ONEOF(value) {
+@@ -81,4 +86,7 @@ void Frankenvalue::toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTable
+     KJ_CASE_ONEOF(v8Serialized, V8Serialized) {
+       builder.setV8Serialized(v8Serialized.data);
+     }
++    KJ_CASE_ONEOF(_, DirectCapability) {
++      KJ_UNREACHABLE;
++    }
+   }
+@@ -171,3 +177,8 @@ jsg::JsValue Frankenvalue::toJsImpl(
+           return deser.readValue(js);
+         }
++        KJ_CASE_ONEOF(_, DirectCapability) {
++          KJ_REQUIRE(capTable.size() == 1);
++          return KJ_REQUIRE_NONNULL(materializer,
++              "direct Frankenvalue capability requires a materializer")(*capTable[0]);
++        }
+       }
+@@ -230,4 +240,11 @@ Frankenvalue Frankenvalue::fromJson(kj::String json) {
+   return result;
+ }
+-
++
++Frankenvalue Frankenvalue::fromDirectCapability(kj::Own<CapTableEntry> capability) {
++  Frankenvalue result;
++  result.value = DirectCapability{};
++  result.capTable.add(kj::mv(capability));
++  return result;
++}
++
+ void Frankenvalue::setProperty(kj::String name, Frankenvalue value) {
+diff --git a/src/workerd/io/frankenvalue.h b/src/workerd/io/frankenvalue.h
+index 98670aa..caf3142 100644
+--- a/src/workerd/io/frankenvalue.h
++++ b/src/workerd/io/frankenvalue.h
+@@ -190,5 +190,6 @@ class Frankenvalue {
+   Frankenvalue cloneImpl() const;
+   void fromCapnpImpl(rpc::Frankenvalue::Reader reader, uint& capTablePos);
+   void toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTableSize);
+-  jsg::JsValue toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTableEntry>> capTable);
++  jsg::JsValue toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTableEntry>> capTable,
++      kj::Maybe<DirectCapabilityMaterializer&> materializer = kj::none);
+ };
+diff --git a/src/workerd/io/frankenvalue.c++ b/src/workerd/io/frankenvalue.c++
+index 9e02831..14fc206 100644
+--- a/src/workerd/io/frankenvalue.c++
++++ b/src/workerd/io/frankenvalue.c++
+@@ -154,4 +154,6 @@ jsg::JsValue Frankenvalue::toJs(jsg::Lock& js) {
+ }
+-
++
+-jsg::JsValue Frankenvalue::toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTableEntry>> capTable) {
++jsg::JsValue Frankenvalue::toJsImpl(jsg::Lock& js,
++    kj::ArrayPtr<kj::Own<CapTableEntry>> capTable,
++    kj::Maybe<DirectCapabilityMaterializer&> materializer) {
+   return js.withinHandleScope([&]() -> jsg::JsValue {
+@@ -192,5 +194,5 @@ jsg::JsValue Frankenvalue::toJsImpl(
+         obj.set(js, property.name,
+             property.value.toJsImpl(js,
+                 capTable.slice(
+-                    property.capTableOffset, property.capTableOffset + property.capTableSize)));
++                    property.capTableOffset, property.capTableOffset + property.capTableSize), materializer));
+       }
+@@ -217,4 +219,22 @@ void Frankenvalue::populateJsObject(jsg::Lock& js, jsg::JsObject target) {
+   }
+ }
+-
++
++void Frankenvalue::populateJsObject(
++    jsg::Lock& js, jsg::JsObject target, DirectCapabilityMaterializer& materializer) {
++  if (!empty()) {
++    js.withinHandleScope([&]() {
++      auto sourceObj = KJ_REQUIRE_NONNULL(
++          toJsImpl(js, capTable, materializer).tryCast<jsg::JsObject>(),
++          "Frankenvalue must be an object for populateJsObject()");
++      auto props = sourceObj.getPropertyNames(js, jsg::KeyCollectionFilter::OWN_ONLY,
++          jsg::PropertyFilter::ONLY_ENUMERABLE, jsg::IndexFilter::INCLUDE_INDICES);
++      auto propCount = props.size();
++      for (auto i: kj::zeroTo(propCount)) {
++        auto prop = props.get(js, i);
++        target.set(js, prop, sourceObj.get(js, prop));
++      }
++    });
++  }
++}
++
+ Frankenvalue Frankenvalue::fromJs(jsg::Lock& js, jsg::JsValue value) {
+diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
+index 742a5d3..77111df 100644
+--- a/src/workerd/server/server.c++
++++ b/src/workerd/server/server.c++
+@@ -4450,4 +4450,19 @@ class Server::WorkerLoaderNamespace::WorkerStubImpl final: public WorkerStubChan
+         .compileBindings = [env = kj::mv(source.env)](
+             jsg::Lock& js, const Worker::Api& api, v8::Local<v8::Object> target) mutable {
+-          env.populateJsObject(js, jsg::JsObject(target));
++          Frankenvalue::DirectCapabilityMaterializer materialize =
++              [&js, &api](Frankenvalue::CapTableEntry& entry) {
++            auto& channel = kj::downcast<IoChannelCapTableEntry>(entry);
++            WorkerdApi::Global global{
++              .name = kj::str("capability"),
++              .value = WorkerdApi::Global::Fetcher{
++                .channel = channel.getChannelNumber(IoChannelCapTableEntry::Type::SUBREQUEST),
++                .requiresHost = true,
++                .isInHouse = false,
++              },
++            };
++            auto holder = js.obj();
++            WorkerdApi::from(api).compileGlobals(js, kj::arrayPtr(&global, 1), holder, 1);
++            return holder.get(js, "capability");
++          };
++          env.populateJsObject(js, jsg::JsObject(target), materialize);
+         },

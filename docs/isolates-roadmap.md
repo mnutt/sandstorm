@@ -443,8 +443,15 @@ Progress:
 - Worker-source translation now validates non-empty and unique module/binding
   names, requires the declared main module to exist, and translates text and
   strictly parsed JSON bindings into the dynamic worker environment. Malformed
-  JSON is rejected synchronously by `startGrain()`; binary-data and
-  capability-backed service bindings remain explicitly fail-closed.
+  JSON is rejected synchronously by `startGrain()`; binary-data and generic
+  service bindings remain explicitly fail-closed.
+- Sandstorm API, storage, and powerbox bindings now materialize as ordinary
+  workerd `Fetcher` objects backed by per-grain Unix-socket channels. The host
+  derives each socket beneath the already-confined grain descriptor, and a
+  narrow non-serializable `Frankenvalue` capability constructor lets the
+  dynamic loader preserve the typed channel until the destination worker's V8
+  context exists. This establishes the native per-worker routing primitive;
+  end-to-end request dispatch and the supervisor protocol adapters remain.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead

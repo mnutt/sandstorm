@@ -35,11 +35,13 @@ int main(int argc, char** argv) {
   module.setName("main.js");
   auto script = kj::StringPtr("export default { fetch() { return new Response('ok'); } };");
   module.setEsModule(script.asBytes());
-  auto bindings = source.initBindings(2);
+  auto bindings = source.initBindings(3);
   bindings[0].setName("MESSAGE");
   bindings[0].setText(kj::StringPtr("hello").asBytes());
   bindings[1].setName("SETTINGS");
   bindings[1].setJson(kj::StringPtr("{\"enabled\":true}").asBytes());
+  bindings[2].setName("STORAGE");
+  bindings[2].setStorage();
   auto sourcePath = kj::str(argv[2], "/testgrain123/isolate-runtime/worker-source.capnp.bin");
   int sourceFd;
   KJ_SYSCALL(sourceFd = open(sourcePath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
