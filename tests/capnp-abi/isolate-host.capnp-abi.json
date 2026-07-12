@@ -44,6 +44,14 @@
           "resultStructId": "0xf69e659bf4e5fe0c",
           "params": [],
           "results": []
+        },
+        {
+          "name": "getHttpService",
+          "ordinal": 2,
+          "paramStructId": "0xbe043e659c1299aa",
+          "resultStructId": "0xd94a9bf7a8b06c5e",
+          "params": [],
+          "results": [{"name": "service", "type": "Http.HttpService"}]
         }
       ]
     }

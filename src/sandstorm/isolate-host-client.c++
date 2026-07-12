@@ -6,6 +6,7 @@
 #include "isolate-worker-source.capnp.h"
 
 #include <capnp/ez-rpc.h>
+#include <capnp/compat/http-over-capnp.h>
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
 #include <kj/debug.h>
@@ -35,7 +36,27 @@ int main(int argc, char** argv) {
   source.setCompatibilityDate("2026-06-10");
   auto module = source.initModules(1)[0];
   module.setName("main.js");
-  auto script = kj::StringPtr("export default { fetch() { return new Response('ok'); } };");
+  auto script = kj::StringPtr(R"JS(
+export default {
+  async fetch(request, env) {
+    if (new URL(request.url).pathname === "/storage-test") {
+      if (request.headers.get("X-Sandstorm-Ingress-Test") !== "ingress-ok") {
+        return new Response("missing ingress header", { status: 400 });
+      }
+      const put = await env.STORAGE.fetch("http://storage/shared-host-test", {
+        method: "PUT",
+        body: "shared-storage-ok",
+      });
+      if (!put.ok) return new Response(`storage PUT failed: ${put.status}`, { status: 500 });
+      const get = await env.STORAGE.fetch("http://storage/shared-host-test");
+      const headers = new Headers(get.headers);
+      headers.set("X-Sandstorm-Egress-Test", "egress-ok");
+      return new Response(get.body, { status: get.status, headers });
+    }
+    return new Response("ok");
+  },
+};
+)JS");
   module.setEsModule(script.asBytes());
   auto bindings = source.initBindings(3);
   bindings[0].setName("MESSAGE");
@@ -77,6 +98,26 @@ int main(int argc, char** argv) {
   start.setServices(services);
   auto grain = start.send().wait(waitScope).getGrain();
   grain.keepAliveRequest().send().wait(waitScope);
+
+  capnp::ByteStreamFactory byteStreamFactory;
+  kj::HttpHeaderTable::Builder headerTableBuilder;
+  capnp::HttpOverCapnpFactory httpFactory(byteStreamFactory, headerTableBuilder);
+  auto ingressTestHeader = headerTableBuilder.add("X-Sandstorm-Ingress-Test");
+  auto egressTestHeader = headerTableBuilder.add("X-Sandstorm-Egress-Test");
+  auto headerTable = headerTableBuilder.build();
+  auto getHttp = grain.getHttpServiceRequest().send().wait(waitScope);
+  auto service = httpFactory.capnpToKj(getHttp.getService());
+  auto httpClient = kj::newHttpClient(*service);
+  kj::HttpHeaders requestHeaders(*headerTable);
+  requestHeaders.set(ingressTestHeader, "ingress-ok"_kj);
+  auto httpRequest = httpClient->request(
+      kj::HttpMethod::GET, "https://grain.invalid/storage-test", requestHeaders);
+  auto httpResponse = httpRequest.response.wait(waitScope);
+  KJ_REQUIRE(httpResponse.statusCode == 200, "hosted worker request failed", httpResponse.statusCode);
+  KJ_REQUIRE(httpResponse.headers->get(egressTestHeader) == "egress-ok"_kj,
+      "hosted worker response header was not preserved");
+  KJ_REQUIRE(httpResponse.body->readAllText().wait(waitScope) == "shared-storage-ok",
+      "hosted worker did not round-trip through its storage binding");
   grain.stopRequest().send().wait(waitScope);
 
   sandstorm::expectFailure([&]() {
@@ -88,6 +129,20 @@ int main(int argc, char** argv) {
   restart.setServices(services);
   auto restartedGrain = restart.send().wait(waitScope).getGrain();
   restartedGrain.keepAliveRequest().send().wait(waitScope);
+  auto restartedHttp = restartedGrain.getHttpServiceRequest().send().wait(waitScope);
+  auto restartedService = httpFactory.capnpToKj(restartedHttp.getService());
+  auto restartedClient = kj::newHttpClient(*restartedService);
+  kj::HttpHeaders restartedHeaders(*headerTable);
+  restartedHeaders.set(ingressTestHeader, "ingress-ok"_kj);
+  auto restartedRequest = restartedClient->request(
+      kj::HttpMethod::GET, "https://grain.invalid/storage-test", restartedHeaders);
+  auto restartedResponse = restartedRequest.response.wait(waitScope);
+  KJ_REQUIRE(restartedResponse.statusCode == 200,
+      "restarted hosted worker request failed", restartedResponse.statusCode);
+  KJ_REQUIRE(restartedResponse.headers->get(egressTestHeader) == "egress-ok"_kj,
+      "restarted hosted worker response header was not preserved");
+  KJ_REQUIRE(restartedResponse.body->readAllText().wait(waitScope) == "shared-storage-ok",
+      "restarted worker lost its STORAGE capability");
   sandstorm::expectFailure([&]() {
     grain.keepAliveRequest().send().wait(waitScope);
   });

@@ -2,7 +2,7 @@ diff --git a/src/workerd/server/BUILD.bazel b/src/workerd/server/BUILD.bazel
 index b5a07e1..a4c345e 100644
 --- a/src/workerd/server/BUILD.bazel
 +++ b/src/workerd/server/BUILD.bazel
-@@ -82,6 +82,33 @@ wd_cc_binary(
+@@ -82,6 +82,38 @@ wd_cc_binary(
      ],
  )
 -
@@ -18,7 +18,9 @@ index b5a07e1..a4c345e 100644
 +        ":server",
 +        ":v8-platform-impl",
 +        "//src/workerd/jsg",
++        "//src/workerd/util",
 +        "@capnp-cpp//src/capnp:capnp-rpc",
++        "@capnp-cpp//src/capnp/compat:http-over-capnp",
 +        "@capnp-cpp//src/capnp/compat:json",
 +        "@capnp-cpp//src/kj:kj-async",
 +    ],
@@ -26,6 +28,9 @@ index b5a07e1..a4c345e 100644
 +
 +wd_capnp_library(
 +    src = "sandstorm-isolate-host.capnp",
++    deps = [
++        "@capnp-cpp//src/capnp/compat:http-over-capnp_capnp",
++    ],
 +    visibility = [":__pkg__"],
 +)
 +
@@ -41,7 +46,7 @@ diff --git a/src/workerd/server/server.h b/src/workerd/server/server.h
 index e30d846..8f3e351 100644
 --- a/src/workerd/server/server.h
 +++ b/src/workerd/server/server.h
-@@ -108,6 +108,16 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
+@@ -108,6 +108,19 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
        kj::StringPtr servicePattern = "*"_kj,
        kj::StringPtr entrypointPattern = "*"_kj);
 -
@@ -55,6 +60,9 @@ index e30d846..8f3e351 100644
 +  // Removes a named worker from the loader cache. Existing channels retain their normal workerd
 +  // lifetime; a later load of the same name constructs a fresh worker.
 +  void evictDynamicWorker(kj::StringPtr loaderNamespace, kj::StringPtr workerName);
++
++  // Inbound requests must use the runtime's exact header table: HttpHeaderIds are table-bound.
++  kj::HttpHeaderTable& getHttpHeaderTableForEmbedding();
 +
    struct Durable {
      kj::String uniqueKey;
@@ -75,7 +83,7 @@ index 46a1746..742a5d3 100644
   private:
    Server& server;
    kj::String namespaceName;
-@@ -4611,6 +4613,24 @@
+@@ -4611,6 +4613,28 @@
    };
  };
 -
@@ -96,6 +104,10 @@ index 46a1746..742a5d3 100644
 +  auto& loader = KJ_REQUIRE_NONNULL(workerLoaderNamespaces.find(loaderNamespace),
 +      "worker loader namespace is not configured", loaderNamespace);
 +  loader->evictIsolate(workerName);
++}
++
++kj::HttpHeaderTable& Server::getHttpHeaderTableForEmbedding() {
++  return globalContext->headerTable;
 +}
 +
  void Server::unlinkWorkerLoaders() {
