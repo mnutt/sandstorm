@@ -1,0 +1,44 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/isolate-host.capnp",
+  "interfaces": [
+    {
+      "name": "IsolateHost",
+      "interfaceId": "0xb15098c984fb8f32",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "startGrain",
+          "ordinal": 0,
+          "paramStructId": "0xb5a7ca26b34ff476",
+          "resultStructId": "0x8fdf1a99638978ff",
+          "params": [{"name": "grainId", "type": "Text"}],
+          "results": [{"name": "grain", "type": "HostedIsolate"}]
+        }
+      ]
+    },
+    {
+      "name": "HostedIsolate",
+      "interfaceId": "0xae62f18e41ff24cb",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "keepAlive",
+          "ordinal": 0,
+          "paramStructId": "0xd9155c437d33ca74",
+          "resultStructId": "0x9c69338aa91638fa",
+          "params": [],
+          "results": []
+        },
+        {
+          "name": "stop",
+          "ordinal": 1,
+          "paramStructId": "0xc23ce9ea936cbb06",
+          "resultStructId": "0xf69e659bf4e5fe0c",
+          "params": [],
+          "results": []
+        }
+      ]
+    }
+  ]
+}

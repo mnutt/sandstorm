@@ -154,6 +154,7 @@ IMAGES= \
 CAPNP_SCHEMAS=$(filter-out src/capnp/test%.capnp,$(wildcard src/capnp/*.capnp))
 ISOLATE_CAPNP_ABI_BASELINES= \
     tests/capnp-abi/isolate-bridge.capnp-abi.json \
+    tests/capnp-abi/isolate-host.capnp-abi.json \
     tests/capnp-abi/isolate-supervisor-internal.capnp-abi.json \
     tests/capnp-abi/outbound-http-session.capnp-abi.json
 
@@ -343,11 +344,11 @@ tmp/bazel-$(BAZEL_VERSION):
 	mv $@.download $@
 	chmod +x $@
 
-tmp/.workerd-embed-source: deps/workerd src/sandstorm/isolate-host-main.c++ \
+tmp/.workerd-embed-source: deps/workerd isolate-host/isolate-host-main.c++ \
 		patches/workerd/0001-add-sandstorm-isolate-host-target.patch
 	rm -rf tmp/workerd-embed
-	cp -a deps/workerd tmp/workerd-embed
-	cp src/sandstorm/isolate-host-main.c++ \
+	cp -a --reflink=auto deps/workerd tmp/workerd-embed
+	cp isolate-host/isolate-host-main.c++ \
 		tmp/workerd-embed/src/workerd/server/sandstorm-isolate-host.c++
 	cd tmp/workerd-embed && patch -p1 < ../../patches/workerd/0001-add-sandstorm-isolate-host-target.patch
 	@touch $@
@@ -355,7 +356,8 @@ tmp/.workerd-embed-source: deps/workerd src/sandstorm/isolate-host-main.c++ \
 bin/isolate-host: tmp/bazel-$(BAZEL_VERSION) tmp/.workerd-embed-source
 	cd tmp/workerd-embed && ../../tmp/bazel-$(BAZEL_VERSION) build --config=release \
 		//src/workerd/server:sandstorm-isolate-host
-	cp tmp/workerd-embed/bazel-bin/src/workerd/server/sandstorm-isolate-host $@
+	cp tmp/workerd-embed/bazel-bin/src/workerd/server/sandstorm-isolate-host $@.new
+	mv -f $@.new $@
 
 isolate-host: bin/isolate-host
 
@@ -561,10 +563,13 @@ test-app-dev: tmp/.ekam-run
 
 isolate-capnp-abi-check: tmp/.ekam-run $(ISOLATE_CAPNP_ABI_BASELINES) \
 		src/sandstorm/isolate-bridge.capnp \
+		src/sandstorm/isolate-host.capnp \
 		src/sandstorm/isolate-supervisor-internal.capnp \
 		src/sandstorm/outbound-http-session.capnp
 	bin/spk capnp-abi --check tests/capnp-abi/isolate-bridge.capnp-abi.json \
 		capnp:/sandstorm/isolate-bridge.capnp
+	bin/spk capnp-abi --check tests/capnp-abi/isolate-host.capnp-abi.json \
+		capnp:/sandstorm/isolate-host.capnp
 	bin/spk capnp-abi --check tests/capnp-abi/isolate-supervisor-internal.capnp-abi.json \
 		capnp:/sandstorm/isolate-supervisor-internal.capnp
 	bin/spk capnp-abi --check tests/capnp-abi/outbound-http-session.capnp-abi.json \

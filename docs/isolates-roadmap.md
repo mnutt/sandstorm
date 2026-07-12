@@ -399,6 +399,11 @@ Progress:
   workerd's in-process `Server` library. The build uses a checksum-pinned Bazel
   binary and a patched copy under `tmp`, leaving the upstream source submodule
   pristine; the resulting `bin/isolate-host` has no Bazel runtime dependency.
+- The proxy migration stage has a minimal, ABI-tracked Cap'n Proto control
+  contract: an account-scoped host accepts only a server-validated grain ID
+  and returns a `HostedIsolate` lifecycle capability with `keepAlive()` and
+  `stop()`. Package, runtime, socket, and storage paths are derived by the host
+  from trusted roots rather than supplied over the per-grain control call.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead
