@@ -816,6 +816,7 @@ async function startIsolateFixture(options = {}) {
       "--stdio",
       "--pkg", pkgDir,
       "--var", varDir,
+      "--isolate-trust-domain", "isolate-test-account",
     ];
 
     if (isNew) {
@@ -1671,6 +1672,7 @@ runtimeTest("isolate supervisor integration suite", {
       "--stdio",
       "--pkg", fixture.pkgDir,
       "--var", fixture.varDir,
+      "--isolate-trust-domain", "isolate-test-account",
       "isolate-test-app",
       "isolate-integration",
       "workerd",
@@ -3240,6 +3242,7 @@ runtimeTest("isolate supervisor integration suite", {
         "--stdio",
         "--pkg", pkgDir,
         "--var", varDir,
+        "--isolate-trust-domain", "isolate-test-account",
         "--new",
         "isolate-test-app",
         "isolate-bad-command",

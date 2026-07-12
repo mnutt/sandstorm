@@ -390,6 +390,11 @@ prerequisite for the cross-grain fast path.
 
 Progress:
 
+- The shared-host trust domain is explicitly per account. The trusted backend
+  now carries `Backend.startGrain.ownerId` through isolate startup as a
+  required `--isolate-trust-domain` value; the supervisor validates it instead
+  of deriving grouping from app or grain metadata. Runtime topology remains
+  `perGrainSidecar` until the host process takes custody of workers.
 - Added integration coverage that runs two isolate instances from the same app
   package at once and verifies identical `STORAGE` keys resolve to distinct
   per-grain directories and values. This guards the storage-mediation invariant
