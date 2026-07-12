@@ -376,9 +376,13 @@ isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 		mkdir -p "$$grain_root/missingmanifest/isolate-runtime"; \
 		mkdir -p "$$grain_root/missingsource/isolate-runtime"; \
 		mkdir -p "$$grain_root/invalidjson/isolate-runtime"; \
+		mkdir -p "$$grain_root/unsupportedversion/isolate-runtime"; \
+		mkdir -p "$$grain_root/oversizedbundle/isolate-runtime"; \
 		printf '{}\n' > "$$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"; \
 		printf '{}\n' > "$$grain_root/missingsource/isolate-runtime/runtime-manifest.json"; \
 		printf '{}\n' > "$$grain_root/invalidjson/isolate-runtime/runtime-manifest.json"; \
+		printf '{}\n' > "$$grain_root/unsupportedversion/isolate-runtime/runtime-manifest.json"; \
+		printf '{}\n' > "$$grain_root/oversizedbundle/isolate-runtime/runtime-manifest.json"; \
 		ln -s testgrain123 "$$grain_root/linkgrain123"; \
 		bin/isolate-host "$$socket" "$$grain_root" & host_pid=$$!; \
 		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"; rm -rf "$$grain_root"' EXIT; \
