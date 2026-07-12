@@ -19,3 +19,6 @@
 [submodule "deps/clang"]
 	path = deps/clang
 	url = https://chromium.googlesource.com/chromium/src/tools/clang.git
+[submodule "deps/workerd"]
+	path = deps/workerd
+	url = https://github.com/cloudflare/workerd.git

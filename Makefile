@@ -25,6 +25,7 @@ PARALLEL=$(shell nproc)
 LIBS=
 EKAM=ekam
 WORKERD_NPM_VERSION=1.20260610.1
+WORKERD_SOURCE_COMMIT=ea5e86d22f16996a3d8fdb8922c34eb7e8711cd3
 WORKERD_NPM_PACKAGE_DIR=deps/workerd-npm
 WORKERD_BIN=
 CAPNP_ES_NPM_VERSION=0.3.0
@@ -158,7 +159,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -327,6 +328,9 @@ verify-workerd-runtime: bin/workerd tmp/.workerd-npm
 	cmp -s bin/workerd "$$(readlink -f tmp/workerd-npm/node_modules/.bin/workerd)"
 	@expected_version="$$(printf '%s\n' "$(WORKERD_NPM_VERSION)" | sed -E 's/^1\.([0-9]{4})([0-9]{2})([0-9]{2})\..*$$/\1-\2-\3/')" && \
 		test "$$(bin/workerd --version)" = "workerd $$expected_version"
+
+verify-workerd-source:
+	@test "$$(git -C deps/workerd rev-parse HEAD)" = "$(WORKERD_SOURCE_COMMIT)"
 
 # ====================================================================
 # fetch capnp-es

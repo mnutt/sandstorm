@@ -390,6 +390,11 @@ prerequisite for the cross-grain fast path.
 
 Progress:
 
+- The embedded-host implementation is pinned to the official workerd source
+  release matching the packaged `workerd@1.20260610.1` executable. The source
+  lives in `deps/workerd` at commit `ea5e86d2`, and
+  `make verify-workerd-source` prevents the native host and packaged runtime
+  from silently drifting to different releases.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead
