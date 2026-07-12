@@ -209,5 +209,30 @@ export default {
     oversized.send().wait(waitScope);
   });
 
+  kj::Vector<kj::Promise<void>> pendingAdmissions;
+  for (auto i: kj::zeroTo(16)) {
+    auto request = host.startGrainRequest();
+    request.setGrainId(kj::str("admission", i < 10 ? "0" : "", i));
+    request.setServices(services);
+    pendingAdmissions.add(request.send().ignoreResult());
+  }
+  sandstorm::expectFailure([&]() {
+    auto overloaded = host.startGrainRequest();
+    overloaded.setGrainId("admission-overload");
+    overloaded.setServices(services);
+    overloaded.send().wait(waitScope);
+  });
+  for (auto i: kj::zeroTo(16)) {
+    auto fifoPath = kj::str(argv[2], "/admission", i < 10 ? "0" : "", i,
+        "/isolate-runtime/worker-source.capnp.bin");
+    int fifoFd;
+    KJ_SYSCALL(fifoFd = open(fifoPath.cStr(), O_WRONLY | O_CLOEXEC));
+    KJ_SYSCALL(write(fifoFd, "x", 1));
+    close(fifoFd);
+  }
+  for (auto& admission: pendingAdmissions) {
+    sandstorm::expectFailure([&]() { kj::mv(admission).wait(waitScope); });
+  }
+
   return 0;
 }

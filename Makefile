@@ -383,6 +383,12 @@ isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 		printf '{}\n' > "$$grain_root/invalidjson/isolate-runtime/runtime-manifest.json"; \
 		printf '{}\n' > "$$grain_root/unsupportedversion/isolate-runtime/runtime-manifest.json"; \
 		printf '{}\n' > "$$grain_root/oversizedbundle/isolate-runtime/runtime-manifest.json"; \
+		for i in $$(seq -w 0 15); do \
+			mkdir -p "$$grain_root/admission$$i/isolate-runtime"; \
+			printf '{}\n' > "$$grain_root/admission$$i/isolate-runtime/runtime-manifest.json"; \
+			mkfifo "$$grain_root/admission$$i/isolate-runtime/worker-source.capnp.bin"; \
+		done; \
+		mkdir -p "$$grain_root/admission-overload"; \
 		ln -s testgrain123 "$$grain_root/linkgrain123"; \
 		bin/isolate-host "$$socket" "$$grain_root" & host_pid=$$!; \
 		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"; rm -rf "$$grain_root"' EXIT; \
