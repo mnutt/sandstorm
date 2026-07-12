@@ -27,6 +27,7 @@
 #include <sandstorm/isolate/capnp-runtime.js.h>
 
 #include <capnp/message.h>
+#include <capnp/compat/http-over-capnp.h>
 #include <capnp/compat/json.h>
 #include <capnp/rpc.capnp.h>
 #include <capnp/rpc-twoparty.h>
@@ -45,6 +46,8 @@
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
 #include <sandstorm/isolate-bridge.capnp.h>
+#include <sandstorm/isolate-account-host.capnp.h>
+#include <sandstorm/isolate-host.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
 #include <sandstorm/isolate-worker-source.capnp.h>
 #include <sandstorm/outbound-http-session.capnp.h>
@@ -424,6 +427,11 @@ class IsolateRuntimeAdapter;
 class IsolateRuntimeAdapterFactory: public kj::Refcounted {
 public:
   virtual ~IsolateRuntimeAdapterFactory() noexcept(false);
+  virtual kj::HttpHeaderTable& getHeaderTable() = 0;
+  virtual bool isConfigured(const IsolateRuntimeConfig& config) = 0;
+  virtual bool isAvailable(const IsolateRuntimeConfig& config) = 0;
+  virtual kj::Promise<kj::Own<kj::AsyncIoStream>> connect(
+      IsolateRuntimeConfig& config, struct IsolateRuntimeHost& host) = 0;
   virtual kj::Own<IsolateRuntimeAdapter> make(
       kj::Own<IsolateRuntimeConfig> config, kj::Own<struct IsolateRuntimeHost> host) = 0;
 };
@@ -436,15 +444,16 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
       : network(network), timer(timer), grainId(kj::heapString(grainId)),
         sandstormCore(kj::mv(sandstormCore)),
         sessions(kj::refcounted<IsolateSessionRegistry>()),
-        runtimeAdapterFactory(kj::mv(runtimeAdapterFactory)) {}
+        runtimeAdapterFactory(kj::mv(runtimeAdapterFactory)),
+        headerTable(this->runtimeAdapterFactory->getHeaderTable()) {}
 
   kj::Network& network;
   kj::Timer& timer;
   kj::String grainId;
   SandstormCore::Client sandstormCore;
-  kj::HttpHeaderTable headerTable;
   kj::Own<IsolateSessionRegistry> sessions;
   kj::Own<IsolateRuntimeAdapterFactory> runtimeAdapterFactory;
+  kj::HttpHeaderTable& headerTable;
 };
 
 IsolateRuntimeConfig::ModuleType getModuleType(
@@ -2429,12 +2438,12 @@ public:
       : config(kj::mv(config)), host(kj::mv(host)) {}
 
   kj::Promise<FetchResponse> fetch(FetchRequest&& request) override {
-    if (isSidecarSocketAvailable()) {
+    if (host->runtimeAdapterFactory->isAvailable(*config)) {
       return fetchFromSidecar(kj::mv(request)).catch_(
           [this](kj::Exception&& exception) mutable {
         return fetchRuntimeError(kj::mv(exception));
       });
-    } else if (hasSidecarEndpoint()) {
+    } else if (host->runtimeAdapterFactory->isConfigured(*config)) {
       return fetchPlaceholder(kj::mv(request), "sidecar socket not listening");
     }
 
@@ -2444,7 +2453,8 @@ public:
   kj::Promise<void> openWebSocket(FetchRequest&& request,
       WebSession::WebSocketStream::Client clientStream,
       WebSession::OpenWebSocketResults::Builder results) override {
-    KJ_REQUIRE(isSidecarSocketAvailable(), "isolate sidecar socket is not available");
+    KJ_REQUIRE(host->runtimeAdapterFactory->isAvailable(*config),
+        "isolate runtime endpoint is not available");
     return openWebSocketFromSidecar(kj::mv(request), kj::mv(clientStream), results);
   }
 
@@ -2455,26 +2465,18 @@ private:
   class StreamingRequestImpl;
 
   struct SidecarHttpState final: public FetchResponseBodyAnchor, public kj::Refcounted {
-    kj::Own<kj::NetworkAddress> addr;
+    kj::Own<kj::AsyncIoStream> stream;
     kj::Own<kj::HttpClient> client;
     kj::Own<kj::AsyncOutputStream> requestBody;
     kj::Promise<kj::HttpClient::Response> response = nullptr;
     kj::Maybe<kj::Own<kj::AsyncInputStream>> responseBody;
 
-    SidecarHttpState(kj::Own<kj::NetworkAddress>&& addr, kj::Own<kj::HttpClient>&& client)
-        : addr(kj::mv(addr)), client(kj::mv(client)) {}
+    SidecarHttpState(kj::Own<kj::AsyncIoStream> stream, kj::HttpHeaderTable& headerTable)
+        : stream(kj::mv(stream)), client(kj::newHttpClient(headerTable, *this->stream)) {}
   };
 
   kj::Own<IsolateRuntimeConfig> config;
   kj::Own<IsolateRuntimeHost> host;
-
-  bool hasSidecarEndpoint() {
-    return config->workerdSocketPath.size() > 0;
-  }
-
-  bool isSidecarSocketAvailable() {
-    return hasSidecarEndpoint() && access(config->workerdSocketPath.cStr(), F_OK) == 0;
-  }
 
   FetchResponse fetchRuntimeError(kj::Exception&& exception) {
     KJ_LOG(WARNING, "Isolate sidecar request failed.", exception);
@@ -2687,10 +2689,9 @@ private:
         return kj::READY_NOW;
       }
 
-      return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
-          .then([this](kj::Own<kj::NetworkAddress>&& addr) mutable {
-        auto client = kj::newHttpClient(host->timer, host->headerTable, *addr);
-        auto newState = kj::refcounted<SidecarHttpState>(kj::mv(addr), kj::mv(client));
+      return host->runtimeAdapterFactory->connect(*config, *host)
+          .then([this](kj::Own<kj::AsyncIoStream>&& stream) mutable {
+        auto newState = kj::refcounted<SidecarHttpState>(kj::mv(stream), host->headerTable);
         kj::HttpHeaders headers(host->headerTable);
         copyHeadersToHttp(request, headers);
 
@@ -2709,11 +2710,10 @@ private:
       auto& fd = KJ_ASSERT_NONNULL(spoolFd);
       KJ_SYSCALL(lseek(fd.get(), 0, SEEK_SET));
 
-      return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
+      return host->runtimeAdapterFactory->connect(*config, *host)
           .then([this, results, responseStream = kj::mv(responseStream)](
-              kj::Own<kj::NetworkAddress>&& addr) mutable {
-        auto client = kj::newHttpClient(host->timer, host->headerTable, *addr);
-        auto state = kj::refcounted<SidecarHttpState>(kj::mv(addr), kj::mv(client));
+              kj::Own<kj::AsyncIoStream>&& stream) mutable {
+        auto state = kj::refcounted<SidecarHttpState>(kj::mv(stream), host->headerTable);
         kj::HttpHeaders headers(host->headerTable);
         copyHeadersToHttp(request, headers);
 
@@ -2774,10 +2774,9 @@ private:
   kj::Promise<FetchResponse> fetchFromSidecar(FetchRequest&& request) {
     KJ_LOG(WARNING, "Forwarding isolate request to sidecar.",
         fetchMethodName(request.method), request.path, request.body.size());
-    return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
-        .then([this, request = kj::mv(request)](kj::Own<kj::NetworkAddress>&& addr) mutable {
-      auto client = kj::newHttpClient(host->timer, host->headerTable, *addr);
-      auto state = kj::refcounted<SidecarHttpState>(kj::mv(addr), kj::mv(client));
+    return host->runtimeAdapterFactory->connect(*config, *host)
+        .then([this, request = kj::mv(request)](kj::Own<kj::AsyncIoStream>&& stream) mutable {
+      auto state = kj::refcounted<SidecarHttpState>(kj::mv(stream), host->headerTable);
       kj::HttpHeaders headers(host->headerTable);
       copyHeadersToHttp(request, headers);
 
@@ -2810,13 +2809,10 @@ private:
       WebSession::WebSocketStream::Client clientStream,
       WebSession::OpenWebSocketResults::Builder results) {
     KJ_LOG(WARNING, "Forwarding isolate WebSocket request to sidecar.", request.path);
-    return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
+    return host->runtimeAdapterFactory->connect(*config, *host)
         .then([this, request = kj::mv(request), clientStream = kj::mv(clientStream), results](
-            kj::Own<kj::NetworkAddress>&& addr) mutable -> kj::Promise<void> {
+            kj::Own<kj::AsyncIoStream>&& stream) mutable -> kj::Promise<void> {
       auto rawRequest = renderSidecarWebSocketUpgradeRequest(request);
-      return addr->connect()
-          .then([rawRequest = kj::mv(rawRequest), clientStream = kj::mv(clientStream), results](
-              kj::Own<kj::AsyncIoStream>&& stream) mutable {
         auto& streamRef = *stream;
         return streamRef.write(rawRequest.begin(), rawRequest.size())
             .attach(kj::mv(rawRequest))
@@ -2835,7 +2831,6 @@ private:
                 kj::mv(stream), kj::mv(clientStream), kj::mv(upgrade.remainder)));
           }).attach(kj::mv(parser));
         });
-      });
     });
   }
 
@@ -2890,15 +2885,69 @@ private:
 
 class WorkerdRuntimeAdapterFactory final: public IsolateRuntimeAdapterFactory {
 public:
+  kj::HttpHeaderTable& getHeaderTable() override { return headerTable; }
+  bool isConfigured(const IsolateRuntimeConfig& config) override {
+    return config.workerdSocketPath.size() > 0;
+  }
+  bool isAvailable(const IsolateRuntimeConfig& config) override {
+    return isConfigured(config) && access(config.workerdSocketPath.cStr(), F_OK) == 0;
+  }
+  kj::Promise<kj::Own<kj::AsyncIoStream>> connect(
+      IsolateRuntimeConfig& config, IsolateRuntimeHost& host) override {
+    return host.network.parseAddress(kj::str("unix:", config.workerdSocketPath), 0)
+        .then([](kj::Own<kj::NetworkAddress>&& address) { return address->connect(); });
+  }
+
   kj::Own<IsolateRuntimeAdapter> make(
       kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host) override {
     return kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host));
   }
+
+private:
+  kj::HttpHeaderTable headerTable;
+};
+
+class HostedRuntimeAdapterFactory final: public IsolateRuntimeAdapterFactory {
+public:
+  explicit HostedRuntimeAdapterFactory(HostedIsolate::Client hosted)
+      : httpFactory(byteStreamFactory, headerTableBuilder),
+        headerTable(headerTableBuilder.build()),
+        hosted(kj::mv(hosted)) {}
+
+  kj::HttpHeaderTable& getHeaderTable() override { return *headerTable; }
+  bool isConfigured(const IsolateRuntimeConfig&) override { return true; }
+  bool isAvailable(const IsolateRuntimeConfig&) override { return true; }
+
+  kj::Promise<kj::Own<kj::AsyncIoStream>> connect(
+      IsolateRuntimeConfig&, IsolateRuntimeHost& host) override {
+    return hosted.getHttpServiceRequest().send().then(
+        [this, &host](auto response) mutable -> kj::Own<kj::AsyncIoStream> {
+      auto service = httpFactory.capnpToKj(response.getService());
+      auto pipe = kj::newTwoWayPipe();
+      auto server = kj::heap<kj::HttpServer>(host.timer, *headerTable, *service);
+      auto serverTask = server->listenHttp(kj::mv(pipe.ends[0]))
+          .attach(kj::mv(server), kj::mv(service));
+      return kj::mv(pipe.ends[1]).attach(kj::mv(serverTask));
+    });
+  }
+
+  kj::Own<IsolateRuntimeAdapter> make(
+      kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host) override {
+    return kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host));
+  }
+
+private:
+  capnp::ByteStreamFactory byteStreamFactory;
+  kj::HttpHeaderTable::Builder headerTableBuilder;
+  capnp::HttpOverCapnpFactory httpFactory;
+  kj::Own<kj::HttpHeaderTable> headerTable;
+  HostedIsolate::Client hosted;
 };
 
 kj::Own<WebSession::RequestStream::Server> WorkerdRuntimeAdapter::startRequestStream(
     FetchRequest&& request, ByteStream::Client responseStream) {
-  KJ_REQUIRE(isSidecarSocketAvailable(), "isolate sidecar socket is not available");
+  KJ_REQUIRE(host->runtimeAdapterFactory->isAvailable(*config),
+      "isolate runtime endpoint is not available");
   return kj::heap<StreamingRequestImpl>(
       kj::addRef(*config), kj::addRef(*host), kj::mv(request), kj::mv(responseStream));
 }
@@ -3386,23 +3435,23 @@ public:
 };
 
 struct IsolateMainViewRpcWebSocketState final: public kj::Refcounted {
-  kj::Own<kj::NetworkAddress> addr;
+  kj::Own<kj::AsyncIoStream> stream;
   kj::Own<kj::HttpClient> client;
   kj::Own<kj::WebSocket> webSocket;
 
-  IsolateMainViewRpcWebSocketState(kj::Own<kj::NetworkAddress>&& addr,
+  IsolateMainViewRpcWebSocketState(kj::Own<kj::AsyncIoStream>&& stream,
       kj::Own<kj::HttpClient>&& client, kj::Own<kj::WebSocket>&& webSocket)
-      : addr(kj::mv(addr)), client(kj::mv(client)), webSocket(kj::mv(webSocket)) {}
+      : stream(kj::mv(stream)), client(kj::mv(client)), webSocket(kj::mv(webSocket)) {}
 };
 
 struct IsolateMainViewRpcFailedWebSocketState final: public kj::Refcounted {
-  kj::Own<kj::NetworkAddress> addr;
+  kj::Own<kj::AsyncIoStream> stream;
   kj::Own<kj::HttpClient> client;
   kj::Own<kj::AsyncInputStream> body;
 
-  IsolateMainViewRpcFailedWebSocketState(kj::Own<kj::NetworkAddress>&& addr,
+  IsolateMainViewRpcFailedWebSocketState(kj::Own<kj::AsyncIoStream>&& stream,
       kj::Own<kj::HttpClient>&& client, kj::Own<kj::AsyncInputStream>&& body)
-      : addr(kj::mv(addr)), client(kj::mv(client)), body(kj::mv(body)) {}
+      : stream(kj::mv(stream)), client(kj::mv(client)), body(kj::mv(body)) {}
 };
 
 class IsolateMainViewRpcMessageStream final: public capnp::MessageStream {
@@ -3526,16 +3575,16 @@ private:
   }
 
   kj::Promise<void> start() {
-    return host->network.parseAddress(kj::str("unix:", config->workerdSocketPath), 0)
-        .then([this](kj::Own<kj::NetworkAddress>&& addr) mutable {
+    return host->runtimeAdapterFactory->connect(*config, *host)
+        .then([this](kj::Own<kj::AsyncIoStream>&& stream) mutable {
       static IsolateMainViewRpcEntropySource entropySource;
       kj::HttpClientSettings settings;
       settings.entropySource = entropySource;
-      auto client = kj::newHttpClient(host->timer, headerTable, *addr, settings);
+      auto client = kj::newHttpClient(headerTable, *stream, settings);
       kj::HttpHeaders headers(headerTable);
       headers.set(kj::HttpHeaderId::HOST, "sandbox");
       return client->openWebSocket(path, headers)
-          .then([this, addr = kj::mv(addr), client = kj::mv(client)](
+          .then([this, stream = kj::mv(stream), client = kj::mv(client)](
               kj::HttpClient::WebSocketResponse&& response) mutable -> kj::Promise<void> {
         if (response.statusCode != 101) {
           auto statusCode = response.statusCode;
@@ -3545,7 +3594,7 @@ private:
           KJ_SWITCH_ONEOF(response.webSocketOrBody) {
             KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
               auto failed = kj::refcounted<IsolateMainViewRpcFailedWebSocketState>(
-                  kj::mv(addr), kj::mv(client), kj::mv(body));
+                  kj::mv(stream), kj::mv(client), kj::mv(body));
               return failed->body->readAllText()
                   .then([statusCode, statusText = kj::mv(statusText),
                       failed = kj::mv(failed)](kj::String&& bodyText) mutable {
@@ -3570,7 +3619,7 @@ private:
           }
           KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
             state = kj::refcounted<IsolateMainViewRpcWebSocketState>(
-                kj::mv(addr), kj::mv(client), kj::mv(webSocket));
+                kj::mv(stream), kj::mv(client), kj::mv(webSocket));
             return kj::READY_NOW;
           }
         }
@@ -5945,23 +5994,84 @@ private:
   }
 };
 
+class IsolateSupervisorLifecycle: public kj::Refcounted {
+public:
+  virtual void requireRunning() {}
+  virtual kj::Promise<void> keepAlive() { return kj::READY_NOW; }
+  virtual kj::Promise<void> shutdown() = 0;
+};
+
+class SidecarSupervisorLifecycle final: public IsolateSupervisorLifecycle {
+public:
+  explicit SidecarSupervisorLifecycle(kj::Own<WorkerdSidecarProcess> sidecar)
+      : sidecar(kj::mv(sidecar)) {}
+
+  kj::Promise<void> shutdown() override {
+    sidecar->stop();
+    _exit(0);
+  }
+
+private:
+  kj::Own<WorkerdSidecarProcess> sidecar;
+};
+
+class HostedSupervisorLifecycle final: public IsolateSupervisorLifecycle {
+public:
+  HostedSupervisorLifecycle(HostedIsolate::Client hosted, kj::Function<void()> onShutdown)
+      : hosted(kj::mv(hosted)), onShutdown(kj::mv(onShutdown)) {}
+
+  void requireRunning() override {
+    KJ_REQUIRE(running, "shared isolate grain has been shut down");
+  }
+
+  kj::Promise<void> keepAlive() override {
+    requireRunning();
+    return hosted.keepAliveRequest().send().ignoreResult();
+  }
+
+  kj::Promise<void> shutdown() override {
+    requireRunning();
+    running = false;
+    return hosted.stopRequest().send().then(
+        [this](auto) { return removeFromAccountLater(); },
+        [this](kj::Exception&& exception) {
+      return removeFromAccountLater().then(
+          [exception = kj::mv(exception)]() mutable -> kj::Promise<void> {
+        return kj::Promise<void>(kj::mv(exception));
+      });
+    });
+  }
+
+private:
+  HostedIsolate::Client hosted;
+  kj::Function<void()> onShutdown;
+  bool running = true;
+
+  kj::Promise<void> removeFromAccountLater() {
+    auto callback = kj::mv(onShutdown);
+    return kj::evalLater([callback = kj::mv(callback)]() mutable { callback(); });
+  }
+};
+
 class IsolateSupervisorImpl final: public Supervisor::Server {
 public:
   IsolateSupervisorImpl(
       kj::UnixEventPort& eventPort, kj::StringPtr varPath, kj::Own<CapRedirector> coreRedirector,
       kj::Own<IsolateRuntimeConfig> runtimeConfig, kj::Own<IsolateRuntimeHost> runtimeHost,
-      kj::Own<WorkerdSidecarProcess> sidecar, SandstormCore::Client sandstormCore)
+      kj::Own<IsolateSupervisorLifecycle> lifecycle, SandstormCore::Client sandstormCore)
       : eventPort(eventPort), varPath(kj::heapString(varPath)), coreRedirector(kj::mv(coreRedirector)),
         runtimeConfig(kj::mv(runtimeConfig)), runtimeHost(kj::mv(runtimeHost)),
-        sidecar(kj::mv(sidecar)), sandstormCore(kj::mv(sandstormCore)) {}
+        lifecycle(kj::mv(lifecycle)), sandstormCore(kj::mv(sandstormCore)) {}
 
   kj::Promise<void> getMainView(GetMainViewContext context) override {
+    lifecycle->requireRunning();
     context.getResults().setView(kj::heap<IsolateUiViewImpl>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost)));
     return kj::READY_NOW;
   }
 
   kj::Promise<void> keepAlive(KeepAliveContext context) override {
+    lifecycle->requireRunning();
     isolateKeepAlive = true;
 
     auto params = context.getParams();
@@ -5969,10 +6079,11 @@ public:
       coreRedirector->setTarget(params.getCore());
     }
 
-    return kj::READY_NOW;
+    return lifecycle->keepAlive();
   }
 
   kj::Promise<void> syncStorage(SyncStorageContext context) override {
+    lifecycle->requireRunning();
     (void)context;
     auto fd = raiiOpen(varPath, O_RDONLY | O_DIRECTORY);
     KJ_SYSCALL(syncfs(fd));
@@ -5985,12 +6096,13 @@ public:
   }
 
   kj::Promise<void> shutdown(ShutdownContext context) override {
+    lifecycle->requireRunning();
     KJ_LOG(WARNING, "Isolate grain shutdown requested.");
-    sidecar->stop();
-    _exit(0);
+    return lifecycle->shutdown();
   }
 
   kj::Promise<void> restore(RestoreContext context) override {
+    lifecycle->requireRunning();
     auto params = context.getParams();
     auto objectId = context.getParams().getRef();
     kj::Maybe<kj::Array<const byte>> parentToken = nullptr;
@@ -6026,6 +6138,7 @@ public:
   }
 
   kj::Promise<void> drop(DropContext context) override {
+    lifecycle->requireRunning();
     auto objectId = context.getParams().getRef();
     switch (objectId.which()) {
       case SupervisorObjectId<>::ROUTE_BACKED_SESSION:
@@ -6045,6 +6158,7 @@ public:
   }
 
   kj::Promise<void> watchLog(WatchLogContext context) override {
+    lifecycle->requireRunning();
     auto params = context.getParams();
     auto logPath = kj::str(varPath, "/log");
     auto logFile = raiiOpen(logPath, O_RDONLY | O_CLOEXEC);
@@ -6084,6 +6198,7 @@ public:
   }
 
   kj::Promise<void> getWwwFileHack(GetWwwFileHackContext context) override {
+    lifecycle->requireRunning();
     context.getResults().setStatus(Supervisor::WwwFileStatus::NOT_FOUND);
     return kj::READY_NOW;
   }
@@ -6094,7 +6209,7 @@ private:
   kj::Own<CapRedirector> coreRedirector;
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
-  kj::Own<WorkerdSidecarProcess> sidecar;
+  kj::Own<IsolateSupervisorLifecycle> lifecycle;
   SandstormCore::Client sandstormCore;
 
   class LogWatcher final: public Handle::Server, private kj::TaskSet::ErrorHandler {
@@ -6185,6 +6300,28 @@ private:
   };
 };
 
+Supervisor::Client newHostedIsolateSupervisor(kj::UnixEventPort& eventPort,
+    kj::Network& network,
+    kj::Timer& timer,
+    kj::StringPtr grainId,
+    kj::StringPtr varPath,
+    kj::Own<IsolateRuntimeConfig> runtimeConfig,
+    HostedIsolate::Client hosted,
+    SandstormCore::Client sandstormCore,
+    kj::Function<void()> onShutdown) {
+  auto coreRedirector = kj::refcounted<CapRedirector>();
+  coreRedirector->setTarget(sandstormCore);
+  SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
+      kj::addRef(*coreRedirector)).castAs<SandstormCore>();
+  HostedIsolate::Client lifecycleHosted = hosted;
+  auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(network, timer, grainId, coreCap,
+      kj::refcounted<HostedRuntimeAdapterFactory>(kj::mv(hosted)));
+  auto lifecycle = kj::refcounted<HostedSupervisorLifecycle>(
+      kj::mv(lifecycleHosted), kj::mv(onShutdown));
+  return kj::heap<IsolateSupervisorImpl>(eventPort, varPath, kj::mv(coreRedirector),
+      kj::mv(runtimeConfig), kj::mv(runtimeHost), kj::mv(lifecycle), kj::mv(coreCap));
+}
+
 kj::String getenvString(kj::StringPtr name) {
   char* value = getenv(name.cStr());
   KJ_REQUIRE(value != nullptr, "Required environment variable is missing.", name);
@@ -6270,6 +6407,89 @@ private:
   kj::String compatibilityDate;
 };
 
+class EmptyIsolateBindingServices final: public IsolateBindingServices::Server {};
+
+class IsolateAccountHostImpl final: public IsolateAccountHost::Server {
+public:
+  IsolateAccountHostImpl(kj::UnixEventPort& eventPort,
+      kj::Network& network,
+      kj::Timer& timer,
+      IsolateHost::Client nativeHost,
+      kj::String appRoot,
+      kj::String grainRoot)
+      : eventPort(eventPort), network(network), timer(timer), nativeHost(kj::mv(nativeHost)),
+        appRoot(kj::mv(appRoot)), grainRoot(kj::mv(grainRoot)) {}
+
+  kj::Promise<void> startGrain(StartGrainContext context) override {
+    auto params = context.getParams();
+    auto grainId = validateOpaqueId(params.getGrainId(), "grain ID");
+    auto packageId = validateOpaqueId(params.getPackageId(), "package ID");
+    KJ_REQUIRE(params.getMainModule().size() > 0, "missing isolate main module");
+
+    KJ_IF_MAYBE(existing, supervisors.find(grainId)) {
+      context.getResults().setSupervisor(*existing);
+      return kj::READY_NOW;
+    }
+
+    auto varPath = kj::str(grainRoot, "/", grainId);
+    auto pkgPath = kj::str(appRoot, "/", packageId);
+    initializeGrainDirectory(varPath, params.getIsNew());
+
+    kj::Maybe<kj::StringPtr> compatibilityDate;
+    if (params.getCompatibilityDate().size() > 0) {
+      compatibilityDate = params.getCompatibilityDate();
+    }
+    auto runtimeConfig = loadIsolateRuntimeConfig(
+        pkgPath, params.getMainModule(), compatibilityDate);
+    prepareRuntimeBundleAndCleanupSockets(varPath, *runtimeConfig);
+
+    auto nativeStart = nativeHost.startGrainRequest();
+    nativeStart.setGrainId(grainId);
+    nativeStart.setServices(kj::heap<EmptyIsolateBindingServices>());
+    auto core = params.getCore();
+    context.releaseParams();
+    return nativeStart.send().then([this, context, grainId = kj::mv(grainId),
+        varPath = kj::mv(varPath), runtimeConfig = kj::mv(runtimeConfig),
+        core = kj::mv(core)](auto response) mutable {
+      auto hosted = response.getGrain();
+      auto supervisor = newHostedIsolateSupervisor(eventPort, network, timer, grainId, varPath,
+          kj::mv(runtimeConfig), hosted, kj::mv(core),
+          [this, grainId = kj::str(grainId)]() { supervisors.erase(grainId); });
+      context.getResults().setSupervisor(supervisor);
+      supervisors.insert(kj::mv(grainId), kj::mv(supervisor));
+    });
+  }
+
+private:
+  static kj::String validateOpaqueId(kj::StringPtr value, kj::StringPtr label) {
+    KJ_REQUIRE(value.size() >= 8 && !value.startsWith(".") && value.findFirst('/') == nullptr,
+        "invalid opaque identifier", label, value);
+    return kj::str(value);
+  }
+
+  static void initializeGrainDirectory(kj::StringPtr varPath, bool isNew) {
+    if (isNew) {
+      KJ_SYSCALL(mkdir(varPath.cStr(), 0770), varPath);
+      KJ_SYSCALL(mkdir(kj::str(varPath, "/sandbox").cStr(), 0770), varPath);
+    } else {
+      KJ_SYSCALL(access(varPath.cStr(), R_OK | W_OK | X_OK), varPath);
+    }
+
+    int logFd;
+    KJ_SYSCALL(logFd = open(kj::str(varPath, "/log").cStr(),
+        O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0660), varPath);
+    KJ_SYSCALL(close(logFd));
+  }
+
+  kj::UnixEventPort& eventPort;
+  kj::Network& network;
+  kj::Timer& timer;
+  IsolateHost::Client nativeHost;
+  kj::String appRoot;
+  kj::String grainRoot;
+  kj::HashMap<kj::String, Supervisor::Client> supervisors;
+};
+
 }  // namespace
 
 IsolateDevSidecarMain::IsolateDevSidecarMain(kj::ProcessContext& context): context(context) {}
@@ -6297,6 +6517,83 @@ kj::MainBuilder::Validity IsolateDevSidecarMain::run() {
 
   KJ_LOG(WARNING, "Isolate development sidecar listening.", socketPath);
   server.listenHttp(*port).wait(ioContext.waitScope);
+  return true;
+}
+
+IsolateAccountHostMain::IsolateAccountHostMain(kj::ProcessContext& context): context(context) {}
+
+kj::MainFunc IsolateAccountHostMain::getMain() {
+  return kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
+                         "Runs an account-scoped shared isolate supervisor host.")
+      .addOptionWithArg({"trust-domain"}, KJ_BIND_METHOD(*this, setTrustDomain), "<account-id>",
+                        "Set the validated account trust domain.")
+      .addOptionWithArg({"control-socket"}, KJ_BIND_METHOD(*this, setControlSocket), "<path>",
+                        "Listen for backend requests on this Unix socket.")
+      .addOptionWithArg({"native-control-socket"},
+                        KJ_BIND_METHOD(*this, setNativeControlSocket), "<path>",
+                        "Connect to the account-local native workerd host.")
+      .addOptionWithArg({"app-root"}, KJ_BIND_METHOD(*this, setAppRoot), "<path>",
+                        "Set the trusted package root.")
+      .addOptionWithArg({"grain-root"}, KJ_BIND_METHOD(*this, setGrainRoot), "<path>",
+                        "Set the trusted grain root.")
+      .callAfterParsing(KJ_BIND_METHOD(*this, run))
+      .build();
+}
+
+kj::MainBuilder::Validity IsolateAccountHostMain::setTrustDomain(kj::StringPtr value) {
+  if (value.size() < 8 || value.startsWith(".") || value.findFirst('/') != nullptr) {
+    return "Invalid isolate trust domain.";
+  }
+  trustDomain = kj::str(value);
+  return true;
+}
+
+kj::MainBuilder::Validity IsolateAccountHostMain::setControlSocket(kj::StringPtr value) {
+  controlSocket = kj::str(value);
+  return true;
+}
+
+kj::MainBuilder::Validity IsolateAccountHostMain::setNativeControlSocket(kj::StringPtr value) {
+  nativeControlSocket = kj::str(value);
+  return true;
+}
+
+kj::MainBuilder::Validity IsolateAccountHostMain::setAppRoot(kj::StringPtr value) {
+  appRoot = kj::str(value);
+  return true;
+}
+
+kj::MainBuilder::Validity IsolateAccountHostMain::setGrainRoot(kj::StringPtr value) {
+  grainRoot = kj::str(value);
+  return true;
+}
+
+kj::MainBuilder::Validity IsolateAccountHostMain::run() {
+  KJ_REQUIRE(trustDomain.size() > 0, "missing account trust domain");
+  KJ_REQUIRE(controlSocket.startsWith("/"), "control socket path must be absolute");
+  KJ_REQUIRE(nativeControlSocket.startsWith("/"), "native control socket path must be absolute");
+  KJ_REQUIRE(appRoot.startsWith("/") && grainRoot.startsWith("/"),
+      "account host roots must be absolute");
+
+  unlinkIfExists(controlSocket);
+  auto io = kj::setupAsyncIo();
+  auto nativeAddress = io.provider->getNetwork()
+      .parseAddress(kj::str("unix:", nativeControlSocket), 0)
+      .wait(io.waitScope);
+  auto nativeStream = nativeAddress->connect().wait(io.waitScope);
+  capnp::TwoPartyClient nativeRpc(*nativeStream);
+  auto nativeHost = nativeRpc.bootstrap().castAs<IsolateHost>();
+
+  auto accountAddress = io.provider->getNetwork()
+      .parseAddress(kj::str("unix:", controlSocket), 0)
+      .wait(io.waitScope);
+  auto listener = accountAddress->listen();
+  capnp::TwoPartyServer server(kj::heap<IsolateAccountHostImpl>(io.unixEventPort,
+      io.provider->getNetwork(), io.provider->getTimer(), kj::mv(nativeHost),
+      kj::str(appRoot), kj::str(grainRoot)));
+  KJ_LOG(WARNING, "Account-scoped isolate host listening.", trustDomain, controlSocket,
+      nativeControlSocket);
+  server.listen(*listener).exclusiveJoin(nativeRpc.onDisconnect()).wait(io.waitScope);
   return true;
 }
 
@@ -6588,11 +6885,12 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
 
   waitForSidecarSocket(*sidecar, *runtimeConfig);
   KJ_LOG(WARNING, "Isolate supervisor sidecar readiness complete.");
+  auto lifecycle = kj::refcounted<SidecarSupervisorLifecycle>(kj::mv(sidecar));
 
   KJ_LOG(WARNING, "Creating isolate supervisor capability.");
   Supervisor::Client mainCap = kj::heap<IsolateSupervisorImpl>(
       ioContext.unixEventPort, varPath, kj::addRef(*coreRedirector), kj::mv(runtimeConfig),
-      kj::mv(runtimeHost), kj::mv(sidecar), kj::mv(coreCap));
+      kj::mv(runtimeHost), kj::mv(lifecycle), kj::mv(coreCap));
   KJ_LOG(WARNING, "Isolate supervisor capability created.");
 
   KJ_LOG(WARNING, "Creating isolate supervisor listener.");

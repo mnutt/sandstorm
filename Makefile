@@ -153,6 +153,7 @@ IMAGES= \
 
 CAPNP_SCHEMAS=$(filter-out src/capnp/test%.capnp,$(wildcard src/capnp/*.capnp))
 ISOLATE_CAPNP_ABI_BASELINES= \
+    tests/capnp-abi/isolate-account-host.capnp-abi.json \
     tests/capnp-abi/isolate-bridge.capnp-abi.json \
     tests/capnp-abi/isolate-host.capnp-abi.json \
     tests/capnp-abi/isolate-supervisor-internal.capnp-abi.json \
@@ -162,7 +163,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-host isolate-host-control-test isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -400,6 +401,28 @@ isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 		test -S "$$socket"; \
 		tmp/sandstorm/isolate-host-client "$$socket" "$$grain_root"
 
+isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
+		tests/assets/isolate-test-app.spk
+	@root="$(PWD)/tmp/isolate-account-host-test"; \
+		app_root="$$root/apps"; grain_root="$$root/grains"; \
+		native_socket="$$root/native.sock"; account_socket="$$root/account.sock"; \
+		rm -rf "$$root"; mkdir -p "$$app_root" "$$grain_root"; \
+		bin/spk unpack tests/assets/isolate-test-app.spk "$$app_root/testpackage123"; \
+		ln -s "$(PWD)/bin/sandstorm" "$$root/isolate-account-host"; \
+		bin/isolate-host "$$native_socket" "$$grain_root" & native_pid=$$!; \
+		trap 'kill $$account_pid $$native_pid 2>/dev/null || true; wait $$account_pid $$native_pid 2>/dev/null || true; rm -rf "$$root"' EXIT; \
+		for attempt in $$(seq 1 100); do test -S "$$native_socket" && break; sleep 0.05; done; \
+		test -S "$$native_socket"; \
+		"$$root/isolate-account-host" \
+			--trust-domain testaccount123 \
+			--control-socket "$$account_socket" \
+			--native-control-socket "$$native_socket" \
+			--app-root "$$app_root" --grain-root "$$grain_root" & account_pid=$$!; \
+		for attempt in $$(seq 1 100); do test -S "$$account_socket" && break; sleep 0.05; done; \
+		test -S "$$account_socket"; \
+		tmp/sandstorm/isolate-account-host-client \
+			"$$account_socket" testgrain123 testpackage123
+
 # ====================================================================
 # fetch capnp-es
 
@@ -601,10 +624,13 @@ test-app-dev: tmp/.ekam-run
 	spk dev -Isrc -Itmp -ptmp/sandstorm/test-app/test-app.capnp:pkgdef
 
 isolate-capnp-abi-check: tmp/.ekam-run $(ISOLATE_CAPNP_ABI_BASELINES) \
+		src/sandstorm/isolate-account-host.capnp \
 		src/sandstorm/isolate-bridge.capnp \
 		src/sandstorm/isolate-host.capnp \
 		src/sandstorm/isolate-supervisor-internal.capnp \
 		src/sandstorm/outbound-http-session.capnp
+	bin/spk capnp-abi --check tests/capnp-abi/isolate-account-host.capnp-abi.json \
+		capnp:/sandstorm/isolate-account-host.capnp
 	bin/spk capnp-abi --check tests/capnp-abi/isolate-bridge.capnp-abi.json \
 		capnp:/sandstorm/isolate-bridge.capnp
 	bin/spk capnp-abi --check tests/capnp-abi/isolate-host.capnp-abi.json \

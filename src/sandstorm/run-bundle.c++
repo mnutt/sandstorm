@@ -364,6 +364,9 @@ public:
       if (programName.endsWith("isolate-supervisor")) {
         alternateMain = kj::heap<IsolateSupervisorMain>(context);
         return alternateMain->getMain();
+      } else if (programName.endsWith("isolate-account-host")) {
+        alternateMain = kj::heap<IsolateAccountHostMain>(context);
+        return alternateMain->getMain();
       } else if (programName.endsWith("supervisor")) {  // historically "sandstorm-supervisor"
         alternateMain = kj::heap<SupervisorMain>(context);
         return alternateMain->getMain();

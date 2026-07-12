@@ -303,9 +303,14 @@ struct DecodedWorkerBundle final: public kj::AtomicRefcounted {
   kj::Array<DecodedBinding> bindings;
 };
 
+struct SelfServiceTarget final: public kj::AtomicRefcounted {
+  workerd::WorkerStubChannel* worker = nullptr;
+};
+
 struct BundleBacking final: public kj::AtomicRefcounted {
   kj::Own<DecodedWorkerBundle> decoded;
   capnp::MallocMessageBuilder compatibility;
+  kj::Array<kj::Own<SelfServiceTarget>> selfServices;
 };
 
 struct LoadedWorkerSource {
@@ -624,8 +629,12 @@ class WorkerIngressService final: public kj::HttpService {
       const kj::HttpHeaders& headers, kj::AsyncInputStream& requestBody,
       kj::HttpService::Response& response) override {
     KJ_CONTEXT("dispatching hosted worker HTTP request", url);
+    auto normalizedUrl = url.startsWith("/")
+        ? kj::str("http://sandstorm", url)
+        : kj::str(url);
     auto request = ingress->startRequest({});
-    return request->request(method, url, headers, requestBody, response).attach(kj::mv(request));
+    return request->request(method, normalizedUrl, headers, requestBody, response)
+        .attach(kj::mv(request), kj::mv(normalizedUrl));
   }
 
   kj::Promise<void> connect(kj::StringPtr host, const kj::HttpHeaders& headers,
@@ -638,6 +647,27 @@ class WorkerIngressService final: public kj::HttpService {
 
  private:
   kj::Own<workerd::IoChannelFactory::SubrequestChannel> ingress;
+};
+
+class SelfBindingHttpService final: public SharedHttpService {
+ public:
+  explicit SelfBindingHttpService(kj::Own<SelfServiceTarget> target)
+      : target(kj::mv(target)) {}
+  ~SelfBindingHttpService() noexcept override = default;
+
+  kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr url,
+      const kj::HttpHeaders& headers, kj::AsyncInputStream& requestBody,
+      kj::HttpService::Response& response) override {
+    auto& worker = KJ_REQUIRE_NONNULL(target->worker,
+        "worker-local service binding used after grain shutdown");
+    auto ingress = worker.getEntrypoint(kj::none, workerd::Frankenvalue(), kj::none);
+    auto request = ingress->startRequest({});
+    return request->request(method, url, headers, requestBody, response)
+        .attach(kj::mv(request), kj::mv(ingress));
+  }
+
+ private:
+  kj::Own<SelfServiceTarget> target;
 };
 
 class CompletedLegacyHttpRequest final: public capnp::HttpService::ServerRequestContext::Server {};
@@ -950,7 +980,12 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::AutoCloseFd grainDir) {
       case IsolateWorkerSource::Binding::POWERBOX:
         break;
       case IsolateWorkerSource::Binding::SERVICE:
-        KJ_FAIL_REQUIRE("shared host does not yet support service bindings", binding.getName());
+        KJ_REQUIRE(binding.getService() == "main",
+            "shared host only supports worker-local service bindings",
+            binding.getName(), binding.getService());
+        value = binding.getService().asBytes();
+        accountBindingBytes(value.size());
+        break;
     }
     bindings.add(DecodedBinding{
       .name = kj::str(binding.getName()),
@@ -970,38 +1005,49 @@ LoadedWorkerSource buildWorkerSource(int grainDirFd,
   backing->decoded = kj::mv(decoded);
   auto& bundle = *backing->decoded;
 
-  auto modules = kj::heapArrayBuilder<workerd::WorkerSource::Module>(bundle.modules.size());
+  size_t moduleCount = bundle.modules.size();
   for (auto& input: bundle.modules) {
-    workerd::WorkerSource::Module output{.name = input.name};
-    kj::StringPtr chars(
-        reinterpret_cast<const char*>(input.content.begin()), input.contentSize);
-    switch (input.type) {
-      case IsolateWorkerSource::Module::ES_MODULE:
-        output.content = workerd::WorkerSource::EsModule{chars, kj::none};
-        break;
-      case IsolateWorkerSource::Module::COMMON_JS_MODULE:
-        output.content = workerd::WorkerSource::CommonJsModule{chars, kj::none};
-        break;
-      case IsolateWorkerSource::Module::TEXT:
-        output.content = workerd::WorkerSource::TextModule{chars};
-        break;
-      case IsolateWorkerSource::Module::DATA:
-        output.content = workerd::WorkerSource::DataModule{
-          input.content.slice(0, input.contentSize)};
-        break;
-      case IsolateWorkerSource::Module::WASM:
-        output.content = workerd::WorkerSource::WasmModule{
-          input.content.slice(0, input.contentSize)};
-        break;
-      case IsolateWorkerSource::Module::JSON:
-        output.content = workerd::WorkerSource::JsonModule{chars};
-        break;
+    if (input.name.startsWith("capnp:/sandstorm/")) ++moduleCount;
+  }
+  auto modules = kj::heapArrayBuilder<workerd::WorkerSource::Module>(moduleCount);
+  for (auto& input: bundle.modules) {
+    auto appendModule = [&](kj::StringPtr name) {
+      workerd::WorkerSource::Module output{.name = name};
+      kj::StringPtr chars(
+          reinterpret_cast<const char*>(input.content.begin()), input.contentSize);
+      switch (input.type) {
+        case IsolateWorkerSource::Module::ES_MODULE:
+          output.content = workerd::WorkerSource::EsModule{chars, kj::none};
+          break;
+        case IsolateWorkerSource::Module::COMMON_JS_MODULE:
+          output.content = workerd::WorkerSource::CommonJsModule{chars, kj::none};
+          break;
+        case IsolateWorkerSource::Module::TEXT:
+          output.content = workerd::WorkerSource::TextModule{chars};
+          break;
+        case IsolateWorkerSource::Module::DATA:
+          output.content = workerd::WorkerSource::DataModule{
+            input.content.slice(0, input.contentSize)};
+          break;
+        case IsolateWorkerSource::Module::WASM:
+          output.content = workerd::WorkerSource::WasmModule{
+            input.content.slice(0, input.contentSize)};
+          break;
+        case IsolateWorkerSource::Module::JSON:
+          output.content = workerd::WorkerSource::JsonModule{chars};
+          break;
+      }
+      modules.add(kj::mv(output));
+    };
+    appendModule(input.name);
+    if (input.name.startsWith("capnp:/sandstorm/")) {
+      appendModule(input.name.slice(strlen("capnp:/")));
     }
-    modules.add(kj::mv(output));
   }
 
   workerd::Frankenvalue env;
   capnp::JsonCodec json;
+  kj::Vector<kj::Own<SelfServiceTarget>> selfServices;
   for (auto& binding: bundle.bindings) {
     switch (binding.type) {
       case IsolateWorkerSource::Binding::TEXT: {
@@ -1026,8 +1072,16 @@ LoadedWorkerSource buildWorkerSource(int grainDirFd,
                         grainDirFd, headerTable, kj::str(binding.name),
                         binding.type == IsolateWorkerSource::Binding::STORAGE))));
         break;
+      case IsolateWorkerSource::Binding::SERVICE: {
+        auto target = kj::atomicRefcounted<SelfServiceTarget>();
+        env.setProperty(kj::str(binding.name),
+            workerd::Frankenvalue::fromDirectCapability(
+                kj::refcounted<HttpServiceChannel>(
+                    kj::refcounted<SelfBindingHttpService>(kj::atomicAddRef(*target)))));
+        selfServices.add(kj::mv(target));
+        break;
+      }
       case IsolateWorkerSource::Binding::DATA:
-      case IsolateWorkerSource::Binding::SERVICE:
         KJ_UNREACHABLE;
     }
   }
@@ -1037,6 +1091,7 @@ LoadedWorkerSource buildWorkerSource(int grainDirFd,
   workerd::compileCompatibilityFlags(bundle.compatibilityDate, flags, compatibility,
       reporter, true, workerd::CompatibilityDateValidation::CODE_VERSION);
   reporter.requireValid();
+  backing->selfServices = selfServices.releaseAsArray();
 
   workerd::WorkerSource source(workerd::WorkerSource::ModulesSource{
     .mainModule = bundle.mainModule,
@@ -1178,16 +1233,26 @@ struct HostedState final: public kj::Refcounted {
       kj::String grainId,
       int grainDirFd,
       IsolateBindingServices::Client bindingServices,
+      kj::Own<BundleBacking> backing,
       kj::Own<workerd::WorkerStubChannel> worker)
       : runtime(runtime), grainId(kj::mv(grainId)), grainDirFd(grainDirFd),
-        bindingServices(kj::mv(bindingServices)), worker(kj::mv(worker)) {}
+        bindingServices(kj::mv(bindingServices)), backing(kj::mv(backing)),
+        worker(kj::mv(worker)) {}
 
-  ~HostedState() noexcept { close(grainDirFd); }
+  ~HostedState() noexcept {
+    revokeSelfServices();
+    close(grainDirFd);
+  }
+
+  void revokeSelfServices() {
+    for (auto& target: backing->selfServices) target->worker = nullptr;
+  }
 
   workerd::server::Server& runtime;
   kj::String grainId;
   int grainDirFd;
   IsolateBindingServices::Client bindingServices;
+  kj::Own<BundleBacking> backing;
   kj::Own<workerd::WorkerStubChannel> worker;
   bool running = true;
 };
@@ -1204,6 +1269,7 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
 
   kj::Promise<void> stop(StopContext context) override {
     state->runtime.evictDynamicWorker(LOADER_NAMESPACE, state->grainId);
+    state->revokeSelfServices();
     state->bindingServices = IsolateBindingServices::Client(nullptr);
     state->running = false;
     return kj::READY_NOW;
@@ -1263,12 +1329,14 @@ class IsolateHostImpl final: public IsolateHost::Server {
       auto grainDir = kj::mv(decoded->grainDir);
       auto source = buildWorkerSource(grainDir.get(),
           runtime.getHttpHeaderTableForEmbedding(), kj::mv(decoded));
+      auto backing = kj::atomicAddRef(*source.backing);
       auto worker = runtime.loadDynamicWorker(LOADER_NAMESPACE, kj::str(grainId),
           [source = kj::mv(source.source), backing = kj::mv(source.backing)]() mutable {
         return source.clone(kj::atomicAddRef(*backing));
       });
+      for (auto& target: backing->selfServices) target->worker = worker.get();
       auto state = kj::rc<HostedState>(runtime, kj::str(grainId), grainDir.release(),
-          kj::mv(services), kj::mv(worker));
+          kj::mv(services), kj::mv(backing), kj::mv(worker));
       context.getResults().setGrain(
           kj::heap<HostedIsolateImpl>(state.addRef(), streamFactory));
       grains.insert(kj::mv(grainId), kj::mv(state));

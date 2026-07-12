@@ -85,6 +85,28 @@ private:
   kj::MainBuilder::Validity run();
 };
 
+class IsolateAccountHostMain final: public AbstractMain {
+public:
+  explicit IsolateAccountHostMain(kj::ProcessContext& context);
+
+  kj::MainFunc getMain() override;
+
+private:
+  kj::ProcessContext& context;
+  kj::String trustDomain;
+  kj::String controlSocket;
+  kj::String nativeControlSocket;
+  kj::String appRoot = kj::str("/var/sandstorm/apps");
+  kj::String grainRoot = kj::str("/var/sandstorm/grains");
+
+  kj::MainBuilder::Validity setTrustDomain(kj::StringPtr value);
+  kj::MainBuilder::Validity setControlSocket(kj::StringPtr value);
+  kj::MainBuilder::Validity setNativeControlSocket(kj::StringPtr value);
+  kj::MainBuilder::Validity setAppRoot(kj::StringPtr value);
+  kj::MainBuilder::Validity setGrainRoot(kj::StringPtr value);
+  kj::MainBuilder::Validity run();
+};
+
 }  // namespace sandstorm
 
 #endif  // SANDSTORM_ISOLATE_SUPERVISOR_H_
