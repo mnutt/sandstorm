@@ -162,7 +162,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-host isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-host isolate-host-control-test isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -345,11 +345,14 @@ tmp/bazel-$(BAZEL_VERSION):
 	chmod +x $@
 
 tmp/.workerd-embed-source: deps/workerd isolate-host/isolate-host-main.c++ \
+		src/sandstorm/isolate-host.capnp \
 		patches/workerd/0001-add-sandstorm-isolate-host-target.patch
 	rm -rf tmp/workerd-embed
 	cp -a --reflink=auto deps/workerd tmp/workerd-embed
 	cp isolate-host/isolate-host-main.c++ \
 		tmp/workerd-embed/src/workerd/server/sandstorm-isolate-host.c++
+	cp src/sandstorm/isolate-host.capnp \
+		tmp/workerd-embed/src/workerd/server/sandstorm-isolate-host.capnp
 	cd tmp/workerd-embed && patch -p1 < ../../patches/workerd/0001-add-sandstorm-isolate-host-target.patch
 	@touch $@
 
@@ -360,6 +363,15 @@ bin/isolate-host: tmp/bazel-$(BAZEL_VERSION) tmp/.workerd-embed-source
 	mv -f $@.new $@
 
 isolate-host: bin/isolate-host
+
+isolate-host-control-test: bin/isolate-host tmp/.ekam-run
+	@socket="$(PWD)/tmp/isolate-host-control-test.sock"; \
+		rm -f "$$socket"; \
+		bin/isolate-host "$$socket" & host_pid=$$!; \
+		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"' EXIT; \
+		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
+		test -S "$$socket"; \
+		tmp/sandstorm/isolate-host-client "$$socket"
 
 # ====================================================================
 # fetch capnp-es
