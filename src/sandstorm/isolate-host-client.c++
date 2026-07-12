@@ -32,6 +32,7 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(argc == 3, "usage: isolate-host-client <control-socket-path> <grain-root-path>");
   capnp::MallocMessageBuilder sourceMessage;
   auto source = sourceMessage.initRoot<sandstorm::IsolateWorkerSource>();
+  source.setFormatVersion(1);
   source.setMainModule("main.js");
   source.setCompatibilityDate("2026-06-10");
   auto module = source.initModules(1)[0];
@@ -73,6 +74,7 @@ export default {
 
   capnp::MallocMessageBuilder invalidMessage;
   auto invalidSource = invalidMessage.initRoot<sandstorm::IsolateWorkerSource>();
+  invalidSource.setFormatVersion(1);
   invalidSource.setMainModule("main.js");
   invalidSource.setCompatibilityDate("2026-06-10");
   auto invalidModule = invalidSource.initModules(1)[0];
@@ -87,6 +89,23 @@ export default {
       invalidPath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
   capnp::writePackedMessageToFd(invalidFd, invalidMessage);
   close(invalidFd);
+
+  source.setFormatVersion(2);
+  auto unsupportedPath = kj::str(
+      argv[2], "/unsupportedversion/isolate-runtime/worker-source.capnp.bin");
+  int unsupportedFd;
+  KJ_SYSCALL(unsupportedFd = open(
+      unsupportedPath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
+  capnp::writePackedMessageToFd(unsupportedFd, sourceMessage);
+  close(unsupportedFd);
+
+  auto oversizedPath = kj::str(
+      argv[2], "/oversizedbundle/isolate-runtime/worker-source.capnp.bin");
+  int oversizedFd;
+  KJ_SYSCALL(oversizedFd = open(
+      oversizedPath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
+  KJ_SYSCALL(ftruncate(oversizedFd, 16 * 1024 * 1024 + 1));
+  close(oversizedFd);
   capnp::EzRpcClient rpc(kj::str("unix:", argv[1]));
   auto& waitScope = rpc.getWaitScope();
   auto host = rpc.getMain<sandstorm::IsolateHost>();
@@ -176,6 +195,18 @@ export default {
     invalid.setGrainId("invalidjson");
     invalid.setServices(services);
     invalid.send().wait(waitScope);
+  });
+  sandstorm::expectFailure([&]() {
+    auto unsupported = host.startGrainRequest();
+    unsupported.setGrainId("unsupportedversion");
+    unsupported.setServices(services);
+    unsupported.send().wait(waitScope);
+  });
+  sandstorm::expectFailure([&]() {
+    auto oversized = host.startGrainRequest();
+    oversized.setGrainId("oversizedbundle");
+    oversized.setServices(services);
+    oversized.send().wait(waitScope);
   });
 
   return 0;

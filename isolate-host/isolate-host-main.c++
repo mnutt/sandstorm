@@ -554,6 +554,15 @@ class LegacyHttpServiceAdapter final: public capnp::HttpService::Server {
 };
 
 LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerTable) {
+  static constexpr uint64_t MAX_BUNDLE_FILE_BYTES = 16 * 1024 * 1024;
+  static constexpr uint64_t MAX_TRAVERSAL_WORDS = 4 * 1024 * 1024;
+  static constexpr size_t MAX_MODULES = 1024;
+  static constexpr size_t MAX_MODULE_BYTES = 8 * 1024 * 1024;
+  static constexpr size_t MAX_TOTAL_MODULE_BYTES = 16 * 1024 * 1024;
+  static constexpr size_t MAX_BINDINGS = 1024;
+  static constexpr size_t MAX_TOTAL_BINDING_BYTES = 4 * 1024 * 1024;
+  static constexpr size_t MAX_NAME_BYTES = 256;
+
   int runtimeFd;
   KJ_SYSCALL(runtimeFd = openat(grainDirFd, "isolate-runtime",
       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
@@ -562,28 +571,56 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerT
   KJ_SYSCALL(sourceFd = openat(runtimeDir, "worker-source.capnp.bin",
       O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
 
+  struct stat sourceStats;
+  KJ_SYSCALL(fstat(sourceFd, &sourceStats));
+  KJ_REQUIRE(S_ISREG(sourceStats.st_mode), "worker source bundle is not a regular file");
+  KJ_REQUIRE(sourceStats.st_size > 0 && sourceStats.st_size <= MAX_BUNDLE_FILE_BYTES,
+      "worker source bundle exceeds size limit", sourceStats.st_size, MAX_BUNDLE_FILE_BYTES);
+
   auto backing = kj::atomicRefcounted<BundleBacking>();
-  backing->source = kj::heap<capnp::PackedFdMessageReader>(kj::AutoCloseFd(sourceFd));
+  capnp::ReaderOptions readerOptions;
+  readerOptions.traversalLimitInWords = MAX_TRAVERSAL_WORDS;
+  readerOptions.nestingLimit = 32;
+  backing->source = kj::heap<capnp::PackedFdMessageReader>(
+      kj::AutoCloseFd(sourceFd), readerOptions);
   auto bundle = backing->source->getRoot<IsolateWorkerSource>();
+  KJ_REQUIRE(bundle.getFormatVersion() == 1,
+      "unsupported worker source format version", bundle.getFormatVersion());
+  KJ_REQUIRE(bundle.getMainModule().size() > 0 &&
+          bundle.getMainModule().size() <= MAX_NAME_BYTES,
+      "invalid worker main module name length", bundle.getMainModule().size());
+  KJ_REQUIRE(bundle.getCompatibilityDate().size() <= 32,
+      "worker compatibility date exceeds size limit");
+  KJ_REQUIRE(bundle.getCompatibilityFlags().size() <= 64,
+      "worker compatibility flag count exceeds limit");
+  for (auto flag: bundle.getCompatibilityFlags()) {
+    KJ_REQUIRE(flag.size() <= 128, "worker compatibility flag exceeds size limit");
+  }
   auto inputModules = bundle.getModules();
-  KJ_REQUIRE(inputModules.size() > 0, "worker bundle has no modules");
+  KJ_REQUIRE(inputModules.size() > 0 && inputModules.size() <= MAX_MODULES,
+      "invalid worker module count", inputModules.size(), MAX_MODULES);
   kj::HashSet<kj::String> moduleNames;
   bool foundMainModule = false;
+  size_t totalModuleBytes = 0;
   auto modules = kj::heapArrayBuilder<workerd::WorkerSource::Module>(inputModules.size());
   for (auto input: inputModules) {
-    KJ_REQUIRE(input.getName().size() > 0, "worker bundle has an empty module name");
+    KJ_REQUIRE(input.getName().size() > 0 && input.getName().size() <= MAX_NAME_BYTES,
+        "invalid worker module name length", input.getName().size());
     KJ_REQUIRE(moduleNames.find(input.getName()) == kj::none,
         "worker bundle has a duplicate module name", input.getName());
     moduleNames.insert(kj::str(input.getName()));
     if (input.getName() == bundle.getMainModule()) foundMainModule = true;
     workerd::WorkerSource::Module output{.name = input.getName()};
+    size_t moduleBytes = 0;
     switch (input.which()) {
       case IsolateWorkerSource::Module::ES_MODULE:
+        moduleBytes = input.getEsModule().size();
         output.content = workerd::WorkerSource::EsModule{input.getEsModule().asChars(), kj::none};
         break;
       case IsolateWorkerSource::Module::COMMON_JS_MODULE:
         {
         auto body = input.getCommonJsModule().asChars();
+        moduleBytes = body.size();
         output.content = workerd::WorkerSource::CommonJsModule{
           kj::StringPtr(body.begin(), body.size()), kj::none};
         break;
@@ -591,33 +628,53 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerT
       case IsolateWorkerSource::Module::TEXT:
         {
         auto body = input.getText().asChars();
+        moduleBytes = body.size();
         output.content = workerd::WorkerSource::TextModule{
           kj::StringPtr(body.begin(), body.size())};
         break;
         }
       case IsolateWorkerSource::Module::DATA:
+        moduleBytes = input.getData().size();
         output.content = workerd::WorkerSource::DataModule{input.getData()};
         break;
       case IsolateWorkerSource::Module::WASM:
+        moduleBytes = input.getWasm().size();
         output.content = workerd::WorkerSource::WasmModule{input.getWasm()};
         break;
       case IsolateWorkerSource::Module::JSON:
         {
         auto body = input.getJson().asChars();
+        moduleBytes = body.size();
         output.content = workerd::WorkerSource::JsonModule{
           kj::StringPtr(body.begin(), body.size())};
         break;
         }
     }
+    KJ_REQUIRE(moduleBytes <= MAX_MODULE_BYTES,
+        "worker module exceeds size limit", input.getName(), moduleBytes, MAX_MODULE_BYTES);
+    totalModuleBytes += moduleBytes;
+    KJ_REQUIRE(totalModuleBytes <= MAX_TOTAL_MODULE_BYTES,
+        "worker modules exceed aggregate size limit", totalModuleBytes, MAX_TOTAL_MODULE_BYTES);
     modules.add(kj::mv(output));
   }
   KJ_REQUIRE(foundMainModule, "worker bundle main module is not present", bundle.getMainModule());
 
   workerd::Frankenvalue env;
   kj::HashSet<kj::String> bindingNames;
+  auto inputBindings = bundle.getBindings();
+  KJ_REQUIRE(inputBindings.size() <= MAX_BINDINGS,
+      "worker binding count exceeds limit", inputBindings.size(), MAX_BINDINGS);
+  size_t totalBindingBytes = 0;
+  auto accountBindingBytes = [&](size_t bytes) {
+    totalBindingBytes += bytes;
+    KJ_REQUIRE(totalBindingBytes <= MAX_TOTAL_BINDING_BYTES,
+        "worker bindings exceed aggregate size limit",
+        totalBindingBytes, MAX_TOTAL_BINDING_BYTES);
+  };
   capnp::JsonCodec json;
-  for (auto binding: bundle.getBindings()) {
-    KJ_REQUIRE(binding.getName().size() > 0, "worker bundle has an empty binding name");
+  for (auto binding: inputBindings) {
+    KJ_REQUIRE(binding.getName().size() > 0 && binding.getName().size() <= MAX_NAME_BYTES,
+        "invalid worker binding name length", binding.getName().size());
     KJ_REQUIRE(bindingNames.find(binding.getName()) == kj::none,
         "worker bundle has a duplicate binding name", binding.getName());
     bindingNames.insert(kj::str(binding.getName()));
@@ -626,6 +683,7 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerT
     switch (binding.which()) {
       case IsolateWorkerSource::Binding::TEXT: {
         auto text = binding.getText().asChars();
+        accountBindingBytes(text.size());
         jsonValue.setString(kj::StringPtr(text.begin(), text.size()));
         env.setProperty(kj::str(binding.getName()),
             workerd::Frankenvalue::fromJson(json.encode(jsonValue.asReader())));
@@ -633,6 +691,7 @@ LoadedWorkerSource loadWorkerSource(int grainDirFd, kj::HttpHeaderTable& headerT
       }
       case IsolateWorkerSource::Binding::JSON: {
         auto text = binding.getJson().asChars();
+        accountBindingBytes(text.size());
         json.decode(text, jsonValue);
         env.setProperty(kj::str(binding.getName()),
             workerd::Frankenvalue::fromJson(json.encode(jsonValue.asReader())));

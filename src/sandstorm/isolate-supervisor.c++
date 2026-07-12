@@ -1327,6 +1327,7 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
 
   capnp::MallocMessageBuilder sourceMessage;
   auto source = sourceMessage.initRoot<IsolateWorkerSource>();
+  source.setFormatVersion(1);
   source.setMainModule(config.mainModule);
   source.setCompatibilityDate(config.compatibilityDate);
   auto flags = source.initCompatibilityFlags(config.compatibilityFlags.size());

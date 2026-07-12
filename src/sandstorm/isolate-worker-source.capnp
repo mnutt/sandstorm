@@ -6,6 +6,10 @@ $Cxx.namespace("sandstorm");
 # Sandstorm-owned, binary handoff from the per-grain supervisor bundle builder to the shared
 # workerd host. Paths and worker identity are deliberately absent.
 struct IsolateWorkerSource {
+  formatVersion @5 :UInt16;
+  # Persisted handoff format version. Writers currently emit 1; readers reject every other value
+  # before interpreting modules or bindings.
+
   mainModule @0 :Text;
   compatibilityDate @1 :Text;
   compatibilityFlags @2 :List(Text);
