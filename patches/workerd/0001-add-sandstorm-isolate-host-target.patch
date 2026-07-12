@@ -51,8 +51,8 @@ index e30d846..8f3e351 100644
 +      kj::String workerName,
 +      kj::Function<kj::Promise<DynamicWorkerSource>()> fetchSource);
 +
-+  // Immediately unlinks a named worker and removes it from the loader cache. Existing channels
-+  // fail; a later load of the same name constructs a fresh worker.
++  // Removes a named worker from the loader cache. Existing channels retain their normal workerd
++  // lifetime; a later load of the same name constructs a fresh worker.
 +  void evictDynamicWorker(kj::StringPtr loaderNamespace, kj::StringPtr workerName);
 +
    struct Durable {
@@ -74,16 +74,13 @@ index 46a1746..742a5d3 100644
   private:
    Server& server;
    kj::String namespaceName;
-@@ -4611,6 +4613,27 @@
+@@ -4611,6 +4613,24 @@
    };
  };
 -
 +
 +void Server::WorkerLoaderNamespace::evictIsolate(kj::StringPtr name) {
-+  KJ_IF_SOME(isolate, isolates.find(name)) {
-+    isolate->unlink();
-+    isolates.erase(name);
-+  }
++  isolates.erase(name);
 +}
 +
 +kj::Own<WorkerStubChannel> Server::loadDynamicWorker(kj::StringPtr loaderNamespace,

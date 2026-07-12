@@ -53,6 +53,15 @@ int main(int argc, char** argv) {
   sandstorm::expectFailure([&]() {
     grain.keepAliveRequest().send().wait(waitScope);
   });
+
+  auto restart = host.startGrainRequest();
+  restart.setGrainId("testgrain123");
+  auto restartedGrain = restart.send().wait(waitScope).getGrain();
+  restartedGrain.keepAliveRequest().send().wait(waitScope);
+  sandstorm::expectFailure([&]() {
+    grain.keepAliveRequest().send().wait(waitScope);
+  });
+  restartedGrain.stopRequest().send().wait(waitScope);
   sandstorm::expectFailure([&]() {
     auto invalid = host.startGrainRequest();
     invalid.setGrainId("../escape");
