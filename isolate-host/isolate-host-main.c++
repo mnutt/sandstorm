@@ -52,12 +52,17 @@ class BundleErrorReporter final: public workerd::Worker::ValidationErrorReporter
   kj::Vector<kj::String> errors;
 };
 
-struct BundleBacking final {
+struct BundleBacking final: public kj::AtomicRefcounted {
   kj::Own<capnp::PackedFdMessageReader> source;
   capnp::MallocMessageBuilder compatibility;
 };
 
-workerd::DynamicWorkerSource loadWorkerSource(int grainDirFd) {
+struct LoadedWorkerSource {
+  workerd::DynamicWorkerSource source;
+  kj::Own<BundleBacking> backing;
+};
+
+LoadedWorkerSource loadWorkerSource(int grainDirFd) {
   int runtimeFd;
   KJ_SYSCALL(runtimeFd = openat(grainDirFd, "isolate-runtime",
       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
@@ -66,7 +71,7 @@ workerd::DynamicWorkerSource loadWorkerSource(int grainDirFd) {
   KJ_SYSCALL(sourceFd = openat(runtimeDir, "worker-source.capnp.bin",
       O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
 
-  auto backing = kj::heap<BundleBacking>();
+  auto backing = kj::atomicRefcounted<BundleBacking>();
   backing->source = kj::heap<capnp::PackedFdMessageReader>(kj::AutoCloseFd(sourceFd));
   auto bundle = backing->source->getRoot<IsolateWorkerSource>();
   auto inputModules = bundle.getModules();
@@ -125,7 +130,7 @@ workerd::DynamicWorkerSource loadWorkerSource(int grainDirFd) {
     .isPython = false,
     .pythonMemorySnapshot = kj::none,
   });
-  return {
+  workerd::DynamicWorkerSource sourceResult{
     .source = kj::mv(source),
     .compatibilityFlags = compatibility.asReader(),
     .limits = kj::none,
@@ -133,9 +138,10 @@ workerd::DynamicWorkerSource loadWorkerSource(int grainDirFd) {
     .globalOutbound = kj::none,
     .tails = {},
     .streamingTails = {},
-    .ownContent = kj::mv(backing),
+    .ownContent = kj::atomicAddRef(*backing),
     .ownContentIsRpcResponse = false,
   };
+  return {kj::mv(sourceResult), kj::mv(backing)};
 }
 
 void initRuntimeConfig(capnp::MallocMessageBuilder& message) {
@@ -211,6 +217,10 @@ class IsolateHostImpl final: public IsolateHost::Server {
     auto grainId = context.getParams().getGrainId();
     KJ_REQUIRE(isValidGrainId(grainId), "invalid grain ID");
 
+    KJ_IF_SOME(existing, grains.find(grainId)) {
+      if (!existing->running) grains.erase(grainId);
+    }
+
     auto& state = grains.findOrCreate(grainId, [&]() -> decltype(grains)::Entry {
       int grainFd;
       KJ_SYSCALL(grainFd = openat(grainRootFd, grainId.cStr(),
@@ -233,7 +243,9 @@ class IsolateHostImpl final: public IsolateHost::Server {
       auto ownedGrainId = kj::heapString(grainId);
       auto source = loadWorkerSource(grainDir.get());
       auto worker = runtime.loadDynamicWorker(LOADER_NAMESPACE, kj::str(grainId),
-          [source = kj::mv(source)]() mutable { return kj::mv(source); });
+          [source = kj::mv(source.source), backing = kj::mv(source.backing)]() mutable {
+        return source.clone(kj::atomicAddRef(*backing));
+      });
       return {kj::heapString(grainId),
         kj::rc<HostedState>(runtime, kj::mv(ownedGrainId), grainDir.release(), kj::mv(worker))};
     });

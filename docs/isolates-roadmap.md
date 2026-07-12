@@ -434,6 +434,12 @@ Progress:
   `DynamicWorkerSource`, and enters workerd's named isolate cache. Module-only
   workers load without expanding the upstream patch; binding translation and
   routing remain before the shared topology can replace the sidecar.
+- Loader source ownership follows workerd's repeatable-callback contract: the
+  host retains atomic backing storage and returns a fresh
+  `DynamicWorkerSource::clone()` on every callback. Eviction now only removes
+  the cache entry, matching upstream restart semantics; restarting a stopped
+  grain creates a new stub while capabilities to the old hosted-grain wrapper
+  remain stopped.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead
