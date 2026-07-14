@@ -2375,10 +2375,10 @@ private:
     auto metadataRoot = isPathUnderRoot(resolvedPath, rootDir)
         ? kj::heapString(rootDir)
         : dirnameForPath(resolvedPath);
-    auto metadata = parseCapnpInterfaceMetadata(
+    auto metadata = parseCapnpSchemaMetadata(
         resolvedPath, metadataRoot, interfaces.asPtr());
-    auto found = metadata.find(toStdString(appInterface.interfaceName));
-    KJ_REQUIRE(found != metadata.end(),
+    auto found = metadata.interfaces.find(toStdString(appInterface.interfaceName));
+    KJ_REQUIRE(found != metadata.interfaces.end(),
         "Advertised app interface schema does not define the requested interface.",
         appInterface.specifier, appInterface.interfaceName);
 
@@ -3886,11 +3886,133 @@ private:
     std::map<std::string, DevCapnpParsedMethodMetadata> methods;
   };
 
-  static std::map<std::string, DevCapnpParsedInterfaceMetadata> parseCapnpInterfaceMetadata(
+  struct DevCapnpParsedStructFieldMetadata {
+    std::string name;
+    uint ordinal;
+    std::string type;
+    int discriminant = -1;
+  };
+
+  struct DevCapnpParsedStructMetadata {
+    std::string name;
+    std::string structId;
+    std::vector<DevCapnpParsedStructFieldMetadata> fields;
+  };
+
+  struct DevCapnpParsedSchemaMetadata {
+    std::map<std::string, DevCapnpParsedInterfaceMetadata> interfaces;
+    std::vector<DevCapnpParsedStructMetadata> structs;
+  };
+
+  static std::string capnpAbiTypeString(capnp::schema::Type::Reader type) {
+    switch (type.which()) {
+      case capnp::schema::Type::VOID: return "Void";
+      case capnp::schema::Type::BOOL: return "Bool";
+      case capnp::schema::Type::INT8: return "Int8";
+      case capnp::schema::Type::INT16: return "Int16";
+      case capnp::schema::Type::INT32: return "Int32";
+      case capnp::schema::Type::INT64: return "Int64";
+      case capnp::schema::Type::UINT8: return "UInt8";
+      case capnp::schema::Type::UINT16: return "UInt16";
+      case capnp::schema::Type::UINT32: return "UInt32";
+      case capnp::schema::Type::UINT64: return "UInt64";
+      case capnp::schema::Type::FLOAT32: return "Float32";
+      case capnp::schema::Type::FLOAT64: return "Float64";
+      case capnp::schema::Type::TEXT: return "Text";
+      case capnp::schema::Type::DATA: return "Data";
+      case capnp::schema::Type::LIST:
+        return toStdString(kj::str(
+            "List(", capnpAbiTypeString(type.getList().getElementType()), ")"));
+      case capnp::schema::Type::ENUM:
+        return toStdString(kj::str(
+            "Enum(", capnpInterfaceIdString(type.getEnum().getTypeId()), ")"));
+      case capnp::schema::Type::STRUCT:
+        return toStdString(kj::str(
+            "Struct(", capnpInterfaceIdString(type.getStruct().getTypeId()), ")"));
+      case capnp::schema::Type::INTERFACE:
+        return toStdString(kj::str(
+            "Interface(", capnpInterfaceIdString(type.getInterface().getTypeId()), ")"));
+      case capnp::schema::Type::ANY_POINTER: {
+        auto anyPointer = type.getAnyPointer();
+        switch (anyPointer.which()) {
+          case capnp::schema::Type::AnyPointer::UNCONSTRAINED:
+            switch (anyPointer.getUnconstrained().which()) {
+              case capnp::schema::Type::AnyPointer::Unconstrained::ANY_KIND:
+                return "AnyPointer";
+              case capnp::schema::Type::AnyPointer::Unconstrained::STRUCT:
+                return "AnyStruct";
+              case capnp::schema::Type::AnyPointer::Unconstrained::LIST:
+                return "AnyList";
+              case capnp::schema::Type::AnyPointer::Unconstrained::CAPABILITY:
+                return "Capability";
+            }
+            break;
+          case capnp::schema::Type::AnyPointer::PARAMETER: {
+            auto parameter = anyPointer.getParameter();
+            return toStdString(kj::str("Parameter(",
+                capnpInterfaceIdString(parameter.getScopeId()), ",",
+                parameter.getParameterIndex(), ")"));
+          }
+          case capnp::schema::Type::AnyPointer::IMPLICIT_METHOD_PARAMETER:
+            return toStdString(kj::str("ImplicitMethodParameter(",
+                anyPointer.getImplicitMethodParameter().getParameterIndex(), ")"));
+        }
+        break;
+      }
+    }
+    KJ_UNREACHABLE;
+  }
+
+  static void collectCapnpStructMetadata(
+      capnp::ParsedSchema schema, std::vector<DevCapnpParsedStructMetadata>& structs,
+      kj::StringPtr parentName = nullptr) {
+    for (auto nested: schema.getAllNested()) {
+      auto proto = nested.getProto();
+      auto displayName = proto.getDisplayName();
+      auto prefixLength = proto.getDisplayNamePrefixLength();
+      KJ_REQUIRE(prefixLength <= displayName.size(),
+          "Invalid display-name prefix in parsed Cap'n Proto schema.", displayName);
+      auto localName = kj::StringPtr(
+          displayName.begin() + prefixLength, displayName.size() - prefixLength);
+      auto nestedName = parentName == nullptr
+          ? kj::heapString(localName)
+          : kj::str(parentName, ".", localName);
+
+      if (proto.isStruct()) {
+        DevCapnpParsedStructMetadata structMetadata;
+        structMetadata.name = toStdString(nestedName);
+        structMetadata.structId = toStdString(capnpInterfaceIdString(proto.getId()));
+        for (auto field: nested.asStruct().getFields()) {
+          auto fieldProto = field.getProto();
+          KJ_REQUIRE(fieldProto.getOrdinal().isExplicit(),
+              "Cap'n Proto ABI checker encountered a field without an explicit ordinal.",
+              structMetadata.name, fieldProto.getName());
+
+          DevCapnpParsedStructFieldMetadata fieldMetadata;
+          fieldMetadata.name = toStdString(fieldProto.getName());
+          fieldMetadata.ordinal = fieldProto.getOrdinal().getExplicit();
+          if (fieldProto.isSlot()) {
+            fieldMetadata.type = capnpAbiTypeString(fieldProto.getSlot().getType());
+          } else {
+            fieldMetadata.type = toStdString(kj::str(
+                "Group(", capnpInterfaceIdString(fieldProto.getGroup().getTypeId()), ")"));
+          }
+          if (fieldProto.getDiscriminantValue() != capnp::schema::Field::NO_DISCRIMINANT) {
+            fieldMetadata.discriminant = fieldProto.getDiscriminantValue();
+          }
+          structMetadata.fields.push_back(kj::mv(fieldMetadata));
+        }
+        structs.push_back(kj::mv(structMetadata));
+      }
+      collectCapnpStructMetadata(nested, structs, nestedName);
+    }
+  }
+
+  static DevCapnpParsedSchemaMetadata parseCapnpSchemaMetadata(
       kj::StringPtr resolvedPath, kj::StringPtr rootDir,
       kj::ArrayPtr<DevCapnpInterface> interfaces,
       kj::ArrayPtr<kj::String> extraImportPath = nullptr) {
-    std::map<std::string, DevCapnpParsedInterfaceMetadata> metadata;
+    DevCapnpParsedSchemaMetadata metadata;
     capnp::SchemaParser parser;
 
     kj::Vector<kj::String> importPath;
@@ -3933,10 +4055,12 @@ private:
                 }));
           }
 
-          metadata.insert(std::make_pair(toStdString(interfaceDef.name), kj::mv(interfaceMetadata)));
+          metadata.interfaces.insert(
+              std::make_pair(toStdString(interfaceDef.name), kj::mv(interfaceMetadata)));
         }
       }
     }
+    collectCapnpStructMetadata(schema, metadata.structs);
 
     return metadata;
   }
@@ -3967,9 +4091,23 @@ private:
     std::vector<CapnpAbiMethod> methods;
   };
 
+  struct CapnpAbiStructField {
+    std::string name;
+    uint ordinal;
+    std::string type;
+    int discriminant = -1;
+  };
+
+  struct CapnpAbiStruct {
+    std::string name;
+    std::string structId;
+    std::vector<CapnpAbiStructField> fields;
+  };
+
   struct CapnpAbiDump {
     std::string schema;
     std::vector<CapnpAbiInterface> interfaces;
+    std::vector<CapnpAbiStruct> structs;
   };
 
   static void appendCapnpAbiFieldsJson(
@@ -4077,6 +4215,22 @@ private:
     return superclasses;
   }
 
+  static std::vector<CapnpAbiStructField> parseCapnpAbiStructFieldsJson(
+      capnp::JsonValue::Reader value, kj::StringPtr context) {
+    std::vector<CapnpAbiStructField> fields;
+    for (auto fieldValue: requireJsonArray(value, context)) {
+      CapnpAbiStructField field;
+      field.name = requireJsonString(requireJsonField(fieldValue, "name", context), context);
+      field.ordinal = requireJsonUInt(requireJsonField(fieldValue, "ordinal", context), context);
+      field.type = requireJsonString(requireJsonField(fieldValue, "type", context), context);
+      KJ_IF_MAYBE(discriminant, findJsonField(fieldValue, "discriminant")) {
+        field.discriminant = requireJsonUInt(*discriminant, context);
+      }
+      fields.push_back(kj::mv(field));
+    }
+    return fields;
+  }
+
   static CapnpAbiDump parseCapnpAbiJson(kj::StringPtr path) {
     auto text = readAll(raiiOpen(path, O_RDONLY | O_CLOEXEC));
     capnp::MallocMessageBuilder message;
@@ -4120,6 +4274,20 @@ private:
       dump.interfaces.push_back(kj::mv(interfaceDef));
     }
 
+    // `structs` was added without changing the v1 format so existing interface-only baselines
+    // remain valid. A baseline opts into struct compatibility checks by containing this field.
+    KJ_IF_MAYBE(structValues, findJsonField(rootReader, "structs")) {
+      for (auto structValue: requireJsonArray(*structValues, path)) {
+        CapnpAbiStruct structDef;
+        structDef.name = requireJsonString(requireJsonField(structValue, "name", path), path);
+        structDef.structId =
+            requireJsonString(requireJsonField(structValue, "structId", path), path);
+        structDef.fields = parseCapnpAbiStructFieldsJson(
+            requireJsonField(structValue, "fields", path), path);
+        dump.structs.push_back(kj::mv(structDef));
+      }
+    }
+
     return dump;
   }
 
@@ -4131,12 +4299,12 @@ private:
     auto metadataRoot = isPathUnderRoot(resolvedPath, rootDir)
         ? kj::heapString(rootDir)
         : dirnameForPath(resolvedPath);
-    auto metadata = parseCapnpInterfaceMetadata(
+    auto metadata = parseCapnpSchemaMetadata(
         resolvedPath, metadataRoot, interfaces.asPtr(), importPath.asPtr());
 
     if (capnpAbiInterfaceFilter != nullptr) {
-      auto found = metadata.find(toStdString(capnpAbiInterfaceFilter));
-      KJ_REQUIRE(found != metadata.end(),
+      auto found = metadata.interfaces.find(toStdString(capnpAbiInterfaceFilter));
+      KJ_REQUIRE(found != metadata.interfaces.end(),
           "Cap'n Proto ABI dump schema does not define the requested interface.",
           specifier, capnpAbiInterfaceFilter);
     }
@@ -4149,8 +4317,8 @@ private:
         continue;
       }
 
-      auto found = metadata.find(toStdString(interfaceDef.name));
-      if (found == metadata.end()) {
+      auto found = metadata.interfaces.find(toStdString(interfaceDef.name));
+      if (found == metadata.interfaces.end()) {
         continue;
       }
 
@@ -4191,6 +4359,21 @@ private:
       }
 
       dump.interfaces.push_back(kj::mv(interfaceDump));
+    }
+
+    for (auto& structDef: metadata.structs) {
+      CapnpAbiStruct structDump;
+      structDump.name = structDef.name;
+      structDump.structId = structDef.structId;
+      for (auto& fieldDef: structDef.fields) {
+        structDump.fields.push_back(CapnpAbiStructField {
+          fieldDef.name,
+          fieldDef.ordinal,
+          fieldDef.type,
+          fieldDef.discriminant,
+        });
+      }
+      dump.structs.push_back(kj::mv(structDump));
     }
 
     return dump;
@@ -4241,6 +4424,42 @@ private:
       }
 
       json.addAll(kj::StringPtr("\n      ]\n    }"));
+    }
+
+    json.addAll(kj::StringPtr("\n  ],\n  \"structs\": ["));
+
+    bool firstStruct = true;
+    for (auto& structDef: dump.structs) {
+      if (!firstStruct) {
+        json.add(',');
+      }
+      firstStruct = false;
+
+      json.addAll(kj::StringPtr("\n    {\n      \"name\": "));
+      appendJsonQuoted(json, kj::StringPtr(structDef.name));
+      json.addAll(kj::StringPtr(",\n      \"structId\": "));
+      appendJsonQuoted(json, kj::StringPtr(structDef.structId));
+      json.addAll(kj::StringPtr(",\n      \"fields\": ["));
+
+      bool firstField = true;
+      for (auto& fieldDef: structDef.fields) {
+        if (!firstField) {
+          json.addAll(kj::StringPtr(", "));
+        }
+        firstField = false;
+        json.addAll(kj::StringPtr("{\"name\": "));
+        appendJsonQuoted(json, kj::StringPtr(fieldDef.name));
+        json.addAll(kj::StringPtr(", \"ordinal\": "));
+        json.addAll(kj::str(fieldDef.ordinal));
+        json.addAll(kj::StringPtr(", \"type\": "));
+        appendJsonQuoted(json, kj::StringPtr(fieldDef.type));
+        if (fieldDef.discriminant >= 0) {
+          json.addAll(kj::StringPtr(", \"discriminant\": "));
+          json.addAll(kj::str(fieldDef.discriminant));
+        }
+        json.add('}');
+      }
+      json.addAll(kj::StringPtr("]\n    }"));
     }
 
     json.addAll(kj::StringPtr("\n  ]\n}"));
@@ -4300,6 +4519,56 @@ private:
     }
   }
 
+  static void compareCapnpAbiStructs(
+      kj::Vector<kj::String>& errors,
+      const std::vector<CapnpAbiStruct>& baselineStructs,
+      const std::vector<CapnpAbiStruct>& currentStructs) {
+    std::map<std::string, const CapnpAbiStruct*> currentByName;
+    for (auto& structDef: currentStructs) {
+      currentByName.insert(std::make_pair(structDef.name, &structDef));
+    }
+
+    for (auto& baselineStruct: baselineStructs) {
+      auto currentStruct = currentByName.find(baselineStruct.name);
+      if (currentStruct == currentByName.end()) {
+        errors.add(kj::str("removed struct ", baselineStruct.name));
+        continue;
+      }
+      if (baselineStruct.structId != currentStruct->second->structId) {
+        errors.add(kj::str("struct ", baselineStruct.name, " changed ID: expected ",
+            baselineStruct.structId, ", found ", currentStruct->second->structId));
+      }
+
+      std::map<uint, const CapnpAbiStructField*> currentFieldsByOrdinal;
+      for (auto& field: currentStruct->second->fields) {
+        currentFieldsByOrdinal.insert(std::make_pair(field.ordinal, &field));
+      }
+      for (auto& baselineField: baselineStruct.fields) {
+        auto currentField = currentFieldsByOrdinal.find(baselineField.ordinal);
+        auto fieldContext = kj::str(
+            "struct ", baselineStruct.name, " field @", baselineField.ordinal);
+        if (currentField == currentFieldsByOrdinal.end()) {
+          errors.add(kj::str("removed ", fieldContext, " (", baselineField.name, ")"));
+          continue;
+        }
+
+        auto& found = *currentField->second;
+        if (baselineField.name != found.name) {
+          errors.add(kj::str(fieldContext, " changed name: expected ",
+              baselineField.name, ", found ", found.name));
+        }
+        if (baselineField.type != found.type) {
+          errors.add(kj::str(fieldContext, " changed type: expected ",
+              baselineField.type, ", found ", found.type));
+        }
+        if (baselineField.discriminant != found.discriminant) {
+          errors.add(kj::str(fieldContext, " changed union discriminant: expected ",
+              baselineField.discriminant, ", found ", found.discriminant));
+        }
+      }
+    }
+  }
+
   static kj::Vector<kj::String> compareCapnpAbiDumps(
       const CapnpAbiDump& baseline, const CapnpAbiDump& current) {
     kj::Vector<kj::String> errors;
@@ -4353,6 +4622,8 @@ private:
             baselineMethod.results, currentMethod->second->results);
       }
     }
+
+    compareCapnpAbiStructs(errors, baseline.structs, current.structs);
 
     return errors;
   }
