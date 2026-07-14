@@ -215,6 +215,22 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Running account-scoped isolate host integration tests"
     VERBATIM)
 
+  add_custom_target(isolate-memory-benchmark
+    COMMAND bash "${PROJECT_SOURCE_DIR}/cmake/RunIsolateMemoryBenchmark.sh"
+      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-memory-benchmark.js"
+      "${CMAKE_BINARY_DIR}/bin/isolate-host"
+      "$<TARGET_FILE:isolate-host-memory-client>"
+    DEPENDS
+      isolate-host
+      isolate-host-memory-client
+      "${PROJECT_SOURCE_DIR}/cmake/RunIsolateMemoryBenchmark.sh"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-memory-benchmark.js"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Measuring shared isolate worker memory density"
+    VERBATIM)
+
   set(_isolate_abi_dir "${PROJECT_SOURCE_DIR}/tests/capnp-abi")
   add_custom_target(isolate-capnp-abi-check
     COMMAND "$<TARGET_FILE:spk>" capnp-abi --check

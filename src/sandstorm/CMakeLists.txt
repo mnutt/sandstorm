@@ -164,6 +164,7 @@ sandstorm_add_executable(spk spk-standalone.c++)
 sandstorm_add_executable(isolate-websession-client isolate-websession-client.c++)
 sandstorm_add_executable(isolate-host-client isolate-host-client.c++)
 sandstorm_add_executable(isolate-account-host-client isolate-account-host-client.c++)
+sandstorm_add_executable(isolate-host-memory-client isolate-host-memory-client.c++)
 
 sandstorm_add_executable(sandstorm-http-bridge sandstorm-http-bridge.c++)
 sandstorm_make_static(sandstorm-http-bridge)

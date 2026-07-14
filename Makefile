@@ -31,6 +31,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	isolate-supervisor-syscall-trace \
 	isolate-host-control-test \
 	isolate-account-host-integration-test \
+	isolate-memory-benchmark \
 	isolate-capnp-abi-check \
 	isolate-capnp-corpus-test isolate-capnp-fuzz \
 	isolate-capnp-toolchain-test isolate-test \
@@ -90,6 +91,11 @@ $(eval $(call cmake_target,verify-workerd-source,verify-workerd-source))
 $(eval $(call cmake_target,isolate-host,isolate-host))
 $(eval $(call cmake_target,isolate-host-control-test,isolate-host-control-test))
 $(eval $(call cmake_target,isolate-account-host-integration-test,isolate-account-host-integration-test))
+
+isolate-memory-benchmark: configure
+	ISOLATE_MEMORY_BENCHMARK_ARGS="$(ISOLATE_MEMORY_BENCHMARK_ARGS)" \
+		$(CMAKE_BUILD) --target isolate-memory-benchmark
+
 $(eval $(call cmake_target,shell-env,shell-env))
 $(eval $(call cmake_target,shell-build,shell-build))
 $(eval $(call cmake_target,shell-build-debug,shell-build-debug))
