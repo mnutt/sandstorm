@@ -1526,22 +1526,43 @@ export default {
       });
     }
 
+    if (url.pathname === "/sandstorm-api-binding-probe") {
+      const statusResponse = await env.SANDSTORM_API.fetch("http://sandstorm/status");
+      const statusBody = await statusResponse.json();
+      const ok = statusResponse.status === 200 &&
+        statusBody.ok === true &&
+        statusBody.binding === "sandstormApi" &&
+        statusBody.mainModule === "worker.js";
+      return Response.json({
+        ok,
+        status: statusResponse.status,
+        body: statusBody,
+      }, { status: ok ? 200 : 500 });
+    }
+
     if (url.pathname === "/powerbox-binding-probe") {
       const statusResponse = await env.POWERBOX.fetch("http://sandstorm/status");
       const descriptorResponse = await env.POWERBOX.fetch(
         "http://sandstorm/powerbox/api-session-descriptor" +
         "?apiCanonicalUrl=https%3A%2F%2Fapi.example.test");
+      const statusBody = await statusResponse.json();
+      const descriptorBody = await descriptorResponse.json();
+      const ok = statusResponse.status === 404 &&
+        statusBody.ok === false &&
+        descriptorResponse.status === 200 &&
+        descriptorBody.ok === true &&
+        descriptorBody.type === "packedPowerboxDescriptor";
       return Response.json({
-        ok: true,
+        ok,
         statusEndpoint: {
           status: statusResponse.status,
-          body: await statusResponse.json(),
+          body: statusBody,
         },
         powerboxEndpoint: {
           status: descriptorResponse.status,
-          body: await descriptorResponse.json(),
+          body: descriptorBody,
         },
-      });
+      }, { status: ok ? 200 : 500 });
     }
 
     if (url.pathname === "/storage-helper-self-test") {

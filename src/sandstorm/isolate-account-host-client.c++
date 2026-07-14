@@ -106,6 +106,8 @@ int main(int argc, char** argv) {
   auto supervisor = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], true);
   sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
+  sandstorm::fetchPath(io.waitScope, supervisor, core, "sandstorm-api-binding-probe");
+  sandstorm::fetchPath(io.waitScope, supervisor, core, "powerbox-binding-probe");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "storage-helper-self-test");
 
   // A second live grain proves that the account control plane and native workerd host are
@@ -126,6 +128,8 @@ int main(int argc, char** argv) {
   auto restarted = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], false);
   sandstorm::fetchPath(io.waitScope, restarted, core, "echo");
+  sandstorm::fetchPath(io.waitScope, restarted, core, "sandstorm-api-binding-probe");
+  sandstorm::fetchPath(io.waitScope, restarted, core, "powerbox-binding-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "storage-helper-self-test");
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
   return 0;
