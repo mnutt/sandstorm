@@ -519,3 +519,134 @@ index f7a67b0..c233aa1 100644
    isolateLoggingOptions.consoleMode =
        def.source.variant.is<WorkerSource::ScriptSource>() && !usingNewModuleRegistry
        ? Worker::ConsoleMode::INSPECTOR_ONLY
+diff --git a/src/workerd/io/io-channels.h b/src/workerd/io/io-channels.h
+index a45b9693..8a0ade99 100644
+--- a/src/workerd/io/io-channels.h
++++ b/src/workerd/io/io-channels.h
+@@ -23,6 +23,7 @@ class Network;
+ namespace workerd {
+
+ class WorkerInterface;
++class DynamicWorkerEnvCompiler;
+
+ // Interface for talking to the Cache API. Needs to be declared here so that IoContext can
+ // contain it.
+@@ -419,6 +420,10 @@ struct DynamicWorkerSource {
+   // a `Frankenvalue` (which should eventually include all binding types, RPC stubs, etc.).
+   Frankenvalue env;
+
++  // Optional embedding strategy for materializing capabilities in `env`. The ordinary dynamic
++  // loader leaves this null and uses Frankenvalue's standard deserializer.
++  kj::Maybe<kj::Own<DynamicWorkerEnvCompiler>> envCompiler;
++
+   // Where should global fetch() (and connect()) be sent?
+   kj::Maybe<kj::Own<IoChannelFactory::SubrequestChannel>> globalOutbound;
+
+@@ -441,19 +446,7 @@ struct DynamicWorkerSource {
+   // which must be a refcount on the same content since the pointers will not be updated. Note
+   // that if `ownContentIsRpcResponse` is false, then `ownContent` could be passed off to other
+   // threads and as such the refcount had better be atomic.
+-  DynamicWorkerSource clone(kj::Own<void> newOwnContent) {
+-    return {
+-      .source = source.clone(),
+-      .compatibilityFlags = compatibilityFlags,
+-      .limits = limits.map([](auto& limits) { return limits.clone(); }),
+-      .env = env.clone(),
+-      .globalOutbound = mapAddRef(globalOutbound),
+-      .tails = KJ_MAP(t, tails) { return kj::addRef(*t); },
+-      .streamingTails = KJ_MAP(t, streamingTails) { return kj::addRef(*t); },
+-      .ownContent = kj::mv(newOwnContent),
+-      .ownContentIsRpcResponse = ownContentIsRpcResponse,
+-    };
+-  }
++  DynamicWorkerSource clone(kj::Own<void> newOwnContent);
+
+   // Walks through all channels in `env` and other properties and ensures that they point at
+   // resolved objects by calling their `getResolved()` methods.
+diff --git a/src/workerd/io/io-channels.c++ b/src/workerd/io/io-channels.c++
+index a4015d26..6627ffbf 100644
+--- a/src/workerd/io/io-channels.c++
++++ b/src/workerd/io/io-channels.c++
+@@ -5,6 +5,22 @@
+
+ namespace workerd {
+
++DynamicWorkerSource DynamicWorkerSource::clone(kj::Own<void> newOwnContent) {
++  return {
++    .source = source.clone(),
++    .compatibilityFlags = compatibilityFlags,
++    .limits = limits.map([](auto& limits) { return limits.clone(); }),
++    .env = env.clone(),
++    .envCompiler = envCompiler.map(
++        [](auto& compiler) { return kj::atomicAddRef(*compiler); }),
++    .globalOutbound = mapAddRef(globalOutbound),
++    .tails = KJ_MAP(t, tails) { return kj::addRef(*t); },
++    .streamingTails = KJ_MAP(t, streamingTails) { return kj::addRef(*t); },
++    .ownContent = kj::mv(newOwnContent),
++    .ownContentIsRpcResponse = ownContentIsRpcResponse,
++  };
++}
++
+ kj::Promise<kj::Array<byte>> IoChannelFactory::SubrequestChannel::getToken(
+     ChannelTokenUsage usage) {
+   KJ_SWITCH_ONEOF(getTokenMaybeSync(usage)) {
+diff --git a/src/workerd/io/worker.h b/src/workerd/io/worker.h
+index e2e8321..693a4c88 100644
+--- a/src/workerd/io/worker.h
++++ b/src/workerd/io/worker.h
+@@ -690,6 +690,19 @@ class Worker::Api {
+   }
+ };
+
++// An optional embedding hook for environment values which cannot use Frankenvalue's standard
++// serialization path. Implementations own the materialization policy; the dynamic loader only
++// invokes the hook while the destination worker's V8 context is active.
++class DynamicWorkerEnvCompiler: public kj::AtomicRefcounted {
++ public:
++  virtual void compile(jsg::Lock& js,
++      const Worker::Api& api,
++      Frankenvalue& env,
++      v8::Local<v8::Object> target) = 0;
++
++  virtual ~DynamicWorkerEnvCompiler() noexcept(false) = default;
++};
++
+ // A Worker may bounce between threads as it handles multiple requests, but can only actually
+ // execute on one thread at a time. Each thread must therefore lock the Worker while executing
+ // code.
+diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
+index 77111df..01fa3568 100644
+--- a/src/workerd/server/server.c++
++++ b/src/workerd/server/server.c++
+@@ -4450,24 +4450,11 @@ class Server::WorkerLoaderNamespace::WorkerStubImpl final: public WorkerStubChan
+         },
+
+-        .compileBindings = [env = kj::mv(source.env)](
++        .compileBindings = [env = kj::mv(source.env),
++                               envCompiler = kj::mv(source.envCompiler)](
+             jsg::Lock& js, const Worker::Api& api, v8::Local<v8::Object> target) mutable {
+-          Frankenvalue::DirectCapabilityMaterializer materialize =
+-              [&js, &api](Frankenvalue::CapTableEntry& entry) {
+-            // Dynamic-worker env construction has already rewritten every supported direct
+-            // capability into an IoChannelCapTableEntry. Keep this downcast and the synthetic
+-            // one-element global in sync with that rewrite and WorkerdApi's Fetcher compiler.
+-            auto& channel = kj::downcast<IoChannelCapTableEntry>(entry);
+-            WorkerdApi::Global global{
+-              .name = kj::str("capability"),
+-              .value = WorkerdApi::Global::Fetcher{
+-                .channel = channel.getChannelNumber(IoChannelCapTableEntry::Type::SUBREQUEST),
+-                .requiresHost = true,
+-                .isInHouse = false,
+-              },
+-            };
+-            auto holder = js.obj();
+-            WorkerdApi::from(api).compileGlobals(js, kj::arrayPtr(&global, 1), holder, 1);
+-            return holder.get(js, "capability");
+-          };
+-          env.populateJsObject(js, jsg::JsObject(target), materialize);
++          KJ_IF_SOME(compiler, envCompiler) {
++            compiler->compile(js, api, env, target);
++          } else {
++            env.populateJsObject(js, jsg::JsObject(target));
++          }
+         },
