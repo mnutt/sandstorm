@@ -69,6 +69,7 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <time.h>
@@ -934,6 +935,22 @@ void unlinkIfExists(kj::StringPtr path) {
       KJ_FAIL_SYSCALL("unlink", error, path);
     }
   }
+}
+
+kj::AutoCloseFd createUnixListener(kj::StringPtr path) {
+  struct sockaddr_un address;
+  memset(&address, 0, sizeof(address));
+  address.sun_family = AF_UNIX;
+  KJ_REQUIRE(path.size() < sizeof(address.sun_path), "Unix socket path is too long", path);
+  memcpy(address.sun_path, path.begin(), path.size());
+
+  int fd;
+  KJ_SYSCALL(fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0));
+  kj::AutoCloseFd result(fd);
+  KJ_SYSCALL(bind(result, reinterpret_cast<struct sockaddr*>(&address), sizeof(address)), path);
+  KJ_SYSCALL(chmod(path.cStr(), 0600), path);
+  KJ_SYSCALL(listen(result, SOMAXCONN), path);
+  return result;
 }
 
 void unlinkSocketIfExists(kj::StringPtr path) {
@@ -4269,7 +4286,7 @@ void setupSidecarStdio() {
   KJ_SYSCALL(dup2(devNullOut, STDOUT_FILENO));
 }
 
-void closeUnexpectedSidecarFds() {
+void closeUnexpectedSidecarFds(kj::ArrayPtr<const int> preservedFds = nullptr) {
   kj::Vector<int> fds;
   DIR* dir = opendir("/proc/self/fd");
   if (dir == nullptr) {
@@ -4291,7 +4308,11 @@ void closeUnexpectedSidecarFds() {
       char* end;
       int fd = strtoul(entry->d_name, &end, 10);
       if (*end == '\0' && end > entry->d_name && fd > STDERR_FILENO && fd != dirfd(dir)) {
-        fds.add(fd);
+        bool preserve = false;
+        for (auto preserved: preservedFds) {
+          if (fd == preserved) preserve = true;
+        }
+        if (!preserve) fds.add(fd);
       }
     }
   }
@@ -4403,7 +4424,8 @@ void bindSidecarRuntimeLibraries() {
   bindSidecarRuntimeLibraryCandidates("libgcc_s.so.1");
 }
 
-void setupSidecarMountRoot(kj::StringPtr trustedWorkerd, kj::StringPtr workerdBundleDir) {
+void setupConfinedRuntimeMountRoot(
+    kj::StringPtr trustedExecutable, kj::Maybe<kj::StringPtr> runtimeBundleDir) {
   auto oldUmask = umask(0);
   KJ_DEFER(umask(oldUmask));
 
@@ -4421,15 +4443,20 @@ void setupSidecarMountRoot(kj::StringPtr trustedWorkerd, kj::StringPtr workerdBu
   KJ_SYSCALL(mount("/tmp/dev", "/tmp/dev", nullptr,
       MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NOEXEC, nullptr));
 
-  bindSidecarDirectory(workerdBundleDir, MS_NOSUID | MS_NODEV);
-  bindSidecarFile(trustedWorkerd, MS_RDONLY | MS_NOSUID | MS_NODEV, 0755);
+  KJ_IF_MAYBE(bundleDir, runtimeBundleDir) {
+    bindSidecarDirectory(*bundleDir, MS_NOSUID | MS_NODEV);
+  }
+  bindSidecarFile(trustedExecutable, MS_RDONLY | MS_NOSUID | MS_NODEV, 0755);
   bindSidecarRuntimeLibraries();
   bindSidecarFile("/etc/ld.so.cache", MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV);
 
   KJ_SYSCALL(chroot("/tmp"));
   KJ_SYSCALL(chdir("/"));
-  KJ_LOG(WARNING, "Isolate sidecar entered minimal mount root.",
-      trustedWorkerd, workerdBundleDir);
+  KJ_LOG(WARNING, "Isolate sidecar entered minimal mount root.", trustedExecutable);
+}
+
+void setupSidecarMountRoot(kj::StringPtr trustedWorkerd, kj::StringPtr workerdBundleDir) {
+  setupConfinedRuntimeMountRoot(trustedWorkerd, workerdBundleDir);
 }
 
 bool trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
@@ -4569,6 +4596,55 @@ void setupSidecarSeccomp(bool logSeccompViolations) {
   CHECK_SECCOMP(seccomp_load(ctx));
 #pragma GCC diagnostic pop
 #undef CHECK_SECCOMP
+}
+
+int runConfinedNativeIsolateHost(
+    kj::String trustedHost,
+    kj::AutoCloseFd controlSocket,
+    kj::Maybe<uid_t> sandboxUid,
+    bool logSeccompViolations) {
+  static constexpr int CONTROL_FD = 3;
+  resetSignalHandlersForExec();
+  setupSidecarParentDeathSignal();
+  setupSidecarProcessGroup();
+
+  int sourceFd = controlSocket.release();
+  if (sourceFd != CONTROL_FD) {
+    KJ_SYSCALL(dup2(sourceFd, CONTROL_FD));
+    KJ_SYSCALL(close(sourceFd));
+  } else {
+    KJ_SYSCALL(fcntl(CONTROL_FD, F_SETFD, 0));
+  }
+
+  auto devNull = raiiOpen("/dev/null", O_RDONLY | O_CLOEXEC);
+  KJ_SYSCALL(dup2(devNull, STDIN_FILENO));
+  devNull = nullptr;
+  int preservedFd = CONTROL_FD;
+  closeUnexpectedSidecarFds(kj::arrayPtr(&preservedFd, 1));
+
+  bool hasPrivateNamespaces = trySetupSidecarNamespaces(sandboxUid);
+  if (hasPrivateNamespaces) {
+    setupConfinedRuntimeMountRoot(trustedHost, nullptr);
+  }
+  KJ_IF_MAYBE(u, sandboxUid) {
+    KJ_SYSCALL(setresuid(*u, *u, *u));
+  }
+  setupSidecarResourceLimits();
+  KJ_SYSCALL(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
+  setupSidecarSeccomp(logSeccompViolations);
+
+  char* argv[] = {
+    const_cast<char*>(trustedHost.cStr()),
+    const_cast<char*>("--control-fd"),
+    const_cast<char*>("3"),
+    nullptr,
+  };
+  char* environment[] = {
+    const_cast<char*>("LANG=C.UTF-8"),
+    nullptr,
+  };
+  KJ_SYSCALL(execve(trustedHost.cStr(), argv, environment), trustedHost);
+  KJ_UNREACHABLE;
 }
 
 int runConfinedWorkerdSidecar(
@@ -6607,9 +6683,15 @@ kj::MainFunc IsolateAccountHostMain::getMain() {
                         "Set the validated account trust domain.")
       .addOptionWithArg({"control-socket"}, KJ_BIND_METHOD(*this, setControlSocket), "<path>",
                         "Listen for backend requests on this Unix socket.")
-      .addOptionWithArg({"native-control-socket"},
-                        KJ_BIND_METHOD(*this, setNativeControlSocket), "<path>",
-                        "Connect to the account-local native workerd host.")
+      .addOptionWithArg({"native-host"}, KJ_BIND_METHOD(*this, setNativeHostPath), "<path>",
+                        "Launch this native workerd host inside the runtime sandbox.")
+      .addOptionWithArg({"uid"}, KJ_BIND_METHOD(*this, setUid), "<uid>",
+                        "Drop the native host and account host to this sandbox UID.")
+      .addOption({"log-seccomp-violations"},
+                 [this]() { logSeccompViolations = true; return true; },
+                 "Log native-host seccomp violations.")
+      .addOption({"wait-for-startup"}, [this]() { waitForStartup = true; return true; },
+                 "Wait for a byte on stdin before launching the native host.")
       .addOptionWithArg({"app-root"}, KJ_BIND_METHOD(*this, setAppRoot), "<path>",
                         "Set the trusted package root.")
       .addOptionWithArg({"grain-root"}, KJ_BIND_METHOD(*this, setGrainRoot), "<path>",
@@ -6631,9 +6713,19 @@ kj::MainBuilder::Validity IsolateAccountHostMain::setControlSocket(kj::StringPtr
   return true;
 }
 
-kj::MainBuilder::Validity IsolateAccountHostMain::setNativeControlSocket(kj::StringPtr value) {
-  nativeControlSocket = kj::str(value);
+kj::MainBuilder::Validity IsolateAccountHostMain::setNativeHostPath(kj::StringPtr value) {
+  nativeHostPath = kj::str(value);
   return true;
+}
+
+kj::MainBuilder::Validity IsolateAccountHostMain::setUid(kj::StringPtr value) {
+  KJ_IF_MAYBE(u, parseUInt(value, 10)) {
+    if (getuid() != 0) return "must start as root to use --uid";
+    if (*u == 0) return "native host sandbox UID cannot be root";
+    sandboxUid = *u;
+    return true;
+  }
+  return "UID must be a number";
 }
 
 kj::MainBuilder::Validity IsolateAccountHostMain::setAppRoot(kj::StringPtr value) {
@@ -6649,28 +6741,46 @@ kj::MainBuilder::Validity IsolateAccountHostMain::setGrainRoot(kj::StringPtr val
 kj::MainBuilder::Validity IsolateAccountHostMain::run() {
   KJ_REQUIRE(trustDomain.size() > 0, "missing account trust domain");
   KJ_REQUIRE(controlSocket.startsWith("/"), "control socket path must be absolute");
-  KJ_REQUIRE(nativeControlSocket.startsWith("/"), "native control socket path must be absolute");
+  KJ_REQUIRE(nativeHostPath.startsWith("/"), "native host path must be absolute");
   KJ_REQUIRE(appRoot.startsWith("/") && grainRoot.startsWith("/"),
       "account host roots must be absolute");
 
+  if (waitForStartup) {
+    char byte;
+    ssize_t count;
+    KJ_SYSCALL(count = read(STDIN_FILENO, &byte, 1));
+    KJ_REQUIRE(count == 1, "account host startup gate closed before release");
+  }
+
   unlinkIfExists(controlSocket);
+  auto accountListenerFd = createUnixListener(controlSocket);
+  KJ_IF_MAYBE(u, sandboxUid) {
+    chownPathTo(controlSocket, *u);
+  }
+
+  auto nativePipe = Pipe::makeTwoWayAsync();
+  Subprocess nativeProcess(
+      [nativeHostPath = kj::str(nativeHostPath), control = kj::mv(nativePipe.writeEnd),
+       sandboxUid = sandboxUid, logSeccompViolations = logSeccompViolations]() mutable {
+    return runConfinedNativeIsolateHost(kj::mv(nativeHostPath), kj::mv(control),
+        sandboxUid, logSeccompViolations);
+  });
+  KJ_IF_MAYBE(u, sandboxUid) {
+    KJ_SYSCALL(setresuid(*u, *u, *u));
+  }
+
   auto io = kj::setupAsyncIo();
-  auto nativeAddress = io.provider->getNetwork()
-      .parseAddress(kj::str("unix:", nativeControlSocket), 0)
-      .wait(io.waitScope);
-  auto nativeStream = nativeAddress->connect().wait(io.waitScope);
+  auto listener = io.lowLevelProvider->wrapListenSocketFd(
+      kj::mv(accountListenerFd), kj::LowLevelAsyncIoProvider::ALREADY_CLOEXEC);
+  auto nativeStream = io.lowLevelProvider->wrapSocketFd(kj::mv(nativePipe.readEnd));
   capnp::TwoPartyClient nativeRpc(*nativeStream);
   auto nativeHost = nativeRpc.bootstrap().castAs<IsolateHost>();
 
-  auto accountAddress = io.provider->getNetwork()
-      .parseAddress(kj::str("unix:", controlSocket), 0)
-      .wait(io.waitScope);
-  auto listener = accountAddress->listen();
   capnp::TwoPartyServer server(kj::heap<IsolateAccountHostImpl>(io.unixEventPort,
       io.provider->getNetwork(), io.provider->getTimer(), kj::mv(nativeHost),
       kj::str(appRoot), kj::str(grainRoot)));
   KJ_LOG(WARNING, "Account-scoped isolate host listening.", trustDomain, controlSocket,
-      nativeControlSocket);
+      nativeHostPath, nativeProcess.getPid());
   server.listen(*listener).exclusiveJoin(nativeRpc.onDisconnect()).wait(io.waitScope);
   return true;
 }

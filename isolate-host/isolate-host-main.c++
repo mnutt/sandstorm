@@ -26,8 +26,10 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <climits>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <mutex>
 #include <thread>
 
@@ -1060,7 +1062,7 @@ class AdmissionPool {
   size_t outstanding = 0;
 };
 
-void initRuntimeConfig(capnp::MallocMessageBuilder& message) {
+void initRuntimeConfig(capnp::MallocMessageBuilder& message, kj::StringPtr bootstrapAddress) {
   auto config = message.initRoot<workerd::server::config::Config>();
   auto service = config.initServices(1)[0];
   service.setName("sandstorm-loader-bootstrap");
@@ -1073,11 +1075,11 @@ void initRuntimeConfig(capnp::MallocMessageBuilder& message) {
   binding.setName("GRAIN_LOADER");
   binding.initWorkerLoader().setId(LOADER_NAMESPACE);
 
-  // Server::run() lives for the lifetime of its listeners. Keep one loopback-only listener so
-  // the embedded runtime remains active; Sandstorm traffic never enters through this socket.
+  // Server::run() lives for the lifetime of its listeners. Keep one private Unix listener so the
+  // embedded runtime remains active; Sandstorm traffic never enters through this socket.
   auto socket = config.initSockets(1)[0];
   socket.setName("loader-bootstrap");
-  socket.setAddress("127.0.0.1:0");
+  socket.setAddress(bootstrapAddress);
   socket.initHttp();
   socket.getService().setName("sandstorm-loader-bootstrap");
 }
@@ -1211,12 +1213,33 @@ class IsolateHostImpl final: public IsolateHost::Server {
 }  // namespace sandstorm
 
 int main(int argc, char** argv) {
-  KJ_REQUIRE(argc == 2, "usage: isolate-host <control-socket-path>");
-  auto address = kj::str("unix:", argv[1]);
-  unlink(argv[1]);
+  bool inheritedControl = argc == 3 && kj::StringPtr(argv[1]) == "--control-fd"_kj;
+  KJ_REQUIRE(inheritedControl || argc == 2,
+      "usage: isolate-host <control-socket-path> | --control-fd <fd>");
+  int controlFd = -1;
+  if (inheritedControl) {
+    char* end = nullptr;
+    long parsed = strtol(argv[2], &end, 10);
+    KJ_REQUIRE(end != argv[2] && *end == '\0' && parsed >= 0 && parsed <= INT_MAX,
+        "invalid inherited control FD", argv[2]);
+    controlFd = parsed;
+    errno = 0;
+    KJ_REQUIRE(access("/var/sandstorm/grains", F_OK) < 0 && errno == ENOENT,
+        "inherited control mode requires the native host's minimal mount root");
+  }
+
   auto io = kj::setupAsyncIo();
-  auto parsed = io.provider->getNetwork().parseAddress(address, 0).wait(io.waitScope);
-  auto listener = parsed->listen();
+  kj::Own<kj::ConnectionReceiver> listener;
+  kj::Own<kj::AsyncIoStream> controlStream;
+  if (inheritedControl) {
+    controlStream = io.lowLevelProvider->wrapSocketFd(controlFd,
+        kj::LowLevelAsyncIoProvider::TAKE_OWNERSHIP);
+  } else {
+    auto address = kj::str("unix:", argv[1]);
+    unlink(argv[1]);
+    auto parsed = io.provider->getNetwork().parseAddress(address, 0).wait(io.waitScope);
+    listener = parsed->listen();
+  }
 
   auto filesystem = kj::newDiskFilesystem();
   sandstorm::SystemEntropySource entropy;
@@ -1234,7 +1257,9 @@ int main(int argc, char** argv) {
   runtime.setLimitEnforcerFactory(limitEnforcers);
   runtime.allowExperimental();
   capnp::MallocMessageBuilder runtimeConfig;
-  sandstorm::initRuntimeConfig(runtimeConfig);
+  auto bootstrapPath = kj::str("/tmp/sandstorm-loader-", getpid(), ".sock");
+  if (!inheritedControl) unlink(bootstrapPath.cStr());
+  sandstorm::initRuntimeConfig(runtimeConfig, kj::str("unix:", bootstrapPath));
   auto runtimeTask = runtime.run(v8System, runtimeConfig.getRoot<workerd::server::config::Config>())
       .eagerlyEvaluate([](kj::Exception&& error) {
     KJ_LOG(FATAL, "embedded workerd runtime failed", error);
@@ -1245,5 +1270,12 @@ int main(int argc, char** argv) {
 
   capnp::TwoPartyServer controlServer(
       kj::heap<sandstorm::IsolateHostImpl>(runtime, byteStreamFactory));
-  controlServer.listen(*listener).exclusiveJoin(kj::mv(runtimeTask)).wait(io.waitScope);
+  if (inheritedControl) {
+    controlServer.accept(*controlStream)
+        .attach(kj::mv(controlStream))
+        .exclusiveJoin(kj::mv(runtimeTask))
+        .wait(io.waitScope);
+  } else {
+    controlServer.listen(*listener).exclusiveJoin(kj::mv(runtimeTask)).wait(io.waitScope);
+  }
 }

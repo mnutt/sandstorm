@@ -381,18 +381,15 @@ isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 		tests/assets/isolate-test-app.spk
 	@root="$(PWD)/tmp/isolate-account-host-test"; \
 		app_root="$$root/apps"; grain_root="$$root/grains"; \
-		native_socket="$$root/native.sock"; account_socket="$$root/account.sock"; \
+		account_socket="$$root/account.sock"; \
 		rm -rf "$$root"; mkdir -p "$$app_root" "$$grain_root"; \
 		bin/spk unpack tests/assets/isolate-test-app.spk "$$app_root/testpackage123"; \
 		ln -s "$(PWD)/bin/sandstorm" "$$root/isolate-account-host"; \
-		bin/isolate-host "$$native_socket" & native_pid=$$!; \
-		trap 'kill $$account_pid $$native_pid 2>/dev/null || true; wait $$account_pid $$native_pid 2>/dev/null || true; rm -rf "$$root"' EXIT; \
-		for attempt in $$(seq 1 100); do test -S "$$native_socket" && break; sleep 0.05; done; \
-		test -S "$$native_socket"; \
+		trap 'kill $$account_pid 2>/dev/null || true; wait $$account_pid 2>/dev/null || true; rm -rf "$$root"' EXIT; \
 		"$$root/isolate-account-host" \
 			--trust-domain testaccount123 \
 			--control-socket "$$account_socket" \
-			--native-control-socket "$$native_socket" \
+			--native-host "$(PWD)/bin/isolate-host" \
 			--app-root "$$app_root" --grain-root "$$grain_root" & account_pid=$$!; \
 		for attempt in $$(seq 1 100); do test -S "$$account_socket" && break; sleep 0.05; done; \
 		test -S "$$account_socket"; \

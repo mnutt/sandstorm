@@ -116,7 +116,7 @@ private:
   class RunningAccountHost {
   public:
     RunningAccountHost(BackendImpl& backend, kj::String ownerId,
-        Subprocess nativeProcess, Subprocess accountProcess,
+        Subprocess accountProcess,
         kj::Own<kj::AsyncIoStream> stream);
     ~RunningAccountHost() noexcept(false);
 
@@ -126,7 +126,6 @@ private:
   private:
     BackendImpl& backend;
     kj::String ownerId;
-    Subprocess nativeProcess;
     Subprocess accountProcess;
     kj::Own<kj::AsyncIoStream> stream;
     capnp::TwoPartyClient client;

@@ -95,13 +95,17 @@ private:
   kj::ProcessContext& context;
   kj::String trustDomain;
   kj::String controlSocket;
-  kj::String nativeControlSocket;
+  kj::String nativeHostPath = kj::str("/bin/isolate-host");
   kj::String appRoot = kj::str("/var/sandstorm/apps");
   kj::String grainRoot = kj::str("/var/sandstorm/grains");
+  kj::Maybe<uid_t> sandboxUid;
+  bool logSeccompViolations = false;
+  bool waitForStartup = false;
 
   kj::MainBuilder::Validity setTrustDomain(kj::StringPtr value);
   kj::MainBuilder::Validity setControlSocket(kj::StringPtr value);
-  kj::MainBuilder::Validity setNativeControlSocket(kj::StringPtr value);
+  kj::MainBuilder::Validity setNativeHostPath(kj::StringPtr value);
+  kj::MainBuilder::Validity setUid(kj::StringPtr value);
   kj::MainBuilder::Validity setAppRoot(kj::StringPtr value);
   kj::MainBuilder::Validity setGrainRoot(kj::StringPtr value);
   kj::MainBuilder::Validity run();
