@@ -41,7 +41,9 @@
 #include <kj/debug.h>
 #include <kj/encoding.h>
 #include <kj/io.h>
+#include <kj/mutex.h>
 #include <kj/refcount.h>
+#include <kj/thread.h>
 #include <sandstorm/api-session.capnp.h>
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
@@ -284,6 +286,15 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::Vector<Binding> bindings;
   IsolateRuntimeTopology topology = IsolateRuntimeTopology::PER_GRAIN_SIDECAR;
 };
+
+// Shared-host producer limits mirror the native decoder's independent trust-boundary checks.
+// Per-grain mode deliberately retains its previous package limits as the compatibility fallback.
+constexpr size_t MAX_ISOLATE_MODULES = 1024;
+constexpr size_t MAX_ISOLATE_MODULE_BYTES = 8 * 1024 * 1024;
+constexpr size_t MAX_ISOLATE_TOTAL_MODULE_BYTES = 16 * 1024 * 1024;
+constexpr size_t MAX_ISOLATE_BINDINGS = 1024;
+constexpr size_t MAX_ISOLATE_TOTAL_BINDING_BYTES = 4 * 1024 * 1024;
+constexpr size_t MAX_ISOLATE_NAME_BYTES = 256;
 
 kj::StringPtr isolateRuntimeTopologyName(IsolateRuntimeTopology topology) {
   switch (topology) {
@@ -598,13 +609,31 @@ kj::String copyModuleSourcePath(spk::Manifest::IsolateConfig::Module::Reader mod
   KJ_UNREACHABLE;
 }
 
-kj::Array<byte> readPackageFile(kj::StringPtr pkgPath, kj::StringPtr sourcePath) {
+kj::Array<byte> readPackageFile(
+    kj::StringPtr pkgPath, kj::StringPtr sourcePath, bool enforceSharedHostLimits) {
   KJ_REQUIRE(isCanonicalPackagePath(sourcePath),
       "Isolate module path must be package-relative and canonical.", sourcePath);
   auto packageDir = raiiOpen(pkgPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   KJ_IF_MAYBE(file, raiiOpenAtIfExistsContained(
       packageDir, kj::Path::parse(sourcePath), O_RDONLY | O_CLOEXEC)) {
-    return readAllBytes(*file);
+    struct stat stats;
+    KJ_SYSCALL(fstat(*file, &stats), sourcePath);
+    KJ_REQUIRE(S_ISREG(stats.st_mode), "Isolate module is not a regular file.", sourcePath);
+    KJ_REQUIRE(stats.st_size >= 0, "Isolate module has an invalid size.", sourcePath);
+    if (enforceSharedHostLimits) {
+      KJ_REQUIRE(stats.st_size <= MAX_ISOLATE_MODULE_BYTES,
+          "Isolate module exceeds size limit.", sourcePath, stats.st_size,
+          MAX_ISOLATE_MODULE_BYTES);
+    }
+    auto result = kj::heapArray<byte>(stats.st_size);
+    size_t offset = 0;
+    while (offset < result.size()) {
+      ssize_t count;
+      KJ_SYSCALL(count = read(*file, result.begin() + offset, result.size() - offset), sourcePath);
+      KJ_REQUIRE(count > 0, "Isolate module ended before its declared size.", sourcePath);
+      offset += count;
+    }
+    return result;
   }
 
   KJ_FAIL_REQUIRE("Isolate module path does not exist in package.", sourcePath);
@@ -628,14 +657,45 @@ kj::Array<byte> copyBindingValue(spk::Manifest::IsolateConfig::Binding::Reader b
   KJ_UNREACHABLE;
 }
 
-void validateIsolateRuntimeConfig(IsolateRuntimeConfig& config) {
+size_t bindingValueSize(spk::Manifest::IsolateConfig::Binding::Reader binding) {
+  switch (binding.which()) {
+    case spk::Manifest::IsolateConfig::Binding::TEXT:
+      return binding.getText().size();
+    case spk::Manifest::IsolateConfig::Binding::DATA:
+      return binding.getData().size();
+    case spk::Manifest::IsolateConfig::Binding::JSON:
+      return binding.getJson().size();
+    case spk::Manifest::IsolateConfig::Binding::SANDSTORM_API:
+    case spk::Manifest::IsolateConfig::Binding::STORAGE:
+    case spk::Manifest::IsolateConfig::Binding::POWERBOX:
+    case spk::Manifest::IsolateConfig::Binding::SERVICE:
+      return 0;
+  }
+
+  KJ_UNREACHABLE;
+}
+
+void validateIsolateRuntimeConfig(
+    IsolateRuntimeConfig& config, bool enforceSharedHostLimits = false) {
   KJ_REQUIRE(config.mainModule.size() > 0, "Isolate command is missing mainModule.");
   KJ_REQUIRE(config.apiPath.size() == 0 || config.apiPath.endsWith("/"),
       "Isolate bridgeConfig.apiPath must be empty or end with '/'.", config.apiPath);
+  if (enforceSharedHostLimits) {
+    KJ_REQUIRE(config.mainModule.size() <= MAX_ISOLATE_NAME_BYTES,
+        "Isolate command mainModule exceeds size limit.", config.mainModule.size());
+    KJ_REQUIRE(config.compatibilityDate.size() <= 32,
+        "Isolate compatibility date exceeds size limit.");
+    KJ_REQUIRE(config.compatibilityFlags.size() <= 64,
+        "Isolate compatibility flag count exceeds limit.");
+  }
 
   for (auto i: kj::indices(config.compatibilityFlags)) {
     auto& flag = config.compatibilityFlags[i];
     KJ_REQUIRE(flag.size() > 0, "Isolate compatibility flag is empty.");
+    if (enforceSharedHostLimits) {
+      KJ_REQUIRE(flag.size() <= 128,
+          "Isolate compatibility flag exceeds size limit.", flag.size());
+    }
 
     for (uint j = 0; j < i; ++j) {
       KJ_REQUIRE(config.compatibilityFlags[j] != flag,
@@ -643,10 +703,26 @@ void validateIsolateRuntimeConfig(IsolateRuntimeConfig& config) {
     }
   }
 
+  if (enforceSharedHostLimits) {
+    KJ_REQUIRE(config.modules.size() > 0 && config.modules.size() <= MAX_ISOLATE_MODULES,
+        "Isolate command has an invalid module count.", config.modules.size());
+  }
   bool foundMainModule = false;
+  size_t totalModuleBytes = 0;
   for (auto i: kj::indices(config.modules)) {
     auto& module = config.modules[i];
     KJ_REQUIRE(module.name.size() > 0, "Isolate module is missing name.");
+    if (enforceSharedHostLimits) {
+      KJ_REQUIRE(module.name.size() <= MAX_ISOLATE_NAME_BYTES,
+          "Isolate module name exceeds size limit.", module.name.size());
+      KJ_REQUIRE(module.content.size() <= MAX_ISOLATE_MODULE_BYTES,
+          "Isolate module exceeds size limit.", module.name, module.content.size(),
+          MAX_ISOLATE_MODULE_BYTES);
+      totalModuleBytes += module.content.size();
+      KJ_REQUIRE(totalModuleBytes <= MAX_ISOLATE_TOTAL_MODULE_BYTES,
+          "Isolate modules exceed aggregate size limit.", totalModuleBytes,
+          MAX_ISOLATE_TOTAL_MODULE_BYTES);
+    }
     if (module.name == config.mainModule) {
       foundMainModule = true;
     }
@@ -659,9 +735,22 @@ void validateIsolateRuntimeConfig(IsolateRuntimeConfig& config) {
   KJ_REQUIRE(foundMainModule, "Isolate mainModule does not match any configured module.",
       config.mainModule);
 
+  if (enforceSharedHostLimits) {
+    KJ_REQUIRE(config.bindings.size() <= MAX_ISOLATE_BINDINGS,
+        "Isolate command binding count exceeds limit.", config.bindings.size());
+  }
+  size_t totalBindingBytes = 0;
   for (auto i: kj::indices(config.bindings)) {
     auto& binding = config.bindings[i];
     KJ_REQUIRE(binding.name.size() > 0, "Isolate binding is missing name.");
+    if (enforceSharedHostLimits) {
+      KJ_REQUIRE(binding.name.size() <= MAX_ISOLATE_NAME_BYTES,
+          "Isolate binding name exceeds size limit.", binding.name.size());
+      totalBindingBytes += binding.value.size();
+      KJ_REQUIRE(totalBindingBytes <= MAX_ISOLATE_TOTAL_BINDING_BYTES,
+          "Isolate bindings exceed aggregate size limit.", totalBindingBytes,
+          MAX_ISOLATE_TOTAL_BINDING_BYTES);
+    }
     KJ_REQUIRE(isImplementedBinding(binding.type),
         "Isolate binding type is declared in the manifest schema but is not implemented yet.",
         binding.name, bindingTypeName(binding.type));
@@ -754,7 +843,8 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
 }
 
 kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
-    spk::Manifest::IsolateConfig::Reader config, kj::StringPtr pkgPath) {
+    spk::Manifest::IsolateConfig::Reader config, kj::StringPtr pkgPath,
+    bool enforceSharedHostLimits) {
   auto result = kj::refcounted<IsolateRuntimeConfig>();
   result->mainModule = kj::heapString(config.getMainModule());
   result->compatibilityDate = kj::heapString(config.getCompatibilityDate());
@@ -779,17 +869,36 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
     result->compatibilityFlags.add(kj::heapString(flag));
   }
 
-  for (auto module: config.getModules()) {
+  auto configuredModules = config.getModules();
+  if (enforceSharedHostLimits) {
+    KJ_REQUIRE(configuredModules.size() <= MAX_ISOLATE_MODULES,
+        "Isolate command module count exceeds limit.", configuredModules.size());
+  }
+  for (auto module: configuredModules) {
     IsolateRuntimeConfig::Module moduleConfig;
     moduleConfig.name = kj::heapString(module.getName());
     moduleConfig.type = getModuleType(module);
     moduleConfig.sourcePath = copyModuleSourcePath(module);
-    moduleConfig.content = readPackageFile(pkgPath, moduleConfig.sourcePath);
+    moduleConfig.content = readPackageFile(
+        pkgPath, moduleConfig.sourcePath, enforceSharedHostLimits);
     result->modules.add(kj::mv(moduleConfig));
   }
   addGeneratedIsolateHelperModules(*result);
 
-  for (auto binding: config.getBindings()) {
+  auto configuredBindings = config.getBindings();
+  if (enforceSharedHostLimits) {
+    KJ_REQUIRE(configuredBindings.size() <= MAX_ISOLATE_BINDINGS,
+        "Isolate command binding count exceeds limit.", configuredBindings.size());
+  }
+  size_t totalBindingBytes = 0;
+  for (auto binding: configuredBindings) {
+    auto valueSize = bindingValueSize(binding);
+    if (enforceSharedHostLimits) {
+      KJ_REQUIRE(valueSize <= MAX_ISOLATE_TOTAL_BINDING_BYTES - totalBindingBytes,
+          "Isolate bindings exceed aggregate size limit.",
+          totalBindingBytes + valueSize, MAX_ISOLATE_TOTAL_BINDING_BYTES);
+    }
+    totalBindingBytes += valueSize;
     IsolateRuntimeConfig::Binding bindingConfig;
     bindingConfig.name = kj::heapString(binding.getName());
     bindingConfig.type = getBindingType(binding);
@@ -800,7 +909,7 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
     result->bindings.add(kj::mv(bindingConfig));
   }
 
-  validateIsolateRuntimeConfig(*result);
+  validateIsolateRuntimeConfig(*result, enforceSharedHostLimits);
   return result;
 }
 
@@ -2992,7 +3101,8 @@ kj::Own<WebSession::RequestStream::Server> WorkerdRuntimeAdapter::startRequestSt
 
 kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
     kj::StringPtr pkgPath, kj::Maybe<kj::StringPtr> requestedMainModule,
-    kj::Maybe<kj::StringPtr> requestedCompatibilityDate) {
+    kj::Maybe<kj::StringPtr> requestedCompatibilityDate,
+    bool enforceSharedHostLimits = false) {
   auto manifestFile = raiiOpen(kj::str(pkgPath, "/sandstorm-manifest"), O_RDONLY | O_CLOEXEC);
 
   capnp::ReaderOptions manifestLimits;
@@ -3021,7 +3131,7 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
         }
       }
 
-      found = copyIsolateConfig(isolate, pkgPath);
+      found = copyIsolateConfig(isolate, pkgPath, enforceSharedHostLimits);
     }
   };
 
@@ -3032,7 +3142,8 @@ kj::Own<IsolateRuntimeConfig> loadIsolateRuntimeConfig(
     }
   } else {
     if (manifest.getContinueCommand().hasIsolate()) {
-      return copyIsolateConfig(manifest.getContinueCommand().getIsolate(), pkgPath);
+      return copyIsolateConfig(
+          manifest.getContinueCommand().getIsolate(), pkgPath, enforceSharedHostLimits);
     }
 
     for (auto action: manifest.getActions()) {
@@ -6511,6 +6622,171 @@ private:
   kj::String compatibilityDate;
 };
 
+struct AccountAdmissionRequest {
+  kj::String appRoot;
+  kj::String grainRoot;
+  kj::String grainId;
+  kj::String packageId;
+  kj::String mainModule;
+  kj::Maybe<kj::String> compatibilityDate;
+  bool isNew;
+};
+
+struct AccountAdmissionResult {
+  kj::String varPath;
+  kj::Own<IsolateRuntimeConfig> runtimeConfig;
+  kj::Array<byte> workerSource;
+};
+
+void initializeAccountGrainDirectory(kj::StringPtr varPath, bool isNew) {
+  if (isNew) {
+    KJ_SYSCALL(mkdir(varPath.cStr(), 0770), varPath);
+    KJ_SYSCALL(mkdir(kj::str(varPath, "/sandbox").cStr(), 0770), varPath);
+  } else {
+    KJ_SYSCALL(access(varPath.cStr(), R_OK | W_OK | X_OK), varPath);
+  }
+
+  int logFd;
+  KJ_SYSCALL(logFd = open(kj::str(varPath, "/log").cStr(),
+      O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0660), varPath);
+  KJ_SYSCALL(close(logFd));
+}
+
+kj::Array<byte> readAccountWorkerSource(kj::StringPtr grainRoot, kj::StringPtr grainId) {
+  int rootFd;
+  KJ_SYSCALL(rootFd = open(grainRoot.cStr(),
+      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainRoot);
+  kj::AutoCloseFd root(rootFd);
+  int grainFd;
+  KJ_SYSCALL(grainFd = openat(root, grainId.cStr(),
+      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainId);
+  kj::AutoCloseFd grain(grainFd);
+  int runtimeFd;
+  KJ_SYSCALL(runtimeFd = openat(grain, "isolate-runtime",
+      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+  kj::AutoCloseFd runtime(runtimeFd);
+  int sourceFd;
+  KJ_SYSCALL(sourceFd = openat(runtime, "worker-source.capnp.bin",
+      O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
+  kj::AutoCloseFd source(sourceFd);
+  struct stat stats;
+  KJ_SYSCALL(fstat(source, &stats));
+  KJ_REQUIRE(S_ISREG(stats.st_mode), "worker source bundle is not a regular file");
+  KJ_REQUIRE(stats.st_size > 0 && stats.st_size <= MAX_ISOLATE_TOTAL_MODULE_BYTES,
+      "worker source bundle exceeds size limit", stats.st_size,
+      MAX_ISOLATE_TOTAL_MODULE_BYTES);
+  auto result = kj::heapArray<byte>(stats.st_size);
+  size_t offset = 0;
+  while (offset < result.size()) {
+    ssize_t count;
+    KJ_SYSCALL(count = read(source, result.begin() + offset, result.size() - offset));
+    KJ_REQUIRE(count > 0, "worker source bundle ended before its declared size");
+    offset += count;
+  }
+  return result;
+}
+
+kj::Own<AccountAdmissionResult> prepareAccountAdmission(AccountAdmissionRequest request) {
+  auto varPath = kj::str(request.grainRoot, "/", request.grainId);
+  auto pkgPath = kj::str(request.appRoot, "/", request.packageId);
+  initializeAccountGrainDirectory(varPath, request.isNew);
+
+  kj::Maybe<kj::StringPtr> compatibilityDate;
+  KJ_IF_MAYBE(value, request.compatibilityDate) {
+    compatibilityDate = *value;
+  }
+  auto runtimeConfig = loadIsolateRuntimeConfig(
+      pkgPath, request.mainModule.asPtr(), compatibilityDate, true);
+  runtimeConfig->topology = IsolateRuntimeTopology::ACCOUNT_SHARED_HOST;
+  prepareRuntimeBundleAndCleanupSockets(varPath, *runtimeConfig);
+  auto workerSource = readAccountWorkerSource(request.grainRoot, request.grainId);
+  return kj::heap<AccountAdmissionResult>(AccountAdmissionResult{
+    kj::mv(varPath), kj::mv(runtimeConfig), kj::mv(workerSource)});
+}
+
+class AccountAdmissionWorker {
+public:
+  AccountAdmissionWorker(): thread([this]() noexcept { run(); }) {
+    auto lock = shared.lockExclusive();
+    lock.wait([](const Shared& state) { return state.executor != nullptr; });
+  }
+
+  ~AccountAdmissionWorker() noexcept(false) {
+    auto executor = getExecutor();
+    executor->executeSync([this]() {
+      auto lock = shared.lockExclusive();
+      KJ_ASSERT(lock->shutdownFulfiller != nullptr);
+      lock->shutdownFulfiller->fulfill();
+      lock->shutdownFulfiller = nullptr;
+    });
+  }
+
+  kj::Promise<kj::Own<AccountAdmissionResult>> admit(AccountAdmissionRequest request) {
+    auto executor = getExecutor();
+    return executor->executeAsync([request = kj::mv(request)]() mutable {
+      auto& clock = kj::systemPreciseMonotonicClock();
+      auto started = clock.now();
+      auto result = prepareAccountAdmission(kj::mv(request));
+      KJ_REQUIRE(clock.now() - started <= 5 * kj::SECONDS,
+          "account worker admission exceeded its five-second deadline");
+      return result;
+    });
+  }
+
+private:
+  struct Shared {
+    kj::Maybe<kj::Own<const kj::Executor>> executor;
+    kj::PromiseFulfiller<void>* shutdownFulfiller = nullptr;
+  };
+
+  kj::MutexGuarded<Shared> shared;
+  kj::Thread thread;
+
+  kj::Own<const kj::Executor> getExecutor() {
+    auto lock = shared.lockExclusive();
+    return KJ_ASSERT_NONNULL(lock->executor)->addRef();
+  }
+
+  void run() noexcept {
+    kj::EventLoop eventLoop;
+    kj::WaitScope waitScope(eventLoop);
+    auto shutdown = kj::newPromiseAndFulfiller<void>();
+    {
+      auto lock = shared.lockExclusive();
+      lock->executor = kj::getCurrentThreadExecutor().addRef();
+      lock->shutdownFulfiller = shutdown.fulfiller.get();
+    }
+    shutdown.promise.wait(waitScope);
+    auto lock = shared.lockExclusive();
+    lock->executor = nullptr;
+  }
+};
+
+class AccountAdmissionPool {
+public:
+  AccountAdmissionPool() {
+    // A small fixed pool keeps filesystem and packed-bundle work off the account event loop while
+    // bounding the memory and thread cost of concurrent grain starts.
+    workers.add(kj::heap<AccountAdmissionWorker>());
+    workers.add(kj::heap<AccountAdmissionWorker>());
+  }
+
+  kj::Promise<kj::Own<AccountAdmissionResult>> admit(AccountAdmissionRequest request) {
+    KJ_REQUIRE(outstanding < MAX_OUTSTANDING,
+        "account worker admission queue is full", outstanding, MAX_OUTSTANDING);
+    ++outstanding;
+    auto& worker = *workers[nextWorker++ % workers.size()];
+    return worker.admit(kj::mv(request))
+        .attach(kj::defer([this]() { --outstanding; }));
+  }
+
+private:
+  static constexpr size_t MAX_OUTSTANDING = 16;
+  kj::Vector<kj::Own<AccountAdmissionWorker>> workers;
+  size_t nextWorker = 0;
+  size_t outstanding = 0;
+};
+
 class IsolateAccountHostImpl final: public IsolateAccountHost::Server {
 public:
   IsolateAccountHostImpl(kj::UnixEventPort& eventPort,
@@ -6533,50 +6809,58 @@ public:
       return kj::READY_NOW;
     }
 
-    auto varPath = kj::str(grainRoot, "/", grainId);
-    auto pkgPath = kj::str(appRoot, "/", packageId);
-    initializeGrainDirectory(varPath, params.getIsNew());
-
-    kj::Maybe<kj::StringPtr> compatibilityDate;
+    kj::Maybe<kj::String> compatibilityDate;
     if (params.getCompatibilityDate().size() > 0) {
-      compatibilityDate = params.getCompatibilityDate();
+      compatibilityDate = kj::str(params.getCompatibilityDate());
     }
-    auto runtimeConfig = loadIsolateRuntimeConfig(
-        pkgPath, params.getMainModule(), compatibilityDate);
-    runtimeConfig->topology = IsolateRuntimeTopology::ACCOUNT_SHARED_HOST;
-    prepareRuntimeBundleAndCleanupSockets(varPath, *runtimeConfig);
-    auto workerSource = readWorkerSource(grainId);
-
     auto core = params.getCore();
-    auto coreRedirector = kj::refcounted<CapRedirector>();
-    coreRedirector->setTarget(core);
-    SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
-        kj::addRef(*coreRedirector)).castAs<SandstormCore>();
-    auto adapterFactory = kj::refcounted<HostedRuntimeAdapterFactory>();
-    auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
-        network, timer, grainId, coreCap, kj::addRef(*adapterFactory));
-
-    auto nativeStart = nativeHost.startGrainRequest();
-    nativeStart.setGrainId(grainId);
-    nativeStart.setWorkerSource(workerSource);
-    nativeStart.setServices(kj::heap<HostedIsolateBindingServices>(
-        kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost)));
+    auto admission = admissionPool.admit(AccountAdmissionRequest{
+      kj::str(appRoot),
+      kj::str(grainRoot),
+      kj::str(grainId),
+      kj::mv(packageId),
+      kj::str(params.getMainModule()),
+      kj::mv(compatibilityDate),
+      params.getIsNew(),
+    });
     context.releaseParams();
-    return nativeStart.send().then([this, context, grainId = kj::mv(grainId),
-        varPath = kj::mv(varPath), runtimeConfig = kj::mv(runtimeConfig),
-        coreRedirector = kj::mv(coreRedirector), runtimeHost = kj::mv(runtimeHost),
-        adapterFactory = kj::mv(adapterFactory), coreCap = kj::mv(coreCap)](auto response) mutable {
-      auto hosted = response.getGrain();
-      HostedIsolate::Client lifecycleHosted = hosted;
-      adapterFactory->setHosted(kj::mv(hosted));
-      auto lifecycle = kj::refcounted<HostedSupervisorLifecycle>(
-          kj::mv(lifecycleHosted),
-          [this, grainId = kj::str(grainId)]() { supervisors.erase(grainId); });
-      Supervisor::Client supervisor = kj::heap<IsolateSupervisorImpl>(eventPort, varPath,
-          kj::mv(coreRedirector), kj::mv(runtimeConfig), kj::mv(runtimeHost),
-          kj::mv(lifecycle), kj::mv(coreCap));
-      context.getResults().setSupervisor(supervisor);
-      supervisors.insert(kj::mv(grainId), kj::mv(supervisor));
+    return admission.then([this, context, grainId = kj::mv(grainId),
+        core = kj::mv(core)](kj::Own<AccountAdmissionResult> admitted) mutable
+        -> kj::Promise<void> {
+      KJ_IF_MAYBE(existing, supervisors.find(grainId)) {
+        context.getResults().setSupervisor(*existing);
+        return kj::READY_NOW;
+      }
+
+      auto coreRedirector = kj::refcounted<CapRedirector>();
+      coreRedirector->setTarget(core);
+      SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
+          kj::addRef(*coreRedirector)).castAs<SandstormCore>();
+      auto adapterFactory = kj::refcounted<HostedRuntimeAdapterFactory>();
+      auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
+          network, timer, grainId, coreCap, kj::addRef(*adapterFactory));
+
+      auto nativeStart = nativeHost.startGrainRequest();
+      nativeStart.setGrainId(grainId);
+      nativeStart.setWorkerSource(admitted->workerSource);
+      nativeStart.setServices(kj::heap<HostedIsolateBindingServices>(
+          kj::addRef(*admitted->runtimeConfig), kj::addRef(*runtimeHost)));
+      return nativeStart.send().then([this, context, grainId = kj::mv(grainId),
+          admitted = kj::mv(admitted), coreRedirector = kj::mv(coreRedirector),
+          runtimeHost = kj::mv(runtimeHost), adapterFactory = kj::mv(adapterFactory),
+          coreCap = kj::mv(coreCap)](auto response) mutable {
+        auto hosted = response.getGrain();
+        HostedIsolate::Client lifecycleHosted = hosted;
+        adapterFactory->setHosted(kj::mv(hosted));
+        auto lifecycle = kj::refcounted<HostedSupervisorLifecycle>(
+            kj::mv(lifecycleHosted),
+            [this, grainId = kj::str(grainId)]() { supervisors.erase(grainId); });
+        Supervisor::Client supervisor = kj::heap<IsolateSupervisorImpl>(eventPort,
+            admitted->varPath, kj::mv(coreRedirector), kj::mv(admitted->runtimeConfig),
+            kj::mv(runtimeHost), kj::mv(lifecycle), kj::mv(coreCap));
+        context.getResults().setSupervisor(supervisor);
+        supervisors.insert(kj::mv(grainId), kj::mv(supervisor));
+      });
     });
   }
 
@@ -6587,60 +6871,13 @@ private:
     return kj::str(value);
   }
 
-  static void initializeGrainDirectory(kj::StringPtr varPath, bool isNew) {
-    if (isNew) {
-      KJ_SYSCALL(mkdir(varPath.cStr(), 0770), varPath);
-      KJ_SYSCALL(mkdir(kj::str(varPath, "/sandbox").cStr(), 0770), varPath);
-    } else {
-      KJ_SYSCALL(access(varPath.cStr(), R_OK | W_OK | X_OK), varPath);
-    }
-
-    int logFd;
-    KJ_SYSCALL(logFd = open(kj::str(varPath, "/log").cStr(),
-        O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0660), varPath);
-    KJ_SYSCALL(close(logFd));
-  }
-
-  kj::Array<byte> readWorkerSource(kj::StringPtr grainId) {
-    static constexpr size_t MAX_WORKER_SOURCE_BYTES = 16 * 1024 * 1024;
-    int rootFd;
-    KJ_SYSCALL(rootFd = open(grainRoot.cStr(),
-        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainRoot);
-    kj::AutoCloseFd root(rootFd);
-    int grainFd;
-    KJ_SYSCALL(grainFd = openat(root, grainId.cStr(),
-        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainId);
-    kj::AutoCloseFd grain(grainFd);
-    int runtimeFd;
-    KJ_SYSCALL(runtimeFd = openat(grain, "isolate-runtime",
-        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-    kj::AutoCloseFd runtime(runtimeFd);
-    int sourceFd;
-    KJ_SYSCALL(sourceFd = openat(runtime, "worker-source.capnp.bin",
-        O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
-    kj::AutoCloseFd source(sourceFd);
-    struct stat stats;
-    KJ_SYSCALL(fstat(source, &stats));
-    KJ_REQUIRE(S_ISREG(stats.st_mode), "worker source bundle is not a regular file");
-    KJ_REQUIRE(stats.st_size > 0 && stats.st_size <= MAX_WORKER_SOURCE_BYTES,
-        "worker source bundle exceeds size limit", stats.st_size, MAX_WORKER_SOURCE_BYTES);
-    auto result = kj::heapArray<byte>(stats.st_size);
-    size_t offset = 0;
-    while (offset < result.size()) {
-      ssize_t count;
-      KJ_SYSCALL(count = read(source, result.begin() + offset, result.size() - offset));
-      KJ_REQUIRE(count > 0, "worker source bundle ended before its declared size");
-      offset += count;
-    }
-    return result;
-  }
-
   kj::UnixEventPort& eventPort;
   kj::Network& network;
   kj::Timer& timer;
   IsolateHost::Client nativeHost;
   kj::String appRoot;
   kj::String grainRoot;
+  AccountAdmissionPool admissionPool;
   kj::HashMap<kj::String, Supervisor::Client> supervisors;
 };
 

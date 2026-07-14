@@ -26,6 +26,9 @@ trap cleanup EXIT
 rm -rf "$root"
 mkdir -p "$app_root" "$grain_root"
 "$spk" unpack "$test_spk" "$app_root/testpackage123"
+cp -a "$app_root/testpackage123" "$app_root/oversizedpackage"
+chmod u+w "$app_root/oversizedpackage/isolate-test/worker.js"
+truncate -s 8388609 "$app_root/oversizedpackage/isolate-test/worker.js"
 ln -s "$sandstorm" "$root/isolate-account-host"
 
 "$root/isolate-account-host" \

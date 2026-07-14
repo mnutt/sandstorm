@@ -36,6 +36,17 @@ Supervisor::Client startGrain(kj::WaitScope& waitScope, IsolateAccountHost::Clie
   return request.send().wait(waitScope).getSupervisor();
 }
 
+void expectStartRejected(kj::WaitScope& waitScope, IsolateAccountHost::Client account,
+    SandstormCore::Client core, kj::StringPtr grainId, kj::StringPtr packageId) {
+  bool rejected = false;
+  try {
+    (void)startGrain(waitScope, account, core, grainId, packageId, true);
+  } catch (const kj::Exception&) {
+    rejected = true;
+  }
+  KJ_REQUIRE(rejected, "oversized worker package was admitted");
+}
+
 void fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
     SandstormCore::Client core, kj::StringPtr path) {
   auto keepAlive = supervisor.keepAliveRequest();
@@ -88,6 +99,9 @@ int main(int argc, char** argv) {
   auto hostId = vatMessage.initRoot<capnp::rpc::twoparty::VatId>();
   hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
   auto account = rpcSystem.bootstrap(hostId).castAs<sandstorm::IsolateAccountHost>();
+
+  sandstorm::expectStartRejected(
+      io.waitScope, account, core, "oversizedgrain", "oversizedpackage");
 
   auto supervisor = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], true);
