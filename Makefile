@@ -384,6 +384,9 @@ isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 		account_socket="$$root/account.sock"; \
 		rm -rf "$$root"; mkdir -p "$$app_root" "$$grain_root"; \
 		bin/spk unpack tests/assets/isolate-test-app.spk "$$app_root/testpackage123"; \
+		cp -a "$$app_root/testpackage123" "$$app_root/oversizedpackage"; \
+		chmod u+w "$$app_root/oversizedpackage/isolate-test/worker.js"; \
+		truncate -s 8388609 "$$app_root/oversizedpackage/isolate-test/worker.js"; \
 		ln -s "$(PWD)/bin/sandstorm" "$$root/isolate-account-host"; \
 		trap 'kill $$account_pid 2>/dev/null || true; wait $$account_pid 2>/dev/null || true; rm -rf "$$root"' EXIT; \
 		"$$root/isolate-account-host" \
