@@ -6263,7 +6263,14 @@ public:
 
   kj::Promise<void> keepAlive() override {
     requireRunning();
-    return hosted.keepAliveRequest().send().ignoreResult();
+    return hosted.keepAliveRequest().send().ignoreResult().catch_(
+        [this](kj::Exception&& exception) -> kj::Promise<void> {
+      running = false;
+      return removeFromAccountLater().then(
+          [exception = kj::mv(exception)]() mutable -> kj::Promise<void> {
+        return kj::Promise<void>(kj::mv(exception));
+      });
+    });
   }
 
   kj::Promise<void> shutdown() override {

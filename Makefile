@@ -376,7 +376,13 @@ isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"' EXIT; \
 		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
 		test -S "$$socket"; \
-		tmp/sandstorm/isolate-host-client "$$socket"
+		tmp/sandstorm/isolate-host-client "$$socket"; \
+		kill $$host_pid; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"; \
+		SANDSTORM_ISOLATE_HOST_IDLE_TIMEOUT_MS=200 \
+			bin/isolate-host "$$socket" & host_pid=$$!; \
+		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
+		test -S "$$socket"; \
+		tmp/sandstorm/isolate-host-client "$$socket" --idle-eviction
 
 isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 		tests/assets/isolate-test-app.spk
