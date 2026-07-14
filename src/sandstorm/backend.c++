@@ -77,10 +77,10 @@ void BackendImpl::taskFailed(kj::Exception&& exception) {
 
 BackendImpl::RunningAccountHost::RunningAccountHost(
     BackendImpl& backend, kj::String ownerId,
-    Subprocess nativeProcess, Subprocess accountProcess,
+    Subprocess accountProcess,
     kj::Own<kj::AsyncIoStream> stream)
     : backend(backend), ownerId(kj::mv(ownerId)),
-      nativeProcess(kj::mv(nativeProcess)), accountProcess(kj::mv(accountProcess)),
+      accountProcess(kj::mv(accountProcess)),
       stream(kj::mv(stream)), client(*this->stream) {}
 
 BackendImpl::RunningAccountHost::~RunningAccountHost() noexcept(false) {
@@ -128,55 +128,52 @@ kj::Promise<IsolateAccountHost::Client> BackendImpl::getAccountHost(kj::StringPt
     KJ_REQUIRE(errno == EEXIST, "failed to create isolate account host directory", hostDir,
         strerror(errno));
   }
-  auto nativeSocket = kj::str(hostDir, "/native.sock");
   auto accountSocket = kj::str(hostDir, "/account.sock");
-  unlink(nativeSocket.cStr());
   unlink(accountSocket.cStr());
 
-  Subprocess::Options nativeOptions({"/bin/isolate-host", nativeSocket});
-  nativeOptions.parentDeathSignal = SIGKILL;
-  Subprocess nativeProcess(kj::mv(nativeOptions));
+  kj::Vector<kj::String> argv;
+  argv.add(kj::heapString("isolate-account-host"));
+  argv.add(kj::heapString("--trust-domain"));
+  argv.add(kj::str(ownerId));
+  argv.add(kj::heapString("--control-socket"));
+  argv.add(kj::str(accountSocket));
+  argv.add(kj::heapString("--native-host"));
+  argv.add(kj::heapString("/bin/isolate-host"));
+  argv.add(kj::heapString("--app-root"));
+  argv.add(kj::heapString("/var/sandstorm/apps"));
+  argv.add(kj::heapString("--grain-root"));
+  argv.add(kj::heapString("/var/sandstorm/grains"));
+  KJ_IF_MAYBE(u, sandboxUid) {
+    argv.add(kj::heapString("--uid"));
+    argv.add(kj::str(*u));
+  }
+  if (logSeccompViolations) argv.add(kj::heapString("--log-seccomp-violations"));
+  argv.add(kj::heapString("--wait-for-startup"));
+  auto startupGate = Pipe::make();
+  Subprocess::Options accountOptions(
+      KJ_MAP(arg, argv) -> const kj::StringPtr { return arg; });
+  accountOptions.executable = "/sandstorm";
+  accountOptions.parentDeathSignal = SIGKILL;
+  accountOptions.stdin = startupGate.readEnd;
+  if (sandboxUid != nullptr) accountOptions.uid = uid_t(0);
+  Subprocess accountProcess(kj::mv(accountOptions));
+  startupGate.readEnd = nullptr;
 
-  auto finalPromise = connectUnixSocket(kj::str(nativeSocket)).then(
-      [this, ownerId = kj::str(ownerId), nativeSocket = kj::mv(nativeSocket),
-       accountSocket = kj::mv(accountSocket), nativeProcess = kj::mv(nativeProcess)]
-      (kj::Own<kj::AsyncIoStream>&& nativeProbe) mutable {
-    nativeProbe = nullptr;
+  KJ_IF_MAYBE(cg, cgroup) {
+    cg->getOrMakeChild(kj::str("isolate-account-", ownerId))
+        .addPid(accountProcess.getPid());
+  }
+  KJ_SYSCALL(write(startupGate.writeEnd, "x", 1));
+  startupGate.writeEnd = nullptr;
 
-    kj::Vector<kj::String> argv;
-    argv.add(kj::heapString("isolate-account-host"));
-    argv.add(kj::heapString("--trust-domain"));
-    argv.add(kj::str(ownerId));
-    argv.add(kj::heapString("--control-socket"));
-    argv.add(kj::str(accountSocket));
-    argv.add(kj::heapString("--native-control-socket"));
-    argv.add(kj::str(nativeSocket));
-    argv.add(kj::heapString("--app-root"));
-    argv.add(kj::heapString("/var/sandstorm/apps"));
-    argv.add(kj::heapString("--grain-root"));
-    argv.add(kj::heapString("/var/sandstorm/grains"));
-    Subprocess::Options accountOptions(
-        KJ_MAP(arg, argv) -> const kj::StringPtr { return arg; });
-    accountOptions.executable = "/sandstorm";
-    accountOptions.parentDeathSignal = SIGKILL;
-    Subprocess accountProcess(kj::mv(accountOptions));
-
-    return connectUnixSocket(kj::str(accountSocket)).then(
-        [this, ownerId = kj::mv(ownerId), nativeProcess = kj::mv(nativeProcess),
-         accountProcess = kj::mv(accountProcess)]
-        (kj::Own<kj::AsyncIoStream>&& connection) mutable {
-      KJ_IF_MAYBE(cg, cgroup) {
-        auto hostCgroup = cg->getOrMakeChild(kj::str("isolate-account-", ownerId));
-        hostCgroup.addPid(nativeProcess.getPid());
-        hostCgroup.addPid(accountProcess.getPid());
-      }
-
-      auto host = kj::heap<RunningAccountHost>(*this, kj::str(ownerId),
-          kj::mv(nativeProcess), kj::mv(accountProcess), kj::mv(connection));
-      auto client = host->getHost();
-      tasks.add(host->onDisconnect().attach(kj::mv(host)));
-      return client;
-    });
+  auto finalPromise = connectUnixSocket(kj::str(accountSocket)).then(
+      [this, ownerId = kj::str(ownerId), accountProcess = kj::mv(accountProcess)]
+      (kj::Own<kj::AsyncIoStream>&& connection) mutable {
+    auto host = kj::heap<RunningAccountHost>(*this, kj::str(ownerId),
+        kj::mv(accountProcess), kj::mv(connection));
+    auto client = host->getHost();
+    tasks.add(host->onDisconnect().attach(kj::mv(host)));
+    return client;
   }).fork();
 
   StartingAccountHost starting = { kj::str(ownerId), kj::mv(finalPromise) };
