@@ -90,10 +90,50 @@ int main(int argc, char** argv) {
 export default {
   async fetch(request, env) {
     console.log("sandstorm-grain-log-marker");
-    if (new URL(request.url).pathname === "/cpu-loop") {
+    const url = new URL(request.url);
+    if (url.pathname === "/cpu-loop") {
       while (true) {}
     }
-    if (new URL(request.url).pathname === "/storage-test") {
+    if (url.pathname === "/local-buffer-source") {
+      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
+        url.searchParams.get("name"));
+      const payload = new Uint8Array([1, 2, 3, 4]);
+      const buffer = payload.buffer;
+      channel.send(buffer);
+      const secondBuffer = new Uint8Array([5, 6]).buffer;
+      channel.send(secondBuffer);
+      const detached = buffer.byteLength === 0 && secondBuffer.byteLength === 0;
+      const reply = Array.from(new Uint8Array(await channel.receive()));
+      return Response.json({ detached, reply });
+    }
+    if (url.pathname === "/local-buffer-target") {
+      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
+        url.searchParams.get("name"));
+      const payload = new Uint8Array(await channel.receive());
+      const received = Array.from(payload);
+      const receivedSecond = Array.from(new Uint8Array(await channel.receive()));
+      payload[0] = 9;
+      const buffer = payload.buffer;
+      channel.send(buffer);
+      return Response.json({ received, receivedSecond, detached: buffer.byteLength === 0 });
+    }
+    if (url.pathname === "/local-buffer-wait-for-close") {
+      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
+        url.searchParams.get("name"));
+      try {
+        await channel.receive();
+        return new Response("unexpected message", { status: 500 });
+      } catch (_) {
+        return new Response("revoked", { status: 410 });
+      }
+    }
+    if (url.pathname === "/local-buffer-close") {
+      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
+        url.searchParams.get("name"));
+      channel.close();
+      return new Response("closed");
+    }
+    if (url.pathname === "/storage-test") {
       if (request.headers.get("X-Sandstorm-Ingress-Test") !== "ingress-ok") {
         return new Response("missing ingress header", { status: 400 });
       }
@@ -228,6 +268,68 @@ export default { fetch() { return new Response("memory limit failed"); } };
     restarted.stopRequest().send().wait(waitScope);
     return 0;
   }
+
+  auto peerStart = host.startGrainRequest();
+  peerStart.setGrainId("peergrain123");
+  peerStart.setServices(services);
+  peerStart.setWorkerSource(sourceBytes);
+  auto peerGrain = peerStart.send().wait(waitScope).getGrain();
+  auto peerHttp = peerGrain.getHttpServiceRequest().send().wait(waitScope);
+  auto peerService = httpFactory.capnpToKj(peerHttp.getService());
+  auto peerClient = kj::newHttpClient(*peerService);
+
+  auto openLink = host.openLocalBufferChannelRequest();
+  openLink.setFirstGrainId("testgrain123");
+  openLink.setFirstName("roundtrip-source");
+  openLink.setSecondGrainId("peergrain123");
+  openLink.setSecondName("roundtrip-target");
+  openLink.send().wait(waitScope);
+
+  kj::HttpHeaders localSourceHeaders(*headerTable);
+  auto localSourceRequest = httpClient->request(kj::HttpMethod::GET,
+      "https://grain.invalid/local-buffer-source?name=roundtrip-source", localSourceHeaders);
+  kj::HttpHeaders localTargetHeaders(*headerTable);
+  auto localTargetRequest = peerClient->request(kj::HttpMethod::GET,
+      "https://grain.invalid/local-buffer-target?name=roundtrip-target", localTargetHeaders);
+  auto localTargetResponse = localTargetRequest.response.wait(waitScope);
+  KJ_REQUIRE(localTargetResponse.statusCode == 200,
+      "local buffer target request failed", localTargetResponse.statusCode);
+  KJ_REQUIRE(localTargetResponse.body->readAllText().wait(waitScope) ==
+          "{\"received\":[1,2,3,4],\"receivedSecond\":[5,6],\"detached\":true}",
+      "local buffer target did not receive FIFO messages and detach the returned backing store");
+  auto localSourceResponse = localSourceRequest.response.wait(waitScope);
+  KJ_REQUIRE(localSourceResponse.statusCode == 200,
+      "local buffer source request failed", localSourceResponse.statusCode);
+  KJ_REQUIRE(localSourceResponse.body->readAllText().wait(waitScope) ==
+          "{\"detached\":true,\"reply\":[9,2,3,4]}",
+      "local buffer source did not receive the returned backing store");
+
+  auto openRevokedLink = host.openLocalBufferChannelRequest();
+  openRevokedLink.setFirstGrainId("testgrain123");
+  openRevokedLink.setFirstName("revoked-source");
+  openRevokedLink.setSecondGrainId("peergrain123");
+  openRevokedLink.setSecondName("revoked-target");
+  openRevokedLink.send().wait(waitScope);
+
+  kj::HttpHeaders revokedSourceHeaders(*headerTable);
+  auto revokedSourceRequest = httpClient->request(kj::HttpMethod::GET,
+      "https://grain.invalid/local-buffer-wait-for-close?name=revoked-source",
+      revokedSourceHeaders);
+  kj::HttpHeaders revokedTargetHeaders(*headerTable);
+  auto revokedTargetRequest = peerClient->request(kj::HttpMethod::GET,
+      "https://grain.invalid/local-buffer-close?name=revoked-target", revokedTargetHeaders);
+  auto revokedTargetResponse = revokedTargetRequest.response.wait(waitScope);
+  KJ_REQUIRE(revokedTargetResponse.statusCode == 200,
+      "local buffer close request failed", revokedTargetResponse.statusCode);
+  KJ_REQUIRE(revokedTargetResponse.body->readAllText().wait(waitScope) == "closed",
+      "local buffer target did not close its endpoint");
+  auto revokedSourceResponse = revokedSourceRequest.response.wait(waitScope);
+  KJ_REQUIRE(revokedSourceResponse.statusCode == 410,
+      "local buffer revocation did not reject an in-flight receive",
+      revokedSourceResponse.statusCode);
+  KJ_REQUIRE(revokedSourceResponse.body->readAllText().wait(waitScope) == "revoked",
+      "local buffer revocation returned the wrong error response");
+  peerGrain.stopRequest().send().wait(waitScope);
 
   kj::HttpHeaders requestHeaders(*headerTable);
   requestHeaders.set(ingressTestHeader, "ingress-ok"_kj);

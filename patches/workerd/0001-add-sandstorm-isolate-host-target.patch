@@ -2,7 +2,7 @@ diff --git a/src/workerd/server/BUILD.bazel b/src/workerd/server/BUILD.bazel
 index b5a07e1..a4c345e 100644
 --- a/src/workerd/server/BUILD.bazel
 +++ b/src/workerd/server/BUILD.bazel
-@@ -82,6 +82,38 @@ wd_cc_binary(
+@@ -82,6 +82,39 @@ wd_cc_binary(
      ],
  )
 -
@@ -17,6 +17,7 @@ index b5a07e1..a4c345e 100644
 +        ":sandstorm-isolate-worker-source_capnp",
 +        ":server",
 +        ":v8-platform-impl",
++        "//src/workerd/api:worker-loader",
 +        "//src/workerd/jsg",
 +        "//src/workerd/util",
 +        "@capnp-cpp//src/capnp:capnp-rpc",
@@ -277,7 +278,164 @@ index 742a5d3..77111df 100644
 +            return holder.get(js, "capability");
 +          };
 +          env.populateJsObject(js, jsg::JsObject(target), materialize);
-         },
+        },
+diff --git a/src/workerd/api/worker-loader.h b/src/workerd/api/worker-loader.h
+index c97cb1be..36b50192 100644
+--- a/src/workerd/api/worker-loader.h
++++ b/src/workerd/api/worker-loader.h
+@@ -5,6 +5,7 @@
+ #include <workerd/io/io-channels.h>
+ #include <workerd/io/io-own.h>
+ #include <workerd/io/worker.h>
++#include <workerd/jsg/buffersource.h>
+ #include <workerd/jsg/setup.h>
+ 
+ namespace workerd::api {
+@@ -12,6 +13,57 @@ namespace workerd::api {
+ class Fetcher;
+ class DurableObjectClass;
+ 
++// A local-only byte channel supplied by an in-process embedder. Backing stores sent through the
++// channel are detached from the sender and may be installed directly in another V8 isolate in the
++// same isolate group. The channel deliberately has no serialization support.
++class LocalBufferChannelEndpoint {
++ public:
++  virtual ~LocalBufferChannelEndpoint() noexcept(false) = default;
++  virtual void send(jsg::BackingStore buffer) = 0;
++  virtual kj::Promise<jsg::BackingStore> receive() = 0;
++  virtual void close() = 0;
++};
++
++class LocalBufferChannelProvider: public kj::AtomicRefcounted {
++ public:
++  virtual ~LocalBufferChannelProvider() noexcept(false) = default;
++  virtual kj::Own<LocalBufferChannelEndpoint> take(kj::StringPtr name) = 0;
++};
++
++class LocalBufferChannel final: public jsg::Object {
++ public:
++  explicit LocalBufferChannel(IoOwn<LocalBufferChannelEndpoint> endpoint)
++      : endpoint(kj::mv(endpoint)) {}
++
++  void send(jsg::Lock& js, jsg::BufferSource buffer);
++  jsg::Promise<jsg::BufferSource> receive(jsg::Lock& js);
++  void close();
++
++  JSG_RESOURCE_TYPE(LocalBufferChannel) {
++    JSG_METHOD(send);
++    JSG_METHOD(receive);
++    JSG_METHOD(close);
++  }
++
++ private:
++  kj::Maybe<IoOwn<LocalBufferChannelEndpoint>> endpoint;
++};
++
++class LocalBufferChannelBroker final: public jsg::Object {
++ public:
++  explicit LocalBufferChannelBroker(kj::Own<LocalBufferChannelProvider> provider)
++      : provider(kj::mv(provider)) {}
++
++  jsg::Ref<LocalBufferChannel> accept(jsg::Lock& js, kj::String name);
++
++  JSG_RESOURCE_TYPE(LocalBufferChannelBroker) {
++    JSG_METHOD(accept);
++  }
++
++ private:
++  kj::Own<LocalBufferChannelProvider> provider;
++};
++
+ // JS stub pointing to a remote Worker loaded using WorkerLoader. This is not a stub for a specific
+ // entrypoint, but instead the entire Worker, allowing the caller to call any entrypoint (and
+ // specify arbitrary props).
+@@ -151,6 +203,7 @@ class WorkerLoader: public jsg::Object {
+ 
+ #define EW_WORKER_LOADER_ISOLATE_TYPES                                                             \
+   api::WorkerStub, api::WorkerStub::EntrypointOptions, api::WorkerLoader,                          \
+-      api::WorkerLoader::Module, api::WorkerLoader::WorkerCode, workerd::ResourceLimits
++      api::WorkerLoader::Module, api::WorkerLoader::WorkerCode, api::LocalBufferChannel,           \
++      api::LocalBufferChannelBroker, workerd::ResourceLimits
+ 
+ }  // namespace workerd::api
+diff --git a/src/workerd/api/worker-loader.c++ b/src/workerd/api/worker-loader.c++
+index 89396d57..6169002e 100644
+--- a/src/workerd/api/worker-loader.c++
++++ b/src/workerd/api/worker-loader.c++
+@@ -10,6 +10,34 @@
+ 
+ namespace workerd::api {
+ 
++void LocalBufferChannel::send(jsg::Lock& js, jsg::BufferSource buffer) {
++  JSG_REQUIRE(buffer.canDetach(js), DOMDataCloneError,
++      "Local buffer channels require a detachable ArrayBuffer");
++  auto& active = JSG_REQUIRE_NONNULL(endpoint, Error, "Local buffer channel is closed");
++  active->send(buffer.detach(js));
++}
++
++jsg::Promise<jsg::BufferSource> LocalBufferChannel::receive(jsg::Lock& js) {
++  auto& active = JSG_REQUIRE_NONNULL(endpoint, Error, "Local buffer channel is closed");
++  return IoContext::current().awaitIo(js, active->receive(),
++      [](jsg::Lock& js, jsg::BackingStore buffer) {
++    return jsg::BufferSource(js, kj::mv(buffer));
++  });
++}
++
++void LocalBufferChannel::close() {
++  KJ_IF_SOME(active, endpoint) {
++    active->close();
++    endpoint = kj::none;
++  }
++}
++
++jsg::Ref<LocalBufferChannel> LocalBufferChannelBroker::accept(
++    jsg::Lock& js, kj::String name) {
++  return js.alloc<LocalBufferChannel>(
++      IoContext::current().addObject(provider->take(name)));
++}
++
+ jsg::Ref<Fetcher> WorkerStub::getEntrypoint(jsg::Lock& js,
+     jsg::Optional<kj::Maybe<kj::String>> name,
+     jsg::Optional<EntrypointOptions> options) {
+diff --git a/src/workerd/server/workerd-api.h b/src/workerd/server/workerd-api.h
+index 40e3abb3..ac8de3e1 100644
+--- a/src/workerd/server/workerd-api.h
++++ b/src/workerd/server/workerd-api.h
+@@ -28,6 +28,7 @@ class ModuleRegistry;
+ 
+ namespace workerd::api {
+ class MemoryCacheProvider;
++class LocalBufferChannelProvider;
+ }
+ 
+ namespace workerd::server {
+@@ -63,6 +64,8 @@ class WorkerdApi final: public Worker::Api {
+       jsg::Lock& lock) const override;
+   jsg::JsObject wrapExecutionContext(
+       jsg::Lock& lock, jsg::Ref<api::ExecutionContext> ref) const override;
++  jsg::JsValue wrapLocalBufferChannelBroker(
++      jsg::Lock& lock, kj::Own<api::LocalBufferChannelProvider> provider) const;
+   const jsg::IsolateObserver& getObserver() const override;
+   void setIsolateObserver(IsolateObserver&) override;
+ 
+diff --git a/src/workerd/server/workerd-api.c++ b/src/workerd/server/workerd-api.c++
+index c48b0181..f59aabf4 100644
+--- a/src/workerd/server/workerd-api.c++
++++ b/src/workerd/server/workerd-api.c++
+@@ -368,6 +368,13 @@ jsg::JsObject WorkerdApi::wrapExecutionContext(
+       kj::downcast<JsgWorkerdIsolate::Lock>(lock).wrap(lock.v8Context(), kj::mv(ref)));
+ }
+ 
++jsg::JsValue WorkerdApi::wrapLocalBufferChannelBroker(
++    jsg::Lock& lock, kj::Own<api::LocalBufferChannelProvider> provider) const {
++  auto& typedLock = kj::downcast<JsgWorkerdIsolate::Lock>(lock);
++  return jsg::JsValue(typedLock.wrap(lock.v8Context(),
++      lock.alloc<api::LocalBufferChannelBroker>(kj::mv(provider))));
++}
++
+ const jsg::IsolateObserver& WorkerdApi::getObserver() const {
+   return *impl->observer;
+ }
 diff --git a/src/workerd/server/server.h b/src/workerd/server/server.h
 index 1a5ab976..ce0f7d31 100644
 --- a/src/workerd/server/server.h
@@ -590,6 +748,40 @@ index a4015d26..6627ffbf 100644
  kj::Promise<kj::Array<byte>> IoChannelFactory::SubrequestChannel::getToken(
      ChannelTokenUsage usage) {
    KJ_SWITCH_ONEOF(getTokenMaybeSync(usage)) {
+@@ -206,6 +222,19 @@ resolveCap(kj::Own<Frankenvalue::CapTableEntry> cap) {
+     KJ_FAIL_ASSERT("unknown type in Frankenvalue", typeid(ref).name());
+   }
+ }
++
++kj::OneOf<kj::Own<Frankenvalue::CapTableEntry>,
++    kj::Promise<kj::Own<Frankenvalue::CapTableEntry>>>
++resolveCapForCustomEnv(kj::Own<Frankenvalue::CapTableEntry> cap) {
++  // A custom env compiler owns the interpretation of cap-table types that are not workerd I/O
++  // channels. Continue resolving the standard channel types, but preserve embedder-owned entries
++  // for that compiler instead of rejecting them before compilation begins.
++  if (kj::tryDowncast<IoChannelFactory::SubrequestChannel>(*cap) != kj::none ||
++      kj::tryDowncast<IoChannelFactory::ActorClassChannel>(*cap) != kj::none) {
++    return resolveCap(kj::mv(cap));
++  }
++  return kj::mv(cap);
++}
+ 
+ }  // namespace
+ 
+@@ -292,7 +319,12 @@ kj::OneOf<kj::Array<byte>, kj::Promise<kj::Array<byte>>> IoChannelFactory::Actor
+ kj::Promise<void> DynamicWorkerSource::ensureAllResolved() {
+   kj::Vector<kj::Promise<void>> promises;
+ 
+-  KJ_IF_SOME(promise, env.resolveCaps(resolveCap)) {
++  auto envPromise = envCompiler != kj::none
++      ? env.resolveCaps(resolveCapForCustomEnv)
++      : env.resolveCaps(resolveCap);
++  // `resolveCaps()` mutates the table synchronously and only returns a promise when one or more
++  // standard workerd channels still need asynchronous resolution.
++  KJ_IF_SOME(promise, envPromise) {
+     promises.add(kj::mv(promise));
+   }
+ 
 diff --git a/src/workerd/io/worker.h b/src/workerd/io/worker.h
 index e2e8321..693a4c88 100644
 --- a/src/workerd/io/worker.h
@@ -618,6 +810,28 @@ diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
 index 77111df..01fa3568 100644
 --- a/src/workerd/server/server.c++
 +++ b/src/workerd/server/server.c++
+@@ -4391,7 +4391,9 @@ class Server::WorkerLoaderNamespace::WorkerStubImpl final: public WorkerStubChan
+       // Rewrite the capabilities in `env` in order to build the I/O channel table.
+       kj::Vector<FutureSubrequestChannel> subrequestChannels;
+       kj::Vector<FutureActorClassChannel> actorClassChannels;
+-      source.env.rewriteCaps([&](kj::Own<Frankenvalue::CapTableEntry> entry) {
++      source.env.rewriteCaps(
++          [&](kj::Own<Frankenvalue::CapTableEntry> entry)
++              -> kj::Own<Frankenvalue::CapTableEntry> {
+         if (auto channel = dynamic_cast<IoChannelFactory::SubrequestChannel*>(entry.get())) {
+           uint channelNumber =
+               subrequestChannels.size() + IoContext::SPECIAL_SUBREQUEST_CHANNEL_COUNT;
+@@ -4409,7 +4409,9 @@ class Server::WorkerLoaderNamespace::WorkerStubImpl final: public WorkerStubChan
+           });
+           return kj::heap<IoChannelCapTableEntry>(
+               IoChannelCapTableEntry::ACTOR_CLASS, channelNumber);
+-        } else {
++        } else if (source.envCompiler != kj::none) {
++          return entry;
++        } else {
+           // Generally, it shouldn't be possible to get here, but just in case, let's at least
+           // provide some sort of error, although it's a vague one.
+           JSG_FAIL_REQUIRE(DOMDataCloneError,
 @@ -4450,24 +4450,11 @@ class Server::WorkerLoaderNamespace::WorkerStubImpl final: public WorkerStubChan
          },
 
