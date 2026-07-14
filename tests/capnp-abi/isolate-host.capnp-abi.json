@@ -12,7 +12,7 @@
           "ordinal": 0,
           "paramStructId": "0xb5a7ca26b34ff476",
           "resultStructId": "0x8fdf1a99638978ff",
-          "params": [{"name": "grainId", "type": "Text"}, {"name": "services", "type": "IsolateBindingServices"}],
+          "params": [{"name": "grainId", "type": "Text"}, {"name": "services", "type": "IsolateBindingServices"}, {"name": "workerSource", "type": "Data"}],
           "results": [{"name": "grain", "type": "HostedIsolate"}]
         }
       ]
@@ -22,6 +22,14 @@
       "interfaceId": "0xd8b8ffcb9dbf83ea",
       "superclasses": [],
       "methods": [
+        {
+          "name": "getService",
+          "ordinal": 0,
+          "paramStructId": "0xdf2f3459f08c99bf",
+          "resultStructId": "0x9858a4fb8b22b9cb",
+          "params": [{"name": "binding", "type": "Binding"}],
+          "results": [{"name": "service", "type": "Http.HttpService"}]
+        }
       ]
     },
     {

@@ -36,8 +36,8 @@ Supervisor::Client startGrain(kj::WaitScope& waitScope, IsolateAccountHost::Clie
   return request.send().wait(waitScope).getSupervisor();
 }
 
-void fetchEcho(kj::WaitScope& waitScope, Supervisor::Client supervisor,
-    SandstormCore::Client core) {
+void fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
+    SandstormCore::Client core, kj::StringPtr path) {
   auto keepAlive = supervisor.keepAliveRequest();
   keepAlive.setCore(core);
   keepAlive.send().wait(waitScope);
@@ -57,7 +57,7 @@ void fetchEcho(kj::WaitScope& waitScope, Supervisor::Client supervisor,
   auto session = sessionRequest.send().wait(waitScope).getSession().castAs<WebSession>();
 
   auto get = session.getRequest();
-  get.setPath("echo");
+  get.setPath(path);
   get.setIgnoreBody(false);
   auto context = get.initContext();
   context.setResponseStream(kj::heap<IgnoreByteStream>());
@@ -91,7 +91,14 @@ int main(int argc, char** argv) {
 
   auto supervisor = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], true);
-  sandstorm::fetchEcho(io.waitScope, supervisor, core);
+  sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
+  sandstorm::fetchPath(io.waitScope, supervisor, core, "storage-helper-self-test");
+
+  // A second live grain proves that the account control plane and native workerd host are
+  // genuinely multi-tenant rather than merely a different one-process-per-grain launcher.
+  auto second = sandstorm::startGrain(
+      io.waitScope, account, core, "testgrain456", argv[3], true);
+  sandstorm::fetchPath(io.waitScope, second, core, "echo");
   supervisor.shutdownRequest().send().wait(io.waitScope);
 
   bool rejectedAfterShutdown = false;
@@ -104,6 +111,8 @@ int main(int argc, char** argv) {
 
   auto restarted = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], false);
-  sandstorm::fetchEcho(io.waitScope, restarted, core);
+  sandstorm::fetchPath(io.waitScope, restarted, core, "echo");
+  sandstorm::fetchPath(io.waitScope, restarted, core, "storage-helper-self-test");
+  sandstorm::fetchPath(io.waitScope, second, core, "echo");
   return 0;
 }

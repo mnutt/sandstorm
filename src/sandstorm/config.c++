@@ -268,6 +268,15 @@ Config readConfig(const char *path, bool parseUids) {
       config.useExperimentalSeccompFilter = value == "true" || value == "yes";
     } else if (key == "LOG_SECCOMP_VIOLATIONS") {
       config.logSeccompViolations = value == "true" || value == "yes";
+    } else if (key == "ISOLATE_HOSTING_MODE") {
+      if (value == "account") {
+        config.isolateHostingMode = IsolateHostingMode::ACCOUNT;
+      } else if (value == "per-grain") {
+        config.isolateHostingMode = IsolateHostingMode::PER_GRAIN;
+      } else {
+        KJ_FAIL_REQUIRE("invalid config value ISOLATE_HOSTING_MODE; expected account or per-grain",
+            value);
+      }
     } else if (key == "ALLOW_LEGACY_RELAXED_CSP") {
       KJ_LOG(WARNING,
           "The option ALLOW_LEGACY_RELAXED_CSP will be removed "

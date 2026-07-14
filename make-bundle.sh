@@ -124,6 +124,7 @@ mkdir -p bundle/bin
 cp bin/sandstorm-http-bridge bundle/bin/sandstorm-http-bridge
 cp bin/sandstorm bundle/sandstorm
 cp bin/workerd bundle/bin/workerd
+cp bin/isolate-host bundle/bin/isolate-host
 cp $METEOR_DEV_BUNDLE/bin/node bundle/bin
 
 # We used to pull mongodb out of the meteor dev bundle, but we need to figure out how to safely

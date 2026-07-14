@@ -370,36 +370,12 @@ isolate-host: bin/isolate-host
 
 isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 	@socket="$(PWD)/tmp/isolate-host-control-test.sock"; \
-		grain_root="$(PWD)/tmp/isolate-host-control-test-grains"; \
 		rm -f "$$socket"; \
-		rm -rf "$$grain_root"; \
-		mkdir -p "$$grain_root/testgrain123/isolate-runtime"; \
-		mkdir -p "$$grain_root/cpugrain123/isolate-runtime"; \
-		mkdir -p "$$grain_root/memorygrain123/isolate-runtime"; \
-		mkdir -p "$$grain_root/missingmanifest/isolate-runtime"; \
-		mkdir -p "$$grain_root/missingsource/isolate-runtime"; \
-		mkdir -p "$$grain_root/invalidjson/isolate-runtime"; \
-		mkdir -p "$$grain_root/unsupportedversion/isolate-runtime"; \
-		mkdir -p "$$grain_root/oversizedbundle/isolate-runtime"; \
-		printf '{}\n' > "$$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"; \
-		printf '{}\n' > "$$grain_root/cpugrain123/isolate-runtime/runtime-manifest.json"; \
-		printf '{}\n' > "$$grain_root/memorygrain123/isolate-runtime/runtime-manifest.json"; \
-		printf '{}\n' > "$$grain_root/missingsource/isolate-runtime/runtime-manifest.json"; \
-		printf '{}\n' > "$$grain_root/invalidjson/isolate-runtime/runtime-manifest.json"; \
-		printf '{}\n' > "$$grain_root/unsupportedversion/isolate-runtime/runtime-manifest.json"; \
-		printf '{}\n' > "$$grain_root/oversizedbundle/isolate-runtime/runtime-manifest.json"; \
-		for i in $$(seq -w 0 15); do \
-			mkdir -p "$$grain_root/admission$$i/isolate-runtime"; \
-			printf '{}\n' > "$$grain_root/admission$$i/isolate-runtime/runtime-manifest.json"; \
-			mkfifo "$$grain_root/admission$$i/isolate-runtime/worker-source.capnp.bin"; \
-		done; \
-		mkdir -p "$$grain_root/admission-overload"; \
-		ln -s testgrain123 "$$grain_root/linkgrain123"; \
-		bin/isolate-host "$$socket" "$$grain_root" & host_pid=$$!; \
-		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"; rm -rf "$$grain_root"' EXIT; \
+		bin/isolate-host "$$socket" & host_pid=$$!; \
+		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"' EXIT; \
 		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
 		test -S "$$socket"; \
-		tmp/sandstorm/isolate-host-client "$$socket" "$$grain_root"
+		tmp/sandstorm/isolate-host-client "$$socket"
 
 isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 		tests/assets/isolate-test-app.spk
@@ -409,7 +385,7 @@ isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 		rm -rf "$$root"; mkdir -p "$$app_root" "$$grain_root"; \
 		bin/spk unpack tests/assets/isolate-test-app.spk "$$app_root/testpackage123"; \
 		ln -s "$(PWD)/bin/sandstorm" "$$root/isolate-account-host"; \
-		bin/isolate-host "$$native_socket" "$$grain_root" & native_pid=$$!; \
+		bin/isolate-host "$$native_socket" & native_pid=$$!; \
 		trap 'kill $$account_pid $$native_pid 2>/dev/null || true; wait $$account_pid $$native_pid 2>/dev/null || true; rm -rf "$$root"' EXIT; \
 		for attempt in $$(seq 1 100); do test -S "$$native_socket" && break; sleep 0.05; done; \
 		test -S "$$native_socket"; \
@@ -421,7 +397,11 @@ isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 		for attempt in $$(seq 1 100); do test -S "$$account_socket" && break; sleep 0.05; done; \
 		test -S "$$account_socket"; \
 		tmp/sandstorm/isolate-account-host-client \
-			"$$account_socket" testgrain123 testpackage123
+			"$$account_socket" testgrain123 testpackage123; \
+		grep -q '"topology": "accountSharedHost"' \
+			"$$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"; \
+		grep -q '"topology": "accountSharedHost"' \
+			"$$grain_root/testgrain456/isolate-runtime/runtime-manifest.json"
 
 # ====================================================================
 # fetch capnp-es
@@ -570,10 +550,11 @@ shell-build: shell/imports/* shell/imports/*/* shell/imports/*/*/* shell/imports
 # ====================================================================
 # Bundle
 
-bundle: tmp/.ekam-run shell-build verify-workerd-runtime make-bundle.sh localedata-C meteor-bundle-main.js
+bundle: tmp/.ekam-run shell-build verify-workerd-runtime isolate-host make-bundle.sh localedata-C meteor-bundle-main.js
 	@$(call color,bundle)
 	@CC=$(CC) ./make-bundle.sh
 	cmp -s bundle/bin/workerd bin/workerd
+	cmp -s bundle/bin/isolate-host bin/isolate-host
 
 sandstorm-$(BUILD).tar.xz: bundle
 	@$(call color,compress release bundle)

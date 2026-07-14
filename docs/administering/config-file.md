@@ -186,6 +186,20 @@ A boolean (true/false or yes/no) that controls whether violations of the
 seccomp filter should be logged to the kernel's message log, when using
 the new experimental seccomp filter. Defaults to false.
 
+### ISOLATE_HOSTING_MODE
+
+Controls the process isolation policy for apps using Sandstorm's isolate runtime. `account` shares
+one workerd process among an account's grains. This improves density but means a workerd or V8
+security failure can affect other isolate grains owned by the same account. `per-grain`, the
+default while the shared host remains experimental, runs a separate workerd sidecar for every
+grain and is the paranoid option with higher process and memory overhead.
+
+Example:
+
+```
+ISOLATE_HOSTING_MODE=account
+```
+
 ### ALLOW_LEGACY_RELAXED_CSP
 
 A boolean (true/false or yes/no) that controls whether to allow apps to

@@ -227,6 +227,11 @@ void keepAliveExistingIsolateSupervisor(kj::StringPtr varPath) {
   _exit(0);
 }
 
+enum class IsolateRuntimeTopology {
+  PER_GRAIN_SIDECAR,
+  ACCOUNT_SHARED_HOST,
+};
+
 struct IsolateRuntimeConfig final: public kj::Refcounted {
   enum class ModuleType {
     ES_MODULE,
@@ -276,16 +281,15 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
   kj::Vector<Binding> bindings;
-};
-
-enum class IsolateRuntimeTopology {
-  PER_GRAIN_SIDECAR,
+  IsolateRuntimeTopology topology = IsolateRuntimeTopology::PER_GRAIN_SIDECAR;
 };
 
 kj::StringPtr isolateRuntimeTopologyName(IsolateRuntimeTopology topology) {
   switch (topology) {
     case IsolateRuntimeTopology::PER_GRAIN_SIDECAR:
       return "perGrainSidecar";
+    case IsolateRuntimeTopology::ACCOUNT_SHARED_HOST:
+      return "accountSharedHost";
   }
 
   KJ_UNREACHABLE;
@@ -432,6 +436,8 @@ public:
   virtual bool isAvailable(const IsolateRuntimeConfig& config) = 0;
   virtual kj::Promise<kj::Own<kj::AsyncIoStream>> connect(
       IsolateRuntimeConfig& config, struct IsolateRuntimeHost& host) = 0;
+  virtual capnp::HttpService::Client exportHttpService(
+      kj::Own<kj::HttpService> service) = 0;
   virtual kj::Own<IsolateRuntimeAdapter> make(
       kj::Own<IsolateRuntimeConfig> config, kj::Own<struct IsolateRuntimeHost> host) = 0;
 };
@@ -1293,7 +1299,7 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   appendJsonField(manifest, "compatibilityDate", config.compatibilityDate);
   manifest.addAll(kj::StringPtr(",\n  "));
   appendJsonField(manifest, "topology",
-      isolateRuntimeTopologyName(IsolateRuntimeTopology::PER_GRAIN_SIDECAR));
+      isolateRuntimeTopologyName(config.topology));
 
   manifest.addAll(kj::StringPtr(",\n  \"compatibilityFlags\": ["));
   for (auto i: kj::indices(config.compatibilityFlags)) {
@@ -2810,7 +2816,7 @@ private:
       WebSession::OpenWebSocketResults::Builder results) {
     KJ_LOG(WARNING, "Forwarding isolate WebSocket request to sidecar.", request.path);
     return host->runtimeAdapterFactory->connect(*config, *host)
-        .then([this, request = kj::mv(request), clientStream = kj::mv(clientStream), results](
+        .then([request = kj::mv(request), clientStream = kj::mv(clientStream), results](
             kj::Own<kj::AsyncIoStream>&& stream) mutable -> kj::Promise<void> {
       auto rawRequest = renderSidecarWebSocketUpgradeRequest(request);
         auto& streamRef = *stream;
@@ -2898,6 +2904,10 @@ public:
         .then([](kj::Own<kj::NetworkAddress>&& address) { return address->connect(); });
   }
 
+  capnp::HttpService::Client exportHttpService(kj::Own<kj::HttpService>) override {
+    KJ_FAIL_REQUIRE("sidecar runtime adapters cannot export in-process binding services");
+  }
+
   kj::Own<IsolateRuntimeAdapter> make(
       kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host) override {
     return kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host));
@@ -2909,10 +2919,16 @@ private:
 
 class HostedRuntimeAdapterFactory final: public IsolateRuntimeAdapterFactory {
 public:
-  explicit HostedRuntimeAdapterFactory(HostedIsolate::Client hosted)
+  HostedRuntimeAdapterFactory()
       : httpFactory(byteStreamFactory, headerTableBuilder),
-        headerTable(headerTableBuilder.build()),
-        hosted(kj::mv(hosted)) {}
+        headerTable(headerTableBuilder.build()) {}
+
+  explicit HostedRuntimeAdapterFactory(HostedIsolate::Client hosted)
+      : HostedRuntimeAdapterFactory() {
+    setHosted(kj::mv(hosted));
+  }
+
+  void setHosted(HostedIsolate::Client value) { hosted = kj::mv(value); }
 
   kj::HttpHeaderTable& getHeaderTable() override { return *headerTable; }
   bool isConfigured(const IsolateRuntimeConfig&) override { return true; }
@@ -2920,7 +2936,8 @@ public:
 
   kj::Promise<kj::Own<kj::AsyncIoStream>> connect(
       IsolateRuntimeConfig&, IsolateRuntimeHost& host) override {
-    return hosted.getHttpServiceRequest().send().then(
+    auto& hostedClient = KJ_REQUIRE_NONNULL(hosted, "hosted isolate ingress is not ready");
+    return hostedClient.getHttpServiceRequest().send().then(
         [this, &host](auto response) mutable -> kj::Own<kj::AsyncIoStream> {
       auto service = httpFactory.capnpToKj(response.getService());
       auto pipe = kj::newTwoWayPipe();
@@ -2929,6 +2946,10 @@ public:
           .attach(kj::mv(server), kj::mv(service));
       return kj::mv(pipe.ends[1]).attach(kj::mv(serverTask));
     });
+  }
+
+  capnp::HttpService::Client exportHttpService(kj::Own<kj::HttpService> service) override {
+    return httpFactory.kjToCapnp(kj::mv(service));
   }
 
   kj::Own<IsolateRuntimeAdapter> make(
@@ -2941,7 +2962,7 @@ private:
   kj::HttpHeaderTable::Builder headerTableBuilder;
   capnp::HttpOverCapnpFactory httpFactory;
   kj::Own<kj::HttpHeaderTable> headerTable;
-  HostedIsolate::Client hosted;
+  kj::Maybe<HostedIsolate::Client> hosted;
 };
 
 kj::Own<WebSession::RequestStream::Server> WorkerdRuntimeAdapter::startRequestStream(
@@ -5541,7 +5562,7 @@ private:
     appendJsonField(json, "compatibilityDate", config.compatibilityDate);
     json.addAll(kj::StringPtr(",\n  "));
     appendJsonField(json, "topology",
-        isolateRuntimeTopologyName(IsolateRuntimeTopology::PER_GRAIN_SIDECAR));
+        isolateRuntimeTopologyName(config.topology));
     json.addAll(kj::StringPtr(",\n  \"compatibilityFlags\": ["));
     for (auto i: kj::indices(config.compatibilityFlags)) {
       if (i > 0) json.addAll(kj::StringPtr(", "));
@@ -5994,6 +6015,35 @@ private:
   }
 };
 
+class HostedIsolateBindingServices final: public IsolateBindingServices::Server {
+public:
+  HostedIsolateBindingServices(
+      kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host)
+      : config(kj::mv(config)), host(kj::mv(host)) {}
+
+  kj::Promise<void> getService(GetServiceContext context) override {
+    kj::Own<kj::HttpService> service;
+    switch (context.getParams().getBinding()) {
+      case IsolateBindingServices::Binding::SANDSTORM_API:
+        service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host);
+        break;
+      case IsolateBindingServices::Binding::STORAGE:
+        service = kj::heap<StorageBindingService>(host->headerTable, *config);
+        break;
+      case IsolateBindingServices::Binding::POWERBOX:
+        service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host, true);
+        break;
+    }
+    context.getResults().setService(
+        host->runtimeAdapterFactory->exportHttpService(kj::mv(service)));
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Own<IsolateRuntimeConfig> config;
+  kj::Own<IsolateRuntimeHost> host;
+};
+
 class IsolateSupervisorLifecycle: public kj::Refcounted {
 public:
   virtual void requireRunning() {}
@@ -6300,28 +6350,6 @@ private:
   };
 };
 
-Supervisor::Client newHostedIsolateSupervisor(kj::UnixEventPort& eventPort,
-    kj::Network& network,
-    kj::Timer& timer,
-    kj::StringPtr grainId,
-    kj::StringPtr varPath,
-    kj::Own<IsolateRuntimeConfig> runtimeConfig,
-    HostedIsolate::Client hosted,
-    SandstormCore::Client sandstormCore,
-    kj::Function<void()> onShutdown) {
-  auto coreRedirector = kj::refcounted<CapRedirector>();
-  coreRedirector->setTarget(sandstormCore);
-  SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
-      kj::addRef(*coreRedirector)).castAs<SandstormCore>();
-  HostedIsolate::Client lifecycleHosted = hosted;
-  auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(network, timer, grainId, coreCap,
-      kj::refcounted<HostedRuntimeAdapterFactory>(kj::mv(hosted)));
-  auto lifecycle = kj::refcounted<HostedSupervisorLifecycle>(
-      kj::mv(lifecycleHosted), kj::mv(onShutdown));
-  return kj::heap<IsolateSupervisorImpl>(eventPort, varPath, kj::mv(coreRedirector),
-      kj::mv(runtimeConfig), kj::mv(runtimeHost), kj::mv(lifecycle), kj::mv(coreCap));
-}
-
 kj::String getenvString(kj::StringPtr name) {
   char* value = getenv(name.cStr());
   KJ_REQUIRE(value != nullptr, "Required environment variable is missing.", name);
@@ -6407,8 +6435,6 @@ private:
   kj::String compatibilityDate;
 };
 
-class EmptyIsolateBindingServices final: public IsolateBindingServices::Server {};
-
 class IsolateAccountHostImpl final: public IsolateAccountHost::Server {
 public:
   IsolateAccountHostImpl(kj::UnixEventPort& eventPort,
@@ -6441,20 +6467,38 @@ public:
     }
     auto runtimeConfig = loadIsolateRuntimeConfig(
         pkgPath, params.getMainModule(), compatibilityDate);
+    runtimeConfig->topology = IsolateRuntimeTopology::ACCOUNT_SHARED_HOST;
     prepareRuntimeBundleAndCleanupSockets(varPath, *runtimeConfig);
+    auto workerSource = readWorkerSource(grainId);
+
+    auto core = params.getCore();
+    auto coreRedirector = kj::refcounted<CapRedirector>();
+    coreRedirector->setTarget(core);
+    SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
+        kj::addRef(*coreRedirector)).castAs<SandstormCore>();
+    auto adapterFactory = kj::refcounted<HostedRuntimeAdapterFactory>();
+    auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
+        network, timer, grainId, coreCap, kj::addRef(*adapterFactory));
 
     auto nativeStart = nativeHost.startGrainRequest();
     nativeStart.setGrainId(grainId);
-    nativeStart.setServices(kj::heap<EmptyIsolateBindingServices>());
-    auto core = params.getCore();
+    nativeStart.setWorkerSource(workerSource);
+    nativeStart.setServices(kj::heap<HostedIsolateBindingServices>(
+        kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost)));
     context.releaseParams();
     return nativeStart.send().then([this, context, grainId = kj::mv(grainId),
         varPath = kj::mv(varPath), runtimeConfig = kj::mv(runtimeConfig),
-        core = kj::mv(core)](auto response) mutable {
+        coreRedirector = kj::mv(coreRedirector), runtimeHost = kj::mv(runtimeHost),
+        adapterFactory = kj::mv(adapterFactory), coreCap = kj::mv(coreCap)](auto response) mutable {
       auto hosted = response.getGrain();
-      auto supervisor = newHostedIsolateSupervisor(eventPort, network, timer, grainId, varPath,
-          kj::mv(runtimeConfig), hosted, kj::mv(core),
+      HostedIsolate::Client lifecycleHosted = hosted;
+      adapterFactory->setHosted(kj::mv(hosted));
+      auto lifecycle = kj::refcounted<HostedSupervisorLifecycle>(
+          kj::mv(lifecycleHosted),
           [this, grainId = kj::str(grainId)]() { supervisors.erase(grainId); });
+      Supervisor::Client supervisor = kj::heap<IsolateSupervisorImpl>(eventPort, varPath,
+          kj::mv(coreRedirector), kj::mv(runtimeConfig), kj::mv(runtimeHost),
+          kj::mv(lifecycle), kj::mv(coreCap));
       context.getResults().setSupervisor(supervisor);
       supervisors.insert(kj::mv(grainId), kj::mv(supervisor));
     });
@@ -6479,6 +6523,40 @@ private:
     KJ_SYSCALL(logFd = open(kj::str(varPath, "/log").cStr(),
         O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0660), varPath);
     KJ_SYSCALL(close(logFd));
+  }
+
+  kj::Array<byte> readWorkerSource(kj::StringPtr grainId) {
+    static constexpr size_t MAX_WORKER_SOURCE_BYTES = 16 * 1024 * 1024;
+    int rootFd;
+    KJ_SYSCALL(rootFd = open(grainRoot.cStr(),
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainRoot);
+    kj::AutoCloseFd root(rootFd);
+    int grainFd;
+    KJ_SYSCALL(grainFd = openat(root, grainId.cStr(),
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainId);
+    kj::AutoCloseFd grain(grainFd);
+    int runtimeFd;
+    KJ_SYSCALL(runtimeFd = openat(grain, "isolate-runtime",
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    kj::AutoCloseFd runtime(runtimeFd);
+    int sourceFd;
+    KJ_SYSCALL(sourceFd = openat(runtime, "worker-source.capnp.bin",
+        O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
+    kj::AutoCloseFd source(sourceFd);
+    struct stat stats;
+    KJ_SYSCALL(fstat(source, &stats));
+    KJ_REQUIRE(S_ISREG(stats.st_mode), "worker source bundle is not a regular file");
+    KJ_REQUIRE(stats.st_size > 0 && stats.st_size <= MAX_WORKER_SOURCE_BYTES,
+        "worker source bundle exceeds size limit", stats.st_size, MAX_WORKER_SOURCE_BYTES);
+    auto result = kj::heapArray<byte>(stats.st_size);
+    size_t offset = 0;
+    while (offset < result.size()) {
+      ssize_t count;
+      KJ_SYSCALL(count = read(source, result.begin() + offset, result.size() - offset));
+      KJ_REQUIRE(count > 0, "worker source bundle ended before its declared size");
+      offset += count;
+    }
+    return result;
   }
 
   kj::UnixEventPort& eventPort;

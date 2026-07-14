@@ -22,10 +22,7 @@
 #include <kj/mutex.h>
 #include <kj/thread.h>
 
-#include <fcntl.h>
-#include <dirent.h>
 #include <sys/random.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -44,6 +41,7 @@ constexpr kj::StringPtr LOADER_NAMESPACE = "sandstorm-grains"_kj;
 constexpr size_t ISOLATE_OLD_HEAP_LIMIT = 64 * 1024 * 1024;
 constexpr size_t ISOLATE_YOUNG_HEAP_LIMIT = 16 * 1024 * 1024;
 constexpr size_t BUFFERING_LIMIT = 16 * 1024 * 1024;
+constexpr size_t MAX_WORKER_SOURCE_BYTES = 16 * 1024 * 1024;
 constexpr uint MAX_SUBREQUESTS = 64;
 constexpr auto REQUEST_JS_LIMIT = std::chrono::milliseconds(250);
 constexpr auto STARTUP_JS_LIMIT = std::chrono::seconds(5);
@@ -293,9 +291,6 @@ struct DecodedBinding {
 };
 
 struct DecodedWorkerBundle final: public kj::AtomicRefcounted {
-  explicit DecodedWorkerBundle(kj::AutoCloseFd grainDir): grainDir(kj::mv(grainDir)) {}
-
-  kj::AutoCloseFd grainDir;
   kj::String mainModule;
   kj::String compatibilityDate;
   kj::Array<kj::String> compatibilityFlags;
@@ -320,252 +315,9 @@ struct LoadedWorkerSource {
 
 class SharedHttpService: public kj::HttpService, public kj::Refcounted {
  public:
-  virtual ~SharedHttpService() noexcept = default;
+  virtual ~SharedHttpService() noexcept(false) = default;
 };
 
-class BindingHttpService final: public SharedHttpService {
- public:
-  BindingHttpService(int sourceGrainDirFd,
-      kj::HttpHeaderTable& headerTable,
-      kj::String bindingName,
-      bool storage)
-      : bindingName(kj::mv(bindingName)), storage(storage),
-        headerTable(headerTable) {
-    KJ_SYSCALL(grainDirFd = fcntl(sourceGrainDirFd, F_DUPFD_CLOEXEC, 0));
-    if (storage) {
-      if (mkdirat(grainDirFd, "isolate-storage", 0770) < 0) {
-        KJ_REQUIRE(errno == EEXIST, "failed to create isolate storage directory", strerror(errno));
-      }
-      KJ_SYSCALL(storageDirFd = openat(grainDirFd, "isolate-storage",
-          O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-    }
-  }
-
-  ~BindingHttpService() noexcept {
-    if (storageDirFd >= 0) close(storageDirFd);
-    close(grainDirFd);
-  }
-
-  kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr url,
-      const kj::HttpHeaders& headers, kj::AsyncInputStream& requestBody,
-      kj::HttpService::Response& response) override {
-    if (storage) return requestStorage(method, url, requestBody, response);
-    auto body = kj::str("{\n  \"ok\": false,\n  \"error\": \"shared-host ",
-        bindingName, " adapter is not connected\"\n}\n");
-    return sendJson(response, 501, "Not Implemented", kj::mv(body));
-  }
-
- private:
-  static constexpr size_t MAX_STORAGE_VALUE_BYTES = 1024 * 1024;
-
-  kj::Promise<void> sendJson(kj::HttpService::Response& response,
-      uint statusCode, kj::StringPtr statusText, kj::String body) {
-    kj::HttpHeaders responseHeaders(headerTable);
-    responseHeaders.setPtr(
-        kj::HttpHeaderId::CONTENT_TYPE, "application/json; charset=utf-8"_kj);
-    auto stream = response.send(statusCode, statusText, responseHeaders, body.size());
-    return stream->write(body.asBytes()).attach(kj::mv(stream), kj::mv(body));
-  }
-
-  static kj::String storageKey(kj::StringPtr url) {
-    size_t begin = 0;
-    size_t end = url.size();
-    KJ_IF_SOME(query, url.findFirst('?')) { end = query; }
-    size_t authorityBegin = 0;
-    if (url.slice(0, end).startsWith("http://"_kj)) authorityBegin = 7;
-    if (url.slice(0, end).startsWith("https://"_kj)) authorityBegin = 8;
-    if (authorityBegin > 0) {
-      auto authorityEnd = url.slice(authorityBegin, end).findFirst('/');
-      KJ_IF_SOME(slash, authorityEnd) {
-        begin = authorityBegin + slash;
-      } else {
-        begin = end;
-      }
-    }
-    while (begin < end && url[begin] == '/') ++begin;
-    return kj::str(url.slice(begin, end));
-  }
-
-  static bool validStorageKey(kj::StringPtr key) {
-    if (key.size() == 0 || key.size() > 128 || key.startsWith(".")) return false;
-    for (char c: key) {
-      if (!(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') &&
-          !(c >= '0' && c <= '9') && c != '-' && c != '_' && c != '.') return false;
-    }
-    for (size_t i = 1; i < key.size(); ++i) {
-      if (key[i - 1] == '.' && key[i] == '.') return false;
-    }
-    return true;
-  }
-
-  kj::Maybe<kj::AutoCloseFd> openStorageFile(kj::StringPtr key) {
-    int fd = openat(storageDirFd, key.cStr(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-    if (fd < 0) {
-      KJ_REQUIRE(errno == ENOENT || errno == ELOOP, "failed to open storage value", strerror(errno));
-      return kj::none;
-    }
-    kj::AutoCloseFd result(fd);
-    struct stat stats;
-    KJ_SYSCALL(fstat(result, &stats));
-    if (!S_ISREG(stats.st_mode)) return kj::none;
-    return kj::mv(result);
-  }
-
-  kj::Promise<void> getStorage(kj::String key, kj::HttpService::Response& response) {
-    KJ_IF_SOME(fd, openStorageFile(key)) {
-      struct stat stats;
-      KJ_SYSCALL(fstat(fd, &stats));
-      auto body = kj::heapArray<kj::byte>(stats.st_size);
-      size_t offset = 0;
-      while (offset < body.size()) {
-        ssize_t count;
-        KJ_SYSCALL(count = read(fd, body.begin() + offset, body.size() - offset));
-        KJ_REQUIRE(count > 0, "storage value ended before its declared size", key);
-        offset += count;
-      }
-      kj::HttpHeaders responseHeaders(headerTable);
-      responseHeaders.setPtr(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream"_kj);
-      auto stream = response.send(200, "OK", responseHeaders, body.size());
-      return stream->write(body).attach(kj::mv(stream), kj::mv(body));
-    }
-    return sendJson(response, 404, "Not Found", kj::heapString(
-        "{\n  \"ok\": false,\n  \"error\": \"storage key not found\"\n}\n"));
-  }
-
-  kj::Promise<void> headStorage(kj::StringPtr key, kj::HttpService::Response& response) {
-    KJ_IF_SOME(fd, openStorageFile(key)) {
-      struct stat stats;
-      KJ_SYSCALL(fstat(fd, &stats));
-      kj::HttpHeaders responseHeaders(headerTable);
-      auto sizeHeader = kj::str(stats.st_size);
-      responseHeaders.addPtr("X-Sandstorm-Storage-Bytes"_kj, kj::mv(sizeHeader));
-      response.send(200, "OK", responseHeaders, uint64_t(0));
-      return kj::READY_NOW;
-    }
-    kj::HttpHeaders responseHeaders(headerTable);
-    response.send(404, "Not Found", responseHeaders, uint64_t(0));
-    return kj::READY_NOW;
-  }
-
-  kj::Promise<void> putStorage(kj::String key, kj::AsyncInputStream& requestBody,
-      kj::HttpService::Response& response) {
-    return requestBody.readAllBytes(MAX_STORAGE_VALUE_BYTES + 1).then(
-        [this, key = kj::mv(key), &response](kj::Array<kj::byte> body) mutable {
-      if (body.size() > MAX_STORAGE_VALUE_BYTES) {
-        return sendJson(response, 413, "Payload Too Large", kj::str(
-            "{\n  \"ok\": false,\n  \"error\": \"storage value exceeds maximum size\",\n",
-            "  \"maxBytes\": ", MAX_STORAGE_VALUE_BYTES, "\n}\n"));
-      }
-      struct stat existing;
-      if (fstatat(storageDirFd, key.cStr(), &existing, AT_SYMLINK_NOFOLLOW) == 0) {
-        if (!S_ISREG(existing.st_mode)) return sendJson(response, 409, "Conflict",
-            kj::heapString("{\n  \"ok\": false,\n  \"error\": \"storage key is blocked\"\n}\n"));
-      } else KJ_REQUIRE(errno == ENOENT, "failed to inspect storage key", strerror(errno));
-
-      auto temporary = kj::str(".tmp-", getpid(), "-", key);
-      struct stat temporaryStats;
-      if (fstatat(storageDirFd, temporary.cStr(),
-          &temporaryStats, AT_SYMLINK_NOFOLLOW) == 0) {
-        KJ_REQUIRE(S_ISREG(temporaryStats.st_mode),
-            "refusing to replace non-regular temporary storage file", temporary);
-        KJ_SYSCALL(unlinkat(storageDirFd, temporary.cStr(), 0));
-      } else KJ_REQUIRE(errno == ENOENT,
-          "failed to inspect temporary storage file", strerror(errno));
-      int fd;
-      KJ_SYSCALL(fd = openat(storageDirFd, temporary.cStr(),
-          O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0660));
-      kj::AutoCloseFd output(fd);
-      size_t offset = 0;
-      while (offset < body.size()) {
-        ssize_t count;
-        KJ_SYSCALL(count = write(output, body.begin() + offset, body.size() - offset));
-        KJ_REQUIRE(count > 0, "storage write made no progress", key);
-        offset += count;
-      }
-      KJ_SYSCALL(fsync(output));
-      KJ_SYSCALL(renameat(storageDirFd, temporary.cStr(), storageDirFd, key.cStr()));
-      KJ_SYSCALL(fsync(storageDirFd));
-      return sendJson(response, 200, "OK", kj::str(
-          "{\n  \"ok\": true,\n  \"bytes\": ", body.size(), "\n}\n"));
-    });
-  }
-
-  kj::Promise<void> deleteStorage(kj::StringPtr key, kj::HttpService::Response& response) {
-    struct stat existing;
-    if (fstatat(storageDirFd, key.cStr(), &existing, AT_SYMLINK_NOFOLLOW) < 0) {
-      KJ_REQUIRE(errno == ENOENT, "failed to inspect storage key", strerror(errno));
-    } else if (!S_ISREG(existing.st_mode)) {
-      return sendJson(response, 409, "Conflict", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"storage key is blocked\"\n}\n"));
-    } else {
-      KJ_SYSCALL(unlinkat(storageDirFd, key.cStr(), 0));
-      KJ_SYSCALL(fsync(storageDirFd));
-    }
-    return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
-  }
-
-  kj::Promise<void> indexStorage(kj::HttpService::Response& response) {
-    int listingFd;
-    KJ_SYSCALL(listingFd = fcntl(storageDirFd, F_DUPFD_CLOEXEC, 0));
-    DIR* directory = fdopendir(listingFd);
-    if (directory == nullptr) {
-      int error = errno;
-      close(listingFd);
-      KJ_FAIL_SYSCALL("fdopendir", error);
-    }
-    KJ_DEFER(closedir(directory));
-
-    kj::Vector<char> json;
-    json.addAll("{\n  \"ok\": true,\n  \"keys\": ["_kj);
-    bool first = true;
-    uint64_t totalBytes = 0;
-    while (true) {
-      errno = 0;
-      auto entry = readdir(directory);
-      if (entry == nullptr) {
-        KJ_REQUIRE(errno == 0, "failed to read storage directory", strerror(errno));
-        break;
-      }
-      kj::StringPtr name(entry->d_name);
-      if (!validStorageKey(name)) continue;
-      struct stat stats;
-      if (fstatat(storageDirFd, name.cStr(), &stats, AT_SYMLINK_NOFOLLOW) < 0) {
-        KJ_REQUIRE(errno == ENOENT, "failed to inspect storage index entry", strerror(errno));
-        continue;
-      }
-      if (!S_ISREG(stats.st_mode)) continue;
-      if (!first) json.addAll(", "_kj);
-      first = false;
-      json.addAll(kj::str("{ \"name\": \"", name, "\", \"bytes\": ", stats.st_size, " }"));
-      totalBytes += stats.st_size;
-    }
-    json.addAll(kj::str("],\n  \"totalBytes\": ", totalBytes, "\n}\n"));
-    json.add('\0');
-    return sendJson(response, 200, "OK", kj::String(json.releaseAsArray()));
-  }
-
-  kj::Promise<void> requestStorage(kj::HttpMethod method, kj::StringPtr url,
-      kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) {
-    auto key = storageKey(url);
-    if (method == kj::HttpMethod::GET && key.size() == 0) return indexStorage(response);
-    if (!validStorageKey(key)) return sendJson(response, 400, "Bad Request", kj::heapString(
-        "{\n  \"ok\": false,\n  \"error\": \"invalid storage key\"\n}\n"));
-    switch (method) {
-      case kj::HttpMethod::GET: return getStorage(kj::mv(key), response);
-      case kj::HttpMethod::HEAD: return headStorage(key, response);
-      case kj::HttpMethod::PUT: return putStorage(kj::mv(key), requestBody, response);
-      case kj::HttpMethod::DELETE: return deleteStorage(key, response);
-      default: return sendJson(response, 405, "Method Not Allowed", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"method not allowed\"\n}\n"));
-    }
-  }
-
-  int grainDirFd;
-  int storageDirFd = -1;
-  kj::String bindingName;
-  bool storage;
-  kj::HttpHeaderTable& headerTable;
-};
 
 class HttpServiceWorkerInterface final: public workerd::WorkerInterface {
  public:
@@ -723,6 +475,123 @@ kj::HttpHeaders decodeLegacyHeaders(kj::HttpHeaderTable& table,
   return result;
 }
 
+void encodeLegacyHeaders(const kj::HttpHeaders& input,
+    capnp::List<capnp::HttpHeader>::Builder output) {
+  size_t index = 0;
+  input.forEach([&](kj::StringPtr name, kj::StringPtr value) {
+    auto uncommon = output[index++].initUncommon();
+    uncommon.setName(name);
+    uncommon.setValue(value);
+  });
+}
+
+class LegacyClientRequestContext final:
+    public capnp::HttpService::ClientRequestContext::Server {
+ public:
+  LegacyClientRequestContext(capnp::ByteStreamFactory& streamFactory,
+      kj::HttpHeaderTable& headerTable,
+      kj::HttpService::Response& response,
+      kj::Own<kj::PromiseFulfiller<kj::Promise<void>>> responseFulfiller)
+      : streamFactory(streamFactory), headerTable(headerTable), response(response),
+        responseFulfiller(kj::mv(responseFulfiller)) {}
+
+  kj::Promise<void> startResponse(StartResponseContext context) override {
+    KJ_REQUIRE(responseFulfiller.get() != nullptr, "legacy HTTP response already started");
+    auto input = context.getParams().getResponse();
+    auto bodySize = input.getBodySize();
+    kj::Maybe<uint64_t> expectedSize;
+    bool hasBody = true;
+    if (bodySize.isFixed()) {
+      expectedSize = bodySize.getFixed();
+      hasBody = bodySize.getFixed() > 0;
+    }
+    auto output = response.send(input.getStatusCode(), input.getStatusText(),
+        decodeLegacyHeaders(headerTable, input.getHeaders()), expectedSize);
+    if (hasBody) {
+      auto pipe = kj::newOneWayPipe(expectedSize);
+      context.getResults().setBody(streamFactory.kjToCapnp(kj::mv(pipe.out)));
+      responseFulfiller->fulfill(pipe.in->pumpTo(*output).ignoreResult()
+          .attach(kj::mv(pipe.in), kj::mv(output)));
+    } else {
+      responseFulfiller->fulfill(kj::READY_NOW);
+    }
+    responseFulfiller = nullptr;
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> startWebSocket(StartWebSocketContext) override {
+    KJ_FAIL_REQUIRE("legacy shared-host bindings do not yet support WebSockets");
+  }
+
+ private:
+  capnp::ByteStreamFactory& streamFactory;
+  kj::HttpHeaderTable& headerTable;
+  kj::HttpService::Response& response;
+  kj::Own<kj::PromiseFulfiller<kj::Promise<void>>> responseFulfiller;
+};
+
+class LegacyCapnpHttpService final: public SharedHttpService {
+ public:
+  LegacyCapnpHttpService(capnp::ByteStreamFactory& streamFactory,
+      kj::HttpHeaderTable& headerTable,
+      capnp::HttpService::Client service)
+      : streamFactory(streamFactory), headerTable(headerTable), service(kj::mv(service)) {}
+
+  kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr url,
+      const kj::HttpHeaders& headers, kj::AsyncInputStream& requestBody,
+      kj::HttpService::Response& response) override {
+    auto request = service.startRequestRequest();
+    auto metadata = request.initRequest();
+    metadata.setMethod(static_cast<capnp::HttpMethod>(method));
+    size_t pathStart = 0;
+    if (url.startsWith("http://"_kj)) pathStart = 7;
+    if (url.startsWith("https://"_kj)) pathStart = 8;
+    if (pathStart > 0) {
+      KJ_IF_SOME(slash, url.slice(pathStart).findFirst('/')) {
+        pathStart += slash;
+      } else {
+        pathStart = url.size();
+      }
+    }
+    metadata.setUrl(pathStart < url.size() ? url.slice(pathStart) : "/"_kj);
+    encodeLegacyHeaders(headers, metadata.initHeaders(headers.size()));
+
+    bool hasBody = true;
+    kj::Maybe<uint64_t> expectedSize;
+    KJ_IF_SOME(size, requestBody.tryGetLength()) {
+      expectedSize = size;
+      metadata.getBodySize().setFixed(size);
+      hasBody = size > 0;
+    } else if ((method == kj::HttpMethod::GET || method == kj::HttpMethod::HEAD) &&
+        headers.get(kj::HttpHeaderId::TRANSFER_ENCODING) == kj::none) {
+      metadata.getBodySize().setFixed(0);
+      hasBody = false;
+    } else {
+      metadata.getBodySize().setUnknown();
+    }
+
+    auto responsePair = kj::newPromiseAndFulfiller<kj::Promise<void>>();
+    request.setContext(kj::heap<LegacyClientRequestContext>(streamFactory, headerTable,
+        response, kj::mv(responsePair.fulfiller)));
+    auto pipeline = request.send();
+    kj::Promise<void> requestBodyTask = kj::READY_NOW;
+    if (hasBody) {
+      auto output = streamFactory.capnpToKj(pipeline.getRequestBody());
+      requestBodyTask = requestBody.pumpTo(*output).ignoreResult().attach(kj::mv(output));
+    }
+    auto tasks = kj::heapArrayBuilder<kj::Promise<void>>(3);
+    tasks.add(pipeline.getContext().whenResolved());
+    tasks.add(kj::mv(responsePair.promise));
+    tasks.add(kj::mv(requestBodyTask));
+    return kj::joinPromisesFailFast(tasks.finish());
+  }
+
+ private:
+  capnp::ByteStreamFactory& streamFactory;
+  kj::HttpHeaderTable& headerTable;
+  capnp::HttpService::Client service;
+};
+
 class LegacyHttpRequestContext final:
     public capnp::HttpService::ServerRequestContext::Server,
     public kj::HttpService::Response {
@@ -830,8 +699,7 @@ class LegacyHttpServiceAdapter final: public capnp::HttpService::Server {
   kj::Own<kj::HttpService> service;
 };
 
-kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::AutoCloseFd grainDir) {
-  static constexpr uint64_t MAX_BUNDLE_FILE_BYTES = 16 * 1024 * 1024;
+kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::ArrayPtr<const kj::byte> workerSource) {
   static constexpr uint64_t MAX_TRAVERSAL_WORDS = 4 * 1024 * 1024;
   static constexpr size_t MAX_MODULES = 1024;
   static constexpr size_t MAX_MODULE_BYTES = 8 * 1024 * 1024;
@@ -840,33 +708,14 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::AutoCloseFd grainDir) {
   static constexpr size_t MAX_TOTAL_BINDING_BYTES = 4 * 1024 * 1024;
   static constexpr size_t MAX_NAME_BYTES = 256;
 
-  int runtimeFd;
-  KJ_SYSCALL(runtimeFd = openat(grainDir, "isolate-runtime",
-      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-  kj::AutoCloseFd runtimeDir(runtimeFd);
-
-  int manifestFd;
-  KJ_SYSCALL(manifestFd = openat(runtimeDir, "runtime-manifest.json",
-      O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
-  kj::AutoCloseFd manifest(manifestFd);
-  struct stat manifestStats;
-  KJ_SYSCALL(fstat(manifest, &manifestStats));
-  KJ_REQUIRE(S_ISREG(manifestStats.st_mode), "runtime manifest is not a regular file");
-
-  int sourceFd;
-  KJ_SYSCALL(sourceFd = openat(runtimeDir, "worker-source.capnp.bin",
-      O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
-
-  struct stat sourceStats;
-  KJ_SYSCALL(fstat(sourceFd, &sourceStats));
-  KJ_REQUIRE(S_ISREG(sourceStats.st_mode), "worker source bundle is not a regular file");
-  KJ_REQUIRE(sourceStats.st_size > 0 && sourceStats.st_size <= MAX_BUNDLE_FILE_BYTES,
-      "worker source bundle exceeds size limit", sourceStats.st_size, MAX_BUNDLE_FILE_BYTES);
+  KJ_REQUIRE(workerSource.size() > 0 && workerSource.size() <= MAX_WORKER_SOURCE_BYTES,
+      "worker source bundle exceeds size limit", workerSource.size(), MAX_WORKER_SOURCE_BYTES);
 
   capnp::ReaderOptions readerOptions;
   readerOptions.traversalLimitInWords = MAX_TRAVERSAL_WORDS;
   readerOptions.nestingLimit = 32;
-  capnp::PackedFdMessageReader reader(kj::AutoCloseFd(sourceFd), readerOptions);
+  kj::ArrayInputStream input(workerSource);
+  capnp::PackedMessageReader reader(input, readerOptions);
   auto bundle = reader.getRoot<IsolateWorkerSource>();
   KJ_REQUIRE(bundle.getFormatVersion() == 1,
       "unsupported worker source format version", bundle.getFormatVersion());
@@ -883,7 +732,7 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::AutoCloseFd grainDir) {
   auto inputModules = bundle.getModules();
   KJ_REQUIRE(inputModules.size() > 0 && inputModules.size() <= MAX_MODULES,
       "invalid worker module count", inputModules.size(), MAX_MODULES);
-  auto result = kj::atomicRefcounted<DecodedWorkerBundle>(kj::mv(grainDir));
+  auto result = kj::atomicRefcounted<DecodedWorkerBundle>();
   result->mainModule = kj::str(bundle.getMainModule());
   result->compatibilityDate = kj::str(bundle.getCompatibilityDate());
   result->compatibilityFlags = KJ_MAP(flag, bundle.getCompatibilityFlags()) {
@@ -998,7 +847,8 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::AutoCloseFd grainDir) {
   return result;
 }
 
-LoadedWorkerSource buildWorkerSource(int grainDirFd,
+LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
+    capnp::ByteStreamFactory& streamFactory,
     kj::HttpHeaderTable& headerTable,
     kj::Own<DecodedWorkerBundle> decoded) {
   auto backing = kj::atomicRefcounted<BundleBacking>();
@@ -1064,14 +914,28 @@ LoadedWorkerSource buildWorkerSource(int grainDirFd,
         break;
       case IsolateWorkerSource::Binding::SANDSTORM_API:
       case IsolateWorkerSource::Binding::STORAGE:
-      case IsolateWorkerSource::Binding::POWERBOX:
+      case IsolateWorkerSource::Binding::POWERBOX: {
+        auto request = services.getServiceRequest();
+        switch (binding.type) {
+          case IsolateWorkerSource::Binding::SANDSTORM_API:
+            request.setBinding(IsolateBindingServices::Binding::SANDSTORM_API);
+            break;
+          case IsolateWorkerSource::Binding::STORAGE:
+            request.setBinding(IsolateBindingServices::Binding::STORAGE);
+            break;
+          case IsolateWorkerSource::Binding::POWERBOX:
+            request.setBinding(IsolateBindingServices::Binding::POWERBOX);
+            break;
+          default:
+            KJ_UNREACHABLE;
+        }
         env.setProperty(kj::str(binding.name),
             workerd::Frankenvalue::fromDirectCapability(
                 kj::refcounted<HttpServiceChannel>(
-                    kj::refcounted<BindingHttpService>(
-                        grainDirFd, headerTable, kj::str(binding.name),
-                        binding.type == IsolateWorkerSource::Binding::STORAGE))));
+                    kj::refcounted<LegacyCapnpHttpService>(streamFactory, headerTable,
+                        request.send().getService()))));
         break;
+      }
       case IsolateWorkerSource::Binding::SERVICE: {
         auto target = kj::atomicRefcounted<SelfServiceTarget>();
         env.setProperty(kj::str(binding.name),
@@ -1131,19 +995,13 @@ class AdmissionWorker {
     });
   }
 
-  kj::Promise<kj::Own<DecodedWorkerBundle>> admit(
-      int sourceGrainRootFd, kj::String grainId) {
-    int grainRootFd;
-    KJ_SYSCALL(grainRootFd = fcntl(sourceGrainRootFd, F_DUPFD_CLOEXEC, 0));
+  kj::Promise<kj::Own<DecodedWorkerBundle>> admit(kj::Array<kj::byte> workerSource) {
     auto executor = getExecutor();
     return executor->executeAsync(
-        [grainRoot = kj::AutoCloseFd(grainRootFd), grainId = kj::mv(grainId)]() mutable {
+        [workerSource = kj::mv(workerSource)]() mutable {
       auto& clock = kj::systemPreciseMonotonicClock();
       auto started = clock.now();
-      int grainDirFd;
-      KJ_SYSCALL(grainDirFd = openat(grainRoot, grainId.cStr(),
-          O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainId);
-      auto result = decodeWorkerBundle(kj::AutoCloseFd(grainDirFd));
+      auto result = decodeWorkerBundle(workerSource);
       KJ_REQUIRE(clock.now() - started <= 5 * kj::SECONDS,
           "worker admission exceeded its five-second deadline");
       return result;
@@ -1186,12 +1044,12 @@ class AdmissionPool {
     workers.add(kj::heap<AdmissionWorker>());
   }
 
-  kj::Promise<kj::Own<DecodedWorkerBundle>> admit(int grainRootFd, kj::String grainId) {
+  kj::Promise<kj::Own<DecodedWorkerBundle>> admit(kj::Array<kj::byte> workerSource) {
     KJ_REQUIRE(outstanding < MAX_OUTSTANDING,
         "worker admission queue is full", outstanding, MAX_OUTSTANDING);
     ++outstanding;
     auto& worker = *workers[nextWorker++ % workers.size()];
-    return worker.admit(grainRootFd, kj::mv(grainId))
+    return worker.admit(kj::mv(workerSource))
         .attach(kj::defer([this]() { --outstanding; }));
   }
 
@@ -1231,17 +1089,15 @@ bool isValidGrainId(kj::StringPtr id) {
 struct HostedState final: public kj::Refcounted {
   HostedState(workerd::server::Server& runtime,
       kj::String grainId,
-      int grainDirFd,
       IsolateBindingServices::Client bindingServices,
       kj::Own<BundleBacking> backing,
       kj::Own<workerd::WorkerStubChannel> worker)
-      : runtime(runtime), grainId(kj::mv(grainId)), grainDirFd(grainDirFd),
+      : runtime(runtime), grainId(kj::mv(grainId)),
         bindingServices(kj::mv(bindingServices)), backing(kj::mv(backing)),
         worker(kj::mv(worker)) {}
 
   ~HostedState() noexcept {
     revokeSelfServices();
-    close(grainDirFd);
   }
 
   void revokeSelfServices() {
@@ -1250,7 +1106,6 @@ struct HostedState final: public kj::Refcounted {
 
   workerd::server::Server& runtime;
   kj::String grainId;
-  int grainDirFd;
   IsolateBindingServices::Client bindingServices;
   kj::Own<BundleBacking> backing;
   kj::Own<workerd::WorkerStubChannel> worker;
@@ -1293,15 +1148,16 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
 class IsolateHostImpl final: public IsolateHost::Server {
  public:
   IsolateHostImpl(workerd::server::Server& runtime,
-      capnp::ByteStreamFactory& streamFactory, int grainRootFd)
-      : runtime(runtime), streamFactory(streamFactory), grainRootFd(grainRootFd) {}
-
-  ~IsolateHostImpl() noexcept { close(grainRootFd); }
+      capnp::ByteStreamFactory& streamFactory)
+      : runtime(runtime), streamFactory(streamFactory) {}
 
   kj::Promise<void> startGrain(StartGrainContext context) override {
     auto grainId = context.getParams().getGrainId();
     KJ_REQUIRE(isValidGrainId(grainId), "invalid grain ID");
     KJ_REQUIRE(context.getParams().hasServices(), "missing per-grain binding services");
+    auto sourceData = context.getParams().getWorkerSource();
+    KJ_REQUIRE(sourceData.size() > 0 && sourceData.size() <= MAX_WORKER_SOURCE_BYTES,
+        "worker source bundle exceeds size limit", sourceData.size(), MAX_WORKER_SOURCE_BYTES);
 
     KJ_IF_SOME(existing, grains.find(grainId)) {
       if (existing->running) {
@@ -1313,8 +1169,10 @@ class IsolateHostImpl final: public IsolateHost::Server {
     }
 
     auto services = context.getParams().getServices();
+    auto workerSource = kj::heapArray<kj::byte>(sourceData.size());
+    workerSource.asPtr().copyFrom(sourceData);
 
-    return admissionPool.admit(grainRootFd, kj::str(grainId)).then(
+    return admissionPool.admit(kj::mv(workerSource)).then(
         [this, context, grainId = kj::str(grainId),
             services = kj::mv(services)](kj::Own<DecodedWorkerBundle> decoded) mutable {
       KJ_IF_SOME(existing, grains.find(grainId)) {
@@ -1326,8 +1184,7 @@ class IsolateHostImpl final: public IsolateHost::Server {
         grains.erase(grainId);
       }
 
-      auto grainDir = kj::mv(decoded->grainDir);
-      auto source = buildWorkerSource(grainDir.get(),
+      auto source = buildWorkerSource(services, streamFactory,
           runtime.getHttpHeaderTableForEmbedding(), kj::mv(decoded));
       auto backing = kj::atomicAddRef(*source.backing);
       auto worker = runtime.loadDynamicWorker(LOADER_NAMESPACE, kj::str(grainId),
@@ -1335,7 +1192,7 @@ class IsolateHostImpl final: public IsolateHost::Server {
         return source.clone(kj::atomicAddRef(*backing));
       });
       for (auto& target: backing->selfServices) target->worker = worker.get();
-      auto state = kj::rc<HostedState>(runtime, kj::str(grainId), grainDir.release(),
+      auto state = kj::rc<HostedState>(runtime, kj::str(grainId),
           kj::mv(services), kj::mv(backing), kj::mv(worker));
       context.getResults().setGrain(
           kj::heap<HostedIsolateImpl>(state.addRef(), streamFactory));
@@ -1346,7 +1203,6 @@ class IsolateHostImpl final: public IsolateHost::Server {
  private:
   workerd::server::Server& runtime;
   capnp::ByteStreamFactory& streamFactory;
-  int grainRootFd;
   AdmissionPool admissionPool;
   kj::HashMap<kj::String, kj::Rc<HostedState>> grains;
 };
@@ -1355,9 +1211,7 @@ class IsolateHostImpl final: public IsolateHost::Server {
 }  // namespace sandstorm
 
 int main(int argc, char** argv) {
-  KJ_REQUIRE(argc == 3, "usage: isolate-host <control-socket-path> <grain-root-path>");
-  int grainRootFd;
-  KJ_SYSCALL(grainRootFd = open(argv[2], O_RDONLY | O_DIRECTORY | O_CLOEXEC), argv[2]);
+  KJ_REQUIRE(argc == 2, "usage: isolate-host <control-socket-path>");
   auto address = kj::str("unix:", argv[1]);
   unlink(argv[1]);
   auto io = kj::setupAsyncIo();
@@ -1390,6 +1244,6 @@ int main(int argc, char** argv) {
   capnp::ByteStreamFactory byteStreamFactory;
 
   capnp::TwoPartyServer controlServer(
-      kj::heap<sandstorm::IsolateHostImpl>(runtime, byteStreamFactory, grainRootFd));
+      kj::heap<sandstorm::IsolateHostImpl>(runtime, byteStreamFactory));
   controlServer.listen(*listener).exclusiveJoin(kj::mv(runtimeTask)).wait(io.waitScope);
 }
