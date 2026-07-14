@@ -16,6 +16,15 @@ interface IsolateHost @0xb15098c984fb8f32 {
       workerSource :Data) -> (grain :HostedIsolate);
   # Instantiate or retain the named grain's worker. Repeated calls for the same grain are idempotent.
   # `services` is a freshly attenuated capability for this grain, never a backend-wide interface.
+
+  openLocalBufferChannel @1 (
+      firstGrainId :Text,
+      firstName :Text,
+      secondGrainId :Text,
+      secondName :Text);
+  # Mint a local-only, bidirectional zero-copy byte channel and place one endpoint in each hosted
+  # grain's private broker. Only the account host possesses this control interface; grain code can
+  # accept endpoints explicitly delivered to its own broker but cannot select another grain.
 }
 
 interface IsolateBindingServices @0xd8b8ffcb9dbf83ea {

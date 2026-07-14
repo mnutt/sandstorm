@@ -9,6 +9,7 @@
 #include <workerd/server/sandstorm-isolate-worker-source.capnp.h>
 #include <workerd/server/workerd-api.h>
 #include <workerd/api/http.h>
+#include <workerd/api/worker-loader.h>
 #include <workerd/io/actor-cache.h>
 #include <workerd/io/compatibility-date.h>
 #include <workerd/io/limit-enforcer.h>
@@ -39,6 +40,8 @@ namespace sandstorm {
 namespace {
 
 constexpr kj::StringPtr LOADER_NAMESPACE = "sandstorm-grains"_kj;
+constexpr kj::StringPtr LOCAL_BUFFER_BROKER_BINDING =
+    "__SANDSTORM_NATIVE_BUFFER_LINKS"_kj;
 
 // These are host policy rather than workerd embedding API. Keep them conservative until the
 // Phase 4 measurements give us enough data to make them configurable per account/app.
@@ -318,6 +321,149 @@ struct LoadedWorkerSource {
   kj::Own<BundleBacking> backing;
 };
 
+class LocalBufferLinkState final: public kj::Refcounted {
+ public:
+  void send(bool fromFirst, workerd::jsg::BackingStore buffer) {
+    KJ_REQUIRE(!closed, "local buffer link is closed");
+    auto& inbox = fromFirst ? secondInbox : firstInbox;
+    KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT,
+        "local buffer message exceeds the host buffering limit", buffer.size());
+    KJ_IF_SOME(waiter, inbox.waiter) {
+      waiter->fulfill(kj::mv(buffer));
+      inbox.waiter = kj::none;
+    } else {
+      KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT - inbox.queuedBytes,
+          "local buffer link queue exceeds the host buffering limit");
+      inbox.queuedBytes += buffer.size();
+      inbox.buffers.add(kj::mv(buffer));
+    }
+  }
+
+  kj::Promise<workerd::jsg::BackingStore> receive(bool first) {
+    KJ_REQUIRE(!closed, "local buffer link is closed");
+    auto& inbox = first ? firstInbox : secondInbox;
+    KJ_REQUIRE(inbox.waiter == kj::none,
+        "only one local buffer receive may be pending per endpoint");
+    if (inbox.readIndex < inbox.buffers.size()) {
+      auto buffer = kj::mv(inbox.buffers[inbox.readIndex++]);
+      inbox.queuedBytes -= buffer.size();
+      if (inbox.readIndex == inbox.buffers.size()) {
+        inbox.buffers.clear();
+        inbox.readIndex = 0;
+      }
+      return kj::mv(buffer);
+    }
+    auto paf = kj::newPromiseAndFulfiller<workerd::jsg::BackingStore>();
+    inbox.waiter = kj::mv(paf.fulfiller);
+    return kj::mv(paf.promise);
+  }
+
+  void close() {
+    if (closed) return;
+    closed = true;
+    auto exception = KJ_EXCEPTION(DISCONNECTED, "local buffer link was revoked");
+    rejectWaiter(firstInbox, exception);
+    rejectWaiter(secondInbox, exception);
+    firstInbox.buffers.clear();
+    secondInbox.buffers.clear();
+    firstInbox.queuedBytes = 0;
+    secondInbox.queuedBytes = 0;
+    firstInbox.readIndex = 0;
+    secondInbox.readIndex = 0;
+  }
+
+ private:
+  struct Inbox {
+    kj::Vector<workerd::jsg::BackingStore> buffers;
+    kj::Maybe<kj::Own<kj::PromiseFulfiller<workerd::jsg::BackingStore>>> waiter;
+    size_t readIndex = 0;
+    size_t queuedBytes = 0;
+  };
+
+  static void rejectWaiter(Inbox& inbox, const kj::Exception& exception) {
+    KJ_IF_SOME(waiter, inbox.waiter) {
+      waiter->reject(exception.clone());
+      inbox.waiter = kj::none;
+    }
+  }
+
+  Inbox firstInbox;
+  Inbox secondInbox;
+  bool closed = false;
+};
+
+class LocalBufferEndpoint final: public workerd::api::LocalBufferChannelEndpoint {
+ public:
+  LocalBufferEndpoint(kj::Own<LocalBufferLinkState> state, bool first)
+      : state(kj::mv(state)), first(first) {}
+  ~LocalBufferEndpoint() noexcept override { state->close(); }
+
+  void send(workerd::jsg::BackingStore buffer) override {
+    state->send(first, kj::mv(buffer));
+  }
+  kj::Promise<workerd::jsg::BackingStore> receive() override {
+    return state->receive(first);
+  }
+  void close() override { state->close(); }
+
+ private:
+  kj::Own<LocalBufferLinkState> state;
+  bool first;
+};
+
+class LocalBufferBrokerProvider final: public workerd::api::LocalBufferChannelProvider {
+ public:
+  kj::Own<workerd::api::LocalBufferChannelEndpoint> take(kj::StringPtr name) override {
+    KJ_REQUIRE(!revoked, "local buffer broker is revoked");
+    auto& endpoint = KJ_REQUIRE_NONNULL(pending.find(name),
+        "unknown or already-accepted local buffer link", name);
+    kj::Own<workerd::api::LocalBufferChannelEndpoint> result = kj::mv(endpoint);
+    pending.erase(name);
+    return result;
+  }
+
+  void add(kj::String name, kj::Own<workerd::api::LocalBufferChannelEndpoint> endpoint) {
+    requireCanAdd(name);
+    pending.insert(kj::mv(name), kj::mv(endpoint));
+  }
+
+  void requireCanAdd(kj::StringPtr name) {
+    KJ_REQUIRE(!revoked, "local buffer broker is revoked");
+    KJ_REQUIRE(pending.find(name) == kj::none, "duplicate local buffer link name", name);
+  }
+
+  void revoke() {
+    if (revoked) return;
+    revoked = true;
+    pending.clear();
+  }
+
+ private:
+  kj::HashMap<kj::String, kj::Own<workerd::api::LocalBufferChannelEndpoint>> pending;
+  bool revoked = false;
+};
+
+class LocalBufferBrokerCapTableEntry final: public workerd::Frankenvalue::CapTableEntry {
+ public:
+  explicit LocalBufferBrokerCapTableEntry(kj::Own<LocalBufferBrokerProvider> provider)
+      : provider(kj::mv(provider)) {}
+
+  kj::Own<CapTableEntry> clone() override {
+    return kj::heap<LocalBufferBrokerCapTableEntry>(kj::atomicAddRef(*provider));
+  }
+  kj::Own<CapTableEntry> threadSafeClone() const override {
+    return kj::heap<LocalBufferBrokerCapTableEntry>(
+        kj::atomicAddRef(const_cast<LocalBufferBrokerProvider&>(*provider)));
+  }
+
+  kj::Own<LocalBufferBrokerProvider> addRefProvider() {
+    return kj::atomicAddRef(*provider);
+  }
+
+ private:
+  kj::Own<LocalBufferBrokerProvider> provider;
+};
+
 class SharedHttpService: public kj::HttpService, public kj::Refcounted {
  public:
   virtual ~SharedHttpService() noexcept(false) = default;
@@ -384,6 +530,10 @@ class SandstormEnvCompiler final: public workerd::DynamicWorkerEnvCompiler {
       v8::Local<v8::Object> target) override {
     workerd::Frankenvalue::DirectCapabilityMaterializer materialize =
         [&js, &api](workerd::Frankenvalue::CapTableEntry& entry) {
+      KJ_IF_SOME(broker, kj::tryDowncast<LocalBufferBrokerCapTableEntry>(entry)) {
+        return workerd::server::WorkerdApi::from(api).wrapLocalBufferChannelBroker(
+            js, broker.addRefProvider());
+      }
       // Sandstorm's bundle translation creates only Fetcher capabilities. Keep this policy and
       // the corresponding IoChannel downcast in the embedding binary rather than workerd's
       // dynamic loader.
@@ -891,6 +1041,7 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::ArrayPtr<const kj::byte> wor
 LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
     capnp::ByteStreamFactory& streamFactory,
     kj::HttpHeaderTable& headerTable,
+    kj::Own<LocalBufferBrokerProvider> localBufferBroker,
     kj::Own<DecodedWorkerBundle> decoded) {
   auto backing = kj::atomicRefcounted<BundleBacking>();
   backing->decoded = kj::mv(decoded);
@@ -990,6 +1141,9 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
         KJ_UNREACHABLE;
     }
   }
+  env.setProperty(kj::str(LOCAL_BUFFER_BROKER_BINDING),
+      workerd::Frankenvalue::fromDirectCapability(
+          kj::heap<LocalBufferBrokerCapTableEntry>(kj::mv(localBufferBroker))));
   auto compatibility = backing->compatibility.initRoot<workerd::CompatibilityFlags>();
   auto flags = KJ_MAP(flag, bundle.compatibilityFlags) { return kj::str(flag); };
   BundleErrorReporter reporter;
@@ -1132,15 +1286,18 @@ struct HostedState final: public kj::Refcounted {
   HostedState(workerd::server::Server& runtime,
       kj::String grainId,
       IsolateBindingServices::Client bindingServices,
+      kj::Own<LocalBufferBrokerProvider> localBufferBroker,
       kj::Own<BundleBacking> backing,
       kj::Own<workerd::WorkerStubChannel> worker,
       kj::Own<SelfServiceTarget> ingressTarget)
       : runtime(runtime), grainId(kj::mv(grainId)),
-        bindingServices(kj::mv(bindingServices)), backing(kj::mv(backing)),
+        bindingServices(kj::mv(bindingServices)), localBufferBroker(kj::mv(localBufferBroker)),
+        backing(kj::mv(backing)),
         worker(kj::mv(worker)), ingressTarget(kj::mv(ingressTarget)) {}
 
   ~HostedState() noexcept {
     revokeSelfServices();
+    localBufferBroker->revoke();
   }
 
   void revokeSelfServices() {
@@ -1154,6 +1311,7 @@ struct HostedState final: public kj::Refcounted {
     runtime.evictDynamicWorker(LOADER_NAMESPACE, grainId);
     ingressTarget->worker = nullptr;
     revokeSelfServices();
+    localBufferBroker->revoke();
     bindingServices = IsolateBindingServices::Client(nullptr);
     worker = nullptr;
     backing = nullptr;
@@ -1163,6 +1321,7 @@ struct HostedState final: public kj::Refcounted {
   workerd::server::Server& runtime;
   kj::String grainId;
   IsolateBindingServices::Client bindingServices;
+  kj::Own<LocalBufferBrokerProvider> localBufferBroker;
   kj::Own<BundleBacking> backing;
   kj::Own<workerd::WorkerStubChannel> worker;
   kj::Own<SelfServiceTarget> ingressTarget;
@@ -1244,8 +1403,10 @@ class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::Er
         grains.erase(grainId);
       }
 
+      auto localBufferBroker = kj::atomicRefcounted<LocalBufferBrokerProvider>();
       auto source = buildWorkerSource(services, streamFactory,
-          runtime.getHttpHeaderTableForEmbedding(), kj::mv(decoded));
+          runtime.getHttpHeaderTableForEmbedding(),
+          kj::atomicAddRef(*localBufferBroker), kj::mv(decoded));
       auto backing = kj::atomicAddRef(*source.backing);
       auto worker = runtime.loadDynamicWorker(LOADER_NAMESPACE, kj::str(grainId),
           [source = kj::mv(source.source), backing = kj::mv(source.backing)]() mutable {
@@ -1255,14 +1416,47 @@ class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::Er
       auto ingressTarget = kj::atomicRefcounted<SelfServiceTarget>();
       ingressTarget->worker = worker.get();
       auto state = kj::rc<HostedState>(runtime, kj::str(grainId),
-          kj::mv(services), kj::mv(backing), kj::mv(worker), kj::mv(ingressTarget));
+          kj::mv(services), kj::mv(localBufferBroker), kj::mv(backing),
+          kj::mv(worker), kj::mv(ingressTarget));
       refreshIdleTimer(state.addRef());
       context.getResults().setGrain(makeHostedIsolate(state.addRef()));
       grains.insert(kj::mv(grainId), kj::mv(state));
     });
   }
 
+  kj::Promise<void> openLocalBufferChannel(OpenLocalBufferChannelContext context) override {
+    auto params = context.getParams();
+    auto& first = requireRunningGrain(params.getFirstGrainId());
+    auto& second = requireRunningGrain(params.getSecondGrainId());
+    KJ_REQUIRE(params.getFirstName().size() > 0 && params.getSecondName().size() > 0,
+        "local buffer link names must be non-empty");
+    KJ_REQUIRE(params.getFirstName().size() <= 256 && params.getSecondName().size() <= 256,
+        "local buffer link names must be at most 256 bytes");
+    KJ_REQUIRE(params.getFirstGrainId() != params.getSecondGrainId() ||
+            params.getFirstName() != params.getSecondName(),
+        "a local buffer link cannot publish both endpoints under the same name");
+
+    // Validate both publications before creating either endpoint. The host event loop does not
+    // yield between these checks and the inserts, so a duplicate can never expose a half-link.
+    first.localBufferBroker->requireCanAdd(params.getFirstName());
+    second.localBufferBroker->requireCanAdd(params.getSecondName());
+
+    auto state = kj::refcounted<LocalBufferLinkState>();
+    first.localBufferBroker->add(kj::str(params.getFirstName()),
+        kj::heap<LocalBufferEndpoint>(kj::addRef(*state), true));
+    second.localBufferBroker->add(kj::str(params.getSecondName()),
+        kj::heap<LocalBufferEndpoint>(kj::mv(state), false));
+    return kj::READY_NOW;
+  }
+
  private:
+  HostedState& requireRunningGrain(kj::StringPtr grainId) {
+    auto& state = KJ_REQUIRE_NONNULL(grains.find(grainId),
+        "local buffer link grain is not hosted", grainId);
+    KJ_REQUIRE(state->running, "local buffer link grain has been stopped", grainId);
+    return *state.operator->();
+  }
+
   kj::Own<HostedIsolateImpl> makeHostedIsolate(kj::Rc<HostedState> state) {
     return kj::heap<HostedIsolateImpl>(kj::mv(state), streamFactory,
         [this](kj::Rc<HostedState> state) { refreshIdleTimer(kj::mv(state)); });
