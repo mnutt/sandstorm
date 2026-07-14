@@ -11,6 +11,7 @@
 #include <capnp/serialize-packed.h>
 #include <kj/debug.h>
 #include <kj/function.h>
+#include <unistd.h>
 
 namespace sandstorm {
 namespace {
@@ -75,7 +76,9 @@ void expectFailure(kj::Function<void()> operation) {
 }  // namespace sandstorm
 
 int main(int argc, char** argv) {
-  KJ_REQUIRE(argc == 2, "usage: isolate-host-client <control-socket-path>");
+  KJ_REQUIRE(argc == 2 || (argc == 3 && kj::StringPtr(argv[2]) == "--idle-eviction"_kj),
+      "usage: isolate-host-client <control-socket-path> [--idle-eviction]");
+  bool idleEvictionOnly = argc == 3;
   capnp::MallocMessageBuilder sourceMessage;
   auto source = sourceMessage.initRoot<sandstorm::IsolateWorkerSource>();
   source.setFormatVersion(1);
@@ -177,6 +180,54 @@ export default { fetch() { return new Response("memory limit failed"); } };
   auto getHttp = grain.getHttpServiceRequest().send().wait(waitScope);
   auto service = httpFactory.capnpToKj(getHttp.getService());
   auto httpClient = kj::newHttpClient(*service);
+
+  if (idleEvictionOnly) {
+    // The host runs in another process, so its timer advances while this client sleeps without
+    // driving its own event loop.
+    usleep(120 * 1000);
+    grain.keepAliveRequest().send().wait(waitScope);
+    usleep(120 * 1000);
+    kj::HttpHeaders refreshedHeaders(*headerTable);
+    auto refreshedRequest = httpClient->request(
+        kj::HttpMethod::GET, "https://grain.invalid/", refreshedHeaders);
+    auto refreshedResponse = refreshedRequest.response.wait(waitScope);
+    KJ_REQUIRE(refreshedResponse.statusCode == 200,
+        "keepalive did not extend the hosted grain idle deadline",
+        refreshedResponse.statusCode);
+    KJ_REQUIRE(refreshedResponse.body->readAllText().wait(waitScope) == "ok",
+        "hosted grain returned the wrong response after keepalive");
+
+    usleep(220 * 1000);
+    sandstorm::expectFailure([&]() {
+      grain.keepAliveRequest().send().wait(waitScope);
+    });
+    sandstorm::expectFailure([&]() {
+      kj::HttpHeaders staleHeaders(*headerTable);
+      auto staleRequest = httpClient->request(
+          kj::HttpMethod::GET, "https://grain.invalid/", staleHeaders);
+      (void)staleRequest.response.wait(waitScope);
+    });
+
+    auto restart = host.startGrainRequest();
+    restart.setGrainId("testgrain123");
+    restart.setServices(services);
+    restart.setWorkerSource(sourceBytes);
+    auto restarted = restart.send().wait(waitScope).getGrain();
+    auto restartedHttp = restarted.getHttpServiceRequest().send().wait(waitScope);
+    auto restartedService = httpFactory.capnpToKj(restartedHttp.getService());
+    auto restartedClient = kj::newHttpClient(*restartedService);
+    kj::HttpHeaders restartedHeaders(*headerTable);
+    auto restartedRequest = restartedClient->request(
+        kj::HttpMethod::GET, "https://grain.invalid/", restartedHeaders);
+    auto restartedResponse = restartedRequest.response.wait(waitScope);
+    KJ_REQUIRE(restartedResponse.statusCode == 200,
+        "idle-evicted grain did not restart", restartedResponse.statusCode);
+    KJ_REQUIRE(restartedResponse.body->readAllText().wait(waitScope) == "ok",
+        "idle-evicted grain returned the wrong response after restart");
+    restarted.stopRequest().send().wait(waitScope);
+    return 0;
+  }
+
   kj::HttpHeaders requestHeaders(*headerTable);
   requestHeaders.set(ingressTestHeader, "ingress-ok"_kj);
   auto httpRequest = httpClient->request(
@@ -244,6 +295,12 @@ export default { fetch() { return new Response("memory limit failed"); } };
 
   sandstorm::expectFailure([&]() {
     grain.keepAliveRequest().send().wait(waitScope);
+  });
+  sandstorm::expectFailure([&]() {
+    kj::HttpHeaders staleHeaders(*headerTable);
+    auto staleRequest = httpClient->request(
+        kj::HttpMethod::GET, "https://grain.invalid/", staleHeaders);
+    (void)staleRequest.response.wait(waitScope);
   });
 
   auto restart = host.startGrainRequest();

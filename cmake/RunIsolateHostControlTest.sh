@@ -26,3 +26,19 @@ done
 
 [[ -S "$socket" ]]
 "$client" "$socket"
+
+kill "$host_pid"
+wait "$host_pid" 2>/dev/null || true
+rm -f "$socket"
+
+SANDSTORM_ISOLATE_HOST_IDLE_TIMEOUT_MS=200 "$host" "$socket" &
+host_pid=$!
+for _attempt in $(seq 1 100); do
+  if [[ -S "$socket" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+
+[[ -S "$socket" ]]
+"$client" "$socket" --idle-eviction

@@ -47,6 +47,7 @@ constexpr size_t MAX_WORKER_SOURCE_BYTES = 16 * 1024 * 1024;
 constexpr uint MAX_SUBREQUESTS = 64;
 constexpr auto REQUEST_JS_LIMIT = std::chrono::milliseconds(250);
 constexpr auto STARTUP_JS_LIMIT = std::chrono::seconds(5);
+constexpr auto DEFAULT_IDLE_TIMEOUT = 180 * kj::SECONDS;
 
 class JsWatchdogScope final {
  public:
@@ -376,31 +377,37 @@ class HttpServiceChannel final: public workerd::IoChannelFactory::SubrequestChan
 class WorkerIngressService final: public kj::HttpService {
  public:
   explicit WorkerIngressService(
-      kj::Own<workerd::IoChannelFactory::SubrequestChannel> ingress)
-      : ingress(kj::mv(ingress)) {}
+      kj::Own<SelfServiceTarget> target)
+      : target(kj::mv(target)) {}
 
   kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr url,
       const kj::HttpHeaders& headers, kj::AsyncInputStream& requestBody,
       kj::HttpService::Response& response) override {
     KJ_CONTEXT("dispatching hosted worker HTTP request", url);
+    auto& worker = KJ_REQUIRE_NONNULL(target->worker,
+        "hosted worker ingress used after grain eviction");
+    auto ingress = worker.getEntrypoint(kj::none, workerd::Frankenvalue(), kj::none);
     auto normalizedUrl = url.startsWith("/")
         ? kj::str("http://sandstorm", url)
         : kj::str(url);
     auto request = ingress->startRequest({});
     return request->request(method, normalizedUrl, headers, requestBody, response)
-        .attach(kj::mv(request), kj::mv(normalizedUrl));
+        .attach(kj::mv(request), kj::mv(ingress), kj::mv(normalizedUrl));
   }
 
   kj::Promise<void> connect(kj::StringPtr host, const kj::HttpHeaders& headers,
       kj::AsyncIoStream& connection, ConnectResponse& response,
       kj::HttpConnectSettings settings) override {
+    auto& worker = KJ_REQUIRE_NONNULL(target->worker,
+        "hosted worker ingress used after grain eviction");
+    auto ingress = worker.getEntrypoint(kj::none, workerd::Frankenvalue(), kj::none);
     auto request = ingress->startRequest({});
     return request->connect(host, headers, connection, response, kj::mv(settings))
-        .attach(kj::mv(request));
+        .attach(kj::mv(request), kj::mv(ingress));
   }
 
  private:
-  kj::Own<workerd::IoChannelFactory::SubrequestChannel> ingress;
+  kj::Own<SelfServiceTarget> target;
 };
 
 class SelfBindingHttpService final: public SharedHttpService {
@@ -1093,17 +1100,31 @@ struct HostedState final: public kj::Refcounted {
       kj::String grainId,
       IsolateBindingServices::Client bindingServices,
       kj::Own<BundleBacking> backing,
-      kj::Own<workerd::WorkerStubChannel> worker)
+      kj::Own<workerd::WorkerStubChannel> worker,
+      kj::Own<SelfServiceTarget> ingressTarget)
       : runtime(runtime), grainId(kj::mv(grainId)),
         bindingServices(kj::mv(bindingServices)), backing(kj::mv(backing)),
-        worker(kj::mv(worker)) {}
+        worker(kj::mv(worker)), ingressTarget(kj::mv(ingressTarget)) {}
 
   ~HostedState() noexcept {
     revokeSelfServices();
   }
 
   void revokeSelfServices() {
-    for (auto& target: backing->selfServices) target->worker = nullptr;
+    if (backing.get() != nullptr) {
+      for (auto& target: backing->selfServices) target->worker = nullptr;
+    }
+  }
+
+  void stop() {
+    if (!running) return;
+    runtime.evictDynamicWorker(LOADER_NAMESPACE, grainId);
+    ingressTarget->worker = nullptr;
+    revokeSelfServices();
+    bindingServices = IsolateBindingServices::Client(nullptr);
+    worker = nullptr;
+    backing = nullptr;
+    running = false;
   }
 
   workerd::server::Server& runtime;
@@ -1111,47 +1132,51 @@ struct HostedState final: public kj::Refcounted {
   IsolateBindingServices::Client bindingServices;
   kj::Own<BundleBacking> backing;
   kj::Own<workerd::WorkerStubChannel> worker;
+  kj::Own<SelfServiceTarget> ingressTarget;
+  uint64_t keepAliveGeneration = 0;
   bool running = true;
 };
 
 class HostedIsolateImpl final: public HostedIsolate::Server {
  public:
-  HostedIsolateImpl(kj::Rc<HostedState> state, capnp::ByteStreamFactory& streamFactory)
-      : state(kj::mv(state)), streamFactory(streamFactory) {}
+  HostedIsolateImpl(kj::Rc<HostedState> state, capnp::ByteStreamFactory& streamFactory,
+      kj::Function<void(kj::Rc<HostedState>)> refreshIdleTimer)
+      : state(kj::mv(state)), streamFactory(streamFactory),
+        refreshIdleTimer(kj::mv(refreshIdleTimer)) {}
 
   kj::Promise<void> keepAlive(KeepAliveContext context) override {
     KJ_REQUIRE(state->running, "hosted isolate has been stopped");
+    refreshIdleTimer(state.addRef());
     return kj::READY_NOW;
   }
 
   kj::Promise<void> stop(StopContext context) override {
-    state->runtime.evictDynamicWorker(LOADER_NAMESPACE, state->grainId);
-    state->revokeSelfServices();
-    state->bindingServices = IsolateBindingServices::Client(nullptr);
-    state->running = false;
+    state->stop();
     return kj::READY_NOW;
   }
 
   kj::Promise<void> getHttpService(GetHttpServiceContext context) override {
     KJ_REQUIRE(state->running, "hosted isolate has been stopped");
-    auto ingress = state->worker->getEntrypoint(
-        kj::none, workerd::Frankenvalue(), kj::none);
     context.getResults().setService(kj::heap<LegacyHttpServiceAdapter>(streamFactory,
         state->runtime.getHttpHeaderTableForEmbedding(),
-        kj::heap<WorkerIngressService>(kj::mv(ingress))));
+        kj::heap<WorkerIngressService>(kj::atomicAddRef(*state->ingressTarget))));
     return kj::READY_NOW;
   }
 
  private:
   kj::Rc<HostedState> state;
   capnp::ByteStreamFactory& streamFactory;
+  kj::Function<void(kj::Rc<HostedState>)> refreshIdleTimer;
 };
 
-class IsolateHostImpl final: public IsolateHost::Server {
+class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::ErrorHandler {
  public:
   IsolateHostImpl(workerd::server::Server& runtime,
-      capnp::ByteStreamFactory& streamFactory)
-      : runtime(runtime), streamFactory(streamFactory) {}
+      capnp::ByteStreamFactory& streamFactory,
+      kj::Timer& timer,
+      kj::Duration idleTimeout)
+      : runtime(runtime), streamFactory(streamFactory), timer(timer),
+        idleTimeout(idleTimeout), tasks(*this) {}
 
   kj::Promise<void> startGrain(StartGrainContext context) override {
     auto grainId = context.getParams().getGrainId();
@@ -1163,8 +1188,8 @@ class IsolateHostImpl final: public IsolateHost::Server {
 
     KJ_IF_SOME(existing, grains.find(grainId)) {
       if (existing->running) {
-        context.getResults().setGrain(
-            kj::heap<HostedIsolateImpl>(existing.addRef(), streamFactory));
+        refreshIdleTimer(existing.addRef());
+        context.getResults().setGrain(makeHostedIsolate(existing.addRef()));
         return kj::READY_NOW;
       }
       grains.erase(grainId);
@@ -1179,8 +1204,8 @@ class IsolateHostImpl final: public IsolateHost::Server {
             services = kj::mv(services)](kj::Own<DecodedWorkerBundle> decoded) mutable {
       KJ_IF_SOME(existing, grains.find(grainId)) {
         if (existing->running) {
-          context.getResults().setGrain(
-              kj::heap<HostedIsolateImpl>(existing.addRef(), streamFactory));
+          refreshIdleTimer(existing.addRef());
+          context.getResults().setGrain(makeHostedIsolate(existing.addRef()));
           return;
         }
         grains.erase(grainId);
@@ -1194,20 +1219,59 @@ class IsolateHostImpl final: public IsolateHost::Server {
         return source.clone(kj::atomicAddRef(*backing));
       });
       for (auto& target: backing->selfServices) target->worker = worker.get();
+      auto ingressTarget = kj::atomicRefcounted<SelfServiceTarget>();
+      ingressTarget->worker = worker.get();
       auto state = kj::rc<HostedState>(runtime, kj::str(grainId),
-          kj::mv(services), kj::mv(backing), kj::mv(worker));
-      context.getResults().setGrain(
-          kj::heap<HostedIsolateImpl>(state.addRef(), streamFactory));
+          kj::mv(services), kj::mv(backing), kj::mv(worker), kj::mv(ingressTarget));
+      refreshIdleTimer(state.addRef());
+      context.getResults().setGrain(makeHostedIsolate(state.addRef()));
       grains.insert(kj::mv(grainId), kj::mv(state));
     });
   }
 
  private:
+  kj::Own<HostedIsolateImpl> makeHostedIsolate(kj::Rc<HostedState> state) {
+    return kj::heap<HostedIsolateImpl>(kj::mv(state), streamFactory,
+        [this](kj::Rc<HostedState> state) { refreshIdleTimer(kj::mv(state)); });
+  }
+
+  void refreshIdleTimer(kj::Rc<HostedState> state) {
+    KJ_REQUIRE(state->running, "cannot refresh a stopped hosted isolate");
+    auto generation = ++state->keepAliveGeneration;
+    tasks.add(timer.afterDelay(idleTimeout).then(
+        [this, state = kj::mv(state), generation]() mutable {
+      if (!state->running || state->keepAliveGeneration != generation) return;
+      auto grainId = kj::str(state->grainId);
+      state->stop();
+      grains.erase(grainId);
+    }));
+  }
+
+  void taskFailed(kj::Exception&& exception) override {
+    KJ_LOG(ERROR, "hosted isolate idle-eviction task failed", exception);
+  }
+
   workerd::server::Server& runtime;
   capnp::ByteStreamFactory& streamFactory;
+  kj::Timer& timer;
+  kj::Duration idleTimeout;
+  kj::TaskSet tasks;
   AdmissionPool admissionPool;
   kj::HashMap<kj::String, kj::Rc<HostedState>> grains;
 };
+
+kj::Duration getIdleTimeout() {
+  auto value = getenv("SANDSTORM_ISOLATE_HOST_IDLE_TIMEOUT_MS");
+  if (value == nullptr) return DEFAULT_IDLE_TIMEOUT;
+
+  char* end = nullptr;
+  errno = 0;
+  auto milliseconds = strtoul(value, &end, 10);
+  KJ_REQUIRE(errno == 0 && end != value && *end == '\0' &&
+          milliseconds > 0 && milliseconds <= 24 * 60 * 60 * 1000,
+      "invalid SANDSTORM_ISOLATE_HOST_IDLE_TIMEOUT_MS", value);
+  return milliseconds * kj::MILLISECONDS;
+}
 
 }  // namespace
 }  // namespace sandstorm
@@ -1269,7 +1333,8 @@ int main(int argc, char** argv) {
   capnp::ByteStreamFactory byteStreamFactory;
 
   capnp::TwoPartyServer controlServer(
-      kj::heap<sandstorm::IsolateHostImpl>(runtime, byteStreamFactory));
+      kj::heap<sandstorm::IsolateHostImpl>(runtime, byteStreamFactory,
+          io.provider->getTimer(), sandstorm::getIdleTimeout()));
   if (inheritedControl) {
     controlServer.accept(*controlStream)
         .attach(kj::mv(controlStream))
