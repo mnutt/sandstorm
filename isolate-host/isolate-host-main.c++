@@ -1311,12 +1311,14 @@ int main(int argc, char** argv) {
   workerd::server::WorkerdPlatform v8Platform(*defaultPlatform);
   workerd::jsg::V8System v8System(v8Platform, {}, defaultPlatform.get());
   sandstorm::SandstormLimitEnforcerFactory limitEnforcers(io.provider->getTimer());
+  auto loggingOptions = workerd::Worker::LoggingOptions(workerd::Worker::ConsoleMode::STDOUT);
+  loggingOptions.structuredLogging = workerd::StructuredLogging::YES;
   workerd::server::Server runtime(*filesystem,
       io.provider->getTimer(),
       kj::systemPreciseMonotonicClock(),
       io.provider->getNetwork(),
       entropy,
-      workerd::Worker::LoggingOptions(workerd::Worker::ConsoleMode::STDOUT),
+      kj::mv(loggingOptions),
       [](kj::String error) { KJ_FAIL_REQUIRE("embedded workerd configuration error", error); });
   runtime.setLimitEnforcerFactory(limitEnforcers);
   runtime.allowExperimental();
