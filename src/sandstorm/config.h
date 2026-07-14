@@ -5,6 +5,11 @@
 
 namespace sandstorm {
 
+enum class IsolateHostingMode {
+  ACCOUNT,
+  PER_GRAIN,
+};
+
 struct UserIds {
   uid_t uid = 0;
   gid_t gid = 0;
@@ -37,6 +42,7 @@ struct Config {
 
   bool useExperimentalSeccompFilter = false;
   bool logSeccompViolations = false;
+  IsolateHostingMode isolateHostingMode = IsolateHostingMode::PER_GRAIN;
 };
 
 // Read and return the config file from `path`.

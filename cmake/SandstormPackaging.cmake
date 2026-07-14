@@ -550,6 +550,8 @@ function(sandstorm_add_packaging_targets)
       "${PROJECT_SOURCE_DIR}/make-bundle.sh"
     COMMAND "${CMAKE_COMMAND}" -E compare_files
       "${_bundle_dir}/bin/workerd" "${CMAKE_BINARY_DIR}/bin/workerd"
+    COMMAND "${CMAKE_COMMAND}" -E compare_files
+      "${_bundle_dir}/bin/isolate-host" "${CMAKE_BINARY_DIR}/bin/isolate-host"
     COMMAND "${CMAKE_COMMAND}" -E touch "${_bundle_stamp}"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     DEPENDS

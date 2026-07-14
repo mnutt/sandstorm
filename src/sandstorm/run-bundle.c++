@@ -2692,7 +2692,8 @@ private:
         kj::mv(grainsCgroup),
         sandboxUid,
         config.useExperimentalSeccompFilter,
-        config.logSeccompViolations));
+        config.logSeccompViolations,
+        config.isolateHostingMode == IsolateHostingMode::ACCOUNT));
 
       auto gatewayServer = kj::heap<capnp::TwoPartyServer>(kj::refcounted<CapRedirector>([&]() {
         return server.getBootstrap().castAs<SandstormCoreFactory>()

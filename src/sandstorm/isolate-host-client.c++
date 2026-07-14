@@ -12,13 +12,59 @@
 #include <kj/debug.h>
 #include <kj/function.h>
 
-#include <fcntl.h>
-#include <unistd.h>
-
 namespace sandstorm {
 namespace {
 
-class BindingServicesImpl final: public IsolateBindingServices::Server {};
+class TestStorageService final: public kj::HttpService {
+public:
+  TestStorageService(kj::HttpHeaderTable& headerTable, kj::String& stored)
+      : headerTable(headerTable), stored(stored) {}
+
+  kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr,
+      const kj::HttpHeaders&, kj::AsyncInputStream& requestBody,
+      kj::HttpService::Response& response) override {
+    if (method == kj::HttpMethod::PUT) {
+      return requestBody.readAllText().then([this, &response](kj::String body) {
+        stored = kj::mv(body);
+        return send(response, stored);
+      });
+    }
+    KJ_REQUIRE(method == kj::HttpMethod::GET, "unexpected test storage method");
+    return send(response, stored);
+  }
+
+private:
+  kj::HttpHeaderTable& headerTable;
+  kj::String& stored;
+
+  kj::Promise<void> send(kj::HttpService::Response& response, kj::StringPtr body) {
+    kj::HttpHeaders headers(headerTable);
+    auto stream = response.send(200, "OK", headers, body.size());
+    return stream->write(body.begin(), body.size()).attach(kj::mv(stream));
+  }
+};
+
+class BindingServicesImpl final: public IsolateBindingServices::Server {
+public:
+  BindingServicesImpl()
+      : httpFactory(byteStreamFactory, headerTableBuilder),
+        headerTable(headerTableBuilder.build()) {}
+
+  kj::Promise<void> getService(GetServiceContext context) override {
+    KJ_REQUIRE(context.getParams().getBinding() == IsolateBindingServices::Binding::STORAGE,
+        "control test requested an unexpected binding service");
+    context.getResults().setService(httpFactory.kjToCapnp(
+        kj::heap<TestStorageService>(*headerTable, stored)));
+    return kj::READY_NOW;
+  }
+
+private:
+  capnp::ByteStreamFactory byteStreamFactory;
+  kj::HttpHeaderTable::Builder headerTableBuilder;
+  capnp::HttpOverCapnpFactory httpFactory;
+  kj::Own<kj::HttpHeaderTable> headerTable;
+  kj::String stored = kj::str("shared-storage-ok");
+};
 
 void expectFailure(kj::Function<void()> operation) {
   auto exception = kj::runCatchingExceptions(kj::mv(operation));
@@ -29,7 +75,7 @@ void expectFailure(kj::Function<void()> operation) {
 }  // namespace sandstorm
 
 int main(int argc, char** argv) {
-  KJ_REQUIRE(argc == 3, "usage: isolate-host-client <control-socket-path> <grain-root-path>");
+  KJ_REQUIRE(argc == 2, "usage: isolate-host-client <control-socket-path>");
   capnp::MallocMessageBuilder sourceMessage;
   auto source = sourceMessage.initRoot<sandstorm::IsolateWorkerSource>();
   source.setFormatVersion(1);
@@ -69,17 +115,9 @@ export default {
   bindings[1].setJson(kj::StringPtr("{\"enabled\":true}").asBytes());
   bindings[2].setName("STORAGE");
   bindings[2].setStorage();
-  auto sourcePath = kj::str(argv[2], "/testgrain123/isolate-runtime/worker-source.capnp.bin");
-  int sourceFd;
-  KJ_SYSCALL(sourceFd = open(sourcePath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
-  capnp::writePackedMessageToFd(sourceFd, sourceMessage);
-  close(sourceFd);
-  auto cpuSourcePath = kj::str(argv[2], "/cpugrain123/isolate-runtime/worker-source.capnp.bin");
-  int cpuSourceFd;
-  KJ_SYSCALL(cpuSourceFd = open(
-      cpuSourcePath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
-  capnp::writePackedMessageToFd(cpuSourceFd, sourceMessage);
-  close(cpuSourceFd);
+  kj::VectorOutputStream sourceOutput;
+  capnp::writePackedMessage(sourceOutput, sourceMessage);
+  auto sourceBytes = sourceOutput.getArray();
 
   capnp::MallocMessageBuilder memorySourceMessage;
   auto memorySource = memorySourceMessage.initRoot<sandstorm::IsolateWorkerSource>();
@@ -93,13 +131,9 @@ const allocations = [];
 while (true) allocations.push(new Array(1024 * 1024).fill(allocations.length));
 export default { fetch() { return new Response("memory limit failed"); } };
 )JS").asBytes());
-  auto memorySourcePath = kj::str(
-      argv[2], "/memorygrain123/isolate-runtime/worker-source.capnp.bin");
-  int memorySourceFd;
-  KJ_SYSCALL(memorySourceFd = open(
-      memorySourcePath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
-  capnp::writePackedMessageToFd(memorySourceFd, memorySourceMessage);
-  close(memorySourceFd);
+  kj::VectorOutputStream memoryOutput;
+  capnp::writePackedMessage(memoryOutput, memorySourceMessage);
+  auto memoryBytes = memoryOutput.getArray();
 
   capnp::MallocMessageBuilder invalidMessage;
   auto invalidSource = invalidMessage.initRoot<sandstorm::IsolateWorkerSource>();
@@ -112,29 +146,15 @@ export default { fetch() { return new Response("memory limit failed"); } };
   auto invalidBinding = invalidSource.initBindings(1)[0];
   invalidBinding.setName("BROKEN");
   invalidBinding.setJson(kj::StringPtr("{not-json}").asBytes());
-  auto invalidPath = kj::str(argv[2], "/invalidjson/isolate-runtime/worker-source.capnp.bin");
-  int invalidFd;
-  KJ_SYSCALL(invalidFd = open(
-      invalidPath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
-  capnp::writePackedMessageToFd(invalidFd, invalidMessage);
-  close(invalidFd);
+  kj::VectorOutputStream invalidOutput;
+  capnp::writePackedMessage(invalidOutput, invalidMessage);
+  auto invalidBytes = invalidOutput.getArray();
 
   source.setFormatVersion(2);
-  auto unsupportedPath = kj::str(
-      argv[2], "/unsupportedversion/isolate-runtime/worker-source.capnp.bin");
-  int unsupportedFd;
-  KJ_SYSCALL(unsupportedFd = open(
-      unsupportedPath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
-  capnp::writePackedMessageToFd(unsupportedFd, sourceMessage);
-  close(unsupportedFd);
+  kj::VectorOutputStream unsupportedOutput;
+  capnp::writePackedMessage(unsupportedOutput, sourceMessage);
+  auto unsupportedBytes = unsupportedOutput.getArray();
 
-  auto oversizedPath = kj::str(
-      argv[2], "/oversizedbundle/isolate-runtime/worker-source.capnp.bin");
-  int oversizedFd;
-  KJ_SYSCALL(oversizedFd = open(
-      oversizedPath.cStr(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600));
-  KJ_SYSCALL(ftruncate(oversizedFd, 16 * 1024 * 1024 + 1));
-  close(oversizedFd);
   capnp::EzRpcClient rpc(kj::str("unix:", argv[1]));
   auto& waitScope = rpc.getWaitScope();
   auto host = rpc.getMain<sandstorm::IsolateHost>();
@@ -144,6 +164,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
   auto start = host.startGrainRequest();
   start.setGrainId("testgrain123");
   start.setServices(services);
+  start.setWorkerSource(sourceBytes);
   auto grain = start.send().wait(waitScope).getGrain();
   grain.keepAliveRequest().send().wait(waitScope);
 
@@ -170,6 +191,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
   auto cpuStart = host.startGrainRequest();
   cpuStart.setGrainId("cpugrain123");
   cpuStart.setServices(services);
+  cpuStart.setWorkerSource(sourceBytes);
   auto cpuGrain = cpuStart.send().wait(waitScope).getGrain();
   auto cpuHttp = cpuGrain.getHttpServiceRequest().send().wait(waitScope);
   auto cpuService = httpFactory.capnpToKj(cpuHttp.getService());
@@ -200,6 +222,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
     auto memoryStart = host.startGrainRequest();
     memoryStart.setGrainId("memorygrain123");
     memoryStart.setServices(services);
+    memoryStart.setWorkerSource(memoryBytes);
     auto memoryGrain = memoryStart.send().wait(waitScope).getGrain();
     auto memoryHttp = memoryGrain.getHttpServiceRequest().send().wait(waitScope);
     auto memoryService = httpFactory.capnpToKj(memoryHttp.getService());
@@ -226,6 +249,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
   auto restart = host.startGrainRequest();
   restart.setGrainId("testgrain123");
   restart.setServices(services);
+  restart.setWorkerSource(sourceBytes);
   auto restartedGrain = restart.send().wait(waitScope).getGrain();
   restartedGrain.keepAliveRequest().send().wait(waitScope);
   auto restartedHttp = restartedGrain.getHttpServiceRequest().send().wait(waitScope);
@@ -253,20 +277,8 @@ export default { fetch() { return new Response("memory limit failed"); } };
     invalid.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
-    auto symlink = host.startGrainRequest();
-    symlink.setGrainId("linkgrain123");
-    symlink.setServices(services);
-    symlink.send().wait(waitScope);
-  });
-  sandstorm::expectFailure([&]() {
     auto incomplete = host.startGrainRequest();
-    incomplete.setGrainId("missingmanifest");
-    incomplete.setServices(services);
-    incomplete.send().wait(waitScope);
-  });
-  sandstorm::expectFailure([&]() {
-    auto incomplete = host.startGrainRequest();
-    incomplete.setGrainId("missingsource");
+    incomplete.setGrainId("missingworker123");
     incomplete.setServices(services);
     incomplete.send().wait(waitScope);
   });
@@ -274,45 +286,24 @@ export default { fetch() { return new Response("memory limit failed"); } };
     auto invalid = host.startGrainRequest();
     invalid.setGrainId("invalidjson");
     invalid.setServices(services);
+    invalid.setWorkerSource(invalidBytes);
     invalid.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
     auto unsupported = host.startGrainRequest();
     unsupported.setGrainId("unsupportedversion");
     unsupported.setServices(services);
+    unsupported.setWorkerSource(unsupportedBytes);
     unsupported.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
     auto oversized = host.startGrainRequest();
     oversized.setGrainId("oversizedbundle");
     oversized.setServices(services);
+    oversized.setWorkerSource(
+        kj::heapArray<kj::byte>(16 * 1024 * 1024 + 1).asPtr());
     oversized.send().wait(waitScope);
   });
-
-  kj::Vector<kj::Promise<void>> pendingAdmissions;
-  for (auto i: kj::zeroTo(16)) {
-    auto request = host.startGrainRequest();
-    request.setGrainId(kj::str("admission", i < 10 ? "0" : "", i));
-    request.setServices(services);
-    pendingAdmissions.add(request.send().ignoreResult());
-  }
-  sandstorm::expectFailure([&]() {
-    auto overloaded = host.startGrainRequest();
-    overloaded.setGrainId("admission-overload");
-    overloaded.setServices(services);
-    overloaded.send().wait(waitScope);
-  });
-  for (auto i: kj::zeroTo(16)) {
-    auto fifoPath = kj::str(argv[2], "/admission", i < 10 ? "0" : "", i,
-        "/isolate-runtime/worker-source.capnp.bin");
-    int fifoFd;
-    KJ_SYSCALL(fifoFd = open(fifoPath.cStr(), O_WRONLY | O_CLOEXEC));
-    KJ_SYSCALL(write(fifoFd, "x", 1));
-    close(fifoFd);
-  }
-  for (auto& admission: pendingAdmissions) {
-    sandstorm::expectFailure([&]() { kj::mv(admission).wait(waitScope); });
-  }
 
   return 0;
 }

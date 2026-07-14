@@ -34,7 +34,7 @@ mkdir -p "$app_root" "$grain_root"
 "$spk" unpack "$test_spk" "$app_root/testpackage123"
 ln -s "$sandstorm" "$root/isolate-account-host"
 
-"$native_host" "$native_socket" "$grain_root" &
+"$native_host" "$native_socket" &
 native_pid=$!
 for _attempt in $(seq 1 100); do
   [[ -S "$native_socket" ]] && break
@@ -56,3 +56,7 @@ done
 [[ -S "$account_socket" ]]
 
 "$client" "$account_socket" testgrain123 testpackage123
+grep -q '"topology": "accountSharedHost"' \
+  "$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"
+grep -q '"topology": "accountSharedHost"' \
+  "$grain_root/testgrain456/isolate-runtime/runtime-manifest.json"

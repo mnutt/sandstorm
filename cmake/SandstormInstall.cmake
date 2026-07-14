@@ -73,6 +73,9 @@ function(sandstorm_install_native)
     COMMENT "Building the embedded workerd isolate host"
     VERBATIM)
   add_custom_target(isolate-host DEPENDS "${_isolate_host_bin}")
+  install(PROGRAMS "${_isolate_host_bin}"
+    DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    COMPONENT native)
   add_custom_target(isolate-host-control-test
     COMMAND bash "${PROJECT_SOURCE_DIR}/cmake/RunIsolateHostControlTest.sh"
       "${_isolate_host_bin}"
@@ -219,7 +222,7 @@ function(sandstorm_install_native)
       --prefix "${CMAKE_BINARY_DIR}/stage"
       --component native
     COMMAND "${CMAKE_COMMAND}" -E touch "${_native_stage_stamp}"
-    DEPENDS ${_native_targets} workerd
+    DEPENDS ${_native_targets} workerd isolate-host
     COMMENT "Staging native Sandstorm build outputs"
     VERBATIM)
   add_custom_target(stage-native DEPENDS "${_native_stage_stamp}")
