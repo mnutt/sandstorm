@@ -410,7 +410,7 @@ index d805980d..f7a67b0d 100644
 +
    // Create the FsMap that will be used to map known file system
    // roots to configurable locations.
-@@ -5162,12 +5180,14 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
+@@ -5162,11 +5180,13 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
    if (!def.isDynamic) serviceName = name;
 -
 +
@@ -425,6 +425,97 @@ index d805980d..f7a67b0d 100644
 -          kj::mv(containerEgressInterceptorImage), def.isDynamic, kj::mv(abortIsolateCallback));
 +          kj::mv(containerEgressInterceptorImage), def.isDynamic, limitEnforcerFactory,
 +          kj::mv(abortIsolateCallback));
-   result->initActorNamespaces(def.localActorConfigs, network);
-   co_return result;
- }
+  result->initActorNamespaces(def.localActorConfigs, network);
+  co_return result;
+diff --git a/src/workerd/io/worker.h b/src/workerd/io/worker.h
+index 03f7fe5..e2e8321 100644
+--- a/src/workerd/io/worker.h
++++ b/src/workerd/io/worker.h
+@@ -131,6 +131,8 @@ class Worker: public kj::AtomicRefcounted {
+     ProcessStdioPrefixed processStdioPrefixed = ProcessStdioPrefixed::YES;
+     kj::ConstString stdoutPrefix = "stdout:"_kjc;
+     kj::ConstString stderrPrefix = "stderr:"_kjc;
++    // Stable runtime identity included in structured console records.
++    kj::String workerName = kj::str("");
+
+     LoggingOptions() = default;
+     LoggingOptions(LoggingOptions&&) = default;
+@@ -143,7 +145,8 @@ class Worker: public kj::AtomicRefcounted {
+           structuredLogging(other.structuredLogging),
+           processStdioPrefixed(other.processStdioPrefixed),
+           stdoutPrefix(other.stdoutPrefix.clone()),
+-          stderrPrefix(other.stderrPrefix.clone()) {}
++          stderrPrefix(other.stderrPrefix.clone()),
++          workerName(kj::str(other.workerName)) {}
+
+     LoggingOptions& operator=(const LoggingOptions& other) {
+       consoleMode = other.consoleMode;
+@@ -151,6 +154,7 @@ class Worker: public kj::AtomicRefcounted {
+       processStdioPrefixed = other.processStdioPrefixed;
+       stdoutPrefix = other.stdoutPrefix.clone();
+       stderrPrefix = other.stderrPrefix.clone();
++      workerName = kj::str(other.workerName);
+       return *this;
+     }
+   };
+diff --git a/src/workerd/io/worker.c++ b/src/workerd/io/worker.c++
+index a32fefc..5dd48f0 100644
+--- a/src/workerd/io/worker.c++
++++ b/src/workerd/io/worker.c++
+@@ -2127,8 +2127,8 @@ void Worker::handleLog(jsg::Lock& js,
+   int length = info.Length();
+   // to pass additional arguments from this function to js' `formatLog` we add arguments to the end
+   // of the arguments vector, then in formatLog we `pop` these from the vector.
+-  // 3 is just the number of args we currently pass.
+-  v8::LocalVector<v8::Value> args(js.v8Isolate, length + 3);
++  // 4 is just the number of args we currently pass.
++  v8::LocalVector<v8::Value> args(js.v8Isolate, length + 4);
+   for (auto i: kj::zeroTo(length)) args[i] = info[i];
+   jsg::check(original.Get(js.v8Isolate)->Call(context, info.This(), length, args.data()));
+
+@@ -2256,8 +2256,9 @@ void Worker::handleLog(jsg::Lock& js,
+     args[length] = js.boolean(colors);
+     args[length + 1] = js.boolean(loggingOptions.structuredLogging.toBool());
+     args[length + 2] = js.strIntern(levelStr);
++    args[length + 3] = js.str(loggingOptions.workerName);
+     auto formatted = js.toString(
+-        jsg::check(formatLog->Call(context, js.v8Undefined(), length + 3, args.data())));
++        jsg::check(formatLog->Call(context, js.v8Undefined(), length + 4, args.data())));
+     fprintf(fd, "%s\n", formatted.cStr());
+     fflush(fd);
+   }
+diff --git a/src/node/internal/internal_inspect.ts b/src/node/internal/internal_inspect.ts
+index a0e6670..5bba3d1 100644
+--- a/src/node/internal/internal_inspect.ts
++++ b/src/node/internal/internal_inspect.ts
+@@ -2998,8 +2998,10 @@ export function formatLog(
+     colors: boolean,
+     structuredLogging: boolean,
+     level: string,
++    worker: string,
+   ]
+ ): string {
++  const worker = args.pop() as string;
+   const level = args.pop() as string;
+   const structuredLogging = args.pop() as boolean;
+   const colors = args.pop() as boolean;
+@@ -3012,6 +3014,7 @@ export function formatLog(
+         timestamp: Date.now(),
+         level,
+         message,
++        worker,
+       });
+     } else {
+       return message;
+diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
+index f7a67b0..c233aa1 100644
+--- a/src/workerd/server/server.c++
++++ b/src/workerd/server/server.c++
+@@ -4863,6 +4863,7 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
+     inspectorPolicy = Worker::Isolate::InspectorPolicy::ALLOW_FULLY_TRUSTED;
+   }
+   Worker::LoggingOptions isolateLoggingOptions = loggingOptions;
++  isolateLoggingOptions.workerName = kj::str(name);
+   isolateLoggingOptions.consoleMode =
+       def.source.variant.is<WorkerSource::ScriptSource>() && !usingNewModuleRegistry
+       ? Worker::ConsoleMode::INSPECTOR_ONLY

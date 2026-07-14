@@ -89,6 +89,7 @@ int main(int argc, char** argv) {
   auto script = kj::StringPtr(R"JS(
 export default {
   async fetch(request, env) {
+    console.log("sandstorm-grain-log-marker");
     if (new URL(request.url).pathname === "/cpu-loop") {
       while (true) {}
     }

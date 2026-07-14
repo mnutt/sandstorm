@@ -371,15 +371,18 @@ isolate-host: bin/isolate-host
 
 isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 	@socket="$(PWD)/tmp/isolate-host-control-test.sock"; \
-		rm -f "$$socket"; \
-		bin/isolate-host "$$socket" & host_pid=$$!; \
-		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"' EXIT; \
+		log="$(PWD)/tmp/isolate-host-control-test.log"; \
+		rm -f "$$socket" "$$log"; \
+		bin/isolate-host "$$socket" >"$$log" 2>&1 & host_pid=$$!; \
+		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket" "$$log"' EXIT; \
 		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
 		test -S "$$socket"; \
 		tmp/sandstorm/isolate-host-client "$$socket"; \
+		grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:testgrain123"' "$$log"; \
+		grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:cpugrain123"' "$$log"; \
 		kill $$host_pid; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"; \
 		SANDSTORM_ISOLATE_HOST_IDLE_TIMEOUT_MS=200 \
-			bin/isolate-host "$$socket" & host_pid=$$!; \
+			bin/isolate-host "$$socket" >>"$$log" 2>&1 & host_pid=$$!; \
 		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
 		test -S "$$socket"; \
 		tmp/sandstorm/isolate-host-client "$$socket" --idle-eviction
