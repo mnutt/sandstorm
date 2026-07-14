@@ -7,6 +7,8 @@
 
 #include <workerd/server/sandstorm-isolate-host.capnp.h>
 #include <workerd/server/sandstorm-isolate-worker-source.capnp.h>
+#include <workerd/server/workerd-api.h>
+#include <workerd/api/http.h>
 #include <workerd/io/actor-cache.h>
 #include <workerd/io/compatibility-date.h>
 #include <workerd/io/limit-enforcer.h>
@@ -372,6 +374,36 @@ class HttpServiceChannel final: public workerd::IoChannelFactory::SubrequestChan
 
  private:
   kj::Own<SharedHttpService> service;
+};
+
+class SandstormEnvCompiler final: public workerd::DynamicWorkerEnvCompiler {
+ public:
+  void compile(workerd::jsg::Lock& js,
+      const workerd::Worker::Api& api,
+      workerd::Frankenvalue& env,
+      v8::Local<v8::Object> target) override {
+    workerd::Frankenvalue::DirectCapabilityMaterializer materialize =
+        [&js, &api](workerd::Frankenvalue::CapTableEntry& entry) {
+      // Sandstorm's bundle translation creates only Fetcher capabilities. Keep this policy and
+      // the corresponding IoChannel downcast in the embedding binary rather than workerd's
+      // dynamic loader.
+      auto& channel = kj::downcast<workerd::IoChannelCapTableEntry>(entry);
+      workerd::server::WorkerdApi::Global global{
+        .name = kj::str("capability"),
+        .value = workerd::server::WorkerdApi::Global::Fetcher{
+          .channel = channel.getChannelNumber(
+              workerd::IoChannelCapTableEntry::Type::SUBREQUEST),
+          .requiresHost = true,
+          .isInHouse = false,
+        },
+      };
+      auto holder = js.obj();
+      workerd::server::WorkerdApi::from(api).compileGlobals(
+          js, kj::arrayPtr(&global, 1), holder, 1);
+      return holder.get(js, "capability");
+    };
+    env.populateJsObject(js, workerd::jsg::JsObject(target), materialize);
+  }
 };
 
 class WorkerIngressService final: public kj::HttpService {
@@ -978,6 +1010,7 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
     .compatibilityFlags = compatibility.asReader(),
     .limits = kj::none,
     .env = kj::mv(env),
+    .envCompiler = kj::atomicRefcounted<SandstormEnvCompiler>(),
     .globalOutbound = kj::none,
     .tails = {},
     .streamingTails = {},
