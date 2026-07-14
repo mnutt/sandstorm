@@ -230,6 +230,9 @@ function(sandstorm_add_packaging_targets)
       "${_isolate_abi_dir}/isolate-supervisor-internal.capnp-abi.json"
       "capnp:/sandstorm/isolate-supervisor-internal.capnp"
     COMMAND "$<TARGET_FILE:spk>" capnp-abi --check
+      "${_isolate_abi_dir}/isolate-worker-source.capnp-abi.json"
+      "capnp:/sandstorm/isolate-worker-source.capnp"
+    COMMAND "$<TARGET_FILE:spk>" capnp-abi --check
       "${_isolate_abi_dir}/outbound-http-session.capnp-abi.json"
       "capnp:/sandstorm/outbound-http-session.capnp"
     DEPENDS
@@ -238,11 +241,13 @@ function(sandstorm_add_packaging_targets)
       "${_isolate_abi_dir}/isolate-bridge.capnp-abi.json"
       "${_isolate_abi_dir}/isolate-host.capnp-abi.json"
       "${_isolate_abi_dir}/isolate-supervisor-internal.capnp-abi.json"
+      "${_isolate_abi_dir}/isolate-worker-source.capnp-abi.json"
       "${_isolate_abi_dir}/outbound-http-session.capnp-abi.json"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-bridge.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-account-host.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-supervisor-internal.capnp"
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-worker-source.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/outbound-http-session.capnp"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     COMMENT "Checking isolate platform Cap'n Proto ABI baselines"

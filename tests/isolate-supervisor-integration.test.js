@@ -1256,6 +1256,66 @@ toolchainTest("spk capnp-abi dumps schema interface metadata", async () => {
     ], options),
     /changed ID/);
 
+  const structSchemaPath = path.join(fixtureRoot, "record.capnp");
+  await fs.writeFile(structSchemaPath, `@0xd9df9f07d2dc3e2d;
+
+struct Record {
+  name @0 :Text;
+  union {
+    text @1 :Text;
+    data @2 :Data;
+  }
+}
+`);
+  const structOptions = { cwd: fixtureRoot };
+  const structDumped = await runCommand(SPK_BIN, [
+    "capnp-abi",
+    "capnp:./record.capnp",
+  ], structOptions);
+  const structAbi = JSON.parse(structDumped.stdout);
+  assert.deepEqual(structAbi.structs, [{
+    name: "Record",
+    structId: structAbi.structs[0].structId,
+    fields: [
+      { name: "name", ordinal: 0, type: "Text" },
+      { name: "text", ordinal: 1, type: "Text", discriminant: 0 },
+      { name: "data", ordinal: 2, type: "Data", discriminant: 1 },
+    ],
+  }]);
+
+  const structBaselinePath = path.join(fixtureRoot, "record.capnp-abi.json");
+  await fs.writeFile(structBaselinePath, structDumped.stdout);
+  await runCommand(SPK_BIN, [
+    "capnp-abi",
+    "--check", structBaselinePath,
+    "capnp:./record.capnp",
+  ], structOptions);
+
+  structAbi.structs[0].fields[0].type = "Data";
+  const incompatibleStructTypePath = path.join(
+    fixtureRoot, "incompatible-struct-type.capnp-abi.json");
+  await fs.writeFile(incompatibleStructTypePath, `${JSON.stringify(structAbi, null, 2)}\n`);
+  await assert.rejects(
+    runCommand(SPK_BIN, [
+      "capnp-abi",
+      "--check", incompatibleStructTypePath,
+      "capnp:./record.capnp",
+    ], structOptions),
+    /changed type/);
+
+  structAbi.structs[0].fields[0].type = "Text";
+  structAbi.structs[0].fields[1].discriminant = 42;
+  const incompatibleStructPath = path.join(
+    fixtureRoot, "incompatible-struct.capnp-abi.json");
+  await fs.writeFile(incompatibleStructPath, `${JSON.stringify(structAbi, null, 2)}\n`);
+  await assert.rejects(
+    runCommand(SPK_BIN, [
+      "capnp-abi",
+      "--check", incompatibleStructPath,
+      "capnp:./record.capnp",
+    ], structOptions),
+    /changed union discriminant/);
+
   await assert.rejects(
     runCommand(SPK_BIN, [
       "capnp-abi",
