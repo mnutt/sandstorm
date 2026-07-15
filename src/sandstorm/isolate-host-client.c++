@@ -8,10 +8,15 @@
 #include <capnp/ez-rpc.h>
 #include <capnp/compat/http-over-capnp.h>
 #include <capnp/message.h>
+#include <capnp/rpc.capnp.h>
+#include <capnp/serialize.h>
 #include <capnp/serialize-packed.h>
 #include <kj/debug.h>
 #include <kj/function.h>
 #include <unistd.h>
+
+#include <initializer_list>
+#include <limits>
 
 namespace sandstorm {
 namespace {
@@ -70,6 +75,67 @@ private:
 void expectFailure(kj::Function<void()> operation) {
   auto exception = kj::runCatchingExceptions(kj::mv(operation));
   KJ_REQUIRE(exception != nullptr, "host operation unexpectedly succeeded");
+}
+
+kj::Array<capnp::word> makeBootstrapFrame(uint32_t questionId) {
+  capnp::MallocMessageBuilder message;
+  message.initRoot<capnp::rpc::Message>().initBootstrap().setQuestionId(questionId);
+  return capnp::messageToFlatArray(message);
+}
+
+kj::Array<capnp::word> makeFinishFrame(uint32_t questionId, bool releaseResultCaps) {
+  capnp::MallocMessageBuilder message;
+  auto finish = message.initRoot<capnp::rpc::Message>().initFinish();
+  finish.setQuestionId(questionId);
+  finish.setReleaseResultCaps(releaseResultCaps);
+  return capnp::messageToFlatArray(message);
+}
+
+kj::Array<capnp::word> makeCallFrame(uint32_t questionId, uint32_t importedCap) {
+  capnp::MallocMessageBuilder message;
+  auto call = message.initRoot<capnp::rpc::Message>().initCall();
+  call.setQuestionId(questionId);
+  call.initTarget().setImportedCap(importedCap);
+  call.initSendResultsTo().setCaller();
+  call.initParams();
+  return capnp::messageToFlatArray(message);
+}
+
+kj::Array<capnp::word> makeReturnFrame(
+    uint32_t answerId, kj::Maybe<uint32_t> senderHosted = nullptr) {
+  capnp::MallocMessageBuilder message;
+  auto result = message.initRoot<capnp::rpc::Message>().initReturn();
+  result.setAnswerId(answerId);
+  result.setReleaseParamCaps(true);
+  auto payload = result.initResults();
+  KJ_IF_MAYBE(exportId, senderHosted) {
+    payload.initCapTable(1)[0].setSenderHosted(*exportId);
+  }
+  return capnp::messageToFlatArray(message);
+}
+
+kj::Array<capnp::word> makeReleaseFrame(uint32_t id, uint32_t referenceCount) {
+  capnp::MallocMessageBuilder message;
+  auto release = message.initRoot<capnp::rpc::Message>().initRelease();
+  release.setId(id);
+  release.setReferenceCount(referenceCount);
+  return capnp::messageToFlatArray(message);
+}
+
+kj::Array<kj::byte> packRpcFrames(
+    std::initializer_list<kj::ArrayPtr<const capnp::word>> frames) {
+  kj::Vector<kj::byte> packed;
+  for (auto frame: frames) {
+    auto bytes = frame.asBytes();
+    KJ_REQUIRE(bytes.size() <= std::numeric_limits<uint32_t>::max());
+    uint32_t size = bytes.size();
+    packed.add(static_cast<kj::byte>(size));
+    packed.add(static_cast<kj::byte>(size >> 8));
+    packed.add(static_cast<kj::byte>(size >> 16));
+    packed.add(static_cast<kj::byte>(size >> 24));
+    packed.addAll(bytes);
+  }
+  return packed.releaseAsArray();
 }
 
 }  // namespace
@@ -132,6 +198,64 @@ export default {
         url.searchParams.get("name"));
       channel.close();
       return new Response("closed");
+    }
+    if (url.pathname === "/local-capnp-source") {
+      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
+        url.searchParams.get("name"));
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      const view = new DataView(bytes.buffer);
+      const frames = [];
+      for (let offset = 0; offset < bytes.byteLength;) {
+        const size = view.getUint32(offset, true);
+        offset += 4;
+        frames.push(bytes.slice(offset, offset + size).buffer);
+        offset += size;
+      }
+      channel.send(frames[0]);
+      await channel.receive();
+      channel.send(frames[1]);
+      channel.send(frames[2]);
+      await channel.receive();
+      channel.send(frames[3]);
+      channel.send(frames[4]);
+      return new Response(frames.every((frame) => frame.byteLength === 0) ? "detached" : "live");
+    }
+    if (url.pathname === "/local-capnp-target") {
+      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
+        url.searchParams.get("name"));
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      const view = new DataView(bytes.buffer);
+      const frames = [];
+      for (let offset = 0; offset < bytes.byteLength;) {
+        const size = view.getUint32(offset, true);
+        offset += 4;
+        frames.push(bytes.slice(offset, offset + size).buffer);
+        offset += size;
+      }
+      await channel.receive();
+      channel.send(frames[0]);
+      await channel.receive();
+      await channel.receive();
+      channel.send(frames[1]);
+      await channel.receive();
+      await channel.receive();
+      return new Response(frames.every((frame) => frame.byteLength === 0) ? "detached" : "live");
+    }
+    if (url.pathname === "/local-capnp-reject") {
+      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
+        url.searchParams.get("name"));
+      const frame = await request.arrayBuffer();
+      try {
+        channel.send(frame);
+        return new Response("accepted", { status: 500 });
+      } catch (_) {
+        try {
+          await channel.receive();
+          return new Response("still open", { status: 500 });
+        } catch (_) {
+          return new Response("rejected", { status: 409 });
+        }
+      }
     }
     if (url.pathname === "/storage-test") {
       if (request.headers.get("X-Sandstorm-Ingress-Test") !== "ingress-ok") {
@@ -303,6 +427,82 @@ export default { fetch() { return new Response("memory limit failed"); } };
   KJ_REQUIRE(localSourceResponse.body->readAllText().wait(waitScope) ==
           "{\"detached\":true,\"reply\":[9,2,3,4]}",
       "local buffer source did not receive the returned backing store");
+
+  auto bootstrapFrame = sandstorm::makeBootstrapFrame(0);
+  auto finishBootstrapFrame = sandstorm::makeFinishFrame(0, false);
+  auto callFrame = sandstorm::makeCallFrame(1, 0);
+  auto finishCallFrame = sandstorm::makeFinishFrame(1, true);
+  auto releaseFrame = sandstorm::makeReleaseFrame(0, 1);
+  auto bootstrapReturnFrame = sandstorm::makeReturnFrame(0, uint32_t(0));
+  auto callReturnFrame = sandstorm::makeReturnFrame(1);
+  auto capnpSourceBody = sandstorm::packRpcFrames({bootstrapFrame.asPtr(),
+      finishBootstrapFrame.asPtr(), callFrame.asPtr(), finishCallFrame.asPtr(),
+      releaseFrame.asPtr()});
+  auto capnpTargetBody = sandstorm::packRpcFrames(
+      {bootstrapReturnFrame.asPtr(), callReturnFrame.asPtr()});
+
+  auto openCapnpLink = host.openLocalCapnpChannelRequest();
+  openCapnpLink.setFirstGrainId("testgrain123");
+  openCapnpLink.setFirstName("capnp-source");
+  openCapnpLink.setSecondGrainId("peergrain123");
+  openCapnpLink.setSecondName("capnp-target");
+  openCapnpLink.send().wait(waitScope);
+
+  kj::HttpHeaders capnpSourceHeaders(*headerTable);
+  auto capnpSourceRequest = httpClient->request(kj::HttpMethod::POST,
+      "https://grain.invalid/local-capnp-source?name=capnp-source",
+      capnpSourceHeaders, capnpSourceBody.size());
+  capnpSourceRequest.body->write(capnpSourceBody.begin(), capnpSourceBody.size()).wait(waitScope);
+  capnpSourceRequest.body = nullptr;
+  kj::HttpHeaders capnpTargetHeaders(*headerTable);
+  auto capnpTargetRequest = peerClient->request(kj::HttpMethod::POST,
+      "https://grain.invalid/local-capnp-target?name=capnp-target",
+      capnpTargetHeaders, capnpTargetBody.size());
+  capnpTargetRequest.body->write(capnpTargetBody.begin(), capnpTargetBody.size()).wait(waitScope);
+  capnpTargetRequest.body = nullptr;
+
+  auto capnpTargetResponse = capnpTargetRequest.response.wait(waitScope);
+  KJ_REQUIRE(capnpTargetResponse.statusCode == 200,
+      "local Cap'n Proto target request failed", capnpTargetResponse.statusCode);
+  KJ_REQUIRE(capnpTargetResponse.body->readAllText().wait(waitScope) == "detached",
+      "local Cap'n Proto target frames were not transferred");
+  auto capnpSourceResponse = capnpSourceRequest.response.wait(waitScope);
+  KJ_REQUIRE(capnpSourceResponse.statusCode == 200,
+      "local Cap'n Proto source request failed", capnpSourceResponse.statusCode);
+  KJ_REQUIRE(capnpSourceResponse.body->readAllText().wait(waitScope) == "detached",
+      "local Cap'n Proto source frames were not transferred");
+
+  auto openForgedLink = host.openLocalCapnpChannelRequest();
+  openForgedLink.setFirstGrainId("testgrain123");
+  openForgedLink.setFirstName("capnp-forged-source");
+  openForgedLink.setSecondGrainId("peergrain123");
+  openForgedLink.setSecondName("capnp-forged-target");
+  openForgedLink.send().wait(waitScope);
+  kj::HttpHeaders forgedTargetHeaders(*headerTable);
+  auto forgedTargetRequest = peerClient->request(kj::HttpMethod::POST,
+      "https://grain.invalid/local-buffer-wait-for-close?name=capnp-forged-target",
+      forgedTargetHeaders, uint64_t(0));
+  forgedTargetRequest.body = nullptr;
+  auto forgedFrame = sandstorm::makeCallFrame(0, 999);
+  auto forgedBytes = forgedFrame.asBytes();
+  kj::HttpHeaders forgedHeaders(*headerTable);
+  auto forgedRequest = httpClient->request(kj::HttpMethod::POST,
+      "https://grain.invalid/local-capnp-reject?name=capnp-forged-source",
+      forgedHeaders, forgedBytes.size());
+  forgedRequest.body->write(forgedBytes.begin(), forgedBytes.size()).wait(waitScope);
+  forgedRequest.body = nullptr;
+  auto forgedResponse = forgedRequest.response.wait(waitScope);
+  KJ_REQUIRE(forgedResponse.statusCode == 409,
+      "local Cap'n Proto authority gate accepted an ungranted import",
+      forgedResponse.statusCode);
+  KJ_REQUIRE(forgedResponse.body->readAllText().wait(waitScope) == "rejected",
+      "local Cap'n Proto authority rejection returned the wrong response");
+  auto forgedTargetResponse = forgedTargetRequest.response.wait(waitScope);
+  KJ_REQUIRE(forgedTargetResponse.statusCode == 410,
+      "local Cap'n Proto authority rejection did not revoke the peer endpoint",
+      forgedTargetResponse.statusCode);
+  KJ_REQUIRE(forgedTargetResponse.body->readAllText().wait(waitScope) == "revoked",
+      "local Cap'n Proto peer revocation returned the wrong response");
 
   auto openRevokedLink = host.openLocalBufferChannelRequest();
   openRevokedLink.setFirstGrainId("testgrain123");
