@@ -664,7 +664,10 @@ class LocalBufferLinkState final: public kj::AtomicRefcounted {
 
   kj::Promise<workerd::jsg::BackingStore> receive(bool first) {
     auto lock = shared.lockExclusive();
-    KJ_REQUIRE(!lock->closed, "local buffer link is closed");
+    if (lock->closed) {
+      return kj::Promise<workerd::jsg::BackingStore>(
+          KJ_EXCEPTION(DISCONNECTED, "local buffer link is closed"));
+    }
     auto& inbox = first ? lock->firstInbox : lock->secondInbox;
     KJ_REQUIRE(inbox.waiter == kj::none,
         "only one local buffer receive may be pending per endpoint");
@@ -1627,6 +1630,7 @@ class AdmissionPool {
 
 void initRuntimeConfig(capnp::MallocMessageBuilder& message, kj::StringPtr bootstrapAddress) {
   auto config = message.initRoot<workerd::server::config::Config>();
+  config.setStructuredLogging(true);
   auto service = config.initServices(1)[0];
   service.setName("sandstorm-loader-bootstrap");
   auto worker = service.initWorker();
@@ -1919,14 +1923,12 @@ int main(int argc, char** argv) {
   workerd::server::WorkerdPlatform v8Platform(*defaultPlatform);
   workerd::jsg::V8System v8System(v8Platform, {}, defaultPlatform.get());
   sandstorm::SandstormLimitEnforcerFactory limitEnforcers(io.provider->getTimer());
-  auto loggingOptions = workerd::Worker::LoggingOptions(workerd::Worker::ConsoleMode::STDOUT);
-  loggingOptions.structuredLogging = workerd::StructuredLogging::YES;
   workerd::server::Server runtime(*filesystem,
       io.provider->getTimer(),
       kj::systemPreciseMonotonicClock(),
       io.provider->getNetwork(),
       entropy,
-      kj::mv(loggingOptions),
+      workerd::Worker::LoggingOptions(workerd::Worker::ConsoleMode::STDOUT),
       [](kj::String error) { KJ_FAIL_REQUIRE("embedded workerd configuration error", error); });
   runtime.setLimitEnforcerFactory(limitEnforcers);
   runtime.allowExperimental();

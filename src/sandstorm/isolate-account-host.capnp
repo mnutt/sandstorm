@@ -16,4 +16,13 @@ interface IsolateAccountHost {
   startGrain @0 (grainId :Text, packageId :Text, mainModule :Text,
                  compatibilityDate :Text, isNew :Bool, core :SandstormCore)
              -> (supervisor :Supervisor);
+
+  openLocalCapnpChannel @1 (
+      firstGrainId :Text,
+      firstName :Text,
+      secondGrainId :Text,
+      secondName :Text);
+  # Mint a host-revocable local RPC link between two live grains in this account. The account host
+  # validates grain membership before forwarding the request to the native host; neither worker
+  # can name or discover another grain through its private endpoint broker.
 }

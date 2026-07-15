@@ -12,9 +12,16 @@ rm -f "$socket" "$log"
 host_pid=$!
 
 cleanup() {
+  local status=$?
   kill "$host_pid" 2>/dev/null || true
   wait "$host_pid" 2>/dev/null || true
-  rm -f "$socket" "$log"
+  rm -f "$socket"
+  if [[ $status -eq 0 ]]; then
+    rm -f "$log"
+  else
+    echo "isolate host log retained at $log" >&2
+  fi
+  return "$status"
 }
 trap cleanup EXIT
 
