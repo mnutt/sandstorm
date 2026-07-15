@@ -321,27 +321,35 @@ struct LoadedWorkerSource {
   kj::Own<BundleBacking> backing;
 };
 
-class LocalBufferLinkState final: public kj::Refcounted {
+class LocalBufferLinkState final: public kj::AtomicRefcounted {
  public:
   void send(bool fromFirst, workerd::jsg::BackingStore buffer) {
-    KJ_REQUIRE(!closed, "local buffer link is closed");
-    auto& inbox = fromFirst ? secondInbox : firstInbox;
-    KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT,
-        "local buffer message exceeds the host buffering limit", buffer.size());
-    KJ_IF_SOME(waiter, inbox.waiter) {
-      waiter->fulfill(kj::mv(buffer));
-      inbox.waiter = kj::none;
-    } else {
-      KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT - inbox.queuedBytes,
-          "local buffer link queue exceeds the host buffering limit");
-      inbox.queuedBytes += buffer.size();
-      inbox.buffers.add(kj::mv(buffer));
+    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>> waiter;
+    {
+      auto lock = shared.lockExclusive();
+      KJ_REQUIRE(!lock->closed, "local buffer link is closed");
+      auto& inbox = fromFirst ? lock->secondInbox : lock->firstInbox;
+      KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT,
+          "local buffer message exceeds the host buffering limit", buffer.size());
+      KJ_IF_SOME(pending, inbox.waiter) {
+        waiter = kj::mv(pending);
+        inbox.waiter = kj::none;
+      } else {
+        KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT - inbox.queuedBytes,
+            "local buffer link queue exceeds the host buffering limit");
+        inbox.queuedBytes += buffer.size();
+        inbox.buffers.add(kj::mv(buffer));
+      }
+    }
+    KJ_IF_SOME(pending, waiter) {
+      pending->fulfill(kj::mv(buffer));
     }
   }
 
   kj::Promise<workerd::jsg::BackingStore> receive(bool first) {
-    KJ_REQUIRE(!closed, "local buffer link is closed");
-    auto& inbox = first ? firstInbox : secondInbox;
+    auto lock = shared.lockExclusive();
+    KJ_REQUIRE(!lock->closed, "local buffer link is closed");
+    auto& inbox = first ? lock->firstInbox : lock->secondInbox;
     KJ_REQUIRE(inbox.waiter == kj::none,
         "only one local buffer receive may be pending per endpoint");
     if (inbox.readIndex < inbox.buffers.size()) {
@@ -353,43 +361,62 @@ class LocalBufferLinkState final: public kj::Refcounted {
       }
       return kj::mv(buffer);
     }
-    auto paf = kj::newPromiseAndFulfiller<workerd::jsg::BackingStore>();
+    auto paf = kj::newPromiseAndCrossThreadFulfiller<workerd::jsg::BackingStore>();
     inbox.waiter = kj::mv(paf.fulfiller);
     return kj::mv(paf.promise);
   }
 
   void close() {
-    if (closed) return;
-    closed = true;
+    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>> firstWaiter;
+    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>> secondWaiter;
+    {
+      auto lock = shared.lockExclusive();
+      if (lock->closed) return;
+      lock->closed = true;
+      firstWaiter = takeWaiter(lock->firstInbox);
+      secondWaiter = takeWaiter(lock->secondInbox);
+      lock->firstInbox.buffers.clear();
+      lock->secondInbox.buffers.clear();
+      lock->firstInbox.queuedBytes = 0;
+      lock->secondInbox.queuedBytes = 0;
+      lock->firstInbox.readIndex = 0;
+      lock->secondInbox.readIndex = 0;
+    }
     auto exception = KJ_EXCEPTION(DISCONNECTED, "local buffer link was revoked");
-    rejectWaiter(firstInbox, exception);
-    rejectWaiter(secondInbox, exception);
-    firstInbox.buffers.clear();
-    secondInbox.buffers.clear();
-    firstInbox.queuedBytes = 0;
-    secondInbox.queuedBytes = 0;
-    firstInbox.readIndex = 0;
-    secondInbox.readIndex = 0;
+    rejectWaiter(firstWaiter, exception);
+    rejectWaiter(secondWaiter, exception);
   }
 
  private:
   struct Inbox {
     kj::Vector<workerd::jsg::BackingStore> buffers;
-    kj::Maybe<kj::Own<kj::PromiseFulfiller<workerd::jsg::BackingStore>>> waiter;
+    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>> waiter;
     size_t readIndex = 0;
     size_t queuedBytes = 0;
   };
 
-  static void rejectWaiter(Inbox& inbox, const kj::Exception& exception) {
-    KJ_IF_SOME(waiter, inbox.waiter) {
-      waiter->reject(exception.clone());
-      inbox.waiter = kj::none;
+  struct Shared {
+    Inbox firstInbox;
+    Inbox secondInbox;
+    bool closed = false;
+  };
+
+  static kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>
+  takeWaiter(Inbox& inbox) {
+    auto result = kj::mv(inbox.waiter);
+    inbox.waiter = kj::none;
+    return result;
+  }
+
+  static void rejectWaiter(
+      kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>& waiter,
+      const kj::Exception& exception) {
+    KJ_IF_SOME(pending, waiter) {
+      pending->reject(exception.clone());
     }
   }
 
-  Inbox firstInbox;
-  Inbox secondInbox;
-  bool closed = false;
+  kj::MutexGuarded<Shared> shared;
 };
 
 class LocalBufferEndpoint final: public workerd::api::LocalBufferChannelEndpoint {
@@ -414,33 +441,46 @@ class LocalBufferEndpoint final: public workerd::api::LocalBufferChannelEndpoint
 class LocalBufferBrokerProvider final: public workerd::api::LocalBufferChannelProvider {
  public:
   kj::Own<workerd::api::LocalBufferChannelEndpoint> take(kj::StringPtr name) override {
-    KJ_REQUIRE(!revoked, "local buffer broker is revoked");
-    auto& endpoint = KJ_REQUIRE_NONNULL(pending.find(name),
+    auto lock = shared.lockExclusive();
+    KJ_REQUIRE(!lock->revoked, "local buffer broker is revoked");
+    auto& endpoint = KJ_REQUIRE_NONNULL(lock->pending.find(name),
         "unknown or already-accepted local buffer link", name);
     kj::Own<workerd::api::LocalBufferChannelEndpoint> result = kj::mv(endpoint);
-    pending.erase(name);
+    lock->pending.erase(name);
     return result;
   }
 
   void add(kj::String name, kj::Own<workerd::api::LocalBufferChannelEndpoint> endpoint) {
-    requireCanAdd(name);
-    pending.insert(kj::mv(name), kj::mv(endpoint));
+    auto lock = shared.lockExclusive();
+    requireCanAdd(*lock, name);
+    lock->pending.insert(kj::mv(name), kj::mv(endpoint));
   }
 
   void requireCanAdd(kj::StringPtr name) {
-    KJ_REQUIRE(!revoked, "local buffer broker is revoked");
-    KJ_REQUIRE(pending.find(name) == kj::none, "duplicate local buffer link name", name);
+    auto lock = shared.lockExclusive();
+    requireCanAdd(*lock, name);
   }
 
   void revoke() {
-    if (revoked) return;
-    revoked = true;
-    pending.clear();
+    auto lock = shared.lockExclusive();
+    if (lock->revoked) return;
+    lock->revoked = true;
+    lock->pending.clear();
   }
 
  private:
-  kj::HashMap<kj::String, kj::Own<workerd::api::LocalBufferChannelEndpoint>> pending;
-  bool revoked = false;
+  struct Shared {
+    kj::HashMap<kj::String, kj::Own<workerd::api::LocalBufferChannelEndpoint>> pending;
+    bool revoked = false;
+  };
+
+  static void requireCanAdd(Shared& shared, kj::StringPtr name) {
+    KJ_REQUIRE(!shared.revoked, "local buffer broker is revoked");
+    KJ_REQUIRE(shared.pending.find(name) == kj::none,
+        "duplicate local buffer link name", name);
+  }
+
+  kj::MutexGuarded<Shared> shared;
 };
 
 class LocalBufferBrokerCapTableEntry final: public workerd::Frankenvalue::CapTableEntry {
@@ -1441,9 +1481,9 @@ class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::Er
     first.localBufferBroker->requireCanAdd(params.getFirstName());
     second.localBufferBroker->requireCanAdd(params.getSecondName());
 
-    auto state = kj::refcounted<LocalBufferLinkState>();
+    auto state = kj::atomicRefcounted<LocalBufferLinkState>();
     first.localBufferBroker->add(kj::str(params.getFirstName()),
-        kj::heap<LocalBufferEndpoint>(kj::addRef(*state), true));
+        kj::heap<LocalBufferEndpoint>(kj::atomicAddRef(*state), true));
     second.localBufferBroker->add(kj::str(params.getSecondName()),
         kj::heap<LocalBufferEndpoint>(kj::mv(state), false));
     return kj::READY_NOW;
