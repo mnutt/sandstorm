@@ -30,6 +30,7 @@ import {
   CAPNP_CLIENT_SYMBOL,
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
+  NativeCapnpLocalBufferTransport,
   NativeCapnpStreamTransport,
   makeNativeCapnpPayload,
   negotiateNativeCapnpBridge,
@@ -40,6 +41,61 @@ import {
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
 const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
 let browserNativeLocalExportGreeter = null;
+
+function makeTransferredBufferChannelPair() {
+  const inboxes = [[], []];
+  const waiters = [null, null];
+  const detachedSends = [];
+  let closed = false;
+
+  function endpoint(index) {
+    return {
+      send(buffer) {
+        if (closed) throw new Error("local buffer test channel is closed");
+        if (!(buffer instanceof ArrayBuffer)) {
+          throw new TypeError("local buffer test channel requires an ArrayBuffer");
+        }
+        const transferred = structuredClone(buffer, { transfer: [buffer] });
+        detachedSends.push(buffer.byteLength === 0);
+        const peer = 1 - index;
+        if (waiters[peer]) {
+          const resolve = waiters[peer].resolve;
+          waiters[peer] = null;
+          resolve(transferred);
+        } else {
+          inboxes[peer].push(transferred);
+        }
+      },
+
+      receive() {
+        if (closed) return Promise.reject(new Error("local buffer test channel is closed"));
+        if (inboxes[index].length > 0) {
+          return Promise.resolve(inboxes[index].shift());
+        }
+        if (waiters[index]) {
+          return Promise.reject(new Error("duplicate local buffer test receive"));
+        }
+        return new Promise((resolve, reject) => {
+          waiters[index] = { resolve, reject };
+        });
+      },
+
+      close() {
+        if (closed) return;
+        closed = true;
+        for (let i = 0; i < waiters.length; ++i) {
+          waiters[i]?.reject(new Error("local buffer test channel is closed"));
+          waiters[i] = null;
+        }
+      },
+    };
+  }
+
+  return {
+    channels: [endpoint(0), endpoint(1)],
+    detachedSends,
+  };
+}
 
 function fixtureExportInfo(InterfaceClass, id = undefined) {
   return {
@@ -2224,6 +2280,19 @@ export default {
     const nativeExportEchoMessage = await nativeExportClientTransport.recvMessage();
     nativeExportClientTransport.close();
     nativeExportServerTransport.close();
+    const nativeLocalLink = makeTransferredBufferChannelPair();
+    const nativeLocalClientTransport = new NativeCapnpLocalBufferTransport(
+      nativeLocalLink.channels[0]);
+    const nativeLocalServerTransport = new NativeCapnpLocalBufferTransport(
+      nativeLocalLink.channels[1]);
+    const nativeLocalRpcMessage = new CapnpEsMessage();
+    nativeLocalRpcMessage.initRoot(CapnpRpcMessage)._initBootstrap().questionId = 78;
+    nativeLocalClientTransport.sendMessage(nativeLocalRpcMessage.getRoot(CapnpRpcMessage));
+    const nativeLocalServerMessage = await nativeLocalServerTransport.recvMessage();
+    nativeLocalServerTransport.sendMessage(nativeLocalServerMessage);
+    const nativeLocalEchoMessage = await nativeLocalClientTransport.recvMessage();
+    nativeLocalClientTransport.close();
+    nativeLocalServerTransport.close();
     const nativeExportWebSessionTarget = {
       async get(params) {
         const path = typeof params?.path === "string" ? params.path : "";
@@ -2737,6 +2806,16 @@ export default {
             serverQuestionId: nativeExportServerMessage.bootstrap.questionId,
             echoBootstrap: nativeExportEchoMessage.which() === CapnpRpcMessage.BOOTSTRAP,
             echoQuestionId: nativeExportEchoMessage.bootstrap.questionId,
+            localBuffer: {
+              serverBootstrap:
+                nativeLocalServerMessage.which() === CapnpRpcMessage.BOOTSTRAP,
+              serverQuestionId: nativeLocalServerMessage.bootstrap.questionId,
+              echoBootstrap: nativeLocalEchoMessage.which() === CapnpRpcMessage.BOOTSTRAP,
+              echoQuestionId: nativeLocalEchoMessage.bootstrap.questionId,
+              detachedSends: nativeLocalLink.detachedSends,
+              clientKind: nativeLocalClientTransport.kind,
+              serverKind: nativeLocalServerTransport.kind,
+            },
             adapters: byteStreamAdapterResult,
           },
           webSession: nativeExportWebSessionResult,
