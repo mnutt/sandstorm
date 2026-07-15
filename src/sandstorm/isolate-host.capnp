@@ -25,6 +25,15 @@ interface IsolateHost @0xb15098c984fb8f32 {
   # Mint a local-only, bidirectional zero-copy byte channel and place one endpoint in each hosted
   # grain's private broker. Only the account host possesses this control interface; grain code can
   # accept endpoints explicitly delivered to its own broker but cannot select another grain.
+
+  openLocalCapnpChannel @2 (
+      firstGrainId :Text,
+      firstName :Text,
+      secondGrainId :Text,
+      secondName :Text);
+  # Like openLocalBufferChannel, but every transferred buffer must be exactly one Cap'n Proto RPC
+  # frame. The host maintains the link's capability and question ledger and rejects authority
+  # references which were not previously granted on this link.
 }
 
 interface IsolateBindingServices @0xd8b8ffcb9dbf83ea {

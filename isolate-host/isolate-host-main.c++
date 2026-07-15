@@ -17,8 +17,10 @@
 #include <workerd/util/stream-utils.h>
 
 #include <capnp/rpc-twoparty.h>
+#include <capnp/rpc.capnp.h>
 #include <capnp/compat/json.h>
 #include <capnp/compat/http-over-capnp.h>
+#include <capnp/serialize.h>
 #include <capnp/serialize-packed.h>
 #include <kj/async-io.h>
 #include <kj/map.h>
@@ -33,6 +35,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <limits>
 #include <mutex>
 #include <thread>
 
@@ -321,25 +324,338 @@ struct LoadedWorkerSource {
   kj::Own<BundleBacking> backing;
 };
 
+class LocalCapnpAuthorityLedger {
+ public:
+  void validate(bool fromFirst, const workerd::jsg::BackingStore& buffer) {
+    KJ_REQUIRE(buffer.size() > 0 && buffer.size() % sizeof(capnp::word) == 0,
+        "local Cap'n Proto link requires a non-empty word-aligned frame size", buffer.size());
+    KJ_REQUIRE(buffer.getOffset() % alignof(capnp::word) == 0,
+        "local Cap'n Proto link requires word-aligned frame storage");
+
+    auto words = buffer.asArrayPtr<const capnp::word>();
+    capnp::ReaderOptions options;
+    options.traversalLimitInWords = BUFFERING_LIMIT / sizeof(capnp::word);
+    options.nestingLimit = 64;
+    capnp::FlatArrayMessageReader reader(words, options);
+    auto message = reader.getRoot<capnp::rpc::Message>();
+    KJ_REQUIRE(reader.getEnd() == words.end(),
+        "local Cap'n Proto link frame contains trailing words");
+
+    auto& sender = fromFirst ? first : second;
+    auto& receiver = fromFirst ? second : first;
+    KJ_REQUIRE(!sender.aborted && !receiver.aborted,
+        "local Cap'n Proto link has already been aborted");
+
+    switch (message.which()) {
+      case capnp::rpc::Message::ABORT:
+        sender.aborted = true;
+        return;
+
+      case capnp::rpc::Message::BOOTSTRAP: {
+        addQuestion(sender, message.getBootstrap().getQuestionId());
+        return;
+      }
+
+      case capnp::rpc::Message::CALL: {
+        auto call = message.getCall();
+        validateTarget(call.getTarget(), sender, receiver);
+        KJ_REQUIRE(call.getSendResultsTo().which() == capnp::rpc::Call::SendResultsTo::CALLER,
+            "local Cap'n Proto fast links do not support redirected call results");
+        auto& question = addQuestion(sender, call.getQuestionId());
+        validatePayload(call.getParams(), sender, receiver, question.paramExports);
+        return;
+      }
+
+      case capnp::rpc::Message::RETURN:
+        validateReturn(message.getReturn(), sender, receiver);
+        return;
+
+      case capnp::rpc::Message::FINISH:
+        validateFinish(message.getFinish(), sender, receiver);
+        return;
+
+      case capnp::rpc::Message::RESOLVE:
+        validateResolve(message.getResolve(), sender, receiver);
+        return;
+
+      case capnp::rpc::Message::RELEASE: {
+        auto release = message.getRelease();
+        KJ_REQUIRE(release.getReferenceCount() > 0,
+            "local Cap'n Proto release count must be positive");
+        releaseExport(receiver, release.getId(), release.getReferenceCount());
+        return;
+      }
+
+      case capnp::rpc::Message::UNIMPLEMENTED:
+      case capnp::rpc::Message::DISEMBARGO:
+      case capnp::rpc::Message::OBSOLETE_SAVE:
+      case capnp::rpc::Message::OBSOLETE_DELETE:
+      case capnp::rpc::Message::PROVIDE:
+      case capnp::rpc::Message::ACCEPT:
+      case capnp::rpc::Message::JOIN:
+      case capnp::rpc::Message::THIRD_PARTY_ANSWER:
+        KJ_FAIL_REQUIRE("unsupported message on local Cap'n Proto fast link",
+            static_cast<uint16_t>(message.which()));
+    }
+    KJ_UNREACHABLE;
+  }
+
+ private:
+  static constexpr size_t MAX_QUESTIONS_PER_SIDE = 65536;
+  static constexpr size_t MAX_EXPORTS_PER_SIDE = 65536;
+
+  struct Export {
+    uint64_t references = 0;
+    bool promise = false;
+    bool resolved = false;
+  };
+
+  struct Question {
+    kj::Vector<uint32_t> paramExports;
+    kj::Vector<uint32_t> resultExports;
+    bool returned = false;
+    bool finished = false;
+    bool releaseResultCaps = false;
+  };
+
+  struct Direction {
+    kj::HashMap<uint32_t, Export> exports;
+    kj::HashMap<uint32_t, Question> questions;
+    bool aborted = false;
+  };
+
+  Direction first;
+  Direction second;
+
+  static Question& addQuestion(Direction& sender, uint32_t id) {
+    KJ_REQUIRE(sender.questions.find(id) == kj::none,
+        "duplicate local Cap'n Proto question ID", id);
+    KJ_REQUIRE(sender.questions.size() < MAX_QUESTIONS_PER_SIDE,
+        "too many outstanding local Cap'n Proto questions");
+    sender.questions.insert(id, Question{});
+    return KJ_ASSERT_NONNULL(sender.questions.find(id));
+  }
+
+  static void validateTarget(capnp::rpc::MessageTarget::Reader target,
+      Direction& sender, Direction& receiver) {
+    switch (target.which()) {
+      case capnp::rpc::MessageTarget::IMPORTED_CAP: {
+        auto id = target.getImportedCap();
+        auto& exportEntry = KJ_REQUIRE_NONNULL(receiver.exports.find(id),
+            "local Cap'n Proto target names an ungranted capability", id);
+        KJ_REQUIRE(exportEntry.references > 0,
+            "local Cap'n Proto target capability has been released", id);
+        return;
+      }
+      case capnp::rpc::MessageTarget::PROMISED_ANSWER: {
+        auto id = target.getPromisedAnswer().getQuestionId();
+        auto& question = KJ_REQUIRE_NONNULL(sender.questions.find(id),
+            "local Cap'n Proto target names an unknown promised answer", id);
+        KJ_REQUIRE(!question.finished,
+            "local Cap'n Proto target names a finished promised answer", id);
+        return;
+      }
+    }
+    KJ_UNREACHABLE;
+  }
+
+  static void validatePayload(capnp::rpc::Payload::Reader payload,
+      Direction& sender, Direction& receiver, kj::Vector<uint32_t>& senderExports) {
+    for (auto descriptor: payload.getCapTable()) {
+      validateDescriptor(descriptor, sender, receiver, senderExports);
+    }
+  }
+
+  static void validateDescriptor(capnp::rpc::CapDescriptor::Reader descriptor,
+      Direction& sender, Direction& receiver, kj::Vector<uint32_t>& senderExports) {
+    KJ_REQUIRE(descriptor.getAttachedFd() == 0xff,
+        "local Cap'n Proto fast links do not support attached file descriptors");
+    switch (descriptor.which()) {
+      case capnp::rpc::CapDescriptor::NONE:
+        return;
+      case capnp::rpc::CapDescriptor::SENDER_HOSTED:
+        addExport(sender, descriptor.getSenderHosted(), false, senderExports);
+        return;
+      case capnp::rpc::CapDescriptor::SENDER_PROMISE:
+        addExport(sender, descriptor.getSenderPromise(), true, senderExports);
+        return;
+      case capnp::rpc::CapDescriptor::RECEIVER_HOSTED: {
+        auto id = descriptor.getReceiverHosted();
+        auto& exportEntry = KJ_REQUIRE_NONNULL(receiver.exports.find(id),
+            "local Cap'n Proto descriptor names an ungranted receiver capability", id);
+        KJ_REQUIRE(exportEntry.references > 0,
+            "local Cap'n Proto descriptor names a released receiver capability", id);
+        return;
+      }
+      case capnp::rpc::CapDescriptor::RECEIVER_ANSWER: {
+        auto id = descriptor.getReceiverAnswer().getQuestionId();
+        auto& question = KJ_REQUIRE_NONNULL(sender.questions.find(id),
+            "local Cap'n Proto descriptor names an unknown receiver answer", id);
+        KJ_REQUIRE(!question.finished,
+            "local Cap'n Proto descriptor names a finished receiver answer", id);
+        return;
+      }
+      case capnp::rpc::CapDescriptor::THIRD_PARTY_HOSTED:
+        KJ_FAIL_REQUIRE(
+            "local Cap'n Proto fast links do not support third-party descriptors");
+    }
+    KJ_UNREACHABLE;
+  }
+
+  static void addExport(Direction& sender, uint32_t id, bool promise,
+      kj::Vector<uint32_t>& senderExports) {
+    KJ_IF_SOME(existing, sender.exports.find(id)) {
+      KJ_REQUIRE(existing.promise == promise,
+          "local Cap'n Proto export ID changed capability kind", id);
+      KJ_REQUIRE(existing.references < std::numeric_limits<uint64_t>::max(),
+          "local Cap'n Proto export reference count overflow", id);
+      ++existing.references;
+    } else {
+      KJ_REQUIRE(sender.exports.size() < MAX_EXPORTS_PER_SIDE,
+          "too many live local Cap'n Proto exports");
+      sender.exports.insert(id, Export{1, promise, false});
+    }
+    senderExports.add(id);
+  }
+
+  static void releaseExport(Direction& exporter, uint32_t id, uint64_t count) {
+    auto& exportEntry = KJ_REQUIRE_NONNULL(exporter.exports.find(id),
+        "local Cap'n Proto release names an unknown export", id);
+    KJ_REQUIRE(count <= exportEntry.references,
+        "local Cap'n Proto release exceeds the granted reference count",
+        id, count, exportEntry.references);
+    exportEntry.references -= count;
+    if (exportEntry.references == 0 && (!exportEntry.promise || exportEntry.resolved)) {
+      exporter.exports.erase(id);
+    }
+  }
+
+  static void releaseExports(Direction& exporter, kj::Vector<uint32_t>& ids) {
+    for (auto id: ids) {
+      releaseExport(exporter, id, 1);
+    }
+    ids.clear();
+  }
+
+  static void validateReturn(capnp::rpc::Return::Reader result,
+      Direction& sender, Direction& receiver) {
+    auto id = result.getAnswerId();
+    auto& question = KJ_REQUIRE_NONNULL(receiver.questions.find(id),
+        "local Cap'n Proto return names an unknown answer", id);
+    KJ_REQUIRE(!question.returned, "duplicate local Cap'n Proto return", id);
+
+    if (result.getReleaseParamCaps()) {
+      releaseExports(receiver, question.paramExports);
+    }
+
+    switch (result.which()) {
+      case capnp::rpc::Return::RESULTS:
+        validatePayload(result.getResults(), sender, receiver, question.resultExports);
+        break;
+      case capnp::rpc::Return::EXCEPTION:
+      case capnp::rpc::Return::CANCELED:
+      case capnp::rpc::Return::RESULTS_SENT_ELSEWHERE:
+        break;
+      case capnp::rpc::Return::TAKE_FROM_OTHER_QUESTION:
+      case capnp::rpc::Return::AWAIT_FROM_THIRD_PARTY:
+        KJ_FAIL_REQUIRE("unsupported return mode on local Cap'n Proto fast link",
+            static_cast<uint16_t>(result.which()));
+    }
+
+    question.returned = true;
+    if (question.finished) {
+      if (question.releaseResultCaps) {
+        releaseExports(sender, question.resultExports);
+      }
+      receiver.questions.erase(id);
+    }
+  }
+
+  static void validateFinish(capnp::rpc::Finish::Reader finish,
+      Direction& sender, Direction& receiver) {
+    auto id = finish.getQuestionId();
+    auto& question = KJ_REQUIRE_NONNULL(sender.questions.find(id),
+        "local Cap'n Proto finish names an unknown question", id);
+    KJ_REQUIRE(!question.finished, "duplicate local Cap'n Proto finish", id);
+    question.finished = true;
+    question.releaseResultCaps = finish.getReleaseResultCaps();
+    if (question.returned) {
+      if (question.releaseResultCaps) {
+        releaseExports(receiver, question.resultExports);
+      }
+      sender.questions.erase(id);
+    }
+  }
+
+  static void validateResolve(capnp::rpc::Resolve::Reader resolve,
+      Direction& sender, Direction& receiver) {
+    auto id = resolve.getPromiseId();
+    auto& originalExport = KJ_REQUIRE_NONNULL(sender.exports.find(id),
+        "local Cap'n Proto resolve names an unknown promise", id);
+    KJ_REQUIRE(originalExport.promise && !originalExport.resolved,
+        "local Cap'n Proto resolve names a non-promise or resolved export", id);
+
+    kj::Vector<uint32_t> resolvedExports;
+    switch (resolve.which()) {
+      case capnp::rpc::Resolve::CAP:
+        validateDescriptor(resolve.getCap(), sender, receiver, resolvedExports);
+        break;
+      case capnp::rpc::Resolve::EXCEPTION:
+        break;
+    }
+    // A capability resolution can add another sender export and rehash the export table, so do
+    // not retain the original map reference across descriptor validation.
+    auto& exportEntry = KJ_ASSERT_NONNULL(sender.exports.find(id));
+    exportEntry.resolved = true;
+    if (exportEntry.references == 0) {
+      sender.exports.erase(id);
+    }
+  }
+};
+
 class LocalBufferLinkState final: public kj::AtomicRefcounted {
  public:
+  explicit LocalBufferLinkState(bool validateCapnpRpc = false): shared(validateCapnpRpc) {}
+
   void send(bool fromFirst, workerd::jsg::BackingStore buffer) {
     kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>> waiter;
+    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>
+        revokedFirstWaiter;
+    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>
+        revokedSecondWaiter;
+    kj::Maybe<kj::Exception> validationFailure;
     {
       auto lock = shared.lockExclusive();
       KJ_REQUIRE(!lock->closed, "local buffer link is closed");
       auto& inbox = fromFirst ? lock->secondInbox : lock->firstInbox;
-      KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT,
-          "local buffer message exceeds the host buffering limit", buffer.size());
-      KJ_IF_SOME(pending, inbox.waiter) {
-        waiter = kj::mv(pending);
-        inbox.waiter = kj::none;
+      validationFailure = kj::runCatchingExceptions([&]() {
+        KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT,
+            "local buffer message exceeds the host buffering limit", buffer.size());
+        KJ_IF_SOME(ledger, lock->capnpLedger) {
+          ledger.validate(fromFirst, buffer);
+        }
+        if (inbox.waiter == kj::none) {
+          KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT - inbox.queuedBytes,
+              "local buffer link queue exceeds the host buffering limit");
+        }
+      });
+
+      if (validationFailure != kj::none) {
+        revokeLocked(*lock, revokedFirstWaiter, revokedSecondWaiter);
       } else {
-        KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT - inbox.queuedBytes,
-            "local buffer link queue exceeds the host buffering limit");
-        inbox.queuedBytes += buffer.size();
-        inbox.buffers.add(kj::mv(buffer));
+        KJ_IF_SOME(pending, inbox.waiter) {
+          waiter = kj::mv(pending);
+          inbox.waiter = kj::none;
+        } else {
+          inbox.queuedBytes += buffer.size();
+          inbox.buffers.add(kj::mv(buffer));
+        }
       }
+    }
+    KJ_IF_SOME(exception, validationFailure) {
+      rejectWaiter(revokedFirstWaiter, exception);
+      rejectWaiter(revokedSecondWaiter, exception);
+      kj::throwRecoverableException(kj::mv(exception));
     }
     KJ_IF_SOME(pending, waiter) {
       pending->fulfill(kj::mv(buffer));
@@ -372,15 +688,7 @@ class LocalBufferLinkState final: public kj::AtomicRefcounted {
     {
       auto lock = shared.lockExclusive();
       if (lock->closed) return;
-      lock->closed = true;
-      firstWaiter = takeWaiter(lock->firstInbox);
-      secondWaiter = takeWaiter(lock->secondInbox);
-      lock->firstInbox.buffers.clear();
-      lock->secondInbox.buffers.clear();
-      lock->firstInbox.queuedBytes = 0;
-      lock->secondInbox.queuedBytes = 0;
-      lock->firstInbox.readIndex = 0;
-      lock->secondInbox.readIndex = 0;
+      revokeLocked(*lock, firstWaiter, secondWaiter);
     }
     auto exception = KJ_EXCEPTION(DISCONNECTED, "local buffer link was revoked");
     rejectWaiter(firstWaiter, exception);
@@ -396,8 +704,13 @@ class LocalBufferLinkState final: public kj::AtomicRefcounted {
   };
 
   struct Shared {
+    explicit Shared(bool validateCapnpRpc) {
+      if (validateCapnpRpc) capnpLedger.emplace();
+    }
+
     Inbox firstInbox;
     Inbox secondInbox;
+    kj::Maybe<LocalCapnpAuthorityLedger> capnpLedger;
     bool closed = false;
   };
 
@@ -406,6 +719,22 @@ class LocalBufferLinkState final: public kj::AtomicRefcounted {
     auto result = kj::mv(inbox.waiter);
     inbox.waiter = kj::none;
     return result;
+  }
+
+  static void revokeLocked(Shared& state,
+      kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>&
+          firstWaiter,
+      kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>&
+          secondWaiter) {
+    state.closed = true;
+    firstWaiter = takeWaiter(state.firstInbox);
+    secondWaiter = takeWaiter(state.secondInbox);
+    state.firstInbox.buffers.clear();
+    state.secondInbox.buffers.clear();
+    state.firstInbox.queuedBytes = 0;
+    state.secondInbox.queuedBytes = 0;
+    state.firstInbox.readIndex = 0;
+    state.secondInbox.readIndex = 0;
   }
 
   static void rejectWaiter(
@@ -1466,30 +1795,42 @@ class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::Er
 
   kj::Promise<void> openLocalBufferChannel(OpenLocalBufferChannelContext context) override {
     auto params = context.getParams();
-    auto& first = requireRunningGrain(params.getFirstGrainId());
-    auto& second = requireRunningGrain(params.getSecondGrainId());
-    KJ_REQUIRE(params.getFirstName().size() > 0 && params.getSecondName().size() > 0,
-        "local buffer link names must be non-empty");
-    KJ_REQUIRE(params.getFirstName().size() <= 256 && params.getSecondName().size() <= 256,
-        "local buffer link names must be at most 256 bytes");
-    KJ_REQUIRE(params.getFirstGrainId() != params.getSecondGrainId() ||
-            params.getFirstName() != params.getSecondName(),
-        "a local buffer link cannot publish both endpoints under the same name");
+    openLocalChannel(params.getFirstGrainId(), params.getFirstName(),
+        params.getSecondGrainId(), params.getSecondName(), false);
+    return kj::READY_NOW;
+  }
 
-    // Validate both publications before creating either endpoint. The host event loop does not
-    // yield between these checks and the inserts, so a duplicate can never expose a half-link.
-    first.localBufferBroker->requireCanAdd(params.getFirstName());
-    second.localBufferBroker->requireCanAdd(params.getSecondName());
-
-    auto state = kj::atomicRefcounted<LocalBufferLinkState>();
-    first.localBufferBroker->add(kj::str(params.getFirstName()),
-        kj::heap<LocalBufferEndpoint>(kj::atomicAddRef(*state), true));
-    second.localBufferBroker->add(kj::str(params.getSecondName()),
-        kj::heap<LocalBufferEndpoint>(kj::mv(state), false));
+  kj::Promise<void> openLocalCapnpChannel(OpenLocalCapnpChannelContext context) override {
+    auto params = context.getParams();
+    openLocalChannel(params.getFirstGrainId(), params.getFirstName(),
+        params.getSecondGrainId(), params.getSecondName(), true);
     return kj::READY_NOW;
   }
 
  private:
+  void openLocalChannel(kj::StringPtr firstGrainId, kj::StringPtr firstName,
+      kj::StringPtr secondGrainId, kj::StringPtr secondName, bool validateCapnpRpc) {
+    auto& first = requireRunningGrain(firstGrainId);
+    auto& second = requireRunningGrain(secondGrainId);
+    KJ_REQUIRE(firstName.size() > 0 && secondName.size() > 0,
+        "local buffer link names must be non-empty");
+    KJ_REQUIRE(firstName.size() <= 256 && secondName.size() <= 256,
+        "local buffer link names must be at most 256 bytes");
+    KJ_REQUIRE(firstGrainId != secondGrainId || firstName != secondName,
+        "a local buffer link cannot publish both endpoints under the same name");
+
+    // Validate both publications before creating either endpoint. The host event loop does not
+    // yield between these checks and the inserts, so a duplicate can never expose a half-link.
+    first.localBufferBroker->requireCanAdd(firstName);
+    second.localBufferBroker->requireCanAdd(secondName);
+
+    auto state = kj::atomicRefcounted<LocalBufferLinkState>(validateCapnpRpc);
+    first.localBufferBroker->add(kj::str(firstName),
+        kj::heap<LocalBufferEndpoint>(kj::atomicAddRef(*state), true));
+    second.localBufferBroker->add(kj::str(secondName),
+        kj::heap<LocalBufferEndpoint>(kj::mv(state), false));
+  }
+
   HostedState& requireRunningGrain(kj::StringPtr grainId) {
     auto& state = KJ_REQUIRE_NONNULL(grains.find(grainId),
         "local buffer link grain is not hosted", grainId);
