@@ -1,6 +1,7 @@
 import message from "message.txt";
 import metadata from "metadata.json";
 import {
+  Conn as CapnpEsConn,
   Message as CapnpEsMessage,
   utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
@@ -633,6 +634,52 @@ export default {
         contentType: request.headers.get("content-type"),
         customHeader: request.headers.get("x-isolate-test"),
       });
+    }
+
+    if (url.pathname === "/native-local-capnp-server") {
+      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
+        url.searchParams.get("name"));
+      const transport = new NativeCapnpLocalBufferTransport(channel);
+      const connection = new CapnpEsConn(transport);
+      transport.attachConnection(connection);
+      let calledName = null;
+      connection.initMain(NativeGreeter, {
+        async hello(params) {
+          calledName = params.name;
+          return { message: `native local hello ${params.name}` };
+        },
+      });
+      try {
+        const deadline = Date.now() + 5000;
+        while (!connection.closed && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        if (!connection.closed || calledName === null) {
+          throw new Error("native local Cap'n Proto server timed out");
+        }
+        return Response.json({ ok: true, name: calledName, transportKind: transport.kind });
+      } finally {
+        transport.close();
+      }
+    }
+
+    if (url.pathname === "/native-local-capnp-client") {
+      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
+        url.searchParams.get("name"));
+      const transport = new NativeCapnpLocalBufferTransport(channel);
+      const connection = new CapnpEsConn(transport);
+      transport.attachConnection(connection);
+      try {
+        const greeter = connection.bootstrap(NativeGreeter);
+        const result = await greeter.hello({ name: "cross-grain" });
+        return Response.json({
+          ok: true,
+          message: result.message,
+          transportKind: transport.kind,
+        });
+      } finally {
+        transport.close();
+      }
     }
 
     if (url.pathname === "/native-capnp-bridge-target/generated-client") {

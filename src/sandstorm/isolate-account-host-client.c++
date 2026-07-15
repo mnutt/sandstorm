@@ -47,7 +47,8 @@ void expectStartRejected(kj::WaitScope& waitScope, IsolateAccountHost::Client ac
   KJ_REQUIRE(rejected, "oversized worker package was admitted");
 }
 
-void fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
+capnp::RemotePromise<WebSession::Response> startFetchPath(
+    kj::WaitScope& waitScope, Supervisor::Client supervisor,
     SandstormCore::Client core, kj::StringPtr path) {
   auto keepAlive = supervisor.keepAliveRequest();
   keepAlive.setCore(core);
@@ -76,10 +77,22 @@ void fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
   context.initAccept(0);
   context.initAcceptEncoding(0);
   context.initAdditionalHeaders(0);
-  auto response = get.send().wait(waitScope);
+  return get.send();
+}
+
+kj::String requireFetchOk(WebSession::Response::Reader response) {
   KJ_REQUIRE(response.which() == WebSession::Response::CONTENT);
   auto content = response.getContent();
   KJ_REQUIRE(content.getStatusCode() == WebSession::Response::SuccessCode::OK);
+  auto body = content.getBody();
+  KJ_REQUIRE(body.isBytes(), "account-host test response was unexpectedly streamed");
+  return kj::str(body.getBytes().asChars());
+}
+
+void fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
+    SandstormCore::Client core, kj::StringPtr path) {
+  (void)requireFetchOk(startFetchPath(waitScope, kj::mv(supervisor), kj::mv(core), path)
+      .wait(waitScope));
 }
 
 }  // namespace
@@ -115,6 +128,25 @@ int main(int argc, char** argv) {
   auto second = sandstorm::startGrain(
       io.waitScope, account, core, "testgrain456", argv[3], true);
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
+
+  auto openLocalCapnp = account.openLocalCapnpChannelRequest();
+  openLocalCapnp.setFirstGrainId(argv[2]);
+  openLocalCapnp.setFirstName("account-e2e-client");
+  openLocalCapnp.setSecondGrainId("testgrain456");
+  openLocalCapnp.setSecondName("account-e2e-server");
+  openLocalCapnp.send().wait(io.waitScope);
+  auto localServerRequest = sandstorm::startFetchPath(io.waitScope, second, core,
+      "native-local-capnp-server?name=account-e2e-server");
+  auto localClientRequest = sandstorm::startFetchPath(io.waitScope, supervisor, core,
+      "native-local-capnp-client?name=account-e2e-client");
+  KJ_REQUIRE(sandstorm::requireFetchOk(localClientRequest.wait(io.waitScope)) ==
+      "{\"ok\":true,\"message\":\"native local hello cross-grain\","
+      "\"transportKind\":\"nativeLocalBuffer\"}",
+      "cross-grain local Cap'n Proto client returned the wrong result");
+  KJ_REQUIRE(sandstorm::requireFetchOk(localServerRequest.wait(io.waitScope)) ==
+      "{\"ok\":true,\"name\":\"cross-grain\",\"transportKind\":\"nativeLocalBuffer\"}",
+      "cross-grain local Cap'n Proto server returned the wrong result");
+
   supervisor.shutdownRequest().send().wait(io.waitScope);
 
   bool rejectedAfterShutdown = false;

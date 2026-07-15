@@ -6871,6 +6871,27 @@ public:
     });
   }
 
+  kj::Promise<void> openLocalCapnpChannel(OpenLocalCapnpChannelContext context) override {
+    auto params = context.getParams();
+    auto firstGrainId = validateOpaqueId(params.getFirstGrainId(), "first grain ID");
+    auto secondGrainId = validateOpaqueId(params.getSecondGrainId(), "second grain ID");
+    KJ_REQUIRE(supervisors.find(firstGrainId) != nullptr,
+        "first local Cap'n Proto link grain is not live in this account", firstGrainId);
+    KJ_REQUIRE(supervisors.find(secondGrainId) != nullptr,
+        "second local Cap'n Proto link grain is not live in this account", secondGrainId);
+    KJ_REQUIRE(params.getFirstName().size() > 0 && params.getFirstName().size() <= 256,
+        "invalid first local Cap'n Proto link name");
+    KJ_REQUIRE(params.getSecondName().size() > 0 && params.getSecondName().size() <= 256,
+        "invalid second local Cap'n Proto link name");
+
+    auto request = nativeHost.openLocalCapnpChannelRequest();
+    request.setFirstGrainId(firstGrainId);
+    request.setFirstName(params.getFirstName());
+    request.setSecondGrainId(secondGrainId);
+    request.setSecondName(params.getSecondName());
+    return request.send().ignoreResult();
+  }
+
 private:
   static kj::String validateOpaqueId(kj::StringPtr value, kj::StringPtr label) {
     KJ_REQUIRE(value.size() >= 8 && !value.startsWith(".") && value.findFirst('/') == nullptr,

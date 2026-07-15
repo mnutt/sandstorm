@@ -370,11 +370,12 @@ bin/isolate-host: tmp/bazel-$(BAZEL_VERSION) tmp/.workerd-embed-source
 isolate-host: bin/isolate-host
 
 isolate-host-control-test: bin/isolate-host tmp/.ekam-run
-	@socket="$(PWD)/tmp/isolate-host-control-test.sock"; \
+	@set -e; \
+		socket="$(PWD)/tmp/isolate-host-control-test.sock"; \
 		log="$(PWD)/tmp/isolate-host-control-test.log"; \
 		rm -f "$$socket" "$$log"; \
 		bin/isolate-host "$$socket" >"$$log" 2>&1 & host_pid=$$!; \
-		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket" "$$log"' EXIT; \
+		trap 'status=$$?; kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"; if test $$status -eq 0; then rm -f "$$log"; else echo "isolate host log retained at $$log" >&2; fi; exit $$status' EXIT; \
 		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
 		test -S "$$socket"; \
 		tmp/sandstorm/isolate-host-client "$$socket"; \
@@ -389,7 +390,8 @@ isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 
 isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 		tests/assets/isolate-test-app.spk
-	@root="$(PWD)/tmp/isolate-account-host-test"; \
+	@set -e; \
+		root="$(PWD)/tmp/isolate-account-host-test"; \
 		app_root="$$root/apps"; grain_root="$$root/grains"; \
 		account_socket="$$root/account.sock"; \
 		rm -rf "$$root"; mkdir -p "$$app_root" "$$grain_root"; \
