@@ -42,7 +42,7 @@ struct Config {
 
   bool useExperimentalSeccompFilter = false;
   bool logSeccompViolations = false;
-  IsolateHostingMode isolateHostingMode = IsolateHostingMode::PER_GRAIN;
+  IsolateHostingMode isolateHostingMode = IsolateHostingMode::ACCOUNT;
 };
 
 // Read and return the config file from `path`.

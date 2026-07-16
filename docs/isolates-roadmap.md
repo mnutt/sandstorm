@@ -487,9 +487,8 @@ Progress:
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead
   of deriving grouping from app or grain metadata. Account-shared hosting is
-  available through `ISOLATE_HOSTING_MODE=account`; `per-grain` remains the
-  default pending a deliberate operational cutover and remains available as a
-  fallback mode.
+  the default hosting topology. `ISOLATE_HOSTING_MODE=per-grain` remains
+  available as a rollback and paranoid-mode fallback.
 - Account-mode integration coverage runs two live grains from the same package
   in one workerd, verifies that identical `STORAGE` keys retain distinct
   per-grain values, and repeats the supported binding and storage checks after
@@ -524,10 +523,8 @@ keepalive eviction is active; the worker-source format has version/ABI
 coverage; per-grain memory overhead is measured and published; per-grain
 sidecar mode still passes the full suite.
 
-The experimental account-shared mode now satisfies these technical criteria.
-The remaining Phase 4 gate is a product/operational decision about when to make
-it the default, with per-grain mode retained as the rollback and paranoid-mode
-escape hatch.
+Account-shared mode satisfies these technical criteria and is now the default,
+with per-grain mode retained as the rollback and paranoid-mode escape hatch.
 
 ---
 

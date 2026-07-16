@@ -193,14 +193,14 @@ one embedded workerd process among an account's grains. A trusted account proces
 and grain I/O, while the embedded runtime receives only worker bytes and capabilities over an
 inherited socket and runs in private namespaces, a minimal mount root, and the isolate seccomp
 sandbox. This improves density but means a workerd or V8 security failure can affect other isolate
-grains owned by the same account. `per-grain`, the default while the shared host remains
-experimental, runs a separate workerd sidecar for every grain and is the paranoid option with
-higher process and memory overhead.
+grains owned by the same account. `account` is the default. `per-grain` runs a separate workerd
+sidecar for every grain and remains available as a rollback or paranoid option, with higher process
+and memory overhead.
 
-Example:
+To select per-grain isolation explicitly:
 
 ```
-ISOLATE_HOSTING_MODE=account
+ISOLATE_HOSTING_MODE=per-grain
 ```
 
 ### ALLOW_LEGACY_RELAXED_CSP
