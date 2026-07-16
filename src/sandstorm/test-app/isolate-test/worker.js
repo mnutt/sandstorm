@@ -748,6 +748,66 @@ export default {
       }
     }
 
+    if (url.pathname === "/local-app-restore-benchmark") {
+      const iterations = Math.max(1, Math.min(10000,
+        Number.parseInt(url.searchParams.get("iterations") || "200", 10)));
+      const pipelineIterations = Math.max(1, Math.min(10000,
+        Number.parseInt(url.searchParams.get("pipelineIterations") || "500", 10)));
+      const largeIterations = Math.max(1, Math.min(100,
+        Number.parseInt(url.searchParams.get("largeIterations") || "20", 10)));
+      const largeBytes = Math.max(1, Math.min(1024 * 1024,
+        Number.parseInt(url.searchParams.get("largeBytes") || String(256 * 1024), 10)));
+      const restored = await sandstorm(request, env)
+        .restore("bG9jYWwtYXBwLXJlc3RvcmUtdG9rZW4");
+      try {
+        const greeter = capnpClient(NativeGreeter, restored);
+        for (let i = 0; i < 20; ++i) {
+          await greeter.hello({ name: "benchmark warmup" });
+        }
+        const started = performance.now();
+        for (let i = 0; i < iterations; ++i) {
+          await greeter.hello({ name: "benchmark" });
+        }
+        const sequentialElapsedMs = performance.now() - started;
+
+        const pipelineStarted = performance.now();
+        await Promise.all(Array.from({ length: pipelineIterations }, () =>
+          greeter.hello({ name: "pipelined benchmark" })));
+        const pipelineElapsedMs = performance.now() - pipelineStarted;
+
+        const content = makeBytes(largeBytes);
+        const largeStarted = performance.now();
+        for (let i = 0; i < largeIterations; ++i) {
+          await greeter.inspectData({ content });
+        }
+        const largeElapsedMs = performance.now() - largeStarted;
+        const info = await restored.info();
+        return Response.json({
+          sequential: {
+            iterations,
+            elapsedMs: sequentialElapsedMs,
+            callsPerSecond: iterations * 1000 / sequentialElapsedMs,
+          },
+          pipeline: {
+            iterations: pipelineIterations,
+            elapsedMs: pipelineElapsedMs,
+            callsPerSecond: pipelineIterations * 1000 / pipelineElapsedMs,
+          },
+          large: {
+            iterations: largeIterations,
+            bytesPerCall: largeBytes,
+            elapsedMs: largeElapsedMs,
+            mebibytesPerSecond: largeIterations * largeBytes * 1000 /
+              largeElapsedMs / (1024 * 1024),
+          },
+          residence: info.residence,
+          transportKind: info.transportKind,
+        });
+      } finally {
+        await restored.drop();
+      }
+    }
+
     if (url.pathname === "/restore-fallback-self-test") {
       const restored = await sandstorm(request, env)
         .restore("ZmFsbGJhY2stcmVzdG9yZS10b2tlbg");

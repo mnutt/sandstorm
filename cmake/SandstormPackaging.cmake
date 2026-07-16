@@ -231,6 +231,29 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Measuring shared isolate worker memory density"
     VERBATIM)
 
+  add_custom_target(isolate-local-capnp-benchmark
+    COMMAND bash "${PROJECT_SOURCE_DIR}/cmake/RunIsolateLocalCapnpBenchmark.sh"
+      "${CMAKE_BINARY_DIR}/bin/isolate-host"
+      "$<TARGET_FILE:sandstorm>"
+      "$<TARGET_FILE:spk>"
+      "$<TARGET_FILE:isolate-account-host-client>"
+      "${_isolate_test_app_spk}"
+      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-local-capnp-benchmark.js"
+      "${CMAKE_BINARY_DIR}/isolate-local-capnp-benchmark"
+    DEPENDS
+      isolate-host
+      sandstorm
+      spk
+      isolate-account-host-client
+      isolate-test-app-spk
+      "${PROJECT_SOURCE_DIR}/cmake/RunIsolateLocalCapnpBenchmark.sh"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-local-capnp-benchmark.js"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Measuring local Cap'n Proto RPC transport speedup"
+    VERBATIM)
+
   set(_isolate_abi_dir "${PROJECT_SOURCE_DIR}/tests/capnp-abi")
   add_custom_target(isolate-capnp-abi-check
     COMMAND "$<TARGET_FILE:spk>" capnp-abi --check

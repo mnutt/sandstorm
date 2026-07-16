@@ -202,12 +202,15 @@ void fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
 int main(int argc, char** argv) {
   KJ_REQUIRE(argc == 5,
       "usage: isolate-account-host-client <control-socket> <grain-id> <package-id> "
-      "<local|fallback>");
+      "<local|fallback|benchmark-local|benchmark-fallback>");
+  auto mode = kj::StringPtr(argv[4]);
+  bool benchmark = mode.startsWith("benchmark-");
   bool expectLocalFastPath;
-  if (kj::StringPtr(argv[4]) == "local") {
+  if (mode == "local" || mode == "benchmark-local") {
     expectLocalFastPath = true;
   } else {
-    KJ_REQUIRE(kj::StringPtr(argv[4]) == "fallback", "invalid expected transport", argv[4]);
+    KJ_REQUIRE(mode == "fallback" || mode == "benchmark-fallback",
+        "invalid expected transport", argv[4]);
     expectLocalFastPath = false;
   }
   auto io = kj::setupAsyncIo();
@@ -224,21 +227,25 @@ int main(int argc, char** argv) {
   hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
   auto account = rpcSystem.bootstrap(hostId).castAs<sandstorm::IsolateAccountHost>();
 
-  sandstorm::expectStartRejected(
-      io.waitScope, account, core, "oversizedgrain", "oversizedpackage");
+  if (!benchmark) {
+    sandstorm::expectStartRejected(
+        io.waitScope, account, core, "oversizedgrain", "oversizedpackage");
+  }
 
   auto supervisor = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], true);
-  sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
-  sandstorm::fetchPath(io.waitScope, supervisor, core, "sandstorm-api-binding-probe");
-  sandstorm::fetchPath(io.waitScope, supervisor, core, "powerbox-binding-probe");
-  sandstorm::fetchPath(io.waitScope, supervisor, core, "storage-helper-self-test");
-  auto dataBinding = sandstorm::requireFetchOk(sandstorm::startFetchPath(
-      io.waitScope, supervisor, core, "data-binding-probe").wait(io.waitScope));
-  KJ_REQUIRE(dataBinding ==
-      "{\"ok\":true,\"isArrayBuffer\":true,\"byteCount\":14,\"checksum\":1466,"
-      "\"firstEightHex\":\"00017f80ff53616e\"}",
-      "shared host did not materialize the binary data binding as an ArrayBuffer", dataBinding);
+  if (!benchmark) {
+    sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
+    sandstorm::fetchPath(io.waitScope, supervisor, core, "sandstorm-api-binding-probe");
+    sandstorm::fetchPath(io.waitScope, supervisor, core, "powerbox-binding-probe");
+    sandstorm::fetchPath(io.waitScope, supervisor, core, "storage-helper-self-test");
+    auto dataBinding = sandstorm::requireFetchOk(sandstorm::startFetchPath(
+        io.waitScope, supervisor, core, "data-binding-probe").wait(io.waitScope));
+    KJ_REQUIRE(dataBinding ==
+        "{\"ok\":true,\"isArrayBuffer\":true,\"byteCount\":14,\"checksum\":1466,"
+        "\"firstEightHex\":\"00017f80ff53616e\"}",
+        "shared host did not materialize the binary data binding as an ArrayBuffer", dataBinding);
+  }
 
   // A second live grain proves that the account control plane and native workerd host are
   // genuinely multi-tenant rather than merely a different one-process-per-grain launcher.
@@ -246,6 +253,15 @@ int main(int argc, char** argv) {
       io.waitScope, account, core, "testgrain456", argv[3], true);
   coreServerPtr->setProvider(second);
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
+
+  if (benchmark) {
+    auto result = sandstorm::requireFetchOk(sandstorm::startFetchPath(
+        io.waitScope, supervisor, core,
+        "local-app-restore-benchmark?iterations=200&pipelineIterations=500&"
+        "largeIterations=20&largeBytes=262144").wait(io.waitScope));
+    printf("%s\n", result.cStr());
+    return 0;
+  }
 
   auto localRestore = sandstorm::requireFetchOk(sandstorm::startFetchPath(
       io.waitScope, supervisor, core, "local-app-restore-self-test").wait(io.waitScope));

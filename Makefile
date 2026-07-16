@@ -32,6 +32,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	isolate-host-control-test \
 	isolate-account-host-integration-test \
 	isolate-memory-benchmark \
+	isolate-local-capnp-benchmark \
 	isolate-capnp-abi-check \
 	isolate-capnp-corpus-test isolate-capnp-fuzz \
 	isolate-capnp-toolchain-test isolate-test \
@@ -95,6 +96,10 @@ $(eval $(call cmake_target,isolate-account-host-integration-test,isolate-account
 isolate-memory-benchmark: configure
 	ISOLATE_MEMORY_BENCHMARK_ARGS="$(ISOLATE_MEMORY_BENCHMARK_ARGS)" \
 		$(CMAKE_BUILD) --target isolate-memory-benchmark
+
+isolate-local-capnp-benchmark: configure
+	ISOLATE_LOCAL_CAPNP_BENCHMARK_ARGS="$(ISOLATE_LOCAL_CAPNP_BENCHMARK_ARGS)" \
+		$(CMAKE_BUILD) --target isolate-local-capnp-benchmark
 
 $(eval $(call cmake_target,shell-env,shell-env))
 $(eval $(call cmake_target,shell-build,shell-build))
