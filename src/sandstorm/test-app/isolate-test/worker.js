@@ -682,6 +682,54 @@ export default {
       }
     }
 
+    if (url.pathname === "/local-app-restore-self-test") {
+      const api = sandstorm(request, env);
+      const restored = await api.restore("bG9jYWwtYXBwLXJlc3RvcmUtdG9rZW4");
+      const greeter = capnpClient(NativeGreeter, restored);
+      let dropped = false;
+      try {
+        const hello = await greeter.hello({ name: "durable local restore" });
+        const info = await restored.info();
+        const resaved = await restored.save({ label: "resaved durable local restore" });
+        await restored.drop();
+        dropped = true;
+        let revokedAfterDrop = false;
+        try {
+          await greeter.hello({ name: "after drop" });
+        } catch (_) {
+          revokedAfterDrop = true;
+        }
+        return Response.json({
+          ok: true,
+          message: hello.message,
+          residence: info.residence,
+          transportKind: info.transportKind,
+          resavedTokenType: typeof resaved,
+          resavedTokenLength: resaved.length,
+          revokedAfterDrop,
+        });
+      } finally {
+        if (!dropped) await restored.drop();
+      }
+    }
+
+    if (url.pathname === "/restore-fallback-self-test") {
+      const restored = await sandstorm(request, env)
+        .restore("ZmFsbGJhY2stcmVzdG9yZS10b2tlbg");
+      try {
+        const hello = await capnpClient(NativeGreeter, restored)
+          .hello({ name: "ordinary restore" });
+        const info = await restored.info();
+        return Response.json({
+          ok: true,
+          message: hello.message,
+          residence: info.residence,
+        });
+      } finally {
+        await restored.drop();
+      }
+    }
+
     if (url.pathname === "/native-capnp-bridge-target/generated-client") {
       return Response.json({
         ok: true,

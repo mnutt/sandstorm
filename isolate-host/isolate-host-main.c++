@@ -1063,6 +1063,75 @@ void encodeLegacyHeaders(const kj::HttpHeaders& input,
   });
 }
 
+// The account host and the embedded workerd binary intentionally meet across the stable wire
+// schema rather than sharing a C++ HttpOverCapnpFactory ABI. Keep the small compatibility adapter
+// complete: native bridge sessions use WebSockets even though ordinary worker fetches do not.
+class LegacyWebSocketState final: public kj::Refcounted {
+ public:
+  explicit LegacyWebSocketState(kj::Own<kj::WebSocket> socket)
+      : socket(kj::mv(socket)) {}
+
+  kj::Own<kj::WebSocket> socket;
+};
+
+class LegacyWebSocketReceiver final: public capnp::WebSocket::Server {
+ public:
+  explicit LegacyWebSocketReceiver(kj::Own<LegacyWebSocketState> state)
+      : state(kj::mv(state)) {}
+
+  kj::Promise<void> sendText(SendTextContext context) override {
+    return state->socket->send(context.getParams().getText());
+  }
+
+  kj::Promise<void> sendData(SendDataContext context) override {
+    return state->socket->send(context.getParams().getData());
+  }
+
+  kj::Promise<void> close(CloseContext context) override {
+    auto params = context.getParams();
+    return state->socket->close(params.getCode(), params.getReason());
+  }
+
+ private:
+  kj::Own<LegacyWebSocketState> state;
+};
+
+kj::Promise<void> pumpLegacyWebSocketToCapnp(
+    kj::Own<LegacyWebSocketState> state, capnp::WebSocket::Client destination) {
+  return state->socket->receive().then(
+      [state = kj::mv(state), destination = kj::mv(destination)](
+          kj::WebSocket::Message&& message) mutable -> kj::Promise<void> {
+    kj::Promise<void> send = nullptr;
+    bool finished = false;
+    KJ_SWITCH_ONEOF(message) {
+      KJ_CASE_ONEOF(text, kj::String) {
+        auto request = destination.sendTextRequest(
+            capnp::MessageSize { 8 + text.size() / sizeof(capnp::word), 0 });
+        request.setText(text);
+        send = request.send();
+      }
+      KJ_CASE_ONEOF(data, kj::Array<kj::byte>) {
+        auto request = destination.sendDataRequest(
+            capnp::MessageSize { 8 + data.size() / sizeof(capnp::word), 0 });
+        request.setData(data);
+        send = request.send();
+      }
+      KJ_CASE_ONEOF(close, kj::WebSocket::Close) {
+        auto request = destination.closeRequest();
+        request.setCode(close.code);
+        request.setReason(close.reason);
+        send = request.send().ignoreResult();
+        finished = true;
+      }
+    }
+    if (finished) return send.attach(kj::mv(state), kj::mv(destination));
+    return send.then(
+        [state = kj::mv(state), destination = kj::mv(destination)]() mutable {
+      return pumpLegacyWebSocketToCapnp(kj::mv(state), kj::mv(destination));
+    });
+  });
+}
+
 class LegacyClientRequestContext final:
     public capnp::HttpService::ClientRequestContext::Server {
  public:
@@ -1097,8 +1166,18 @@ class LegacyClientRequestContext final:
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> startWebSocket(StartWebSocketContext) override {
-    KJ_FAIL_REQUIRE("legacy shared-host bindings do not yet support WebSockets");
+  kj::Promise<void> startWebSocket(StartWebSocketContext context) override {
+    KJ_REQUIRE(responseFulfiller.get() != nullptr, "legacy HTTP response already started");
+    auto params = context.getParams();
+    auto socket = response.acceptWebSocket(decodeLegacyHeaders(
+        headerTable, params.getHeaders()));
+    auto state = kj::refcounted<LegacyWebSocketState>(kj::mv(socket));
+    context.getResults().setDownSocket(
+        kj::heap<LegacyWebSocketReceiver>(kj::addRef(*state)));
+    responseFulfiller->fulfill(
+        pumpLegacyWebSocketToCapnp(kj::mv(state), params.getUpSocket()));
+    responseFulfiller = nullptr;
+    return kj::READY_NOW;
   }
 
  private:
@@ -1224,8 +1303,23 @@ class LegacyHttpRequestContext final:
     return output;
   }
 
-  kj::Own<kj::WebSocket> acceptWebSocket(const kj::HttpHeaders&) override {
-    KJ_FAIL_REQUIRE("legacy shared-host ingress does not yet support WebSockets");
+  kj::Own<kj::WebSocket> acceptWebSocket(const kj::HttpHeaders& responseHeaders) override {
+    KJ_REQUIRE(replyTask == kj::none, "HTTP response already started");
+    auto pipe = kj::newWebSocketPipe();
+    auto state = kj::refcounted<LegacyWebSocketState>(kj::mv(pipe.ends[1]));
+
+    auto request = clientContext.startWebSocketRequest();
+    encodeLegacyHeaders(responseHeaders,
+        request.initHeaders(responseHeaders.size()));
+    request.setUpSocket(kj::heap<LegacyWebSocketReceiver>(kj::addRef(*state)));
+    auto pipeline = request.send();
+    auto pump = pumpLegacyWebSocketToCapnp(
+        kj::mv(state), pipeline.getDownSocket());
+    auto tasks = kj::heapArrayBuilder<kj::Promise<void>>(2);
+    tasks.add(pipeline.ignoreResult());
+    tasks.add(kj::mv(pump));
+    replyTask = kj::joinPromisesFailFast(tasks.finish());
+    return kj::mv(pipe.ends[0]);
   }
 
  private:

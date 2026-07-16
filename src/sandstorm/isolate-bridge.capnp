@@ -3,6 +3,18 @@
 $import "/capnp/c++.capnp".namespace("sandstorm");
 
 using Grain = import "grain.capnp";
+using Util = import "util.capnp";
+
+struct LocalAppRestoreRequest {
+  # Trusted account-host bootstrap message sent only to the provider grain's system route.
+  endpointName @0 :Text;
+  appRef @1 :AnyPointer;
+}
+
+interface LocalAppCapability {
+  # Untyped bootstrap marker for a locally-restored app capability. Application code casts the
+  # returned client to its generated interface in the same way as any other Sandstorm capability.
+}
 
 interface IsolateBridge @0xc4b06a6915ad0e3c {
   # Bootstrap capability for an isolate worker's request-scoped authority
@@ -42,6 +54,16 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
   # Sandstorm-internal SystemPersistent capability. App JS should continue to
   # implement AppPersistent; this bridge performs the realm translation needed
   # when passing app-hosted capabilities to legacy SessionContext APIs.
+
+  restoreCapability @7 (token :Data)
+      -> (cap :Capability, localEndpoint :Text, localLifetime :Capability);
+  # Restores a durable token, preferring a host-authorized same-account local RPC link for appRef
+  # capabilities. An empty localEndpoint selects the ordinary `cap` fallback. localLifetime must
+  # remain live with a local result so token revocation or capability release closes the link.
+
+  resaveRestoredCapability @8 (parentToken :Data, label :Util.LocalizedText) -> (token :Data);
+  # Saves a locally-restored raw app capability without exposing AppPersistent across grain realms.
+  # This creates the same parent-linked child token as the ordinary SystemPersistent wrapper.
 }
 
 interface BrowserIsolateBridge @0x93fb2746c97b5bea {

@@ -7,13 +7,63 @@
 #include <kj/debug.h>
 #include <sandstorm/isolate-account-host.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
+#include <sandstorm/test-app/isolate-test/native-greeter.capnp.h>
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
 
 namespace sandstorm {
 namespace {
 
-class TestCore final: public SandstormCore::Server {};
+class TestRevocationObserver final: public SystemPersistent::RevocationObserver::Server {
+public:
+  kj::Promise<void> dropWhenRevoked(DropWhenRevokedContext context) override {
+    revokers.add(context.getParams().getHandle());
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Vector<Handle::Client> revokers;
+};
+
+class TestFallbackGreeter final: public NativeGreeter::Server {
+public:
+  kj::Promise<void> hello(HelloContext context) override {
+    context.getResults().setMessage(kj::str(
+        "fallback greeter hello ", context.getParams().getName()));
+    return kj::READY_NOW;
+  }
+};
+
+class TestCore final: public SandstormCore::Server {
+public:
+  kj::Promise<void> restoreForIsolate(RestoreForIsolateContext context) override {
+    auto params = context.getParams();
+    if (params.getToken() == kj::StringPtr("fallback-restore-token").asBytes()) {
+      context.getResults().setCap(kj::heap<TestFallbackGreeter>());
+      return kj::READY_NOW;
+    }
+    KJ_REQUIRE(params.getToken() == kj::StringPtr("local-app-restore-token").asBytes(),
+        "unexpected local app restore token");
+    auto request = params.getRequester().prepareRequest();
+    request.setProviderGrainId("testgrain456");
+    request.getAppRef().initAs<NativeGreeterObjectId>().setId("account-local-app-ref");
+    request.setObserver(kj::heap<TestRevocationObserver>());
+    return request.send().then([context](auto prepared) mutable {
+      context.getResults().setLocalEndpoint(prepared.getEndpointName());
+      context.getResults().setLocalLifetime(prepared.getLifetime());
+    });
+  }
+
+  kj::Promise<void> makeChildToken(MakeChildTokenContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.getParent() == kj::StringPtr("local-app-restore-token").asBytes(),
+        "local restore resave lost its parent token");
+    KJ_REQUIRE(params.getOwner().isGrain(),
+        "local restore resave did not create a grain-owned token");
+    context.getResults().setToken(kj::StringPtr("resaved-local-token").asBytes());
+    return kj::READY_NOW;
+  }
+};
 class TestSessionContext final: public SessionContext::Server {};
 
 class IgnoreByteStream final: public ByteStream::Server {
@@ -128,6 +178,22 @@ int main(int argc, char** argv) {
   auto second = sandstorm::startGrain(
       io.waitScope, account, core, "testgrain456", argv[3], true);
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
+
+  auto localRestore = sandstorm::requireFetchOk(sandstorm::startFetchPath(
+      io.waitScope, supervisor, core, "local-app-restore-self-test").wait(io.waitScope));
+  KJ_REQUIRE(localRestore ==
+      "{\"ok\":true,\"message\":\"classic native greeter account-local-app-ref hello "
+      "durable local restore\",\"residence\":\"sameAccountLocal\","
+      "\"transportKind\":\"nativeLocalBuffer\",\"resavedTokenType\":\"string\","
+      "\"resavedTokenLength\":26,\"revokedAfterDrop\":true}",
+      "durable appRef did not use the native same-account restore path", localRestore);
+  auto fallbackRestore = sandstorm::requireFetchOk(sandstorm::startFetchPath(
+      io.waitScope, supervisor, core, "restore-fallback-self-test").wait(io.waitScope));
+  KJ_REQUIRE(fallbackRestore ==
+      "{\"ok\":true,\"message\":\"fallback greeter hello ordinary restore\","
+      "\"residence\":\"imported\"}",
+      "ordinary capability restore did not preserve the supervisor fallback path",
+      fallbackRestore);
 
   auto openLocalCapnp = account.openLocalCapnpChannelRequest();
   openLocalCapnp.setFirstGrainId(argv[2]);

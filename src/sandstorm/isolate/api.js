@@ -1,5 +1,6 @@
 import {
   CAPNP_CLIENT_SYMBOL,
+  NativeCapnpLocalBufferTransport,
   connectIsolateBridge,
   createNativeCapnpServerSession,
   nativeCapnpInterfaceMetadata,
@@ -7,12 +8,18 @@ import {
   nativeCapnpSavedTokenText,
 } from "sandstorm-internal:capnp-runtime";
 import {
+  Conn as CapnpEsConn,
   dataBytes as CapnpEsDataBytes,
+  ErrorClient as CapnpEsErrorClient,
   Interface as CapnpEsInterface,
   Message as CapnpEsMessage,
   utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
-import { MainView } from "/sandstorm/grain.capnp";
+import { AppPersistent, MainView } from "/sandstorm/grain.capnp";
+import {
+  LocalAppCapability,
+  LocalAppRestoreRequest,
+} from "/sandstorm/isolate-bridge.capnp";
 import { OutboundHttpSession } from "/sandstorm/outbound-http-session.capnp";
 import { PowerboxDescriptor, PowerboxDisplayInfo } from "/sandstorm/powerbox.capnp";
 import { ByteStream } from "/sandstorm/util.capnp";
@@ -40,8 +47,13 @@ const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";
 const POWERBOX_FULFILLMENT_PREFIX = "/__sandstorm/powerbox-fulfillment";
 const MAIN_VIEW_RPC_SESSION_PATH = "/__sandstorm/main-view/rpc-session";
+const LOCAL_APP_RESTORE_PATH = "/__sandstorm/local-app-restore";
+const APP_PERSISTENT_INTERFACE_ID =
+  nativeCapnpInterfaceMetadata(AppPersistent, "local app capability membrane").interfaceId;
 const capabilityMetadata = new Map();
 const capabilityBridgeRefs = new WeakMap();
+const localRestoredCapabilityTokens = new WeakMap();
+const localAppRestoreServerConnections = new Set();
 let nextCapabilityId = 0;
 
 function makeLiveCapabilityId(kind = "capability") {
@@ -1057,6 +1069,25 @@ async function saveCapabilityRecord(env, capability, options = {}) {
   const label = saveLabel(options);
   const info = await capabilityInfo(env, capability);
   const bridge = capabilityBridge(capability);
+  const localParentToken = capability instanceof Capability
+    ? localRestoredCapabilityTokens.get(capability)
+    : undefined;
+  if (localParentToken !== undefined) {
+    if (typeof bridge.resaveRestoredCapability !== "function") {
+      throw new Error("capability bridge returned no local-restore child-token saver");
+    }
+    const saved = await bridge.resaveRestoredCapability({
+      parentToken: nativeCapnpSavedTokenData(localParentToken),
+      label: { defaultText: label },
+    });
+    return savedCapabilityRecord({
+      ok: true,
+      type: "savedCapability",
+      id: rawId,
+      token: encodeSavedCapabilityToken(saved.token, info || {}),
+      tokenEncoding: "base64url",
+    });
+  }
   if (typeof bridge.getSandstormApi !== "function") {
     throw new Error("capability bridge returned no SandstormApi resolver");
   }
@@ -2194,8 +2225,65 @@ async function serveMainViewRpcSession(request, env, options = {}) {
   });
 }
 
+function localAppCapabilityMembrane(capability) {
+  const client = capnpClientReference(capability, "locally-restored app capability");
+  return {
+    call(call) {
+      if (call?.method?.interfaceId === APP_PERSISTENT_INTERFACE_ID) {
+        return new CapnpEsErrorClient(new Error(
+          "AppPersistent is confined to the provider grain realm")).call(call);
+      }
+      return client.call(call);
+    },
+    close() {
+      client.close();
+    },
+  };
+}
+
+async function serveLocalAppRestore(request, env, options = {}) {
+  const url = new URL(request.url);
+  if (url.pathname !== LOCAL_APP_RESTORE_PATH) {
+    return null;
+  }
+  if (request.method !== "POST") {
+    return new Response("local app restore requires POST", { status: 405 });
+  }
+
+  try {
+    const message = new CapnpEsMessage(
+      new Uint8Array(await request.arrayBuffer()), false);
+    const bootstrap = message.getRoot(LocalAppRestoreRequest);
+    const endpointName = bootstrap.endpointName;
+    if (typeof endpointName !== "string" || endpointName.length === 0) {
+      throw new Error("local app restore bootstrap omitted its endpoint");
+    }
+    const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(endpointName);
+    const target = mainViewRpcTarget(request, env, options);
+    const restored = await target.restore({ objectId: bootstrap.appRef });
+    const membrane = localAppCapabilityMembrane(restored.cap);
+    const transport = new NativeCapnpLocalBufferTransport(channel);
+    const connection = new CapnpEsConn(transport);
+    transport.attachConnection(connection);
+    connection.main = membrane;
+    connection.addExport(membrane);
+    localAppRestoreServerConnections.add(connection);
+    await new Promise((resolve) => {
+      connection.onError = (error) => {
+        localAppRestoreServerConnections.delete(connection);
+        transport.close(error);
+        resolve();
+      };
+    });
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    return new Response(error?.message || String(error), { status: 400 });
+  }
+}
+
 export async function serveSystemRoutes(request, env, options = {}) {
   return await serveBrowserSystemRoute(request, env) ||
+    await serveLocalAppRestore(request, env, options) ||
     await serveMainViewRpcSession(request, env, options) ||
     await servePowerboxDescriptors(request, env);
 }
@@ -2442,6 +2530,9 @@ function cacheCapabilityMetadata(id, metadata = {}) {
     liveForwardable: metadata.liveForwardable !== undefined
       ? Boolean(metadata.liveForwardable)
       : true,
+    ...(typeof metadata.transportKind === "string" && metadata.transportKind.length > 0
+      ? { transportKind: metadata.transportKind }
+      : {}),
   });
 }
 
@@ -3106,6 +3197,50 @@ function safeOutboundHttpStatus(statusCode) {
   return Number.isInteger(status) && status >= 200 && status <= 599 ? status : 502;
 }
 
+function makeLocalRestoreBridge(baseBridge, connection, lifetime) {
+  let closed = false;
+  return new Proxy({}, {
+    get(_target, property) {
+      if (property === "close") {
+        return (error = undefined) => {
+          if (closed) return;
+          closed = true;
+          try {
+            lifetime.close();
+          } catch (_) {}
+          try {
+            connection.transport.close(error);
+          } catch (_) {}
+          baseBridge.close(error);
+        };
+      }
+      if (property === "localTransportKind") {
+        return connection.transport.kind;
+      }
+      const value = baseBridge[property];
+      return typeof value === "function" ? value.bind(baseBridge) : value;
+    },
+  });
+}
+
+async function restoreCapabilityThroughSandstormApi(bridge, tokenText) {
+  const apiResult = await bridge.getSandstormApi({});
+  const sandstormApi = apiResult.api;
+  if (!sandstormApi || typeof sandstormApi.restore !== "function") {
+    throw new Error("isolate bridge returned a SandstormApi without restore()");
+  }
+
+  const restoredPromise = sandstormApi.restore({
+    token: nativeCapnpSavedTokenData(tokenText),
+  });
+  const cap = capnpCapabilityFromResult(restoredPromise, "restored capability");
+  if (!cap) {
+    throw new Error("SandstormApi.restore() returned no capability");
+  }
+  await restoredPromise;
+  return cap;
+}
+
 async function restoreCapabilityToken(env, token, options = {}) {
   const tokenText = savedCapabilityToken(token);
   const metadata = savedCapabilityEnvelopeMetadata(tokenText);
@@ -3113,21 +3248,51 @@ async function restoreCapabilityToken(env, token, options = {}) {
     connectionId: makeLiveCapabilityId("restore"),
   });
   try {
-    const apiResult = await bridge.getSandstormApi({});
-    const sandstormApi = apiResult.api;
-    if (!sandstormApi || typeof sandstormApi.restore !== "function") {
-      throw new Error("isolate bridge returned a SandstormApi without restore()");
+    if (typeof bridge.restoreCapability === "function") {
+      const restoredPromise = bridge.restoreCapability({
+        token: nativeCapnpSavedTokenData(tokenText),
+      });
+      const fallbackCap = capnpCapabilityFromResult(restoredPromise, "restored capability");
+      const restored = await restoredPromise;
+      if (restored.localEndpoint) {
+        let lifetime;
+        try {
+          lifetime = capnpClientReference(
+            restored.localLifetime, "local restore lifetime capability");
+          const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(restored.localEndpoint);
+          const transport = new NativeCapnpLocalBufferTransport(channel);
+          const connection = new CapnpEsConn(transport);
+          transport.attachConnection(connection);
+          const cap = connection.bootstrap(LocalAppCapability);
+          const localBridge = makeLocalRestoreBridge(bridge, connection, lifetime);
+          const capability = new Capability(env, cap, {
+            ...metadata,
+            kind: metadata.kind || "restored",
+            bridge: localBridge,
+            residence: "sameAccountLocal",
+            transportKind: transport.kind,
+            browserSessionId: options.browserSessionId,
+          });
+          localRestoredCapabilityTokens.set(capability, tokenText);
+          return capability;
+        } catch (error) {
+          try {
+            lifetime?.close();
+          } catch (_) {}
+          // The host has already revoked the abandoned local link. Preserve restore semantics by
+          // retrying through the established supervisor capability path.
+        }
+      } else if (fallbackCap) {
+        return new Capability(env, fallbackCap, {
+          ...metadata,
+          kind: metadata.kind || "restored",
+          bridge,
+          browserSessionId: options.browserSessionId,
+        });
+      }
     }
 
-    const restoredPromise = sandstormApi.restore({
-      token: nativeCapnpSavedTokenData(tokenText),
-    });
-    const cap = capnpCapabilityFromResult(restoredPromise, "restored capability");
-    if (!cap) {
-      throw new Error("SandstormApi.restore() returned no capability");
-    }
-    await restoredPromise;
-
+    const cap = await restoreCapabilityThroughSandstormApi(bridge, tokenText);
     return new Capability(env, cap, {
       ...metadata,
       kind: metadata.kind || "restored",

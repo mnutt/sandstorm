@@ -440,6 +440,22 @@ private:
 };
 
 class IsolateRuntimeAdapter;
+
+struct PreparedLocalAppRestore {
+  kj::String endpointName;
+  capnp::Capability::Client lifetime;
+};
+
+class LocalAppRestoreCoordinator {
+public:
+  virtual ~LocalAppRestoreCoordinator() noexcept(false) {}
+  virtual kj::Promise<PreparedLocalAppRestore> prepareLocalAppRestore(
+      kj::StringPtr callerGrainId,
+      kj::StringPtr providerGrainId,
+      capnp::AnyPointer::Reader appRef,
+      SystemPersistent::RevocationObserver::Client observer) = 0;
+};
+
 class IsolateRuntimeAdapterFactory: public kj::Refcounted {
 public:
   virtual ~IsolateRuntimeAdapterFactory() noexcept(false);
@@ -458,12 +474,14 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
   IsolateRuntimeHost(
       kj::Network& network, kj::Timer& timer, kj::StringPtr grainId,
       SandstormCore::Client sandstormCore,
-      kj::Own<IsolateRuntimeAdapterFactory> runtimeAdapterFactory)
+      kj::Own<IsolateRuntimeAdapterFactory> runtimeAdapterFactory,
+      LocalAppRestoreCoordinator* localRestoreCoordinator = nullptr)
       : network(network), timer(timer), grainId(kj::heapString(grainId)),
         sandstormCore(kj::mv(sandstormCore)),
         sessions(kj::refcounted<IsolateSessionRegistry>()),
         runtimeAdapterFactory(kj::mv(runtimeAdapterFactory)),
-        headerTable(this->runtimeAdapterFactory->getHeaderTable()) {}
+        headerTable(this->runtimeAdapterFactory->getHeaderTable()),
+        localRestoreCoordinator(localRestoreCoordinator) {}
 
   kj::Network& network;
   kj::Timer& timer;
@@ -472,6 +490,7 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
   kj::Own<IsolateSessionRegistry> sessions;
   kj::Own<IsolateRuntimeAdapterFactory> runtimeAdapterFactory;
   kj::HttpHeaderTable& headerTable;
+  LocalAppRestoreCoordinator* localRestoreCoordinator;
 };
 
 IsolateRuntimeConfig::ModuleType getModuleType(
@@ -4992,6 +5011,30 @@ private:
     IsolateRuntimeHost& host;
   };
 
+  class LocalAppRestoreRequesterImpl final: public LocalAppRestoreRequester::Server {
+  public:
+    explicit LocalAppRestoreRequesterImpl(IsolateRuntimeHost& host): host(host) {}
+
+    kj::Promise<void> prepare(PrepareContext context) override {
+      KJ_REQUIRE(!used, "local app restore requester is one-shot");
+      used = true;
+      auto& coordinator = KJ_REQUIRE_NONNULL(host.localRestoreCoordinator,
+          "local app restore is unavailable outside the account host");
+      auto params = context.getParams();
+      return coordinator.prepareLocalAppRestore(
+          host.grainId, params.getProviderGrainId(), params.getAppRef(),
+          params.getObserver())
+          .then([context](PreparedLocalAppRestore&& prepared) mutable {
+        context.getResults().setEndpointName(prepared.endpointName);
+        context.getResults().setLifetime(kj::mv(prepared.lifetime));
+      });
+    }
+
+  private:
+    IsolateRuntimeHost& host;
+    bool used = false;
+  };
+
   class IsolateBridgeImpl final: public IsolateBridge::Server {
   public:
     IsolateBridgeImpl(IsolateRuntimeConfig& config, IsolateRuntimeHost& host)
@@ -5057,6 +5100,35 @@ private:
       context.getResults().setCap(kj::heap<IsolateAppPersistentCapability>(
           kj::addRef(host), params.getCap()));
       return kj::READY_NOW;
+    }
+
+    kj::Promise<void> restoreCapability(RestoreCapabilityContext context) override {
+      auto request = host.sandstormCore.restoreForIsolateRequest();
+      request.setToken(context.getParams().getToken());
+      request.setRequester(kj::heap<LocalAppRestoreRequesterImpl>(host));
+      return request.send().then([context](auto result) mutable {
+        if (result.hasCap()) {
+          context.getResults().setCap(result.getCap());
+        }
+        context.getResults().setLocalEndpoint(result.getLocalEndpoint());
+        if (result.hasLocalLifetime()) {
+          context.getResults().setLocalLifetime(result.getLocalLifetime());
+        }
+      });
+    }
+
+    kj::Promise<void> resaveRestoredCapability(
+        ResaveRestoredCapabilityContext context) override {
+      auto params = context.getParams();
+      auto request = host.sandstormCore.makeChildTokenRequest();
+      request.setParent(params.getParentToken());
+      auto owner = request.getOwner().initGrain();
+      owner.setGrainId(host.grainId);
+      owner.setSaveLabel(params.getLabel());
+      request.initRequirements(0);
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setToken(result.getToken());
+      });
     }
 
   private:
@@ -6794,7 +6866,65 @@ private:
   size_t outstanding = 0;
 };
 
-class IsolateAccountHostImpl final: public IsolateAccountHost::Server {
+class LocalRestoreLinkState final: public kj::Refcounted {
+public:
+  explicit LocalRestoreLinkState(capnp::Capability::Client revoker)
+      : revoker(kj::mv(revoker)) {}
+
+  void revoke() { revoker = nullptr; }
+
+private:
+  capnp::Capability::Client revoker;
+};
+
+class LocalLinkRevokerHandle final: public Handle::Server {
+public:
+  explicit LocalLinkRevokerHandle(kj::Own<LocalRestoreLinkState> state)
+      : state(kj::mv(state)) {}
+  ~LocalLinkRevokerHandle() noexcept { state->revoke(); }
+
+private:
+  kj::Own<LocalRestoreLinkState> state;
+};
+
+class LocalRestoreLifetime final: public capnp::Capability::Server {
+public:
+  LocalRestoreLifetime(SystemPersistent::RevocationObserver::Client observer,
+      kj::Own<LocalRestoreLinkState> state,
+      kj::Promise<void> bootstrapTask)
+      : observer(kj::mv(observer)), state(kj::mv(state)),
+        bootstrapTask(kj::mv(bootstrapTask).eagerlyEvaluate(
+            [state = kj::addRef(*this->state)](kj::Exception&& exception) mutable {
+    state->revoke();
+    KJ_LOG(WARNING, "Local app restore bootstrap failed.", exception);
+  })) {}
+  ~LocalRestoreLifetime() noexcept { state->revoke(); }
+
+  DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
+      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer>) override {
+    return internalUnimplemented("sandstorm.LocalRestoreLifetime", interfaceId, methodId);
+  }
+
+private:
+  SystemPersistent::RevocationObserver::Client observer;
+  kj::Own<LocalRestoreLinkState> state;
+  kj::Promise<void> bootstrapTask;
+};
+
+struct AccountHostedGrain {
+  Supervisor::Client supervisor;
+  kj::Own<IsolateRuntimeConfig> runtimeConfig;
+  kj::Own<IsolateRuntimeHost> runtimeHost;
+};
+
+kj::String newLocalRestoreEndpointName(kj::StringPtr role) {
+  byte entropy[16];
+  randombytes_buf(entropy, sizeof(entropy));
+  return kj::str("restore-", role, "-", kj::encodeHex(kj::arrayPtr(entropy, sizeof(entropy))));
+}
+
+class IsolateAccountHostImpl final: public IsolateAccountHost::Server,
+    public LocalAppRestoreCoordinator {
 public:
   IsolateAccountHostImpl(kj::UnixEventPort& eventPort,
       kj::Network& network,
@@ -6812,7 +6942,7 @@ public:
     KJ_REQUIRE(params.getMainModule().size() > 0, "missing isolate main module");
 
     KJ_IF_MAYBE(existing, supervisors.find(grainId)) {
-      context.getResults().setSupervisor(*existing);
+      context.getResults().setSupervisor(existing->supervisor);
       return kj::READY_NOW;
     }
 
@@ -6835,7 +6965,7 @@ public:
         core = kj::mv(core)](kj::Own<AccountAdmissionResult> admitted) mutable
         -> kj::Promise<void> {
       KJ_IF_MAYBE(existing, supervisors.find(grainId)) {
-        context.getResults().setSupervisor(*existing);
+        context.getResults().setSupervisor(existing->supervisor);
         return kj::READY_NOW;
       }
 
@@ -6845,7 +6975,7 @@ public:
           kj::addRef(*coreRedirector)).castAs<SandstormCore>();
       auto adapterFactory = kj::refcounted<HostedRuntimeAdapterFactory>();
       auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
-          network, timer, grainId, coreCap, kj::addRef(*adapterFactory));
+          network, timer, grainId, coreCap, kj::addRef(*adapterFactory), this);
 
       auto nativeStart = nativeHost.startGrainRequest();
       nativeStart.setGrainId(grainId);
@@ -6862,11 +6992,81 @@ public:
         auto lifecycle = kj::refcounted<HostedSupervisorLifecycle>(
             kj::mv(lifecycleHosted),
             [this, grainId = kj::str(grainId)]() { supervisors.erase(grainId); });
+        auto storedRuntimeConfig = kj::addRef(*admitted->runtimeConfig);
+        auto storedRuntimeHost = kj::addRef(*runtimeHost);
         Supervisor::Client supervisor = kj::heap<IsolateSupervisorImpl>(eventPort,
             admitted->varPath, kj::mv(coreRedirector), kj::mv(admitted->runtimeConfig),
             kj::mv(runtimeHost), kj::mv(lifecycle), kj::mv(coreCap));
         context.getResults().setSupervisor(supervisor);
-        supervisors.insert(kj::mv(grainId), kj::mv(supervisor));
+        supervisors.insert(kj::mv(grainId), AccountHostedGrain{
+          kj::mv(supervisor),
+          kj::mv(storedRuntimeConfig),
+          kj::mv(storedRuntimeHost),
+        });
+      });
+    });
+  }
+
+  kj::Promise<PreparedLocalAppRestore> prepareLocalAppRestore(
+      kj::StringPtr callerGrainId,
+      kj::StringPtr providerGrainId,
+      capnp::AnyPointer::Reader appRef,
+      SystemPersistent::RevocationObserver::Client observer) override {
+    auto callerId = validateOpaqueId(callerGrainId, "local restore caller grain ID");
+    auto providerId = validateOpaqueId(providerGrainId, "local restore provider grain ID");
+    KJ_REQUIRE(callerId != providerId,
+        "local app restore does not require a cross-grain link", callerId);
+    KJ_REQUIRE(supervisors.find(callerId) != nullptr,
+        "local restore caller grain is not live in this account", callerId);
+    auto& provider = KJ_REQUIRE_NONNULL(supervisors.find(providerId),
+        "local restore provider grain is not live in this account", providerId);
+
+    auto callerEndpoint = newLocalRestoreEndpointName("caller");
+    auto providerEndpoint = newLocalRestoreEndpointName("provider");
+
+    capnp::MallocMessageBuilder bootstrapMessage;
+    auto bootstrap = bootstrapMessage.initRoot<LocalAppRestoreRequest>();
+    bootstrap.setEndpointName(providerEndpoint);
+    bootstrap.getAppRef().set(appRef);
+    auto bootstrapWords = capnp::messageToFlatArray(bootstrapMessage);
+    auto bootstrapBody = kj::heapArray<byte>(bootstrapWords.asBytes());
+
+    FetchRequest providerRequest;
+    providerRequest.method = FetchMethod::POST;
+    providerRequest.path = kj::heapString("/__sandstorm/local-app-restore");
+    setFetchRequestBodyHeaders(
+        providerRequest, "application/x-capnp", "identity");
+    providerRequest.body = kj::mv(bootstrapBody);
+
+    auto runtime = provider.runtimeHost->runtimeAdapterFactory->make(
+        kj::addRef(*provider.runtimeConfig), kj::addRef(*provider.runtimeHost));
+    auto open = nativeHost.openLocalCapnpChannelRequest();
+    open.setFirstGrainId(callerId);
+    open.setFirstName(callerEndpoint);
+    open.setSecondGrainId(providerId);
+    open.setSecondName(providerEndpoint);
+    return open.send().then([runtime = kj::mv(runtime), providerRequest = kj::mv(providerRequest),
+        callerEndpoint = kj::mv(callerEndpoint), observer = kj::mv(observer)](
+        auto opened) mutable -> kj::Promise<PreparedLocalAppRestore> {
+      auto state = kj::refcounted<LocalRestoreLinkState>(opened.getRevoker());
+      auto dropRequest = observer.dropWhenRevokedRequest();
+      dropRequest.setHandle(kj::heap<LocalLinkRevokerHandle>(kj::addRef(*state)));
+      return dropRequest.send().then(
+          [runtime = kj::mv(runtime), providerRequest = kj::mv(providerRequest),
+              callerEndpoint = kj::mv(callerEndpoint),
+              observer = kj::mv(observer), state = kj::mv(state)](auto) mutable {
+        auto bootstrapTask = runtime->fetch(kj::mv(providerRequest))
+            .then([](FetchResponse&& response) {
+          KJ_REQUIRE(response.statusCode >= 200 && response.statusCode < 300,
+              "provider rejected local app restore bootstrap", response.statusCode,
+              response.body.asChars());
+        }).attach(kj::mv(runtime));
+        capnp::Capability::Client lifetime = kj::heap<LocalRestoreLifetime>(
+            kj::mv(observer), kj::addRef(*state), kj::mv(bootstrapTask));
+        return PreparedLocalAppRestore{
+          kj::mv(callerEndpoint),
+          kj::mv(lifetime),
+        };
       });
     });
   }
@@ -6908,7 +7108,7 @@ private:
   kj::String appRoot;
   kj::String grainRoot;
   AccountAdmissionPool admissionPool;
-  kj::HashMap<kj::String, Supervisor::Client> supervisors;
+  kj::HashMap<kj::String, AccountHostedGrain> supervisors;
 };
 
 }  // namespace
