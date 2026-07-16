@@ -36,6 +36,10 @@ public:
 
 class TestCore final: public SandstormCore::Server {
 public:
+  void setProvider(Supervisor::Client provider) {
+    this->provider = kj::mv(provider);
+  }
+
   kj::Promise<void> restoreForIsolate(RestoreForIsolateContext context) override {
     auto params = context.getParams();
     if (params.getToken() == kj::StringPtr("fallback-restore-token").asBytes()) {
@@ -48,9 +52,22 @@ public:
     request.setProviderGrainId("testgrain456");
     request.getAppRef().initAs<NativeGreeterObjectId>().setId("account-local-app-ref");
     request.setObserver(kj::heap<TestRevocationObserver>());
-    return request.send().then([context](auto prepared) mutable {
+    return request.send().then([context](auto prepared) mutable -> kj::Promise<void> {
       context.getResults().setLocalEndpoint(prepared.getEndpointName());
       context.getResults().setLocalLifetime(prepared.getLifetime());
+      return kj::READY_NOW;
+    }, [this, context](kj::Exception&&) mutable -> kj::Promise<void> {
+      // Forced-off coverage follows the same provider-supervisor fallback as the real front-end.
+      auto restore = KJ_REQUIRE_NONNULL(provider).restoreRequest();
+      capnp::MallocMessageBuilder appRefMessage;
+      auto appRef = appRefMessage.initRoot<capnp::AnyPointer>();
+      appRef.initAs<NativeGreeterObjectId>().setId("account-local-app-ref");
+      restore.getRef().setAppRef(appRef);
+      restore.initObsolete(0);
+      restore.setParentToken(kj::StringPtr("local-app-restore-token").asBytes());
+      return restore.send().then([context](auto restored) mutable {
+        context.getResults().setCap(restored.getCap());
+      });
     });
   }
 
@@ -63,6 +80,9 @@ public:
     context.getResults().setToken(kj::StringPtr("resaved-local-token").asBytes());
     return kj::READY_NOW;
   }
+
+private:
+  kj::Maybe<Supervisor::Client> provider;
 };
 class TestSessionContext final: public SessionContext::Server {};
 
@@ -149,13 +169,23 @@ void fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
 }  // namespace sandstorm
 
 int main(int argc, char** argv) {
-  KJ_REQUIRE(argc == 4,
-      "usage: isolate-account-host-client <control-socket> <grain-id> <package-id>");
+  KJ_REQUIRE(argc == 5,
+      "usage: isolate-account-host-client <control-socket> <grain-id> <package-id> "
+      "<local|fallback>");
+  bool expectLocalFastPath;
+  if (kj::StringPtr(argv[4]) == "local") {
+    expectLocalFastPath = true;
+  } else {
+    KJ_REQUIRE(kj::StringPtr(argv[4]) == "fallback", "invalid expected transport", argv[4]);
+    expectLocalFastPath = false;
+  }
   auto io = kj::setupAsyncIo();
   auto address = io.provider->getNetwork()
       .parseAddress(kj::str("unix:", argv[1]), 0).wait(io.waitScope);
   auto stream = address->connect().wait(io.waitScope);
-  sandstorm::SandstormCore::Client core = kj::heap<sandstorm::TestCore>();
+  auto coreServer = kj::heap<sandstorm::TestCore>();
+  auto* coreServerPtr = coreServer.get();
+  sandstorm::SandstormCore::Client core = kj::mv(coreServer);
   capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
   auto rpcSystem = capnp::makeRpcServer(network, core);
   capnp::MallocMessageBuilder vatMessage;
@@ -183,16 +213,23 @@ int main(int argc, char** argv) {
   // genuinely multi-tenant rather than merely a different one-process-per-grain launcher.
   auto second = sandstorm::startGrain(
       io.waitScope, account, core, "testgrain456", argv[3], true);
+  coreServerPtr->setProvider(second);
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
 
   auto localRestore = sandstorm::requireFetchOk(sandstorm::startFetchPath(
       io.waitScope, supervisor, core, "local-app-restore-self-test").wait(io.waitScope));
-  KJ_REQUIRE(localRestore ==
-      "{\"ok\":true,\"message\":\"classic native greeter account-local-app-ref hello "
-      "durable local restore\",\"residence\":\"sameAccountLocal\","
-      "\"transportKind\":\"nativeLocalBuffer\",\"resavedTokenType\":\"string\","
-      "\"resavedTokenLength\":26,\"revokedAfterDrop\":true}",
-      "durable appRef did not use the native same-account restore path", localRestore);
+  auto expectedLocalRestore = expectLocalFastPath
+      ? "{\"ok\":true,\"message\":\"classic native greeter account-local-app-ref hello "
+        "durable local restore\",\"residence\":\"sameAccountLocal\","
+        "\"transportKind\":\"nativeLocalBuffer\",\"resavedTokenType\":\"string\","
+        "\"resavedTokenLength\":26,\"revokedAfterDrop\":true}"
+      : "{\"ok\":true,\"message\":\"classic native greeter account-local-app-ref hello "
+        "durable local restore\",\"residence\":\"imported\","
+        "\"resavedTokenType\":\"string\",\"resavedTokenLength\":26,"
+        "\"revokedAfterDrop\":true}";
+  KJ_REQUIRE(localRestore == expectedLocalRestore,
+      "durable appRef restore did not use the forced transport", expectLocalFastPath,
+      localRestore);
   auto fallbackRestore = sandstorm::requireFetchOk(sandstorm::startFetchPath(
       io.waitScope, supervisor, core, "restore-fallback-self-test").wait(io.waitScope));
   KJ_REQUIRE(fallbackRestore ==
@@ -201,23 +238,25 @@ int main(int argc, char** argv) {
       "ordinary capability restore did not preserve the supervisor fallback path",
       fallbackRestore);
 
-  auto openLocalCapnp = account.openLocalCapnpChannelRequest();
-  openLocalCapnp.setFirstGrainId(argv[2]);
-  openLocalCapnp.setFirstName("account-e2e-client");
-  openLocalCapnp.setSecondGrainId("testgrain456");
-  openLocalCapnp.setSecondName("account-e2e-server");
-  auto localCapnpRevoker = openLocalCapnp.send().wait(io.waitScope).getRevoker();
-  auto localServerRequest = sandstorm::startFetchPath(io.waitScope, second, core,
-      "native-local-capnp-server?name=account-e2e-server");
-  auto localClientRequest = sandstorm::startFetchPath(io.waitScope, supervisor, core,
-      "native-local-capnp-client?name=account-e2e-client");
-  KJ_REQUIRE(sandstorm::requireFetchOk(localClientRequest.wait(io.waitScope)) ==
-      "{\"ok\":true,\"message\":\"native local hello cross-grain\","
-      "\"transportKind\":\"nativeLocalBuffer\"}",
-      "cross-grain local Cap'n Proto client returned the wrong result");
-  KJ_REQUIRE(sandstorm::requireFetchOk(localServerRequest.wait(io.waitScope)) ==
-      "{\"ok\":true,\"name\":\"cross-grain\",\"transportKind\":\"nativeLocalBuffer\"}",
-      "cross-grain local Cap'n Proto server returned the wrong result");
+  if (expectLocalFastPath) {
+    auto openLocalCapnp = account.openLocalCapnpChannelRequest();
+    openLocalCapnp.setFirstGrainId(argv[2]);
+    openLocalCapnp.setFirstName("account-e2e-client");
+    openLocalCapnp.setSecondGrainId("testgrain456");
+    openLocalCapnp.setSecondName("account-e2e-server");
+    auto localCapnpRevoker = openLocalCapnp.send().wait(io.waitScope).getRevoker();
+    auto localServerRequest = sandstorm::startFetchPath(io.waitScope, second, core,
+        "native-local-capnp-server?name=account-e2e-server");
+    auto localClientRequest = sandstorm::startFetchPath(io.waitScope, supervisor, core,
+        "native-local-capnp-client?name=account-e2e-client");
+    KJ_REQUIRE(sandstorm::requireFetchOk(localClientRequest.wait(io.waitScope)) ==
+        "{\"ok\":true,\"message\":\"native local hello cross-grain\","
+        "\"transportKind\":\"nativeLocalBuffer\"}",
+        "cross-grain local Cap'n Proto client returned the wrong result");
+    KJ_REQUIRE(sandstorm::requireFetchOk(localServerRequest.wait(io.waitScope)) ==
+        "{\"ok\":true,\"name\":\"cross-grain\",\"transportKind\":\"nativeLocalBuffer\"}",
+        "cross-grain local Cap'n Proto server returned the wrong result");
+  }
 
   supervisor.shutdownRequest().send().wait(io.waitScope);
 

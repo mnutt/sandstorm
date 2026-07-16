@@ -6931,9 +6931,11 @@ public:
       kj::Timer& timer,
       IsolateHost::Client nativeHost,
       kj::String appRoot,
-      kj::String grainRoot)
+      kj::String grainRoot,
+      bool localFastPathEnabled)
       : eventPort(eventPort), network(network), timer(timer), nativeHost(kj::mv(nativeHost)),
-        appRoot(kj::mv(appRoot)), grainRoot(kj::mv(grainRoot)) {}
+        appRoot(kj::mv(appRoot)), grainRoot(kj::mv(grainRoot)),
+        localFastPathEnabled(localFastPathEnabled) {}
 
   kj::Promise<void> startGrain(StartGrainContext context) override {
     auto params = context.getParams();
@@ -6975,7 +6977,8 @@ public:
           kj::addRef(*coreRedirector)).castAs<SandstormCore>();
       auto adapterFactory = kj::refcounted<HostedRuntimeAdapterFactory>();
       auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
-          network, timer, grainId, coreCap, kj::addRef(*adapterFactory), this);
+          network, timer, grainId, coreCap, kj::addRef(*adapterFactory),
+          localFastPathEnabled ? this : nullptr);
 
       auto nativeStart = nativeHost.startGrainRequest();
       nativeStart.setGrainId(grainId);
@@ -7107,6 +7110,7 @@ private:
   IsolateHost::Client nativeHost;
   kj::String appRoot;
   kj::String grainRoot;
+  bool localFastPathEnabled;
   AccountAdmissionPool admissionPool;
   kj::HashMap<kj::String, AccountHostedGrain> supervisors;
 };
@@ -7159,6 +7163,9 @@ kj::MainFunc IsolateAccountHostMain::getMain() {
                  "Log native-host seccomp violations.")
       .addOption({"wait-for-startup"}, [this]() { waitForStartup = true; return true; },
                  "Wait for a byte on stdin before launching the native host.")
+      .addOption({"disable-local-fast-path"},
+                 [this]() { localFastPathEnabled = false; return true; },
+                 "Force durable app capability restores through the ordinary RPC path.")
       .addOptionWithArg({"app-root"}, KJ_BIND_METHOD(*this, setAppRoot), "<path>",
                         "Set the trusted package root.")
       .addOptionWithArg({"grain-root"}, KJ_BIND_METHOD(*this, setGrainRoot), "<path>",
@@ -7245,7 +7252,7 @@ kj::MainBuilder::Validity IsolateAccountHostMain::run() {
 
   capnp::TwoPartyServer server(kj::heap<IsolateAccountHostImpl>(io.unixEventPort,
       io.provider->getNetwork(), io.provider->getTimer(), kj::mv(nativeHost),
-      kj::str(appRoot), kj::str(grainRoot)));
+      kj::str(appRoot), kj::str(grainRoot), localFastPathEnabled));
   KJ_LOG(WARNING, "Account-scoped isolate host listening.", trustDomain, controlSocket,
       nativeHostPath, nativeProcess.getPid());
   server.listen(*listener).exclusiveJoin(nativeRpc.onDisconnect()).wait(io.waitScope);
