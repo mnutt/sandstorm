@@ -1266,6 +1266,10 @@ struct Record {
     data @2 :Data;
   }
 }
+
+struct Ignored {
+  value @0 :UInt32;
+}
 `);
   const structOptions = { cwd: fixtureRoot };
   const structDumped = await runCommand(SPK_BIN, [
@@ -1273,15 +1277,37 @@ struct Record {
     "capnp:./record.capnp",
   ], structOptions);
   const structAbi = JSON.parse(structDumped.stdout);
-  assert.deepEqual(structAbi.structs, [{
-    name: "Record",
-    structId: structAbi.structs[0].structId,
-    fields: [
-      { name: "name", ordinal: 0, type: "Text" },
-      { name: "text", ordinal: 1, type: "Text", discriminant: 0 },
-      { name: "data", ordinal: 2, type: "Data", discriminant: 1 },
-    ],
-  }]);
+  assert.deepEqual(structAbi.structs, [
+    {
+      name: "Record",
+      structId: structAbi.structs[0].structId,
+      fields: [
+        { name: "name", ordinal: 0, type: "Text" },
+        { name: "text", ordinal: 1, type: "Text", discriminant: 0 },
+        { name: "data", ordinal: 2, type: "Data", discriminant: 1 },
+      ],
+    },
+    {
+      name: "Ignored",
+      structId: structAbi.structs[1].structId,
+      fields: [{ name: "value", ordinal: 0, type: "UInt32" }],
+    },
+  ]);
+
+  const filteredStructDumped = await runCommand(SPK_BIN, [
+    "capnp-abi",
+    "--struct", "Record",
+    "capnp:./record.capnp",
+  ], structOptions);
+  assert.deepEqual(JSON.parse(filteredStructDumped.stdout).structs, [structAbi.structs[0]]);
+
+  await assert.rejects(
+    runCommand(SPK_BIN, [
+      "capnp-abi",
+      "--struct", "Missing",
+      "capnp:./record.capnp",
+    ], structOptions),
+    /does not define the requested struct/);
 
   const structBaselinePath = path.join(fixtureRoot, "record.capnp-abi.json");
   await fs.writeFile(structBaselinePath, structDumped.stdout);
@@ -1842,6 +1868,21 @@ runtimeTest("isolate supervisor integration suite", {
         api: 0,
       },
     });
+    assert.deepEqual(body.sandstormApi.stableSurface, [
+      "apiSession",
+      "powerbox",
+      "powerboxFulfillment",
+      "powerboxGrants",
+      "restore",
+      "revoke",
+      "serveSystemRoutes",
+      "session",
+      "storage",
+      "unstable",
+      "use",
+      "webSession",
+    ]);
+    assert.deepEqual(body.sandstormApi.unstableStatus, body.sandstormApi.status);
     assert.equal(body.sandstormApi.status.ok, true);
     assert.equal(body.sandstormApi.runtime.mainModule, "worker.js");
     assert.equal(body.sandstormApi.runtime.topology, "perGrainSidecar");

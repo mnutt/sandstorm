@@ -273,13 +273,18 @@ declare module "sandstorm:api" {
     drop?: MainViewRouteHandlers["drop"];
   }
 
+  /**
+   * Operational diagnostics with no compatibility guarantee for member names
+   * or response shapes. The namespace itself is stable so experimental tools
+   * do not need to add methods to SandstormApi's stable surface.
+   */
+  export interface UnstableSandstormDiagnostics {
+    readonly [name: string]: (...args: unknown[]) => Promise<unknown>;
+  }
+
   export interface SandstormApi {
     session(): SessionInfo;
-    status(): Promise<unknown>;
-    capabilities(): Promise<unknown>;
-    runtime(): Promise<unknown>;
-    modules(): Promise<unknown>;
-    bindings(): Promise<unknown>;
+    readonly unstable: UnstableSandstormDiagnostics;
     storage(): StorageApi;
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
@@ -305,15 +310,10 @@ declare module "sandstorm:api" {
     options: PowerboxFulfillmentOptions,
   ): PowerboxFulfillmentApi;
   export function getSession(request: Request): SessionInfo;
-  export function servePowerboxDescriptors(
-    request: Request,
-    env: SandstormEnv,
-  ): Promise<Response | null>;
   export function serveSystemRoutes(
     request: Request,
     env: SandstormEnv,
     options?: SystemRouteOptions,
   ): Promise<Response | null>;
-  export function nativeCapnpBrowserClientScript(): string;
   export function sandstorm(request: Request, env: SandstormEnv): SandstormApi;
 }

@@ -153,6 +153,7 @@ IMAGES= \
 
 CAPNP_SCHEMAS=$(filter-out src/capnp/test%.capnp,$(wildcard src/capnp/*.capnp))
 ISOLATE_CAPNP_ABI_BASELINES= \
+    tests/capnp-abi/isolate-config.capnp-abi.json \
     tests/capnp-abi/isolate-account-host.capnp-abi.json \
     tests/capnp-abi/isolate-bridge.capnp-abi.json \
     tests/capnp-abi/isolate-host.capnp-abi.json \
@@ -629,12 +630,16 @@ test-app-dev: tmp/.ekam-run
 	spk dev -Isrc -Itmp -ptmp/sandstorm/test-app/test-app.capnp:pkgdef
 
 isolate-capnp-abi-check: tmp/.ekam-run $(ISOLATE_CAPNP_ABI_BASELINES) \
+		src/sandstorm/package.capnp \
 		src/sandstorm/isolate-account-host.capnp \
 		src/sandstorm/isolate-bridge.capnp \
 		src/sandstorm/isolate-host.capnp \
 		src/sandstorm/isolate-supervisor-internal.capnp \
 		src/sandstorm/isolate-worker-source.capnp \
 		src/sandstorm/outbound-http-session.capnp
+	bin/spk capnp-abi --struct Manifest.IsolateConfig \
+		--check tests/capnp-abi/isolate-config.capnp-abi.json \
+		capnp:/sandstorm/package.capnp
 	bin/spk capnp-abi --check tests/capnp-abi/isolate-account-host.capnp-abi.json \
 		capnp:/sandstorm/isolate-account-host.capnp
 	bin/spk capnp-abi --check tests/capnp-abi/isolate-bridge.capnp-abi.json \

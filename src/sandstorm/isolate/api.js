@@ -1250,7 +1250,7 @@ async function appInterfacePowerboxDescriptorInfo(env, options = {}) {
   return cachedPowerboxDescriptorInfo(path, () => callPowerbox(env, path));
 }
 
-export async function servePowerboxDescriptors(request, env) {
+async function servePowerboxDescriptors(request, env) {
   const url = new URL(request.url);
 
   if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/api-session-descriptor`) {
@@ -3567,7 +3567,7 @@ export function getSession(request) {
   };
 }
 
-export function nativeCapnpBrowserClientScript() {
+function nativeCapnpBrowserClientScript() {
   return `
 import {
   Conn,
@@ -4242,16 +4242,15 @@ export function sandstorm(request, env) {
     ? { ...options, browserSessionId }
     : options;
 
-  return {
+  const api = {
     session: () => getSession(request),
-    status: () => callSandstorm(env, "status"),
-    capabilities: () => callSandstorm(env, "capabilities"),
-    runtime: () => callSandstorm(env, "runtime"),
-    modules: () => callSandstorm(env, "modules"),
-    bindings: () => callSandstorm(env, "bindings"),
-    capnpBridgeInfo: () => callSandstorm(env, "capnp/bridge-info"),
-    nativeCapnpBridgeOpenBootstrapSession: (connectionId) =>
-      openNativeCapnpBridgeBootstrapSession(env, connectionId),
+    unstable: Object.freeze({
+      status: () => callSandstorm(env, "status"),
+      capabilities: () => callSandstorm(env, "capabilities"),
+      runtime: () => callSandstorm(env, "runtime"),
+      modules: () => callSandstorm(env, "modules"),
+      bindings: () => callSandstorm(env, "bindings"),
+    }),
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, withBrowserSession(options)),
@@ -4263,4 +4262,18 @@ export function sandstorm(request, env) {
     powerboxGrants: (options = {}) => powerboxGrants(request, env, options),
     serveSystemRoutes: async (options = {}) => await serveSystemRoutes(request, env, options),
   };
+
+  // These hooks are a private protocol between sandstorm:api and the trusted
+  // Cap'n Proto runtime. They deliberately remain absent from the enumerable,
+  // app-facing API surface.
+  Object.defineProperties(api, {
+    capnpBridgeInfo: {
+      value: () => callSandstorm(env, "capnp/bridge-info"),
+    },
+    nativeCapnpBridgeOpenBootstrapSession: {
+      value: (connectionId) => openNativeCapnpBridgeBootstrapSession(env, connectionId),
+    },
+  });
+
+  return api;
 }
