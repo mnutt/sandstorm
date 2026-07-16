@@ -65,6 +65,10 @@ const isolateCommand :Spk.Manifest.Command = (
         json = "{\"binding\":\"json\"}"
       ),
       (
+        name = "DATA_BINDING",
+        data = "\x00\x01\x7f\x80\xffSandstorm"
+      ),
+      (
         name = "SANDSTORM_API",
         sandstormApi = void
       ),
