@@ -654,6 +654,9 @@ function(sandstorm_add_packaging_targets)
 
   _sandstorm_add_tarball(package "" FALSE)
   _sandstorm_add_tarball(package-fast "-fast" TRUE)
+  add_dependencies(bundle verify-workerd-source)
+  add_dependencies(package verify-workerd-source)
+  add_dependencies(package-fast verify-workerd-source)
 
   find_program(SANDSTORM_TEST_EXECUTABLE NAMES test REQUIRED)
   add_custom_target(verify-isolate-release-bundle
