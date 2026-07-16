@@ -164,7 +164,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-memory-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-memory-benchmark isolate-local-capnp-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -424,6 +424,38 @@ isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 
 isolate-memory-benchmark: bin/isolate-host tmp/.ekam-run
 	@$(NODEJS) tests/isolate-memory-benchmark.js $(ISOLATE_MEMORY_BENCHMARK_ARGS)
+
+# Reports all measurements by default. CI or release qualification can enforce a small-message
+# throughput target with ISOLATE_LOCAL_CAPNP_BENCHMARK_ARGS="--min-speedup 10".
+isolate-local-capnp-benchmark: bin/isolate-host tmp/.ekam-run \
+		tests/assets/isolate-test-app.spk
+	@set -e; \
+		root="$(PWD)/tmp/isolate-local-capnp-benchmark"; \
+		app_root="$$root/apps"; grain_root="$$root/grains"; \
+		account_socket="$$root/account.sock"; \
+		rm -rf "$$root"; mkdir -p "$$app_root" "$$grain_root"; \
+		bin/spk unpack tests/assets/isolate-test-app.spk "$$app_root/testpackage123"; \
+		ln -s "$(PWD)/bin/sandstorm" "$$root/isolate-account-host"; \
+		trap 'test -z "$$account_pid" || kill $$account_pid 2>/dev/null || true; test -z "$$account_pid" || wait $$account_pid 2>/dev/null || true; rm -rf "$$root"' EXIT; \
+		run_case() { \
+			expected="$$1"; shift; \
+			rm -rf "$$grain_root"; mkdir -p "$$grain_root"; rm -f "$$account_socket"; \
+			"$$root/isolate-account-host" --trust-domain benchmarkaccount \
+				--control-socket "$$account_socket" --native-host "$(PWD)/bin/isolate-host" \
+				--app-root "$$app_root" --grain-root "$$grain_root" "$$@" \
+				2>"$$root/$$expected.log" & account_pid=$$!; \
+			for attempt in $$(seq 1 100); do test -S "$$account_socket" && break; sleep 0.05; done; \
+			test -S "$$account_socket"; \
+			if ! tmp/sandstorm/isolate-account-host-client "$$account_socket" \
+					benchmarkgrain testpackage123 "benchmark-$$expected"; then \
+				cat "$$root/$$expected.log" >&2; return 1; \
+			fi; \
+			kill $$account_pid; wait $$account_pid 2>/dev/null || true; account_pid=; \
+		}; \
+		local_result=$$(run_case local); \
+		fallback_result=$$(run_case fallback --disable-local-fast-path); \
+		$(NODEJS) tests/isolate-local-capnp-benchmark.js \
+			"$$local_result" "$$fallback_result" $(ISOLATE_LOCAL_CAPNP_BENCHMARK_ARGS)
 
 # ====================================================================
 # fetch capnp-es
