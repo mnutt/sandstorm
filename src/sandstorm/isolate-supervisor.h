@@ -101,6 +101,7 @@ private:
   kj::Maybe<uid_t> sandboxUid;
   bool logSeccompViolations = false;
   bool waitForStartup = false;
+  bool localFastPathEnabled = true;
 
   kj::MainBuilder::Validity setTrustDomain(kj::StringPtr value);
   kj::MainBuilder::Validity setControlSocket(kj::StringPtr value);
