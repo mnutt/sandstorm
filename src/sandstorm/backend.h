@@ -33,6 +33,16 @@ namespace kj {
 
 namespace sandstorm {
 
+struct IsolateAccountHostPaths {
+  kj::String executable;
+  kj::String nativeHost;
+  kj::String appRoot;
+  kj::String grainRoot;
+  kj::String stateRoot;
+
+  static IsolateAccountHostPaths production();
+};
+
 class BackendImpl final: public Backend::Server, private kj::TaskSet::ErrorHandler {
 public:
   BackendImpl(kj::LowLevelAsyncIoProvider& ioProvider,
@@ -43,6 +53,15 @@ public:
               bool useExperimentalSeccompFilter,
               bool logSeccompViolations,
               bool useAccountIsolateHosts);
+  BackendImpl(kj::LowLevelAsyncIoProvider& ioProvider,
+              kj::Network& network,
+              SandstormCoreFactory::Client&& sandstormCoreFactory,
+              kj::Maybe<Cgroup>&& cgroup,
+              kj::Maybe<uid_t> sandboxUid,
+              bool useExperimentalSeccompFilter,
+              bool logSeccompViolations,
+              bool useAccountIsolateHosts,
+              IsolateAccountHostPaths accountHostPaths);
 
 protected:
   kj::Promise<void> ping(PingContext context) override;
@@ -71,6 +90,7 @@ private:
   bool useExperimentalSeccompFilter;
   bool logSeccompViolations;
   bool useAccountIsolateHosts;
+  IsolateAccountHostPaths accountHostPaths;
 
   class RunningGrain {
   public:
@@ -116,6 +136,7 @@ private:
   class RunningAccountHost {
   public:
     RunningAccountHost(BackendImpl& backend, kj::String ownerId,
+        uint64_t generation,
         Subprocess accountProcess,
         kj::Own<kj::AsyncIoStream> stream);
     ~RunningAccountHost() noexcept(false);
@@ -126,6 +147,7 @@ private:
   private:
     BackendImpl& backend;
     kj::String ownerId;
+    uint64_t generation;
     Subprocess accountProcess;
     kj::Own<kj::AsyncIoStream> stream;
     capnp::TwoPartyClient client;
@@ -134,9 +156,11 @@ private:
   struct StartingAccountHost {
     kj::String ownerId;
     kj::ForkedPromise<IsolateAccountHost::Client> promise;
+    uint64_t generation;
   };
 
   std::map<kj::StringPtr, StartingAccountHost> accountHosts;
+  uint64_t nextAccountHostGeneration = 0;
 
   kj::Promise<Supervisor::Client> bootGrain(kj::StringPtr ownerId, kj::StringPtr grainId,
       kj::StringPtr packageId,
@@ -144,6 +168,7 @@ private:
       bool isRetry);
 
   kj::Promise<IsolateAccountHost::Client> getAccountHost(kj::StringPtr ownerId);
+  void eraseAccountHost(kj::StringPtr ownerId, uint64_t generation);
   kj::Promise<kj::Own<kj::AsyncIoStream>> connectUnixSocket(
       kj::String path, uint attemptsRemaining = 500);
 

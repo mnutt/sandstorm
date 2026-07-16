@@ -215,6 +215,26 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Running account-scoped isolate host integration tests"
     VERBATIM)
 
+  add_custom_target(isolate-backend-recovery-test
+    COMMAND bash "${PROJECT_SOURCE_DIR}/cmake/RunIsolateBackendRecoveryTest.sh"
+      "$<TARGET_FILE:spk>"
+      "${_isolate_test_app_spk}"
+      "$<TARGET_FILE:isolate-backend-recovery-client>"
+      "$<TARGET_FILE:sandstorm>"
+      "${CMAKE_BINARY_DIR}/bin/isolate-host"
+      "${CMAKE_BINARY_DIR}/isolate-backend-recovery-test"
+    DEPENDS
+      isolate-host
+      sandstorm
+      spk
+      isolate-backend-recovery-client
+      isolate-test-app-spk
+      "${PROJECT_SOURCE_DIR}/cmake/RunIsolateBackendRecoveryTest.sh"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Testing account-host recovery through the backend"
+    VERBATIM)
+
   add_custom_target(isolate-memory-benchmark
     COMMAND bash "${PROJECT_SOURCE_DIR}/cmake/RunIsolateMemoryBenchmark.sh"
       "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
