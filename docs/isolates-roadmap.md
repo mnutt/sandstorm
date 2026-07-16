@@ -1,8 +1,10 @@
 # Isolates: Roadmap to the Target Architecture
 
-**Status:** Plan. Complements `docs/isolates-architecture-review.md`, which
-describes the current state on branch `isolates-v2`; this document describes
-where the feature needs to go and in what order.
+**Status:** Implementation roadmap. Phases 1–4 are substantially complete,
+Phase 5 is deliberately deferred after measurement, and Phase 6 remains.
+Complements `docs/isolates-architecture-review.md`, which describes the current
+state on branch `isolates-v2`; this document records the target, progress, and
+remaining stabilization work.
 
 Dated progress entries retain prototype API names as superseded history; see
 `docs/developing/isolate-grains.md` for the current application API.
@@ -22,10 +24,10 @@ on capabilities carried by that channel; there is no capability registry
 addressed by string IDs, no lifecycle envelope, no per-export callback RPC
 sessions, and no local-dispatch lease mechanism. Per-grain workerd sidecars
 are replaced by a small number of shared workerd processes. When caller and
-callee are colocated in the same workerd, a native workerd extension binds the
-capability to a **transferred-ArrayBuffer transport** (zero-copy capnp messages
-between isolates) instead of the WebSocket transport — same message format,
-same generated code, same semantics, ~1–2 orders of magnitude faster.
+callee are colocated in the same workerd, capabilities still use the ordinary
+WebSocket transport. A colocated transport remains an optional future
+optimization only if a substantially simpler upstream facility and new
+measurements justify it; it is not part of the target required for stability.
 
 Invariants that hold at every phase:
 
@@ -36,8 +38,9 @@ Invariants that hold at every phase:
    only to join a request to its same-grain `SessionContext`.
 3. Live handles are ephemeral (die with the connection / request context /
    isolate eviction); tokens and app object IDs are durable.
-4. Transport choice (WebSocket vs. local transfer) is made by trusted runtime
-   code at capability-bind time and is invisible to app code.
+4. Transport choice is made by trusted runtime code and is invisible to app
+   code. The supported topology currently uses WebSockets for both local and
+   remote peers.
 5. Revocation is enforceable from outside both endpoints' JS heaps.
 
 ---
@@ -363,8 +366,8 @@ fuzz target available outside normal CI.
 
 Replace per-grain sidecars with a small number of multi-tenant workerd
 processes. This is the phase that actually delivers isolate economics
-(per-grain cost drops from two processes to one isolate) and it is a
-prerequisite for the cross-grain fast path.
+(per-grain cost drops from two processes to one isolate). It also supplied the
+colocation needed to evaluate the now-deferred Phase 5 optimization.
 
 - **Isolate host service.** A long-lived `isolate-host` process (per trust
   domain — see below) runs one workerd hosting N grain workers. The backend
@@ -387,6 +390,19 @@ prerequisite for the cross-grain fast path.
   instantiation/eviction in the host; `syncStorage`/`reportGrainSize` per
   grain as today. Isolate eviction severs that grain's RPC connections, which
   by invariant 3 is already well-defined (live handles die, tokens survive).
+- **Non-blocking admission.** Bundle lookup, packed-message decoding, and
+  module loading must not perform unbounded synchronous filesystem work on the
+  shared host event loop. Admission runs asynchronously or on bounded worker
+  threads, with cancellation and per-stage size/time limits, so starting one
+  grain cannot stall unrelated grains in the same trust domain.
+- **Resource bounds.** Every admitted worker has explicit memory, CPU/watchdog,
+  bundle/module-size, and concurrent-admission limits. The host defines
+  overload behavior and preserves enough headroom to evict or report a faulty
+  grain rather than letting one grain deny service to its neighbors.
+- **Bundle compatibility.** `worker-source.capnp.bin` is a persisted handoff
+  format, not an incidental cache file. Give it an explicit format version and
+  compatibility policy, retain ABI fixtures, and reject unsupported versions
+  before interpreting modules or bindings.
 
 Progress:
 
@@ -432,65 +448,93 @@ Progress:
   private named-worker loader namespace and keeps it alive alongside the
   Cap'n Proto control listener. The bootstrap service is reachable only on an
   ephemeral loopback listener; Sandstorm requests do not traverse it. Host
-  `stop()` calls workerd's explicit eviction path, so the remaining bridge to
-  real grain execution is runtime-bundle translation and request routing, not
-  process or V8 lifecycle setup.
+  `stop()` calls workerd's explicit eviction path, and production grain
+  requests enter through a per-grain `HostedIsolate` HTTP capability.
 - The supervisor now emits a Sandstorm-owned packed Cap'n Proto worker-source
   bundle alongside its human-readable manifest and per-grain workerd config.
   The shared host reads that file through the already-confined grain directory,
   compiles compatibility flags, translates every supported module kind into a
-  `DynamicWorkerSource`, and enters workerd's named isolate cache. Module-only
-  workers load without expanding the upstream patch; binding translation and
-  routing remain before the shared topology can replace the sidecar.
+  `DynamicWorkerSource`, materializes every supported binding kind, and enters
+  workerd's named isolate cache. Real worker ingress and binding dispatch now
+  run end to end without expanding the upstream patch into a general workerd
+  configuration API.
+- Bundle filesystem work and packed-message decoding run on bounded admission
+  worker pools rather than either shared host's common event loop. Readers cap
+  the bundle, module, binding, name, and collection sizes before retaining
+  decoded content; both account and native-host admission have five-second
+  deadlines, two workers, and a maximum of 16 outstanding starts.
 - Loader source ownership follows workerd's repeatable-callback contract: the
   host retains atomic backing storage and returns a fresh
   `DynamicWorkerSource::clone()` on every callback. Eviction now only removes
   the cache entry, matching upstream restart semantics; restarting a stopped
   grain creates a new stub while capabilities to the old hosted-grain wrapper
   remain stopped.
-- Worker-source translation now validates non-empty and unique module/binding
-  names, requires the declared main module to exist, and translates text and
-  strictly parsed JSON bindings into the dynamic worker environment. Malformed
-  JSON is rejected synchronously by `startGrain()`; binary-data and generic
-  service bindings remain explicitly fail-closed.
+- Worker-source translation validates non-empty and unique module/binding
+  names, requires the declared main module to exist, and supports text,
+  strictly parsed JSON, binary `ArrayBuffer`, service, Sandstorm API, storage,
+  and powerbox bindings. The account-host integration test sends real requests
+  through every supported binding and repeats them after worker eviction and
+  restart.
 - Sandstorm API, storage, and powerbox bindings now materialize as ordinary
-  workerd `Fetcher` objects backed by per-grain Unix-socket channels. The host
-  derives each socket beneath a duplicated, channel-owned grain descriptor, so
-  eviction cannot turn a reused descriptor number into cross-grain authority.
-  The path transport is transitional: dispatch adapters will instead be
-  host-owned in-process HTTP services tied to grain state, avoiding repeated
-  filesystem traversal and preserving the Phase 4 density goal. A
-  narrow non-serializable `Frankenvalue` capability constructor lets the
-  dynamic loader preserve the typed channel until the destination worker's V8
-  context exists. This establishes the native per-worker routing primitive;
-  end-to-end request dispatch and the supervisor protocol adapters remain.
+  workerd `Fetcher` objects backed by host-owned in-process HTTP services; no
+  filesystem socket lookup or reusable descriptor number participates in the
+  request path. The storage service owns its opened storage-root descriptor
+  and performs per-request file operations relative to it with `*at()` APIs.
+  A narrow non-serializable `Frankenvalue` capability constructor lets the
+  dynamic loader preserve each typed channel until the destination worker's V8
+  context exists.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
   required `--isolate-trust-domain` value; the supervisor validates it instead
-  of deriving grouping from app or grain metadata. Runtime topology remains
-  `perGrainSidecar` until the host process takes custody of workers.
-- Added integration coverage that runs two isolate instances from the same app
-  package at once and verifies identical `STORAGE` keys resolve to distinct
-  per-grain directories and values. This guards the storage-mediation invariant
-  before the runtime topology changes.
-- The runtime manifest and `/runtime` Sandstorm API metadata now report the
-  current topology as `perGrainSidecar`, giving shared-host work an explicit
-  mode bit to assert against without changing launch behavior.
-- Still deferred but required before the shared topology exits Phase 4:
-  per-grain worker limits and watchdog policy, grain-tagged logs rather than
-  global stdout-only attribution, keepalive-driven eviction, and published
-  per-grain memory measurements.
+  of deriving grouping from app or grain metadata. Account-shared hosting is
+  available through `ISOLATE_HOSTING_MODE=account`; `per-grain` remains the
+  default pending a deliberate operational cutover and remains available as a
+  fallback mode.
+- Account-mode integration coverage runs two live grains from the same package
+  in one workerd, verifies that identical `STORAGE` keys retain distinct
+  per-grain values, and repeats the supported binding and storage checks after
+  stopping and restarting one grain. Runtime manifests and `/runtime` metadata
+  report `accountSharedHost` in this mode and `perGrainSidecar` in fallback
+  mode.
+- Sandstorm-owned limit enforcers apply a 64 MiB old-generation heap limit,
+  16 MiB young-generation and buffering limits, a 250 ms per-request JS
+  watchdog, a five-second startup watchdog, and 64 subrequests. Integration
+  tests force CPU and heap failures and verify that neighboring workers remain
+  responsive.
+- Grain-tagged workerd console logs, keepalive-driven idle eviction with clean
+  restart semantics, and an explicitly versioned worker-source format with ABI
+  fixtures are implemented and tested.
+- The published 32-worker memory benchmark measures 1.19 MiB incremental PSS
+  per shared worker versus 8.15 MiB per one-worker process; total host PSS at
+  32 workers is 72.4 MiB versus 279.9 MiB. See
+  `docs/isolates-memory-benchmark.md`.
+- The backend caches account hosts by generation and discards a dead generation
+  on disconnect. A real backend/account-host/native-host integration test kills
+  the account host and proves that the next grain start recovers through a new
+  host generation.
 
 **Exit criteria:** N example grains for one user run in one workerd with
-correct storage isolation; per-grain memory overhead measured and published;
-per-grain sidecar mode still passes the full suite.
+correct storage isolation; a real worker request traverses each supported
+binding and receives the expected response; stop/restart with capability
+bindings proves clone and eviction behavior end to end; large or malformed
+bundles cannot block unrelated grains and are rejected within documented
+size/time bounds; explicit worker, admission, watchdog, and overload limits
+are exercised in integration tests; logs identify the responsible grain;
+keepalive eviction is active; the worker-source format has version/ABI
+coverage; per-grain memory overhead is measured and published; per-grain
+sidecar mode still passes the full suite.
+
+The experimental account-shared mode now satisfies these technical criteria.
+The remaining Phase 4 gate is a product/operational decision about when to make
+it the default, with per-grain mode retained as the rollback and paranoid-mode
+escape hatch.
 
 ---
 
 ## Phase 5 — Colocated fast path (deferred)
 
-Now both prerequisites exist: one authority channel (Phase 1) and colocated
-grains (Phase 4).
+The prerequisites exist — one authority channel (Phase 1) and colocated grains
+(Phase 4) — but measurements do not justify shipping this optimization.
 
 Status: a complete prototype established host-authorized local links,
 revocation, durable restore, three-party handoff, and forced-on/forced-off
@@ -509,36 +553,12 @@ transport. Revisit this phase only if workerd or capnp-es gains a substantially
 simpler upstream facility, or new workload measurements demonstrate a larger
 benefit. Phase 5 is an optional optimization and does not block stabilization.
 
-- **Transport:** a native workerd extension provides a transferred-`ArrayBuffer`
-  capnp transport between isolates in the same workerd. The caller builds the
-  capnp message once (the only serialization that ever happens); the backing
-  buffer transfers zero-copy to the callee, which reads fields in place.
-  Identical message format and generated code as the WebSocket path; only the
-  transport binding differs (invariant 4).
-- **Cap-table translation:** each colocated pair gets a link with its own cap
-  table, owned by trusted workerd C++, translating capability slots on
-  transfer. This is the real engineering in this phase; it never lives in app
-  code or either app isolate's JS heap.
-- **Binding rule:** the host resolves "is the target colocated?" at
-  claim/restore time and mints the fast-path binding then or never. **Live
-  capabilities never migrate transports.** Promise-resolved capabilities
-  inherit the connection binding they resolved on. This sidesteps the
-  e-order/embargo problem; mid-stream promotion is out of scope unless we later
-  implement proper embargoes.
-- **Revocation:** every fast-path link is held through a revoker in the host's
-  C++ layer (outside both JS heaps, invariant 5). Membrane-requirement
-  revocation severs the link; the capability breaks with the same observable
-  error as the slow path.
-- **Hand-off:** passing a fast-path capability to a non-colocated party
-  re-materializes it as a host-mediated capability (three-party handoff in
-  miniature). Apps must not be able to observe or depend on colocation.
-- **Proof:** microbenchmark in CI comparing colocated call latency/throughput
-  vs. WebSocket path; target ≥10x on small messages, more on large payloads.
-  Semantics parity: run the full native-capnp integration suite with fast
-  path forced on and forced off; identical results required.
-
-**Exit criteria if resumed:** benchmark target justified and met; suite passes
-in both modes; revoking a requirement kills in-flight fast-path use.
+If this phase is revisited, begin with a simpler upstream transport or routing
+facility instead of restoring the removed private state machine. Require a
+representative workload to demonstrate at least a 10x benefit before accepting
+the complexity, then re-establish forced-on/forced-off semantic parity,
+host-enforced revocation outside both JS heaps, and correct three-party
+hand-off before enabling it in production.
 
 ---
 
@@ -560,13 +580,13 @@ in both modes; revoking a requirement kills in-flight fast-path use.
 
 - **Phase 1 before everything:** every later phase gets simpler on one channel
   (Phase 4's host serves one WebSocket per grain instead of a route zoo;
-  Phase 5 binds transports for real RPC caps instead of registry IDs).
+  the Phase 5 evaluation used real RPC caps instead of registry IDs).
   Deleting ~20 authority routes also shrinks the attack surface before the
   multi-tenant host raises the stakes.
-- **Phase 4 before Phase 5:** per-grain workerd has no colocated pairs except
-  a grain restoring its own export. If early de-risking of the
-  transferred-buffer machinery is wanted, that self-colocated case can be
-  prototyped after Phase 1 — but don't let it re-grow a lease mechanism.
+- **Phase 4 before evaluating Phase 5:** per-grain workerd had no representative
+  colocated pairs. The resulting shared host made the measurement realistic;
+  that measurement now supports deferral rather than a second production
+  transport.
 - **Biggest risk, Phase 1:** capnp-es becomes fully load-bearing for all
   authority operations (hence Phase 3 custody/fuzzing). Second: WebSocket
   connection lifecycle under worker eviction — mitigated by invariant 3 and
@@ -574,7 +594,6 @@ in both modes; revoking a requirement kills in-flight fast-path use.
 - **Biggest risk, Phase 4:** quietly weakening the isolation story. The
   blast-radius policy must be a documented, deliberate choice, not an
   emergent property of the implementation.
-- **Biggest risk, Phase 5:** cap-table translation bugs enabling authority
-  leaks between colocated grains. The forced-on/forced-off parity suite and
-  host-side revokers are the guardrails; any capability crossing a colocated
-  link must be provably present in the source link's cap table.
+- **Risk if Phase 5 is revived:** cap-table translation bugs can leak authority
+  between colocated grains. Any future design must keep translation and
+  revocation outside app heaps and prove parity with the WebSocket path.
