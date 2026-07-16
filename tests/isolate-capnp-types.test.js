@@ -9,12 +9,13 @@ const test = require("node:test");
 const { pathToFileURL } = require("node:url");
 
 const REPO_DIR = path.resolve(__dirname, "..");
-const CAPNP_BIN = path.join(REPO_DIR, "tmp/capnp/compiler/capnp");
-const COMPILER = path.join(
+const CAPNP_BIN = process.env.CAPNP_BIN || path.join(REPO_DIR, "tmp/capnp/compiler/capnp");
+const COMPILER = process.env.CAPNP_ES_COMPILER_MODULE || path.join(
   REPO_DIR, "tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs");
-const CAPNP_ES_TYPES = path.join(
+const CAPNP_ES_TYPES = process.env.CAPNP_ES_TYPES || path.join(
   REPO_DIR, "tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/index.d.mts");
-const TSC = path.join(REPO_DIR, "examples/isolate-typescript/node_modules/.bin/tsc");
+const TSC = process.env.TSC_BIN || path.join(
+  REPO_DIR, "tmp/capnp-es-npm/node_modules/typescript/bin/tsc");
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {

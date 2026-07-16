@@ -1,12 +1,331 @@
+diff --git a/src/node/internal/internal_inspect.ts b/src/node/internal/internal_inspect.ts
+index ae41e49..0a6e80b 100644
+--- a/src/node/internal/internal_inspect.ts
++++ b/src/node/internal/internal_inspect.ts
+@@ -2998,8 +2998,10 @@ export function formatLog(
+     colors: boolean,
+     structuredLogging: boolean,
+     level: string,
++    worker: string,
+   ]
+ ): string {
++  const worker = args.pop() as string;
+   const level = args.pop() as string;
+   const structuredLogging = args.pop() as boolean;
+   const colors = args.pop() as boolean;
+@@ -3012,6 +3014,7 @@ export function formatLog(
+         timestamp: Date.now(),
+         level,
+         message,
++        worker,
+       });
+     } else {
+       return message;
+diff --git a/src/workerd/io/frankenvalue.c++ b/src/workerd/io/frankenvalue.c++
+index f4d0dd0..5a07f15 100644
+--- a/src/workerd/io/frankenvalue.c++
++++ b/src/workerd/io/frankenvalue.c++
+@@ -17,6 +17,9 @@ Frankenvalue Frankenvalue::cloneImpl() const {
+     KJ_CASE_ONEOF(v8Serialized, V8Serialized) {
+       result.value = V8Serialized{kj::heapArray(v8Serialized.data.asPtr())};
+     }
++    KJ_CASE_ONEOF(_, DirectCapability) {
++      result.value = DirectCapability{};
++    }
+   }
+ 
+   if (!properties.empty()) {
+@@ -71,6 +74,8 @@ void Frankenvalue::toCapnp(rpc::Frankenvalue::Builder builder) {
+ }
+ 
+ void Frankenvalue::toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTableSize) {
++  KJ_REQUIRE(!value.is<DirectCapability>(),
++      "direct Frankenvalue capabilities cannot be serialized");
+   KJ_SWITCH_ONEOF(value) {
+     KJ_CASE_ONEOF(_, EmptyObject) {
+       builder.setEmptyObject();
+@@ -81,6 +86,9 @@ void Frankenvalue::toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTable
+     KJ_CASE_ONEOF(v8Serialized, V8Serialized) {
+       builder.setV8Serialized(v8Serialized.data);
+     }
++    KJ_CASE_ONEOF(_, DirectCapability) {
++      KJ_UNREACHABLE;
++    }
+   }
+ 
+   if (properties.empty()) {
+@@ -150,7 +158,9 @@ jsg::JsValue Frankenvalue::toJs(jsg::Lock& js) {
+   return toJsImpl(js, capTable);
+ }
+ 
+-jsg::JsValue Frankenvalue::toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTableEntry>> capTable) {
++jsg::JsValue Frankenvalue::toJsImpl(jsg::Lock& js,
++    kj::ArrayPtr<kj::Own<CapTableEntry>> capTable,
++    kj::Maybe<DirectCapabilityMaterializer&> materializer) {
+   return js.withinHandleScope([&]() -> jsg::JsValue {
+     jsg::JsValue result = [&]() -> jsg::JsValue {
+       KJ_SWITCH_ONEOF(value) {
+@@ -171,6 +181,11 @@ jsg::JsValue Frankenvalue::toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTable
+               });
+           return deser.readValue(js);
+         }
++        KJ_CASE_ONEOF(_, DirectCapability) {
++          KJ_REQUIRE(capTable.size() == 1);
++          return KJ_REQUIRE_NONNULL(materializer,
++              "direct Frankenvalue capability requires a materializer")(*capTable[0]);
++        }
+       }
+       KJ_UNREACHABLE;
+     }();
+@@ -183,7 +198,7 @@ jsg::JsValue Frankenvalue::toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTable
+         obj.set(js, property.name,
+             property.value.toJsImpl(js,
+                 capTable.slice(
+-                    property.capTableOffset, property.capTableOffset + property.capTableSize)));
++                    property.capTableOffset, property.capTableOffset + property.capTableSize), materializer));
+       }
+     }
+ 
+@@ -207,6 +222,24 @@ void Frankenvalue::populateJsObject(jsg::Lock& js, jsg::JsObject target) {
+   }
+ }
+ 
++void Frankenvalue::populateJsObject(
++    jsg::Lock& js, jsg::JsObject target, DirectCapabilityMaterializer& materializer) {
++  if (!empty()) {
++    js.withinHandleScope([&]() {
++      auto sourceObj = KJ_REQUIRE_NONNULL(
++          toJsImpl(js, capTable, materializer).tryCast<jsg::JsObject>(),
++          "Frankenvalue must be an object for populateJsObject()");
++      auto props = sourceObj.getPropertyNames(js, jsg::KeyCollectionFilter::OWN_ONLY,
++          jsg::PropertyFilter::ONLY_ENUMERABLE, jsg::IndexFilter::INCLUDE_INDICES);
++      auto propCount = props.size();
++      for (auto i: kj::zeroTo(propCount)) {
++        auto prop = props.get(js, i);
++        target.set(js, prop, sourceObj.get(js, prop));
++      }
++    });
++  }
++}
++
+ Frankenvalue Frankenvalue::fromJs(jsg::Lock& js, jsg::JsValue value) {
+   Frankenvalue result;
+ 
+@@ -230,6 +263,13 @@ Frankenvalue Frankenvalue::fromJson(kj::String json) {
+   return result;
+ }
+ 
++Frankenvalue Frankenvalue::fromDirectCapability(kj::Own<CapTableEntry> capability) {
++  Frankenvalue result;
++  result.value = DirectCapability{};
++  result.capTable.add(kj::mv(capability));
++  return result;
++}
++
+ void Frankenvalue::setProperty(kj::String name, Frankenvalue value) {
+   // We need to merge the value's cap table into ours.
+   uint capTableOffset = capTable.size();
+diff --git a/src/workerd/io/frankenvalue.h b/src/workerd/io/frankenvalue.h
+index 84c5191..c2dfee9 100644
+--- a/src/workerd/io/frankenvalue.h
++++ b/src/workerd/io/frankenvalue.h
+@@ -49,6 +49,9 @@ class Frankenvalue {
+   // Like toJs() but add the properties to an existing object. Throws if the `Frankenvalue` does
+   // not represent an object. This is used to populate `env` in particular.
+   void populateJsObject(jsg::Lock& js, jsg::JsObject target);
++  using DirectCapabilityMaterializer = kj::Function<jsg::JsValue(CapTableEntry&)>;
++  void populateJsObject(
++      jsg::Lock& js, jsg::JsObject target, DirectCapabilityMaterializer& materializer);
+ 
+   // Construct a Frankenvalue from JSON.
+   //
+@@ -56,6 +59,10 @@ class Frankenvalue {
+   // then JSON-stringifying from there.)
+   static Frankenvalue fromJson(kj::String json);
+ 
++  // Construct a non-serializable value which materializes one owned capability under the
++  // destination worker's active V8 context.
++  static Frankenvalue fromDirectCapability(kj::Own<CapTableEntry> capability);
++
+   // Add a property to the value, represented as another Frankenvalue. This is how you "stitch
+   // together" values!
+   //
+@@ -170,7 +177,8 @@ class Frankenvalue {
+   struct V8Serialized {
+     kj::Array<byte> data;
+   };
+-  kj::OneOf<EmptyObject, Json, V8Serialized> value;
++  struct DirectCapability {};
++  kj::OneOf<EmptyObject, Json, V8Serialized, DirectCapability> value;
+ 
+   struct Property;
+   kj::Vector<Property> properties;
+@@ -180,7 +188,8 @@ class Frankenvalue {
+   Frankenvalue cloneImpl() const;
+   void fromCapnpImpl(rpc::Frankenvalue::Reader reader, uint& capTablePos);
+   void toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTableSize);
+-  jsg::JsValue toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTableEntry>> capTable);
++  jsg::JsValue toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTableEntry>> capTable,
++      kj::Maybe<DirectCapabilityMaterializer&> materializer = kj::none);
+ };
+ 
+ // Can't be defined inline since `Frankenvalue` is still incomplete there.
+diff --git a/src/workerd/io/io-channels.c++ b/src/workerd/io/io-channels.c++
+index a4015d2..6627ffb 100644
+--- a/src/workerd/io/io-channels.c++
++++ b/src/workerd/io/io-channels.c++
+@@ -5,6 +5,22 @@
+ 
+ namespace workerd {
+ 
++DynamicWorkerSource DynamicWorkerSource::clone(kj::Own<void> newOwnContent) {
++  return {
++    .source = source.clone(),
++    .compatibilityFlags = compatibilityFlags,
++    .limits = limits.map([](auto& limits) { return limits.clone(); }),
++    .env = env.clone(),
++    .envCompiler = envCompiler.map(
++        [](auto& compiler) { return kj::atomicAddRef(*compiler); }),
++    .globalOutbound = mapAddRef(globalOutbound),
++    .tails = KJ_MAP(t, tails) { return kj::addRef(*t); },
++    .streamingTails = KJ_MAP(t, streamingTails) { return kj::addRef(*t); },
++    .ownContent = kj::mv(newOwnContent),
++    .ownContentIsRpcResponse = ownContentIsRpcResponse,
++  };
++}
++
+ kj::Promise<kj::Array<byte>> IoChannelFactory::SubrequestChannel::getToken(
+     ChannelTokenUsage usage) {
+   KJ_SWITCH_ONEOF(getTokenMaybeSync(usage)) {
+diff --git a/src/workerd/io/io-channels.h b/src/workerd/io/io-channels.h
+index a45b969..8a0ade9 100644
+--- a/src/workerd/io/io-channels.h
++++ b/src/workerd/io/io-channels.h
+@@ -23,6 +23,7 @@ class Network;
+ namespace workerd {
+ 
+ class WorkerInterface;
++class DynamicWorkerEnvCompiler;
+ 
+ // Interface for talking to the Cache API. Needs to be declared here so that IoContext can
+ // contain it.
+@@ -419,6 +420,10 @@ struct DynamicWorkerSource {
+   // a `Frankenvalue` (which should eventually include all binding types, RPC stubs, etc.).
+   Frankenvalue env;
+ 
++  // Optional embedding strategy for materializing capabilities in `env`. The ordinary dynamic
++  // loader leaves this null and uses Frankenvalue's standard deserializer.
++  kj::Maybe<kj::Own<DynamicWorkerEnvCompiler>> envCompiler;
++
+   // Where should global fetch() (and connect()) be sent?
+   kj::Maybe<kj::Own<IoChannelFactory::SubrequestChannel>> globalOutbound;
+ 
+@@ -441,19 +446,7 @@ struct DynamicWorkerSource {
+   // which must be a refcount on the same content since the pointers will not be updated. Note
+   // that if `ownContentIsRpcResponse` is false, then `ownContent` could be passed off to other
+   // threads and as such the refcount had better be atomic.
+-  DynamicWorkerSource clone(kj::Own<void> newOwnContent) {
+-    return {
+-      .source = source.clone(),
+-      .compatibilityFlags = compatibilityFlags,
+-      .limits = limits.map([](auto& limits) { return limits.clone(); }),
+-      .env = env.clone(),
+-      .globalOutbound = mapAddRef(globalOutbound),
+-      .tails = KJ_MAP(t, tails) { return kj::addRef(*t); },
+-      .streamingTails = KJ_MAP(t, streamingTails) { return kj::addRef(*t); },
+-      .ownContent = kj::mv(newOwnContent),
+-      .ownContentIsRpcResponse = ownContentIsRpcResponse,
+-    };
+-  }
++  DynamicWorkerSource clone(kj::Own<void> newOwnContent);
+ 
+   // Walks through all channels in `env` and other properties and ensures that they point at
+   // resolved objects by calling their `getResolved()` methods.
+diff --git a/src/workerd/io/worker.c++ b/src/workerd/io/worker.c++
+index 2394e06..f711773 100644
+--- a/src/workerd/io/worker.c++
++++ b/src/workerd/io/worker.c++
+@@ -2127,8 +2127,8 @@ void Worker::handleLog(jsg::Lock& js,
+   int length = info.Length();
+   // to pass additional arguments from this function to js' `formatLog` we add arguments to the end
+   // of the arguments vector, then in formatLog we `pop` these from the vector.
+-  // 3 is just the number of args we currently pass.
+-  v8::LocalVector<v8::Value> args(js.v8Isolate, length + 3);
++  // 4 is just the number of args we currently pass.
++  v8::LocalVector<v8::Value> args(js.v8Isolate, length + 4);
+   for (auto i: kj::zeroTo(length)) args[i] = info[i];
+   jsg::check(original.Get(js.v8Isolate)->Call(context, info.This(), length, args.data()));
+ 
+@@ -2256,8 +2256,9 @@ void Worker::handleLog(jsg::Lock& js,
+     args[length] = js.boolean(colors);
+     args[length + 1] = js.boolean(loggingOptions.structuredLogging.toBool());
+     args[length + 2] = js.strIntern(levelStr);
++    args[length + 3] = js.str(loggingOptions.workerName);
+     auto formatted = js.toString(
+-        jsg::check(formatLog->Call(context, js.v8Undefined(), length + 3, args.data())));
++        jsg::check(formatLog->Call(context, js.v8Undefined(), length + 4, args.data())));
+     fprintf(fd, "%s\n", formatted.cStr());
+     fflush(fd);
+   }
+diff --git a/src/workerd/io/worker.h b/src/workerd/io/worker.h
+index 626f6e8..693a4c8 100644
+--- a/src/workerd/io/worker.h
++++ b/src/workerd/io/worker.h
+@@ -131,6 +131,8 @@ class Worker: public kj::AtomicRefcounted {
+     ProcessStdioPrefixed processStdioPrefixed = ProcessStdioPrefixed::YES;
+     kj::ConstString stdoutPrefix = "stdout:"_kjc;
+     kj::ConstString stderrPrefix = "stderr:"_kjc;
++    // Stable runtime identity included in structured console records.
++    kj::String workerName = kj::str("");
+ 
+     LoggingOptions() = default;
+     LoggingOptions(LoggingOptions&&) = default;
+@@ -143,7 +145,8 @@ class Worker: public kj::AtomicRefcounted {
+           structuredLogging(other.structuredLogging),
+           processStdioPrefixed(other.processStdioPrefixed),
+           stdoutPrefix(other.stdoutPrefix.clone()),
+-          stderrPrefix(other.stderrPrefix.clone()) {}
++          stderrPrefix(other.stderrPrefix.clone()),
++          workerName(kj::str(other.workerName)) {}
+ 
+     LoggingOptions& operator=(const LoggingOptions& other) {
+       consoleMode = other.consoleMode;
+@@ -151,6 +154,7 @@ class Worker: public kj::AtomicRefcounted {
+       processStdioPrefixed = other.processStdioPrefixed;
+       stdoutPrefix = other.stdoutPrefix.clone();
+       stderrPrefix = other.stderrPrefix.clone();
++      workerName = kj::str(other.workerName);
+       return *this;
+     }
+   };
+@@ -686,6 +690,19 @@ class Worker::Api {
+   }
+ };
+ 
++// An optional embedding hook for environment values which cannot use Frankenvalue's standard
++// serialization path. Implementations own the materialization policy; the dynamic loader only
++// invokes the hook while the destination worker's V8 context is active.
++class DynamicWorkerEnvCompiler: public kj::AtomicRefcounted {
++ public:
++  virtual void compile(jsg::Lock& js,
++      const Worker::Api& api,
++      Frankenvalue& env,
++      v8::Local<v8::Object> target) = 0;
++
++  virtual ~DynamicWorkerEnvCompiler() noexcept(false) = default;
++};
++
+ // A Worker may bounce between threads as it handles multiple requests, but can only actually
+ // execute on one thread at a time. Each thread must therefore lock the Worker while executing
+ // code.
 diff --git a/src/workerd/server/BUILD.bazel b/src/workerd/server/BUILD.bazel
-index b5a07e1..a4c345e 100644
+index ece98ee..5780587 100644
 --- a/src/workerd/server/BUILD.bazel
 +++ b/src/workerd/server/BUILD.bazel
-@@ -82,6 +82,38 @@ wd_cc_binary(
+@@ -81,6 +81,38 @@ wd_cc_binary(
      ],
  )
--
-+
+ 
 +wd_cc_binary(
 +    name = "sandstorm-isolate-host",
 +    srcs = ["sandstorm-isolate-host.c++"],
@@ -42,52 +361,100 @@ index b5a07e1..a4c345e 100644
  wd_cc_library(
      name = "alarm-scheduler",
      srcs = [
-diff --git a/src/workerd/server/server.h b/src/workerd/server/server.h
-index e30d846..8f3e351 100644
---- a/src/workerd/server/server.h
-+++ b/src/workerd/server/server.h
-@@ -108,6 +108,19 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
-       kj::StringPtr servicePattern = "*"_kj,
-       kj::StringPtr entrypointPattern = "*"_kj);
--
-+
-+  // Sandstorm's shared host uses workerd's loader cache directly. The loader namespace must
-+  // already have been declared by the server config passed to run().
-+  kj::Own<WorkerStubChannel> loadDynamicWorker(kj::StringPtr loaderNamespace,
-+      kj::String workerName,
-+      kj::Function<kj::Promise<DynamicWorkerSource>()> fetchSource);
-+
-+  // Removes a named worker from the loader cache. Existing channels retain their normal workerd
-+  // lifetime; a later load of the same name constructs a fresh worker.
-+  void evictDynamicWorker(kj::StringPtr loaderNamespace, kj::StringPtr workerName);
-+
-+  // Inbound requests must use the runtime's exact header table: HttpHeaderIds are table-bound.
-+  kj::HttpHeaderTable& getHttpHeaderTableForEmbedding();
-+
-   struct Durable {
-     kj::String uniqueKey;
-     bool isEvictable;
 diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
-index 46a1746..742a5d3 100644
+index a298e80..01fa356 100644
 --- a/src/workerd/server/server.c++
 +++ b/src/workerd/server/server.c++
-@@ -4284,8 +4284,10 @@
-   void removeIsolate(kj::StringPtr name) {
-     // This is called by abortIsolate()
+@@ -1954,6 +1954,7 @@ class Server::WorkerService final: public Service,
+   using DeleteActorsCallback = kj::Function<void(kj::Maybe<const kj::Exception&> reason)>;
+ 
+   WorkerService(ChannelTokenHandler& channelTokenHandler,
++      kj::String workerName,
+       kj::Maybe<kj::StringPtr> serviceName,
+       ThreadContext& threadContext,
+       const kj::MonotonicClock& monotonicClock,
+@@ -1967,8 +1968,10 @@ class Server::WorkerService final: public Service,
+       kj::Maybe<kj::String> dockerPathParam,
+       kj::Maybe<kj::String> containerEgressInterceptorImageParam,
+       bool isDynamic,
++      kj::Maybe<LimitEnforcerFactory&> limitEnforcerFactory,
+       kj::Maybe<kj::Function<void()>> abortIsolateCallback = kj::none)
+       : channelTokenHandler(channelTokenHandler),
++        workerName(kj::mv(workerName)),
+         serviceName(serviceName),
+         threadContext(threadContext),
+         monotonicClock(monotonicClock),
+@@ -1983,6 +1986,7 @@ class Server::WorkerService final: public Service,
+         dockerPath(kj::mv(dockerPathParam)),
+         containerEgressInterceptorImage(kj::mv(containerEgressInterceptorImageParam)),
+         isDynamic(isDynamic),
++        limitEnforcerFactory(limitEnforcerFactory),
+         abortIsolateCallback(kj::mv(abortIsolateCallback)) {}
+ 
+   // Call immediately after the constructor to set up `actorNamespaces`. This can't happen during
+@@ -2279,8 +2283,15 @@ class Server::WorkerService final: public Service,
+       }
+     }
+ 
++    kj::Own<LimitEnforcer> requestLimitEnforcer(this, kj::NullDisposer::instance);
++    KJ_IF_SOME(factory, limitEnforcerFactory) {
++      KJ_IF_SOME(custom, factory.newRequestLimitEnforcer(workerName, isDynamic)) {
++        requestLimitEnforcer = kj::mv(custom);
++      }
++    }
++
+     return newWorkerEntrypoint(threadContext, kj::atomicAddRef(*worker), entrypointName,
+-        kj::mv(props), kj::mv(actor), kj::Own<LimitEnforcer>(this, kj::NullDisposer::instance),
++        kj::mv(props), kj::mv(actor), kj::mv(requestLimitEnforcer),
+         {},  // ioContextDependency
+         kj::Own<IoChannelFactory>(this, kj::NullDisposer::instance), kj::mv(observer),
+         waitUntilTasks,
+@@ -3360,6 +3371,7 @@ class Server::WorkerService final: public Service,
+   };
+ 
+   ChannelTokenHandler& channelTokenHandler;
++  kj::String workerName;
+ 
+   // This service's name as defined in the original config, or null if it's a dynamic isolate.
+   // Used only for serialization.
+@@ -3382,6 +3394,7 @@ class Server::WorkerService final: public Service,
+   kj::Maybe<kj::String> dockerPath;
+   kj::Maybe<kj::String> containerEgressInterceptorImage;
+   bool isDynamic;
++  kj::Maybe<LimitEnforcerFactory&> limitEnforcerFactory;
+   kj::Maybe<kj::Function<void()>> abortIsolateCallback;
+ 
+   class ActorChannelImpl final: public IoChannelFactory::ActorChannel {
+@@ -4286,6 +4299,8 @@ class Server::WorkerLoaderNamespace: public kj::Refcounted, private kj::TaskSet:
      isolates.erase(name);
    }
--
-+
+ 
 +  void evictIsolate(kj::StringPtr name);
 +
   private:
    Server& server;
    kj::String namespaceName;
-@@ -4611,6 +4613,28 @@
+@@ -4448,9 +4463,14 @@ class Server::WorkerLoaderNamespace: public kj::Refcounted, private kj::TaskSet:
+           };
+         },
+ 
+-        .compileBindings = [env = kj::mv(source.env)](
++        .compileBindings = [env = kj::mv(source.env),
++                               envCompiler = kj::mv(source.envCompiler)](
+             jsg::Lock& js, const Worker::Api& api, v8::Local<v8::Object> target) mutable {
+-          env.populateJsObject(js, jsg::JsObject(target));
++          KJ_IF_SOME(compiler, envCompiler) {
++            compiler->compile(js, api, env, target);
++          } else {
++            env.populateJsObject(js, jsg::JsObject(target));
++          }
+         },
+ 
+         // Note here that we always keep the ownContent from the source, even if
+@@ -4611,6 +4631,28 @@ class Server::WorkerLoaderNamespace: public kj::Refcounted, private kj::TaskSet:
    };
  };
--
-+
+ 
 +void Server::WorkerLoaderNamespace::evictIsolate(kj::StringPtr name) {
 +  isolates.erase(name);
 +}
@@ -113,173 +480,47 @@ index 46a1746..742a5d3 100644
  void Server::unlinkWorkerLoaders() {
    for (auto& loader: workerLoaderNamespaces) {
      loader.value->unlink();
-diff --git a/src/workerd/io/frankenvalue.h b/src/workerd/io/frankenvalue.h
-index 4a0d9e4..98670aa 100644
---- a/src/workerd/io/frankenvalue.h
-+++ b/src/workerd/io/frankenvalue.h
-@@ -47,5 +47,8 @@ class Frankenvalue {
-   static Frankenvalue fromJs(jsg::Lock& js, jsg::JsValue value);
--
-+
-   // Like toJs() but add the properties to an existing object. Throws if the `Frankenvalue` does
-   // not represent an object. This is used to populate `env` in particular.
-   void populateJsObject(jsg::Lock& js, jsg::JsObject target);
-+  using DirectCapabilityMaterializer = kj::Function<jsg::JsValue(CapTableEntry&)>;
-+  void populateJsObject(
-+      jsg::Lock& js, jsg::JsObject target, DirectCapabilityMaterializer& materializer);
-@@ -53,4 +56,8 @@ class Frankenvalue {
-   // Construct a Frankenvalue from JSON.
-   static Frankenvalue fromJson(kj::String json);
--
-+
-+  // Construct a non-serializable value which materializes one owned capability under the
-+  // destination worker's active V8 context.
-+  static Frankenvalue fromDirectCapability(kj::Own<CapTableEntry> capability);
-+
-   // Add a property to the value, represented as another Frankenvalue. This is how you "stitch
-@@ -160,6 +170,7 @@ class Frankenvalue {
-   struct V8Serialized {
-     kj::Array<byte> data;
-   };
--  kj::OneOf<EmptyObject, Json, V8Serialized> value;
-+  struct DirectCapability {};
-+  kj::OneOf<EmptyObject, Json, V8Serialized, DirectCapability> value;
--
-+
-   struct Property;
-diff --git a/src/workerd/io/frankenvalue.c++ b/src/workerd/io/frankenvalue.c++
-index 85b7ee4..9e02831 100644
---- a/src/workerd/io/frankenvalue.c++
-+++ b/src/workerd/io/frankenvalue.c++
-@@ -16,4 +16,7 @@ Frankenvalue Frankenvalue::cloneImpl() const {
-     KJ_CASE_ONEOF(v8Serialized, V8Serialized) {
-       result.value = V8Serialized{kj::heapArray(v8Serialized.data.asPtr())};
-     }
-+    KJ_CASE_ONEOF(_, DirectCapability) {
-+      result.value = DirectCapability{};
+@@ -4741,7 +4783,12 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
+ 
+   auto jsgobserver = kj::atomicRefcounted<JsgIsolateObserver>();
+   auto observer = kj::atomicRefcounted<IsolateObserver>();
+-  auto limitEnforcer = kj::refcounted<NullIsolateLimitEnforcer>();
++  kj::Own<IsolateLimitEnforcer> limitEnforcer = kj::refcounted<NullIsolateLimitEnforcer>();
++  KJ_IF_SOME(factory, limitEnforcerFactory) {
++    KJ_IF_SOME(custom, factory.newIsolateLimitEnforcer(name, def.isDynamic)) {
++      limitEnforcer = kj::mv(custom);
 +    }
-   }
-@@ -73,2 +76,4 @@ void Frankenvalue::toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTable
- void Frankenvalue::toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTableSize) {
-+  KJ_REQUIRE(!value.is<DirectCapability>(),
-+      "direct Frankenvalue capabilities cannot be serialized");
-   KJ_SWITCH_ONEOF(value) {
-@@ -81,4 +86,7 @@ void Frankenvalue::toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTable
-     KJ_CASE_ONEOF(v8Serialized, V8Serialized) {
-       builder.setV8Serialized(v8Serialized.data);
-     }
-+    KJ_CASE_ONEOF(_, DirectCapability) {
-+      KJ_UNREACHABLE;
-+    }
-   }
-@@ -171,3 +177,8 @@ jsg::JsValue Frankenvalue::toJsImpl(
-           return deser.readValue(js);
-         }
-+        KJ_CASE_ONEOF(_, DirectCapability) {
-+          KJ_REQUIRE(capTable.size() == 1);
-+          return KJ_REQUIRE_NONNULL(materializer,
-+              "direct Frankenvalue capability requires a materializer")(*capTable[0]);
-+        }
-       }
-@@ -230,4 +240,11 @@ Frankenvalue Frankenvalue::fromJson(kj::String json) {
-   return result;
- }
--
-+
-+Frankenvalue Frankenvalue::fromDirectCapability(kj::Own<CapTableEntry> capability) {
-+  Frankenvalue result;
-+  result.value = DirectCapability{};
-+  result.capTable.add(kj::mv(capability));
-+  return result;
-+}
-+
- void Frankenvalue::setProperty(kj::String name, Frankenvalue value) {
-diff --git a/src/workerd/io/frankenvalue.h b/src/workerd/io/frankenvalue.h
-index 98670aa..caf3142 100644
---- a/src/workerd/io/frankenvalue.h
-+++ b/src/workerd/io/frankenvalue.h
-@@ -190,5 +190,6 @@ class Frankenvalue {
-   Frankenvalue cloneImpl() const;
-   void fromCapnpImpl(rpc::Frankenvalue::Reader reader, uint& capTablePos);
-   void toCapnpImpl(rpc::Frankenvalue::Builder builder, uint capTableSize);
--  jsg::JsValue toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTableEntry>> capTable);
-+  jsg::JsValue toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTableEntry>> capTable,
-+      kj::Maybe<DirectCapabilityMaterializer&> materializer = kj::none);
- };
-diff --git a/src/workerd/io/frankenvalue.c++ b/src/workerd/io/frankenvalue.c++
-index 9e02831..14fc206 100644
---- a/src/workerd/io/frankenvalue.c++
-+++ b/src/workerd/io/frankenvalue.c++
-@@ -154,4 +154,6 @@ jsg::JsValue Frankenvalue::toJs(jsg::Lock& js) {
- }
--
-+
--jsg::JsValue Frankenvalue::toJsImpl(jsg::Lock& js, kj::ArrayPtr<kj::Own<CapTableEntry>> capTable) {
-+jsg::JsValue Frankenvalue::toJsImpl(jsg::Lock& js,
-+    kj::ArrayPtr<kj::Own<CapTableEntry>> capTable,
-+    kj::Maybe<DirectCapabilityMaterializer&> materializer) {
-   return js.withinHandleScope([&]() -> jsg::JsValue {
-@@ -192,5 +194,5 @@ jsg::JsValue Frankenvalue::toJsImpl(
-         obj.set(js, property.name,
-             property.value.toJsImpl(js,
-                 capTable.slice(
--                    property.capTableOffset, property.capTableOffset + property.capTableSize)));
-+                    property.capTableOffset, property.capTableOffset + property.capTableSize), materializer));
-       }
-@@ -217,4 +219,22 @@ void Frankenvalue::populateJsObject(jsg::Lock& js, jsg::JsObject target) {
-   }
- }
--
-+
-+void Frankenvalue::populateJsObject(
-+    jsg::Lock& js, jsg::JsObject target, DirectCapabilityMaterializer& materializer) {
-+  if (!empty()) {
-+    js.withinHandleScope([&]() {
-+      auto sourceObj = KJ_REQUIRE_NONNULL(
-+          toJsImpl(js, capTable, materializer).tryCast<jsg::JsObject>(),
-+          "Frankenvalue must be an object for populateJsObject()");
-+      auto props = sourceObj.getPropertyNames(js, jsg::KeyCollectionFilter::OWN_ONLY,
-+          jsg::PropertyFilter::ONLY_ENUMERABLE, jsg::IndexFilter::INCLUDE_INDICES);
-+      auto propCount = props.size();
-+      for (auto i: kj::zeroTo(propCount)) {
-+        auto prop = props.get(js, i);
-+        target.set(js, prop, sourceObj.get(js, prop));
-+      }
-+    });
 +  }
-+}
-+
- Frankenvalue Frankenvalue::fromJs(jsg::Lock& js, jsg::JsValue value) {
-diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
-index 742a5d3..77111df 100644
---- a/src/workerd/server/server.c++
-+++ b/src/workerd/server/server.c++
-@@ -4450,4 +4450,22 @@ class Server::WorkerLoaderNamespace::WorkerStubImpl final: public WorkerStubChan
-         .compileBindings = [env = kj::mv(source.env)](
-             jsg::Lock& js, const Worker::Api& api, v8::Local<v8::Object> target) mutable {
--          env.populateJsObject(js, jsg::JsObject(target));
-+          Frankenvalue::DirectCapabilityMaterializer materialize =
-+              [&js, &api](Frankenvalue::CapTableEntry& entry) {
-+            // Dynamic-worker env construction has already rewritten every supported direct
-+            // capability into an IoChannelCapTableEntry. Keep this downcast and the synthetic
-+            // one-element global in sync with that rewrite and WorkerdApi's Fetcher compiler.
-+            auto& channel = kj::downcast<IoChannelCapTableEntry>(entry);
-+            WorkerdApi::Global global{
-+              .name = kj::str("capability"),
-+              .value = WorkerdApi::Global::Fetcher{
-+                .channel = channel.getChannelNumber(IoChannelCapTableEntry::Type::SUBREQUEST),
-+                .requiresHost = true,
-+                .isInHouse = false,
-+              },
-+            };
-+            auto holder = js.obj();
-+            WorkerdApi::from(api).compileGlobals(js, kj::arrayPtr(&global, 1), holder, 1);
-+            return holder.get(js, "capability");
-+          };
-+          env.populateJsObject(js, jsg::JsObject(target), materialize);
-         },
+ 
+   // Create the FsMap that will be used to map known file system
+   // roots to configurable locations.
+@@ -4803,6 +4850,7 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
+     inspectorPolicy = Worker::Isolate::InspectorPolicy::ALLOW_FULLY_TRUSTED;
+   }
+   Worker::LoggingOptions isolateLoggingOptions = loggingOptions;
++  isolateLoggingOptions.workerName = kj::str(name);
+   isolateLoggingOptions.consoleMode =
+       def.source.variant.is<WorkerSource::ScriptSource>() && !usingNewModuleRegistry
+       ? Worker::ConsoleMode::INSPECTOR_ONLY
+@@ -5120,12 +5168,14 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
+   if (!def.isDynamic) serviceName = name;
+ 
+   auto result =
+-      kj::refcounted<WorkerService>(channelTokenHandler, serviceName, globalContext->threadContext,
++      kj::refcounted<WorkerService>(channelTokenHandler, kj::str(name), serviceName,
++          globalContext->threadContext,
+           monotonicClock, kj::mv(worker), kj::mv(errorReporter.defaultEntrypoint),
+           kj::mv(errorReporter.namedEntrypoints), kj::mv(errorReporter.actorClasses),
+           kj::mv(linkCallback), KJ_BIND_METHOD(*this, abortAllActors),
+           KJ_BIND_METHOD(*this, deleteAllActors), kj::mv(dockerPath),
+-          kj::mv(containerEgressInterceptorImage), def.isDynamic, kj::mv(abortIsolateCallback));
++          kj::mv(containerEgressInterceptorImage), def.isDynamic, limitEnforcerFactory,
++          kj::mv(abortIsolateCallback));
+   result->initActorNamespaces(def.localActorConfigs, network);
+   co_return result;
+ }
 diff --git a/src/workerd/server/server.h b/src/workerd/server/server.h
-index 1a5ab976..ce0f7d31 100644
+index 4ddfd54..ce0f7d3 100644
 --- a/src/workerd/server/server.h
 +++ b/src/workerd/server/server.h
 @@ -35,6 +35,17 @@ using api::pyodide::PythonConfig;
@@ -303,8 +544,7 @@ index 1a5ab976..ce0f7d31 100644
 @@ -50,6 +61,12 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
      experimental = true;
    }
--
-+
+ 
 +  void setLimitEnforcerFactory(LimitEnforcerFactory& factory) {
 +    KJ_REQUIRE(globalContext.get() == nullptr,
 +        "limit enforcer factory must be installed before the server starts");
@@ -314,339 +554,31 @@ index 1a5ab976..ce0f7d31 100644
    void overrideSocket(kj::String name, kj::Own<kj::ConnectionReceiver> port) {
      socketOverrides.upsert(kj::mv(name), kj::mv(port));
    }
-@@ -160,6 +177,7 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
-     .loadSnapshotFromDisk = kj::none};
--
+@@ -112,6 +129,19 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
+       kj::StringPtr servicePattern = "*"_kj,
+       kj::StringPtr entrypointPattern = "*"_kj);
+ 
++  // Sandstorm's shared host uses workerd's loader cache directly. The loader namespace must
++  // already have been declared by the server config passed to run().
++  kj::Own<WorkerStubChannel> loadDynamicWorker(kj::StringPtr loaderNamespace,
++      kj::String workerName,
++      kj::Function<kj::Promise<DynamicWorkerSource>()> fetchSource);
 +
++  // Removes a named worker from the loader cache. Existing channels retain their normal workerd
++  // lifetime; a later load of the same name constructs a fresh worker.
++  void evictDynamicWorker(kj::StringPtr loaderNamespace, kj::StringPtr workerName);
++
++  // Inbound requests must use the runtime's exact header table: HttpHeaderIds are table-bound.
++  kj::HttpHeaderTable& getHttpHeaderTableForEmbedding();
++
+   struct Durable {
+     kj::String uniqueKey;
+     bool isEvictable;
+@@ -147,6 +177,7 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
+     .loadSnapshotFromDisk = kj::none};
+ 
    bool experimental = false;
 +  kj::Maybe<LimitEnforcerFactory&> limitEnforcerFactory;
--
-+
+ 
    // When set, overrides compatibilityDate for all workers and enforces that workers don't
    // specify their own compatibilityDate.
-diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
-index d805980d..f7a67b0d 100644
---- a/src/workerd/server/server.c++
-+++ b/src/workerd/server/server.c++
-@@ -1954,6 +1954,7 @@ class Server::WorkerService final: public Service,
-   using DeleteActorsCallback = kj::Function<void(kj::Maybe<const kj::Exception&> reason)>;
--
-+
-   WorkerService(ChannelTokenHandler& channelTokenHandler,
-+      kj::String workerName,
-       kj::Maybe<kj::StringPtr> serviceName,
-       ThreadContext& threadContext,
-       const kj::MonotonicClock& monotonicClock,
-@@ -1967,8 +1968,10 @@ class Server::WorkerService final: public Service,
-       kj::Maybe<kj::String> dockerPathParam,
-       kj::Maybe<kj::String> containerEgressInterceptorImageParam,
-       bool isDynamic,
-+      kj::Maybe<LimitEnforcerFactory&> limitEnforcerFactory,
-       kj::Maybe<kj::Function<void()>> abortIsolateCallback = kj::none)
-       : channelTokenHandler(channelTokenHandler),
-+        workerName(kj::mv(workerName)),
-         serviceName(serviceName),
-         threadContext(threadContext),
-         monotonicClock(monotonicClock),
-@@ -1983,6 +1986,7 @@ class Server::WorkerService final: public Service,
-         dockerPath(kj::mv(dockerPathParam)),
-         containerEgressInterceptorImage(kj::mv(containerEgressInterceptorImageParam)),
-         isDynamic(isDynamic),
-+        limitEnforcerFactory(limitEnforcerFactory),
-         abortIsolateCallback(kj::mv(abortIsolateCallback)) {}
--
-+
-   // Call immediately after the constructor to set up `actorNamespaces`. This can't happen during
-@@ -2279,8 +2283,15 @@ class Server::WorkerService final: public Service,
-       }
-     }
--
-+
-+    kj::Own<LimitEnforcer> requestLimitEnforcer(this, kj::NullDisposer::instance);
-+    KJ_IF_SOME(factory, limitEnforcerFactory) {
-+      KJ_IF_SOME(custom, factory.newRequestLimitEnforcer(workerName, isDynamic)) {
-+        requestLimitEnforcer = kj::mv(custom);
-+      }
-+    }
-+
-     return newWorkerEntrypoint(threadContext, kj::atomicAddRef(*worker), entrypointName,
--        kj::mv(props), kj::mv(actor), kj::Own<LimitEnforcer>(this, kj::NullDisposer::instance),
-+        kj::mv(props), kj::mv(actor), kj::mv(requestLimitEnforcer),
-         {},  // ioContextDependency
-         kj::Own<IoChannelFactory>(this, kj::NullDisposer::instance), kj::mv(observer),
-         waitUntilTasks,
-@@ -3360,6 +3371,7 @@ class Server::WorkerService final: public Service,
-   };
--
-+
-   ChannelTokenHandler& channelTokenHandler;
-+  kj::String workerName;
--
-+
-   // This service's name as defined in the original config, or null if it's a dynamic isolate.
-   // Used only for serialization.
-@@ -3382,6 +3394,7 @@ class Server::WorkerService final: public Service,
-   kj::Maybe<kj::String> dockerPath;
-   kj::Maybe<kj::String> containerEgressInterceptorImage;
-   bool isDynamic;
-+  kj::Maybe<LimitEnforcerFactory&> limitEnforcerFactory;
-   kj::Maybe<kj::Function<void()>> abortIsolateCallback;
--
-+
-   class ActorChannelImpl final: public IoChannelFactory::ActorChannel {
-@@ -4783,7 +4796,12 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
--
-+
-   auto jsgobserver = kj::atomicRefcounted<JsgIsolateObserver>();
-   auto observer = kj::atomicRefcounted<IsolateObserver>();
--  auto limitEnforcer = kj::refcounted<NullIsolateLimitEnforcer>();
-+  kj::Own<IsolateLimitEnforcer> limitEnforcer = kj::refcounted<NullIsolateLimitEnforcer>();
-+  KJ_IF_SOME(factory, limitEnforcerFactory) {
-+    KJ_IF_SOME(custom, factory.newIsolateLimitEnforcer(name, def.isDynamic)) {
-+      limitEnforcer = kj::mv(custom);
-+    }
-+  }
--
-+
-   // Create the FsMap that will be used to map known file system
-   // roots to configurable locations.
-@@ -5162,11 +5180,13 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
-   if (!def.isDynamic) serviceName = name;
--
-+
-   auto result =
--      kj::refcounted<WorkerService>(channelTokenHandler, serviceName, globalContext->threadContext,
-+      kj::refcounted<WorkerService>(channelTokenHandler, kj::str(name), serviceName,
-+          globalContext->threadContext,
-           monotonicClock, kj::mv(worker), kj::mv(errorReporter.defaultEntrypoint),
-           kj::mv(errorReporter.namedEntrypoints), kj::mv(errorReporter.actorClasses),
-           kj::mv(linkCallback), KJ_BIND_METHOD(*this, abortAllActors),
-           KJ_BIND_METHOD(*this, deleteAllActors), kj::mv(dockerPath),
--          kj::mv(containerEgressInterceptorImage), def.isDynamic, kj::mv(abortIsolateCallback));
-+          kj::mv(containerEgressInterceptorImage), def.isDynamic, limitEnforcerFactory,
-+          kj::mv(abortIsolateCallback));
-  result->initActorNamespaces(def.localActorConfigs, network);
-  co_return result;
-diff --git a/src/workerd/io/worker.h b/src/workerd/io/worker.h
-index 03f7fe5..e2e8321 100644
---- a/src/workerd/io/worker.h
-+++ b/src/workerd/io/worker.h
-@@ -131,6 +131,8 @@ class Worker: public kj::AtomicRefcounted {
-     ProcessStdioPrefixed processStdioPrefixed = ProcessStdioPrefixed::YES;
-     kj::ConstString stdoutPrefix = "stdout:"_kjc;
-     kj::ConstString stderrPrefix = "stderr:"_kjc;
-+    // Stable runtime identity included in structured console records.
-+    kj::String workerName = kj::str("");
-
-     LoggingOptions() = default;
-     LoggingOptions(LoggingOptions&&) = default;
-@@ -143,7 +145,8 @@ class Worker: public kj::AtomicRefcounted {
-           structuredLogging(other.structuredLogging),
-           processStdioPrefixed(other.processStdioPrefixed),
-           stdoutPrefix(other.stdoutPrefix.clone()),
--          stderrPrefix(other.stderrPrefix.clone()) {}
-+          stderrPrefix(other.stderrPrefix.clone()),
-+          workerName(kj::str(other.workerName)) {}
-
-     LoggingOptions& operator=(const LoggingOptions& other) {
-       consoleMode = other.consoleMode;
-@@ -151,6 +154,7 @@ class Worker: public kj::AtomicRefcounted {
-       processStdioPrefixed = other.processStdioPrefixed;
-       stdoutPrefix = other.stdoutPrefix.clone();
-       stderrPrefix = other.stderrPrefix.clone();
-+      workerName = kj::str(other.workerName);
-       return *this;
-     }
-   };
-diff --git a/src/workerd/io/worker.c++ b/src/workerd/io/worker.c++
-index a32fefc..5dd48f0 100644
---- a/src/workerd/io/worker.c++
-+++ b/src/workerd/io/worker.c++
-@@ -2127,8 +2127,8 @@ void Worker::handleLog(jsg::Lock& js,
-   int length = info.Length();
-   // to pass additional arguments from this function to js' `formatLog` we add arguments to the end
-   // of the arguments vector, then in formatLog we `pop` these from the vector.
--  // 3 is just the number of args we currently pass.
--  v8::LocalVector<v8::Value> args(js.v8Isolate, length + 3);
-+  // 4 is just the number of args we currently pass.
-+  v8::LocalVector<v8::Value> args(js.v8Isolate, length + 4);
-   for (auto i: kj::zeroTo(length)) args[i] = info[i];
-   jsg::check(original.Get(js.v8Isolate)->Call(context, info.This(), length, args.data()));
-
-@@ -2256,8 +2256,9 @@ void Worker::handleLog(jsg::Lock& js,
-     args[length] = js.boolean(colors);
-     args[length + 1] = js.boolean(loggingOptions.structuredLogging.toBool());
-     args[length + 2] = js.strIntern(levelStr);
-+    args[length + 3] = js.str(loggingOptions.workerName);
-     auto formatted = js.toString(
--        jsg::check(formatLog->Call(context, js.v8Undefined(), length + 3, args.data())));
-+        jsg::check(formatLog->Call(context, js.v8Undefined(), length + 4, args.data())));
-     fprintf(fd, "%s\n", formatted.cStr());
-     fflush(fd);
-   }
-diff --git a/src/node/internal/internal_inspect.ts b/src/node/internal/internal_inspect.ts
-index a0e6670..5bba3d1 100644
---- a/src/node/internal/internal_inspect.ts
-+++ b/src/node/internal/internal_inspect.ts
-@@ -2998,8 +2998,10 @@ export function formatLog(
-     colors: boolean,
-     structuredLogging: boolean,
-     level: string,
-+    worker: string,
-   ]
- ): string {
-+  const worker = args.pop() as string;
-   const level = args.pop() as string;
-   const structuredLogging = args.pop() as boolean;
-   const colors = args.pop() as boolean;
-@@ -3012,6 +3014,7 @@ export function formatLog(
-         timestamp: Date.now(),
-         level,
-         message,
-+        worker,
-       });
-     } else {
-       return message;
-diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
-index f7a67b0..c233aa1 100644
---- a/src/workerd/server/server.c++
-+++ b/src/workerd/server/server.c++
-@@ -4863,6 +4863,7 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
-     inspectorPolicy = Worker::Isolate::InspectorPolicy::ALLOW_FULLY_TRUSTED;
-   }
-   Worker::LoggingOptions isolateLoggingOptions = loggingOptions;
-+  isolateLoggingOptions.workerName = kj::str(name);
-   isolateLoggingOptions.consoleMode =
-       def.source.variant.is<WorkerSource::ScriptSource>() && !usingNewModuleRegistry
-       ? Worker::ConsoleMode::INSPECTOR_ONLY
-diff --git a/src/workerd/io/io-channels.h b/src/workerd/io/io-channels.h
-index a45b9693..8a0ade99 100644
---- a/src/workerd/io/io-channels.h
-+++ b/src/workerd/io/io-channels.h
-@@ -23,6 +23,7 @@ class Network;
- namespace workerd {
-
- class WorkerInterface;
-+class DynamicWorkerEnvCompiler;
-
- // Interface for talking to the Cache API. Needs to be declared here so that IoContext can
- // contain it.
-@@ -419,6 +420,10 @@ struct DynamicWorkerSource {
-   // a `Frankenvalue` (which should eventually include all binding types, RPC stubs, etc.).
-   Frankenvalue env;
-
-+  // Optional embedding strategy for materializing capabilities in `env`. The ordinary dynamic
-+  // loader leaves this null and uses Frankenvalue's standard deserializer.
-+  kj::Maybe<kj::Own<DynamicWorkerEnvCompiler>> envCompiler;
-+
-   // Where should global fetch() (and connect()) be sent?
-   kj::Maybe<kj::Own<IoChannelFactory::SubrequestChannel>> globalOutbound;
-
-@@ -441,19 +446,7 @@ struct DynamicWorkerSource {
-   // which must be a refcount on the same content since the pointers will not be updated. Note
-   // that if `ownContentIsRpcResponse` is false, then `ownContent` could be passed off to other
-   // threads and as such the refcount had better be atomic.
--  DynamicWorkerSource clone(kj::Own<void> newOwnContent) {
--    return {
--      .source = source.clone(),
--      .compatibilityFlags = compatibilityFlags,
--      .limits = limits.map([](auto& limits) { return limits.clone(); }),
--      .env = env.clone(),
--      .globalOutbound = mapAddRef(globalOutbound),
--      .tails = KJ_MAP(t, tails) { return kj::addRef(*t); },
--      .streamingTails = KJ_MAP(t, streamingTails) { return kj::addRef(*t); },
--      .ownContent = kj::mv(newOwnContent),
--      .ownContentIsRpcResponse = ownContentIsRpcResponse,
--    };
--  }
-+  DynamicWorkerSource clone(kj::Own<void> newOwnContent);
-
-   // Walks through all channels in `env` and other properties and ensures that they point at
-   // resolved objects by calling their `getResolved()` methods.
-diff --git a/src/workerd/io/io-channels.c++ b/src/workerd/io/io-channels.c++
-index a4015d26..6627ffbf 100644
---- a/src/workerd/io/io-channels.c++
-+++ b/src/workerd/io/io-channels.c++
-@@ -5,6 +5,22 @@
-
- namespace workerd {
-
-+DynamicWorkerSource DynamicWorkerSource::clone(kj::Own<void> newOwnContent) {
-+  return {
-+    .source = source.clone(),
-+    .compatibilityFlags = compatibilityFlags,
-+    .limits = limits.map([](auto& limits) { return limits.clone(); }),
-+    .env = env.clone(),
-+    .envCompiler = envCompiler.map(
-+        [](auto& compiler) { return kj::atomicAddRef(*compiler); }),
-+    .globalOutbound = mapAddRef(globalOutbound),
-+    .tails = KJ_MAP(t, tails) { return kj::addRef(*t); },
-+    .streamingTails = KJ_MAP(t, streamingTails) { return kj::addRef(*t); },
-+    .ownContent = kj::mv(newOwnContent),
-+    .ownContentIsRpcResponse = ownContentIsRpcResponse,
-+  };
-+}
-+
- kj::Promise<kj::Array<byte>> IoChannelFactory::SubrequestChannel::getToken(
-     ChannelTokenUsage usage) {
-   KJ_SWITCH_ONEOF(getTokenMaybeSync(usage)) {
-diff --git a/src/workerd/io/worker.h b/src/workerd/io/worker.h
-index e2e8321..693a4c88 100644
---- a/src/workerd/io/worker.h
-+++ b/src/workerd/io/worker.h
-@@ -690,6 +690,19 @@ class Worker::Api {
-   }
- };
-
-+// An optional embedding hook for environment values which cannot use Frankenvalue's standard
-+// serialization path. Implementations own the materialization policy; the dynamic loader only
-+// invokes the hook while the destination worker's V8 context is active.
-+class DynamicWorkerEnvCompiler: public kj::AtomicRefcounted {
-+ public:
-+  virtual void compile(jsg::Lock& js,
-+      const Worker::Api& api,
-+      Frankenvalue& env,
-+      v8::Local<v8::Object> target) = 0;
-+
-+  virtual ~DynamicWorkerEnvCompiler() noexcept(false) = default;
-+};
-+
- // A Worker may bounce between threads as it handles multiple requests, but can only actually
- // execute on one thread at a time. Each thread must therefore lock the Worker while executing
- // code.
-diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
-index 77111df..01fa3568 100644
---- a/src/workerd/server/server.c++
-+++ b/src/workerd/server/server.c++
-@@ -4450,24 +4450,11 @@ class Server::WorkerLoaderNamespace::WorkerStubImpl final: public WorkerStubChan
-         },
-
--        .compileBindings = [env = kj::mv(source.env)](
-+        .compileBindings = [env = kj::mv(source.env),
-+                               envCompiler = kj::mv(source.envCompiler)](
-             jsg::Lock& js, const Worker::Api& api, v8::Local<v8::Object> target) mutable {
--          Frankenvalue::DirectCapabilityMaterializer materialize =
--              [&js, &api](Frankenvalue::CapTableEntry& entry) {
--            // Dynamic-worker env construction has already rewritten every supported direct
--            // capability into an IoChannelCapTableEntry. Keep this downcast and the synthetic
--            // one-element global in sync with that rewrite and WorkerdApi's Fetcher compiler.
--            auto& channel = kj::downcast<IoChannelCapTableEntry>(entry);
--            WorkerdApi::Global global{
--              .name = kj::str("capability"),
--              .value = WorkerdApi::Global::Fetcher{
--                .channel = channel.getChannelNumber(IoChannelCapTableEntry::Type::SUBREQUEST),
--                .requiresHost = true,
--                .isInHouse = false,
--              },
--            };
--            auto holder = js.obj();
--            WorkerdApi::from(api).compileGlobals(js, kj::arrayPtr(&global, 1), holder, 1);
--            return holder.get(js, "capability");
--          };
--          env.populateJsObject(js, jsg::JsObject(target), materialize);
-+          KJ_IF_SOME(compiler, envCompiler) {
-+            compiler->compile(js, api, env, target);
-+          } else {
-+            env.populateJsObject(js, jsg::JsObject(target));
-+          }
-         },

@@ -1,0 +1,3 @@
+# Unified diffs encode blank context lines as a single space. Do not report
+# those format-required prefixes as trailing whitespace in patches-as-data.
+*.patch whitespace=-blank-at-eol

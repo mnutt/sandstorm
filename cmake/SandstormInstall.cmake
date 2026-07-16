@@ -8,10 +8,12 @@ function(sandstorm_install_native)
       "-DGIT=${GIT_EXECUTABLE}"
       "-DREPOSITORY=${PROJECT_SOURCE_DIR}/deps/workerd"
       "-DEXPECTED=${SANDSTORM_WORKERD_SOURCE_COMMIT}"
+      "-DPATCH=${PROJECT_SOURCE_DIR}/patches/workerd/0001-add-sandstorm-isolate-host-target.patch"
       -P "${PROJECT_SOURCE_DIR}/cmake/VerifyGitHead.cmake"
     DEPENDS
       "${PROJECT_SOURCE_DIR}/deps/workerd"
       "${PROJECT_SOURCE_DIR}/cmake/VerifyGitHead.cmake"
+      "${PROJECT_SOURCE_DIR}/patches/workerd/0001-add-sandstorm-isolate-host-target.patch"
     COMMENT "Verifying the pinned workerd source checkout"
     VERBATIM)
 
@@ -46,7 +48,7 @@ function(sandstorm_install_native)
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-worker-source.capnp"
       "${_workerd_embed_dir}/src/workerd/server/sandstorm-isolate-worker-source.capnp"
     COMMAND "${CMAKE_COMMAND}" -E chdir "${_workerd_embed_dir}"
-      "${SANDSTORM_PATCH_EXECUTABLE}" -p1 -i "${_workerd_patch}"
+      "${SANDSTORM_PATCH_EXECUTABLE}" --batch --fuzz=0 -p1 -i "${_workerd_patch}"
     COMMAND "${CMAKE_COMMAND}" -E touch "${_workerd_embed_stamp}"
     DEPENDS
       verify-workerd-source

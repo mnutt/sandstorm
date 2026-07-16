@@ -327,6 +327,24 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Running generated isolate Cap'n Proto corpus cases"
     VERBATIM)
 
+  add_custom_target(isolate-capnp-types-test
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "CAPNP_BIN=$<TARGET_FILE:capnp_tool>"
+      "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
+      "CAPNP_ES_TYPES=${_capnp_es_work_dir}/node_modules/@mnutt/capnp-es/dist/index.d.mts"
+      "TSC_BIN=${_capnp_es_work_dir}/node_modules/typescript/bin/tsc"
+      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-capnp-types.test.js"
+    DEPENDS
+      capnp_tool
+      "${_capnp_es_compiler_deps}"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-capnp-types.test.js"
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate/api.d.ts"
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate/capnp.d.ts"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    COMMENT "Checking isolate Cap'n Proto TypeScript declarations"
+    VERBATIM)
+
   add_custom_target(isolate-capnp-toolchain-test
     COMMAND "${CMAKE_COMMAND}" -E env
       "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
@@ -343,6 +361,7 @@ function(sandstorm_add_packaging_targets)
       isolate-websession-client
       isolate-capnp-abi-check
       isolate-capnp-corpus-test
+      isolate-capnp-types-test
       "${_capnp_es_compiler_deps}"
       "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
@@ -636,6 +655,24 @@ function(sandstorm_add_packaging_targets)
   _sandstorm_add_tarball(package "" FALSE)
   _sandstorm_add_tarball(package-fast "-fast" TRUE)
 
+  find_program(SANDSTORM_TEST_EXECUTABLE NAMES test REQUIRED)
+  add_custom_target(verify-isolate-release-bundle
+    COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -x "${_bundle_dir}/bin/workerd"
+    COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -x "${_bundle_dir}/bin/isolate-host"
+    COMMAND "${CMAKE_COMMAND}" -E compare_files
+      "${_bundle_dir}/bin/workerd" "${CMAKE_BINARY_DIR}/bin/workerd"
+    COMMAND "${CMAKE_COMMAND}" -E compare_files
+      "${_bundle_dir}/bin/isolate-host" "${CMAKE_BINARY_DIR}/bin/isolate-host"
+    COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -f
+      "${_bundle_dir}/usr/lib/capnp-es/dist/compiler/index.mjs"
+    COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -f
+      "${_bundle_dir}/usr/include/sandstorm/package.capnp"
+    COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -f
+      "${_bundle_dir}/usr/include/sandstorm/isolate-bridge.capnp"
+    DEPENDS package-fast
+    COMMENT "Verifying the isolate release bundle"
+    VERBATIM)
+
   set(_fast_package
     "${_package_dir}/sandstorm-${SANDSTORM_BUILD}-fast.tar.xz")
   add_custom_target(install-local
@@ -687,5 +724,16 @@ function(sandstorm_add_packaging_targets)
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     USES_TERMINAL
     COMMENT "Running isolate example system tests"
+    VERBATIM)
+
+  add_custom_target(isolate-ci
+    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target verify-workerd-source
+    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target verify-isolate-release-bundle
+    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target isolate-test
+    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target isolate-host-control-test
+    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target isolate-account-host-integration-test
+    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target isolate-backend-recovery-test
+    USES_TERMINAL
+    COMMENT "Running the isolate release gate"
     VERBATIM)
 endfunction()

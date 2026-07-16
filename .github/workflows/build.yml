@@ -180,9 +180,9 @@ jobs:
           set -e
           echo "Result: $result"
           exit "$result"
-      - name: isolate supervisor integration test
+      - name: isolate release gate
         run: |
-          cmake --build --preset ci --target isolate-supervisor-integration-test
+          cmake --build --preset ci --target isolate-ci
       - name: upload test log
         if: always()
         uses: actions/upload-artifact@v7

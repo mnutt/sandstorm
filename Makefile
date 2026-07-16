@@ -33,8 +33,9 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	isolate-account-host-integration-test \
 	isolate-backend-recovery-test \
 	isolate-memory-benchmark \
+	verify-isolate-release-bundle isolate-ci \
 	isolate-capnp-abi-check \
-	isolate-capnp-corpus-test isolate-capnp-fuzz \
+	isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test \
 	isolate-capnp-toolchain-test isolate-test \
 	stage-native workerd verify-workerd-runtime verify-workerd-source isolate-host shell-env shell-build shell-build-debug bundle \
 	test-app.spk test-app-spk test-app-dev app-index.spk app-index-spk app-index-dev \
@@ -89,6 +90,7 @@ $(eval $(call cmake_target,stage-native,stage-native))
 $(eval $(call cmake_target,workerd,workerd))
 $(eval $(call cmake_target,verify-workerd-runtime,verify-workerd-runtime))
 $(eval $(call cmake_target,verify-workerd-source,verify-workerd-source))
+$(eval $(call cmake_target,verify-isolate-release-bundle,verify-isolate-release-bundle))
 $(eval $(call cmake_target,isolate-host,isolate-host))
 $(eval $(call cmake_target,isolate-host-control-test,isolate-host-control-test))
 $(eval $(call cmake_target,isolate-account-host-integration-test,isolate-account-host-integration-test))
@@ -114,8 +116,10 @@ $(eval $(call cmake_target,isolate-supervisor-syscall-trace,isolate-supervisor-s
 $(eval $(call cmake_target,isolate-capnp-abi-check,isolate-capnp-abi-check))
 $(eval $(call cmake_target,isolate-capnp-corpus-test,isolate-capnp-corpus-test))
 $(eval $(call cmake_target,isolate-capnp-fuzz,isolate-capnp-fuzz))
+$(eval $(call cmake_target,isolate-capnp-types-test,isolate-capnp-types-test))
 $(eval $(call cmake_target,isolate-capnp-toolchain-test,isolate-capnp-toolchain-test))
 $(eval $(call cmake_target,isolate-test,isolate-test))
+$(eval $(call cmake_target,isolate-ci,isolate-ci))
 $(eval $(call cmake_target,tests/assets/isolate-api-powerbox-test-app.spk,isolate-api-powerbox-test-app-spk))
 $(eval $(call cmake_target,tests/assets/isolate-api-provider-test-app.spk,isolate-api-provider-test-app-spk))
 $(eval $(call cmake_target,app-index.spk,app-index-spk))
