@@ -407,7 +407,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
   openLink.setFirstName("roundtrip-source");
   openLink.setSecondGrainId("peergrain123");
   openLink.setSecondName("roundtrip-target");
-  openLink.send().wait(waitScope);
+  auto localLinkRevoker = openLink.send().wait(waitScope).getRevoker();
 
   kj::HttpHeaders localSourceHeaders(*headerTable);
   auto localSourceRequest = httpClient->request(kj::HttpMethod::GET,
@@ -446,7 +446,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
   openCapnpLink.setFirstName("capnp-source");
   openCapnpLink.setSecondGrainId("peergrain123");
   openCapnpLink.setSecondName("capnp-target");
-  openCapnpLink.send().wait(waitScope);
+  auto capnpLinkRevoker = openCapnpLink.send().wait(waitScope).getRevoker();
 
   kj::HttpHeaders capnpSourceHeaders(*headerTable);
   auto capnpSourceRequest = httpClient->request(kj::HttpMethod::POST,
@@ -477,7 +477,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
   openForgedLink.setFirstName("capnp-forged-source");
   openForgedLink.setSecondGrainId("peergrain123");
   openForgedLink.setSecondName("capnp-forged-target");
-  openForgedLink.send().wait(waitScope);
+  auto forgedLinkRevoker = openForgedLink.send().wait(waitScope).getRevoker();
   kj::HttpHeaders forgedTargetHeaders(*headerTable);
   auto forgedTargetRequest = peerClient->request(kj::HttpMethod::POST,
       "https://grain.invalid/local-buffer-wait-for-close?name=capnp-forged-target",
@@ -509,7 +509,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
   openRevokedLink.setFirstName("revoked-source");
   openRevokedLink.setSecondGrainId("peergrain123");
   openRevokedLink.setSecondName("revoked-target");
-  openRevokedLink.send().wait(waitScope);
+  auto revokedLinkRevoker = openRevokedLink.send().wait(waitScope).getRevoker();
 
   kj::HttpHeaders revokedSourceHeaders(*headerTable);
   auto revokedSourceRequest = httpClient->request(kj::HttpMethod::GET,
@@ -529,6 +529,26 @@ export default { fetch() { return new Response("memory limit failed"); } };
       revokedSourceResponse.statusCode);
   KJ_REQUIRE(revokedSourceResponse.body->readAllText().wait(waitScope) == "revoked",
       "local buffer revocation returned the wrong error response");
+
+  auto openExplicitlyRevokedLink = host.openLocalBufferChannelRequest();
+  openExplicitlyRevokedLink.setFirstGrainId("testgrain123");
+  openExplicitlyRevokedLink.setFirstName("explicitly-revoked-source");
+  openExplicitlyRevokedLink.setSecondGrainId("peergrain123");
+  openExplicitlyRevokedLink.setSecondName("explicitly-revoked-target");
+  auto explicitLinkRevoker =
+      openExplicitlyRevokedLink.send().wait(waitScope).getRevoker();
+
+  kj::HttpHeaders explicitlyRevokedHeaders(*headerTable);
+  auto explicitlyRevokedRequest = httpClient->request(kj::HttpMethod::GET,
+      "https://grain.invalid/local-buffer-wait-for-close?name=explicitly-revoked-source",
+      explicitlyRevokedHeaders);
+  explicitLinkRevoker = nullptr;
+  auto explicitlyRevokedResponse = explicitlyRevokedRequest.response.wait(waitScope);
+  KJ_REQUIRE(explicitlyRevokedResponse.statusCode == 410,
+      "dropping the local-link revoker did not reject an in-flight receive",
+      explicitlyRevokedResponse.statusCode);
+  KJ_REQUIRE(explicitlyRevokedResponse.body->readAllText().wait(waitScope) == "revoked",
+      "explicit local-link revocation returned the wrong response");
   peerGrain.stopRequest().send().wait(waitScope);
 
   kj::HttpHeaders requestHeaders(*headerTable);

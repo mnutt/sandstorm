@@ -770,6 +770,21 @@ class LocalBufferEndpoint final: public workerd::api::LocalBufferChannelEndpoint
   bool first;
 };
 
+class LocalBufferLinkRevoker final: public capnp::Capability::Server {
+ public:
+  explicit LocalBufferLinkRevoker(kj::Own<LocalBufferLinkState> state)
+      : state(kj::mv(state)) {}
+  ~LocalBufferLinkRevoker() noexcept { state->close(); }
+
+  DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
+      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer>) override {
+    return internalUnimplemented("sandstorm.LocalBufferLinkRevoker", interfaceId, methodId);
+  }
+
+ private:
+  kj::Own<LocalBufferLinkState> state;
+};
+
 class LocalBufferBrokerProvider final: public workerd::api::LocalBufferChannelProvider {
  public:
   kj::Own<workerd::api::LocalBufferChannelEndpoint> take(kj::StringPtr name) override {
@@ -1799,20 +1814,23 @@ class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::Er
 
   kj::Promise<void> openLocalBufferChannel(OpenLocalBufferChannelContext context) override {
     auto params = context.getParams();
-    openLocalChannel(params.getFirstGrainId(), params.getFirstName(),
-        params.getSecondGrainId(), params.getSecondName(), false);
+    context.getResults().setRevoker(kj::heap<LocalBufferLinkRevoker>(
+        openLocalChannel(params.getFirstGrainId(), params.getFirstName(),
+            params.getSecondGrainId(), params.getSecondName(), false)));
     return kj::READY_NOW;
   }
 
   kj::Promise<void> openLocalCapnpChannel(OpenLocalCapnpChannelContext context) override {
     auto params = context.getParams();
-    openLocalChannel(params.getFirstGrainId(), params.getFirstName(),
-        params.getSecondGrainId(), params.getSecondName(), true);
+    context.getResults().setRevoker(kj::heap<LocalBufferLinkRevoker>(
+        openLocalChannel(params.getFirstGrainId(), params.getFirstName(),
+            params.getSecondGrainId(), params.getSecondName(), true)));
     return kj::READY_NOW;
   }
 
  private:
-  void openLocalChannel(kj::StringPtr firstGrainId, kj::StringPtr firstName,
+  kj::Own<LocalBufferLinkState> openLocalChannel(
+      kj::StringPtr firstGrainId, kj::StringPtr firstName,
       kj::StringPtr secondGrainId, kj::StringPtr secondName, bool validateCapnpRpc) {
     auto& first = requireRunningGrain(firstGrainId);
     auto& second = requireRunningGrain(secondGrainId);
@@ -1832,7 +1850,8 @@ class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::Er
     first.localBufferBroker->add(kj::str(firstName),
         kj::heap<LocalBufferEndpoint>(kj::atomicAddRef(*state), true));
     second.localBufferBroker->add(kj::str(secondName),
-        kj::heap<LocalBufferEndpoint>(kj::mv(state), false));
+        kj::heap<LocalBufferEndpoint>(kj::atomicAddRef(*state), false));
+    return state;
   }
 
   HostedState& requireRunningGrain(kj::StringPtr grainId) {
