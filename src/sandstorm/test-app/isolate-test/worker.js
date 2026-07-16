@@ -770,6 +770,14 @@ export default {
       });
     }
 
+    if (url.pathname === "/binding-values-probe") {
+      return Response.json({
+        ok: true,
+        text: env.TEXT_BINDING,
+        json: env.JSON_BINDING,
+      });
+    }
+
     if (url.pathname === "/data-binding-probe") {
       const bytes = new Uint8Array(env.DATA_BINDING);
       return Response.json({
@@ -1611,6 +1619,25 @@ export default {
         deletedBytes,
         deletedJson,
       });
+    }
+
+    if (url.pathname === "/shared-storage-isolation") {
+      const key = "shared-host-isolation";
+      if (url.searchParams.has("value")) {
+        const put = await env.STORAGE.fetch(`http://storage/${key}`, {
+          method: "PUT",
+          body: url.searchParams.get("value"),
+        });
+        if (!put.ok) {
+          return Response.json({ ok: false, status: put.status }, { status: 500 });
+        }
+      }
+
+      const read = await env.STORAGE.fetch(`http://storage/${key}`);
+      return Response.json({
+        ok: read.ok,
+        value: read.ok ? await read.text() : null,
+      }, { status: read.ok ? 200 : 500 });
     }
 
     if (url.pathname === "/powerbox-grants-helper-self-test") {

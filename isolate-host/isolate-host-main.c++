@@ -967,7 +967,7 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
         auto jsonValue = jsonMessage.initRoot<capnp::json::Value>();
         jsonValue.setString(binding.value);
         env.setProperty(kj::str(binding.name),
-            workerd::Frankenvalue::fromJson(json.encode(jsonValue.asReader())));
+            workerd::Frankenvalue::fromJson(json.encodeRaw(jsonValue.asReader())));
         break;
       }
       case IsolateWorkerSource::Binding::JSON:
