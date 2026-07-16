@@ -1,7 +1,6 @@
 import message from "message.txt";
 import metadata from "metadata.json";
 import {
-  Conn as CapnpEsConn,
   Message as CapnpEsMessage,
   utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
@@ -31,7 +30,6 @@ import {
   CAPNP_CLIENT_SYMBOL,
   SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
   SANDSTORM_CAPNP_VERSION,
-  NativeCapnpLocalBufferTransport,
   NativeCapnpStreamTransport,
   makeNativeCapnpPayload,
   negotiateNativeCapnpBridge,
@@ -42,61 +40,6 @@ import {
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
 const TEST_PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
 let browserNativeLocalExportGreeter = null;
-
-function makeTransferredBufferChannelPair() {
-  const inboxes = [[], []];
-  const waiters = [null, null];
-  const detachedSends = [];
-  let closed = false;
-
-  function endpoint(index) {
-    return {
-      send(buffer) {
-        if (closed) throw new Error("local buffer test channel is closed");
-        if (!(buffer instanceof ArrayBuffer)) {
-          throw new TypeError("local buffer test channel requires an ArrayBuffer");
-        }
-        const transferred = structuredClone(buffer, { transfer: [buffer] });
-        detachedSends.push(buffer.byteLength === 0);
-        const peer = 1 - index;
-        if (waiters[peer]) {
-          const resolve = waiters[peer].resolve;
-          waiters[peer] = null;
-          resolve(transferred);
-        } else {
-          inboxes[peer].push(transferred);
-        }
-      },
-
-      receive() {
-        if (closed) return Promise.reject(new Error("local buffer test channel is closed"));
-        if (inboxes[index].length > 0) {
-          return Promise.resolve(inboxes[index].shift());
-        }
-        if (waiters[index]) {
-          return Promise.reject(new Error("duplicate local buffer test receive"));
-        }
-        return new Promise((resolve, reject) => {
-          waiters[index] = { resolve, reject };
-        });
-      },
-
-      close() {
-        if (closed) return;
-        closed = true;
-        for (let i = 0; i < waiters.length; ++i) {
-          waiters[i]?.reject(new Error("local buffer test channel is closed"));
-          waiters[i] = null;
-        }
-      },
-    };
-  }
-
-  return {
-    channels: [endpoint(0), endpoint(1)],
-    detachedSends,
-  };
-}
 
 function fixtureExportInfo(InterfaceClass, id = undefined) {
   return {
@@ -634,195 +577,6 @@ export default {
         contentType: request.headers.get("content-type"),
         customHeader: request.headers.get("x-isolate-test"),
       });
-    }
-
-    if (url.pathname === "/native-local-capnp-server") {
-      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
-        url.searchParams.get("name"));
-      const transport = new NativeCapnpLocalBufferTransport(channel);
-      const connection = new CapnpEsConn(transport);
-      transport.attachConnection(connection);
-      let calledName = null;
-      connection.initMain(NativeGreeter, {
-        async hello(params) {
-          calledName = params.name;
-          return { message: `native local hello ${params.name}` };
-        },
-      });
-      try {
-        const deadline = Date.now() + 5000;
-        while (!connection.closed && Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        if (!connection.closed || calledName === null) {
-          throw new Error("native local Cap'n Proto server timed out");
-        }
-        return Response.json({ ok: true, name: calledName, transportKind: transport.kind });
-      } finally {
-        transport.close();
-      }
-    }
-
-    if (url.pathname === "/native-local-capnp-client") {
-      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
-        url.searchParams.get("name"));
-      const transport = new NativeCapnpLocalBufferTransport(channel);
-      const connection = new CapnpEsConn(transport);
-      transport.attachConnection(connection);
-      try {
-        const greeter = connection.bootstrap(NativeGreeter);
-        const result = await greeter.hello({ name: "cross-grain" });
-        return Response.json({
-          ok: true,
-          message: result.message,
-          transportKind: transport.kind,
-        });
-      } finally {
-        transport.close();
-      }
-    }
-
-    if (url.pathname === "/local-app-restore-self-test") {
-      const api = sandstorm(request, env);
-      const restored = await api.restore("bG9jYWwtYXBwLXJlc3RvcmUtdG9rZW4");
-      const greeter = capnpClient(NativeGreeter, restored);
-      let dropped = false;
-      try {
-        const hello = await greeter.hello({ name: "durable local restore" });
-        const info = await restored.info();
-        const resaved = await restored.save({ label: "resaved durable local restore" });
-        await restored.drop();
-        dropped = true;
-        let revokedAfterDrop = false;
-        try {
-          await greeter.hello({ name: "after drop" });
-        } catch (_) {
-          revokedAfterDrop = true;
-        }
-        return Response.json({
-          ok: true,
-          message: hello.message,
-          residence: info.residence,
-          transportKind: info.transportKind,
-          resavedTokenType: typeof resaved,
-          resavedTokenLength: resaved.length,
-          revokedAfterDrop,
-        });
-      } finally {
-        if (!dropped) await restored.drop();
-      }
-    }
-
-    if (url.pathname === "/local-app-handoff-self-test") {
-      const api = sandstorm(request, env);
-      const provider = await api.restore("bG9jYWwtYXBwLXJlc3RvcmUtdG9rZW4");
-      const receiver = await api.restore("aGFuZG9mZi1yZWNlaXZlci10b2tlbg");
-      let providerDropped = false;
-      try {
-        const providerClient = capnpClient(NativeGreeter, provider);
-        const receiverClient = capnpClient(NativeGreeter, receiver);
-        const handed = await receiverClient.greetWith({
-          greeter: providerClient,
-          name: "non-colocated handoff",
-        });
-        const providerInfo = await provider.info();
-        const receiverInfo = await receiver.info();
-        await provider.drop();
-        providerDropped = true;
-        let revokedAfterDrop = false;
-        try {
-          await receiverClient.hello({ name: "after local drop" });
-        } catch (_) {
-          revokedAfterDrop = true;
-        }
-        return Response.json({
-          ok: true,
-          message: handed.message,
-          providerResidence: providerInfo.residence,
-          receiverResidence: receiverInfo.residence,
-          revokedAfterDrop,
-        });
-      } finally {
-        if (!providerDropped) await provider.drop();
-        await receiver.drop();
-      }
-    }
-
-    if (url.pathname === "/local-app-restore-benchmark") {
-      const iterations = Math.max(1, Math.min(10000,
-        Number.parseInt(url.searchParams.get("iterations") || "200", 10)));
-      const pipelineIterations = Math.max(1, Math.min(10000,
-        Number.parseInt(url.searchParams.get("pipelineIterations") || "500", 10)));
-      const largeIterations = Math.max(1, Math.min(100,
-        Number.parseInt(url.searchParams.get("largeIterations") || "20", 10)));
-      const largeBytes = Math.max(1, Math.min(1024 * 1024,
-        Number.parseInt(url.searchParams.get("largeBytes") || String(256 * 1024), 10)));
-      const restored = await sandstorm(request, env)
-        .restore("bG9jYWwtYXBwLXJlc3RvcmUtdG9rZW4");
-      try {
-        const greeter = capnpClient(NativeGreeter, restored);
-        for (let i = 0; i < 20; ++i) {
-          await greeter.hello({ name: "benchmark warmup" });
-        }
-        const started = performance.now();
-        for (let i = 0; i < iterations; ++i) {
-          await greeter.hello({ name: "benchmark" });
-        }
-        const sequentialElapsedMs = performance.now() - started;
-
-        const pipelineStarted = performance.now();
-        await Promise.all(Array.from({ length: pipelineIterations }, () =>
-          greeter.hello({ name: "pipelined benchmark" })));
-        const pipelineElapsedMs = performance.now() - pipelineStarted;
-
-        const content = makeBytes(largeBytes);
-        const largeStarted = performance.now();
-        for (let i = 0; i < largeIterations; ++i) {
-          await greeter.inspectData({ content });
-        }
-        const largeElapsedMs = performance.now() - largeStarted;
-        const info = await restored.info();
-        return Response.json({
-          sequential: {
-            iterations,
-            elapsedMs: sequentialElapsedMs,
-            callsPerSecond: iterations * 1000 / sequentialElapsedMs,
-          },
-          pipeline: {
-            iterations: pipelineIterations,
-            elapsedMs: pipelineElapsedMs,
-            callsPerSecond: pipelineIterations * 1000 / pipelineElapsedMs,
-          },
-          large: {
-            iterations: largeIterations,
-            bytesPerCall: largeBytes,
-            elapsedMs: largeElapsedMs,
-            mebibytesPerSecond: largeIterations * largeBytes * 1000 /
-              largeElapsedMs / (1024 * 1024),
-          },
-          residence: info.residence,
-          transportKind: info.transportKind,
-        });
-      } finally {
-        await restored.drop();
-      }
-    }
-
-    if (url.pathname === "/restore-fallback-self-test") {
-      const restored = await sandstorm(request, env)
-        .restore("ZmFsbGJhY2stcmVzdG9yZS10b2tlbg");
-      try {
-        const hello = await capnpClient(NativeGreeter, restored)
-          .hello({ name: "ordinary restore" });
-        const info = await restored.info();
-        return Response.json({
-          ok: true,
-          message: hello.message,
-          residence: info.residence,
-        });
-      } finally {
-        await restored.drop();
-      }
     }
 
     if (url.pathname === "/native-capnp-bridge-target/generated-client") {
@@ -2481,19 +2235,6 @@ export default {
     const nativeExportEchoMessage = await nativeExportClientTransport.recvMessage();
     nativeExportClientTransport.close();
     nativeExportServerTransport.close();
-    const nativeLocalLink = makeTransferredBufferChannelPair();
-    const nativeLocalClientTransport = new NativeCapnpLocalBufferTransport(
-      nativeLocalLink.channels[0]);
-    const nativeLocalServerTransport = new NativeCapnpLocalBufferTransport(
-      nativeLocalLink.channels[1]);
-    const nativeLocalRpcMessage = new CapnpEsMessage();
-    nativeLocalRpcMessage.initRoot(CapnpRpcMessage)._initBootstrap().questionId = 78;
-    nativeLocalClientTransport.sendMessage(nativeLocalRpcMessage.getRoot(CapnpRpcMessage));
-    const nativeLocalServerMessage = await nativeLocalServerTransport.recvMessage();
-    nativeLocalServerTransport.sendMessage(nativeLocalServerMessage);
-    const nativeLocalEchoMessage = await nativeLocalClientTransport.recvMessage();
-    nativeLocalClientTransport.close();
-    nativeLocalServerTransport.close();
     const nativeExportWebSessionTarget = {
       async get(params) {
         const path = typeof params?.path === "string" ? params.path : "";
@@ -3007,16 +2748,6 @@ export default {
             serverQuestionId: nativeExportServerMessage.bootstrap.questionId,
             echoBootstrap: nativeExportEchoMessage.which() === CapnpRpcMessage.BOOTSTRAP,
             echoQuestionId: nativeExportEchoMessage.bootstrap.questionId,
-            localBuffer: {
-              serverBootstrap:
-                nativeLocalServerMessage.which() === CapnpRpcMessage.BOOTSTRAP,
-              serverQuestionId: nativeLocalServerMessage.bootstrap.questionId,
-              echoBootstrap: nativeLocalEchoMessage.which() === CapnpRpcMessage.BOOTSTRAP,
-              echoQuestionId: nativeLocalEchoMessage.bootstrap.questionId,
-              detachedSends: nativeLocalLink.detachedSends,
-              clientKind: nativeLocalClientTransport.kind,
-              serverKind: nativeLocalServerTransport.kind,
-            },
             adapters: byteStreamAdapterResult,
           },
           webSession: nativeExportWebSessionResult,

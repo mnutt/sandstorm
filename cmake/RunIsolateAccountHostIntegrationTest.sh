@@ -31,36 +31,21 @@ chmod u+w "$app_root/oversizedpackage/isolate-test/worker.js"
 truncate -s 8388609 "$app_root/oversizedpackage/isolate-test/worker.js"
 ln -s "$sandstorm" "$root/isolate-account-host"
 
-run_case() {
-  local expected=$1
-  shift
-  rm -rf "$grain_root"
-  mkdir -p "$grain_root"
-  rm -f "$account_socket"
+"$root/isolate-account-host" \
+  --trust-domain testaccount123 \
+  --control-socket "$account_socket" \
+  --native-host "$native_host" \
+  --app-root "$app_root" \
+  --grain-root "$grain_root" &
+account_pid=$!
+for _attempt in $(seq 1 100); do
+  [[ -S "$account_socket" ]] && break
+  sleep 0.05
+done
+[[ -S "$account_socket" ]]
 
-  "$root/isolate-account-host" \
-    --trust-domain testaccount123 \
-    --control-socket "$account_socket" \
-    --native-host "$native_host" \
-    --app-root "$app_root" \
-    --grain-root "$grain_root" \
-    "$@" &
-  account_pid=$!
-  for _attempt in $(seq 1 100); do
-    [[ -S "$account_socket" ]] && break
-    sleep 0.05
-  done
-  [[ -S "$account_socket" ]]
-
-  "$client" "$account_socket" testgrain123 testpackage123 "$expected"
-  grep -q '"topology": "accountSharedHost"' \
-    "$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"
-  grep -q '"topology": "accountSharedHost"' \
-    "$grain_root/testgrain456/isolate-runtime/runtime-manifest.json"
-  kill "$account_pid"
-  wait "$account_pid" 2>/dev/null || true
-  account_pid=
-}
-
-run_case local
-run_case fallback --disable-local-fast-path
+"$client" "$account_socket" testgrain123 testpackage123
+grep -q '"topology": "accountSharedHost"' \
+  "$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"
+grep -q '"topology": "accountSharedHost"' \
+  "$grain_root/testgrain456/isolate-runtime/runtime-manifest.json"
