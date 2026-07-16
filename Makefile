@@ -164,7 +164,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-memory-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-backend-recovery-test isolate-memory-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -412,6 +412,17 @@ isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 			"$$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"; \
 		grep -q '"topology": "accountSharedHost"' \
 			"$$grain_root/testgrain456/isolate-runtime/runtime-manifest.json"
+
+isolate-backend-recovery-test: bin/isolate-host tmp/.ekam-run \
+		tests/assets/isolate-test-app.spk
+	@root="$(PWD)/tmp/isolate-backend-recovery-test"; \
+		app_root="$$root/apps"; grain_root="$$root/grains"; state_root="$$root/state"; \
+		rm -rf "$$root"; mkdir -p "$$app_root" "$$grain_root" "$$state_root"; \
+		trap 'rm -rf "$$root"' EXIT; \
+		bin/spk unpack tests/assets/isolate-test-app.spk "$$app_root/testpackage123"; \
+		tmp/sandstorm/isolate-backend-recovery-client \
+			"$(PWD)/bin/sandstorm" "$(PWD)/bin/isolate-host" \
+			"$$app_root" "$$grain_root" "$$state_root"
 
 isolate-memory-benchmark: bin/isolate-host tmp/.ekam-run
 	@$(NODEJS) tests/isolate-memory-benchmark.js $(ISOLATE_MEMORY_BENCHMARK_ARGS)
