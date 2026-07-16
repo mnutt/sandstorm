@@ -112,18 +112,43 @@ int main(int argc, char** argv) {
   sandstorm::fetchPath(io.waitScope, supervisor, core, "sandstorm-api-binding-probe");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "powerbox-binding-probe");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "storage-helper-self-test");
+  auto bindingValues = sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "binding-values-probe");
+  KJ_REQUIRE(bindingValues ==
+      "{\"ok\":true,\"text\":\"hello from a text binding\",\"json\":{\"binding\":\"json\"}}",
+      "shared host did not preserve text and JSON bindings", bindingValues);
   auto dataBinding = sandstorm::fetchPath(
       io.waitScope, supervisor, core, "data-binding-probe");
   KJ_REQUIRE(dataBinding ==
       "{\"ok\":true,\"isArrayBuffer\":true,\"byteCount\":14,\"checksum\":1466,"
       "\"firstEightHex\":\"00017f80ff53616e\"}",
       "shared host did not materialize the binary data binding as an ArrayBuffer", dataBinding);
+  auto serviceBinding = sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "service-loopback");
+  KJ_REQUIRE(serviceBinding ==
+      "{\"ok\":true,\"status\":200,\"body\":{\"ok\":true,"
+      "\"source\":\"loopback-service-target\",\"method\":\"POST\","
+      "\"pathname\":\"/service-target\",\"search\":\"?source=service-binding\","
+      "\"body\":\"hello through service binding\",\"customHeader\":\"present\"}}",
+      "shared host did not route the service binding", serviceBinding);
+  auto firstStorage = sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "shared-storage-isolation?value=first");
+  KJ_REQUIRE(firstStorage == "{\"ok\":true,\"value\":\"first\"}",
+      "first shared grain did not retain its storage value", firstStorage);
 
   // A second live grain proves that the account control plane and native workerd host are
   // genuinely multi-tenant rather than merely a different one-process-per-grain launcher.
   auto second = sandstorm::startGrain(
       io.waitScope, account, core, "testgrain456", argv[3], true);
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
+  auto secondStorage = sandstorm::fetchPath(
+      io.waitScope, second, core, "shared-storage-isolation?value=second");
+  KJ_REQUIRE(secondStorage == "{\"ok\":true,\"value\":\"second\"}",
+      "second shared grain did not retain its storage value", secondStorage);
+  auto isolatedFirstStorage = sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "shared-storage-isolation");
+  KJ_REQUIRE(isolatedFirstStorage == "{\"ok\":true,\"value\":\"first\"}",
+      "second shared grain overwrote the first grain's storage", isolatedFirstStorage);
   supervisor.shutdownRequest().send().wait(io.waitScope);
 
   bool rejectedAfterShutdown = false;
@@ -140,7 +165,17 @@ int main(int argc, char** argv) {
   sandstorm::fetchPath(io.waitScope, restarted, core, "sandstorm-api-binding-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "powerbox-binding-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "storage-helper-self-test");
+  sandstorm::fetchPath(io.waitScope, restarted, core, "binding-values-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "data-binding-probe");
+  sandstorm::fetchPath(io.waitScope, restarted, core, "service-loopback");
+  auto restartedStorage = sandstorm::fetchPath(
+      io.waitScope, restarted, core, "shared-storage-isolation");
+  KJ_REQUIRE(restartedStorage == "{\"ok\":true,\"value\":\"first\"}",
+      "shared grain restart lost or crossed storage authority", restartedStorage);
+  auto isolatedSecondStorage = sandstorm::fetchPath(
+      io.waitScope, second, core, "shared-storage-isolation");
+  KJ_REQUIRE(isolatedSecondStorage == "{\"ok\":true,\"value\":\"second\"}",
+      "first shared grain restart changed the second grain's storage", isolatedSecondStorage);
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
   return 0;
 }
