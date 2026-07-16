@@ -487,10 +487,27 @@ per-grain sidecar mode still passes the full suite.
 
 ---
 
-## Phase 5 — Colocated fast path
+## Phase 5 — Colocated fast path (deferred)
 
 Now both prerequisites exist: one authority channel (Phase 1) and colocated
 grains (Phase 4).
+
+Status: a complete prototype established host-authorized local links,
+revocation, durable restore, three-party handoff, and forced-on/forced-off
+semantic parity. End-to-end measurements showed only about 1.8x improvement
+for small sequential and pipelined calls and about 1.3–1.6x for 256 KiB calls,
+far short of the 10x goal. Profiling showed that buffer transfer, frame
+validation, and the host-side authority ledger consumed only a small fraction
+of call time; promise scheduling, isolate dispatch, and application work
+dominated. Moving the ledger into a deeper native router therefore would not
+plausibly close the gap.
+
+The prototype's production machinery has been removed to avoid maintaining a
+second transport and a duplicate security-critical RPC state machine for a
+modest gain. Cross-grain capabilities continue to use the ordinary WebSocket
+transport. Revisit this phase only if workerd or capnp-es gains a substantially
+simpler upstream facility, or new workload measurements demonstrate a larger
+benefit. Phase 5 is an optional optimization and does not block stabilization.
 
 - **Transport:** a native workerd extension provides a transferred-`ArrayBuffer`
   capnp transport between isolates in the same workerd. The caller builds the
@@ -520,8 +537,8 @@ grains (Phase 4).
   Semantics parity: run the full native-capnp integration suite with fast
   path forced on and forced off; identical results required.
 
-**Exit criteria:** benchmark target met; suite passes in both modes; revoking
-a requirement kills in-flight fast-path use.
+**Exit criteria if resumed:** benchmark target justified and met; suite passes
+in both modes; revoking a requirement kills in-flight fast-path use.
 
 ---
 
@@ -533,8 +550,9 @@ a requirement kills in-flight fast-path use.
   by `spk capnp-abi`).
 - Rewrite `docs/developing/isolate-grains.md` against the final model; retire
   the interim `docs/isolates-*.md` working notes into it.
-- Remove the "not a stable contract" warnings only when Phases 1–5 exit
-  criteria are all met.
+- Remove the "not a stable contract" warnings only when Phases 1–4 and the
+  Phase 6 compatibility criteria are met. Deferred Phase 5 is not part of the
+  stable contract.
 
 ---
 
