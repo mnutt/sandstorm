@@ -5981,8 +5981,8 @@ private:
 
 class StorageBindingService final: public kj::HttpService {
 public:
-  StorageBindingService(kj::HttpHeaderTable& headerTable, IsolateRuntimeConfig& config)
-      : headerTable(headerTable), config(config) {}
+  StorageBindingService(kj::HttpHeaderTable& headerTable, kj::StringPtr storageRootPath)
+      : headerTable(headerTable), storageRoot(openStorageRoot(storageRootPath)) {}
 
   kj::Promise<void> request(
       kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
@@ -6000,15 +6000,14 @@ public:
           "{\n  \"ok\": false,\n  \"error\": \"invalid storage key\"\n}\n"));
     }
 
-    auto path = kj::str(config.storageRootPath, "/", key);
     switch (method) {
       case kj::HttpMethod::GET:
-        return get(kj::mv(path), response);
+        return get(kj::mv(key), response);
       case kj::HttpMethod::HEAD:
-        return head(kj::mv(path), response);
+        return head(kj::mv(key), response);
       case kj::HttpMethod::PUT:
         return requestBody.readAllBytes(MAX_STORAGE_VALUE_BYTES + 2)
-            .then([this, key = kj::mv(key), path = kj::mv(path), &response]
+            .then([this, key = kj::mv(key), &response]
                 (kj::Array<byte>&& body) mutable {
           if (body.size() > MAX_STORAGE_VALUE_BYTES) {
             return sendJson(response, 413, "Payload Too Large", kj::str(
@@ -6017,17 +6016,17 @@ public:
                 "  \"maxBytes\": ", MAX_STORAGE_VALUE_BYTES, "\n}\n"));
           }
 
-          if (!storagePathIsMissingOrRegular(path)) {
+          if (!storagePathIsMissingOrRegular(key)) {
             return sendJson(response, 409, "Conflict", kj::heapString(
                 "{\n  \"ok\": false,\n"
                 "  \"error\": \"storage key is blocked by a non-regular file\"\n}\n"));
           }
 
-          writeStorageFile(path, key, body);
+          writeStorageFile(key, body);
           return sendJson(response, 200, "OK", renderStored(body.size()));
         });
       case kj::HttpMethod::DELETE:
-        return deleteStorageFile(kj::mv(path), response);
+        return deleteStorageFile(kj::mv(key), response);
       default:
         return sendJson(response, 405, "Method Not Allowed", kj::heapString(
             "{\n  \"ok\": false,\n  \"error\": \"method not allowed\"\n}\n"));
@@ -6044,7 +6043,14 @@ private:
   };
 
   kj::HttpHeaderTable& headerTable;
-  IsolateRuntimeConfig& config;
+  kj::AutoCloseFd storageRoot;
+
+  static kj::AutoCloseFd openStorageRoot(kj::StringPtr path) {
+    int fd;
+    KJ_SYSCALL(fd = open(path.cStr(),
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW), path);
+    return kj::AutoCloseFd(fd);
+  }
 
   kj::Promise<void> sendJson(kj::HttpService::Response& response, uint statusCode,
       kj::StringPtr statusText, kj::String body) {
@@ -6055,22 +6061,22 @@ private:
     return promise.attach(kj::mv(stream), kj::mv(body));
   }
 
-  kj::Promise<void> get(kj::String path, kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(fd, openStorageFileIfExists(path)) {
+  kj::Promise<void> get(kj::String key, kj::HttpService::Response& response) {
+    KJ_IF_MAYBE(fd, openStorageFileIfExists(key)) {
       auto body = readAllBytes(*fd);
       kj::HttpHeaders responseHeaders(headerTable);
       responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream");
       auto stream = response.send(200, "OK", responseHeaders, body.size());
       auto promise = stream->write(body.begin(), body.size());
-      return promise.attach(kj::mv(stream), kj::mv(body), kj::mv(path));
+      return promise.attach(kj::mv(stream), kj::mv(body), kj::mv(key));
     }
 
     return sendJson(response, 404, "Not Found", kj::heapString(
         "{\n  \"ok\": false,\n  \"error\": \"storage key not found\"\n}\n"));
   }
 
-  kj::Promise<void> head(kj::String path, kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(fd, openStorageFileIfExists(path)) {
+  kj::Promise<void> head(kj::String key, kj::HttpService::Response& response) {
+    KJ_IF_MAYBE(fd, openStorageFileIfExists(key)) {
       struct stat stats;
       KJ_SYSCALL(fstat(*fd, &stats));
       kj::HttpHeaders responseHeaders(headerTable);
@@ -6085,20 +6091,20 @@ private:
     return kj::READY_NOW;
   }
 
-  kj::Maybe<kj::AutoCloseFd> openStorageFileIfExists(kj::StringPtr path) {
-    int fd = open(path.cStr(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  kj::Maybe<kj::AutoCloseFd> openStorageFileIfExists(kj::StringPtr key) {
+    int fd = openat(storageRoot, key.cStr(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd == -1) {
       int error = errno;
       if (error == ENOENT || error == ENOTDIR || error == ELOOP) {
         return nullptr;
       }
 
-      KJ_FAIL_SYSCALL("open", error, path);
+      KJ_FAIL_SYSCALL("openat", error, key);
     }
 
     kj::AutoCloseFd result(fd);
     struct stat stats;
-    KJ_SYSCALL(fstat(result.get(), &stats), path);
+    KJ_SYSCALL(fstat(result.get(), &stats), key);
     if (!S_ISREG(stats.st_mode)) {
       return nullptr;
     }
@@ -6106,30 +6112,30 @@ private:
     return kj::mv(result);
   }
 
-  StoragePathState inspectStoragePath(kj::StringPtr path) {
+  StoragePathState inspectStoragePath(kj::StringPtr key) {
     struct stat stats;
-    if (lstat(path.cStr(), &stats) != 0) {
+    if (fstatat(storageRoot, key.cStr(), &stats, AT_SYMLINK_NOFOLLOW) != 0) {
       int error = errno;
       if (error == ENOENT || error == ENOTDIR) {
         return StoragePathState::MISSING;
       }
 
-      KJ_FAIL_SYSCALL("lstat", error, path);
+      KJ_FAIL_SYSCALL("fstatat", error, key);
     }
 
     return S_ISREG(stats.st_mode) ? StoragePathState::REGULAR : StoragePathState::NON_REGULAR;
   }
 
-  bool storagePathIsMissingOrRegular(kj::StringPtr path) {
-    return inspectStoragePath(path) != StoragePathState::NON_REGULAR;
+  bool storagePathIsMissingOrRegular(kj::StringPtr key) {
+    return inspectStoragePath(key) != StoragePathState::NON_REGULAR;
   }
 
-  kj::Promise<void> deleteStorageFile(kj::String path, kj::HttpService::Response& response) {
-    switch (inspectStoragePath(path)) {
+  kj::Promise<void> deleteStorageFile(kj::String key, kj::HttpService::Response& response) {
+    switch (inspectStoragePath(key)) {
       case StoragePathState::MISSING:
         return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
       case StoragePathState::REGULAR:
-        KJ_SYSCALL(unlink(path.cStr()), path);
+        KJ_SYSCALL(unlinkat(storageRoot, key.cStr(), 0), key);
         return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
       case StoragePathState::NON_REGULAR:
         return sendJson(response, 409, "Conflict", kj::heapString(
@@ -6140,28 +6146,26 @@ private:
     KJ_UNREACHABLE;
   }
 
-  void writeStorageFile(kj::StringPtr path, kj::StringPtr key, kj::ArrayPtr<const byte> content) {
-    auto tmpPath = kj::str(config.storageRootPath, "/.tmp-", getpid(), "-", key);
-    switch (inspectStoragePath(tmpPath)) {
+  void writeStorageFile(kj::StringPtr key, kj::ArrayPtr<const byte> content) {
+    auto tmpName = kj::str(".tmp-", getpid(), "-", key);
+    switch (inspectStoragePath(tmpName)) {
       case StoragePathState::MISSING:
         break;
       case StoragePathState::REGULAR:
-        KJ_SYSCALL(unlink(tmpPath.cStr()), tmpPath);
+        KJ_SYSCALL(unlinkat(storageRoot, tmpName.cStr(), 0), tmpName);
         break;
       case StoragePathState::NON_REGULAR:
-        KJ_FAIL_REQUIRE("refusing to replace non-regular temporary storage file", tmpPath);
+        KJ_FAIL_REQUIRE("refusing to replace non-regular temporary storage file", tmpName);
     }
 
     int fd;
-    KJ_SYSCALL(fd = open(tmpPath.cStr(),
-        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0660), tmpPath);
-    KJ_DEFER(close(fd));
-    writeAllToFd(fd, content);
-    KJ_SYSCALL(fsync(fd), tmpPath);
-    KJ_SYSCALL(rename(tmpPath.cStr(), path.cStr()), tmpPath, path);
-
-    auto dirFd = raiiOpen(config.storageRootPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    KJ_SYSCALL(fsync(dirFd), config.storageRootPath);
+    KJ_SYSCALL(fd = openat(storageRoot, tmpName.cStr(),
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0660), tmpName);
+    kj::AutoCloseFd output(fd);
+    writeAllToFd(output, content);
+    KJ_SYSCALL(fsync(output), tmpName);
+    KJ_SYSCALL(renameat(storageRoot, tmpName.cStr(), storageRoot, key.cStr()), tmpName, key);
+    KJ_SYSCALL(fsync(storageRoot));
   }
 
   kj::String renderStored(size_t bytes) {
@@ -6169,7 +6173,7 @@ private:
   }
 
   kj::String renderIndex() {
-    auto files = listDirectory(config.storageRootPath);
+    auto files = listStorageDirectory();
     kj::Vector<char> json;
     json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"keys\": ["));
     uint64_t totalBytes = 0;
@@ -6179,8 +6183,7 @@ private:
         continue;
       }
 
-      auto path = kj::str(config.storageRootPath, "/", file);
-      KJ_IF_MAYBE(fd, openStorageFileIfExists(path)) {
+      KJ_IF_MAYBE(fd, openStorageFileIfExists(file)) {
         struct stat stats;
         KJ_SYSCALL(fstat(*fd, &stats));
 
@@ -6200,6 +6203,34 @@ private:
     json.add('\0');
     return kj::String(json.releaseAsArray());
   }
+
+  kj::Vector<kj::String> listStorageDirectory() {
+    int directoryFd;
+    KJ_SYSCALL(directoryFd = openat(storageRoot, ".",
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+    DIR* dir = fdopendir(directoryFd);
+    if (dir == nullptr) {
+      int error = errno;
+      KJ_SYSCALL(close(directoryFd));
+      KJ_FAIL_SYSCALL("fdopendir", error);
+    }
+    KJ_DEFER(KJ_SYSCALL(closedir(dir)) { break; });
+
+    kj::Vector<kj::String> result;
+    for (;;) {
+      errno = 0;
+      auto entry = readdir(dir);
+      if (entry == nullptr) {
+        int error = errno;
+        if (error != 0) KJ_FAIL_SYSCALL("readdir", error);
+        break;
+      }
+      if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+        result.add(kj::str(entry->d_name));
+      }
+    }
+    return result;
+  }
 };
 
 class HostedIsolateBindingServices final: public IsolateBindingServices::Server {
@@ -6215,7 +6246,7 @@ public:
         service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host);
         break;
       case IsolateBindingServices::Binding::STORAGE:
-        service = kj::heap<StorageBindingService>(host->headerTable, *config);
+        service = kj::heap<StorageBindingService>(host->headerTable, config->storageRootPath);
         break;
       case IsolateBindingServices::Binding::POWERBOX:
         service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host, true);
@@ -7301,7 +7332,7 @@ kj::MainBuilder::Validity IsolateSupervisorMain::run() {
   }
   if (hasStorageBinding(*runtimeConfig)) {
     auto storageService = kj::heap<StorageBindingService>(
-        runtimeHost->headerTable, *runtimeConfig);
+        runtimeHost->headerTable, runtimeConfig->storageRootPath);
     auto storageServer = kj::heap<kj::HttpServer>(
         runtimeHost->timer, runtimeHost->headerTable, *storageService);
     storageServer = storageServer.attach(kj::mv(storageService));
