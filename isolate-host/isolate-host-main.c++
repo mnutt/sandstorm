@@ -911,6 +911,9 @@ class HttpServiceChannel final: public workerd::IoChannelFactory::SubrequestChan
 
 class SandstormEnvCompiler final: public workerd::DynamicWorkerEnvCompiler {
  public:
+  explicit SandstormEnvCompiler(kj::Own<BundleBacking> backing)
+      : backing(kj::mv(backing)) {}
+
   void compile(workerd::jsg::Lock& js,
       const workerd::Worker::Api& api,
       workerd::Frankenvalue& env,
@@ -940,7 +943,23 @@ class SandstormEnvCompiler final: public workerd::DynamicWorkerEnvCompiler {
       return holder.get(js, "capability");
     };
     env.populateJsObject(js, workerd::jsg::JsObject(target), materialize);
+
+    // Frankenvalue intentionally has no byte-string representation. Materialize immutable data
+    // bindings directly in the destination context, matching workerd's configured-binding
+    // behavior without extending the embedding patch or treating raw bytes as a capability.
+    auto targetObject = workerd::jsg::JsObject(target);
+    for (auto& binding: backing->decoded->bindings) {
+      if (binding.type != IsolateWorkerSource::Binding::DATA) continue;
+      auto bytes = kj::heapArray<kj::byte>(binding.value.size());
+      bytes.asPtr().copyFrom(binding.value.asBytes());
+      auto buffer = js.arrayBuffer(kj::mv(bytes));
+      targetObject.set(js, binding.name,
+          workerd::jsg::JsValue(buffer.getHandle(js)));
+    }
   }
+
+ private:
+  kj::Own<BundleBacking> backing;
 };
 
 class WorkerIngressService final: public kj::HttpService {
@@ -1495,7 +1514,9 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::ArrayPtr<const kj::byte> wor
         break;
       }
       case IsolateWorkerSource::Binding::DATA:
-        KJ_FAIL_REQUIRE("shared host does not yet support data bindings", binding.getName());
+        value = binding.getData();
+        accountBindingBytes(value.size());
+        break;
       case IsolateWorkerSource::Binding::SANDSTORM_API:
       case IsolateWorkerSource::Binding::STORAGE:
       case IsolateWorkerSource::Binding::POWERBOX:
@@ -1619,7 +1640,9 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
         break;
       }
       case IsolateWorkerSource::Binding::DATA:
-        KJ_UNREACHABLE;
+        // SandstormEnvCompiler materializes binary data after Frankenvalue has populated the
+        // ordinary JSON and capability bindings.
+        break;
     }
   }
   env.setProperty(kj::str(LOCAL_BUFFER_BROKER_BINDING),
@@ -1645,7 +1668,8 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
     .compatibilityFlags = compatibility.asReader(),
     .limits = kj::none,
     .env = kj::mv(env),
-    .envCompiler = kj::atomicRefcounted<SandstormEnvCompiler>(),
+    .envCompiler = kj::atomicRefcounted<SandstormEnvCompiler>(
+        kj::atomicAddRef(*backing)),
     .globalOutbound = kj::none,
     .tails = {},
     .streamingTails = {},

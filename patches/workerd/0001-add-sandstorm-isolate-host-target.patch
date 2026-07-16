@@ -362,7 +362,7 @@ diff --git a/src/workerd/api/worker-loader.c++ b/src/workerd/api/worker-loader.c
 index 89396d57..6169002e 100644
 --- a/src/workerd/api/worker-loader.c++
 +++ b/src/workerd/api/worker-loader.c++
-@@ -10,6 +10,34 @@
+@@ -10,6 +10,33 @@
  
  namespace workerd::api {
  

@@ -921,6 +921,17 @@ export default {
       });
     }
 
+    if (url.pathname === "/data-binding-probe") {
+      const bytes = new Uint8Array(env.DATA_BINDING);
+      return Response.json({
+        ok: true,
+        isArrayBuffer: env.DATA_BINDING instanceof ArrayBuffer,
+        byteCount: bytes.byteLength,
+        checksum: checksum(bytes),
+        firstEightHex: firstEightHex(bytes),
+      });
+    }
+
     if (url.pathname === "/upload") {
       const body = new Uint8Array(await request.arrayBuffer());
       return Response.json({

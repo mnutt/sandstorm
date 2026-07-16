@@ -172,6 +172,12 @@ int main(int argc, char** argv) {
   sandstorm::fetchPath(io.waitScope, supervisor, core, "sandstorm-api-binding-probe");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "powerbox-binding-probe");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "storage-helper-self-test");
+  auto dataBinding = sandstorm::requireFetchOk(sandstorm::startFetchPath(
+      io.waitScope, supervisor, core, "data-binding-probe").wait(io.waitScope));
+  KJ_REQUIRE(dataBinding ==
+      "{\"ok\":true,\"isArrayBuffer\":true,\"byteCount\":14,\"checksum\":1466,"
+      "\"firstEightHex\":\"00017f80ff53616e\"}",
+      "shared host did not materialize the binary data binding as an ArrayBuffer", dataBinding);
 
   // A second live grain proves that the account control plane and native workerd host are
   // genuinely multi-tenant rather than merely a different one-process-per-grain launcher.
@@ -229,6 +235,7 @@ int main(int argc, char** argv) {
   sandstorm::fetchPath(io.waitScope, restarted, core, "sandstorm-api-binding-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "powerbox-binding-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "storage-helper-self-test");
+  sandstorm::fetchPath(io.waitScope, restarted, core, "data-binding-probe");
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
   return 0;
 }

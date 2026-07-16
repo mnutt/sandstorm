@@ -1703,6 +1703,7 @@ runtimeTest("isolate supervisor integration suite", {
       [
         ["TEXT_BINDING", "text"],
         ["JSON_BINDING", "json"],
+        ["DATA_BINDING", "data"],
         ["SANDSTORM_API", "sandstormApi"],
         ["POWERBOX", "powerbox"],
         ["STORAGE", "storage"],
@@ -1715,6 +1716,7 @@ runtimeTest("isolate supervisor integration suite", {
     assert.match(workerdConfig, /service = "sandstorm-powerbox"/);
     assert.match(workerdConfig, /service = "sandstorm-storage"/);
     assert.match(workerdConfig, /name = "POWERBOX", service = "sandstorm-powerbox"/);
+    assert.match(workerdConfig, /name = "DATA_BINDING", data = embed/);
     assert.match(workerdConfig, /name = "LOOPBACK_SERVICE", service = "main"/);
   });
 
@@ -2234,6 +2236,16 @@ runtimeTest("isolate supervisor integration suite", {
     assert.equal(loopback.json.body.body, "hello through service binding");
     assert.equal(loopback.json.body.customHeader, "present");
 
+    const dataBinding = await requestJson(fixture.workerdSocket, "/data-binding-probe");
+    assert.equal(dataBinding.statusCode, 200, dataBinding.body);
+    assert.deepEqual(dataBinding.json, {
+      ok: true,
+      isArrayBuffer: true,
+      byteCount: 14,
+      checksum: 1466,
+      firstEightHex: "00017f80ff53616e",
+    });
+
     const powerboxProbe = await requestJson(fixture.workerdSocket, "/powerbox-binding-probe");
     assert.equal(powerboxProbe.statusCode, 200, powerboxProbe.body);
     assert.equal(powerboxProbe.json.ok, true);
@@ -2726,7 +2738,7 @@ runtimeTest("isolate supervisor integration suite", {
       5 + FIXTURE_GENERATED_SCHEMA_MODULES.length +
           CAPNP_ES_SCHEME_RUNTIME_MODULES.length + CAPNP_ES_PATH_RUNTIME_MODULES.length +
           CAPNP_ES_SCHEME_RELATIVE_RUNTIME_MODULES.length);
-    assert.equal(runtime.json.bindingCount, 6);
+    assert.equal(runtime.json.bindingCount, 7);
 
     const capabilities = await requestJson(fixture.sandstormApiSocket, "/capabilities");
     assert.equal(capabilities.statusCode, 200);
@@ -3040,12 +3052,13 @@ runtimeTest("isolate supervisor integration suite", {
       [
         ["TEXT_BINDING", "text", true],
         ["JSON_BINDING", "json", true],
+        ["DATA_BINDING", "data", true],
         ["SANDSTORM_API", "sandstormApi", true],
         ["POWERBOX", "powerbox", true],
         ["STORAGE", "storage", true],
         ["LOOPBACK_SERVICE", "service", true],
       ]);
-    assert.equal(bindings.json.bindings[5].serviceName, "main");
+    assert.equal(bindings.json.bindings[6].serviceName, "main");
 
     const nativeInterfaceValidation = await requestJson(
       fixture.workerdSocket, "/native-interface-validation-self-test");
