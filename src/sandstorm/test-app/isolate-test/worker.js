@@ -713,6 +713,41 @@ export default {
       }
     }
 
+    if (url.pathname === "/local-app-handoff-self-test") {
+      const api = sandstorm(request, env);
+      const provider = await api.restore("bG9jYWwtYXBwLXJlc3RvcmUtdG9rZW4");
+      const receiver = await api.restore("aGFuZG9mZi1yZWNlaXZlci10b2tlbg");
+      let providerDropped = false;
+      try {
+        const providerClient = capnpClient(NativeGreeter, provider);
+        const receiverClient = capnpClient(NativeGreeter, receiver);
+        const handed = await receiverClient.greetWith({
+          greeter: providerClient,
+          name: "non-colocated handoff",
+        });
+        const providerInfo = await provider.info();
+        const receiverInfo = await receiver.info();
+        await provider.drop();
+        providerDropped = true;
+        let revokedAfterDrop = false;
+        try {
+          await receiverClient.hello({ name: "after local drop" });
+        } catch (_) {
+          revokedAfterDrop = true;
+        }
+        return Response.json({
+          ok: true,
+          message: handed.message,
+          providerResidence: providerInfo.residence,
+          receiverResidence: receiverInfo.residence,
+          revokedAfterDrop,
+        });
+      } finally {
+        if (!providerDropped) await provider.drop();
+        await receiver.drop();
+      }
+    }
+
     if (url.pathname === "/restore-fallback-self-test") {
       const restored = await sandstorm(request, env)
         .restore("ZmFsbGJhY2stcmVzdG9yZS10b2tlbg");

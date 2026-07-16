@@ -101,6 +101,17 @@ kj::Array<capnp::word> makeCallFrame(uint32_t questionId, uint32_t importedCap) 
   return capnp::messageToFlatArray(message);
 }
 
+kj::Array<capnp::word> makeCallWithSenderHostedParamFrame(
+    uint32_t questionId, uint32_t importedCap, uint32_t senderHosted) {
+  capnp::MallocMessageBuilder message;
+  auto call = message.initRoot<capnp::rpc::Message>().initCall();
+  call.setQuestionId(questionId);
+  call.initTarget().setImportedCap(importedCap);
+  call.initSendResultsTo().setCaller();
+  call.initParams().initCapTable(1)[0].setSenderHosted(senderHosted);
+  return capnp::messageToFlatArray(message);
+}
+
 kj::Array<capnp::word> makeReturnFrame(
     uint32_t answerId, kj::Maybe<uint32_t> senderHosted = nullptr) {
   capnp::MallocMessageBuilder message;
@@ -111,6 +122,44 @@ kj::Array<capnp::word> makeReturnFrame(
   KJ_IF_MAYBE(exportId, senderHosted) {
     payload.initCapTable(1)[0].setSenderHosted(*exportId);
   }
+  return capnp::messageToFlatArray(message);
+}
+
+kj::Array<capnp::word> makePromiseReturnFrame(uint32_t answerId, uint32_t senderPromise) {
+  capnp::MallocMessageBuilder message;
+  auto result = message.initRoot<capnp::rpc::Message>().initReturn();
+  result.setAnswerId(answerId);
+  result.setReleaseParamCaps(true);
+  result.initResults().initCapTable(1)[0].setSenderPromise(senderPromise);
+  return capnp::messageToFlatArray(message);
+}
+
+kj::Array<capnp::word> makeReceiverAnswerReturnFrame(
+    uint32_t answerId, uint32_t questionId) {
+  capnp::MallocMessageBuilder message;
+  auto result = message.initRoot<capnp::rpc::Message>().initReturn();
+  result.setAnswerId(answerId);
+  result.setReleaseParamCaps(true);
+  auto answer = result.initResults().initCapTable(1)[0].initReceiverAnswer();
+  answer.setQuestionId(questionId);
+  answer.initTransform(0);
+  return capnp::messageToFlatArray(message);
+}
+
+kj::Array<capnp::word> makeThirdPartyReturnFrame(uint32_t answerId) {
+  capnp::MallocMessageBuilder message;
+  auto result = message.initRoot<capnp::rpc::Message>().initReturn();
+  result.setAnswerId(answerId);
+  result.setReleaseParamCaps(true);
+  result.initResults().initCapTable(1)[0].initThirdPartyHosted();
+  return capnp::messageToFlatArray(message);
+}
+
+kj::Array<capnp::word> makeResolveHostedFrame(uint32_t promiseId, uint32_t senderHosted) {
+  capnp::MallocMessageBuilder message;
+  auto resolve = message.initRoot<capnp::rpc::Message>().initResolve();
+  resolve.setPromiseId(promiseId);
+  resolve.initCap().setSenderHosted(senderHosted);
   return capnp::messageToFlatArray(message);
 }
 
@@ -256,6 +305,50 @@ export default {
           return new Response("rejected", { status: 409 });
         }
       }
+    }
+    if (url.pathname === "/local-capnp-script") {
+      const channel = env.__SANDSTORM_NATIVE_BUFFER_LINKS.accept(
+        url.searchParams.get("name"));
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const frames = [];
+      for (let offset = 0; offset < bytes.byteLength;) {
+        if (offset + 4 > bytes.byteLength) throw new Error("truncated frame size");
+        const size = view.getUint32(offset, true);
+        offset += 4;
+        if (offset + size > bytes.byteLength) throw new Error("truncated frame");
+        frames.push(bytes.slice(offset, offset + size).buffer);
+        offset += size;
+      }
+
+      let nextFrame = 0;
+      let rejected = false;
+      let revoked = false;
+      for (const step of url.searchParams.get("steps") || "") {
+        if (step === "s") {
+          channel.send(frames[nextFrame++]);
+        } else if (step === "r") {
+          await channel.receive();
+        } else if (step === "x") {
+          try {
+            channel.send(frames[nextFrame++]);
+            return new Response("invalid frame was accepted", { status: 500 });
+          } catch (_) {
+            rejected = true;
+          }
+        } else if (step === "c") {
+          try {
+            await channel.receive();
+            return new Response("revoked link delivered a frame", { status: 500 });
+          } catch (_) {
+            revoked = true;
+          }
+        } else {
+          throw new Error(`unknown protocol script step: ${step}`);
+        }
+      }
+      if (nextFrame !== frames.length) throw new Error("unused protocol script frame");
+      return Response.json({ rejected, revoked });
     }
     if (url.pathname === "/storage-test") {
       if (request.headers.get("X-Sandstorm-Ingress-Test") !== "ingress-ok") {
@@ -427,6 +520,116 @@ export default { fetch() { return new Response("memory limit failed"); } };
   KJ_REQUIRE(localSourceResponse.body->readAllText().wait(waitScope) ==
           "{\"detached\":true,\"reply\":[9,2,3,4]}",
       "local buffer source did not receive the returned backing store");
+
+  auto runProtocolScript = [&](kj::StringPtr label,
+      kj::ArrayPtr<const kj::byte> firstBody, kj::StringPtr firstSteps,
+      kj::ArrayPtr<const kj::byte> secondBody, kj::StringPtr secondSteps,
+      kj::StringPtr expectedFirst, kj::StringPtr expectedSecond) {
+    auto open = host.openLocalCapnpChannelRequest();
+    open.setFirstGrainId("testgrain123");
+    open.setFirstName(kj::str(label, "-first"));
+    open.setSecondGrainId("peergrain123");
+    open.setSecondName(kj::str(label, "-second"));
+    auto revoker = open.send().wait(waitScope).getRevoker();
+
+    kj::HttpHeaders firstHeaders(*headerTable);
+    auto firstRequest = httpClient->request(kj::HttpMethod::POST,
+        kj::str("https://grain.invalid/local-capnp-script?name=", label,
+            "-first&steps=", firstSteps),
+        firstHeaders, firstBody.size());
+    firstRequest.body->write(firstBody.begin(), firstBody.size()).wait(waitScope);
+    firstRequest.body = nullptr;
+    kj::HttpHeaders secondHeaders(*headerTable);
+    auto secondRequest = peerClient->request(kj::HttpMethod::POST,
+        kj::str("https://grain.invalid/local-capnp-script?name=", label,
+            "-second&steps=", secondSteps),
+        secondHeaders, secondBody.size());
+    secondRequest.body->write(secondBody.begin(), secondBody.size()).wait(waitScope);
+    secondRequest.body = nullptr;
+
+    auto secondResponse = secondRequest.response.wait(waitScope);
+    KJ_REQUIRE(secondResponse.statusCode == 200,
+        "second local Cap'n Proto protocol script failed", label, secondResponse.statusCode);
+    KJ_REQUIRE(secondResponse.body->readAllText().wait(waitScope) == expectedSecond,
+        "second local Cap'n Proto protocol script returned the wrong result", label);
+    auto firstResponse = firstRequest.response.wait(waitScope);
+    KJ_REQUIRE(firstResponse.statusCode == 200,
+        "first local Cap'n Proto protocol script failed", label, firstResponse.statusCode);
+    KJ_REQUIRE(firstResponse.body->readAllText().wait(waitScope) == expectedFirst,
+        "first local Cap'n Proto protocol script returned the wrong result", label);
+  };
+
+  // A receiverAnswer is valid only when it names an unfinished question posed by the descriptor
+  // sender. This sequence also exercises capabilities in params, pipelined answers, and releases
+  // from both Call and Finish.
+  auto receiverBootstrap = sandstorm::makeBootstrapFrame(0);
+  auto receiverCallWithCap = sandstorm::makeCallWithSenderHostedParamFrame(1, 0, 0);
+  auto receiverNestedReturn = sandstorm::makeReturnFrame(0);
+  auto receiverFinishBootstrap = sandstorm::makeFinishFrame(0, true);
+  auto receiverFinishCall = sandstorm::makeFinishFrame(1, true);
+  auto receiverFirstBody = sandstorm::packRpcFrames({receiverBootstrap.asPtr(),
+      receiverCallWithCap.asPtr(), receiverNestedReturn.asPtr(),
+      receiverFinishBootstrap.asPtr(), receiverFinishCall.asPtr()});
+  auto receiverBootstrapReturn = sandstorm::makeReturnFrame(0, uint32_t(0));
+  auto receiverNestedCall = sandstorm::makeCallFrame(0, 0);
+  auto receiverAnswerReturn = sandstorm::makeReceiverAnswerReturnFrame(1, 0);
+  auto receiverFinishNested = sandstorm::makeFinishFrame(0, true);
+  auto receiverSecondBody = sandstorm::packRpcFrames({receiverBootstrapReturn.asPtr(),
+      receiverNestedCall.asPtr(), receiverAnswerReturn.asPtr(), receiverFinishNested.asPtr()});
+  runProtocolScript("receiver-answer", receiverFirstBody, "srsrsrssr",
+      receiverSecondBody, "rsrsrsrrs",
+      "{\"rejected\":false,\"revoked\":false}",
+      "{\"rejected\":false,\"revoked\":false}");
+
+  // Promise exports remain authoritative after resolution and until both the promise and its
+  // resolved capability have been explicitly released.
+  auto promiseBootstrap = sandstorm::makeBootstrapFrame(0);
+  auto promiseCall = sandstorm::makeCallFrame(1, 0);
+  auto promiseRelease = sandstorm::makeReleaseFrame(0, 1);
+  auto promiseResolvedRelease = sandstorm::makeReleaseFrame(1, 1);
+  auto promiseFinishBootstrap = sandstorm::makeFinishFrame(0, false);
+  auto promiseFinishCall = sandstorm::makeFinishFrame(1, true);
+  auto promiseFirstBody = sandstorm::packRpcFrames({promiseBootstrap.asPtr(),
+      promiseCall.asPtr(), promiseRelease.asPtr(), promiseResolvedRelease.asPtr(),
+      promiseFinishBootstrap.asPtr(), promiseFinishCall.asPtr()});
+  auto promiseReturn = sandstorm::makePromiseReturnFrame(0, 0);
+  auto promiseResolve = sandstorm::makeResolveHostedFrame(0, 1);
+  auto promiseCallReturn = sandstorm::makeReturnFrame(1);
+  auto promiseSecondBody = sandstorm::packRpcFrames(
+      {promiseReturn.asPtr(), promiseResolve.asPtr(), promiseCallReturn.asPtr()});
+  runProtocolScript("promise-resolution", promiseFirstBody, "srsrrssss",
+      promiseSecondBody, "rsrssrrrr",
+      "{\"rejected\":false,\"revoked\":false}",
+      "{\"rejected\":false,\"revoked\":false}");
+
+  auto overReleaseBootstrap = sandstorm::makeBootstrapFrame(0);
+  auto overRelease = sandstorm::makeReleaseFrame(0, 2);
+  auto overReleaseFirstBody = sandstorm::packRpcFrames(
+      {overReleaseBootstrap.asPtr(), overRelease.asPtr()});
+  auto overReleaseReturn = sandstorm::makeReturnFrame(0, uint32_t(0));
+  auto overReleaseSecondBody = sandstorm::packRpcFrames({overReleaseReturn.asPtr()});
+  runProtocolScript("over-release", overReleaseFirstBody, "srx",
+      overReleaseSecondBody, "rsc",
+      "{\"rejected\":true,\"revoked\":false}",
+      "{\"rejected\":false,\"revoked\":true}");
+
+  auto unknownAnswerBootstrap = sandstorm::makeBootstrapFrame(0);
+  auto unknownAnswerFirstBody = sandstorm::packRpcFrames({unknownAnswerBootstrap.asPtr()});
+  auto unknownAnswerReturn = sandstorm::makeReceiverAnswerReturnFrame(0, 999);
+  auto unknownAnswerSecondBody = sandstorm::packRpcFrames({unknownAnswerReturn.asPtr()});
+  runProtocolScript("unknown-receiver-answer", unknownAnswerFirstBody, "sc",
+      unknownAnswerSecondBody, "rx",
+      "{\"rejected\":false,\"revoked\":true}",
+      "{\"rejected\":true,\"revoked\":false}");
+
+  auto thirdPartyBootstrap = sandstorm::makeBootstrapFrame(0);
+  auto thirdPartyFirstBody = sandstorm::packRpcFrames({thirdPartyBootstrap.asPtr()});
+  auto thirdPartyReturn = sandstorm::makeThirdPartyReturnFrame(0);
+  auto thirdPartySecondBody = sandstorm::packRpcFrames({thirdPartyReturn.asPtr()});
+  runProtocolScript("third-party-descriptor", thirdPartyFirstBody, "sc",
+      thirdPartySecondBody, "rx",
+      "{\"rejected\":false,\"revoked\":true}",
+      "{\"rejected\":true,\"revoked\":false}");
 
   auto bootstrapFrame = sandstorm::makeBootstrapFrame(0);
   auto finishBootstrapFrame = sandstorm::makeFinishFrame(0, false);
