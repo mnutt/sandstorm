@@ -2239,6 +2239,7 @@ export default {
     const apiCapnpBridgeInfo =
         await (await env.SANDSTORM_API.fetch("http://sandstorm/capnp/bridge-info")).json();
     const apiHelper = sandstorm(request, env);
+    const unstableStatus = await apiHelper.unstable.status();
     const helperCapnpBridgeInfo = await apiHelper.capnpBridgeInfo();
     const capnpBridgeNegotiation = await negotiateNativeCapnpBridge(apiHelper, {
       requiredFeatures: ["nativeRpc", "nativeRpcWebSocket"],
@@ -2760,6 +2761,8 @@ export default {
         aggregate: SANDSTORM_HELPER_VERSIONS,
       },
       sandstormApi: {
+        stableSurface: Object.keys(apiHelper).sort(),
+        unstableStatus,
         status: apiStatus,
         capabilities: apiCapabilities,
         runtime: apiRuntime,

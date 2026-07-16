@@ -1,10 +1,10 @@
 # Isolates: Roadmap to the Target Architecture
 
-**Status:** Implementation roadmap. Phases 1–4 are substantially complete,
-Phase 5 is deliberately deferred after measurement, and Phase 6 remains.
+**Status:** Phases 1–4 and the Phase 6 stabilization work are complete. Phase 5
+is deliberately deferred after measurement and is not a release prerequisite.
 Complements `docs/isolates-architecture-review.md`, which describes the current
-state on branch `isolates-v2`; this document records the target, progress, and
-remaining stabilization work.
+state on branch `isolates-v2`; this document records the target, implementation
+history, and compatibility boundary.
 
 Dated progress entries retain prototype API names as superseded history; see
 `docs/developing/isolate-grains.md` for the current application API.
@@ -570,6 +570,25 @@ hand-off before enabling it in production.
 - Remove the "not a stable contract" warnings only when Phases 1–4 and the
   Phase 6 compatibility criteria are met. Deferred Phase 5 is not part of the
   stable contract.
+
+**Progress, 2026-07-16:** The intentional app-authoring surface is now the
+stable boundary. `sandstorm()` exposes sessions, storage, Powerbox, capability
+lifecycles, and system routes; operational inspection lives below
+`api.unstable`, while native bridge negotiation hooks remain non-enumerable
+private runtime glue. Undocumented module exports used only by route serving
+were removed. Integration coverage asserts the exact enumerable facade so a
+future helper cannot accidentally become public API.
+
+`spk capnp-abi` can select a struct and its nested structs, and now ignores
+ordinal-free group containers while checking their numbered fields. A checked-
+in `Manifest.IsolateConfig` baseline therefore protects the manifest ABI in
+addition to the existing `isolate-bridge.capnp` and internal protocol
+baselines. The authoring guide documents additive schema evolution,
+compatibility-date behavior, persistence migration requirements, and the
+private diagnostics/transport/host boundary; the pre-release warning has been
+retired. The superseded Powerbox V2 and detailed architecture-review drafts
+have also been retired; the authoring guide, this roadmap, and the published
+memory benchmark are the maintained isolate documentation.
 
 ---
 

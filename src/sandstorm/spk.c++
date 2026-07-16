@@ -43,6 +43,7 @@
 #include <sandstorm/isolate/platform-capnp-es.js.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <algorithm>
 #include <set>
 #include <map>
 #include <vector>
@@ -260,6 +261,7 @@ private:
   PowerboxDescriptorOutputFormat powerboxDescriptorOutputFormat =
       PowerboxDescriptorOutputFormat::BASE64URL;
   kj::String capnpAbiInterfaceFilter = nullptr;
+  kj::String capnpAbiStructFilter = nullptr;
   kj::String capnpAbiBaselinePath = nullptr;
 
   kj::StringPtr keyringPath = nullptr;
@@ -1959,6 +1961,8 @@ private:
             "Check <schema.capnp> for compatibility with a previous capnp-abi JSON dump.")
         .addOptionWithArg({"interface"}, KJ_BIND_METHOD(*this, setCapnpAbiInterfaceFilter),
             "<name>", "Only include the named interface.")
+        .addOptionWithArg({"struct"}, KJ_BIND_METHOD(*this, setCapnpAbiStructFilter),
+            "<name>", "Only include the named struct and its nested structs.")
         .expectArg("<schema.capnp>", KJ_BIND_METHOD(*this, doCapnpAbi))
         .build();
   }
@@ -1968,6 +1972,14 @@ private:
       return "interface name must not be empty";
     }
     capnpAbiInterfaceFilter = kj::heapString(name);
+    return true;
+  }
+
+  kj::MainBuilder::Validity setCapnpAbiStructFilter(kj::StringPtr name) {
+    if (name.size() == 0) {
+      return "struct name must not be empty";
+    }
+    capnpAbiStructFilter = kj::heapString(name);
     return true;
   }
 
@@ -4015,9 +4027,15 @@ private:
         structMetadata.structId = toStdString(capnpInterfaceIdString(proto.getId()));
         for (auto field: nested.asStruct().getFields()) {
           auto fieldProto = field.getProto();
-          KJ_REQUIRE(fieldProto.getOrdinal().isExplicit(),
-              "Cap'n Proto ABI checker encountered a field without an explicit ordinal.",
-              structMetadata.name, fieldProto.getName());
+          // A named group (including `name :union`) has no wire ordinal of its
+          // own. Its nested struct and explicitly-numbered fields are collected
+          // recursively, so recording the implicit container would invent ABI.
+          if (!fieldProto.getOrdinal().isExplicit()) {
+            KJ_REQUIRE(fieldProto.isGroup(),
+                "Cap'n Proto ABI checker encountered a slot without an explicit ordinal.",
+                structMetadata.name, fieldProto.getName());
+            continue;
+          }
 
           DevCapnpParsedStructFieldMetadata fieldMetadata;
           fieldMetadata.name = toStdString(fieldProto.getName());
@@ -4339,6 +4357,14 @@ private:
           "Cap'n Proto ABI dump schema does not define the requested interface.",
           specifier, capnpAbiInterfaceFilter);
     }
+    if (capnpAbiStructFilter != nullptr) {
+      auto requested = toStdString(capnpAbiStructFilter);
+      auto found = std::find_if(metadata.structs.begin(), metadata.structs.end(),
+          [&](const auto& structDef) { return structDef.name == requested; });
+      KJ_REQUIRE(found != metadata.structs.end(),
+          "Cap'n Proto ABI dump schema does not define the requested struct.",
+          specifier, capnpAbiStructFilter);
+    }
 
     CapnpAbiDump dump;
     dump.schema = toStdString(specifier);
@@ -4393,6 +4419,13 @@ private:
     }
 
     for (auto& structDef: metadata.structs) {
+      if (capnpAbiStructFilter != nullptr) {
+        auto requested = toStdString(capnpAbiStructFilter);
+        auto nestedPrefix = requested + ".";
+        if (structDef.name != requested && structDef.name.rfind(nestedPrefix, 0) != 0) {
+          continue;
+        }
+      }
       CapnpAbiStruct structDump;
       structDump.name = structDef.name;
       structDump.structId = structDef.structId;

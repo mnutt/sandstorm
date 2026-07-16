@@ -1,7 +1,10 @@
 # Isolate grains
 
-Isolate grains are an experimental Sandstorm app runtime backed by a
-Worker-style JavaScript entry point and a per-grain `workerd` sidecar.
+Isolate grains are Sandstorm's Worker-style JavaScript app runtime. By default,
+one account's active grains share a multi-tenant `workerd` host while retaining
+separate workers, storage roots, capabilities, limits, and grain-tagged logs.
+Operators can select per-grain hosting as a rollback or paranoid-mode option;
+that topology does not change the app contract.
 
 An isolate app exports a module like:
 
@@ -17,28 +20,34 @@ From outside the app, the grain is still a normal Sandstorm grain: the shell
 talks to a supervisor, opens `UiView` / `WebSession` sessions, uses Powerbox,
 saves capabilities, and applies Sandstorm's usual object-capability model.
 
-## Pre-Release Compatibility Policy
+## Compatibility Policy
 
-Isolate grains are not a stable app-runtime contract yet. Until Sandstorm
-explicitly ships and documents isolate grains as a supported runtime, app
-authors should treat the isolate API surface as experimental.
+The documented isolate app contract is compatibility-sensitive. It consists
+of:
 
-These pieces may change without a backwards-compatibility shim:
+- `Manifest.Command.isolate` and `Manifest.IsolateConfig`
+- the exports and types documented for `sandstorm:api`
+- public `capnp:` schema imports and the `isolate-bridge.capnp` capability
+  semantics they use
+- saved capability behavior and the persisted worker-source handoff format
 
-- the `spk dev-isolate` command and generated package layout
-- `Manifest.Command.isolate` and related package schema fields
-- the injected `sandstorm:api` helper module
-- JavaScript helper names, method signatures, and return shapes
-- supervisor-local helper endpoints behind `SANDSTORM_API`, `POWERBOX`, and
-  `STORAGE`
-- route-backed capability app-ref formats
-- example app layouts and recommended project structure
+Schema evolution is additive: existing field ordinals, union discriminants,
+interface IDs, and method ordinals do not change. Sandstorm's checked-in
+`spk capnp-abi` baselines enforce this for the manifest and isolate protocols.
+Runtime behavior changes that could affect existing apps must be gated by the
+app's compatibility date or an explicit compatibility flag.
 
-This policy only applies to unreleased isolate-grain APIs. Existing
-Linux/process grain behavior remains compatibility-sensitive.
+The boundary is intentionally narrower than every implementation detail.
+Members and response shapes below `api.unstable` may change without notice.
+The raw `SANDSTORM_API`, `POWERBOX`, and `STORAGE` binding endpoints, native
+bridge negotiation hooks, browser transport framing, host control protocols,
+generated package layout, and operator hosting topology are private. Apps
+should use the documented helper and schema surfaces rather than depending on
+those details.
 
-During the pre-release period, Sandstorm should prefer clean API and protocol
-changes over compatibility with earlier isolate prototypes.
+Removing a documented API requires a deprecation and compatibility path;
+adding APIs or schema fields remains allowed. Persistence formats may evolve
+only with readers or migrations that preserve existing saved app state.
 
 ## Current Authoring Guidance
 
@@ -157,15 +166,20 @@ methods in application code:
 - `api.powerboxFulfillment()` for provider-side Powerbox fulfillment routes
 - `api.serveSystemRoutes()` before normal app routes
 
-The helper modules also expose lower-level functions for tests, framework
-adapters, and internal plumbing. App code should prefer the `sandstorm()`
-facade unless it has a specific integration reason to pass `request` and `env`
-through manually.
+The declarations in `src/sandstorm/isolate/api.d.ts` define the supported named
+exports. App code should prefer the `sandstorm()` facade unless it has a
+specific framework integration reason to pass `request` and `env` through
+manually. Undocumented exports and the raw injected bindings are implementation
+details.
 
-Do not use versioned import paths such as `sandstorm:api/v1`. Sandstorm will
-use the app's isolate compatibility date and compatibility flags to preserve
-or intentionally change helper behavior once isolate grains become a supported
-runtime.
+Operational tooling can use `api.unstable`, which currently contains runtime
+and binding diagnostics. The namespace is a deliberate quarantine boundary:
+its member names and response shapes are not part of the compatibility
+contract and application behavior must not depend on them.
+
+Do not use versioned import paths such as `sandstorm:api/v1`. Sandstorm uses the
+app's isolate compatibility date and compatibility flags to preserve existing
+helper behavior while allowing newer apps to opt into intentional changes.
 
 ## Native Cap'n Proto Modules
 
@@ -515,8 +529,7 @@ Compatibility flags are for narrow runtime behavior switches. They should not
 be used as general app configuration. App configuration should live in
 explicit bindings, storage, or app code.
 
-While isolate grains are experimental, compatibility dates and flags are
-recorded and forwarded to workerd, but they do not yet imply a stable public
-compatibility guarantee for the Sandstorm-specific helper APIs. The
-pre-release policy above still applies to `sandstorm:api`, the generated package
-layout, and supervisor-local helper endpoints.
+Compatibility dates and flags cover observable runtime behavior, including
+workerd behavior selected by Sandstorm. They do not stabilize private binding
+endpoints, transport framing, host protocols, or the members of
+`api.unstable`; those remain outside the app contract described above.
