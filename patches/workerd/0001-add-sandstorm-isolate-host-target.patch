@@ -314,7 +314,7 @@ index c97cb1be..36b50192 100644
 +
 +class LocalBufferChannel final: public jsg::Object {
 + public:
-+  explicit LocalBufferChannel(IoOwn<LocalBufferChannelEndpoint> endpoint)
++  explicit LocalBufferChannel(kj::Own<LocalBufferChannelEndpoint> endpoint)
 +      : endpoint(kj::mv(endpoint)) {}
 +
 +  void send(jsg::Lock& js, jsg::BufferSource buffer);
@@ -328,7 +328,7 @@ index c97cb1be..36b50192 100644
 +  }
 +
 + private:
-+  kj::Maybe<IoOwn<LocalBufferChannelEndpoint>> endpoint;
++  kj::Maybe<kj::Own<LocalBufferChannelEndpoint>> endpoint;
 +};
 +
 +class LocalBufferChannelBroker final: public jsg::Object {
@@ -390,8 +390,7 @@ index 89396d57..6169002e 100644
 +
 +jsg::Ref<LocalBufferChannel> LocalBufferChannelBroker::accept(
 +    jsg::Lock& js, kj::String name) {
-+  return js.alloc<LocalBufferChannel>(
-+      IoContext::current().addObject(provider->take(name)));
++  return js.alloc<LocalBufferChannel>(provider->take(name));
 +}
 +
  jsg::Ref<Fetcher> WorkerStub::getEntrypoint(jsg::Lock& js,

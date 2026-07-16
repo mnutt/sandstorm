@@ -112,6 +112,14 @@ interface SandstormCore {
   # Restores an API token to a live capability. Fails if this grain is not the token's owner
   # (including if the ref has no owner).
 
+  restoreForIsolate @11 (token :Data, requester :LocalAppRestoreRequester)
+      -> (cap :Capability, localEndpoint :Text, localLifetime :Capability);
+  # Trusted isolate-runtime variant of restore(). The front-end performs the same owner, token
+  # chain, requirement, and expiration checks as restore(), then may ask `requester` to prepare a
+  # host-minted local RPC path for a durable appRef. If localEndpoint is non-empty, cap is null and
+  # localLifetime must be retained for exactly as long as the local capability is live. Otherwise
+  # localEndpoint is empty and cap contains the ordinary supervisor-routed fallback.
+
   claimRequest @6 (requestToken :Text, requiredPermissions :Identity.PermissionSet)
                -> (cap :Capability);
   # Restores a client powerbox request token to a live capability, which can then be saved to get
@@ -237,6 +245,19 @@ interface SystemPersistent extends(Persistent(Data, ApiTokenOwner)) {
   #   by having every endpoint implement the appropriate membrane. SystemPersistent should probably
   #   be renamed and split from `Persistent` -- the inheritance heirarchy can be adjusted without
   #   breaking compatibility.
+}
+
+interface LocalAppRestoreRequester {
+  # One-shot authority supplied by a trusted isolate supervisor. It is bound to the requesting
+  # grain, so the front-end discloses the provider grain and appRef only after validating `token`.
+  # The account host independently verifies that both grains are live in the same trust domain.
+
+  prepare @0 (providerGrainId :Text, appRef :AnyPointer,
+              observer :SystemPersistent.RevocationObserver)
+      -> (endpointName :Text, lifetime :Capability);
+  # Returns an endpoint name from the requesting grain's private broker. `lifetime` keeps observer
+  # alive; observer holds the host revoker and will drop it when the token becomes invalid. Dropping
+  # lifetime also tears down both ends of the local link.
 }
 
 interface PersistentHandle extends(SystemPersistent, Util.Handle) {}
