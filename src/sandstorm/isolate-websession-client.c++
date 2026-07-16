@@ -656,43 +656,6 @@ public:
     }
   }
 
-  kj::Promise<void> restoreForIsolate(RestoreForIsolateContext context) override {
-    // This fixture deliberately exercises the ordinary supervisor-routed fallback. The local
-    // requester remains unused, just as it would for a non-appRef capability.
-    auto token = context.getParams().getToken();
-    auto tokenText = kj::heapString(token.asChars());
-    if (tokenText == "websession-saved-token") {
-      ++sessionContext.restoreCount;
-      context.getResults().setCap(kj::heap<FakeClaimedCapability>(sessionContext.saveCount));
-      return kj::READY_NOW;
-    } else if (tokenText == "outbound-http-saved-token") {
-      ++sessionContext.restoreCount;
-      context.getResults().setCap(kj::heap<FakeOutboundHttpSession>(sessionContext.saveCount));
-      return kj::READY_NOW;
-    } else if (tokenText == "native-greeter-saved-token") {
-      ++sessionContext.restoreCount;
-      context.getResults().setCap(kj::heap<FakeLegacyNativeGreeter>());
-      return kj::READY_NOW;
-    }
-
-    loadRouteBackedTokens();
-    KJ_IF_MAYBE(saved, findRouteBackedToken(tokenText)) {
-      ++sessionContext.restoreCount;
-      if (saved->supervisorSocketPath == supervisorSocketPath) {
-        KJ_IF_MAYBE(supervisor, this->supervisor) {
-          return restoreRouteBackedToken(*supervisor, *saved, context);
-        } else {
-          KJ_FAIL_REQUIRE("fake SandstormCore has no supervisor for route-backed restore");
-        }
-      } else {
-        return restoreRouteBackedTokenFromSupervisor(
-            saved->supervisorSocketPath, copyRouteBackedToken(*saved), context);
-      }
-    } else {
-      KJ_FAIL_REQUIRE("unknown fake SandstormCore token", tokenText);
-    }
-  }
-
   kj::Promise<void> drop(DropContext context) override {
     auto token = context.getParams().getToken();
     auto tokenText = kj::heapString(token.asChars());
@@ -925,10 +888,9 @@ private:
     }
   }
 
-  template <typename Context>
   kj::Promise<void> restoreRouteBackedToken(
       Supervisor::Client supervisor, const RouteBackedToken& token,
-      Context context) {
+      RestoreContext context) {
     auto request = supervisor.restoreRequest();
     setRouteBackedTokenObjectId(request.getRef(), token);
     request.setParentToken(token.token.asBytes());
@@ -937,10 +899,9 @@ private:
     });
   }
 
-  template <typename Context>
   kj::Promise<void> restoreRouteBackedTokenFromSupervisor(
       kj::StringPtr ownerSupervisorSocketPath, RouteBackedToken token,
-      Context context) {
+      RestoreContext context) {
     return network.parseAddress(kj::str("unix:", ownerSupervisorSocketPath), 0)
         .then([this, token = kj::mv(token), context](
             kj::Own<kj::NetworkAddress> address) mutable {

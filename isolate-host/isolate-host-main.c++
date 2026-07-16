@@ -9,7 +9,6 @@
 #include <workerd/server/sandstorm-isolate-worker-source.capnp.h>
 #include <workerd/server/workerd-api.h>
 #include <workerd/api/http.h>
-#include <workerd/api/worker-loader.h>
 #include <workerd/io/actor-cache.h>
 #include <workerd/io/compatibility-date.h>
 #include <workerd/io/limit-enforcer.h>
@@ -17,10 +16,8 @@
 #include <workerd/util/stream-utils.h>
 
 #include <capnp/rpc-twoparty.h>
-#include <capnp/rpc.capnp.h>
 #include <capnp/compat/json.h>
 #include <capnp/compat/http-over-capnp.h>
-#include <capnp/serialize.h>
 #include <capnp/serialize-packed.h>
 #include <kj/async-io.h>
 #include <kj/map.h>
@@ -35,7 +32,6 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
-#include <limits>
 #include <mutex>
 #include <thread>
 
@@ -43,8 +39,6 @@ namespace sandstorm {
 namespace {
 
 constexpr kj::StringPtr LOADER_NAMESPACE = "sandstorm-grains"_kj;
-constexpr kj::StringPtr LOCAL_BUFFER_BROKER_BINDING =
-    "__SANDSTORM_NATIVE_BUFFER_LINKS"_kj;
 
 // These are host policy rather than workerd embedding API. Keep them conservative until the
 // Phase 4 measurements give us enough data to make them configurable per account/app.
@@ -324,538 +318,6 @@ struct LoadedWorkerSource {
   kj::Own<BundleBacking> backing;
 };
 
-// Authoritative per-link capability state. capnp-es inside each worker maintains the dispatch
-// tables, but those tables are not trusted: every complete RPC frame crosses this ledger before
-// delivery, and any reference not derivable from previously validated traffic revokes the link.
-// Keeping the authority state here lets the workers use the standard RPC implementation without
-// giving either JS heap the ability to mint or guess authority.
-class LocalCapnpAuthorityLedger {
- public:
-  void validate(bool fromFirst, const workerd::jsg::BackingStore& buffer) {
-    KJ_REQUIRE(buffer.size() > 0 && buffer.size() % sizeof(capnp::word) == 0,
-        "local Cap'n Proto link requires a non-empty word-aligned frame size", buffer.size());
-    KJ_REQUIRE(buffer.getOffset() % alignof(capnp::word) == 0,
-        "local Cap'n Proto link requires word-aligned frame storage");
-
-    auto words = buffer.asArrayPtr<const capnp::word>();
-    capnp::ReaderOptions options;
-    options.traversalLimitInWords = BUFFERING_LIMIT / sizeof(capnp::word);
-    options.nestingLimit = 64;
-    capnp::FlatArrayMessageReader reader(words, options);
-    auto message = reader.getRoot<capnp::rpc::Message>();
-    KJ_REQUIRE(reader.getEnd() == words.end(),
-        "local Cap'n Proto link frame contains trailing words");
-
-    auto& sender = fromFirst ? first : second;
-    auto& receiver = fromFirst ? second : first;
-    KJ_REQUIRE(!sender.aborted && !receiver.aborted,
-        "local Cap'n Proto link has already been aborted");
-
-    switch (message.which()) {
-      case capnp::rpc::Message::ABORT:
-        sender.aborted = true;
-        return;
-
-      case capnp::rpc::Message::BOOTSTRAP: {
-        addQuestion(sender, message.getBootstrap().getQuestionId());
-        return;
-      }
-
-      case capnp::rpc::Message::CALL: {
-        auto call = message.getCall();
-        validateTarget(call.getTarget(), sender, receiver);
-        KJ_REQUIRE(call.getSendResultsTo().which() == capnp::rpc::Call::SendResultsTo::CALLER,
-            "local Cap'n Proto fast links do not support redirected call results");
-        auto& question = addQuestion(sender, call.getQuestionId());
-        validatePayload(call.getParams(), sender, receiver, question.paramExports);
-        return;
-      }
-
-      case capnp::rpc::Message::RETURN:
-        validateReturn(message.getReturn(), sender, receiver);
-        return;
-
-      case capnp::rpc::Message::FINISH:
-        validateFinish(message.getFinish(), sender, receiver);
-        return;
-
-      case capnp::rpc::Message::RESOLVE:
-        validateResolve(message.getResolve(), sender, receiver);
-        return;
-
-      case capnp::rpc::Message::RELEASE: {
-        auto release = message.getRelease();
-        KJ_REQUIRE(release.getReferenceCount() > 0,
-            "local Cap'n Proto release count must be positive");
-        releaseExport(receiver, release.getId(), release.getReferenceCount());
-        return;
-      }
-
-      case capnp::rpc::Message::UNIMPLEMENTED:
-      case capnp::rpc::Message::DISEMBARGO:
-      case capnp::rpc::Message::OBSOLETE_SAVE:
-      case capnp::rpc::Message::OBSOLETE_DELETE:
-      case capnp::rpc::Message::PROVIDE:
-      case capnp::rpc::Message::ACCEPT:
-      case capnp::rpc::Message::JOIN:
-      case capnp::rpc::Message::THIRD_PARTY_ANSWER:
-        KJ_FAIL_REQUIRE("unsupported message on local Cap'n Proto fast link",
-            static_cast<uint16_t>(message.which()));
-    }
-    KJ_UNREACHABLE;
-  }
-
- private:
-  static constexpr size_t MAX_QUESTIONS_PER_SIDE = 65536;
-  static constexpr size_t MAX_EXPORTS_PER_SIDE = 65536;
-
-  struct Export {
-    uint64_t references = 0;
-    bool promise = false;
-    bool resolved = false;
-  };
-
-  struct Question {
-    kj::Vector<uint32_t> paramExports;
-    kj::Vector<uint32_t> resultExports;
-    bool returned = false;
-    bool finished = false;
-    bool releaseResultCaps = false;
-  };
-
-  struct Direction {
-    kj::HashMap<uint32_t, Export> exports;
-    kj::HashMap<uint32_t, Question> questions;
-    bool aborted = false;
-  };
-
-  Direction first;
-  Direction second;
-
-  static Question& addQuestion(Direction& sender, uint32_t id) {
-    KJ_REQUIRE(sender.questions.find(id) == kj::none,
-        "duplicate local Cap'n Proto question ID", id);
-    KJ_REQUIRE(sender.questions.size() < MAX_QUESTIONS_PER_SIDE,
-        "too many outstanding local Cap'n Proto questions");
-    sender.questions.insert(id, Question{});
-    return KJ_ASSERT_NONNULL(sender.questions.find(id));
-  }
-
-  static void validateTarget(capnp::rpc::MessageTarget::Reader target,
-      Direction& sender, Direction& receiver) {
-    switch (target.which()) {
-      case capnp::rpc::MessageTarget::IMPORTED_CAP: {
-        auto id = target.getImportedCap();
-        auto& exportEntry = KJ_REQUIRE_NONNULL(receiver.exports.find(id),
-            "local Cap'n Proto target names an ungranted capability", id);
-        KJ_REQUIRE(exportEntry.references > 0,
-            "local Cap'n Proto target capability has been released", id);
-        return;
-      }
-      case capnp::rpc::MessageTarget::PROMISED_ANSWER: {
-        auto id = target.getPromisedAnswer().getQuestionId();
-        auto& question = KJ_REQUIRE_NONNULL(sender.questions.find(id),
-            "local Cap'n Proto target names an unknown promised answer", id);
-        KJ_REQUIRE(!question.finished,
-            "local Cap'n Proto target names a finished promised answer", id);
-        return;
-      }
-    }
-    KJ_UNREACHABLE;
-  }
-
-  static void validatePayload(capnp::rpc::Payload::Reader payload,
-      Direction& sender, Direction& receiver, kj::Vector<uint32_t>& senderExports) {
-    for (auto descriptor: payload.getCapTable()) {
-      validateDescriptor(descriptor, sender, receiver, senderExports);
-    }
-  }
-
-  static void validateDescriptor(capnp::rpc::CapDescriptor::Reader descriptor,
-      Direction& sender, Direction& receiver, kj::Vector<uint32_t>& senderExports) {
-    KJ_REQUIRE(descriptor.getAttachedFd() == 0xff,
-        "local Cap'n Proto fast links do not support attached file descriptors");
-    switch (descriptor.which()) {
-      case capnp::rpc::CapDescriptor::NONE:
-        return;
-      case capnp::rpc::CapDescriptor::SENDER_HOSTED:
-        addExport(sender, descriptor.getSenderHosted(), false, senderExports);
-        return;
-      case capnp::rpc::CapDescriptor::SENDER_PROMISE:
-        addExport(sender, descriptor.getSenderPromise(), true, senderExports);
-        return;
-      case capnp::rpc::CapDescriptor::RECEIVER_HOSTED: {
-        auto id = descriptor.getReceiverHosted();
-        auto& exportEntry = KJ_REQUIRE_NONNULL(receiver.exports.find(id),
-            "local Cap'n Proto descriptor names an ungranted receiver capability", id);
-        KJ_REQUIRE(exportEntry.references > 0,
-            "local Cap'n Proto descriptor names a released receiver capability", id);
-        return;
-      }
-      case capnp::rpc::CapDescriptor::RECEIVER_ANSWER: {
-        auto id = descriptor.getReceiverAnswer().getQuestionId();
-        auto& question = KJ_REQUIRE_NONNULL(sender.questions.find(id),
-            "local Cap'n Proto descriptor names an unknown receiver answer", id);
-        KJ_REQUIRE(!question.finished,
-            "local Cap'n Proto descriptor names a finished receiver answer", id);
-        return;
-      }
-      case capnp::rpc::CapDescriptor::THIRD_PARTY_HOSTED:
-        KJ_FAIL_REQUIRE(
-            "local Cap'n Proto fast links do not support third-party descriptors");
-    }
-    KJ_UNREACHABLE;
-  }
-
-  static void addExport(Direction& sender, uint32_t id, bool promise,
-      kj::Vector<uint32_t>& senderExports) {
-    KJ_IF_SOME(existing, sender.exports.find(id)) {
-      KJ_REQUIRE(existing.promise == promise,
-          "local Cap'n Proto export ID changed capability kind", id);
-      KJ_REQUIRE(existing.references < std::numeric_limits<uint64_t>::max(),
-          "local Cap'n Proto export reference count overflow", id);
-      ++existing.references;
-    } else {
-      KJ_REQUIRE(sender.exports.size() < MAX_EXPORTS_PER_SIDE,
-          "too many live local Cap'n Proto exports");
-      sender.exports.insert(id, Export{1, promise, false});
-    }
-    senderExports.add(id);
-  }
-
-  static void releaseExport(Direction& exporter, uint32_t id, uint64_t count) {
-    auto& exportEntry = KJ_REQUIRE_NONNULL(exporter.exports.find(id),
-        "local Cap'n Proto release names an unknown export", id);
-    KJ_REQUIRE(count <= exportEntry.references,
-        "local Cap'n Proto release exceeds the granted reference count",
-        id, count, exportEntry.references);
-    exportEntry.references -= count;
-    if (exportEntry.references == 0 && (!exportEntry.promise || exportEntry.resolved)) {
-      exporter.exports.erase(id);
-    }
-  }
-
-  static void releaseExports(Direction& exporter, kj::Vector<uint32_t>& ids) {
-    for (auto id: ids) {
-      releaseExport(exporter, id, 1);
-    }
-    ids.clear();
-  }
-
-  static void validateReturn(capnp::rpc::Return::Reader result,
-      Direction& sender, Direction& receiver) {
-    auto id = result.getAnswerId();
-    auto& question = KJ_REQUIRE_NONNULL(receiver.questions.find(id),
-        "local Cap'n Proto return names an unknown answer", id);
-    KJ_REQUIRE(!question.returned, "duplicate local Cap'n Proto return", id);
-
-    if (result.getReleaseParamCaps()) {
-      releaseExports(receiver, question.paramExports);
-    }
-
-    switch (result.which()) {
-      case capnp::rpc::Return::RESULTS:
-        validatePayload(result.getResults(), sender, receiver, question.resultExports);
-        break;
-      case capnp::rpc::Return::EXCEPTION:
-      case capnp::rpc::Return::CANCELED:
-      case capnp::rpc::Return::RESULTS_SENT_ELSEWHERE:
-        break;
-      case capnp::rpc::Return::TAKE_FROM_OTHER_QUESTION:
-      case capnp::rpc::Return::AWAIT_FROM_THIRD_PARTY:
-        KJ_FAIL_REQUIRE("unsupported return mode on local Cap'n Proto fast link",
-            static_cast<uint16_t>(result.which()));
-    }
-
-    question.returned = true;
-    if (question.finished) {
-      if (question.releaseResultCaps) {
-        releaseExports(sender, question.resultExports);
-      }
-      receiver.questions.erase(id);
-    }
-  }
-
-  static void validateFinish(capnp::rpc::Finish::Reader finish,
-      Direction& sender, Direction& receiver) {
-    auto id = finish.getQuestionId();
-    auto& question = KJ_REQUIRE_NONNULL(sender.questions.find(id),
-        "local Cap'n Proto finish names an unknown question", id);
-    KJ_REQUIRE(!question.finished, "duplicate local Cap'n Proto finish", id);
-    question.finished = true;
-    question.releaseResultCaps = finish.getReleaseResultCaps();
-    if (question.returned) {
-      if (question.releaseResultCaps) {
-        releaseExports(receiver, question.resultExports);
-      }
-      sender.questions.erase(id);
-    }
-  }
-
-  static void validateResolve(capnp::rpc::Resolve::Reader resolve,
-      Direction& sender, Direction& receiver) {
-    auto id = resolve.getPromiseId();
-    auto& originalExport = KJ_REQUIRE_NONNULL(sender.exports.find(id),
-        "local Cap'n Proto resolve names an unknown promise", id);
-    KJ_REQUIRE(originalExport.promise && !originalExport.resolved,
-        "local Cap'n Proto resolve names a non-promise or resolved export", id);
-
-    kj::Vector<uint32_t> resolvedExports;
-    switch (resolve.which()) {
-      case capnp::rpc::Resolve::CAP:
-        validateDescriptor(resolve.getCap(), sender, receiver, resolvedExports);
-        break;
-      case capnp::rpc::Resolve::EXCEPTION:
-        break;
-    }
-    // A capability resolution can add another sender export and rehash the export table, so do
-    // not retain the original map reference across descriptor validation.
-    auto& exportEntry = KJ_ASSERT_NONNULL(sender.exports.find(id));
-    exportEntry.resolved = true;
-    if (exportEntry.references == 0) {
-      sender.exports.erase(id);
-    }
-  }
-};
-
-class LocalBufferLinkState final: public kj::AtomicRefcounted {
- public:
-  explicit LocalBufferLinkState(bool validateCapnpRpc = false): shared(validateCapnpRpc) {}
-
-  void send(bool fromFirst, workerd::jsg::BackingStore buffer) {
-    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>> waiter;
-    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>
-        revokedFirstWaiter;
-    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>
-        revokedSecondWaiter;
-    kj::Maybe<kj::Exception> validationFailure;
-    {
-      auto lock = shared.lockExclusive();
-      KJ_REQUIRE(!lock->closed, "local buffer link is closed");
-      auto& inbox = fromFirst ? lock->secondInbox : lock->firstInbox;
-      validationFailure = kj::runCatchingExceptions([&]() {
-        KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT,
-            "local buffer message exceeds the host buffering limit", buffer.size());
-        KJ_IF_SOME(ledger, lock->capnpLedger) {
-          ledger.validate(fromFirst, buffer);
-        }
-        if (inbox.waiter == kj::none) {
-          KJ_REQUIRE(buffer.size() <= BUFFERING_LIMIT - inbox.queuedBytes,
-              "local buffer link queue exceeds the host buffering limit");
-        }
-      });
-
-      if (validationFailure != kj::none) {
-        revokeLocked(*lock, revokedFirstWaiter, revokedSecondWaiter);
-      } else {
-        KJ_IF_SOME(pending, inbox.waiter) {
-          waiter = kj::mv(pending);
-          inbox.waiter = kj::none;
-        } else {
-          inbox.queuedBytes += buffer.size();
-          inbox.buffers.add(kj::mv(buffer));
-        }
-      }
-    }
-    KJ_IF_SOME(exception, validationFailure) {
-      rejectWaiter(revokedFirstWaiter, exception);
-      rejectWaiter(revokedSecondWaiter, exception);
-      kj::throwRecoverableException(kj::mv(exception));
-    }
-    KJ_IF_SOME(pending, waiter) {
-      pending->fulfill(kj::mv(buffer));
-    }
-  }
-
-  kj::Promise<workerd::jsg::BackingStore> receive(bool first) {
-    auto lock = shared.lockExclusive();
-    if (lock->closed) {
-      return kj::Promise<workerd::jsg::BackingStore>(
-          KJ_EXCEPTION(DISCONNECTED, "local buffer link is closed"));
-    }
-    auto& inbox = first ? lock->firstInbox : lock->secondInbox;
-    KJ_REQUIRE(inbox.waiter == kj::none,
-        "only one local buffer receive may be pending per endpoint");
-    if (inbox.readIndex < inbox.buffers.size()) {
-      auto buffer = kj::mv(inbox.buffers[inbox.readIndex++]);
-      inbox.queuedBytes -= buffer.size();
-      if (inbox.readIndex == inbox.buffers.size()) {
-        inbox.buffers.clear();
-        inbox.readIndex = 0;
-      }
-      return kj::mv(buffer);
-    }
-    auto paf = kj::newPromiseAndCrossThreadFulfiller<workerd::jsg::BackingStore>();
-    inbox.waiter = kj::mv(paf.fulfiller);
-    return kj::mv(paf.promise);
-  }
-
-  void close() {
-    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>> firstWaiter;
-    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>> secondWaiter;
-    {
-      auto lock = shared.lockExclusive();
-      if (lock->closed) return;
-      revokeLocked(*lock, firstWaiter, secondWaiter);
-    }
-    auto exception = KJ_EXCEPTION(DISCONNECTED, "local buffer link was revoked");
-    rejectWaiter(firstWaiter, exception);
-    rejectWaiter(secondWaiter, exception);
-  }
-
- private:
-  struct Inbox {
-    kj::Vector<workerd::jsg::BackingStore> buffers;
-    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>> waiter;
-    size_t readIndex = 0;
-    size_t queuedBytes = 0;
-  };
-
-  struct Shared {
-    explicit Shared(bool validateCapnpRpc) {
-      if (validateCapnpRpc) capnpLedger.emplace();
-    }
-
-    Inbox firstInbox;
-    Inbox secondInbox;
-    kj::Maybe<LocalCapnpAuthorityLedger> capnpLedger;
-    bool closed = false;
-  };
-
-  static kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>
-  takeWaiter(Inbox& inbox) {
-    auto result = kj::mv(inbox.waiter);
-    inbox.waiter = kj::none;
-    return result;
-  }
-
-  static void revokeLocked(Shared& state,
-      kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>&
-          firstWaiter,
-      kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>&
-          secondWaiter) {
-    state.closed = true;
-    firstWaiter = takeWaiter(state.firstInbox);
-    secondWaiter = takeWaiter(state.secondInbox);
-    state.firstInbox.buffers.clear();
-    state.secondInbox.buffers.clear();
-    state.firstInbox.queuedBytes = 0;
-    state.secondInbox.queuedBytes = 0;
-    state.firstInbox.readIndex = 0;
-    state.secondInbox.readIndex = 0;
-  }
-
-  static void rejectWaiter(
-      kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<workerd::jsg::BackingStore>>>& waiter,
-      const kj::Exception& exception) {
-    KJ_IF_SOME(pending, waiter) {
-      pending->reject(exception.clone());
-    }
-  }
-
-  kj::MutexGuarded<Shared> shared;
-};
-
-class LocalBufferEndpoint final: public workerd::api::LocalBufferChannelEndpoint {
- public:
-  LocalBufferEndpoint(kj::Own<LocalBufferLinkState> state, bool first)
-      : state(kj::mv(state)), first(first) {}
-  ~LocalBufferEndpoint() noexcept override { state->close(); }
-
-  void send(workerd::jsg::BackingStore buffer) override {
-    state->send(first, kj::mv(buffer));
-  }
-  kj::Promise<workerd::jsg::BackingStore> receive() override {
-    return state->receive(first);
-  }
-  void close() override { state->close(); }
-
- private:
-  kj::Own<LocalBufferLinkState> state;
-  bool first;
-};
-
-class LocalBufferLinkRevoker final: public capnp::Capability::Server {
- public:
-  explicit LocalBufferLinkRevoker(kj::Own<LocalBufferLinkState> state)
-      : state(kj::mv(state)) {}
-  ~LocalBufferLinkRevoker() noexcept { state->close(); }
-
-  DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
-      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer>) override {
-    return internalUnimplemented("sandstorm.LocalBufferLinkRevoker", interfaceId, methodId);
-  }
-
- private:
-  kj::Own<LocalBufferLinkState> state;
-};
-
-class LocalBufferBrokerProvider final: public workerd::api::LocalBufferChannelProvider {
- public:
-  kj::Own<workerd::api::LocalBufferChannelEndpoint> take(kj::StringPtr name) override {
-    auto lock = shared.lockExclusive();
-    KJ_REQUIRE(!lock->revoked, "local buffer broker is revoked");
-    auto& endpoint = KJ_REQUIRE_NONNULL(lock->pending.find(name),
-        "unknown or already-accepted local buffer link", name);
-    kj::Own<workerd::api::LocalBufferChannelEndpoint> result = kj::mv(endpoint);
-    lock->pending.erase(name);
-    return result;
-  }
-
-  void add(kj::String name, kj::Own<workerd::api::LocalBufferChannelEndpoint> endpoint) {
-    auto lock = shared.lockExclusive();
-    requireCanAdd(*lock, name);
-    lock->pending.insert(kj::mv(name), kj::mv(endpoint));
-  }
-
-  void requireCanAdd(kj::StringPtr name) {
-    auto lock = shared.lockExclusive();
-    requireCanAdd(*lock, name);
-  }
-
-  void revoke() {
-    auto lock = shared.lockExclusive();
-    if (lock->revoked) return;
-    lock->revoked = true;
-    lock->pending.clear();
-  }
-
- private:
-  struct Shared {
-    kj::HashMap<kj::String, kj::Own<workerd::api::LocalBufferChannelEndpoint>> pending;
-    bool revoked = false;
-  };
-
-  static void requireCanAdd(Shared& shared, kj::StringPtr name) {
-    KJ_REQUIRE(!shared.revoked, "local buffer broker is revoked");
-    KJ_REQUIRE(shared.pending.find(name) == kj::none,
-        "duplicate local buffer link name", name);
-  }
-
-  kj::MutexGuarded<Shared> shared;
-};
-
-class LocalBufferBrokerCapTableEntry final: public workerd::Frankenvalue::CapTableEntry {
- public:
-  explicit LocalBufferBrokerCapTableEntry(kj::Own<LocalBufferBrokerProvider> provider)
-      : provider(kj::mv(provider)) {}
-
-  kj::Own<CapTableEntry> clone() override {
-    return kj::heap<LocalBufferBrokerCapTableEntry>(kj::atomicAddRef(*provider));
-  }
-  kj::Own<CapTableEntry> threadSafeClone() const override {
-    return kj::heap<LocalBufferBrokerCapTableEntry>(
-        kj::atomicAddRef(const_cast<LocalBufferBrokerProvider&>(*provider)));
-  }
-
-  kj::Own<LocalBufferBrokerProvider> addRefProvider() {
-    return kj::atomicAddRef(*provider);
-  }
-
- private:
-  kj::Own<LocalBufferBrokerProvider> provider;
-};
-
 class SharedHttpService: public kj::HttpService, public kj::Refcounted {
  public:
   virtual ~SharedHttpService() noexcept(false) = default;
@@ -925,10 +387,6 @@ class SandstormEnvCompiler final: public workerd::DynamicWorkerEnvCompiler {
       v8::Local<v8::Object> target) override {
     workerd::Frankenvalue::DirectCapabilityMaterializer materialize =
         [&js, &api](workerd::Frankenvalue::CapTableEntry& entry) {
-      KJ_IF_SOME(broker, kj::tryDowncast<LocalBufferBrokerCapTableEntry>(entry)) {
-        return workerd::server::WorkerdApi::from(api).wrapLocalBufferChannelBroker(
-            js, broker.addRefProvider());
-      }
       // Sandstorm's bundle translation creates only Fetcher capabilities. Keep this policy and
       // the corresponding IoChannel downcast in the embedding binary rather than workerd's
       // dynamic loader.
@@ -1087,75 +545,6 @@ void encodeLegacyHeaders(const kj::HttpHeaders& input,
   });
 }
 
-// The account host and the embedded workerd binary intentionally meet across the stable wire
-// schema rather than sharing a C++ HttpOverCapnpFactory ABI. Keep the small compatibility adapter
-// complete: native bridge sessions use WebSockets even though ordinary worker fetches do not.
-class LegacyWebSocketState final: public kj::Refcounted {
- public:
-  explicit LegacyWebSocketState(kj::Own<kj::WebSocket> socket)
-      : socket(kj::mv(socket)) {}
-
-  kj::Own<kj::WebSocket> socket;
-};
-
-class LegacyWebSocketReceiver final: public capnp::WebSocket::Server {
- public:
-  explicit LegacyWebSocketReceiver(kj::Own<LegacyWebSocketState> state)
-      : state(kj::mv(state)) {}
-
-  kj::Promise<void> sendText(SendTextContext context) override {
-    return state->socket->send(context.getParams().getText());
-  }
-
-  kj::Promise<void> sendData(SendDataContext context) override {
-    return state->socket->send(context.getParams().getData());
-  }
-
-  kj::Promise<void> close(CloseContext context) override {
-    auto params = context.getParams();
-    return state->socket->close(params.getCode(), params.getReason());
-  }
-
- private:
-  kj::Own<LegacyWebSocketState> state;
-};
-
-kj::Promise<void> pumpLegacyWebSocketToCapnp(
-    kj::Own<LegacyWebSocketState> state, capnp::WebSocket::Client destination) {
-  return state->socket->receive().then(
-      [state = kj::mv(state), destination = kj::mv(destination)](
-          kj::WebSocket::Message&& message) mutable -> kj::Promise<void> {
-    kj::Promise<void> send = nullptr;
-    bool finished = false;
-    KJ_SWITCH_ONEOF(message) {
-      KJ_CASE_ONEOF(text, kj::String) {
-        auto request = destination.sendTextRequest(
-            capnp::MessageSize { 8 + text.size() / sizeof(capnp::word), 0 });
-        request.setText(text);
-        send = request.send();
-      }
-      KJ_CASE_ONEOF(data, kj::Array<kj::byte>) {
-        auto request = destination.sendDataRequest(
-            capnp::MessageSize { 8 + data.size() / sizeof(capnp::word), 0 });
-        request.setData(data);
-        send = request.send();
-      }
-      KJ_CASE_ONEOF(close, kj::WebSocket::Close) {
-        auto request = destination.closeRequest();
-        request.setCode(close.code);
-        request.setReason(close.reason);
-        send = request.send().ignoreResult();
-        finished = true;
-      }
-    }
-    if (finished) return send.attach(kj::mv(state), kj::mv(destination));
-    return send.then(
-        [state = kj::mv(state), destination = kj::mv(destination)]() mutable {
-      return pumpLegacyWebSocketToCapnp(kj::mv(state), kj::mv(destination));
-    });
-  });
-}
-
 class LegacyClientRequestContext final:
     public capnp::HttpService::ClientRequestContext::Server {
  public:
@@ -1190,18 +579,8 @@ class LegacyClientRequestContext final:
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> startWebSocket(StartWebSocketContext context) override {
-    KJ_REQUIRE(responseFulfiller.get() != nullptr, "legacy HTTP response already started");
-    auto params = context.getParams();
-    auto socket = response.acceptWebSocket(decodeLegacyHeaders(
-        headerTable, params.getHeaders()));
-    auto state = kj::refcounted<LegacyWebSocketState>(kj::mv(socket));
-    context.getResults().setDownSocket(
-        kj::heap<LegacyWebSocketReceiver>(kj::addRef(*state)));
-    responseFulfiller->fulfill(
-        pumpLegacyWebSocketToCapnp(kj::mv(state), params.getUpSocket()));
-    responseFulfiller = nullptr;
-    return kj::READY_NOW;
+  kj::Promise<void> startWebSocket(StartWebSocketContext) override {
+    KJ_FAIL_REQUIRE("legacy shared-host bindings do not yet support WebSockets");
   }
 
  private:
@@ -1327,23 +706,8 @@ class LegacyHttpRequestContext final:
     return output;
   }
 
-  kj::Own<kj::WebSocket> acceptWebSocket(const kj::HttpHeaders& responseHeaders) override {
-    KJ_REQUIRE(replyTask == kj::none, "HTTP response already started");
-    auto pipe = kj::newWebSocketPipe();
-    auto state = kj::refcounted<LegacyWebSocketState>(kj::mv(pipe.ends[1]));
-
-    auto request = clientContext.startWebSocketRequest();
-    encodeLegacyHeaders(responseHeaders,
-        request.initHeaders(responseHeaders.size()));
-    request.setUpSocket(kj::heap<LegacyWebSocketReceiver>(kj::addRef(*state)));
-    auto pipeline = request.send();
-    auto pump = pumpLegacyWebSocketToCapnp(
-        kj::mv(state), pipeline.getDownSocket());
-    auto tasks = kj::heapArrayBuilder<kj::Promise<void>>(2);
-    tasks.add(pipeline.ignoreResult());
-    tasks.add(kj::mv(pump));
-    replyTask = kj::joinPromisesFailFast(tasks.finish());
-    return kj::mv(pipe.ends[0]);
+  kj::Own<kj::WebSocket> acceptWebSocket(const kj::HttpHeaders&) override {
+    KJ_FAIL_REQUIRE("legacy shared-host ingress does not yet support WebSockets");
   }
 
  private:
@@ -1548,7 +912,6 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::ArrayPtr<const kj::byte> wor
 LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
     capnp::ByteStreamFactory& streamFactory,
     kj::HttpHeaderTable& headerTable,
-    kj::Own<LocalBufferBrokerProvider> localBufferBroker,
     kj::Own<DecodedWorkerBundle> decoded) {
   auto backing = kj::atomicRefcounted<BundleBacking>();
   backing->decoded = kj::mv(decoded);
@@ -1650,9 +1013,6 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
         break;
     }
   }
-  env.setProperty(kj::str(LOCAL_BUFFER_BROKER_BINDING),
-      workerd::Frankenvalue::fromDirectCapability(
-          kj::heap<LocalBufferBrokerCapTableEntry>(kj::mv(localBufferBroker))));
   auto compatibility = backing->compatibility.initRoot<workerd::CompatibilityFlags>();
   auto flags = KJ_MAP(flag, bundle.compatibilityFlags) { return kj::str(flag); };
   BundleErrorReporter reporter;
@@ -1768,7 +1128,6 @@ class AdmissionPool {
 
 void initRuntimeConfig(capnp::MallocMessageBuilder& message, kj::StringPtr bootstrapAddress) {
   auto config = message.initRoot<workerd::server::config::Config>();
-  config.setStructuredLogging(true);
   auto service = config.initServices(1)[0];
   service.setName("sandstorm-loader-bootstrap");
   auto worker = service.initWorker();
@@ -1797,18 +1156,15 @@ struct HostedState final: public kj::Refcounted {
   HostedState(workerd::server::Server& runtime,
       kj::String grainId,
       IsolateBindingServices::Client bindingServices,
-      kj::Own<LocalBufferBrokerProvider> localBufferBroker,
       kj::Own<BundleBacking> backing,
       kj::Own<workerd::WorkerStubChannel> worker,
       kj::Own<SelfServiceTarget> ingressTarget)
       : runtime(runtime), grainId(kj::mv(grainId)),
-        bindingServices(kj::mv(bindingServices)), localBufferBroker(kj::mv(localBufferBroker)),
-        backing(kj::mv(backing)),
+        bindingServices(kj::mv(bindingServices)), backing(kj::mv(backing)),
         worker(kj::mv(worker)), ingressTarget(kj::mv(ingressTarget)) {}
 
   ~HostedState() noexcept {
     revokeSelfServices();
-    localBufferBroker->revoke();
   }
 
   void revokeSelfServices() {
@@ -1822,7 +1178,6 @@ struct HostedState final: public kj::Refcounted {
     runtime.evictDynamicWorker(LOADER_NAMESPACE, grainId);
     ingressTarget->worker = nullptr;
     revokeSelfServices();
-    localBufferBroker->revoke();
     bindingServices = IsolateBindingServices::Client(nullptr);
     worker = nullptr;
     backing = nullptr;
@@ -1832,7 +1187,6 @@ struct HostedState final: public kj::Refcounted {
   workerd::server::Server& runtime;
   kj::String grainId;
   IsolateBindingServices::Client bindingServices;
-  kj::Own<LocalBufferBrokerProvider> localBufferBroker;
   kj::Own<BundleBacking> backing;
   kj::Own<workerd::WorkerStubChannel> worker;
   kj::Own<SelfServiceTarget> ingressTarget;
@@ -1914,10 +1268,8 @@ class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::Er
         grains.erase(grainId);
       }
 
-      auto localBufferBroker = kj::atomicRefcounted<LocalBufferBrokerProvider>();
       auto source = buildWorkerSource(services, streamFactory,
-          runtime.getHttpHeaderTableForEmbedding(),
-          kj::atomicAddRef(*localBufferBroker), kj::mv(decoded));
+          runtime.getHttpHeaderTableForEmbedding(), kj::mv(decoded));
       auto backing = kj::atomicAddRef(*source.backing);
       auto worker = runtime.loadDynamicWorker(LOADER_NAMESPACE, kj::str(grainId),
           [source = kj::mv(source.source), backing = kj::mv(source.backing)]() mutable {
@@ -1927,63 +1279,14 @@ class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::Er
       auto ingressTarget = kj::atomicRefcounted<SelfServiceTarget>();
       ingressTarget->worker = worker.get();
       auto state = kj::rc<HostedState>(runtime, kj::str(grainId),
-          kj::mv(services), kj::mv(localBufferBroker), kj::mv(backing),
-          kj::mv(worker), kj::mv(ingressTarget));
+          kj::mv(services), kj::mv(backing), kj::mv(worker), kj::mv(ingressTarget));
       refreshIdleTimer(state.addRef());
       context.getResults().setGrain(makeHostedIsolate(state.addRef()));
       grains.insert(kj::mv(grainId), kj::mv(state));
     });
   }
 
-  kj::Promise<void> openLocalBufferChannel(OpenLocalBufferChannelContext context) override {
-    auto params = context.getParams();
-    context.getResults().setRevoker(kj::heap<LocalBufferLinkRevoker>(
-        openLocalChannel(params.getFirstGrainId(), params.getFirstName(),
-            params.getSecondGrainId(), params.getSecondName(), false)));
-    return kj::READY_NOW;
-  }
-
-  kj::Promise<void> openLocalCapnpChannel(OpenLocalCapnpChannelContext context) override {
-    auto params = context.getParams();
-    context.getResults().setRevoker(kj::heap<LocalBufferLinkRevoker>(
-        openLocalChannel(params.getFirstGrainId(), params.getFirstName(),
-            params.getSecondGrainId(), params.getSecondName(), true)));
-    return kj::READY_NOW;
-  }
-
  private:
-  kj::Own<LocalBufferLinkState> openLocalChannel(
-      kj::StringPtr firstGrainId, kj::StringPtr firstName,
-      kj::StringPtr secondGrainId, kj::StringPtr secondName, bool validateCapnpRpc) {
-    auto& first = requireRunningGrain(firstGrainId);
-    auto& second = requireRunningGrain(secondGrainId);
-    KJ_REQUIRE(firstName.size() > 0 && secondName.size() > 0,
-        "local buffer link names must be non-empty");
-    KJ_REQUIRE(firstName.size() <= 256 && secondName.size() <= 256,
-        "local buffer link names must be at most 256 bytes");
-    KJ_REQUIRE(firstGrainId != secondGrainId || firstName != secondName,
-        "a local buffer link cannot publish both endpoints under the same name");
-
-    // Validate both publications before creating either endpoint. The host event loop does not
-    // yield between these checks and the inserts, so a duplicate can never expose a half-link.
-    first.localBufferBroker->requireCanAdd(firstName);
-    second.localBufferBroker->requireCanAdd(secondName);
-
-    auto state = kj::atomicRefcounted<LocalBufferLinkState>(validateCapnpRpc);
-    first.localBufferBroker->add(kj::str(firstName),
-        kj::heap<LocalBufferEndpoint>(kj::atomicAddRef(*state), true));
-    second.localBufferBroker->add(kj::str(secondName),
-        kj::heap<LocalBufferEndpoint>(kj::atomicAddRef(*state), false));
-    return state;
-  }
-
-  HostedState& requireRunningGrain(kj::StringPtr grainId) {
-    auto& state = KJ_REQUIRE_NONNULL(grains.find(grainId),
-        "local buffer link grain is not hosted", grainId);
-    KJ_REQUIRE(state->running, "local buffer link grain has been stopped", grainId);
-    return *state.operator->();
-  }
-
   kj::Own<HostedIsolateImpl> makeHostedIsolate(kj::Rc<HostedState> state) {
     return kj::heap<HostedIsolateImpl>(kj::mv(state), streamFactory,
         [this](kj::Rc<HostedState> state) { refreshIdleTimer(kj::mv(state)); });
@@ -2065,12 +1368,14 @@ int main(int argc, char** argv) {
   workerd::server::WorkerdPlatform v8Platform(*defaultPlatform);
   workerd::jsg::V8System v8System(v8Platform, {}, defaultPlatform.get());
   sandstorm::SandstormLimitEnforcerFactory limitEnforcers(io.provider->getTimer());
+  auto loggingOptions = workerd::Worker::LoggingOptions(workerd::Worker::ConsoleMode::STDOUT);
+  loggingOptions.structuredLogging = workerd::StructuredLogging::YES;
   workerd::server::Server runtime(*filesystem,
       io.provider->getTimer(),
       kj::systemPreciseMonotonicClock(),
       io.provider->getNetwork(),
       entropy,
-      workerd::Worker::LoggingOptions(workerd::Worker::ConsoleMode::STDOUT),
+      kj::mv(loggingOptions),
       [](kj::String error) { KJ_FAIL_REQUIRE("embedded workerd configuration error", error); });
   runtime.setLimitEnforcerFactory(limitEnforcers);
   runtime.allowExperimental();

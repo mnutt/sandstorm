@@ -1903,15 +1903,6 @@ runtimeTest("isolate supervisor integration suite", {
         serverQuestionId: 77,
         echoBootstrap: true,
         echoQuestionId: 77,
-        localBuffer: {
-          serverBootstrap: true,
-          serverQuestionId: 78,
-          echoBootstrap: true,
-          echoQuestionId: 78,
-          detachedSends: [true, true],
-          clientKind: "nativeLocalBuffer",
-          serverKind: "nativeLocalBuffer",
-        },
         adapters: {
           pipeReadableToByteStream: {
             bytes: 12,

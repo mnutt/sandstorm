@@ -64,21 +64,6 @@ class SandstormCoreImpl {
     });
   }
 
-  restoreForIsolate(sturdyRef, requester) {
-    return inMeteor(async () => {
-      sturdyRef = sturdyRef.toString("utf8");
-      const token = await fetchApiToken(this.db, sturdyRef,
-          { "owner.grain.grainId": this.grainId });
-      if (!token) {
-        throw new Error("no such token");
-      }
-
-      return await restoreInternal(this.db, sturdyRef,
-          { grain: Match.ObjectIncluding({ grainId: this.grainId }) },
-          [], token, undefined, undefined, requester);
-    });
-  }
-
   drop(sturdyRef) {
     return inMeteor(async () => {
       sturdyRef = sturdyRef.toString("utf8");
@@ -534,7 +519,7 @@ class DummyObserver {
 }
 
 export const restoreInternal = async (db, originalToken, ownerPattern, requirements, originalTokenInfo,
-                         currentTokenId, currentTokenKey, localAppRestoreRequester) => {
+                         currentTokenId, currentTokenKey) => {
   // Restores the token `originalToken`, which is a Buffer.
   //
   // `ownerPattern` is a match pattern (i.e. used with check()) that the token's owner must match.
@@ -597,8 +582,7 @@ export const restoreInternal = async (db, originalToken, ownerPattern, requireme
     // A token which chains to some parent token.  Restore the parent token (possibly recursively),
     // checking requirements on the way up.
     return restoreInternal(db, originalToken, Match.Any, requirements,
-                           originalTokenInfo, token.parentToken, token.parentTokenKey,
-                           localAppRestoreRequester);
+                           originalTokenInfo, token.parentToken, token.parentTokenKey);
   }
 
   // Check the passed-in `requirements`.
@@ -616,26 +600,8 @@ export const restoreInternal = async (db, originalToken, ownerPattern, requireme
     //   when the observer is dropped.
     const observer = new DummyObserver();
 
-    // Ensure the grain is running, then prefer the account host's private local transport for a
-    // durable appRef. Preparation is only attempted after the full token chain has been validated;
-    // any runtime/topology failure falls back to the ordinary supervisor wrapper.
-    const restored = await globalBackend.useGrain(token.grainId, async (supervisor) => {
-      if (localAppRestoreRequester && token.objectId.appRef) {
-        try {
-          const prepared = await localAppRestoreRequester.prepare(
-              token.grainId, token.objectId.appRef, observer);
-          if (prepared.endpointName) {
-            return {
-              localEndpoint: prepared.endpointName,
-              localLifetime: prepared.lifetime,
-            };
-          }
-        } catch (error) {
-          // A provider that is not colocated, has not adopted the system route yet, or is shutting
-          // down remains reachable through the existing capability path.
-        }
-      }
-
+    // Ensure the grain is running, then restore the capability.
+    const cap = (await globalBackend.useGrain(token.grainId, (supervisor) => {
       // Note that in this case it is the supervisor's job to implement SystemPersistent, so we
       // don't generate a saveTemplate here.
       let promise = supervisor.restore(token.objectId, [], new Buffer(originalToken, "utf8"));
@@ -643,13 +609,9 @@ export const restoreInternal = async (db, originalToken, ownerPattern, requireme
         promise = promise.cap.castAs(SystemPersistent).addRequirements(requirements, observer);
       }
       return promise;
-    });
+    })).cap;
 
-    if (restored.localEndpoint) {
-      return restored;
-    }
-
-    return { cap: restored.cap };
+    return { cap };
   } else {
     // Construct a template ApiToken for use if the restored capability is save()d later.
     const saveTemplate = await makeSaveTemplateForChild(db, originalToken, requirements, originalTokenInfo);
