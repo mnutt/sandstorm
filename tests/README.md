@@ -59,6 +59,18 @@ When running `tests/apps/isolate-examples.js` directly, set
 `ISOLATE_API_POWERBOX_TEST_SPK` or `ISOLATE_API_PROVIDER_TEST_SPK` to use
 prebuilt example packages outside `tests/assets/`.
 
+## Running the isolate release gate
+
+Before releasing changes to the isolate runtime, run:
+
+    make isolate-ci
+
+This verifies the pinned workerd source and packaged release artifact, public
+Cap'n Proto ABI baselines, deterministic schema corpus, TypeScript declarations,
+per-grain fallback, account-shared storage isolation and restart, native-host
+lifecycle and idle eviction, and backend recovery after an account-host crash.
+GitHub Actions runs this target after the general release-bundle tests.
+
 ## Displaying the browser's UI during tests
 
 By default the tests run against a mock X server, so the browser windows

@@ -590,6 +590,12 @@ retired. The superseded Powerbox V2 and detailed architecture-review drafts
 have also been retired; the authoring guide, this roadmap, and the published
 memory benchmark are the maintained isolate documentation.
 
+Release CI now runs the composite `make isolate-ci` gate. It verifies a clean,
+pinned workerd tree and zero-fuzz private patch; checks the packaged native
+host, workerd runtime, schema compiler, and public schemas; then runs the ABI,
+corpus, TypeScript, per-grain fallback, account-shared isolation, native-host
+lifecycle, and backend-recovery suites.
+
 ---
 
 ## Sequencing rationale and risks

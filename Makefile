@@ -165,7 +165,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-backend-recovery-test isolate-memory-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source verify-isolate-release-bundle isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-backend-recovery-test isolate-memory-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test isolate-ci
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -337,6 +337,9 @@ verify-workerd-runtime: bin/workerd tmp/.workerd-npm
 
 verify-workerd-source:
 	@test "$$(git -C deps/workerd rev-parse HEAD)" = "$(WORKERD_SOURCE_COMMIT)"
+	@test -z "$$(git -C deps/workerd status --porcelain)"
+	@cd deps/workerd && git apply --check \
+		../../patches/workerd/0001-add-sandstorm-isolate-host-target.patch
 
 tmp/bazel-$(BAZEL_VERSION):
 	@$(call color,downloading Bazel $(BAZEL_VERSION))
@@ -359,7 +362,8 @@ tmp/.workerd-embed-source: deps/workerd isolate-host/isolate-host-main.c++ \
 		tmp/workerd-embed/src/workerd/server/sandstorm-isolate-host.capnp
 	cp src/sandstorm/isolate-worker-source.capnp \
 		tmp/workerd-embed/src/workerd/server/sandstorm-isolate-worker-source.capnp
-	cd tmp/workerd-embed && patch -p1 < ../../patches/workerd/0001-add-sandstorm-isolate-host-target.patch
+	cd tmp/workerd-embed && patch --batch --fuzz=0 -p1 < \
+		../../patches/workerd/0001-add-sandstorm-isolate-host-target.patch
 	@touch $@
 
 bin/isolate-host: tmp/bazel-$(BAZEL_VERSION) tmp/.workerd-embed-source
@@ -589,6 +593,15 @@ sandstorm-$(BUILD)-fast.tar.xz: bundle
 	@$(call color,compress fast bundle)
 	@tar c --transform="s,^bundle,sandstorm-$(BUILD)," bundle | xz -c -0 --threads=0 > sandstorm-$(BUILD)-fast.tar.xz
 
+verify-isolate-release-bundle: sandstorm-$(BUILD)-fast.tar.xz
+	@test -x bundle/bin/workerd
+	@test -x bundle/bin/isolate-host
+	@cmp -s bundle/bin/workerd bin/workerd
+	@cmp -s bundle/bin/isolate-host bin/isolate-host
+	@test -f bundle/usr/lib/capnp-es/dist/compiler/index.mjs
+	@test -f bundle/usr/include/sandstorm/package.capnp
+	@test -f bundle/usr/include/sandstorm/isolate-bridge.capnp
+
 # ====================================================================
 # app-index.spk
 
@@ -664,6 +677,12 @@ isolate-capnp-fuzz: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) \
 	CAPNP_ES_COMPILER_MODULE=$(CAPNP_ES_COMPILER_MODULE) \
 	$(NODEJS) tests/isolate-capnp-corpus.test.js
 
+isolate-capnp-types-test: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) \
+		tests/isolate-capnp-types.test.js \
+		src/sandstorm/isolate/api.d.ts src/sandstorm/isolate/capnp.d.ts
+	@test -x tmp/capnp-es-npm/node_modules/typescript/bin/tsc
+	$(NODEJS) tests/isolate-capnp-types.test.js
+
 tests/assets/isolate-test-app.spk: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) src/sandstorm/test-app/isolate-test-app.capnp src/sandstorm/test-app/isolate-test/*
 	@mkdir -p tests/assets
 	@mkdir -p tmp/sandstorm/isolate-test-app
@@ -682,7 +701,7 @@ isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capn
 	spk dev -Isrc -Itmp -ptmp/sandstorm/isolate-test-app/isolate-test-app.capnp:pkgdef
 
 isolate-capnp-toolchain-test: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) \
-		isolate-capnp-abi-check isolate-capnp-corpus-test \
+		isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-types-test \
 		tests/isolate-supervisor-integration.test.js
 	CAPNP_ES_COMPILER_MODULE=$(CAPNP_ES_COMPILER_MODULE) \
 	ISOLATE_SUPERVISOR_TEST_SCOPE=toolchain \
@@ -694,6 +713,17 @@ isolate-supervisor-integration-test: tmp/.ekam-run tests/assets/isolate-test-app
 	$(NODEJS) tests/isolate-supervisor-integration.test.js
 
 isolate-test: isolate-capnp-toolchain-test isolate-supervisor-integration-test
+
+# Release gate for isolate support. Keep the default account-shared topology,
+# its per-grain fallback, the native host, and backend recovery in one CI target
+# so adding a narrower test step cannot accidentally omit the released path.
+isolate-ci:
+	$(MAKE) verify-workerd-source
+	$(MAKE) verify-isolate-release-bundle
+	$(MAKE) isolate-test
+	$(MAKE) isolate-host-control-test
+	$(MAKE) isolate-account-host-integration-test
+	$(MAKE) isolate-backend-recovery-test
 
 isolate-supervisor-stress-test: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
 	ISOLATE_STRESS_64M=1 ISOLATE_SUPERVISOR_TEST_SCOPE=runtime \

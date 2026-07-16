@@ -126,9 +126,9 @@ jobs:
         run: |
           set -o pipefail
           make test |& tee testlog.txt
-      - name: isolate supervisor integration test
+      - name: isolate release gate
         run: |
-          make isolate-supervisor-integration-test
+          make isolate-ci
       - name: upload test log
         if: always()
         uses: actions/upload-artifact@v4

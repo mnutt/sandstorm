@@ -14,7 +14,8 @@ const COMPILER = path.join(
   REPO_DIR, "tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs");
 const CAPNP_ES_TYPES = path.join(
   REPO_DIR, "tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/index.d.mts");
-const TSC = path.join(REPO_DIR, "examples/isolate-typescript/node_modules/.bin/tsc");
+const TSC = path.join(
+  REPO_DIR, "tmp/capnp-es-npm/node_modules/typescript/bin/tsc");
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
