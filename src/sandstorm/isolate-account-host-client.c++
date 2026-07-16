@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
   openLocalCapnp.setFirstName("account-e2e-client");
   openLocalCapnp.setSecondGrainId("testgrain456");
   openLocalCapnp.setSecondName("account-e2e-server");
-  openLocalCapnp.send().wait(io.waitScope);
+  auto localCapnpRevoker = openLocalCapnp.send().wait(io.waitScope).getRevoker();
   auto localServerRequest = sandstorm::startFetchPath(io.waitScope, second, core,
       "native-local-capnp-server?name=account-e2e-server");
   auto localClientRequest = sandstorm::startFetchPath(io.waitScope, supervisor, core,

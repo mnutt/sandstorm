@@ -6889,7 +6889,9 @@ public:
     request.setFirstName(params.getFirstName());
     request.setSecondGrainId(secondGrainId);
     request.setSecondName(params.getSecondName());
-    return request.send().ignoreResult();
+    return request.send().then([context](auto result) mutable {
+      context.getResults().setRevoker(result.getRevoker());
+    });
   }
 
 private:
