@@ -579,7 +579,7 @@ shell-build: shell/imports/* shell/imports/*/* shell/imports/*/*/* shell/imports
 # ====================================================================
 # Bundle
 
-bundle: tmp/.ekam-run shell-build verify-workerd-runtime isolate-host make-bundle.sh localedata-C meteor-bundle-main.js
+bundle: tmp/.ekam-run shell-build verify-workerd-runtime isolate-host make-bundle.sh localedata-C meteor-bundle-main.js | verify-workerd-source
 	@$(call color,bundle)
 	@CC=$(CC) ./make-bundle.sh
 	cmp -s bundle/bin/workerd bin/workerd
