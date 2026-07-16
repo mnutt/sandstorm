@@ -324,6 +324,11 @@ struct LoadedWorkerSource {
   kj::Own<BundleBacking> backing;
 };
 
+// Authoritative per-link capability state. capnp-es inside each worker maintains the dispatch
+// tables, but those tables are not trusted: every complete RPC frame crosses this ledger before
+// delivery, and any reference not derivable from previously validated traffic revokes the link.
+// Keeping the authority state here lets the workers use the standard RPC implementation without
+// giving either JS heap the ability to mint or guess authority.
 class LocalCapnpAuthorityLedger {
  public:
   void validate(bool fromFirst, const workerd::jsg::BackingStore& buffer) {

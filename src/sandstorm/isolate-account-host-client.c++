@@ -34,6 +34,33 @@ public:
   }
 };
 
+class TestHandoffReceiver final: public NativeGreeter::Server {
+public:
+  kj::Promise<void> hello(HelloContext context) override {
+    auto request = KJ_REQUIRE_NONNULL(heldGreeter,
+        "handoff receiver has not received a capability").helloRequest();
+    request.setName(context.getParams().getName());
+    return request.send().then([context](auto result) mutable {
+      context.getResults().setMessage(kj::str(
+          "handoff receiver relayed ", result.getMessage()));
+    });
+  }
+
+  kj::Promise<void> greetWith(GreetWithContext context) override {
+    auto params = context.getParams();
+    heldGreeter = params.getGreeter();
+    auto request = KJ_ASSERT_NONNULL(heldGreeter).helloRequest();
+    request.setName(params.getName());
+    return request.send().then([context](auto result) mutable {
+      context.getResults().setMessage(kj::str(
+          "handoff receiver called ", result.getMessage()));
+    });
+  }
+
+private:
+  kj::Maybe<NativeGreeter::Client> heldGreeter;
+};
+
 class TestCore final: public SandstormCore::Server {
 public:
   void setProvider(Supervisor::Client provider) {
@@ -44,6 +71,10 @@ public:
     auto params = context.getParams();
     if (params.getToken() == kj::StringPtr("fallback-restore-token").asBytes()) {
       context.getResults().setCap(kj::heap<TestFallbackGreeter>());
+      return kj::READY_NOW;
+    }
+    if (params.getToken() == kj::StringPtr("handoff-receiver-token").asBytes()) {
+      context.getResults().setCap(kj::heap<TestHandoffReceiver>());
       return kj::READY_NOW;
     }
     KJ_REQUIRE(params.getToken() == kj::StringPtr("local-app-restore-token").asBytes(),
@@ -230,6 +261,16 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(localRestore == expectedLocalRestore,
       "durable appRef restore did not use the forced transport", expectLocalFastPath,
       localRestore);
+  if (expectLocalFastPath) {
+    auto handoff = sandstorm::requireFetchOk(sandstorm::startFetchPath(
+        io.waitScope, supervisor, core, "local-app-handoff-self-test").wait(io.waitScope));
+    KJ_REQUIRE(handoff ==
+        "{\"ok\":true,\"message\":\"handoff receiver called classic native greeter "
+        "account-local-app-ref hello non-colocated handoff\","
+        "\"providerResidence\":\"sameAccountLocal\","
+        "\"receiverResidence\":\"imported\",\"revokedAfterDrop\":true}",
+        "local capability handoff did not preserve authority and revocation", handoff);
+  }
   auto fallbackRestore = sandstorm::requireFetchOk(sandstorm::startFetchPath(
       io.waitScope, supervisor, core, "restore-fallback-self-test").wait(io.waitScope));
   KJ_REQUIRE(fallbackRestore ==
