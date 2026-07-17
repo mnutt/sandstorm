@@ -162,7 +162,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint verify-workerd-source verify-isolate-release-bundle isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-backend-recovery-test isolate-memory-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test isolate-capnp-toolchain-test isolate-test isolate-ci
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint verify-workerd-source verify-isolate-release-bundle isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-backend-recovery-test isolate-memory-benchmark isolate-cross-grain-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test isolate-capnp-toolchain-test isolate-test isolate-ci
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -396,6 +396,28 @@ isolate-backend-recovery-test: bin/isolate-host tmp/.ekam-run \
 
 isolate-memory-benchmark: bin/isolate-host tmp/.ekam-run
 	@$(NODEJS) tests/isolate-memory-benchmark.js $(ISOLATE_MEMORY_BENCHMARK_ARGS)
+
+isolate-cross-grain-benchmark: bin/isolate-host tmp/.ekam-run \
+		tests/assets/isolate-test-app.spk
+	@set -e; root="$(PWD)/tmp/isolate-cross-grain-benchmark"; \
+		app_root="$$root/apps"; grain_root="$$root/grains"; \
+		account_socket="$$root/account.sock"; account_log="$$root/account.log"; \
+		rm -rf "$$root"; mkdir -p "$$app_root" "$$grain_root"; \
+		bin/spk unpack tests/assets/isolate-test-app.spk "$$app_root/testpackage123" >/dev/null; \
+		ln -s "$(PWD)/bin/sandstorm" "$$root/isolate-account-host"; \
+		trap 'kill $$account_pid 2>/dev/null || true; wait $$account_pid 2>/dev/null || true; rm -rf "$$root"' EXIT; \
+		"$$root/isolate-account-host" \
+			--trust-domain benchmarkaccount \
+			--control-socket "$$account_socket" \
+			--native-host "$(PWD)/bin/isolate-host" \
+			--app-root "$$app_root" --grain-root "$$grain_root" \
+			>"$$account_log" 2>&1 & account_pid=$$!; \
+		for attempt in $$(seq 1 100); do test -S "$$account_socket" && break; sleep 0.05; done; \
+		test -S "$$account_socket"; \
+		tmp/sandstorm/isolate-account-host-client \
+			"$$account_socket" isolatebenchmarkprovider testpackage123 --benchmark \
+			$(ISOLATE_CROSS_GRAIN_BENCHMARK_ARGS) || \
+			{ status=$$?; cat "$$account_log"; exit $$status; }
 
 # ====================================================================
 # fetch capnp-es

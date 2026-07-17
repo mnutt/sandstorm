@@ -186,6 +186,10 @@ function makePersistentNativeGreeterTarget(id) {
         firstEightHex: firstEightHex(bytes),
       };
     },
+
+    async ping(params) {
+      return { payload: capnpDataBytes(params.payload) };
+    },
   };
 }
 
@@ -219,6 +223,96 @@ function capnpDataBytes(value) {
   }
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   return new Uint8Array(value);
+}
+
+function benchmarkInteger(searchParams, name, defaultValue, { min, max }) {
+  const text = searchParams.get(name);
+  if (text === null) return defaultValue;
+  if (!/^[0-9]+$/.test(text)) {
+    throw new TypeError(`${name} must be an integer`);
+  }
+  const value = Number(text);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new RangeError(`${name} must be between ${min} and ${max}`);
+  }
+  return value;
+}
+
+function rounded(value) {
+  return Number(value.toFixed(3));
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function roundedMedian(values) {
+  const finite = values.filter(Number.isFinite);
+  return finite.length > 0 ? rounded(median(finite)) : null;
+}
+
+async function benchmarkNativeGreeterSample(client, payload, { iterations, concurrency }) {
+  let nextCall = 0;
+  const started = performance.now();
+
+  async function runCalls() {
+    while (true) {
+      const call = nextCall++;
+      if (call >= iterations) return;
+      const result = await client.ping({ payload });
+      const echoed = capnpDataBytes(result.payload);
+      if (echoed.byteLength !== payload.byteLength) {
+        throw new Error(
+          `benchmark ping returned ${echoed.byteLength} bytes; expected ${payload.byteLength}`);
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, runCalls));
+  const elapsedMs = performance.now() - started;
+  const requestBytes = iterations * payload.byteLength;
+  const roundTripBytes = requestBytes * 2;
+  const seconds = elapsedMs / 1000;
+  return {
+    elapsedMs: rounded(elapsedMs),
+    callsPerSecond: elapsedMs > 0 ? rounded(iterations / seconds) : null,
+    wallTimeUsPerCall: rounded(elapsedMs * 1000 / iterations),
+    requestMiBPerSecond: elapsedMs > 0
+      ? rounded(requestBytes / (1024 * 1024) / seconds)
+      : null,
+    roundTripMiBPerSecond: elapsedMs > 0
+      ? rounded(roundTripBytes / (1024 * 1024) / seconds)
+      : null,
+  };
+}
+
+async function benchmarkNativeGreeter(client, payload, options) {
+  for (let i = 0; i < options.warmup; ++i) {
+    const result = await client.ping({ payload });
+    if (capnpDataBytes(result.payload).byteLength !== payload.byteLength) {
+      throw new Error("benchmark warmup returned the wrong payload length");
+    }
+  }
+
+  const samples = [];
+  for (let i = 0; i < options.samples; ++i) {
+    samples.push(await benchmarkNativeGreeterSample(client, payload, options));
+  }
+  return {
+    samples,
+    median: {
+      callsPerSecond: roundedMedian(samples.map((sample) => sample.callsPerSecond)),
+      wallTimeUsPerCall: roundedMedian(samples.map((sample) => sample.wallTimeUsPerCall)),
+      requestMiBPerSecond: roundedMedian(
+        samples.map((sample) => sample.requestMiBPerSecond)),
+      roundTripMiBPerSecond: roundedMedian(
+        samples.map((sample) => sample.roundTripMiBPerSecond)),
+    },
+  };
 }
 
 function concatByteChunks(chunks) {
@@ -1208,6 +1302,9 @@ export default {
             firstEightHex: firstEightHex(bytes),
           };
         },
+        async ping(params) {
+          return { payload: capnpDataBytes(params.payload) };
+        },
       };
       const capability = await exportFixtureCapnp(api, NativeGreeter, target, {
         id,
@@ -1218,6 +1315,134 @@ export default {
         capabilityClass: capability instanceof Capability,
         capability: JSON.parse(JSON.stringify(capability)),
         info: await capability.info(),
+      });
+    }
+
+    if (url.pathname === "/cross-grain-capnp-benchmark-token") {
+      const api = sandstorm(request, env);
+      const capability = await exportFixtureCapnp(
+        api,
+        NativeGreeter,
+        makePersistentNativeGreeterTarget("cross-grain-capnp-benchmark"));
+      const token = await capability.save({ label: "Cross-grain Cap'n Proto benchmark" });
+      return new Response(token, {
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    if (url.pathname === "/cross-grain-capnp-benchmark") {
+      const token = url.searchParams.get("token");
+      if (!token) {
+        return Response.json({ ok: false, error: "missing token" }, { status: 400 });
+      }
+
+      let config;
+      try {
+        config = {
+          samples: benchmarkInteger(
+            url.searchParams, "samples", 5, { min: 1, max: 25 }),
+          concurrency: benchmarkInteger(
+            url.searchParams, "concurrency", 1, { min: 1, max: 64 }),
+          smallIterations: benchmarkInteger(
+            url.searchParams, "smallIterations", 500, { min: 1, max: 100000 }),
+          smallWarmup: benchmarkInteger(
+            url.searchParams, "smallWarmup", 50, { min: 0, max: 10000 }),
+          largeIterations: benchmarkInteger(
+            url.searchParams, "largeIterations", 16, { min: 1, max: 10000 }),
+          largeWarmup: benchmarkInteger(
+            url.searchParams, "largeWarmup", 2, { min: 0, max: 1000 }),
+          largePayloadBytes: benchmarkInteger(
+            url.searchParams, "largePayloadBytes", 1024 * 1024,
+            { min: 1, max: 16 * 1024 * 1024 }),
+        };
+      } catch (error) {
+        return Response.json({ ok: false, error: String(error.message || error) }, { status: 400 });
+      }
+
+      const api = sandstorm(request, env);
+      // Grant and restoration happen before either timer starts. The benchmark is specifically
+      // measuring calls on an already-connected capability, not persistence or HTTP setup.
+      const crossGrain = await restoreFixtureCapability(api, token, NativeGreeter);
+      const local = new NativeGreeter.Server(
+        makePersistentNativeGreeterTarget("cross-grain-capnp-benchmark-local")).client();
+      const emptyPayload = new Uint8Array();
+      const largePayload = new Uint8Array(config.largePayloadBytes);
+      for (let i = 0; i < largePayload.length; ++i) {
+        largePayload[i] = (i * 37 + 11) & 0xff;
+      }
+
+      const smallOptions = {
+        iterations: config.smallIterations,
+        warmup: config.smallWarmup,
+        samples: config.samples,
+        concurrency: config.concurrency,
+      };
+      const largeOptions = {
+        iterations: config.largeIterations,
+        warmup: config.largeWarmup,
+        samples: config.samples,
+        concurrency: config.concurrency,
+      };
+      const fixedCrossGrain = await benchmarkNativeGreeter(
+        crossGrain, emptyPayload, smallOptions);
+      const fixedLocal = await benchmarkNativeGreeter(local, emptyPayload, smallOptions);
+      const dataCrossGrain = await benchmarkNativeGreeter(
+        crossGrain, largePayload, largeOptions);
+      const dataLocal = await benchmarkNativeGreeter(local, largePayload, largeOptions);
+
+      const result = {
+        ok: true,
+        topology: "two grains in one account-shared native workerd host",
+        measuredPath: "consumer isolate -> typed Cap'n Proto RPC -> provider isolate",
+        setupExcluded: [
+          "HTTP benchmark orchestration",
+          "capability save/grant",
+          "capability restore and connection establishment",
+        ],
+        config,
+        cases: {
+          fixedCall: {
+            description: "zero-byte request and response at concurrency 1 by default",
+            payloadBytesEachDirection: 0,
+            crossGrain: fixedCrossGrain,
+            inIsolateCapnpBaseline: fixedLocal,
+            overhead: {
+              addedWallTimeUsPerCall: rounded(
+                fixedCrossGrain.median.wallTimeUsPerCall -
+                  fixedLocal.median.wallTimeUsPerCall),
+              wallTimeRatio: fixedLocal.median.wallTimeUsPerCall > 0
+                ? rounded(
+                  fixedCrossGrain.median.wallTimeUsPerCall /
+                    fixedLocal.median.wallTimeUsPerCall)
+                : null,
+            },
+          },
+          dataEcho: {
+            description: "large Data payload echoed once in each direction",
+            payloadBytesEachDirection: config.largePayloadBytes,
+            applicationBytesPerCall: config.largePayloadBytes * 2,
+            crossGrain: dataCrossGrain,
+            inIsolateCapnpBaseline: dataLocal,
+            overhead: {
+              addedWallTimeUsPerCall: rounded(
+                dataCrossGrain.median.wallTimeUsPerCall -
+                  dataLocal.median.wallTimeUsPerCall),
+              wallTimeRatio: dataLocal.median.wallTimeUsPerCall > 0
+                ? rounded(
+                  dataCrossGrain.median.wallTimeUsPerCall /
+                    dataLocal.median.wallTimeUsPerCall)
+                : null,
+              roundTripThroughputRatio: dataLocal.median.roundTripMiBPerSecond > 0
+                ? rounded(
+                  dataCrossGrain.median.roundTripMiBPerSecond /
+                    dataLocal.median.roundTripMiBPerSecond)
+                : null,
+            },
+          },
+        },
+      };
+      return new Response(JSON.stringify(result, null, 2), {
+        headers: { "content-type": "application/json; charset=utf-8" },
       });
     }
 
