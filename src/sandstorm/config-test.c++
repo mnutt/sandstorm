@@ -56,17 +56,10 @@ private:
   int fd;
 };
 
-KJ_TEST("account-shared isolate hosting is the default") {
+KJ_TEST("config defaults parse") {
   TempConfig file;
   auto config = readConfig(file.getPath(), false);
-  KJ_EXPECT(config.isolateHostingMode == IsolateHostingMode::ACCOUNT);
-}
-
-KJ_TEST("per-grain isolate hosting remains an explicit fallback") {
-  TempConfig file;
-  file.set("ISOLATE_HOSTING_MODE=per-grain\n");
-  auto config = readConfig(file.getPath(), false);
-  KJ_EXPECT(config.isolateHostingMode == IsolateHostingMode::PER_GRAIN);
+  KJ_EXPECT(config.logSeccompViolations == false);
 }
 
 }  // namespace

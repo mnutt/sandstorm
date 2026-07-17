@@ -101,72 +101,6 @@ function(sandstorm_install_native)
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT native)
 
-  set(_workerd_dir "${CMAKE_BINARY_DIR}/workerd-npm")
-  set(_workerd_bin "${CMAKE_BINARY_DIR}/bin/workerd")
-  set(_workerd_package_dir "${PROJECT_SOURCE_DIR}/deps/workerd-npm")
-  if(SANDSTORM_WORKERD_BIN)
-    add_custom_command(
-      OUTPUT "${_workerd_bin}"
-      COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/bin"
-      COMMAND "${CMAKE_COMMAND}" -E copy
-        "${SANDSTORM_WORKERD_BIN}" "${_workerd_bin}"
-      DEPENDS "${SANDSTORM_WORKERD_BIN}"
-      COMMENT "Staging the configured workerd binary"
-      VERBATIM)
-  else()
-    add_custom_command(
-      OUTPUT "${_workerd_bin}"
-      COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_workerd_dir}"
-      COMMAND "${CMAKE_COMMAND}" -E make_directory
-        "${_workerd_dir}" "${CMAKE_BINARY_DIR}/bin"
-      COMMAND "${CMAKE_COMMAND}" -E copy
-        "${_workerd_package_dir}/package.json"
-        "${_workerd_package_dir}/package-lock.json"
-        "${_workerd_dir}"
-      COMMAND "${CMAKE_COMMAND}" -E env
-        "PATH=${SANDSTORM_METEOR_DEV_BUNDLE}/bin:$ENV{PATH}"
-        "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/npm" ci
-          --no-fund --prefix "${_workerd_dir}"
-      COMMAND "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node" -e
-        "const v=require('${_workerd_dir}/node_modules/workerd/package.json').version;if(v!=='${SANDSTORM_WORKERD_NPM_VERSION}')process.exit(1)"
-      COMMAND "${CMAKE_COMMAND}" -E copy
-        "${_workerd_dir}/node_modules/.bin/workerd" "${_workerd_bin}"
-      DEPENDS
-        "${_workerd_package_dir}/package.json"
-        "${_workerd_package_dir}/package-lock.json"
-      COMMENT "Installing workerd from npm"
-      VERBATIM)
-  endif()
-  add_custom_target(workerd DEPENDS "${_workerd_bin}")
-  if(SANDSTORM_WORKERD_BIN)
-    add_custom_target(verify-workerd-runtime
-      COMMAND "${CMAKE_COMMAND}" -E echo
-        "SANDSTORM_WORKERD_BIN cannot be used for reproducible bundles"
-      COMMAND "${CMAKE_COMMAND}" -E false
-      DEPENDS workerd
-      VERBATIM)
-  else()
-    string(REGEX REPLACE
-      "^1\\.([0-9][0-9][0-9][0-9])([0-9][0-9])([0-9][0-9])\\..*$"
-      "\\1-\\2-\\3" _workerd_release_date "${SANDSTORM_WORKERD_NPM_VERSION}")
-    add_custom_target(verify-workerd-runtime
-      COMMAND "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node" -e
-        "const l=require('${_workerd_dir}/package-lock.json');const p=require('${_workerd_dir}/node_modules/workerd/package.json');const v='${SANDSTORM_WORKERD_NPM_VERSION}';if(l.packages[''].dependencies.workerd!==v||l.packages['node_modules/workerd'].version!==v||p.version!==v)process.exit(1)"
-      COMMAND "${CMAKE_COMMAND}" -E compare_files
-        "${_workerd_bin}" "${_workerd_dir}/node_modules/.bin/workerd"
-      COMMAND "${CMAKE_COMMAND}"
-        "-DCOMMAND=${_workerd_bin}"
-        "-DARGUMENTS=--version"
-        "-DEXPECTED=workerd ${_workerd_release_date}"
-        -P "${PROJECT_SOURCE_DIR}/cmake/VerifyCommandOutput.cmake"
-      DEPENDS workerd "${PROJECT_SOURCE_DIR}/cmake/VerifyCommandOutput.cmake"
-      COMMENT "Verifying the bundled workerd runtime"
-      VERBATIM)
-  endif()
-  install(PROGRAMS "${_workerd_bin}"
-    DESTINATION "${CMAKE_INSTALL_BINDIR}"
-    COMPONENT native)
-
   set(_sandstorm_node_schemas
     activity.capnp
     api-session-impl.capnp
@@ -224,7 +158,7 @@ function(sandstorm_install_native)
       --prefix "${CMAKE_BINARY_DIR}/stage"
       --component native
     COMMAND "${CMAKE_COMMAND}" -E touch "${_native_stage_stamp}"
-    DEPENDS ${_native_targets} workerd isolate-host
+    DEPENDS ${_native_targets} isolate-host
     COMMENT "Staging native Sandstorm build outputs"
     VERBATIM)
   add_custom_target(stage-native DEPENDS "${_native_stage_stamp}")

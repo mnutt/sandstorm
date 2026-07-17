@@ -1,7 +1,0 @@
-{
-  "name": "sandstorm-workerd-runtime",
-  "private": true,
-  "dependencies": {
-    "workerd": "1.20260610.1"
-  }
-}

@@ -23,13 +23,6 @@ const viewInfo :Grain.UiView.ViewInfo = (
 );
 
 const command :Spk.Manifest.Command = (
-  argv = [
-    "workerd",
-    "serve",
-    "${SANDSTORM_ISOLATE_WORKERD_CONFIG}",
-    "sandstormConfig"
-  ],
-
   isolate = (
     mainModule = "worker.js",
     compatibilityDate = "2025-01-01",

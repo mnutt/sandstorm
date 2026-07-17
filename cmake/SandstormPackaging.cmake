@@ -173,28 +173,6 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Running the Sandstorm isolate test app in development mode"
     VERBATIM)
 
-  add_custom_target(isolate-supervisor-integration-test
-    COMMAND "${CMAKE_COMMAND}" -E env
-      "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
-      "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
-      "SPK_BIN=$<TARGET_FILE:spk>"
-      "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
-      "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
-      "ISOLATE_SUPERVISOR_TEST_SCOPE=runtime"
-      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
-      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
-    DEPENDS
-      sandstorm
-      spk
-      isolate-websession-client
-      workerd
-      isolate-test-app-spk
-      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
-    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
-    USES_TERMINAL
-    COMMENT "Running isolate supervisor integration tests"
-    VERBATIM)
-
   add_custom_target(isolate-account-host-integration-test
     COMMAND bash "${PROJECT_SOURCE_DIR}/cmake/RunIsolateAccountHostIntegrationTest.sh"
       "${CMAKE_BINARY_DIR}/bin/isolate-host"
@@ -347,90 +325,26 @@ function(sandstorm_add_packaging_targets)
 
   add_custom_target(isolate-capnp-toolchain-test
     COMMAND "${CMAKE_COMMAND}" -E env
-      "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
-      "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
       "SPK_BIN=$<TARGET_FILE:spk>"
-      "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
+      "CAPNP_BIN=$<TARGET_FILE:capnp_tool>"
       "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
-      "ISOLATE_SUPERVISOR_TEST_SCOPE=toolchain"
       "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
-      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-capnp-toolchain.test.js"
     DEPENDS
-      sandstorm
       spk
-      isolate-websession-client
+      capnp_tool
       isolate-capnp-abi-check
       isolate-capnp-corpus-test
       isolate-capnp-types-test
       "${_capnp_es_compiler_deps}"
-      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
+      "${PROJECT_SOURCE_DIR}/tests/isolate-capnp-toolchain.test.js"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     USES_TERMINAL
     COMMENT "Running isolate Cap'n Proto toolchain tests"
     VERBATIM)
 
   add_custom_target(isolate-test
-    DEPENDS isolate-capnp-toolchain-test isolate-supervisor-integration-test)
-
-  add_custom_target(isolate-supervisor-stress-test
-    COMMAND "${CMAKE_COMMAND}" -E env
-      "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
-      "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
-      "SPK_BIN=$<TARGET_FILE:spk>"
-      "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
-      "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
-      "ISOLATE_STRESS_64M=1"
-      "ISOLATE_SUPERVISOR_TEST_SCOPE=runtime"
-      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
-      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
-    DEPENDS
-      sandstorm
-      spk
-      isolate-websession-client
-      workerd
-      isolate-test-app-spk
-      "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
-    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
-    USES_TERMINAL
-    COMMENT "Running isolate supervisor stress tests"
-    VERBATIM)
-
-  find_program(SANDSTORM_STRACE_EXECUTABLE NAMES strace)
-  if(SANDSTORM_STRACE_EXECUTABLE)
-    set(_isolate_trace_dir "${CMAKE_BINARY_DIR}/isolate-syscall-trace")
-    add_custom_target(isolate-supervisor-syscall-trace
-      COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_isolate_trace_dir}"
-      COMMAND "${CMAKE_COMMAND}" -E make_directory "${_isolate_trace_dir}"
-      COMMAND "${CMAKE_COMMAND}" -E env
-        "PATH=${CMAKE_BINARY_DIR}/bin:$ENV{PATH}"
-        "SANDSTORM_BIN=$<TARGET_FILE:sandstorm>"
-        "SPK_BIN=$<TARGET_FILE:spk>"
-        "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
-        "ISOLATE_WEBSESSION_CLIENT=$<TARGET_FILE:isolate-websession-client>"
-        "ISOLATE_SYSCALL_TRACE_DIR=${_isolate_trace_dir}"
-        "ISOLATE_SYSCALL_TRACE_PROFILE=representative"
-        "ISOLATE_SUPERVISOR_TEST_SCOPE=runtime"
-        "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
-        "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
-      COMMAND "${CMAKE_COMMAND}" -E echo
-        "Wrote syscall traces to ${_isolate_trace_dir}"
-      DEPENDS
-        sandstorm
-        spk
-        isolate-websession-client
-        workerd
-        isolate-test-app-spk
-        "${PROJECT_SOURCE_DIR}/tests/isolate-supervisor-integration.test.js"
-      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
-      USES_TERMINAL
-      COMMENT "Tracing isolate supervisor syscalls"
-      VERBATIM)
-  else()
-    add_custom_target(isolate-supervisor-syscall-trace
-      COMMAND "${CMAKE_COMMAND}" -E echo "strace is required for this target"
-      COMMAND "${CMAKE_COMMAND}" -E false
-      VERBATIM)
-  endif()
+    DEPENDS isolate-capnp-toolchain-test)
 
   set(_api_powerbox_source "${PROJECT_SOURCE_DIR}/src/sandstorm/test-app")
   set(_api_powerbox_stage "${_spk_stage}/sandstorm/isolate-api-powerbox-test-app")
@@ -615,15 +529,12 @@ function(sandstorm_add_packaging_targets)
       "SANDSTORM_CAPNP_ES_NPM_DIR=${_capnp_es_work_dir}"
       "${PROJECT_SOURCE_DIR}/make-bundle.sh"
     COMMAND "${CMAKE_COMMAND}" -E compare_files
-      "${_bundle_dir}/bin/workerd" "${CMAKE_BINARY_DIR}/bin/workerd"
-    COMMAND "${CMAKE_COMMAND}" -E compare_files
       "${_bundle_dir}/bin/isolate-host" "${CMAKE_BINARY_DIR}/bin/isolate-host"
     COMMAND "${CMAKE_COMMAND}" -E touch "${_bundle_stamp}"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     DEPENDS
       "${SANDSTORM_SHELL_BUILD_STAMP}"
       "${SANDSTORM_NATIVE_STAGE_STAMP}"
-      verify-workerd-runtime
       "${_capnp_es_npm_compiler}"
       "${PROJECT_SOURCE_DIR}/make-bundle.sh"
       "${PROJECT_SOURCE_DIR}/find-meteor-dev-bundle.sh"
@@ -660,10 +571,8 @@ function(sandstorm_add_packaging_targets)
 
   find_program(SANDSTORM_TEST_EXECUTABLE NAMES test REQUIRED)
   add_custom_target(verify-isolate-release-bundle
-    COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -x "${_bundle_dir}/bin/workerd"
     COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -x "${_bundle_dir}/bin/isolate-host"
-    COMMAND "${CMAKE_COMMAND}" -E compare_files
-      "${_bundle_dir}/bin/workerd" "${CMAKE_BINARY_DIR}/bin/workerd"
+    COMMAND "${SANDSTORM_TEST_EXECUTABLE}" ! -e "${_bundle_dir}/bin/workerd"
     COMMAND "${CMAKE_COMMAND}" -E compare_files
       "${_bundle_dir}/bin/isolate-host" "${CMAKE_BINARY_DIR}/bin/isolate-host"
     COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -f

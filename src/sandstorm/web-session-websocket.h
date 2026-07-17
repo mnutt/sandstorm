@@ -47,11 +47,11 @@ public:
 
   kj::Promise<void> write(const void* buffer, size_t size) override {
     auto req = KJ_REQUIRE_NONNULL(outgoing, "already called shutdownWrite()").sendBytesRequest();
-    req.setMessage(kj::arrayPtr(reinterpret_cast<const byte*>(buffer), size));
+    req.setMessage(kj::arrayPtr(reinterpret_cast<const kj::byte*>(buffer), size));
     return req.send();
   }
 
-  kj::Promise<void> write(kj::ArrayPtr<const kj::ArrayPtr<const byte>> pieces) override {
+  kj::Promise<void> write(kj::ArrayPtr<const kj::ArrayPtr<const kj::byte>> pieces) override {
     size_t size = 0;
     for (auto piece: pieces) {
       size += piece.size();
@@ -60,7 +60,7 @@ public:
     auto req = KJ_REQUIRE_NONNULL(outgoing, "already called shutdownWrite()").sendBytesRequest();
     auto builder = req.initMessage(size);
 
-    byte* pos = builder.begin();
+    kj::byte* pos = builder.begin();
     for (auto piece: pieces) {
       memcpy(pos, piece.begin(), piece.size());
       pos += piece.size();
@@ -93,7 +93,7 @@ public:
           w.fulfiller->fulfill();
           auto paf = kj::newPromiseAndFulfiller<size_t>();
           current = CurrentRead {
-            kj::arrayPtr(reinterpret_cast<byte*>(buffer) + alreadyRead, maxBytes - alreadyRead),
+            kj::arrayPtr(reinterpret_cast<kj::byte*>(buffer) + alreadyRead, maxBytes - alreadyRead),
             minBytes - alreadyRead,
             alreadyRead,
             kj::mv(paf.fulfiller)
@@ -110,7 +110,7 @@ public:
       KJ_CASE_ONEOF(n, None) {
         auto paf = kj::newPromiseAndFulfiller<size_t>();
         current = CurrentRead {
-          kj::arrayPtr(reinterpret_cast<byte*>(buffer), maxBytes),
+          kj::arrayPtr(reinterpret_cast<kj::byte*>(buffer), maxBytes),
           minBytes,
           0,
           kj::mv(paf.fulfiller)
@@ -121,7 +121,7 @@ public:
     KJ_UNREACHABLE;
   }
 
-  kj::Promise<void> fulfillRead(kj::ArrayPtr<const byte> data) {
+  kj::Promise<void> fulfillRead(kj::ArrayPtr<const kj::byte> data) {
     KJ_SWITCH_ONEOF(current) {
       KJ_CASE_ONEOF(w, CurrentWrite) {
         KJ_FAIL_REQUIRE("can only call fulfillRead() once at a time");
@@ -181,11 +181,11 @@ private:
   kj::Maybe<WebSession::WebSocketStream::Client> outgoing;
 
   struct CurrentWrite {
-    kj::ArrayPtr<const byte> buffer;
+    kj::ArrayPtr<const kj::byte> buffer;
     kj::Own<kj::PromiseFulfiller<void>> fulfiller;
   };
   struct CurrentRead {
-    kj::ArrayPtr<byte> buffer;
+    kj::ArrayPtr<kj::byte> buffer;
     size_t minBytes;
     size_t alreadyRead;
     kj::Own<kj::PromiseFulfiller<size_t>> fulfiller;

@@ -26,9 +26,6 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 
 .PHONY: all configure toolchain deps update-deps clean ci-clean \
 	package fast install update test isolate-examples-test lint typecheck typecheck-ts installer-test \
-	isolate-supervisor-integration-test \
-	isolate-supervisor-stress-test \
-	isolate-supervisor-syscall-trace \
 	isolate-host-control-test \
 	isolate-account-host-integration-test \
 	isolate-backend-recovery-test \
@@ -37,7 +34,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	isolate-capnp-abi-check \
 	isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test \
 	isolate-capnp-toolchain-test isolate-test \
-	stage-native workerd verify-workerd-runtime verify-workerd-source isolate-host shell-env shell-build shell-build-debug bundle \
+	stage-native verify-workerd-source isolate-host shell-env shell-build shell-build-debug bundle \
 	test-app.spk test-app-spk test-app-dev app-index.spk app-index-spk app-index-dev \
 	tests/assets/isolate-test-app.spk isolate-test-app-spk isolate-test-app-dev \
 	tests/assets/isolate-api-powerbox-test-app.spk \
@@ -87,8 +84,6 @@ $(eval $(call cmake_target,typecheck,typecheck))
 $(eval $(call cmake_target,typecheck-ts,typecheck))
 $(eval $(call cmake_target,installer-test,installer-test))
 $(eval $(call cmake_target,stage-native,stage-native))
-$(eval $(call cmake_target,workerd,workerd))
-$(eval $(call cmake_target,verify-workerd-runtime,verify-workerd-runtime))
 $(eval $(call cmake_target,verify-workerd-source,verify-workerd-source))
 $(eval $(call cmake_target,verify-isolate-release-bundle,verify-isolate-release-bundle))
 $(eval $(call cmake_target,isolate-host,isolate-host))
@@ -110,9 +105,6 @@ $(eval $(call cmake_target,test-app-dev,test-app-dev))
 $(eval $(call cmake_target,tests/assets/isolate-test-app.spk,isolate-test-app-spk))
 $(eval $(call cmake_target,isolate-test-app-spk,isolate-test-app-spk))
 $(eval $(call cmake_target,isolate-test-app-dev,isolate-test-app-dev))
-$(eval $(call cmake_target,isolate-supervisor-integration-test,isolate-supervisor-integration-test))
-$(eval $(call cmake_target,isolate-supervisor-stress-test,isolate-supervisor-stress-test))
-$(eval $(call cmake_target,isolate-supervisor-syscall-trace,isolate-supervisor-syscall-trace))
 $(eval $(call cmake_target,isolate-capnp-abi-check,isolate-capnp-abi-check))
 $(eval $(call cmake_target,isolate-capnp-corpus-test,isolate-capnp-corpus-test))
 $(eval $(call cmake_target,isolate-capnp-fuzz,isolate-capnp-fuzz))

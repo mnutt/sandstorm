@@ -142,7 +142,6 @@ cp "$NODE_MODULES_DIR/capnp.node" "$BUNDLE_DIR/programs/server/node_modules/capn
 mkdir -p "$BUNDLE_DIR/bin"
 cp "$NATIVE_STAGE/bin/sandstorm-http-bridge" "$BUNDLE_DIR/bin/sandstorm-http-bridge"
 cp "$NATIVE_STAGE/bin/sandstorm" "$BUNDLE_DIR/sandstorm"
-cp "$NATIVE_STAGE/bin/workerd" "$BUNDLE_DIR/bin/workerd"
 cp "$NATIVE_STAGE/bin/isolate-host" "$BUNDLE_DIR/bin/isolate-host"
 cp "$METEOR_DEV_BUNDLE/bin/node" "$BUNDLE_DIR/bin"
 

@@ -2710,8 +2710,6 @@ private:
         "using Spk = import \"/sandstorm/package.capnp\";\n\n"));
     capnp.addAll(kj::StringPtr("const placeholderCommand :Spk.Manifest.Command = (\n"));
     capnp.addAll(kj::StringPtr(
-        "  argv = [ \"workerd\", \"serve\", \"${SANDSTORM_ISOLATE_WORKERD_CONFIG}\", "
-        "\"sandstormConfig\" ],\n"
         "  isolate = (\n"
         "    mainModule = "));
     appendCapnpText(capnp, "__sandstorm_dev_isolate_placeholder__.js");
@@ -2887,12 +2885,6 @@ private:
   void initDevIsolateCommand(spk::Manifest::Command::Builder command,
                              kj::ArrayPtr<DevIsolateModule> modules) {
     KJ_REQUIRE(modules.size() > 0);
-
-    auto argv = command.initArgv(4);
-    argv.set(0, "workerd");
-    argv.set(1, "serve");
-    argv.set(2, "${SANDSTORM_ISOLATE_WORKERD_CONFIG}");
-    argv.set(3, "sandstormConfig");
 
     auto isolate = command.initIsolate();
     isolate.setMainModule(modules[0].name);
