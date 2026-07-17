@@ -17,8 +17,9 @@
 #include "isolate-supervisor.h"
 
 #include "isolate-capnp-framing.h"
+#include "isolate-native-host-launch.h"
+#include "isolate-session-registry.h"
 #include "isolate-util.h"
-#include "sandbox.h"
 #include "util.h"
 #include "version.h"
 #include "web-session-websocket.h"
@@ -65,10 +66,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/inotify.h>
-#include <sys/mount.h>
-#include <sys/prctl.h>
 #include <sys/ptrace.h>
-#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -82,7 +80,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
-#include <sched.h>
 #include <map>
 #include <queue>
 #include <set>
@@ -95,15 +92,6 @@
 #ifndef __NR_userfaultfd
 #define __NR_userfaultfd 323
 #endif
-#include <seccomp.h>
-
-#ifndef PR_SET_NO_NEW_PRIVS
-#define PR_SET_NO_NEW_PRIVS 38
-#endif
-#ifndef PR_SET_VMA
-#define PR_SET_VMA 0x53564d41
-#endif
-
 namespace sandstorm {
 
 namespace {
@@ -168,144 +156,95 @@ constexpr size_t MAX_ISOLATE_BINDINGS = 1024;
 constexpr size_t MAX_ISOLATE_TOTAL_BINDING_BYTES = 4 * 1024 * 1024;
 constexpr size_t MAX_ISOLATE_NAME_BYTES = 256;
 
-kj::String makeOpaqueToken() {
-  kj::Array<byte> bytes = kj::heapArray<byte>(18);
-  kj::FdInputStream(raiiOpen("/dev/urandom", O_RDONLY)).read(bytes.begin(), bytes.size());
-  return kj::encodeBase64Url(bytes);
-}
+void writeAllToFd(int fd, kj::ArrayPtr<const byte> content);
 
-class IsolateSessionRegistry final: public kj::Refcounted {
+struct SpoolFile final: public kj::AtomicRefcounted {
+  explicit SpoolFile(kj::AutoCloseFd fd): fd(kj::mv(fd)) {}
+  kj::AutoCloseFd fd;
+};
+
+class SpoolIoWorker final {
 public:
-  kj::String registerSession(SessionContext::Client context) {
-    return registerSession(kj::mv(context), nullptr);
+  SpoolIoWorker(): thread([this]() noexcept { run(); }) {
+    auto lock = shared.lockExclusive();
+    lock.wait([](const Shared& state) { return state.executor != nullptr; });
   }
 
-  kj::String registerOfferSession(SessionContext::Client context, capnp::Capability::Client offer) {
-    return registerSession(kj::mv(context), kj::mv(offer));
+  ~SpoolIoWorker() noexcept(false) {
+    auto executor = getExecutor();
+    executor->executeSync([this]() {
+      auto lock = shared.lockExclusive();
+      KJ_ASSERT(lock->shutdownFulfiller != nullptr);
+      lock->shutdownFulfiller->fulfill();
+      lock->shutdownFulfiller = nullptr;
+    });
   }
 
-  kj::String registerSession(
-      SessionContext::Client context, kj::Maybe<capnp::Capability::Client> offeredCapability) {
-    for (;;) {
-      auto id = makeOpaqueToken();
-      if (findSessionIndex(id) == nullptr) {
-        sessions.add(SessionRecord { kj::heapString(id), context, kj::mv(offeredCapability) });
-        return id;
-      }
-    }
+  kj::Promise<void> write(kj::Own<SpoolFile> file, kj::Array<byte> data) {
+    return getExecutor()->executeAsync(
+        [file = kj::mv(file), data = kj::mv(data)]() mutable {
+      writeAllToFd(file->fd.get(), data);
+    });
   }
 
-  void unregisterSession(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findSessionIndex(id)) {
-      if (*index + 1 < sessions.size()) {
-        sessions[*index] = kj::mv(sessions.back());
-      }
-      sessions.removeLast();
-    }
+  kj::Promise<void> sync(kj::Own<SpoolFile> file) {
+    return getExecutor()->executeAsync([file = kj::mv(file)]() mutable {
+      KJ_SYSCALL(fsync(file->fd.get()));
+    });
   }
 
-  kj::Maybe<SessionContext::Client> findSessionContext(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findSessionIndex(id)) {
-      return sessions[*index].context;
-    }
-
-    return nullptr;
+  kj::Promise<void> rewind(kj::Own<SpoolFile> file) {
+    return getExecutor()->executeAsync([file = kj::mv(file)]() mutable {
+      KJ_SYSCALL(lseek(file->fd.get(), 0, SEEK_SET));
+    });
   }
 
-  kj::Maybe<capnp::Capability::Client> findOfferedCapability(kj::StringPtr sessionId) {
-    KJ_IF_MAYBE(index, findSessionIndex(sessionId)) {
-      KJ_IF_MAYBE(cap, sessions[*index].offeredCapability) {
-        return *cap;
-      }
-    }
-
-    return nullptr;
-  }
-
-  kj::String storeBrowserHandoffCapability(
-      kj::StringPtr sessionId, capnp::Capability::Client cap) {
-    KJ_REQUIRE(sessionId.size() > 0, "browser handoff requires a session ID");
-    return storeBrowserHandoffCapabilityInternal(sessionId, kj::mv(cap));
-  }
-
-  bool dropBrowserHandoffCapability(kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findBrowserHandoffCapabilityIndex(id)) {
-      if (*index + 1 < browserHandoffCapabilities.size()) {
-        browserHandoffCapabilities[*index] = kj::mv(browserHandoffCapabilities.back());
-      }
-      browserHandoffCapabilities.removeLast();
-      return true;
-    }
-
-    return false;
-  }
-
-  kj::Maybe<capnp::Capability::Client> findBrowserHandoffCapability(
-      kj::StringPtr sessionId, kj::StringPtr id) {
-    KJ_IF_MAYBE(index, findBrowserHandoffCapabilityIndex(id)) {
-      if (browserHandoffCapabilities[*index].sessionId == sessionId) {
-        return browserHandoffCapabilities[*index].cap;
-      }
-    }
-
-    return nullptr;
+  kj::Promise<kj::Array<byte>> read(kj::Own<SpoolFile> file, size_t maxBytes) {
+    return getExecutor()->executeAsync(
+        [file = kj::mv(file), maxBytes]() mutable -> kj::Array<byte> {
+      auto buffer = kj::heapArray<byte>(maxBytes);
+      ssize_t count;
+      KJ_SYSCALL(count = ::read(file->fd.get(), buffer.begin(), buffer.size()));
+      return kj::heapArray<byte>(buffer.asPtr().slice(0, static_cast<size_t>(count)));
+    });
   }
 
 private:
-  kj::String storeBrowserHandoffCapabilityInternal(
-      kj::StringPtr sessionId, capnp::Capability::Client cap) {
-    for (;;) {
-      auto id = makeOpaqueToken();
-      if (findBrowserHandoffCapabilityIndex(id) == nullptr) {
-        browserHandoffCapabilities.add(BrowserHandoffCapabilityRecord {
-          kj::heapString(id), kj::heapString(sessionId), cap });
-        return id;
-      }
-    }
-  }
-
-  struct SessionRecord {
-    kj::String id;
-    SessionContext::Client context;
-    kj::Maybe<capnp::Capability::Client> offeredCapability;
+  struct Shared {
+    kj::Maybe<kj::Own<const kj::Executor>> executor;
+    kj::PromiseFulfiller<void>* shutdownFulfiller = nullptr;
   };
 
-  struct BrowserHandoffCapabilityRecord {
-    kj::String id;
-    kj::String sessionId;
-    capnp::Capability::Client cap;
-  };
+  kj::MutexGuarded<Shared> shared;
+  kj::Thread thread;
 
-  kj::Maybe<size_t> findSessionIndex(kj::StringPtr id) {
-    for (auto i: kj::indices(sessions)) {
-      if (sessions[i].id == id) {
-        return i;
-      }
-    }
-
-    return nullptr;
+  kj::Own<const kj::Executor> getExecutor() {
+    auto lock = shared.lockExclusive();
+    return KJ_ASSERT_NONNULL(lock->executor)->addRef();
   }
 
-  kj::Maybe<size_t> findBrowserHandoffCapabilityIndex(kj::StringPtr id) {
-    for (auto i: kj::indices(browserHandoffCapabilities)) {
-      if (browserHandoffCapabilities[i].id == id) {
-        return i;
-      }
+  void run() noexcept {
+    kj::EventLoop eventLoop;
+    kj::WaitScope waitScope(eventLoop);
+    auto shutdown = kj::newPromiseAndFulfiller<void>();
+    {
+      auto lock = shared.lockExclusive();
+      lock->executor = kj::getCurrentThreadExecutor().addRef();
+      lock->shutdownFulfiller = shutdown.fulfiller.get();
     }
-
-    return nullptr;
+    shutdown.promise.wait(waitScope);
+    auto lock = shared.lockExclusive();
+    lock->executor = nullptr;
   }
-
-  kj::Vector<SessionRecord> sessions;
-  kj::Vector<BrowserHandoffCapabilityRecord> browserHandoffCapabilities;
 };
 
 struct IsolateRuntimeHost final: public kj::Refcounted {
   IsolateRuntimeHost(
       kj::Network& network, kj::Timer& timer, kj::StringPtr grainId,
-      SandstormCore::Client sandstormCore)
+      SandstormCore::Client sandstormCore, SpoolIoWorker& spoolIo)
       : network(network), timer(timer), grainId(kj::heapString(grainId)),
         sandstormCore(kj::mv(sandstormCore)),
+        spoolIo(spoolIo),
         sessions(kj::refcounted<IsolateSessionRegistry>()),
         httpFactory(byteStreamFactory, headerTableBuilder),
         ownedHeaderTable(headerTableBuilder.build()),
@@ -330,6 +269,7 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
   kj::Timer& timer;
   kj::String grainId;
   SandstormCore::Client sandstormCore;
+  SpoolIoWorker& spoolIo;
   kj::Own<IsolateSessionRegistry> sessions;
   capnp::ByteStreamFactory byteStreamFactory;
   kj::HttpHeaderTable::Builder headerTableBuilder;
@@ -624,6 +564,9 @@ void validateIsolateRuntimeConfig(
     if (binding.type == IsolateRuntimeConfig::BindingType::SERVICE) {
       KJ_REQUIRE(binding.serviceName.size() > 0, "Isolate service binding is missing service name.",
           binding.name);
+      KJ_REQUIRE(binding.serviceName == "main",
+          "Isolate service bindings may only target the worker-local main service.",
+          binding.name, binding.serviceName);
     }
 
     for (uint j = 0; j < i; ++j) {
@@ -693,6 +636,8 @@ kj::String capnpEsSchemeRelativeRuntimeSpecifier(kj::StringPtr moduleName) {
 void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
   addGeneratedIsolateModule(config, "sandstorm:api", IsolateRuntimeConfig::ModuleType::ES_MODULE,
       ISOLATE_API_HELPER_SOURCE);
+  addGeneratedIsolateModule(config, "sandstorm-internal:validation",
+      IsolateRuntimeConfig::ModuleType::ES_MODULE, ISOLATE_VALIDATION_HELPER_SOURCE);
   addGeneratedIsolateModule(config, "sandstorm-internal:capnp-runtime",
       IsolateRuntimeConfig::ModuleType::ES_MODULE, ISOLATE_CAPNP_RUNTIME_SOURCE);
   for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
@@ -1328,6 +1273,7 @@ constexpr uint64_t MAX_NATIVE_CAPNP_RPC_WEBSOCKET_MESSAGE_BYTES =
 constexpr uint64_t MAX_API_BINDING_REQUEST_BYTES = 1024 * 1024;
 constexpr uint NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION = 0;
 constexpr uint64_t RUNTIME_RESPONSE_STREAM_THRESHOLD_BYTES = 64 * 1024;
+constexpr uint64_t RUNTIME_STREAM_PUMP_CHUNK_BYTES = 1024 * 1024;
 
 kj::Promise<kj::Array<byte>> readAllBytesAtMost(
     kj::AsyncInputStream& input, uint64_t maxBytes, kj::StringPtr description) {
@@ -1361,10 +1307,12 @@ kj::Promise<void> pumpAtMost(kj::AsyncInputStream& input, ByteStream::Client str
     });
   }
 
-  auto req = stream.writeRequest(capnp::MessageSize { 2100, 0 });
+  auto chunkSize = static_cast<size_t>(
+      kj::min(RUNTIME_STREAM_PUMP_CHUNK_BYTES, maxBytes - bytesPumped));
+  auto req = stream.writeRequest(capnp::MessageSize {
+      chunkSize / sizeof(capnp::word) + 16, 0 });
   auto orphanage = capnp::Orphanage::getForMessageContaining(
       kj::implicitCast<ByteStream::WriteParams::Builder>(req));
-  auto chunkSize = static_cast<size_t>(kj::min(uint64_t(8192), maxBytes - bytesPumped));
   auto orphan = orphanage.newOrphan<capnp::Data>(chunkSize);
   auto buffer = orphan.get();
 
@@ -1822,7 +1770,7 @@ public:
         bodyStream(kj::mv(bodyStream)),
         responseStream(kj::mv(responseStream)),
         tasks(*this) {
-    KJ_LOG(WARNING, "Starting isolate response body stream.");
+    KJ_LOG(INFO, "Starting isolate response body stream.");
     tasks.add(kj::evalLater([this]() {
       return pumpAtMost(*this->bodyStream, this->responseStream, MAX_RUNTIME_RESPONSE_BYTES,
           "streaming isolate response body exceeds maximum allowed size");
@@ -1830,7 +1778,7 @@ public:
   }
 
   ~FetchResponseStreamHandle() noexcept(false) {
-    KJ_LOG(WARNING, "Destroying isolate response body stream handle.");
+    KJ_LOG(INFO, "Destroying isolate response body stream handle.");
   }
 
   kj::Promise<void> ping(PingContext context) override {
@@ -2012,7 +1960,7 @@ private:
       }
       result.bodyStreamAnchor = kj::mv(state);
       result.bodyStream = kj::mv(response.body);
-      KJ_LOG(WARNING, "Isolate runtime streaming response received.",
+      KJ_LOG(INFO, "Isolate runtime streaming response received.",
           result.statusCode, result.mimeType);
       return kj::mv(result);
     }
@@ -2023,7 +1971,7 @@ private:
         "buffered isolate response body exceeds maximum allowed size")
         .then([result = kj::mv(result), state = kj::mv(state)](kj::Array<byte>&& body) mutable {
       result.body = kj::mv(body);
-      KJ_LOG(WARNING, "Isolate runtime response received.",
+      KJ_LOG(INFO, "Isolate runtime response received.",
           result.statusCode, result.mimeType, result.body.size());
       return kj::mv(result);
     });
@@ -2074,9 +2022,8 @@ private:
       }
 
       auto promise = writeQueue.then([this, data = kj::mv(data)]() mutable -> kj::Promise<void> {
-        KJ_IF_MAYBE(fd, spoolFd) {
-          writeAllToFd(fd->get(), data);
-          return kj::READY_NOW;
+        KJ_IF_MAYBE(file, spoolFile) {
+          return host->spoolIo.write(kj::atomicAddRef(**file), kj::mv(data));
         } else {
           auto& current = KJ_ASSERT_NONNULL(state);
           KJ_REQUIRE(current->requestBody.get() != nullptr, "streaming request body is closed");
@@ -2096,17 +2043,17 @@ private:
       }
 
       doneCalled = true;
-      auto promise = writeQueue.then([this]() {
-        KJ_IF_MAYBE(fd, spoolFd) {
-          KJ_SYSCALL(fsync(fd->get()));
+      auto promise = writeQueue.then([this]() -> kj::Promise<void> {
+        KJ_IF_MAYBE(file, spoolFile) {
+          return host->spoolIo.sync(kj::atomicAddRef(**file)).then([this]() {
+            finishUpload();
+          });
         } else {
           auto& current = KJ_ASSERT_NONNULL(state);
           current->requestBody = nullptr;
+          finishUpload();
+          return kj::READY_NOW;
         }
-        KJ_IF_MAYBE(fulfiller, doneFulfiller) {
-          (*fulfiller)->fulfill();
-        }
-        doneFulfiller = nullptr;
       });
       auto fork = promise.fork();
       writeQueue = fork.addBranch();
@@ -2160,7 +2107,7 @@ private:
     FetchRequest request;
     ByteStream::Client responseStream;
     kj::Maybe<kj::Own<RuntimeHttpState>> state;
-    kj::Maybe<kj::AutoCloseFd> spoolFd;
+    kj::Maybe<kj::Own<SpoolFile>> spoolFile;
     kj::ForkedPromise<void> started;
     kj::Promise<void> writeQueue;
     kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> doneFulfiller;
@@ -2172,7 +2119,8 @@ private:
 
     kj::Promise<void> start() {
       if (request.expectedBodySize == nullptr) {
-        spoolFd = openTemporary(kj::str(config->runtimeStateDir, "/upload-spool"));
+        spoolFile = kj::atomicRefcounted<SpoolFile>(
+            openTemporary(kj::str(config->runtimeStateDir, "/upload-spool")));
         return kj::READY_NOW;
       }
 
@@ -2194,11 +2142,11 @@ private:
 
     kj::Promise<void> sendSpooledRequest(
         WebSession::Response::Builder results, ByteStream::Client responseStream) {
-      auto& fd = KJ_ASSERT_NONNULL(spoolFd);
-      KJ_SYSCALL(lseek(fd.get(), 0, SEEK_SET));
-
-      return host->getHttpClient()
-          .then([this, results, responseStream = kj::mv(responseStream)](
+      auto& file = KJ_ASSERT_NONNULL(spoolFile);
+      return host->spoolIo.rewind(kj::atomicAddRef(*file)).then(
+          [this]() {
+        return host->getHttpClient();
+      }).then([this, results, responseStream = kj::mv(responseStream)](
               kj::Own<kj::HttpClient>&& client) mutable {
         auto state = kj::refcounted<RuntimeHttpState>(kj::mv(client));
         kj::HttpHeaders headers(host->headerTable);
@@ -2210,56 +2158,71 @@ private:
 
         if (httpRequest.body.get() != nullptr && bytesReceived > 0) {
           auto requestBody = kj::mv(httpRequest.body);
-          auto& fd = KJ_ASSERT_NONNULL(spoolFd);
-          return writeFdToAsync(fd.get(), *requestBody, bytesReceived)
+          auto& file = KJ_ASSERT_NONNULL(spoolFile);
+          return writeSpoolToAsync(
+                  kj::atomicAddRef(*file), *requestBody, bytesReceived)
               .attach(kj::mv(requestBody))
               .then([response = kj::mv(response)]() mutable {
             return kj::mv(response);
-          }).then([results, state = kj::mv(state), responseStream = kj::mv(responseStream)](
+          }).then([this, results, state = kj::mv(state),
+              responseStream = kj::mv(responseStream)](
               kj::HttpClient::Response&& response) mutable {
-            return readRuntimeResponse(kj::mv(response), kj::mv(state))
-                .then([results, responseStream = kj::mv(responseStream)](
-                    FetchResponse&& fetchResponse) mutable {
-              writeFetchResponse(kj::mv(fetchResponse), results, kj::mv(responseStream));
-            });
+            return finishResponse(
+                kj::mv(response), kj::mv(state), results, kj::mv(responseStream));
           });
         }
 
-        return response.then([results, state = kj::mv(state),
+        return response.then([this, results, state = kj::mv(state),
             responseStream = kj::mv(responseStream)](
             kj::HttpClient::Response&& response) mutable {
-          return readRuntimeResponse(kj::mv(response), kj::mv(state))
-              .then([results, responseStream = kj::mv(responseStream)](
-                  FetchResponse&& fetchResponse) mutable {
-            writeFetchResponse(kj::mv(fetchResponse), results, kj::mv(responseStream));
-          });
+          return finishResponse(
+              kj::mv(response), kj::mv(state), results, kj::mv(responseStream));
         });
       });
     }
 
-    static kj::Promise<void> writeFdToAsync(
-        int fd, kj::AsyncOutputStream& output, uint64_t remaining) {
+    kj::Promise<void> writeSpoolToAsync(
+        kj::Own<SpoolFile> file, kj::AsyncOutputStream& output, uint64_t remaining) {
       if (remaining == 0) {
         return kj::READY_NOW;
       }
 
-      auto buffer = kj::heapArray<byte>(
-          static_cast<size_t>(kj::min(remaining, uint64_t(8192))));
-      ssize_t n;
-      KJ_SYSCALL(n = read(fd, buffer.begin(), buffer.size()));
-      KJ_REQUIRE(n > 0, "spooled isolate upload ended before expected byte count");
-      auto written = static_cast<uint64_t>(n);
+      auto maxBytes = static_cast<size_t>(kj::min(remaining, uint64_t(8192)));
+      return host->spoolIo.read(kj::atomicAddRef(*file), maxBytes).then(
+          [this, file = kj::mv(file), &output, remaining](kj::Array<byte> buffer) mutable {
+        KJ_REQUIRE(buffer.size() > 0,
+            "spooled isolate upload ended before expected byte count");
+        auto written = buffer.size();
+        return output.write(buffer.begin(), buffer.size())
+            .attach(kj::mv(buffer))
+            .then([this, file = kj::mv(file), &output, remaining, written]() mutable {
+          return writeSpoolToAsync(kj::mv(file), output, remaining - written);
+        });
+      });
+    }
 
-      return output.write(buffer.begin(), static_cast<size_t>(n))
-          .attach(kj::mv(buffer))
-          .then([fd, &output, remaining, written]() {
-        return writeFdToAsync(fd, output, remaining - written);
+    void finishUpload() {
+      KJ_IF_MAYBE(fulfiller, doneFulfiller) {
+        (*fulfiller)->fulfill();
+      }
+      doneFulfiller = nullptr;
+    }
+
+    kj::Promise<void> finishResponse(
+        kj::HttpClient::Response response,
+        kj::Own<RuntimeHttpState> state,
+        WebSession::Response::Builder results,
+        ByteStream::Client responseStream) {
+      return readRuntimeResponse(kj::mv(response), kj::mv(state))
+          .then([results, responseStream = kj::mv(responseStream)](
+              FetchResponse&& fetchResponse) mutable {
+        writeFetchResponse(kj::mv(fetchResponse), results, kj::mv(responseStream));
       });
     }
   };
 
   kj::Promise<FetchResponse> fetchFromRuntime(FetchRequest&& request) {
-    KJ_LOG(WARNING, "Forwarding isolate request to runtime.",
+    KJ_LOG(INFO, "Forwarding isolate request to runtime.",
         fetchMethodName(request.method), request.path, request.body.size());
     return host->getHttpClient()
         .then([this, request = kj::mv(request)](kj::Own<kj::HttpClient>&& client) mutable {
@@ -2295,7 +2258,7 @@ private:
   kj::Promise<void> openWebSocketFromRuntime(FetchRequest&& request,
       WebSession::WebSocketStream::Client clientStream,
       WebSession::OpenWebSocketResults::Builder results) {
-    KJ_LOG(WARNING, "Forwarding isolate WebSocket request to runtime.", request.path);
+    KJ_LOG(INFO, "Forwarding isolate WebSocket request to runtime.", request.path);
     return host->getHttpClient()
         .then([this, request = kj::mv(request), clientStream = kj::mv(clientStream), results](
             kj::Own<kj::HttpClient>&& client) mutable -> kj::Promise<void> {
@@ -2663,7 +2626,7 @@ public:
       addHeader(request, "sec-websocket-protocol", kj::strArray(protocols, ", "));
     }
     addSessionHeaders(request);
-    KJ_LOG(WARNING, "Handling isolate WebSession WebSocket request.",
+    KJ_LOG(INFO, "Handling isolate WebSession WebSocket request.",
         request.path, sessionKindName(sessionKind));
     return runtime->openWebSocket(
         kj::mv(request), params.getClientStream(), context.getResults());
@@ -2813,7 +2776,7 @@ private:
       FetchRequest&& request, WebSession::Response::Builder response, ByteStream::Client responseStream) {
     addSessionHeaders(request);
     bool omitBody = request.method == FetchMethod::HEAD;
-    KJ_LOG(WARNING, "Handling isolate WebSession request.",
+    KJ_LOG(INFO, "Handling isolate WebSession request.",
         fetchMethodName(request.method), request.path, sessionKindName(sessionKind));
     return runtime->fetch(kj::mv(request))
         .then([response, responseStream = kj::mv(responseStream), omitBody](
@@ -3323,383 +3286,6 @@ private:
   kj::Own<IsolateRuntimeHost> runtimeHost;
 };
 
-void resetSignalHandlersForExec() {
-  for (uint i = 0; i < NSIG; i++) {
-    ::signal(i, SIG_DFL);
-  }
-
-  sigset_t sigmask;
-  sigemptyset(&sigmask);
-  KJ_SYSCALL(sigprocmask(SIG_SETMASK, &sigmask, nullptr));
-}
-
-void setupNativeHostParentDeathSignal() {
-  KJ_SYSCALL(prctl(PR_SET_PDEATHSIG, SIGTERM));
-  if (getppid() == 1) {
-    _exit(1);
-  }
-}
-
-void setupNativeHostProcessGroup() {
-  KJ_SYSCALL(setpgid(0, 0));
-}
-
-void closeUnexpectedNativeHostFds(kj::ArrayPtr<const int> preservedFds = nullptr) {
-  kj::Vector<int> fds;
-  DIR* dir = opendir("/proc/self/fd");
-  if (dir == nullptr) {
-    KJ_FAIL_SYSCALL("opendir(/proc/self/fd)", errno);
-  }
-  KJ_DEFER(KJ_SYSCALL(closedir(dir)) { break; });
-
-  for (;;) {
-    errno = 0;
-    auto entry = readdir(dir);
-    if (entry == nullptr) {
-      if (errno != 0) {
-        KJ_FAIL_SYSCALL("readdir(/proc/self/fd)", errno);
-      }
-      break;
-    }
-
-    if (entry->d_name[0] != '.') {
-      char* end;
-      int fd = strtoul(entry->d_name, &end, 10);
-      if (*end == '\0' && end > entry->d_name && fd > STDERR_FILENO && fd != dirfd(dir)) {
-        bool preserve = false;
-        for (auto preserved: preservedFds) {
-          if (fd == preserved) preserve = true;
-        }
-        if (!preserve) fds.add(fd);
-      }
-    }
-  }
-
-  for (auto fd: fds) {
-    close(fd);
-  }
-}
-
-void setupNativeHostResourceLimits() {
-  struct rlimit nofile;
-  memset(&nofile, 0, sizeof(nofile));
-  nofile.rlim_cur = 1024;
-  nofile.rlim_max = 4096;
-  KJ_SYSCALL(setrlimit(RLIMIT_NOFILE, &nofile));
-
-  struct rlimit core;
-  memset(&core, 0, sizeof(core));
-  KJ_SYSCALL(setrlimit(RLIMIT_CORE, &core));
-}
-
-void finishNativeHostNamespaceSetup() {
-  KJ_SYSCALL(mount("none", "/", nullptr, MS_REC | MS_PRIVATE, nullptr));
-  KJ_SYSCALL(sethostname("sandbox", 7));
-  KJ_SYSCALL(setdomainname("sandbox", 7));
-}
-
-void nativeHostBind(kj::StringPtr src, kj::StringPtr dst, unsigned long flags) {
-  KJ_SYSCALL(mount(src.cStr(), dst.cStr(), nullptr, MS_BIND | MS_REC, nullptr), src, dst);
-  KJ_SYSCALL(mount(src.cStr(), dst.cStr(), nullptr,
-      MS_BIND | MS_REC | MS_REMOUNT | flags, nullptr), src, dst);
-}
-
-kj::String nativeHostRootPath(kj::StringPtr absolutePath) {
-  KJ_REQUIRE(absolutePath.startsWith("/"), "Expected absolute native-host path.", absolutePath);
-  if (absolutePath == "/") {
-    return kj::heapString("/tmp");
-  } else {
-    return kj::str("/tmp", absolutePath);
-  }
-}
-
-void ensureNativeHostDirectory(kj::StringPtr path, mode_t mode = 0755) {
-  if (mkdir(path.cStr(), mode) != 0) {
-    int error = errno;
-    if (error != EEXIST) {
-      KJ_FAIL_SYSCALL("mkdir", error, path);
-    }
-  }
-}
-
-void bindNativeHostDirectory(kj::StringPtr src, unsigned long flags) {
-  if (access(src.cStr(), F_OK) != 0) {
-    int error = errno;
-    if (error == ENOENT || error == ENOTDIR) {
-      return;
-    }
-    KJ_FAIL_SYSCALL("access", error, src);
-  }
-
-  auto dst = nativeHostRootPath(src);
-  recursivelyCreateParent(dst);
-  ensureNativeHostDirectory(dst);
-  nativeHostBind(src, dst, flags);
-}
-
-void bindNativeHostFile(kj::StringPtr src, unsigned long flags, mode_t mode = 0644) {
-  if (access(src.cStr(), F_OK) != 0) {
-    int error = errno;
-    if (error == ENOENT || error == ENOTDIR) {
-      return;
-    }
-    KJ_FAIL_SYSCALL("access", error, src);
-  }
-
-  auto dst = nativeHostRootPath(src);
-  recursivelyCreateParent(dst);
-  KJ_SYSCALL(mknod(dst.cStr(), S_IFREG | mode, 0), dst);
-  nativeHostBind(src, dst, flags);
-}
-
-void bindNativeHostRuntimeLibraryFile(kj::StringPtr src) {
-  bindNativeHostFile(src, MS_RDONLY | MS_NOSUID | MS_NODEV, 0755);
-}
-
-void bindNativeHostRuntimeLibraryCandidates(kj::StringPtr name) {
-  bindNativeHostRuntimeLibraryFile(kj::str("/lib/", name));
-  bindNativeHostRuntimeLibraryFile(kj::str("/lib64/", name));
-  bindNativeHostRuntimeLibraryFile(kj::str("/usr/lib/", name));
-  bindNativeHostRuntimeLibraryFile(kj::str("/usr/lib64/", name));
-  bindNativeHostRuntimeLibraryFile(kj::str("/lib/x86_64-linux-gnu/", name));
-  bindNativeHostRuntimeLibraryFile(kj::str("/usr/lib/x86_64-linux-gnu/", name));
-}
-
-void bindNativeHostRuntimeLibraries() {
-  bindNativeHostRuntimeLibraryFile("/lib64/ld-linux-x86-64.so.2");
-  bindNativeHostRuntimeLibraryFile("/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2");
-
-  bindNativeHostRuntimeLibraryCandidates("libc.so.6");
-  bindNativeHostRuntimeLibraryCandidates("libm.so.6");
-
-  // These are not needed by the current embedded workerd build on all distros, but
-  // are common C/C++ runtime dependencies. Keep this list file-based rather
-  // than mounting whole library directories.
-  bindNativeHostRuntimeLibraryCandidates("libdl.so.2");
-  bindNativeHostRuntimeLibraryCandidates("libpthread.so.0");
-  bindNativeHostRuntimeLibraryCandidates("librt.so.1");
-  bindNativeHostRuntimeLibraryCandidates("libstdc++.so.6");
-  bindNativeHostRuntimeLibraryCandidates("libgcc_s.so.1");
-}
-
-void setupConfinedRuntimeMountRoot(
-    kj::StringPtr trustedExecutable, kj::Maybe<kj::StringPtr> runtimeBundleDir) {
-  auto oldUmask = umask(0);
-  KJ_DEFER(umask(oldUmask));
-
-  KJ_SYSCALL(mount("sandstorm-isolate-native-host-root", "/tmp", "tmpfs",
-      MS_NOSUID | MS_NODEV, "size=64m,nr_inodes=4096,mode=755"));
-
-  ensureNativeHostDirectory("/tmp/tmp", 0777);
-  ensureNativeHostDirectory("/tmp/dev", 0755);
-  KJ_SYSCALL(mount("sandstorm-isolate-native-host-dev", "/tmp/dev", "tmpfs",
-      MS_NOATIME | MS_NOSUID | MS_NOEXEC, "size=1m,nr_inodes=16,mode=755"));
-  bindNativeHostFile("/dev/null", MS_NOSUID | MS_NOEXEC);
-  bindNativeHostFile("/dev/zero", MS_NOSUID | MS_NOEXEC);
-  bindNativeHostFile("/dev/random", MS_NOSUID | MS_NOEXEC);
-  bindNativeHostFile("/dev/urandom", MS_NOSUID | MS_NOEXEC);
-  KJ_SYSCALL(mount("/tmp/dev", "/tmp/dev", nullptr,
-      MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NOEXEC, nullptr));
-
-  KJ_IF_MAYBE(bundleDir, runtimeBundleDir) {
-    bindNativeHostDirectory(*bundleDir, MS_NOSUID | MS_NODEV);
-  }
-  bindNativeHostFile(trustedExecutable, MS_RDONLY | MS_NOSUID | MS_NODEV, 0755);
-  bindNativeHostRuntimeLibraries();
-  bindNativeHostFile("/etc/ld.so.cache", MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV);
-
-  KJ_SYSCALL(chroot("/tmp"));
-  KJ_SYSCALL(chdir("/"));
-  KJ_LOG(WARNING, "Native isolate host entered minimal mount root.", trustedExecutable);
-}
-
-bool trySetupNativeHostNamespaces(kj::Maybe<uid_t> sandboxUid) {
-  KJ_IF_MAYBE(u, sandboxUid) {
-    if (unshare(CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS) < 0) {
-      int error = errno;
-      KJ_FAIL_SYSCALL("unshare(CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS)",
-          error);
-    } else {
-      finishNativeHostNamespaceSetup();
-      KJ_LOG(WARNING, "Native isolate host entered private network/mount/ipc/uts namespaces.");
-      return true;
-    }
-  }
-
-  uid_t realUid = getuid();
-  gid_t realGid = getgid();
-
-  if (unshare(CLONE_NEWUSER | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS) < 0) {
-    int error = errno;
-    KJ_FAIL_SYSCALL(
-        "unshare(CLONE_NEWUSER | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS)",
-        error);
-  }
-
-  sandbox::hideUserGroupIds(realUid, realGid, false);
-  finishNativeHostNamespaceSetup();
-  KJ_LOG(WARNING, "Native isolate host entered private user/network/mount/ipc/uts namespaces.");
-  return true;
-}
-
-void setupNativeHostSeccomp(bool logSeccompViolations) {
-  scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ERRNO(ENOSYS));
-  if (ctx == nullptr) {
-    KJ_FAIL_SYSCALL("seccomp_init", 0);
-  }
-  KJ_DEFER(seccomp_release(ctx));
-
-#define CHECK_SECCOMP(call)                   \
-  do {                                        \
-    if (auto result = (call)) {               \
-      KJ_FAIL_SYSCALL(#call, -result);        \
-    }                                         \
-  } while (0)
-
-  CHECK_SECCOMP(seccomp_attr_set(ctx, SCMP_FLTATR_CTL_NNP, 1));
-  CHECK_SECCOMP(seccomp_attr_set(ctx, SCMP_FLTATR_ACT_BADARCH, SCMP_ACT_ERRNO(ENOSYS)));
-  if (logSeccompViolations) {
-    CHECK_SECCOMP(seccomp_attr_set(ctx, SCMP_FLTATR_CTL_LOG, 1));
-  }
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-  // This allowlist is based on post-exec native-host workerd traces. Calls used only while setting up
-  // namespaces, mounts, credential drops, or seccomp itself intentionally stay
-  // unavailable after the filter is loaded.
-  int allowedSyscalls[] = {
-    SCMP_SYS(accept4),
-    SCMP_SYS(access),
-    SCMP_SYS(arch_prctl),
-    SCMP_SYS(bind),
-    SCMP_SYS(brk),
-    SCMP_SYS(clock_nanosleep),
-    SCMP_SYS(close),
-    SCMP_SYS(connect),
-    SCMP_SYS(dup),
-    SCMP_SYS(dup2),
-    SCMP_SYS(epoll_create1),
-    SCMP_SYS(epoll_ctl),
-    SCMP_SYS(epoll_pwait),
-    SCMP_SYS(epoll_wait),
-    SCMP_SYS(eventfd2),
-    SCMP_SYS(execve),
-    SCMP_SYS(exit),
-    SCMP_SYS(exit_group),
-    SCMP_SYS(fcntl),
-    SCMP_SYS(fstat),
-    SCMP_SYS(futex),
-    SCMP_SYS(getcwd),
-    SCMP_SYS(getpid),
-    SCMP_SYS(getrandom),
-    SCMP_SYS(getsockopt),
-    SCMP_SYS(gettid),
-    SCMP_SYS(ioctl),
-    SCMP_SYS(listen),
-    SCMP_SYS(lseek),
-    SCMP_SYS(madvise),
-    SCMP_SYS(mmap),
-    SCMP_SYS(mprotect),
-    SCMP_SYS(munmap),
-    SCMP_SYS(newfstatat),
-    SCMP_SYS(openat),
-    SCMP_SYS(pipe2),
-    SCMP_SYS(pkey_alloc),
-    SCMP_SYS(poll),
-    SCMP_SYS(pread64),
-    SCMP_SYS(prlimit64),
-    SCMP_SYS(read),
-    SCMP_SYS(readlink),
-    SCMP_SYS(readlinkat),
-    SCMP_SYS(readv),
-    SCMP_SYS(rt_sigaction),
-    SCMP_SYS(rt_sigprocmask),
-    SCMP_SYS(rt_sigreturn),
-    SCMP_SYS(sched_getaffinity),
-    SCMP_SYS(sched_getparam),
-    SCMP_SYS(sched_getscheduler),
-    SCMP_SYS(set_tid_address),
-    SCMP_SYS(setsockopt),
-    SCMP_SYS(sigaltstack),
-    SCMP_SYS(splice),
-    SCMP_SYS(umask),
-    SCMP_SYS(uname),
-    SCMP_SYS(write),
-    SCMP_SYS(writev),
-  };
-
-  for (auto syscall: allowedSyscalls) {
-    CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ALLOW, syscall, 0));
-  }
-
-  // Do not allow clone3(): libseccomp cannot inspect the pointed-to clone_args
-  // flags. Returning ENOSYS makes glibc fall back to clone(), where we can at
-  // least reject namespace-creating flags.
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(clone), 1,
-      SCMP_A0(SCMP_CMP_MASKED_EQ,
-          CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWUSER |
-          CLONE_NEWPID | CLONE_NEWNET, 0)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(prctl), 1,
-      SCMP_A0(SCMP_CMP_EQ, PR_SET_NAME)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(prctl), 1,
-      SCMP_A0(SCMP_CMP_EQ, PR_SET_VMA)));
-  CHECK_SECCOMP(seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(socket), 1,
-      SCMP_A0(SCMP_CMP_EQ, AF_UNIX)));
-
-  CHECK_SECCOMP(seccomp_load(ctx));
-#pragma GCC diagnostic pop
-#undef CHECK_SECCOMP
-}
-
-int runConfinedNativeIsolateHost(
-    kj::String trustedHost,
-    kj::AutoCloseFd controlSocket,
-    kj::Maybe<uid_t> sandboxUid,
-    bool logSeccompViolations) {
-  static constexpr int CONTROL_FD = 3;
-  resetSignalHandlersForExec();
-  setupNativeHostParentDeathSignal();
-  setupNativeHostProcessGroup();
-
-  int sourceFd = controlSocket.release();
-  if (sourceFd != CONTROL_FD) {
-    KJ_SYSCALL(dup2(sourceFd, CONTROL_FD));
-    KJ_SYSCALL(close(sourceFd));
-  } else {
-    KJ_SYSCALL(fcntl(CONTROL_FD, F_SETFD, 0));
-  }
-
-  auto devNull = raiiOpen("/dev/null", O_RDONLY | O_CLOEXEC);
-  KJ_SYSCALL(dup2(devNull, STDIN_FILENO));
-  devNull = nullptr;
-  int preservedFd = CONTROL_FD;
-  closeUnexpectedNativeHostFds(kj::arrayPtr(&preservedFd, 1));
-
-  bool hasPrivateNamespaces = trySetupNativeHostNamespaces(sandboxUid);
-  if (hasPrivateNamespaces) {
-    setupConfinedRuntimeMountRoot(trustedHost, nullptr);
-  }
-  KJ_IF_MAYBE(u, sandboxUid) {
-    KJ_SYSCALL(setresuid(*u, *u, *u));
-  }
-  setupNativeHostResourceLimits();
-  KJ_SYSCALL(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
-  setupNativeHostSeccomp(logSeccompViolations);
-
-  char* argv[] = {
-    const_cast<char*>(trustedHost.cStr()),
-    const_cast<char*>("--control-fd"),
-    const_cast<char*>("3"),
-    nullptr,
-  };
-  char* environment[] = {
-    const_cast<char*>("LANG=C.UTF-8"),
-    nullptr,
-  };
-  KJ_SYSCALL(execve(trustedHost.cStr(), argv, environment), trustedHost);
-  KJ_UNREACHABLE;
-}
-
 kj::StringPtr urlPath(kj::StringPtr url) {
   KJ_IF_MAYBE(query, url.findFirst('?')) {
     return kj::StringPtr(url.begin(), *query);
@@ -3760,7 +3346,7 @@ public:
     auto methodName = kj::str(method);
     auto path = kj::heapString(url);
     auto route = kj::heapString(urlPath(url));
-    KJ_LOG(WARNING, "Isolate Sandstorm API binding received request.", methodName, path);
+    KJ_LOG(INFO, "Isolate Sandstorm API binding received request.", methodName, path);
 
     if (!powerboxOnly && methodName == "GET" && route == "/capnp/rpc-session") {
       return openBrowserNativeCapnpBridgeRpcSession(path, headers, response);
@@ -4839,7 +4425,7 @@ public:
       kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
     (void)headers;
     auto key = isolateStorageKeyFromUrl(url);
-    KJ_LOG(WARNING, "Isolate storage binding received request.", kj::str(method), key);
+    KJ_LOG(INFO, "Isolate storage binding received request.", kj::str(method), key);
 
     if (method == kj::HttpMethod::GET && key.size() == 0) {
       return sendJson(response, 200, "OK", renderIndex());
@@ -5203,7 +4789,7 @@ public:
     KJ_SYSCALL(syncfs(fd));
 
     auto bytes = computeDiskUsage(varPath);
-    KJ_LOG(WARNING, "Reporting isolate grain disk usage.", varPath, bytes);
+    KJ_LOG(INFO, "Reporting isolate grain disk usage.", varPath, bytes);
     auto req = sandstormCore.reportGrainSizeRequest();
     req.setBytes(bytes);
     return req.send().ignoreResult();
@@ -5211,7 +4797,7 @@ public:
 
   kj::Promise<void> shutdown(ShutdownContext context) override {
     lifecycle->requireRunning();
-    KJ_LOG(WARNING, "Isolate grain shutdown requested.");
+    KJ_LOG(INFO, "Isolate grain shutdown requested.");
     return lifecycle->shutdown();
   }
 
@@ -5561,8 +5147,10 @@ public:
     KJ_REQUIRE(params.getMainModule().size() > 0, "missing isolate main module");
 
     KJ_IF_MAYBE(existing, supervisors.find(grainId)) {
-      context.getResults().setSupervisor(*existing);
-      return kj::READY_NOW;
+      return existing->addBranch().then(
+          [context](Supervisor::Client&& supervisor) mutable {
+        context.getResults().setSupervisor(supervisor);
+      });
     }
 
     kj::Maybe<kj::String> compatibilityDate;
@@ -5580,30 +5168,25 @@ public:
       params.getIsNew(),
     });
     context.releaseParams();
-    return admission.then([this, context, grainId = kj::mv(grainId),
-        core = kj::mv(core)](kj::Own<AccountAdmissionResult> admitted) mutable
-        -> kj::Promise<void> {
-      KJ_IF_MAYBE(existing, supervisors.find(grainId)) {
-        context.getResults().setSupervisor(*existing);
-        return kj::READY_NOW;
-      }
-
+    auto mapGrainId = kj::str(grainId);
+    auto start = admission.then([this, grainId = kj::mv(grainId), core = kj::mv(core)](
+        kj::Own<AccountAdmissionResult> admitted) mutable -> kj::Promise<Supervisor::Client> {
       auto coreRedirector = kj::refcounted<CapRedirector>();
       coreRedirector->setTarget(core);
       SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
           kj::addRef(*coreRedirector)).castAs<SandstormCore>();
       auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
-          network, timer, grainId, coreCap);
+          network, timer, grainId, coreCap, spoolIo);
 
       auto nativeStart = nativeHost.startGrainRequest();
       nativeStart.setGrainId(grainId);
       nativeStart.setWorkerSource(admitted->workerSource);
       nativeStart.setServices(kj::heap<HostedIsolateBindingServices>(
           kj::addRef(*admitted->runtimeConfig), kj::addRef(*runtimeHost)));
-      return nativeStart.send().then([this, context, grainId = kj::mv(grainId),
+      return nativeStart.send().then([this, grainId = kj::mv(grainId),
           admitted = kj::mv(admitted), coreRedirector = kj::mv(coreRedirector),
           runtimeHost = kj::mv(runtimeHost),
-          coreCap = kj::mv(coreCap)](auto response) mutable {
+          coreCap = kj::mv(coreCap)](auto response) mutable -> Supervisor::Client {
         auto hosted = response.getGrain();
         HostedIsolate::Client lifecycleHosted = hosted;
         runtimeHost->setHosted(kj::mv(hosted));
@@ -5613,10 +5196,24 @@ public:
         Supervisor::Client supervisor = kj::heap<IsolateSupervisorImpl>(eventPort,
             admitted->varPath, kj::mv(coreRedirector), kj::mv(admitted->runtimeConfig),
             kj::mv(runtimeHost), kj::mv(lifecycle), kj::mv(coreCap));
-        context.getResults().setSupervisor(supervisor);
-        supervisors.insert(kj::mv(grainId), kj::mv(supervisor));
+        return supervisor;
       });
+    }).then([](Supervisor::Client&& supervisor) {
+      return kj::mv(supervisor);
+    }, [this, grainId = kj::str(mapGrainId)](kj::Exception&& exception)
+        -> kj::Promise<Supervisor::Client> {
+      supervisors.erase(grainId);
+      return kj::mv(exception);
+    }).fork();
+
+    // Publish the fork before admission begins. Concurrent callers for this grain join the same
+    // startup and cannot race a duplicate nativeHost.startGrain() call.
+    auto response = start.addBranch().then(
+        [context](Supervisor::Client&& supervisor) mutable {
+      context.getResults().setSupervisor(supervisor);
     });
+    supervisors.insert(kj::mv(mapGrainId), kj::mv(start));
+    return response;
   }
 
 private:
@@ -5632,8 +5229,9 @@ private:
   IsolateHost::Client nativeHost;
   kj::String appRoot;
   kj::String grainRoot;
+  SpoolIoWorker spoolIo;
   AccountAdmissionPool admissionPool;
-  kj::HashMap<kj::String, Supervisor::Client> supervisors;
+  kj::HashMap<kj::String, kj::ForkedPromise<Supervisor::Client>> supervisors;
 };
 
 }  // namespace
@@ -5743,7 +5341,7 @@ kj::MainBuilder::Validity IsolateAccountHostMain::run() {
   capnp::TwoPartyServer server(kj::heap<IsolateAccountHostImpl>(io.unixEventPort,
       io.provider->getNetwork(), io.provider->getTimer(), kj::mv(nativeHost),
       kj::str(appRoot), kj::str(grainRoot)));
-  KJ_LOG(WARNING, "Account-scoped isolate host listening.", trustDomain, controlSocket,
+  KJ_LOG(INFO, "Account-scoped isolate host listening.", trustDomain, controlSocket,
       nativeHostPath, nativeProcess.getPid());
   server.listen(*listener).exclusiveJoin(nativeRpc.onDisconnect()).wait(io.waitScope);
   return true;

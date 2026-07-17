@@ -605,6 +605,36 @@ export default {
       }
     }
 
+    if (url.pathname === "/app-persistent-save-restore-self-test") {
+      const greeter = await exportFixtureCapnp(api, NativeGreeter, {
+        async save() {
+          return {
+            objectId: makeNativeGreeterObjectId("account-host-app-persistent"),
+            label: { defaultText: "account host app persistent fixture" },
+          };
+        },
+        async hello(params) {
+          return { message: `account-host persistent hello ${params.name}` };
+        },
+      }, { interfaceName: "NativeGreeter" });
+      const saved = await greeter.save({ label: "account host app persistent fixture" });
+      const restored = await restoreFixtureCapability(api, saved, NativeGreeter, {
+        interfaceName: "NativeGreeter",
+        connectionId: "account-host-app-persistent-restored",
+      });
+      const hello = await restored.hello({ name: "parity" });
+      const dropRestored = (await restored.drop()) ?? null;
+      const dropOriginal = (await greeter.drop()) ?? null;
+      await api.revoke(saved);
+      return Response.json({
+        ok: true,
+        savedTokenType: typeof saved,
+        message: hello.message,
+        dropRestored,
+        dropOriginal,
+      });
+    }
+
     if (url.pathname === "/native-capnp-bridge-target/generated-client") {
       return Response.json({
         ok: true,
@@ -815,6 +845,22 @@ export default {
       });
     }
 
+    if (url.pathname === "/upload-stream") {
+      let bodyBytes = 0;
+      const reader = request.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bodyBytes += value.byteLength;
+      }
+      return Response.json({
+        ok: true,
+        method: request.method,
+        bodyBytes,
+        contentType: request.headers.get("content-type"),
+      });
+    }
+
     if (url.pathname === "/upload") {
       const body = new Uint8Array(await request.arrayBuffer());
       return Response.json({
@@ -823,6 +869,28 @@ export default {
         bodyBytes: body.length,
         checksum: checksum(body),
         contentType: request.headers.get("content-type"),
+      });
+    }
+
+    if (url.pathname === "/download-stream") {
+      const size = Math.min(Number(url.searchParams.get("bytes") || "0"), MAX_TEST_DOWNLOAD_BYTES);
+      let sent = 0;
+      const body = new ReadableStream({
+        pull(controller) {
+          const count = Math.min(1024 * 1024, size - sent);
+          if (count === 0) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(new Uint8Array(count));
+          sent += count;
+        },
+      });
+      return new Response(body, {
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(size),
+        },
       });
     }
 

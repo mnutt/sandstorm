@@ -37,6 +37,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace sandstorm {
 namespace {
@@ -54,24 +55,101 @@ constexpr auto REQUEST_JS_LIMIT = std::chrono::milliseconds(250);
 constexpr auto STARTUP_JS_LIMIT = std::chrono::seconds(5);
 constexpr auto DEFAULT_IDLE_TIMEOUT = 180 * kj::SECONDS;
 
-class JsWatchdogScope final {
+class JsWatchdogScheduler final {
  public:
-  JsWatchdogScope(v8::Isolate& isolate,
-      std::atomic<int64_t>& remainingNanos,
-      std::atomic<bool>& exceeded)
-      : isolate(isolate),
-        remainingNanos(remainingNanos),
-        exceeded(exceeded),
-        started(std::chrono::steady_clock::now()),
-        watchdog([this]() { run(); }) {}
+  JsWatchdogScheduler(): thread([this]() { run(); }) {}
 
-  ~JsWatchdogScope() noexcept {
+  ~JsWatchdogScheduler() noexcept {
     {
       std::lock_guard lock(mutex);
-      canceled = true;
+      shuttingDown = true;
     }
     wake.notify_one();
-    watchdog.join();
+    thread.join();
+  }
+
+  uint64_t schedule(v8::Isolate& isolate,
+      std::atomic<bool>& exceeded,
+      std::chrono::steady_clock::time_point deadline) {
+    std::lock_guard lock(mutex);
+    auto id = nextId++;
+    entries.push_back(Entry{ id, deadline, &isolate, &exceeded });
+    wake.notify_one();
+    return id;
+  }
+
+  void cancel(uint64_t id) {
+    std::lock_guard lock(mutex);
+    for (size_t i = 0; i < entries.size(); ++i) {
+      if (entries[i].id == id) {
+        entries[i] = entries.back();
+        entries.pop_back();
+        wake.notify_one();
+        return;
+      }
+    }
+  }
+
+ private:
+  struct Entry {
+    uint64_t id;
+    std::chrono::steady_clock::time_point deadline;
+    v8::Isolate* isolate;
+    std::atomic<bool>* exceeded;
+  };
+
+  std::mutex mutex;
+  std::condition_variable wake;
+  std::vector<Entry> entries;
+  uint64_t nextId = 1;
+  bool shuttingDown = false;
+  std::thread thread;
+
+  void run() {
+    std::unique_lock lock(mutex);
+    for (;;) {
+      if (shuttingDown) return;
+      if (entries.empty()) {
+        wake.wait(lock, [this]() { return shuttingDown || !entries.empty(); });
+        continue;
+      }
+
+      auto next = entries.front().deadline;
+      for (auto& entry: entries) next = std::min(next, entry.deadline);
+      wake.wait_until(lock, next);
+      if (shuttingDown) return;
+
+      auto now = std::chrono::steady_clock::now();
+      for (size_t i = entries.size(); i > 0; --i) {
+        auto& entry = entries[i - 1];
+        if (entry.deadline > now) continue;
+        // Keep the scheduler lock while touching the registered pointers. cancel() therefore does
+        // not return until a concurrent timeout is finished, so scope destruction is race-free.
+        entry.exceeded->store(true, std::memory_order_release);
+        entry.isolate->TerminateExecution();
+        entry = entries.back();
+        entries.pop_back();
+      }
+    }
+  }
+};
+
+class JsWatchdogScope final {
+ public:
+  JsWatchdogScope(JsWatchdogScheduler& scheduler,
+      v8::Isolate& isolate,
+      std::atomic<int64_t>& remainingNanos,
+      std::atomic<bool>& exceeded)
+      : scheduler(scheduler),
+        remainingNanos(remainingNanos),
+        started(std::chrono::steady_clock::now()) {
+    auto budget = std::chrono::nanoseconds(
+        kj::max<int64_t>(0, remainingNanos.load(std::memory_order_relaxed)));
+    registration = scheduler.schedule(isolate, exceeded, started + budget);
+  }
+
+  ~JsWatchdogScope() noexcept {
+    scheduler.cancel(registration);
 
     auto elapsed = std::chrono::steady_clock::now() - started;
     remainingNanos.fetch_sub(
@@ -80,28 +158,17 @@ class JsWatchdogScope final {
   }
 
  private:
-  void run() {
-    auto budget = std::chrono::nanoseconds(
-        kj::max<int64_t>(0, remainingNanos.load(std::memory_order_relaxed)));
-    std::unique_lock lock(mutex);
-    if (!wake.wait_for(lock, budget, [this]() { return canceled; })) {
-      exceeded.store(true, std::memory_order_release);
-      isolate.TerminateExecution();
-    }
-  }
-
-  v8::Isolate& isolate;
+  JsWatchdogScheduler& scheduler;
   std::atomic<int64_t>& remainingNanos;
-  std::atomic<bool>& exceeded;
   std::chrono::steady_clock::time_point started;
-  std::mutex mutex;
-  std::condition_variable wake;
-  bool canceled = false;
-  std::thread watchdog;
+  uint64_t registration;
 };
 
 class SandstormIsolateLimitEnforcer final: public workerd::IsolateLimitEnforcer {
  public:
+  explicit SandstormIsolateLimitEnforcer(JsWatchdogScheduler& watchdogs)
+      : watchdogs(watchdogs) {}
+
   v8::Isolate::CreateParams getCreateParams() override {
     v8::Isolate::CreateParams result;
     result.constraints.set_max_old_generation_size_in_bytes(ISOLATE_OLD_HEAP_LIMIT);
@@ -168,12 +235,14 @@ class SandstormIsolateLimitEnforcer final: public workerd::IsolateLimitEnforcer 
 
   class StartupScope final {
    public:
-    StartupScope(v8::Isolate& isolate,
+    StartupScope(JsWatchdogScheduler& watchdogs,
+        v8::Isolate& isolate,
         kj::OneOf<kj::Exception, kj::Duration>& result,
         std::chrono::nanoseconds limit)
         : result(result),
           remainingNanos(limit.count()),
-          watchdog(kj::heap<JsWatchdogScope>(isolate, remainingNanos, exceeded)) {}
+          watchdog(kj::heap<JsWatchdogScope>(
+              watchdogs, isolate, remainingNanos, exceeded)) {}
     ~StartupScope() noexcept {
       watchdog = nullptr;
       if (exceeded.load(std::memory_order_acquire)) {
@@ -187,12 +256,13 @@ class SandstormIsolateLimitEnforcer final: public workerd::IsolateLimitEnforcer 
     kj::Own<JsWatchdogScope> watchdog;
   };
 
-  static kj::Own<void> enterLimitedJs(workerd::jsg::Lock& lock,
+  kj::Own<void> enterLimitedJs(workerd::jsg::Lock& lock,
       kj::OneOf<kj::Exception, kj::Duration>& result,
-      std::chrono::nanoseconds limit) {
-    return kj::heap<StartupScope>(*lock.v8Isolate, result, limit);
+      std::chrono::nanoseconds limit) const {
+    return kj::heap<StartupScope>(watchdogs, *lock.v8Isolate, result, limit);
   }
 
+  JsWatchdogScheduler& watchdogs;
   workerd::TrackedWasmInstanceList trackedWasmInstances;
   std::atomic<bool> heapLimitExceeded = false;
   v8::Isolate* isolateForHeapLimit = nullptr;
@@ -200,16 +270,18 @@ class SandstormIsolateLimitEnforcer final: public workerd::IsolateLimitEnforcer 
 
 class SandstormRequestLimitEnforcer final: public workerd::LimitEnforcer {
  public:
-  explicit SandstormRequestLimitEnforcer(kj::Timer& timer): timer(timer), remainingNanos(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(REQUEST_JS_LIMIT).count()) {}
+  SandstormRequestLimitEnforcer(kj::Timer& timer, JsWatchdogScheduler& watchdogs)
+      : timer(timer), watchdogs(watchdogs), remainingNanos(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(REQUEST_JS_LIMIT).count()) {}
 
   kj::Own<void> enterJs(workerd::jsg::Lock& lock, workerd::IoContext&) override {
     requireLimitsNotExceeded();
-    return kj::heap<JsWatchdogScope>(*lock.v8Isolate, remainingNanos, exceeded);
+    return kj::heap<JsWatchdogScope>(watchdogs, *lock.v8Isolate, remainingNanos, exceeded);
   }
   void topUpActor() override {}
   void newSubrequest(bool) override {
-    JSG_REQUIRE(++subrequests <= MAX_SUBREQUESTS, Error, "subrequest limit exceeded");
+    auto count = subrequests.fetch_add(1, std::memory_order_relaxed) + 1;
+    JSG_REQUIRE(count <= MAX_SUBREQUESTS, Error, "subrequest limit exceeded");
   }
   void newKvRequest(KvOpType) override { newSubrequest(false); }
   void newAnalyticsEngineRequest() override { newSubrequest(false); }
@@ -232,9 +304,10 @@ class SandstormRequestLimitEnforcer final: public workerd::LimitEnforcer {
 
  private:
   kj::Timer& timer;
+  JsWatchdogScheduler& watchdogs;
   std::atomic<int64_t> remainingNanos;
   std::atomic<bool> exceeded = false;
-  uint subrequests = 0;
+  std::atomic<uint> subrequests = 0;
 };
 
 class SandstormLimitEnforcerFactory final:
@@ -245,17 +318,18 @@ class SandstormLimitEnforcerFactory final:
   kj::Maybe<kj::Own<workerd::IsolateLimitEnforcer>> newIsolateLimitEnforcer(
       kj::StringPtr, bool isDynamic) override {
     if (!isDynamic) return kj::none;
-    return kj::heap<SandstormIsolateLimitEnforcer>();
+    return kj::heap<SandstormIsolateLimitEnforcer>(watchdogs);
   }
 
   kj::Maybe<kj::Own<workerd::LimitEnforcer>> newRequestLimitEnforcer(
       kj::StringPtr, bool isDynamic) override {
     if (!isDynamic) return kj::none;
-    return kj::heap<SandstormRequestLimitEnforcer>(timer);
+    return kj::heap<SandstormRequestLimitEnforcer>(timer, watchdogs);
   }
 
  private:
   kj::Timer& timer;
+  JsWatchdogScheduler watchdogs;
 };
 
 class SystemEntropySource final: public kj::EntropySource {
@@ -1519,6 +1593,9 @@ struct HostedState final: public kj::Refcounted {
 
   void stop() {
     if (!running) return;
+    if (!idleTimerCanceler.isEmpty()) {
+      idleTimerCanceler.cancel("hosted isolate stopped");
+    }
     runtime.evictDynamicWorker(LOADER_NAMESPACE, grainId);
     ingressTarget->worker = nullptr;
     revokeSelfServices();
@@ -1534,7 +1611,7 @@ struct HostedState final: public kj::Refcounted {
   kj::Own<BundleBacking> backing;
   kj::Own<workerd::WorkerStubChannel> worker;
   kj::Own<SelfServiceTarget> ingressTarget;
-  uint64_t keepAliveGeneration = 0;
+  kj::Canceler idleTimerCanceler;
   bool running = true;
 };
 
@@ -1638,14 +1715,24 @@ class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::Er
 
   void refreshIdleTimer(kj::Rc<HostedState> state) {
     KJ_REQUIRE(state->running, "cannot refresh a stopped hosted isolate");
-    auto generation = ++state->keepAliveGeneration;
-    tasks.add(timer.afterDelay(idleTimeout).then(
-        [this, state = kj::mv(state), generation]() mutable {
-      if (!state->running || state->keepAliveGeneration != generation) return;
+    if (!state->idleTimerCanceler.isEmpty()) {
+      state->idleTimerCanceler.cancel("hosted isolate idle timer refreshed");
+    }
+    auto timerTask = state->idleTimerCanceler.wrap(timer.afterDelay(idleTimeout).then(
+        [this, state = kj::mv(state)]() mutable {
+      // Detach the currently-running timer before stop() cancels any outstanding timer.
+      state->idleTimerCanceler.release();
+      if (!state->running) return;
       auto grainId = kj::str(state->grainId);
       state->stop();
       grains.erase(grainId);
-    }));
+    })).catch_([](kj::Exception&& exception) -> kj::Promise<void> {
+      if (exception.getType() == kj::Exception::Type::DISCONNECTED) {
+        return kj::READY_NOW;
+      }
+      return kj::mv(exception);
+    });
+    tasks.add(kj::mv(timerTask));
   }
 
   void taskFailed(kj::Exception&& exception) override {

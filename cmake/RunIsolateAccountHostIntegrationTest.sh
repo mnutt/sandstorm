@@ -28,7 +28,9 @@ mkdir -p "$app_root" "$grain_root"
 "$spk" unpack "$test_spk" "$app_root/testpackage123"
 cp -a "$app_root/testpackage123" "$app_root/oversizedpackage"
 chmod u+w "$app_root/oversizedpackage/isolate-test/worker.js"
-truncate -s 8388609 "$app_root/oversizedpackage/isolate-test/worker.js"
+# Keep this one byte above MAX_ISOLATE_TOTAL_MODULE_BYTES in isolate-supervisor.c++.
+truncate -s 16777217 "$app_root/oversizedpackage/isolate-test/worker.js"
+[[ $(stat -c %s "$app_root/oversizedpackage/isolate-test/worker.js") -eq 16777217 ]]
 ln -s "$sandstorm" "$root/isolate-account-host"
 
 "$root/isolate-account-host" \
@@ -49,3 +51,5 @@ grep -q '"topology": "accountSharedHost"' \
   "$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"
 grep -q '"topology": "accountSharedHost"' \
   "$grain_root/testgrain456/isolate-runtime/runtime-manifest.json"
+grep -q '"topology": "accountSharedHost"' \
+  "$grain_root/concurrentgrain789/isolate-runtime/runtime-manifest.json"

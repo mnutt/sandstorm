@@ -26,7 +26,12 @@ for _attempt in $(seq 1 100); do
 done
 
 [[ -S "$socket" ]]
+set -- /proc/"$host_pid"/task/*
+baseline_threads=$#
 "$client" "$socket"
+set -- /proc/"$host_pid"/task/*
+final_threads=$#
+[[ "$final_threads" -le $((baseline_threads + 2)) ]]
 grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:testgrain123"' "$log"
 grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:cpugrain123"' "$log"
 

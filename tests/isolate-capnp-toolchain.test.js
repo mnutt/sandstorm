@@ -208,6 +208,9 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
     modules.get("sandstorm-internal:capnp-runtime").esModulePath,
     "__sandstorm_isolate_runtime/capnp-runtime.js");
   assert.equal(
+    modules.get("sandstorm-internal:validation").esModulePath,
+    "__sandstorm_isolate_runtime/validation.js");
+  assert.equal(
     modules.get("capnp:/sandstorm/web-session.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/web-session.js");
   assert.equal(modules.has("sandstorm:rpc"), false);
@@ -271,6 +274,19 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
       },
     }),
     /`capnp-es:` isolate schema imports have been renamed; use `capnp:`/);
+});
+
+test("spk dev-isolate rejects service targets outside the worker", async () => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+  const workerPath = path.join(REPO_DIR, "examples/isolate-capnp-rpc/worker.js");
+  await assert.rejects(
+    runCommand(SPK_BIN, [
+      "dev-isolate",
+      "--print-manifest-json",
+      "--service-binding", "REMOTE=another-service",
+      workerPath,
+    ]),
+    /service binding target must be the worker-local main service/);
 });
 
 test("spk dev-isolate resolves app-interface schemas outside the repo", async (t) => {
@@ -776,7 +792,7 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
   ].join("\n"));
 
   const pkgdefPath = path.join(fixtureRoot, "sandstorm-pkgdef.capnp");
-  await fs.writeFile(pkgdefPath, [
+  const pkgdefSource = [
     "@0xbeba1a4a7a55e001;",
     "",
     "using Grain = import \"/sandstorm/grain.capnp\";",
@@ -819,7 +835,28 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     "  alwaysInclude = [ \"sandstorm-manifest\", \"app/src/worker.js\" ]",
     ");",
     "",
-  ].join("\n"));
+  ].join("\n");
+  await fs.writeFile(pkgdefPath, pkgdefSource);
+
+  const unsupportedPkgdefPath = path.join(fixtureRoot, "unsupported-service-pkgdef.capnp");
+  await fs.writeFile(unsupportedPkgdefPath, pkgdefSource.replace(
+    "    bindings = [],",
+    "    bindings = [ (name = \"REMOTE\", service = \"another-service\") ],"));
+  await assert.rejects(
+    runCommand(SPK_BIN, [
+      "pack",
+      `-k${path.join(REPO_DIR, "src/sandstorm/test-app/isolate-test-app.key")}`,
+      "-Isrc",
+      "-p", `${unsupportedPkgdefPath}:pkgdef`,
+      path.join(fixtureRoot, "unsupported-service.spk"),
+    ], {
+      cwd: REPO_DIR,
+      env: {
+        ...process.env,
+        SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
+      },
+    }),
+    /Isolate service bindings may only target the worker-local main service/);
 
   const spkPath = path.join(fixtureRoot, "pkg.spk");
   await runCommand(SPK_BIN, [

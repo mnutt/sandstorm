@@ -51,6 +51,7 @@ sandstorm_generate_capnp(_sandstorm_schema_sources _sandstorm_schema_headers
   ${_sandstorm_schemas})
 
 set(_isolate_generated_headers)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 function(_sandstorm_embed_isolate_js input name variable)
   set(_output "${CMAKE_BINARY_DIR}/generated/sandstorm/isolate/${name}.js.h")
   add_custom_command(
@@ -66,10 +67,29 @@ function(_sandstorm_embed_isolate_js input name variable)
   set(_isolate_generated_headers ${_isolate_generated_headers} "${_output}" PARENT_SCOPE)
 endfunction()
 
-_sandstorm_embed_isolate_js(
-  "${CMAKE_CURRENT_SOURCE_DIR}/isolate/api.js" api ISOLATE_API_HELPER_SOURCE)
+set(_isolate_api_header
+  "${CMAKE_BINARY_DIR}/generated/sandstorm/isolate/api.js.h")
+add_custom_command(
+  OUTPUT "${_isolate_api_header}"
+  COMMAND "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/cmake/EmbedIsolateApi.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/isolate/api.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/isolate/browser-client.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/isolate/validation.js"
+    "${_isolate_api_header}"
+  DEPENDS
+    "${PROJECT_SOURCE_DIR}/cmake/EmbedIsolateApi.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/isolate/api.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/isolate/browser-client.js"
+    "${CMAKE_CURRENT_SOURCE_DIR}/isolate/validation.js"
+  COMMENT "Embedding isolate API JavaScript"
+  VERBATIM)
+list(APPEND _isolate_generated_headers "${_isolate_api_header}")
 
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
+_sandstorm_embed_isolate_js(
+  "${CMAKE_CURRENT_SOURCE_DIR}/isolate/capnp-runtime.js"
+  capnp-runtime ISOLATE_CAPNP_RUNTIME_SOURCE)
+
 set(_capnp_es_runtime_header
   "${CMAKE_BINARY_DIR}/generated/sandstorm/isolate/capnp-es.js.h")
 add_custom_command(
@@ -108,6 +128,8 @@ add_library(sandstorm_core STATIC
   fuse.c++
   gateway.c++
   id-to-text.c++
+  isolate-native-host-launch.c++
+  isolate-session-registry.c++
   isolate-supervisor.c++
   sandbox.c++
   send-fd.c++
@@ -196,6 +218,14 @@ if(BUILD_TESTING)
       CapnProto::kj-test)
     add_test(NAME "sandstorm/${_test}" COMMAND "$<TARGET_FILE:${_target}>")
   endforeach()
+
+  add_executable(sandstorm-isolate-session-registry-test
+    isolate-session-registry-test.c++)
+  target_link_libraries(sandstorm-isolate-session-registry-test PRIVATE
+    sandstorm_core
+    CapnProto::kj-test)
+  add_test(NAME sandstorm/isolate-session-registry
+    COMMAND "$<TARGET_FILE:sandstorm-isolate-session-registry-test>")
 endif()
 
 if(SANDSTORM_BUILD_NODE_CAPNP)
