@@ -96,6 +96,40 @@ transfers. Use schema-first `capnp:` imports for public typed capability
 protocols that other isolates, browser code, or legacy Cap'n Proto grains
 should call.
 
+### Benchmarking isolate-to-isolate RPC
+
+Run the manual cross-grain benchmark with:
+
+```sh
+make isolate-cross-grain-benchmark
+```
+
+The harness starts two grains in one account-shared native host. The provider
+saves a typed Cap'n Proto capability, the consumer restores it, and all timed
+calls go directly from the consumer isolate to the provider isolate. HTTP is
+used only to start the benchmark and collect its JSON report; capability save,
+restore, connection setup, and HTTP orchestration are outside the timed region.
+
+The default report contains a serial zero-byte ping to expose fixed call
+latency and a serial 1 MiB echo to expose data-transfer overhead. Each echo
+moves the configured payload once in each direction, so
+`roundTripMiBPerSecond` counts twice the payload size while
+`requestMiBPerSecond` counts one direction. Both cases include an in-isolate
+typed Cap'n Proto client as a binding/runtime baseline.
+
+Pass tuning options through `ISOLATE_CROSS_GRAIN_BENCHMARK_ARGS`, for example:
+
+```sh
+make isolate-cross-grain-benchmark \
+  ISOLATE_CROSS_GRAIN_BENCHMARK_ARGS='--samples 7 --small-iterations 2000 --large-iterations 32 --large-payload-bytes 4194304'
+```
+
+The available options are `--samples`, `--concurrency`,
+`--small-iterations`, `--small-warmup`, `--large-iterations`,
+`--large-warmup`, and `--large-payload-bytes`. Keep concurrency at one when
+measuring per-call latency; raise it separately when measuring saturated
+throughput.
+
 The old private JavaScript object RPC helpers have been removed. Do not design
 new isolate protocols around JavaScript class names, raw service binding names,
 or hidden in-process object references.

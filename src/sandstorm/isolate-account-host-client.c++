@@ -7,6 +7,7 @@
 #include <kj/async-io.h>
 #include <kj/compat/http.h>
 #include <kj/debug.h>
+#include <kj/map.h>
 #include <sandstorm/isolate-account-host.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
 #include <sandstorm/outbound-http-session-impl.capnp.h>
@@ -17,6 +18,7 @@
 
 #include "web-session-websocket.h"
 
+#include <stdio.h>
 #include <string.h>
 
 namespace sandstorm {
@@ -67,16 +69,26 @@ public:
 
 class TestCore final: public SandstormCore::Server {
 public:
-  void setSupervisor(Supervisor::Client supervisor) {
-    this->supervisor = kj::mv(supervisor);
+  void setSupervisor(kj::StringPtr grainId, Supervisor::Client supervisor) {
+    KJ_IF_MAYBE(existing, supervisors.find(grainId)) {
+      *existing = kj::mv(supervisor);
+    } else {
+      supervisors.insert(kj::str(grainId), kj::mv(supervisor));
+    }
   }
 
   kj::Promise<void> makeToken(MakeTokenContext context) override {
-    auto ref = context.getParams().getRef();
+    auto params = context.getParams();
+    auto owner = params.getOwner();
+    KJ_REQUIRE(owner.which() == ApiTokenOwner::GRAIN,
+        "account-host test only supports grain-owned tokens");
+    auto ownerGrainId = kj::str(owner.getGrain().getGrainId());
+    auto ref = params.getRef();
     if (ref.which() == SupervisorObjectId<>::ROUTE_BACKED_SESSION) {
       auto route = ref.getRouteBackedSession();
       routeType = route.getType();
       routePathPrefix = kj::heapString(route.getPathPrefix());
+      routeOwnerGrainId = kj::mv(ownerGrainId);
       routeTokenLive = true;
       context.getResults().setToken(kj::StringPtr("account-route-token").asBytes());
     } else {
@@ -85,6 +97,7 @@ public:
       capnp::MallocMessageBuilder message;
       message.setRoot(ref.getAppRef());
       appRef = capnp::messageToFlatArray(message);
+      appOwnerGrainId = kj::mv(ownerGrainId);
       appTokenLive = true;
       context.getResults().setToken(kj::StringPtr("account-app-token").asBytes());
     }
@@ -97,23 +110,31 @@ public:
       context.getResults().setCap(kj::heap<FakeOutboundHttpSession>());
       return kj::READY_NOW;
     }
-    auto& currentSupervisor = KJ_ASSERT_NONNULL(supervisor);
-    auto request = currentSupervisor.restoreRequest();
+    kj::StringPtr ownerGrainId;
     if (token == "account-route-token") {
       KJ_REQUIRE(routeTokenLive, "dropped account-host route token was restored");
-      auto route = request.getRef().initRouteBackedSession();
-      route.setType(routeType);
-      route.setPathPrefix(routePathPrefix);
+      ownerGrainId = routeOwnerGrainId;
     } else {
       KJ_REQUIRE(token == "account-app-token" && appTokenLive,
           "unknown account-host test token", token);
-      capnp::FlatArrayMessageReader reader(appRef.asPtr());
-      request.getRef().setAppRef(reader.getRoot<capnp::AnyPointer>());
+      ownerGrainId = appOwnerGrainId;
     }
-    request.setParentToken(token.asBytes());
-    return request.send().then([context, token = kj::mv(token)](auto result) mutable {
-      context.getResults().setCap(result.getCap());
-    });
+    KJ_IF_MAYBE(currentSupervisor, supervisors.find(ownerGrainId)) {
+      auto request = currentSupervisor->restoreRequest();
+      if (token == "account-route-token") {
+        auto route = request.getRef().initRouteBackedSession();
+        route.setType(routeType);
+        route.setPathPrefix(routePathPrefix);
+      } else {
+        capnp::FlatArrayMessageReader reader(appRef.asPtr());
+        request.getRef().setAppRef(reader.getRoot<capnp::AnyPointer>());
+      }
+      request.setParentToken(token.asBytes());
+      return request.send().then([context, token = kj::mv(token)](auto result) mutable {
+        context.getResults().setCap(result.getCap());
+      });
+    }
+    KJ_FAIL_REQUIRE("no supervisor registered for token-owning grain", ownerGrainId);
   }
 
   kj::Promise<void> drop(DropContext context) override {
@@ -138,12 +159,14 @@ public:
   }
 
 private:
-  kj::Maybe<Supervisor::Client> supervisor;
+  kj::HashMap<kj::String, Supervisor::Client> supervisors;
   SupervisorObjectId<>::RouteBackedSession::Type routeType =
       SupervisorObjectId<>::RouteBackedSession::Type::WEB;
   kj::String routePathPrefix;
+  kj::String routeOwnerGrainId;
   bool routeTokenLive = false;
   kj::Array<capnp::word> appRef;
+  kj::String appOwnerGrainId;
   bool appTokenLive = false;
 };
 
@@ -485,8 +508,12 @@ void testBrowserBootstrap(kj::WaitScope& waitScope, Supervisor::Client superviso
 }  // namespace sandstorm
 
 int main(int argc, char** argv) {
-  KJ_REQUIRE(argc == 4,
-      "usage: isolate-account-host-client <control-socket> <grain-id> <package-id>");
+  bool benchmarkMode = argc >= 5 && kj::StringPtr(argv[4]) == "--benchmark";
+  KJ_REQUIRE(argc == 4 || benchmarkMode,
+      "usage: isolate-account-host-client <control-socket> <grain-id> <package-id> "
+      "[--benchmark [--samples N] [--concurrency N] [--small-iterations N] "
+      "[--small-warmup N] [--large-iterations N] [--large-warmup N] "
+      "[--large-payload-bytes N]]");
   auto io = kj::setupAsyncIo();
   auto address = io.provider->getNetwork()
       .parseAddress(kj::str("unix:", argv[1]), 0).wait(io.waitScope);
@@ -500,6 +527,54 @@ int main(int argc, char** argv) {
   auto hostId = vatMessage.initRoot<capnp::rpc::twoparty::VatId>();
   hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
   auto account = rpcSystem.bootstrap(hostId).castAs<sandstorm::IsolateAccountHost>();
+
+  if (benchmarkMode) {
+    auto provider = sandstorm::startGrain(
+        io.waitScope, account, core, argv[2], argv[3], true);
+    coreImpl.setSupervisor(argv[2], provider);
+    auto token = sandstorm::fetchPath(
+        io.waitScope, provider, core, "cross-grain-capnp-benchmark-token");
+
+    auto consumer = sandstorm::startGrain(
+        io.waitScope, account, core, "isolatebenchmarkconsumer", argv[3], true);
+    coreImpl.setSupervisor("isolatebenchmarkconsumer", consumer);
+    auto path = kj::str("cross-grain-capnp-benchmark?token=", token);
+
+    KJ_REQUIRE((argc - 5) % 2 == 0, "benchmark options require a numeric value");
+    for (int i = 5; i < argc; i += 2) {
+      auto option = kj::StringPtr(argv[i]);
+      auto value = kj::StringPtr(argv[i + 1]);
+      KJ_REQUIRE(value.size() > 0, "benchmark option has an empty value", option);
+      for (char c: value) {
+        KJ_REQUIRE(c >= '0' && c <= '9', "benchmark option must be an integer", option, value);
+      }
+
+      kj::StringPtr parameter;
+      if (option == "--samples") {
+        parameter = "samples";
+      } else if (option == "--concurrency") {
+        parameter = "concurrency";
+      } else if (option == "--small-iterations") {
+        parameter = "smallIterations";
+      } else if (option == "--small-warmup") {
+        parameter = "smallWarmup";
+      } else if (option == "--large-iterations") {
+        parameter = "largeIterations";
+      } else if (option == "--large-warmup") {
+        parameter = "largeWarmup";
+      } else if (option == "--large-payload-bytes") {
+        parameter = "largePayloadBytes";
+      } else {
+        KJ_FAIL_REQUIRE("unknown benchmark option", option);
+      }
+      path = kj::str(path, "&", parameter, "=", value);
+    }
+
+    auto result = sandstorm::fetchPath(io.waitScope, consumer, core, path);
+    fwrite(result.begin(), 1, result.size(), stdout);
+    fputc('\n', stdout);
+    return 0;
+  }
 
   sandstorm::expectStartRejected(
       io.waitScope, account, core, "oversizedgrain", "oversizedpackage");
@@ -530,7 +605,7 @@ int main(int argc, char** argv) {
 
   auto supervisor = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], true);
-  coreImpl.setSupervisor(supervisor);
+  coreImpl.setSupervisor(argv[2], supervisor);
   sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
   sandstorm::testWebSocket(io.waitScope, supervisor);
   sandstorm::testBrowserBootstrap(io.waitScope, supervisor);
@@ -587,6 +662,7 @@ int main(int argc, char** argv) {
   // genuinely multi-tenant rather than merely a different one-process-per-grain launcher.
   auto second = sandstorm::startGrain(
       io.waitScope, account, core, "testgrain456", argv[3], true);
+  coreImpl.setSupervisor("testgrain456", second);
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
   auto secondStorage = sandstorm::fetchPath(
       io.waitScope, second, core, "shared-storage-isolation?value=second");
@@ -596,6 +672,15 @@ int main(int argc, char** argv) {
       io.waitScope, supervisor, core, "shared-storage-isolation");
   KJ_REQUIRE(isolatedFirstStorage == "{\"ok\":true,\"value\":\"first\"}",
       "second shared grain overwrote the first grain's storage", isolatedFirstStorage);
+
+  auto crossGrainToken = sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "cross-grain-capnp-benchmark-token");
+  auto crossGrainCall = sandstorm::fetchPath(io.waitScope, second, core,
+      kj::str("cross-grain-native-greeter-self-test?token=", crossGrainToken));
+  KJ_REQUIRE(sandstorm::contains(crossGrainCall, "\"ok\":true"), crossGrainCall);
+  KJ_REQUIRE(sandstorm::contains(crossGrainCall,
+      "\"message\":\"classic native greeter cross-grain-capnp-benchmark hello client isolate\""),
+      "second isolate did not call the first isolate over Cap'n Proto RPC", crossGrainCall);
   supervisor.shutdownRequest().send().wait(io.waitScope);
 
   bool rejectedAfterShutdown = false;

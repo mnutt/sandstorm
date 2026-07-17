@@ -30,6 +30,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	isolate-account-host-integration-test \
 	isolate-backend-recovery-test \
 	isolate-memory-benchmark \
+	isolate-cross-grain-benchmark \
 	verify-isolate-release-bundle isolate-ci \
 	isolate-capnp-abi-check \
 	isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test \
@@ -94,6 +95,10 @@ $(eval $(call cmake_target,isolate-backend-recovery-test,isolate-backend-recover
 isolate-memory-benchmark: configure
 	ISOLATE_MEMORY_BENCHMARK_ARGS="$(ISOLATE_MEMORY_BENCHMARK_ARGS)" \
 		$(CMAKE_BUILD) --target isolate-memory-benchmark
+
+isolate-cross-grain-benchmark: configure
+	ISOLATE_CROSS_GRAIN_BENCHMARK_ARGS="$(ISOLATE_CROSS_GRAIN_BENCHMARK_ARGS)" \
+		$(CMAKE_BUILD) --target isolate-cross-grain-benchmark
 
 $(eval $(call cmake_target,shell-env,shell-env))
 $(eval $(call cmake_target,shell-build,shell-build))
