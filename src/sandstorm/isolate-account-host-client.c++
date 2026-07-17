@@ -3,25 +3,161 @@
 // Licensed under the Apache License, Version 2.0.
 
 #include <capnp/rpc-twoparty.h>
+#include <capnp/serialize.h>
 #include <kj/async-io.h>
 #include <kj/compat/http.h>
 #include <kj/debug.h>
 #include <sandstorm/isolate-account-host.capnp.h>
+#include <sandstorm/isolate-supervisor-internal.capnp.h>
+#include <sandstorm/outbound-http-session-impl.capnp.h>
+#include <sandstorm/outbound-http-session.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
 
 #include "web-session-websocket.h"
 
+#include <string.h>
+
 namespace sandstorm {
 namespace {
 
-class TestCore final: public SandstormCore::Server {};
 class TestSessionContext final: public SessionContext::Server {};
+
+bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
+  if (needle.size() > haystack.size()) return false;
+  for (size_t i = 0; i <= haystack.size() - needle.size(); ++i) {
+    if (haystack.slice(i).startsWith(needle)) return true;
+  }
+  return false;
+}
+
+class FakeOutboundHttpSession final: public PersistentOutboundHttpSession::Server {
+public:
+  kj::Promise<void> request(RequestContext context) override {
+    auto params = context.getParams();
+    KJ_REQUIRE(params.getMethod() == OutboundHttpSession::Method::POST);
+    KJ_REQUIRE(params.getPath() == "v1/chat/completions?model=test", params.getPath());
+    KJ_REQUIRE(kj::str(params.getBody().asChars()) == "hello");
+    auto response = context.getResults();
+    response.setStatusCode(201);
+    response.setStatusText("Created");
+    auto headers = response.initHeaders(2);
+    headers[0].setName("content-type");
+    headers[0].setValue("application/json; charset=utf-8");
+    headers[1].setName("x-outbound-test");
+    headers[1].setValue("yes");
+    auto body = kj::str(
+        "{\"ok\":true,\"source\":\"fake-outbound-http\","
+        "\"method\":\"POST\",\"path\":\"", params.getPath(),
+        "\",\"authorization\":\"Bearer isolate-test\",\"body\":\"hello\"}");
+    auto stream = params.getResponseStream();
+    auto write = stream.writeRequest();
+    write.setData(body.asBytes());
+    return write.send().then([stream = kj::mv(stream), body = kj::mv(body)]() mutable {
+      return stream.doneRequest().send().then([](auto) {});
+    });
+  }
+
+  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
+    context.getResults().setCap(thisCap().castAs<SystemPersistent>());
+    return kj::READY_NOW;
+  }
+};
+
+class TestCore final: public SandstormCore::Server {
+public:
+  void setSupervisor(Supervisor::Client supervisor) {
+    this->supervisor = kj::mv(supervisor);
+  }
+
+  kj::Promise<void> makeToken(MakeTokenContext context) override {
+    auto ref = context.getParams().getRef();
+    if (ref.which() == SupervisorObjectId<>::ROUTE_BACKED_SESSION) {
+      auto route = ref.getRouteBackedSession();
+      routeType = route.getType();
+      routePathPrefix = kj::heapString(route.getPathPrefix());
+      routeTokenLive = true;
+      context.getResults().setToken(kj::StringPtr("account-route-token").asBytes());
+    } else {
+      KJ_REQUIRE(ref.which() == SupervisorObjectId<>::APP_REF,
+          "account-host test received an unsupported persistent object type");
+      capnp::MallocMessageBuilder message;
+      message.setRoot(ref.getAppRef());
+      appRef = capnp::messageToFlatArray(message);
+      appTokenLive = true;
+      context.getResults().setToken(kj::StringPtr("account-app-token").asBytes());
+    }
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> restore(RestoreContext context) override {
+    auto token = kj::str(context.getParams().getToken().asChars());
+    if (token == "outbound-http-saved-token") {
+      context.getResults().setCap(kj::heap<FakeOutboundHttpSession>());
+      return kj::READY_NOW;
+    }
+    auto& currentSupervisor = KJ_ASSERT_NONNULL(supervisor);
+    auto request = currentSupervisor.restoreRequest();
+    if (token == "account-route-token") {
+      KJ_REQUIRE(routeTokenLive, "dropped account-host route token was restored");
+      auto route = request.getRef().initRouteBackedSession();
+      route.setType(routeType);
+      route.setPathPrefix(routePathPrefix);
+    } else {
+      KJ_REQUIRE(token == "account-app-token" && appTokenLive,
+          "unknown account-host test token", token);
+      capnp::FlatArrayMessageReader reader(appRef.asPtr());
+      request.getRef().setAppRef(reader.getRoot<capnp::AnyPointer>());
+    }
+    request.setParentToken(token.asBytes());
+    return request.send().then([context, token = kj::mv(token)](auto result) mutable {
+      context.getResults().setCap(result.getCap());
+    });
+  }
+
+  kj::Promise<void> drop(DropContext context) override {
+    auto token = kj::str(context.getParams().getToken().asChars());
+    if (token == "account-route-token") {
+      KJ_REQUIRE(routeTokenLive, "route-backed token dropped twice");
+      routeTokenLive = false;
+      return kj::READY_NOW;
+    }
+    if (token == "account-app-token") {
+      KJ_REQUIRE(appTokenLive, "app-persistent token dropped twice");
+      appTokenLive = false;
+      return kj::READY_NOW;
+    }
+    KJ_REQUIRE(token == "outbound-http-saved-token", "unknown account-host test token", token);
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> reportGrainSize(ReportGrainSizeContext context) override {
+    KJ_REQUIRE(context.getParams().getBytes() > 0);
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Maybe<Supervisor::Client> supervisor;
+  SupervisorObjectId<>::RouteBackedSession::Type routeType =
+      SupervisorObjectId<>::RouteBackedSession::Type::WEB;
+  kj::String routePathPrefix;
+  bool routeTokenLive = false;
+  kj::Array<capnp::word> appRef;
+  bool appTokenLive = false;
+};
 
 class IgnoreByteStream final: public ByteStream::Server {
 public:
   kj::Promise<void> write(WriteContext context) override {
+    (void)context;
+    return kj::READY_NOW;
+  }
+};
+
+class IgnoreWebSocketStream final: public WebSession::WebSocketStream::Server {
+public:
+  kj::Promise<void> sendBytes(SendBytesContext context) override {
     (void)context;
     return kj::READY_NOW;
   }
@@ -47,6 +183,26 @@ private:
   kj::Own<kj::PromiseFulfiller<kj::String>> doneFulfiller;
 };
 
+class CountingByteStream final: public ByteStream::Server {
+public:
+  explicit CountingByteStream(kj::Own<kj::PromiseFulfiller<uint64_t>> doneFulfiller)
+      : doneFulfiller(kj::mv(doneFulfiller)) {}
+
+  kj::Promise<void> write(WriteContext context) override {
+    byteCount += context.getParams().getData().size();
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> done(DoneContext context) override {
+    doneFulfiller->fulfill(kj::mv(byteCount));
+    return kj::READY_NOW;
+  }
+
+private:
+  uint64_t byteCount = 0;
+  kj::Own<kj::PromiseFulfiller<uint64_t>> doneFulfiller;
+};
+
 class TestEntropySource final: public kj::EntropySource {
 public:
   void generate(kj::ArrayPtr<kj::byte> buffer) override {
@@ -70,19 +226,17 @@ void expectStartRejected(kj::WaitScope& waitScope, IsolateAccountHost::Client ac
     SandstormCore::Client core, kj::StringPtr grainId, kj::StringPtr packageId) {
   bool rejected = false;
   try {
-    (void)startGrain(waitScope, account, core, grainId, packageId, true);
+    auto supervisor = startGrain(waitScope, account, core, grainId, packageId, true);
+    auto keepAlive = supervisor.keepAliveRequest();
+    keepAlive.setCore(core);
+    keepAlive.send().wait(waitScope);
   } catch (const kj::Exception&) {
     rejected = true;
   }
   KJ_REQUIRE(rejected, "oversized worker package was admitted");
 }
 
-kj::String fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
-    SandstormCore::Client core, kj::StringPtr path) {
-  auto keepAlive = supervisor.keepAliveRequest();
-  keepAlive.setCore(core);
-  keepAlive.send().wait(waitScope);
-
+WebSession::Client newWebSession(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
   auto view = supervisor.getMainViewRequest().send().wait(waitScope).getView();
   auto sessionRequest = view.newSessionRequest();
   auto userInfo = sessionRequest.initUserInfo();
@@ -95,7 +249,16 @@ kj::String fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
   sessionParams.setBasePath("https://account-host-test.invalid");
   sessionParams.setUserAgent("isolate-account-host-client");
   sessionRequest.setTabId(kj::StringPtr("account-host-test-tab").asBytes());
-  auto session = sessionRequest.send().wait(waitScope).getSession().castAs<WebSession>();
+  return sessionRequest.send().wait(waitScope).getSession().castAs<WebSession>();
+}
+
+kj::String fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
+    SandstormCore::Client core, kj::StringPtr path) {
+  auto keepAlive = supervisor.keepAliveRequest();
+  keepAlive.setCore(core);
+  keepAlive.send().wait(waitScope);
+
+  auto session = newWebSession(waitScope, supervisor);
 
   auto get = session.getRequest();
   get.setPath(path);
@@ -124,20 +287,148 @@ kj::String fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
   return streamedBody.promise.wait(waitScope);
 }
 
+void testUnknownLengthUploads(kj::AsyncIoContext& io, Supervisor::Client supervisor,
+    SandstormCore::Client core) {
+  auto keepAlive = supervisor.keepAliveRequest();
+  keepAlive.setCore(core);
+  keepAlive.send().wait(io.waitScope);
+  auto session = newWebSession(io.waitScope, supervisor);
+
+  auto runUpload = [&](uint64_t size) {
+    auto request = session.postStreamingRequest();
+    request.setPath("upload-stream");
+    request.setMimeType("application/octet-stream");
+    request.setEncoding("");
+    // expectedSize=0 deliberately selects the unknown-length, disk-spooled path.
+    request.setExpectedSize(0);
+    auto context = request.initContext();
+    auto streamedBody = kj::newPromiseAndFulfiller<kj::String>();
+    context.setResponseStream(kj::heap<CollectByteStream>(kj::mv(streamedBody.fulfiller)));
+    context.initCookies(0);
+    context.initAccept(0);
+    context.initAcceptEncoding(0);
+    context.initAdditionalHeaders(0);
+    auto stream = request.send().wait(io.waitScope).getStream();
+    auto responsePromise = stream.getResponseRequest().send();
+    auto chunk = kj::heapArray<kj::byte>(1024 * 1024);
+    memset(chunk.begin(), 0x5a, chunk.size());
+    uint64_t written = 0;
+    while (written < size) {
+      auto count = static_cast<size_t>(
+          kj::min(static_cast<uint64_t>(chunk.size()), size - written));
+      auto write = stream.writeRequest();
+      write.setData(chunk.asPtr().slice(0, count));
+      write.send().wait(io.waitScope);
+      written += count;
+    }
+    stream.doneRequest().send().wait(io.waitScope);
+    auto response = responsePromise.wait(io.waitScope);
+    KJ_REQUIRE(response.which() == WebSession::Response::CONTENT, response.which());
+    auto body = response.getContent().getBody();
+    KJ_REQUIRE(body.isBytes() || body.isStream(), "upload response had an unknown body shape");
+    auto text = body.isBytes()
+        ? kj::str(body.getBytes().asChars())
+        : streamedBody.promise.wait(io.waitScope);
+    KJ_REQUIRE(contains(text, kj::str("\"bodyBytes\":", size)), text);
+  };
+
+  runUpload(2 * 1024 * 1024 + 17);
+  runUpload(64ull * 1024 * 1024);
+
+  // Cancellation must release the unlinked spool file and leave the host usable.
+  {
+    auto request = session.postStreamingRequest();
+    request.setPath("upload");
+    request.setMimeType("application/octet-stream");
+    request.setEncoding("");
+    request.setExpectedSize(0);
+    auto context = request.initContext();
+    context.setResponseStream(kj::heap<IgnoreByteStream>());
+    context.initCookies(0);
+    context.initAccept(0);
+    context.initAcceptEncoding(0);
+    context.initAdditionalHeaders(0);
+    auto stream = request.send().wait(io.waitScope).getStream();
+    auto chunk = kj::heapArray<kj::byte>(1024 * 1024);
+    auto write = stream.writeRequest();
+    write.setData(chunk);
+    write.send().wait(io.waitScope);
+  }
+  io.provider->getTimer().afterDelay(10 * kj::MILLISECONDS).wait(io.waitScope);
+  fetchPath(io.waitScope, supervisor, core, "echo");
+
+  // The same unknown-length path enforces the aggregate cap while receiving data.
+  auto request = session.postStreamingRequest();
+  request.setPath("upload");
+  request.setMimeType("application/octet-stream");
+  request.setEncoding("");
+  request.setExpectedSize(0);
+  auto context = request.initContext();
+  context.setResponseStream(kj::heap<IgnoreByteStream>());
+  context.initCookies(0);
+  context.initAccept(0);
+  context.initAcceptEncoding(0);
+  context.initAdditionalHeaders(0);
+  auto stream = request.send().wait(io.waitScope).getStream();
+  auto responsePromise = stream.getResponseRequest().send();
+  auto chunk = kj::heapArray<kj::byte>(1024 * 1024);
+  for (uint i = 0; i < 64; ++i) {
+    auto write = stream.writeRequest();
+    write.setData(chunk);
+    write.send().wait(io.waitScope);
+  }
+  bool rejected = false;
+  try {
+    kj::byte extra = 0;
+    auto write = stream.writeRequest();
+    write.setData(kj::arrayPtr(&extra, 1));
+    write.send().wait(io.waitScope);
+    stream.doneRequest().send().wait(io.waitScope);
+    (void)responsePromise.wait(io.waitScope);
+  } catch (const kj::Exception&) {
+    rejected = true;
+  }
+  KJ_REQUIRE(rejected, "unknown-length upload exceeded 64 MiB without rejection");
+  stream = nullptr;
+  io.provider->getTimer().afterDelay(10 * kj::MILLISECONDS).wait(io.waitScope);
+  fetchPath(io.waitScope, supervisor, core, "echo");
+}
+
+void testStreamingResponse(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
+  auto session = newWebSession(waitScope, supervisor);
+  auto counted = kj::newPromiseAndFulfiller<uint64_t>();
+  auto request = session.getRequest();
+  request.setPath("download-stream?bytes=67108864");
+  request.setIgnoreBody(false);
+  auto context = request.initContext();
+  context.setResponseStream(kj::heap<CountingByteStream>(kj::mv(counted.fulfiller)));
+  context.initCookies(0);
+  context.initAccept(0);
+  context.initAcceptEncoding(0);
+  context.initAdditionalHeaders(0);
+  auto response = request.send().wait(waitScope);
+  KJ_REQUIRE(response.which() == WebSession::Response::CONTENT, response.which());
+  KJ_REQUIRE(response.getContent().getBody().isStream(),
+      "64 MiB account-host response was not streamed");
+  KJ_REQUIRE(counted.promise.wait(waitScope) == 64ull * 1024 * 1024,
+      "64 MiB account-host response was truncated");
+
+  auto tooLarge = session.getRequest();
+  tooLarge.setPath("download-stream?bytes=67108865");
+  tooLarge.setIgnoreBody(false);
+  auto tooLargeContext = tooLarge.initContext();
+  tooLargeContext.setResponseStream(kj::heap<IgnoreByteStream>());
+  tooLargeContext.initCookies(0);
+  tooLargeContext.initAccept(0);
+  tooLargeContext.initAcceptEncoding(0);
+  tooLargeContext.initAdditionalHeaders(0);
+  auto rejected = tooLarge.send().wait(waitScope);
+  KJ_REQUIRE(rejected.which() == WebSession::Response::SERVER_ERROR,
+      "over-limit account-host response was accepted", rejected.which());
+}
+
 void testWebSocket(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
-  auto view = supervisor.getMainViewRequest().send().wait(waitScope).getView();
-  auto sessionRequest = view.newSessionRequest();
-  auto userInfo = sessionRequest.initUserInfo();
-  userInfo.initDisplayName().setDefaultText("Account host WebSocket test user");
-  userInfo.setPreferredHandle("account-host-websocket-test");
-  userInfo.initPermissions(1).set(0, true);
-  sessionRequest.setContext(kj::heap<TestSessionContext>());
-  sessionRequest.setSessionType(capnp::typeId<WebSession>());
-  auto sessionParams = sessionRequest.getSessionParams().initAs<WebSession::Params>();
-  sessionParams.setBasePath("https://account-host-test.invalid");
-  sessionParams.setUserAgent("isolate-account-host-client");
-  sessionRequest.setTabId(kj::StringPtr("account-host-websocket-tab").asBytes());
-  auto session = sessionRequest.send().wait(waitScope).getSession().castAs<WebSession>();
+  auto session = newWebSession(waitScope, supervisor);
 
   auto request = session.openWebSocketRequest();
   request.setPath("websocket-echo");
@@ -172,6 +463,24 @@ void testWebSocket(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
   webSocket->close(1000, "test complete").wait(waitScope);
 }
 
+void testBrowserBootstrap(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
+  auto session = newWebSession(waitScope, supervisor);
+  auto request = session.openWebSocketRequest();
+  request.setPath(
+      "/__sandstorm/native-capnp/rpc-session?connectionId=account-host-test");
+  request.initProtocol(0);
+  request.setClientStream(kj::heap<IgnoreWebSocketStream>());
+  auto context = request.initContext();
+  context.setResponseStream(kj::heap<IgnoreByteStream>());
+  context.initCookies(0);
+  context.initAccept(0);
+  context.initAcceptEncoding(0);
+  context.initAdditionalHeaders(0);
+  auto response = request.send().wait(waitScope);
+  KJ_REQUIRE(response.getProtocol().size() == 0);
+  KJ_REQUIRE(response.hasServerStream(), "browser bootstrap did not return a native RPC stream");
+}
+
 }  // namespace
 }  // namespace sandstorm
 
@@ -182,7 +491,9 @@ int main(int argc, char** argv) {
   auto address = io.provider->getNetwork()
       .parseAddress(kj::str("unix:", argv[1]), 0).wait(io.waitScope);
   auto stream = address->connect().wait(io.waitScope);
-  sandstorm::SandstormCore::Client core = kj::heap<sandstorm::TestCore>();
+  auto coreServer = kj::heap<sandstorm::TestCore>();
+  auto& coreImpl = *coreServer;
+  sandstorm::SandstormCore::Client core = kj::mv(coreServer);
   capnp::TwoPartyVatNetwork network(*stream, capnp::rpc::twoparty::Side::CLIENT);
   auto rpcSystem = capnp::makeRpcServer(network, core);
   capnp::MallocMessageBuilder vatMessage;
@@ -193,16 +504,58 @@ int main(int argc, char** argv) {
   sandstorm::expectStartRejected(
       io.waitScope, account, core, "oversizedgrain", "oversizedpackage");
 
+  // Publish a single in-flight startup per grain. Both callers must join it instead of racing
+  // two native-host admissions and contending on the supervisors map.
+  auto concurrentRequest1 = account.startGrainRequest();
+  concurrentRequest1.setGrainId("concurrentgrain789");
+  concurrentRequest1.setPackageId(argv[3]);
+  concurrentRequest1.setMainModule("worker.js");
+  concurrentRequest1.setCompatibilityDate("2025-01-01");
+  concurrentRequest1.setIsNew(true);
+  concurrentRequest1.setCore(core);
+  auto concurrentStart1 = concurrentRequest1.send();
+  auto concurrentRequest2 = account.startGrainRequest();
+  concurrentRequest2.setGrainId("concurrentgrain789");
+  concurrentRequest2.setPackageId(argv[3]);
+  concurrentRequest2.setMainModule("worker.js");
+  concurrentRequest2.setCompatibilityDate("2025-01-01");
+  concurrentRequest2.setIsNew(true);
+  concurrentRequest2.setCore(core);
+  auto concurrentStart2 = concurrentRequest2.send();
+  auto concurrentSupervisor1 = concurrentStart1.wait(io.waitScope).getSupervisor();
+  auto concurrentSupervisor2 = concurrentStart2.wait(io.waitScope).getSupervisor();
+  sandstorm::fetchPath(io.waitScope, concurrentSupervisor1, core, "echo");
+  sandstorm::fetchPath(io.waitScope, concurrentSupervisor2, core, "echo");
+  concurrentSupervisor1.shutdownRequest().send().wait(io.waitScope);
+
   auto supervisor = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], true);
+  coreImpl.setSupervisor(supervisor);
   sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
   sandstorm::testWebSocket(io.waitScope, supervisor);
+  sandstorm::testBrowserBootstrap(io.waitScope, supervisor);
+  sandstorm::testUnknownLengthUploads(io, supervisor, core);
+  sandstorm::testStreamingResponse(io.waitScope, supervisor);
+  auto routePersistence = sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "web-session-save-restore-self-test");
+  KJ_REQUIRE(sandstorm::contains(routePersistence, "\"ok\":true"), routePersistence);
+  auto outboundRestore = sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "outbound-http-restore-self-test");
+  KJ_REQUIRE(sandstorm::contains(outboundRestore, "\"ok\":true"), outboundRestore);
+  KJ_REQUIRE(sandstorm::contains(outboundRestore, "\"source\":\"fake-outbound-http\""),
+      outboundRestore);
   auto nativeBridge = sandstorm::fetchPath(
       io.waitScope, supervisor, core, "native-capnp-direct-probe");
   KJ_REQUIRE(nativeBridge ==
       "{\"ok\":true,\"transportKind\":\"isolateBridgeNative\",\"hasSave\":true,"
       "\"hasRestore\":true,\"hasDrop\":true}",
       "shared host did not complete a direct native Cap'n Proto bridge call", nativeBridge);
+  auto appPersistence = sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "app-persistent-save-restore-self-test");
+  KJ_REQUIRE(sandstorm::contains(appPersistence, "\"ok\":true"), appPersistence);
+  KJ_REQUIRE(sandstorm::contains(appPersistence,
+      "\"message\":\"classic native greeter account-host-app-persistent hello parity\""),
+      appPersistence);
   sandstorm::fetchPath(io.waitScope, supervisor, core, "sandstorm-api-binding-probe");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "powerbox-binding-probe");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "storage-helper-self-test");

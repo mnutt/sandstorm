@@ -64,15 +64,19 @@ void waitUntilZombie(pid_t pid) {
 }
 
 Supervisor::Client startGrain(kj::WaitScope& waitScope, Backend::Client backend,
-    spk::Manifest::Command::Reader command, bool isNew) {
+    spk::Manifest::Command::Reader command, kj::StringPtr grainId, bool isNew) {
   auto request = backend.startGrainRequest();
   request.setOwnerId("testaccount123");
-  request.setGrainId("testgrain123");
+  request.setGrainId(grainId);
   request.setPackageId("testpackage123");
   request.setCommand(command);
   request.setIsNew(isNew);
   request.setDevMode(true);
   return request.send().wait(waitScope).getSupervisor();
+}
+
+void shutdown(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
+  supervisor.shutdownRequest().send().wait(waitScope);
 }
 
 void keepAlive(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
@@ -114,8 +118,23 @@ int main(int argc, char** argv) {
   isolate.setCompatibilityDate("2025-01-01");
 
   // Development isolate packages use the same account/native-host path as installed packages.
-  auto first = sandstorm::startGrain(io.waitScope, backend, command.asReader(), true);
+  auto first = sandstorm::startGrain(
+      io.waitScope, backend, command.asReader(), "testgrain123", true);
   sandstorm::keepAlive(io.waitScope, first);
+
+  // A stopped grain leaves a stale supervisor capability in BackendImpl until the next start.
+  // Its keepAlive failure is local to that grain and must not recycle the shared account host.
+  auto sibling = sandstorm::startGrain(
+      io.waitScope, backend, command.asReader(), "testgrain456", true);
+  sandstorm::keepAlive(io.waitScope, sibling);
+  auto originalAccountPid = sandstorm::readOnlyChildPid();
+  sandstorm::shutdown(io.waitScope, first);
+  auto restarted = sandstorm::startGrain(
+      io.waitScope, backend, command.asReader(), "testgrain123", false);
+  sandstorm::keepAlive(io.waitScope, restarted);
+  KJ_REQUIRE(sandstorm::readOnlyChildPid() == originalAccountPid,
+      "a grain-local keepAlive failure recycled the shared account host");
+  sandstorm::keepAlive(io.waitScope, sibling);
 
   auto accountPid = sandstorm::readOnlyChildPid();
   KJ_SYSCALL(kill(accountPid, SIGKILL));
@@ -123,7 +142,8 @@ int main(int argc, char** argv) {
 
   // Issue the restart before BackendImpl has a chance to consume its disconnect notification.
   // Recovery must invalidate both the stale supervisor and the stale per-account host cache.
-  auto recovered = sandstorm::startGrain(io.waitScope, backend, command.asReader(), false);
+  auto recovered = sandstorm::startGrain(
+      io.waitScope, backend, command.asReader(), "testgrain123", false);
   sandstorm::keepAlive(io.waitScope, recovered);
   return 0;
 }

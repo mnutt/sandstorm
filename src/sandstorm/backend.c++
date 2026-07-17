@@ -257,15 +257,18 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
           }, [=](kj::Exception&& exception) mutable -> kj::Promise<Supervisor::Client> {
             // Exception?
             if (exception.getType() == kj::Exception::Type::DISCONNECTED || accountHosted) {
-              // Oops, disconnected. onDisconnect() should have already fired causing the RunningGrain
-              // to unregister itself. Give it an extra turn using evalLater() just in case, then
-              // re-run.
+              // A non-disconnect failure from an account-hosted Supervisor usually means only that
+              // the native worker was idle-evicted or stopped. Remove this grain entry and ask the
+              // same account host to start it again. Tear down the account process and cgroup only
+              // when its RPC connection is actually disconnected.
               KJ_ASSERT(!isRetry, "retry supervisor startup logic failed");
               if (accountHosted) {
                 supervisors.erase(grainId);
-                auto host = accountHosts.find(ownerId);
-                if (host != accountHosts.end()) {
-                  eraseAccountHost(ownerId, host->second.generation);
+                if (exception.getType() == kj::Exception::Type::DISCONNECTED) {
+                  auto host = accountHosts.find(ownerId);
+                  if (host != accountHosts.end()) {
+                    eraseAccountHost(ownerId, host->second.generation);
+                  }
                 }
               }
               return kj::evalLater([=]() mutable {

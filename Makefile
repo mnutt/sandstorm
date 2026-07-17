@@ -340,7 +340,10 @@ isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket" "$$log"' EXIT; \
 		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
 		test -S "$$socket"; \
+		set -- /proc/$$host_pid/task/*; baseline_threads=$$#; \
 		tmp/sandstorm/isolate-host-client "$$socket"; \
+		set -- /proc/$$host_pid/task/*; final_threads=$$#; \
+		test "$$final_threads" -le "$$((baseline_threads + 2))"; \
 		grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:testgrain123"' "$$log"; \
 		grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:cpugrain123"' "$$log"; \
 		kill $$host_pid; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"; \
@@ -352,14 +355,16 @@ isolate-host-control-test: bin/isolate-host tmp/.ekam-run
 
 isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 		tests/assets/isolate-test-app.spk
-	@root="$(PWD)/tmp/isolate-account-host-test"; \
+	@set -e; root="$(PWD)/tmp/isolate-account-host-test"; \
 		app_root="$$root/apps"; grain_root="$$root/grains"; \
 		account_socket="$$root/account.sock"; \
 		rm -rf "$$root"; mkdir -p "$$app_root" "$$grain_root"; \
 		bin/spk unpack tests/assets/isolate-test-app.spk "$$app_root/testpackage123"; \
 		cp -a "$$app_root/testpackage123" "$$app_root/oversizedpackage"; \
 		chmod u+w "$$app_root/oversizedpackage/isolate-test/worker.js"; \
-		truncate -s 8388609 "$$app_root/oversizedpackage/isolate-test/worker.js"; \
+		: "Keep this one byte above MAX_ISOLATE_TOTAL_MODULE_BYTES in isolate-supervisor.c++."; \
+		truncate -s 16777217 "$$app_root/oversizedpackage/isolate-test/worker.js"; \
+		test "$$(stat -c %s "$$app_root/oversizedpackage/isolate-test/worker.js")" -eq 16777217; \
 		ln -s "$(PWD)/bin/sandstorm" "$$root/isolate-account-host"; \
 		trap 'kill $$account_pid 2>/dev/null || true; wait $$account_pid 2>/dev/null || true; rm -rf "$$root"' EXIT; \
 		"$$root/isolate-account-host" \
@@ -374,7 +379,9 @@ isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 		grep -q '"topology": "accountSharedHost"' \
 			"$$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"; \
 		grep -q '"topology": "accountSharedHost"' \
-			"$$grain_root/testgrain456/isolate-runtime/runtime-manifest.json"
+			"$$grain_root/testgrain456/isolate-runtime/runtime-manifest.json"; \
+		grep -q '"topology": "accountSharedHost"' \
+			"$$grain_root/concurrentgrain789/isolate-runtime/runtime-manifest.json"
 
 isolate-backend-recovery-test: bin/isolate-host tmp/.ekam-run \
 		tests/assets/isolate-test-app.spk

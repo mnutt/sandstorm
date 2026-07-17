@@ -3,8 +3,8 @@
 Isolate grains are Sandstorm's Worker-style JavaScript app runtime. By default,
 one account's active grains share a multi-tenant `workerd` host while retaining
 separate workers, storage roots, capabilities, limits, and grain-tagged logs.
-Operators can select per-grain hosting as a rollback or paranoid-mode option;
-that topology does not change the app contract.
+There is one runtime topology and one supervisor-to-host transport: binary
+Cap'n Proto. Sandstorm does not maintain a per-grain HTTP sidecar fallback.
 
 An isolate app exports a module like:
 
@@ -37,6 +37,27 @@ interface IDs, and method ordinals do not change. Sandstorm's checked-in
 Runtime behavior changes that could affect existing apps must be gated by the
 app's compatibility date or an explicit compatibility flag.
 
+`SANDSTORM_API_VERSION` identifies the documented JavaScript/TypeScript helper
+contract. A breaking helper change requires a version bump and an explicit
+compatibility path; additive helper changes do not. Native bridge protocol
+feature names gate independently deployable additive behavior. A peer must
+test for a feature before using it and must reject an unsupported required
+feature; a feature bit must not silently redefine existing behavior.
+
+Cap'n Proto schemas evolve additively. New fields and methods get new ordinals;
+existing ordinals, union meanings, type IDs, and method semantics remain
+stable. A schema addition is preferable when the behavior is naturally an
+optional RPC field or method. Use a bridge feature bit when both peers must
+coordinate behavior that is not expressed by one schema field. Use an API
+version bump only for a breaking change to the documented app-facing helper
+surface.
+
+The generated modules listed in
+`src/sandstorm/isolate/capnp-es/runtime-modules.txt` and schemas listed in
+`src/sandstorm/isolate/platform-capnp-es/schemas.txt` are public package
+surface. Changes to either list require API review, regenerated ABI/type
+fixtures, and `make isolate-ci` before merge.
+
 The boundary is intentionally narrower than every implementation detail.
 Members and response shapes below `api.unstable` may change without notice.
 The raw `SANDSTORM_API`, `POWERBOX`, and `STORAGE` binding endpoints, native
@@ -48,6 +69,12 @@ those details.
 Removing a documented API requires a deprecation and compatibility path;
 adding APIs or schema fields remains allowed. Persistence formats may evolve
 only with readers or migrations that preserve existing saved app state.
+
+`WebSession` remains the shell compatibility boundary today, not the desired
+lowest-level transport. The long-term direction is for the shell to speak
+http-over-Cap'n-Proto to supervisors and layer `WebSession` on top for existing
+apps and callers. New HTTP features should first use the generic HTTP model;
+do not treat another per-header `WebSession` field as the permanent design.
 
 ## Current Authoring Guidance
 
@@ -494,8 +521,10 @@ await api.storage().delete("chosen-document-token");
 ## Service Bindings
 
 Isolate manifests can define workerd-style service bindings. Today these are
-same-workerd bindings: the service name resolves inside the generated workerd
-config for the grain, such as a loopback binding to `main`.
+worker-local loopbacks and the only accepted service target is `main`. Both
+`spk` and runtime admission reject any other target. The binding can call the
+same worker through workerd's service API; it cannot name another worker,
+grain, or global service.
 
 Do not use raw service binding names as cross-grain authority. If an isolate
 app needs to talk to another grain or an external provider, obtain a Sandstorm
@@ -504,9 +533,29 @@ restore/use that capability later. That keeps authority visible to
 Sandstorm's existing object-capability model instead of creating an ambient
 name service.
 
-Development-only mocks can still use local service bindings, but production
-cross-grain wiring should be represented as saved capabilities or explicit
-future capability bindings, not as unresolved global service names.
+Development mocks and packaged apps follow the same restriction. Cross-grain
+wiring must be represented as saved capabilities or explicit future capability
+bindings, not as unresolved global service names.
+
+## Resource and persistence policies
+
+The account-scoped native host is an intentional failure and contention
+domain. A native-host crash can interrupt every active isolate grain owned by
+that account; backend recovery restarts the account host. A failure from one
+stopped or idle-evicted worker is grain-local and does not recycle healthy
+sibling grains.
+
+Isolate storage limits each value to 1 MiB. There is no separate aggregate
+key-count or byte quota inside the isolate storage helper; the grain's normal
+Sandstorm storage accounting is the aggregate policy. Applications should not
+interpret the per-value limit as a reservation of unlimited storage.
+
+Two persistence families are intentional. Route-backed WebSession and
+ApiSession objects are supervisor-owned and remain stable across app-code
+changes. App-defined `AppPersistent` objects preserve application-specific
+object semantics and are restored through the worker's MainView RPC route.
+They share durable Sandstorm token ownership rules, but one family is not a
+fallback encoding for the other.
 
 ## Compatibility Dates and Flags
 

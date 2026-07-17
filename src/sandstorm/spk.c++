@@ -2293,6 +2293,9 @@ private:
 
   kj::MainBuilder::Validity addDevIsolateServiceBinding(kj::StringPtr spec) {
     KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
+      if (binding->value != "main") {
+        return "service binding target must be the worker-local main service";
+      }
       devIsolateServiceBindings.add(DevIsolateServiceBinding {
         kj::mv(binding->name),
         kj::mv(binding->value),
@@ -2755,6 +2758,7 @@ private:
         "{ status: 500 }); } };\n");
     writeDevIsolateSupportFile(path, "capnp-runtime.js", ISOLATE_CAPNP_RUNTIME_SOURCE);
     writeDevIsolateSupportFile(path, "api.js", ISOLATE_API_HELPER_SOURCE);
+    writeDevIsolateSupportFile(path, "validation.js", ISOLATE_VALIDATION_HELPER_SOURCE);
     std::set<std::string> writtenCapnpEsRuntimePaths;
     for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
       auto runtimePath = capnpEsRuntimePath(module.name);
@@ -2861,7 +2865,7 @@ private:
     isolate.initCompatibilityFlags(0);
 
     auto moduleList = isolate.initModules(
-        modules.size() + 2 + (3 * ISOLATE_CAPNP_ES_MODULE_COUNT));
+        modules.size() + 3 + (3 * ISOLATE_CAPNP_ES_MODULE_COUNT));
     for (auto i: kj::indices(modules)) {
       auto module = moduleList[i];
       module.setName(modules[i].name);
@@ -2890,6 +2894,9 @@ private:
     auto helperModule = moduleList[helperIndex++];
     helperModule.setName("sandstorm:api");
     helperModule.setEsModulePath("__sandstorm_isolate_runtime/api.js");
+    auto validationModule = moduleList[helperIndex++];
+    validationModule.setName("sandstorm-internal:validation");
+    validationModule.setEsModulePath("__sandstorm_isolate_runtime/validation.js");
     auto capnpRuntimeModule = moduleList[helperIndex++];
     capnpRuntimeModule.setName("sandstorm-internal:capnp-runtime");
     capnpRuntimeModule.setEsModulePath("__sandstorm_isolate_runtime/capnp-runtime.js");
@@ -5222,6 +5229,14 @@ private:
   }
 
   bool augmentPackIsolateConfig(spk::Manifest::IsolateConfig::Builder isolate) {
+    for (auto binding: isolate.getBindings()) {
+      if (binding.which() == spk::Manifest::IsolateConfig::Binding::SERVICE) {
+        KJ_REQUIRE(binding.getService().asString() == "main",
+            "Isolate service bindings may only target the worker-local main service.",
+            binding.getName(), binding.getService());
+      }
+    }
+
     auto oldModuleList = isolate.getModules();
     kj::Vector<PackIsolateModuleSpec> oldModules;
     std::set<std::string> existingModuleNames;
