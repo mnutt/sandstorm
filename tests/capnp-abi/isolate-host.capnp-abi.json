@@ -29,6 +29,14 @@
           "resultStructId": "0x9858a4fb8b22b9cb",
           "params": [{"name": "binding", "type": "Binding"}],
           "results": [{"name": "service", "type": "Http.HttpService"}]
+        },
+        {
+          "name": "getBridge",
+          "ordinal": 1,
+          "paramStructId": "0xfdb5ed634441a833",
+          "resultStructId": "0xbe20a297f24d964b",
+          "params": [],
+          "results": [{"name": "bridge", "type": "Capability"}]
         }
       ]
     },

@@ -21,6 +21,7 @@
 #include "sandbox.h"
 #include "util.h"
 #include "version.h"
+#include "web-session-websocket.h"
 
 #include <sandstorm/isolate/api.js.h>
 #include <sandstorm/isolate/capnp-es.js.h>
@@ -113,128 +114,6 @@ constexpr uint64_t CAPNP_PERSISTENT_INTERFACE_ID = 0xc8cb212fcd9f5691ull;
 constexpr uint64_t SYSTEM_PERSISTENT_INTERFACE_ID = 0xc38cedd77cbed5b4ull;
 constexpr uint64_t APP_PERSISTENT_INTERFACE_ID = 0xaffa789add8747b8ull;
 
-volatile sig_atomic_t isolateSidecarPid = 0;
-volatile sig_atomic_t isolateKeepAlive = true;
-
-void isolateSupervisorLogSafely(const char* text) {
-  while (text[0] != '\0') {
-    ssize_t n = write(STDERR_FILENO, text, strlen(text));
-    if (n < 0) return;
-    text += n;
-  }
-}
-
-#define SANDSTORM_ISOLATE_LOG(text) \
-  isolateSupervisorLogSafely("** SANDSTORM ISOLATE SUPERVISOR: " text "\n")
-
-void killIsolateSidecar() {
-  pid_t pid = isolateSidecarPid;
-  if (pid != 0) {
-    kill(-pid, SIGTERM);
-    kill(pid, SIGTERM);
-    isolateSidecarPid = 0;
-  }
-}
-
-[[noreturn]] void killIsolateSidecarAndExit(int status) {
-  killIsolateSidecar();
-  _exit(status);
-}
-
-void isolateSupervisorSignalHandler(int signo) {
-  switch (signo) {
-    case SIGALRM:
-      if (isolateKeepAlive) {
-        SANDSTORM_ISOLATE_LOG("Grain still in use; staying up for now.");
-        isolateKeepAlive = false;
-        return;
-      }
-      SANDSTORM_ISOLATE_LOG("Grain no longer in use; shutting down.");
-      killIsolateSidecarAndExit(0);
-
-    case SIGINT:
-    case SIGTERM:
-      SANDSTORM_ISOLATE_LOG("Grain supervisor terminated by signal.");
-      killIsolateSidecarAndExit(0);
-
-    case SIGABRT:
-      SANDSTORM_ISOLATE_LOG("Grain supervisor crashed due to SIGABRT.");
-      killIsolateSidecarAndExit(1);
-
-    case SIGSEGV:
-      SANDSTORM_ISOLATE_LOG("Grain supervisor crashed due to SIGSEGV.");
-      killIsolateSidecarAndExit(1);
-
-    case SIGSYS:
-      SANDSTORM_ISOLATE_LOG("Grain supervisor crashed due to SIGSYS.");
-      killIsolateSidecarAndExit(1);
-
-    default:
-      SANDSTORM_ISOLATE_LOG("Grain supervisor crashed due to signal.");
-      killIsolateSidecarAndExit(1);
-  }
-}
-
-int ISOLATE_DEATH_SIGNALS[] = {
-  SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGFPE, SIGSEGV, SIGTERM, SIGUSR1, SIGUSR2, SIGBUS,
-  SIGPOLL, SIGPROF, SIGSYS, SIGTRAP, SIGVTALRM, SIGXCPU, SIGXFSZ, SIGSTKFLT, SIGPWR
-};
-
-void registerIsolateSupervisorSignalHandlers() {
-  struct sigaction action;
-  memset(&action, 0, sizeof(action));
-  action.sa_handler = &isolateSupervisorSignalHandler;
-  sigfillset(&action.sa_mask);
-
-  KJ_SYSCALL(sigaction(SIGALRM, &action, nullptr));
-  for (int signo: kj::ArrayPtr<int>(ISOLATE_DEATH_SIGNALS)) {
-    KJ_SYSCALL(sigaction(signo, &action, nullptr));
-  }
-
-  struct itimerval timer;
-  memset(&timer, 0, sizeof(timer));
-  timer.it_interval.tv_sec = 90;
-  timer.it_value.tv_sec = 90;
-  KJ_SYSCALL(setitimer(ITIMER_REAL, &timer, nullptr));
-}
-
-void keepAliveExistingIsolateSupervisor(kj::StringPtr varPath) {
-  auto ioContext = kj::setupAsyncIo();
-  auto addr = ioContext.provider->getNetwork()
-      .parseAddress(kj::str("unix:", varPath, "/socket"))
-      .wait(ioContext.waitScope);
-
-  kj::Own<kj::AsyncIoStream> connection;
-  KJ_IF_MAYBE(exception, kj::runCatchingExceptions([&]() {
-    connection = addr->connect().wait(ioContext.waitScope);
-  })) {
-    return;
-  }
-
-  capnp::TwoPartyVatNetwork vatNetwork(*connection, capnp::rpc::twoparty::Side::CLIENT);
-  auto client = capnp::makeRpcClient(vatNetwork);
-
-  capnp::MallocMessageBuilder message;
-  auto hostId = message.initRoot<capnp::rpc::twoparty::VatId>();
-  hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
-  auto supervisor = client.bootstrap(hostId).castAs<Supervisor>();
-
-  auto promise = supervisor.keepAliveRequest().send();
-  KJ_IF_MAYBE(exception, kj::runCatchingExceptions([&]() {
-    promise.wait(ioContext.waitScope);
-  })) {
-    return;
-  }
-
-  KJ_SYSCALL(write(STDOUT_FILENO, "Already running...\n", strlen("Already running...\n")));
-  _exit(0);
-}
-
-enum class IsolateRuntimeTopology {
-  PER_GRAIN_SIDECAR,
-  ACCOUNT_SHARED_HOST,
-};
-
 struct IsolateRuntimeConfig final: public kj::Refcounted {
   enum class ModuleType {
     ES_MODULE,
@@ -273,39 +152,21 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String compatibilityDate;
   kj::String appTitle;
   kj::String apiPath;
-  kj::String workerdBundleDir;
-  kj::String workerdConfigPath;
-  kj::String workerdSocketPath;
-  kj::String sandstormApiSocketPath;
-  kj::String powerboxSocketPath;
-  kj::String storageSocketPath;
+  kj::String runtimeStateDir;
   kj::String storageRootPath;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
   kj::Vector<Binding> bindings;
-  IsolateRuntimeTopology topology = IsolateRuntimeTopology::PER_GRAIN_SIDECAR;
 };
 
-// Shared-host producer limits mirror the native decoder's independent trust-boundary checks.
-// Per-grain mode deliberately retains its previous package limits as the compatibility fallback.
+// Producer limits mirror the native decoder's independent trust-boundary checks.
 constexpr size_t MAX_ISOLATE_MODULES = 1024;
 constexpr size_t MAX_ISOLATE_MODULE_BYTES = 8 * 1024 * 1024;
 constexpr size_t MAX_ISOLATE_TOTAL_MODULE_BYTES = 16 * 1024 * 1024;
 constexpr size_t MAX_ISOLATE_BINDINGS = 1024;
 constexpr size_t MAX_ISOLATE_TOTAL_BINDING_BYTES = 4 * 1024 * 1024;
 constexpr size_t MAX_ISOLATE_NAME_BYTES = 256;
-
-kj::StringPtr isolateRuntimeTopologyName(IsolateRuntimeTopology topology) {
-  switch (topology) {
-    case IsolateRuntimeTopology::PER_GRAIN_SIDECAR:
-      return "perGrainSidecar";
-    case IsolateRuntimeTopology::ACCOUNT_SHARED_HOST:
-      return "accountSharedHost";
-  }
-
-  KJ_UNREACHABLE;
-}
 
 kj::String makeOpaqueToken() {
   kj::Array<byte> bytes = kj::heapArray<byte>(18);
@@ -439,39 +300,43 @@ private:
   kj::Vector<BrowserHandoffCapabilityRecord> browserHandoffCapabilities;
 };
 
-class IsolateRuntimeAdapter;
-class IsolateRuntimeAdapterFactory: public kj::Refcounted {
-public:
-  virtual ~IsolateRuntimeAdapterFactory() noexcept(false);
-  virtual kj::HttpHeaderTable& getHeaderTable() = 0;
-  virtual bool isConfigured(const IsolateRuntimeConfig& config) = 0;
-  virtual bool isAvailable(const IsolateRuntimeConfig& config) = 0;
-  virtual kj::Promise<kj::Own<kj::AsyncIoStream>> connect(
-      IsolateRuntimeConfig& config, struct IsolateRuntimeHost& host) = 0;
-  virtual capnp::HttpService::Client exportHttpService(
-      kj::Own<kj::HttpService> service) = 0;
-  virtual kj::Own<IsolateRuntimeAdapter> make(
-      kj::Own<IsolateRuntimeConfig> config, kj::Own<struct IsolateRuntimeHost> host) = 0;
-};
-
 struct IsolateRuntimeHost final: public kj::Refcounted {
   IsolateRuntimeHost(
       kj::Network& network, kj::Timer& timer, kj::StringPtr grainId,
-      SandstormCore::Client sandstormCore,
-      kj::Own<IsolateRuntimeAdapterFactory> runtimeAdapterFactory)
+      SandstormCore::Client sandstormCore)
       : network(network), timer(timer), grainId(kj::heapString(grainId)),
         sandstormCore(kj::mv(sandstormCore)),
         sessions(kj::refcounted<IsolateSessionRegistry>()),
-        runtimeAdapterFactory(kj::mv(runtimeAdapterFactory)),
-        headerTable(this->runtimeAdapterFactory->getHeaderTable()) {}
+        httpFactory(byteStreamFactory, headerTableBuilder),
+        ownedHeaderTable(headerTableBuilder.build()),
+        headerTable(*ownedHeaderTable) {}
+
+  void setHosted(HostedIsolate::Client value) { hosted = kj::mv(value); }
+
+  kj::Promise<kj::Own<kj::HttpClient>> getHttpClient() {
+    auto& hostedClient = KJ_REQUIRE_NONNULL(hosted, "hosted isolate ingress is not ready");
+    return hostedClient.getHttpServiceRequest().send().then(
+        [this](auto response) mutable -> kj::Own<kj::HttpClient> {
+      auto service = httpFactory.capnpToKj(response.getService());
+      return kj::newHttpClient(*service).attach(kj::mv(service));
+    });
+  }
+
+  capnp::HttpService::Client exportHttpService(kj::Own<kj::HttpService> service) {
+    return httpFactory.kjToCapnp(kj::mv(service));
+  }
 
   kj::Network& network;
   kj::Timer& timer;
   kj::String grainId;
   SandstormCore::Client sandstormCore;
   kj::Own<IsolateSessionRegistry> sessions;
-  kj::Own<IsolateRuntimeAdapterFactory> runtimeAdapterFactory;
+  capnp::ByteStreamFactory byteStreamFactory;
+  kj::HttpHeaderTable::Builder headerTableBuilder;
+  capnp::HttpOverCapnpFactory httpFactory;
+  kj::Own<kj::HttpHeaderTable> ownedHeaderTable;
   kj::HttpHeaderTable& headerTable;
+  kj::Maybe<HostedIsolate::Client> hosted;
 };
 
 IsolateRuntimeConfig::ModuleType getModuleType(
@@ -743,6 +608,8 @@ void validateIsolateRuntimeConfig(
   for (auto i: kj::indices(config.bindings)) {
     auto& binding = config.bindings[i];
     KJ_REQUIRE(binding.name.size() > 0, "Isolate binding is missing name.");
+    KJ_REQUIRE(binding.name != "__SANDSTORM_NATIVE_CAPNP",
+        "Isolate binding name is reserved by the native runtime.", binding.name);
     if (enforceSharedHostLimits) {
       KJ_REQUIRE(binding.name.size() <= MAX_ISOLATE_NAME_BYTES,
           "Isolate binding name exceeds size limit.", binding.name.size());
@@ -913,86 +780,8 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
   return result;
 }
 
-kj::String htmlEscape(kj::StringPtr text) {
-  kj::Vector<char> result(text.size() + 1);
-  for (char c: text) {
-    switch (c) {
-      case '<': result.addAll(kj::StringPtr("&lt;")); break;
-      case '>': result.addAll(kj::StringPtr("&gt;")); break;
-      case '&': result.addAll(kj::StringPtr("&amp;")); break;
-      case '"': result.addAll(kj::StringPtr("&quot;")); break;
-      default: result.add(c); break;
-    }
-  }
-  result.add('\0');
-  return kj::String(result.releaseAsArray());
-}
-
-void appendString(kj::Vector<char>& target, kj::StringPtr value) {
-  target.addAll(value);
-}
-
 kj::StringPtr appTitleOrDefault(IsolateRuntimeConfig& config) {
   return config.appTitle.size() > 0 ? config.appTitle.asPtr() : kj::StringPtr("Isolate grain");
-}
-
-kj::String renderCompatibilityFlagsHtml(IsolateRuntimeConfig& config) {
-  if (config.compatibilityFlags.size() == 0) {
-    return kj::heapString("<p>None</p>");
-  }
-
-  kj::Vector<char> result;
-  result.addAll(kj::StringPtr("<ul>"));
-
-  for (auto& flag: config.compatibilityFlags) {
-    auto escapedFlag = htmlEscape(flag);
-    auto line = kj::str("<li><code>", escapedFlag, "</code></li>");
-    appendString(result, line);
-  }
-
-  result.addAll(kj::StringPtr("</ul>"));
-  result.add('\0');
-  return kj::String(result.releaseAsArray());
-}
-
-kj::String renderModuleListHtml(IsolateRuntimeConfig& config) {
-  kj::Vector<char> result;
-  result.addAll(kj::StringPtr("<ul>"));
-
-  for (auto& module: config.modules) {
-    auto name = htmlEscape(module.name);
-    auto line = kj::str("<li><code>", name, "</code> <span>(", moduleTypeName(module.type),
-        ", ", module.content.size(), " bytes)</span></li>");
-    appendString(result, line);
-  }
-
-  result.addAll(kj::StringPtr("</ul>"));
-  result.add('\0');
-  return kj::String(result.releaseAsArray());
-}
-
-kj::String renderBindingListHtml(IsolateRuntimeConfig& config) {
-  kj::Vector<char> result;
-  result.addAll(kj::StringPtr("<ul>"));
-
-  for (auto& binding: config.bindings) {
-    auto name = htmlEscape(binding.name);
-    kj::String serviceSuffix;
-    if (binding.type == IsolateRuntimeConfig::BindingType::SERVICE) {
-      auto serviceName = htmlEscape(binding.serviceName);
-      serviceSuffix = kj::str(" -> <code>", serviceName, "</code>");
-    } else {
-      serviceSuffix = kj::heapString("");
-    }
-
-    auto line = kj::str("<li><code>", name, "</code> <span>(", bindingTypeName(binding.type),
-        serviceSuffix, ")</span></li>");
-    appendString(result, line);
-  }
-
-  result.addAll(kj::StringPtr("</ul>"));
-  result.add('\0');
-  return kj::String(result.releaseAsArray());
 }
 
 void ensureDirectory(kj::StringPtr path) {
@@ -1062,22 +851,6 @@ kj::AutoCloseFd createUnixListener(kj::StringPtr path) {
   return result;
 }
 
-void unlinkSocketIfExists(kj::StringPtr path) {
-  struct stat stats;
-  if (lstat(path.cStr(), &stats) != 0) {
-    int error = errno;
-    if (error == ENOENT || error == ENOTDIR) {
-      return;
-    }
-
-    KJ_FAIL_SYSCALL("lstat", error, path);
-  }
-
-  KJ_REQUIRE(S_ISSOCK(stats.st_mode),
-      "Refusing to remove non-socket at generated isolate sidecar socket path.", path);
-  KJ_SYSCALL(unlink(path.cStr()), path);
-}
-
 uint64_t computeDiskUsage(kj::StringPtr path) {
   struct stat stats;
   if (lstat(path.cStr(), &stats) != 0) {
@@ -1136,37 +909,6 @@ void appendJsonString(kj::Vector<char>& result, kj::StringPtr text) {
   result.addAll(encoded);
 }
 
-char hexDigit(uint value) {
-  KJ_ASSERT(value < 16);
-  return value < 10 ? '0' + value : 'A' + value - 10;
-}
-
-void appendCapnpString(kj::Vector<char>& result, kj::StringPtr text) {
-  result.add('"');
-  for (unsigned char c: text) {
-    switch (c) {
-      case '"': result.addAll(kj::StringPtr("\\\"")); break;
-      case '\\': result.addAll(kj::StringPtr("\\\\")); break;
-      case '\b': result.addAll(kj::StringPtr("\\b")); break;
-      case '\f': result.addAll(kj::StringPtr("\\f")); break;
-      case '\n': result.addAll(kj::StringPtr("\\n")); break;
-      case '\r': result.addAll(kj::StringPtr("\\r")); break;
-      case '\t': result.addAll(kj::StringPtr("\\t")); break;
-      default: {
-        if (c < 0x20) {
-          result.addAll(kj::StringPtr("\\x"));
-          result.add(hexDigit(c >> 4));
-          result.add(hexDigit(c & 0x0f));
-        } else {
-          result.add(static_cast<char>(c));
-        }
-        break;
-      }
-    }
-  }
-  result.add('"');
-}
-
 void appendJsonField(kj::Vector<char>& result, kj::StringPtr name, kj::StringPtr value) {
   appendJsonString(result, name);
   result.addAll(kj::StringPtr(": "));
@@ -1179,43 +921,6 @@ kj::String moduleBundleFileName(size_t index, IsolateRuntimeConfig::ModuleType t
 
 kj::String bindingBundleFileName(size_t index) {
   return kj::str("binding-", index, ".bin");
-}
-
-void appendWorkerdModuleEntry(kj::Vector<char>& result, kj::StringPtr name,
-    IsolateRuntimeConfig::ModuleType type, kj::StringPtr fileName) {
-  result.addAll(kj::StringPtr("          ( name = "));
-  appendCapnpString(result, name);
-  result.addAll(kj::StringPtr(", "));
-
-  switch (type) {
-    case IsolateRuntimeConfig::ModuleType::ES_MODULE:
-      result.addAll(kj::StringPtr("esModule"));
-      break;
-    case IsolateRuntimeConfig::ModuleType::COMMON_JS_MODULE:
-      result.addAll(kj::StringPtr("commonJsModule"));
-      break;
-    case IsolateRuntimeConfig::ModuleType::TEXT:
-      result.addAll(kj::StringPtr("text"));
-      break;
-    case IsolateRuntimeConfig::ModuleType::DATA:
-      result.addAll(kj::StringPtr("data"));
-      break;
-    case IsolateRuntimeConfig::ModuleType::WASM:
-      result.addAll(kj::StringPtr("wasm"));
-      break;
-    case IsolateRuntimeConfig::ModuleType::JSON:
-      result.addAll(kj::StringPtr("json"));
-      break;
-  }
-
-  result.addAll(kj::StringPtr(" = embed "));
-  appendCapnpString(result, kj::str("modules/", fileName));
-  result.addAll(kj::StringPtr(" )"));
-}
-
-void appendWorkerdModule(
-    kj::Vector<char>& result, IsolateRuntimeConfig::Module& module, kj::StringPtr fileName) {
-  appendWorkerdModuleEntry(result, module.name, module.type, fileName);
 }
 
 bool isWorkerdDirectBinding(IsolateRuntimeConfig::Binding& binding) {
@@ -1233,185 +938,12 @@ bool isWorkerdDirectBinding(IsolateRuntimeConfig::Binding& binding) {
   KJ_UNREACHABLE;
 }
 
-void appendWorkerdBinding(
-    kj::Vector<char>& result, IsolateRuntimeConfig::Binding& binding, kj::StringPtr fileName) {
-  result.addAll(kj::StringPtr("          ( name = "));
-  appendCapnpString(result, binding.name);
-  result.addAll(kj::StringPtr(", "));
-
-  switch (binding.type) {
-    case IsolateRuntimeConfig::BindingType::TEXT: {
-      result.addAll(kj::StringPtr("text = "));
-      auto text = kj::heapString(binding.value.asChars());
-      appendCapnpString(result, text);
-      break;
-    }
-    case IsolateRuntimeConfig::BindingType::DATA:
-      result.addAll(kj::StringPtr("data = embed "));
-      appendCapnpString(result, kj::str("bindings/", fileName));
-      break;
-    case IsolateRuntimeConfig::BindingType::JSON: {
-      result.addAll(kj::StringPtr("json = "));
-      auto text = kj::heapString(binding.value.asChars());
-      appendCapnpString(result, text);
-      break;
-    }
-    case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
-      result.addAll(kj::StringPtr("service = \"sandstorm-api\""));
-      break;
-    case IsolateRuntimeConfig::BindingType::STORAGE:
-      result.addAll(kj::StringPtr("service = \"sandstorm-storage\""));
-      break;
-    case IsolateRuntimeConfig::BindingType::POWERBOX:
-      result.addAll(kj::StringPtr("service = \"sandstorm-powerbox\""));
-      break;
-    case IsolateRuntimeConfig::BindingType::SERVICE:
-      result.addAll(kj::StringPtr("service = "));
-      appendCapnpString(result, binding.serviceName);
-      break;
-  }
-
-  result.addAll(kj::StringPtr(" )"));
-}
-
-bool hasSandstormApiBinding(IsolateRuntimeConfig& config) {
-  for (auto& binding: config.bindings) {
-    if (binding.type == IsolateRuntimeConfig::BindingType::SANDSTORM_API) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool hasStorageBinding(IsolateRuntimeConfig& config) {
-  for (auto& binding: config.bindings) {
-    if (binding.type == IsolateRuntimeConfig::BindingType::STORAGE) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool hasPowerboxBinding(IsolateRuntimeConfig& config) {
-  for (auto& binding: config.bindings) {
-    if (binding.type == IsolateRuntimeConfig::BindingType::POWERBOX) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-void appendExternalWorkerdService(
-    kj::Vector<char>& result, kj::StringPtr name, kj::StringPtr socketPath) {
-  result.addAll(kj::StringPtr(",\n    ( name = "));
-  appendCapnpString(result, name);
-  result.addAll(kj::StringPtr(", external = ( address = "));
-  appendCapnpString(result, kj::str("unix:", socketPath));
-  result.addAll(kj::StringPtr(", http = () ) )"));
-}
-
-void appendWorkerdConfig(
-    kj::Vector<char>& result, IsolateRuntimeConfig& config, kj::StringPtr socketPath) {
-  result.addAll(kj::StringPtr(
-      "using Workerd = import \"/workerd/workerd.capnp\";\n"
-      "\n"
-      "const sandstormConfig :Workerd.Config = (\n"
-      "  services = [\n"
-      "    ( name = \"main\", worker = (\n"
-      "        modules = [\n"));
-
-  bool needsComma = false;
-  auto appendModuleByIndex = [&](size_t index) {
-    if (needsComma) {
-      result.addAll(kj::StringPtr(",\n"));
-    }
-    auto& module = config.modules[index];
-    auto fileName = moduleBundleFileName(index, module.type);
-    appendWorkerdModule(result, module, fileName);
-    needsComma = true;
-    if (module.name.startsWith("capnp:/sandstorm/")) {
-      result.addAll(kj::StringPtr(",\n"));
-      appendWorkerdModuleEntry(result,
-          module.name.slice(strlen("capnp:/")), module.type, fileName);
-    }
-  };
-
-  for (auto i: kj::indices(config.modules)) {
-    if (config.modules[i].name == config.mainModule) {
-      appendModuleByIndex(i);
-    }
-  }
-  for (auto i: kj::indices(config.modules)) {
-    if (config.modules[i].name != config.mainModule) {
-      appendModuleByIndex(i);
-    }
-  }
-
-  result.addAll(kj::StringPtr("\n        ],\n        compatibilityDate = "));
-  appendCapnpString(result, config.compatibilityDate);
-  result.addAll(kj::StringPtr(",\n        compatibilityFlags = ["));
-  for (auto i: kj::indices(config.compatibilityFlags)) {
-    if (i > 0) {
-      result.addAll(kj::StringPtr(", "));
-    }
-    appendCapnpString(result, config.compatibilityFlags[i]);
-  }
-  result.addAll(kj::StringPtr("],\n        bindings = [\n"));
-
-  needsComma = false;
-  for (auto i: kj::indices(config.bindings)) {
-    auto& binding = config.bindings[i];
-    if (!isWorkerdDirectBinding(binding)) {
-      continue;
-    }
-
-    if (needsComma) {
-      result.addAll(kj::StringPtr(",\n"));
-    }
-    appendWorkerdBinding(result, binding, bindingBundleFileName(i));
-    needsComma = true;
-  }
-
-  result.addAll(kj::StringPtr(
-      "\n        ]\n"
-      "    ) )"));
-
-  if (hasSandstormApiBinding(config)) {
-    appendExternalWorkerdService(result, "sandstorm-api", config.sandstormApiSocketPath);
-  }
-  if (hasStorageBinding(config)) {
-    appendExternalWorkerdService(result, "sandstorm-storage", config.storageSocketPath);
-  }
-  if (hasPowerboxBinding(config)) {
-    appendExternalWorkerdService(result, "sandstorm-powerbox", config.powerboxSocketPath);
-  }
-
-  result.addAll(kj::StringPtr(
-      "\n  ],\n"
-      "  sockets = [\n"
-      "    ( name = \"sandstorm\", address = "));
-  appendCapnpString(result, kj::str("unix:", socketPath));
-  result.addAll(kj::StringPtr(
-      ", http = (), service = \"main\" )\n"
-      "  ]\n"
-      ");\n"));
-}
-
-kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& config) {
+kj::Array<byte> prepareRuntimeState(kj::StringPtr varPath, IsolateRuntimeConfig& config) {
   auto bundleDir = kj::str(varPath, "/isolate-runtime");
+  config.runtimeStateDir = kj::str(bundleDir);
   auto modulesDir = kj::str(bundleDir, "/modules");
   auto bindingsDir = kj::str(bundleDir, "/bindings");
-  auto socketPath = kj::str(bundleDir, "/workerd.sock");
-  auto sandstormApiSocketPath = kj::str(bundleDir, "/sandstorm-api.sock");
-  auto powerboxSocketPath = kj::str(bundleDir, "/sandstorm-powerbox.sock");
-  auto storageSocketPath = kj::str(bundleDir, "/sandstorm-storage.sock");
   auto storageRootPath = kj::str(varPath, "/isolate-storage");
-  config.sandstormApiSocketPath = kj::heapString(sandstormApiSocketPath);
-  config.powerboxSocketPath = kj::heapString(powerboxSocketPath);
-  config.storageSocketPath = kj::heapString(storageSocketPath);
   config.storageRootPath = kj::heapString(storageRootPath);
   ensureDirectory(bundleDir);
   ensureDirectory(modulesDir);
@@ -1424,8 +956,7 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   manifest.addAll(kj::StringPtr(",\n  "));
   appendJsonField(manifest, "compatibilityDate", config.compatibilityDate);
   manifest.addAll(kj::StringPtr(",\n  "));
-  appendJsonField(manifest, "topology",
-      isolateRuntimeTopologyName(config.topology));
+  appendJsonField(manifest, "topology", "accountSharedHost");
 
   manifest.addAll(kj::StringPtr(",\n  \"compatibilityFlags\": ["));
   for (auto i: kj::indices(config.compatibilityFlags)) {
@@ -1516,35 +1047,9 @@ kj::String prepareWorkerdBundle(kj::StringPtr varPath, IsolateRuntimeConfig& con
   }
   kj::VectorOutputStream sourceBytes;
   capnp::writePackedMessage(sourceBytes, sourceMessage);
-  writeFile(kj::str(bundleDir, "/worker-source.capnp.bin"), sourceBytes.getArray());
-
-  kj::Vector<char> workerdConfig;
-  appendWorkerdConfig(workerdConfig, config, socketPath);
-  workerdConfig.add('\0');
-  auto workerdConfigText = kj::String(workerdConfig.releaseAsArray());
-  writeFile(kj::str(bundleDir, "/workerd.capnp"), workerdConfigText.asBytes());
-  return bundleDir;
-}
-
-void prepareRuntimeBundleAndCleanupSockets(kj::StringPtr varPath, IsolateRuntimeConfig& config) {
-  config.workerdBundleDir = prepareWorkerdBundle(varPath, config);
-  config.workerdConfigPath = kj::str(config.workerdBundleDir, "/workerd.capnp");
-  config.workerdSocketPath = kj::str(config.workerdBundleDir, "/workerd.sock");
-  unlinkSocketIfExists(config.workerdSocketPath);
-  unlinkSocketIfExists(config.sandstormApiSocketPath);
-  unlinkSocketIfExists(config.powerboxSocketPath);
-  unlinkSocketIfExists(config.storageSocketPath);
-}
-
-void prepareRuntimeBundleAsSandboxUser(
-    kj::StringPtr varPath, IsolateRuntimeConfig& config, kj::Maybe<uid_t> sandboxUid) {
-  KJ_IF_MAYBE(u, sandboxUid) {
-    KJ_SYSCALL(seteuid(*u));
-    KJ_DEFER(KJ_SYSCALL(seteuid(0)));
-    prepareRuntimeBundleAndCleanupSockets(varPath, config);
-  } else {
-    prepareRuntimeBundleAndCleanupSockets(varPath, config);
-  }
+  auto result = kj::heapArray<byte>(sourceBytes.getArray());
+  writeFile(kj::str(bundleDir, "/worker-source.capnp.bin"), result);
+  return result;
 }
 
 enum class FetchMethod {
@@ -1816,18 +1321,13 @@ struct ParsedETag {
   bool weak = false;
 };
 
-constexpr uint64_t MAX_SIDECAR_REQUEST_BYTES = 64 * 1024 * 1024;
-constexpr uint64_t MAX_SIDECAR_RESPONSE_BYTES = 64 * 1024 * 1024;
+constexpr uint64_t MAX_RUNTIME_REQUEST_BYTES = 64 * 1024 * 1024;
+constexpr uint64_t MAX_RUNTIME_RESPONSE_BYTES = 64 * 1024 * 1024;
 constexpr uint64_t MAX_NATIVE_CAPNP_RPC_WEBSOCKET_MESSAGE_BYTES =
-    MAX_SIDECAR_REQUEST_BYTES + 1024 * 1024;
+    MAX_RUNTIME_REQUEST_BYTES + 1024 * 1024;
 constexpr uint64_t MAX_API_BINDING_REQUEST_BYTES = 1024 * 1024;
 constexpr uint NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION = 0;
-constexpr uint64_t SIDECAR_RESPONSE_STREAM_THRESHOLD_BYTES = 64 * 1024;
-constexpr uint SIDECAR_READY_TIMEOUT_MS = 10000;
-constexpr uint SIDECAR_READY_POLL_MS = 50;
-constexpr uint SIDECAR_SHUTDOWN_TIMEOUT_MS = 2000;
-
-void sleepMillis(uint millis);
+constexpr uint64_t RUNTIME_RESPONSE_STREAM_THRESHOLD_BYTES = 64 * 1024;
 
 kj::Promise<kj::Array<byte>> readAllBytesAtMost(
     kj::AsyncInputStream& input, uint64_t maxBytes, kj::StringPtr description) {
@@ -1887,186 +1387,64 @@ kj::Promise<void> pumpAtMost(kj::AsyncInputStream& input, ByteStream::Client str
   });
 }
 
-struct IsolateWebSocketUpgradeResponse {
-  kj::Vector<kj::String> protocols;
-  kj::Array<byte> remainder;
+class IsolateWebSocketEntropySource final: public kj::EntropySource {
+public:
+  void generate(kj::ArrayPtr<byte> buffer) override {
+    randombytes_buf(buffer.begin(), buffer.size());
+  }
 };
 
-kj::Maybe<size_t> findHttpHeaderEnd(kj::ArrayPtr<const byte> bytes) {
-  for (size_t i = 3; i < bytes.size(); ++i) {
-    if (bytes[i - 3] == '\r' && bytes[i - 2] == '\n' &&
-        bytes[i - 1] == '\r' && bytes[i] == '\n') {
-      return i + 1;
-    }
-  }
-
-  return nullptr;
-}
-
-void requireNoHttpLineBreaks(kj::StringPtr value, kj::StringPtr description) {
-  KJ_REQUIRE(value.findFirst('\r') == nullptr && value.findFirst('\n') == nullptr,
-      description, value);
-}
-
-bool headerNameEquals(kj::StringPtr actual, kj::StringPtr expectedLowercase) {
-  auto normalized = kj::str(actual);
-  toLower(normalized);
-  return normalized == expectedLowercase;
-}
-
-kj::Array<byte> renderSidecarWebSocketUpgradeRequest(FetchRequest& request) {
-  requireNoHttpLineBreaks(request.path, "isolate WebSocket path contains a line break");
-
-  kj::Vector<char> result;
-  auto add = [&](kj::StringPtr text) {
-    result.addAll(text.asArray());
-  };
-
-  add("GET ");
-  add(request.path);
-  add(" HTTP/1.1\r\n");
-  add("Upgrade: websocket\r\n");
-  add("Connection: Upgrade\r\n");
-  add("Sec-WebSocket-Key: mj9i153gxeYNlGDoKdoXOQ==\r\n");
-  add("Sec-WebSocket-Version: 13\r\n");
-
-  for (auto& header: request.headers) {
-    requireNoHttpLineBreaks(header.name, "isolate WebSocket header name contains a line break");
-    requireNoHttpLineBreaks(header.value, "isolate WebSocket header value contains a line break");
-
-    if (headerNameEquals(header.name, "upgrade") ||
-        headerNameEquals(header.name, "connection") ||
-        headerNameEquals(header.name, "sec-websocket-key") ||
-        headerNameEquals(header.name, "sec-websocket-version")) {
-      continue;
-    }
-
-    add(header.name);
-    add(": ");
-    add(header.value);
-    add("\r\n");
-  }
-
-  add("\r\n");
-  return kj::heapArray<byte>(result.asPtr().asBytes());
-}
-
-class IsolateWebSocketUpgradeParser final: public kj::Refcounted {
+class IsolateWebSocketBridgeState final: public kj::Refcounted,
+                                         private kj::TaskSet::ErrorHandler {
 public:
-  kj::Promise<IsolateWebSocketUpgradeResponse> read(kj::AsyncInputStream& stream) {
-    return stream.tryRead(scratch, 1, sizeof(scratch))
-        .then([this, &stream](size_t amount) mutable
-            -> kj::Promise<IsolateWebSocketUpgradeResponse> {
-      KJ_REQUIRE(amount > 0, "isolate sidecar closed before WebSocket upgrade response");
-      bytes.addAll(kj::arrayPtr(scratch, amount));
-      KJ_REQUIRE(bytes.size() <= 65536,
-          "isolate sidecar WebSocket upgrade response headers are too large");
-
-      KJ_IF_MAYBE(headerEnd, findHttpHeaderEnd(bytes.asPtr())) {
-        return parse(*headerEnd);
-      }
-
-      return read(stream);
-    });
+  IsolateWebSocketBridgeState(kj::Own<kj::WebSocket> runtimeWebSocket,
+      WebSession::WebSocketStream::Client callerStream)
+      : pipe(kj::refcounted<WebSessionWebSocketPipe>(kj::mv(callerStream))),
+        incoming(pipe->getIncomingStreamCapability()),
+        runtimeWebSocket(kj::mv(runtimeWebSocket)),
+        callerWebSocket(kj::newWebSocket(kj::addRef(*pipe), entropySource)),
+        tasks(*this) {
+    tasks.add(this->runtimeWebSocket->pumpTo(*callerWebSocket)
+        .then([this]() { closing = true; }));
+    tasks.add(callerWebSocket->pumpTo(*this->runtimeWebSocket)
+        .then([this]() { closing = true; }));
   }
+
+  WebSession::WebSocketStream::Client getIncoming() { return incoming; }
 
 private:
-  byte scratch[4096];
-  kj::Vector<byte> bytes;
+  static IsolateWebSocketEntropySource entropySource;
+  kj::Own<WebSessionWebSocketPipe> pipe;
+  WebSession::WebSocketStream::Client incoming;
+  kj::Own<kj::WebSocket> runtimeWebSocket;
+  kj::Own<kj::WebSocket> callerWebSocket;
+  kj::TaskSet tasks;
+  bool closing = false;
 
-  IsolateWebSocketUpgradeResponse parse(size_t headerEnd) {
-    auto headerText = bytes.asPtr().slice(0, headerEnd).asChars();
-    auto lines = split(headerText, '\n');
-    KJ_REQUIRE(lines.size() > 0, "isolate sidecar WebSocket response was empty");
-
-    auto status = trim(lines[0]);
-    KJ_REQUIRE(status.startsWith("HTTP/1.") &&
-        (status == "HTTP/1.0 101" || status.startsWith("HTTP/1.0 101 ") ||
-         status == "HTTP/1.1 101" || status.startsWith("HTTP/1.1 101 ")),
-        "isolate sidecar did not upgrade WebSocket", status);
-
-    IsolateWebSocketUpgradeResponse result;
-    for (size_t i = 1; i < lines.size(); ++i) {
-      auto line = trim(lines[i]);
-      if (line.size() == 0) {
-        continue;
-      }
-
-      KJ_IF_MAYBE(colon, line.findFirst(':')) {
-        auto name = trim(line.slice(0, *colon));
-        toLower(name);
-        if (name == "sec-websocket-protocol") {
-          auto value = line.slice(*colon + 1, line.size());
-          for (auto part: split(value, ',')) {
-            auto protocol = trim(part);
-            if (protocol.size() > 0) {
-              result.protocols.add(kj::mv(protocol));
-            }
-          }
-        }
-      }
+  void taskFailed(kj::Exception&& exception) override {
+    if (!closing && exception.getType() != kj::Exception::Type::DISCONNECTED) {
+      KJ_LOG(WARNING, "Isolate WebSession WebSocket bridge failed.", exception);
     }
-
-    result.remainder = kj::heapArray<byte>(bytes.asPtr().slice(headerEnd, bytes.size()));
-    return kj::mv(result);
   }
 };
 
-class IsolateRawWebSocketPump final: public WebSession::WebSocketStream::Server,
-                                    private kj::TaskSet::ErrorHandler {
+IsolateWebSocketEntropySource IsolateWebSocketBridgeState::entropySource;
+
+class IsolateWebSocketBridge final: public WebSession::WebSocketStream::Server {
 public:
-  IsolateRawWebSocketPump(kj::Own<kj::AsyncIoStream> sidecarStream,
-      WebSession::WebSocketStream::Client callerStream, kj::Array<byte> initialBytes)
-      : sidecarStream(kj::mv(sidecarStream)),
-        callerStream(kj::mv(callerStream)),
-        tasks(*this) {
-    if (initialBytes.size() > 0) {
-      sendData(initialBytes);
-    }
-    pumpSidecarToCaller();
-  }
+  explicit IsolateWebSocketBridge(kj::Own<IsolateWebSocketBridgeState> state)
+      : incoming(state->getIncoming()), state(kj::mv(state)) {}
 
 protected:
   kj::Promise<void> sendBytes(SendBytesContext context) override {
-    auto fork = upstream.then([this, context]() mutable {
-      auto message = context.getParams().getMessage();
-      return sidecarStream->write(message.begin(), message.size());
-    }).fork();
-    upstream = fork.addBranch();
-    return fork.addBranch();
+    auto request = incoming.sendBytesRequest();
+    request.setMessage(context.getParams().getMessage());
+    return request.send();
   }
 
 private:
-  kj::Own<kj::AsyncIoStream> sidecarStream;
-  WebSession::WebSocketStream::Client callerStream;
-  kj::Promise<void> upstream = kj::READY_NOW;
-  kj::TaskSet tasks;
-  byte buffer[4096];
-
-  void pumpSidecarToCaller() {
-    tasks.add(sidecarStream->tryRead(buffer, 1, sizeof(buffer))
-        .then([this](size_t amount) mutable {
-      if (amount > 0) {
-        sendData(kj::arrayPtr(buffer, amount));
-        pumpSidecarToCaller();
-      } else {
-        callerStream = nullptr;
-      }
-    }));
-  }
-
-  void sendData(kj::ArrayPtr<const byte> data) {
-    auto request = callerStream.sendBytesRequest(
-        capnp::MessageSize { data.size() / sizeof(capnp::word) + 8, 0 });
-    request.setMessage(data);
-    tasks.add(request.send());
-  }
-
-  void taskFailed(kj::Exception&& exception) override {
-    if (exception.getType() != kj::Exception::Type::DISCONNECTED) {
-      KJ_LOG(WARNING, "Isolate WebSession WebSocket pump failed.", exception);
-    }
-  }
+  WebSession::WebSocketStream::Client incoming;
+  kj::Own<IsolateWebSocketBridgeState> state;
 };
 
 void addHeader(FetchRequest& request, kj::StringPtr name, kj::StringPtr value) {
@@ -2151,9 +1529,9 @@ void setFetchRequestBodyHeaders(FetchRequest& request, kj::StringPtr mimeType, k
 template <typename ContentReader>
 void setFetchRequestBody(FetchRequest& request, ContentReader content) {
   setFetchRequestBodyHeaders(request, content.getMimeType(), content.getEncoding());
-  KJ_REQUIRE(content.getContent().size() <= MAX_SIDECAR_REQUEST_BYTES,
+  KJ_REQUIRE(content.getContent().size() <= MAX_RUNTIME_REQUEST_BYTES,
       "buffered isolate request body exceeds maximum allowed size",
-      content.getContent().size(), MAX_SIDECAR_REQUEST_BYTES);
+      content.getContent().size(), MAX_RUNTIME_REQUEST_BYTES);
   request.body = kj::heapArray<byte>(content.getContent());
 }
 
@@ -2409,14 +1787,14 @@ void setFetchErrorBody(ErrorBuilder error, FetchResponse& response) {
   }
 }
 
-bool shouldStreamSidecarResponse(uint statusCode, kj::Vector<FetchHeader>& headers) {
+bool shouldStreamRuntimeResponse(uint statusCode, kj::Vector<FetchHeader>& headers) {
   if (!isFetchContentStatus(statusCode)) {
     return false;
   }
 
   KJ_IF_MAYBE(contentLength, findFetchResponseHeader(headers, "content-length")) {
     KJ_IF_MAYBE(size, parseUInt64(*contentLength, 10)) {
-      return *size > SIDECAR_RESPONSE_STREAM_THRESHOLD_BYTES;
+      return *size > RUNTIME_RESPONSE_STREAM_THRESHOLD_BYTES;
     }
   }
 
@@ -2425,7 +1803,7 @@ bool shouldStreamSidecarResponse(uint statusCode, kj::Vector<FetchHeader>& heade
   return true;
 }
 
-kj::Maybe<uint64_t> getSidecarResponseContentLength(kj::Vector<FetchHeader>& headers) {
+kj::Maybe<uint64_t> getRuntimeResponseContentLength(kj::Vector<FetchHeader>& headers) {
   KJ_IF_MAYBE(contentLength, findFetchResponseHeader(headers, "content-length")) {
     KJ_IF_MAYBE(size, parseUInt64(*contentLength, 10)) {
       return *size;
@@ -2446,7 +1824,7 @@ public:
         tasks(*this) {
     KJ_LOG(WARNING, "Starting isolate response body stream.");
     tasks.add(kj::evalLater([this]() {
-      return pumpAtMost(*this->bodyStream, this->responseStream, MAX_SIDECAR_RESPONSE_BYTES,
+      return pumpAtMost(*this->bodyStream, this->responseStream, MAX_RUNTIME_RESPONSE_BYTES,
           "streaming isolate response body exceeds maximum allowed size");
     }));
   }
@@ -2460,7 +1838,7 @@ public:
   }
 
 private:
-  // Must be declared before bodyStream so the stream is destroyed before the sidecar HTTP state.
+  // Must be declared before bodyStream so the stream is destroyed before the runtime HTTP state.
   kj::Maybe<kj::Own<FetchResponseBodyAnchor>> bodyStreamAnchor;
   kj::Own<kj::AsyncInputStream> bodyStream;
   ByteStream::Client responseStream;
@@ -2551,67 +1929,44 @@ void writeFetchResponse(
   }
 }
 
-class IsolateRuntimeAdapter {
+class HostedWorkerClient final {
 public:
-  virtual ~IsolateRuntimeAdapter() noexcept(false) {}
-  virtual kj::Promise<FetchResponse> fetch(FetchRequest&& request) = 0;
-  virtual kj::Promise<void> openWebSocket(FetchRequest&& request,
-      WebSession::WebSocketStream::Client clientStream,
-      WebSession::OpenWebSocketResults::Builder results) = 0;
-  virtual kj::Own<WebSession::RequestStream::Server> startRequestStream(
-      FetchRequest&& request, ByteStream::Client responseStream) = 0;
-};
-
-IsolateRuntimeAdapterFactory::~IsolateRuntimeAdapterFactory() noexcept(false) = default;
-
-class WorkerdRuntimeAdapter final: public IsolateRuntimeAdapter {
-public:
-  WorkerdRuntimeAdapter(kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host)
+  HostedWorkerClient(kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host)
       : config(kj::mv(config)), host(kj::mv(host)) {}
 
-  kj::Promise<FetchResponse> fetch(FetchRequest&& request) override {
-    if (host->runtimeAdapterFactory->isAvailable(*config)) {
-      return fetchFromSidecar(kj::mv(request)).catch_(
-          [this](kj::Exception&& exception) mutable {
-        return fetchRuntimeError(kj::mv(exception));
-      });
-    } else if (host->runtimeAdapterFactory->isConfigured(*config)) {
-      return fetchPlaceholder(kj::mv(request), "sidecar socket not listening");
-    }
-
-    return fetchPlaceholder(kj::mv(request), "sidecar endpoint not configured");
+  kj::Promise<FetchResponse> fetch(FetchRequest&& request) {
+    return fetchFromRuntime(kj::mv(request)).catch_(
+        [this](kj::Exception&& exception) mutable {
+      return fetchRuntimeError(kj::mv(exception));
+    });
   }
 
   kj::Promise<void> openWebSocket(FetchRequest&& request,
       WebSession::WebSocketStream::Client clientStream,
-      WebSession::OpenWebSocketResults::Builder results) override {
-    KJ_REQUIRE(host->runtimeAdapterFactory->isAvailable(*config),
-        "isolate runtime endpoint is not available");
-    return openWebSocketFromSidecar(kj::mv(request), kj::mv(clientStream), results);
+      WebSession::OpenWebSocketResults::Builder results) {
+    return openWebSocketFromRuntime(kj::mv(request), kj::mv(clientStream), results);
   }
 
   kj::Own<WebSession::RequestStream::Server> startRequestStream(
-      FetchRequest&& request, ByteStream::Client responseStream) override;
+      FetchRequest&& request, ByteStream::Client responseStream);
 
 private:
   class StreamingRequestImpl;
 
-  struct SidecarHttpState final: public FetchResponseBodyAnchor, public kj::Refcounted {
-    kj::Own<kj::AsyncIoStream> stream;
+  struct RuntimeHttpState final: public FetchResponseBodyAnchor, public kj::Refcounted {
     kj::Own<kj::HttpClient> client;
     kj::Own<kj::AsyncOutputStream> requestBody;
     kj::Promise<kj::HttpClient::Response> response = nullptr;
     kj::Maybe<kj::Own<kj::AsyncInputStream>> responseBody;
 
-    SidecarHttpState(kj::Own<kj::AsyncIoStream> stream, kj::HttpHeaderTable& headerTable)
-        : stream(kj::mv(stream)), client(kj::newHttpClient(headerTable, *this->stream)) {}
+    explicit RuntimeHttpState(kj::Own<kj::HttpClient> client): client(kj::mv(client)) {}
   };
 
   kj::Own<IsolateRuntimeConfig> config;
   kj::Own<IsolateRuntimeHost> host;
 
   FetchResponse fetchRuntimeError(kj::Exception&& exception) {
-    KJ_LOG(WARNING, "Isolate sidecar request failed.", exception);
+    KJ_LOG(WARNING, "Isolate runtime request failed.", exception);
 
     FetchResponse response;
     response.statusCode = 502;
@@ -2627,8 +1982,8 @@ private:
     }
   }
 
-  static kj::Promise<FetchResponse> readSidecarResponse(
-      kj::HttpClient::Response&& response, kj::Own<SidecarHttpState> state) {
+  static kj::Promise<FetchResponse> readRuntimeResponse(
+      kj::HttpClient::Response&& response, kj::Own<RuntimeHttpState> state) {
     FetchResponse result;
     result.statusCode = response.statusCode;
 
@@ -2649,26 +2004,26 @@ private:
       return kj::mv(result);
     }
 
-    if (shouldStreamSidecarResponse(result.statusCode, result.headers)) {
-      KJ_IF_MAYBE(size, getSidecarResponseContentLength(result.headers)) {
-        KJ_REQUIRE(*size <= MAX_SIDECAR_RESPONSE_BYTES,
+    if (shouldStreamRuntimeResponse(result.statusCode, result.headers)) {
+      KJ_IF_MAYBE(size, getRuntimeResponseContentLength(result.headers)) {
+        KJ_REQUIRE(*size <= MAX_RUNTIME_RESPONSE_BYTES,
             "streaming isolate response declared size exceeds maximum allowed size",
-            *size, MAX_SIDECAR_RESPONSE_BYTES);
+            *size, MAX_RUNTIME_RESPONSE_BYTES);
       }
       result.bodyStreamAnchor = kj::mv(state);
       result.bodyStream = kj::mv(response.body);
-      KJ_LOG(WARNING, "Isolate sidecar streaming response received.",
+      KJ_LOG(WARNING, "Isolate runtime streaming response received.",
           result.statusCode, result.mimeType);
       return kj::mv(result);
     }
 
     state->responseBody = kj::mv(response.body);
     auto& body = KJ_ASSERT_NONNULL(state->responseBody);
-    return readAllBytesAtMost(*body, MAX_SIDECAR_RESPONSE_BYTES,
+    return readAllBytesAtMost(*body, MAX_RUNTIME_RESPONSE_BYTES,
         "buffered isolate response body exceeds maximum allowed size")
         .then([result = kj::mv(result), state = kj::mv(state)](kj::Array<byte>&& body) mutable {
       result.body = kj::mv(body);
-      KJ_LOG(WARNING, "Isolate sidecar response received.",
+      KJ_LOG(WARNING, "Isolate runtime response received.",
           result.statusCode, result.mimeType, result.body.size());
       return kj::mv(result);
     });
@@ -2687,9 +2042,9 @@ private:
           writeQueue(started.addBranch()) {
       expectedSize = this->request.expectedBodySize;
       KJ_IF_MAYBE(size, expectedSize) {
-        KJ_REQUIRE(*size <= MAX_SIDECAR_REQUEST_BYTES,
+        KJ_REQUIRE(*size <= MAX_RUNTIME_REQUEST_BYTES,
             "streaming isolate request expected size exceeds maximum allowed size",
-            *size, MAX_SIDECAR_REQUEST_BYTES);
+            *size, MAX_RUNTIME_REQUEST_BYTES);
       }
       if (this->request.expectedBodySize == nullptr) {
         auto paf = kj::newPromiseAndFulfiller<void>();
@@ -2711,9 +2066,9 @@ private:
       KJ_REQUIRE(!doneCalled, "write() called after done()");
       auto data = kj::heapArray<byte>(context.getParams().getData());
       bytesReceived += data.size();
-      KJ_REQUIRE(bytesReceived <= MAX_SIDECAR_REQUEST_BYTES,
+      KJ_REQUIRE(bytesReceived <= MAX_RUNTIME_REQUEST_BYTES,
           "streaming isolate request body exceeds maximum allowed size",
-          bytesReceived, MAX_SIDECAR_REQUEST_BYTES);
+          bytesReceived, MAX_RUNTIME_REQUEST_BYTES);
       KJ_IF_MAYBE(size, expectedSize) {
         KJ_REQUIRE(bytesReceived <= *size, "received more bytes than expected");
       }
@@ -2760,9 +2115,9 @@ private:
 
     kj::Promise<void> expectSize(ExpectSizeContext context) override {
       auto size = bytesReceived + context.getParams().getSize();
-      KJ_REQUIRE(size <= MAX_SIDECAR_REQUEST_BYTES,
+      KJ_REQUIRE(size <= MAX_RUNTIME_REQUEST_BYTES,
           "streaming isolate request expected size exceeds maximum allowed size",
-          size, MAX_SIDECAR_REQUEST_BYTES);
+          size, MAX_RUNTIME_REQUEST_BYTES);
       KJ_IF_MAYBE(expected, expectedSize) {
         KJ_REQUIRE(*expected == size, "expectSize() disagrees with expected streaming request size");
       }
@@ -2790,7 +2145,7 @@ private:
         return response.then([results, responseState = kj::mv(responseState),
             stream = kj::mv(stream)](
             kj::HttpClient::Response&& response) mutable {
-          return readSidecarResponse(kj::mv(response), kj::mv(responseState))
+          return readRuntimeResponse(kj::mv(response), kj::mv(responseState))
               .then([results, stream = kj::mv(stream)](
                   FetchResponse&& fetchResponse) mutable {
             writeFetchResponse(kj::mv(fetchResponse), results, kj::mv(stream));
@@ -2804,7 +2159,7 @@ private:
     kj::Own<IsolateRuntimeHost> host;
     FetchRequest request;
     ByteStream::Client responseStream;
-    kj::Maybe<kj::Own<SidecarHttpState>> state;
+    kj::Maybe<kj::Own<RuntimeHttpState>> state;
     kj::Maybe<kj::AutoCloseFd> spoolFd;
     kj::ForkedPromise<void> started;
     kj::Promise<void> writeQueue;
@@ -2817,13 +2172,13 @@ private:
 
     kj::Promise<void> start() {
       if (request.expectedBodySize == nullptr) {
-        spoolFd = openTemporary(kj::str(config->workerdBundleDir, "/upload-spool"));
+        spoolFd = openTemporary(kj::str(config->runtimeStateDir, "/upload-spool"));
         return kj::READY_NOW;
       }
 
-      return host->runtimeAdapterFactory->connect(*config, *host)
-          .then([this](kj::Own<kj::AsyncIoStream>&& stream) mutable {
-        auto newState = kj::refcounted<SidecarHttpState>(kj::mv(stream), host->headerTable);
+      return host->getHttpClient()
+          .then([this](kj::Own<kj::HttpClient>&& client) mutable {
+        auto newState = kj::refcounted<RuntimeHttpState>(kj::mv(client));
         kj::HttpHeaders headers(host->headerTable);
         copyHeadersToHttp(request, headers);
 
@@ -2842,10 +2197,10 @@ private:
       auto& fd = KJ_ASSERT_NONNULL(spoolFd);
       KJ_SYSCALL(lseek(fd.get(), 0, SEEK_SET));
 
-      return host->runtimeAdapterFactory->connect(*config, *host)
+      return host->getHttpClient()
           .then([this, results, responseStream = kj::mv(responseStream)](
-              kj::Own<kj::AsyncIoStream>&& stream) mutable {
-        auto state = kj::refcounted<SidecarHttpState>(kj::mv(stream), host->headerTable);
+              kj::Own<kj::HttpClient>&& client) mutable {
+        auto state = kj::refcounted<RuntimeHttpState>(kj::mv(client));
         kj::HttpHeaders headers(host->headerTable);
         copyHeadersToHttp(request, headers);
 
@@ -2862,7 +2217,7 @@ private:
             return kj::mv(response);
           }).then([results, state = kj::mv(state), responseStream = kj::mv(responseStream)](
               kj::HttpClient::Response&& response) mutable {
-            return readSidecarResponse(kj::mv(response), kj::mv(state))
+            return readRuntimeResponse(kj::mv(response), kj::mv(state))
                 .then([results, responseStream = kj::mv(responseStream)](
                     FetchResponse&& fetchResponse) mutable {
               writeFetchResponse(kj::mv(fetchResponse), results, kj::mv(responseStream));
@@ -2873,7 +2228,7 @@ private:
         return response.then([results, state = kj::mv(state),
             responseStream = kj::mv(responseStream)](
             kj::HttpClient::Response&& response) mutable {
-          return readSidecarResponse(kj::mv(response), kj::mv(state))
+          return readRuntimeResponse(kj::mv(response), kj::mv(state))
               .then([results, responseStream = kj::mv(responseStream)](
                   FetchResponse&& fetchResponse) mutable {
             writeFetchResponse(kj::mv(fetchResponse), results, kj::mv(responseStream));
@@ -2903,12 +2258,12 @@ private:
     }
   };
 
-  kj::Promise<FetchResponse> fetchFromSidecar(FetchRequest&& request) {
-    KJ_LOG(WARNING, "Forwarding isolate request to sidecar.",
+  kj::Promise<FetchResponse> fetchFromRuntime(FetchRequest&& request) {
+    KJ_LOG(WARNING, "Forwarding isolate request to runtime.",
         fetchMethodName(request.method), request.path, request.body.size());
-    return host->runtimeAdapterFactory->connect(*config, *host)
-        .then([this, request = kj::mv(request)](kj::Own<kj::AsyncIoStream>&& stream) mutable {
-      auto state = kj::refcounted<SidecarHttpState>(kj::mv(stream), host->headerTable);
+    return host->getHttpClient()
+        .then([this, request = kj::mv(request)](kj::Own<kj::HttpClient>&& client) mutable {
+      auto state = kj::refcounted<RuntimeHttpState>(kj::mv(client));
       kj::HttpHeaders headers(host->headerTable);
       copyHeadersToHttp(request, headers);
 
@@ -2926,175 +2281,86 @@ private:
           return kj::mv(response);
         }).then([state = kj::mv(state)](
             kj::HttpClient::Response&& response) mutable {
-          return readSidecarResponse(kj::mv(response), kj::mv(state));
+          return readRuntimeResponse(kj::mv(response), kj::mv(state));
         });
       }
 
       return response.then([state = kj::mv(state)](
           kj::HttpClient::Response&& response) mutable {
-        return readSidecarResponse(kj::mv(response), kj::mv(state));
+        return readRuntimeResponse(kj::mv(response), kj::mv(state));
       });
     });
   }
 
-  kj::Promise<void> openWebSocketFromSidecar(FetchRequest&& request,
+  kj::Promise<void> openWebSocketFromRuntime(FetchRequest&& request,
       WebSession::WebSocketStream::Client clientStream,
       WebSession::OpenWebSocketResults::Builder results) {
-    KJ_LOG(WARNING, "Forwarding isolate WebSocket request to sidecar.", request.path);
-    return host->runtimeAdapterFactory->connect(*config, *host)
-        .then([request = kj::mv(request), clientStream = kj::mv(clientStream), results](
-            kj::Own<kj::AsyncIoStream>&& stream) mutable -> kj::Promise<void> {
-      auto rawRequest = renderSidecarWebSocketUpgradeRequest(request);
-        auto& streamRef = *stream;
-        return streamRef.write(rawRequest.begin(), rawRequest.size())
-            .attach(kj::mv(rawRequest))
-            .then([stream = kj::mv(stream), clientStream = kj::mv(clientStream), results]()
-                mutable {
-          auto parser = kj::refcounted<IsolateWebSocketUpgradeParser>();
-          return parser->read(*stream)
-              .then([stream = kj::mv(stream), clientStream = kj::mv(clientStream), results](
-                  IsolateWebSocketUpgradeResponse&& upgrade) mutable {
-            auto protocols = upgrade.protocols.asPtr();
-            auto protocolList = results.initProtocol(protocols.size());
-            for (auto i: kj::indices(protocols)) {
-              protocolList.set(i, protocols[i]);
+    KJ_LOG(WARNING, "Forwarding isolate WebSocket request to runtime.", request.path);
+    return host->getHttpClient()
+        .then([this, request = kj::mv(request), clientStream = kj::mv(clientStream), results](
+            kj::Own<kj::HttpClient>&& client) mutable -> kj::Promise<void> {
+      kj::HttpHeaders headers(host->headerTable);
+      copyHeadersToHttp(request, headers);
+      return client->openWebSocket(request.path, headers)
+          .then([client = kj::mv(client), clientStream = kj::mv(clientStream), results](
+              kj::HttpClient::WebSocketResponse&& response) mutable -> kj::Promise<void> {
+        if (response.statusCode != 101) {
+          auto statusCode = response.statusCode;
+          auto statusText = kj::str(response.statusText);
+          KJ_SWITCH_ONEOF(response.webSocketOrBody) {
+            KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
+              return body->readAllText()
+                  .attach(kj::mv(body), kj::mv(client))
+                  .then([statusCode, statusText = kj::mv(statusText)](kj::String bodyText) {
+                KJ_FAIL_REQUIRE("Isolate runtime rejected WebSocket upgrade",
+                    statusCode, statusText, bodyText);
+              });
             }
-            results.setServerStream(kj::heap<IsolateRawWebSocketPump>(
-                kj::mv(stream), kj::mv(clientStream), kj::mv(upgrade.remainder)));
-          }).attach(kj::mv(parser));
-        });
+            KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
+              (void)webSocket;
+              KJ_FAIL_REQUIRE("Isolate runtime rejected WebSocket upgrade",
+                  statusCode, statusText);
+            }
+          }
+        }
+
+        kj::Vector<kj::String> protocols;
+        if (response.headers != nullptr) {
+          response.headers->forEach([&](kj::StringPtr name, kj::StringPtr value) {
+            auto normalizedName = kj::str(name);
+            toLower(normalizedName);
+            if (normalizedName == "sec-websocket-protocol") {
+              for (auto part: split(value, ',')) {
+                auto protocol = trim(part);
+                if (protocol.size() > 0) protocols.add(kj::mv(protocol));
+              }
+            }
+          });
+        }
+        auto protocolList = results.initProtocol(protocols.size());
+        for (auto i: kj::indices(protocols)) protocolList.set(i, protocols[i]);
+
+        KJ_SWITCH_ONEOF(response.webSocketOrBody) {
+          KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
+            (void)body;
+            KJ_FAIL_REQUIRE("Isolate runtime did not upgrade WebSocket");
+          }
+          KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
+            auto state = kj::refcounted<IsolateWebSocketBridgeState>(
+                kj::mv(webSocket).attach(kj::mv(client)), kj::mv(clientStream));
+            results.setServerStream(kj::heap<IsolateWebSocketBridge>(kj::mv(state)));
+            return kj::READY_NOW;
+          }
+        }
+        KJ_UNREACHABLE;
+      });
     });
   }
 
-  kj::Promise<FetchResponse> fetchPlaceholder(
-      FetchRequest&& request, kj::StringPtr runtimeState) {
-    if (request.method == FetchMethod::GET || request.method == FetchMethod::HEAD) {
-      FetchResponse response;
-      response.statusCode = 200;
-      response.mimeType = kj::heapString("text/html; charset=utf-8");
-
-      if (request.method == FetchMethod::GET) {
-        auto escapedMainModule = htmlEscape(config->mainModule);
-        auto escapedCompatibilityDate = htmlEscape(config->compatibilityDate);
-        auto escapedAppTitle = htmlEscape(appTitleOrDefault(*config));
-        auto escapedBundleDir = htmlEscape(config->workerdBundleDir);
-        auto escapedWorkerdConfigPath = htmlEscape(config->workerdConfigPath);
-        auto escapedSocketPath = htmlEscape(config->workerdSocketPath);
-        auto compatibilityFlags = renderCompatibilityFlagsHtml(*config);
-        auto modules = renderModuleListHtml(*config);
-        auto bindings = renderBindingListHtml(*config);
-        auto body = kj::str(
-            "<!doctype html><meta charset=\"utf-8\">"
-            "<title>Isolate grain runtime</title>"
-            "<h1>Isolate grain runtime</h1>"
-            "<p>The isolate supervisor is wired into Sandstorm, "
-            "and the workerd adapter seam has loaded the package configuration, "
-            "but V8 execution is not implemented yet.</p>"
-            "<p>Runtime state: <code>", runtimeState, "</code></p>"
-            "<p>App title: <code>", escapedAppTitle, "</code></p>"
-            "<p>Main module: <code>", escapedMainModule, "</code></p>"
-            "<p>Compatibility date: <code>", escapedCompatibilityDate, "</code></p>"
-            "<p>Runtime bundle: <code>", escapedBundleDir, "</code></p>"
-            "<p>workerd config: <code>", escapedWorkerdConfigPath, "</code></p>"
-            "<p>Runtime socket: <code>", escapedSocketPath, "</code></p>"
-            "<h2>Compatibility flags</h2>", compatibilityFlags,
-            "<h2>Modules</h2>", modules,
-            "<h2>Bindings</h2>", bindings);
-        response.body = kj::heapArray<byte>(body.asBytes());
-      }
-
-      return kj::mv(response);
-    }
-
-    FetchResponse response;
-    response.statusCode = 500;
-    response.mimeType = kj::heapString("text/plain; charset=utf-8");
-    response.body = kj::heapArray<byte>(kj::StringPtr(
-        "Isolate workerd adapter is configured, but V8 execution is not implemented yet.").asBytes());
-    return kj::mv(response);
-  }
 };
 
-class WorkerdRuntimeAdapterFactory final: public IsolateRuntimeAdapterFactory {
-public:
-  kj::HttpHeaderTable& getHeaderTable() override { return headerTable; }
-  bool isConfigured(const IsolateRuntimeConfig& config) override {
-    return config.workerdSocketPath.size() > 0;
-  }
-  bool isAvailable(const IsolateRuntimeConfig& config) override {
-    return isConfigured(config) && access(config.workerdSocketPath.cStr(), F_OK) == 0;
-  }
-  kj::Promise<kj::Own<kj::AsyncIoStream>> connect(
-      IsolateRuntimeConfig& config, IsolateRuntimeHost& host) override {
-    return host.network.parseAddress(kj::str("unix:", config.workerdSocketPath), 0)
-        .then([](kj::Own<kj::NetworkAddress>&& address) { return address->connect(); });
-  }
-
-  capnp::HttpService::Client exportHttpService(kj::Own<kj::HttpService>) override {
-    KJ_FAIL_REQUIRE("sidecar runtime adapters cannot export in-process binding services");
-  }
-
-  kj::Own<IsolateRuntimeAdapter> make(
-      kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host) override {
-    return kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host));
-  }
-
-private:
-  kj::HttpHeaderTable headerTable;
-};
-
-class HostedRuntimeAdapterFactory final: public IsolateRuntimeAdapterFactory {
-public:
-  HostedRuntimeAdapterFactory()
-      : httpFactory(byteStreamFactory, headerTableBuilder),
-        headerTable(headerTableBuilder.build()) {}
-
-  explicit HostedRuntimeAdapterFactory(HostedIsolate::Client hosted)
-      : HostedRuntimeAdapterFactory() {
-    setHosted(kj::mv(hosted));
-  }
-
-  void setHosted(HostedIsolate::Client value) { hosted = kj::mv(value); }
-
-  kj::HttpHeaderTable& getHeaderTable() override { return *headerTable; }
-  bool isConfigured(const IsolateRuntimeConfig&) override { return true; }
-  bool isAvailable(const IsolateRuntimeConfig&) override { return true; }
-
-  kj::Promise<kj::Own<kj::AsyncIoStream>> connect(
-      IsolateRuntimeConfig&, IsolateRuntimeHost& host) override {
-    auto& hostedClient = KJ_REQUIRE_NONNULL(hosted, "hosted isolate ingress is not ready");
-    return hostedClient.getHttpServiceRequest().send().then(
-        [this, &host](auto response) mutable -> kj::Own<kj::AsyncIoStream> {
-      auto service = httpFactory.capnpToKj(response.getService());
-      auto pipe = kj::newTwoWayPipe();
-      auto server = kj::heap<kj::HttpServer>(host.timer, *headerTable, *service);
-      auto serverTask = server->listenHttp(kj::mv(pipe.ends[0]))
-          .attach(kj::mv(server), kj::mv(service));
-      return kj::mv(pipe.ends[1]).attach(kj::mv(serverTask));
-    });
-  }
-
-  capnp::HttpService::Client exportHttpService(kj::Own<kj::HttpService> service) override {
-    return httpFactory.kjToCapnp(kj::mv(service));
-  }
-
-  kj::Own<IsolateRuntimeAdapter> make(
-      kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host) override {
-    return kj::heap<WorkerdRuntimeAdapter>(kj::mv(config), kj::mv(host));
-  }
-
-private:
-  capnp::ByteStreamFactory byteStreamFactory;
-  kj::HttpHeaderTable::Builder headerTableBuilder;
-  capnp::HttpOverCapnpFactory httpFactory;
-  kj::Own<kj::HttpHeaderTable> headerTable;
-  kj::Maybe<HostedIsolate::Client> hosted;
-};
-
-kj::Own<WebSession::RequestStream::Server> WorkerdRuntimeAdapter::startRequestStream(
+kj::Own<WebSession::RequestStream::Server> HostedWorkerClient::startRequestStream(
     FetchRequest&& request, ByteStream::Client responseStream) {
-  KJ_REQUIRE(host->runtimeAdapterFactory->isAvailable(*config),
-      "isolate runtime endpoint is not available");
   return kj::heap<StreamingRequestImpl>(
       kj::addRef(*config), kj::addRef(*host), kj::mv(request), kj::mv(responseStream));
 }
@@ -3326,7 +2592,7 @@ public:
         parentToken(kj::mv(parentToken)),
         runtimeConfig(kj::addRef(*config)),
         runtimeHost(kj::addRef(*host)),
-        runtime(runtimeHost->runtimeAdapterFactory->make(kj::mv(config), kj::mv(host))) {}
+        runtime(kj::heap<HostedWorkerClient>(kj::mv(config), kj::mv(host))) {}
 
   ~IsolateRouteBackedSessionImpl() noexcept(false) {
     if (sessionMetadata.sessionId.size() > 0) {
@@ -3478,7 +2744,7 @@ private:
   kj::Maybe<kj::Array<const byte>> parentToken;
   kj::Own<IsolateRuntimeConfig> runtimeConfig;
   kj::Own<IsolateRuntimeHost> runtimeHost;
-  kj::Own<IsolateRuntimeAdapter> runtime;
+  kj::Own<HostedWorkerClient> runtime;
 
   RouteBackedCapabilityType capabilityType() { return routeBackedCapabilityType<InternalSession>(); }
 
@@ -3576,31 +2842,22 @@ capnp::Capability::Client makeRouteBackedSessionCapability(
   KJ_UNREACHABLE;
 }
 
-class IsolateMainViewRpcEntropySource final: public kj::EntropySource {
-public:
-  void generate(kj::ArrayPtr<byte> buffer) override {
-    randombytes_buf(buffer.begin(), buffer.size());
-  }
-};
-
 struct IsolateMainViewRpcWebSocketState final: public kj::Refcounted {
-  kj::Own<kj::AsyncIoStream> stream;
   kj::Own<kj::HttpClient> client;
   kj::Own<kj::WebSocket> webSocket;
 
-  IsolateMainViewRpcWebSocketState(kj::Own<kj::AsyncIoStream>&& stream,
+  IsolateMainViewRpcWebSocketState(
       kj::Own<kj::HttpClient>&& client, kj::Own<kj::WebSocket>&& webSocket)
-      : stream(kj::mv(stream)), client(kj::mv(client)), webSocket(kj::mv(webSocket)) {}
+      : client(kj::mv(client)), webSocket(kj::mv(webSocket)) {}
 };
 
 struct IsolateMainViewRpcFailedWebSocketState final: public kj::Refcounted {
-  kj::Own<kj::AsyncIoStream> stream;
   kj::Own<kj::HttpClient> client;
   kj::Own<kj::AsyncInputStream> body;
 
-  IsolateMainViewRpcFailedWebSocketState(kj::Own<kj::AsyncIoStream>&& stream,
+  IsolateMainViewRpcFailedWebSocketState(
       kj::Own<kj::HttpClient>&& client, kj::Own<kj::AsyncInputStream>&& body)
-      : stream(kj::mv(stream)), client(kj::mv(client)), body(kj::mv(body)) {}
+      : client(kj::mv(client)), body(kj::mv(body)) {}
 };
 
 class IsolateMainViewRpcMessageStream final: public capnp::MessageStream {
@@ -3724,16 +2981,12 @@ private:
   }
 
   kj::Promise<void> start() {
-    return host->runtimeAdapterFactory->connect(*config, *host)
-        .then([this](kj::Own<kj::AsyncIoStream>&& stream) mutable {
-      static IsolateMainViewRpcEntropySource entropySource;
-      kj::HttpClientSettings settings;
-      settings.entropySource = entropySource;
-      auto client = kj::newHttpClient(headerTable, *stream, settings);
+    return host->getHttpClient()
+        .then([this](kj::Own<kj::HttpClient>&& client) mutable {
       kj::HttpHeaders headers(headerTable);
       headers.set(kj::HttpHeaderId::HOST, "sandbox");
       return client->openWebSocket(path, headers)
-          .then([this, stream = kj::mv(stream), client = kj::mv(client)](
+          .then([this, client = kj::mv(client)](
               kj::HttpClient::WebSocketResponse&& response) mutable -> kj::Promise<void> {
         if (response.statusCode != 101) {
           auto statusCode = response.statusCode;
@@ -3743,7 +2996,7 @@ private:
           KJ_SWITCH_ONEOF(response.webSocketOrBody) {
             KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
               auto failed = kj::refcounted<IsolateMainViewRpcFailedWebSocketState>(
-                  kj::mv(stream), kj::mv(client), kj::mv(body));
+                  kj::mv(client), kj::mv(body));
               return failed->body->readAllText()
                   .then([statusCode, statusText = kj::mv(statusText),
                       failed = kj::mv(failed)](kj::String&& bodyText) mutable {
@@ -3768,7 +3021,7 @@ private:
           }
           KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
             state = kj::refcounted<IsolateMainViewRpcWebSocketState>(
-                kj::mv(stream), kj::mv(client), kj::mv(webSocket));
+                kj::mv(client), kj::mv(webSocket));
             return kj::READY_NOW;
           }
         }
@@ -4070,305 +3323,6 @@ private:
   kj::Own<IsolateRuntimeHost> runtimeHost;
 };
 
-kj::String trustedWorkerdExecutablePath();
-void requireAllowedSidecarCommand(
-    kj::ArrayPtr<const kj::String> argvStrings, IsolateRuntimeConfig& runtimeConfig);
-int runConfinedWorkerdSidecar(
-    kj::Array<kj::String> argvStrings,
-    kj::Array<kj::String> environment,
-    kj::String trustedWorkerd,
-    kj::String workerdBundleDir,
-    kj::Maybe<uid_t> sandboxUid,
-    bool logSeccompViolations);
-
-class WorkerdSidecarProcess final {
-public:
-  WorkerdSidecarProcess(
-      kj::ArrayPtr<const kj::String> runtimeArgs,
-      kj::ArrayPtr<const kj::String> environment,
-      IsolateRuntimeConfig& runtimeConfig,
-      kj::Maybe<uid_t> sandboxUid,
-      bool logSeccompViolations) {
-    if (runtimeArgs.size() == 0) {
-      KJ_LOG(WARNING, "No isolate sidecar command configured; runtime remains in diagnostics mode.",
-          runtimeConfig.workerdBundleDir, runtimeConfig.workerdSocketPath);
-      return;
-    }
-
-    auto argvStrings = KJ_MAP(arg, runtimeArgs) {
-      return expandSidecarPlaceholders(arg, runtimeConfig);
-    };
-    requireAllowedSidecarCommand(argvStrings.asPtr(), runtimeConfig);
-    auto childEnvStrings = makeSidecarEnvironment(environment, runtimeConfig);
-
-    auto trustedWorkerd = trustedWorkerdExecutablePath();
-    auto trustedWorkerdForLog = kj::str(trustedWorkerd);
-    process = Subprocess([argvStrings = kj::mv(argvStrings),
-                          childEnvStrings = kj::mv(childEnvStrings),
-                          trustedWorkerd = kj::mv(trustedWorkerd),
-                          workerdBundleDir = kj::heapString(runtimeConfig.workerdBundleDir),
-                          sandboxUid,
-                          logSeccompViolations]() mutable {
-      return runConfinedWorkerdSidecar(
-          kj::mv(argvStrings), kj::mv(childEnvStrings), kj::mv(trustedWorkerd),
-          kj::mv(workerdBundleDir), sandboxUid, logSeccompViolations);
-    });
-
-    KJ_IF_MAYBE(p, process) {
-      KJ_LOG(WARNING, "Started isolate sidecar process.",
-          trustedWorkerdForLog, p->getPid(), runtimeConfig.workerdBundleDir,
-          runtimeConfig.workerdSocketPath);
-      isolateSidecarPid = p->getPid();
-    }
-  }
-
-  ~WorkerdSidecarProcess() noexcept(false) {
-    stop();
-  }
-
-  KJ_DISALLOW_COPY(WorkerdSidecarProcess);
-
-  bool isConfigured() {
-    KJ_IF_MAYBE(p, process) {
-      return true;
-    }
-
-    return false;
-  }
-
-  bool isRunning() {
-    KJ_IF_MAYBE(p, process) {
-      if (!p->isRunning()) {
-        return false;
-      }
-
-      int status;
-      pid_t waitResult;
-      KJ_SYSCALL(waitResult = waitpid(p->getPid(), &status, WNOHANG));
-      if (waitResult == p->getPid()) {
-        logExitStatus(status);
-        p->notifyExited(status);
-        if (isolateSidecarPid == p->getPid()) {
-          isolateSidecarPid = 0;
-        }
-        return false;
-      }
-
-      if (waitResult == 0 && kill(p->getPid(), 0) == 0) {
-        return true;
-      }
-
-      int error = errno;
-      return error == EPERM;
-    }
-
-    return false;
-  }
-
-  void stop() {
-    KJ_IF_MAYBE(p, process) {
-      if (p->isRunning()) {
-        auto pid = p->getPid();
-        KJ_LOG(WARNING, "Stopping isolate sidecar process group.", pid);
-        signalProcessGroup(pid, SIGTERM);
-
-        for (uint elapsed = 0; elapsed < SIDECAR_SHUTDOWN_TIMEOUT_MS;
-             elapsed += SIDECAR_READY_POLL_MS) {
-          if (!isRunning()) {
-            process = nullptr;
-            return;
-          }
-          sleepMillis(SIDECAR_READY_POLL_MS);
-        }
-
-        KJ_LOG(WARNING, "Killing isolate sidecar process group after shutdown timeout.", pid);
-        signalProcessGroup(pid, SIGKILL);
-      }
-      if (isolateSidecarPid == p->getPid()) {
-        isolateSidecarPid = 0;
-      }
-      process = nullptr;
-    }
-  }
-
-private:
-  kj::Maybe<Subprocess> process;
-
-  static void signalProcessGroup(pid_t pid, int signo) {
-    if (kill(-pid, signo) != 0) {
-      int error = errno;
-      if (error == ESRCH) {
-        return;
-      }
-
-      KJ_SYSCALL(kill(pid, signo), pid, signo);
-    }
-  }
-
-  static void logExitStatus(int status) {
-    if (WIFEXITED(status)) {
-      KJ_LOG(WARNING, "Isolate sidecar process exited.", WEXITSTATUS(status));
-    } else if (WIFSIGNALED(status)) {
-      KJ_LOG(WARNING, "Isolate sidecar process was killed.", WTERMSIG(status));
-    } else {
-      KJ_LOG(WARNING, "Isolate sidecar process stopped unexpectedly.", status);
-    }
-  }
-
-  static bool appendPlaceholder(
-      kj::Vector<char>& result, kj::StringPtr input, size_t& pos, kj::StringPtr token,
-      kj::StringPtr value) {
-    if (!input.slice(pos, input.size()).startsWith(token)) {
-      return false;
-    }
-
-    result.addAll(value);
-    pos += token.size();
-    return true;
-  }
-
-  static kj::String expandSidecarPlaceholders(
-      kj::StringPtr input, IsolateRuntimeConfig& runtimeConfig) {
-    kj::Vector<char> result(input.size() + 1);
-    size_t pos = 0;
-    while (pos < input.size()) {
-      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_RUNTIME_DIR}",
-          runtimeConfig.workerdBundleDir)) {
-        continue;
-      }
-      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_WORKERD_CONFIG}",
-          runtimeConfig.workerdConfigPath)) {
-        continue;
-      }
-      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_RUNTIME_MANIFEST}",
-          kj::str(runtimeConfig.workerdBundleDir, "/runtime-manifest.json"))) {
-        continue;
-      }
-      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_SOCKET}",
-          runtimeConfig.workerdSocketPath)) {
-        continue;
-      }
-      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_MAIN_MODULE}",
-          runtimeConfig.mainModule)) {
-        continue;
-      }
-      if (appendPlaceholder(result, input, pos, "${SANDSTORM_ISOLATE_COMPATIBILITY_DATE}",
-          runtimeConfig.compatibilityDate)) {
-        continue;
-      }
-
-      result.add(input[pos]);
-      ++pos;
-    }
-
-    result.add('\0');
-    return kj::String(result.releaseAsArray());
-  }
-
-  static kj::Array<kj::String> makeSidecarEnvironment(
-      kj::ArrayPtr<const kj::String> environment,
-      IsolateRuntimeConfig& runtimeConfig) {
-    if (environment.size() > 0) {
-      KJ_LOG(WARNING, "Ignoring package-provided isolate sidecar environment.",
-          environment.size());
-    }
-
-    kj::Vector<kj::String> result(6);
-    result.add(kj::str("SANDSTORM_ISOLATE_RUNTIME_DIR=", runtimeConfig.workerdBundleDir));
-    result.add(kj::str("SANDSTORM_ISOLATE_WORKERD_CONFIG=", runtimeConfig.workerdConfigPath));
-    result.add(kj::str("SANDSTORM_ISOLATE_RUNTIME_MANIFEST=",
-        runtimeConfig.workerdBundleDir, "/runtime-manifest.json"));
-    result.add(kj::str("SANDSTORM_ISOLATE_SOCKET=", runtimeConfig.workerdSocketPath));
-    result.add(kj::str("SANDSTORM_ISOLATE_MAIN_MODULE=", runtimeConfig.mainModule));
-    result.add(kj::str("SANDSTORM_ISOLATE_COMPATIBILITY_DATE=",
-        runtimeConfig.compatibilityDate));
-    return result.releaseAsArray();
-  }
-};
-
-bool isSocketReady(kj::StringPtr path) {
-  struct stat statbuf;
-  if (stat(path.cStr(), &statbuf) != 0) {
-    int error = errno;
-    if (error == ENOENT || error == ENOTDIR) {
-      return false;
-    }
-
-    KJ_FAIL_SYSCALL("stat", error, path);
-  }
-
-  return S_ISSOCK(statbuf.st_mode);
-}
-
-void sleepMillis(uint millis) {
-  struct timespec request;
-  request.tv_sec = millis / 1000;
-  request.tv_nsec = (millis % 1000) * 1000 * 1000;
-
-  while (nanosleep(&request, &request) != 0) {
-    int error = errno;
-    if (error != EINTR) {
-      KJ_FAIL_SYSCALL("nanosleep", error);
-    }
-  }
-}
-
-kj::String dirname(kj::StringPtr path) {
-  KJ_IF_MAYBE(slash, path.findLast('/')) {
-    if (*slash == 0) {
-      return kj::heapString("/");
-    } else {
-      return kj::heapString(path.slice(0, *slash));
-    }
-  } else {
-    return kj::heapString(".");
-  }
-}
-
-kj::String currentExecutablePath() {
-  char buffer[PATH_MAX + 1];
-  ssize_t n;
-  KJ_SYSCALL(n = readlink("/proc/self/exe", buffer, PATH_MAX), "/proc/self/exe");
-  KJ_REQUIRE(n < PATH_MAX, "/proc/self/exe path too long");
-  buffer[n] = '\0';
-  return kj::heapString(buffer);
-}
-
-kj::String trustedWorkerdExecutablePath() {
-  auto exePath = currentExecutablePath();
-  auto exeDir = dirname(exePath);
-
-  auto sibling = kj::str(exeDir, "/workerd");
-  if (exeDir == "/") {
-    sibling = kj::heapString("/workerd");
-  }
-  if (access(sibling.cStr(), X_OK) == 0) {
-    return sibling;
-  }
-
-  auto bundled = kj::str(exeDir, "/bin/workerd");
-  if (exeDir == "/") {
-    bundled = kj::heapString("/bin/workerd");
-  }
-  if (access(bundled.cStr(), X_OK) == 0) {
-    return bundled;
-  }
-
-  KJ_FAIL_REQUIRE("Could not find bundled workerd executable next to sandstorm binary.",
-      exePath, sibling, bundled);
-}
-
-void requireAllowedSidecarCommand(
-    kj::ArrayPtr<const kj::String> argvStrings, IsolateRuntimeConfig& runtimeConfig) {
-  KJ_REQUIRE(argvStrings.size() == 4 &&
-      argvStrings[0] == "workerd" &&
-      argvStrings[1] == "serve" &&
-      argvStrings[2] == runtimeConfig.workerdConfigPath &&
-      argvStrings[3] == "sandstormConfig",
-      "Isolate sidecar command is not allowlisted. Use: workerd serve "
-      "${SANDSTORM_ISOLATE_WORKERD_CONFIG} sandstormConfig");
-}
-
 void resetSignalHandlersForExec() {
   for (uint i = 0; i < NSIG; i++) {
     ::signal(i, SIG_DFL);
@@ -4379,25 +3333,18 @@ void resetSignalHandlersForExec() {
   KJ_SYSCALL(sigprocmask(SIG_SETMASK, &sigmask, nullptr));
 }
 
-void setupSidecarParentDeathSignal() {
+void setupNativeHostParentDeathSignal() {
   KJ_SYSCALL(prctl(PR_SET_PDEATHSIG, SIGTERM));
   if (getppid() == 1) {
     _exit(1);
   }
 }
 
-void setupSidecarProcessGroup() {
+void setupNativeHostProcessGroup() {
   KJ_SYSCALL(setpgid(0, 0));
 }
 
-void setupSidecarStdio() {
-  auto devNullIn = raiiOpen("/dev/null", O_RDONLY | O_CLOEXEC);
-  auto devNullOut = raiiOpen("/dev/null", O_WRONLY | O_CLOEXEC);
-  KJ_SYSCALL(dup2(devNullIn, STDIN_FILENO));
-  KJ_SYSCALL(dup2(devNullOut, STDOUT_FILENO));
-}
-
-void closeUnexpectedSidecarFds(kj::ArrayPtr<const int> preservedFds = nullptr) {
+void closeUnexpectedNativeHostFds(kj::ArrayPtr<const int> preservedFds = nullptr) {
   kj::Vector<int> fds;
   DIR* dir = opendir("/proc/self/fd");
   if (dir == nullptr) {
@@ -4433,7 +3380,7 @@ void closeUnexpectedSidecarFds(kj::ArrayPtr<const int> preservedFds = nullptr) {
   }
 }
 
-void setupSidecarResourceLimits() {
+void setupNativeHostResourceLimits() {
   struct rlimit nofile;
   memset(&nofile, 0, sizeof(nofile));
   nofile.rlim_cur = 1024;
@@ -4445,20 +3392,20 @@ void setupSidecarResourceLimits() {
   KJ_SYSCALL(setrlimit(RLIMIT_CORE, &core));
 }
 
-void finishSidecarNamespaceSetup() {
+void finishNativeHostNamespaceSetup() {
   KJ_SYSCALL(mount("none", "/", nullptr, MS_REC | MS_PRIVATE, nullptr));
   KJ_SYSCALL(sethostname("sandbox", 7));
   KJ_SYSCALL(setdomainname("sandbox", 7));
 }
 
-void sidecarBind(kj::StringPtr src, kj::StringPtr dst, unsigned long flags) {
+void nativeHostBind(kj::StringPtr src, kj::StringPtr dst, unsigned long flags) {
   KJ_SYSCALL(mount(src.cStr(), dst.cStr(), nullptr, MS_BIND | MS_REC, nullptr), src, dst);
   KJ_SYSCALL(mount(src.cStr(), dst.cStr(), nullptr,
       MS_BIND | MS_REC | MS_REMOUNT | flags, nullptr), src, dst);
 }
 
-kj::String sidecarRootPath(kj::StringPtr absolutePath) {
-  KJ_REQUIRE(absolutePath.startsWith("/"), "Expected absolute sidecar path.", absolutePath);
+kj::String nativeHostRootPath(kj::StringPtr absolutePath) {
+  KJ_REQUIRE(absolutePath.startsWith("/"), "Expected absolute native-host path.", absolutePath);
   if (absolutePath == "/") {
     return kj::heapString("/tmp");
   } else {
@@ -4466,7 +3413,7 @@ kj::String sidecarRootPath(kj::StringPtr absolutePath) {
   }
 }
 
-void ensureSidecarDirectory(kj::StringPtr path, mode_t mode = 0755) {
+void ensureNativeHostDirectory(kj::StringPtr path, mode_t mode = 0755) {
   if (mkdir(path.cStr(), mode) != 0) {
     int error = errno;
     if (error != EEXIST) {
@@ -4475,7 +3422,7 @@ void ensureSidecarDirectory(kj::StringPtr path, mode_t mode = 0755) {
   }
 }
 
-void bindSidecarDirectory(kj::StringPtr src, unsigned long flags) {
+void bindNativeHostDirectory(kj::StringPtr src, unsigned long flags) {
   if (access(src.cStr(), F_OK) != 0) {
     int error = errno;
     if (error == ENOENT || error == ENOTDIR) {
@@ -4484,13 +3431,13 @@ void bindSidecarDirectory(kj::StringPtr src, unsigned long flags) {
     KJ_FAIL_SYSCALL("access", error, src);
   }
 
-  auto dst = sidecarRootPath(src);
+  auto dst = nativeHostRootPath(src);
   recursivelyCreateParent(dst);
-  ensureSidecarDirectory(dst);
-  sidecarBind(src, dst, flags);
+  ensureNativeHostDirectory(dst);
+  nativeHostBind(src, dst, flags);
 }
 
-void bindSidecarFile(kj::StringPtr src, unsigned long flags, mode_t mode = 0644) {
+void bindNativeHostFile(kj::StringPtr src, unsigned long flags, mode_t mode = 0644) {
   if (access(src.cStr(), F_OK) != 0) {
     int error = errno;
     if (error == ENOENT || error == ENOTDIR) {
@@ -4499,40 +3446,40 @@ void bindSidecarFile(kj::StringPtr src, unsigned long flags, mode_t mode = 0644)
     KJ_FAIL_SYSCALL("access", error, src);
   }
 
-  auto dst = sidecarRootPath(src);
+  auto dst = nativeHostRootPath(src);
   recursivelyCreateParent(dst);
   KJ_SYSCALL(mknod(dst.cStr(), S_IFREG | mode, 0), dst);
-  sidecarBind(src, dst, flags);
+  nativeHostBind(src, dst, flags);
 }
 
-void bindSidecarRuntimeLibraryFile(kj::StringPtr src) {
-  bindSidecarFile(src, MS_RDONLY | MS_NOSUID | MS_NODEV, 0755);
+void bindNativeHostRuntimeLibraryFile(kj::StringPtr src) {
+  bindNativeHostFile(src, MS_RDONLY | MS_NOSUID | MS_NODEV, 0755);
 }
 
-void bindSidecarRuntimeLibraryCandidates(kj::StringPtr name) {
-  bindSidecarRuntimeLibraryFile(kj::str("/lib/", name));
-  bindSidecarRuntimeLibraryFile(kj::str("/lib64/", name));
-  bindSidecarRuntimeLibraryFile(kj::str("/usr/lib/", name));
-  bindSidecarRuntimeLibraryFile(kj::str("/usr/lib64/", name));
-  bindSidecarRuntimeLibraryFile(kj::str("/lib/x86_64-linux-gnu/", name));
-  bindSidecarRuntimeLibraryFile(kj::str("/usr/lib/x86_64-linux-gnu/", name));
+void bindNativeHostRuntimeLibraryCandidates(kj::StringPtr name) {
+  bindNativeHostRuntimeLibraryFile(kj::str("/lib/", name));
+  bindNativeHostRuntimeLibraryFile(kj::str("/lib64/", name));
+  bindNativeHostRuntimeLibraryFile(kj::str("/usr/lib/", name));
+  bindNativeHostRuntimeLibraryFile(kj::str("/usr/lib64/", name));
+  bindNativeHostRuntimeLibraryFile(kj::str("/lib/x86_64-linux-gnu/", name));
+  bindNativeHostRuntimeLibraryFile(kj::str("/usr/lib/x86_64-linux-gnu/", name));
 }
 
-void bindSidecarRuntimeLibraries() {
-  bindSidecarRuntimeLibraryFile("/lib64/ld-linux-x86-64.so.2");
-  bindSidecarRuntimeLibraryFile("/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2");
+void bindNativeHostRuntimeLibraries() {
+  bindNativeHostRuntimeLibraryFile("/lib64/ld-linux-x86-64.so.2");
+  bindNativeHostRuntimeLibraryFile("/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2");
 
-  bindSidecarRuntimeLibraryCandidates("libc.so.6");
-  bindSidecarRuntimeLibraryCandidates("libm.so.6");
+  bindNativeHostRuntimeLibraryCandidates("libc.so.6");
+  bindNativeHostRuntimeLibraryCandidates("libm.so.6");
 
-  // These are not needed by the current npm workerd build on all distros, but
+  // These are not needed by the current embedded workerd build on all distros, but
   // are common C/C++ runtime dependencies. Keep this list file-based rather
   // than mounting whole library directories.
-  bindSidecarRuntimeLibraryCandidates("libdl.so.2");
-  bindSidecarRuntimeLibraryCandidates("libpthread.so.0");
-  bindSidecarRuntimeLibraryCandidates("librt.so.1");
-  bindSidecarRuntimeLibraryCandidates("libstdc++.so.6");
-  bindSidecarRuntimeLibraryCandidates("libgcc_s.so.1");
+  bindNativeHostRuntimeLibraryCandidates("libdl.so.2");
+  bindNativeHostRuntimeLibraryCandidates("libpthread.so.0");
+  bindNativeHostRuntimeLibraryCandidates("librt.so.1");
+  bindNativeHostRuntimeLibraryCandidates("libstdc++.so.6");
+  bindNativeHostRuntimeLibraryCandidates("libgcc_s.so.1");
 }
 
 void setupConfinedRuntimeMountRoot(
@@ -4540,45 +3487,41 @@ void setupConfinedRuntimeMountRoot(
   auto oldUmask = umask(0);
   KJ_DEFER(umask(oldUmask));
 
-  KJ_SYSCALL(mount("sandstorm-isolate-sidecar-root", "/tmp", "tmpfs",
+  KJ_SYSCALL(mount("sandstorm-isolate-native-host-root", "/tmp", "tmpfs",
       MS_NOSUID | MS_NODEV, "size=64m,nr_inodes=4096,mode=755"));
 
-  ensureSidecarDirectory("/tmp/tmp", 0777);
-  ensureSidecarDirectory("/tmp/dev", 0755);
-  KJ_SYSCALL(mount("sandstorm-isolate-sidecar-dev", "/tmp/dev", "tmpfs",
+  ensureNativeHostDirectory("/tmp/tmp", 0777);
+  ensureNativeHostDirectory("/tmp/dev", 0755);
+  KJ_SYSCALL(mount("sandstorm-isolate-native-host-dev", "/tmp/dev", "tmpfs",
       MS_NOATIME | MS_NOSUID | MS_NOEXEC, "size=1m,nr_inodes=16,mode=755"));
-  bindSidecarFile("/dev/null", MS_NOSUID | MS_NOEXEC);
-  bindSidecarFile("/dev/zero", MS_NOSUID | MS_NOEXEC);
-  bindSidecarFile("/dev/random", MS_NOSUID | MS_NOEXEC);
-  bindSidecarFile("/dev/urandom", MS_NOSUID | MS_NOEXEC);
+  bindNativeHostFile("/dev/null", MS_NOSUID | MS_NOEXEC);
+  bindNativeHostFile("/dev/zero", MS_NOSUID | MS_NOEXEC);
+  bindNativeHostFile("/dev/random", MS_NOSUID | MS_NOEXEC);
+  bindNativeHostFile("/dev/urandom", MS_NOSUID | MS_NOEXEC);
   KJ_SYSCALL(mount("/tmp/dev", "/tmp/dev", nullptr,
       MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NOEXEC, nullptr));
 
   KJ_IF_MAYBE(bundleDir, runtimeBundleDir) {
-    bindSidecarDirectory(*bundleDir, MS_NOSUID | MS_NODEV);
+    bindNativeHostDirectory(*bundleDir, MS_NOSUID | MS_NODEV);
   }
-  bindSidecarFile(trustedExecutable, MS_RDONLY | MS_NOSUID | MS_NODEV, 0755);
-  bindSidecarRuntimeLibraries();
-  bindSidecarFile("/etc/ld.so.cache", MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV);
+  bindNativeHostFile(trustedExecutable, MS_RDONLY | MS_NOSUID | MS_NODEV, 0755);
+  bindNativeHostRuntimeLibraries();
+  bindNativeHostFile("/etc/ld.so.cache", MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV);
 
   KJ_SYSCALL(chroot("/tmp"));
   KJ_SYSCALL(chdir("/"));
-  KJ_LOG(WARNING, "Isolate sidecar entered minimal mount root.", trustedExecutable);
+  KJ_LOG(WARNING, "Native isolate host entered minimal mount root.", trustedExecutable);
 }
 
-void setupSidecarMountRoot(kj::StringPtr trustedWorkerd, kj::StringPtr workerdBundleDir) {
-  setupConfinedRuntimeMountRoot(trustedWorkerd, workerdBundleDir);
-}
-
-bool trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
+bool trySetupNativeHostNamespaces(kj::Maybe<uid_t> sandboxUid) {
   KJ_IF_MAYBE(u, sandboxUid) {
     if (unshare(CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS) < 0) {
       int error = errno;
       KJ_FAIL_SYSCALL("unshare(CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWIPC | CLONE_NEWUTS)",
           error);
     } else {
-      finishSidecarNamespaceSetup();
-      KJ_LOG(WARNING, "Isolate sidecar entered private network/mount/ipc/uts namespaces.");
+      finishNativeHostNamespaceSetup();
+      KJ_LOG(WARNING, "Native isolate host entered private network/mount/ipc/uts namespaces.");
       return true;
     }
   }
@@ -4594,12 +3537,12 @@ bool trySetupSidecarNamespaces(kj::Maybe<uid_t> sandboxUid) {
   }
 
   sandbox::hideUserGroupIds(realUid, realGid, false);
-  finishSidecarNamespaceSetup();
-  KJ_LOG(WARNING, "Isolate sidecar entered private user/network/mount/ipc/uts namespaces.");
+  finishNativeHostNamespaceSetup();
+  KJ_LOG(WARNING, "Native isolate host entered private user/network/mount/ipc/uts namespaces.");
   return true;
 }
 
-void setupSidecarSeccomp(bool logSeccompViolations) {
+void setupNativeHostSeccomp(bool logSeccompViolations) {
   scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ERRNO(ENOSYS));
   if (ctx == nullptr) {
     KJ_FAIL_SYSCALL("seccomp_init", 0);
@@ -4621,8 +3564,7 @@ void setupSidecarSeccomp(bool logSeccompViolations) {
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-  // This allowlist is based on post-exec workerd traces from
-  // `make isolate-supervisor-syscall-trace`. Calls used only while setting up
+  // This allowlist is based on post-exec native-host workerd traces. Calls used only while setting up
   // namespaces, mounts, credential drops, or seccomp itself intentionally stay
   // unavailable after the filter is loaded.
   int allowedSyscalls[] = {
@@ -4716,8 +3658,8 @@ int runConfinedNativeIsolateHost(
     bool logSeccompViolations) {
   static constexpr int CONTROL_FD = 3;
   resetSignalHandlersForExec();
-  setupSidecarParentDeathSignal();
-  setupSidecarProcessGroup();
+  setupNativeHostParentDeathSignal();
+  setupNativeHostProcessGroup();
 
   int sourceFd = controlSocket.release();
   if (sourceFd != CONTROL_FD) {
@@ -4731,18 +3673,18 @@ int runConfinedNativeIsolateHost(
   KJ_SYSCALL(dup2(devNull, STDIN_FILENO));
   devNull = nullptr;
   int preservedFd = CONTROL_FD;
-  closeUnexpectedSidecarFds(kj::arrayPtr(&preservedFd, 1));
+  closeUnexpectedNativeHostFds(kj::arrayPtr(&preservedFd, 1));
 
-  bool hasPrivateNamespaces = trySetupSidecarNamespaces(sandboxUid);
+  bool hasPrivateNamespaces = trySetupNativeHostNamespaces(sandboxUid);
   if (hasPrivateNamespaces) {
     setupConfinedRuntimeMountRoot(trustedHost, nullptr);
   }
   KJ_IF_MAYBE(u, sandboxUid) {
     KJ_SYSCALL(setresuid(*u, *u, *u));
   }
-  setupSidecarResourceLimits();
+  setupNativeHostResourceLimits();
   KJ_SYSCALL(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
-  setupSidecarSeccomp(logSeccompViolations);
+  setupNativeHostSeccomp(logSeccompViolations);
 
   char* argv[] = {
     const_cast<char*>(trustedHost.cStr()),
@@ -4756,66 +3698,6 @@ int runConfinedNativeIsolateHost(
   };
   KJ_SYSCALL(execve(trustedHost.cStr(), argv, environment), trustedHost);
   KJ_UNREACHABLE;
-}
-
-int runConfinedWorkerdSidecar(
-    kj::Array<kj::String> argvStrings,
-    kj::Array<kj::String> environment,
-    kj::String trustedWorkerd,
-    kj::String workerdBundleDir,
-    kj::Maybe<uid_t> sandboxUid,
-    bool logSeccompViolations) {
-  resetSignalHandlersForExec();
-  setupSidecarParentDeathSignal();
-  setupSidecarProcessGroup();
-  setupSidecarStdio();
-  closeUnexpectedSidecarFds();
-  bool hasPrivateNamespaces = trySetupSidecarNamespaces(sandboxUid);
-  if (hasPrivateNamespaces) {
-    setupSidecarMountRoot(trustedWorkerd, workerdBundleDir);
-  }
-  KJ_IF_MAYBE(u, sandboxUid) {
-    KJ_SYSCALL(setresuid(*u, *u, *u));
-  }
-  setupSidecarResourceLimits();
-  KJ_SYSCALL(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
-  setupSidecarSeccomp(logSeccompViolations);
-
-  KJ_STACK_ARRAY(char*, argv, argvStrings.size() + 1, 16, 64);
-  for (auto i: kj::indices(argvStrings)) {
-    argv[i] = const_cast<char*>(argvStrings[i].cStr());
-  }
-  argv[argvStrings.size()] = nullptr;
-
-  KJ_STACK_ARRAY(char*, envp, environment.size() + 1, 16, 64);
-  for (auto i: kj::indices(environment)) {
-    envp[i] = const_cast<char*>(environment[i].cStr());
-  }
-  envp[environment.size()] = nullptr;
-
-  KJ_SYSCALL(execve(trustedWorkerd.cStr(), argv.begin(), envp.begin()), trustedWorkerd);
-  KJ_UNREACHABLE;
-}
-
-void waitForSidecarSocket(WorkerdSidecarProcess& sidecar, IsolateRuntimeConfig& runtimeConfig) {
-  if (!sidecar.isConfigured()) {
-    return;
-  }
-
-  for (uint elapsed = 0; elapsed <= SIDECAR_READY_TIMEOUT_MS;
-       elapsed += SIDECAR_READY_POLL_MS) {
-    if (isSocketReady(runtimeConfig.workerdSocketPath)) {
-      KJ_LOG(WARNING, "Isolate sidecar socket is ready.", runtimeConfig.workerdSocketPath);
-      return;
-    }
-
-    KJ_REQUIRE(sidecar.isRunning(), "Isolate sidecar exited before its socket was ready.",
-        runtimeConfig.workerdSocketPath);
-    sleepMillis(SIDECAR_READY_POLL_MS);
-  }
-
-  KJ_FAIL_REQUIRE("Timed out waiting for isolate sidecar socket.",
-      runtimeConfig.workerdSocketPath);
 }
 
 kj::StringPtr urlPath(kj::StringPtr url) {
@@ -4869,6 +3751,9 @@ public:
       bool powerboxOnly = false)
       : headerTable(headerTable), config(config), host(host), powerboxOnly(powerboxOnly) {}
 
+  static IsolateBridge::Client makeBridge(
+      IsolateRuntimeConfig& config, IsolateRuntimeHost& host);
+
   kj::Promise<void> request(
       kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
       kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
@@ -4878,7 +3763,7 @@ public:
     KJ_LOG(WARNING, "Isolate Sandstorm API binding received request.", methodName, path);
 
     if (!powerboxOnly && methodName == "GET" && route == "/capnp/rpc-session") {
-      return openNativeCapnpBridgeRpcSession(path, headers, response);
+      return openBrowserNativeCapnpBridgeRpcSession(path, headers, response);
     }
 
     auto maxBodyBytes = MAX_API_BINDING_REQUEST_BYTES;
@@ -5274,34 +4159,6 @@ private:
     return readSingleNonEmptyQueryParam(url, name, errorMessage, output);
   }
 
-  kj::Promise<void> openIsolateBridgeBootstrapRpcSession(
-      kj::StringPtr url, kj::HttpService::Response& response) {
-    kj::String connectionId;
-    KJ_IF_MAYBE(error, readNativeCapnpRpcSessionParam(
-        url, "connectionId", "isolate bridge RPC session connection id is missing",
-        connectionId)) {
-      return sendJson(response, 400, "Bad Request", renderError(*error));
-    }
-
-    if (findIsolateQueryParams(url, "id").size() > 0 ||
-        findIsolateQueryParams(url, "interfaceId").size() > 0 ||
-        findIsolateQueryParams(url, "interfaceName").size() > 0) {
-      return sendJson(response, 400, "Bad Request", renderError(
-          "isolate bridge bootstrap sessions must not specify a target capability"));
-    }
-
-    if (nativeCapnpBridge.hasRpcSession(connectionId)) {
-      return sendJson(response, 409, "Conflict", renderError(
-          "isolate bridge RPC session connection id is already in use"));
-    }
-
-    kj::HttpHeaders responseHeaders(headerTable);
-    auto webSocket = response.acceptWebSocket(responseHeaders);
-    capnp::Capability::Client bootstrap = kj::heap<IsolateBridgeImpl>(config, host);
-    return nativeCapnpBridge.openWebSocketRpcSession(kj::mv(webSocket), connectionId,
-        kj::mv(bootstrap));
-  }
-
   kj::Promise<void> openBrowserIsolateBridgeBootstrapRpcSession(
       kj::StringPtr url, const kj::HttpHeaders& requestHeaders,
       kj::HttpService::Response& response) {
@@ -5339,7 +4196,7 @@ private:
         kj::mv(bootstrap));
   }
 
-  kj::Promise<void> openNativeCapnpBridgeRpcSession(
+  kj::Promise<void> openBrowserNativeCapnpBridgeRpcSession(
       kj::StringPtr url, const kj::HttpHeaders& requestHeaders,
       kj::HttpService::Response& response) {
     if (!requestHeaders.isWebSocket()) {
@@ -5348,23 +4205,12 @@ private:
           "  \"error\": \"native Cap'n Proto RPC sessions require WebSocket upgrade\"\n}\n"));
     }
 
-    auto bootstrapModes = findIsolateQueryParams(url, "bootstrap");
-    if (bootstrapModes.size() > 1) {
+    if (findIsolateQueryParams(url, "bootstrap").size() > 0) {
       return sendJson(response, 400, "Bad Request", renderError(
-          "native Cap'n Proto RPC session bootstrap mode appears more than once"));
-    } else if (bootstrapModes.size() == 0) {
-      return sendJson(response, 400, "Bad Request", renderError(
-          "native Cap'n Proto RPC session bootstrap mode is missing"));
+          "browser Cap'n Proto RPC sessions do not accept a bootstrap mode"));
     }
 
-    if (bootstrapModes[0] == "worker") {
-      return openIsolateBridgeBootstrapRpcSession(url, response);
-    } else if (bootstrapModes[0] == "browser") {
-      return openBrowserIsolateBridgeBootstrapRpcSession(url, requestHeaders, response);
-    } else {
-      return sendJson(response, 400, "Bad Request", renderError(
-          "native Cap'n Proto RPC session bootstrap mode is invalid"));
-    }
+    return openBrowserIsolateBridgeBootstrapRpcSession(url, requestHeaders, response);
   }
 
   kj::Maybe<kj::String> readSingleNonEmptyQueryParam(kj::StringPtr url, kj::StringPtr name,
@@ -5748,8 +4594,7 @@ private:
     json.addAll(kj::StringPtr(",\n  "));
     appendJsonField(json, "compatibilityDate", config.compatibilityDate);
     json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "topology",
-        isolateRuntimeTopologyName(config.topology));
+    appendJsonField(json, "topology", "accountSharedHost");
     json.addAll(kj::StringPtr(",\n  \"compatibilityFlags\": ["));
     for (auto i: kj::indices(config.compatibilityFlags)) {
       if (i > 0) json.addAll(kj::StringPtr(", "));
@@ -5978,6 +4823,11 @@ private:
     return kj::String(json.releaseAsArray());
   }
 };
+
+IsolateBridge::Client SandstormApiBindingService::makeBridge(
+    IsolateRuntimeConfig& config, IsolateRuntimeHost& host) {
+  return kj::heap<IsolateBridgeImpl>(config, host);
+}
 
 class StorageBindingService final: public kj::HttpService {
 public:
@@ -6252,8 +5102,12 @@ public:
         service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host, true);
         break;
     }
-    context.getResults().setService(
-        host->runtimeAdapterFactory->exportHttpService(kj::mv(service)));
+    context.getResults().setService(host->exportHttpService(kj::mv(service)));
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> getBridge(GetBridgeContext context) override {
+    context.getResults().setBridge(SandstormApiBindingService::makeBridge(*config, *host));
     return kj::READY_NOW;
   }
 
@@ -6267,20 +5121,6 @@ public:
   virtual void requireRunning() {}
   virtual kj::Promise<void> keepAlive() { return kj::READY_NOW; }
   virtual kj::Promise<void> shutdown() = 0;
-};
-
-class SidecarSupervisorLifecycle final: public IsolateSupervisorLifecycle {
-public:
-  explicit SidecarSupervisorLifecycle(kj::Own<WorkerdSidecarProcess> sidecar)
-      : sidecar(kj::mv(sidecar)) {}
-
-  kj::Promise<void> shutdown() override {
-    sidecar->stop();
-    _exit(0);
-  }
-
-private:
-  kj::Own<WorkerdSidecarProcess> sidecar;
 };
 
 class HostedSupervisorLifecycle final: public IsolateSupervisorLifecycle {
@@ -6347,7 +5187,6 @@ public:
 
   kj::Promise<void> keepAlive(KeepAliveContext context) override {
     lifecycle->requireRunning();
-    isolateKeepAlive = true;
 
     auto params = context.getParams();
     if (params.hasCore()) {
@@ -6575,91 +5414,6 @@ private:
   };
 };
 
-kj::String getenvString(kj::StringPtr name) {
-  char* value = getenv(name.cStr());
-  KJ_REQUIRE(value != nullptr, "Required environment variable is missing.", name);
-  return kj::heapString(value);
-}
-
-kj::String readOptionalTextFile(kj::StringPtr path) {
-  if (path.size() == 0) {
-    return kj::heapString("(not configured)");
-  }
-
-  KJ_IF_MAYBE(fd, raiiOpenIfExists(path, O_RDONLY | O_CLOEXEC)) {
-    return readAll(*fd);
-  } else {
-    return kj::str("(missing: ", path, ")");
-  }
-}
-
-class IsolateDevSidecarService final: public kj::HttpService {
-public:
-  explicit IsolateDevSidecarService(kj::HttpHeaderTable& headerTable)
-      : headerTable(headerTable),
-        socketPath(getenvString("SANDSTORM_ISOLATE_SOCKET")),
-        runtimeDir(getenvString("SANDSTORM_ISOLATE_RUNTIME_DIR")),
-        runtimeManifestPath(getenvString("SANDSTORM_ISOLATE_RUNTIME_MANIFEST")),
-        workerdConfigPath(getenvString("SANDSTORM_ISOLATE_WORKERD_CONFIG")),
-        mainModule(getenvString("SANDSTORM_ISOLATE_MAIN_MODULE")),
-        compatibilityDate(getenvString("SANDSTORM_ISOLATE_COMPATIBILITY_DATE")) {}
-
-  kj::Promise<void> request(
-      kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
-      kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
-    auto methodName = kj::str(method);
-    auto path = kj::heapString(url);
-    KJ_LOG(WARNING, "Isolate development sidecar received request.", methodName, path);
-
-    return readAllBytesAtMost(requestBody, 1024 * 1024,
-        "isolate development sidecar request body exceeds maximum allowed size").then(
-        [this, methodName = kj::mv(methodName), path = kj::mv(path), &response]
-        (kj::Array<byte>&& bodyBytes) mutable {
-      kj::HttpHeaders responseHeaders(headerTable);
-      responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "text/html; charset=utf-8");
-
-      auto escapedMethod = htmlEscape(methodName);
-      auto escapedPath = htmlEscape(path);
-      auto escapedSocketPath = htmlEscape(socketPath);
-      auto escapedRuntimeDir = htmlEscape(runtimeDir);
-      auto escapedMainModule = htmlEscape(mainModule);
-      auto escapedCompatibilityDate = htmlEscape(compatibilityDate);
-      auto escapedManifest = htmlEscape(readOptionalTextFile(runtimeManifestPath));
-      auto escapedWorkerdConfig = htmlEscape(readOptionalTextFile(workerdConfigPath));
-
-      auto body = kj::str(
-          "<!doctype html><meta charset=\"utf-8\">"
-          "<title>Isolate dev sidecar</title>"
-          "<h1>Isolate dev sidecar</h1>"
-          "<p>This response came through the isolate sidecar HTTP proxy path.</p>"
-          "<dl>"
-          "<dt>Method</dt><dd><code>", escapedMethod, "</code></dd>"
-          "<dt>Path</dt><dd><code>", escapedPath, "</code></dd>"
-          "<dt>Request body bytes</dt><dd><code>", bodyBytes.size(), "</code></dd>"
-          "<dt>Socket</dt><dd><code>", escapedSocketPath, "</code></dd>"
-          "<dt>Runtime dir</dt><dd><code>", escapedRuntimeDir, "</code></dd>"
-          "<dt>Main module</dt><dd><code>", escapedMainModule, "</code></dd>"
-          "<dt>Compatibility date</dt><dd><code>", escapedCompatibilityDate, "</code></dd>"
-          "</dl>"
-          "<h2>runtime-manifest.json</h2><pre>", escapedManifest, "</pre>"
-          "<h2>workerd.capnp</h2><pre>", escapedWorkerdConfig, "</pre>");
-
-      auto stream = response.send(200, "OK", responseHeaders, body.size());
-      auto promise = stream->write(body.begin(), body.size());
-      return promise.attach(kj::mv(stream), kj::mv(body), kj::mv(bodyBytes));
-    });
-  }
-
-private:
-  kj::HttpHeaderTable& headerTable;
-  kj::String socketPath;
-  kj::String runtimeDir;
-  kj::String runtimeManifestPath;
-  kj::String workerdConfigPath;
-  kj::String mainModule;
-  kj::String compatibilityDate;
-};
-
 struct AccountAdmissionRequest {
   kj::String appRoot;
   kj::String grainRoot;
@@ -6690,40 +5444,6 @@ void initializeAccountGrainDirectory(kj::StringPtr varPath, bool isNew) {
   KJ_SYSCALL(close(logFd));
 }
 
-kj::Array<byte> readAccountWorkerSource(kj::StringPtr grainRoot, kj::StringPtr grainId) {
-  int rootFd;
-  KJ_SYSCALL(rootFd = open(grainRoot.cStr(),
-      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainRoot);
-  kj::AutoCloseFd root(rootFd);
-  int grainFd;
-  KJ_SYSCALL(grainFd = openat(root, grainId.cStr(),
-      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC), grainId);
-  kj::AutoCloseFd grain(grainFd);
-  int runtimeFd;
-  KJ_SYSCALL(runtimeFd = openat(grain, "isolate-runtime",
-      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-  kj::AutoCloseFd runtime(runtimeFd);
-  int sourceFd;
-  KJ_SYSCALL(sourceFd = openat(runtime, "worker-source.capnp.bin",
-      O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
-  kj::AutoCloseFd source(sourceFd);
-  struct stat stats;
-  KJ_SYSCALL(fstat(source, &stats));
-  KJ_REQUIRE(S_ISREG(stats.st_mode), "worker source bundle is not a regular file");
-  KJ_REQUIRE(stats.st_size > 0 && stats.st_size <= MAX_ISOLATE_TOTAL_MODULE_BYTES,
-      "worker source bundle exceeds size limit", stats.st_size,
-      MAX_ISOLATE_TOTAL_MODULE_BYTES);
-  auto result = kj::heapArray<byte>(stats.st_size);
-  size_t offset = 0;
-  while (offset < result.size()) {
-    ssize_t count;
-    KJ_SYSCALL(count = read(source, result.begin() + offset, result.size() - offset));
-    KJ_REQUIRE(count > 0, "worker source bundle ended before its declared size");
-    offset += count;
-  }
-  return result;
-}
-
 kj::Own<AccountAdmissionResult> prepareAccountAdmission(AccountAdmissionRequest request) {
   auto varPath = kj::str(request.grainRoot, "/", request.grainId);
   auto pkgPath = kj::str(request.appRoot, "/", request.packageId);
@@ -6735,9 +5455,7 @@ kj::Own<AccountAdmissionResult> prepareAccountAdmission(AccountAdmissionRequest 
   }
   auto runtimeConfig = loadIsolateRuntimeConfig(
       pkgPath, request.mainModule.asPtr(), compatibilityDate, true);
-  runtimeConfig->topology = IsolateRuntimeTopology::ACCOUNT_SHARED_HOST;
-  prepareRuntimeBundleAndCleanupSockets(varPath, *runtimeConfig);
-  auto workerSource = readAccountWorkerSource(request.grainRoot, request.grainId);
+  auto workerSource = prepareRuntimeState(varPath, *runtimeConfig);
   return kj::heap<AccountAdmissionResult>(AccountAdmissionResult{
     kj::mv(varPath), kj::mv(runtimeConfig), kj::mv(workerSource)});
 }
@@ -6874,9 +5592,8 @@ public:
       coreRedirector->setTarget(core);
       SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
           kj::addRef(*coreRedirector)).castAs<SandstormCore>();
-      auto adapterFactory = kj::refcounted<HostedRuntimeAdapterFactory>();
       auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
-          network, timer, grainId, coreCap, kj::addRef(*adapterFactory));
+          network, timer, grainId, coreCap);
 
       auto nativeStart = nativeHost.startGrainRequest();
       nativeStart.setGrainId(grainId);
@@ -6885,11 +5602,11 @@ public:
           kj::addRef(*admitted->runtimeConfig), kj::addRef(*runtimeHost)));
       return nativeStart.send().then([this, context, grainId = kj::mv(grainId),
           admitted = kj::mv(admitted), coreRedirector = kj::mv(coreRedirector),
-          runtimeHost = kj::mv(runtimeHost), adapterFactory = kj::mv(adapterFactory),
+          runtimeHost = kj::mv(runtimeHost),
           coreCap = kj::mv(coreCap)](auto response) mutable {
         auto hosted = response.getGrain();
         HostedIsolate::Client lifecycleHosted = hosted;
-        adapterFactory->setHosted(kj::mv(hosted));
+        runtimeHost->setHosted(kj::mv(hosted));
         auto lifecycle = kj::refcounted<HostedSupervisorLifecycle>(
             kj::mv(lifecycleHosted),
             [this, grainId = kj::str(grainId)]() { supervisors.erase(grainId); });
@@ -6920,34 +5637,6 @@ private:
 };
 
 }  // namespace
-
-IsolateDevSidecarMain::IsolateDevSidecarMain(kj::ProcessContext& context): context(context) {}
-
-kj::MainFunc IsolateDevSidecarMain::getMain() {
-  return kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
-                         "Runs the built-in isolate development sidecar.")
-      .callAfterParsing(KJ_BIND_METHOD(*this, run))
-      .build();
-}
-
-kj::MainBuilder::Validity IsolateDevSidecarMain::run() {
-  auto socketPath = getenvString("SANDSTORM_ISOLATE_SOCKET");
-  unlinkIfExists(socketPath);
-
-  auto ioContext = kj::setupAsyncIo();
-  kj::HttpHeaderTable headerTable;
-  IsolateDevSidecarService service(headerTable);
-  kj::HttpServer server(ioContext.provider->getTimer(), headerTable, service);
-
-  auto address = ioContext.provider->getNetwork()
-      .parseAddress(kj::str("unix:", socketPath), 0)
-      .wait(ioContext.waitScope);
-  auto port = address->listen();
-
-  KJ_LOG(WARNING, "Isolate development sidecar listening.", socketPath);
-  server.listenHttp(*port).wait(ioContext.waitScope);
-  return true;
-}
 
 IsolateAccountHostMain::IsolateAccountHostMain(kj::ProcessContext& context): context(context) {}
 
@@ -7057,337 +5746,6 @@ kj::MainBuilder::Validity IsolateAccountHostMain::run() {
   KJ_LOG(WARNING, "Account-scoped isolate host listening.", trustDomain, controlSocket,
       nativeHostPath, nativeProcess.getPid());
   server.listen(*listener).exclusiveJoin(nativeRpc.onDisconnect()).wait(io.waitScope);
-  return true;
-}
-
-IsolateSupervisorMain::IsolateSupervisorMain(kj::ProcessContext& context): context(context) {
-  sigset_t sigset;
-  KJ_SYSCALL(sigemptyset(&sigset));
-  KJ_SYSCALL(sigprocmask(SIG_SETMASK, &sigset, nullptr));
-}
-
-kj::MainFunc IsolateSupervisorMain::getMain() {
-  return kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
-                         "Runs a V8-isolate grain supervisor.")
-      .addOptionWithArg({"uid"}, KJ_BIND_METHOD(*this, setUid), "<uid>",
-                        "Accept the traditional supervisor --uid option.")
-      .addOptionWithArg({"pkg"}, KJ_BIND_METHOD(*this, setPkg), "<path>",
-                        "Set directory containing the app package.")
-      .addOptionWithArg({"var"}, KJ_BIND_METHOD(*this, setVar), "<path>",
-                        "Set directory where grain data will be stored.")
-      .addOptionWithArg({'e', "env"}, KJ_BIND_METHOD(*this, addEnv), "<name>=<val>",
-                        "Record an isolate environment binding.")
-      .addOptionWithArg({"isolate-main-module"}, KJ_BIND_METHOD(*this, setIsolateMainModule),
-                        "<module>", "Select the isolate command main module from the manifest.")
-      .addOptionWithArg({"isolate-compatibility-date"},
-                        KJ_BIND_METHOD(*this, setIsolateCompatibilityDate), "<date>",
-                        "Record the selected isolate command compatibility date.")
-      .addOptionWithArg({"isolate-trust-domain"},
-                        KJ_BIND_METHOD(*this, setIsolateTrustDomain), "<account-id>",
-                        "Select the server-controlled account trust domain for shared hosting.")
-      .addOption({"proc"}, []() { return true; },
-                 "Accepted for compatibility with supervisor launch flags.")
-      .addOption({"stdio"}, [this]() { keepStdio = true; return true; },
-                 "Do not redirect stderr to the grain log.")
-      .addOption({"dev"}, []() { return true; },
-                 "Accepted for compatibility with supervisor launch flags.")
-      .addOption({"use-experimental-seccomp-filter"}, []() { return true; },
-                 "Accepted for compatibility with supervisor launch flags.")
-      .addOption({"log-seccomp-violations"},
-                 [this]() { logSeccompViolations = true; return true; },
-                 "Accepted for compatibility with supervisor launch flags.")
-      .addOption({'n', "new"}, [this]() { isNew = true; return true; },
-                 "Initialize a new grain.")
-      .expectArg("<app-name>", KJ_BIND_METHOD(*this, setAppName))
-      .expectArg("<grain-id>", KJ_BIND_METHOD(*this, setGrainId))
-      .expectZeroOrMoreArgs("<runtime-arg>", KJ_BIND_METHOD(*this, addRuntimeArg))
-      .callAfterParsing(KJ_BIND_METHOD(*this, run))
-      .build();
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::setAppName(kj::StringPtr name) {
-  if (name == nullptr || name.findFirst('/') != nullptr) {
-    return "Invalid app name.";
-  }
-  appName = kj::heapString(name);
-  return true;
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::setGrainId(kj::StringPtr id) {
-  if (id == nullptr || id.findFirst('/') != nullptr) {
-    return "Invalid grain id.";
-  }
-  grainId = kj::heapString(id);
-  return true;
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::setPkg(kj::StringPtr path) {
-  pkgPath = realPath(path);
-  return true;
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::setVar(kj::StringPtr path) {
-  varPath = realPath(path);
-  return true;
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::setUid(kj::StringPtr arg) {
-  KJ_IF_MAYBE(u, parseUInt(arg, 10)) {
-    if (getuid() != 0) {
-      return "must start as root to use --uid";
-    }
-    if (*u == 0) {
-      return "can't run isolate supervisor as root";
-    }
-    sandboxUid = *u;
-    return true;
-  } else {
-    return "UID must be a number";
-  }
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::setIsolateMainModule(kj::StringPtr mainModule) {
-  isolateMainModule = kj::heapString(mainModule);
-  return true;
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::setIsolateCompatibilityDate(
-    kj::StringPtr compatibilityDate) {
-  isolateCompatibilityDate = kj::heapString(compatibilityDate);
-  return true;
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::setIsolateTrustDomain(kj::StringPtr trustDomain) {
-  if (trustDomain.size() < 8 || trustDomain.startsWith(".") ||
-      trustDomain.findFirst('/') != nullptr) {
-    return "Invalid isolate trust domain.";
-  }
-  isolateTrustDomain = kj::heapString(trustDomain);
-  return true;
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::addEnv(kj::StringPtr arg) {
-  environment.add(kj::heapString(arg));
-  return true;
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::addRuntimeArg(kj::StringPtr arg) {
-  runtimeArgs.add(kj::heapString(arg));
-  return true;
-}
-
-kj::String IsolateSupervisorMain::realPath(kj::StringPtr path) {
-  char* cResult = realpath(path.cStr(), nullptr);
-  if (cResult == nullptr) {
-    int error = errno;
-    if (error != ENOENT) {
-      KJ_FAIL_SYSCALL("realpath", error, path);
-    }
-
-    KJ_IF_MAYBE(slashPos, path.findLast('/')) {
-      if (*slashPos == 0) {
-        return kj::heapString(path);
-      } else {
-        auto parent = kj::heapString(path.slice(0, *slashPos));
-        auto suffix = kj::heapString(path.slice(*slashPos));
-        return kj::str(realPath(parent), suffix);
-      }
-    } else {
-      char* cwd = getcwd(nullptr, 0);
-      if (cwd == nullptr) {
-        KJ_FAIL_SYSCALL("getcwd", errno);
-      }
-      KJ_DEFER(free(cwd));
-      if (cwd[0] == '/' && cwd[1] == '\0') {
-        return kj::str('/', path);
-      } else {
-        return kj::str(cwd, '/', path);
-      }
-    }
-  }
-
-  auto result = kj::heapString(cResult);
-  free(cResult);
-  return result;
-}
-
-kj::MainBuilder::Validity IsolateSupervisorMain::run() {
-  KJ_REQUIRE(isolateTrustDomain != nullptr,
-      "isolate supervisor requires a server-controlled trust domain");
-  if (pkgPath == nullptr) pkgPath = kj::str("/var/sandstorm/apps/", appName);
-  if (varPath == nullptr) varPath = kj::str("/var/sandstorm/grains/", grainId);
-
-  KJ_SYSCALL(access(pkgPath.cStr(), R_OK | X_OK), pkgPath);
-  kj::Maybe<kj::StringPtr> requestedMainModule;
-  if (isolateMainModule != nullptr) {
-    requestedMainModule = isolateMainModule;
-  }
-
-  kj::Maybe<kj::StringPtr> requestedCompatibilityDate;
-  if (isolateCompatibilityDate != nullptr) {
-    requestedCompatibilityDate = isolateCompatibilityDate;
-  }
-
-  umask(0007);
-  if (isNew) {
-    if (mkdir(varPath.cStr(), 0770) != 0) {
-      int error = errno;
-      if (error == EEXIST) {
-        context.exitError(kj::str("Grain already exists: ", grainId));
-      } else {
-        KJ_FAIL_SYSCALL("mkdir(varPath.cStr(), 0770)", error, varPath);
-      }
-    }
-    KJ_SYSCALL(mkdir(kj::str(varPath, "/sandbox").cStr(), 0770), varPath);
-  } else {
-    if (access(varPath.cStr(), R_OK | W_OK | X_OK) != 0) {
-      int error = errno;
-      if (error == ENOENT) {
-        context.exitError(kj::str("No such grain: ", grainId));
-      } else {
-        KJ_FAIL_SYSCALL("access(varPath.cStr(), R_OK | W_OK | X_OK)", error, varPath);
-      }
-    }
-  }
-
-  KJ_IF_MAYBE(u, sandboxUid) {
-    chownPathTo(varPath, *u);
-    chownPathTo(kj::str(varPath, "/sandbox"), *u);
-  }
-
-  if (!keepStdio) {
-    int log;
-    KJ_SYSCALL(log = open(kj::str(varPath, "/log").cStr(),
-        O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0660));
-    KJ_IF_MAYBE(u, sandboxUid) {
-      KJ_SYSCALL(fchown(log, *u, static_cast<gid_t>(-1)));
-    }
-    KJ_SYSCALL(dup2(log, STDERR_FILENO));
-    KJ_SYSCALL(close(log));
-  }
-
-  keepAliveExistingIsolateSupervisor(varPath);
-  registerIsolateSupervisorSignalHandlers();
-
-  auto runtimeConfig = loadIsolateRuntimeConfig(
-      pkgPath, requestedMainModule, requestedCompatibilityDate);
-
-  prepareRuntimeBundleAsSandboxUser(varPath, *runtimeConfig, sandboxUid);
-
-  KJ_LOG(WARNING, "Starting isolate supervisor with workerd adapter skeleton.",
-      grainId, isolateTrustDomain, pkgPath,
-      runtimeConfig->mainModule, runtimeConfig->compatibilityDate,
-      runtimeConfig->compatibilityFlags.size(), runtimeConfig->modules.size(),
-      runtimeConfig->bindings.size(), runtimeConfig->workerdBundleDir,
-      runtimeConfig->workerdSocketPath);
-
-  auto sidecar = kj::heap<WorkerdSidecarProcess>(
-      runtimeArgs.asPtr(), environment.asPtr(), *runtimeConfig, sandboxUid, logSeccompViolations);
-
-  KJ_IF_MAYBE(u, sandboxUid) {
-    KJ_SYSCALL(setuid(*u));
-  }
-
-  auto ioContext = kj::setupAsyncIo();
-  auto coreRedirector = kj::refcounted<CapRedirector>();
-  SandstormCore::Client coreCap = static_cast<capnp::Capability::Client>(
-      kj::addRef(*coreRedirector)).castAs<SandstormCore>();
-  KJ_LOG(WARNING, "Isolate supervisor core redirector created.");
-
-  auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
-      ioContext.provider->getNetwork(), ioContext.provider->getTimer(), grainId, coreCap,
-      kj::refcounted<WorkerdRuntimeAdapterFactory>());
-  kj::Maybe<kj::Promise<void>> apiListenTask = nullptr;
-  kj::Maybe<kj::Promise<void>> powerboxListenTask = nullptr;
-  kj::Maybe<kj::Promise<void>> storageListenTask = nullptr;
-  if (hasSandstormApiBinding(*runtimeConfig)) {
-    auto apiService = kj::heap<SandstormApiBindingService>(
-        runtimeHost->headerTable, *runtimeConfig, *runtimeHost);
-    auto apiServer = kj::heap<kj::HttpServer>(
-        runtimeHost->timer, runtimeHost->headerTable, *apiService);
-    apiServer = apiServer.attach(kj::mv(apiService));
-    auto apiAddress = runtimeHost->network
-        .parseAddress(kj::str("unix:", runtimeConfig->sandstormApiSocketPath), 0)
-        .wait(ioContext.waitScope);
-    auto apiPort = apiAddress->listen();
-    KJ_LOG(WARNING, "Isolate Sandstorm API binding socket is listening.",
-        runtimeConfig->sandstormApiSocketPath);
-    apiListenTask = apiServer->listenHttp(*apiPort)
-        .attach(kj::mv(apiPort), kj::mv(apiServer));
-  }
-  if (hasPowerboxBinding(*runtimeConfig)) {
-    auto powerboxService = kj::heap<SandstormApiBindingService>(
-        runtimeHost->headerTable, *runtimeConfig, *runtimeHost, true);
-    auto powerboxServer = kj::heap<kj::HttpServer>(
-        runtimeHost->timer, runtimeHost->headerTable, *powerboxService);
-    powerboxServer = powerboxServer.attach(kj::mv(powerboxService));
-    auto powerboxAddress = runtimeHost->network
-        .parseAddress(kj::str("unix:", runtimeConfig->powerboxSocketPath), 0)
-        .wait(ioContext.waitScope);
-    auto powerboxPort = powerboxAddress->listen();
-    KJ_LOG(WARNING, "Isolate Powerbox binding socket is listening.",
-        runtimeConfig->powerboxSocketPath);
-    powerboxListenTask = powerboxServer->listenHttp(*powerboxPort)
-        .attach(kj::mv(powerboxPort), kj::mv(powerboxServer));
-  }
-  if (hasStorageBinding(*runtimeConfig)) {
-    auto storageService = kj::heap<StorageBindingService>(
-        runtimeHost->headerTable, runtimeConfig->storageRootPath);
-    auto storageServer = kj::heap<kj::HttpServer>(
-        runtimeHost->timer, runtimeHost->headerTable, *storageService);
-    storageServer = storageServer.attach(kj::mv(storageService));
-    auto storageAddress = runtimeHost->network
-        .parseAddress(kj::str("unix:", runtimeConfig->storageSocketPath), 0)
-        .wait(ioContext.waitScope);
-    auto storagePort = storageAddress->listen();
-    KJ_LOG(WARNING, "Isolate storage binding socket is listening.",
-        runtimeConfig->storageSocketPath);
-    storageListenTask = storageServer->listenHttp(*storagePort)
-        .attach(kj::mv(storagePort), kj::mv(storageServer));
-  }
-
-  waitForSidecarSocket(*sidecar, *runtimeConfig);
-  KJ_LOG(WARNING, "Isolate supervisor sidecar readiness complete.");
-  auto lifecycle = kj::refcounted<SidecarSupervisorLifecycle>(kj::mv(sidecar));
-
-  KJ_LOG(WARNING, "Creating isolate supervisor capability.");
-  Supervisor::Client mainCap = kj::heap<IsolateSupervisorImpl>(
-      ioContext.unixEventPort, varPath, kj::addRef(*coreRedirector), kj::mv(runtimeConfig),
-      kj::mv(runtimeHost), kj::mv(lifecycle), kj::mv(coreCap));
-  KJ_LOG(WARNING, "Isolate supervisor capability created.");
-
-  KJ_LOG(WARNING, "Creating isolate supervisor listener.");
-  auto listener = kj::heap<TwoPartyServerWithClientBootstrap>(
-      kj::mv(mainCap), kj::mv(coreRedirector));
-  KJ_LOG(WARNING, "Isolate supervisor listener created.");
-
-  auto socketPath = kj::str(varPath, "/socket");
-  unlinkIfExists(socketPath);
-
-  KJ_LOG(WARNING, "Parsing isolate supervisor socket address.", socketPath);
-  auto address = ioContext.provider->getNetwork()
-      .parseAddress(kj::str("unix:", socketPath), 0)
-      .wait(ioContext.waitScope);
-  KJ_LOG(WARNING, "Parsed isolate supervisor socket address.", socketPath);
-
-  KJ_LOG(WARNING, "Listening on isolate supervisor socket.", socketPath);
-  auto serverPort = address->listen();
-  KJ_LOG(WARNING, "Listening on isolate supervisor socket succeeded.", socketPath);
-
-  KJ_SYSCALL(write(STDOUT_FILENO, "Listening...\n", strlen("Listening...\n")));
-  KJ_LOG(WARNING, "Isolate supervisor socket is listening.", socketPath);
-
-  auto listenTask = listener->listen(kj::mv(serverPort)).attach(kj::mv(listener));
-  KJ_IF_MAYBE(apiTask, apiListenTask) {
-    listenTask = listenTask.exclusiveJoin(kj::mv(*apiTask));
-  }
-  KJ_IF_MAYBE(powerboxTask, powerboxListenTask) {
-    listenTask = listenTask.exclusiveJoin(kj::mv(*powerboxTask));
-  }
-  KJ_IF_MAYBE(storageTask, storageListenTask) {
-    listenTask = listenTask.exclusiveJoin(kj::mv(*storageTask));
-  }
-  listenTask.wait(ioContext.waitScope);
   return true;
 }
 

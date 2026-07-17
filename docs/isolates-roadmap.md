@@ -14,20 +14,18 @@ Dated progress entries retain prototype API names as superseded history; see
 Agreed direction, in one paragraph: every caller of a grain's native
 capabilities — the grain's own worker, another isolate grain, a legacy grain,
 the browser — is a Cap'n Proto two-party peer. Each isolate has **one logical
-capnp RPC authority channel** to its trusted layer. In the initial JS
-implementation, concrete live connections are request-scoped because workerd
-I/O belongs to a per-request `IoContext`; the long-term native workerd binding
-can own the persistent channel outside request JS. The bootstrap exposes the
+capnp RPC authority channel** to its trusted layer. The workerd embedding
+provides a native binary message channel whose bootstrap is supplied by the
+trusted account host; it does not use worker HTTP or WebSocket discovery. The bootstrap exposes the
 standard Sandstorm API and same-session `SessionContext`. All authority
 operations (claim, save, restore, drop, offer, fulfill, powerbox) are methods
 on capabilities carried by that channel; there is no capability registry
 addressed by string IDs, no lifecycle envelope, no per-export callback RPC
 sessions, and no local-dispatch lease mechanism. Per-grain workerd sidecars
-are replaced by a small number of shared workerd processes. When caller and
-callee are colocated in the same workerd, capabilities still use the ordinary
-WebSocket transport. A colocated transport remains an optional future
-optimization only if a substantially simpler upstream facility and new
-measurements justify it; it is not part of the target required for stability.
+are replaced by account-scoped shared workerd processes. HTTP-shaped fetch,
+streaming, and WebSocket operations are application-layer capability calls on
+that binary process connection; no raw HTTP socket or second worker transport
+is introduced. Browser peers still use WebSocket at the browser boundary.
 
 Invariants that hold at every phase:
 
@@ -39,8 +37,8 @@ Invariants that hold at every phase:
 3. Live handles are ephemeral (die with the connection / request context /
    isolate eviction); tokens and app object IDs are durable.
 4. Transport choice is made by trusted runtime code and is invisible to app
-   code. The supported topology currently uses WebSockets for both local and
-   remote peers.
+   code. Worker authority and ingress use the native Cap'n Proto connection;
+   WebSocket is used only where the browser boundary requires it.
 5. Revocation is enforceable from outside both endpoints' JS heaps.
 
 ---
@@ -57,10 +55,8 @@ compatibility with current prototype apps is explicitly a non-goal.
   `getSandstormApi() -> Grain.SandstormApi` and
   `getSessionContext(sessionId) -> Grain.SessionContext`. Do not add
   `restoreForInterface()` or `exportNative()` authority methods.
-- Make `GET /capnp/rpc-session` (the existing WebSocket RPC session,
-  `isolate-supervisor.c++:4673`) the single authority channel, carrying this
-  bootstrap. JS connections are request-scoped until a native workerd binding
-  can own the persistent channel outside `IoContext`.
+- Make a native binary Cap'n Proto channel the single worker authority channel,
+  carrying this bootstrap outside request-scoped `IoContext` lifetime.
 - Exports become ordinary capability passing. Durable app-provided exports use
   classic `AppPersistent.save()` plus `MainView.restore/drop()` and
   `SupervisorObjectId.appRef`; route-backed supervisor capabilities use
@@ -71,13 +67,10 @@ compatibility with current prototype apps is explicitly a non-goal.
   channel. Merge `sandstorm:api` and `sandstorm:capnp` into one module while
   we're at it — the split reflects the transport split we're removing.
 
-**Progress, 2026-07-08:** `isolate-bridge.capnp` now defines the minimal
-request-scoped bootstrap (`getSandstormApi()` and `getSessionContext()`), and
-`GET /capnp/rpc-session?bootstrap=worker` serves it over the existing native
-Cap'n Proto WebSocket RPC session. `sandstorm:capnp` exposes
-`connectIsolateBridge()` for trusted helper code, and the isolate integration
-suite covers successful `SandstormApi` bootstrap plus a rejected missing
-session-context lookup.
+**Progress, 2026-07-17:** `isolate-bridge.capnp` defines the worker bootstrap
+(`getSandstormApi()` and `getSessionContext()`), and the native host injects a
+binary Cap'n Proto channel directly into each worker. Worker authority RPC no
+longer uses HTTP or WebSocket; WebSocket remains only at the browser boundary.
 
 **Progress, 2026-07-08:** `sandstorm:capnp` also exposes
 `restoreNativeCapnpViaBootstrap()`, an explicit migration helper that restores
@@ -223,15 +216,11 @@ remain isolated in `sandstorm-internal:capnp-runtime`.
   `MainView` RPC socket plumbing. The native-export registration endpoint and
   JS export-session paths were already gone; the remaining C++ session classes
   are now named for `MainView` RPC.
-**Keep as HTTP:** inbound WebSession→sidecar fetch (workerd's native
-ingress), `STORAGE` binding, and non-authority runtime/module/binding metadata
-GETs.
-
-**Test/migrate:** port the dev sidecar (§3.4 of the review) to speak the new
-bootstrap so the seam stays testable without workerd; migrate
-`isolate-websession-client.c++`, the JS integration tests, and the
-`examples/isolate-*` apps. Static-assert the new schema IDs as the old ones
-are today.
+**Keep as an HTTP-shaped capability API:** inbound WebSession fetch,
+`STORAGE`, and non-authority metadata operations. These are transported by
+`HttpService` capabilities over the same binary Cap'n Proto connection, not by
+a Unix HTTP socket. The worker authority bootstrap uses the native message
+channel directly.
 
 **Exit criteria:** all examples and integration tests pass with the POST
 routes and envelope deleted (not deprecated — deleted); grep shows no
@@ -267,10 +256,10 @@ bridge. Rebase it onto the Phase 1 channel:
   schema module plus `/__sandstorm/native-capnp/client.js`, fetches one
   handoff slot, and calls `read()`, `increment()`, and `reset()` over the
   browser-scoped capnp WebSocket bridge.
-- Done: real `WebSession.openWebSocket()` calls now forward to the workerd
-  sidecar as raw WebSocket upgrade streams, so browser-native capnp RPC works
-  through the normal Sandstorm WebSession boundary rather than only through
-  direct supervisor binding routes.
+- Done: real `WebSession.openWebSocket()` calls use the hosted worker's
+  capability-backed HTTP client directly. Browser-native capnp RPC works
+  through the normal Sandstorm WebSession boundary without a raw HTTP upgrade
+  parser or a worker-side bootstrap WebSocket.
 - Powerbox flow stays browser-first: shell `postMessage` picker → token →
   browser (or worker) claims over its own channel. Worker-initiated Powerbox
   UI becomes a `SessionContext` method call whenever the shell supports it —
@@ -348,9 +337,9 @@ Do this while surface area is small and before any stability promise.
     disconnect cleanup.
   - Done: `make isolate-capnp-corpus-test` replays deterministic capnp-es/KJ
     encode/decode corpus cases for common struct field shapes, and
-    `make isolate-supervisor-integration-test` runs it before the real bridge
-    fixture. The bridge fixture is the RPC conformance path for pipelining,
-    returned capabilities, capability arguments, save/restore, browser calls,
+    `make isolate-capnp-toolchain-test` runs it with the generated-type checks.
+    The account-host integration fixture is the RPC conformance path for
+    pipelining, returned capabilities, capability arguments, save/restore, browser calls,
     and legacy C++ interop. `make isolate-capnp-fuzz` is the opt-in generated
     corpus target for local or scheduled runs outside normal PR CI.
 
@@ -379,9 +368,8 @@ colocation needed to evaluate the now-deferred Phase 5 optimization.
 - **Blast-radius policy.** Grains in one workerd are separated by V8 isolation
   only. Group workerds by trust domain — per-user is the natural starting
   policy — so a V8 escape is contained to one user's grains, preserving a
-  meaningful version of Sandstorm's isolation story. Make the grouping policy
-  a server setting, and keep per-grain workerd available as a paranoid mode
-  (the runtime-adapter seam already supports both).
+  meaningful version of Sandstorm's isolation story. The released topology is
+  account-scoped; there is no parallel per-grain workerd mode.
 - **Storage mediation.** Per-grain storage stays per-grain on disk; the
   `STORAGE` binding in the shared host must be bound per-worker to the right
   grain directory, enforced in the host's C++ layer, never by worker identity
@@ -407,29 +395,27 @@ colocation needed to evaluate the now-deferred Phase 5 optimization.
 Progress:
 
 - The embedded-host implementation is pinned to the official workerd source
-  release matching the packaged `workerd@1.20260610.1` executable. The source
-  lives in `deps/workerd` at commit `ea5e86d2`, and
-  `make verify-workerd-source` prevents the native host and packaged runtime
-  from silently drifting to different releases.
+  release in `deps/workerd` at commit `ea5e86d2`. `isolate-host` is the only
+  workerd runtime executable shipped in the bundle; the former standalone npm
+  `workerd` binary and package lock are gone. `make verify-workerd-source`
+  prevents the native host and downstream patch from silently drifting.
 - `make isolate-host` now builds a Sandstorm-owned native executable against
   workerd's in-process `Server` library. The build uses a checksum-pinned Bazel
   binary and a patched copy under `tmp`, leaving the upstream source submodule
   pristine; the resulting `bin/isolate-host` has no Bazel runtime dependency.
-- The proxy migration stage has a minimal, ABI-tracked Cap'n Proto control
-  contract: an account-scoped host accepts only a server-validated grain ID
-  and returns a `HostedIsolate` lifecycle capability with `keepAlive()` and
-  `stop()`. Package, runtime, socket, and storage paths are derived by the host
-  from trusted roots rather than supplied over the per-grain control call.
+- The host has a minimal, ABI-tracked Cap'n Proto control contract: an
+  account-scoped host accepts a server-validated grain ID, a bounded packed
+  worker-source bundle, and per-grain binding capabilities, then returns a
+  `HostedIsolate` lifecycle capability with `keepAlive()` and `stop()`.
 - `bin/isolate-host` now serves that lifecycle contract over a Unix socket and
   keeps account-local grain state in one long-lived process. A client built by
   Sandstorm's existing toolchain verifies cross-toolchain wire compatibility,
   start/keepAlive/stop behavior, stopped-handle rejection, and rejection of a
   path-traversal grain ID via `make isolate-host-control-test`.
-- The host receives the grain root once at process startup and resolves each
-  validated grain beneath an open root directory descriptor. It retains a
-  descriptor for the selected grain and requires a regular runtime manifest,
-  using `openat()` plus `O_NOFOLLOW` at trust boundaries so neither RPC input
-  nor a grain-directory symlink can redirect worker loading outside that root.
+- Worker code and configuration cross the existing host control connection as
+  bounded Cap'n Proto data. The native host never receives package, grain,
+  runtime, or socket paths, so worker admission cannot redirect loading through
+  a grain-directory symlink or a caller-selected filesystem location.
 - The embedded workerd patch now exposes a deliberately small native loader
   seam: load a named worker from an already-configured loader namespace, or
   explicitly unlink and evict that worker. This reuses workerd's existing
@@ -450,10 +436,12 @@ Progress:
   ephemeral loopback listener; Sandstorm requests do not traverse it. Host
   `stop()` calls workerd's explicit eviction path, and production grain
   requests enter through a per-grain `HostedIsolate` HTTP capability.
-- The supervisor now emits a Sandstorm-owned packed Cap'n Proto worker-source
-  bundle alongside its human-readable manifest and per-grain workerd config.
-  The shared host reads that file through the already-confined grain directory,
-  compiles compatibility flags, translates every supported module kind into a
+- The supervisor now serializes a Sandstorm-owned packed Cap'n Proto
+  worker-source bundle for the `startGrain()` call and persists a copy alongside
+  its human-readable manifest for diagnostics. It does not generate an external
+  workerd configuration or runtime ingress sockets. The shared host decodes the
+  bytes received on the control capability, compiles compatibility flags,
+  translates every supported module kind into a
   `DynamicWorkerSource`, materializes every supported binding kind, and enters
   workerd's named isolate cache. Real worker ingress and binding dispatch now
   run end to end without expanding the upstream patch into a general workerd
@@ -485,16 +473,14 @@ Progress:
   context exists.
 - The shared-host trust domain is explicitly per account. The trusted backend
   now carries `Backend.startGrain.ownerId` through isolate startup as a
-  required `--isolate-trust-domain` value; the supervisor validates it instead
-  of deriving grouping from app or grain metadata. Account-shared hosting is
-  the default hosting topology. `ISOLATE_HOSTING_MODE=per-grain` remains
-  available as a rollback and paranoid-mode fallback.
+  required trust-domain value; the host validates it instead of deriving
+  grouping from app or grain metadata. Account-shared hosting is the isolate
+  runtime topology for both installed and development packages.
 - Account-mode integration coverage runs two live grains from the same package
   in one workerd, verifies that identical `STORAGE` keys retain distinct
   per-grain values, and repeats the supported binding and storage checks after
   stopping and restarting one grain. Runtime manifests and `/runtime` metadata
-  report `accountSharedHost` in this mode and `perGrainSidecar` in fallback
-  mode.
+  report `accountSharedHost`.
 - Sandstorm-owned limit enforcers apply a 64 MiB old-generation heap limit,
   16 MiB young-generation and buffering limits, a 250 ms per-request JS
   watchdog, a five-second startup watchdog, and 64 subrequests. Integration
@@ -520,11 +506,11 @@ bundles cannot block unrelated grains and are rejected within documented
 size/time bounds; explicit worker, admission, watchdog, and overload limits
 are exercised in integration tests; logs identify the responsible grain;
 keepalive eviction is active; the worker-source format has version/ABI
-coverage; per-grain memory overhead is measured and published; per-grain
-sidecar mode still passes the full suite.
+coverage; per-grain memory overhead is measured and published; the obsolete
+per-grain process topology and its test harness are absent.
 
-Account-shared mode satisfies these technical criteria and is now the default,
-with per-grain mode retained as the rollback and paranoid-mode escape hatch.
+Account-shared mode satisfies these technical criteria and is the only isolate
+runtime topology.
 
 ---
 
@@ -593,7 +579,7 @@ memory benchmark are the maintained isolate documentation.
 Release CI now runs the composite `make isolate-ci` gate. It verifies a clean,
 pinned workerd tree and zero-fuzz private patch; checks the packaged native
 host, workerd runtime, schema compiler, and public schemas; then runs the ABI,
-corpus, TypeScript, per-grain fallback, account-shared isolation, native-host
+corpus, TypeScript, account-shared isolation, native-host
 lifecycle, and backend-recovery suites.
 
 ---
@@ -601,7 +587,7 @@ lifecycle, and backend-recovery suites.
 ## Sequencing rationale and risks
 
 - **Phase 1 before everything:** every later phase gets simpler on one channel
-  (Phase 4's host serves one WebSocket per grain instead of a route zoo;
+  (Phase 4's host serves one native Cap'n Proto channel per grain;
   the Phase 5 evaluation used real RPC caps instead of registry IDs).
   Deleting ~20 authority routes also shrinks the attack surface before the
   multi-tenant host raises the stakes.

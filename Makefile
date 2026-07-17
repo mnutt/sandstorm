@@ -24,12 +24,9 @@ BUILD=0
 PARALLEL=$(shell nproc)
 LIBS=
 EKAM=ekam
-WORKERD_NPM_VERSION=1.20260610.1
 WORKERD_SOURCE_COMMIT=ea5e86d22f16996a3d8fdb8922c34eb7e8711cd3
 BAZEL_VERSION=9.1.0
 BAZEL_LINUX_X86_64_SHA256=a667454f3f4f8878df8199136b82c199f6ada8477b337fae3b1ef854f01e4e2f
-WORKERD_NPM_PACKAGE_DIR=deps/workerd-npm
-WORKERD_BIN=
 CAPNP_ES_NPM_VERSION=0.3.0
 CAPNP_ES_NPM_PACKAGE_DIR=deps/capnp-es-npm
 CAPNP_ES_NPM_COMPILER_MODULE=$(abspath tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs)
@@ -165,7 +162,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint workerd verify-workerd-runtime verify-workerd-source verify-isolate-release-bundle isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-backend-recovery-test isolate-memory-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test isolate-capnp-toolchain-test isolate-supervisor-integration-test isolate-test isolate-ci
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint verify-workerd-source verify-isolate-release-bundle isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-backend-recovery-test isolate-memory-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test isolate-capnp-toolchain-test isolate-test isolate-ci
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -175,7 +172,6 @@ clean: ci-clean
 	cd deps/ekam && make clean
 	rm -rf deps/libsodium/build
 	rm -rf deps/boringssl/build
-	rm -rf tmp/workerd-npm
 	rm -rf tmp/capnweb-npm src/sandstorm/isolate/capnweb.js
 
 ci-clean:
@@ -296,44 +292,6 @@ deps/libsodium/build/Makefile: | tmp/.deps deps/llvm-build
 deps/libsodium/build/src/libsodium/.libs/libsodium.a: deps/libsodium/build/Makefile
 	@$(call color,building libsodium)
 	cd deps/libsodium/build && make -j$(PARALLEL)
-
-# ====================================================================
-# fetch/build workerd
-
-tmp/.workerd-npm: $(WORKERD_NPM_PACKAGE_DIR)/package.json \
-    $(wildcard $(WORKERD_NPM_PACKAGE_DIR)/package-lock.json)
-	@$(call color,installing npm workerd)
-	rm -rf tmp/workerd-npm
-	@mkdir -p tmp/workerd-npm
-	cp $(WORKERD_NPM_PACKAGE_DIR)/package.json tmp/workerd-npm/package.json
-	@if test -e $(WORKERD_NPM_PACKAGE_DIR)/package-lock.json; then cp $(WORKERD_NPM_PACKAGE_DIR)/package-lock.json tmp/workerd-npm/package-lock.json; fi
-	cd tmp/workerd-npm && if test -e package-lock.json; then PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm ci --no-fund; else PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund --no-save; fi
-	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./node_modules/workerd/package.json").version')" = "$(WORKERD_NPM_VERSION)"
-	@test -e tmp/workerd-npm/node_modules/.bin/workerd
-	@touch $@
-
-ifeq ($(WORKERD_BIN),)
-bin/workerd: tmp/.workerd-npm
-	@mkdir -p bin
-	cp -L "$$(readlink -f tmp/workerd-npm/node_modules/.bin/workerd)" $@
-	chmod +x $@
-else
-bin/workerd:
-	@mkdir -p bin
-	cp "$(WORKERD_BIN)" $@
-endif
-
-workerd: bin/workerd
-
-verify-workerd-runtime: bin/workerd tmp/.workerd-npm
-	@$(call color,verifying npm workerd)
-	@test -z "$(WORKERD_BIN)" || (echo "error: WORKERD_BIN override cannot be used for reproducible bundles" >&2; exit 1)
-	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./package-lock.json").packages[""].dependencies.workerd')" = "$(WORKERD_NPM_VERSION)"
-	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./package-lock.json").packages["node_modules/workerd"].version')" = "$(WORKERD_NPM_VERSION)"
-	@test "$$(cd tmp/workerd-npm && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/node -p 'require("./node_modules/workerd/package.json").version')" = "$(WORKERD_NPM_VERSION)"
-	cmp -s bin/workerd "$$(readlink -f tmp/workerd-npm/node_modules/.bin/workerd)"
-	@expected_version="$$(printf '%s\n' "$(WORKERD_NPM_VERSION)" | sed -E 's/^1\.([0-9]{4})([0-9]{2})([0-9]{2})\..*$$/\1-\2-\3/')" && \
-		test "$$(bin/workerd --version)" = "workerd $$expected_version"
 
 verify-workerd-source:
 	@test "$$(git -C deps/workerd rev-parse HEAD)" = "$(WORKERD_SOURCE_COMMIT)"
@@ -579,10 +537,9 @@ shell-build: shell/imports/* shell/imports/*/* shell/imports/*/*/* shell/imports
 # ====================================================================
 # Bundle
 
-bundle: tmp/.ekam-run shell-build verify-workerd-runtime isolate-host make-bundle.sh localedata-C meteor-bundle-main.js | verify-workerd-source
+bundle: tmp/.ekam-run shell-build isolate-host make-bundle.sh localedata-C meteor-bundle-main.js | verify-workerd-source
 	@$(call color,bundle)
 	@CC=$(CC) ./make-bundle.sh
-	cmp -s bundle/bin/workerd bin/workerd
 	cmp -s bundle/bin/isolate-host bin/isolate-host
 
 sandstorm-$(BUILD).tar.xz: bundle
@@ -594,9 +551,8 @@ sandstorm-$(BUILD)-fast.tar.xz: bundle
 	@tar c --transform="s,^bundle,sandstorm-$(BUILD)," bundle | xz -c -0 --threads=0 > sandstorm-$(BUILD)-fast.tar.xz
 
 verify-isolate-release-bundle: sandstorm-$(BUILD)-fast.tar.xz
-	@test -x bundle/bin/workerd
 	@test -x bundle/bin/isolate-host
-	@cmp -s bundle/bin/workerd bin/workerd
+	@test ! -e bundle/bin/workerd
 	@cmp -s bundle/bin/isolate-host bin/isolate-host
 	@test -f bundle/usr/lib/capnp-es/dist/compiler/index.mjs
 	@test -f bundle/usr/include/sandstorm/package.capnp
@@ -702,20 +658,14 @@ isolate-test-app-dev: tmp/.ekam-run src/sandstorm/test-app/isolate-test-app.capn
 
 isolate-capnp-toolchain-test: tmp/.ekam-run $(CAPNP_ES_COMPILER_MODULE_DEPS) \
 		isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-types-test \
-		tests/isolate-supervisor-integration.test.js
+		tests/isolate-capnp-toolchain.test.js
 	CAPNP_ES_COMPILER_MODULE=$(CAPNP_ES_COMPILER_MODULE) \
-	ISOLATE_SUPERVISOR_TEST_SCOPE=toolchain \
-	$(NODEJS) tests/isolate-supervisor-integration.test.js
+	$(NODEJS) tests/isolate-capnp-toolchain.test.js
 
-isolate-supervisor-integration-test: tmp/.ekam-run tests/assets/isolate-test-app.spk \
-		tests/isolate-supervisor-integration.test.js
-	ISOLATE_SUPERVISOR_TEST_SCOPE=runtime \
-	$(NODEJS) tests/isolate-supervisor-integration.test.js
+isolate-test: isolate-capnp-toolchain-test
 
-isolate-test: isolate-capnp-toolchain-test isolate-supervisor-integration-test
-
-# Release gate for isolate support. Keep the default account-shared topology,
-# its per-grain fallback, the native host, and backend recovery in one CI target
+# Release gate for isolate support. Keep the account-shared topology,
+# native host, and backend recovery in one CI target
 # so adding a narrower test step cannot accidentally omit the released path.
 isolate-ci:
 	$(MAKE) verify-workerd-source
@@ -724,22 +674,6 @@ isolate-ci:
 	$(MAKE) isolate-host-control-test
 	$(MAKE) isolate-account-host-integration-test
 	$(MAKE) isolate-backend-recovery-test
-
-isolate-supervisor-stress-test: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
-	ISOLATE_STRESS_64M=1 ISOLATE_SUPERVISOR_TEST_SCOPE=runtime \
-	$(NODEJS) tests/isolate-supervisor-integration.test.js
-
-isolate-supervisor-syscall-trace: tmp/.ekam-run tests/assets/isolate-test-app.spk tests/isolate-supervisor-integration.test.js
-	@command -v strace >/dev/null || (echo "strace is required for this target" >&2; exit 1)
-	@rm -rf tmp/isolate-syscall-trace
-	@mkdir -p tmp/isolate-syscall-trace
-	ISOLATE_SYSCALL_TRACE_DIR=$(CURDIR)/tmp/isolate-syscall-trace \
-		ISOLATE_SYSCALL_TRACE_PROFILE=representative \
-		ISOLATE_SUPERVISOR_TEST_SCOPE=runtime \
-		$(NODEJS) tests/isolate-supervisor-integration.test.js
-	@echo "wrote syscall traces to tmp/isolate-syscall-trace"
-	@echo "workerd exec traces:"
-	@grep -h 'execve.*workerd' tmp/isolate-syscall-trace/* || true
 
 tests/assets/isolate-api-powerbox-test-app.spk: \
 		tmp/.ekam-run \

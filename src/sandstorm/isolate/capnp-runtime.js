@@ -781,38 +781,45 @@ export class NativeCapnpWebSocketTransport extends CapnpEsDeferredTransport {
   }
 }
 
-export class IsolateBridgeWebSocketRpcTransport extends CapnpEsDeferredTransport {
-  #webSocket = null;
-  #openPromise = null;
-  #sendQueue = Promise.resolve();
+export class IsolateBridgeNativeTransport extends CapnpEsDeferredTransport {
+  #channel;
 
-  constructor(api, options = {}) {
+  constructor(api) {
     super();
-    if (!api || typeof api.nativeCapnpBridgeOpenBootstrapSession !== "function") {
+    if (!api || typeof api.nativeCapnpBridgeOpenChannel !== "function") {
       throw new NativeCapnpBridgeProtocolError(
-        "IsolateBridgeWebSocketRpcTransport requires " +
-        "api.nativeCapnpBridgeOpenBootstrapSession()");
+        "IsolateBridgeNativeTransport requires api.nativeCapnpBridgeOpenChannel()");
     }
 
     this.api = api;
-    this.connectionId = normalizeNativeCapnpBridgeConnectionId(options.connectionId);
     this.connection = null;
-    this.kind = "isolateBridgeWebSocketRpc";
+    this.kind = "isolateBridgeNative";
+    this.#channel = api.nativeCapnpBridgeOpenChannel();
+    if (!this.#channel || typeof this.#channel.send !== "function" ||
+        typeof this.#channel.receive !== "function" ||
+        typeof this.#channel.close !== "function") {
+      throw new NativeCapnpBridgeProtocolError(
+        "native isolate bridge binding returned an invalid channel");
+    }
+    this.#readLoop();
   }
 
   sendMessage(message) {
     if (this.closed) {
       throw new CapnpUnavailableError(
-        "isolate bridge WebSocket RPC transport is closed");
+        "native isolate bridge transport is closed");
     }
 
     const bytes = nativeCapnpRootMessageBytes(message);
-    this.#sendQueue = this.#sendQueue
-      .then(async () => {
-        const webSocket = await this.#open();
-        webSocket.send(bytes);
-      })
-      .catch((error) => this.abort(error));
+    const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+      ? bytes.buffer
+      : bytes.slice().buffer;
+    try {
+      this.#channel.send(buffer);
+    } catch (error) {
+      this.abort(error);
+      throw error;
+    }
   }
 
   abort(error) {
@@ -830,47 +837,25 @@ export class IsolateBridgeWebSocketRpcTransport extends CapnpEsDeferredTransport
     }
 
     try {
-      this.#webSocket?.close(error === undefined ? 1000 : 1011);
+      this.#channel.close();
     } catch (_) {}
 
     super.close(error);
   }
 
-  async #open() {
-    if (this.#webSocket) {
-      return this.#webSocket;
+  async #readLoop() {
+    try {
+      while (!this.closed) {
+        this.resolve(nativeCapnpMessageBytes(await this.#channel.receive()));
+      }
+    } catch (error) {
+      this.abort(error);
     }
-
-    if (!this.#openPromise) {
-      this.#openPromise = this.api.nativeCapnpBridgeOpenBootstrapSession(
-        this.connectionId).then((webSocket) => {
-        if (!webSocket || typeof webSocket.send !== "function" ||
-            typeof webSocket.addEventListener !== "function") {
-          throw new NativeCapnpBridgeProtocolError(
-            "isolate bridge RPC session returned an invalid WebSocket");
-        }
-
-        webSocket.binaryType = "arraybuffer";
-        webSocket.addEventListener("message", (event) => {
-          try {
-            this.resolve(nativeCapnpMessageBytes(event.data));
-          } catch (error) {
-            this.abort(error);
-          }
-        });
-        webSocket.addEventListener("close", () => this.close());
-        webSocket.addEventListener("error", (event) => this.abort(event.error || event));
-        this.#webSocket = webSocket;
-        return webSocket;
-      });
-    }
-
-    return await this.#openPromise;
   }
 }
 
 export function createIsolateBridgeConnection(api, options = {}) {
-  const transport = new IsolateBridgeWebSocketRpcTransport(api, options);
+  const transport = new IsolateBridgeNativeTransport(api);
   const connection = new CapnpEsConn(transport, options.finalize);
   transport.connection = connection;
   return Object.assign(connection, { transport });

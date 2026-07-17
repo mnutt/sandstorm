@@ -51,8 +51,7 @@ public:
               kj::Maybe<Cgroup>&& cgroup,
               kj::Maybe<uid_t> sandboxUid,
               bool useExperimentalSeccompFilter,
-              bool logSeccompViolations,
-              bool useAccountIsolateHosts);
+              bool logSeccompViolations);
   BackendImpl(kj::LowLevelAsyncIoProvider& ioProvider,
               kj::Network& network,
               SandstormCoreFactory::Client&& sandstormCoreFactory,
@@ -60,7 +59,6 @@ public:
               kj::Maybe<uid_t> sandboxUid,
               bool useExperimentalSeccompFilter,
               bool logSeccompViolations,
-              bool useAccountIsolateHosts,
               IsolateAccountHostPaths accountHostPaths);
 
 protected:
@@ -89,7 +87,6 @@ private:
   kj::Maybe<Cgroup> cgroup;
   bool useExperimentalSeccompFilter;
   bool logSeccompViolations;
-  bool useAccountIsolateHosts;
   IsolateAccountHostPaths accountHostPaths;
 
   class RunningGrain {

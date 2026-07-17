@@ -3,7 +3,7 @@
 using Grain = import "/sandstorm/grain.capnp";
 using Spk = import "/sandstorm/package.capnp";
 
-# Local validation package for the isolate supervisor sidecar path.
+# Local validation package for the account-shared isolate runtime path.
 #
 # This uses a dedicated checked-in test key so local validation cannot collide with the legacy
 # test app's app ID or grains.
@@ -28,13 +28,6 @@ const isolateTestViewInfo :Grain.UiView.ViewInfo = (
 );
 
 const isolateCommand :Spk.Manifest.Command = (
-  argv = [
-    "workerd",
-    "serve",
-    "${SANDSTORM_ISOLATE_WORKERD_CONFIG}",
-    "sandstormConfig"
-  ],
-
   isolate = (
     mainModule = "worker.js",
     compatibilityDate = "2025-01-01",

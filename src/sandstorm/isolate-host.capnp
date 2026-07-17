@@ -28,6 +28,10 @@ interface IsolateBindingServices @0xd8b8ffcb9dbf83ea {
   getService @0 (binding :Binding) -> (service :Http.HttpService);
   # Returns one service already confined to this grain. The native host can route requests through
   # the capability but cannot derive another grain's service or storage path.
+
+  getBridge @1 () -> (bridge :Capability);
+  # Returns the grain-scoped native capability bootstrap. The embedded host exposes this through
+  # a direct binary message channel; worker code does not discover it through HTTP or WebSockets.
 }
 
 interface HostedIsolate @0xae62f18e41ff24cb {

@@ -123,7 +123,6 @@ cp tmp/node-capnp/capnp.node bundle/programs/server/node_modules/capnp.node
 mkdir -p bundle/bin
 cp bin/sandstorm-http-bridge bundle/bin/sandstorm-http-bridge
 cp bin/sandstorm bundle/sandstorm
-cp bin/workerd bundle/bin/workerd
 cp bin/isolate-host bundle/bin/isolate-host
 cp $METEOR_DEV_BUNDLE/bin/node bundle/bin
 

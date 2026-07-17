@@ -579,6 +579,32 @@ export default {
       });
     }
 
+    if (url.pathname === "/websocket-echo") {
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      server.accept();
+      server.addEventListener("message", (event) => {
+        server.send(`shared:${event.data}`);
+      });
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
+    if (url.pathname === "/native-capnp-direct-probe") {
+      const bridge = connectIsolateBridge(api);
+      try {
+        const result = await bridge.getSandstormApi({});
+        return Response.json({
+          ok: true,
+          transportKind: bridge.transport.kind,
+          hasSave: typeof result.api?.save === "function",
+          hasRestore: typeof result.api?.restore === "function",
+          hasDrop: typeof result.api?.drop === "function",
+        });
+      } finally {
+        bridge.close();
+      }
+    }
+
     if (url.pathname === "/native-capnp-bridge-target/generated-client") {
       return Response.json({
         ok: true,

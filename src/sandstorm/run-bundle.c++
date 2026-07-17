@@ -361,10 +361,7 @@ public:
 
     {
       auto programName = context.getProgramName();
-      if (programName.endsWith("isolate-supervisor")) {
-        alternateMain = kj::heap<IsolateSupervisorMain>(context);
-        return alternateMain->getMain();
-      } else if (programName.endsWith("isolate-account-host")) {
+      if (programName.endsWith("isolate-account-host")) {
         alternateMain = kj::heap<IsolateAccountHostMain>(context);
         return alternateMain->getMain();
       } else if (programName.endsWith("supervisor")) {  // historically "sandstorm-supervisor"
@@ -439,12 +436,6 @@ public:
               return alternateMain->getMain();
             },
             "Manipulate spk files.")
-        .addSubCommand("isolate-dev-sidecar",
-            [this]() {
-              alternateMain = kj::heap<IsolateDevSidecarMain>(context);
-              return alternateMain->getMain();
-            },
-            "Run the built-in isolate development sidecar.")
         .addSubCommand("continue",
             [this]() {
               return kj::MainBuilder(context, VERSION,
@@ -2689,8 +2680,7 @@ private:
         kj::mv(grainsCgroup),
         sandboxUid,
         config.useExperimentalSeccompFilter,
-        config.logSeccompViolations,
-        config.isolateHostingMode == IsolateHostingMode::ACCOUNT));
+        config.logSeccompViolations));
 
       auto gatewayServer = kj::heap<capnp::TwoPartyServer>(kj::refcounted<CapRedirector>([&]() {
         return server.getBootstrap().castAs<SandstormCoreFactory>()

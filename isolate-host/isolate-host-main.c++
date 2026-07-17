@@ -9,6 +9,7 @@
 #include <workerd/server/sandstorm-isolate-worker-source.capnp.h>
 #include <workerd/server/workerd-api.h>
 #include <workerd/api/http.h>
+#include <workerd/api/worker-loader.h>
 #include <workerd/io/actor-cache.h>
 #include <workerd/io/compatibility-date.h>
 #include <workerd/io/limit-enforcer.h>
@@ -18,6 +19,8 @@
 #include <capnp/rpc-twoparty.h>
 #include <capnp/compat/json.h>
 #include <capnp/compat/http-over-capnp.h>
+#include <capnp/serialize.h>
+#include <capnp/serialize-async.h>
 #include <capnp/serialize-packed.h>
 #include <kj/async-io.h>
 #include <kj/map.h>
@@ -376,6 +379,213 @@ class HttpServiceChannel final: public workerd::IoChannelFactory::SubrequestChan
   kj::Own<SharedHttpService> service;
 };
 
+class NativeCapnpChannelState final: public kj::AtomicRefcounted {
+ public:
+  void send(bool fromWorker, kj::Array<kj::byte> message) {
+    KJ_REQUIRE(message.size() > 0 && message.size() <= MAX_CAPNP_FRAME_BYTES,
+        "native Cap'n Proto message exceeds size limit", message.size(), MAX_CAPNP_FRAME_BYTES);
+    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<kj::Array<kj::byte>>>> waiter;
+    {
+      auto lock = state.lockExclusive();
+      KJ_REQUIRE(!lock->closed, "native Cap'n Proto channel is closed");
+      auto& inbox = fromWorker ? lock->nativeInbox : lock->workerInbox;
+      if (inbox.queued.empty()) {
+        KJ_IF_SOME(pending, inbox.waitingReceiver) {
+          waiter = kj::mv(pending);
+          inbox.waitingReceiver = kj::none;
+        }
+      }
+      if (waiter == kj::none) {
+        KJ_REQUIRE(message.size() <= MAX_CAPNP_FRAME_BYTES - inbox.queuedBytes,
+            "native Cap'n Proto channel queue exceeds size limit");
+        inbox.queuedBytes += message.size();
+        inbox.queued.add(kj::mv(message));
+      }
+    }
+    KJ_IF_SOME(pending, waiter) {
+      pending->fulfill(kj::mv(message));
+    }
+  }
+
+  kj::Promise<kj::Array<kj::byte>> receive(bool workerSide) {
+    auto lock = state.lockExclusive();
+    if (lock->closed) {
+      return kj::Promise<kj::Array<kj::byte>>(
+          KJ_EXCEPTION(DISCONNECTED, "native Cap'n Proto channel is closed"));
+    }
+    auto& inbox = workerSide ? lock->workerInbox : lock->nativeInbox;
+    KJ_REQUIRE(inbox.waitingReceiver == kj::none,
+        "only one native Cap'n Proto receive may be pending");
+    if (!inbox.queued.empty()) {
+      auto message = kj::mv(inbox.queued.front());
+      inbox.queuedBytes -= message.size();
+      for (size_t i = 1; i < inbox.queued.size(); ++i) {
+        inbox.queued[i - 1] = kj::mv(inbox.queued[i]);
+      }
+      inbox.queued.removeLast();
+      return kj::mv(message);
+    }
+    auto paf = kj::newPromiseAndCrossThreadFulfiller<kj::Array<kj::byte>>();
+    inbox.waitingReceiver = kj::mv(paf.fulfiller);
+    return kj::mv(paf.promise);
+  }
+
+  void close() {
+    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<kj::Array<kj::byte>>>> workerWaiter;
+    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<kj::Array<kj::byte>>>> nativeWaiter;
+    {
+      auto lock = state.lockExclusive();
+      if (lock->closed) return;
+      lock->closed = true;
+      workerWaiter = kj::mv(lock->workerInbox.waitingReceiver);
+      nativeWaiter = kj::mv(lock->nativeInbox.waitingReceiver);
+      lock->workerInbox.waitingReceiver = kj::none;
+      lock->nativeInbox.waitingReceiver = kj::none;
+      lock->workerInbox.queued.clear();
+      lock->nativeInbox.queued.clear();
+    }
+    auto exception = KJ_EXCEPTION(DISCONNECTED, "native Cap'n Proto channel was closed");
+    KJ_IF_SOME(waiter, workerWaiter) { waiter->reject(exception.clone()); }
+    KJ_IF_SOME(waiter, nativeWaiter) { waiter->reject(exception.clone()); }
+  }
+
+ private:
+  static constexpr size_t MAX_CAPNP_FRAME_BYTES = 64 * 1024 * 1024 + 64 * 1024;
+
+  struct Inbox {
+    kj::Vector<kj::Array<kj::byte>> queued;
+    kj::Maybe<kj::Own<kj::CrossThreadPromiseFulfiller<kj::Array<kj::byte>>>> waitingReceiver;
+    size_t queuedBytes = 0;
+  };
+
+  struct State {
+    Inbox workerInbox;
+    Inbox nativeInbox;
+    bool closed = false;
+  };
+
+  kj::MutexGuarded<State> state;
+};
+
+class NativeCapnpMessageStream final: public capnp::MessageStream {
+ public:
+  explicit NativeCapnpMessageStream(kj::Own<NativeCapnpChannelState> state)
+      : state(kj::mv(state)) {}
+
+  kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> tryReadMessage(
+      kj::ArrayPtr<kj::AutoCloseFd> fdSpace,
+      capnp::ReaderOptions options,
+      kj::ArrayPtr<capnp::word>) override {
+    KJ_REQUIRE(fdSpace.size() == 0, "native Cap'n Proto channels do not carry file descriptors");
+    return state->receive(false).then([options](kj::Array<kj::byte> bytes)
+        -> kj::Maybe<capnp::MessageReaderAndFds> {
+      KJ_REQUIRE(bytes.size() % sizeof(capnp::word) == 0,
+          "native Cap'n Proto message is not word-aligned", bytes.size());
+      auto words = kj::heapArray<capnp::word>(bytes.size() / sizeof(capnp::word));
+      memcpy(words.begin(), bytes.begin(), bytes.size());
+      auto reader = kj::heap<capnp::FlatArrayMessageReader>(words.asPtr(), options);
+      kj::Own<capnp::MessageReader> owned =
+          kj::attachRef(*reader, kj::mv(reader), kj::mv(words));
+      return capnp::MessageReaderAndFds { kj::mv(owned), nullptr };
+    });
+  }
+
+  kj::Promise<void> writeMessage(kj::ArrayPtr<const int> fds,
+      kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) override {
+    KJ_REQUIRE(fds.size() == 0, "native Cap'n Proto channels do not carry file descriptors");
+    auto words = capnp::messageToFlatArray(segments);
+    auto bytes = kj::heapArray<kj::byte>(words.asBytes());
+    state->send(false, kj::mv(bytes));
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> writeMessages(
+      kj::ArrayPtr<kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>>> messages) override {
+    for (auto message: messages) {
+      auto words = capnp::messageToFlatArray(message);
+      auto bytes = kj::heapArray<kj::byte>(words.asBytes());
+      state->send(false, kj::mv(bytes));
+    }
+    return kj::READY_NOW;
+  }
+
+  kj::Maybe<int> getSendBufferSize() override { return kj::none; }
+  kj::Promise<void> end() override {
+    state->close();
+    return kj::READY_NOW;
+  }
+
+ private:
+  kj::Own<NativeCapnpChannelState> state;
+};
+
+class NativeCapnpRpcSession final {
+ public:
+  NativeCapnpRpcSession(
+      kj::Own<NativeCapnpChannelState> state, capnp::Capability::Client bootstrap)
+      : stream(kj::mv(state)),
+        network(stream, capnp::rpc::twoparty::Side::SERVER),
+        rpcSystem(capnp::makeRpcServer(network, kj::mv(bootstrap))) {}
+
+ private:
+  NativeCapnpMessageStream stream;
+  capnp::TwoPartyVatNetwork network;
+  capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
+};
+
+class NativeCapnpChannelEndpoint final: public workerd::api::NativeByteChannelEndpoint {
+ public:
+  NativeCapnpChannelEndpoint(
+      kj::Own<NativeCapnpChannelState> state, kj::Own<NativeCapnpRpcSession> session)
+      : state(kj::mv(state)), session(kj::mv(session)) {}
+  ~NativeCapnpChannelEndpoint() noexcept override { state->close(); }
+
+  void send(kj::Array<kj::byte> message) override {
+    state->send(true, kj::mv(message));
+  }
+  kj::Promise<kj::Array<kj::byte>> receive() override { return state->receive(true); }
+  void close() override { state->close(); }
+
+ private:
+  kj::Own<NativeCapnpChannelState> state;
+  kj::Own<NativeCapnpRpcSession> session;
+};
+
+class NativeCapnpChannelProvider final: public workerd::api::NativeByteChannelProvider {
+ public:
+  explicit NativeCapnpChannelProvider(capnp::Capability::Client bootstrap)
+      : bootstrap(kj::mv(bootstrap)) {}
+
+  kj::Own<workerd::api::NativeByteChannelEndpoint> open() override {
+    auto state = kj::atomicRefcounted<NativeCapnpChannelState>();
+    auto session = kj::heap<NativeCapnpRpcSession>(kj::atomicAddRef(*state), bootstrap);
+    return kj::heap<NativeCapnpChannelEndpoint>(kj::mv(state), kj::mv(session));
+  }
+
+ private:
+  capnp::Capability::Client bootstrap;
+};
+
+class NativeCapnpChannelCapTableEntry final: public workerd::DynamicWorkerEnvCapability {
+ public:
+  explicit NativeCapnpChannelCapTableEntry(kj::Own<NativeCapnpChannelProvider> provider)
+      : provider(kj::mv(provider)) {}
+
+  kj::Own<CapTableEntry> clone() override {
+    return kj::heap<NativeCapnpChannelCapTableEntry>(kj::atomicAddRef(*provider));
+  }
+  kj::Own<CapTableEntry> threadSafeClone() const override {
+    return kj::heap<NativeCapnpChannelCapTableEntry>(
+        kj::atomicAddRef(const_cast<NativeCapnpChannelProvider&>(*provider)));
+  }
+  kj::Own<NativeCapnpChannelProvider> addRefProvider() {
+    return kj::atomicAddRef(*provider);
+  }
+
+ private:
+  kj::Own<NativeCapnpChannelProvider> provider;
+};
+
 class SandstormEnvCompiler final: public workerd::DynamicWorkerEnvCompiler {
  public:
   explicit SandstormEnvCompiler(kj::Own<BundleBacking> backing)
@@ -387,6 +597,10 @@ class SandstormEnvCompiler final: public workerd::DynamicWorkerEnvCompiler {
       v8::Local<v8::Object> target) override {
     workerd::Frankenvalue::DirectCapabilityMaterializer materialize =
         [&js, &api](workerd::Frankenvalue::CapTableEntry& entry) {
+      KJ_IF_SOME(channel, kj::tryDowncast<NativeCapnpChannelCapTableEntry>(entry)) {
+        return workerd::server::WorkerdApi::from(api).wrapNativeByteChannelFactory(
+            js, channel.addRefProvider());
+      }
       // Sandstorm's bundle translation creates only Fetcher capabilities. Keep this policy and
       // the corresponding IoChannel downcast in the embedding binary rather than workerd's
       // dynamic loader.
@@ -482,9 +696,106 @@ class SelfBindingHttpService final: public SharedHttpService {
   kj::Own<SelfServiceTarget> target;
 };
 
-class CompletedLegacyHttpRequest final: public capnp::HttpService::ServerRequestContext::Server {};
+class CompatibleWebSocketBridge final: public kj::Refcounted,
+                                       private kj::TaskSet::ErrorHandler {
+ public:
+  CompatibleWebSocketBridge(kj::Own<kj::WebSocket> socket,
+      capnp::WebSocket::Client outgoing,
+      kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> doneFulfiller = kj::none)
+      : socket(kj::mv(socket)), outgoing(kj::mv(outgoing)), tasks(*this),
+        doneFulfiller(kj::mv(doneFulfiller)) {}
 
-static constexpr kj::StringPtr LEGACY_COMMON_HEADER_NAMES[] = {
+  explicit CompatibleWebSocketBridge(kj::Own<kj::WebSocket> socket)
+      : socket(kj::mv(socket)), outgoing(nullptr), tasks(*this) {}
+
+  void setOutgoing(capnp::WebSocket::Client value) {
+    outgoing = kj::mv(value);
+  }
+
+  void start() {
+    tasks.add(pumpToCapnp());
+  }
+
+  capnp::WebSocket::Client makeIncomingCapability() {
+    return kj::heap<Incoming>(kj::addRef(*this));
+  }
+
+ private:
+  class Incoming final: public capnp::WebSocket::Server {
+   public:
+    explicit Incoming(kj::Own<CompatibleWebSocketBridge> bridge)
+        : bridge(kj::mv(bridge)) {}
+
+    kj::Promise<void> sendText(SendTextContext context) override {
+      auto text = context.getParams().getText();
+      return bridge->socket->send(kj::arrayPtr(text.begin(), text.size()));
+    }
+
+    kj::Promise<void> sendData(SendDataContext context) override {
+      return bridge->socket->send(context.getParams().getData());
+    }
+
+    kj::Promise<void> close(CloseContext context) override {
+      auto params = context.getParams();
+      return bridge->socket->close(params.getCode(), params.getReason())
+          .then([bridge = kj::addRef(*bridge)]() mutable { bridge->complete(); });
+    }
+
+   private:
+    kj::Own<CompatibleWebSocketBridge> bridge;
+  };
+
+  kj::Promise<void> pumpToCapnp() {
+    return socket->receive(BUFFERING_LIMIT).then(
+        [this](kj::WebSocket::Message message) -> kj::Promise<void> {
+      KJ_SWITCH_ONEOF(message) {
+        KJ_CASE_ONEOF(text, kj::String) {
+          auto request = outgoing.sendTextRequest();
+          request.setText(text);
+          return request.send().then([this]() { return pumpToCapnp(); });
+        }
+        KJ_CASE_ONEOF(data, kj::Array<kj::byte>) {
+          auto request = outgoing.sendDataRequest();
+          request.setData(data);
+          return request.send().then([this]() { return pumpToCapnp(); });
+        }
+        KJ_CASE_ONEOF(close, kj::WebSocket::Close) {
+          auto request = outgoing.closeRequest();
+          request.setCode(close.code);
+          request.setReason(close.reason);
+          return request.send().then([this](auto&&) { complete(); });
+        }
+      }
+      KJ_UNREACHABLE;
+    });
+  }
+
+  void complete() {
+    KJ_IF_SOME(fulfiller, doneFulfiller) {
+      fulfiller->fulfill();
+      doneFulfiller = kj::none;
+    }
+  }
+
+  void taskFailed(kj::Exception&& exception) override {
+    if (exception.getType() != kj::Exception::Type::DISCONNECTED) {
+      KJ_LOG(WARNING, "HTTP-over-Cap'n-Proto WebSocket bridge failed", exception);
+    }
+    KJ_IF_SOME(fulfiller, doneFulfiller) {
+      fulfiller->reject(kj::mv(exception));
+      doneFulfiller = kj::none;
+    }
+  }
+
+  kj::Own<kj::WebSocket> socket;
+  capnp::WebSocket::Client outgoing;
+  kj::TaskSet tasks;
+  kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> doneFulfiller;
+};
+
+class CompletedCompatibleHttpRequest final: public capnp::HttpService::ServerRequestContext::Server {};
+
+static constexpr kj::StringPtr COMPATIBLE_COMMON_HEADER_NAMES[] = {
   ""_kj,
   "Accept-Charset"_kj, "Accept-Encoding"_kj, "Accept-Language"_kj,
   "Accept-Ranges"_kj, "Accept"_kj, "Access-Control-Allow-Origin"_kj,
@@ -501,7 +812,7 @@ static constexpr kj::StringPtr LEGACY_COMMON_HEADER_NAMES[] = {
   "User-Agent"_kj, "Vary"_kj, "Via"_kj, "WWW-Authenticate"_kj,
 };
 
-kj::HttpHeaders decodeLegacyHeaders(kj::HttpHeaderTable& table,
+kj::HttpHeaders decodeCompatibleHeaders(kj::HttpHeaderTable& table,
     capnp::List<capnp::HttpHeader>::Reader input) {
   kj::HttpHeaders result(table);
   for (auto header: input) {
@@ -514,8 +825,8 @@ kj::HttpHeaders decodeLegacyHeaders(kj::HttpHeaderTable& table,
       case capnp::HttpHeader::COMMON: {
         auto common = header.getCommon();
         auto nameIndex = static_cast<uint>(common.getName());
-        KJ_REQUIRE(nameIndex > 0 && nameIndex < kj::size(LEGACY_COMMON_HEADER_NAMES),
-            "invalid legacy common HTTP header name", nameIndex);
+        KJ_REQUIRE(nameIndex > 0 && nameIndex < kj::size(COMPATIBLE_COMMON_HEADER_NAMES),
+            "invalid compatible HTTP header name", nameIndex);
         kj::String value;
         switch (common.which()) {
           case capnp::HttpHeader::Common::VALUE:
@@ -523,11 +834,11 @@ kj::HttpHeaders decodeLegacyHeaders(kj::HttpHeaderTable& table,
             break;
           case capnp::HttpHeader::Common::COMMON_VALUE:
             KJ_REQUIRE(common.getCommonValue() == capnp::CommonHeaderValue::GZIP_DEFLATE,
-                "invalid legacy common HTTP header value");
+                "invalid compatible HTTP header value");
             value = kj::str("gzip, deflate");
             break;
         }
-        result.add(kj::str(LEGACY_COMMON_HEADER_NAMES[nameIndex]), kj::mv(value));
+        result.add(kj::str(COMPATIBLE_COMMON_HEADER_NAMES[nameIndex]), kj::mv(value));
         break;
       }
     }
@@ -535,7 +846,7 @@ kj::HttpHeaders decodeLegacyHeaders(kj::HttpHeaderTable& table,
   return result;
 }
 
-void encodeLegacyHeaders(const kj::HttpHeaders& input,
+void encodeCompatibleHeaders(const kj::HttpHeaders& input,
     capnp::List<capnp::HttpHeader>::Builder output) {
   size_t index = 0;
   input.forEach([&](kj::StringPtr name, kj::StringPtr value) {
@@ -545,10 +856,10 @@ void encodeLegacyHeaders(const kj::HttpHeaders& input,
   });
 }
 
-class LegacyClientRequestContext final:
+class CompatibleClientRequestContext final:
     public capnp::HttpService::ClientRequestContext::Server {
  public:
-  LegacyClientRequestContext(capnp::ByteStreamFactory& streamFactory,
+  CompatibleClientRequestContext(capnp::ByteStreamFactory& streamFactory,
       kj::HttpHeaderTable& headerTable,
       kj::HttpService::Response& response,
       kj::Own<kj::PromiseFulfiller<kj::Promise<void>>> responseFulfiller)
@@ -556,7 +867,7 @@ class LegacyClientRequestContext final:
         responseFulfiller(kj::mv(responseFulfiller)) {}
 
   kj::Promise<void> startResponse(StartResponseContext context) override {
-    KJ_REQUIRE(responseFulfiller.get() != nullptr, "legacy HTTP response already started");
+    KJ_REQUIRE(responseFulfiller.get() != nullptr, "compatible HTTP response already started");
     auto input = context.getParams().getResponse();
     auto bodySize = input.getBodySize();
     kj::Maybe<uint64_t> expectedSize;
@@ -566,7 +877,7 @@ class LegacyClientRequestContext final:
       hasBody = bodySize.getFixed() > 0;
     }
     auto output = response.send(input.getStatusCode(), input.getStatusText(),
-        decodeLegacyHeaders(headerTable, input.getHeaders()), expectedSize);
+        decodeCompatibleHeaders(headerTable, input.getHeaders()), expectedSize);
     if (hasBody) {
       auto pipe = kj::newOneWayPipe(expectedSize);
       context.getResults().setBody(streamFactory.kjToCapnp(kj::mv(pipe.out)));
@@ -579,8 +890,19 @@ class LegacyClientRequestContext final:
     return kj::READY_NOW;
   }
 
-  kj::Promise<void> startWebSocket(StartWebSocketContext) override {
-    KJ_FAIL_REQUIRE("legacy shared-host bindings do not yet support WebSockets");
+  kj::Promise<void> startWebSocket(StartWebSocketContext context) override {
+    KJ_REQUIRE(responseFulfiller.get() != nullptr, "HTTP response already started");
+    auto params = context.getParams();
+    auto socket = response.acceptWebSocket(
+        decodeCompatibleHeaders(headerTable, params.getHeaders()));
+    auto done = kj::newPromiseAndFulfiller<void>();
+    auto bridge = kj::refcounted<CompatibleWebSocketBridge>(
+        kj::mv(socket), params.getUpSocket(), kj::mv(done.fulfiller));
+    bridge->start();
+    context.getResults().setDownSocket(bridge->makeIncomingCapability());
+    responseFulfiller->fulfill(done.promise.attach(kj::mv(bridge)));
+    responseFulfiller = nullptr;
+    return kj::READY_NOW;
   }
 
  private:
@@ -590,9 +912,9 @@ class LegacyClientRequestContext final:
   kj::Own<kj::PromiseFulfiller<kj::Promise<void>>> responseFulfiller;
 };
 
-class LegacyCapnpHttpService final: public SharedHttpService {
+class CompatibleCapnpHttpService final: public SharedHttpService {
  public:
-  LegacyCapnpHttpService(capnp::ByteStreamFactory& streamFactory,
+  CompatibleCapnpHttpService(capnp::ByteStreamFactory& streamFactory,
       kj::HttpHeaderTable& headerTable,
       capnp::HttpService::Client service)
       : streamFactory(streamFactory), headerTable(headerTable), service(kj::mv(service)) {}
@@ -614,7 +936,7 @@ class LegacyCapnpHttpService final: public SharedHttpService {
       }
     }
     metadata.setUrl(pathStart < url.size() ? url.slice(pathStart) : "/"_kj);
-    encodeLegacyHeaders(headers, metadata.initHeaders(headers.size()));
+    encodeCompatibleHeaders(headers, metadata.initHeaders(headers.size()));
 
     bool hasBody = true;
     kj::Maybe<uint64_t> expectedSize;
@@ -631,7 +953,7 @@ class LegacyCapnpHttpService final: public SharedHttpService {
     }
 
     auto responsePair = kj::newPromiseAndFulfiller<kj::Promise<void>>();
-    request.setContext(kj::heap<LegacyClientRequestContext>(streamFactory, headerTable,
+    request.setContext(kj::heap<CompatibleClientRequestContext>(streamFactory, headerTable,
         response, kj::mv(responsePair.fulfiller)));
     auto pipeline = request.send();
     kj::Promise<void> requestBodyTask = kj::READY_NOW;
@@ -652,11 +974,11 @@ class LegacyCapnpHttpService final: public SharedHttpService {
   capnp::HttpService::Client service;
 };
 
-class LegacyHttpRequestContext final:
+class CompatibleHttpRequestContext final:
     public capnp::HttpService::ServerRequestContext::Server,
     public kj::HttpService::Response {
  public:
-  LegacyHttpRequestContext(capnp::ByteStreamFactory& streamFactory,
+  CompatibleHttpRequestContext(capnp::ByteStreamFactory& streamFactory,
       capnp::HttpRequest::Reader request,
       capnp::HttpService::ClientRequestContext::Client clientContext,
       kj::Own<kj::AsyncInputStream> requestBody,
@@ -664,7 +986,7 @@ class LegacyHttpRequestContext final:
       kj::HttpService& service)
       : streamFactory(streamFactory),
         method(static_cast<kj::HttpMethod>(request.getMethod())), url(kj::str(request.getUrl())),
-        headers(decodeLegacyHeaders(headerTable, request.getHeaders())),
+        headers(decodeCompatibleHeaders(headerTable, request.getHeaders())),
         clientContext(kj::mv(clientContext)),
         task(service.request(method, url, headers, *requestBody, *this)
             .attach(kj::mv(requestBody))
@@ -672,7 +994,7 @@ class LegacyHttpRequestContext final:
 
   kj::Maybe<kj::Promise<capnp::Capability::Client>> shortenPath() override {
     return task.then([]() -> capnp::Capability::Client {
-      return kj::heap<CompletedLegacyHttpRequest>();
+      return kj::heap<CompletedCompatibleHttpRequest>();
     });
   }
 
@@ -706,8 +1028,18 @@ class LegacyHttpRequestContext final:
     return output;
   }
 
-  kj::Own<kj::WebSocket> acceptWebSocket(const kj::HttpHeaders&) override {
-    KJ_FAIL_REQUIRE("legacy shared-host ingress does not yet support WebSockets");
+  kj::Own<kj::WebSocket> acceptWebSocket(const kj::HttpHeaders& headers) override {
+    KJ_REQUIRE(replyTask == kj::none, "HTTP response already started");
+    auto request = clientContext.startWebSocketRequest();
+    encodeCompatibleHeaders(headers, request.initHeaders(headers.size()));
+    auto pipe = kj::newWebSocketPipe();
+    auto bridge = kj::refcounted<CompatibleWebSocketBridge>(kj::mv(pipe.ends[1]));
+    request.setUpSocket(bridge->makeIncomingCapability());
+    auto pipeline = request.send();
+    bridge->setOutgoing(pipeline.getDownSocket());
+    bridge->start();
+    replyTask = pipeline.ignoreResult().attach(kj::mv(bridge));
+    return kj::mv(pipe.ends[0]);
   }
 
  private:
@@ -720,9 +1052,9 @@ class LegacyHttpRequestContext final:
   kj::Promise<void> task;
 };
 
-class LegacyHttpServiceAdapter final: public capnp::HttpService::Server {
+class CompatibleHttpServiceAdapter final: public capnp::HttpService::Server {
  public:
-  LegacyHttpServiceAdapter(
+  CompatibleHttpServiceAdapter(
       capnp::ByteStreamFactory& streamFactory,
       kj::HttpHeaderTable& headerTable,
       kj::Own<kj::HttpService> service)
@@ -748,7 +1080,7 @@ class LegacyHttpServiceAdapter final: public capnp::HttpService::Server {
     } else {
       input = workerd::newNullInputStream();
     }
-    results.setContext(kj::heap<LegacyHttpRequestContext>(streamFactory,
+    results.setContext(kj::heap<CompatibleHttpRequestContext>(streamFactory,
         request, params.getContext(), kj::mv(input), headerTable, *service));
     return kj::READY_NOW;
   }
@@ -865,6 +1197,8 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::ArrayPtr<const kj::byte> wor
   for (auto binding: inputBindings) {
     KJ_REQUIRE(binding.getName().size() > 0 && binding.getName().size() <= MAX_NAME_BYTES,
         "invalid worker binding name length", binding.getName().size());
+    KJ_REQUIRE(binding.getName() != "__SANDSTORM_NATIVE_CAPNP",
+        "worker binding name is reserved by the native runtime", binding.getName());
     KJ_REQUIRE(bindingNames.find(binding.getName()) == kj::none,
         "worker bundle has a duplicate binding name", binding.getName());
     bindingNames.insert(kj::str(binding.getName()));
@@ -960,6 +1294,7 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
   workerd::Frankenvalue env;
   capnp::JsonCodec json;
   kj::Vector<kj::Own<SelfServiceTarget>> selfServices;
+  bool needsNativeBridge = false;
   for (auto& binding: bundle.bindings) {
     switch (binding.type) {
       case IsolateWorkerSource::Binding::TEXT: {
@@ -981,6 +1316,7 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
         switch (binding.type) {
           case IsolateWorkerSource::Binding::SANDSTORM_API:
             request.setBinding(IsolateBindingServices::Binding::SANDSTORM_API);
+            needsNativeBridge = true;
             break;
           case IsolateWorkerSource::Binding::STORAGE:
             request.setBinding(IsolateBindingServices::Binding::STORAGE);
@@ -994,7 +1330,7 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
         env.setProperty(kj::str(binding.name),
             workerd::Frankenvalue::fromDirectCapability(
                 kj::refcounted<HttpServiceChannel>(
-                    kj::refcounted<LegacyCapnpHttpService>(streamFactory, headerTable,
+                    kj::refcounted<CompatibleCapnpHttpService>(streamFactory, headerTable,
                         request.send().getService()))));
         break;
       }
@@ -1012,6 +1348,14 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
         // ordinary JSON and capability bindings.
         break;
     }
+  }
+  if (needsNativeBridge) {
+    auto request = services.getBridgeRequest();
+    env.setProperty(kj::str("__SANDSTORM_NATIVE_CAPNP"),
+        workerd::Frankenvalue::fromDirectCapability(
+            kj::heap<NativeCapnpChannelCapTableEntry>(
+                kj::atomicRefcounted<NativeCapnpChannelProvider>(
+                    request.send().getBridge()))));
   }
   auto compatibility = backing->compatibility.initRoot<workerd::CompatibilityFlags>();
   auto flags = KJ_MAP(flag, bundle.compatibilityFlags) { return kj::str(flag); };
@@ -1214,7 +1558,7 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
 
   kj::Promise<void> getHttpService(GetHttpServiceContext context) override {
     KJ_REQUIRE(state->running, "hosted isolate has been stopped");
-    context.getResults().setService(kj::heap<LegacyHttpServiceAdapter>(streamFactory,
+    context.getResults().setService(kj::heap<CompatibleHttpServiceAdapter>(streamFactory,
         state->runtime.getHttpHeaderTableForEmbedding(),
         kj::heap<WorkerIngressService>(kj::atomicAddRef(*state->ingressTarget))));
     return kj::READY_NOW;

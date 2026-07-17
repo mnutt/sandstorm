@@ -71,6 +71,7 @@ Supervisor::Client startGrain(kj::WaitScope& waitScope, Backend::Client backend,
   request.setPackageId("testpackage123");
   request.setCommand(command);
   request.setIsNew(isNew);
+  request.setDevMode(true);
   return request.send().wait(waitScope).getSupervisor();
 }
 
@@ -98,7 +99,6 @@ int main(int argc, char** argv) {
       nullptr,
       false,
       false,
-      true,
       sandstorm::IsolateAccountHostPaths{
         kj::str(argv[1]),
         kj::str(argv[2]),
@@ -113,6 +113,7 @@ int main(int argc, char** argv) {
   isolate.setMainModule("worker.js");
   isolate.setCompatibilityDate("2025-01-01");
 
+  // Development isolate packages use the same account/native-host path as installed packages.
   auto first = sandstorm::startGrain(io.waitScope, backend, command.asReader(), true);
   sandstorm::keepAlive(io.waitScope, first);
 

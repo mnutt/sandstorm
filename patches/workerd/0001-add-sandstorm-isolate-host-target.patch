@@ -197,6 +197,14 @@ index a4015d2..6627ffb 100644
  kj::Promise<kj::Array<byte>> IoChannelFactory::SubrequestChannel::getToken(
      ChannelTokenUsage usage) {
    KJ_SWITCH_ONEOF(getTokenMaybeSync(usage)) {
+@@ -204,5 +220,7 @@ resolveCap(kj::Own<Frankenvalue::CapTableEntry> cap) {
+     }
+     KJ_UNREACHABLE;
++  } else if (dynamic_cast<DynamicWorkerEnvCapability*>(cap.get()) != nullptr) {
++    return kj::mv(cap);
+   } else {
+     auto& ref = *cap;
+     KJ_FAIL_ASSERT("unknown type in Frankenvalue", typeid(ref).name());
 diff --git a/src/workerd/io/io-channels.h b/src/workerd/io/io-channels.h
 index a45b969..8a0ade9 100644
 --- a/src/workerd/io/io-channels.h
@@ -298,10 +306,15 @@ index 626f6e8..693a4c8 100644
        return *this;
      }
    };
-@@ -686,6 +690,19 @@ class Worker::Api {
+@@ -686,6 +690,24 @@ class Worker::Api {
    }
  };
  
++// Marker for non-serializable environment capabilities owned by an embedding. The dynamic worker
++// loader preserves these entries instead of rewriting them into numbered I/O channels. They must
++// be consumed by DynamicWorkerEnvCompiler while compiling the destination worker's environment.
++class DynamicWorkerEnvCapability: public Frankenvalue::CapTableEntry {};
++
 +// An optional embedding hook for environment values which cannot use Frankenvalue's standard
 +// serialization path. Implementations own the materialization policy; the dynamic loader only
 +// invokes the hook while the destination worker's V8 context is active.
@@ -322,7 +335,7 @@ diff --git a/src/workerd/server/BUILD.bazel b/src/workerd/server/BUILD.bazel
 index ece98ee..5780587 100644
 --- a/src/workerd/server/BUILD.bazel
 +++ b/src/workerd/server/BUILD.bazel
-@@ -81,6 +81,38 @@ wd_cc_binary(
+@@ -81,6 +81,39 @@ wd_cc_binary(
      ],
  )
  
@@ -336,6 +349,7 @@ index ece98ee..5780587 100644
 +        ":sandstorm-isolate-worker-source_capnp",
 +        ":server",
 +        ":v8-platform-impl",
++        "//src/workerd/api:worker-loader",
 +        "//src/workerd/jsg",
 +        "//src/workerd/util",
 +        "@capnp-cpp//src/capnp:capnp-rpc",
@@ -434,7 +448,24 @@ index a298e80..01fa356 100644
   private:
    Server& server;
    kj::String namespaceName;
-@@ -4448,9 +4463,14 @@ class Server::WorkerLoaderNamespace: public kj::Refcounted, private kj::TaskSet:
+@@ -4394,6 +4409,7 @@ class Server::WorkerLoaderNamespace: public kj::Refcounted, private kj::TaskSet:
+       kj::Vector<FutureSubrequestChannel> subrequestChannels;
+       kj::Vector<FutureActorClassChannel> actorClassChannels;
+-      source.env.rewriteCaps([&](kj::Own<Frankenvalue::CapTableEntry> entry) {
++      source.env.rewriteCaps([&](kj::Own<Frankenvalue::CapTableEntry> entry)
++          -> kj::Own<Frankenvalue::CapTableEntry> {
+         if (auto channel = dynamic_cast<IoChannelFactory::SubrequestChannel*>(entry.get())) {
+           uint channelNumber =
+               subrequestChannels.size() + IoContext::SPECIAL_SUBREQUEST_CHANNEL_COUNT;
+@@ -4405,5 +4421,7 @@ class Server::WorkerLoaderNamespace: public kj::Refcounted, private kj::TaskSet:
+           return kj::heap<IoChannelCapTableEntry>(
+               IoChannelCapTableEntry::ACTOR_CLASS, channelNumber);
++        } else if (dynamic_cast<DynamicWorkerEnvCapability*>(entry.get()) != nullptr) {
++          return kj::mv(entry);
+         } else {
+           // Generally, it shouldn't be possible to get here, but just in case, let's at least
+           // provide some sort of error, although it's a vague one.
+@@ -4448,9 +4465,14 @@ class Server::WorkerLoaderNamespace: public kj::Refcounted, private kj::TaskSet:
            };
          },
  
@@ -582,3 +613,159 @@ index 4ddfd54..ce0f7d3 100644
  
    // When set, overrides compatibilityDate for all workers and enforces that workers don't
    // specify their own compatibilityDate.
+diff --git a/src/workerd/api/worker-loader.c++ b/src/workerd/api/worker-loader.c++
+index 89396d5..59a2b4c 100644
+--- a/src/workerd/api/worker-loader.c++
++++ b/src/workerd/api/worker-loader.c++
+@@ -10,6 +10,33 @@
+ 
+ namespace workerd::api {
+ 
++void NativeByteChannel::send(jsg::Lock& js, jsg::BufferSource message) {
++  auto& active = JSG_REQUIRE_NONNULL(endpoint, Error, "Native byte channel is closed");
++  auto backing = message.detach(js);
++  auto bytes = kj::heapArray<kj::byte>(backing.size());
++  bytes.asPtr().copyFrom(backing.asArrayPtr<const kj::byte>());
++  active->send(kj::mv(bytes));
++}
++
++jsg::Promise<jsg::BufferSource> NativeByteChannel::receive(jsg::Lock& js) {
++  auto& active = JSG_REQUIRE_NONNULL(endpoint, Error, "Native byte channel is closed");
++  return IoContext::current().awaitIo(js, active->receive(),
++      [](jsg::Lock& js, kj::Array<kj::byte> message) {
++    return jsg::BufferSource(js, jsg::BackingStore::from(js, kj::mv(message)));
++  });
++}
++
++void NativeByteChannel::close() {
++  KJ_IF_SOME(active, endpoint) {
++    active->close();
++    endpoint = kj::none;
++  }
++}
++
++jsg::Ref<NativeByteChannel> NativeByteChannelFactory::open(jsg::Lock& js) {
++  return js.alloc<NativeByteChannel>(provider->open());
++}
++
+ jsg::Ref<Fetcher> WorkerStub::getEntrypoint(jsg::Lock& js,
+     jsg::Optional<kj::Maybe<kj::String>> name,
+     jsg::Optional<EntrypointOptions> options) {
+diff --git a/src/workerd/api/worker-loader.h b/src/workerd/api/worker-loader.h
+index c97cb1b..7ca6915 100644
+--- a/src/workerd/api/worker-loader.h
++++ b/src/workerd/api/worker-loader.h
+@@ -5,6 +5,7 @@
+ #include <workerd/io/io-channels.h>
+ #include <workerd/io/io-own.h>
+ #include <workerd/io/worker.h>
++#include <workerd/jsg/buffersource.h>
+ #include <workerd/jsg/setup.h>
+ 
+ namespace workerd::api {
+@@ -12,6 +13,56 @@ namespace workerd::api {
+ class Fetcher;
+ class DurableObjectClass;
+ 
++// A binary message channel supplied directly by an in-process embedder. The channel is deliberately
++// not serializable and is intended for native protocols such as Cap'n Proto RPC.
++class NativeByteChannelEndpoint {
++ public:
++  virtual ~NativeByteChannelEndpoint() noexcept(false) = default;
++  virtual void send(kj::Array<kj::byte> message) = 0;
++  virtual kj::Promise<kj::Array<kj::byte>> receive() = 0;
++  virtual void close() = 0;
++};
++
++class NativeByteChannelProvider: public kj::AtomicRefcounted {
++ public:
++  virtual ~NativeByteChannelProvider() noexcept(false) = default;
++  virtual kj::Own<NativeByteChannelEndpoint> open() = 0;
++};
++
++class NativeByteChannel final: public jsg::Object {
++ public:
++  explicit NativeByteChannel(kj::Own<NativeByteChannelEndpoint> endpoint)
++      : endpoint(kj::mv(endpoint)) {}
++
++  void send(jsg::Lock& js, jsg::BufferSource message);
++  jsg::Promise<jsg::BufferSource> receive(jsg::Lock& js);
++  void close();
++
++  JSG_RESOURCE_TYPE(NativeByteChannel) {
++    JSG_METHOD(send);
++    JSG_METHOD(receive);
++    JSG_METHOD(close);
++  }
++
++ private:
++  kj::Maybe<kj::Own<NativeByteChannelEndpoint>> endpoint;
++};
++
++class NativeByteChannelFactory final: public jsg::Object {
++ public:
++  explicit NativeByteChannelFactory(kj::Own<NativeByteChannelProvider> provider)
++      : provider(kj::mv(provider)) {}
++
++  jsg::Ref<NativeByteChannel> open(jsg::Lock& js);
++
++  JSG_RESOURCE_TYPE(NativeByteChannelFactory) {
++    JSG_METHOD(open);
++  }
++
++ private:
++  kj::Own<NativeByteChannelProvider> provider;
++};
++
+ // JS stub pointing to a remote Worker loaded using WorkerLoader. This is not a stub for a specific
+ // entrypoint, but instead the entire Worker, allowing the caller to call any entrypoint (and
+ // specify arbitrary props).
+@@ -151,6 +202,7 @@ class WorkerLoader: public jsg::Object {
+ 
+ #define EW_WORKER_LOADER_ISOLATE_TYPES                                                             \
+   api::WorkerStub, api::WorkerStub::EntrypointOptions, api::WorkerLoader,                          \
+-      api::WorkerLoader::Module, api::WorkerLoader::WorkerCode, workerd::ResourceLimits
++      api::WorkerLoader::Module, api::WorkerLoader::WorkerCode, api::NativeByteChannel,             \
++      api::NativeByteChannelFactory, workerd::ResourceLimits
+ 
+ }  // namespace workerd::api
+diff --git a/src/workerd/server/workerd-api.c++ b/src/workerd/server/workerd-api.c++
+index c48b018..a12729a 100644
+--- a/src/workerd/server/workerd-api.c++
++++ b/src/workerd/server/workerd-api.c++
+@@ -368,6 +368,13 @@ jsg::JsObject WorkerdApi::wrapExecutionContext(
+       kj::downcast<JsgWorkerdIsolate::Lock>(lock).wrap(lock.v8Context(), kj::mv(ref)));
+ }
+ 
++jsg::JsValue WorkerdApi::wrapNativeByteChannelFactory(
++    jsg::Lock& lock, kj::Own<api::NativeByteChannelProvider> provider) const {
++  auto& typedLock = kj::downcast<JsgWorkerdIsolate::Lock>(lock);
++  return jsg::JsValue(typedLock.wrap(lock.v8Context(),
++      lock.alloc<api::NativeByteChannelFactory>(kj::mv(provider))));
++}
++
+ const jsg::IsolateObserver& WorkerdApi::getObserver() const {
+   return *impl->observer;
+ }
+diff --git a/src/workerd/server/workerd-api.h b/src/workerd/server/workerd-api.h
+index 40e3abb..6516fe1 100644
+--- a/src/workerd/server/workerd-api.h
++++ b/src/workerd/server/workerd-api.h
+@@ -28,6 +28,7 @@ class ModuleRegistry;
+ 
+ namespace workerd::api {
+ class MemoryCacheProvider;
++class NativeByteChannelProvider;
+ }
+ 
+ namespace workerd::server {
+@@ -63,7 +64,9 @@ class WorkerdApi final: public Worker::Api {
+       jsg::Lock& lock) const override;
+   jsg::JsObject wrapExecutionContext(
+       jsg::Lock& lock, jsg::Ref<api::ExecutionContext> ref) const override;
++  jsg::JsValue wrapNativeByteChannelFactory(
++      jsg::Lock& lock, kj::Own<api::NativeByteChannelProvider> provider) const;
+   const jsg::IsolateObserver& getObserver() const override;
+   void setIsolateObserver(IsolateObserver&) override;
+
+   static Worker::Script::Source extractSource(kj::StringPtr name,

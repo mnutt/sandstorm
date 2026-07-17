@@ -66,10 +66,9 @@ BackendImpl::BackendImpl(
   kj::Maybe<Cgroup>&& cgroup,
   kj::Maybe<uid_t> sandboxUid,
   bool useExperimentalSeccompFilter,
-  bool logSeccompViolations,
-  bool useAccountIsolateHosts)
+  bool logSeccompViolations)
     : BackendImpl(ioProvider, network, kj::mv(sandstormCoreFactory), kj::mv(cgroup), sandboxUid,
-          useExperimentalSeccompFilter, logSeccompViolations, useAccountIsolateHosts,
+          useExperimentalSeccompFilter, logSeccompViolations,
           IsolateAccountHostPaths::production()) {}
 
 BackendImpl::BackendImpl(
@@ -80,7 +79,6 @@ BackendImpl::BackendImpl(
   kj::Maybe<uid_t> sandboxUid,
   bool useExperimentalSeccompFilter,
   bool logSeccompViolations,
-  bool useAccountIsolateHosts,
   IsolateAccountHostPaths accountHostPaths)
     : ioProvider(ioProvider), network(network), coreFactory(kj::mv(sandstormCoreFactory)),
       sandboxUid(sandboxUid),
@@ -88,7 +86,6 @@ BackendImpl::BackendImpl(
       cgroup(kj::mv(cgroup)),
       useExperimentalSeccompFilter(useExperimentalSeccompFilter),
       logSeccompViolations(logSeccompViolations),
-      useAccountIsolateHosts(useAccountIsolateHosts),
       accountHostPaths(kj::mv(accountHostPaths))
     {}
 
@@ -285,7 +282,7 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
   }
 
   // Grain is not currently running, so let's start it.
-  if (useIsolateRuntime && useAccountIsolateHosts && !devMode) {
+  if (useIsolateRuntime) {
     auto isolateConfig = command.getIsolate();
     auto mainModule = kj::str(isolateConfig.getMainModule());
     auto compatibilityDate = isolateConfig.hasCompatibilityDate()
@@ -326,8 +323,8 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
   auto commandArgv = command.getArgv();
   auto commandName = commandArgv.size() > 0 ? commandArgv[0] : kj::StringPtr("");
   KJ_LOG(WARNING, "Starting grain supervisor.",
-      grainId, packageId, useIsolateRuntime, isNew, commandName);
-  argv.add(kj::heapString(useIsolateRuntime ? "isolate-supervisor" : "supervisor"));
+      grainId, packageId, isNew, commandName);
+  argv.add(kj::heapString("supervisor"));
 
   KJ_IF_MAYBE(u, sandboxUid) {
     argv.add(kj::heapString("--uid"));
@@ -358,40 +355,16 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
     argv.add(kj::str("-e", env.getKey(), "=", env.getValue()));
   }
 
-  if (useIsolateRuntime) {
-    auto isolateConfig = command.getIsolate();
-    argv.add(kj::heapString("--isolate-trust-domain"));
-    argv.add(kj::heapString(ownerId));
-    argv.add(kj::heapString("--isolate-main-module"));
-    argv.add(kj::heapString(isolateConfig.getMainModule()));
-
-    if (isolateConfig.hasCompatibilityDate()) {
-      argv.add(kj::heapString("--isolate-compatibility-date"));
-      argv.add(kj::heapString(isolateConfig.getCompatibilityDate()));
-    }
-  }
-
   argv.add(kj::heapString(packageId));
   argv.add(kj::heapString(grainId));
 
   argv.add(kj::heapString("--"));
 
-  if (!useIsolateRuntime) {
-    if (command.hasDeprecatedExecutablePath()) {
-      argv.add(kj::heapString(command.getDeprecatedExecutablePath()));
-    }
-    for (auto arg: command.getArgv()) {
-      argv.add(kj::heapString(arg));
-    }
-  } else {
-    // Isolate commands are selected by `command.isolate`; argv is treated as the runtime sidecar
-    // command rather than as a process command inside the traditional Linux sandbox.
-    if (command.hasDeprecatedExecutablePath()) {
-      argv.add(kj::heapString(command.getDeprecatedExecutablePath()));
-    }
-    for (auto arg: command.getArgv()) {
-      argv.add(kj::heapString(arg));
-    }
+  if (command.hasDeprecatedExecutablePath()) {
+    argv.add(kj::heapString(command.getDeprecatedExecutablePath()));
+  }
+  for (auto arg: command.getArgv()) {
+    argv.add(kj::heapString(arg));
   }
 
   Subprocess::Options options(KJ_MAP(a, argv) -> const kj::StringPtr { return a; });

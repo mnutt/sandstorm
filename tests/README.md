@@ -65,9 +65,9 @@ Before releasing changes to the isolate runtime, run:
 
     make isolate-ci
 
-This verifies the pinned workerd source and packaged release artifact, public
+This verifies the pinned workerd source and the packaged `isolate-host` runtime, public
 Cap'n Proto ABI baselines, deterministic schema corpus, TypeScript declarations,
-per-grain fallback, account-shared storage isolation and restart, native-host
+account-shared storage isolation and restart, native-host
 lifecycle and idle eviction, and backend recovery after an account-host crash.
 GitHub Actions runs this target after the general release-bundle tests.
 
