@@ -1,6 +1,0 @@
-{
-  "private": true,
-  "dependencies": {
-    "capnweb": "0.8.0"
-  }
-}

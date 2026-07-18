@@ -34,9 +34,6 @@ export {
 } from "sandstorm-internal:capnp-runtime";
 
 export const SANDSTORM_API_VERSION = 0;
-export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
-  api: SANDSTORM_API_VERSION,
-});
 
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";
@@ -316,23 +313,7 @@ export class UnsupportedCapabilityError extends Error {
   }
 }
 
-export class CapabilityCallError extends Error {
-  constructor(message, details = {}) {
-    super(message);
-    this.name = "CapabilityCallError";
-    this.details = details;
-  }
-}
-
-export class DisconnectedCapabilityError extends Error {
-  constructor(message, details = {}) {
-    super(message);
-    this.name = "DisconnectedCapabilityError";
-    this.details = details;
-  }
-}
-
-export class NativeCapnpBridgeUnavailableError extends Error {
+class NativeCapnpBridgeUnavailableError extends Error {
   constructor(message, details = {}) {
     super(message);
     this.name = "NativeCapnpBridgeUnavailableError";
@@ -1276,7 +1257,7 @@ function escapeHtml(value) {
 }
 
 function routePrefix(options = {}, fallback, name) {
-  const value = options.routePrefix ?? options.prefix ?? fallback;
+  const value = options.routePrefix ?? fallback;
   const prefix = validate.string(value, name, { minLength: 1, maxLength: 1024 });
   if (!prefix.startsWith("/")) {
     throw new ValidationError(`${name} must start with '/'`);
@@ -2045,7 +2026,7 @@ export function powerboxGrants(request, env, options = {}) {
 }
 
 function normalizeMainViewHandlers(options = {}) {
-  const mainView = options.mainView ?? options;
+  const mainView = options.mainView;
   if (!mainView || typeof mainView !== "object") {
     return {};
   }
@@ -2205,7 +2186,7 @@ async function serveBrowserSystemRoute(request, env) {
 }
 
 function webSessionPathPrefix(options = {}) {
-  const value = options.pathPrefix ?? options.prefix ?? "";
+  const value = options.pathPrefix ?? "";
   const pathPrefix = validate.string(value, "pathPrefix", { maxLength: 1024 });
   if (pathPrefix.length > 0 && !pathPrefix.startsWith("/")) {
     throw new ValidationError("pathPrefix must be empty or start with '/'");
