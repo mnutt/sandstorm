@@ -8,7 +8,7 @@ import { BrowserIsolateBridge } from "/__sandstorm/capnp/sandstorm/isolate-bridg
 
 export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
 
-export class NativeCapnpBridgeUnavailableError extends Error {
+class NativeCapnpBridgeUnavailableError extends Error {
   constructor(message, details = {}) {
     super(message);
     this.name = "NativeCapnpBridgeUnavailableError";

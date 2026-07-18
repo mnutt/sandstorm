@@ -9,13 +9,11 @@ import {
 import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
 import { ByteStream } from "capnp:/sandstorm/util.capnp";
 
-export const SANDSTORM_CAPNP_VERSION = 0;
 export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
 
 const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
   "nativeTransport",
   "nativeRpc",
-  "nativeRpcWebSocket",
 ]);
 
 // Shared only by trusted runtime modules. This symbol is the unforgeable protocol used
@@ -52,7 +50,6 @@ function invalidNativeCapnpBridgeInfo(reason, info) {
     protocolVersion: SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
     nativeTransport: false,
     nativeRpc: false,
-    nativeRpcWebSocket: false,
     missingFeatures: Object.freeze([]),
     reason,
     info,
@@ -95,7 +92,6 @@ export function negotiateNativeCapnpBridgeInfo(info, options = {}) {
     protocolVersion: SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
     nativeTransport,
     nativeRpc: info.nativeRpc === true,
-    nativeRpcWebSocket: info.nativeRpcWebSocket === true,
     missingFeatures: Object.freeze(missingFeatures),
     reason,
     info,
@@ -543,70 +539,6 @@ function nativeCapnpRootMessageBytes(message) {
   return nativeCapnpMessageBytes(message);
 }
 
-const NATIVE_CAPNP_MAX_STREAM_FRAME_BYTES = 16 * 1024 * 1024;
-const NATIVE_CAPNP_MAX_STREAM_SEGMENTS = 4096;
-
-function copyUint8Array(value) {
-  const bytes = nativeCapnpMessageBytes(value);
-  return new Uint8Array(bytes);
-}
-
-function concatNativeCapnpChunks(left, right) {
-  if (left.byteLength === 0) {
-    return copyUint8Array(right);
-  }
-
-  const bytes = copyUint8Array(right);
-  const result = new Uint8Array(left.byteLength + bytes.byteLength);
-  result.set(left);
-  result.set(bytes, left.byteLength);
-  return result;
-}
-
-class NativeCapnpStreamFrameDecoder {
-  #pending = new Uint8Array(0);
-
-  push(chunk) {
-    this.#pending = concatNativeCapnpChunks(this.#pending, chunk);
-    const frames = [];
-
-    while (this.#pending.byteLength >= 8) {
-      const view = new DataView(
-        this.#pending.buffer, this.#pending.byteOffset, this.#pending.byteLength);
-      const segmentCount = view.getUint32(0, true) + 1;
-      if (segmentCount <= 0 || segmentCount > NATIVE_CAPNP_MAX_STREAM_SEGMENTS) {
-        throw new NativeCapnpBridgeProtocolError(
-          `invalid native Cap'n Proto stream segment count: ${segmentCount}`);
-      }
-
-      const tableInts = 1 + segmentCount;
-      const headerBytes = Math.ceil(tableInts / 2) * 8;
-      if (this.#pending.byteLength < headerBytes) {
-        break;
-      }
-
-      let payloadWords = 0;
-      for (let i = 0; i < segmentCount; ++i) {
-        payloadWords += view.getUint32(4 + i * 4, true);
-      }
-
-      const frameBytes = headerBytes + payloadWords * 8;
-      if (frameBytes > NATIVE_CAPNP_MAX_STREAM_FRAME_BYTES) {
-        throw new NativeCapnpBridgeProtocolError(
-          `native Cap'n Proto stream frame exceeds ${NATIVE_CAPNP_MAX_STREAM_FRAME_BYTES} bytes`);
-      }
-      if (this.#pending.byteLength < frameBytes) {
-        break;
-      }
-
-      frames.push(this.#pending.slice(0, frameBytes));
-      this.#pending = this.#pending.slice(frameBytes);
-    }
-
-    return frames;
-  }
-}
-
 export function nativeCapnpInterfaceMetadata(InterfaceClass, operation = "Cap'n Proto operation") {
   const metadata = InterfaceClass?._capnp;
   if (!InterfaceClass || typeof InterfaceClass.Client !== "function" ||
@@ -623,162 +555,6 @@ export function nativeCapnpInterfaceMetadata(InterfaceClass, operation = "Cap'n 
       : `0x${metadata.typeIdHex}`,
     interfaceName: metadata.displayName,
   });
-}
-
-export class NativeCapnpStreamTransport extends CapnpEsDeferredTransport {
-  #decoder = new NativeCapnpStreamFrameDecoder();
-  #reader;
-  #writer;
-  #writeQueue = Promise.resolve();
-  #connection;
-
-  constructor(readable, writable, options = {}) {
-    super();
-    if (!readable || typeof readable.getReader !== "function") {
-      throw new TypeError("NativeCapnpStreamTransport requires a ReadableStream");
-    }
-    if (!writable || typeof writable.getWriter !== "function") {
-      throw new TypeError("NativeCapnpStreamTransport requires a WritableStream");
-    }
-
-    this.#reader = readable.getReader();
-    this.#writer = writable.getWriter();
-    this.#connection = options.connection || null;
-    this.#readLoop();
-  }
-
-  attachConnection(connection) {
-    this.#connection = connection;
-  }
-
-  sendMessage(message) {
-    if (this.closed) {
-      throw new CapnpUnavailableError("native Cap'n Proto stream transport is closed");
-    }
-
-    const bytes = nativeCapnpRootMessageBytes(message);
-    this.#writeQueue = this.#writeQueue
-      .then(() => this.#writer.write(bytes))
-      .catch((error) => this.abort(error));
-  }
-
-  abort(error) {
-    if (this.closed) {
-      return;
-    }
-
-    if (this.#connection && !this.#connection.closed) {
-      this.#connection.shutdown(error instanceof Error ? error : new Error(String(error)));
-      return;
-    }
-
-    this.close(error);
-  }
-
-  close(error) {
-    if (this.closed) {
-      return;
-    }
-
-    try {
-      this.#reader.cancel(error);
-    } catch (_) {}
-    try {
-      if (error === undefined) {
-        this.#writer.close();
-      } else {
-        this.#writer.abort(error);
-      }
-    } catch (_) {}
-
-    super.close(error);
-  }
-
-  async #readLoop() {
-    try {
-      while (!this.closed) {
-        const { done, value } = await this.#reader.read();
-        if (done) {
-          this.close();
-          return;
-        }
-
-        for (const frame of this.#decoder.push(value)) {
-          this.resolve(frame);
-        }
-      }
-    } catch (error) {
-      this.abort(error);
-    }
-  }
-}
-
-export class NativeCapnpWebSocketTransport extends CapnpEsDeferredTransport {
-  #webSocket;
-  #sendQueue = Promise.resolve();
-  #connection;
-
-  constructor(webSocket, options = {}) {
-    super();
-    if (!webSocket || typeof webSocket.send !== "function" ||
-        typeof webSocket.addEventListener !== "function") {
-      throw new TypeError("NativeCapnpWebSocketTransport requires a WebSocket");
-    }
-
-    this.#webSocket = webSocket;
-    this.#connection = options.connection || null;
-    this.#webSocket.binaryType = "arraybuffer";
-    this.#webSocket.addEventListener("message", (event) => {
-      try {
-        this.resolve(nativeCapnpMessageBytes(event.data));
-      } catch (error) {
-        this.abort(error);
-      }
-    });
-    this.#webSocket.addEventListener("close", () => this.close());
-    this.#webSocket.addEventListener("error", (event) => this.abort(event.error || event));
-  }
-
-  attachConnection(connection) {
-    this.#connection = connection;
-  }
-
-  sendMessage(message) {
-    if (this.closed) {
-      throw new CapnpUnavailableError(
-        "native Cap'n Proto WebSocket transport is closed");
-    }
-
-    const bytes = nativeCapnpRootMessageBytes(message);
-    this.#sendQueue = this.#sendQueue
-      .then(() => this.#webSocket.send(bytes))
-      .catch((error) => this.abort(error));
-  }
-
-  abort(error) {
-    if (this.closed) {
-      return;
-    }
-
-    if (this.#connection && !this.#connection.closed) {
-      this.#connection.shutdown(error instanceof Error ? error : new Error(String(error)));
-      return;
-    }
-
-    this.close(error);
-  }
-
-  close(error) {
-    if (this.closed) {
-      return;
-    }
-
-    try {
-      this.#webSocket.close(error === undefined ? 1000 : 1011);
-    } catch (_) {}
-
-    super.close(error);
-  }
 }
 
 export class IsolateBridgeNativeTransport extends CapnpEsDeferredTransport {
@@ -884,25 +660,6 @@ export function capnpClient(InterfaceClass, capability) {
     capability[CAPNP_CLIENT_SYMBOL](), "live Sandstorm capability"));
 }
 
-export function createNativeCapnpServerSession(
-    InterfaceClass, target, { readable, writable, webSocket, finalize } = {}) {
-  validateNativeCapnpGeneratedInterface(InterfaceClass, "createNativeCapnpServerSession()");
-  if (!target || typeof target !== "object") {
-    throw new TypeError("createNativeCapnpServerSession() requires a server target object");
-  }
-
-  const transport = webSocket
-    ? new NativeCapnpWebSocketTransport(webSocket)
-    : new NativeCapnpStreamTransport(readable, writable);
-  const connection = new CapnpEsConn(transport, finalize);
-  transport.attachConnection(connection);
-  connection.initMain(InterfaceClass, target);
-  return Object.assign(connection, {
-    transport,
-    interfaceMetadata: nativeCapnpInterfaceMetadata(InterfaceClass),
-  });
-}
-
 export async function exportCapnp(api, InterfaceClass, target) {
   validateNativeCapnpGeneratedInterface(InterfaceClass, "exportCapnp()");
   if (typeof InterfaceClass.Server !== "function") {
@@ -918,7 +675,7 @@ export async function exportCapnp(api, InterfaceClass, target) {
 
   const interfaceMetadata = nativeCapnpInterfaceMetadata(InterfaceClass, "exportCapnp()");
   const negotiation = await negotiateNativeCapnpBridge(api, {
-    requiredFeatures: ["nativeRpc", "nativeRpcWebSocket"],
+    requiredFeatures: ["nativeRpc"],
   });
   if (!negotiation.available) {
     throw new CapnpUnavailableError(

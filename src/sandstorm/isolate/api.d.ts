@@ -1,8 +1,5 @@
 declare module "sandstorm:api" {
   export const SANDSTORM_API_VERSION: 0;
-  export const SANDSTORM_HELPER_VERSIONS: {
-    readonly api: 0;
-  };
 
   export interface Fetcher {
     fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
@@ -20,14 +17,6 @@ declare module "sandstorm:api" {
     readonly capability: string;
     readonly operation: string;
     constructor(capability: string, operation: string, message?: string);
-  }
-  export class CapabilityCallError extends Error {
-    readonly details: unknown;
-    constructor(message: string, details?: unknown);
-  }
-  export class DisconnectedCapabilityError extends Error {
-    readonly details: unknown;
-    constructor(message: string, details?: unknown);
   }
 
   export interface Validator {
@@ -117,7 +106,6 @@ declare module "sandstorm:api" {
 
   export interface WebSessionCapabilityOptions {
     pathPrefix?: string;
-    prefix?: string;
     persistent?: boolean;
     title?: string | { defaultText: string };
     label?: string | { defaultText: string };
@@ -201,7 +189,6 @@ declare module "sandstorm:api" {
 
   export interface PowerboxFulfillmentOptions {
     routePrefix?: string;
-    prefix?: string;
     title?: string;
     description?: string;
     buttonLabel?: string;
@@ -238,7 +225,7 @@ declare module "sandstorm:api" {
 
   export type PowerboxGrantsOptions =
     | Record<string, PowerboxGrantSpec>
-    | { routePrefix?: string; prefix?: string; grants: Record<string, PowerboxGrantSpec> | PowerboxGrantSpec[] };
+    | { routePrefix?: string; grants: Record<string, PowerboxGrantSpec> | PowerboxGrantSpec[] };
 
   export interface PowerboxGrantsApi {
     config(): Promise<unknown>;
@@ -269,8 +256,6 @@ declare module "sandstorm:api" {
 
   export interface SystemRouteOptions {
     mainView?: MainViewRouteHandlers;
-    restore?: MainViewRouteHandlers["restore"];
-    drop?: MainViewRouteHandlers["drop"];
   }
 
   /**

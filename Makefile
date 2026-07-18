@@ -172,7 +172,6 @@ clean: ci-clean
 	cd deps/ekam && make clean
 	rm -rf deps/libsodium/build
 	rm -rf deps/boringssl/build
-	rm -rf tmp/capnweb-npm src/sandstorm/isolate/capnweb.js
 
 ci-clean:
 	@# Clean only the stuff that we want to clean between CI builds.

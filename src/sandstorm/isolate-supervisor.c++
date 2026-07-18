@@ -483,21 +483,6 @@ kj::StringPtr bindingTypeName(IsolateRuntimeConfig::BindingType type) {
   KJ_UNREACHABLE;
 }
 
-bool isImplementedBinding(IsolateRuntimeConfig::BindingType type) {
-  switch (type) {
-    case IsolateRuntimeConfig::BindingType::TEXT:
-    case IsolateRuntimeConfig::BindingType::DATA:
-    case IsolateRuntimeConfig::BindingType::JSON:
-    case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
-    case IsolateRuntimeConfig::BindingType::STORAGE:
-    case IsolateRuntimeConfig::BindingType::POWERBOX:
-    case IsolateRuntimeConfig::BindingType::SERVICE:
-      return true;
-  }
-
-  KJ_UNREACHABLE;
-}
-
 kj::StringPtr moduleFileExtension(IsolateRuntimeConfig::ModuleType type) {
   switch (type) {
     case IsolateRuntimeConfig::ModuleType::ES_MODULE:
@@ -680,9 +665,6 @@ void validateIsolateRuntimeConfig(
           "Isolate bindings exceed aggregate size limit.", totalBindingBytes,
           MAX_ISOLATE_TOTAL_BINDING_BYTES);
     }
-    KJ_REQUIRE(isImplementedBinding(binding.type),
-        "Isolate binding type is declared in the manifest schema but is not implemented yet.",
-        binding.name, bindingTypeName(binding.type));
     if (binding.type == IsolateRuntimeConfig::BindingType::SERVICE) {
       KJ_REQUIRE(binding.serviceName.size() > 0, "Isolate service binding is missing service name.",
           binding.name);
@@ -3772,7 +3754,7 @@ private:
   kj::String renderStatus(kj::StringPtr methodName, kj::StringPtr path, size_t bodySize) {
       kj::Vector<char> json;
       json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"binding\": \"sandstormApi\",\n  "));
-      appendJsonField(json, "status", "prototype");
+      appendJsonField(json, "status", "ready");
       json.addAll(kj::StringPtr(",\n  "));
       appendJsonField(json, "method", methodName);
       json.addAll(kj::StringPtr(",\n  "));
@@ -3808,8 +3790,7 @@ private:
         "  \"minProtocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
         "  \"maxProtocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
         "  \"nativeTransport\": true,\n"
-        "  \"nativeRpc\": true,\n"
-        "  \"nativeRpcWebSocket\": true\n"
+        "  \"nativeRpc\": true\n"
         "}\n");
   }
 
