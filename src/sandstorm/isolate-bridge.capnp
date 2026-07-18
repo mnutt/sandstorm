@@ -42,6 +42,11 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
   # Sandstorm-internal SystemPersistent capability. App JS should continue to
   # implement AppPersistent; this bridge performs the realm translation needed
   # when passing app-hosted capabilities to legacy SessionContext APIs.
+
+  registerMainView @7 (view :Grain.MainView, registrationId :Text) -> ();
+  # Publishes the worker's MainView over the native bridge for one supervisor-initiated
+  # restore/drop operation. The call remains pending for the lifetime of the registration so the
+  # request-scoped worker RPC connection stays alive while returned capabilities are in use.
 }
 
 interface BrowserIsolateBridge @0x93fb2746c97b5bea {

@@ -1,7 +1,6 @@
 import {
   CAPNP_CLIENT_SYMBOL,
   connectIsolateBridge,
-  createNativeCapnpServerSession,
   nativeCapnpInterfaceMetadata,
   nativeCapnpSavedTokenData,
   nativeCapnpSavedTokenText,
@@ -42,7 +41,7 @@ export const SANDSTORM_HELPER_VERSIONS = Object.freeze({
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";
 const POWERBOX_FULFILLMENT_PREFIX = "/__sandstorm/powerbox-fulfillment";
-const MAIN_VIEW_RPC_SESSION_PATH = "/__sandstorm/main-view/rpc-session";
+const MAIN_VIEW_REGISTRATION_PATH = "/__sandstorm/main-view/register";
 const capabilityMetadata = new Map();
 const capabilityBridgeRefs = new WeakMap();
 let nextCapabilityId = 0;
@@ -2086,34 +2085,41 @@ function mainViewRpcTarget(request, env, options = {}) {
   };
 }
 
-async function serveMainViewRpcSession(request, env, options = {}) {
+async function serveMainViewRegistration(request, env, options = {}) {
   const url = new URL(request.url);
-  if (url.pathname !== MAIN_VIEW_RPC_SESSION_PATH) {
+  if (url.pathname !== MAIN_VIEW_REGISTRATION_PATH) {
     return null;
   }
 
-  if (request.method !== "GET" ||
-      request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
-    return Response.json({ ok: false, error: "main view RPC requires WebSocket" }, {
-      status: 426,
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
+
+  const registrationId = url.searchParams.get("registrationId");
+  if (!registrationId) {
+    return Response.json({ ok: false, error: "missing MainView registration id" }, {
+      status: 400,
     });
   }
 
-  const pair = new WebSocketPair();
-  const server = pair[0];
-  server.accept();
-  createNativeCapnpServerSession(MainView, mainViewRpcTarget(request, env, options), {
-    webSocket: server,
+  const bridge = connectIsolateBridge(nativeCapnpBridgeApi(env), {
+    connectionId: `main-view-${registrationId}`,
   });
-  return new Response(null, {
-    status: 101,
-    webSocket: pair[1],
-  });
+  const view = new MainView.Server(mainViewRpcTarget(request, env, options)).client();
+  try {
+    await bridge.registerMainView((params) => {
+      initCapnpCapabilityParam(params, view, "MainView registration");
+      params.registrationId = registrationId;
+    });
+    return new Response(null, { status: 204 });
+  } finally {
+    bridge.close();
+  }
 }
 
 export async function serveSystemRoutes(request, env, options = {}) {
   return await serveBrowserSystemRoute(request, env) ||
-    await serveMainViewRpcSession(request, env, options) ||
+    await serveMainViewRegistration(request, env, options) ||
     await servePowerboxDescriptors(request, env);
 }
 
