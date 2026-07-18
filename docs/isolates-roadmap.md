@@ -492,9 +492,9 @@ Progress:
 - Grain-tagged workerd console logs, keepalive-driven idle eviction with clean
   restart semantics, and an explicitly versioned worker-source format with ABI
   fixtures are implemented and tested.
-- The published 32-worker memory benchmark measures 1.19 MiB incremental PSS
-  per shared worker versus 8.15 MiB per one-worker process; total host PSS at
-  32 workers is 72.4 MiB versus 279.9 MiB. See
+- The published 32-worker memory benchmark measures 1.18 MiB incremental PSS
+  per shared worker versus 8.11 MiB per one-worker process; total host PSS at
+  32 workers is 70.0 MiB versus 277.1 MiB. See
   `docs/isolates-memory-benchmark.md`.
 - The backend caches account hosts by generation and discards a dead generation
   on disconnect. A real backend/account-host/native-host integration test kills
