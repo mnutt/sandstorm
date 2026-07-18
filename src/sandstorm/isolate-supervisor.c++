@@ -96,8 +96,8 @@ namespace sandstorm {
 
 namespace {
 
-constexpr const char* ISOLATE_MAIN_VIEW_RPC_SESSION_PATH =
-    "/__sandstorm/main-view/rpc-session";
+constexpr const char* ISOLATE_MAIN_VIEW_REGISTRATION_PATH =
+    "/__sandstorm/main-view/register";
 constexpr uint64_t CAPNP_PERSISTENT_INTERFACE_ID = 0xc8cb212fcd9f5691ull;
 constexpr uint64_t SYSTEM_PERSISTENT_INTERFACE_ID = 0xc38cedd77cbed5b4ull;
 constexpr uint64_t APP_PERSISTENT_INTERFACE_ID = 0xaffa789add8747b8ull;
@@ -147,6 +147,8 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::Vector<Module> modules;
   kj::Vector<Binding> bindings;
 };
+
+struct IsolateMainViewRegistration;
 
 // Producer limits mirror the native decoder's independent trust-boundary checks.
 constexpr size_t MAX_ISOLATE_MODULES = 1024;
@@ -265,6 +267,12 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
     return httpFactory.kjToCapnp(kj::mv(service));
   }
 
+  kj::Promise<kj::Own<IsolateMainViewRegistration>> openMainViewRegistration();
+  kj::Promise<void> registerMainView(
+      kj::StringPtr registrationId, MainView<>::Client view);
+  void removeMainViewRegistration(
+      kj::StringPtr registrationId, IsolateMainViewRegistration& registration);
+
   kj::Network& network;
   kj::Timer& timer;
   kj::String grainId;
@@ -277,7 +285,121 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
   kj::Own<kj::HttpHeaderTable> ownedHeaderTable;
   kj::HttpHeaderTable& headerTable;
   kj::Maybe<HostedIsolate::Client> hosted;
+  std::map<std::string, IsolateMainViewRegistration*> mainViewRegistrations;
+  uint64_t nextMainViewRegistrationId = 0;
 };
+
+struct IsolateMainViewRegistration final {
+  IsolateMainViewRegistration(IsolateRuntimeHost& host, kj::String id)
+      : host(host), id(kj::mv(id)) {
+    auto ready = kj::newPromiseAndFulfiller<void>();
+    readyPromise = kj::mv(ready.promise);
+    readyFulfiller = kj::mv(ready.fulfiller);
+    auto release = kj::newPromiseAndFulfiller<void>();
+    releasePromise = kj::mv(release.promise);
+    releaseFulfiller = kj::mv(release.fulfiller);
+  }
+
+  ~IsolateMainViewRegistration() noexcept(false) {
+    host.removeMainViewRegistration(id, *this);
+    KJ_IF_MAYBE(fulfiller, releaseFulfiller) {
+      if ((*fulfiller)->isWaiting()) (*fulfiller)->fulfill();
+    }
+  }
+
+  void start() {
+    auto path = kj::str(ISOLATE_MAIN_VIEW_REGISTRATION_PATH,
+        "?registrationId=", id);
+    httpTask = host.getHttpClient()
+        .then([this, path = kj::mv(path)](kj::Own<kj::HttpClient>&& client) mutable {
+      kj::HttpHeaders headers(host.headerTable);
+      headers.set(kj::HttpHeaderId::HOST, "sandbox");
+      auto request = client->request(kj::HttpMethod::POST, path, headers, uint64_t(0));
+      auto requestBody = kj::mv(request.body);
+      return request.response.then(
+          [client = kj::mv(client), requestBody = kj::mv(requestBody)](
+              kj::HttpClient::Response&& response) mutable -> kj::Promise<void> {
+        KJ_REQUIRE(response.statusCode == 204,
+            "MainView native registration request failed",
+            response.statusCode, response.statusText);
+        if (response.body.get() == nullptr) return kj::Promise<void>(kj::READY_NOW);
+        return response.body->readAllBytes(4096).then([](kj::Array<byte>&&) {});
+      });
+    }).then([this]() {
+      KJ_IF_MAYBE(fulfiller, readyFulfiller) {
+        if ((*fulfiller)->isWaiting()) {
+          (*fulfiller)->reject(KJ_EXCEPTION(DISCONNECTED,
+              "MainView registration request ended before publishing a capability"));
+        }
+      }
+    }).eagerlyEvaluate([this](kj::Exception&& exception) {
+      KJ_IF_MAYBE(fulfiller, readyFulfiller) {
+        if ((*fulfiller)->isWaiting()) (*fulfiller)->reject(kj::mv(exception));
+      }
+    });
+  }
+
+  void publish(MainView<>::Client publishedView) {
+    KJ_REQUIRE(view == nullptr, "MainView registration was published more than once", id);
+    view = kj::mv(publishedView);
+    auto fulfiller = kj::mv(KJ_REQUIRE_NONNULL(readyFulfiller));
+    readyFulfiller = nullptr;
+    fulfiller->fulfill();
+  }
+
+  MainView<>::Client getView() {
+    return KJ_REQUIRE_NONNULL(view, "MainView registration has no published capability");
+  }
+
+  kj::Promise<void> takeReleasePromise() {
+    auto promise = kj::mv(KJ_REQUIRE_NONNULL(releasePromise,
+        "MainView registration release promise was already consumed"));
+    releasePromise = nullptr;
+    return kj::mv(promise);
+  }
+
+  IsolateRuntimeHost& host;
+  kj::String id;
+  kj::Maybe<MainView<>::Client> view;
+  kj::Promise<void> readyPromise = nullptr;
+  kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> readyFulfiller;
+  kj::Maybe<kj::Promise<void>> releasePromise;
+  kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> releaseFulfiller;
+  kj::Promise<void> httpTask = nullptr;
+};
+
+kj::Promise<kj::Own<IsolateMainViewRegistration>>
+IsolateRuntimeHost::openMainViewRegistration() {
+  auto id = kj::str("registration-", ++nextMainViewRegistrationId);
+  auto registration = kj::heap<IsolateMainViewRegistration>(*this, kj::mv(id));
+  auto inserted = mainViewRegistrations.emplace(
+      std::string(registration->id.begin(), registration->id.size()), registration.get());
+  KJ_ASSERT(inserted.second);
+  registration->start();
+  auto ready = kj::mv(registration->readyPromise);
+  return ready.then([registration = kj::mv(registration)]() mutable {
+    return kj::mv(registration);
+  });
+}
+
+kj::Promise<void> IsolateRuntimeHost::registerMainView(
+    kj::StringPtr registrationId, MainView<>::Client view) {
+  auto key = std::string(registrationId.begin(), registrationId.size());
+  auto found = mainViewRegistrations.find(key);
+  KJ_REQUIRE(found != mainViewRegistrations.end(),
+      "unknown or expired MainView registration", registrationId);
+  found->second->publish(kj::mv(view));
+  return found->second->takeReleasePromise();
+}
+
+void IsolateRuntimeHost::removeMainViewRegistration(
+    kj::StringPtr registrationId, IsolateMainViewRegistration& registration) {
+  auto key = std::string(registrationId.begin(), registrationId.size());
+  auto found = mainViewRegistrations.find(key);
+  if (found != mainViewRegistrations.end() && found->second == &registration) {
+    mainViewRegistrations.erase(found);
+  }
+}
 
 IsolateRuntimeConfig::ModuleType getModuleType(
     spk::Manifest::IsolateConfig::Module::Reader module) {
@@ -2805,251 +2927,15 @@ capnp::Capability::Client makeRouteBackedSessionCapability(
   KJ_UNREACHABLE;
 }
 
-struct IsolateMainViewRpcWebSocketState final: public kj::Refcounted {
-  kj::Own<kj::HttpClient> client;
-  kj::Own<kj::WebSocket> webSocket;
-
-  IsolateMainViewRpcWebSocketState(
-      kj::Own<kj::HttpClient>&& client, kj::Own<kj::WebSocket>&& webSocket)
-      : client(kj::mv(client)), webSocket(kj::mv(webSocket)) {}
-};
-
-struct IsolateMainViewRpcFailedWebSocketState final: public kj::Refcounted {
-  kj::Own<kj::HttpClient> client;
-  kj::Own<kj::AsyncInputStream> body;
-
-  IsolateMainViewRpcFailedWebSocketState(
-      kj::Own<kj::HttpClient>&& client, kj::Own<kj::AsyncInputStream>&& body)
-      : client(kj::mv(client)), body(kj::mv(body)) {}
-};
-
-class IsolateMainViewRpcMessageStream final: public capnp::MessageStream {
-public:
-  IsolateMainViewRpcMessageStream(kj::Own<IsolateRuntimeConfig> config,
-      kj::Own<IsolateRuntimeHost> host, kj::HttpHeaderTable& headerTable, kj::String path)
-      : config(kj::mv(config)),
-        host(kj::mv(host)),
-        headerTable(headerTable),
-        path(kj::mv(path)) {}
-
-  kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> tryReadMessage(
-      kj::ArrayPtr<kj::AutoCloseFd> fdSpace,
-      capnp::ReaderOptions options = capnp::ReaderOptions(),
-      kj::ArrayPtr<capnp::word> scratchSpace = nullptr) override {
-    (void)fdSpace;
-    return ensureStarted().then([this, options, scratchSpace]() mutable {
-      auto& current = KJ_ASSERT_NONNULL(state);
-      return current->webSocket->receive(MAX_NATIVE_CAPNP_RPC_WEBSOCKET_MESSAGE_BYTES)
-          .then([options, scratchSpace](kj::WebSocket::Message&& message) mutable
-              -> kj::Maybe<capnp::MessageReaderAndFds> {
-        KJ_SWITCH_ONEOF(message) {
-          KJ_CASE_ONEOF(text, kj::String) {
-            KJ_FAIL_REQUIRE("native Cap'n Proto MainView RPC session received a text WebSocket frame");
-          }
-          KJ_CASE_ONEOF(bytes, kj::Array<byte>) {
-            auto reader = parseIsolateCapnpRpcFrame(bytes, options, scratchSpace);
-            return capnp::MessageReaderAndFds { kj::mv(reader), nullptr };
-          }
-          KJ_CASE_ONEOF(close, kj::WebSocket::Close) {
-            (void)close;
-            return nullptr;
-          }
-        }
-        KJ_UNREACHABLE;
-      });
-    });
-  }
-
-  kj::Promise<void> writeMessage(kj::ArrayPtr<const int> fds,
-      kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) override {
-    if (fds.size() > 0) {
-      return KJ_EXCEPTION(UNIMPLEMENTED,
-          "native Cap'n Proto MainView RPC sessions do not support file descriptors");
-    }
-
-    auto data = serializeMessageSegments(segments);
-    auto fork = writeQueue.then([this, data = kj::mv(data)]() mutable {
-      return ensureStarted().then([this, data = kj::mv(data)]() mutable {
-        auto& current = KJ_ASSERT_NONNULL(state);
-        return current->webSocket->send(data.asPtr()).attach(kj::mv(data));
-      });
-    }).fork();
-    writeQueue = fork.addBranch();
-    return fork.addBranch();
-  }
-
-  kj::Promise<void> writeMessages(
-      kj::ArrayPtr<kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>>> messages) override {
-    kj::Vector<kj::Array<byte>> serialized;
-    for (auto message: messages) {
-      serialized.add(serializeMessageSegments(message));
-    }
-    auto fork = writeQueue.then([this, serialized = serialized.releaseAsArray()]() mutable {
-      return ensureStarted().then([this, serialized = kj::mv(serialized)]() mutable {
-        auto& current = KJ_ASSERT_NONNULL(state);
-        auto webSocket = current->webSocket.get();
-        kj::Promise<void> result = kj::READY_NOW;
-        for (auto& message: serialized) {
-          result = result.then([webSocket, data = kj::mv(message)]() mutable {
-            return webSocket->send(data.asPtr()).attach(kj::mv(data));
-          });
-        }
-        return kj::mv(result).attach(kj::mv(serialized));
-      });
-    }).fork();
-    writeQueue = fork.addBranch();
-    return fork.addBranch();
-  }
-
-  kj::Maybe<int> getSendBufferSize() override {
-    return nullptr;
-  }
-
-  kj::Promise<void> end() override {
-    auto fork = writeQueue.then([this]() mutable -> kj::Promise<void> {
-      KJ_IF_MAYBE(existing, started) {
-        return existing->addBranch().then([this]() mutable -> kj::Promise<void> {
-          KJ_IF_MAYBE(current, state) {
-            return (*current)->webSocket->close(1000, "native Cap'n Proto MainView RPC session ended");
-          }
-          return kj::READY_NOW;
-        });
-      }
-
-      KJ_IF_MAYBE(current, state) {
-        return (*current)->webSocket->close(1000, "native Cap'n Proto MainView RPC session ended");
-      }
-      return kj::READY_NOW;
-    }).fork();
-    writeQueue = fork.addBranch();
-    return fork.addBranch();
-  }
-
-private:
-  kj::Own<IsolateRuntimeConfig> config;
-  kj::Own<IsolateRuntimeHost> host;
-  kj::HttpHeaderTable& headerTable;
-  kj::String path;
-  kj::Maybe<kj::Own<IsolateMainViewRpcWebSocketState>> state;
-  kj::Maybe<kj::ForkedPromise<void>> started;
-  kj::Promise<void> writeQueue = kj::READY_NOW;
-
-  kj::Promise<void> ensureStarted() {
-    KJ_IF_MAYBE(existing, started) {
-      return existing->addBranch();
-    }
-
-    started = start().fork();
-    return KJ_ASSERT_NONNULL(started).addBranch();
-  }
-
-  kj::Promise<void> start() {
-    return host->getHttpClient()
-        .then([this](kj::Own<kj::HttpClient>&& client) mutable {
-      kj::HttpHeaders headers(headerTable);
-      headers.set(kj::HttpHeaderId::HOST, "sandbox");
-      return client->openWebSocket(path, headers)
-          .then([this, client = kj::mv(client)](
-              kj::HttpClient::WebSocketResponse&& response) mutable -> kj::Promise<void> {
-        if (response.statusCode != 101) {
-          auto statusCode = response.statusCode;
-          auto statusText = kj::str(response.statusText);
-          KJ_LOG(WARNING, "MainView RPC WebSocket returned an unsuccessful status.",
-              statusCode, statusText);
-          KJ_SWITCH_ONEOF(response.webSocketOrBody) {
-            KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
-              auto failed = kj::refcounted<IsolateMainViewRpcFailedWebSocketState>(
-                  kj::mv(client), kj::mv(body));
-              return failed->body->readAllText()
-                  .then([statusCode, statusText = kj::mv(statusText),
-                      failed = kj::mv(failed)](kj::String&& bodyText) mutable {
-                (void)failed;
-                KJ_FAIL_REQUIRE(
-                    "MainView RPC WebSocket returned an unsuccessful status",
-                    statusCode, statusText, bodyText);
-              });
-            }
-            KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
-              (void)webSocket;
-              KJ_FAIL_REQUIRE(
-                  "MainView RPC WebSocket returned an unsuccessful status",
-                  statusCode, statusText);
-            }
-          }
-        }
-        KJ_SWITCH_ONEOF(response.webSocketOrBody) {
-          KJ_CASE_ONEOF(body, kj::Own<kj::AsyncInputStream>) {
-            (void)body;
-            KJ_FAIL_REQUIRE("MainView RPC WebSocket did not upgrade");
-          }
-          KJ_CASE_ONEOF(webSocket, kj::Own<kj::WebSocket>) {
-            state = kj::refcounted<IsolateMainViewRpcWebSocketState>(
-                kj::mv(client), kj::mv(webSocket));
-            return kj::READY_NOW;
-          }
-        }
-        KJ_UNREACHABLE;
-      });
-    });
-  }
-
-  kj::Array<byte> serializeMessageSegments(
-      kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) {
-    kj::VectorOutputStream output;
-    capnp::writeMessage(output, segments);
-    auto data = output.getArray();
-    auto result = kj::heapArray<byte>(data.size());
-    memcpy(result.begin(), data.begin(), data.size());
-    return result;
-  }
-};
-
-struct IsolateMainViewRpcSession {
-  kj::String sessionId;
-  kj::String path;
-  uint64_t interfaceId = 0;
-  kj::String interfaceName;
-
-  IsolateMainViewRpcMessageStream stream;
-  capnp::TwoPartyVatNetwork network;
-  capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
-  kj::Maybe<capnp::Capability::Client> cap;
-
-  IsolateMainViewRpcSession(kj::Own<IsolateRuntimeConfig> config,
-      kj::Own<IsolateRuntimeHost> host, kj::HttpHeaderTable& headerTable,
-      kj::String sessionId, kj::String path, uint64_t interfaceId, kj::String interfaceName)
-      : sessionId(kj::mv(sessionId)),
-        path(kj::heapString(path)),
-        interfaceId(interfaceId),
-        interfaceName(kj::mv(interfaceName)),
-        stream(kj::mv(config), kj::mv(host), headerTable, kj::mv(path)),
-        network(stream, capnp::rpc::twoparty::Side::CLIENT),
-        rpcSystem(network, kj::Maybe<capnp::Capability::Client>(nullptr)) {
-    capnp::MallocMessageBuilder message;
-    auto vatId = message.initRoot<capnp::rpc::twoparty::VatId>();
-    vatId.setSide(capnp::rpc::twoparty::Side::SERVER);
-    cap = rpcSystem.bootstrap(vatId);
-  }
-};
-
-kj::Own<IsolateMainViewRpcSession> newIsolateMainViewRpcSession(
-    kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
-    kj::HttpHeaderTable& headerTable) {
-  return kj::heap<IsolateMainViewRpcSession>(
-      kj::mv(config), kj::mv(host), headerTable,
-      kj::heapString("mainView"), kj::heapString(ISOLATE_MAIN_VIEW_RPC_SESSION_PATH),
-      capnp::typeId<MainView<>>(), kj::heapString("sandstorm.MainView"));
-}
-
 class IsolateMainViewRestoredCapability final: public SystemPersistent::Server {
 public:
   IsolateMainViewRestoredCapability(kj::Own<IsolateRuntimeHost> host,
-      kj::Own<IsolateMainViewRpcSession> session, capnp::Capability::Client cap,
+      kj::Own<IsolateMainViewRegistration> registration, capnp::Capability::Client cap,
       kj::Maybe<kj::Array<const byte>> parentToken = nullptr,
       kj::Own<PersistentRequirementState> requirementState =
           kj::refcounted<PersistentRequirementState>())
       : host(kj::mv(host)),
-        session(kj::mv(session)),
+        registration(kj::mv(registration)),
         cap(kj::mv(cap)),
         parentToken(kj::mv(parentToken)),
         requirementState(kj::mv(requirementState)) {}
@@ -3124,7 +3010,7 @@ public:
 
 private:
   kj::Own<IsolateRuntimeHost> host;
-  kj::Own<IsolateMainViewRpcSession> session;
+  kj::Own<IsolateMainViewRegistration> registration;
   capnp::Capability::Client cap;
   kj::Maybe<kj::Array<const byte>> parentToken;
   kj::Own<PersistentRequirementState> requirementState;
@@ -3528,6 +3414,12 @@ private:
       context.getResults().setCap(kj::heap<IsolateAppPersistentCapability>(
           kj::addRef(host), params.getCap()));
       return kj::READY_NOW;
+    }
+
+    kj::Promise<void> registerMainView(RegisterMainViewContext context) override {
+      auto params = context.getParams();
+      KJ_REQUIRE(params.hasView(), "Cannot register a null MainView capability.");
+      return host.registerMainView(params.getRegistrationId(), params.getView());
     }
 
   private:
@@ -4819,15 +4711,18 @@ public:
         return kj::READY_NOW;
       }
       case SupervisorObjectId<>::APP_REF: {
-        auto session = newIsolateMainViewRpcSession(
-            kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), runtimeHost->headerTable);
-        auto request = KJ_ASSERT_NONNULL(session->cap).castAs<MainView<>>().restoreRequest();
-        request.setObjectId(objectId.getAppRef());
-        return request.send().then(
-            [this, context, session = kj::mv(session), parentToken = kj::mv(parentToken)](
-                auto result) mutable {
-          context.getResults().setCap(kj::heap<IsolateMainViewRestoredCapability>(
-              kj::addRef(*runtimeHost), kj::mv(session), result.getCap(), kj::mv(parentToken)));
+        return runtimeHost->openMainViewRegistration().then(
+            [this, context, parentToken = kj::mv(parentToken)](
+                kj::Own<IsolateMainViewRegistration>&& registration) mutable {
+          auto request = registration->getView().restoreRequest();
+          request.setObjectId(context.getParams().getRef().getAppRef());
+          return request.send().then(
+              [this, context, registration = kj::mv(registration),
+                  parentToken = kj::mv(parentToken)](auto result) mutable {
+            context.getResults().setCap(kj::heap<IsolateMainViewRestoredCapability>(
+                kj::addRef(*runtimeHost), kj::mv(registration), result.getCap(),
+                kj::mv(parentToken)));
+          });
         });
       }
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
@@ -4844,11 +4739,13 @@ public:
       case SupervisorObjectId<>::ROUTE_BACKED_SESSION:
         return kj::READY_NOW;
       case SupervisorObjectId<>::APP_REF: {
-        auto session = newIsolateMainViewRpcSession(
-            kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost), runtimeHost->headerTable);
-        auto request = KJ_ASSERT_NONNULL(session->cap).castAs<MainView<>>().dropRequest();
-        request.setObjectId(objectId.getAppRef());
-        return request.send().ignoreResult().attach(kj::mv(session));
+        return runtimeHost->openMainViewRegistration().then(
+            [context](
+                kj::Own<IsolateMainViewRegistration>&& registration) mutable {
+          auto request = registration->getView().dropRequest();
+          request.setObjectId(context.getParams().getRef().getAppRef());
+          return request.send().ignoreResult().attach(kj::mv(registration));
+        });
       }
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
         KJ_FAIL_REQUIRE("isolate supervisor-owned persistent object type is not supported yet");
