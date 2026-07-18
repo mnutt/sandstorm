@@ -16,7 +16,9 @@ capabilities — the grain's own worker, another isolate grain, a legacy grain,
 the browser — is a Cap'n Proto two-party peer. Each isolate has **one logical
 capnp RPC authority channel** to its trusted layer. The workerd embedding
 provides a native binary message channel whose bootstrap is supplied by the
-trusted account host; it does not use worker HTTP or WebSocket discovery. The bootstrap exposes the
+trusted account host. A private worker request may establish the workerd
+execution context that owns the native channel, but it is not an RPC transport
+and carries no capability authority. The bootstrap exposes the
 standard Sandstorm API and same-session `SessionContext`. All authority
 operations (claim, save, restore, drop, offer, fulfill, powerbox) are methods
 on capabilities carried by that channel; there is no capability registry
@@ -55,8 +57,9 @@ compatibility with current prototype apps is explicitly a non-goal.
   `getSandstormApi() -> Grain.SandstormApi` and
   `getSessionContext(sessionId) -> Grain.SessionContext`. Do not add
   `restoreForInterface()` or `exportNative()` authority methods.
-- Make a native binary Cap'n Proto channel the single worker authority channel,
-  carrying this bootstrap outside request-scoped `IoContext` lifetime.
+- Make a native binary Cap'n Proto channel the single worker authority channel.
+  When workerd requires a request-scoped `IoContext`, keep that request alive
+  for the lifetime of capabilities exported over its native channel.
 - Exports become ordinary capability passing. Durable app-provided exports use
   classic `AppPersistent.save()` plus `MainView.restore/drop()` and
   `SupervisorObjectId.appRef`; route-backed supervisor capabilities use
@@ -72,6 +75,12 @@ compatibility with current prototype apps is explicitly a non-goal.
 binary Cap'n Proto channel directly into each worker. Worker authority RPC no
 longer uses HTTP or WebSocket; WebSocket remains only at the browser boundary.
 
+**Progress, 2026-07-18:** supervisor-initiated `MainView.restore/drop()` now
+acquires the worker's `MainView` capability over the native bridge. The private
+registration request only creates and retains the worker execution context;
+all capability passing and calls use binary Cap'n Proto. The former MainView
+Cap'n Proto-over-WebSocket transport and worker server session are deleted.
+
 **Progress, 2026-07-08:** `sandstorm:capnp` also exposes
 `restoreNativeCapnpViaBootstrap()`, an explicit migration helper that restores
 durable native capability tokens by calling `SandstormApi.restore()` over the
@@ -82,7 +91,7 @@ checks that the restored live handle can be saved again.
 
 **Progress, 2026-07-08:** `restoreNativeCapnp()` now defaults to the isolate
 bridge bootstrap restore path, so normal durable native capability restores
-return RPC imports carried by the single WebSocket RPC channel.
+return RPC imports carried by the native RPC channel.
 
 **Progress, 2026-07-08:** `connectNativeCapnp()` no longer consumes
 `NativeCapnpLocalDispatch` metadata or exposes a `localDirect` transport. Even
@@ -104,8 +113,8 @@ route-backed/native capabilities while their persistence formats are migrated
 to `MainView.restore/drop()` or explicit supervisor object variants.
 
 **Progress, 2026-07-08:** Non-route `SupervisorObjectId.appRef` restores and
-drops now call the worker's `MainView.restore/drop()` over a native capnp
-WebSocket session, so isolate-defined `AppPersistent` capabilities can be
+drops now call the worker's `MainView.restore/drop()` over the native Cap'n
+Proto bridge, so isolate-defined `AppPersistent` capabilities can be
 saved, restored, called, re-saved, and dropped through the classic app object
 model. The integration fixture now covers a schema-defined `NativeGreeter`
 object ID through that path; route-backed WebSession/ApiSession app refs still
@@ -116,7 +125,7 @@ deleted. `POST /capnp/lifecycle`, the browser-forwarded
 `/__sandstorm/native-capnp/lifecycle` route, the
 `NativeCapnpBridgeRequest/Response/Drop/Save/Restore/Saved` schema, and the
 generated `sandstorm:native-capnp-bridge` helper module are gone.
-`connectNativeCapnp()` now works with live RPC imports from the WebSocket
+`connectNativeCapnp()` now works with live RPC imports from the native
 channel and delegates save/drop to capability methods when present. The
 integration suite asserts that lifecycle is no longer advertised, old
 lifecycle calls are rejected, and the removed browser schema module is absent.
@@ -212,10 +221,9 @@ remain isolated in `sandstorm-internal:capnp-runtime`.
 - Done: `IsolateSessionRegistry`'s worker string-ID claimed-capability table.
   Worker capabilities now hold live RPC refs; the registry only keeps scoped
   browser handoff slots and session-scoped offer state.
-- Done: the misleading per-export HTTP-transport names on the worker
-  `MainView` RPC socket plumbing. The native-export registration endpoint and
-  JS export-session paths were already gone; the remaining C++ session classes
-  are now named for `MainView` RPC.
+- Done: the worker `MainView` capability is registered directly over the native
+  bridge. Its former private Cap'n Proto-over-WebSocket client/server stack is
+  deleted rather than renamed or retained as a fallback.
 **Keep as an HTTP-shaped capability API:** inbound WebSession fetch,
 `STORAGE`, and non-authority metadata operations. These are transported by
 `HttpService` capabilities over the same binary Cap'n Proto connection, not by
@@ -288,8 +296,8 @@ Do this while surface area is small and before any stability promise.
     WebSession/ApiSession tokens as supervisor-owned typed object IDs.
     `appRef` restores are reserved for app-defined objects, while route-backed
     restore/drop dispatch directly in the isolate supervisor. The fake
-    SandstormCore used by `isolate-websession-client` preserves app refs and
-    route-backed refs as separate token kinds.
+    The account-host integration fixture preserves app refs and route-backed
+    refs as separate token kinds.
 - **capnp-es custody.** `@mnutt/capnp-es` must stop being a personal-fork npm
   dependency: upstream, vendor into the tree, or move to a `sandstorm-org`
   namespace with pinned integrity hashes in the build. The runtime is
@@ -304,8 +312,8 @@ Do this while surface area is small and before any stability promise.
     `interface Foo @... extends(...)` are checked accurately. The tracked
     isolate platform ABI snapshots cover `isolate-bridge.capnp`,
     `isolate-supervisor-internal.capnp`, and `outbound-http-session.capnp`,
-    and `make isolate-capnp-toolchain-test` runs
-    `make isolate-capnp-abi-check` before the JS fixture.
+    and `isolate-capnp-toolchain-test` depends on
+    `isolate-capnp-abi-check`.
 - **Dev tooling:** `spk dev-isolate --app-interface` must work from ordinary
   app directories and fail cleanly on invalid paths.
   - Done: app-interface metadata parsing now uses the same Sandstorm schema
@@ -323,18 +331,13 @@ Do this while surface area is small and before any stability promise.
     implementation and worker-side file uploads.
 - Fuzz the supervisor-side `MessageStream` framing parsers and add
   differential capnp-es/KJ corpus and RPC conformance tests.
-  - Progress: the isolate integration fixture now opens native Cap'n Proto
-    WebSocket RPC sessions, sends malformed binary/text frames, verifies that
-    the session closes, and checks that the supervisor remains responsive.
-    The two supervisor MessageStream implementations now share the parser
+  - Progress: the browser integration fixture opens browser-scoped native
+    Cap'n Proto WebSocket RPC sessions and covers upgrade and disconnect
+    cleanup. The remaining supervisor WebSocket `MessageStream` uses the parser
     exercised by a native KJ test. That test round-trips a valid RPC bootstrap
     frame, checks explicit malformed segment tables, and deterministically
     feeds 4,096 generated malformed frames through the production parser with
     bounded traversal and nesting limits.
-  - Done: the WebSession client fixture opens a browser-scoped native capnp
-    WebSocket through `WebSession.openWebSocket()` and then tears it down
-    without sending RPC frames, covering the upgrade path and no-frame
-    disconnect cleanup.
   - Done: `make isolate-capnp-corpus-test` replays deterministic capnp-es/KJ
     encode/decode corpus cases for common struct field shapes, and
     `make isolate-capnp-toolchain-test` runs it with the generated-type checks.
@@ -531,8 +534,9 @@ plausibly close the gap.
 
 The prototype's production machinery has been removed to avoid maintaining a
 second transport and a duplicate security-critical RPC state machine for a
-modest gain. Cross-grain capabilities continue to use the ordinary WebSocket
-transport. Revisit this phase only if workerd or capnp-es gains a substantially
+modest gain. Cross-grain capabilities use the ordinary native binary Cap'n
+Proto bridge; WebSocket remains only at the browser boundary. Revisit this
+phase only if workerd or capnp-es gains a substantially
 simpler upstream facility, or new workload measurements demonstrate a larger
 benefit. Phase 5 is an optional optimization and does not block stabilization.
 
@@ -596,12 +600,12 @@ lifecycle, and backend-recovery suites.
   that measurement now supports deferral rather than a second production
   transport.
 - **Biggest risk, Phase 1:** capnp-es becomes fully load-bearing for all
-  authority operations (hence Phase 3 custody/fuzzing). Second: WebSocket
-  connection lifecycle under worker eviction — mitigated by invariant 3 and
-  explicit reconnect semantics in the trusted layer.
+  authority operations (hence Phase 3 custody/fuzzing). Native-channel
+  lifetime under request completion and worker eviction is covered by the
+  registration lease and explicit reconnect semantics in the trusted layer.
 - **Biggest risk, Phase 4:** quietly weakening the isolation story. The
   blast-radius policy must be a documented, deliberate choice, not an
   emergent property of the implementation.
 - **Risk if Phase 5 is revived:** cap-table translation bugs can leak authority
   between colocated grains. Any future design must keep translation and
-  revocation outside app heaps and prove parity with the WebSocket path.
+  revocation outside app heaps and prove parity with the native RPC path.

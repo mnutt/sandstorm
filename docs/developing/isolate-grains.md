@@ -106,9 +106,11 @@ make isolate-cross-grain-benchmark
 
 The harness starts two grains in one account-shared native host. The provider
 saves a typed Cap'n Proto capability, the consumer restores it, and all timed
-calls go directly from the consumer isolate to the provider isolate. HTTP is
-used only to start the benchmark and collect its JSON report; capability save,
-restore, connection setup, and HTTP orchestration are outside the timed region.
+calls use the consumer and provider native Cap'n Proto channels through the
+trusted account host's capability proxy. No HTTP or WebSocket transport is in
+the timed path. HTTP is used only to start the benchmark and collect its JSON
+report; capability save, restore, connection setup, and HTTP orchestration are
+outside the timed region.
 
 The default report contains a serial zero-byte ping to expose fixed call
 latency and a serial 1 MiB echo to expose data-transfer overhead. Each echo
