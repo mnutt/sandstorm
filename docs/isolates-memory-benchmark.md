@@ -2,10 +2,10 @@
 
 This benchmark measures the host-process memory benefit from putting multiple
 warmed workers in one `isolate-host`. On the test machine, the shared host's
-fitted incremental cost was **1.19 MiB PSS per worker**, compared with **8.15
+fitted incremental cost was **1.18 MiB PSS per worker**, compared with **8.11
 MiB PSS per worker** for one host process per worker. At 32 workers, the shared
-host used 72.4 MiB PSS and the equivalent one-worker processes used 279.9 MiB,
-a 3.9x reduction in total host-process memory.
+host used 70.0 MiB PSS and the equivalent one-worker processes used 277.1 MiB,
+a 4.0x reduction in total host-process memory.
 
 These results establish that sharing the V8/workerd host materially reduces
 per-grain memory overhead. They are not a production capacity limit: real
@@ -19,18 +19,18 @@ count. The regression is ordinary least squares over those seven medians.
 
 | Workers | Shared host PSS | One-worker host PSS |
 | ---: | ---: | ---: |
-| 0 | 33.0 MiB | 0 MiB |
-| 1 | 36.6 MiB | 36.4 MiB |
-| 2 | 37.9 MiB | 47.3 MiB |
-| 4 | 40.1 MiB | 63.6 MiB |
-| 8 | 44.8 MiB | 95.0 MiB |
-| 16 | 54.3 MiB | 156.8 MiB |
-| 32 | 72.4 MiB | 279.9 MiB |
+| 0 | 30.7 MiB | 0 MiB |
+| 1 | 34.5 MiB | 34.1 MiB |
+| 2 | 35.0 MiB | 43.8 MiB |
+| 4 | 37.8 MiB | 60.5 MiB |
+| 8 | 42.5 MiB | 91.8 MiB |
+| 16 | 51.6 MiB | 153.2 MiB |
+| 32 | 70.0 MiB | 277.1 MiB |
 
 | Topology | Slope | Intercept | R-squared |
 | --- | ---: | ---: | ---: |
-| Shared host | 1.19 MiB/worker | 34.9 MiB | 0.995466 |
-| One-worker processes | 8.15 MiB/worker | 23.7 MiB | 0.985970 |
+| Shared host | 1.18 MiB/worker | 32.5 MiB | 0.995686 |
+| One-worker processes | 8.11 MiB/worker | 21.4 MiB | 0.988503 |
 
 The fitted slopes are the useful density comparison. The isolated topology's
 intercept is not the size of an actual zero-worker process: that topology has
@@ -60,9 +60,9 @@ the processes mapping them. Summing PSS across the one-worker host processes
 therefore counts shared executable pages proportionally while retaining each
 process's private cost.
 
-The run was performed on 2026-07-14 UTC with:
+The run was performed on 2026-07-18 UTC with:
 
-- Sandstorm host source parent: `5bb4c04bbd27bda30f400393ddc4e7cdfe40ac6d`
+- Sandstorm host source parent: `533ccf4500b0b4c5065a92112b730130fee28789`
 - workerd source: `ea5e86d22f16996a3d8fdb8922c34eb7e8711cd3`
 - packaged workerd release: `1.20260610.1`
 - Linux `7.0.0-1006-aws`, x86-64, 4 KiB pages
