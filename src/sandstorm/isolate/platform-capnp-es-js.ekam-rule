@@ -26,10 +26,17 @@ while IFS= read -r line <&3; do
   read _SCHEMA_DISK_FILE
 done 3< "$MANIFEST_DISK_FILE"
 
+echo "findProvider file:compiler/capnp"
+read CAPNP
+if test -z "$CAPNP"; then
+  echo "error: couldn't find the Cap'n Proto compiler." >&2
+  exit 1
+fi
+
 echo "newOutput ${output}"
 read OUTPUT_DISK_FILE
 
-python3 - "$OUTPUT_DISK_FILE" "$MANIFEST_DISK_FILE" "$NODEJS" <<'PY'
+python3 - "$OUTPUT_DISK_FILE" "$MANIFEST_DISK_FILE" "$NODEJS" "$CAPNP" <<'PY'
 import subprocess
 import sys
 import os
@@ -38,6 +45,7 @@ from pathlib import Path
 output_path = sys.argv[1]
 manifest_path = Path(sys.argv[2]).resolve()
 nodejs = sys.argv[3]
+capnp = Path(sys.argv[4])
 
 repo_root = None
 for parent in manifest_path.parents:
@@ -46,6 +54,8 @@ for parent in manifest_path.parents:
         break
 if repo_root is None:
     raise SystemExit(f"could not find repository root from {manifest_path}")
+if not capnp.is_absolute():
+    capnp = (repo_root / capnp).resolve()
 
 compiler_module = repo_root / "tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs"
 if not compiler_module.exists():
@@ -70,7 +80,7 @@ extra_includes = [
 ]
 
 capnpc = subprocess.run(
-    ["capnpc", "-o-", *[f"-I{include}" for include in extra_includes],
+    [str(capnp), "compile", "-o-", *[f"-I{include}" for include in extra_includes],
      "-I.", "-I/usr/include", *schema_specs],
     cwd=repo_root / "src",
     stdout=subprocess.PIPE,
