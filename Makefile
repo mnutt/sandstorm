@@ -324,7 +324,10 @@ tmp/.workerd-embed-source: deps/workerd isolate-host/isolate-host-main.c++ \
 	@touch $@
 
 bin/isolate-host: tmp/bazel-$(BAZEL_VERSION) tmp/.workerd-embed-source
-	cd tmp/workerd-embed && ../../tmp/bazel-$(BAZEL_VERSION) build --config=release \
+	# Bazel resolves /usr/lib/ccache/clang to the ccache binary, then invokes it
+	# directly with Clang flags. Hide the symlink farm so it finds Clang itself.
+	cd tmp/workerd-embed && PATH="$${PATH#/usr/lib/ccache:}" \
+		../../tmp/bazel-$(BAZEL_VERSION) build --config=release \
 		//src/workerd/server:sandstorm-isolate-host
 	cp tmp/workerd-embed/bazel-bin/src/workerd/server/sandstorm-isolate-host $@.new
 	mv -f $@.new $@
