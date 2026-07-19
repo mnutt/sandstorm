@@ -3,7 +3,12 @@
 // Licensed under the Apache License, Version 2.0.
 
 #include "isolate-host.capnp.h"
+#include "isolate-bridge.capnp.h"
 #include "isolate-worker-source.capnp.h"
+
+#include <sandstorm/isolate/capnp-es.js.h>
+#include <sandstorm/isolate/capnp-runtime.js.h>
+#include <sandstorm/isolate/platform-capnp-es.js.h>
 
 #include <capnp/ez-rpc.h>
 #include <capnp/compat/http-over-capnp.h>
@@ -72,6 +77,23 @@ void expectFailure(kj::Function<void()> operation) {
   KJ_REQUIRE(exception != nullptr, "host operation unexpectedly succeeded");
 }
 
+kj::String capnpEsRuntimePath(kj::StringPtr moduleName) {
+  if (moduleName == "@mnutt/capnp-es") return kj::str("capnp-es/index.mjs");
+
+  kj::StringPtr capnpEsPrefix = "@mnutt/capnp-es/";
+  if (moduleName.startsWith(capnpEsPrefix)) {
+    auto relative = moduleName.slice(capnpEsPrefix.size());
+    return relative.endsWith(".mjs")
+        ? kj::str("capnp-es/", relative)
+        : kj::str("capnp-es/", relative, ".mjs");
+  }
+
+  kj::StringPtr sharedPrefix = "@mnutt/shared/";
+  KJ_REQUIRE(moduleName.startsWith(sharedPrefix),
+      "unexpected capnp-es runtime module", moduleName);
+  return kj::str("capnp-es/shared/", moduleName.slice(sharedPrefix.size()));
+}
+
 }  // namespace
 }  // namespace sandstorm
 
@@ -84,19 +106,32 @@ int main(int argc, char** argv) {
   source.setFormatVersion(1);
   source.setMainModule("main.js");
   source.setCompatibilityDate("2026-06-10");
-  auto module = source.initModules(1)[0];
+  auto modules = source.initModules(2 + sandstorm::ISOLATE_CAPNP_ES_MODULE_COUNT +
+      sandstorm::ISOLATE_PLATFORM_CAPNP_ES_MODULE_COUNT);
+  uint moduleIndex = 0;
+  auto module = modules[moduleIndex++];
   module.setName("main.js");
   auto script = kj::StringPtr(R"JS(
-export default {
-  previousRpcContext: undefined,
-  rpcCallCount: 0,
+import { createCapnpRpcEventDispatcher } from "sandstorm-internal:capnp-runtime";
+import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
 
+const rpcState = {
+  previousContext: undefined,
+  callCount: 0,
+  sameContext: false,
+};
+const rpcDispatcher = createCapnpRpcEventDispatcher(IsolateBridge, {
+  async createBrowserHandoff({ sessionId }) {
+    return { id: `rpc-${rpcState.callCount}-${rpcState.sameContext ? 1 : 0}-${sessionId}` };
+  },
+});
+
+export default {
   async sandstormRpcEvent(request, env, ctx) {
-    const sameContext = this.previousRpcContext === ctx;
-    this.previousRpcContext = ctx;
-    this.rpcCallCount++;
-    await Promise.resolve();
-    return new Uint8Array([this.rpcCallCount, sameContext ? 1 : 0, ...request]);
+    rpcState.sameContext = rpcState.previousContext === ctx;
+    rpcState.previousContext = ctx;
+    rpcState.callCount++;
+    return await rpcDispatcher.handler(request);
   },
 
   async fetch(request, env) {
@@ -123,6 +158,20 @@ export default {
 };
 )JS");
   module.setEsModule(script.asBytes());
+  auto capnpRuntime = modules[moduleIndex++];
+  capnpRuntime.setName("sandstorm-internal:capnp-runtime");
+  capnpRuntime.setEsModule(kj::StringPtr(sandstorm::ISOLATE_CAPNP_RUNTIME_SOURCE).asBytes());
+  for (auto& runtimeModule: sandstorm::ISOLATE_CAPNP_ES_MODULES) {
+    auto output = modules[moduleIndex++];
+    output.setName(sandstorm::capnpEsRuntimePath(runtimeModule.name));
+    output.setEsModule(kj::StringPtr(runtimeModule.source).asBytes());
+  }
+  for (auto& platformModule: sandstorm::ISOLATE_PLATFORM_CAPNP_ES_MODULES) {
+    auto output = modules[moduleIndex++];
+    output.setName(platformModule.name);
+    output.setEsModule(kj::StringPtr(platformModule.source).asBytes());
+  }
+  KJ_ASSERT(moduleIndex == modules.size());
   auto bindings = source.initBindings(3);
   bindings[0].setName("MESSAGE");
   bindings[0].setText(kj::StringPtr("hello").asBytes());
@@ -251,17 +300,24 @@ export default { fetch() { return new Response("memory limit failed"); } };
   KJ_REQUIRE(httpResponse.body->readAllText().wait(waitScope) == "shared-storage-ok",
       "hosted worker did not round-trip through its storage binding");
 
-  auto firstRpc = grain.invokeRpcEventRequest();
-  firstRpc.setRequest(kj::arr<kj::byte>(4, 5));
-  auto firstRpcResponse = firstRpc.send().wait(waitScope).getResponse();
-  KJ_REQUIRE(firstRpcResponse.asBytes() == kj::arr<kj::byte>(1, 0, 4, 5),
-      "first worker RPC event returned the wrong response", firstRpcResponse);
+  auto rpcBootstrap = grain.getRpcBootstrapRequest().send().wait(waitScope).getCap()
+      .castAs<sandstorm::IsolateBridge>();
+  auto firstRpc = rpcBootstrap.createBrowserHandoffRequest();
+  firstRpc.setCap(capnp::Capability::Client(nullptr));
+  firstRpc.setSessionId("first");
+  auto firstRpcResponse = firstRpc.send().wait(waitScope);
+  // Bootstrap is followed by a Finish housekeeping message before the first application call.
+  // Each protocol message still receives its own workerd event context.
+  KJ_REQUIRE(firstRpcResponse.getId() == "rpc-3-0-first",
+      "typed worker RPC call did not use separate event contexts", firstRpcResponse.getId());
 
-  auto secondRpc = grain.invokeRpcEventRequest();
-  secondRpc.setRequest(kj::arr<kj::byte>(6));
-  auto secondRpcResponse = secondRpc.send().wait(waitScope).getResponse();
-  KJ_REQUIRE(secondRpcResponse.asBytes() == kj::arr<kj::byte>(2, 0, 6),
-      "worker RPC events reused an execution context", secondRpcResponse);
+  auto secondRpc = rpcBootstrap.createBrowserHandoffRequest();
+  secondRpc.setCap(capnp::Capability::Client(nullptr));
+  secondRpc.setSessionId("second");
+  auto secondRpcResponse = secondRpc.send().wait(waitScope);
+  // The first answer is likewise followed by Finish before the next application call.
+  KJ_REQUIRE(secondRpcResponse.getId() == "rpc-5-0-second",
+      "worker-global RPC connection state was not preserved", secondRpcResponse.getId());
 
   auto cpuStart = host.startGrainRequest();
   cpuStart.setGrainId("cpugrain123");
@@ -317,6 +373,12 @@ export default { fetch() { return new Response("memory limit failed"); } };
       "heap-limit termination affected an unrelated worker", postMemoryResponse.statusCode);
   grain.stopRequest().send().wait(waitScope);
 
+  sandstorm::expectFailure([&]() {
+    auto stoppedRpc = rpcBootstrap.createBrowserHandoffRequest();
+    stoppedRpc.setCap(capnp::Capability::Client(nullptr));
+    stoppedRpc.setSessionId("stopped");
+    stoppedRpc.send().wait(waitScope);
+  });
   sandstorm::expectFailure([&]() {
     grain.keepAliveRequest().send().wait(waitScope);
   });

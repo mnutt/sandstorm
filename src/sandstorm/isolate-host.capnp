@@ -49,4 +49,8 @@ interface HostedIsolate @0xae62f18e41ff24cb {
   # Private prototype for one independently-accounted worker RPC event. The native host invokes
   # the worker's reserved `sandstormRpcEvent` handler with `request` and returns its byte response.
   # This is a host protocol seam, not an application-facing RPC or framing format.
+
+  getRpcBootstrap @4 () -> (cap :Capability);
+  # Private prototype exposing the bootstrap of a worker-global, event-driven Cap'n Proto RPC
+  # connection. Application schemas and capability tables remain opaque to the native host.
 }

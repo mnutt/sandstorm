@@ -6,6 +6,10 @@ import {
   Message as CapnpEsMessage,
   utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
+import {
+  Message as CapnpEsRpcMessage,
+  Message_Which as CapnpEsRpcMessageWhich,
+} from "capnp-es/capnp/rpc.mjs";
 import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
 import { ByteStream } from "capnp:/sandstorm/util.capnp";
 
@@ -500,6 +504,127 @@ export class IsolateBridgeNativeTransport extends CapnpEsDeferredTransport {
       this.abort(error);
     }
   }
+}
+
+// A capnp-es Conn normally owns an async receive loop. That is correct for sockets, but not for
+// workerd events: a receive promise created by one event would retain that event's async context
+// and resume it when a later call arrived. Override the constructor hook so each inbound message
+// is instead dispatched explicitly by CapnpRpcEventTransport in the current event.
+class EventDrivenCapnpConn extends CapnpEsConn {
+  startWork() {}
+}
+
+class CapnpRpcEventTransport {
+  #closed = false;
+  #pendingReturns = new Map();
+
+  sendMessage(message) {
+    if (this.#closed) {
+      throw new CapnpUnavailableError("worker Cap'n Proto RPC connection is closed");
+    }
+
+    const bytes = nativeCapnpRootMessageBytes(message).slice();
+    switch (message.which()) {
+      case CapnpEsRpcMessageWhich.RETURN: {
+        const answerId = message.return.answerId;
+        const pending = this.#pendingReturns.get(answerId);
+        if (!pending) {
+          throw new NativeCapnpBridgeProtocolError(
+            `worker produced a Return for unknown RPC answer ${answerId}`);
+        }
+        this.#pendingReturns.delete(answerId);
+        pending.resolve(bytes);
+        return;
+      }
+      case CapnpEsRpcMessageWhich.ABORT: {
+        const error = new NativeCapnpBridgeProtocolError(
+          `worker aborted its Cap'n Proto RPC connection: ${message.abort.reason}`);
+        this.close(error);
+        throw error;
+      }
+      default:
+        throw new NativeCapnpBridgeProtocolError(
+          "worker RPC event produced an unsupported extra protocol message", {
+            messageKind: message.which(),
+          });
+    }
+  }
+
+  async dispatch(connection, request) {
+    if (this.#closed) {
+      throw new CapnpUnavailableError("worker Cap'n Proto RPC connection is closed");
+    }
+
+    const bytes = nativeCapnpMessageBytes(request);
+    const message = new CapnpEsMessage(bytes, false).getRoot(CapnpEsRpcMessage);
+    let questionId;
+    switch (message.which()) {
+      case CapnpEsRpcMessageWhich.BOOTSTRAP:
+        questionId = message.bootstrap.questionId;
+        break;
+      case CapnpEsRpcMessageWhich.CALL:
+        questionId = message.call.questionId;
+        break;
+      default:
+        connection.handleMessage(message);
+        return new Uint8Array(0);
+    }
+
+    if (this.#pendingReturns.has(questionId)) {
+      throw new NativeCapnpBridgeProtocolError(
+        `worker received duplicate concurrent RPC question ${questionId}`);
+    }
+
+    let resolve;
+    let reject;
+    const response = new Promise((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    this.#pendingReturns.set(questionId, { resolve, reject });
+    try {
+      connection.handleMessage(message);
+    } catch (error) {
+      this.#pendingReturns.delete(questionId);
+      throw error;
+    }
+    return await response;
+  }
+
+  close(error = new CapnpUnavailableError("worker Cap'n Proto RPC connection was closed")) {
+    if (this.#closed) return;
+    this.#closed = true;
+    for (const pending of this.#pendingReturns.values()) {
+      pending.reject(error);
+    }
+    this.#pendingReturns.clear();
+  }
+}
+
+// Internal prototype used by the native isolate host. The returned handler must be installed as
+// the reserved sandstormRpcEvent export; application-facing named export syntax will wrap this in
+// a later migration phase.
+export function createCapnpRpcEventDispatcher(InterfaceClass, target, options = {}) {
+  validateNativeCapnpGeneratedInterface(InterfaceClass, "createCapnpRpcEventDispatcher()");
+  if (typeof InterfaceClass.Server !== "function") {
+    throw new TypeError(
+      "createCapnpRpcEventDispatcher() requires a generated server interface class");
+  }
+  if (!target || typeof target !== "object") {
+    throw new TypeError("createCapnpRpcEventDispatcher() requires a server target object");
+  }
+
+  const transport = new CapnpRpcEventTransport();
+  const connection = new EventDrivenCapnpConn(transport, options.finalize);
+  connection.initMain(InterfaceClass, target);
+  return Object.freeze({
+    connection,
+    handler: (request) => transport.dispatch(connection, request),
+    close: (error) => {
+      transport.close(error);
+      connection.shutdown(error);
+    },
+  });
 }
 
 export function createIsolateBridgeConnection(api, options = {}) {

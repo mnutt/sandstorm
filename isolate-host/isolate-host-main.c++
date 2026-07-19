@@ -1654,40 +1654,20 @@ bool isValidGrainId(kj::StringPtr id) {
   return id.size() >= 8 && !id.startsWith(".") && id.findFirst('/') == kj::none;
 }
 
+class WorkerRpcConnection;
+
 struct HostedState final: public kj::Refcounted {
   HostedState(workerd::server::Server& runtime,
       kj::String grainId,
       IsolateBindingServices::Client bindingServices,
       kj::Own<BundleBacking> backing,
       kj::Own<workerd::WorkerStubChannel> worker,
-      kj::Own<SelfServiceTarget> ingressTarget)
-      : runtime(runtime), grainId(kj::mv(grainId)),
-        bindingServices(kj::mv(bindingServices)), backing(kj::mv(backing)),
-        worker(kj::mv(worker)), ingressTarget(kj::mv(ingressTarget)) {}
+      kj::Own<SelfServiceTarget> ingressTarget);
 
-  ~HostedState() noexcept {
-    revokeSelfServices();
-  }
+  ~HostedState() noexcept;
 
-  void revokeSelfServices() {
-    if (backing.get() != nullptr) {
-      for (auto& target: backing->selfServices) target->worker = nullptr;
-    }
-  }
-
-  void stop() {
-    if (!running) return;
-    if (!idleTimerCanceler.isEmpty()) {
-      idleTimerCanceler.cancel("hosted isolate stopped");
-    }
-    runtime.evictDynamicWorker(LOADER_NAMESPACE, grainId);
-    ingressTarget->worker = nullptr;
-    revokeSelfServices();
-    bindingServices = IsolateBindingServices::Client(nullptr);
-    worker = nullptr;
-    backing = nullptr;
-    running = false;
-  }
+  void revokeSelfServices();
+  void stop();
 
   workerd::server::Server& runtime;
   kj::String grainId;
@@ -1695,9 +1675,188 @@ struct HostedState final: public kj::Refcounted {
   kj::Own<BundleBacking> backing;
   kj::Own<workerd::WorkerStubChannel> worker;
   kj::Own<SelfServiceTarget> ingressTarget;
+  kj::Maybe<kj::Own<WorkerRpcConnection>> rpcConnection;
   kj::Canceler idleTimerCanceler;
   bool running = true;
 };
+
+kj::Promise<kj::Array<kj::byte>> dispatchWorkerRpcEvent(
+    kj::Rc<HostedState> state, kj::Array<kj::byte> input) {
+  KJ_REQUIRE(state->running, "hosted isolate has been stopped");
+  KJ_REQUIRE(input.size() <= MAX_RPC_EVENT_BYTES,
+      "worker RPC event request exceeds size limit", input.size(), MAX_RPC_EVENT_BYTES);
+
+  auto ingress = state->worker->getEntrypoint(kj::none, workerd::Frankenvalue(), kj::none);
+  auto request = ingress->startRequest({});
+  auto result = kj::refcounted<SandstormRpcEventResult>();
+  auto promise = request->customEvent(kj::heap<SandstormRpcEvent>(
+      kj::mv(input), kj::addRef(*result)));
+  return promise.then([state = kj::mv(state), result = kj::mv(result),
+                          request = kj::mv(request), ingress = kj::mv(ingress)](
+                          auto eventResult) mutable {
+    KJ_REQUIRE(eventResult.outcome == workerd::EventOutcome::OK,
+        "worker RPC event failed", eventResult.outcome);
+    return kj::mv(KJ_REQUIRE_NONNULL(
+        result->response, "worker RPC event returned no response"));
+  });
+}
+
+class WorkerRpcMessageStream final: public capnp::MessageStream {
+ public:
+  explicit WorkerRpcMessageStream(kj::Rc<HostedState> state): state(kj::mv(state)) {}
+
+  kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> tryReadMessage(
+      kj::ArrayPtr<kj::AutoCloseFd> fdSpace,
+      capnp::ReaderOptions options,
+      kj::ArrayPtr<capnp::word>) override {
+    KJ_REQUIRE(fdSpace.size() == 0, "worker RPC connections do not carry file descriptors");
+    if (!responses.empty()) {
+      auto response = kj::mv(responses.front());
+      for (size_t i = 1; i < responses.size(); ++i) {
+        responses[i - 1] = kj::mv(responses[i]);
+      }
+      responses.removeLast();
+      return readMessage(kj::mv(response), options);
+    }
+    if (closed) return kj::Maybe<capnp::MessageReaderAndFds>(kj::none);
+    KJ_REQUIRE(waitingReader == kj::none, "only one worker RPC read may be pending");
+    auto paf = kj::newPromiseAndFulfiller<kj::Maybe<kj::Array<kj::byte>>>();
+    waitingReader = kj::mv(paf.fulfiller);
+    return paf.promise.then([options](kj::Maybe<kj::Array<kj::byte>> response)
+        -> kj::Maybe<capnp::MessageReaderAndFds> {
+      KJ_IF_SOME(bytes, response) {
+        return readMessage(kj::mv(bytes), options);
+      }
+      return kj::none;
+    });
+  }
+
+  kj::Promise<void> writeMessage(kj::ArrayPtr<const int> fds,
+      kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) override {
+    KJ_REQUIRE(fds.size() == 0, "worker RPC connections do not carry file descriptors");
+    return sendMessage(capnp::messageToFlatArray(segments));
+  }
+
+  kj::Promise<void> writeMessages(
+      kj::ArrayPtr<kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>>> messages) override {
+    kj::Promise<void> result = kj::READY_NOW;
+    for (auto message: messages) {
+      auto words = capnp::messageToFlatArray(message);
+      result = result.then([this, words = kj::mv(words)]() mutable {
+        return sendMessage(kj::mv(words));
+      });
+    }
+    return result;
+  }
+
+  kj::Maybe<int> getSendBufferSize() override { return kj::none; }
+
+  kj::Promise<void> end() override {
+    close();
+    return kj::READY_NOW;
+  }
+
+  void close() {
+    if (closed) return;
+    closed = true;
+    responses.clear();
+    KJ_IF_SOME(reader, waitingReader) {
+      reader->fulfill(kj::none);
+      waitingReader = kj::none;
+    }
+  }
+
+ private:
+  static kj::Maybe<capnp::MessageReaderAndFds> readMessage(
+      kj::Array<kj::byte> bytes, capnp::ReaderOptions options) {
+    KJ_REQUIRE(bytes.size() % sizeof(capnp::word) == 0,
+        "worker returned a Cap'n Proto message that is not word-aligned", bytes.size());
+    auto words = kj::heapArray<capnp::word>(bytes.size() / sizeof(capnp::word));
+    memcpy(words.begin(), bytes.begin(), bytes.size());
+    auto reader = kj::heap<capnp::FlatArrayMessageReader>(words.asPtr(), options);
+    kj::Own<capnp::MessageReader> owned =
+        kj::attachRef(*reader, kj::mv(reader), kj::mv(words));
+    return capnp::MessageReaderAndFds { kj::mv(owned), nullptr };
+  }
+
+  kj::Promise<void> sendMessage(kj::Array<capnp::word> words) {
+    KJ_REQUIRE(!closed, "worker RPC connection is closed");
+    auto bytes = kj::heapArray<kj::byte>(words.asBytes());
+    return dispatchWorkerRpcEvent(state.addRef(), kj::mv(bytes)).then(
+        [this](kj::Array<kj::byte> response) {
+      if (response.size() == 0) return;
+      KJ_IF_SOME(reader, waitingReader) {
+        reader->fulfill(kj::mv(response));
+        waitingReader = kj::none;
+      } else {
+        responses.add(kj::mv(response));
+      }
+    });
+  }
+
+  kj::Rc<HostedState> state;
+  kj::Vector<kj::Array<kj::byte>> responses;
+  kj::Maybe<kj::Own<kj::PromiseFulfiller<kj::Maybe<kj::Array<kj::byte>>>>> waitingReader;
+  bool closed = false;
+};
+
+class WorkerRpcConnection final {
+ public:
+  explicit WorkerRpcConnection(kj::Rc<HostedState> state)
+      : stream(kj::mv(state)),
+        network(stream, capnp::rpc::twoparty::Side::CLIENT),
+        rpcSystem(capnp::makeRpcClient(network)) {}
+
+  ~WorkerRpcConnection() noexcept { stream.close(); }
+
+  capnp::Capability::Client bootstrap() {
+    capnp::word scratch[4] = {};
+    capnp::MallocMessageBuilder message(scratch);
+    auto vatId = message.getRoot<capnp::rpc::twoparty::VatId>();
+    vatId.setSide(capnp::rpc::twoparty::Side::SERVER);
+    return rpcSystem.bootstrap(vatId);
+  }
+
+ private:
+  WorkerRpcMessageStream stream;
+  capnp::TwoPartyVatNetwork network;
+  capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
+};
+
+HostedState::HostedState(workerd::server::Server& runtime,
+    kj::String grainId,
+    IsolateBindingServices::Client bindingServices,
+    kj::Own<BundleBacking> backing,
+    kj::Own<workerd::WorkerStubChannel> worker,
+    kj::Own<SelfServiceTarget> ingressTarget)
+    : runtime(runtime), grainId(kj::mv(grainId)),
+      bindingServices(kj::mv(bindingServices)), backing(kj::mv(backing)),
+      worker(kj::mv(worker)), ingressTarget(kj::mv(ingressTarget)) {}
+
+HostedState::~HostedState() noexcept {
+  revokeSelfServices();
+}
+
+void HostedState::revokeSelfServices() {
+  if (backing.get() != nullptr) {
+    for (auto& target: backing->selfServices) target->worker = nullptr;
+  }
+}
+
+void HostedState::stop() {
+  if (!running) return;
+  if (!idleTimerCanceler.isEmpty()) {
+    idleTimerCanceler.cancel("hosted isolate stopped");
+  }
+  rpcConnection = kj::none;
+  runtime.evictDynamicWorker(LOADER_NAMESPACE, grainId);
+  ingressTarget->worker = nullptr;
+  revokeSelfServices();
+  bindingServices = IsolateBindingServices::Client(nullptr);
+  worker = nullptr;
+  backing = nullptr;
+  running = false;
+}
 
 class HostedIsolateImpl final: public HostedIsolate::Server {
  public:
@@ -1726,24 +1885,23 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
   }
 
   kj::Promise<void> invokeRpcEvent(InvokeRpcEventContext context) override {
-    KJ_REQUIRE(state->running, "hosted isolate has been stopped");
     auto input = context.getParams().getRequest();
-    KJ_REQUIRE(input.size() <= MAX_RPC_EVENT_BYTES,
-        "worker RPC event request exceeds size limit", input.size(), MAX_RPC_EVENT_BYTES);
-
-    auto ingress = state->worker->getEntrypoint(
-        kj::none, workerd::Frankenvalue(), kj::none);
-    auto request = ingress->startRequest({});
-    auto result = kj::refcounted<SandstormRpcEventResult>();
-    auto promise = request->customEvent(kj::heap<SandstormRpcEvent>(
-        kj::heapArray(input.asBytes()), kj::addRef(*result)));
-    return promise.then([context, result = kj::mv(result), request = kj::mv(request),
-                            ingress = kj::mv(ingress)](auto eventResult) mutable {
-      KJ_REQUIRE(eventResult.outcome == workerd::EventOutcome::OK,
-          "worker RPC event failed", eventResult.outcome);
-      context.getResults().setResponse(
-          KJ_REQUIRE_NONNULL(result->response, "worker RPC event returned no response"));
+    return dispatchWorkerRpcEvent(state.addRef(), kj::heapArray(input.asBytes())).then(
+        [context](kj::Array<kj::byte> response) mutable {
+      context.getResults().setResponse(response);
     });
+  }
+
+  kj::Promise<void> getRpcBootstrap(GetRpcBootstrapContext context) override {
+    KJ_REQUIRE(state->running, "hosted isolate has been stopped");
+    KJ_IF_SOME(connection, state->rpcConnection) {
+      context.getResults().setCap(connection->bootstrap());
+    } else {
+      auto connection = kj::heap<WorkerRpcConnection>(state.addRef());
+      context.getResults().setCap(connection->bootstrap());
+      state->rpcConnection = kj::mv(connection);
+    }
+    return kj::READY_NOW;
   }
 
  private:
@@ -1760,6 +1918,10 @@ class IsolateHostImpl final: public IsolateHost::Server, private kj::TaskSet::Er
       kj::Duration idleTimeout)
       : runtime(runtime), streamFactory(streamFactory), timer(timer),
         idleTimeout(idleTimeout), tasks(*this) {}
+
+  ~IsolateHostImpl() noexcept {
+    for (auto& entry: grains) entry.value->stop();
+  }
 
   kj::Promise<void> startGrain(StartGrainContext context) override {
     auto grainId = context.getParams().getGrainId();

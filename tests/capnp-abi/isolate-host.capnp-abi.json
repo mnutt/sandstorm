@@ -76,6 +76,14 @@
           "resultStructId": "0xdab23bdc5f32ed0d",
           "params": [{"name": "request", "type": "Data"}],
           "results": [{"name": "response", "type": "Data"}]
+        },
+        {
+          "name": "getRpcBootstrap",
+          "ordinal": 4,
+          "paramStructId": "0xcc045d48e5bd10f9",
+          "resultStructId": "0xbd57805cf9da6ed9",
+          "params": [],
+          "results": [{"name": "cap", "type": "Capability"}]
         }
       ]
     }
