@@ -6,8 +6,6 @@ import {
 } from "/capnp-es/index.mjs";
 import { BrowserIsolateBridge } from "/__sandstorm/capnp/sandstorm/isolate-bridge.capnp.js";
 
-export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
-
 class NativeCapnpBridgeUnavailableError extends Error {
   constructor(message, details = {}) {
     super(message);
@@ -160,17 +158,6 @@ function normalizeNativeCapnpCapabilitySlot(slot) {
   });
 }
 
-function nativeCapnpCapabilityForInterface(capability, InterfaceClass, options = {}) {
-  const metadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
-  return Object.freeze({
-    ...capability,
-    id: capability.id,
-    interfaceId: options.interfaceId ?? capability.interfaceId ?? metadata.interfaceId,
-    interfaceName: options.interfaceName ?? capability.interfaceName ?? metadata.interfaceName,
-    kind: capability.kind ?? "receiverHosted",
-  });
-}
-
 function normalizeConnectionId(connectionId) {
   if (typeof connectionId === "string" && connectionId.length > 0) return connectionId;
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -178,16 +165,6 @@ function normalizeConnectionId(connectionId) {
   }
   return "browser-native-capnp-" + Date.now().toString(36) + "-" +
     Math.random().toString(36).slice(2);
-}
-
-export async function nativeCapnpBridgeInfo() {
-  const response = await fetch("/__sandstorm/native-capnp/bridge-info");
-  const result = await response.json();
-  if (!response.ok || !result.ok) {
-    throw new NativeCapnpBridgeUnavailableError(
-      result.error || "native bridge info request failed", { response, result });
-  }
-  return result;
 }
 
 async function nativeCapnpBrowserMessageBytes(data) {
@@ -254,11 +231,6 @@ export function openBrowserNativeCapnpRpcSession(connectionId) {
     webSocket.addEventListener("close", onClose);
   });
 }
-
-export const browserNativeCapnpApi = Object.freeze({
-  capnpBridgeInfo: nativeCapnpBridgeInfo,
-  openBrowserNativeCapnpRpcSession,
-});
 
 const nativeCapnpPowerboxDescriptorCache = new Map();
 

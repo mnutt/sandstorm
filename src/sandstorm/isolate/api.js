@@ -264,7 +264,6 @@ async function callSandstormApi(env, path) {
 
 function nativeCapnpBridgeApi(env) {
   return {
-    capnpBridgeInfo: () => callSandstormApi(env, "capnp/bridge-info"),
     nativeCapnpBridgeOpenChannel: () => {
       const factory = env.__SANDSTORM_NATIVE_CAPNP;
       if (!factory || typeof factory.open !== "function") {
@@ -319,15 +318,6 @@ class NativeCapnpBridgeUnavailableError extends Error {
     this.name = "NativeCapnpBridgeUnavailableError";
     this.details = details;
   }
-}
-
-function isPlainObject(value) {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
 }
 
 function storageUrl(key = "") {
@@ -2113,19 +2103,6 @@ async function serveBrowserSystemRoute(request, env) {
     });
   }
 
-  if (url.pathname === "/__sandstorm/native-capnp/bridge-info" &&
-      request.method === "GET") {
-    const response = await env.SANDSTORM_API.fetch("http://sandstorm/capnp/bridge-info");
-    return new Response(await response.text(), {
-      status: response.status,
-      statusText: response.statusText,
-      headers: {
-        "content-type": response.headers.get("content-type") ||
-          "application/json; charset=utf-8",
-      },
-    });
-  }
-
   if (url.pathname === "/__sandstorm/native-capnp/rpc-session" &&
       request.method === "GET") {
     const headers = {};
@@ -2346,17 +2323,6 @@ function cacheCapabilityMetadata(id, metadata = {}) {
     liveForwardable: metadata.liveForwardable !== undefined
       ? Boolean(metadata.liveForwardable)
       : true,
-  });
-}
-
-function cacheImportedCapabilityMetadata(id, kind, metadata) {
-  cacheCapabilityMetadata(id, {
-    ...metadata,
-    kind,
-    residence: "imported",
-    persistent: true,
-    hasNativeCapability: true,
-    liveForwardable: true,
   });
 }
 
@@ -3286,12 +3252,6 @@ async function requiredPermissionSet(env, names) {
   return declaredNames.map((name) => required.has(name));
 }
 
-async function validateRequiredPermissions(env, names) {
-  if (names.length === 0) return;
-
-  await requiredPermissionSet(env, names);
-}
-
 export function powerbox(request, env) {
   const claimToken = async (token, options = {}) => {
     token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
@@ -3488,10 +3448,6 @@ export function sandstorm(request, env) {
     session: () => getSession(request),
     unstable: Object.freeze({
       status: () => callSandstorm(env, "status"),
-      capabilities: () => callSandstorm(env, "capabilities"),
-      runtime: () => callSandstorm(env, "runtime"),
-      modules: () => callSandstorm(env, "modules"),
-      bindings: () => callSandstorm(env, "bindings"),
     }),
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
@@ -3509,9 +3465,6 @@ export function sandstorm(request, env) {
   // Cap'n Proto runtime. They deliberately remain absent from the enumerable,
   // app-facing API surface.
   Object.defineProperties(api, {
-    capnpBridgeInfo: {
-      value: () => callSandstorm(env, "capnp/bridge-info"),
-    },
     nativeCapnpBridgeOpenChannel: {
       value: () => nativeCapnpBridgeApi(env).nativeCapnpBridgeOpenChannel(),
     },

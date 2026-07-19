@@ -264,7 +264,7 @@ declare module "sandstorm:api" {
    * do not need to add methods to SandstormApi's stable surface.
    */
   export interface UnstableSandstormDiagnostics {
-    readonly [name: string]: (...args: unknown[]) => Promise<unknown>;
+    status(): Promise<unknown>;
   }
 
   export interface SandstormApi {

@@ -972,21 +972,6 @@ kj::String bindingBundleFileName(size_t index) {
   return kj::str("binding-", index, ".bin");
 }
 
-bool isWorkerdDirectBinding(IsolateRuntimeConfig::Binding& binding) {
-  switch (binding.type) {
-    case IsolateRuntimeConfig::BindingType::TEXT:
-    case IsolateRuntimeConfig::BindingType::DATA:
-    case IsolateRuntimeConfig::BindingType::JSON:
-    case IsolateRuntimeConfig::BindingType::SANDSTORM_API:
-    case IsolateRuntimeConfig::BindingType::STORAGE:
-    case IsolateRuntimeConfig::BindingType::POWERBOX:
-    case IsolateRuntimeConfig::BindingType::SERVICE:
-      return true;
-  }
-
-  KJ_UNREACHABLE;
-}
-
 kj::Array<byte> prepareRuntimeState(kj::StringPtr varPath, IsolateRuntimeConfig& config) {
   auto bundleDir = kj::str(varPath, "/isolate-runtime");
   config.runtimeStateDir = kj::str(bundleDir);
@@ -1375,7 +1360,6 @@ constexpr uint64_t MAX_RUNTIME_RESPONSE_BYTES = 64 * 1024 * 1024;
 constexpr uint64_t MAX_NATIVE_CAPNP_RPC_WEBSOCKET_MESSAGE_BYTES =
     MAX_RUNTIME_REQUEST_BYTES + 1024 * 1024;
 constexpr uint64_t MAX_API_BINDING_REQUEST_BYTES = 1024 * 1024;
-constexpr uint NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION = 0;
 constexpr uint64_t RUNTIME_RESPONSE_STREAM_THRESHOLD_BYTES = 64 * 1024;
 constexpr uint64_t RUNTIME_STREAM_PUMP_CHUNK_BYTES = 1024 * 1024;
 
@@ -3246,16 +3230,6 @@ public:
         return outboundHttpPowerboxDescriptor(path, response);
       } else if (route == "/powerbox/app-interface-descriptor") {
         return appInterfacePowerboxDescriptor(path, response);
-      } else if (route == "/capabilities") {
-        return sendJson(response, 200, "OK", renderCapabilities());
-      } else if (route == "/runtime") {
-        return sendJson(response, 200, "OK", renderRuntime());
-      } else if (route == "/modules") {
-        return sendJson(response, 200, "OK", renderModules());
-      } else if (route == "/bindings") {
-        return sendJson(response, 200, "OK", renderBindings());
-      } else if (route == "/capnp/bridge-info") {
-        return sendJson(response, 200, "OK", renderCapnpBridgeInfo());
       } else if (route == "/capnp/browser-module") {
         return browserCapnpEsModule(path, response);
       } else if (route == "/permissions") {
@@ -3768,32 +3742,6 @@ private:
       return kj::String(json.releaseAsArray());
   }
 
-  kj::String renderCapabilities() {
-    return kj::str(
-        "{\n"
-        "  \"ok\": true,\n"
-        "  \"binding\": \"sandstormApi\",\n"
-        "  \"capabilities\": [\"status\", \"capabilities\", \"runtime\", \"modules\", "
-        "\"bindings\", \"permissions\", \"capnp.bridgeInfo\", "
-        "\"powerbox.claim\", "
-        "\"powerbox.apiSessionDescriptor\", \"powerbox.outboundHttpDescriptor\", "
-        "\"powerbox.offer\", \"powerbox.fulfillRequest\", \"powerbox.tieToUser\"]\n"
-        "}\n");
-  }
-
-  kj::String renderCapnpBridgeInfo() {
-    return kj::str(
-        "{\n"
-        "  \"ok\": true,\n"
-        "  \"type\": \"capnpBridgeInfo\",\n"
-        "  \"protocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
-        "  \"minProtocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
-        "  \"maxProtocolVersion\": ", NATIVE_CAPNP_BRIDGE_PROTOCOL_VERSION, ",\n"
-        "  \"nativeTransport\": true,\n"
-        "  \"nativeRpc\": true\n"
-        "}\n");
-  }
-
   kj::String renderPermissions() {
     auto viewInfo = config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader();
     auto permissionDefs = viewInfo.getPermissions();
@@ -4046,47 +3994,6 @@ private:
     }
   }
 
-  kj::String renderRuntime() {
-    kj::Vector<char> json;
-    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"binding\": \"sandstormApi\",\n  "));
-    appendJsonField(json, "mainModule", config.mainModule);
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "compatibilityDate", config.compatibilityDate);
-    json.addAll(kj::StringPtr(",\n  "));
-    appendJsonField(json, "topology", "accountSharedHost");
-    json.addAll(kj::StringPtr(",\n  \"compatibilityFlags\": ["));
-    for (auto i: kj::indices(config.compatibilityFlags)) {
-      if (i > 0) json.addAll(kj::StringPtr(", "));
-      appendJsonString(json, config.compatibilityFlags[i]);
-    }
-    json.addAll(kj::StringPtr("],\n  \"moduleCount\": "));
-    json.addAll(kj::str(config.modules.size()));
-    json.addAll(kj::StringPtr(",\n  \"bindingCount\": "));
-    json.addAll(kj::str(config.bindings.size()));
-    json.addAll(kj::StringPtr("\n}\n"));
-    json.add('\0');
-    return kj::String(json.releaseAsArray());
-  }
-
-  kj::String renderModules() {
-    kj::Vector<char> json;
-    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"modules\": [\n"));
-    for (auto i: kj::indices(config.modules)) {
-      if (i > 0) json.addAll(kj::StringPtr(",\n"));
-      json.addAll(kj::StringPtr("    { "));
-      appendJsonField(json, "name", config.modules[i].name);
-      json.addAll(kj::StringPtr(", "));
-      appendJsonField(json, "type", moduleTypeName(config.modules[i].type));
-      json.addAll(kj::StringPtr(", \"main\": "));
-      json.addAll(config.modules[i].name == config.mainModule
-          ? kj::StringPtr("true") : kj::StringPtr("false"));
-      json.addAll(kj::StringPtr(" }"));
-    }
-    json.addAll(kj::StringPtr("\n  ]\n}\n"));
-    json.add('\0');
-    return kj::String(json.releaseAsArray());
-  }
-
   static bool isValidBrowserModulePath(kj::StringPtr path) {
     if (path.size() == 0 || path.startsWith("/") || path.findFirst('\\') != nullptr) {
       return false;
@@ -4259,28 +4166,6 @@ private:
     }
   }
 
-  kj::String renderBindings() {
-    kj::Vector<char> json;
-    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"bindings\": [\n"));
-    for (auto i: kj::indices(config.bindings)) {
-      if (i > 0) json.addAll(kj::StringPtr(",\n"));
-      json.addAll(kj::StringPtr("    { "));
-      appendJsonField(json, "name", config.bindings[i].name);
-      json.addAll(kj::StringPtr(", "));
-      appendJsonField(json, "type", bindingTypeName(config.bindings[i].type));
-      json.addAll(kj::StringPtr(", \"workerdDirect\": "));
-      json.addAll(isWorkerdDirectBinding(config.bindings[i])
-          ? kj::StringPtr("true") : kj::StringPtr("false"));
-      if (config.bindings[i].serviceName.size() > 0) {
-        json.addAll(kj::StringPtr(", "));
-        appendJsonField(json, "serviceName", config.bindings[i].serviceName);
-      }
-      json.addAll(kj::StringPtr(" }"));
-    }
-    json.addAll(kj::StringPtr("\n  ]\n}\n"));
-    json.add('\0');
-    return kj::String(json.releaseAsArray());
-  }
 };
 
 IsolateBridge::Client SandstormApiBindingService::makeBridge(
