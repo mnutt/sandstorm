@@ -61,7 +61,7 @@ fixtures, and `make isolate-ci` before merge.
 The boundary is intentionally narrower than every implementation detail.
 Members and response shapes below `api.unstable` may change without notice.
 The raw `SANDSTORM_API`, `POWERBOX`, and `STORAGE` binding endpoints, native
-bridge negotiation hooks, browser transport framing, host control protocols,
+bridge hooks, browser transport framing, host control protocols,
 generated package layout, and operator hosting topology are private. Apps
 should use the documented helper and schema surfaces rather than depending on
 those details.
@@ -235,10 +235,10 @@ specific framework integration reason to pass `request` and `env` through
 manually. Undocumented exports and the raw injected bindings are implementation
 details.
 
-Operational tooling can use `api.unstable`, which currently contains runtime
-and binding diagnostics. The namespace is a deliberate quarantine boundary:
-its member names and response shapes are not part of the compatibility
-contract and application behavior must not depend on them.
+Operational tooling can use `api.unstable.status()` for a liveness probe. The
+namespace is a deliberate quarantine boundary: its member names and response
+shape are not part of the compatibility contract and application behavior must
+not depend on them.
 
 Do not use versioned import paths such as `sandstorm:api/v1`. Sandstorm uses the
 app's isolate compatibility date and compatibility flags to preserve existing

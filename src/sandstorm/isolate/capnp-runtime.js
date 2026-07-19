@@ -9,13 +9,6 @@ import {
 import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
 import { ByteStream } from "capnp:/sandstorm/util.capnp";
 
-export const SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION = 0;
-
-const NATIVE_CAPNP_BRIDGE_FEATURES = Object.freeze([
-  "nativeTransport",
-  "nativeRpc",
-]);
-
 // Shared only by trusted runtime modules. This symbol is the unforgeable protocol used
 // to obtain a live capnp-es reference without exposing it on the public API.
 export const CAPNP_CLIENT_SYMBOL = Symbol("sandstorm.capnp.client");
@@ -41,68 +34,6 @@ function initCapnpCapabilityParam(params, cap, name = "capability") {
 function initSandstormApiSaveParams(params, cap, label) {
   initCapnpCapabilityParam(params, cap, "SandstormApi.save() capability");
   initLocalizedText(params._initLabel(), label);
-}
-
-function invalidNativeCapnpBridgeInfo(reason, info) {
-  return Object.freeze({
-    available: false,
-    protocolSupported: false,
-    protocolVersion: SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
-    nativeTransport: false,
-    nativeRpc: false,
-    missingFeatures: Object.freeze([]),
-    reason,
-    info,
-  });
-}
-
-export function negotiateNativeCapnpBridgeInfo(info, options = {}) {
-  if (!info || typeof info !== "object" || info.type !== "capnpBridgeInfo") {
-    return invalidNativeCapnpBridgeInfo("invalid bridge info", info);
-  }
-
-  const requiredFeatures = options.requiredFeatures || [];
-  for (const feature of requiredFeatures) {
-    if (!NATIVE_CAPNP_BRIDGE_FEATURES.includes(feature)) {
-      throw new TypeError(`unknown native Cap'n Proto bridge feature: ${feature}`);
-    }
-  }
-
-  const minProtocolVersion = Number(info.minProtocolVersion);
-  const maxProtocolVersion = Number(info.maxProtocolVersion);
-  const protocolSupported = Number.isInteger(minProtocolVersion) &&
-    Number.isInteger(maxProtocolVersion) &&
-    minProtocolVersion <= SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION &&
-    SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION <= maxProtocolVersion;
-  const missingFeatures = requiredFeatures.filter((feature) => info[feature] !== true);
-  const nativeTransport = info.nativeTransport === true;
-  const available = protocolSupported && nativeTransport && missingFeatures.length === 0;
-  let reason = "";
-  if (!protocolSupported) {
-    reason = "unsupported protocol";
-  } else if (!nativeTransport) {
-    reason = "native transport unavailable";
-  } else if (missingFeatures.length > 0) {
-    reason = "missing features";
-  }
-
-  return Object.freeze({
-    available,
-    protocolSupported,
-    protocolVersion: SANDSTORM_CAPNP_NATIVE_BRIDGE_PROTOCOL_VERSION,
-    nativeTransport,
-    nativeRpc: info.nativeRpc === true,
-    missingFeatures: Object.freeze(missingFeatures),
-    reason,
-    info,
-  });
-}
-
-export async function negotiateNativeCapnpBridge(api, options = {}) {
-  if (!api || typeof api.capnpBridgeInfo !== "function") {
-    throw new TypeError("negotiateNativeCapnpBridge() requires a Sandstorm API object");
-  }
-  return negotiateNativeCapnpBridgeInfo(await api.capnpBridgeInfo(), options);
 }
 
 export class CapnpUnavailableError extends Error {
@@ -426,36 +357,6 @@ export function nativeCapnpSavedTokenText(token) {
   return nativeCapnpBase64UrlEncode(token);
 }
 
-function normalizeNativeCapnpCapabilitySlot(slot) {
-  if (!slot || typeof slot !== "object") {
-    throw new TypeError("native Cap'n Proto capability slot must be an object");
-  }
-  if (typeof slot.id !== "string" || slot.id.length === 0) {
-    throw new TypeError("native Cap'n Proto capability slot requires a non-empty id");
-  }
-  return Object.freeze({
-    id: slot.id,
-    interfaceId: nativeCapnpInterfaceId(slot.interfaceId ?? 0n),
-    interfaceName: typeof slot.interfaceName === "string" ? slot.interfaceName : "",
-    kind: typeof slot.kind === "string" ? slot.kind : "receiverHosted",
-  });
-}
-
-function makeNativeCapnpBridgeConnectionId() {
-  if (typeof globalThis.crypto?.randomUUID === "function") {
-    return `native-capnp-${globalThis.crypto.randomUUID()}`;
-  }
-
-  const bytes = new Uint8Array(16);
-  if (typeof globalThis.crypto?.getRandomValues === "function") {
-    globalThis.crypto.getRandomValues(bytes);
-    return "native-capnp-" + Array.from(bytes, (byte) =>
-      byte.toString(16).padStart(2, "0")).join("");
-  }
-
-  return `native-capnp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
-
 function nativeCapnpBrowserHandoffSessionId(options = {}) {
   let sessionId = "";
   if (typeof Request === "function" && options.request instanceof Request) {
@@ -469,23 +370,6 @@ function nativeCapnpBrowserHandoffSessionId(options = {}) {
       "native Cap'n Proto browser handoff requires a live Sandstorm WebSession");
   }
   return sessionId;
-}
-
-function normalizeNativeCapnpBridgeConnectionId(connectionId = makeNativeCapnpBridgeConnectionId()) {
-  if (typeof connectionId !== "string" || connectionId.length === 0) {
-    throw new TypeError("native Cap'n Proto bridge connection id must be a non-empty string");
-  }
-  return connectionId;
-}
-
-export function makeNativeCapnpPayload(message = new CapnpEsMessage(), capabilities = []) {
-  if (!Array.isArray(capabilities)) {
-    throw new TypeError("native Cap'n Proto payload capabilities must be an array");
-  }
-  return Object.freeze({
-    message: nativeCapnpMessageBytes(message),
-    capabilities: Object.freeze(capabilities.map(normalizeNativeCapnpCapabilitySlot)),
-  });
 }
 
 function validateNativeCapnpGeneratedStruct(StructClass, operation) {
@@ -511,18 +395,6 @@ export function createCapnpStruct(StructClass, value = {}) {
 export function readCapnpStruct(StructClass, value) {
   validateNativeCapnpGeneratedStruct(StructClass, "readCapnpStruct()");
   return CapnpEsUtils.getAs(StructClass, value);
-}
-
-function nativeCapnpInterfaceId(value) {
-  if (typeof value === "bigint") {
-    return value;
-  } else if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
-    return BigInt(value);
-  } else if (typeof value === "string") {
-    const text = value.startsWith("0x") ? value : `0x${value}`;
-    return BigInt(text);
-  }
-  throw new TypeError("native Cap'n Proto interface ID must be a bigint, safe integer, or hex string");
 }
 
 function nativeCapnpRootMessageBytes(message) {
@@ -665,7 +537,7 @@ export async function exportCapnp(api, InterfaceClass, target) {
   if (typeof InterfaceClass.Server !== "function") {
     throw new TypeError("exportCapnp() requires a generated server interface class");
   }
-  if (!api || typeof api.capnpBridgeInfo !== "function") {
+  if (!api || typeof api.nativeCapnpBridgeOpenChannel !== "function") {
     throw new TypeError("exportCapnp() requires a Sandstorm API object");
   }
 
@@ -674,15 +546,6 @@ export async function exportCapnp(api, InterfaceClass, target) {
   }
 
   const interfaceMetadata = nativeCapnpInterfaceMetadata(InterfaceClass, "exportCapnp()");
-  const negotiation = await negotiateNativeCapnpBridge(api, {
-    requiredFeatures: ["nativeRpc"],
-  });
-  if (!negotiation.available) {
-    throw new CapnpUnavailableError(
-      `native Cap'n Proto RPC is unavailable for local exports: ${
-        negotiation.reason || "unavailable"}`,
-      { negotiation, interfaceMetadata });
-  }
 
   const server = new InterfaceClass.Server(target);
   const client = server.client();
