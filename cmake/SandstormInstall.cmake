@@ -61,9 +61,14 @@ function(sandstorm_install_native)
     VERBATIM)
 
   set(_isolate_host_bin "${CMAKE_BINARY_DIR}/bin/isolate-host")
+  # Bazel resolves /usr/lib/ccache/clang to the ccache binary, then invokes it
+  # directly with Clang flags. Hide the symlink farm so it finds Clang itself.
+  set(_bazel_path "$ENV{PATH}")
+  string(REGEX REPLACE "^/usr/lib/ccache:" "" _bazel_path "${_bazel_path}")
   add_custom_command(
     OUTPUT "${_isolate_host_bin}"
-    COMMAND "${_bazel}" build --config=release
+    COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_bazel_path}"
+      "${_bazel}" build --config=release
       //src/workerd/server:sandstorm-isolate-host
     COMMAND "${CMAKE_COMMAND}" -E copy
       "${_workerd_embed_dir}/bazel-bin/src/workerd/server/sandstorm-isolate-host"
