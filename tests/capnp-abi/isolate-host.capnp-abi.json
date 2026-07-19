@@ -68,6 +68,14 @@
           "resultStructId": "0xd94a9bf7a8b06c5e",
           "params": [],
           "results": [{"name": "service", "type": "Http.HttpService"}]
+        },
+        {
+          "name": "invokeRpcEvent",
+          "ordinal": 3,
+          "paramStructId": "0xb4dfee2c3369f77d",
+          "resultStructId": "0xdab23bdc5f32ed0d",
+          "params": [{"name": "request", "type": "Data"}],
+          "results": [{"name": "response", "type": "Data"}]
         }
       ]
     }

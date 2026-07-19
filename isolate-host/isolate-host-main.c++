@@ -8,11 +8,16 @@
 #include <workerd/server/sandstorm-isolate-host.capnp.h>
 #include <workerd/server/sandstorm-isolate-worker-source.capnp.h>
 #include <workerd/server/workerd-api.h>
+#include <workerd/api/global-scope.h>
 #include <workerd/api/http.h>
 #include <workerd/api/worker-loader.h>
 #include <workerd/io/actor-cache.h>
 #include <workerd/io/compatibility-date.h>
+#include <workerd/io/io-context.h>
 #include <workerd/io/limit-enforcer.h>
+#include <workerd/io/tracer.h>
+#include <workerd/io/worker-interface.h>
+#include <workerd/jsg/buffersource.h>
 #include <workerd/jsg/setup.h>
 #include <workerd/util/stream-utils.h>
 
@@ -50,6 +55,7 @@ constexpr size_t ISOLATE_OLD_HEAP_LIMIT = 64 * 1024 * 1024;
 constexpr size_t ISOLATE_YOUNG_HEAP_LIMIT = 16 * 1024 * 1024;
 constexpr size_t BUFFERING_LIMIT = 16 * 1024 * 1024;
 constexpr size_t MAX_WORKER_SOURCE_BYTES = 16 * 1024 * 1024;
+constexpr size_t MAX_RPC_EVENT_BYTES = 16 * 1024 * 1024;
 constexpr uint MAX_SUBREQUESTS = 64;
 constexpr auto REQUEST_JS_LIMIT = std::chrono::milliseconds(250);
 constexpr auto STARTUP_JS_LIMIT = std::chrono::seconds(5);
@@ -747,6 +753,84 @@ class WorkerIngressService final: public kj::HttpService {
 
  private:
   kj::Own<SelfServiceTarget> target;
+};
+
+struct SandstormRpcEventResult final: public kj::Refcounted {
+  kj::Maybe<kj::Array<kj::byte>> response;
+};
+
+class SandstormRpcEvent final: public workerd::WorkerInterface::CustomEvent {
+ public:
+  SandstormRpcEvent(kj::Array<kj::byte> request, kj::Own<SandstormRpcEventResult> result)
+      : request(kj::mv(request)), result(kj::mv(result)) {}
+
+  kj::Promise<Result> run(kj::Own<workerd::IoContext::IncomingRequest> incomingRequest,
+      kj::Maybe<kj::StringPtr> entrypointName,
+      kj::Maybe<workerd::Worker::VersionInfo> versionInfo,
+      workerd::Frankenvalue props,
+      kj::TaskSet& waitUntilTasks,
+      bool isDynamicDispatch) override {
+    auto& ioContext = incomingRequest->getContext();
+    incomingRequest->delivered();
+
+    KJ_DEFER({
+      waitUntilTasks.add(incomingRequest->drain().attach(kj::mv(incomingRequest)));
+    });
+
+    co_await ioContext.run(
+        [this, &ioContext, entrypointName, versionInfo = kj::mv(versionInfo),
+            props = kj::mv(props), isDynamicDispatch](workerd::Worker::Lock& lock) mutable {
+      workerd::jsg::AsyncContextFrame::StorageScope traceScope =
+          ioContext.makeAsyncTraceScope(lock);
+      workerd::jsg::AsyncContextFrame::StorageScope userTraceScope =
+          ioContext.makeUserAsyncTraceScope(lock);
+
+      auto handler = KJ_REQUIRE_NONNULL(
+          lock.getExportedHandler(entrypointName, kj::mv(versionInfo), kj::mv(props),
+              ioContext.getActor(), isDynamicDispatch),
+          "sandstorm RPC events require a module-syntax worker");
+      auto& function = JSG_REQUIRE_NONNULL(handler->sandstormRpcEvent, TypeError,
+          "worker does not export a sandstormRpcEvent() handler");
+      auto input = workerd::jsg::BufferSource(
+          lock, workerd::jsg::BackingStore::from(lock, kj::mv(request)));
+      auto promise = function(lock, kj::mv(input),
+          workerd::jsg::JsValue(handler->env.getHandle(lock)).addRef(lock), handler->getCtx());
+
+      return ioContext.awaitJs(lock, kj::mv(promise)).then(
+          [result = kj::addRef(*result)](workerd::jsg::BufferSource output) mutable {
+        KJ_REQUIRE(output.size() <= MAX_RPC_EVENT_BYTES,
+            "worker RPC event response exceeds size limit", output.size(), MAX_RPC_EVENT_BYTES);
+        result->response = kj::heapArray(output.asArrayPtr());
+      });
+    }).exclusiveJoin(ioContext.onAbort());
+
+    KJ_IF_SOME(tracer, ioContext.getWorkerTracer()) {
+      tracer.setReturn(ioContext.now());
+    }
+    co_return Result{.outcome = workerd::EventOutcome::OK};
+  }
+
+  kj::Promise<Result> sendRpc(capnp::HttpOverCapnpFactory&,
+      capnp::ByteStreamFactory&, workerd::rpc::EventDispatcher::Client) override {
+    KJ_UNIMPLEMENTED("sandstorm RPC events are local to the embedded workerd host");
+  }
+
+  kj::Promise<Result> notSupported() override {
+    KJ_UNIMPLEMENTED("sandstorm RPC events are not supported by this worker channel");
+  }
+
+  uint16_t getType() override {
+    // Report this as the existing workerd JS-RPC event category for metrics and tracing.
+    return 9;
+  }
+
+  workerd::tracing::EventInfo getEventInfo() const override {
+    return workerd::tracing::JsRpcEventInfo(nullptr);
+  }
+
+ private:
+  kj::Array<kj::byte> request;
+  kj::Own<SandstormRpcEventResult> result;
 };
 
 class SelfBindingHttpService final: public SharedHttpService {
@@ -1639,6 +1723,27 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
         state->runtime.getHttpHeaderTableForEmbedding(),
         kj::heap<WorkerIngressService>(kj::atomicAddRef(*state->ingressTarget))));
     return kj::READY_NOW;
+  }
+
+  kj::Promise<void> invokeRpcEvent(InvokeRpcEventContext context) override {
+    KJ_REQUIRE(state->running, "hosted isolate has been stopped");
+    auto input = context.getParams().getRequest();
+    KJ_REQUIRE(input.size() <= MAX_RPC_EVENT_BYTES,
+        "worker RPC event request exceeds size limit", input.size(), MAX_RPC_EVENT_BYTES);
+
+    auto ingress = state->worker->getEntrypoint(
+        kj::none, workerd::Frankenvalue(), kj::none);
+    auto request = ingress->startRequest({});
+    auto result = kj::refcounted<SandstormRpcEventResult>();
+    auto promise = request->customEvent(kj::heap<SandstormRpcEvent>(
+        kj::heapArray(input.asBytes()), kj::addRef(*result)));
+    return promise.then([context, result = kj::mv(result), request = kj::mv(request),
+                            ingress = kj::mv(ingress)](auto eventResult) mutable {
+      KJ_REQUIRE(eventResult.outcome == workerd::EventOutcome::OK,
+          "worker RPC event failed", eventResult.outcome);
+      context.getResults().setResponse(
+          KJ_REQUIRE_NONNULL(result->response, "worker RPC event returned no response"));
+    });
   }
 
  private:

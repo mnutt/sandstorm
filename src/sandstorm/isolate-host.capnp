@@ -44,4 +44,9 @@ interface HostedIsolate @0xae62f18e41ff24cb {
   getHttpService @2 () -> (service :Http.HttpService);
   # Returns this grain's worker ingress as a streaming HTTP capability. Possession of this
   # HostedIsolate capability, rather than a grain ID or bearer token, authorizes ingress.
+
+  invokeRpcEvent @3 (request :Data) -> (response :Data);
+  # Private prototype for one independently-accounted worker RPC event. The native host invokes
+  # the worker's reserved `sandstormRpcEvent` handler with `request` and returns its byte response.
+  # This is a host protocol seam, not an application-facing RPC or framing format.
 }

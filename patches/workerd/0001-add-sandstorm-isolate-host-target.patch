@@ -769,3 +769,39 @@ index 40e3abb..6516fe1 100644
    void setIsolateObserver(IsolateObserver&) override;
 
    static Worker::Script::Source extractSource(kj::StringPtr name,
+diff --git a/src/workerd/api/global-scope.c++ b/src/workerd/api/global-scope.c++
+index 21ff2274..85a2bb03 100644
+--- a/src/workerd/api/global-scope.c++
++++ b/src/workerd/api/global-scope.c++
+@@ -125,6 +125,7 @@ ExportedHandler ExportedHandler::clone(jsg::Lock& js) {
+     .scheduled{mapAddRef(js, scheduled)},
+     .alarm{mapAddRef(js, alarm)},
+     .test{mapAddRef(js, test)},
++    .sandstormRpcEvent{mapAddRef(js, sandstormRpcEvent)},
+     .webSocketMessage{mapAddRef(js, webSocketMessage)},
+     .webSocketClose{mapAddRef(js, webSocketClose)},
+     .webSocketError{mapAddRef(js, webSocketError)},
+diff --git a/src/workerd/api/global-scope.h b/src/workerd/api/global-scope.h
+index 0abc00c2..480c1f97 100644
+--- a/src/workerd/api/global-scope.h
++++ b/src/workerd/api/global-scope.h
+@@ -450,6 +450,11 @@ struct ExportedHandler {
+       jsg::Optional<jsg::Ref<ExecutionContext>> ctx);
+   jsg::LenientOptional<jsg::Function<TestHandler>> test;
+ 
++  using SandstormRpcEventHandler = jsg::Promise<jsg::BufferSource>(jsg::BufferSource request,
++      jsg::Value env,
++      jsg::Optional<jsg::Ref<ExecutionContext>> ctx);
++  jsg::LenientOptional<jsg::Function<SandstormRpcEventHandler>> sandstormRpcEvent;
++
+   using HibernatableWebSocketMessageHandler = kj::Promise<void>(
+       jsg::Ref<WebSocket>, kj::OneOf<kj::String, kj::Array<byte>> message);
+   jsg::LenientOptional<jsg::Function<HibernatableWebSocketMessageHandler>> webSocketMessage;
+@@ -472,6 +477,7 @@ struct ExportedHandler {
+       scheduled,
+       alarm,
+       test,
++      sandstormRpcEvent,
+       webSocketMessage,
+       webSocketClose,
+       webSocketError,

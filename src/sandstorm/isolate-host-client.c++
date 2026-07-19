@@ -88,6 +88,17 @@ int main(int argc, char** argv) {
   module.setName("main.js");
   auto script = kj::StringPtr(R"JS(
 export default {
+  previousRpcContext: undefined,
+  rpcCallCount: 0,
+
+  async sandstormRpcEvent(request, env, ctx) {
+    const sameContext = this.previousRpcContext === ctx;
+    this.previousRpcContext = ctx;
+    this.rpcCallCount++;
+    await Promise.resolve();
+    return new Uint8Array([this.rpcCallCount, sameContext ? 1 : 0, ...request]);
+  },
+
   async fetch(request, env) {
     console.log("sandstorm-grain-log-marker");
     if (new URL(request.url).pathname === "/cpu-loop") {
@@ -240,6 +251,18 @@ export default { fetch() { return new Response("memory limit failed"); } };
   KJ_REQUIRE(httpResponse.body->readAllText().wait(waitScope) == "shared-storage-ok",
       "hosted worker did not round-trip through its storage binding");
 
+  auto firstRpc = grain.invokeRpcEventRequest();
+  firstRpc.setRequest(kj::arr<kj::byte>(4, 5));
+  auto firstRpcResponse = firstRpc.send().wait(waitScope).getResponse();
+  KJ_REQUIRE(firstRpcResponse.asBytes() == kj::arr<kj::byte>(1, 0, 4, 5),
+      "first worker RPC event returned the wrong response", firstRpcResponse);
+
+  auto secondRpc = grain.invokeRpcEventRequest();
+  secondRpc.setRequest(kj::arr<kj::byte>(6));
+  auto secondRpcResponse = secondRpc.send().wait(waitScope).getResponse();
+  KJ_REQUIRE(secondRpcResponse.asBytes() == kj::arr<kj::byte>(2, 0, 6),
+      "worker RPC events reused an execution context", secondRpcResponse);
+
   auto cpuStart = host.startGrainRequest();
   cpuStart.setGrainId("cpugrain123");
   cpuStart.setServices(services);
@@ -296,6 +319,9 @@ export default { fetch() { return new Response("memory limit failed"); } };
 
   sandstorm::expectFailure([&]() {
     grain.keepAliveRequest().send().wait(waitScope);
+  });
+  sandstorm::expectFailure([&]() {
+    grain.invokeRpcEventRequest().send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
     kj::HttpHeaders staleHeaders(*headerTable);
