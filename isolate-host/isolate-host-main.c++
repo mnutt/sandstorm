@@ -22,6 +22,7 @@
 #include <workerd/util/stream-utils.h>
 
 #include <capnp/rpc-twoparty.h>
+#include <capnp/rpc.capnp.h>
 #include <capnp/compat/json.h>
 #include <capnp/compat/http-over-capnp.h>
 #include <capnp/serialize.h>
@@ -755,14 +756,60 @@ class WorkerIngressService final: public kj::HttpService {
   kj::Own<SelfServiceTarget> target;
 };
 
-struct SandstormRpcEventResult final: public kj::Refcounted {
-  kj::Maybe<kj::Array<kj::byte>> response;
+class SandstormRpcEventInputQueue final: public kj::Refcounted {
+ public:
+  kj::Promise<kj::Array<kj::byte>> receive() {
+    if (!frames.empty()) {
+      auto result = kj::mv(frames.front());
+      for (size_t i = 1; i < frames.size(); ++i) {
+        frames[i - 1] = kj::mv(frames[i]);
+      }
+      frames.removeLast();
+      return kj::mv(result);
+    }
+    if (closed) {
+      return KJ_EXCEPTION(DISCONNECTED, "worker RPC event input is closed");
+    }
+    KJ_REQUIRE(waitingReceiver == kj::none,
+        "only one receive may be pending for a worker RPC event");
+    auto paf = kj::newPromiseAndFulfiller<kj::Array<kj::byte>>();
+    waitingReceiver = kj::mv(paf.fulfiller);
+    return kj::mv(paf.promise);
+  }
+
+  bool push(kj::Array<kj::byte> frame) {
+    if (closed) return false;
+    KJ_IF_SOME(receiver, waitingReceiver) {
+      receiver->fulfill(kj::mv(frame));
+      waitingReceiver = kj::none;
+    } else {
+      frames.add(kj::mv(frame));
+    }
+    return true;
+  }
+
+  void close() {
+    if (closed) return;
+    closed = true;
+    frames.clear();
+    KJ_IF_SOME(receiver, waitingReceiver) {
+      receiver->reject(KJ_EXCEPTION(DISCONNECTED, "worker RPC event input was closed"));
+      waitingReceiver = kj::none;
+    }
+  }
+
+ private:
+  kj::Vector<kj::Array<kj::byte>> frames;
+  kj::Maybe<kj::Own<kj::PromiseFulfiller<kj::Array<kj::byte>>>> waitingReceiver;
+  bool closed = false;
 };
 
 class SandstormRpcEvent final: public workerd::WorkerInterface::CustomEvent {
  public:
-  SandstormRpcEvent(kj::Array<kj::byte> request, kj::Own<SandstormRpcEventResult> result)
-      : request(kj::mv(request)), result(kj::mv(result)) {}
+  SandstormRpcEvent(kj::Array<kj::byte> request,
+      kj::Function<void(kj::Array<kj::byte>)> send,
+      kj::Own<SandstormRpcEventInputQueue> inputQueue)
+      : request(kj::mv(request)), send(kj::mv(send)), inputQueue(kj::mv(inputQueue)) {}
 
   kj::Promise<Result> run(kj::Own<workerd::IoContext::IncomingRequest> incomingRequest,
       kj::Maybe<kj::StringPtr> entrypointName,
@@ -793,16 +840,27 @@ class SandstormRpcEvent final: public workerd::WorkerInterface::CustomEvent {
           "worker does not export a sandstormRpcEvent() handler");
       auto input = workerd::jsg::BufferSource(
           lock, workerd::jsg::BackingStore::from(lock, kj::mv(request)));
-      auto promise = function(lock, kj::mv(input),
-          workerd::jsg::JsValue(handler->env.getHandle(lock)).addRef(lock), handler->getCtx());
-
-      return ioContext.awaitJs(lock, kj::mv(promise)).then(
-          [result = kj::addRef(*result)](workerd::jsg::BufferSource output) mutable {
-        KJ_REQUIRE(output.size() <= MAX_RPC_EVENT_BYTES,
-            "worker RPC event response exceeds size limit", output.size(), MAX_RPC_EVENT_BYTES);
-        result->response = kj::heapArray(output.asArrayPtr());
+      auto sendToHost = workerd::jsg::Function<void(workerd::jsg::BufferSource)>(
+          [send = kj::mv(send)](
+              workerd::jsg::Lock&, workerd::jsg::BufferSource output) mutable {
+        KJ_REQUIRE(output.size() > 0 && output.size() <= MAX_RPC_EVENT_BYTES,
+            "worker RPC frame exceeds size limit", output.size(), MAX_RPC_EVENT_BYTES);
+        send(kj::heapArray(output.asArrayPtr()));
       });
-    }).exclusiveJoin(ioContext.onAbort());
+      auto receiveFromHost = workerd::jsg::Function<
+          workerd::jsg::Promise<workerd::jsg::BufferSource>()>(
+          [inputQueue = kj::addRef(*inputQueue), &ioContext](workerd::jsg::Lock& lock) mutable {
+        return ioContext.awaitIo(lock, inputQueue->receive(),
+            [](workerd::jsg::Lock& lock, kj::Array<kj::byte> frame) {
+          return workerd::jsg::BufferSource(
+              lock, workerd::jsg::BackingStore::from(lock, kj::mv(frame)));
+        });
+      });
+      auto promise = function(lock, kj::mv(input), kj::mv(sendToHost), kj::mv(receiveFromHost),
+          workerd::jsg::JsValue(handler->env.getHandle(lock)).addRef(lock), handler->getCtx());
+      return ioContext.awaitJs(lock, kj::mv(promise));
+    }).exclusiveJoin(ioContext.onAbort()).attach(
+        kj::defer([inputQueue = kj::addRef(*inputQueue)]() mutable { inputQueue->close(); }));
 
     KJ_IF_SOME(tracer, ioContext.getWorkerTracer()) {
       tracer.setReturn(ioContext.now());
@@ -830,7 +888,8 @@ class SandstormRpcEvent final: public workerd::WorkerInterface::CustomEvent {
 
  private:
   kj::Array<kj::byte> request;
-  kj::Own<SandstormRpcEventResult> result;
+  kj::Function<void(kj::Array<kj::byte>)> send;
+  kj::Own<SandstormRpcEventInputQueue> inputQueue;
 };
 
 class SelfBindingHttpService final: public SharedHttpService {
@@ -1680,36 +1739,32 @@ struct HostedState final: public kj::Refcounted {
   bool running = true;
 };
 
-kj::Promise<kj::Array<kj::byte>> dispatchWorkerRpcEvent(
-    kj::Rc<HostedState> state, kj::Array<kj::byte> input) {
+struct RpcFrameCollector final: public kj::Refcounted {
+  kj::Vector<kj::Array<kj::byte>> frames;
+};
+
+kj::Promise<void> dispatchWorkerRpcEvent(kj::Rc<HostedState> state,
+    kj::Array<kj::byte> input,
+    kj::Function<void(kj::Array<kj::byte>)> send,
+    kj::Own<SandstormRpcEventInputQueue> inputQueue) {
   KJ_REQUIRE(state->running, "hosted isolate has been stopped");
   KJ_REQUIRE(input.size() <= MAX_RPC_EVENT_BYTES,
       "worker RPC event request exceeds size limit", input.size(), MAX_RPC_EVENT_BYTES);
 
   auto ingress = state->worker->getEntrypoint(kj::none, workerd::Frankenvalue(), kj::none);
   auto request = ingress->startRequest({});
-  auto result = kj::refcounted<SandstormRpcEventResult>();
   auto promise = request->customEvent(kj::heap<SandstormRpcEvent>(
-      kj::mv(input), kj::addRef(*result)));
-  return promise.then([state = kj::mv(state), result = kj::mv(result),
-                          request = kj::mv(request), ingress = kj::mv(ingress)](
-                          auto eventResult) mutable {
+      kj::mv(input), kj::mv(send), kj::mv(inputQueue)));
+  return promise.then([state = kj::mv(state), request = kj::mv(request),
+                          ingress = kj::mv(ingress)](auto eventResult) mutable {
     KJ_REQUIRE(eventResult.outcome == workerd::EventOutcome::OK,
         "worker RPC event failed", eventResult.outcome);
-    return kj::mv(KJ_REQUIRE_NONNULL(
-        result->response, "worker RPC event returned no response"));
   });
 }
 
-class WorkerRpcMessageStream final: public capnp::MessageStream {
+class WorkerRpcResponseQueue final: public kj::Refcounted {
  public:
-  explicit WorkerRpcMessageStream(kj::Rc<HostedState> state): state(kj::mv(state)) {}
-
-  kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> tryReadMessage(
-      kj::ArrayPtr<kj::AutoCloseFd> fdSpace,
-      capnp::ReaderOptions options,
-      kj::ArrayPtr<capnp::word>) override {
-    KJ_REQUIRE(fdSpace.size() == 0, "worker RPC connections do not carry file descriptors");
+  kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> read(capnp::ReaderOptions options) {
     if (!responses.empty()) {
       auto response = kj::mv(responses.front());
       for (size_t i = 1; i < responses.size(); ++i) {
@@ -1729,6 +1784,109 @@ class WorkerRpcMessageStream final: public capnp::MessageStream {
       }
       return kj::none;
     });
+  }
+
+  void push(kj::Array<kj::byte> response) {
+    KJ_REQUIRE(!closed, "worker RPC connection is closed");
+    KJ_IF_SOME(reader, waitingReader) {
+      reader->fulfill(kj::mv(response));
+      waitingReader = kj::none;
+    } else {
+      responses.add(kj::mv(response));
+    }
+  }
+
+  void close() {
+    if (closed) return;
+    closed = true;
+    responses.clear();
+    KJ_IF_SOME(reader, waitingReader) {
+      reader->fulfill(kj::none);
+      waitingReader = kj::none;
+    }
+  }
+
+ private:
+  static kj::Maybe<capnp::MessageReaderAndFds> readMessage(
+      kj::Array<kj::byte> bytes, capnp::ReaderOptions options) {
+    KJ_REQUIRE(bytes.size() % sizeof(capnp::word) == 0,
+        "worker returned a Cap'n Proto message that is not word-aligned", bytes.size());
+    auto words = kj::heapArray<capnp::word>(bytes.size() / sizeof(capnp::word));
+    memcpy(words.begin(), bytes.begin(), bytes.size());
+    auto reader = kj::heap<capnp::FlatArrayMessageReader>(words.asPtr(), options);
+    kj::Own<capnp::MessageReader> owned =
+        kj::attachRef(*reader, kj::mv(reader), kj::mv(words));
+    return capnp::MessageReaderAndFds { kj::mv(owned), nullptr };
+  }
+
+  kj::Vector<kj::Array<kj::byte>> responses;
+  kj::Maybe<kj::Own<kj::PromiseFulfiller<kj::Maybe<kj::Array<kj::byte>>>>> waitingReader;
+  bool closed = false;
+};
+
+class WorkerRpcFrameRouter final: public kj::Refcounted {
+ public:
+  WorkerRpcFrameRouter(): responses(kj::refcounted<WorkerRpcResponseQueue>()) {}
+
+  kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> read(capnp::ReaderOptions options) {
+    return responses->read(options);
+  }
+
+  void receiveWorkerFrame(SandstormRpcEventInputQueue& event,
+      kj::Array<kj::byte> frame) {
+    KJ_REQUIRE(frame.size() % sizeof(capnp::word) == 0,
+        "worker returned a Cap'n Proto message that is not word-aligned", frame.size());
+    auto words = kj::heapArray<capnp::word>(frame.size() / sizeof(capnp::word));
+    memcpy(words.begin(), frame.begin(), frame.size());
+    capnp::FlatArrayMessageReader reader(words.asPtr());
+    auto message = reader.getRoot<capnp::rpc::Message>();
+    if (message.which() == capnp::rpc::Message::CALL) {
+      auto questionId = message.getCall().getQuestionId();
+      callbackEvents.insert(questionId, kj::addRef(event));
+    }
+    responses->push(kj::mv(frame));
+  }
+
+  bool routeHostFrame(kj::ArrayPtr<const capnp::word> words,
+      kj::ArrayPtr<const kj::byte> frame) {
+    capnp::FlatArrayMessageReader reader(words);
+    auto message = reader.getRoot<capnp::rpc::Message>();
+    if (message.which() != capnp::rpc::Message::RETURN) return false;
+
+    auto answerId = message.getReturn().getAnswerId();
+    KJ_IF_SOME(event, callbackEvents.find(answerId)) {
+      auto eventRef = kj::addRef(*event);
+      callbackEvents.erase(answerId);
+      return eventRef->push(kj::heapArray(frame));
+    }
+    return false;
+  }
+
+  void close() {
+    for (auto& entry: callbackEvents) {
+      entry.value->close();
+    }
+    callbackEvents.clear();
+    responses->close();
+  }
+
+ private:
+  kj::Own<WorkerRpcResponseQueue> responses;
+  kj::HashMap<uint32_t, kj::Own<SandstormRpcEventInputQueue>> callbackEvents;
+};
+
+class WorkerRpcMessageStream final: public capnp::MessageStream,
+                                   private kj::TaskSet::ErrorHandler {
+ public:
+  explicit WorkerRpcMessageStream(kj::Rc<HostedState> state)
+      : state(kj::mv(state)), router(kj::refcounted<WorkerRpcFrameRouter>()), tasks(*this) {}
+
+  kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> tryReadMessage(
+      kj::ArrayPtr<kj::AutoCloseFd> fdSpace,
+      capnp::ReaderOptions options,
+      kj::ArrayPtr<capnp::word>) override {
+    KJ_REQUIRE(fdSpace.size() == 0, "worker RPC connections do not carry file descriptors");
+    return router->read(options);
   }
 
   kj::Promise<void> writeMessage(kj::ArrayPtr<const int> fds,
@@ -1756,48 +1914,36 @@ class WorkerRpcMessageStream final: public capnp::MessageStream {
     return kj::READY_NOW;
   }
 
-  void close() {
-    if (closed) return;
-    closed = true;
-    responses.clear();
-    KJ_IF_SOME(reader, waitingReader) {
-      reader->fulfill(kj::none);
-      waitingReader = kj::none;
-    }
-  }
+  void close() { router->close(); }
 
  private:
-  static kj::Maybe<capnp::MessageReaderAndFds> readMessage(
-      kj::Array<kj::byte> bytes, capnp::ReaderOptions options) {
-    KJ_REQUIRE(bytes.size() % sizeof(capnp::word) == 0,
-        "worker returned a Cap'n Proto message that is not word-aligned", bytes.size());
-    auto words = kj::heapArray<capnp::word>(bytes.size() / sizeof(capnp::word));
-    memcpy(words.begin(), bytes.begin(), bytes.size());
-    auto reader = kj::heap<capnp::FlatArrayMessageReader>(words.asPtr(), options);
-    kj::Own<capnp::MessageReader> owned =
-        kj::attachRef(*reader, kj::mv(reader), kj::mv(words));
-    return capnp::MessageReaderAndFds { kj::mv(owned), nullptr };
+  void taskFailed(kj::Exception&& exception) override {
+    KJ_LOG(ERROR, "worker RPC event failed", exception);
+    router->close();
   }
 
   kj::Promise<void> sendMessage(kj::Array<capnp::word> words) {
-    KJ_REQUIRE(!closed, "worker RPC connection is closed");
     auto bytes = kj::heapArray<kj::byte>(words.asBytes());
-    return dispatchWorkerRpcEvent(state.addRef(), kj::mv(bytes)).then(
-        [this](kj::Array<kj::byte> response) {
-      if (response.size() == 0) return;
-      KJ_IF_SOME(reader, waitingReader) {
-        reader->fulfill(kj::mv(response));
-        waitingReader = kj::none;
-      } else {
-        responses.add(kj::mv(response));
-      }
-    });
+    if (router->routeHostFrame(words.asPtr(), bytes.asPtr())) {
+      return kj::READY_NOW;
+    }
+
+    auto inputQueue = kj::refcounted<SandstormRpcEventInputQueue>();
+    // Cap'n Proto serializes MessageStream writes until the returned promise resolves. An
+    // incoming worker Call can itself issue a callback whose Return must be written while the
+    // original event is still pending, so acknowledge the frame after scheduling its event and
+    // retain the event separately for the connection lifetime.
+    tasks.add(dispatchWorkerRpcEvent(state.addRef(), kj::mv(bytes),
+        [router = kj::addRef(*router), inputQueue = kj::addRef(*inputQueue)](
+            kj::Array<kj::byte> response) mutable {
+      router->receiveWorkerFrame(*inputQueue, kj::mv(response));
+    }, kj::mv(inputQueue)));
+    return kj::READY_NOW;
   }
 
   kj::Rc<HostedState> state;
-  kj::Vector<kj::Array<kj::byte>> responses;
-  kj::Maybe<kj::Own<kj::PromiseFulfiller<kj::Maybe<kj::Array<kj::byte>>>>> waitingReader;
-  bool closed = false;
+  kj::Own<WorkerRpcFrameRouter> router;
+  kj::TaskSet tasks;
 };
 
 class WorkerRpcConnection final {
@@ -1886,9 +2032,15 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
 
   kj::Promise<void> invokeRpcEvent(InvokeRpcEventContext context) override {
     auto input = context.getParams().getRequest();
-    return dispatchWorkerRpcEvent(state.addRef(), kj::heapArray(input.asBytes())).then(
-        [context](kj::Array<kj::byte> response) mutable {
-      context.getResults().setResponse(response);
+    auto collector = kj::refcounted<RpcFrameCollector>();
+    return dispatchWorkerRpcEvent(state.addRef(), kj::heapArray(input.asBytes()),
+        [collector = kj::addRef(*collector)](kj::Array<kj::byte> frame) mutable {
+      collector->frames.add(kj::mv(frame));
+    }, kj::refcounted<SandstormRpcEventInputQueue>()).then(
+        [context, collector = kj::mv(collector)]() mutable {
+      KJ_REQUIRE(collector->frames.size() == 1,
+          "raw worker RPC event must produce exactly one frame", collector->frames.size());
+      context.getResults().setResponse(collector->frames[0]);
     });
   }
 

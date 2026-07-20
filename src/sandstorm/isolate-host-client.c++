@@ -72,6 +72,16 @@ private:
   kj::String stored = kj::str("shared-storage-ok");
 };
 
+class RpcCallbackImpl final: public IsolateBridge::Server {
+ public:
+  kj::Promise<void> dropBrowserHandoff(DropBrowserHandoffContext context) override {
+    KJ_REQUIRE(context.getParams().getId() == "first",
+        "worker callback carried the wrong value", context.getParams().getId());
+    context.getResults().setReleased(true);
+    return kj::READY_NOW;
+  }
+};
+
 void expectFailure(kj::Function<void()> operation) {
   auto exception = kj::runCatchingExceptions(kj::mv(operation));
   KJ_REQUIRE(exception != nullptr, "host operation unexpectedly succeeded");
@@ -113,25 +123,39 @@ int main(int argc, char** argv) {
   module.setName("main.js");
   auto script = kj::StringPtr(R"JS(
 import { createCapnpRpcEventDispatcher } from "sandstorm-internal:capnp-runtime";
+import { Interface } from "capnp-es/index.mjs";
 import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
 
 const rpcState = {
   previousContext: undefined,
+  currentContext: undefined,
   callCount: 0,
   sameContext: false,
 };
 const rpcDispatcher = createCapnpRpcEventDispatcher(IsolateBridge, {
-  async createBrowserHandoff({ sessionId }) {
-    return { id: `rpc-${rpcState.callCount}-${rpcState.sameContext ? 1 : 0}-${sessionId}` };
+  async createBrowserHandoff({ cap, sessionId }) {
+    let callbackReleased = false;
+    let callbackStayedInEvent = false;
+    if (sessionId === "first") {
+      const eventContext = rpcState.currentContext;
+      const callback = new IsolateBridge.Client(Interface.fromPointer(cap).getClient());
+      callbackReleased = (await callback.dropBrowserHandoff({ id: sessionId })).released;
+      callbackStayedInEvent = rpcState.currentContext === eventContext;
+    }
+    return {
+      id: `rpc-${rpcState.callCount}-${rpcState.sameContext ? 1 : 0}-${sessionId}` +
+        `-${callbackReleased ? 1 : 0}-${callbackStayedInEvent ? 1 : 0}`,
+    };
   },
 });
 
 export default {
-  async sandstormRpcEvent(request, env, ctx) {
+  async sandstormRpcEvent(request, send, receive, env, ctx) {
     rpcState.sameContext = rpcState.previousContext === ctx;
     rpcState.previousContext = ctx;
+    rpcState.currentContext = ctx;
     rpcState.callCount++;
-    return await rpcDispatcher.handler(request);
+    await rpcDispatcher.handler(request, send, receive);
   },
 
   async fetch(request, env) {
@@ -303,20 +327,22 @@ export default { fetch() { return new Response("memory limit failed"); } };
   auto rpcBootstrap = grain.getRpcBootstrapRequest().send().wait(waitScope).getCap()
       .castAs<sandstorm::IsolateBridge>();
   auto firstRpc = rpcBootstrap.createBrowserHandoffRequest();
-  firstRpc.setCap(capnp::Capability::Client(nullptr));
+  firstRpc.setCap(kj::heap<sandstorm::RpcCallbackImpl>());
   firstRpc.setSessionId("first");
   auto firstRpcResponse = firstRpc.send().wait(waitScope);
-  // Bootstrap is followed by a Finish housekeeping message before the first application call.
-  // Each protocol message still receives its own workerd event context.
-  KJ_REQUIRE(firstRpcResponse.getId() == "rpc-3-0-first",
-      "typed worker RPC call did not use separate event contexts", firstRpcResponse.getId());
+  // Bootstrap and Finish are events 1 and 2. The application Call is event 3; its callback Return
+  // is delivered through that event's I/O source, without invoking a fourth handler or replacing
+  // the Call's ExecutionContext.
+  KJ_REQUIRE(firstRpcResponse.getId() == "rpc-3-0-first-1-1",
+      "typed worker RPC callback did not stay in its originating event",
+      firstRpcResponse.getId());
 
   auto secondRpc = rpcBootstrap.createBrowserHandoffRequest();
   secondRpc.setCap(capnp::Capability::Client(nullptr));
   secondRpc.setSessionId("second");
   auto secondRpcResponse = secondRpc.send().wait(waitScope);
-  // The first answer is likewise followed by Finish before the next application call.
-  KJ_REQUIRE(secondRpcResponse.getId() == "rpc-5-0-second",
+  // The first answer's Finish is event 4 and this second application Call is event 5.
+  KJ_REQUIRE(secondRpcResponse.getId() == "rpc-5-0-second-0-0",
       "worker-global RPC connection state was not preserved", secondRpcResponse.getId());
 
   auto cpuStart = host.startGrainRequest();

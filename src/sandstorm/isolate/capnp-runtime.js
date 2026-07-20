@@ -517,6 +517,7 @@ class EventDrivenCapnpConn extends CapnpEsConn {
 class CapnpRpcEventTransport {
   #closed = false;
   #pendingReturns = new Map();
+  #send;
 
   sendMessage(message) {
     if (this.#closed) {
@@ -524,6 +525,11 @@ class CapnpRpcEventTransport {
     }
 
     const bytes = nativeCapnpRootMessageBytes(message).slice();
+    if (typeof this.#send !== "function") {
+      throw new NativeCapnpBridgeProtocolError(
+        "worker Cap'n Proto RPC connection has no native frame sink");
+    }
+    this.#send(bytes);
     switch (message.which()) {
       case CapnpEsRpcMessageWhich.RETURN: {
         const answerId = message.return.answerId;
@@ -540,20 +546,26 @@ class CapnpRpcEventTransport {
         const error = new NativeCapnpBridgeProtocolError(
           `worker aborted its Cap'n Proto RPC connection: ${message.abort.reason}`);
         this.close(error);
-        throw error;
+        return;
       }
       default:
-        throw new NativeCapnpBridgeProtocolError(
-          "worker RPC event produced an unsupported extra protocol message", {
-            messageKind: message.which(),
-          });
+        return;
     }
   }
 
-  async dispatch(connection, request) {
+  async dispatch(connection, request, send, receive) {
     if (this.#closed) {
       throw new CapnpUnavailableError("worker Cap'n Proto RPC connection is closed");
     }
+    if (typeof send !== "function") {
+      throw new TypeError("worker Cap'n Proto RPC event requires a native frame sink");
+    }
+    if (typeof receive !== "function") {
+      throw new TypeError("worker Cap'n Proto RPC event requires a native frame source");
+    }
+    // Every event receives an equivalent native sink. Retaining the latest one lets capnp-es
+    // emit deferred Resolve/Release messages without retaining an event's ExecutionContext.
+    this.#send = send;
 
     const bytes = nativeCapnpMessageBytes(request);
     const message = new CapnpEsMessage(bytes, false).getRoot(CapnpEsRpcMessage);
@@ -588,6 +600,15 @@ class CapnpRpcEventTransport {
       this.#pendingReturns.delete(questionId);
       throw error;
     }
+
+    // Callback Returns belong to the top-level Call that issued them. The native host routes
+    // those protocol frames into this event's I/O source so capnp-es resumes the original method
+    // under the same IoContext rather than borrowing a later event's context.
+    while (this.#pendingReturns.has(questionId)) {
+      const inboundBytes = nativeCapnpMessageBytes(await receive());
+      const inbound = new CapnpEsMessage(inboundBytes, false).getRoot(CapnpEsRpcMessage);
+      connection.handleMessage(inbound);
+    }
     return await response;
   }
 
@@ -619,7 +640,7 @@ export function createCapnpRpcEventDispatcher(InterfaceClass, target, options = 
   connection.initMain(InterfaceClass, target);
   return Object.freeze({
     connection,
-    handler: (request) => transport.dispatch(connection, request),
+    handler: (request, send, receive) => transport.dispatch(connection, request, send, receive),
     close: (error) => {
       transport.close(error);
       connection.shutdown(error);

@@ -785,11 +785,13 @@ diff --git a/src/workerd/api/global-scope.h b/src/workerd/api/global-scope.h
 index 0abc00c2..480c1f97 100644
 --- a/src/workerd/api/global-scope.h
 +++ b/src/workerd/api/global-scope.h
-@@ -450,6 +450,11 @@ struct ExportedHandler {
+@@ -450,6 +450,13 @@ struct ExportedHandler {
        jsg::Optional<jsg::Ref<ExecutionContext>> ctx);
    jsg::LenientOptional<jsg::Function<TestHandler>> test;
  
-+  using SandstormRpcEventHandler = jsg::Promise<jsg::BufferSource>(jsg::BufferSource request,
++  using SandstormRpcEventHandler = jsg::Promise<void>(jsg::BufferSource request,
++      jsg::Function<void(jsg::BufferSource)> send,
++      jsg::Function<jsg::Promise<jsg::BufferSource>()> receive,
 +      jsg::Value env,
 +      jsg::Optional<jsg::Ref<ExecutionContext>> ctx);
 +  jsg::LenientOptional<jsg::Function<SandstormRpcEventHandler>> sandstormRpcEvent;
@@ -797,7 +799,7 @@ index 0abc00c2..480c1f97 100644
    using HibernatableWebSocketMessageHandler = kj::Promise<void>(
        jsg::Ref<WebSocket>, kj::OneOf<kj::String, kj::Array<byte>> message);
    jsg::LenientOptional<jsg::Function<HibernatableWebSocketMessageHandler>> webSocketMessage;
-@@ -472,6 +477,7 @@ struct ExportedHandler {
+@@ -472,6 +479,7 @@ struct ExportedHandler {
        scheduled,
        alarm,
        test,

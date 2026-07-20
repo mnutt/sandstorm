@@ -13,6 +13,16 @@ additive until the replacement path has equivalent lifecycle, security,
 observability, and performance coverage. Existing fetch-style isolate apps and
 saved capabilities must continue to work throughout the transition.
 
+Implementation checkpoint (2026-07-19): the native host now exposes a hidden
+worker-global Cap'n Proto bootstrap and schedules top-level RPC messages as
+workerd custom events. The event ABI has a native frame sink plus an
+`awaitIo()`-backed source for callback replies, so a JS server can call a native
+capability parameter and resume in the originating event context without a
+synthetic Fetch request. Serial typed calls and a bidirectional callback are
+covered by the host integration test. This is still a Phase 1 prototype: named
+exports, concurrent-call routing, cancellation, promise-capability resolution,
+pipelining, and public SDK syntax remain to be implemented.
+
 ## Summary
 
 The target model is:
