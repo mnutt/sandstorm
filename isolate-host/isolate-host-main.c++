@@ -795,6 +795,13 @@ class SandstormRpcEventInputQueue final: public kj::Refcounted {
     return true;
   }
 
+  kj::Promise<void> whenClosed() {
+    if (closed) return kj::READY_NOW;
+    auto paf = kj::newPromiseAndFulfiller<void>();
+    closeWaiters.add(kj::mv(paf.fulfiller));
+    return kj::mv(paf.promise);
+  }
+
   void close() {
     if (closed) return;
     closed = true;
@@ -803,20 +810,65 @@ class SandstormRpcEventInputQueue final: public kj::Refcounted {
       receiver->reject(KJ_EXCEPTION(DISCONNECTED, "worker RPC event input was closed"));
       waitingReceiver = kj::none;
     }
+    for (auto& waiter: closeWaiters) {
+      waiter->fulfill();
+    }
+    closeWaiters.clear();
   }
 
  private:
   kj::Vector<kj::Array<kj::byte>> frames;
   kj::Maybe<kj::Own<kj::PromiseFulfiller<kj::Array<kj::byte>>>> waitingReceiver;
+  kj::Vector<kj::Own<kj::PromiseFulfiller<void>>> closeWaiters;
   bool closed = false;
+};
+
+class SandstormRpcEventControl final: public kj::Refcounted {
+ public:
+  void start(workerd::IoContext& context) {
+    KJ_REQUIRE(ioContext == nullptr && !completed,
+        "worker RPC event control started more than once");
+    ioContext = &context;
+    if (cancellationRequested) {
+      abortContext();
+    }
+  }
+
+  void finish() {
+    ioContext = nullptr;
+    completed = true;
+  }
+
+  void cancel() {
+    if (completed || cancellationRequested) return;
+    cancellationRequested = true;
+    if (ioContext != nullptr) {
+      abortContext();
+    }
+  }
+
+  bool wasCanceled() const { return cancellationRequested; }
+
+ private:
+  void abortContext() {
+    KJ_ASSERT(ioContext != nullptr);
+    ioContext->abort(KJ_EXCEPTION(DISCONNECTED,
+        "worker RPC event was canceled by its Cap'n Proto caller"));
+  }
+
+  workerd::IoContext* ioContext = nullptr;
+  bool cancellationRequested = false;
+  bool completed = false;
 };
 
 class SandstormRpcEvent final: public workerd::WorkerInterface::CustomEvent {
  public:
   SandstormRpcEvent(kj::Array<kj::byte> request,
       kj::Function<void(kj::Array<kj::byte>)> send,
-      kj::Own<SandstormRpcEventInputQueue> inputQueue)
-      : request(kj::mv(request)), send(kj::mv(send)), inputQueue(kj::mv(inputQueue)) {}
+      kj::Own<SandstormRpcEventInputQueue> inputQueue,
+      kj::Own<SandstormRpcEventControl> control)
+      : request(kj::mv(request)), send(kj::mv(send)), inputQueue(kj::mv(inputQueue)),
+        control(kj::mv(control)) {}
 
   kj::Promise<Result> run(kj::Own<workerd::IoContext::IncomingRequest> incomingRequest,
       kj::Maybe<kj::StringPtr> entrypointName,
@@ -826,8 +878,10 @@ class SandstormRpcEvent final: public workerd::WorkerInterface::CustomEvent {
       bool isDynamicDispatch) override {
     auto& ioContext = incomingRequest->getContext();
     incomingRequest->delivered();
+    control->start(ioContext);
 
     KJ_DEFER({
+      control->finish();
       waitUntilTasks.add(incomingRequest->drain().attach(kj::mv(incomingRequest)));
     });
 
@@ -897,6 +951,7 @@ class SandstormRpcEvent final: public workerd::WorkerInterface::CustomEvent {
   kj::Array<kj::byte> request;
   kj::Function<void(kj::Array<kj::byte>)> send;
   kj::Own<SandstormRpcEventInputQueue> inputQueue;
+  kj::Own<SandstormRpcEventControl> control;
 };
 
 class SelfBindingHttpService final: public SharedHttpService {
@@ -1775,7 +1830,8 @@ struct RpcFrameCollector final: public kj::Refcounted {
 kj::Promise<void> dispatchWorkerRpcEvent(kj::Rc<HostedState> state,
     kj::Array<kj::byte> input,
     kj::Function<void(kj::Array<kj::byte>)> send,
-    kj::Own<SandstormRpcEventInputQueue> inputQueue) {
+    kj::Own<SandstormRpcEventInputQueue> inputQueue,
+    kj::Own<SandstormRpcEventControl> control) {
   KJ_REQUIRE(state->running, "hosted isolate has been stopped");
   KJ_REQUIRE(input.size() <= MAX_RPC_EVENT_BYTES,
       "worker RPC event request exceeds size limit", input.size(), MAX_RPC_EVENT_BYTES);
@@ -1783,7 +1839,7 @@ kj::Promise<void> dispatchWorkerRpcEvent(kj::Rc<HostedState> state,
   auto ingress = state->worker->getEntrypoint(kj::none, workerd::Frankenvalue(), kj::none);
   auto request = ingress->startRequest({});
   auto promise = request->customEvent(kj::heap<SandstormRpcEvent>(
-      kj::mv(input), kj::mv(send), kj::mv(inputQueue)));
+      kj::mv(input), kj::mv(send), kj::mv(inputQueue), kj::mv(control)));
   return promise.then([state = kj::mv(state), request = kj::mv(request),
                           ingress = kj::mv(ingress)](auto eventResult) mutable {
     KJ_REQUIRE(eventResult.outcome == workerd::EventOutcome::OK,
@@ -1876,7 +1932,7 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
     responses->push(kj::mv(frame));
   }
 
-  bool routeHostFrame(kj::ArrayPtr<const capnp::word> words,
+  bool routeHostReturn(kj::ArrayPtr<const capnp::word> words,
       kj::ArrayPtr<const kj::byte> frame) {
     capnp::FlatArrayMessageReader reader(words);
     auto message = reader.getRoot<capnp::rpc::Message>();
@@ -1891,17 +1947,60 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
     return false;
   }
 
+  void registerCallEvent(uint32_t questionId,
+      SandstormRpcEventInputQueue& inputQueue,
+      SandstormRpcEventControl& control) {
+    KJ_REQUIRE(callEvents.find(questionId) == kj::none,
+        "duplicate active worker RPC question", questionId);
+    callEvents.insert(questionId, kj::addRef(inputQueue));
+    callEventControls.insert(questionId, kj::addRef(control));
+  }
+
+  kj::Maybe<kj::Promise<void>> routeHostFinish(kj::ArrayPtr<const capnp::word> words,
+      kj::ArrayPtr<const kj::byte> frame) {
+    capnp::FlatArrayMessageReader reader(words);
+    auto message = reader.getRoot<capnp::rpc::Message>();
+    if (message.which() != capnp::rpc::Message::FINISH) return kj::none;
+
+    auto questionId = message.getFinish().getQuestionId();
+    KJ_IF_SOME(event, callEvents.find(questionId)) {
+      auto eventRef = kj::addRef(*event);
+      callEvents.erase(questionId);
+      callEventControls.erase(questionId);
+      // Finish must run in the same workerd IoContext as the Call. In particular, aborting an
+      // AbortController created by one request from a second custom event is prohibited by
+      // workerd's request-context isolation. The original event is already waiting on this queue
+      // for callback traffic, so deliver Finish there too. Handling it settles the answer and
+      // lets that event return. Hold the MessageStream write until the event closes so a later
+      // Call cannot overtake its cancellation cleanup.
+      auto completion = eventRef->whenClosed();
+      eventRef->push(kj::heapArray(frame));
+      return kj::mv(completion);
+    }
+    return kj::none;
+  }
+
   void close() {
     for (auto& entry: callbackEvents) {
       entry.value->close();
     }
     callbackEvents.clear();
+    for (auto& entry: callEvents) {
+      entry.value->close();
+    }
+    for (auto& entry: callEventControls) {
+      entry.value->cancel();
+    }
+    callEvents.clear();
+    callEventControls.clear();
     responses->close();
   }
 
  private:
   kj::Own<WorkerRpcResponseQueue> responses;
   kj::HashMap<uint32_t, kj::Own<SandstormRpcEventInputQueue>> callbackEvents;
+  kj::HashMap<uint32_t, kj::Own<SandstormRpcEventInputQueue>> callEvents;
+  kj::HashMap<uint32_t, kj::Own<SandstormRpcEventControl>> callEventControls;
 };
 
 class WorkerRpcMessageStream final: public capnp::MessageStream,
@@ -1953,20 +2052,44 @@ class WorkerRpcMessageStream final: public capnp::MessageStream,
 
   kj::Promise<void> sendMessage(kj::Array<capnp::word> words) {
     auto bytes = kj::heapArray<kj::byte>(words.asBytes());
-    if (router->routeHostFrame(words.asPtr(), bytes.asPtr())) {
+    capnp::FlatArrayMessageReader reader(words.asPtr());
+    auto message = reader.getRoot<capnp::rpc::Message>();
+    if (message.which() == capnp::rpc::Message::RETURN &&
+        router->routeHostReturn(words.asPtr(), bytes.asPtr())) {
       return kj::READY_NOW;
+    }
+    if (message.which() == capnp::rpc::Message::FINISH) {
+      KJ_IF_SOME(completion, router->routeHostFinish(words.asPtr(), bytes.asPtr())) {
+        return kj::mv(completion);
+      }
     }
 
     auto inputQueue = kj::refcounted<SandstormRpcEventInputQueue>();
+    auto eventControl = kj::refcounted<SandstormRpcEventControl>();
+    bool isCall = message.which() == capnp::rpc::Message::CALL;
+    if (isCall) {
+      router->registerCallEvent(
+          message.getCall().getQuestionId(), *inputQueue, *eventControl);
+    }
+
     // Cap'n Proto serializes MessageStream writes until the returned promise resolves. An
     // incoming worker Call can itself issue a callback whose Return must be written while the
     // original event is still pending, so acknowledge the frame after scheduling its event and
     // retain the event separately for the connection lifetime.
-    tasks.add(dispatchWorkerRpcEvent(state.addRef(), kj::mv(bytes),
+    auto eventTask = dispatchWorkerRpcEvent(state.addRef(), kj::mv(bytes),
         [router = kj::addRef(*router), inputQueue = kj::addRef(*inputQueue)](
             kj::Array<kj::byte> response) mutable {
       router->receiveWorkerFrame(*inputQueue, kj::mv(response));
-    }, kj::mv(inputQueue)));
+    }, kj::mv(inputQueue), kj::addRef(*eventControl));
+    if (isCall) {
+      eventTask = eventTask.catch_([
+          eventControl = kj::mv(eventControl)](kj::Exception&& exception)
+          -> kj::Promise<void> {
+        if (eventControl->wasCanceled()) return kj::READY_NOW;
+        return kj::mv(exception);
+      });
+    }
+    tasks.add(kj::mv(eventTask));
     return kj::READY_NOW;
   }
 
@@ -2065,7 +2188,8 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
     return dispatchWorkerRpcEvent(state.addRef(), kj::heapArray(input.asBytes()),
         [collector = kj::addRef(*collector)](kj::Array<kj::byte> frame) mutable {
       collector->frames.add(kj::mv(frame));
-    }, kj::refcounted<SandstormRpcEventInputQueue>()).then(
+    }, kj::refcounted<SandstormRpcEventInputQueue>(),
+        kj::refcounted<SandstormRpcEventControl>()).then(
         [context, collector = kj::mv(collector)]() mutable {
       KJ_REQUIRE(collector->frames.size() == 1,
           "raw worker RPC event must produce exactly one frame", collector->frames.size());

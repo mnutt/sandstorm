@@ -354,10 +354,10 @@ export default { fetch() { return new Response("memory limit failed"); } };
   firstRpc.setCap(kj::heap<sandstorm::RpcCallbackImpl>());
   firstRpc.setSessionId("first");
   auto firstRpcResponse = firstRpc.send().wait(waitScope);
-  // Bootstrap, its Finish, and the export lookup precede the application Call. Its callback Return
-  // is delivered through that event's I/O source, without invoking another handler or replacing
-  // the Call's ExecutionContext.
-  KJ_REQUIRE(firstRpcResponse.getId() == "rpc-5-0-first-1-1",
+  // Bootstrap and the export lookup precede the application Call. Bootstrap Finish and the
+  // callback Return are delivered through their originating events' I/O sources, without
+  // invoking another handler or replacing the Call's ExecutionContext.
+  KJ_REQUIRE(firstRpcResponse.getId() == "rpc-4-0-first-1-1",
       "typed worker RPC callback did not stay in its originating event",
       firstRpcResponse.getId());
 
@@ -365,8 +365,8 @@ export default { fetch() { return new Response("memory limit failed"); } };
   secondRpc.setCap(capnp::Capability::Client(nullptr));
   secondRpc.setSessionId("second");
   auto secondRpcResponse = secondRpc.send().wait(waitScope);
-  // The first answer's Finish precedes this second application Call.
-  KJ_REQUIRE(secondRpcResponse.getId() == "rpc-7-0-second-0-0",
+  // The first answer's Finish is consumed by its original event before this second Call.
+  KJ_REQUIRE(secondRpcResponse.getId() == "rpc-5-0-second-0-0",
       "worker-global RPC connection state was not preserved", secondRpcResponse.getId());
 
   auto cpuStart = host.startGrainRequest();

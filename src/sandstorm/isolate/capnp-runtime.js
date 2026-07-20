@@ -525,9 +525,23 @@ export class IsolateBridgeNativeTransport extends CapnpEsDeferredTransport {
 // is instead dispatched explicitly by CapnpRpcEventTransport in the current event.
 class EventDrivenCapnpConn extends CapnpEsConn {
   startWork() {}
+
+  handleFinishMessage(message) {
+    const answer = this.answers[message.finish.questionId];
+    if (answer && !answer.done) {
+      // capnp-es 0.3.0 otherwise only removes the protocol answer. Settle it first so the local
+      // generated Server detaches from the wire and cannot emit a stale Return if this question ID
+      // is reused after cancellation. The event transport suppresses this synthetic Return.
+      answer.reject(new DOMException(
+        "Cap'n Proto caller canceled the worker method", "AbortError"));
+    }
+    return super.handleFinishMessage(message);
+  }
 }
 
 class CapnpRpcEventTransport {
+  #answerAbortControllers = new Map();
+  #canceledAnswers = new Set();
   #closed = false;
   #pendingReturns = new Map();
   #runWithContext;
@@ -544,9 +558,33 @@ class CapnpRpcEventTransport {
     return this.#runWithContext(context, () => connection.handleMessage(message));
   }
 
+  #handleFinish(message) {
+    const answerId = message.finish.questionId;
+    const controller = this.#answerAbortControllers.get(answerId);
+    if (controller) {
+      this.#answerAbortControllers.delete(answerId);
+      this.#canceledAnswers.add(answerId);
+      controller.abort(new DOMException(
+        "Cap'n Proto caller canceled the worker method", "AbortError"));
+    }
+  }
+
   sendMessage(message) {
     if (this.#closed) {
       throw new CapnpUnavailableError("worker Cap'n Proto RPC connection is closed");
+    }
+
+    if (message.which() === CapnpEsRpcMessageWhich.RETURN) {
+      const answerId = message.return.answerId;
+      if (this.#canceledAnswers.delete(answerId)) {
+        this.#answerAbortControllers.delete(answerId);
+        const pending = this.#pendingReturns.get(answerId);
+        if (pending) {
+          this.#pendingReturns.delete(answerId);
+          pending.resolve(new Uint8Array(0));
+        }
+        return;
+      }
     }
 
     const bytes = nativeCapnpRootMessageBytes(message).slice();
@@ -558,6 +596,7 @@ class CapnpRpcEventTransport {
     switch (message.which()) {
       case CapnpEsRpcMessageWhich.RETURN: {
         const answerId = message.return.answerId;
+        this.#answerAbortControllers.delete(answerId);
         const pending = this.#pendingReturns.get(answerId);
         if (!pending) {
           throw new NativeCapnpBridgeProtocolError(
@@ -603,6 +642,9 @@ class CapnpRpcEventTransport {
         questionId = message.call.questionId;
         break;
       default:
+        if (message.which() === CapnpEsRpcMessageWhich.FINISH) {
+          this.#handleFinish(message);
+        }
         this.#handleMessage(connection, message, context);
         return new Uint8Array(0);
     }
@@ -610,6 +652,13 @@ class CapnpRpcEventTransport {
     if (this.#pendingReturns.has(questionId)) {
       throw new NativeCapnpBridgeProtocolError(
         `worker received duplicate concurrent RPC question ${questionId}`);
+    }
+
+    const controller = new AbortController();
+    this.#answerAbortControllers.set(questionId, controller);
+    let dispatchContext = context;
+    if (message.which() === CapnpEsRpcMessageWhich.CALL) {
+      dispatchContext = Object.freeze({ ...context, signal: controller.signal });
     }
 
     let resolve;
@@ -620,8 +669,9 @@ class CapnpRpcEventTransport {
     });
     this.#pendingReturns.set(questionId, { resolve, reject });
     try {
-      this.#handleMessage(connection, message, context);
+      this.#handleMessage(connection, message, dispatchContext);
     } catch (error) {
+      this.#answerAbortControllers.delete(questionId);
       this.#pendingReturns.delete(questionId);
       throw error;
     }
@@ -632,7 +682,10 @@ class CapnpRpcEventTransport {
     while (this.#pendingReturns.has(questionId)) {
       const inboundBytes = nativeCapnpMessageBytes(await receive());
       const inbound = new CapnpEsMessage(inboundBytes, false).getRoot(CapnpEsRpcMessage);
-      this.#handleMessage(connection, inbound, context);
+      if (inbound.which() === CapnpEsRpcMessageWhich.FINISH) {
+        this.#handleFinish(inbound);
+      }
+      this.#handleMessage(connection, inbound, dispatchContext);
     }
     return await response;
   }
@@ -640,6 +693,11 @@ class CapnpRpcEventTransport {
   close(error = new CapnpUnavailableError("worker Cap'n Proto RPC connection was closed")) {
     if (this.#closed) return;
     this.#closed = true;
+    for (const controller of this.#answerAbortControllers.values()) {
+      controller.abort(error);
+    }
+    this.#answerAbortControllers.clear();
+    this.#canceledAnswers.clear();
     for (const pending of this.#pendingReturns.values()) {
       pending.reject(error);
     }

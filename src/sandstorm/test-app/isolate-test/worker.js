@@ -98,6 +98,7 @@ function readNativeGreeterObjectId(objectId) {
 
 function makePersistentNativeGreeterTarget(id) {
   let blockedCallContext = null;
+  let cancellationObserved = false;
 
   return {
     async save() {
@@ -110,7 +111,9 @@ function makePersistentNativeGreeterTarget(id) {
     async hello(params, callContext) {
       if (id === "supervisor-export" &&
           (!callContext?.env?.SANDSTORM_API ||
-           typeof callContext?.ctx?.waitUntil !== "function")) {
+           typeof callContext?.ctx?.waitUntil !== "function" ||
+           typeof callContext?.signal?.addEventListener !== "function" ||
+           callContext.signal.aborted)) {
         throw new Error("named Cap'n Proto export did not receive its workerd call context");
       }
       if (id === "supervisor-export" && params.name === "concurrent second") {
@@ -119,6 +122,38 @@ function makePersistentNativeGreeterTarget(id) {
         }
         if (blockedCallContext === callContext.ctx) {
           throw new Error("concurrent worker calls shared a workerd execution context");
+        }
+      }
+      if (id === "supervisor-export" && params.name === "cancel cooperative") {
+        if (blockedCallContext !== null) {
+          throw new Error("worker cancellation probe already had a blocked call");
+        }
+        blockedCallContext = callContext.ctx;
+        try {
+          await new Promise((_, reject) => {
+            callContext.signal.addEventListener("abort", () => {
+              cancellationObserved = true;
+              reject(callContext.signal.reason);
+            }, { once: true });
+          });
+        } finally {
+          blockedCallContext = null;
+        }
+      }
+      if (id === "supervisor-export" && params.name === "cancellation started") {
+        if (blockedCallContext === null || blockedCallContext === callContext.ctx) {
+          throw new Error("worker cancellation probe did not start in an independent event");
+        }
+      }
+      if (id === "supervisor-export" && params.name === "cancellation status") {
+        return { message: cancellationObserved ? "cancellation observed" : "cancellation pending" };
+      }
+      if (id === "supervisor-export" && params.name === "after cancellation") {
+        if (!cancellationObserved) {
+          throw new Error("canceled worker call did not abort its call signal");
+        }
+        if (blockedCallContext !== null) {
+          throw new Error("canceled worker call did not release its event context");
         }
       }
       return {

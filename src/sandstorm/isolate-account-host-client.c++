@@ -670,6 +670,39 @@ int main(int argc, char** argv) {
       "classic native greeter supervisor-export called released "
       "concurrent first from classic native greeter supervisor-export",
       "blocked worker RPC did not resume after its callback", concurrentFirstMessage);
+
+  {
+    auto cancellationRequest = workerGreeter.helloRequest();
+    cancellationRequest.setName("cancel cooperative");
+    auto canceledCall = cancellationRequest.send().dropPipeline().eagerlyEvaluate(nullptr);
+    auto startedRequest = workerGreeter.helloRequest();
+    startedRequest.setName("cancellation started");
+    auto started = startedRequest.send().wait(io.waitScope).getMessage();
+    KJ_REQUIRE(started ==
+        "classic native greeter supervisor-export hello cancellation started",
+        "worker cancellation probe did not start", started);
+    // Cancel the only response promise. This sends Finish for the outstanding worker question.
+    canceledCall = nullptr;
+  }
+  bool cancellationObserved = false;
+  for (uint attempt = 0; attempt < 100; ++attempt) {
+    auto statusRequest = workerGreeter.helloRequest();
+    statusRequest.setName("cancellation status");
+    auto status = statusRequest.send().wait(io.waitScope).getMessage();
+    if (status == "cancellation observed") {
+      cancellationObserved = true;
+      break;
+    }
+    KJ_REQUIRE(status == "cancellation pending", "unexpected cancellation status", status);
+    io.provider->getTimer().afterDelay(10 * kj::MILLISECONDS).wait(io.waitScope);
+  }
+  KJ_REQUIRE(cancellationObserved, "worker did not receive client-initiated RPC cancellation");
+  auto afterCancellationRequest = workerGreeter.helloRequest();
+  afterCancellationRequest.setName("after cancellation");
+  auto afterCancellation = afterCancellationRequest.send().wait(io.waitScope).getMessage();
+  KJ_REQUIRE(afterCancellation ==
+      "classic native greeter supervisor-export hello after cancellation",
+      "worker did not observe client-initiated RPC cancellation", afterCancellation);
   sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
   sandstorm::testWebSocket(io.waitScope, supervisor);
   sandstorm::testBrowserBootstrap(io.waitScope, supervisor);

@@ -44,9 +44,9 @@ Implementation checkpoint (2026-07-20): the public isolate SDK now provides
 `defineWorker()` and `serveCapnp()`. Applications declare named generated
 servers without importing the private frame transport or implementing the
 reserved workerd event. Each eager, worker-global server target is constructed
-during module evaluation. Its methods receive event-scoped `{ env, ctx }` as a
-second argument; the generated results builder remains an optional third
-argument. Fetch remains an independent, optional worker handler. Lazy export
+during module evaluation. Its methods receive event-scoped
+`{ env, ctx, signal }` as a second argument; the generated results builder
+remains an optional third argument. Fetch remains an independent, optional worker handler. Lazy export
 factories can be added later without changing the registry shape if
 measurements justify them.
 
@@ -54,10 +54,18 @@ Implementation checkpoint (2026-07-20): the account-host integration test now
 holds one public worker RPC event open on a callback while a second call runs,
 proving that overlapping calls receive distinct workerd execution contexts and
 that the first call resumes after its callback. It also shuts down a grain with
-a call still blocked and verifies that the caller is rejected. Client-initiated
-call cancellation is not complete: the pinned capnp-es 0.3.0 runtime consumes
-`Finish` messages but does not expose a hook that can abort the corresponding
-server method.
+a call still blocked and verifies that the caller is rejected.
+
+Implementation checkpoint (2026-07-20): client-initiated cancellation now
+works end-to-end for top-level worker calls. The supervisor's schema-opaque
+export forwarder opts into KJ cancellation so `Finish` propagates across the
+account-host boundary. The native host routes that `Finish` into the original
+call's event input queue rather than scheduling a second workerd event. The JS
+transport aborts the call's `AbortSignal`, settles capnp-es's server answer,
+suppresses its synthetic stale `Return`, and lets the original event close
+before a subsequent stream write proceeds. The account-host integration test
+cancels an eagerly evaluated native call, observes signal-driven cleanup, and
+then successfully reuses the export.
 
 ## Summary
 
@@ -279,6 +287,17 @@ The capnp-es connection, export table, and server objects live at worker scope.
 They may schedule work only through the event mechanism; they must not retain
 an expired `IoContext` between calls. This removes the current need for a
 permanently pending Fetch response.
+
+Cancellation is deliberately delivered through the original event. workerd
+does not permit an `AbortController` created in request context A to be aborted
+from request context B. The native router therefore associates each inbound
+`Call.questionId` with that call's event input queue. Callback `Return` frames
+and the call's eventual `Finish` are fed through this queue, so capnp-es and the
+application-visible signal resume under the same `IoContext` that created
+them. A `Finish` write remains pending until the event closes, preventing the
+next call on the connection from overtaking cancellation cleanup. Connection
+shutdown is the stronger fallback: native event controls abort every remaining
+`IoContext` and reject outstanding calls.
 
 ### Capability lifecycle
 
@@ -632,11 +651,9 @@ round-trip through supervisor HTTP bindings merely to reach the same worker.
 The following questions should be answered by prototypes rather than fixed by
 the first schema sketch:
 
-- What is the cleanest workerd/capnp-es boundary for identifying one inbound
-  top-level call while preserving pipelining and callbacks?
-- Should application-visible cancellation be an `AbortSignal` in the per-call
-  context, and should it be driven by a small capnp-es extension or by a more
-  strongly cancelable workerd event primitive?
+- How should promise pipelining extend the current boundary, where one inbound
+  top-level `Call` owns an event and callback `Return` plus cancellation
+  `Finish` frames re-enter that event's queue?
 - Does a live exported capability pin the worker directly, or should the host
   issue a separate reference-counted lease?
 - Should the UI facade export `MainView`, `UiView`, or a Sandstorm-owned

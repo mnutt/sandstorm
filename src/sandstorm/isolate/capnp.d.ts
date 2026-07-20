@@ -36,6 +36,8 @@ declare module "sandstorm:api" {
   export interface WorkerCapnpCallContext<E extends SandstormEnv = SandstormEnv> {
     readonly env: E;
     readonly ctx: WorkerExecutionContext;
+    /** Aborted when the Cap'n Proto caller cancels this method. */
+    readonly signal: AbortSignal;
   }
 
   /**

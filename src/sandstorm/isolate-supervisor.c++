@@ -4575,6 +4575,30 @@ private:
   }
 };
 
+class CancellableCapabilityForwarder final: public capnp::Capability::Server {
+public:
+  explicit CancellableCapabilityForwarder(capnp::Capability::Client target)
+      : target(kj::mv(target)) {}
+
+  DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
+      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer> context) override {
+    // Worker exports cross the account-host -> supervisor and supervisor -> isolate-host RPC
+    // connections. Opting this forwarding call into cancellation ensures that Finish on the
+    // outer connection drops the downstream RemotePromise and propagates Finish to workerd.
+    context.allowCancellation();
+    auto params = context.getParams();
+    auto request = target.typelessRequest(interfaceId, methodId, params.targetSize());
+    request.set(params);
+    auto promise = request.send().then([context](auto&& response) mutable {
+      context.initResults(response.targetSize()).set(response);
+    });
+    return { kj::mv(promise), false };
+  }
+
+private:
+  capnp::Capability::Client target;
+};
+
 class IsolateSupervisorImpl final: public Supervisor::Server {
 public:
   IsolateSupervisorImpl(
@@ -4597,7 +4621,7 @@ public:
     auto params = context.getParams();
     return runtimeHost->getExport(params.getName(), params.getInterfaceId()).then(
         [context](capnp::Capability::Client cap) mutable {
-      context.getResults().setCap(kj::mv(cap));
+      context.getResults().setCap(kj::heap<CancellableCapabilityForwarder>(kj::mv(cap)));
     });
   }
 

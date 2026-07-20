@@ -165,8 +165,10 @@ void restored;
 void revoked;
 
 const workerTarget: WorkerCapnpServerTargetFor<typeof Collision> = {
-  save: async ({ value }, { env, ctx }) => {
+  save: async ({ value }, { env, ctx, signal }) => {
     ctx.waitUntil(env.STORAGE.fetch("http://storage/capnp-call").then(() => undefined));
+    const canceled: boolean = signal.aborted;
+    void canceled;
     return { value };
   },
   drop: async (_params, _context, results) => {
