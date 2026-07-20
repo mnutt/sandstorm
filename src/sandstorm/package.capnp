@@ -159,6 +159,15 @@ struct Manifest {
     # View/session metadata for HTTP-style isolate apps. This mirrors the role of BridgeConfig
     # for sandstorm-http-bridge apps.
 
+    exports @6 :List(Export);
+    # Named Cap'n Proto capabilities implemented by the worker. The runtime registration must use
+    # the same interface ID. Declaring an interface does not itself grant the worker authority.
+
+    struct Export {
+      name @0 :Text;
+      interfaceId @1 :UInt64;
+    }
+
     struct Module {
       name @0 :Text;
 

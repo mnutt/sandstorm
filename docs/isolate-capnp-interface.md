@@ -30,9 +30,15 @@ now has a schema-opaque `IsolateExportBroker`. Version 2 worker handoffs declare
 mismatched lookups, and the worker runtime can register arbitrary generated
 server interfaces behind one broker connection. The native-host integration
 test resolves `IsolateBridge` by name and exercises a typed callback without an
-HTTP adapter. Version 1 handoffs remain accepted. Account-host proxying,
-manifest declarations, public SDK syntax, concurrency, cancellation, and full
-Cap'n Proto protocol routing are not yet implemented.
+HTTP adapter. Version 1 handoffs remain accepted.
+
+Implementation checkpoint (2026-07-20): package manifests can now declare
+named `(name, interfaceId)` exports, and the per-grain `Supervisor.getExport()`
+capability forwards their lookup opaquely through the account host. The
+account-host integration test calls a worker `NativeGreeter` directly, runs a
+second grain in the same workerd process, and verifies that grain shutdown
+revokes the returned capability. Public SDK syntax, concurrency, cancellation,
+and full Cap'n Proto protocol routing are not yet implemented.
 
 ## Summary
 

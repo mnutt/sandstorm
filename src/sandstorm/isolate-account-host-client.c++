@@ -13,6 +13,7 @@
 #include <sandstorm/outbound-http-session-impl.capnp.h>
 #include <sandstorm/outbound-http-session.capnp.h>
 #include <sandstorm/supervisor.capnp.h>
+#include <sandstorm/test-app/isolate-test/native-greeter.capnp.h>
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
 
@@ -606,6 +607,16 @@ int main(int argc, char** argv) {
   auto supervisor = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], true);
   coreImpl.setSupervisor(argv[2], supervisor);
+  auto workerExportRequest = supervisor.getExportRequest();
+  workerExportRequest.setName("greeter");
+  workerExportRequest.setInterfaceId(capnp::typeId<NativeGreeter>());
+  auto workerGreeter = workerExportRequest.send().wait(io.waitScope).getCap()
+      .castAs<NativeGreeter>();
+  auto greetingRequest = workerGreeter.helloRequest();
+  greetingRequest.setName("account host");
+  auto greeting = greetingRequest.send().wait(io.waitScope).getMessage();
+  KJ_REQUIRE(greeting == "classic native greeter supervisor-export hello account host",
+      "Supervisor did not proxy the named worker export", greeting);
   sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
   sandstorm::testWebSocket(io.waitScope, supervisor);
   sandstorm::testBrowserBootstrap(io.waitScope, supervisor);
@@ -682,6 +693,17 @@ int main(int argc, char** argv) {
       "\"message\":\"classic native greeter cross-grain-capnp-benchmark hello client isolate\""),
       "second isolate did not call the first isolate over Cap'n Proto RPC", crossGrainCall);
   supervisor.shutdownRequest().send().wait(io.waitScope);
+
+  bool exportRejectedAfterShutdown = false;
+  try {
+    auto stoppedGreeting = workerGreeter.helloRequest();
+    stoppedGreeting.setName("after shutdown");
+    stoppedGreeting.send().wait(io.waitScope);
+  } catch (const kj::Exception&) {
+    exportRejectedAfterShutdown = true;
+  }
+  KJ_REQUIRE(exportRejectedAfterShutdown,
+      "worker export capability remained usable after grain shutdown");
 
   bool rejectedAfterShutdown = false;
   try {

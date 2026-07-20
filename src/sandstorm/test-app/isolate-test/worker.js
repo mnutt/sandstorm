@@ -14,6 +14,7 @@ import {
 import {
   CAPNP_CLIENT_SYMBOL,
   connectIsolateBridge,
+  createCapnpWorkerExportDispatcher,
 } from "sandstorm-internal:capnp-runtime";
 
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
@@ -143,6 +144,13 @@ function makePersistentNativeGreeterTarget(id) {
     },
   };
 }
+
+const workerRpc = createCapnpWorkerExportDispatcher({
+  greeter: {
+    interface: NativeGreeter,
+    target: makePersistentNativeGreeterTarget("supervisor-export"),
+  },
+});
 
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
@@ -398,6 +406,10 @@ function renderBrowserStoragePage() {
 }
 
 export default {
+  async sandstormRpcEvent(request, send, receive) {
+    await workerRpc.handler(request, send, receive);
+  },
+
   async fetch(request, env, ctx) {
     const api = sandstorm(request, env);
     const url = new URL(request.url);

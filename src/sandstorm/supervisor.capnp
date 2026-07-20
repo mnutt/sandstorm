@@ -32,6 +32,10 @@ interface Supervisor {
   getMainView @0 () -> (view :Grain.UiView);
   # Get the grain's main UiView.
 
+  getExport @10 (name :Text, interfaceId :UInt64) -> (cap :Capability);
+  # Resolve a named Cap'n Proto capability exported by this grain. Possession of this Supervisor
+  # capability authorizes lookup; callers must supply the interface ID they intend to use.
+
   keepAlive @1 (core :SandstormCore);
   # Must call periodically to prevent supervisor from killing itself off.  Call at least once
   # per minute.

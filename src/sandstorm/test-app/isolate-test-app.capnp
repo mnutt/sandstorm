@@ -33,6 +33,10 @@ const isolateCommand :Spk.Manifest.Command = (
     compatibilityDate = "2025-01-01",
     compatibilityFlags = [],
 
+    exports = [
+      (name = "greeter", interfaceId = 0xb66316217ceedb1b)
+    ],
+
     modules = [
       (
         name = "worker.js",

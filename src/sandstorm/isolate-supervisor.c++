@@ -136,6 +136,11 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
     kj::String serviceName;
   };
 
+  struct Export {
+    kj::String name;
+    uint64_t interfaceId;
+  };
+
   kj::String mainModule;
   kj::String compatibilityDate;
   kj::String appTitle;
@@ -146,6 +151,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
   kj::Vector<Binding> bindings;
+  kj::Vector<Export> exports;
 };
 
 struct IsolateMainViewRegistration;
@@ -155,6 +161,7 @@ constexpr size_t MAX_ISOLATE_MODULES = 1024;
 constexpr size_t MAX_ISOLATE_MODULE_BYTES = 8 * 1024 * 1024;
 constexpr size_t MAX_ISOLATE_TOTAL_MODULE_BYTES = 16 * 1024 * 1024;
 constexpr size_t MAX_ISOLATE_BINDINGS = 1024;
+constexpr size_t MAX_ISOLATE_EXPORTS = 256;
 constexpr size_t MAX_ISOLATE_TOTAL_BINDING_BYTES = 4 * 1024 * 1024;
 constexpr size_t MAX_ISOLATE_NAME_BYTES = 256;
 
@@ -260,6 +267,16 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
         [this](auto response) mutable -> kj::Own<kj::HttpClient> {
       auto service = httpFactory.capnpToKj(response.getService());
       return kj::newHttpClient(*service).attach(kj::mv(service));
+    });
+  }
+
+  kj::Promise<capnp::Capability::Client> getExport(kj::StringPtr name, uint64_t interfaceId) {
+    auto& hostedClient = KJ_REQUIRE_NONNULL(hosted, "hosted isolate ingress is not ready");
+    auto request = hostedClient.getExportRequest();
+    request.setName(name);
+    request.setInterfaceId(interfaceId);
+    return request.send().then([](auto response) -> capnp::Capability::Client {
+      return response.getCap();
     });
   }
 
@@ -678,6 +695,25 @@ void validateIsolateRuntimeConfig(
           "Isolate command has duplicate binding names.", binding.name);
     }
   }
+
+  if (enforceSharedHostLimits) {
+    KJ_REQUIRE(config.exports.size() <= MAX_ISOLATE_EXPORTS,
+        "Isolate command export count exceeds limit.", config.exports.size());
+  }
+  for (auto i: kj::indices(config.exports)) {
+    auto& workerExport = config.exports[i];
+    KJ_REQUIRE(workerExport.name.size() > 0, "Isolate export is missing name.");
+    KJ_REQUIRE(workerExport.interfaceId != 0,
+        "Isolate export interface ID must be nonzero.", workerExport.name);
+    if (enforceSharedHostLimits) {
+      KJ_REQUIRE(workerExport.name.size() <= MAX_ISOLATE_NAME_BYTES,
+          "Isolate export name exceeds size limit.", workerExport.name.size());
+    }
+    for (uint j = 0; j < i; ++j) {
+      KJ_REQUIRE(config.exports[j].name != workerExport.name,
+          "Isolate command has duplicate export names.", workerExport.name);
+    }
+  }
 }
 
 bool hasIsolateModule(IsolateRuntimeConfig& config, kj::StringPtr name) {
@@ -823,6 +859,18 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
       bindingConfig.serviceName = kj::heapString(binding.getService());
     }
     result->bindings.add(kj::mv(bindingConfig));
+  }
+
+  auto configuredExports = config.getExports();
+  if (enforceSharedHostLimits) {
+    KJ_REQUIRE(configuredExports.size() <= MAX_ISOLATE_EXPORTS,
+        "Isolate command export count exceeds limit.", configuredExports.size());
+  }
+  for (auto workerExport: configuredExports) {
+    result->exports.add(IsolateRuntimeConfig::Export{
+      .name = kj::heapString(workerExport.getName()),
+      .interfaceId = workerExport.getInterfaceId(),
+    });
   }
 
   validateIsolateRuntimeConfig(*result, enforceSharedHostLimits);
@@ -1037,6 +1085,16 @@ kj::Array<byte> prepareRuntimeState(kj::StringPtr varPath, IsolateRuntimeConfig&
     manifest.addAll(kj::StringPtr(" }"));
   }
 
+  manifest.addAll(kj::StringPtr("\n  ],\n  \"exports\": [\n"));
+  for (auto i: kj::indices(config.exports)) {
+    auto& workerExport = config.exports[i];
+    if (i > 0) manifest.addAll(kj::StringPtr(",\n"));
+    manifest.addAll(kj::StringPtr("    { "));
+    appendJsonField(manifest, "name", workerExport.name);
+    manifest.addAll(kj::StringPtr(", "));
+    appendJsonField(manifest, "interfaceId", kj::str("0x", kj::hex(workerExport.interfaceId)));
+    manifest.addAll(kj::StringPtr(" }"));
+  }
   manifest.addAll(kj::StringPtr("\n  ]\n}\n"));
   manifest.add('\0');
   auto manifestText = kj::String(manifest.releaseAsArray());
@@ -1044,7 +1102,7 @@ kj::Array<byte> prepareRuntimeState(kj::StringPtr varPath, IsolateRuntimeConfig&
 
   capnp::MallocMessageBuilder sourceMessage;
   auto source = sourceMessage.initRoot<IsolateWorkerSource>();
-  source.setFormatVersion(1);
+  source.setFormatVersion(config.exports.size() == 0 ? 1 : 2);
   source.setMainModule(config.mainModule);
   source.setCompatibilityDate(config.compatibilityDate);
   auto flags = source.initCompatibilityFlags(config.compatibilityFlags.size());
@@ -1078,6 +1136,11 @@ kj::Array<byte> prepareRuntimeState(kj::StringPtr varPath, IsolateRuntimeConfig&
       case IsolateRuntimeConfig::BindingType::POWERBOX: output.setPowerbox(); break;
       case IsolateRuntimeConfig::BindingType::SERVICE: output.setService(input.serviceName); break;
     }
+  }
+  auto exports = source.initExports(config.exports.size());
+  for (auto i: kj::indices(config.exports)) {
+    exports[i].setName(config.exports[i].name);
+    exports[i].setInterfaceId(config.exports[i].interfaceId);
   }
   kj::VectorOutputStream sourceBytes;
   capnp::writePackedMessage(sourceBytes, sourceMessage);
@@ -4527,6 +4590,15 @@ public:
     context.getResults().setView(kj::heap<IsolateUiViewImpl>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost)));
     return kj::READY_NOW;
+  }
+
+  kj::Promise<void> getExport(GetExportContext context) override {
+    lifecycle->requireRunning();
+    auto params = context.getParams();
+    return runtimeHost->getExport(params.getName(), params.getInterfaceId()).then(
+        [context](capnp::Capability::Client cap) mutable {
+      context.getResults().setCap(kj::mv(cap));
+    });
   }
 
   kj::Promise<void> keepAlive(KeepAliveContext context) override {

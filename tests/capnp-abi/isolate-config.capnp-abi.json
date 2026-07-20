@@ -7,7 +7,12 @@
     {
       "name": "Manifest.IsolateConfig",
       "structId": "0xd5b4dacda9ef3910",
-      "fields": [{"name": "mainModule", "ordinal": 0, "type": "Text"}, {"name": "modules", "ordinal": 1, "type": "List(Struct(0xa691c983138f8206))"}, {"name": "compatibilityDate", "ordinal": 2, "type": "Text"}, {"name": "compatibilityFlags", "ordinal": 3, "type": "List(Text)"}, {"name": "bindings", "ordinal": 4, "type": "List(Struct(0x8b2734f75ad2d39b))"}, {"name": "bridgeConfig", "ordinal": 5, "type": "Struct(0xdd8c82383168c096)"}]
+      "fields": [{"name": "mainModule", "ordinal": 0, "type": "Text"}, {"name": "modules", "ordinal": 1, "type": "List(Struct(0xa691c983138f8206))"}, {"name": "compatibilityDate", "ordinal": 2, "type": "Text"}, {"name": "compatibilityFlags", "ordinal": 3, "type": "List(Text)"}, {"name": "bindings", "ordinal": 4, "type": "List(Struct(0x8b2734f75ad2d39b))"}, {"name": "bridgeConfig", "ordinal": 5, "type": "Struct(0xdd8c82383168c096)"}, {"name": "exports", "ordinal": 6, "type": "List(Struct(0xd3a117e6374a8618))"}]
+    },
+    {
+      "name": "Manifest.IsolateConfig.Export",
+      "structId": "0xd3a117e6374a8618",
+      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "interfaceId", "ordinal": 1, "type": "UInt64"}]
     },
     {
       "name": "Manifest.IsolateConfig.Module",
