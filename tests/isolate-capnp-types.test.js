@@ -68,6 +68,8 @@ test("sandstorm:api exports exactly the intended public Cap'n Proto values", asy
   assert.ok(match, "sandstorm:api must re-export Cap'n Proto helpers from the internal runtime");
   const exportedNames = match[1].split(",").map((name) => name.trim()).filter(Boolean);
   assert.deepEqual(exportedNames.sort(), names.sort());
+  assert.match(source, /export function defineWorker\s*\(/);
+  assert.match(source, /export function serveCapnp\s*\(/);
 });
 
 test("generated Cap'n Proto types enforce the Sandstorm API contract", async (t) => {
@@ -110,14 +112,17 @@ import { Collision, Profile } from "./contract.js";
 import {
   capnpClient,
   createCapnpStruct,
+  defineWorker,
   exportCapnp,
   pipeReadableToByteStream,
+  serveCapnp,
 } from "sandstorm:api";
 import type {
   ByteStreamClient,
   Capability,
   SandstormApi,
   ServerTargetFor,
+  WorkerCapnpServerTargetFor,
 } from "sandstorm:api";
 // @ts-expect-error internal bridge exports are not public
 import { connectIsolateBridge } from "sandstorm:api";
@@ -158,6 +163,31 @@ void piped;
 void descriptor;
 void restored;
 void revoked;
+
+const workerTarget: WorkerCapnpServerTargetFor<typeof Collision> = {
+  save: async ({ value }, { env, ctx }) => {
+    ctx.waitUntil(env.STORAGE.fetch("http://storage/capnp-call").then(() => undefined));
+    return { value };
+  },
+  drop: async (_params, _context, results) => {
+    results.value = "drop";
+  },
+  info: async () => ({ value: "info" }),
+};
+const worker = defineWorker({
+  capabilities: {
+    collision: serveCapnp(Collision, workerTarget),
+  },
+  async fetch(_request, env, ctx) {
+    ctx.waitUntil(env.STORAGE.fetch("http://storage/fetch").then(() => undefined));
+    return new Response("ok");
+  },
+});
+void worker;
+// @ts-expect-error worker capabilities must be opaque serveCapnp() declarations
+defineWorker({ capabilities: { collision: { interface: Collision, target: workerTarget } } });
+// @ts-expect-error worker target context is not a generated results builder
+serveCapnp(Collision, { ...workerTarget, save: async (_params, { value }) => ({ value }) });
 
 // @ts-expect-error generated server target requires every method
 exportCapnp(api, Collision, { save: target.save });

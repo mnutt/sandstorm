@@ -1,6 +1,7 @@
 import {
   CAPNP_CLIENT_SYMBOL,
   connectIsolateBridge,
+  createCapnpWorkerExportDispatcher,
   nativeCapnpInterfaceMetadata,
   nativeCapnpSavedTokenData,
   nativeCapnpSavedTokenText,
@@ -34,6 +35,70 @@ export {
 } from "sandstorm-internal:capnp-runtime";
 
 export const SANDSTORM_API_VERSION = 0;
+
+const workerCapnpExports = new WeakMap();
+
+/** Declares one generated Cap'n Proto server as a named worker capability. */
+export function serveCapnp(InterfaceClass, target) {
+  nativeCapnpInterfaceMetadata(InterfaceClass, "serveCapnp()");
+  if (typeof InterfaceClass.Server !== "function") {
+    throw new TypeError("serveCapnp() requires a generated server interface class");
+  }
+  if (!target || typeof target !== "object") {
+    throw new TypeError("serveCapnp() requires a server target object");
+  }
+
+  const descriptor = Object.freeze({});
+  workerCapnpExports.set(descriptor, Object.freeze({ interface: InterfaceClass, target }));
+  return descriptor;
+}
+
+/** Defines a worker with optional Fetch handling and named Cap'n Proto capabilities. */
+export function defineWorker(definition) {
+  if (!definition || typeof definition !== "object" || Array.isArray(definition)) {
+    throw new TypeError("defineWorker() requires a worker definition object");
+  }
+  if (Object.hasOwn(definition, "sandstormRpcEvent")) {
+    throw new TypeError("sandstormRpcEvent is reserved for Sandstorm's Cap'n Proto runtime");
+  }
+  if (definition.fetch !== undefined && typeof definition.fetch !== "function") {
+    throw new TypeError("defineWorker() fetch must be a function");
+  }
+
+  const capabilities = definition.capabilities ?? {};
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) {
+    throw new TypeError("defineWorker() capabilities must be an object");
+  }
+  const internalExports = Object.create(null);
+  for (const [name, descriptor] of Object.entries(capabilities)) {
+    const internal = workerCapnpExports.get(descriptor);
+    if (!internal) {
+      throw new TypeError(
+        `defineWorker() capability ${name} must be created with serveCapnp()`);
+    }
+    internalExports[name] = internal;
+  }
+
+  const worker = {};
+  for (const property of Reflect.ownKeys(definition)) {
+    if (property === "capabilities") continue;
+    Object.defineProperty(worker, property, Object.getOwnPropertyDescriptor(definition, property));
+  }
+
+  if (Object.keys(internalExports).length > 0) {
+    const dispatcher = createCapnpWorkerExportDispatcher(internalExports);
+    Object.defineProperty(worker, "sandstormRpcEvent", {
+      configurable: false,
+      enumerable: true,
+      value(request, send, receive, env, ctx) {
+        return dispatcher.handler(request, send, receive, env, ctx);
+      },
+      writable: false,
+    });
+  }
+
+  return Object.freeze(worker);
+}
 
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
 const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";

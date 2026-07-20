@@ -26,6 +26,73 @@ declare module "sandstorm:api" {
     ConstructorParameters<I["Server"]>[0];
   export type StructInitFor<S extends CapnpStructClass> = Parameters<S["_applyInit"]>[1];
 
+  /** The workerd lifetime controls associated with one inbound worker event. */
+  export interface WorkerExecutionContext {
+    waitUntil(promise: Promise<unknown>): void;
+    passThroughOnException(): void;
+  }
+
+  /** Environment and event lifetime for one inbound Cap'n Proto method call. */
+  export interface WorkerCapnpCallContext<E extends SandstormEnv = SandstormEnv> {
+    readonly env: E;
+    readonly ctx: WorkerExecutionContext;
+  }
+
+  /**
+   * A generated server target adapted for a worker export. Its second argument is
+   * call context; the generated result builder moves to the third argument.
+   */
+  export type WorkerCapnpServerTargetFor<
+    I extends CapnpServerInterface,
+    E extends SandstormEnv = SandstormEnv,
+  > = {
+    [K in keyof ServerTargetFor<I>]: ServerTargetFor<I>[K] extends
+      (params: infer P, results: infer R) => infer V
+        ? (params: P, context: WorkerCapnpCallContext<E>, results: R) => V
+        : ServerTargetFor<I>[K];
+  };
+
+  const workerCapnpExportBrand: unique symbol;
+
+  /** An opaque declaration accepted by defineWorker(). */
+  export interface WorkerCapnpExport<
+    I extends CapnpServerInterface = CapnpServerInterface,
+    E extends SandstormEnv = SandstormEnv,
+  > {
+    readonly [workerCapnpExportBrand]: { readonly interface: I; readonly env: E };
+  }
+
+  /** Declares a generated server target as one worker capability. */
+  export function serveCapnp<
+    I extends CapnpServerInterface,
+    E extends SandstormEnv = SandstormEnv,
+  >(
+    InterfaceClass: I,
+    target: WorkerCapnpServerTargetFor<I, E>,
+  ): WorkerCapnpExport<I, E>;
+
+  export interface SandstormWorkerDefinition<E extends SandstormEnv = SandstormEnv> {
+    readonly capabilities?: Readonly<Record<string, WorkerCapnpExport<any, E>>>;
+    fetch?(
+      request: Request,
+      env: E,
+      ctx: WorkerExecutionContext,
+    ): Response | Promise<Response>;
+  }
+
+  export interface DefinedSandstormWorker<E extends SandstormEnv = SandstormEnv> {
+    fetch?(
+      request: Request,
+      env: E,
+      ctx: WorkerExecutionContext,
+    ): Response | Promise<Response>;
+  }
+
+  /** Builds the default workerd export and installs Sandstorm's private RPC event handler. */
+  export function defineWorker<E extends SandstormEnv = SandstormEnv>(
+    definition: SandstormWorkerDefinition<E>,
+  ): Readonly<DefinedSandstormWorker<E>>;
+
   /**
    * Creates a non-owning schema view of a live Sandstorm capability. The returned
    * client does not own or extend the capability lifetime; its caller must drop the

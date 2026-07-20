@@ -40,6 +40,16 @@ second grain in the same workerd process, and verifies that grain shutdown
 revokes the returned capability. Public SDK syntax, concurrency, cancellation,
 and full Cap'n Proto protocol routing are not yet implemented.
 
+Implementation checkpoint (2026-07-20): the public isolate SDK now provides
+`defineWorker()` and `serveCapnp()`. Applications declare named generated
+servers without importing the private frame transport or implementing the
+reserved workerd event. Each eager, worker-global server target is constructed
+during module evaluation. Its methods receive event-scoped `{ env, ctx }` as a
+second argument; the generated results builder remains an optional third
+argument. Fetch remains an independent, optional worker handler. Lazy export
+factories can be added later without changing the registry shape if
+measurements justify them.
+
 ## Summary
 
 The target model is:
@@ -179,12 +189,12 @@ The exact JavaScript syntax should be selected during the SDK phase, but the
 intended shape is approximately:
 
 ```js
-import { defineWorker, exportCapnp, webSessionFromFetch } from "sandstorm:api";
+import { defineWorker, serveCapnp, webSessionFromFetch } from "sandstorm:api";
 import { SearchIndex } from "capnp:./search.capnp";
 
 export default defineWorker({
   capabilities: {
-    search: exportCapnp(SearchIndex, new SearchIndexImpl()),
+    search: serveCapnp(SearchIndex, new SearchIndexImpl()),
 
     // Optional. Only this export carries UI and Fetch semantics.
     ui: webSessionFromFetch({
@@ -196,9 +206,9 @@ export default defineWorker({
 });
 ```
 
-This example is illustrative, not a commitment to those helper names. The
-important contract is the named capability registry, not JavaScript module
-introspection or a particular facade spelling.
+`defineWorker()` and `serveCapnp()` are now the implemented SDK names. The UI
+facade remains illustrative; the important contract is the named capability
+registry rather than JavaScript module introspection.
 
 The package manifest declares the public identity and role of exports so that
 Sandstorm can validate them without running untrusted code. Runtime
@@ -617,10 +627,6 @@ the first schema sketch:
   top-level call while preserving pipelining and callbacks?
 - Does a live exported capability pin the worker directly, or should the host
   issue a separate reference-counted lease?
-- Are named export server objects constructed at module evaluation, lazily on
-  first resolution, or by an explicit startup event?
-- How should an exported handler receive `env` without binding itself to one
-  expired call context?
 - Should the UI facade export `MainView`, `UiView`, or a Sandstorm-owned
   bootstrap that produces the correct view capability?
 - Which export metadata belongs in `Manifest.IsolateConfig`, and which belongs

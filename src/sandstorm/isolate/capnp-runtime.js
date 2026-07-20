@@ -530,7 +530,19 @@ class EventDrivenCapnpConn extends CapnpEsConn {
 class CapnpRpcEventTransport {
   #closed = false;
   #pendingReturns = new Map();
+  #runWithContext;
   #send;
+
+  constructor(runWithContext = (_context, callback) => callback()) {
+    if (typeof runWithContext !== "function") {
+      throw new TypeError("worker Cap'n Proto context dispatcher must be a function");
+    }
+    this.#runWithContext = runWithContext;
+  }
+
+  #handleMessage(connection, message, context) {
+    return this.#runWithContext(context, () => connection.handleMessage(message));
+  }
 
   sendMessage(message) {
     if (this.#closed) {
@@ -566,7 +578,7 @@ class CapnpRpcEventTransport {
     }
   }
 
-  async dispatch(connection, request, send, receive) {
+  async dispatch(connection, request, send, receive, context) {
     if (this.#closed) {
       throw new CapnpUnavailableError("worker Cap'n Proto RPC connection is closed");
     }
@@ -591,7 +603,7 @@ class CapnpRpcEventTransport {
         questionId = message.call.questionId;
         break;
       default:
-        connection.handleMessage(message);
+        this.#handleMessage(connection, message, context);
         return new Uint8Array(0);
     }
 
@@ -608,7 +620,7 @@ class CapnpRpcEventTransport {
     });
     this.#pendingReturns.set(questionId, { resolve, reject });
     try {
-      connection.handleMessage(message);
+      this.#handleMessage(connection, message, context);
     } catch (error) {
       this.#pendingReturns.delete(questionId);
       throw error;
@@ -620,7 +632,7 @@ class CapnpRpcEventTransport {
     while (this.#pendingReturns.has(questionId)) {
       const inboundBytes = nativeCapnpMessageBytes(await receive());
       const inbound = new CapnpEsMessage(inboundBytes, false).getRoot(CapnpEsRpcMessage);
-      connection.handleMessage(inbound);
+      this.#handleMessage(connection, inbound, context);
     }
     return await response;
   }
@@ -635,9 +647,8 @@ class CapnpRpcEventTransport {
   }
 }
 
-// Internal prototype used by the native isolate host. The returned handler must be installed as
-// the reserved sandstormRpcEvent export; application-facing named export syntax will wrap this in
-// a later migration phase.
+// Internal transport used by the native isolate host. Public worker definitions install the
+// reserved sandstormRpcEvent handler through defineWorker(), so applications never handle frames.
 export function createCapnpRpcEventDispatcher(InterfaceClass, target, options = {}) {
   validateNativeCapnpGeneratedInterface(InterfaceClass, "createCapnpRpcEventDispatcher()");
   if (typeof InterfaceClass.Server !== "function") {
@@ -648,12 +659,13 @@ export function createCapnpRpcEventDispatcher(InterfaceClass, target, options = 
     throw new TypeError("createCapnpRpcEventDispatcher() requires a server target object");
   }
 
-  const transport = new CapnpRpcEventTransport();
+  const transport = new CapnpRpcEventTransport(options.runWithContext);
   const connection = new EventDrivenCapnpConn(transport, options.finalize);
   connection.initMain(InterfaceClass, target);
   return Object.freeze({
     connection,
-    handler: (request, send, receive) => transport.dispatch(connection, request, send, receive),
+    handler: (request, send, receive, env, ctx) => transport.dispatch(
+      connection, request, send, receive, Object.freeze({ env, ctx })),
     close: (error) => {
       transport.close(error);
       connection.shutdown(error);
@@ -669,6 +681,7 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
     throw new TypeError("createCapnpWorkerExportDispatcher() requires an export object");
   }
 
+  let activeCallContext = null;
   const exportsByName = new Map();
   for (const [name, descriptor] of Object.entries(workerExports)) {
     if (!name || !descriptor || typeof descriptor !== "object") {
@@ -683,12 +696,38 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
     if (!descriptor.target || typeof descriptor.target !== "object") {
       throw new TypeError(`worker Cap'n Proto export ${name} requires a server target object`);
     }
+    // Generated capnp-es server methods call their target synchronously before awaiting the
+    // returned promise. Interpose only at that boundary so concurrent events cannot observe a
+    // worker-global stale context. The generated results builder remains available as the third
+    // argument for handlers that need it.
+    const contextualTarget = new Proxy(descriptor.target, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof property !== "string" || typeof value !== "function") return value;
+        return (params, results) => {
+          if (activeCallContext === null) {
+            throw new NativeCapnpBridgeProtocolError(
+              `worker Cap'n Proto export ${name} was called outside an RPC event`);
+          }
+          return Reflect.apply(value, target, [params, activeCallContext, results]);
+        };
+      },
+    });
     exportsByName.set(name, Object.freeze({
       interfaceId: metadata.interfaceId,
-      client: new InterfaceClass.Server(descriptor.target).client(),
+      client: new InterfaceClass.Server(contextualTarget).client(),
     }));
   }
 
+  const runWithContext = (context, callback) => {
+    const previous = activeCallContext;
+    activeCallContext = context;
+    try {
+      return callback();
+    } finally {
+      activeCallContext = previous;
+    }
+  };
   const dispatcher = createCapnpRpcEventDispatcher(IsolateExportBroker, {
     getExport({ name, interfaceId }) {
       const workerExport = exportsByName.get(name);
@@ -702,7 +741,7 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
           workerExport.client, `worker Cap'n Proto export ${name}`),
       };
     },
-  }, options);
+  }, { ...options, runWithContext });
 
   return Object.freeze({
     ...dispatcher,

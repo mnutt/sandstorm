@@ -7,14 +7,15 @@ import {
   Capability,
   capnpClient,
   createCapnpStruct,
+  defineWorker,
   exportCapnp,
   readCapnpStruct,
   sandstorm,
+  serveCapnp,
 } from "sandstorm:api";
 import {
   CAPNP_CLIENT_SYMBOL,
   connectIsolateBridge,
-  createCapnpWorkerExportDispatcher,
 } from "sandstorm-internal:capnp-runtime";
 
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
@@ -104,7 +105,12 @@ function makePersistentNativeGreeterTarget(id) {
       };
     },
 
-    async hello(params) {
+    async hello(params, callContext) {
+      if (id === "supervisor-export" &&
+          (!callContext?.env?.SANDSTORM_API ||
+           typeof callContext?.ctx?.waitUntil !== "function")) {
+        throw new Error("named Cap'n Proto export did not receive its workerd call context");
+      }
       return {
         message: `classic native greeter ${id} hello ${params.name}`,
       };
@@ -144,13 +150,6 @@ function makePersistentNativeGreeterTarget(id) {
     },
   };
 }
-
-const workerRpc = createCapnpWorkerExportDispatcher({
-  greeter: {
-    interface: NativeGreeter,
-    target: makePersistentNativeGreeterTarget("supervisor-export"),
-  },
-});
 
 function makeBytes(size) {
   const bytes = new Uint8Array(size);
@@ -405,11 +404,11 @@ function renderBrowserStoragePage() {
 </html>`;
 }
 
-export default {
-  async sandstormRpcEvent(request, send, receive) {
-    await workerRpc.handler(request, send, receive);
+export default defineWorker({
+  capabilities: {
+    greeter: serveCapnp(
+      NativeGreeter, makePersistentNativeGreeterTarget("supervisor-export")),
   },
-
   async fetch(request, env, ctx) {
     const api = sandstorm(request, env);
     const url = new URL(request.url);
@@ -1211,4 +1210,4 @@ export default {
 
     return Response.json({ ok: false, error: "not found" }, { status: 404 });
   },
-};
+});
