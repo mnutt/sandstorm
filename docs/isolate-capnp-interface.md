@@ -536,6 +536,30 @@ Exit criteria:
   capabilities; and
 - no idle connection keeps an account's workers resident forever.
 
+Implemented checkpoint:
+
+- `serveCapnp(Interface, target, { restore, drop })` declares the durable registry for a named
+  export. `target.save()` still implements the interface's application-defined `AppPersistent`
+  object ID; the registry recreates server targets from that opaque ID and receives final-drop
+  notifications.
+- New saves use the additive `SupervisorObjectId.isolateWorkerRef` variant containing the export
+  name, interface ID, and opaque object ID. Existing `appRef` values retain the legacy
+  `MainView.restore()` path.
+- The supervisor wraps named and returned worker capabilities in a Cap'n Proto membrane. External
+  callers see `SystemPersistent`, direct cross-realm `AppPersistent` calls remain blocked, and
+  requirement revocation applies transitively to capabilities returned by worker methods.
+- Restore and drop call the worker's schema-opaque export broker directly. They do not construct a
+  synthetic `MainView`, Fetch request, or KJ HTTP adapter.
+- Integration coverage saves and restores both a named export and a returned child capability,
+  restores the named export into a new worker incarnation, exercises requirement revocation,
+  rejects a missing durable registry, and verifies token revocation.
+
+The current native host continues to use its bounded idle timer: retaining an otherwise-idle RPC
+bootstrap does not pin a worker forever, and eviction disconnects its transient capabilities.
+Durable tokens remain reconstructible because they contain application object IDs rather than V8
+object identity. App-upgrade migration aliases for renamed exports remain future policy work; a
+missing name/interface/registry currently fails restoration explicitly.
+
 ### Phase 5: Build the UI/WebSession facade on generic exports
 
 Implement the standard UI capability stack in JavaScript/capnp-es and layer the

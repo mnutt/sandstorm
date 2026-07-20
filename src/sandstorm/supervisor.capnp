@@ -401,6 +401,10 @@ struct SupervisorObjectId(AppObjectId) {
     routeBackedSession @2 :RouteBackedSession;
     # A WebSession or ApiSession implemented by the supervisor by routing requests back through
     # the grain's ordinary web entry point. This is supervisor-owned rather than an app ref.
+
+    isolateWorkerRef @3 :IsolateWorkerRef;
+    # An application object restored directly through a named isolate worker export. This is
+    # separate from appRef so existing persisted objects retain their MainView restoration path.
   }
 
   struct RouteBackedSession {
@@ -411,5 +415,11 @@ struct SupervisorObjectId(AppObjectId) {
 
     type @0 :Type;
     pathPrefix @1 :Text;
+  }
+
+  struct IsolateWorkerRef {
+    exportName @0 :Text;
+    interfaceId @1 :UInt64;
+    objectId @2 :AnyPointer;
   }
 }

@@ -178,7 +178,16 @@ const workerTarget: WorkerCapnpServerTargetFor<typeof Collision> = {
 };
 const worker = defineWorker({
   capabilities: {
-    collision: serveCapnp(Collision, workerTarget),
+    collision: serveCapnp(Collision, workerTarget, {
+      restore: async (_objectId, { signal }) => {
+        const canceled: boolean = signal.aborted;
+        void canceled;
+        return workerTarget;
+      },
+      drop: async (_objectId, { env }) => {
+        await env.STORAGE.fetch("http://storage/drop");
+      },
+    }),
   },
   async fetch(_request, env, ctx) {
     ctx.waitUntil(env.STORAGE.fetch("http://storage/fetch").then(() => undefined));
@@ -190,6 +199,10 @@ void worker;
 defineWorker({ capabilities: { collision: { interface: Collision, target: workerTarget } } });
 // @ts-expect-error worker target context is not a generated results builder
 serveCapnp(Collision, { ...workerTarget, save: async (_params, { value }) => ({ value }) });
+// @ts-expect-error durable exports require both lifecycle functions
+serveCapnp(Collision, workerTarget, { restore: async () => workerTarget });
+// @ts-expect-error restore must produce a generated server target
+serveCapnp(Collision, workerTarget, { restore: async () => ({}), drop: async () => undefined });
 
 // @ts-expect-error generated server target requires every method
 exportCapnp(api, Collision, { save: target.save });

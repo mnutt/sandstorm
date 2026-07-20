@@ -39,7 +39,7 @@ export const SANDSTORM_API_VERSION = 0;
 const workerCapnpExports = new WeakMap();
 
 /** Declares one generated Cap'n Proto server as a named worker capability. */
-export function serveCapnp(InterfaceClass, target) {
+export function serveCapnp(InterfaceClass, target, options = undefined) {
   nativeCapnpInterfaceMetadata(InterfaceClass, "serveCapnp()");
   if (typeof InterfaceClass.Server !== "function") {
     throw new TypeError("serveCapnp() requires a generated server interface class");
@@ -48,8 +48,20 @@ export function serveCapnp(InterfaceClass, target) {
     throw new TypeError("serveCapnp() requires a server target object");
   }
 
+  let durable = null;
+  if (options !== undefined) {
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw new TypeError("serveCapnp() options must be an object");
+    }
+    if (typeof options.restore !== "function" || typeof options.drop !== "function") {
+      throw new TypeError("durable serveCapnp() exports require restore and drop functions");
+    }
+    durable = Object.freeze({ restore: options.restore, drop: options.drop });
+  }
+
   const descriptor = Object.freeze({});
-  workerCapnpExports.set(descriptor, Object.freeze({ interface: InterfaceClass, target }));
+  workerCapnpExports.set(
+    descriptor, Object.freeze({ interface: InterfaceClass, target, durable }));
   return descriptor;
 }
 

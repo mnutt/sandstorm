@@ -162,13 +162,8 @@ function makePersistentNativeGreeterTarget(id) {
     },
 
     async makeGreeter(params) {
-      const greeter = new NativeGreeter.Server({
-        async hello(helloParams) {
-          return {
-            message: `${params.prefix} ${helloParams.name}`,
-          };
-        },
-      }).client();
+      const greeter = new NativeGreeter.Server(
+        makeReturnedNativeGreeterTarget(params.prefix)).client();
       return { greeter };
     },
 
@@ -206,6 +201,27 @@ function makePersistentNativeGreeterTarget(id) {
       return { payload: capnpDataBytes(params.payload) };
     },
   };
+}
+
+function makeReturnedNativeGreeterTarget(prefix) {
+  return {
+    async save() {
+      return {
+        objectId: makeNativeGreeterObjectId(`returned:${prefix}`),
+        label: { defaultText: `returned native greeter ${prefix}` },
+      };
+    },
+    async hello(params) {
+      return { message: `${prefix} ${params.name}` };
+    },
+  };
+}
+
+function restoreNativeGreeterTarget(objectId) {
+  const id = readNativeGreeterObjectId(objectId);
+  return id.startsWith("returned:")
+    ? makeReturnedNativeGreeterTarget(id.slice("returned:".length))
+    : makePersistentNativeGreeterTarget(id);
 }
 
 function makeBytes(size) {
@@ -464,7 +480,16 @@ function renderBrowserStoragePage() {
 export default defineWorker({
   capabilities: {
     greeter: serveCapnp(
-      NativeGreeter, makePersistentNativeGreeterTarget("supervisor-export")),
+      NativeGreeter,
+      makePersistentNativeGreeterTarget("supervisor-export"),
+      {
+        async restore(objectId) {
+          return restoreNativeGreeterTarget(objectId);
+        },
+        async drop(objectId) {
+          readNativeGreeterObjectId(objectId);
+        },
+      }),
   },
   async fetch(request, env, ctx) {
     const api = sandstorm(request, env);

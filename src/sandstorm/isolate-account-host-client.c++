@@ -56,6 +56,24 @@ private:
   kj::Promise<void> releasePromise;
 };
 
+class CapturingRevocationObserver final: public SystemPersistent::RevocationObserver::Server {
+public:
+  explicit CapturingRevocationObserver(
+      kj::Own<kj::PromiseFulfiller<capnp::Capability::Client>> handleFulfiller)
+      : handleFulfiller(kj::mv(handleFulfiller)) {}
+
+  kj::Promise<void> dropWhenRevoked(DropWhenRevokedContext context) override {
+    KJ_REQUIRE(handleFulfiller.get() != nullptr,
+        "worker requirement observer received more than one revoker handle");
+    handleFulfiller->fulfill(context.getParams().getHandle());
+    handleFulfiller = nullptr;
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Own<kj::PromiseFulfiller<capnp::Capability::Client>> handleFulfiller;
+};
+
 bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
   if (needle.size() > haystack.size()) return false;
   for (size_t i = 0; i <= haystack.size() - needle.size(); ++i) {
@@ -121,15 +139,22 @@ public:
       routeOwnerGrainId = kj::mv(ownerGrainId);
       routeTokenLive = true;
       context.getResults().setToken(kj::StringPtr("account-route-token").asBytes());
-    } else {
-      KJ_REQUIRE(ref.which() == SupervisorObjectId<>::APP_REF,
-          "account-host test received an unsupported persistent object type");
+    } else if (ref.which() == SupervisorObjectId<>::APP_REF) {
       capnp::MallocMessageBuilder message;
       message.setRoot(ref.getAppRef());
       appRef = capnp::messageToFlatArray(message);
       appOwnerGrainId = kj::mv(ownerGrainId);
       appTokenLive = true;
       context.getResults().setToken(kj::StringPtr("account-app-token").asBytes());
+    } else {
+      KJ_REQUIRE(ref.which() == SupervisorObjectId<>::ISOLATE_WORKER_REF,
+          "account-host test received an unsupported persistent object type");
+      capnp::MallocMessageBuilder message;
+      message.setRoot(ref.getIsolateWorkerRef());
+      workerRef = capnp::messageToFlatArray(message);
+      workerOwnerGrainId = kj::mv(ownerGrainId);
+      workerTokenLive = true;
+      context.getResults().setToken(kj::StringPtr("account-worker-token").asBytes());
     }
     return kj::READY_NOW;
   }
@@ -144,10 +169,13 @@ public:
     if (token == "account-route-token") {
       KJ_REQUIRE(routeTokenLive, "dropped account-host route token was restored");
       ownerGrainId = routeOwnerGrainId;
-    } else {
-      KJ_REQUIRE(token == "account-app-token" && appTokenLive,
-          "unknown account-host test token", token);
+    } else if (token == "account-app-token") {
+      KJ_REQUIRE(appTokenLive, "dropped account-host app token was restored");
       ownerGrainId = appOwnerGrainId;
+    } else {
+      KJ_REQUIRE(token == "account-worker-token" && workerTokenLive,
+          "unknown account-host test token", token);
+      ownerGrainId = workerOwnerGrainId;
     }
     KJ_IF_MAYBE(currentSupervisor, supervisors.find(ownerGrainId)) {
       auto request = currentSupervisor->restoreRequest();
@@ -155,9 +183,13 @@ public:
         auto route = request.getRef().initRouteBackedSession();
         route.setType(routeType);
         route.setPathPrefix(routePathPrefix);
-      } else {
+      } else if (token == "account-app-token") {
         capnp::FlatArrayMessageReader reader(appRef.asPtr());
         request.getRef().setAppRef(reader.getRoot<capnp::AnyPointer>());
+      } else {
+        capnp::FlatArrayMessageReader reader(workerRef.asPtr());
+        request.getRef().setIsolateWorkerRef(
+            reader.getRoot<SupervisorObjectId<>::IsolateWorkerRef>());
       }
       request.setParentToken(token.asBytes());
       return request.send().then([context, token = kj::mv(token)](auto result) mutable {
@@ -179,6 +211,18 @@ public:
       appTokenLive = false;
       return kj::READY_NOW;
     }
+    if (token == "account-worker-token") {
+      KJ_REQUIRE(workerTokenLive, "worker token dropped twice");
+      workerTokenLive = false;
+      KJ_IF_MAYBE(currentSupervisor, supervisors.find(workerOwnerGrainId)) {
+        auto request = currentSupervisor->dropRequest();
+        capnp::FlatArrayMessageReader reader(workerRef.asPtr());
+        request.getRef().setIsolateWorkerRef(
+            reader.getRoot<SupervisorObjectId<>::IsolateWorkerRef>());
+        return request.send().ignoreResult();
+      }
+      KJ_FAIL_REQUIRE("no supervisor registered for worker token's grain", workerOwnerGrainId);
+    }
     KJ_REQUIRE(token == "outbound-http-saved-token", "unknown account-host test token", token);
     return kj::READY_NOW;
   }
@@ -198,6 +242,9 @@ private:
   kj::Array<capnp::word> appRef;
   kj::String appOwnerGrainId;
   bool appTokenLive = false;
+  kj::Array<capnp::word> workerRef;
+  kj::String workerOwnerGrainId;
+  bool workerTokenLive = false;
 };
 
 class IgnoreByteStream final: public ByteStream::Server {
@@ -647,6 +694,25 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(greeting == "classic native greeter supervisor-export hello account host",
       "Supervisor did not proxy the named worker export", greeting);
 
+  auto saveWorkerExportRequest =
+      workerGreeter.castAs<sandstorm::SystemPersistent>().saveRequest();
+  auto workerTokenOwner = saveWorkerExportRequest.getSealFor().initGrain();
+  workerTokenOwner.setGrainId(argv[2]);
+  workerTokenOwner.getSaveLabel().setDefaultText("named isolate worker export");
+  auto savedWorkerExport = saveWorkerExportRequest.send().wait(io.waitScope);
+  auto workerExportToken = kj::heapArray<kj::byte>(savedWorkerExport.getSturdyRef());
+
+  auto restoreWorkerExportRequest = core.restoreRequest();
+  restoreWorkerExportRequest.setToken(workerExportToken);
+  auto restoredWorkerGreeter = restoreWorkerExportRequest.send().wait(io.waitScope)
+      .getCap().castAs<NativeGreeter>();
+  auto restoredGreetingRequest = restoredWorkerGreeter.helloRequest();
+  restoredGreetingRequest.setName("restored account host");
+  auto restoredGreeting = restoredGreetingRequest.send().wait(io.waitScope).getMessage();
+  KJ_REQUIRE(restoredGreeting ==
+      "classic native greeter supervisor-export hello restored account host",
+      "named worker export did not restore through its durable registry", restoredGreeting);
+
   auto makePipelinedGreeterRequest = workerGreeter.makeGreeterRequest();
   makePipelinedGreeterRequest.setPrefix("pipelined worker greeter");
   auto makePipelinedGreeter = makePipelinedGreeterRequest.send();
@@ -712,6 +778,45 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(afterCancellation ==
       "classic native greeter supervisor-export hello after cancellation",
       "worker did not observe client-initiated RPC cancellation", afterCancellation);
+
+  auto membraneExportRequest = supervisor.getExportRequest();
+  membraneExportRequest.setName("greeter");
+  membraneExportRequest.setInterfaceId(capnp::typeId<NativeGreeter>());
+  auto membraneExport = membraneExportRequest.send().wait(io.waitScope).getCap()
+      .castAs<sandstorm::SystemPersistent>();
+  auto revokerHandle = kj::newPromiseAndFulfiller<capnp::Capability::Client>();
+  auto addRequirementsRequest = membraneExport.addRequirementsRequest();
+  addRequirementsRequest.setObserver(kj::heap<sandstorm::CapturingRevocationObserver>(
+      kj::mv(revokerHandle.fulfiller)));
+  auto attenuatedGreeter = addRequirementsRequest.send().wait(io.waitScope).getCap()
+      .castAs<NativeGreeter>();
+  auto revoker = revokerHandle.promise.wait(io.waitScope);
+  auto beforeRequirementRevocationRequest = attenuatedGreeter.helloRequest();
+  beforeRequirementRevocationRequest.setName("before requirement revocation");
+  KJ_REQUIRE(beforeRequirementRevocationRequest.send().wait(io.waitScope).getMessage() ==
+      "classic native greeter supervisor-export hello before requirement revocation");
+  auto makeAttenuatedChildRequest = attenuatedGreeter.makeGreeterRequest();
+  makeAttenuatedChildRequest.setPrefix("attenuated returned worker greeter");
+  auto attenuatedChild = makeAttenuatedChildRequest.send().wait(io.waitScope).getGreeter();
+  auto beforeChildRevocationRequest = attenuatedChild.helloRequest();
+  beforeChildRevocationRequest.setName("before child revocation");
+  KJ_REQUIRE(beforeChildRevocationRequest.send().wait(io.waitScope).getMessage() ==
+      "attenuated returned worker greeter before child revocation");
+  revoker = nullptr;
+  bool requirementRevoked = false;
+  for (uint attempt = 0; attempt < 100; ++attempt) {
+    try {
+      auto revokedRequest = attenuatedChild.helloRequest();
+      revokedRequest.setName("after requirement revocation");
+      revokedRequest.send().wait(io.waitScope);
+    } catch (const kj::Exception&) {
+      requirementRevoked = true;
+      break;
+    }
+    io.provider->getTimer().afterDelay(10 * kj::MILLISECONDS).wait(io.waitScope);
+  }
+  KJ_REQUIRE(requirementRevoked,
+      "worker export remained callable after its membrane requirements were revoked");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
   sandstorm::testWebSocket(io.waitScope, supervisor);
   sandstorm::testBrowserBootstrap(io.waitScope, supervisor);
@@ -829,6 +934,7 @@ int main(int argc, char** argv) {
 
   auto restarted = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], false);
+  coreImpl.setSupervisor(argv[2], restarted);
   sandstorm::fetchPath(io.waitScope, restarted, core, "echo");
   sandstorm::fetchPath(io.waitScope, restarted, core, "sandstorm-api-binding-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "powerbox-binding-probe");
@@ -840,6 +946,53 @@ int main(int argc, char** argv) {
       io.waitScope, restarted, core, "shared-storage-isolation");
   KJ_REQUIRE(restartedStorage == "{\"ok\":true,\"value\":\"first\"}",
       "shared grain restart lost or crossed storage authority", restartedStorage);
+
+  auto restoreRestartedWorkerRequest = core.restoreRequest();
+  restoreRestartedWorkerRequest.setToken(workerExportToken);
+  auto restartedWorkerGreeter = restoreRestartedWorkerRequest.send().wait(io.waitScope)
+      .getCap().castAs<NativeGreeter>();
+  auto restartedWorkerGreetingRequest = restartedWorkerGreeter.helloRequest();
+  restartedWorkerGreetingRequest.setName("after worker restart");
+  auto restartedWorkerGreeting =
+      restartedWorkerGreetingRequest.send().wait(io.waitScope).getMessage();
+  KJ_REQUIRE(restartedWorkerGreeting ==
+      "classic native greeter supervisor-export hello after worker restart",
+      "durable worker export did not restore into a new worker incarnation",
+      restartedWorkerGreeting);
+
+  auto makeDurableChildRequest = restartedWorkerGreeter.makeGreeterRequest();
+  makeDurableChildRequest.setPrefix("durable returned worker greeter");
+  auto durableChild = makeDurableChildRequest.send().wait(io.waitScope).getGreeter();
+  auto saveDurableChildRequest = durableChild.castAs<sandstorm::SystemPersistent>().saveRequest();
+  auto durableChildOwner = saveDurableChildRequest.getSealFor().initGrain();
+  durableChildOwner.setGrainId(argv[2]);
+  durableChildOwner.getSaveLabel().setDefaultText("returned isolate worker capability");
+  auto savedDurableChild = saveDurableChildRequest.send().wait(io.waitScope);
+  auto durableChildToken = kj::heapArray<kj::byte>(savedDurableChild.getSturdyRef());
+  auto restoreDurableChildRequest = core.restoreRequest();
+  restoreDurableChildRequest.setToken(durableChildToken);
+  auto restoredDurableChild = restoreDurableChildRequest.send().wait(io.waitScope)
+      .getCap().castAs<NativeGreeter>();
+  auto durableChildGreetingRequest = restoredDurableChild.helloRequest();
+  durableChildGreetingRequest.setName("after child restore");
+  auto durableChildGreeting = durableChildGreetingRequest.send().wait(io.waitScope).getMessage();
+  KJ_REQUIRE(durableChildGreeting ==
+      "durable returned worker greeter after child restore",
+      "returned worker capability bypassed durable realm translation", durableChildGreeting);
+
+  auto dropWorkerTokenRequest = core.dropRequest();
+  dropWorkerTokenRequest.setToken(durableChildToken);
+  dropWorkerTokenRequest.send().wait(io.waitScope);
+  bool droppedWorkerTokenRejected = false;
+  try {
+    auto restoreDroppedWorkerRequest = core.restoreRequest();
+    restoreDroppedWorkerRequest.setToken(durableChildToken);
+    restoreDroppedWorkerRequest.send().wait(io.waitScope);
+  } catch (const kj::Exception&) {
+    droppedWorkerTokenRejected = true;
+  }
+  KJ_REQUIRE(droppedWorkerTokenRejected,
+      "revoked durable worker export token remained restorable");
   auto isolatedSecondStorage = sandstorm::fetchPath(
       io.waitScope, second, core, "shared-storage-isolation");
   KJ_REQUIRE(isolatedSecondStorage == "{\"ok\":true,\"value\":\"second\"}",

@@ -64,6 +64,18 @@ declare module "sandstorm:api" {
     readonly [workerCapnpExportBrand]: { readonly interface: I; readonly env: E };
   }
 
+  /** Recreates and cleans up application object IDs saved by a durable worker export. */
+  export interface WorkerCapnpDurableOptions<
+    I extends CapnpServerInterface,
+    E extends SandstormEnv = SandstormEnv,
+  > {
+    restore(
+      objectId: unknown,
+      context: WorkerCapnpCallContext<E>,
+    ): WorkerCapnpServerTargetFor<I, E> | Promise<WorkerCapnpServerTargetFor<I, E>>;
+    drop(objectId: unknown, context: WorkerCapnpCallContext<E>): void | Promise<void>;
+  }
+
   /** Declares a generated server target as one worker capability. */
   export function serveCapnp<
     I extends CapnpServerInterface,
@@ -71,6 +83,7 @@ declare module "sandstorm:api" {
   >(
     InterfaceClass: I,
     target: WorkerCapnpServerTargetFor<I, E>,
+    options?: WorkerCapnpDurableOptions<I, E>,
   ): WorkerCapnpExport<I, E>;
 
   export interface SandstormWorkerDefinition<E extends SandstormEnv = SandstormEnv> {

@@ -9,4 +9,12 @@ $import "/capnp/c++.capnp".namespace("sandstorm");
 # wrong Cap'n Proto type.
 interface IsolateExportBroker @0xf65d14118e8e227b {
   getExport @0 (name :Text, interfaceId :UInt64) -> (cap :Capability);
+
+  restoreExport @1 (name :Text, interfaceId :UInt64, objectId :AnyPointer)
+      -> (cap :Capability);
+  # Recreates a durable capability previously saved by this named export. The object ID remains
+  # application-defined and opaque to the native host and supervisor.
+
+  dropExport @2 (name :Text, interfaceId :UInt64, objectId :AnyPointer);
+  # Notifies the export that all durable references to the application object have been dropped.
 }

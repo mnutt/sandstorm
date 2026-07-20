@@ -31,6 +31,7 @@
 #include <capnp/message.h>
 #include <capnp/compat/http-over-capnp.h>
 #include <capnp/compat/json.h>
+#include <capnp/membrane.h>
 #include <capnp/rpc.capnp.h>
 #include <capnp/rpc-twoparty.h>
 #include <capnp/schema.h>
@@ -50,6 +51,7 @@
 #include <sandstorm/grain.capnp.h>
 #include <sandstorm/identity.capnp.h>
 #include <sandstorm/isolate-bridge.capnp.h>
+#include <sandstorm/isolate-exports.capnp.h>
 #include <sandstorm/isolate-account-host.capnp.h>
 #include <sandstorm/isolate-host.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
@@ -277,6 +279,48 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
     request.setInterfaceId(interfaceId);
     return request.send().then([](auto response) -> capnp::Capability::Client {
       return response.getCap();
+    });
+  }
+
+  kj::Promise<capnp::Capability::Client> restoreExport(
+      kj::StringPtr name, uint64_t interfaceId, capnp::AnyPointer::Reader objectId) {
+    auto& hostedClient = KJ_REQUIRE_NONNULL(hosted, "hosted isolate ingress is not ready");
+    capnp::MallocMessageBuilder objectIdMessage;
+    objectIdMessage.getRoot<capnp::AnyPointer>().set(objectId);
+    auto objectIdWords = capnp::messageToFlatArray(objectIdMessage);
+    auto bootstrapRequest = hostedClient.getRpcBootstrapRequest();
+    return bootstrapRequest.send().then(
+        [name = kj::heapString(name), interfaceId,
+            objectIdWords = kj::mv(objectIdWords)](auto response) mutable {
+      capnp::Capability::Client bootstrap = response.getCap();
+      auto request = bootstrap.castAs<IsolateExportBroker>().restoreExportRequest();
+      request.setName(name);
+      request.setInterfaceId(interfaceId);
+      capnp::FlatArrayMessageReader objectIdReader(objectIdWords.asPtr());
+      request.getObjectId().set(objectIdReader.getRoot<capnp::AnyPointer>());
+      return request.send().then([](auto result) -> capnp::Capability::Client {
+        return result.getCap();
+      });
+    });
+  }
+
+  kj::Promise<void> dropExport(
+      kj::StringPtr name, uint64_t interfaceId, capnp::AnyPointer::Reader objectId) {
+    auto& hostedClient = KJ_REQUIRE_NONNULL(hosted, "hosted isolate ingress is not ready");
+    capnp::MallocMessageBuilder objectIdMessage;
+    objectIdMessage.getRoot<capnp::AnyPointer>().set(objectId);
+    auto objectIdWords = capnp::messageToFlatArray(objectIdMessage);
+    auto bootstrapRequest = hostedClient.getRpcBootstrapRequest();
+    return bootstrapRequest.send().then(
+        [name = kj::heapString(name), interfaceId,
+            objectIdWords = kj::mv(objectIdWords)](auto response) mutable {
+      capnp::Capability::Client bootstrap = response.getCap();
+      auto request = bootstrap.castAs<IsolateExportBroker>().dropExportRequest();
+      request.setName(name);
+      request.setInterfaceId(interfaceId);
+      capnp::FlatArrayMessageReader objectIdReader(objectIdWords.asPtr());
+      request.getObjectId().set(objectIdReader.getRoot<capnp::AnyPointer>());
+      return request.send().ignoreResult();
     });
   }
 
@@ -2651,7 +2695,22 @@ RouteBackedCapabilityType routeBackedCapabilityType<IsolateApiSession>() {
 }
 
 struct PersistentRequirementState final: public kj::Refcounted {
+  PersistentRequirementState() {
+    auto revoked = kj::newPromiseAndFulfiller<void>();
+    revocation = revoked.promise.fork();
+    revocationFulfiller = kj::mv(revoked.fulfiller);
+  }
+
+  void revoke() {
+    if (revoked) return;
+    revoked = true;
+    revocationFulfiller->fulfill();
+    revocationFulfiller = nullptr;
+  }
+
   bool revoked = false;
+  kj::Maybe<kj::ForkedPromise<void>> revocation;
+  kj::Own<kj::PromiseFulfiller<void>> revocationFulfiller;
   kj::Vector<OwnCapnp<capnp::List<MembraneRequirement>>> requirements;
   kj::Vector<SystemPersistent::RevocationObserver::Client> observers;
 };
@@ -2662,7 +2721,7 @@ public:
       : state(kj::mv(state)) {}
 
   ~PersistentRevokerHandle() noexcept(false) {
-    state->revoked = true;
+    state->revoke();
   }
 
 private:
@@ -3116,6 +3175,175 @@ private:
   capnp::Capability::Client cap;
   kj::Own<PersistentRequirementState> requirementState;
 };
+
+capnp::Capability::Client makeIsolateWorkerPersistentCapability(
+    kj::Own<IsolateRuntimeHost> host, kj::StringPtr exportName, uint64_t interfaceId,
+    capnp::Capability::Client cap, kj::Own<PersistentRequirementState> requirementState);
+
+class IsolateWorkerMembranePolicy final:
+    public capnp::MembranePolicy, public kj::Refcounted {
+public:
+  IsolateWorkerMembranePolicy(kj::Own<IsolateRuntimeHost> host,
+      kj::StringPtr exportName, uint64_t interfaceId,
+      kj::Own<PersistentRequirementState> requirementState)
+      : host(kj::mv(host)),
+        exportName(kj::heapString(exportName)),
+        interfaceId(interfaceId),
+        requirementState(kj::mv(requirementState)) {}
+
+  bool shouldResolveBeforeRedirecting() override { return true; }
+
+  kj::Maybe<capnp::Capability::Client> inboundCall(
+      uint64_t requestedInterfaceId, uint16_t methodId,
+      capnp::Capability::Client target) override {
+    if (requestedInterfaceId == SYSTEM_PERSISTENT_INTERFACE_ID ||
+        requestedInterfaceId == CAPNP_PERSISTENT_INTERFACE_ID) {
+      return makeIsolateWorkerPersistentCapability(
+          kj::addRef(*host), exportName, interfaceId, kj::mv(target),
+          kj::addRef(*requirementState));
+    } else if (requestedInterfaceId == APP_PERSISTENT_INTERFACE_ID) {
+      KJ_UNIMPLEMENTED("can't call AppPersistent.save() from outside isolate grain");
+    }
+    return nullptr;
+  }
+
+  kj::Maybe<capnp::Capability::Client> outboundCall(
+      uint64_t requestedInterfaceId, uint16_t methodId,
+      capnp::Capability::Client target) override {
+    if (requestedInterfaceId == APP_PERSISTENT_INTERFACE_ID) {
+      KJ_UNIMPLEMENTED(
+          "can't call AppPersistent.save() on capabilities from outside the isolate grain");
+    } else if (requestedInterfaceId == SYSTEM_PERSISTENT_INTERFACE_ID ||
+               requestedInterfaceId == CAPNP_PERSISTENT_INTERFACE_ID) {
+      KJ_FAIL_REQUIRE("Cannot directly save an external capability from an isolate grain. "
+          "Use SandstormApi.save() instead.");
+    }
+    return nullptr;
+  }
+
+  kj::Own<MembranePolicy> addRef() override { return kj::addRef(*this); }
+
+  kj::Maybe<kj::Promise<void>> onRevoked() override {
+    KJ_IF_MAYBE(revocation, requirementState->revocation) {
+      return revocation->addBranch();
+    }
+    KJ_UNREACHABLE;
+  }
+
+private:
+  kj::Own<IsolateRuntimeHost> host;
+  kj::String exportName;
+  uint64_t interfaceId;
+  kj::Own<PersistentRequirementState> requirementState;
+};
+
+class IsolateWorkerPersistentCapability final: public SystemPersistent::Server {
+public:
+  IsolateWorkerPersistentCapability(kj::Own<IsolateRuntimeHost> host,
+      kj::StringPtr exportName, uint64_t interfaceId, capnp::Capability::Client cap,
+      kj::Maybe<kj::Array<const byte>> parentToken = nullptr,
+      kj::Own<PersistentRequirementState> requirementState =
+          kj::refcounted<PersistentRequirementState>())
+      : host(kj::mv(host)),
+        exportName(kj::heapString(exportName)),
+        interfaceId(interfaceId),
+        appCap(nullptr),
+        cap(nullptr),
+        parentToken(kj::mv(parentToken)),
+        requirementState(kj::mv(requirementState)) {
+    appCap = cap;
+    this->cap = capnp::membrane(kj::mv(cap), kj::refcounted<IsolateWorkerMembranePolicy>(
+        kj::addRef(*this->host), this->exportName, this->interfaceId,
+        kj::addRef(*this->requirementState)));
+  }
+
+  DispatchCallResult dispatchCall(uint64_t requestedInterfaceId, uint16_t methodId,
+      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer> context) override {
+    context.allowCancellation();
+    if (requestedInterfaceId == SYSTEM_PERSISTENT_INTERFACE_ID ||
+        requestedInterfaceId == CAPNP_PERSISTENT_INTERFACE_ID) {
+      return SystemPersistent::Server::dispatchCall(requestedInterfaceId, methodId, context);
+    }
+    if (requestedInterfaceId == APP_PERSISTENT_INTERFACE_ID) {
+      KJ_UNIMPLEMENTED("can't call AppPersistent.save() from outside isolate grain");
+    }
+    KJ_REQUIRE(!requirementState->revoked,
+        "isolate worker capability requirements have been revoked");
+
+    auto params = context.getParams();
+    auto request = cap.typelessRequest(requestedInterfaceId, methodId, params.targetSize());
+    request.set(params);
+    auto promise = request.send().then([context](auto&& response) mutable {
+      context.initResults(response.targetSize()).set(response);
+    });
+    return { kj::mv(promise), false };
+  }
+
+  kj::Promise<void> addRequirements(AddRequirementsContext context) override {
+    auto params = context.getParams();
+    if (params.getRequirements().size() > 0) {
+      requirementState->requirements.add(newOwnCapnp(params.getRequirements()));
+    }
+
+    auto observer = params.getObserver();
+    auto request = observer.dropWhenRevokedRequest();
+    request.setHandle(kj::heap<PersistentRevokerHandle>(kj::addRef(*requirementState)));
+    requirementState->observers.add(kj::mv(observer));
+    return request.send().ignoreResult().then([this, context]() mutable {
+      context.getResults().setCap(this->thisCap().castAs<SystemPersistent>());
+    });
+  }
+
+  kj::Promise<void> save(SaveContext context) override {
+    KJ_REQUIRE(!requirementState->revoked,
+        "isolate worker capability requirements have been revoked");
+    auto owner = newOwnCapnp(context.getParams().getSealFor());
+    KJ_IF_MAYBE(parent, parentToken) {
+      auto request = host->sandstormCore.makeChildTokenRequest();
+      request.setParent(*parent);
+      request.setOwner(owner);
+      request.adoptRequirements(collectPersistentRequirements(*requirementState,
+          capnp::Orphanage::getForMessageContaining(
+              SandstormCore::MakeChildTokenParams::Builder(request))));
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setSturdyRef(result.getToken());
+      });
+    }
+
+    auto appRequest = appCap.castAs<AppPersistent<>>().saveRequest();
+    return appRequest.send().then([this, context, KJ_MVCAP(owner)](auto result) mutable {
+      auto request = host->sandstormCore.makeTokenRequest();
+      auto workerRef = request.getRef().initIsolateWorkerRef();
+      workerRef.setExportName(exportName);
+      workerRef.setInterfaceId(interfaceId);
+      workerRef.getObjectId().setAs<capnp::AnyPointer>(result.getObjectId());
+      request.setOwner(owner);
+      request.adoptRequirements(collectPersistentRequirements(*requirementState,
+          capnp::Orphanage::getForMessageContaining(
+              SandstormCore::MakeTokenParams::Builder(request))));
+      return request.send().then([context](auto result) mutable {
+        context.getResults().setSturdyRef(result.getToken());
+      });
+    });
+  }
+
+private:
+  kj::Own<IsolateRuntimeHost> host;
+  kj::String exportName;
+  uint64_t interfaceId;
+  capnp::Capability::Client appCap;
+  capnp::Capability::Client cap;
+  kj::Maybe<kj::Array<const byte>> parentToken;
+  kj::Own<PersistentRequirementState> requirementState;
+};
+
+capnp::Capability::Client makeIsolateWorkerPersistentCapability(
+    kj::Own<IsolateRuntimeHost> host, kj::StringPtr exportName, uint64_t interfaceId,
+    capnp::Capability::Client cap, kj::Own<PersistentRequirementState> requirementState) {
+  return kj::heap<IsolateWorkerPersistentCapability>(
+      kj::mv(host), exportName, interfaceId, kj::mv(cap), nullptr,
+      kj::mv(requirementState));
+}
 
 class IsolateUiViewImpl final: public UiView::Server {
 public:
@@ -4575,30 +4803,6 @@ private:
   }
 };
 
-class CancellableCapabilityForwarder final: public capnp::Capability::Server {
-public:
-  explicit CancellableCapabilityForwarder(capnp::Capability::Client target)
-      : target(kj::mv(target)) {}
-
-  DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
-      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer> context) override {
-    // Worker exports cross the account-host -> supervisor and supervisor -> isolate-host RPC
-    // connections. Opting this forwarding call into cancellation ensures that Finish on the
-    // outer connection drops the downstream RemotePromise and propagates Finish to workerd.
-    context.allowCancellation();
-    auto params = context.getParams();
-    auto request = target.typelessRequest(interfaceId, methodId, params.targetSize());
-    request.set(params);
-    auto promise = request.send().then([context](auto&& response) mutable {
-      context.initResults(response.targetSize()).set(response);
-    });
-    return { kj::mv(promise), false };
-  }
-
-private:
-  capnp::Capability::Client target;
-};
-
 class IsolateSupervisorImpl final: public Supervisor::Server {
 public:
   IsolateSupervisorImpl(
@@ -4619,9 +4823,13 @@ public:
   kj::Promise<void> getExport(GetExportContext context) override {
     lifecycle->requireRunning();
     auto params = context.getParams();
+    auto name = kj::heapString(params.getName());
+    auto interfaceId = params.getInterfaceId();
     return runtimeHost->getExport(params.getName(), params.getInterfaceId()).then(
-        [context](capnp::Capability::Client cap) mutable {
-      context.getResults().setCap(kj::heap<CancellableCapabilityForwarder>(kj::mv(cap)));
+        [this, context, name = kj::mv(name), interfaceId](
+            capnp::Capability::Client cap) mutable {
+      context.getResults().setCap(kj::heap<IsolateWorkerPersistentCapability>(
+          kj::addRef(*runtimeHost), name, interfaceId, kj::mv(cap)));
     });
   }
 
@@ -4687,6 +4895,19 @@ public:
           });
         });
       }
+      case SupervisorObjectId<>::ISOLATE_WORKER_REF: {
+        auto workerRef = objectId.getIsolateWorkerRef();
+        auto exportName = kj::heapString(workerRef.getExportName());
+        auto interfaceId = workerRef.getInterfaceId();
+        return runtimeHost->restoreExport(
+            exportName, interfaceId, workerRef.getObjectId()).then(
+            [this, context, exportName = kj::mv(exportName), interfaceId,
+                parentToken = kj::mv(parentToken)](capnp::Capability::Client cap) mutable {
+          context.getResults().setCap(kj::heap<IsolateWorkerPersistentCapability>(
+              kj::addRef(*runtimeHost), exportName, interfaceId, kj::mv(cap),
+              kj::mv(parentToken)));
+        });
+      }
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
         KJ_FAIL_REQUIRE("isolate supervisor-owned persistent object type is not supported yet");
       default:
@@ -4708,6 +4929,11 @@ public:
           request.setObjectId(context.getParams().getRef().getAppRef());
           return request.send().ignoreResult().attach(kj::mv(registration));
         });
+      }
+      case SupervisorObjectId<>::ISOLATE_WORKER_REF: {
+        auto workerRef = objectId.getIsolateWorkerRef();
+        return runtimeHost->dropExport(
+            workerRef.getExportName(), workerRef.getInterfaceId(), workerRef.getObjectId());
       }
       case SupervisorObjectId<>::WAKE_LOCK_NOTIFICATION:
         KJ_FAIL_REQUIRE("isolate supervisor-owned persistent object type is not supported yet");

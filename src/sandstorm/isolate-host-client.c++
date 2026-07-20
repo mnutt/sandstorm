@@ -4,6 +4,7 @@
 
 #include "isolate-host.capnp.h"
 #include "isolate-bridge.capnp.h"
+#include "isolate-exports.capnp.h"
 #include "isolate-worker-source.capnp.h"
 
 #include <sandstorm/isolate/capnp-es.js.h>
@@ -395,6 +396,16 @@ export default { fetch() { return new Response("memory limit failed"); } };
   // The first answer's Finish is consumed by its original event before this second Call.
   KJ_REQUIRE(secondRpcResponse.getId() == "rpc-8-0-second-0-0",
       "worker-global RPC connection state was not preserved", secondRpcResponse.getId());
+
+  sandstorm::expectFailure([&]() {
+    auto bootstrap = grain.getRpcBootstrapRequest().send().wait(waitScope).getCap()
+        .castAs<sandstorm::IsolateExportBroker>();
+    auto restore = bootstrap.restoreExportRequest();
+    restore.setName("bridge");
+    restore.setInterfaceId(capnp::typeId<sandstorm::IsolateBridge>());
+    restore.getObjectId().setAs<capnp::Text>("missing durable registry");
+    restore.send().wait(waitScope);
+  });
 
   auto cpuStart = host.startGrainRequest();
   cpuStart.setGrainId("cpugrain123");
