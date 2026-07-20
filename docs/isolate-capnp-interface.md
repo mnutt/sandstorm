@@ -606,8 +606,9 @@ Implemented checkpoint (partial):
   longer send callback traffic through whichever RPC event happened to run most recently.
 - Dual-path conformance covers streaming uploads and a multi-megabyte streamed response. The
   correctness checkpoint buffers a streaming request up to 64 MiB because workerd I/O objects
-  cannot move between the independent `RequestStream` RPC events. It also keeps the response
-  method open until its `ByteStream` pump finishes so callback replies remain in that event.
+  cannot move between the independent `RequestStream` RPC events. Response metadata returns while
+  the body pump continues through tracked event-scoped `waitUntil()` work; the native host routes
+  post-Return `Finish` separately so it cannot deadlock callback Returns from that body pump.
 
 This checkpoint includes request/response conversion and streaming scaffolding, but it is not
 yet the Phase 5 compatibility switch. WebSockets, direct `SessionContext` plumbing, complete

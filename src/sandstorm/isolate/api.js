@@ -363,10 +363,11 @@ async function responseToWebSession(response, context, callContext) {
   let body = { bytes: new Uint8Array() };
   if (response.body) {
     const handle = new Handle.Server({ ping() {} }).client();
-    await pipeReadableToByteStream(response.body, context.responseStream, {
+    const pump = pipeReadableToByteStream(response.body, context.responseStream, {
       size: declaredSize === null ? undefined : BigInt(declaredSize),
       maxBytes: MAX_WEB_SESSION_BODY_BYTES,
     });
+    callContext.ctx.waitUntil(pump);
     body = { stream: handle };
   }
   return {

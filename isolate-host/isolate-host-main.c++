@@ -1943,7 +1943,11 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
     }
     kj::Maybe<uint32_t> returnedAnswer;
     if (message.which() == capnp::rpc::Message::RETURN) {
-      returnedAnswer = message.getReturn().getAnswerId();
+      auto answerId = message.getReturn().getAnswerId();
+      returnedAnswer = answerId;
+      if (callEvents.find(answerId) != kj::none) {
+        returnedCallAnswers.insert(answerId, true);
+      }
     }
     responses->push(kj::mv(frame));
     return returnedAnswer;
@@ -1985,6 +1989,13 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
       auto controlRef = kj::addRef(*KJ_REQUIRE_NONNULL(callEventControls.find(questionId)));
       callEvents.erase(questionId);
       callEventControls.erase(questionId);
+      if (returnedCallAnswers.erase(questionId)) {
+        // A normal Finish may arrive while the completed method's waitUntil() work is still
+        // issuing callbacks. Do not serialize those callback Returns behind event completion.
+        // Schedule Finish as its own protocol-control event; the answer has already returned, so
+        // this cannot abort application code in a foreign IoContext.
+        return kj::none;
+      }
       // Finish must run in the same workerd IoContext as the Call. In particular, aborting an
       // AbortController created by one request from a second custom event is prohibited by
       // workerd's request-context isolation. The original event is already waiting on this queue
@@ -2024,6 +2035,7 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
     }
     callEvents.clear();
     callEventControls.clear();
+    returnedCallAnswers.clear();
     responses->close();
   }
 
@@ -2032,6 +2044,7 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
   kj::HashMap<uint32_t, kj::Own<SandstormRpcEventInputQueue>> callbackEvents;
   kj::HashMap<uint32_t, kj::Own<SandstormRpcEventInputQueue>> callEvents;
   kj::HashMap<uint32_t, kj::Own<SandstormRpcEventControl>> callEventControls;
+  kj::HashMap<uint32_t, bool> returnedCallAnswers;
 };
 
 class WorkerRpcMessageStream final: public capnp::MessageStream,

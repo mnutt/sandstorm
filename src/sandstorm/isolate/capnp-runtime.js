@@ -550,6 +550,59 @@ class EventDrivenCapnpConn extends CapnpEsConn {
   }
 }
 
+class WorkerRpcEventState {
+  #change = null;
+  #waits = new Set();
+
+  constructor(send, context) {
+    this.send = send;
+    const executionContext = context.ctx;
+    if (!executionContext || typeof executionContext.waitUntil !== "function") {
+      this.context = context;
+      return;
+    }
+
+    const waitUntil = promise => {
+      const tracked = Promise.resolve(promise);
+      this.#waits.add(tracked);
+      tracked.then(
+        () => this.#finishWait(tracked),
+        () => this.#finishWait(tracked));
+      executionContext.waitUntil(tracked);
+    };
+    const wrappedExecutionContext = new Proxy(executionContext, {
+      get(target, property) {
+        if (property === "waitUntil") return waitUntil;
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    this.context = Object.freeze({ ...context, ctx: wrappedExecutionContext });
+  }
+
+  get hasWaits() {
+    return this.#waits.size > 0;
+  }
+
+  waitForChange() {
+    if (this.#change === null) {
+      let resolve;
+      const promise = new Promise(resolvePromise => { resolve = resolvePromise; });
+      this.#change = { promise, resolve };
+    }
+    return this.#change.promise;
+  }
+
+  #finishWait(promise) {
+    if (!this.#waits.delete(promise)) return;
+    if (this.#change !== null) {
+      const change = this.#change;
+      this.#change = null;
+      change.resolve();
+    }
+  }
+}
+
 class CapnpRpcEventTransport {
   #answerAbortControllers = new Map();
   #canceledAnswers = new Set();
@@ -642,8 +695,9 @@ class CapnpRpcEventTransport {
     // Every event receives an equivalent native sink. Retaining the latest one lets capnp-es
     // emit deferred Resolve/Release messages without retaining an event's ExecutionContext.
     this.#send = send;
+    const eventState = new WorkerRpcEventState(send, context);
 
-    return await workerRpcEventContext.run(Object.freeze({ send }), async () => {
+    return await workerRpcEventContext.run(eventState, async () => {
       const bytes = nativeCapnpMessageBytes(request);
       const message = new CapnpEsMessage(bytes, false).getRoot(CapnpEsRpcMessage);
       let questionId;
@@ -658,7 +712,7 @@ class CapnpRpcEventTransport {
           if (message.which() === CapnpEsRpcMessageWhich.FINISH) {
             this.#handleFinish(message);
           }
-          this.#handleMessage(connection, message, context);
+          this.#handleMessage(connection, message, eventState.context);
           return new Uint8Array(0);
       }
 
@@ -669,9 +723,9 @@ class CapnpRpcEventTransport {
 
       const controller = new AbortController();
       this.#answerAbortControllers.set(questionId, controller);
-      let dispatchContext = context;
+      let dispatchContext = eventState.context;
       if (message.which() === CapnpEsRpcMessageWhich.CALL) {
-        dispatchContext = Object.freeze({ ...context, signal: controller.signal });
+        dispatchContext = Object.freeze({ ...eventState.context, signal: controller.signal });
       }
 
       let resolve;
@@ -689,17 +743,36 @@ class CapnpRpcEventTransport {
         throw error;
       }
 
-      // Callback Returns belong to the top-level Call that issued them. The native host routes
-      // those protocol frames into this event's I/O source so capnp-es resumes the original method
-      // under the same IoContext rather than borrowing a later event's context.
-      while (this.#pendingReturns.has(questionId)) {
-        const inboundBytes = nativeCapnpMessageBytes(await receive());
+      // Callback Returns belong to the top-level Call that issued them. Keep receiving after its
+      // Return while event-scoped waitUntil() work remains, so streaming and other background RPC
+      // can finish under the IoContext where it started.
+      let inboundPromise = null;
+      while (this.#pendingReturns.has(questionId) || eventState.hasWaits) {
+        if (inboundPromise === null) {
+          inboundPromise = Promise.resolve(receive()).then(
+            value => ({ value }), error => ({ error }));
+        }
+        const racers = [inboundPromise.then(result => ({ kind: "inbound", result }))];
+        if (eventState.hasWaits) {
+          racers.push(eventState.waitForChange().then(() => ({ kind: "change" })));
+        }
+        if (this.#pendingReturns.has(questionId)) {
+          racers.push(response.then(
+            () => ({ kind: "return" }), error => ({ kind: "error", error })));
+        }
+        const next = await Promise.race(racers);
+        if (next.kind === "change" || next.kind === "return") continue;
+        if (next.kind === "error") throw next.error;
+        inboundPromise = null;
+        if ("error" in next.result) throw next.result.error;
+        const inboundBytes = nativeCapnpMessageBytes(next.result.value);
         const inbound = new CapnpEsMessage(inboundBytes, false).getRoot(CapnpEsRpcMessage);
         if (inbound.which() === CapnpEsRpcMessageWhich.FINISH) {
           this.#handleFinish(inbound);
         }
         this.#handleMessage(connection, inbound, dispatchContext);
       }
+      if (inboundPromise !== null) inboundPromise.catch(() => {});
       return await response;
     });
   }

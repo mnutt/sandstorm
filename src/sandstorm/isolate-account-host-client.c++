@@ -303,6 +303,33 @@ private:
   kj::Own<kj::PromiseFulfiller<uint64_t>> doneFulfiller;
 };
 
+class GatedCountingByteStream final: public ByteStream::Server {
+public:
+  GatedCountingByteStream(kj::Promise<void> firstWriteGate,
+      kj::Own<kj::PromiseFulfiller<uint64_t>> doneFulfiller)
+      : firstWriteGate(kj::mv(firstWriteGate)), doneFulfiller(kj::mv(doneFulfiller)) {}
+
+  kj::Promise<void> write(WriteContext context) override {
+    byteCount += context.getParams().getData().size();
+    if (!firstWriteSeen) {
+      firstWriteSeen = true;
+      return kj::mv(firstWriteGate);
+    }
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> done(DoneContext context) override {
+    doneFulfiller->fulfill(kj::mv(byteCount));
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Promise<void> firstWriteGate;
+  kj::Own<kj::PromiseFulfiller<uint64_t>> doneFulfiller;
+  uint64_t byteCount = 0;
+  bool firstWriteSeen = false;
+};
+
 class TestEntropySource final: public kj::EntropySource {
 public:
   void generate(kj::ArrayPtr<kj::byte> buffer) override {
@@ -411,16 +438,21 @@ void testWorkerUiStreaming(kj::WaitScope& waitScope, UiView::Client view) {
   download.setPath("download-stream?bytes=2097169");
   download.setIgnoreBody(false);
   auto downloadContext = download.initContext();
+  auto firstWriteGate = kj::newPromiseAndFulfiller<void>();
   auto counted = kj::newPromiseAndFulfiller<uint64_t>();
-  downloadContext.setResponseStream(kj::heap<CountingByteStream>(kj::mv(counted.fulfiller)));
+  downloadContext.setResponseStream(kj::heap<GatedCountingByteStream>(
+      kj::mv(firstWriteGate.promise), kj::mv(counted.fulfiller)));
   downloadContext.initCookies(0);
   downloadContext.initAccept(0);
   downloadContext.initAcceptEncoding(0);
   downloadContext.initAdditionalHeaders(0);
+  // The first ByteStream write cannot finish yet. Receiving the response proves the method Return
+  // is independent of its event-scoped waitUntil() body pump.
   auto downloadResponse = download.send().wait(waitScope);
   KJ_REQUIRE(downloadResponse.which() == WebSession::Response::CONTENT,
       downloadResponse.which());
   KJ_REQUIRE(downloadResponse.getContent().getBody().isStream());
+  firstWriteGate.fulfiller->fulfill();
   KJ_REQUIRE(counted.promise.wait(waitScope) == 2097169,
       "JS WebSession facade truncated a streamed response");
 }
