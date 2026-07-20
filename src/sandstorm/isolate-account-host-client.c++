@@ -266,6 +266,11 @@ public:
     (void)context;
     return kj::READY_NOW;
   }
+
+  kj::Promise<void> done(DoneContext context) override {
+    (void)context;
+    return kj::READY_NOW;
+  }
 };
 
 class IgnoreWebSocketStream final: public WebSession::WebSocketStream::Server {
@@ -397,6 +402,23 @@ WebSession::Client newWebSession(kj::WaitScope& waitScope, Supervisor::Client su
   return newWebSessionFromView(waitScope, view);
 }
 
+template <typename ContextBuilder>
+void initIgnoredWebSessionContext(ContextBuilder context) {
+  context.setResponseStream(kj::heap<IgnoreByteStream>());
+  context.initCookies(0);
+  context.initAccept(0);
+  context.initAcceptEncoding(0);
+  context.initAdditionalHeaders(0);
+}
+
+kj::StringPtr requireAdditionalHeader(
+    WebSession::Response::Reader response, kj::StringPtr expectedName) {
+  for (auto header: response.getAdditionalHeaders()) {
+    if (header.getName() == expectedName) return header.getValue();
+  }
+  KJ_FAIL_REQUIRE("worker UI response omitted expected additional header", expectedName);
+}
+
 kj::String fetchViewPath(
     kj::WaitScope& waitScope, UiView::Client view, kj::StringPtr path) {
   auto session = newWebSessionFromView(waitScope, view);
@@ -468,6 +490,89 @@ void testWorkerUiStreaming(kj::WaitScope& waitScope, UiView::Client view) {
   firstWriteGate.fulfiller->fulfill();
   KJ_REQUIRE(counted.promise.wait(waitScope) == 2097169,
       "JS WebSession facade truncated a streamed response");
+}
+
+void testWorkerUiHttpParity(kj::WaitScope& waitScope, UiView::Client view) {
+  auto session = newWebSessionFromView(waitScope, view);
+  auto metadataRequest = session.getRequest();
+  metadataRequest.setPath("direct-ui-metadata");
+  metadataRequest.setIgnoreBody(false);
+  initIgnoredWebSessionContext(metadataRequest.initContext());
+  auto metadata = metadataRequest.send().wait(waitScope);
+  KJ_REQUIRE(metadata.which() == WebSession::Response::CONTENT, metadata.which());
+  KJ_REQUIRE(metadata.getSetCookies().size() == 1,
+      "JS WebSession facade did not translate Set-Cookie");
+  auto cookie = metadata.getSetCookies()[0];
+  KJ_REQUIRE(cookie.getName() == "workerSession" && cookie.getValue() == "alpha");
+  KJ_REQUIRE(cookie.getExpires().isRelative() && cookie.getExpires().getRelative() == 120);
+  KJ_REQUIRE(cookie.getHttpOnly() && cookie.getPath() == "/scope");
+  auto cachePolicy = metadata.getCachePolicy();
+  KJ_REQUIRE(cachePolicy.getPermanent() == WebSession::CachePolicy::Scope::PER_SESSION);
+  KJ_REQUIRE(cachePolicy.getWithCheck() == WebSession::CachePolicy::Scope::NONE);
+  KJ_REQUIRE(cachePolicy.getVariesOnCookie() && cachePolicy.getVariesOnAccept());
+  auto content = metadata.getContent();
+  KJ_REQUIRE(content.getETag().getWeak() &&
+      content.getETag().getValue() == "worker-ui-metadata");
+  KJ_REQUIRE(content.getLanguage() == "en-CA");
+  KJ_REQUIRE(content.getDisposition().isDownload() &&
+      content.getDisposition().getDownload() == "worker-report.txt");
+  KJ_REQUIRE(requireAdditionalHeader(metadata, "x-sandstorm-app-metadata") == "present");
+
+  auto propfind = session.propfindRequest();
+  propfind.setPath("direct-ui-webdav");
+  propfind.setXmlContent("<propfind/>");
+  propfind.setDepth(WebSession::PropfindDepth::ONE);
+  initIgnoredWebSessionContext(propfind.initContext());
+  auto propfindResponse = propfind.send().wait(waitScope);
+  KJ_REQUIRE(requireAdditionalHeader(propfindResponse, "x-sandstorm-app-dav-method") ==
+      "PROPFIND");
+  KJ_REQUIRE(requireAdditionalHeader(propfindResponse, "x-sandstorm-app-dav-depth") == "1");
+  KJ_REQUIRE(requireAdditionalHeader(propfindResponse, "x-sandstorm-app-dav-type") ==
+      "application/xml;charset=utf-8");
+
+  auto copy = session.copyRequest();
+  copy.setPath("direct-ui-webdav");
+  copy.setDestination("copied");
+  copy.setNoOverwrite(true);
+  copy.setShallow(true);
+  initIgnoredWebSessionContext(copy.initContext());
+  auto copyResponse = copy.send().wait(waitScope);
+  KJ_REQUIRE(requireAdditionalHeader(copyResponse, "x-sandstorm-app-dav-method") == "COPY");
+  KJ_REQUIRE(requireAdditionalHeader(copyResponse, "x-sandstorm-app-dav-destination") ==
+      "https://account-host-test.invalid/copied");
+  KJ_REQUIRE(requireAdditionalHeader(copyResponse, "x-sandstorm-app-dav-overwrite") == "F");
+  KJ_REQUIRE(requireAdditionalHeader(copyResponse, "x-sandstorm-app-dav-depth") == "0");
+
+  auto move = session.moveRequest();
+  move.setPath("direct-ui-webdav");
+  move.setDestination("moved");
+  move.setNoOverwrite(false);
+  initIgnoredWebSessionContext(move.initContext());
+  auto moveResponse = move.send().wait(waitScope);
+  KJ_REQUIRE(requireAdditionalHeader(moveResponse, "x-sandstorm-app-dav-method") == "MOVE");
+  KJ_REQUIRE(requireAdditionalHeader(moveResponse, "x-sandstorm-app-dav-destination") ==
+      "https://account-host-test.invalid/moved");
+  KJ_REQUIRE(requireAdditionalHeader(moveResponse, "x-sandstorm-app-dav-overwrite") == "T");
+
+  auto lock = session.lockRequest();
+  lock.setPath("direct-ui-webdav");
+  lock.setXmlContent("<lock/>");
+  lock.setShallow(false);
+  initIgnoredWebSessionContext(lock.initContext());
+  auto lockResponse = lock.send().wait(waitScope);
+  KJ_REQUIRE(requireAdditionalHeader(lockResponse, "x-sandstorm-app-dav-method") == "LOCK");
+  KJ_REQUIRE(requireAdditionalHeader(lockResponse, "x-sandstorm-app-dav-depth") == "infinity");
+  KJ_REQUIRE(requireAdditionalHeader(lockResponse, "x-sandstorm-app-dav-type") ==
+      "application/xml;charset=utf-8");
+
+  auto unlock = session.unlockRequest();
+  unlock.setPath("direct-ui-webdav");
+  unlock.setLockToken("<worker-lock-token>");
+  initIgnoredWebSessionContext(unlock.initContext());
+  auto unlockResponse = unlock.send().wait(waitScope);
+  KJ_REQUIRE(requireAdditionalHeader(unlockResponse, "x-sandstorm-app-dav-method") == "UNLOCK");
+  KJ_REQUIRE(requireAdditionalHeader(unlockResponse, "x-sandstorm-app-dav-lock-token") ==
+      "<worker-lock-token>");
 }
 
 kj::String fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
@@ -821,6 +926,7 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(sandstorm::contains(workerUiEcho, "\"ok\":true"),
       "JS MainView/WebSession Fetch facade did not serve a request", workerUiEcho);
   sandstorm::testWorkerUiStreaming(io.waitScope, workerUi);
+  sandstorm::testWorkerUiHttpParity(io.waitScope, workerUi);
   auto offersBefore = sandstorm::TestSessionContext::getOfferCount();
   auto directSessionContext = sandstorm::fetchViewPath(
       io.waitScope, workerUi, "direct-session-context-offer");

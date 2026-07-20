@@ -611,6 +611,32 @@ async function isolateTestFetch(request, env, ctx) {
       return Response.json({ ok: true, directSessionContext: true });
     }
 
+    if (url.pathname === "/direct-ui-metadata") {
+      const headers = new Headers({
+        "cache-control": "public, immutable, max-age=31536000",
+        "content-disposition": "attachment; filename=\"worker-report.txt\"",
+        "content-language": "en-CA",
+        "etag": "W/\"worker-ui-metadata\"",
+        "vary": "Cookie, Accept",
+        "x-sandstorm-app-metadata": "present",
+      });
+      headers.append("set-cookie", "workerSession=alpha; Max-Age=120; Path=/scope; HttpOnly; Secure");
+      return new Response("worker UI metadata", { headers });
+    }
+
+    if (url.pathname === "/direct-ui-webdav") {
+      return new Response("worker UI WebDAV", {
+        headers: {
+          "x-sandstorm-app-dav-depth": request.headers.get("depth") || "",
+          "x-sandstorm-app-dav-destination": request.headers.get("destination") || "",
+          "x-sandstorm-app-dav-lock-token": request.headers.get("lock-token") || "",
+          "x-sandstorm-app-dav-method": request.method,
+          "x-sandstorm-app-dav-overwrite": request.headers.get("overwrite") || "",
+          "x-sandstorm-app-dav-type": request.headers.get("content-type") || "",
+        },
+      });
+    }
+
     if (url.pathname === "/browser-powerbox-finish" && request.method === "POST") {
       const body = await request.json();
       const capability = await api.powerbox().claim(body);

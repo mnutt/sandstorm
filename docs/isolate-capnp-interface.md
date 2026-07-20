@@ -614,11 +614,18 @@ Implemented checkpoint (partial):
   `SessionContext` capability passed to `newSession()` instead of asking the legacy isolate bridge
   to recover it from an account-host session-ID registry. The synthetic request header remains for
   ordinary `getSession()` metadata and does not authorize that direct capability lookup.
+- Fetch response metadata now maps into the typed `WebSession.Response`: structured cookies,
+  per-session cache policy (including `Vary` on cookies and accepted types), entity tags,
+  content language/encoding, download disposition, and whitelisted response headers all pass the
+  direct capability conformance test.
+- The direct facade also maps typed WebDAV arguments back to the Fetch handler's standard request
+  headers. Conformance covers `PROPFIND` depth, `COPY`/`MOVE` destination and overwrite behavior,
+  and `LOCK`/`UNLOCK` depth and token fields.
 
 This checkpoint includes request/response conversion and streaming scaffolding, but it is not
 yet the Phase 5 compatibility switch. WebSockets, browser handoff registration for direct sessions,
-complete cookie/cache/WebDAV parity, full-duplex request streaming, and shell UI conformance remain
-on the legacy path until their dual-path tests pass.
+full-duplex request streaming, and shell UI conformance remain on the legacy path until their
+dual-path tests pass.
 
 ### Phase 6: Support service-only grains in packages and the shell
 

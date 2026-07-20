@@ -301,7 +301,124 @@ function responseETag(headers) {
   return match ? { weak: Boolean(match[1]), value: match[2] } : undefined;
 }
 
-async function responseToWebSession(response, context, callContext) {
+function responseSetCookieHeaderValues(headers) {
+  if (typeof headers.getSetCookie === "function") return headers.getSetCookie();
+  const combined = headers.get("set-cookie");
+  if (combined === null) return [];
+  // A Fetch implementation may expose multiple Set-Cookie fields as one value. An Expires date
+  // contains a comma, but it is not followed by another cookie name and '='.
+  return combined.split(/,(?=\s*[^;,\s=]+\s*=)/);
+}
+
+function responseCookies(headers) {
+  const result = [];
+  for (const header of responseSetCookieHeaderValues(headers)) {
+    const parts = header.split(";");
+    const first = parts.shift()?.trim() ?? "";
+    const equals = first.indexOf("=");
+    if (equals <= 0) continue;
+    const name = first.slice(0, equals).trim();
+    const value = first.slice(equals + 1).trim();
+    if (/[;,=]/.test(name) || /[;,]/.test(value)) continue;
+
+    let path = "";
+    let httpOnly = false;
+    let absolute;
+    let relative;
+    for (const rawPart of parts) {
+      const part = rawPart.trim();
+      const attributeEquals = part.indexOf("=");
+      const attributeName = (attributeEquals < 0 ? part : part.slice(0, attributeEquals))
+        .trim().toLowerCase();
+      const attributeValue = attributeEquals < 0 ? "" : part.slice(attributeEquals + 1).trim();
+      if (attributeName === "httponly") {
+        httpOnly = true;
+      } else if (attributeName === "path" && !/[;,]/.test(attributeValue)) {
+        path = attributeValue;
+      } else if (attributeName === "max-age" && /^\d+$/.test(attributeValue)) {
+        relative = BigInt(attributeValue);
+      } else if (attributeName === "expires") {
+        const milliseconds = Date.parse(attributeValue);
+        if (Number.isFinite(milliseconds)) absolute = BigInt(Math.floor(milliseconds / 1000));
+      }
+    }
+
+    const expires = relative !== undefined ? { relative }
+      : absolute !== undefined ? { absolute }
+      : { none: true };
+    result.push({ name, value, expires, httpOnly, path });
+  }
+  return result;
+}
+
+function responseCachePolicy(headers) {
+  let withCheck = WebSession.CachePolicy.Scope.NONE;
+  let permanent = WebSession.CachePolicy.Scope.NONE;
+  let noStore = false;
+  let noCache = false;
+  let explicitlyCacheable = false;
+  let immutable = false;
+  let maxAge;
+  for (const rawDirective of (headers.get("cache-control") ?? "").split(",")) {
+    const [rawName, ...rawValue] = rawDirective.trim().split("=");
+    const name = rawName.toLowerCase();
+    const value = rawValue.join("=").trim().replace(/^"|"$/g, "");
+    if (name === "no-store") noStore = true;
+    else if (name === "no-cache" || name === "must-revalidate") noCache = true;
+    else if (name === "private" || name === "public") explicitlyCacheable = true;
+    else if (name === "immutable") immutable = true;
+    else if (name === "max-age" && /^\d+$/.test(value)) maxAge = BigInt(value);
+  }
+  if (!noStore) {
+    if (immutable && maxAge !== undefined && maxAge > 0n && !noCache) {
+      permanent = WebSession.CachePolicy.Scope.PER_SESSION;
+    } else if (noCache || explicitlyCacheable || maxAge !== undefined) {
+      withCheck = WebSession.CachePolicy.Scope.PER_SESSION;
+    }
+  }
+  const vary = new Set((headers.get("vary") ?? "").split(",")
+    .map(value => value.trim().toLowerCase()).filter(Boolean));
+  if (Array.from(vary).some(name => name !== "cookie" && name !== "accept")) {
+    // CachePolicy cannot describe any other varying request fields, so caching such a response
+    // would risk returning it for a request with a different value.
+    withCheck = WebSession.CachePolicy.Scope.NONE;
+    permanent = WebSession.CachePolicy.Scope.NONE;
+  }
+  return {
+    withCheck,
+    permanent,
+    variesOnCookie: vary.has("cookie"),
+    variesOnAccept: vary.has("accept"),
+  };
+}
+
+function responseDisposition(headers) {
+  const raw = headers.get("content-disposition");
+  if (raw === null) return { normal: true };
+  const parts = raw.split(";");
+  if (parts.shift()?.trim().toLowerCase() !== "attachment") return { normal: true };
+  for (const part of parts) {
+    const equals = part.indexOf("=");
+    if (equals < 0 || part.slice(0, equals).trim().toLowerCase() !== "filename") continue;
+    let filename = part.slice(equals + 1).trim();
+    if (filename.startsWith('"') && filename.endsWith('"')) {
+      filename = filename.slice(1, -1).replace(/\\(.)/g, "$1");
+    }
+    return { download: filename };
+  }
+  return { normal: true };
+}
+
+function responseErrorBody(bytes, headers) {
+  return {
+    data: bytes,
+    encoding: headers.get("content-encoding") || "",
+    language: headers.get("content-language") || "",
+    mimeType: headers.get("content-type") || "text/plain; charset=utf-8",
+  };
+}
+
+async function responseToWebSession(response, context, callContext, omitBody = false) {
   if (!(response instanceof Response)) {
     throw new TypeError("mainViewFromFetch() fetch handler must return a Response");
   }
@@ -312,8 +429,8 @@ async function responseToWebSession(response, context, callContext) {
   }
   const common = {
     additionalHeaders: responseAdditionalHeaders(response.headers),
-    setCookies: [],
-    cachePolicy: { withCheck: 0, permanent: 0 },
+    setCookies: responseCookies(response.headers),
+    cachePolicy: responseCachePolicy(response.headers),
   };
   const eTag = responseETag(response.headers);
 
@@ -340,10 +457,7 @@ async function responseToWebSession(response, context, callContext) {
       clientError: {
         statusCode: webSessionClientErrorCode(response.status),
         descriptionHtml: "",
-        nonHtmlBody: {
-          data: bytes,
-          mimeType: response.headers.get("content-type") || "text/plain; charset=utf-8",
-        },
+        nonHtmlBody: responseErrorBody(bytes, response.headers),
       },
     };
   }
@@ -353,16 +467,15 @@ async function responseToWebSession(response, context, callContext) {
       ...common,
       serverError: {
         descriptionHtml: "",
-        nonHtmlBody: {
-          data: bytes,
-          mimeType: response.headers.get("content-type") || "text/plain; charset=utf-8",
-        },
+        nonHtmlBody: responseErrorBody(bytes, response.headers),
       },
     };
   }
 
   let body = { bytes: new Uint8Array() };
-  if (response.body) {
+  if (omitBody) {
+    await response.body?.cancel();
+  } else if (response.body) {
     const handle = new Handle.Server({ ping() {} }).client();
     const pump = pipeReadableToByteStream(response.body, context.responseStream, {
       size: declaredSize === null ? undefined : BigInt(declaredSize),
@@ -380,7 +493,7 @@ async function responseToWebSession(response, context, callContext) {
       mimeType: response.headers.get("content-type") || "application/octet-stream",
       eTag,
       body,
-      disposition: { normal: true },
+      disposition: responseDisposition(response.headers),
     },
   };
 }
@@ -389,7 +502,8 @@ async function runUiFetch(session, request, context, callContext) {
   try {
     directUiFetchSessions.set(request, session);
     const response = await session.fetch(request, callContext.env, callContext.ctx);
-    return await responseToWebSession(response, context, callContext);
+    return await responseToWebSession(
+      response, context, callContext, request.method.toUpperCase() === "HEAD");
   } catch (error) {
     return webSessionError(error);
   }
@@ -451,10 +565,11 @@ function streamingRequestTarget(session, method, params) {
 }
 
 function webSessionFromFetchTarget(session) {
-  const invoke = (method, body = undefined) => async (params, callContext) => {
+  const invoke = (method, body = undefined, configure = undefined) => async (params, callContext) => {
     const request = webSessionRequest(
       session, method, params.path, params.context, body?.(params),
       params.content?.mimeType, params.content?.encoding);
+    configure?.(request.headers, params);
     return await runUiFetch(session, request, params.context, callContext);
   };
   const target = {
@@ -480,17 +595,38 @@ function webSessionFromFetchTarget(session) {
     openWebSocket() {
       throw new Error("mainViewFromFetch() WebSocket support is not yet implemented");
     },
-    propfind: invoke("PROPFIND", params => new TextEncoder().encode(params.xmlContent)),
-    proppatch: invoke("PROPPATCH", params => new TextEncoder().encode(params.xmlContent)),
+    propfind: invoke("PROPFIND", params => new TextEncoder().encode(params.xmlContent),
+      (headers, params) => {
+        headers.set("content-type", "application/xml;charset=utf-8");
+        headers.set("depth", ["infinity", "0", "1"][params.depth] ?? "infinity");
+      }),
+    proppatch: invoke("PROPPATCH", params => new TextEncoder().encode(params.xmlContent),
+      headers => headers.set("content-type", "application/xml;charset=utf-8")),
     mkcol: invoke("MKCOL", params => capnpDataBytes(params.content.content)),
-    copy: invoke("COPY"),
-    move: invoke("MOVE"),
-    lock: invoke("LOCK", params => new TextEncoder().encode(params.xmlContent)),
-    unlock: invoke("UNLOCK"),
-    acl: invoke("ACL", params => new TextEncoder().encode(params.xmlContent)),
+    copy: invoke("COPY", undefined, (headers, params) => {
+      headers.set("destination", new URL(String(params.destination).replace(/^\/+/, ""),
+        `${session.basePath || "http://sandstorm-session"}/`).href);
+      headers.set("overwrite", params.noOverwrite ? "F" : "T");
+      headers.set("depth", params.shallow ? "0" : "infinity");
+    }),
+    move: invoke("MOVE", undefined, (headers, params) => {
+      headers.set("destination", new URL(String(params.destination).replace(/^\/+/, ""),
+        `${session.basePath || "http://sandstorm-session"}/`).href);
+      headers.set("overwrite", params.noOverwrite ? "F" : "T");
+    }),
+    lock: invoke("LOCK", params => new TextEncoder().encode(params.xmlContent),
+      (headers, params) => {
+        headers.set("content-type", "application/xml;charset=utf-8");
+        headers.set("depth", params.shallow ? "0" : "infinity");
+      }),
+    unlock: invoke("UNLOCK", undefined,
+      (headers, params) => headers.set("lock-token", params.lockToken)),
+    acl: invoke("ACL", params => new TextEncoder().encode(params.xmlContent),
+      headers => headers.set("content-type", "application/xml;charset=utf-8")),
     report: invoke("REPORT", params => capnpDataBytes(params.content.content)),
     options: async (params, callContext) => {
       const request = webSessionRequest(session, "OPTIONS", params.path, params.context);
+      directUiFetchSessions.set(request, session);
       const response = await session.fetch(request, callContext.env, callContext.ctx);
       const dav = response.headers.get("dav") || "";
       return {
@@ -513,6 +649,7 @@ function mainViewSession(options, params, callContext, kind) {
   const session = {
     fetch: options.fetch,
     headers: uiSessionHeaders(params, sessionParams, options.viewInfo, kind),
+    basePath: sessionParams.basePath,
     sessionContext: params.context,
   };
   session.headers.set("x-sandstorm-session-id", makeLiveCapabilityId("worker-ui-session"));
