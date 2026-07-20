@@ -19,9 +19,20 @@ workerd custom events. The event ABI has a native frame sink plus an
 `awaitIo()`-backed source for callback replies, so a JS server can call a native
 capability parameter and resume in the originating event context without a
 synthetic Fetch request. Serial typed calls and a bidirectional callback are
-covered by the host integration test. This is still a Phase 1 prototype: named
-exports, concurrent-call routing, cancellation, promise-capability resolution,
-pipelining, and public SDK syntax remain to be implemented.
+covered by the host integration test. At this checkpoint it was still a Phase
+1 prototype: named exports, concurrent-call routing, cancellation,
+promise-capability resolution, pipelining, and public SDK syntax remained to be
+implemented.
+
+Implementation checkpoint (2026-07-20): the additive Phase 2 native-host path
+now has a schema-opaque `IsolateExportBroker`. Version 2 worker handoffs declare
+`(name, interfaceId)` exports, `HostedIsolate.getExport()` rejects undeclared or
+mismatched lookups, and the worker runtime can register arbitrary generated
+server interfaces behind one broker connection. The native-host integration
+test resolves `IsolateBridge` by name and exercises a typed callback without an
+HTTP adapter. Version 1 handoffs remain accepted. Account-host proxying,
+manifest declarations, public SDK syntax, concurrency, cancellation, and full
+Cap'n Proto protocol routing are not yet implemented.
 
 ## Summary
 

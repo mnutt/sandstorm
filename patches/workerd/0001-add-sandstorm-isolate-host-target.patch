@@ -335,7 +335,7 @@ diff --git a/src/workerd/server/BUILD.bazel b/src/workerd/server/BUILD.bazel
 index ece98ee..5780587 100644
 --- a/src/workerd/server/BUILD.bazel
 +++ b/src/workerd/server/BUILD.bazel
-@@ -81,6 +81,39 @@ wd_cc_binary(
+@@ -81,6 +81,45 @@ wd_cc_binary(
      ],
  )
  
@@ -345,6 +345,7 @@ index ece98ee..5780587 100644
 +    malloc = ":malloc",
 +    visibility = ["//visibility:public"],
 +    deps = [
++        ":sandstorm-isolate-exports_capnp",
 +        ":sandstorm-isolate-host_capnp",
 +        ":sandstorm-isolate-worker-source_capnp",
 +        ":server",
@@ -357,6 +358,11 @@ index ece98ee..5780587 100644
 +        "@capnp-cpp//src/capnp/compat:json",
 +        "@capnp-cpp//src/kj:kj-async",
 +    ],
++)
++
++wd_capnp_library(
++    src = "sandstorm-isolate-exports.capnp",
++    visibility = [":__pkg__"],
 +)
 +
 +wd_capnp_library(

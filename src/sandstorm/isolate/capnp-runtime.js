@@ -11,6 +11,7 @@ import {
   Message_Which as CapnpEsRpcMessageWhich,
 } from "capnp-es/capnp/rpc.mjs";
 import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
+import { IsolateExportBroker } from "capnp:/sandstorm/isolate-exports.capnp";
 import { ByteStream } from "capnp:/sandstorm/util.capnp";
 
 // Shared only by trusted runtime modules. This symbol is the unforgeable protocol used
@@ -93,6 +94,18 @@ function nativeCapnpClientReference(value, name = "capability") {
   }
 
   throw new NativeCapnpBridgeProtocolError(`${name} is not a capnp-es client reference`);
+}
+
+function nativeCapnpCapabilityPointer(value, name = "capability") {
+  if (value && value.segment && typeof value.byteOffset === "number") {
+    return value;
+  }
+
+  const message = new CapnpEsMessage();
+  const pointer = new CapnpEsInterface(message.getSegment(0), 0);
+  CapnpEsUtils.setInterfacePointer(
+    message.addCap(nativeCapnpClientReference(value, name)), pointer);
+  return pointer;
 }
 
 function nativeCapnpBase64UrlDecode(text, name = "base64url value") {
@@ -645,6 +658,56 @@ export function createCapnpRpcEventDispatcher(InterfaceClass, target, options = 
       transport.close(error);
       connection.shutdown(error);
     },
+  });
+}
+
+// Builds the worker-global RPC bootstrap as a name/type broker. Each exported application
+// capability remains typed by its own generated class; the broker is the only schema the native
+// host needs in order to carry arbitrary application interfaces over the shared connection.
+export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
+  if (!workerExports || typeof workerExports !== "object" || Array.isArray(workerExports)) {
+    throw new TypeError("createCapnpWorkerExportDispatcher() requires an export object");
+  }
+
+  const exportsByName = new Map();
+  for (const [name, descriptor] of Object.entries(workerExports)) {
+    if (!name || !descriptor || typeof descriptor !== "object") {
+      throw new TypeError("worker Cap'n Proto exports require non-empty names and descriptors");
+    }
+    const InterfaceClass = descriptor.interface;
+    const metadata = nativeCapnpInterfaceMetadata(
+      InterfaceClass, `worker Cap'n Proto export ${name}`);
+    if (typeof InterfaceClass.Server !== "function") {
+      throw new TypeError(`worker Cap'n Proto export ${name} requires a server interface class`);
+    }
+    if (!descriptor.target || typeof descriptor.target !== "object") {
+      throw new TypeError(`worker Cap'n Proto export ${name} requires a server target object`);
+    }
+    exportsByName.set(name, Object.freeze({
+      interfaceId: metadata.interfaceId,
+      client: new InterfaceClass.Server(descriptor.target).client(),
+    }));
+  }
+
+  const dispatcher = createCapnpRpcEventDispatcher(IsolateExportBroker, {
+    getExport({ name, interfaceId }) {
+      const workerExport = exportsByName.get(name);
+      if (!workerExport || workerExport.interfaceId !== interfaceId) {
+        throw new NativeCapnpBridgeProtocolError(
+          `worker Cap'n Proto export ${name} was not registered with interface ` +
+          `0x${interfaceId.toString(16)}`);
+      }
+      return {
+        cap: nativeCapnpCapabilityPointer(
+          workerExport.client, `worker Cap'n Proto export ${name}`),
+      };
+    },
+  }, options);
+
+  return Object.freeze({
+    ...dispatcher,
+    declarations: Object.freeze(Array.from(exportsByName, ([name, workerExport]) =>
+      Object.freeze({ name, interfaceId: workerExport.interfaceId }))),
   });
 }
 

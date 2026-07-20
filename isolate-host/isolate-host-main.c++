@@ -6,6 +6,7 @@
 #include "v8-platform-impl.h"
 
 #include <workerd/server/sandstorm-isolate-host.capnp.h>
+#include <workerd/server/sandstorm-isolate-exports.capnp.h>
 #include <workerd/server/sandstorm-isolate-worker-source.capnp.h>
 #include <workerd/server/workerd-api.h>
 #include <workerd/api/global-scope.h>
@@ -379,12 +380,18 @@ struct DecodedBinding {
   kj::String value;
 };
 
+struct DecodedExport {
+  kj::String name;
+  uint64_t interfaceId;
+};
+
 struct DecodedWorkerBundle final: public kj::AtomicRefcounted {
   kj::String mainModule;
   kj::String compatibilityDate;
   kj::Array<kj::String> compatibilityFlags;
   kj::Array<DecodedModule> modules;
   kj::Array<DecodedBinding> bindings;
+  kj::Array<DecodedExport> exports;
 };
 
 struct SelfServiceTarget final: public kj::AtomicRefcounted {
@@ -1314,6 +1321,7 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::ArrayPtr<const kj::byte> wor
   static constexpr size_t MAX_MODULE_BYTES = 8 * 1024 * 1024;
   static constexpr size_t MAX_TOTAL_MODULE_BYTES = 16 * 1024 * 1024;
   static constexpr size_t MAX_BINDINGS = 1024;
+  static constexpr size_t MAX_EXPORTS = 256;
   static constexpr size_t MAX_TOTAL_BINDING_BYTES = 4 * 1024 * 1024;
   static constexpr size_t MAX_NAME_BYTES = 256;
 
@@ -1326,8 +1334,10 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::ArrayPtr<const kj::byte> wor
   kj::ArrayInputStream input(workerSource);
   capnp::PackedMessageReader reader(input, readerOptions);
   auto bundle = reader.getRoot<IsolateWorkerSource>();
-  KJ_REQUIRE(bundle.getFormatVersion() == 1,
+  KJ_REQUIRE(bundle.getFormatVersion() == 1 || bundle.getFormatVersion() == 2,
       "unsupported worker source format version", bundle.getFormatVersion());
+  KJ_REQUIRE(bundle.getFormatVersion() >= 2 || bundle.getExports().size() == 0,
+      "worker source format version 1 cannot declare exports");
   KJ_REQUIRE(bundle.getMainModule().size() > 0 &&
           bundle.getMainModule().size() <= MAX_NAME_BYTES,
       "invalid worker main module name length", bundle.getMainModule().size());
@@ -1457,6 +1467,25 @@ kj::Own<DecodedWorkerBundle> decodeWorkerBundle(kj::ArrayPtr<const kj::byte> wor
   }
   result->modules = modules.finish();
   result->bindings = bindings.finish();
+  auto inputExports = bundle.getExports();
+  KJ_REQUIRE(inputExports.size() <= MAX_EXPORTS,
+      "worker export count exceeds limit", inputExports.size(), MAX_EXPORTS);
+  kj::HashSet<kj::String> exportNames;
+  auto exports = kj::heapArrayBuilder<DecodedExport>(inputExports.size());
+  for (auto input: inputExports) {
+    KJ_REQUIRE(input.getName().size() > 0 && input.getName().size() <= MAX_NAME_BYTES,
+        "invalid worker export name length", input.getName().size());
+    KJ_REQUIRE(input.getInterfaceId() != 0,
+        "worker export interface ID must be nonzero", input.getName());
+    KJ_REQUIRE(exportNames.find(input.getName()) == kj::none,
+        "worker bundle has a duplicate export name", input.getName());
+    exportNames.insert(kj::str(input.getName()));
+    exports.add(DecodedExport{
+      .name = kj::str(input.getName()),
+      .interfaceId = input.getInterfaceId(),
+    });
+  }
+  result->exports = exports.finish();
   return result;
 }
 
@@ -2046,17 +2075,44 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
 
   kj::Promise<void> getRpcBootstrap(GetRpcBootstrapContext context) override {
     KJ_REQUIRE(state->running, "hosted isolate has been stopped");
-    KJ_IF_SOME(connection, state->rpcConnection) {
-      context.getResults().setCap(connection->bootstrap());
-    } else {
-      auto connection = kj::heap<WorkerRpcConnection>(state.addRef());
-      context.getResults().setCap(connection->bootstrap());
-      state->rpcConnection = kj::mv(connection);
-    }
+    context.getResults().setCap(rpcBootstrap());
     return kj::READY_NOW;
   }
 
+  kj::Promise<void> getExport(GetExportContext context) override {
+    KJ_REQUIRE(state->running, "hosted isolate has been stopped");
+    auto name = context.getParams().getName();
+    auto interfaceId = context.getParams().getInterfaceId();
+    bool declared = false;
+    for (auto& workerExport: state->backing->decoded->exports) {
+      if (workerExport.name == name && workerExport.interfaceId == interfaceId) {
+        declared = true;
+        break;
+      }
+    }
+    KJ_REQUIRE(declared, "worker export was not declared with this interface ID", name,
+        kj::hex(interfaceId));
+
+    auto request = rpcBootstrap().castAs<IsolateExportBroker>().getExportRequest();
+    request.setName(name);
+    request.setInterfaceId(interfaceId);
+    return request.send().then([context](auto response) mutable {
+      context.getResults().setCap(response.getCap());
+    });
+  }
+
  private:
+  capnp::Capability::Client rpcBootstrap() {
+    KJ_IF_SOME(connection, state->rpcConnection) {
+      return connection->bootstrap();
+    } else {
+      auto connection = kj::heap<WorkerRpcConnection>(state.addRef());
+      auto result = connection->bootstrap();
+      state->rpcConnection = kj::mv(connection);
+      return result;
+    }
+  }
+
   kj::Rc<HostedState> state;
   capnp::ByteStreamFactory& streamFactory;
   kj::Function<void(kj::Rc<HostedState>)> refreshIdleTimer;

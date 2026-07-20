@@ -1,0 +1,23 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/isolate-exports.capnp",
+  "interfaces": [
+    {
+      "name": "IsolateExportBroker",
+      "interfaceId": "0xf65d14118e8e227b",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "getExport",
+          "ordinal": 0,
+          "paramStructId": "0xf452e0e869004663",
+          "resultStructId": "0xb1c81ae48ce76b74",
+          "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}],
+          "results": [{"name": "cap", "type": "Capability"}]
+        }
+      ]
+    }
+  ],
+  "structs": [
+  ]
+}

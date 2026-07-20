@@ -7,8 +7,7 @@ $Cxx.namespace("sandstorm");
 # workerd host. Paths and worker identity are deliberately absent.
 struct IsolateWorkerSource {
   formatVersion @5 :UInt16;
-  # Persisted handoff format version. Writers currently emit 1; readers reject every other value
-  # before interpreting modules or bindings.
+  # Persisted handoff format version. Version 1 has modules and bindings; version 2 adds exports.
 
   mainModule @0 :Text;
   compatibilityDate @1 :Text;
@@ -39,5 +38,14 @@ struct IsolateWorkerSource {
       powerbox @6 :Void;
       service @7 :Text;
     }
+  }
+
+  exports @6 :List(Export);
+  # Capabilities the worker promises to publish through IsolateExportBroker. This declaration lets
+  # the native host reject accidental name/type mismatches without knowing application schemas.
+  # It does not grant authority: the worker still has to return the capability over its RPC link.
+  struct Export {
+    name @0 :Text;
+    interfaceId @1 :UInt64;
   }
 }

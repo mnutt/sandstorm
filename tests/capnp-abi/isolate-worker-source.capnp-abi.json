@@ -7,7 +7,7 @@
     {
       "name": "IsolateWorkerSource",
       "structId": "0x90fbc3c5bdaeed0f",
-      "fields": [{"name": "mainModule", "ordinal": 0, "type": "Text"}, {"name": "compatibilityDate", "ordinal": 1, "type": "Text"}, {"name": "compatibilityFlags", "ordinal": 2, "type": "List(Text)"}, {"name": "modules", "ordinal": 3, "type": "List(Struct(0xf377f1aa0eb30009))"}, {"name": "bindings", "ordinal": 4, "type": "List(Struct(0xe2e96e6f4464b7b2))"}, {"name": "formatVersion", "ordinal": 5, "type": "UInt16"}]
+      "fields": [{"name": "mainModule", "ordinal": 0, "type": "Text"}, {"name": "compatibilityDate", "ordinal": 1, "type": "Text"}, {"name": "compatibilityFlags", "ordinal": 2, "type": "List(Text)"}, {"name": "modules", "ordinal": 3, "type": "List(Struct(0xf377f1aa0eb30009))"}, {"name": "bindings", "ordinal": 4, "type": "List(Struct(0xe2e96e6f4464b7b2))"}, {"name": "formatVersion", "ordinal": 5, "type": "UInt16"}, {"name": "exports", "ordinal": 6, "type": "List(Struct(0xd5edc18461537026))"}]
     },
     {
       "name": "IsolateWorkerSource.Module",
@@ -18,6 +18,11 @@
       "name": "IsolateWorkerSource.Binding",
       "structId": "0xe2e96e6f4464b7b2",
       "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "text", "ordinal": 1, "type": "Data", "discriminant": 0}, {"name": "data", "ordinal": 2, "type": "Data", "discriminant": 1}, {"name": "json", "ordinal": 3, "type": "Data", "discriminant": 2}, {"name": "sandstormApi", "ordinal": 4, "type": "Void", "discriminant": 3}, {"name": "storage", "ordinal": 5, "type": "Void", "discriminant": 4}, {"name": "powerbox", "ordinal": 6, "type": "Void", "discriminant": 5}, {"name": "service", "ordinal": 7, "type": "Text", "discriminant": 6}]
+    },
+    {
+      "name": "IsolateWorkerSource.Export",
+      "structId": "0xd5edc18461537026",
+      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "interfaceId", "ordinal": 1, "type": "UInt64"}]
     }
   ]
 }

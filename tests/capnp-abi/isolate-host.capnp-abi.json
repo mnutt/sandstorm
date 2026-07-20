@@ -84,6 +84,14 @@
           "resultStructId": "0xbd57805cf9da6ed9",
           "params": [],
           "results": [{"name": "cap", "type": "Capability"}]
+        },
+        {
+          "name": "getExport",
+          "ordinal": 5,
+          "paramStructId": "0xabe6322d2489715f",
+          "resultStructId": "0xa5676ccf14f83940",
+          "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}],
+          "results": [{"name": "cap", "type": "Capability"}]
         }
       ]
     }

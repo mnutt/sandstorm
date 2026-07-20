@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
   bool idleEvictionOnly = argc == 3;
   capnp::MallocMessageBuilder sourceMessage;
   auto source = sourceMessage.initRoot<sandstorm::IsolateWorkerSource>();
-  source.setFormatVersion(1);
+  source.setFormatVersion(2);
   source.setMainModule("main.js");
   source.setCompatibilityDate("2026-06-10");
   auto modules = source.initModules(2 + sandstorm::ISOLATE_CAPNP_ES_MODULE_COUNT +
@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
   auto module = modules[moduleIndex++];
   module.setName("main.js");
   auto script = kj::StringPtr(R"JS(
-import { createCapnpRpcEventDispatcher } from "sandstorm-internal:capnp-runtime";
+import { createCapnpWorkerExportDispatcher } from "sandstorm-internal:capnp-runtime";
 import { Interface } from "capnp-es/index.mjs";
 import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
 
@@ -132,20 +132,25 @@ const rpcState = {
   callCount: 0,
   sameContext: false,
 };
-const rpcDispatcher = createCapnpRpcEventDispatcher(IsolateBridge, {
-  async createBrowserHandoff({ cap, sessionId }) {
-    let callbackReleased = false;
-    let callbackStayedInEvent = false;
-    if (sessionId === "first") {
-      const eventContext = rpcState.currentContext;
-      const callback = new IsolateBridge.Client(Interface.fromPointer(cap).getClient());
-      callbackReleased = (await callback.dropBrowserHandoff({ id: sessionId })).released;
-      callbackStayedInEvent = rpcState.currentContext === eventContext;
-    }
-    return {
-      id: `rpc-${rpcState.callCount}-${rpcState.sameContext ? 1 : 0}-${sessionId}` +
-        `-${callbackReleased ? 1 : 0}-${callbackStayedInEvent ? 1 : 0}`,
-    };
+const rpcDispatcher = createCapnpWorkerExportDispatcher({
+  bridge: {
+    interface: IsolateBridge,
+    target: {
+      async createBrowserHandoff({ cap, sessionId }) {
+        let callbackReleased = false;
+        let callbackStayedInEvent = false;
+        if (sessionId === "first") {
+          const eventContext = rpcState.currentContext;
+          const callback = new IsolateBridge.Client(Interface.fromPointer(cap).getClient());
+          callbackReleased = (await callback.dropBrowserHandoff({ id: sessionId })).released;
+          callbackStayedInEvent = rpcState.currentContext === eventContext;
+        }
+        return {
+          id: `rpc-${rpcState.callCount}-${rpcState.sameContext ? 1 : 0}-${sessionId}` +
+            `-${callbackReleased ? 1 : 0}-${callbackStayedInEvent ? 1 : 0}`,
+        };
+      },
+    },
   },
 });
 
@@ -182,6 +187,10 @@ export default {
 };
 )JS");
   module.setEsModule(script.asBytes());
+
+  auto workerExports = source.initExports(1);
+  workerExports[0].setName("bridge");
+  workerExports[0].setInterfaceId(capnp::typeId<sandstorm::IsolateBridge>());
   auto capnpRuntime = modules[moduleIndex++];
   capnpRuntime.setName("sandstorm-internal:capnp-runtime");
   capnpRuntime.setEsModule(kj::StringPtr(sandstorm::ISOLATE_CAPNP_RUNTIME_SOURCE).asBytes());
@@ -238,7 +247,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
   capnp::writePackedMessage(invalidOutput, invalidMessage);
   auto invalidBytes = invalidOutput.getArray();
 
-  source.setFormatVersion(2);
+  source.setFormatVersion(3);
   kj::VectorOutputStream unsupportedOutput;
   capnp::writePackedMessage(unsupportedOutput, sourceMessage);
   auto unsupportedBytes = unsupportedOutput.getArray();
@@ -324,16 +333,31 @@ export default { fetch() { return new Response("memory limit failed"); } };
   KJ_REQUIRE(httpResponse.body->readAllText().wait(waitScope) == "shared-storage-ok",
       "hosted worker did not round-trip through its storage binding");
 
-  auto rpcBootstrap = grain.getRpcBootstrapRequest().send().wait(waitScope).getCap()
+  sandstorm::expectFailure([&]() {
+    auto undeclared = grain.getExportRequest();
+    undeclared.setName("missing");
+    undeclared.setInterfaceId(capnp::typeId<sandstorm::IsolateBridge>());
+    undeclared.send().wait(waitScope);
+  });
+  sandstorm::expectFailure([&]() {
+    auto wrongType = grain.getExportRequest();
+    wrongType.setName("bridge");
+    wrongType.setInterfaceId(1);
+    wrongType.send().wait(waitScope);
+  });
+  auto exportRequest = grain.getExportRequest();
+  exportRequest.setName("bridge");
+  exportRequest.setInterfaceId(capnp::typeId<sandstorm::IsolateBridge>());
+  auto rpcBootstrap = exportRequest.send().wait(waitScope).getCap()
       .castAs<sandstorm::IsolateBridge>();
   auto firstRpc = rpcBootstrap.createBrowserHandoffRequest();
   firstRpc.setCap(kj::heap<sandstorm::RpcCallbackImpl>());
   firstRpc.setSessionId("first");
   auto firstRpcResponse = firstRpc.send().wait(waitScope);
-  // Bootstrap and Finish are events 1 and 2. The application Call is event 3; its callback Return
-  // is delivered through that event's I/O source, without invoking a fourth handler or replacing
+  // Bootstrap, its Finish, and the export lookup precede the application Call. Its callback Return
+  // is delivered through that event's I/O source, without invoking another handler or replacing
   // the Call's ExecutionContext.
-  KJ_REQUIRE(firstRpcResponse.getId() == "rpc-3-0-first-1-1",
+  KJ_REQUIRE(firstRpcResponse.getId() == "rpc-5-0-first-1-1",
       "typed worker RPC callback did not stay in its originating event",
       firstRpcResponse.getId());
 
@@ -341,8 +365,8 @@ export default { fetch() { return new Response("memory limit failed"); } };
   secondRpc.setCap(capnp::Capability::Client(nullptr));
   secondRpc.setSessionId("second");
   auto secondRpcResponse = secondRpc.send().wait(waitScope);
-  // The first answer's Finish is event 4 and this second application Call is event 5.
-  KJ_REQUIRE(secondRpcResponse.getId() == "rpc-5-0-second-0-0",
+  // The first answer's Finish precedes this second application Call.
+  KJ_REQUIRE(secondRpcResponse.getId() == "rpc-7-0-second-0-0",
       "worker-global RPC connection state was not preserved", secondRpcResponse.getId());
 
   auto cpuStart = host.startGrainRequest();

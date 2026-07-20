@@ -53,4 +53,8 @@ interface HostedIsolate @0xae62f18e41ff24cb {
   getRpcBootstrap @4 () -> (cap :Capability);
   # Private prototype exposing the bootstrap of a worker-global, event-driven Cap'n Proto RPC
   # connection. Application schemas and capability tables remain opaque to the native host.
+
+  getExport @5 (name :Text, interfaceId :UInt64) -> (cap :Capability);
+  # Resolves one capability declared by the worker bundle. The native host validates only the
+  # export name and interface ID, then forwards the capability without application-schema logic.
 }
