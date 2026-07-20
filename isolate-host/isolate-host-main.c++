@@ -1662,7 +1662,16 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
                     request.send().getBridge()))));
   }
   auto compatibility = backing->compatibility.initRoot<workerd::CompatibilityFlags>();
-  auto flags = KJ_MAP(flag, bundle.compatibilityFlags) { return kj::str(flag); };
+  auto flagsBuilder = kj::heapArrayBuilder<kj::String>(bundle.compatibilityFlags.size() + 1);
+  bool hasNodeJsAls = false;
+  for (auto& flag: bundle.compatibilityFlags) {
+    KJ_REQUIRE(flag != "no_nodejs_als",
+        "isolate workers cannot disable AsyncLocalStorage required by the Cap'n Proto runtime");
+    if (flag == "nodejs_als" || flag == "nodejs_compat") hasNodeJsAls = true;
+    flagsBuilder.add(kj::str(flag));
+  }
+  if (!hasNodeJsAls) flagsBuilder.add(kj::str("nodejs_als"));
+  auto flags = flagsBuilder.finish();
   BundleErrorReporter reporter;
   workerd::compileCompatibilityFlags(bundle.compatibilityDate, flags, compatibility,
       reporter, true, workerd::CompatibilityDateValidation::CODE_VERSION);

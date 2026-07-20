@@ -1,4 +1,5 @@
 // Internal Cap'n Proto bridge runtime. Application code must use sandstorm:api.
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   Conn as CapnpEsConn,
   DeferredTransport as CapnpEsDeferredTransport,
@@ -18,6 +19,7 @@ import { ByteStream } from "capnp:/sandstorm/util.capnp";
 // to obtain a live capnp-es reference without exposing it on the public API.
 export const CAPNP_CLIENT_SYMBOL = Symbol("sandstorm.capnp.client");
 const DEFAULT_BYTE_STREAM_CHUNK_BYTES = 256 * 1024;
+const workerRpcEventContext = new AsyncLocalStorage();
 
 function initLocalizedText(builder, value) {
   if (value && typeof value.defaultText === "string") {
@@ -597,11 +599,12 @@ class CapnpRpcEventTransport {
     }
 
     const bytes = nativeCapnpRootMessageBytes(message).slice();
-    if (typeof this.#send !== "function") {
+    const eventSend = workerRpcEventContext.getStore()?.send ?? this.#send;
+    if (typeof eventSend !== "function") {
       throw new NativeCapnpBridgeProtocolError(
         "worker Cap'n Proto RPC connection has no native frame sink");
     }
-    this.#send(bytes);
+    eventSend(bytes);
     switch (message.which()) {
       case CapnpEsRpcMessageWhich.RETURN: {
         const answerId = message.return.answerId;
@@ -640,63 +643,65 @@ class CapnpRpcEventTransport {
     // emit deferred Resolve/Release messages without retaining an event's ExecutionContext.
     this.#send = send;
 
-    const bytes = nativeCapnpMessageBytes(request);
-    const message = new CapnpEsMessage(bytes, false).getRoot(CapnpEsRpcMessage);
-    let questionId;
-    switch (message.which()) {
-      case CapnpEsRpcMessageWhich.BOOTSTRAP:
-        questionId = message.bootstrap.questionId;
-        break;
-      case CapnpEsRpcMessageWhich.CALL:
-        questionId = message.call.questionId;
-        break;
-      default:
-        if (message.which() === CapnpEsRpcMessageWhich.FINISH) {
-          this.#handleFinish(message);
-        }
-        this.#handleMessage(connection, message, context);
-        return new Uint8Array(0);
-    }
-
-    if (this.#pendingReturns.has(questionId)) {
-      throw new NativeCapnpBridgeProtocolError(
-        `worker received duplicate concurrent RPC question ${questionId}`);
-    }
-
-    const controller = new AbortController();
-    this.#answerAbortControllers.set(questionId, controller);
-    let dispatchContext = context;
-    if (message.which() === CapnpEsRpcMessageWhich.CALL) {
-      dispatchContext = Object.freeze({ ...context, signal: controller.signal });
-    }
-
-    let resolve;
-    let reject;
-    const response = new Promise((resolvePromise, rejectPromise) => {
-      resolve = resolvePromise;
-      reject = rejectPromise;
-    });
-    this.#pendingReturns.set(questionId, { resolve, reject });
-    try {
-      this.#handleMessage(connection, message, dispatchContext);
-    } catch (error) {
-      this.#answerAbortControllers.delete(questionId);
-      this.#pendingReturns.delete(questionId);
-      throw error;
-    }
-
-    // Callback Returns belong to the top-level Call that issued them. The native host routes
-    // those protocol frames into this event's I/O source so capnp-es resumes the original method
-    // under the same IoContext rather than borrowing a later event's context.
-    while (this.#pendingReturns.has(questionId)) {
-      const inboundBytes = nativeCapnpMessageBytes(await receive());
-      const inbound = new CapnpEsMessage(inboundBytes, false).getRoot(CapnpEsRpcMessage);
-      if (inbound.which() === CapnpEsRpcMessageWhich.FINISH) {
-        this.#handleFinish(inbound);
+    return await workerRpcEventContext.run(Object.freeze({ send }), async () => {
+      const bytes = nativeCapnpMessageBytes(request);
+      const message = new CapnpEsMessage(bytes, false).getRoot(CapnpEsRpcMessage);
+      let questionId;
+      switch (message.which()) {
+        case CapnpEsRpcMessageWhich.BOOTSTRAP:
+          questionId = message.bootstrap.questionId;
+          break;
+        case CapnpEsRpcMessageWhich.CALL:
+          questionId = message.call.questionId;
+          break;
+        default:
+          if (message.which() === CapnpEsRpcMessageWhich.FINISH) {
+            this.#handleFinish(message);
+          }
+          this.#handleMessage(connection, message, context);
+          return new Uint8Array(0);
       }
-      this.#handleMessage(connection, inbound, dispatchContext);
-    }
-    return await response;
+
+      if (this.#pendingReturns.has(questionId)) {
+        throw new NativeCapnpBridgeProtocolError(
+          `worker received duplicate concurrent RPC question ${questionId}`);
+      }
+
+      const controller = new AbortController();
+      this.#answerAbortControllers.set(questionId, controller);
+      let dispatchContext = context;
+      if (message.which() === CapnpEsRpcMessageWhich.CALL) {
+        dispatchContext = Object.freeze({ ...context, signal: controller.signal });
+      }
+
+      let resolve;
+      let reject;
+      const response = new Promise((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+      });
+      this.#pendingReturns.set(questionId, { resolve, reject });
+      try {
+        this.#handleMessage(connection, message, dispatchContext);
+      } catch (error) {
+        this.#answerAbortControllers.delete(questionId);
+        this.#pendingReturns.delete(questionId);
+        throw error;
+      }
+
+      // Callback Returns belong to the top-level Call that issued them. The native host routes
+      // those protocol frames into this event's I/O source so capnp-es resumes the original method
+      // under the same IoContext rather than borrowing a later event's context.
+      while (this.#pendingReturns.has(questionId)) {
+        const inboundBytes = nativeCapnpMessageBytes(await receive());
+        const inbound = new CapnpEsMessage(inboundBytes, false).getRoot(CapnpEsRpcMessage);
+        if (inbound.which() === CapnpEsRpcMessageWhich.FINISH) {
+          this.#handleFinish(inbound);
+        }
+        this.#handleMessage(connection, inbound, dispatchContext);
+      }
+      return await response;
+    });
   }
 
   close(error = new CapnpUnavailableError("worker Cap'n Proto RPC connection was closed")) {

@@ -378,6 +378,53 @@ kj::String fetchViewPath(
   return streamedBody.promise.wait(waitScope);
 }
 
+void testWorkerUiStreaming(kj::WaitScope& waitScope, UiView::Client view) {
+  auto session = newWebSessionFromView(waitScope, view);
+  auto request = session.postStreamingRequest();
+  request.setPath("upload-stream");
+  request.setMimeType("application/octet-stream");
+  request.setEncoding("");
+  request.setExpectedSize(17);
+  auto context = request.initContext();
+  auto streamedBody = kj::newPromiseAndFulfiller<kj::String>();
+  context.setResponseStream(kj::heap<CollectByteStream>(kj::mv(streamedBody.fulfiller)));
+  context.initCookies(0);
+  context.initAccept(0);
+  context.initAcceptEncoding(0);
+  context.initAdditionalHeaders(0);
+  auto stream = request.send().wait(waitScope).getStream();
+  auto responsePromise = stream.getResponseRequest().send();
+  auto write = stream.writeRequest();
+  write.setData(kj::StringPtr("worker-ui-stream!").asBytes());
+  write.send().wait(waitScope);
+  stream.doneRequest().send().wait(waitScope);
+  auto response = responsePromise.wait(waitScope);
+  KJ_REQUIRE(response.which() == WebSession::Response::CONTENT, response.which());
+  auto body = response.getContent().getBody();
+  auto text = body.isBytes()
+      ? kj::str(body.getBytes().asChars())
+      : streamedBody.promise.wait(waitScope);
+  KJ_REQUIRE(contains(text, "\"bodyBytes\":17"),
+      "JS WebSession facade did not stream a request body", text);
+
+  auto download = session.getRequest();
+  download.setPath("download-stream?bytes=2097169");
+  download.setIgnoreBody(false);
+  auto downloadContext = download.initContext();
+  auto counted = kj::newPromiseAndFulfiller<uint64_t>();
+  downloadContext.setResponseStream(kj::heap<CountingByteStream>(kj::mv(counted.fulfiller)));
+  downloadContext.initCookies(0);
+  downloadContext.initAccept(0);
+  downloadContext.initAcceptEncoding(0);
+  downloadContext.initAdditionalHeaders(0);
+  auto downloadResponse = download.send().wait(waitScope);
+  KJ_REQUIRE(downloadResponse.which() == WebSession::Response::CONTENT,
+      downloadResponse.which());
+  KJ_REQUIRE(downloadResponse.getContent().getBody().isStream());
+  KJ_REQUIRE(counted.promise.wait(waitScope) == 2097169,
+      "JS WebSession facade truncated a streamed response");
+}
+
 kj::String fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
     SandstormCore::Client core, kj::StringPtr path) {
   auto keepAlive = supervisor.keepAliveRequest();
@@ -728,6 +775,7 @@ int main(int argc, char** argv) {
   auto workerUiEcho = sandstorm::fetchViewPath(io.waitScope, workerUi, "echo");
   KJ_REQUIRE(sandstorm::contains(workerUiEcho, "\"ok\":true"),
       "JS MainView/WebSession Fetch facade did not serve a request", workerUiEcho);
+  sandstorm::testWorkerUiStreaming(io.waitScope, workerUi);
 
   auto restoreUiChildRequest = workerUiCap.castAs<sandstorm::MainView<>>().restoreRequest();
   restoreUiChildRequest.getObjectId().initAs<NativeGreeterObjectId>().setId("ui-child");

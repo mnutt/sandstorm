@@ -363,11 +363,10 @@ async function responseToWebSession(response, context, callContext) {
   let body = { bytes: new Uint8Array() };
   if (response.body) {
     const handle = new Handle.Server({ ping() {} }).client();
-    const pump = pipeReadableToByteStream(response.body, context.responseStream, {
+    await pipeReadableToByteStream(response.body, context.responseStream, {
       size: declaredSize === null ? undefined : BigInt(declaredSize),
       maxBytes: MAX_WEB_SESSION_BODY_BYTES,
     });
-    callContext.ctx.waitUntil(pump);
     body = { stream: handle };
   }
   return {
@@ -393,16 +392,12 @@ async function runUiFetch(session, request, context, callContext) {
   }
 }
 
-function streamingRequestTarget(session, method, params, callContext) {
-  const body = new TransformStream();
-  const writer = body.writable.getWriter();
+function streamingRequestTarget(session, method, params) {
   const expectedSize = Number(params.expectedSize || 0n);
+  const chunks = [];
   let written = 0;
   let closed = false;
-  const request = webSessionRequest(
-    session, method, params.path, params.context, body.readable, params.mimeType, params.encoding);
-  const response = runUiFetch(session, request, params.context, callContext);
-  callContext.ctx.waitUntil(response.then(() => undefined));
+  let failure = null;
 
   return {
     async write({ data }) {
@@ -412,25 +407,42 @@ function streamingRequestTarget(session, method, params, callContext) {
       written += copy.byteLength;
       if (written > MAX_WEB_SESSION_BODY_BYTES || (expectedSize !== 0 && written > expectedSize)) {
         closed = true;
-        await writer.abort(new Error("streaming request exceeds declared limit"));
-        throw new Error("streaming request exceeds declared limit");
+        failure = new Error("streaming request exceeds declared limit");
+        chunks.length = 0;
+        throw failure;
       }
-      await writer.write(copy);
+      chunks.push(copy);
     },
     async done() {
       if (closed) return;
       closed = true;
       if (expectedSize !== 0 && written !== expectedSize) {
-        await writer.abort(new Error("streaming request size did not match declaration"));
-        throw new Error("streaming request size did not match declaration");
+        failure = new Error("streaming request size did not match declaration");
+        chunks.length = 0;
+        throw failure;
       }
-      await writer.close();
     },
-    async getResponse() {
-      return await response;
+    async getResponse(_params, callContext) {
+      // A workerd I/O object belongs to the request context that created it. ByteStream.write()
+      // calls intentionally run in independent RPC events, so retain only plain copied bytes
+      // between calls and create the Fetch Request here, in getResponse()'s own context.
+      while (!closed) {
+        if (callContext.signal.aborted) throw callContext.signal.reason;
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      if (failure) throw failure;
+      const body = new Blob(chunks, { type: params.mimeType || "application/octet-stream" });
+      chunks.length = 0;
+      const request = webSessionRequest(
+        session, method, params.path, params.context, body, params.mimeType, params.encoding);
+      return await runUiFetch(session, request, params.context, callContext);
     },
-    async [Symbol.for("capnp-es.dispose")]() {
-      if (!closed) await writer.abort(new Error("streaming request was canceled"));
+    [Symbol.for("capnp-es.dispose")]() {
+      if (!closed) {
+        closed = true;
+        failure = new Error("streaming request was canceled");
+        chunks.length = 0;
+      }
     },
   };
 }
@@ -452,13 +464,13 @@ function webSessionFromFetchTarget(session) {
     put: invoke("PUT", params => capnpDataBytes(params.content.content)),
     patch: invoke("PATCH", params => capnpDataBytes(params.content.content)),
     delete: invoke("DELETE"),
-    postStreaming(params, callContext) {
-      const streamTarget = streamingRequestTarget(session, "POST", params, callContext);
+    postStreaming(params) {
+      const streamTarget = streamingRequestTarget(session, "POST", params);
       return { stream: createWorkerCapnpClient(
         WebSession.RequestStream, streamTarget, "Fetch request stream") };
     },
-    putStreaming(params, callContext) {
-      const streamTarget = streamingRequestTarget(session, "PUT", params, callContext);
+    putStreaming(params) {
+      const streamTarget = streamingRequestTarget(session, "PUT", params);
       return { stream: createWorkerCapnpClient(
         WebSession.RequestStream, streamTarget, "Fetch request stream") };
     },

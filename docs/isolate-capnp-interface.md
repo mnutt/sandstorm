@@ -601,11 +601,18 @@ Implemented checkpoint (partial):
 - Late normal Cap'n Proto `Finish` messages are scheduled as protocol-control events after their
   original call event has closed. They do not invoke application code, and they release capnp-es
   answer state before KJ reuses a broker question ID.
+- The event transport uses workerd's `AsyncLocalStorage` support to retain the correct native
+  frame sink across asynchronous continuations. Concurrent calls and facade-owned streams no
+  longer send callback traffic through whichever RPC event happened to run most recently.
+- Dual-path conformance covers streaming uploads and a multi-megabyte streamed response. The
+  correctness checkpoint buffers a streaming request up to 64 MiB because workerd I/O objects
+  cannot move between the independent `RequestStream` RPC events. It also keeps the response
+  method open until its `ByteStream` pump finishes so callback replies remain in that event.
 
 This checkpoint includes request/response conversion and streaming scaffolding, but it is not
 yet the Phase 5 compatibility switch. WebSockets, direct `SessionContext` plumbing, complete
-cookie/cache/WebDAV parity, streaming conformance, and shell UI conformance remain on the legacy
-path until their dual-path tests pass.
+cookie/cache/WebDAV parity, full-duplex/early-return streaming, and shell UI conformance remain on
+the legacy path until their dual-path tests pass.
 
 ### Phase 6: Support service-only grains in packages and the shell
 
