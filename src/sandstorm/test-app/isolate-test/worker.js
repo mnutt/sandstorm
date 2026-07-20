@@ -97,6 +97,8 @@ function readNativeGreeterObjectId(objectId) {
 }
 
 function makePersistentNativeGreeterTarget(id) {
+  let blockedCallContext = null;
+
   return {
     async save() {
       return {
@@ -110,6 +112,14 @@ function makePersistentNativeGreeterTarget(id) {
           (!callContext?.env?.SANDSTORM_API ||
            typeof callContext?.ctx?.waitUntil !== "function")) {
         throw new Error("named Cap'n Proto export did not receive its workerd call context");
+      }
+      if (id === "supervisor-export" && params.name === "concurrent second") {
+        if (blockedCallContext === null) {
+          throw new Error("concurrent worker call did not overlap the blocked call");
+        }
+        if (blockedCallContext === callContext.ctx) {
+          throw new Error("concurrent worker calls shared a workerd execution context");
+        }
       }
       return {
         message: `classic native greeter ${id} hello ${params.name}`,
@@ -127,13 +137,25 @@ function makePersistentNativeGreeterTarget(id) {
       return { greeter };
     },
 
-    async greetWith(params) {
-      const hello = await params.greeter.hello({
-        name: `${params.name} from classic native greeter ${id}`,
-      });
-      return {
-        message: `classic native greeter ${id} called ${hello.message}`,
-      };
+    async greetWith(params, callContext) {
+      const isConcurrencyProbe = id === "supervisor-export" &&
+          (params.name === "concurrent first" || params.name === "shutdown pending");
+      if (isConcurrencyProbe) {
+        if (blockedCallContext !== null) {
+          throw new Error("worker concurrency probe already had a blocked call");
+        }
+        blockedCallContext = callContext.ctx;
+      }
+      try {
+        const hello = await params.greeter.hello({
+          name: `${params.name} from classic native greeter ${id}`,
+        });
+        return {
+          message: `classic native greeter ${id} called ${hello.message}`,
+        };
+      } finally {
+        if (isConcurrencyProbe) blockedCallContext = null;
+      }
     },
 
     async inspectData(params) {

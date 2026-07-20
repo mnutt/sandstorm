@@ -50,6 +50,15 @@ argument. Fetch remains an independent, optional worker handler. Lazy export
 factories can be added later without changing the registry shape if
 measurements justify them.
 
+Implementation checkpoint (2026-07-20): the account-host integration test now
+holds one public worker RPC event open on a callback while a second call runs,
+proving that overlapping calls receive distinct workerd execution contexts and
+that the first call resumes after its callback. It also shuts down a grain with
+a call still blocked and verifies that the caller is rejected. Client-initiated
+call cancellation is not complete: the pinned capnp-es 0.3.0 runtime consumes
+`Finish` messages but does not expose a hook that can abort the corresponding
+server method.
+
 ## Summary
 
 The target model is:
@@ -625,6 +634,9 @@ the first schema sketch:
 
 - What is the cleanest workerd/capnp-es boundary for identifying one inbound
   top-level call while preserving pipelining and callbacks?
+- Should application-visible cancellation be an `AbortSignal` in the per-call
+  context, and should it be driven by a small capnp-es extension or by a more
+  strongly cancelable workerd event primitive?
 - Does a live exported capability pin the worker directly, or should the host
   issue a separate reference-counted lease?
 - Should the UI facade export `MainView`, `UiView`, or a Sandstorm-owned

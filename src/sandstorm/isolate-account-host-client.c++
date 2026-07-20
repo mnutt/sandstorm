@@ -27,6 +27,35 @@ namespace {
 
 class TestSessionContext final: public SessionContext::Server {};
 
+class BlockingNativeGreeter final: public NativeGreeter::Server {
+public:
+  BlockingNativeGreeter(kj::String expectedName,
+      kj::Own<kj::PromiseFulfiller<void>> startedFulfiller,
+      kj::Promise<void> releasePromise)
+      : expectedName(kj::mv(expectedName)),
+        startedFulfiller(kj::mv(startedFulfiller)),
+        releasePromise(kj::mv(releasePromise)) {}
+
+  kj::Promise<void> hello(HelloContext context) override {
+    KJ_REQUIRE(context.getParams().getName() == expectedName,
+        "worker concurrency callback carried the wrong value",
+        context.getParams().getName(), expectedName);
+    KJ_REQUIRE(startedFulfiller.get() != nullptr,
+        "worker concurrency callback was called more than once");
+    startedFulfiller->fulfill();
+    startedFulfiller = nullptr;
+    return kj::mv(releasePromise).then(
+        [context, expectedName = kj::mv(expectedName)]() mutable {
+      context.getResults().setMessage(kj::str("released ", expectedName));
+    });
+  }
+
+private:
+  kj::String expectedName;
+  kj::Own<kj::PromiseFulfiller<void>> startedFulfiller;
+  kj::Promise<void> releasePromise;
+};
+
 bool contains(kj::StringPtr haystack, kj::StringPtr needle) {
   if (needle.size() > haystack.size()) return false;
   for (size_t i = 0; i <= haystack.size() - needle.size(); ++i) {
@@ -617,6 +646,30 @@ int main(int argc, char** argv) {
   auto greeting = greetingRequest.send().wait(io.waitScope).getMessage();
   KJ_REQUIRE(greeting == "classic native greeter supervisor-export hello account host",
       "Supervisor did not proxy the named worker export", greeting);
+
+  auto callbackStarted = kj::newPromiseAndFulfiller<void>();
+  auto callbackRelease = kj::newPromiseAndFulfiller<void>();
+  auto concurrentFirstRequest = workerGreeter.greetWithRequest();
+  concurrentFirstRequest.setGreeter(kj::heap<sandstorm::BlockingNativeGreeter>(
+      kj::str("concurrent first from classic native greeter supervisor-export"),
+      kj::mv(callbackStarted.fulfiller), kj::mv(callbackRelease.promise)));
+  concurrentFirstRequest.setName("concurrent first");
+  auto concurrentFirst = concurrentFirstRequest.send();
+  callbackStarted.promise.wait(io.waitScope);
+
+  auto concurrentSecondRequest = workerGreeter.helloRequest();
+  concurrentSecondRequest.setName("concurrent second");
+  auto concurrentSecond = concurrentSecondRequest.send().wait(io.waitScope).getMessage();
+  KJ_REQUIRE(concurrentSecond ==
+      "classic native greeter supervisor-export hello concurrent second",
+      "concurrent worker RPC did not run in an independent event", concurrentSecond);
+
+  callbackRelease.fulfiller->fulfill();
+  auto concurrentFirstMessage = concurrentFirst.wait(io.waitScope).getMessage();
+  KJ_REQUIRE(concurrentFirstMessage ==
+      "classic native greeter supervisor-export called released "
+      "concurrent first from classic native greeter supervisor-export",
+      "blocked worker RPC did not resume after its callback", concurrentFirstMessage);
   sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
   sandstorm::testWebSocket(io.waitScope, supervisor);
   sandstorm::testBrowserBootstrap(io.waitScope, supervisor);
@@ -692,7 +745,26 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(sandstorm::contains(crossGrainCall,
       "\"message\":\"classic native greeter cross-grain-capnp-benchmark hello client isolate\""),
       "second isolate did not call the first isolate over Cap'n Proto RPC", crossGrainCall);
+  auto shutdownCallbackStarted = kj::newPromiseAndFulfiller<void>();
+  auto shutdownCallbackRelease = kj::newPromiseAndFulfiller<void>();
+  auto pendingShutdownRequest = workerGreeter.greetWithRequest();
+  pendingShutdownRequest.setGreeter(kj::heap<sandstorm::BlockingNativeGreeter>(
+      kj::str("shutdown pending from classic native greeter supervisor-export"),
+      kj::mv(shutdownCallbackStarted.fulfiller), kj::mv(shutdownCallbackRelease.promise)));
+  pendingShutdownRequest.setName("shutdown pending");
+  auto pendingShutdownCall = pendingShutdownRequest.send();
+  shutdownCallbackStarted.promise.wait(io.waitScope);
+
   supervisor.shutdownRequest().send().wait(io.waitScope);
+
+  bool pendingCallRejectedAfterShutdown = false;
+  try {
+    pendingShutdownCall.wait(io.waitScope);
+  } catch (const kj::Exception&) {
+    pendingCallRejectedAfterShutdown = true;
+  }
+  KJ_REQUIRE(pendingCallRejectedAfterShutdown,
+      "in-flight worker export call remained pending after grain shutdown");
 
   bool exportRejectedAfterShutdown = false;
   try {
