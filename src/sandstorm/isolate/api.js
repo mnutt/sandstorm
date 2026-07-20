@@ -116,6 +116,7 @@ export function defineWorker(definition) {
 }
 
 const MAX_WEB_SESSION_BODY_BYTES = 64 * 1024 * 1024;
+const directUiFetchSessions = new WeakMap();
 const WEB_SESSION_RESPONSE_HEADERS = new Set([
   "accept-ranges",
   "content-range",
@@ -386,6 +387,7 @@ async function responseToWebSession(response, context, callContext) {
 
 async function runUiFetch(session, request, context, callContext) {
   try {
+    directUiFetchSessions.set(request, session);
     const response = await session.fetch(request, callContext.env, callContext.ctx);
     return await responseToWebSession(response, context, callContext);
   } catch (error) {
@@ -513,6 +515,7 @@ function mainViewSession(options, params, callContext, kind) {
     headers: uiSessionHeaders(params, sessionParams, options.viewInfo, kind),
     sessionContext: params.context,
   };
+  session.headers.set("x-sandstorm-session-id", makeLiveCapabilityId("worker-ui-session"));
   if (kind === "offer" && params.descriptor !== undefined) {
     session.headers.set("x-sandstorm-offer-descriptor", JSON.stringify({}));
   }
@@ -923,6 +926,20 @@ function sessionIdForPowerbox(request) {
     throw new Error("Powerbox operations require a live Sandstorm WebSession");
   }
   return sessionId;
+}
+
+async function sessionContextForRequest(request, bridge, sessionId) {
+  const directContext = directUiFetchSessions.get(request)?.sessionContext;
+  if (directContext) return directContext;
+
+  if (typeof bridge.getSessionContext !== "function") {
+    throw new Error("isolate bridge returned no session-context resolver");
+  }
+  const session = await bridge.getSessionContext({ sessionId });
+  if (!session?.context) {
+    throw new Error("isolate bridge returned no SessionContext capability");
+  }
+  return session.context;
 }
 
 function capabilityId(value, name = "capability") {
@@ -1514,19 +1531,11 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
 
   try {
     const cap = await wrapSessionActionCapability(actionCapability);
-
-    if (typeof bridge.getSessionContext !== "function") {
-      throw new Error("isolate bridge returned no session-context resolver");
-    }
-
-    const session = await bridge.getSessionContext({ sessionId });
-    if (!session?.context) {
-      throw new Error("isolate bridge returned no SessionContext capability");
-    }
+    const sessionContext = await sessionContextForRequest(request, bridge, sessionId);
 
     switch (endpoint) {
       case "offer":
-        await session.context.offer((params) => {
+        await sessionContext.offer((params) => {
           initCapnpCapabilityParam(params, cap, "offered capability");
           initPermissionSetParam(params, permissions);
           initPowerboxDescriptorParam(params, descriptor);
@@ -1535,7 +1544,7 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
         if (temporaryBridge) bridge.close();
         return { ok: true };
       case "fulfill-request":
-        await session.context.fulfillRequest((params) => {
+        await sessionContext.fulfillRequest((params) => {
           initCapnpCapabilityParam(params, cap, "fulfilled capability");
           initPermissionSetParam(params, permissions);
           initPowerboxDescriptorParam(params, descriptor);
@@ -1544,7 +1553,7 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
         if (temporaryBridge) bridge.close();
         return { ok: true };
       case "tie-to-user": {
-        const tiedPromise = session.context.tieToUser((params) => {
+        const tiedPromise = sessionContext.tieToUser((params) => {
           initCapnpCapabilityParam(params, cap, "tied capability");
           initPermissionSetParam(params, permissions);
           initPowerboxDisplayInfoParam(params, displayInfo);
@@ -3784,15 +3793,8 @@ export function powerbox(request, env) {
       connectionId: makeLiveCapabilityId("powerbox-claim"),
     });
     try {
-      if (typeof bridge.getSessionContext !== "function") {
-        throw new Error("isolate bridge returned no session-context resolver");
-      }
-
-      const session = await bridge.getSessionContext({ sessionId });
-      if (!session?.context) {
-        throw new Error("isolate bridge returned no SessionContext capability");
-      }
-      const claimedPromise = session.context.claimRequest({
+      const sessionContext = await sessionContextForRequest(request, bridge, sessionId);
+      const claimedPromise = sessionContext.claimRequest({
         requestToken: token,
         requiredPermissions: permissions,
       });

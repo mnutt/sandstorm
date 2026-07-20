@@ -609,11 +609,16 @@ Implemented checkpoint (partial):
   cannot move between the independent `RequestStream` RPC events. Response metadata returns while
   the body pump continues through tracked event-scoped `waitUntil()` work; the native host routes
   post-Return `Finish` separately so it cannot deadlock callback Returns from that body pump.
+- Fetch requests created by the JS `WebSession` facade retain their originating UI session in a
+  private weak association. Powerbox offer, fulfill, tie, and claim helpers use the actual
+  `SessionContext` capability passed to `newSession()` instead of asking the legacy isolate bridge
+  to recover it from an account-host session-ID registry. The synthetic request header remains for
+  ordinary `getSession()` metadata and does not authorize that direct capability lookup.
 
 This checkpoint includes request/response conversion and streaming scaffolding, but it is not
-yet the Phase 5 compatibility switch. WebSockets, direct `SessionContext` plumbing, complete
-cookie/cache/WebDAV parity, full-duplex/early-return streaming, and shell UI conformance remain on
-the legacy path until their dual-path tests pass.
+yet the Phase 5 compatibility switch. WebSockets, browser handoff registration for direct sessions,
+complete cookie/cache/WebDAV parity, full-duplex request streaming, and shell UI conformance remain
+on the legacy path until their dual-path tests pass.
 
 ### Phase 6: Support service-only grains in packages and the shell
 

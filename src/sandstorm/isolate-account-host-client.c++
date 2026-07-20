@@ -25,7 +25,20 @@
 namespace sandstorm {
 namespace {
 
-class TestSessionContext final: public SessionContext::Server {};
+class TestSessionContext final: public SessionContext::Server {
+public:
+  kj::Promise<void> offer(OfferContext context) override {
+    ++offerCount;
+    return kj::READY_NOW;
+  }
+
+  static uint getOfferCount() { return offerCount; }
+
+private:
+  static uint offerCount;
+};
+
+uint TestSessionContext::offerCount = 0;
 
 class BlockingNativeGreeter final: public NativeGreeter::Server {
 public:
@@ -808,6 +821,14 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(sandstorm::contains(workerUiEcho, "\"ok\":true"),
       "JS MainView/WebSession Fetch facade did not serve a request", workerUiEcho);
   sandstorm::testWorkerUiStreaming(io.waitScope, workerUi);
+  auto offersBefore = sandstorm::TestSessionContext::getOfferCount();
+  auto directSessionContext = sandstorm::fetchViewPath(
+      io.waitScope, workerUi, "direct-session-context-offer");
+  KJ_REQUIRE(sandstorm::contains(directSessionContext, "\"directSessionContext\":true"),
+      "JS MainView facade did not complete its direct SessionContext operation",
+      directSessionContext);
+  KJ_REQUIRE(sandstorm::TestSessionContext::getOfferCount() == offersBefore + 1,
+      "JS MainView facade did not call the SessionContext capability passed to newSession()");
 
   auto restoreUiChildRequest = workerUiCap.castAs<sandstorm::MainView<>>().restoreRequest();
   restoreUiChildRequest.getObjectId().initAs<NativeGreeterObjectId>().setId("ui-child");

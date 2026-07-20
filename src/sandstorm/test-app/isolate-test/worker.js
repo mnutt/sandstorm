@@ -601,6 +601,16 @@ async function isolateTestFetch(request, env, ctx) {
       return Response.json({ ok: true, offer });
     }
 
+    if (url.pathname === "/direct-session-context-offer") {
+      const capability = await api.webSession({ pathPrefix: "/browser-powerbox-shared" });
+      await capability.offer(request, {
+        title: "Direct worker SessionContext probe",
+        requiredPermissions: [],
+      });
+      await capability.drop();
+      return Response.json({ ok: true, directSessionContext: true });
+    }
+
     if (url.pathname === "/browser-powerbox-finish" && request.method === "POST") {
       const body = await request.json();
       const capability = await api.powerbox().claim(body);
