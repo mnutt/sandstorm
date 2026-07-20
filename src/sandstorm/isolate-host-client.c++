@@ -131,12 +131,19 @@ const rpcState = {
   currentContext: undefined,
   callCount: 0,
   sameContext: false,
+  delayNextExport: true,
+  canceledPipelinedCallRan: false,
 };
 const rpcDispatcher = createCapnpWorkerExportDispatcher({
   bridge: {
     interface: IsolateBridge,
     target: {
       async createBrowserHandoff({ cap, sessionId }) {
+        if (sessionId === "cancel-before-pipeline-dispatch") {
+          rpcState.canceledPipelinedCallRan = true;
+        } else if (rpcState.canceledPipelinedCallRan) {
+          throw new Error("canceled promise-pipelined call was dispatched");
+        }
         let callbackReleased = false;
         let callbackStayedInEvent = false;
         if (sessionId === "first") {
@@ -151,6 +158,13 @@ const rpcDispatcher = createCapnpWorkerExportDispatcher({
         };
       },
     },
+  },
+}, {
+  async beforeGetExport() {
+    if (rpcState.delayNextExport) {
+      rpcState.delayNextExport = false;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   },
 });
 
@@ -345,11 +359,24 @@ export default { fetch() { return new Response("memory limit failed"); } };
     wrongType.setInterfaceId(1);
     wrongType.send().wait(waitScope);
   });
+  auto canceledExportRequest = grain.getExportRequest();
+  canceledExportRequest.setName("bridge");
+  canceledExportRequest.setInterfaceId(capnp::typeId<sandstorm::IsolateBridge>());
+  auto canceledExport = canceledExportRequest.send();
+  auto canceledPipelinedRequest = canceledExport.getCap()
+      .castAs<sandstorm::IsolateBridge>().createBrowserHandoffRequest();
+  canceledPipelinedRequest.setCap(capnp::Capability::Client(nullptr));
+  canceledPipelinedRequest.setSessionId("cancel-before-pipeline-dispatch");
+  auto canceledPipelinedCall = canceledPipelinedRequest.send()
+      .dropPipeline().eagerlyEvaluate(nullptr);
+  canceledPipelinedCall = nullptr;
+  canceledExport.wait(waitScope);
+
   auto exportRequest = grain.getExportRequest();
   exportRequest.setName("bridge");
   exportRequest.setInterfaceId(capnp::typeId<sandstorm::IsolateBridge>());
-  auto rpcBootstrap = exportRequest.send().wait(waitScope).getCap()
-      .castAs<sandstorm::IsolateBridge>();
+  auto exportPipeline = exportRequest.send();
+  auto rpcBootstrap = exportPipeline.getCap().castAs<sandstorm::IsolateBridge>();
   auto firstRpc = rpcBootstrap.createBrowserHandoffRequest();
   firstRpc.setCap(kj::heap<sandstorm::RpcCallbackImpl>());
   firstRpc.setSessionId("first");
@@ -357,7 +384,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
   // Bootstrap and the export lookup precede the application Call. Bootstrap Finish and the
   // callback Return are delivered through their originating events' I/O sources, without
   // invoking another handler or replacing the Call's ExecutionContext.
-  KJ_REQUIRE(firstRpcResponse.getId() == "rpc-4-0-first-1-1",
+  KJ_REQUIRE(firstRpcResponse.getId() == "rpc-7-0-first-1-1",
       "typed worker RPC callback did not stay in its originating event",
       firstRpcResponse.getId());
 
@@ -366,7 +393,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
   secondRpc.setSessionId("second");
   auto secondRpcResponse = secondRpc.send().wait(waitScope);
   // The first answer's Finish is consumed by its original event before this second Call.
-  KJ_REQUIRE(secondRpcResponse.getId() == "rpc-5-0-second-0-0",
+  KJ_REQUIRE(secondRpcResponse.getId() == "rpc-8-0-second-0-0",
       "worker-global RPC connection state was not preserved", secondRpcResponse.getId());
 
   auto cpuStart = host.startGrainRequest();

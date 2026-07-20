@@ -58,6 +58,8 @@ constexpr size_t ISOLATE_YOUNG_HEAP_LIMIT = 16 * 1024 * 1024;
 constexpr size_t BUFFERING_LIMIT = 16 * 1024 * 1024;
 constexpr size_t MAX_WORKER_SOURCE_BYTES = 16 * 1024 * 1024;
 constexpr size_t MAX_RPC_EVENT_BYTES = 16 * 1024 * 1024;
+constexpr size_t MAX_DEFERRED_RPC_CALLS_PER_ANSWER = 64;
+constexpr size_t MAX_DEFERRED_RPC_CALLS = 1024;
 constexpr uint MAX_SUBREQUESTS = 64;
 constexpr auto REQUEST_JS_LIMIT = std::chrono::milliseconds(250);
 constexpr auto STARTUP_JS_LIMIT = std::chrono::seconds(5);
@@ -848,6 +850,7 @@ class SandstormRpcEventControl final: public kj::Refcounted {
   }
 
   bool wasCanceled() const { return cancellationRequested; }
+  bool hasStarted() const { return ioContext != nullptr || completed; }
 
  private:
   void abortContext() {
@@ -1917,7 +1920,7 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
     return responses->read(options);
   }
 
-  void receiveWorkerFrame(SandstormRpcEventInputQueue& event,
+  kj::Maybe<uint32_t> receiveWorkerFrame(SandstormRpcEventInputQueue& event,
       kj::Array<kj::byte> frame) {
     KJ_REQUIRE(frame.size() % sizeof(capnp::word) == 0,
         "worker returned a Cap'n Proto message that is not word-aligned", frame.size());
@@ -1929,7 +1932,12 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
       auto questionId = message.getCall().getQuestionId();
       callbackEvents.insert(questionId, kj::addRef(event));
     }
+    kj::Maybe<uint32_t> returnedAnswer;
+    if (message.which() == capnp::rpc::Message::RETURN) {
+      returnedAnswer = message.getReturn().getAnswerId();
+    }
     responses->push(kj::mv(frame));
+    return returnedAnswer;
   }
 
   bool routeHostReturn(kj::ArrayPtr<const capnp::word> words,
@@ -1965,6 +1973,7 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
     auto questionId = message.getFinish().getQuestionId();
     KJ_IF_SOME(event, callEvents.find(questionId)) {
       auto eventRef = kj::addRef(*event);
+      auto controlRef = kj::addRef(*KJ_REQUIRE_NONNULL(callEventControls.find(questionId)));
       callEvents.erase(questionId);
       callEventControls.erase(questionId);
       // Finish must run in the same workerd IoContext as the Call. In particular, aborting an
@@ -1974,7 +1983,14 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
       // lets that event return. Hold the MessageStream write until the event closes so a later
       // Call cannot overtake its cancellation cleanup.
       auto completion = eventRef->whenClosed();
-      eventRef->push(kj::heapArray(frame));
+      if (controlRef->hasStarted()) {
+        eventRef->push(kj::heapArray(frame));
+      } else {
+        // A promise-pipelined Call can wait for its target answer before it is dispatched. It has
+        // no JS AbortController yet, so cancellation closes it without starting a throwaway event.
+        controlRef->cancel();
+        eventRef->close();
+      }
       return kj::mv(completion);
     }
     return kj::none;
@@ -2042,12 +2058,88 @@ class WorkerRpcMessageStream final: public capnp::MessageStream,
     return kj::READY_NOW;
   }
 
-  void close() { router->close(); }
+  void close() {
+    router->close();
+    for (auto& entry: deferredCalls) {
+      for (auto& event: entry.value) {
+        event.inputQueue->close();
+        event.control->cancel();
+      }
+    }
+    deferredCalls.clear();
+    deferredCallCount = 0;
+    unresolvedAnswers.clear();
+  }
 
  private:
+  struct PendingWorkerRpcEvent {
+    kj::Array<kj::byte> bytes;
+    kj::Own<SandstormRpcEventInputQueue> inputQueue;
+    kj::Own<SandstormRpcEventControl> control;
+    kj::Maybe<uint32_t> answerId;
+  };
+
   void taskFailed(kj::Exception&& exception) override {
     KJ_LOG(ERROR, "worker RPC event failed", exception);
     router->close();
+  }
+
+  void answerSettled(uint32_t answerId) {
+    if (unresolvedAnswers.find(answerId) == kj::none) return;
+    unresolvedAnswers.erase(answerId);
+
+    KJ_IF_SOME(events, deferredCalls.find(answerId)) {
+      KJ_ASSERT(deferredCallCount >= events.size());
+      deferredCallCount -= events.size();
+      auto readyEvents = kj::mv(events);
+      deferredCalls.erase(answerId);
+      for (auto& event: readyEvents) {
+        scheduleEvent(kj::mv(event));
+      }
+    }
+  }
+
+  void receiveWorkerFrame(SandstormRpcEventInputQueue& event,
+      kj::Array<kj::byte> frame) {
+    KJ_IF_SOME(answerId, router->receiveWorkerFrame(event, kj::mv(frame))) {
+      // A promised-answer target must not be dispatched until capnp-es has completed the parent
+      // answer. Deferring in the native host means the child still runs as its own workerd event,
+      // rather than being flushed synchronously under the parent's IoContext by capnp-es.
+      answerSettled(answerId);
+    }
+  }
+
+  void scheduleEvent(PendingWorkerRpcEvent event) {
+    if (event.control->wasCanceled()) {
+      event.inputQueue->close();
+      KJ_IF_SOME(answerId, event.answerId) {
+        answerSettled(answerId);
+      }
+      return;
+    }
+
+    auto answerId = event.answerId;
+    auto control = kj::addRef(*event.control);
+    auto eventTask = dispatchWorkerRpcEvent(state.addRef(), kj::mv(event.bytes),
+        [this, inputQueue = kj::addRef(*event.inputQueue)](
+            kj::Array<kj::byte> response) mutable {
+      receiveWorkerFrame(*inputQueue, kj::mv(response));
+    }, kj::mv(event.inputQueue), kj::mv(event.control));
+
+    eventTask = eventTask.then([this, answerId]() mutable -> kj::Promise<void> {
+      KJ_IF_SOME(id, answerId) {
+        answerSettled(id);
+      }
+      return kj::READY_NOW;
+    }, [this, answerId, control = kj::mv(control)](kj::Exception&& exception) mutable
+        -> kj::Promise<void> {
+      KJ_IF_SOME(id, answerId) {
+        answerSettled(id);
+      }
+      if (control->wasCanceled()) return kj::READY_NOW;
+      return kj::mv(exception);
+    });
+    tasks.add(kj::mv(eventTask));
   }
 
   kj::Promise<void> sendMessage(kj::Array<capnp::word> words) {
@@ -2067,35 +2159,62 @@ class WorkerRpcMessageStream final: public capnp::MessageStream,
     auto inputQueue = kj::refcounted<SandstormRpcEventInputQueue>();
     auto eventControl = kj::refcounted<SandstormRpcEventControl>();
     bool isCall = message.which() == capnp::rpc::Message::CALL;
+    kj::Maybe<uint32_t> answerId;
     if (isCall) {
+      answerId = message.getCall().getQuestionId();
       router->registerCallEvent(
-          message.getCall().getQuestionId(), *inputQueue, *eventControl);
+          KJ_ASSERT_NONNULL(answerId), *inputQueue, *eventControl);
+    } else if (message.which() == capnp::rpc::Message::BOOTSTRAP) {
+      answerId = message.getBootstrap().getQuestionId();
+    }
+    KJ_IF_SOME(id, answerId) {
+      KJ_REQUIRE(unresolvedAnswers.find(id) == kj::none,
+          "duplicate unresolved worker RPC question", id);
+      unresolvedAnswers.insert(id, true);
+    }
+
+    PendingWorkerRpcEvent event{
+      kj::mv(bytes), kj::mv(inputQueue), kj::mv(eventControl), answerId
+    };
+
+    if (isCall) {
+      auto target = message.getCall().getTarget();
+      if (target.which() == capnp::rpc::MessageTarget::PROMISED_ANSWER) {
+        auto parentId = target.getPromisedAnswer().getQuestionId();
+        if (unresolvedAnswers.find(parentId) != kj::none) {
+          KJ_REQUIRE(deferredCallCount < MAX_DEFERRED_RPC_CALLS,
+              "too many deferred worker RPC calls", deferredCallCount,
+              MAX_DEFERRED_RPC_CALLS);
+          KJ_IF_SOME(events, deferredCalls.find(parentId)) {
+            KJ_REQUIRE(events.size() < MAX_DEFERRED_RPC_CALLS_PER_ANSWER,
+                "too many worker RPC calls pipelined on one answer", parentId,
+                events.size(), MAX_DEFERRED_RPC_CALLS_PER_ANSWER);
+            events.add(kj::mv(event));
+          } else {
+            kj::Vector<PendingWorkerRpcEvent> events;
+            events.add(kj::mv(event));
+            deferredCalls.insert(parentId, kj::mv(events));
+          }
+          ++deferredCallCount;
+          return kj::READY_NOW;
+        }
+      }
     }
 
     // Cap'n Proto serializes MessageStream writes until the returned promise resolves. An
     // incoming worker Call can itself issue a callback whose Return must be written while the
     // original event is still pending, so acknowledge the frame after scheduling its event and
     // retain the event separately for the connection lifetime.
-    auto eventTask = dispatchWorkerRpcEvent(state.addRef(), kj::mv(bytes),
-        [router = kj::addRef(*router), inputQueue = kj::addRef(*inputQueue)](
-            kj::Array<kj::byte> response) mutable {
-      router->receiveWorkerFrame(*inputQueue, kj::mv(response));
-    }, kj::mv(inputQueue), kj::addRef(*eventControl));
-    if (isCall) {
-      eventTask = eventTask.catch_([
-          eventControl = kj::mv(eventControl)](kj::Exception&& exception)
-          -> kj::Promise<void> {
-        if (eventControl->wasCanceled()) return kj::READY_NOW;
-        return kj::mv(exception);
-      });
-    }
-    tasks.add(kj::mv(eventTask));
+    scheduleEvent(kj::mv(event));
     return kj::READY_NOW;
   }
 
   kj::Rc<HostedState> state;
   kj::Own<WorkerRpcFrameRouter> router;
   kj::TaskSet tasks;
+  kj::HashMap<uint32_t, bool> unresolvedAnswers;
+  kj::HashMap<uint32_t, kj::Vector<PendingWorkerRpcEvent>> deferredCalls;
+  size_t deferredCallCount = 0;
 };
 
 class WorkerRpcConnection final {

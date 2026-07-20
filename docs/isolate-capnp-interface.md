@@ -46,9 +46,9 @@ servers without importing the private frame transport or implementing the
 reserved workerd event. Each eager, worker-global server target is constructed
 during module evaluation. Its methods receive event-scoped
 `{ env, ctx, signal }` as a second argument; the generated results builder
-remains an optional third argument. Fetch remains an independent, optional worker handler. Lazy export
-factories can be added later without changing the registry shape if
-measurements justify them.
+remains an optional third argument. Fetch remains an independent, optional
+worker handler. Lazy export factories can be added later without changing the
+registry shape if measurements justify them.
 
 Implementation checkpoint (2026-07-20): the account-host integration test now
 holds one public worker RPC event open on a callback while a second call runs,
@@ -66,6 +66,16 @@ suppresses its synthetic stale `Return`, and lets the original event close
 before a subsequent stream write proceeds. The account-host integration test
 cancels an eagerly evaluated native call, observes signal-driven cleanup, and
 then successfully reuses the export.
+
+Implementation checkpoint (2026-07-20): promise-pipelined calls now preserve
+the protocol pipeline without borrowing their parent call's workerd context.
+The native host holds a `Call` whose target is an unresolved `promisedAnswer`
+until the worker emits the parent `Return`, then schedules the child as its own
+RPC event. A child canceled while waiting is closed without starting a JS
+event. Deferred calls are bounded both per parent answer and per connection.
+The native-host test covers unresolved export pipelining, cancellation before
+dispatch, callback traffic, and subsequent connection reuse; the account-host
+test pipelines a call onto a worker-returned capability through the supervisor.
 
 ## Summary
 
@@ -651,9 +661,6 @@ round-trip through supervisor HTTP bindings merely to reach the same worker.
 The following questions should be answered by prototypes rather than fixed by
 the first schema sketch:
 
-- How should promise pipelining extend the current boundary, where one inbound
-  top-level `Call` owns an event and callback `Return` plus cancellation
-  `Finish` frames re-enter that event's queue?
 - Does a live exported capability pin the worker directly, or should the host
   issue a separate reference-counted lease?
 - Should the UI facade export `MainView`, `UiView`, or a Sandstorm-owned

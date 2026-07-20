@@ -647,6 +647,15 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(greeting == "classic native greeter supervisor-export hello account host",
       "Supervisor did not proxy the named worker export", greeting);
 
+  auto makePipelinedGreeterRequest = workerGreeter.makeGreeterRequest();
+  makePipelinedGreeterRequest.setPrefix("pipelined worker greeter");
+  auto makePipelinedGreeter = makePipelinedGreeterRequest.send();
+  auto pipelinedHelloRequest = makePipelinedGreeter.getGreeter().helloRequest();
+  pipelinedHelloRequest.setName("account host");
+  auto pipelinedGreeting = pipelinedHelloRequest.send().wait(io.waitScope).getMessage();
+  KJ_REQUIRE(pipelinedGreeting == "pipelined worker greeter account host",
+      "worker promise-pipelined capability call failed", pipelinedGreeting);
+
   auto callbackStarted = kj::newPromiseAndFulfiller<void>();
   auto callbackRelease = kj::newPromiseAndFulfiller<void>();
   auto concurrentFirstRequest = workerGreeter.greetWithRequest();

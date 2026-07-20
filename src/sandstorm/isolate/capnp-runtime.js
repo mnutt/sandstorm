@@ -787,17 +787,24 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
     }
   };
   const dispatcher = createCapnpRpcEventDispatcher(IsolateExportBroker, {
-    getExport({ name, interfaceId }) {
-      const workerExport = exportsByName.get(name);
-      if (!workerExport || workerExport.interfaceId !== interfaceId) {
-        throw new NativeCapnpBridgeProtocolError(
-          `worker Cap'n Proto export ${name} was not registered with interface ` +
-          `0x${interfaceId.toString(16)}`);
-      }
-      return {
-        cap: nativeCapnpCapabilityPointer(
-          workerExport.client, `worker Cap'n Proto export ${name}`),
+    getExport({ name: inputName, interfaceId }) {
+      const name = String(inputName);
+      const resolveExport = () => {
+        const workerExport = exportsByName.get(name);
+        if (!workerExport || workerExport.interfaceId !== interfaceId) {
+          throw new NativeCapnpBridgeProtocolError(
+            `worker Cap'n Proto export ${name} was not registered with interface ` +
+            `0x${interfaceId.toString(16)}`);
+        }
+        return {
+          cap: nativeCapnpCapabilityPointer(
+            workerExport.client, `worker Cap'n Proto export ${name}`),
+        };
       };
+      const beforeGetExport = options.beforeGetExport?.({ name, interfaceId });
+      return beforeGetExport === undefined
+        ? resolveExport()
+        : Promise.resolve(beforeGetExport).then(resolveExport);
     },
   }, { ...options, runWithContext });
 
