@@ -166,6 +166,15 @@ struct Manifest {
     struct Export {
       name @0 :Text;
       interfaceId @1 :UInt64;
+      role @2 :Role;
+      # Optional platform interpretation of this export. `ordinary` exports are only resolved by
+      # name and interface ID. `mainView` supplies Supervisor.getMainView() while still traveling
+      # over the same generic worker-export path.
+
+      enum Role {
+        ordinary @0;
+        mainView @1;
+      }
     }
 
     struct Module {

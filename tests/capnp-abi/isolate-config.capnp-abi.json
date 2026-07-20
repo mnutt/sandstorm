@@ -12,7 +12,7 @@
     {
       "name": "Manifest.IsolateConfig.Export",
       "structId": "0xd3a117e6374a8618",
-      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "interfaceId", "ordinal": 1, "type": "UInt64"}]
+      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "interfaceId", "ordinal": 1, "type": "UInt64"}, {"name": "role", "ordinal": 2, "type": "Enum(0xda2359fa7d961470)"}]
     },
     {
       "name": "Manifest.IsolateConfig.Module",

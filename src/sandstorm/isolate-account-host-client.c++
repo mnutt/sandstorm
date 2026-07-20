@@ -336,8 +336,8 @@ void expectStartRejected(kj::WaitScope& waitScope, IsolateAccountHost::Client ac
   KJ_REQUIRE(rejected, "oversized worker package was admitted");
 }
 
-WebSession::Client newWebSession(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
-  auto view = supervisor.getMainViewRequest().send().wait(waitScope).getView();
+WebSession::Client newWebSessionFromView(
+    kj::WaitScope& waitScope, UiView::Client view) {
   auto sessionRequest = view.newSessionRequest();
   auto userInfo = sessionRequest.initUserInfo();
   userInfo.initDisplayName().setDefaultText("Account host test user");
@@ -350,6 +350,32 @@ WebSession::Client newWebSession(kj::WaitScope& waitScope, Supervisor::Client su
   sessionParams.setUserAgent("isolate-account-host-client");
   sessionRequest.setTabId(kj::StringPtr("account-host-test-tab").asBytes());
   return sessionRequest.send().wait(waitScope).getSession().castAs<WebSession>();
+}
+
+WebSession::Client newWebSession(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
+  auto view = supervisor.getMainViewRequest().send().wait(waitScope).getView();
+  return newWebSessionFromView(waitScope, view);
+}
+
+kj::String fetchViewPath(
+    kj::WaitScope& waitScope, UiView::Client view, kj::StringPtr path) {
+  auto session = newWebSessionFromView(waitScope, view);
+  auto get = session.getRequest();
+  get.setPath(path);
+  get.setIgnoreBody(false);
+  auto context = get.initContext();
+  auto streamedBody = kj::newPromiseAndFulfiller<kj::String>();
+  context.setResponseStream(kj::heap<CollectByteStream>(kj::mv(streamedBody.fulfiller)));
+  context.initCookies(0);
+  context.initAccept(0);
+  context.initAcceptEncoding(0);
+  context.initAdditionalHeaders(0);
+  auto response = get.send().wait(waitScope);
+  KJ_REQUIRE(response.which() == WebSession::Response::CONTENT, response.which());
+  auto body = response.getContent().getBody();
+  if (body.isBytes()) return kj::str(body.getBytes().asChars());
+  KJ_REQUIRE(body.isStream(), "worker UI facade response had an unknown body shape");
+  return streamedBody.promise.wait(waitScope);
 }
 
 kj::String fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
@@ -693,6 +719,35 @@ int main(int argc, char** argv) {
   auto greeting = greetingRequest.send().wait(io.waitScope).getMessage();
   KJ_REQUIRE(greeting == "classic native greeter supervisor-export hello account host",
       "Supervisor did not proxy the named worker export", greeting);
+
+  auto workerUiRequest = supervisor.getExportRequest();
+  workerUiRequest.setName("ui");
+  workerUiRequest.setInterfaceId(capnp::typeId<sandstorm::MainView<>>());
+  auto workerUiCap = workerUiRequest.send().wait(io.waitScope).getCap();
+  auto workerUi = workerUiCap.castAs<sandstorm::UiView>();
+  auto workerUiEcho = sandstorm::fetchViewPath(io.waitScope, workerUi, "echo");
+  KJ_REQUIRE(sandstorm::contains(workerUiEcho, "\"ok\":true"),
+      "JS MainView/WebSession Fetch facade did not serve a request", workerUiEcho);
+
+  auto restoreUiChildRequest = workerUiCap.castAs<sandstorm::MainView<>>().restoreRequest();
+  restoreUiChildRequest.getObjectId().initAs<NativeGreeterObjectId>().setId("ui-child");
+  auto workerUiChild = restoreUiChildRequest.send().wait(io.waitScope).getCap()
+      .castAs<NativeGreeter>();
+  auto saveUiChildRequest = workerUiChild.castAs<sandstorm::SystemPersistent>().saveRequest();
+  auto uiChildOwner = saveUiChildRequest.getSealFor().initGrain();
+  uiChildOwner.setGrainId(argv[2]);
+  uiChildOwner.getSaveLabel().setDefaultText("worker UI child with a different interface");
+  auto uiChildToken = kj::heapArray<kj::byte>(
+      saveUiChildRequest.send().wait(io.waitScope).getSturdyRef());
+  auto restoreSavedUiChild = core.restoreRequest();
+  restoreSavedUiChild.setToken(uiChildToken);
+  auto restoredUiChild = restoreSavedUiChild.send().wait(io.waitScope).getCap()
+      .castAs<NativeGreeter>();
+  auto restoredUiChildHello = restoredUiChild.helloRequest();
+  restoredUiChildHello.setName("different interface registry");
+  KJ_REQUIRE(restoredUiChildHello.send().wait(io.waitScope).getMessage() ==
+      "classic native greeter ui-child hello different interface registry",
+      "durable worker registry did not restore a child with a different interface");
 
   auto saveWorkerExportRequest =
       workerGreeter.castAs<sandstorm::SystemPersistent>().saveRequest();

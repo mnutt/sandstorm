@@ -9,6 +9,7 @@ import {
   createCapnpStruct,
   defineWorker,
   exportCapnp,
+  mainViewFromFetch,
   readCapnpStruct,
   sandstorm,
   serveCapnp,
@@ -477,21 +478,7 @@ function renderBrowserStoragePage() {
 </html>`;
 }
 
-export default defineWorker({
-  capabilities: {
-    greeter: serveCapnp(
-      NativeGreeter,
-      makePersistentNativeGreeterTarget("supervisor-export"),
-      {
-        async restore(objectId) {
-          return restoreNativeGreeterTarget(objectId);
-        },
-        async drop(objectId) {
-          readNativeGreeterObjectId(objectId);
-        },
-      }),
-  },
-  async fetch(request, env, ctx) {
+async function isolateTestFetch(request, env, ctx) {
     const api = sandstorm(request, env);
     const url = new URL(request.url);
     const systemResponse = await api.serveSystemRoutes({
@@ -1291,5 +1278,46 @@ export default defineWorker({
 
 
     return Response.json({ ok: false, error: "not found" }, { status: 404 });
+}
+
+const isolateTestViewInfo = {
+  appTitle: { defaultText: "Sandstorm Isolate Test App" },
+  permissions: [{
+    name: "view",
+    title: { defaultText: "view" },
+    description: { defaultText: "allows opening the isolate test app" },
+  }],
+  roles: [{
+    title: { defaultText: "viewer" },
+    permissions: [true],
+    verbPhrase: { defaultText: "can view" },
+    default: true,
+  }],
+};
+
+const restoreNativeGreeter = async (objectId) => new NativeGreeter.Server(
+  restoreNativeGreeterTarget(objectId)).client();
+const dropNativeGreeter = async (objectId) => {
+  readNativeGreeterObjectId(objectId);
+};
+
+export default defineWorker({
+  capabilities: {
+    greeter: serveCapnp(
+      NativeGreeter,
+      makePersistentNativeGreeterTarget("supervisor-export"),
+      {
+        async restore(objectId) {
+          return restoreNativeGreeterTarget(objectId);
+        },
+        drop: dropNativeGreeter,
+      }),
+    ui: mainViewFromFetch({
+      fetch: isolateTestFetch,
+      viewInfo: isolateTestViewInfo,
+      restore: restoreNativeGreeter,
+      drop: dropNativeGreeter,
+    }),
   },
+  fetch: isolateTestFetch,
 });

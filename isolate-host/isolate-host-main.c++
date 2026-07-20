@@ -1984,7 +1984,13 @@ class WorkerRpcFrameRouter final: public kj::Refcounted {
       // Call cannot overtake its cancellation cleanup.
       auto completion = eventRef->whenClosed();
       if (controlRef->hasStarted()) {
-        eventRef->push(kj::heapArray(frame));
+        if (!eventRef->push(kj::heapArray(frame))) {
+          // A normal Finish commonly arrives after the Call has returned and its input queue has
+          // closed. Fall through so MessageStream schedules the Finish as a protocol-control
+          // event. The JS dispatcher handles it without invoking an application server method.
+          // This is required before KJ may safely reuse the question ID on a long-lived broker.
+          return kj::none;
+        }
       } else {
         // A promise-pipelined Call can wait for its target answer before it is dispatched. It has
         // no JS AbortController yet, so cancellation closes it without starting a throwaway event.

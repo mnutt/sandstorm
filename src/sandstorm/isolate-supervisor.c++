@@ -139,8 +139,14 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   };
 
   struct Export {
+    enum class Role {
+      ORDINARY,
+      MAIN_VIEW,
+    };
+
     kj::String name;
     uint64_t interfaceId;
+    Role role;
   };
 
   kj::String mainModule;
@@ -756,6 +762,15 @@ void validateIsolateRuntimeConfig(
     for (uint j = 0; j < i; ++j) {
       KJ_REQUIRE(config.exports[j].name != workerExport.name,
           "Isolate command has duplicate export names.", workerExport.name);
+      KJ_REQUIRE(workerExport.role != IsolateRuntimeConfig::Export::Role::MAIN_VIEW ||
+              config.exports[j].role != IsolateRuntimeConfig::Export::Role::MAIN_VIEW,
+          "Isolate command declares more than one mainView export.", workerExport.name,
+          config.exports[j].name);
+    }
+    if (workerExport.role == IsolateRuntimeConfig::Export::Role::MAIN_VIEW) {
+      KJ_REQUIRE(workerExport.interfaceId == capnp::typeId<MainView<>>(),
+          "Isolate mainView export must implement sandstorm MainView.", workerExport.name,
+          workerExport.interfaceId, capnp::typeId<MainView<>>());
     }
   }
 }
@@ -911,9 +926,19 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
         "Isolate command export count exceeds limit.", configuredExports.size());
   }
   for (auto workerExport: configuredExports) {
+    auto role = [&]() {
+      switch (workerExport.getRole()) {
+        case spk::Manifest::IsolateConfig::Export::Role::ORDINARY:
+          return IsolateRuntimeConfig::Export::Role::ORDINARY;
+        case spk::Manifest::IsolateConfig::Export::Role::MAIN_VIEW:
+          return IsolateRuntimeConfig::Export::Role::MAIN_VIEW;
+      }
+      KJ_UNREACHABLE;
+    }();
     result->exports.add(IsolateRuntimeConfig::Export{
       .name = kj::heapString(workerExport.getName()),
       .interfaceId = workerExport.getInterfaceId(),
+      .role = role,
     });
   }
 
@@ -4815,6 +4840,22 @@ public:
 
   kj::Promise<void> getMainView(GetMainViewContext context) override {
     lifecycle->requireRunning();
+
+    for (auto& workerExport: runtimeConfig->exports) {
+      if (workerExport.role == IsolateRuntimeConfig::Export::Role::MAIN_VIEW) {
+        auto exportName = kj::heapString(workerExport.name);
+        auto interfaceId = workerExport.interfaceId;
+        return runtimeHost->getExport(exportName, interfaceId).then(
+            [this, context, exportName = kj::mv(exportName), interfaceId](
+                capnp::Capability::Client cap) mutable {
+          auto persistent = capnp::Capability::Client(
+              kj::heap<IsolateWorkerPersistentCapability>(
+                  kj::addRef(*runtimeHost), exportName, interfaceId, kj::mv(cap)));
+          context.getResults().setView(persistent.castAs<UiView>());
+        });
+      }
+    }
+
     context.getResults().setView(kj::heap<IsolateUiViewImpl>(
         kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost)));
     return kj::READY_NOW;

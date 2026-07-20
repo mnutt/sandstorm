@@ -583,6 +583,30 @@ Exit criteria:
   the current adapter; and
 - a non-UI export does not instantiate any UI or Fetch adapter code.
 
+Implemented checkpoint (partial):
+
+- `Manifest.IsolateConfig.Export.role` can mark one declared `MainView` export. The isolate
+  supervisor resolves that capability through the generic worker broker for `getMainView()`;
+  manifests without the role continue to use the C++ route-backed adapter.
+- `mainViewFromFetch()` now provides a public SDK declaration backed by capnp-es `MainView` and
+  returned `WebSession` servers. The dual-path integration fixture keeps its legacy main view and
+  resolves a second JS UI export directly, proving that `newSession()` and `get()` reach the
+  application Fetch handler without supervisor KJ HTTP translation.
+- Returned SDK facade capabilities are context-aware: every method is dispatched with the
+  workerd event's `{ env, ctx, signal }`, including methods on capabilities returned by another
+  worker call.
+- Durable registries may return a generated client for an arbitrary child interface. A saved
+  `NativeGreeter` returned by the `MainView` export restores through the UI export's registry even
+  though its interface differs from `MainView`.
+- Late normal Cap'n Proto `Finish` messages are scheduled as protocol-control events after their
+  original call event has closed. They do not invoke application code, and they release capnp-es
+  answer state before KJ reuses a broker question ID.
+
+This checkpoint includes request/response conversion and streaming scaffolding, but it is not
+yet the Phase 5 compatibility switch. WebSockets, direct `SessionContext` plumbing, complete
+cookie/cache/WebDAV parity, streaming conformance, and shell UI conformance remain on the legacy
+path until their dual-path tests pass.
+
 ### Phase 6: Support service-only grains in packages and the shell
 
 Add manifest declarations and supervisor APIs for generic named exports.

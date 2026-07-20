@@ -72,8 +72,14 @@ declare module "sandstorm:api" {
     restore(
       objectId: unknown,
       context: WorkerCapnpCallContext<E>,
-    ): WorkerCapnpServerTargetFor<I, E> | Promise<WorkerCapnpServerTargetFor<I, E>>;
+    ): WorkerCapnpServerTargetFor<I, E> | WorkerCapnpRestoredClient |
+      Promise<WorkerCapnpServerTargetFor<I, E> | WorkerCapnpRestoredClient>;
     drop(objectId: unknown, context: WorkerCapnpCallContext<E>): void | Promise<void>;
+  }
+
+  /** A generated capnp-es client returned by a registry for an arbitrary child interface. */
+  export interface WorkerCapnpRestoredClient {
+    readonly client: { call(request: unknown): unknown };
   }
 
   /** Declares a generated server target as one worker capability. */
@@ -107,6 +113,25 @@ declare module "sandstorm:api" {
   export function defineWorker<E extends SandstormEnv = SandstormEnv>(
     definition: SandstormWorkerDefinition<E>,
   ): Readonly<DefinedSandstormWorker<E>>;
+
+  export interface MainViewFromFetchOptions<E extends SandstormEnv = SandstormEnv> {
+    readonly viewInfo: object;
+    fetch(
+      request: Request,
+      env: E,
+      ctx: WorkerExecutionContext,
+    ): Response | Promise<Response>;
+    restore?(
+      objectId: unknown,
+      context: WorkerCapnpCallContext<E>,
+    ): WorkerCapnpRestoredClient | Promise<WorkerCapnpRestoredClient>;
+    drop?(objectId: unknown, context: WorkerCapnpCallContext<E>): void | Promise<void>;
+  }
+
+  /** Implements MainView/WebSession in capnp-es and adapts those UI calls to Fetch. */
+  export function mainViewFromFetch<E extends SandstormEnv = SandstormEnv>(
+    options: MainViewFromFetchOptions<E>,
+  ): WorkerCapnpExport<CapnpServerInterface, E>;
 
   /**
    * Creates a non-owning schema view of a live Sandstorm capability. The returned
@@ -181,6 +206,8 @@ declare module "sandstorm:api" {
   export interface WritableFromByteStreamOptions {
     /** Total number of bytes that will be written. */
     readonly size?: bigint | number;
+    /** Reject after writing more than this many bytes. */
+    readonly maxBytes?: bigint | number;
     readonly chunkSize?: number;
   }
 

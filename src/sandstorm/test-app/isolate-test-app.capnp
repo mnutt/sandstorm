@@ -34,7 +34,8 @@ const isolateCommand :Spk.Manifest.Command = (
     compatibilityFlags = [],
 
     exports = [
-      (name = "greeter", interfaceId = 0xb66316217ceedb1b)
+      (name = "greeter", interfaceId = 0xb66316217ceedb1b),
+      (name = "ui", interfaceId = 0xc277e9822ae2c8fc)
     ],
 
     modules = [

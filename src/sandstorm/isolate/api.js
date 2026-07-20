@@ -2,9 +2,12 @@ import {
   CAPNP_CLIENT_SYMBOL,
   connectIsolateBridge,
   createCapnpWorkerExportDispatcher,
+  createWorkerCapnpClient,
   nativeCapnpInterfaceMetadata,
   nativeCapnpSavedTokenData,
   nativeCapnpSavedTokenText,
+  pipeReadableToByteStream,
+  readCapnpStruct,
 } from "sandstorm-internal:capnp-runtime";
 import {
   dataBytes as CapnpEsDataBytes,
@@ -15,7 +18,7 @@ import {
 import { MainView } from "/sandstorm/grain.capnp";
 import { OutboundHttpSession } from "/sandstorm/outbound-http-session.capnp";
 import { PowerboxDescriptor, PowerboxDisplayInfo } from "/sandstorm/powerbox.capnp";
-import { ByteStream } from "/sandstorm/util.capnp";
+import { ByteStream, Handle } from "/sandstorm/util.capnp";
 import { WebSession } from "/sandstorm/web-session.capnp";
 import { ValidationError, validate } from "sandstorm-internal:validation";
 
@@ -110,6 +113,432 @@ export function defineWorker(definition) {
   }
 
   return Object.freeze(worker);
+}
+
+const MAX_WEB_SESSION_BODY_BYTES = 64 * 1024 * 1024;
+const WEB_SESSION_RESPONSE_HEADERS = new Set([
+  "accept-ranges",
+  "content-range",
+  "x-oc-mtime",
+]);
+
+function uiFacadeOptions(options) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("mainViewFromFetch() requires an options object");
+  }
+  if (typeof options.fetch !== "function") {
+    throw new TypeError("mainViewFromFetch() requires a fetch handler");
+  }
+  if (!options.viewInfo || typeof options.viewInfo !== "object") {
+    throw new TypeError("mainViewFromFetch() requires ViewInfo initialization data");
+  }
+  if ((options.restore === undefined) !== (options.drop === undefined)) {
+    throw new TypeError("mainViewFromFetch() restore and drop must be supplied together");
+  }
+  if (options.restore !== undefined &&
+      (typeof options.restore !== "function" || typeof options.drop !== "function")) {
+    throw new TypeError("mainViewFromFetch() restore and drop must be functions");
+  }
+  return options;
+}
+
+function hexBytes(value) {
+  return Array.from(capnpDataBytes(value), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function uiSessionHeaders(params, sessionParams, viewInfo, kind) {
+  const headers = new Headers();
+  headers.set("x-sandstorm-session-type", kind);
+  const displayName = params.userInfo?.displayName?.defaultText;
+  if (displayName) headers.set("x-sandstorm-username", displayName);
+  const identityId = params.userInfo?.identityId;
+  if (identityId && capnpDataBytes(identityId).byteLength > 0) {
+    headers.set("x-sandstorm-user-id", hexBytes(identityId).slice(0, 32));
+  }
+  if (params.userInfo?.preferredHandle) {
+    headers.set("x-sandstorm-preferred-handle", params.userInfo.preferredHandle);
+  }
+  if (params.userInfo?.pictureUrl) {
+    headers.set("x-sandstorm-user-picture", params.userInfo.pictureUrl);
+  }
+
+  const permissionNames = [];
+  const permissionDefs = Array.from(viewInfo.permissions ?? []);
+  const permissions = params.userInfo?.permissions ?? [];
+  for (let i = 0; i < permissionDefs.length && i < permissions.length; ++i) {
+    if (permissions.get ? permissions.get(i) : permissions[i]) {
+      const name = permissionDefs[i]?.name;
+      if (name) permissionNames.push(name);
+    }
+  }
+  if (permissionNames.length > 0) {
+    headers.set("x-sandstorm-permissions", permissionNames.join(","));
+  }
+
+  if (params.tabId && capnpDataBytes(params.tabId).byteLength > 0) {
+    headers.set("x-sandstorm-tab-id", hexBytes(params.tabId));
+  }
+  if (sessionParams.basePath) {
+    headers.set("x-sandstorm-base-path", sessionParams.basePath);
+    const base = new URL(sessionParams.basePath);
+    headers.set("host", base.host);
+    headers.set("x-forwarded-proto", base.protocol.slice(0, -1));
+  } else {
+    headers.set("host", "sandbox");
+    headers.set("x-forwarded-proto", "http");
+  }
+  if (sessionParams.userAgent) headers.set("user-agent", sessionParams.userAgent);
+  const languages = Array.from(sessionParams.acceptableLanguages ?? [], String);
+  if (languages.length > 0) headers.set("accept-language", languages.join(","));
+  return headers;
+}
+
+function formatETag(eTag) {
+  return `${eTag.weak ? "W/" : ""}\"${eTag.value}\"`;
+}
+
+function addWebSessionRequestContext(headers, context) {
+  const cookies = Array.from(context.cookies ?? [], cookie => `${cookie.name}=${cookie.value}`);
+  if (cookies.length > 0) headers.set("cookie", cookies.join("; "));
+
+  const accepted = Array.from(context.accept ?? [], item =>
+    item.qValue === 1 ? item.mimeType : `${item.mimeType};q=${item.qValue}`);
+  if (accepted.length > 0) headers.set("accept", accepted.join(", "));
+  const encodings = Array.from(context.acceptEncoding ?? [], item =>
+    item.qValue === 1 ? item.contentCoding : `${item.contentCoding};q=${item.qValue}`);
+  if (encodings.length > 0) headers.set("accept-encoding", encodings.join(", "));
+
+  const precondition = context.eTagPrecondition;
+  switch (precondition.which()) {
+    case 1:
+      headers.set("if-match", "*");
+      break;
+    case 4:
+      headers.set("if-none-match", "*");
+      break;
+    case 2:
+      headers.set("if-match", Array.from(precondition.matchesOneOf, formatETag).join(", "));
+      break;
+    case 3:
+      headers.set("if-none-match", Array.from(precondition.matchesNoneOf, formatETag).join(", "));
+      break;
+  }
+  for (const header of context.additionalHeaders ?? []) {
+    headers.append(header.name, header.value);
+  }
+}
+
+function webSessionRequest(session, method, path, context, body, contentType, encoding) {
+  const headers = new Headers(session.headers);
+  addWebSessionRequestContext(headers, context);
+  if (contentType) headers.set("content-type", contentType);
+  if (encoding) headers.set("content-encoding", encoding);
+  const normalized = String(path).replace(/^\/+/, "");
+  const init = { method, headers };
+  if (body !== undefined && body !== null) {
+    init.body = body;
+    if (body instanceof ReadableStream) init.duplex = "half";
+  }
+  return new Request(new URL(normalized, "http://sandstorm-session/"), init);
+}
+
+function webSessionError(error) {
+  const message = error?.message || String(error);
+  return {
+    serverError: {
+      descriptionHtml: "",
+      nonHtmlBody: {
+        data: new TextEncoder().encode(message),
+        mimeType: "text/plain; charset=utf-8",
+      },
+    },
+  };
+}
+
+function webSessionSuccessCode(status) {
+  switch (status) {
+    case 201: return WebSession.Response.SuccessCode.CREATED;
+    case 202: return WebSession.Response.SuccessCode.ACCEPTED;
+    case 206: return WebSession.Response.SuccessCode.PARTIAL_CONTENT;
+    case 207: return WebSession.Response.SuccessCode.MULTI_STATUS;
+    default: return WebSession.Response.SuccessCode.OK;
+  }
+}
+
+function webSessionClientErrorCode(status) {
+  switch (status) {
+    case 403: return WebSession.Response.ClientErrorCode.FORBIDDEN;
+    case 404: return WebSession.Response.ClientErrorCode.NOT_FOUND;
+    case 405: return WebSession.Response.ClientErrorCode.METHOD_NOT_ALLOWED;
+    case 406: return WebSession.Response.ClientErrorCode.NOT_ACCEPTABLE;
+    case 409: return WebSession.Response.ClientErrorCode.CONFLICT;
+    case 410: return WebSession.Response.ClientErrorCode.GONE;
+    case 412: return WebSession.Response.ClientErrorCode.PRECONDITION_FAILED;
+    case 413: return WebSession.Response.ClientErrorCode.REQUEST_ENTITY_TOO_LARGE;
+    case 414: return WebSession.Response.ClientErrorCode.REQUEST_URI_TOO_LONG;
+    case 415: return WebSession.Response.ClientErrorCode.UNSUPPORTED_MEDIA_TYPE;
+    case 418: return WebSession.Response.ClientErrorCode.IM_ATEAPOT;
+    case 422: return WebSession.Response.ClientErrorCode.UNPROCESSABLE_ENTITY;
+    default: return WebSession.Response.ClientErrorCode.BAD_REQUEST;
+  }
+}
+
+function responseAdditionalHeaders(headers) {
+  const result = [];
+  for (const [name, value] of headers) {
+    if (WEB_SESSION_RESPONSE_HEADERS.has(name) || name.startsWith("x-sandstorm-app-")) {
+      result.push({ name, value });
+    }
+  }
+  return result;
+}
+
+function responseETag(headers) {
+  const value = headers.get("etag");
+  if (!value) return undefined;
+  const match = value.match(/^(W\/)?\"(.*)\"$/);
+  return match ? { weak: Boolean(match[1]), value: match[2] } : undefined;
+}
+
+async function responseToWebSession(response, context, callContext) {
+  if (!(response instanceof Response)) {
+    throw new TypeError("mainViewFromFetch() fetch handler must return a Response");
+  }
+  const declaredSize = response.headers.get("content-length");
+  if (declaredSize !== null && Number(declaredSize) > MAX_WEB_SESSION_BODY_BYTES) {
+    await response.body?.cancel();
+    return webSessionError(new Error("response body exceeds 64 MiB limit"));
+  }
+  const common = {
+    additionalHeaders: responseAdditionalHeaders(response.headers),
+    setCookies: [],
+    cachePolicy: { withCheck: 0, permanent: 0 },
+  };
+  const eTag = responseETag(response.headers);
+
+  if (response.status === 204 || response.status === 205) {
+    return { ...common, noContent: { shouldResetForm: response.status === 205, eTag } };
+  }
+  if (response.status === 304 || response.status === 412) {
+    return { ...common, preconditionFailed: { matchingETag: eTag } };
+  }
+  if ([301, 302, 303, 307, 308].includes(response.status)) {
+    return {
+      ...common,
+      redirect: {
+        isPermanent: response.status === 301 || response.status === 308,
+        switchToGet: response.status === 301 || response.status === 302 || response.status === 303,
+        location: response.headers.get("location") || "",
+      },
+    };
+  }
+  if (response.status >= 400 && response.status < 500) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return {
+      ...common,
+      clientError: {
+        statusCode: webSessionClientErrorCode(response.status),
+        descriptionHtml: "",
+        nonHtmlBody: {
+          data: bytes,
+          mimeType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+        },
+      },
+    };
+  }
+  if (response.status >= 500) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return {
+      ...common,
+      serverError: {
+        descriptionHtml: "",
+        nonHtmlBody: {
+          data: bytes,
+          mimeType: response.headers.get("content-type") || "text/plain; charset=utf-8",
+        },
+      },
+    };
+  }
+
+  let body = { bytes: new Uint8Array() };
+  if (response.body) {
+    const handle = new Handle.Server({ ping() {} }).client();
+    const pump = pipeReadableToByteStream(response.body, context.responseStream, {
+      size: declaredSize === null ? undefined : BigInt(declaredSize),
+      maxBytes: MAX_WEB_SESSION_BODY_BYTES,
+    });
+    callContext.ctx.waitUntil(pump);
+    body = { stream: handle };
+  }
+  return {
+    ...common,
+    content: {
+      statusCode: webSessionSuccessCode(response.status),
+      encoding: response.headers.get("content-encoding") || "",
+      language: response.headers.get("content-language") || "",
+      mimeType: response.headers.get("content-type") || "application/octet-stream",
+      eTag,
+      body,
+      disposition: { normal: true },
+    },
+  };
+}
+
+async function runUiFetch(session, request, context, callContext) {
+  try {
+    const response = await session.fetch(request, callContext.env, callContext.ctx);
+    return await responseToWebSession(response, context, callContext);
+  } catch (error) {
+    return webSessionError(error);
+  }
+}
+
+function streamingRequestTarget(session, method, params, callContext) {
+  const body = new TransformStream();
+  const writer = body.writable.getWriter();
+  const expectedSize = Number(params.expectedSize || 0n);
+  let written = 0;
+  let closed = false;
+  const request = webSessionRequest(
+    session, method, params.path, params.context, body.readable, params.mimeType, params.encoding);
+  const response = runUiFetch(session, request, params.context, callContext);
+  callContext.ctx.waitUntil(response.then(() => undefined));
+
+  return {
+    async write({ data }) {
+      if (closed) throw new Error("streaming request is closed");
+      const bytes = new Uint8Array(capnpDataBytes(data));
+      const copy = new Uint8Array(bytes);
+      written += copy.byteLength;
+      if (written > MAX_WEB_SESSION_BODY_BYTES || (expectedSize !== 0 && written > expectedSize)) {
+        closed = true;
+        await writer.abort(new Error("streaming request exceeds declared limit"));
+        throw new Error("streaming request exceeds declared limit");
+      }
+      await writer.write(copy);
+    },
+    async done() {
+      if (closed) return;
+      closed = true;
+      if (expectedSize !== 0 && written !== expectedSize) {
+        await writer.abort(new Error("streaming request size did not match declaration"));
+        throw new Error("streaming request size did not match declaration");
+      }
+      await writer.close();
+    },
+    async getResponse() {
+      return await response;
+    },
+    async [Symbol.for("capnp-es.dispose")]() {
+      if (!closed) await writer.abort(new Error("streaming request was canceled"));
+    },
+  };
+}
+
+function webSessionFromFetchTarget(session) {
+  const invoke = (method, body = undefined) => async (params, callContext) => {
+    const request = webSessionRequest(
+      session, method, params.path, params.context, body?.(params),
+      params.content?.mimeType, params.content?.encoding);
+    return await runUiFetch(session, request, params.context, callContext);
+  };
+  const target = {
+    get: async (params, callContext) => {
+      const request = webSessionRequest(
+        session, params.ignoreBody ? "HEAD" : "GET", params.path, params.context);
+      return await runUiFetch(session, request, params.context, callContext);
+    },
+    post: invoke("POST", params => capnpDataBytes(params.content.content)),
+    put: invoke("PUT", params => capnpDataBytes(params.content.content)),
+    patch: invoke("PATCH", params => capnpDataBytes(params.content.content)),
+    delete: invoke("DELETE"),
+    postStreaming(params, callContext) {
+      const streamTarget = streamingRequestTarget(session, "POST", params, callContext);
+      return { stream: createWorkerCapnpClient(
+        WebSession.RequestStream, streamTarget, "Fetch request stream") };
+    },
+    putStreaming(params, callContext) {
+      const streamTarget = streamingRequestTarget(session, "PUT", params, callContext);
+      return { stream: createWorkerCapnpClient(
+        WebSession.RequestStream, streamTarget, "Fetch request stream") };
+    },
+    openWebSocket() {
+      throw new Error("mainViewFromFetch() WebSocket support is not yet implemented");
+    },
+    propfind: invoke("PROPFIND", params => new TextEncoder().encode(params.xmlContent)),
+    proppatch: invoke("PROPPATCH", params => new TextEncoder().encode(params.xmlContent)),
+    mkcol: invoke("MKCOL", params => capnpDataBytes(params.content.content)),
+    copy: invoke("COPY"),
+    move: invoke("MOVE"),
+    lock: invoke("LOCK", params => new TextEncoder().encode(params.xmlContent)),
+    unlock: invoke("UNLOCK"),
+    acl: invoke("ACL", params => new TextEncoder().encode(params.xmlContent)),
+    report: invoke("REPORT", params => capnpDataBytes(params.content.content)),
+    options: async (params, callContext) => {
+      const request = webSessionRequest(session, "OPTIONS", params.path, params.context);
+      const response = await session.fetch(request, callContext.env, callContext.ctx);
+      const dav = response.headers.get("dav") || "";
+      return {
+        davClass1: /(^|,)\s*1\s*(,|$)/.test(dav),
+        davClass2: /(^|,)\s*2\s*(,|$)/.test(dav),
+        davClass3: /(^|,)\s*3\s*(,|$)/.test(dav),
+        davExtensions: dav.split(",").map(value => value.trim()).filter(value => !/^[123]$/.test(value)),
+      };
+    },
+  };
+  return target;
+}
+
+function mainViewSession(options, params, callContext, kind) {
+  if (params.sessionType !== WebSession._capnp.typeId) {
+    throw new Error(`mainViewFromFetch() does not support session type 0x${
+      params.sessionType.toString(16)}`);
+  }
+  const sessionParams = readCapnpStruct(WebSession.Params, params.sessionParams);
+  const session = {
+    fetch: options.fetch,
+    headers: uiSessionHeaders(params, sessionParams, options.viewInfo, kind),
+    sessionContext: params.context,
+  };
+  if (kind === "offer" && params.descriptor !== undefined) {
+    session.headers.set("x-sandstorm-offer-descriptor", JSON.stringify({}));
+  }
+  return createWorkerCapnpClient(
+    WebSession, webSessionFromFetchTarget(session), `Fetch ${kind} WebSession`);
+}
+
+/** Implements MainView and WebSession in capnp-es, translating only the selected UI to Fetch. */
+export function mainViewFromFetch(inputOptions) {
+  const options = uiFacadeOptions(inputOptions);
+  const target = {
+    getViewInfo() {
+      return options.viewInfo;
+    },
+    newSession(params, callContext) {
+      return { session: mainViewSession(options, params, callContext, "normal") };
+    },
+    newRequestSession(params, callContext) {
+      return { session: mainViewSession(options, params, callContext, "request") };
+    },
+    newOfferSession(params, callContext) {
+      return { session: mainViewSession(options, params, callContext, "offer") };
+    },
+    async restore(params, callContext) {
+      if (options.restore === undefined) {
+        throw new UnsupportedCapabilityError("mainView", "restore");
+      }
+      return { cap: capnpCapabilityPointer(await options.restore(params.objectId, callContext)) };
+    },
+    async drop(params, callContext) {
+      if (options.drop !== undefined) await options.drop(params.objectId, callContext);
+    },
+  };
+
+  const durable = options.restore === undefined ? undefined : {
+    restore: options.restore,
+    drop: options.drop,
+  };
+  return serveCapnp(MainView, target, durable);
 }
 
 const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";

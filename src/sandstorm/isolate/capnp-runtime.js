@@ -221,6 +221,10 @@ function expectByteStreamClient(stream) {
 export function writableFromByteStream(stream, options = {}) {
   stream = expectByteStreamClient(stream);
   const chunkSize = normalizeByteStreamChunkSize(options.chunkSize);
+  const maxBytes = options.maxBytes === undefined
+    ? null
+    : normalizeByteStreamSize(options.maxBytes, "maximum size");
+  let bytesWritten = 0n;
   let closed = false;
 
   return new WritableStream({
@@ -239,7 +243,12 @@ export function writableFromByteStream(stream, options = {}) {
       if (closed) {
         throw new TypeError("ByteStream writable is closed");
       }
-      await writeChunksToByteStream(stream, byteStreamChunkBytes(chunk), chunkSize);
+      const bytes = byteStreamChunkBytes(chunk);
+      bytesWritten += BigInt(bytes.byteLength);
+      if (maxBytes !== null && bytesWritten > maxBytes) {
+        throw new Error("ByteStream writable exceeded maximum size");
+      }
+      await writeChunksToByteStream(stream, bytes, chunkSize);
     },
 
     async close() {
@@ -731,6 +740,35 @@ export function createCapnpRpcEventDispatcher(InterfaceClass, target, options = 
   });
 }
 
+let activeWorkerCapnpCallContext = null;
+
+function contextualizeWorkerTarget(name, target) {
+  return new Proxy(target, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof property !== "string" || typeof value !== "function") return value;
+      return (params, results) => {
+        if (activeWorkerCapnpCallContext === null) {
+          throw new NativeCapnpBridgeProtocolError(
+            `worker Cap'n Proto server ${name} was called outside an RPC event`);
+        }
+        return Reflect.apply(value, target, [params, activeWorkerCapnpCallContext, results]);
+      };
+    },
+  });
+}
+
+// Internal building block for SDK facades which return additional worker-hosted capabilities.
+// Their calls travel on the same broker connection and therefore receive the event context that
+// is active while capnp-es dispatches each individual method.
+export function createWorkerCapnpClient(InterfaceClass, target, name = "returned capability") {
+  validateNativeCapnpGeneratedInterface(InterfaceClass, "createWorkerCapnpClient()");
+  if (typeof InterfaceClass.Server !== "function" || !target || typeof target !== "object") {
+    throw new TypeError("createWorkerCapnpClient() requires a generated interface and target");
+  }
+  return new InterfaceClass.Server(contextualizeWorkerTarget(name, target)).client();
+}
+
 // Builds the worker-global RPC bootstrap as a name/type broker. Each exported application
 // capability remains typed by its own generated class; the broker is the only schema the native
 // host needs in order to carry arbitrary application interfaces over the shared connection.
@@ -739,21 +777,7 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
     throw new TypeError("createCapnpWorkerExportDispatcher() requires an export object");
   }
 
-  let activeCallContext = null;
   const exportsByName = new Map();
-  const contextualizeTarget = (name, target) => new Proxy(target, {
-    get(target, property, receiver) {
-      const value = Reflect.get(target, property, receiver);
-      if (typeof property !== "string" || typeof value !== "function") return value;
-      return (params, results) => {
-        if (activeCallContext === null) {
-          throw new NativeCapnpBridgeProtocolError(
-            `worker Cap'n Proto export ${name} was called outside an RPC event`);
-        }
-        return Reflect.apply(value, target, [params, activeCallContext, results]);
-      };
-    },
-  });
   for (const [name, descriptor] of Object.entries(workerExports)) {
     if (!name || !descriptor || typeof descriptor !== "object") {
       throw new TypeError("worker Cap'n Proto exports require non-empty names and descriptors");
@@ -771,7 +795,7 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
     // returned promise. Interpose only at that boundary so concurrent events cannot observe a
     // worker-global stale context. The generated results builder remains available as the third
     // argument for handlers that need it.
-    const contextualTarget = contextualizeTarget(name, descriptor.target);
+    const contextualTarget = contextualizeWorkerTarget(`export ${name}`, descriptor.target);
     exportsByName.set(name, Object.freeze({
       interfaceId: metadata.interfaceId,
       InterfaceClass,
@@ -781,12 +805,12 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
   }
 
   const runWithContext = (context, callback) => {
-    const previous = activeCallContext;
-    activeCallContext = context;
+    const previous = activeWorkerCapnpCallContext;
+    activeWorkerCapnpCallContext = context;
     try {
       return callback();
     } finally {
-      activeCallContext = previous;
+      activeWorkerCapnpCallContext = previous;
     }
   };
   const dispatcher = createCapnpRpcEventDispatcher(IsolateExportBroker, {
@@ -818,18 +842,23 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
           `worker Cap'n Proto export ${name} has no durable registry for interface ` +
           `0x${interfaceId.toString(16)}`);
       }
-      const callContext = activeCallContext;
+      const callContext = activeWorkerCapnpCallContext;
       if (callContext === null) {
         throw new NativeCapnpBridgeProtocolError(
           `worker Cap'n Proto export ${name} restore ran outside an RPC event`);
       }
-      return Promise.resolve(workerExport.durable.restore(objectId, callContext)).then(target => {
-        if (!target || typeof target !== "object") {
+      return Promise.resolve(workerExport.durable.restore(objectId, callContext)).then(restored => {
+        if (!restored || typeof restored !== "object") {
           throw new NativeCapnpBridgeProtocolError(
-            `worker Cap'n Proto export ${name} restore did not return a server target`);
+            `worker Cap'n Proto export ${name} restore did not return a capability or server target`);
         }
-        const client = new workerExport.InterfaceClass.Server(
-          contextualizeTarget(name, target)).client();
+        let client;
+        try {
+          client = nativeCapnpClientReference(restored, `restored worker capability ${name}`);
+        } catch (_) {
+          client = createWorkerCapnpClient(
+            workerExport.InterfaceClass, restored, `restored export ${name}`);
+        }
         return {
           cap: nativeCapnpCapabilityPointer(
             client, `restored worker Cap'n Proto export ${name}`),
@@ -845,7 +874,7 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
           `worker Cap'n Proto export ${name} has no durable registry for interface ` +
           `0x${interfaceId.toString(16)}`);
       }
-      const callContext = activeCallContext;
+      const callContext = activeWorkerCapnpCallContext;
       if (callContext === null) {
         throw new NativeCapnpBridgeProtocolError(
           `worker Cap'n Proto export ${name} drop ran outside an RPC event`);

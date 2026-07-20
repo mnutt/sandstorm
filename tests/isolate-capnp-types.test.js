@@ -70,6 +70,7 @@ test("sandstorm:api exports exactly the intended public Cap'n Proto values", asy
   assert.deepEqual(exportedNames.sort(), names.sort());
   assert.match(source, /export function defineWorker\s*\(/);
   assert.match(source, /export function serveCapnp\s*\(/);
+  assert.match(source, /export function mainViewFromFetch\s*\(/);
 });
 
 test("generated Cap'n Proto types enforce the Sandstorm API contract", async (t) => {
@@ -114,6 +115,7 @@ import {
   createCapnpStruct,
   defineWorker,
   exportCapnp,
+  mainViewFromFetch,
   pipeReadableToByteStream,
   serveCapnp,
 } from "sandstorm:api";
@@ -187,6 +189,10 @@ const worker = defineWorker({
       drop: async (_objectId, { env }) => {
         await env.STORAGE.fetch("http://storage/drop");
       },
+    }),
+    ui: mainViewFromFetch({
+      viewInfo: { appTitle: { defaultText: "Typed UI" } },
+      fetch: async () => new Response("ok"),
     }),
   },
   async fetch(_request, env, ctx) {
