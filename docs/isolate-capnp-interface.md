@@ -627,10 +627,14 @@ Implemented checkpoint (partial):
 - The direct facade also maps typed WebDAV arguments back to the Fetch handler's standard request
   headers. Conformance covers `PROPFIND` depth, `COPY`/`MOVE` destination and overwrite behavior,
   and `LOCK`/`UNLOCK` depth and token fields.
+- A dedicated package action now selects a worker export with the `mainView` role. Focused
+  account-host integration coverage calls the shell-facing `Supervisor.getMainView()` boundary,
+  reaches the JS facade, and verifies browser capability handoff. The legacy action remains in the
+  same package so the old WebSocket path stays covered while the new facade is incomplete.
 
 This checkpoint includes request/response conversion and streaming scaffolding, but it is not
-yet the Phase 5 compatibility switch. WebSockets, full-duplex request streaming, and shell UI
-conformance remain on the legacy path until their dual-path tests pass.
+yet the Phase 5 compatibility switch. WebSockets, full-duplex request streaming, and end-to-end
+browser-shell conformance remain on the legacy path until their dual-path tests pass.
 
 ### Phase 6: Support service-only grains in packages and the shell
 

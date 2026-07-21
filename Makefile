@@ -163,7 +163,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint verify-workerd-source verify-isolate-release-bundle isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-backend-recovery-test isolate-memory-benchmark isolate-cross-grain-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test isolate-capnp-toolchain-test isolate-test isolate-ci
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test isolate-examples-test installer-test app-index-dev lint verify-workerd-source verify-isolate-release-bundle isolate-host isolate-host-control-test isolate-account-host-integration-test isolate-main-view-role-integration-test isolate-backend-recovery-test isolate-memory-benchmark isolate-cross-grain-benchmark isolate-capnp-abi-check isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test isolate-capnp-toolchain-test isolate-test isolate-ci
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -388,6 +388,27 @@ isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 			"$$grain_root/testgrain456/isolate-runtime/runtime-manifest.json"; \
 		grep -q '"topology": "accountSharedHost"' \
 			"$$grain_root/concurrentgrain789/isolate-runtime/runtime-manifest.json"
+
+isolate-main-view-role-integration-test: bin/isolate-host tmp/.ekam-run \
+		tests/assets/isolate-test-app.spk
+	@set -e; root="$(PWD)/tmp/isolate-main-view-role-test"; \
+		app_root="$$root/apps"; grain_root="$$root/grains"; \
+		account_socket="$$root/account.sock"; \
+		rm -rf "$$root"; mkdir -p "$$app_root" "$$grain_root"; \
+		bin/spk unpack tests/assets/isolate-test-app.spk "$$app_root/testpackage123"; \
+		ln -s "$(PWD)/bin/sandstorm" "$$root/isolate-account-host"; \
+		trap 'kill $$account_pid 2>/dev/null || true; wait $$account_pid 2>/dev/null || true; rm -rf "$$root"' EXIT; \
+		"$$root/isolate-account-host" \
+			--trust-domain mainviewtestaccount \
+			--control-socket "$$account_socket" \
+			--native-host "$(PWD)/bin/isolate-host" \
+			--app-root "$$app_root" --grain-root "$$grain_root" & account_pid=$$!; \
+		for attempt in $$(seq 1 100); do test -S "$$account_socket" && break; sleep 0.05; done; \
+		test -S "$$account_socket"; \
+		tmp/sandstorm/isolate-account-host-client \
+			"$$account_socket" mainviewgrain testpackage123 --main-view-role; \
+		grep -q '"topology": "accountSharedHost"' \
+			"$$grain_root/mainviewgrain/isolate-runtime/runtime-manifest.json"
 
 isolate-backend-recovery-test: bin/isolate-host tmp/.ekam-run \
 		tests/assets/isolate-test-app.spk
@@ -710,6 +731,7 @@ isolate-ci:
 	$(MAKE) verify-isolate-release-bundle
 	$(MAKE) isolate-test
 	$(MAKE) isolate-host-control-test
+	$(MAKE) isolate-main-view-role-integration-test
 	$(MAKE) isolate-account-host-integration-test
 	$(MAKE) isolate-backend-recovery-test
 

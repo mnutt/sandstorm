@@ -27,6 +27,37 @@ const isolateTestViewInfo :Grain.UiView.ViewInfo = (
   ]
 );
 
+const isolateBindings :List(Spk.Manifest.IsolateConfig.Binding) = [
+  (
+    name = "TEXT_BINDING",
+    text = "hello from a text binding"
+  ),
+  (
+    name = "JSON_BINDING",
+    json = "{\"binding\":\"json\"}"
+  ),
+  (
+    name = "DATA_BINDING",
+    data = "\x00\x01\x7f\x80\xffSandstorm"
+  ),
+  (
+    name = "SANDSTORM_API",
+    sandstormApi = void
+  ),
+  (
+    name = "POWERBOX",
+    powerbox = void
+  ),
+  (
+    name = "STORAGE",
+    storage = void
+  ),
+  (
+    name = "LOOPBACK_SERVICE",
+    service = "main"
+  )
+];
+
 const isolateCommand :Spk.Manifest.Command = (
   isolate = (
     mainModule = "worker.js",
@@ -53,36 +84,42 @@ const isolateCommand :Spk.Manifest.Command = (
       )
     ],
 
-    bindings = [
+    bindings = .isolateBindings,
+
+    bridgeConfig = (
+      viewInfo = .isolateTestViewInfo,
+      apiPath = "/api/"
+    )
+  )
+);
+
+const isolateMainViewCommand :Spk.Manifest.Command = (
+  isolate = (
+    mainModule = "main-view-worker.js",
+    compatibilityDate = "2025-01-01",
+    compatibilityFlags = [],
+
+    exports = [
+      (name = "greeter", interfaceId = 0xb66316217ceedb1b),
+      (name = "ui", interfaceId = 0xc277e9822ae2c8fc, role = mainView)
+    ],
+
+    modules = [
       (
-        name = "TEXT_BINDING",
-        text = "hello from a text binding"
+        name = "main-view-worker.js",
+        esModulePath = "isolate-test/worker.js"
       ),
       (
-        name = "JSON_BINDING",
-        json = "{\"binding\":\"json\"}"
+        name = "message.txt",
+        textPath = "isolate-test/message.txt"
       ),
       (
-        name = "DATA_BINDING",
-        data = "\x00\x01\x7f\x80\xffSandstorm"
-      ),
-      (
-        name = "SANDSTORM_API",
-        sandstormApi = void
-      ),
-      (
-        name = "POWERBOX",
-        powerbox = void
-      ),
-      (
-        name = "STORAGE",
-        storage = void
-      ),
-      (
-        name = "LOOPBACK_SERVICE",
-        service = "main"
+        name = "metadata.json",
+        jsonPath = "isolate-test/metadata.json"
       )
     ],
+
+    bindings = .isolateBindings,
 
     bridgeConfig = (
       viewInfo = .isolateTestViewInfo,
@@ -104,6 +141,10 @@ const pkgdef :Spk.PackageDefinition = (
       ( title = (defaultText = "New Isolate Test App Instance"),
         nounPhrase = (defaultText = "instance"),
         command = .isolateCommand
+      ),
+      ( title = (defaultText = "New Direct MainView Test Instance"),
+        nounPhrase = (defaultText = "instance"),
+        command = .isolateMainViewCommand
       )
     ],
 

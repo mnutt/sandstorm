@@ -356,11 +356,12 @@ public:
 };
 
 Supervisor::Client startGrain(kj::WaitScope& waitScope, IsolateAccountHost::Client account,
-    SandstormCore::Client core, kj::StringPtr grainId, kj::StringPtr packageId, bool isNew) {
+    SandstormCore::Client core, kj::StringPtr grainId, kj::StringPtr packageId, bool isNew,
+    kj::StringPtr mainModule = "worker.js") {
   auto request = account.startGrainRequest();
   request.setGrainId(grainId);
   request.setPackageId(packageId);
-  request.setMainModule("worker.js");
+  request.setMainModule(mainModule);
   request.setCompatibilityDate("2025-01-01");
   request.setIsNew(isNew);
   request.setCore(core);
@@ -809,9 +810,10 @@ void testBrowserBootstrap(kj::WaitScope& waitScope, Supervisor::Client superviso
 
 int main(int argc, char** argv) {
   bool benchmarkMode = argc >= 5 && kj::StringPtr(argv[4]) == "--benchmark";
-  KJ_REQUIRE(argc == 4 || benchmarkMode,
+  bool mainViewRoleMode = argc == 5 && kj::StringPtr(argv[4]) == "--main-view-role";
+  KJ_REQUIRE(argc == 4 || benchmarkMode || mainViewRoleMode,
       "usage: isolate-account-host-client <control-socket> <grain-id> <package-id> "
-      "[--benchmark [--samples N] [--concurrency N] [--small-iterations N] "
+      "[--main-view-role | --benchmark [--samples N] [--concurrency N] [--small-iterations N] "
       "[--small-warmup N] [--large-iterations N] [--large-warmup N] "
       "[--large-payload-bytes N]]");
   auto io = kj::setupAsyncIo();
@@ -827,6 +829,26 @@ int main(int argc, char** argv) {
   auto hostId = vatMessage.initRoot<capnp::rpc::twoparty::VatId>();
   hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
   auto account = rpcSystem.bootstrap(hostId).castAs<sandstorm::IsolateAccountHost>();
+
+  if (mainViewRoleMode) {
+    auto supervisor = sandstorm::startGrain(
+        io.waitScope, account, core, argv[2], argv[3], true, "main-view-worker.js");
+    coreImpl.setSupervisor(argv[2], supervisor);
+    auto view = supervisor.getMainViewRequest().send().wait(io.waitScope).getView();
+    auto echo = sandstorm::fetchViewPath(io.waitScope, view, "echo");
+    KJ_REQUIRE(sandstorm::contains(echo, "\"ok\":true"),
+        "Supervisor.getMainView() did not resolve the worker export assigned the mainView role",
+        echo);
+    auto browserHandoff = sandstorm::fetchViewPath(
+        io.waitScope, view, "direct-browser-handoff");
+    KJ_REQUIRE(sandstorm::contains(browserHandoff, "\"ok\":true") &&
+        sandstorm::contains(browserHandoff, "\"residence\":\"browserHandoff\"") &&
+        sandstorm::contains(browserHandoff, "\"handoffId\":"),
+        "mainView-role worker session did not support browser capability handoff",
+        browserHandoff);
+    supervisor.shutdownRequest().send().wait(io.waitScope);
+    return 0;
+  }
 
   if (benchmarkMode) {
     auto provider = sandstorm::startGrain(
