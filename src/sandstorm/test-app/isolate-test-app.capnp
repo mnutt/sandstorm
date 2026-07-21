@@ -119,12 +119,28 @@ const isolateMainViewCommand :Spk.Manifest.Command = (
       )
     ],
 
-    bindings = .isolateBindings,
+    bindings = .isolateBindings
+  )
+);
 
-    bridgeConfig = (
-      viewInfo = .isolateTestViewInfo,
-      apiPath = "/api/"
-    )
+const isolateServiceCommand :Spk.Manifest.Command = (
+  isolate = (
+    mainModule = "service-worker.js",
+    compatibilityDate = "2025-01-01",
+    compatibilityFlags = [],
+
+    exports = [
+      (name = "greeter", interfaceId = 0xb66316217ceedb1b)
+    ],
+
+    modules = [
+      (
+        name = "service-worker.js",
+        esModulePath = "isolate-test/service-worker.js"
+      )
+    ],
+
+    bindings = []
   )
 );
 
@@ -145,6 +161,10 @@ const pkgdef :Spk.PackageDefinition = (
       ( title = (defaultText = "New Direct MainView Test Instance"),
         nounPhrase = (defaultText = "instance"),
         command = .isolateMainViewCommand
+      ),
+      ( title = (defaultText = "New Service-only Test Instance"),
+        nounPhrase = (defaultText = "service"),
+        command = .isolateServiceCommand
       )
     ],
 

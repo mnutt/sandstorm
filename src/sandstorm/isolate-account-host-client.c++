@@ -948,9 +948,11 @@ void testBrowserBootstrap(kj::WaitScope& waitScope, Supervisor::Client superviso
 int main(int argc, char** argv) {
   bool benchmarkMode = argc >= 5 && kj::StringPtr(argv[4]) == "--benchmark";
   bool mainViewRoleMode = argc == 5 && kj::StringPtr(argv[4]) == "--main-view-role";
-  KJ_REQUIRE(argc == 4 || benchmarkMode || mainViewRoleMode,
+  bool serviceOnlyMode = argc == 5 && kj::StringPtr(argv[4]) == "--service-only";
+  KJ_REQUIRE(argc == 4 || benchmarkMode || mainViewRoleMode || serviceOnlyMode,
       "usage: isolate-account-host-client <control-socket> <grain-id> <package-id> "
-      "[--main-view-role | --benchmark [--samples N] [--concurrency N] [--small-iterations N] "
+      "[--main-view-role | --service-only | "
+      "--benchmark [--samples N] [--concurrency N] [--small-iterations N] "
       "[--small-warmup N] [--large-iterations N] [--large-warmup N] "
       "[--large-payload-bytes N]]");
   auto io = kj::setupAsyncIo();
@@ -966,6 +968,32 @@ int main(int argc, char** argv) {
   auto hostId = vatMessage.initRoot<capnp::rpc::twoparty::VatId>();
   hostId.setSide(capnp::rpc::twoparty::Side::SERVER);
   auto account = rpcSystem.bootstrap(hostId).castAs<sandstorm::IsolateAccountHost>();
+
+  if (serviceOnlyMode) {
+    auto supervisor = sandstorm::startGrain(
+        io.waitScope, account, core, argv[2], argv[3], true, "service-worker.js");
+    coreImpl.setSupervisor(argv[2], supervisor);
+    auto exportRequest = supervisor.getExportRequest();
+    exportRequest.setName("greeter");
+    exportRequest.setInterfaceId(capnp::typeId<NativeGreeter>());
+    auto greeter = exportRequest.send().wait(io.waitScope).getCap().castAs<NativeGreeter>();
+    auto hello = greeter.helloRequest();
+    hello.setName("without UI");
+    KJ_REQUIRE(hello.send().wait(io.waitScope).getMessage() ==
+        "service-only hello without UI",
+        "service-only worker export did not answer directly");
+
+    bool mainViewRejected = false;
+    try {
+      supervisor.getMainViewRequest().send().wait(io.waitScope);
+    } catch (const kj::Exception& exception) {
+      mainViewRejected = exception.getType() == kj::Exception::Type::UNIMPLEMENTED;
+    }
+    KJ_REQUIRE(mainViewRejected,
+        "service-only worker unexpectedly fabricated a legacy MainView");
+    supervisor.shutdownRequest().send().wait(io.waitScope);
+    return 0;
+  }
 
   if (mainViewRoleMode) {
     auto supervisor = sandstorm::startGrain(

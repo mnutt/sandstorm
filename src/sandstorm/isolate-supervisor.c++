@@ -153,6 +153,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String compatibilityDate;
   kj::String appTitle;
   kj::String apiPath;
+  bool hasBridgeConfig = false;
   kj::String runtimeStateDir;
   kj::String storageRootPath;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
@@ -859,23 +860,31 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
   auto result = kj::refcounted<IsolateRuntimeConfig>();
   result->mainModule = kj::heapString(config.getMainModule());
   result->compatibilityDate = kj::heapString(config.getCompatibilityDate());
-  auto bridgeConfig = config.getBridgeConfig();
-  result->apiPath = kj::heapString(bridgeConfig.getApiPath());
-  auto viewInfo = bridgeConfig.getViewInfo();
-  result->viewInfoMessage = kj::heap<capnp::MallocMessageBuilder>(
-      viewInfo.totalSize().wordCount + 4);
-  result->viewInfoMessage->setRoot(viewInfo);
-  auto powerboxApis = bridgeConfig.getPowerboxApis();
-  if (powerboxApis.size() > 0) {
-    auto copiedViewInfo = result->viewInfoMessage->getRoot<UiView::ViewInfo>();
-    auto descriptors = copiedViewInfo.initMatchRequests(powerboxApis.size());
-    for (auto i: kj::indices(powerboxApis)) {
-      auto tag = descriptors[i].initTags(1)[0];
-      tag.setId(capnp::typeId<ApiSession>());
-      tag.getValue().setAs<ApiSession::PowerboxTag>(powerboxApis[i].getTag());
+  result->hasBridgeConfig = config.hasBridgeConfig();
+  if (result->hasBridgeConfig) {
+    auto bridgeConfig = config.getBridgeConfig();
+    result->apiPath = kj::heapString(bridgeConfig.getApiPath());
+    auto viewInfo = bridgeConfig.getViewInfo();
+    result->viewInfoMessage = kj::heap<capnp::MallocMessageBuilder>(
+        viewInfo.totalSize().wordCount + 4);
+    result->viewInfoMessage->setRoot(viewInfo);
+    auto powerboxApis = bridgeConfig.getPowerboxApis();
+    if (powerboxApis.size() > 0) {
+      auto copiedViewInfo = result->viewInfoMessage->getRoot<UiView::ViewInfo>();
+      auto descriptors = copiedViewInfo.initMatchRequests(powerboxApis.size());
+      for (auto i: kj::indices(powerboxApis)) {
+        auto tag = descriptors[i].initTags(1)[0];
+        tag.setId(capnp::typeId<ApiSession>());
+        tag.getValue().setAs<ApiSession::PowerboxTag>(powerboxApis[i].getTag());
+      }
     }
+    result->appTitle = kj::heapString(viewInfo.getAppTitle().getDefaultText());
+  } else {
+    result->apiPath = kj::str("");
+    result->viewInfoMessage = kj::heap<capnp::MallocMessageBuilder>();
+    result->viewInfoMessage->initRoot<UiView::ViewInfo>();
+    result->appTitle = kj::str("");
   }
-  result->appTitle = kj::heapString(viewInfo.getAppTitle().getDefaultText());
   for (auto flag: config.getCompatibilityFlags()) {
     result->compatibilityFlags.add(kj::heapString(flag));
   }
@@ -5041,6 +5050,11 @@ public:
           context.getResults().setView(persistent.castAs<UiView>());
         });
       }
+    }
+
+    if (!runtimeConfig->hasBridgeConfig) {
+      KJ_UNIMPLEMENTED(
+          "isolate command has neither a mainView export nor legacy bridgeConfig");
     }
 
     context.getResults().setView(kj::heap<IsolateUiViewImpl>(

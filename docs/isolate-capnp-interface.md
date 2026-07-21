@@ -666,6 +666,20 @@ Exit criteria:
 - traditional and Fetch-style grains remain unchanged from the user's
   perspective.
 
+Implemented checkpoint (partial):
+
+- `Manifest.IsolateConfig.bridgeConfig` is now semantically optional. If a command declares no
+  `mainView` export and omits `bridgeConfig`, `Supervisor.getMainView()` returns UNIMPLEMENTED
+  instead of fabricating the legacy route-backed `UiView`.
+- The service-only integration fixture has one ordinary `NativeGreeter` export, no Fetch handler,
+  no bindings, no `bridgeConfig`, and no `MainView`/`WebSession` implementation. It starts in the
+  account-shared workerd host and answers a typed `Supervisor.getExport()` call directly. The
+  direct-`mainView` fixture also omits `bridgeConfig`, proving its UI metadata and sessions come
+  exclusively from the exported capability.
+
+Package-action output typing, shell navigation for non-view actions, and Powerbox selection remain
+to complete this phase.
+
 ### Phase 7: Add typed platform services
 
 Replace private Fetcher bindings incrementally with typed Cap'n Proto clients.
