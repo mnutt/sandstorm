@@ -614,6 +614,12 @@ Implemented checkpoint (partial):
   `SessionContext` capability passed to `newSession()` instead of asking the legacy isolate bridge
   to recover it from an account-host session-ID registry. The synthetic request header remains for
   ordinary `getSession()` metadata and does not authorize that direct capability lookup.
+- Direct `MainView` exports now participate in the supervisor's browser session registry. The
+  supervisor wraps each `SessionContext` with a private typed extension that supplies the facade an
+  opaque registration ID, and a membrane around the returned `UiSession` owns the matching
+  registration lifetime. Worker-created `browserHandoff()` calls therefore resolve through the
+  same trusted account-host registry as legacy sessions without exposing grain or account identity
+  to JavaScript.
 - Fetch response metadata now maps into the typed `WebSession.Response`: structured cookies,
   per-session cache policy (including `Vary` on cookies and accepted types), entity tags,
   content language/encoding, download disposition, and whitelisted response headers all pass the
@@ -623,9 +629,8 @@ Implemented checkpoint (partial):
   and `LOCK`/`UNLOCK` depth and token fields.
 
 This checkpoint includes request/response conversion and streaming scaffolding, but it is not
-yet the Phase 5 compatibility switch. WebSockets, browser handoff registration for direct sessions,
-full-duplex request streaming, and shell UI conformance remain on the legacy path until their
-dual-path tests pass.
+yet the Phase 5 compatibility switch. WebSockets, full-duplex request streaming, and shell UI
+conformance remain on the legacy path until their dual-path tests pass.
 
 ### Phase 6: Support service-only grains in packages and the shell
 

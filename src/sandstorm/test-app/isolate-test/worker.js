@@ -611,6 +611,18 @@ async function isolateTestFetch(request, env, ctx) {
       return Response.json({ ok: true, directSessionContext: true });
     }
 
+    if (url.pathname === "/direct-browser-handoff") {
+      const capability = await sandstorm(request, env).webSession({
+        pathPrefix: "/browser-powerbox-shared",
+      });
+      const handoff = await capability.browserHandoff({ request });
+      return Response.json({
+        ok: true,
+        handoffId: handoff.id,
+        residence: handoff.residence,
+      });
+    }
+
     if (url.pathname === "/direct-ui-metadata") {
       const headers = new Headers({
         "cache-control": "public, immutable, max-age=31536000",

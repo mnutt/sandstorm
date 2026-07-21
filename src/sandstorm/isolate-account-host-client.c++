@@ -935,6 +935,13 @@ int main(int argc, char** argv) {
       directSessionContext);
   KJ_REQUIRE(sandstorm::TestSessionContext::getOfferCount() == offersBefore + 1,
       "JS MainView facade did not call the SessionContext capability passed to newSession()");
+  auto directBrowserHandoff = sandstorm::fetchViewPath(
+      io.waitScope, workerUi, "direct-browser-handoff");
+  KJ_REQUIRE(sandstorm::contains(directBrowserHandoff, "\"ok\":true") &&
+      sandstorm::contains(directBrowserHandoff, "\"residence\":\"browserHandoff\"") &&
+      sandstorm::contains(directBrowserHandoff, "\"handoffId\":"),
+      "direct JS MainView session was not registered for browser capability handoff",
+      directBrowserHandoff);
 
   auto restoreUiChildRequest = workerUiCap.castAs<sandstorm::MainView<>>().restoreRequest();
   restoreUiChildRequest.getObjectId().initAs<NativeGreeterObjectId>().setId("ui-child");

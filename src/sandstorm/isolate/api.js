@@ -16,6 +16,7 @@ import {
   utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
 import { MainView } from "/sandstorm/grain.capnp";
+import { IsolateSessionContext } from "/sandstorm/isolate-bridge.capnp";
 import { OutboundHttpSession } from "/sandstorm/outbound-http-session.capnp";
 import { PowerboxDescriptor, PowerboxDisplayInfo } from "/sandstorm/powerbox.capnp";
 import { ByteStream, Handle } from "/sandstorm/util.capnp";
@@ -640,7 +641,7 @@ function webSessionFromFetchTarget(session) {
   return target;
 }
 
-function mainViewSession(options, params, callContext, kind) {
+async function mainViewSession(options, params, callContext, kind) {
   if (params.sessionType !== WebSession._capnp.typeId) {
     throw new Error(`mainViewFromFetch() does not support session type 0x${
       params.sessionType.toString(16)}`);
@@ -652,7 +653,13 @@ function mainViewSession(options, params, callContext, kind) {
     basePath: sessionParams.basePath,
     sessionContext: params.context,
   };
-  session.headers.set("x-sandstorm-session-id", makeLiveCapabilityId("worker-ui-session"));
+  const extendedContext = new IsolateSessionContext.Client(
+    capnpClientReference(params.context, "direct UI SessionContext"));
+  const registration = await extendedContext.getSessionId({});
+  if (!registration?.id) {
+    throw new Error("direct UI SessionContext returned no browser session ID");
+  }
+  session.headers.set("x-sandstorm-session-id", registration.id);
   if (kind === "offer" && params.descriptor !== undefined) {
     session.headers.set("x-sandstorm-offer-descriptor", JSON.stringify({}));
   }
@@ -667,14 +674,14 @@ export function mainViewFromFetch(inputOptions) {
     getViewInfo() {
       return options.viewInfo;
     },
-    newSession(params, callContext) {
-      return { session: mainViewSession(options, params, callContext, "normal") };
+    async newSession(params, callContext) {
+      return { session: await mainViewSession(options, params, callContext, "normal") };
     },
-    newRequestSession(params, callContext) {
-      return { session: mainViewSession(options, params, callContext, "request") };
+    async newRequestSession(params, callContext) {
+      return { session: await mainViewSession(options, params, callContext, "request") };
     },
-    newOfferSession(params, callContext) {
-      return { session: mainViewSession(options, params, callContext, "offer") };
+    async newOfferSession(params, callContext) {
+      return { session: await mainViewSession(options, params, callContext, "offer") };
     },
     async restore(params, callContext) {
       if (options.restore === undefined) {

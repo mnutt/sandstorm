@@ -4,6 +4,15 @@ $import "/capnp/c++.capnp".namespace("sandstorm");
 
 using Grain = import "grain.capnp";
 
+interface IsolateSessionContext @0xc8b2a7f6dfd3c48a extends(Grain.SessionContext) {
+  # Supervisor-private extension placed around SessionContext capabilities passed to a direct
+  # isolate MainView export. It lets the worker's standard UI facade label its synthetic Fetch
+  # requests with the opaque registry ID needed by the browser capability bridge. Ordinary
+  # SessionContext authority continues to travel through the inherited interface.
+
+  getSessionId @0 () -> (id :Text);
+}
+
 interface IsolateBridge @0xc4b06a6915ad0e3c {
   # Bootstrap capability for an isolate worker's request-scoped authority
   # connection to its supervisor.

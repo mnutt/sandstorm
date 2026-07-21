@@ -3370,6 +3370,194 @@ capnp::Capability::Client makeIsolateWorkerPersistentCapability(
       kj::mv(requirementState));
 }
 
+class IsolateDirectSessionState final: public kj::Refcounted {
+public:
+  IsolateDirectSessionState(kj::Own<IsolateRuntimeHost> host, kj::String id)
+      : host(kj::mv(host)), id(kj::mv(id)) {}
+
+  ~IsolateDirectSessionState() noexcept(false) {
+    host->sessions->unregisterSession(id);
+  }
+
+  kj::StringPtr getId() const { return id; }
+
+private:
+  kj::Own<IsolateRuntimeHost> host;
+  kj::String id;
+};
+
+class IsolateSessionIdCapability final: public IsolateSessionContext::Server {
+public:
+  explicit IsolateSessionIdCapability(kj::Own<IsolateDirectSessionState> state)
+      : state(kj::mv(state)) {}
+
+  kj::Promise<void> getSessionId(GetSessionIdContext context) override {
+    context.getResults().setId(state->getId());
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Own<IsolateDirectSessionState> state;
+};
+
+class IsolateSessionContextMembrane final:
+    public capnp::MembranePolicy, public kj::Refcounted {
+public:
+  explicit IsolateSessionContextMembrane(kj::Own<IsolateDirectSessionState> state)
+      : state(kj::mv(state)) {}
+
+  bool shouldResolveBeforeRedirecting() override { return true; }
+
+  kj::Maybe<capnp::Capability::Client> inboundCall(
+      uint64_t requestedInterfaceId, uint16_t methodId,
+      capnp::Capability::Client target) override {
+    (void)target;
+    if (requestedInterfaceId == capnp::typeId<IsolateSessionContext>() && methodId == 0) {
+      return capnp::Capability::Client(
+          kj::heap<IsolateSessionIdCapability>(kj::addRef(*state)));
+    }
+    return nullptr;
+  }
+
+  kj::Maybe<capnp::Capability::Client> outboundCall(
+      uint64_t requestedInterfaceId, uint16_t methodId,
+      capnp::Capability::Client target) override {
+    (void)requestedInterfaceId;
+    (void)methodId;
+    (void)target;
+    return nullptr;
+  }
+
+  kj::Own<MembranePolicy> addRef() override { return kj::addRef(*this); }
+
+private:
+  kj::Own<IsolateDirectSessionState> state;
+};
+
+class IsolateSessionLifetimeMembrane final:
+    public capnp::MembranePolicy, public kj::Refcounted {
+public:
+  explicit IsolateSessionLifetimeMembrane(kj::Own<IsolateDirectSessionState> state)
+      : state(kj::mv(state)) {}
+
+  kj::Maybe<capnp::Capability::Client> inboundCall(
+      uint64_t requestedInterfaceId, uint16_t methodId,
+      capnp::Capability::Client target) override {
+    (void)requestedInterfaceId;
+    (void)methodId;
+    (void)target;
+    return nullptr;
+  }
+
+  kj::Maybe<capnp::Capability::Client> outboundCall(
+      uint64_t requestedInterfaceId, uint16_t methodId,
+      capnp::Capability::Client target) override {
+    (void)requestedInterfaceId;
+    (void)methodId;
+    (void)target;
+    return nullptr;
+  }
+
+  kj::Own<MembranePolicy> addRef() override { return kj::addRef(*this); }
+
+private:
+  kj::Own<IsolateDirectSessionState> state;
+};
+
+class IsolateDirectMainView final: public MainView<>::Server {
+public:
+  IsolateDirectMainView(kj::Own<IsolateRuntimeHost> host, MainView<>::Client inner)
+      : host(kj::mv(host)), inner(kj::mv(inner)) {}
+
+  kj::Promise<void> getViewInfo(GetViewInfoContext context) override {
+    return inner.getViewInfoRequest().send().then([context](auto response) mutable {
+      context.setResults(response);
+    });
+  }
+
+  kj::Promise<void> newSession(NewSessionContext context) override {
+    auto params = context.getParams();
+    auto id = host->sessions->registerSession(params.getContext());
+    auto state = kj::refcounted<IsolateDirectSessionState>(kj::addRef(*host), kj::mv(id));
+    auto request = inner.newSessionRequest();
+    copyCommonSessionParams(params, request, *state);
+    return finishSession(request.send(), context, kj::mv(state));
+  }
+
+  kj::Promise<void> newRequestSession(NewRequestSessionContext context) override {
+    auto params = context.getParams();
+    auto id = host->sessions->registerSession(params.getContext());
+    auto state = kj::refcounted<IsolateDirectSessionState>(kj::addRef(*host), kj::mv(id));
+    auto request = inner.newRequestSessionRequest();
+    copyCommonSessionParams(params, request, *state);
+    request.setRequestInfo(params.getRequestInfo());
+    return finishSession(request.send(), context, kj::mv(state));
+  }
+
+  kj::Promise<void> newOfferSession(NewOfferSessionContext context) override {
+    auto params = context.getParams();
+    auto id = host->sessions->registerOfferSession(params.getContext(), params.getOffer());
+    auto state = kj::refcounted<IsolateDirectSessionState>(kj::addRef(*host), kj::mv(id));
+    auto request = inner.newOfferSessionRequest();
+    copyCommonSessionParams(params, request, *state);
+    request.setOffer(params.getOffer());
+    request.setDescriptor(params.getDescriptor());
+    return finishSession(request.send(), context, kj::mv(state));
+  }
+
+  kj::Promise<void> restore(RestoreContext context) override {
+    auto request = inner.restoreRequest();
+    request.getObjectId().set(context.getParams().getObjectId());
+    return request.send().then([context](auto response) mutable {
+      context.getResults().setCap(response.getCap());
+    });
+  }
+
+  kj::Promise<void> drop(DropContext context) override {
+    auto request = inner.dropRequest();
+    request.getObjectId().set(context.getParams().getObjectId());
+    return request.send().ignoreResult();
+  }
+
+private:
+  kj::Own<IsolateRuntimeHost> host;
+  MainView<>::Client inner;
+
+  template <typename Params, typename Request>
+  void copyCommonSessionParams(
+      Params params, Request& request, IsolateDirectSessionState& state) {
+    request.setUserInfo(params.getUserInfo());
+    request.setContext(capnp::membrane(
+        params.getContext(), kj::refcounted<IsolateSessionContextMembrane>(kj::addRef(state)))
+        .template castAs<SessionContext>());
+    request.setSessionType(params.getSessionType());
+    request.getSessionParams().set(params.getSessionParams());
+    request.setTabId(params.getTabId());
+  }
+
+  template <typename RemotePromise, typename Context>
+  kj::Promise<void> finishSession(
+      RemotePromise promise, Context context, kj::Own<IsolateDirectSessionState> state) {
+    return promise.then([context, state = kj::mv(state)](auto response) mutable {
+      context.getResults().setSession(capnp::membrane(
+          response.getSession(),
+          kj::refcounted<IsolateSessionLifetimeMembrane>(kj::mv(state)))
+          .template castAs<UiSession>());
+    });
+  }
+};
+
+capnp::Capability::Client wrapIsolateWorkerExport(
+    kj::Own<IsolateRuntimeHost> host, kj::StringPtr exportName,
+    uint64_t interfaceId, capnp::Capability::Client cap) {
+  if (interfaceId == capnp::typeId<MainView<>>()) {
+    cap = kj::heap<IsolateDirectMainView>(
+        kj::addRef(*host), kj::mv(cap).castAs<MainView<>>());
+  }
+  return kj::heap<IsolateWorkerPersistentCapability>(
+      kj::mv(host), exportName, interfaceId, kj::mv(cap));
+}
+
 class IsolateUiViewImpl final: public UiView::Server {
 public:
   IsolateUiViewImpl(kj::Own<IsolateRuntimeConfig> runtimeConfig,
@@ -4848,9 +5036,8 @@ public:
         return runtimeHost->getExport(exportName, interfaceId).then(
             [this, context, exportName = kj::mv(exportName), interfaceId](
                 capnp::Capability::Client cap) mutable {
-          auto persistent = capnp::Capability::Client(
-              kj::heap<IsolateWorkerPersistentCapability>(
-                  kj::addRef(*runtimeHost), exportName, interfaceId, kj::mv(cap)));
+          auto persistent = wrapIsolateWorkerExport(
+              kj::addRef(*runtimeHost), exportName, interfaceId, kj::mv(cap));
           context.getResults().setView(persistent.castAs<UiView>());
         });
       }
@@ -4869,7 +5056,7 @@ public:
     return runtimeHost->getExport(params.getName(), params.getInterfaceId()).then(
         [this, context, name = kj::mv(name), interfaceId](
             capnp::Capability::Client cap) mutable {
-      context.getResults().setCap(kj::heap<IsolateWorkerPersistentCapability>(
+      context.getResults().setCap(wrapIsolateWorkerExport(
           kj::addRef(*runtimeHost), name, interfaceId, kj::mv(cap)));
     });
   }
