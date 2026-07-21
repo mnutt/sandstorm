@@ -1362,6 +1362,24 @@ export default defineWorker({
       }),
     ui: mainViewFromFetch({
       fetch: isolateTestFetch,
+      async webSocket(request) {
+        const url = new URL(request.url);
+        if (url.pathname !== "/websocket-echo") {
+          throw new Error(`unknown direct WebSocket path: ${url.pathname}`);
+        }
+        return {
+          async message(event, socket) {
+            if (event.type === "text") {
+              await socket.send(`capnp:${event.data}`);
+            } else {
+              await socket.send(event.data);
+            }
+          },
+          async close(event, socket) {
+            await socket.close(event.code, event.reason);
+          },
+        };
+      },
       viewInfo: isolateTestViewInfo,
       restore: restoreNativeGreeter,
       drop: dropNativeGreeter,

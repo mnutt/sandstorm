@@ -121,11 +121,49 @@ declare module "sandstorm:api" {
       env: E,
       ctx: WorkerExecutionContext,
     ): Response | Promise<Response>;
+    webSocket?(
+      request: Request,
+      socket: SandstormWebSocket,
+      env: E,
+      ctx: WorkerExecutionContext,
+    ): SandstormWebSocketHandler<E> | Promise<SandstormWebSocketHandler<E>>;
     restore?(
       objectId: unknown,
       context: WorkerCapnpCallContext<E>,
     ): WorkerCapnpRestoredClient | Promise<WorkerCapnpRestoredClient>;
     drop?(objectId: unknown, context: WorkerCapnpCallContext<E>): void | Promise<void>;
+  }
+
+  export interface SandstormWebSocket {
+    readonly closed: boolean;
+    send(message: string | ArrayBuffer | ArrayBufferView): Promise<void>;
+    close(code?: number, reason?: string): Promise<void>;
+  }
+
+  export interface SandstormWebSocketMessageEvent {
+    readonly type: "text" | "data";
+    readonly data: string | Uint8Array;
+  }
+
+  export interface SandstormWebSocketCloseEvent {
+    readonly code: number;
+    readonly reason: string;
+  }
+
+  export interface SandstormWebSocketHandler<E extends SandstormEnv = SandstormEnv> {
+    readonly protocol?: string;
+    message(
+      event: SandstormWebSocketMessageEvent,
+      socket: SandstormWebSocket,
+      env: E,
+      ctx: WorkerExecutionContext,
+    ): void | Promise<void>;
+    close?(
+      event: SandstormWebSocketCloseEvent,
+      socket: SandstormWebSocket,
+      env: E,
+      ctx: WorkerExecutionContext,
+    ): void | Promise<void>;
   }
 
   /** Implements MainView/WebSession in capnp-es and adapts those UI calls to Fetch. */

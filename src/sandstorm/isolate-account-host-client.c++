@@ -281,6 +281,35 @@ public:
   }
 };
 
+class CapturingWebSocketMessageStream final:
+    public WebSession::WebSocketMessageStream::Server {
+public:
+  explicit CapturingWebSocketMessageStream(
+      kj::Own<kj::PromiseFulfiller<kj::String>> messageFulfiller)
+      : messageFulfiller(kj::mv(messageFulfiller)) {}
+
+  kj::Promise<void> sendText(SendTextContext context) override {
+    KJ_REQUIRE(messageFulfiller.get() != nullptr,
+        "direct WebSocket sent more than one message");
+    messageFulfiller->fulfill(kj::str(context.getParams().getMessage()));
+    messageFulfiller = nullptr;
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> sendData(SendDataContext context) override {
+    KJ_FAIL_REQUIRE("direct WebSocket returned binary data",
+        context.getParams().getMessage().size());
+  }
+
+  kj::Promise<void> close(CloseContext context) override {
+    (void)context;
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Own<kj::PromiseFulfiller<kj::String>> messageFulfiller;
+};
+
 class CollectByteStream final: public ByteStream::Server {
 public:
   explicit CollectByteStream(kj::Own<kj::PromiseFulfiller<kj::String>> doneFulfiller)
@@ -787,6 +816,37 @@ void testWebSocket(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
   webSocket->close(1000, "test complete").wait(waitScope);
 }
 
+void testLogicalWebSocket(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
+  auto session = newWebSession(waitScope, supervisor);
+  auto received = kj::newPromiseAndFulfiller<kj::String>();
+
+  auto request = session.openWebSocketMessagesRequest();
+  request.setPath("websocket-echo");
+  request.initProtocol(0);
+  request.setClientStream(kj::heap<CapturingWebSocketMessageStream>(
+      kj::mv(received.fulfiller)));
+  auto context = request.initContext();
+  context.setResponseStream(kj::heap<IgnoreByteStream>());
+  context.initCookies(0);
+  context.initAccept(0);
+  context.initAcceptEncoding(0);
+  context.initAdditionalHeaders(0);
+
+  auto response = request.send().wait(waitScope);
+  KJ_REQUIRE(response.getProtocol().size() == 0);
+  auto serverStream = response.getServerStream();
+  auto send = serverStream.sendTextRequest();
+  send.setMessage("direct");
+  send.send().wait(waitScope);
+  KJ_REQUIRE(received.promise.wait(waitScope) == "capnp:direct",
+      "logical worker WebSocket returned wrong payload");
+
+  auto close = serverStream.closeRequest();
+  close.setCode(1000);
+  close.setReason("test complete");
+  close.send().wait(waitScope);
+}
+
 void testBrowserBootstrap(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
   auto session = newWebSession(waitScope, supervisor);
   auto request = session.openWebSocketRequest();
@@ -846,6 +906,7 @@ int main(int argc, char** argv) {
         sandstorm::contains(browserHandoff, "\"handoffId\":"),
         "mainView-role worker session did not support browser capability handoff",
         browserHandoff);
+    sandstorm::testLogicalWebSocket(io.waitScope, supervisor);
     supervisor.shutdownRequest().send().wait(io.waitScope);
     return 0;
   }

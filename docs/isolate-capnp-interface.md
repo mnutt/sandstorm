@@ -631,10 +631,18 @@ Implemented checkpoint (partial):
   account-host integration coverage calls the shell-facing `Supervisor.getMainView()` boundary,
   reaches the JS facade, and verifies browser capability handoff. The legacy action remains in the
   same package so the old WebSocket path stays covered while the new facade is incomplete.
+- `WebSession.openWebSocketMessages()` and `WebSocketMessageStream` now carry logical text, binary,
+  and close messages rather than RFC 6455 bytes. The shell-facing KJ bridge prefers this method and
+  adapts messages directly to `kj::WebSocket`, falling back to the raw method only for old session
+  implementations. `mainViewFromFetch()` exposes a message-handler facade whose callbacks each run
+  as their own worker RPC event; new isolate sessions do not implement the raw-frame method.
+- `Util.ByteStreamSource` and the additive pull-streaming WebSession methods define the analogous
+  event-safe upload contract. The native and JavaScript adapters still need to be connected before
+  this replaces the current buffered correctness path.
 
 This checkpoint includes request/response conversion and streaming scaffolding, but it is not
-yet the Phase 5 compatibility switch. WebSockets, full-duplex request streaming, and end-to-end
-browser-shell conformance remain on the legacy path until their dual-path tests pass.
+yet the Phase 5 compatibility switch. Logical WebSockets now pass through the direct worker path;
+full-duplex request streaming and end-to-end browser-shell conformance remain before cutover.
 
 ### Phase 6: Support service-only grains in packages and the shell
 

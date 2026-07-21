@@ -86,6 +86,22 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   # `clientStream` is the capability which will receive server -> client messages, while
   # serverStream represents client -> server.
 
+  openWebSocketMessages @18 (path :Text, context :Context,
+                             protocol :List(Text), clientStream :WebSocketMessageStream)
+                         -> (protocol :List(Text), serverStream :WebSocketMessageStream);
+  # Message-oriented WebSocket transport. New implementations should prefer this method over
+  # openWebSocket(), whose streams expose raw RFC 6455 framing. Text, binary, and close messages
+  # retain their logical boundaries; ping/pong and fragmentation remain transport details.
+
+  postStreamingPull @19 (path :Text, mimeType :Text, context :Context, encoding :Text,
+                         expectedSize :UInt64 = 0, body :Util.ByteStreamSource) -> Response;
+  putStreamingPull @20 (path :Text, mimeType :Text, context :Context, encoding :Text,
+                        expectedSize :UInt64 = 0, body :Util.ByteStreamSource) -> Response;
+  # Pull-oriented streaming requests. These preserve full-duplex behavior when the callee's input
+  # stream is scoped to the event handling this method: the callee pulls chunks from body while it
+  # computes and streams the response. Callers should fall back to postStreaming()/putStreaming()
+  # if these methods are unimplemented.
+
   propfind @7 (path :Text, xmlContent :Text, depth :PropfindDepth, context :Context) -> Response;
   proppatch @8 (path :Text, xmlContent :Text, context :Context) -> Response;
   mkcol @9 (path :Text, content :PostContent, context :Context) -> Response;
@@ -484,6 +500,15 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
     # datagram at a time.
     #
     # TODO(apibump): Send whole WebSocket messages.
+  }
+
+  interface WebSocketMessageStream {
+    # One direction of a logical WebSocket connection. Dropping the capability aborts that
+    # direction without a close message.
+
+    sendText @0 (message :Text) -> stream;
+    sendData @1 (message :Data) -> stream;
+    close @2 (code :UInt16 = 1000, reason :Text) -> stream;
   }
 
   struct CachePolicy {

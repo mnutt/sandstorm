@@ -125,6 +125,29 @@ interface ByteStream {
   # is not necessary for the callee to actually implement it.
 }
 
+interface ByteStreamSource {
+  # A pull-oriented source of bytes. Unlike `ByteStream`, this interface is intended for cases
+  # where the consumer owns an event-scoped input object and the producer cannot safely push into
+  # that event from another execution context.
+  #
+  # Callers must have at most one read() outstanding at a time. Dropping the capability cancels
+  # the source; cancel() provides an explicit, prompt cancellation signal when the caller knows it
+  # will not consume the rest of the input.
+
+  read @0 (maxBytes :UInt32 = 65536) -> (result :ReadResult);
+  # Read at most maxBytes. Implementations may return a smaller non-empty chunk. A maxBytes value
+  # of zero is invalid. Once done is returned, all subsequent reads must also return done.
+
+  cancel @1 ();
+
+  struct ReadResult {
+    union {
+      data @0 :Data;
+      done @1 :Void;
+    }
+  }
+}
+
 interface Blob @0xe53527a75d90198f {
   # Represents a large byte blob.
 

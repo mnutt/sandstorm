@@ -59,6 +59,116 @@ static kj::Promise<void> pingEveryMinute(kj::Timer& timer, Handle::Client handle
 
 static inline ByteStream::Client newNoStreamingByteStream();
 
+class MessageWebSocketState final: public kj::Refcounted {
+public:
+  MessageWebSocketState(kj::Own<kj::WebSocket> webSocket,
+      WebSession::WebSocketMessageStream::Client outgoing)
+      : webSocket(kj::mv(webSocket)), outgoing(kj::mv(outgoing)) {}
+
+  kj::Promise<void> sendText(kj::StringPtr message) {
+    auto copy = kj::heapString(message);
+    return enqueue([this, copy = kj::mv(copy)]() mutable {
+      return webSocket->send(copy.asArray()).attach(kj::mv(copy));
+    });
+  }
+
+  kj::Promise<void> sendData(kj::ArrayPtr<const byte> message) {
+    auto copy = kj::heapArray(message);
+    return enqueue([this, copy = kj::mv(copy)]() mutable {
+      return webSocket->send(copy.asPtr()).attach(kj::mv(copy));
+    });
+  }
+
+  kj::Promise<void> close(uint16_t code, kj::StringPtr reason) {
+    KJ_REQUIRE(!closed, "WebSocket is already closed");
+    closed = true;
+    auto copy = kj::heapString(reason);
+    auto fork = sendQueue.then([this, code, copy = kj::mv(copy)]() mutable {
+      return webSocket->close(code, copy).attach(kj::mv(copy));
+    }).fork();
+    sendQueue = fork.addBranch();
+    return fork.addBranch();
+  }
+
+  void abort() noexcept {
+    if (!closed) {
+      closed = true;
+      webSocket->abort();
+    }
+  }
+
+  kj::Promise<void> pumpToWorker() {
+    return webSocket->receive().then(
+        [self = kj::addRef(*this)](kj::WebSocket::Message&& message) mutable
+            -> kj::Promise<void> {
+      KJ_SWITCH_ONEOF(message) {
+        KJ_CASE_ONEOF(text, kj::String) {
+          auto request = self->outgoing.sendTextRequest();
+          request.setMessage(text);
+          return request.send().then([self = kj::mv(self)]() mutable {
+            return self->pumpToWorker();
+          });
+        }
+        KJ_CASE_ONEOF(data, kj::Array<byte>) {
+          auto request = self->outgoing.sendDataRequest();
+          request.setMessage(data);
+          return request.send().then([self = kj::mv(self)]() mutable {
+            return self->pumpToWorker();
+          });
+        }
+        KJ_CASE_ONEOF(close, kj::WebSocket::Close) {
+          self->closed = true;
+          auto request = self->outgoing.closeRequest();
+          request.setCode(close.code);
+          request.setReason(close.reason);
+          return request.send();
+        }
+      }
+      KJ_UNREACHABLE;
+    });
+  }
+
+private:
+  kj::Own<kj::WebSocket> webSocket;
+  WebSession::WebSocketMessageStream::Client outgoing;
+  kj::Promise<void> sendQueue = kj::READY_NOW;
+  bool closed = false;
+
+  kj::Promise<void> enqueue(kj::Function<kj::Promise<void>()> operation) {
+    KJ_REQUIRE(!closed, "WebSocket is already closed");
+    auto fork = sendQueue.then(kj::mv(operation)).fork();
+    sendQueue = fork.addBranch();
+    return fork.addBranch();
+  }
+};
+
+class MessageWebSocketSink final: public WebSession::WebSocketMessageStream::Server {
+public:
+  explicit MessageWebSocketSink(kj::Own<MessageWebSocketState> state)
+      : state(kj::mv(state)) {}
+
+  ~MessageWebSocketSink() noexcept {
+    state->abort();
+  }
+
+protected:
+  kj::Promise<void> sendText(SendTextContext context) override {
+    return state->sendText(context.getParams().getMessage());
+  }
+
+  kj::Promise<void> sendData(SendDataContext context) override {
+    return state->sendData(context.getParams().getMessage());
+  }
+
+  kj::Promise<void> close(CloseContext context) override {
+    auto params = context.getParams();
+    return state->close(params.getCode(), params.getReason());
+  }
+
+private:
+  kj::Own<MessageWebSocketState> state;
+};
+
 WebSessionBridge::Tables::Tables(kj::HttpHeaderTable::Builder& headerTableBuilder)
     : headerTable(headerTableBuilder.getFutureTable()),
       hAccessControlAllowHeaders(headerTableBuilder.add("Access-Control-Allow-Headers")),
@@ -544,6 +654,62 @@ static inline ByteStream::Client newNoStreamingByteStream() {
 }
 
 kj::Promise<void> WebSessionBridge::openWebSocket(
+    kj::StringPtr path, const kj::HttpHeaders& headers, Response& response) {
+  return openWebSocketMessages(path, headers, response).catch_(
+      [this, path = kj::heapString(path), &headers, &response](kj::Exception&& exception) mutable
+          -> kj::Promise<void> {
+    if (exception.getType() == kj::Exception::Type::UNIMPLEMENTED) {
+      return openWebSocketLegacy(path, headers, response);
+    }
+    return kj::mv(exception);
+  });
+}
+
+kj::Promise<void> WebSessionBridge::openWebSocketMessages(
+    kj::StringPtr path, const kj::HttpHeaders& headers, Response& response) {
+  KJ_REQUIRE(path.startsWith("/"));
+  path = path.slice(1);
+
+  auto req = session.openWebSocketMessagesRequest();
+  req.setPath(path);
+
+  auto streamer = initContext(req.initContext(), headers);
+  streamer.streamer->fulfill(kj::heap<NoStreamingByteStream>());
+
+  KJ_IF_MAYBE(proto, headers.get(tables.hSecWebSocketProtocol)) {
+    auto protos = split(*proto, ',');
+    auto listBuilder = req.initProtocol(protos.size());
+    for (auto i: kj::indices(protos)) {
+      listBuilder.set(i, trim(protos[i]));
+    }
+  }
+
+  auto clientStreamPaf =
+      kj::newPromiseAndFulfiller<WebSession::WebSocketMessageStream::Client>();
+  req.setClientStream(kj::mv(clientStreamPaf.promise));
+  auto& clientStreamFulfillerRef = *clientStreamPaf.fulfiller;
+
+  return req.send().then(
+      [this, &response, &clientStreamFulfillerRef]
+          (capnp::Response<WebSession::OpenWebSocketMessagesResults>&& rpcResponse) mutable {
+    kj::HttpHeaders headers(tables.headerTable);
+    auto protos = rpcResponse.getProtocol();
+    if (protos.size() > 0) {
+      headers.set(tables.hSecWebSocketProtocol, kj::strArray(protos, ", "));
+    }
+
+    auto state = kj::refcounted<MessageWebSocketState>(
+        response.acceptWebSocket(headers), rpcResponse.getServerStream());
+    clientStreamFulfillerRef.fulfill(
+        kj::heap<MessageWebSocketSink>(kj::addRef(*state)));
+    return state->pumpToWorker().attach(kj::mv(state));
+  }, [&clientStreamFulfillerRef](kj::Exception&& exception) -> kj::Promise<void> {
+    clientStreamFulfillerRef.reject(kj::cp(exception));
+    return kj::mv(exception);
+  }).attach(kj::mv(clientStreamPaf.fulfiller));
+}
+
+kj::Promise<void> WebSessionBridge::openWebSocketLegacy(
     kj::StringPtr path, const kj::HttpHeaders& headers, Response& response) {
   KJ_REQUIRE(path.startsWith("/"));
   path = path.slice(1);

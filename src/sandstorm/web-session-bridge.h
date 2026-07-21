@@ -149,6 +149,10 @@ private:
 
   kj::Promise<void> openWebSocket(
       kj::StringPtr url, const kj::HttpHeaders& headers, Response& response);
+  kj::Promise<void> openWebSocketMessages(
+      kj::StringPtr url, const kj::HttpHeaders& headers, Response& response);
+  kj::Promise<void> openWebSocketLegacy(
+      kj::StringPtr url, const kj::HttpHeaders& headers, Response& response);
 
   struct ContextInitInfo {
     kj::Own<kj::PromiseFulfiller<ByteStream::Client>> streamer;

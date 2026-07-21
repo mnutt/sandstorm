@@ -131,6 +131,9 @@ function uiFacadeOptions(options) {
   if (typeof options.fetch !== "function") {
     throw new TypeError("mainViewFromFetch() requires a fetch handler");
   }
+  if (options.webSocket !== undefined && typeof options.webSocket !== "function") {
+    throw new TypeError("mainViewFromFetch() webSocket must be a function");
+  }
   if (!options.viewInfo || typeof options.viewInfo !== "object") {
     throw new TypeError("mainViewFromFetch() requires ViewInfo initialization data");
   }
@@ -565,6 +568,80 @@ function streamingRequestTarget(session, method, params) {
   };
 }
 
+function webSocketFacade(clientStream) {
+  let closed = false;
+  return Object.freeze({
+    async send(message) {
+      if (closed) throw new Error("WebSocket is closed");
+      if (typeof message === "string") {
+        await clientStream.sendText({ message });
+      } else {
+        await clientStream.sendData({ message: new Uint8Array(capnpDataBytes(message)) });
+      }
+    },
+    async close(code = 1000, reason = "") {
+      if (closed) return;
+      closed = true;
+      await clientStream.close({ code, reason });
+    },
+    get closed() {
+      return closed;
+    },
+  });
+}
+
+async function openWebSocketMessages(session, params, callContext) {
+  const request = webSessionRequest(session, "GET", params.path, params.context);
+  request.headers.set("upgrade", "websocket");
+  request.headers.set("connection", "Upgrade");
+  const protocols = Array.from(params.protocol ?? [], String);
+  if (protocols.length > 0) {
+    request.headers.set("sec-websocket-protocol", protocols.join(", "));
+  }
+
+  const socket = webSocketFacade(params.clientStream);
+  const handler = await session.webSocket(request, socket, callContext.env, callContext.ctx);
+  if (!handler || typeof handler !== "object" || typeof handler.message !== "function") {
+    await socket.close(1011, "invalid WebSocket handler");
+    throw new TypeError("mainViewFromFetch() webSocket must return a message handler");
+  }
+  const selectedProtocol = handler.protocol === undefined ? "" : String(handler.protocol);
+  if (selectedProtocol !== "" && !protocols.includes(selectedProtocol)) {
+    await socket.close(1002, "invalid WebSocket protocol");
+    throw new TypeError("mainViewFromFetch() selected an unoffered WebSocket protocol");
+  }
+
+  let peerClosed = false;
+  const streamTarget = {
+    async sendText(messageParams, messageContext) {
+      if (peerClosed) throw new Error("WebSocket peer is closed");
+      await handler.message(
+        { data: String(messageParams.message), type: "text" },
+        socket, messageContext.env, messageContext.ctx);
+    },
+    async sendData(messageParams, messageContext) {
+      if (peerClosed) throw new Error("WebSocket peer is closed");
+      const data = new Uint8Array(capnpDataBytes(messageParams.message));
+      await handler.message(
+        { data, type: "data" }, socket, messageContext.env, messageContext.ctx);
+    },
+    async close(closeParams, closeContext) {
+      if (peerClosed) return;
+      peerClosed = true;
+      if (typeof handler.close === "function") {
+        await handler.close(
+          { code: closeParams.code, reason: String(closeParams.reason) },
+          socket, closeContext.env, closeContext.ctx);
+      }
+    },
+  };
+  return {
+    protocol: selectedProtocol === "" ? [] : [selectedProtocol],
+    serverStream: createWorkerCapnpClient(
+      WebSession.WebSocketMessageStream, streamTarget, "Fetch WebSocket message stream"),
+  };
+}
+
 function webSessionFromFetchTarget(session) {
   const invoke = (method, body = undefined, configure = undefined) => async (params, callContext) => {
     const request = webSessionRequest(
@@ -594,7 +671,7 @@ function webSessionFromFetchTarget(session) {
         WebSession.RequestStream, streamTarget, "Fetch request stream") };
     },
     openWebSocket() {
-      throw new Error("mainViewFromFetch() WebSocket support is not yet implemented");
+      throw new Error("raw WebSession WebSocket framing is only available on the legacy path");
     },
     propfind: invoke("PROPFIND", params => new TextEncoder().encode(params.xmlContent),
       (headers, params) => {
@@ -638,6 +715,10 @@ function webSessionFromFetchTarget(session) {
       };
     },
   };
+  if (session.webSocket !== undefined) {
+    target.openWebSocketMessages = (params, callContext) =>
+      openWebSocketMessages(session, params, callContext);
+  }
   return target;
 }
 
@@ -649,6 +730,7 @@ async function mainViewSession(options, params, callContext, kind) {
   const sessionParams = readCapnpStruct(WebSession.Params, params.sessionParams);
   const session = {
     fetch: options.fetch,
+    webSocket: options.webSocket,
     headers: uiSessionHeaders(params, sessionParams, options.viewInfo, kind),
     basePath: sessionParams.basePath,
     sessionContext: params.context,
