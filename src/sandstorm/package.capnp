@@ -233,6 +233,29 @@ struct Manifest {
 
     description @4 :Util.LocalizedText;
     # Description of this action, suitable for help text.
+
+    output :union {
+      mainView @6 :Void;
+      # The default for existing actions. Running the action creates a grain and opens its
+      # Supervisor.getMainView() result in a browser tab.
+
+      capability @7 :CapabilityOutput;
+      # Running this action from Powerbox creates a grain and returns one declared worker export
+      # directly to the requester. It does not create a browser tab or a WebSession.
+    }
+
+    struct CapabilityOutput {
+      exportName @0 :Text;
+      interfaceId @1 :UInt64;
+      # Must exactly match an export declared by the action's isolate command.
+
+      descriptor @2 :Powerbox.PowerboxDescriptor;
+      # Used to match this action against Powerbox queries. By convention this includes a tag whose
+      # ID is `interfaceId`.
+
+      displayInfo @3 :Powerbox.PowerboxDisplayInfo;
+      # Human-readable presentation in the Powerbox chooser and capability audit UI.
+    }
   }
 
   actions @2 :List(Action);

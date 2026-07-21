@@ -77,6 +77,16 @@ The native-host test covers unresolved export pipelining, cancellation before
 dispatch, callback traffic, and subsequent connection reuse; the account-host
 test pipelines a call onto a worker-returned capability through the supervisor.
 
+Implementation checkpoint (2026-07-21): package actions can now declare either
+the default browser `mainView` output or a typed capability output naming a
+manifest-declared worker export. Capability actions are indexed as Powerbox
+providers, omitted from ordinary app-launch and grain UI, and fulfilled by
+creating a headless grain, calling `Supervisor.getExport()`, and saving the
+result directly for the requesting session. The service-only fixture has no
+Fetch handler, HTTP binding, `MainView`, or `WebSession`; its Powerbox-selected
+`NativeGreeter` can be called, saved, restored, and revoked entirely over the
+generic Cap'n Proto path.
+
 ## Summary
 
 The target model is:
@@ -666,7 +676,7 @@ Exit criteria:
 - traditional and Fetch-style grains remain unchanged from the user's
   perspective.
 
-Implemented checkpoint (partial):
+Implemented checkpoint:
 
 - `Manifest.IsolateConfig.bridgeConfig` is now semantically optional. If a command declares no
   `mainView` export and omits `bridgeConfig`, `Supervisor.getMainView()` returns UNIMPLEMENTED
@@ -676,9 +686,22 @@ Implemented checkpoint (partial):
   account-shared workerd host and answers a typed `Supervisor.getExport()` call directly. The
   direct-`mainView` fixture also omits `bridgeConfig`, proving its UI metadata and sessions come
   exclusively from the exported capability.
-
-Package-action output typing, shell navigation for non-view actions, and Powerbox selection remain
-to complete this phase.
+- `Manifest.Action.output` is an additive union. Existing actions default to `mainView`; a
+  `capability` output declares the export name and interface ID plus its Powerbox descriptor and
+  display metadata. Packaging rejects capability actions that use a non-isolate command, do not
+  match a declared export, or omit the interface-ID descriptor tag.
+- Installed capability actions remain in `UserActions` for provider discovery but are excluded
+  from ordinary “New grain” controls. Selecting their Powerbox card creates an `isService` grain,
+  resolves exactly the declared `(exportName, interfaceId)`, saves the result with the requesting
+  session as owner, and returns its sturdy ref without resolving `MainView` or opening a tab.
+- Service grains are excluded from browser-grain queries (including the `UiView` Powerbox
+  handler), while package retention, capability audit, persistence, and quota accounting continue
+  to see them.
+- Shell tests cover action/grain separation, descriptor authorization including unacceptable
+  clauses, headless creation, exact export lookup, and direct capability saving. A browser
+  integration test drives the real Powerbox card and then calls, saves, restores, and revokes the
+  resulting `NativeGreeter`. The native service-only integration test independently covers the
+  same capability lifecycle and asserts that `Supervisor.getMainView()` is unavailable.
 
 ### Phase 7: Add typed platform services
 

@@ -983,6 +983,37 @@ int main(int argc, char** argv) {
         "service-only hello without UI",
         "service-only worker export did not answer directly");
 
+    auto saveRequest = greeter.castAs<sandstorm::SystemPersistent>().saveRequest();
+    auto tokenOwner = saveRequest.getSealFor().initGrain();
+    tokenOwner.setGrainId(argv[2]);
+    tokenOwner.getSaveLabel().setDefaultText("service-only greeter");
+    auto token = kj::heapArray<kj::byte>(
+        saveRequest.send().wait(io.waitScope).getSturdyRef());
+
+    auto restoreRequest = core.restoreRequest();
+    restoreRequest.setToken(token);
+    auto restored = restoreRequest.send().wait(io.waitScope).getCap()
+        .castAs<NativeGreeter>();
+    auto restoredHello = restored.helloRequest();
+    restoredHello.setName("after save and restore");
+    KJ_REQUIRE(restoredHello.send().wait(io.waitScope).getMessage() ==
+        "service-only hello after save and restore",
+        "service-only worker export did not restore without a UI path");
+
+    auto dropRequest = core.dropRequest();
+    dropRequest.setToken(token);
+    dropRequest.send().wait(io.waitScope);
+    bool revokedTokenRejected = false;
+    try {
+      auto restoreRevokedRequest = core.restoreRequest();
+      restoreRevokedRequest.setToken(token);
+      restoreRevokedRequest.send().wait(io.waitScope);
+    } catch (const kj::Exception&) {
+      revokedTokenRejected = true;
+    }
+    KJ_REQUIRE(revokedTokenRejected,
+        "revoked service-only worker export remained restorable");
+
     bool mainViewRejected = false;
     try {
       supervisor.getMainViewRequest().send().wait(io.waitScope);

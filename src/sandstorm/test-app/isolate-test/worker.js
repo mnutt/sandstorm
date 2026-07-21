@@ -373,14 +373,17 @@ function renderBrowserPowerboxPage() {
   <body>
     <button id="offer" type="button">offer capability</button>
     <button id="request" type="button">request capability</button>
+    <button id="request-service" type="button">request service capability</button>
     <pre id="offer-result">not offered</pre>
     <pre id="request-result">not requested</pre>
+    <pre id="service-result">service not requested</pre>
 
     <script type="module">
       import { requestPowerbox } from "/__sandstorm/native-capnp/client.js";
 
       const offerResult = document.querySelector("#offer-result");
       const requestResult = document.querySelector("#request-result");
+      const serviceResult = document.querySelector("#service-result");
 
       document.querySelector("#offer").addEventListener("click", async () => {
         offerResult.textContent = "offering";
@@ -407,6 +410,35 @@ function renderBrowserPowerboxPage() {
             JSON.stringify(body);
         } catch (error) {
           requestResult.textContent = (error.message || String(error)) + "\\n" + (error.stack || "");
+        }
+      });
+
+      document.querySelector("#request-service").addEventListener("click", async () => {
+        serviceResult.textContent = "requesting service";
+        try {
+          const descriptorResponse = await fetch(
+            "/__sandstorm/powerbox/app-interface-descriptor" +
+            "?interfaceId=0xb66316217ceedb1b&interfaceName=NativeGreeter");
+          const descriptor = await descriptorResponse.json();
+          if (!descriptorResponse.ok || !descriptor.ok) {
+            throw new Error(descriptor.error || "failed to build NativeGreeter descriptor");
+          }
+          const requested = await requestPowerbox([descriptor.descriptor], {
+            saveLabel: { defaultText: "Service-only greeter" },
+          });
+          const response = await fetch("/browser-service-powerbox-finish", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(requested),
+          });
+          const body = await response.json();
+          serviceResult.textContent = body.ok
+            ? "service: success " + body.hello + " / " + body.restoredHello +
+              " / revoked=" + body.revoked
+            : JSON.stringify(body);
+        } catch (error) {
+          serviceResult.textContent = (error.message || String(error)) +
+            "\\n" + (error.stack || "");
         }
       });
     </script>
@@ -670,6 +702,35 @@ async function isolateTestFetch(request, env, ctx) {
         dropRestored,
         dropSaved,
       });
+    }
+
+    if (url.pathname === "/browser-service-powerbox-finish" && request.method === "POST") {
+      const body = await request.json();
+      const capability = await api.powerbox().claim(body);
+      const client = viewFixtureCapability(api, capability, NativeGreeter);
+      const hello = await client.hello({ name: "from Powerbox" });
+      const saved = await capability.save({ label: "Service-only greeter from Powerbox" });
+      await capability.drop();
+
+      const restoredCapability = await api.restore(saved);
+      const restored = viewFixtureCapability(api, restoredCapability, NativeGreeter);
+      const restoredHello = await restored.hello({ name: "after Powerbox restore" });
+      await restoredCapability.drop();
+      await api.revoke(saved);
+
+      let revoked = false;
+      try {
+        const unexpected = await api.restore(saved);
+        await unexpected.drop();
+      } catch (error) {
+        revoked = true;
+      }
+      return Response.json({
+        ok: revoked,
+        hello: hello.message,
+        restoredHello: restoredHello.message,
+        revoked,
+      }, { status: revoked ? 200 : 500 });
     }
 
     if (url.pathname === "/browser-storage-test") {

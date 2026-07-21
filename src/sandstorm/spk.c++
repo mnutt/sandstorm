@@ -5228,6 +5228,42 @@ private:
     return false;
   }
 
+  void validateCapabilityAction(spk::Manifest::Action::Reader action) {
+    auto output = action.getOutput();
+    if (!output.isCapability()) return;
+
+    auto capability = output.getCapability();
+    KJ_REQUIRE(action.getCommand().hasIsolate(),
+        "Capability-output actions must use an isolate command.");
+    KJ_REQUIRE(capability.getExportName().size() > 0,
+        "Capability-output action is missing exportName.");
+    KJ_REQUIRE(capability.getInterfaceId() != 0,
+        "Capability-output action interfaceId must be nonzero.", capability.getExportName());
+
+    bool foundExport = false;
+    for (auto workerExport: action.getCommand().getIsolate().getExports()) {
+      if (workerExport.getName() == capability.getExportName() &&
+          workerExport.getInterfaceId() == capability.getInterfaceId()) {
+        foundExport = true;
+        break;
+      }
+    }
+    KJ_REQUIRE(foundExport,
+        "Capability-output action does not match a declared isolate export.",
+        capability.getExportName(), capability.getInterfaceId());
+
+    bool hasInterfaceTag = false;
+    for (auto tag: capability.getDescriptor().getTags()) {
+      if (tag.getId() == capability.getInterfaceId()) {
+        hasInterfaceTag = true;
+        break;
+      }
+    }
+    KJ_REQUIRE(hasInterfaceTag,
+        "Capability-output action descriptor must include its interface ID as a tag.",
+        capability.getExportName(), capability.getInterfaceId());
+  }
+
   bool augmentPackIsolateConfig(spk::Manifest::IsolateConfig::Builder isolate) {
     for (auto binding: isolate.getBindings()) {
       if (binding.which() == spk::Manifest::IsolateConfig::Binding::SERVICE) {
@@ -5310,6 +5346,7 @@ private:
 
     auto actions = manifest.getActions();
     for (auto i: kj::indices(actions)) {
+      validateCapabilityAction(actions[i].asReader());
       auto command = actions[i].getCommand();
       if (command.hasIsolate()) {
         isolateSupportChanged =

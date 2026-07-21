@@ -326,6 +326,7 @@ Template.sandstormAppDetailsPage.helpers({
       };
 
       for (let i = 0; i < pkg.manifest.actions.length; i++) {
+        if (pkg.manifest.actions[i].output && pkg.manifest.actions[i].output.capability) continue;
         actions.push({
           buttonText: "(Dev) Create new " + SandstormDb.nounPhraseForActionAndAppTitle(
             pkg.manifest.actions[i],

@@ -118,6 +118,8 @@ export class SandstormPowerboxRequest {
       this._selectedProvider.set(card);
     } else if (card.option.frontendRef) {
       this.completeNewFrontendRef(card.option.frontendRef);
+    } else if (card.option.capabilityAction) {
+      this.completeCapabilityAction(card.option.capabilityAction.actionId);
     } else {
       this.failRequest(new Error("not sure how to complete powerbox request for non-frontendRef " +
                                  "that didn't provide a configureTemplate"));
@@ -248,6 +250,23 @@ export class SandstormPowerboxRequest {
       "selected via Powerbox",
       roleAssignment,
       this._requestInfo.grainId,
+      (err, result) => {
+        if (err) {
+          this.failRequest(err);
+        } else {
+          this.completeRequest(result.sturdyRef, result.descriptor);
+        }
+      }
+    );
+  }
+
+  completeCapabilityAction(actionId) {
+    Meteor.call(
+      "fulfillCapabilityActionRequest",
+      this._requestInfo.sessionId,
+      actionId,
+      this._requestInfo.grainId,
+      this.getQuery(),
       (err, result) => {
         if (err) {
           this.failRequest(err);

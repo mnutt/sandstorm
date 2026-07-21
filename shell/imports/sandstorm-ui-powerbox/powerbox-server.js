@@ -16,14 +16,19 @@
 
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
+import { Random } from "meteor/random";
 import { _ } from "meteor/underscore";
 
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
+import { SandstormDb } from "/imports/sandstorm-db/db";
 import Capnp from "/imports/server/capnp";
+import { getGlobalBackend } from "/imports/server/backend-instance";
+import { hashSturdyRef } from "/imports/server/persistent";
 import { isTesting } from "/imports/shared/testing";
 
 const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
 const Grain = Capnp.importSystem("sandstorm/grain.capnp");
+const SystemPersistent = Capnp.importSystem("sandstorm/supervisor.capnp").SystemPersistent;
 
 const OUTBOUND_HTTP_METHODS = [
   "GET",
@@ -161,6 +166,134 @@ function descriptorTagsMatch(queryTags, provisionTags, diagnostics) {
   return allMatched;
 }
 
+export function powerboxRequestMatchesProvision(queryDescriptors, provisionTags) {
+  let included = false;
+  (queryDescriptors || []).forEach(query => {
+    const matches = descriptorTagsMatch(query.tags || [], provisionTags || [], {
+      grainDescriptorMissingTagCount: 0,
+      grainDescriptorValueMismatchCount: 0,
+    });
+    if (matches) included = query.quality !== "unacceptable";
+  });
+
+  return included;
+}
+
+export async function provisionCapabilityAction(
+    methodContext, sessionId, actionId, ownerGrainId, requestDescriptors, dependencies = {}) {
+  const userId = methodContext.userId;
+  if (!userId) throw new Meteor.Error(403, "Must be logged in");
+
+  const db = methodContext.connection.sandstormDb;
+  const session = await db.collections.sessions.findOneAsync({
+    _id: sessionId,
+    userId,
+    grainId: ownerGrainId,
+  });
+  if (!session) {
+    throw new Meteor.Error(403, "Invalid requesting grain session");
+  }
+
+  const action = await db.collections.userActions.findOneAsync({
+    _id: actionId,
+    userId,
+    "output.capability": { $exists: true },
+  });
+  if (!action) throw new Meteor.Error(404, "Capability action not found");
+
+  const capability = action.output.capability;
+  const provisionTags = ((capability.descriptor || {}).tags || []);
+  if (!powerboxRequestMatchesProvision(
+      requestDescriptors, provisionTags)) {
+    throw new Meteor.Error(403, "Capability action does not match this Powerbox request");
+  }
+
+  const pkg = await db.collections.packages.findOneAsync({
+    _id: action.packageId,
+    status: "ready",
+  });
+  if (!pkg) throw new Meteor.Error(404, "Capability action package is not installed");
+
+  const users = dependencies.users || Meteor.users;
+  const account = await users.findOneAsync({ _id: userId });
+  if (!await db.isAccountSignedUpOrDemoAsync(account)) {
+    throw new Meteor.Error(403, "Only invited users or demo users can create grains");
+  }
+  if (await db.isUserOverQuotaAsync(account)) {
+    throw new Meteor.Error(402, "You are out of storage space");
+  }
+
+  const grainId = dependencies.grainId || Random.id(22);
+  const displayTitle = (((capability.displayInfo || {}).title || {}).defaultText) ||
+      (((action.nounPhrase || {}).defaultText)) || "capability service";
+  const generateIdentityId = dependencies.generateIdentityId || SandstormDb.generateIdentityId;
+  await db.collections.grains.insertAsync({
+    _id: grainId,
+    packageId: action.packageId,
+    appId: action.appId,
+    appVersion: action.appVersion,
+    userId,
+    identityId: generateIdentityId(),
+    title: displayTitle,
+    private: true,
+    isService: true,
+    size: 0,
+  });
+
+  const backend = dependencies.backend || getGlobalBackend();
+  let supervisor;
+  let exported;
+  let savedSturdyRef;
+  try {
+    supervisor = (await backend.startGrainInternal(
+        action.packageId, grainId, userId, action.command, true, false, false)).supervisor;
+    exported = (await supervisor.getExport(
+        capability.exportName, capability.interfaceId)).cap;
+    const owner = {
+      clientPowerboxRequest: {
+        grainId: ownerGrainId,
+        sessionId,
+      },
+    };
+    const saved = await exported.castAs(SystemPersistent).save(owner);
+    const sturdyRef = saved.sturdyRef;
+    savedSturdyRef = sturdyRef;
+    const updated = await db.collections.apiTokens.updateAsync(
+        { _id: hashSturdyRef(sturdyRef) },
+        { $set: {
+          powerbox: {
+            descriptor: capability.descriptor,
+            displayInfo: capability.displayInfo,
+          },
+        } });
+    if (updated !== 1) {
+      throw new Error("Capability action save did not create exactly one API token");
+    }
+    return {
+      sturdyRef: sturdyRef.toString(),
+      descriptor: encodePowerboxDescriptor(capability.descriptor),
+    };
+  } catch (error) {
+    if (savedSturdyRef) {
+      await db.collections.apiTokens.removeAsync({
+        _id: hashSturdyRef(savedSturdyRef),
+      }).catch(cleanupError => {
+        console.error("Failed to clean up capability-action token", grainId, cleanupError);
+      });
+    }
+    await db.collections.grains.removeAsync(grainId).catch(cleanupError => {
+      console.error("Failed to clean up capability-action grain record", grainId, cleanupError);
+    });
+    await backend.deleteGrain(grainId, userId).catch(cleanupError => {
+      console.error("Failed to clean up capability-action grain", grainId, cleanupError);
+    });
+    throw error;
+  } finally {
+    if (exported) exported.close();
+    if (supervisor) supervisor.close();
+  }
+}
+
 Meteor.methods({
   async newFrontendRef(sessionId, frontendRefRequest) {
     // Completes a powerbox request for a frontendRef capability.
@@ -238,6 +371,19 @@ Meteor.methods({
       sturdyRef: result.token,
       descriptor,
     };
+  },
+
+  async fulfillCapabilityActionRequest(sessionId, actionId, ownerGrainId, descriptorList) {
+    check(sessionId, String);
+    check(actionId, String);
+    check(ownerGrainId, String);
+    check(descriptorList, [String]);
+    const requestDescriptors = descriptorList.map(packedDescriptor => Capnp.parse(
+        Powerbox.PowerboxDescriptor,
+        new Buffer(packedDescriptor, "base64"),
+        { packed: true }));
+    return await provisionCapabilityAction(
+        this, sessionId, actionId, ownerGrainId, requestDescriptors);
   },
 });
 
@@ -353,6 +499,8 @@ function powerboxDescriptorDiagnostics(queryDescriptor, index) {
     grainDescriptorMissingTagCount: 0,
     grainDescriptorValueMismatchCount: 0,
     hostedObjectMatchCount: 0,
+    capabilityActionsChecked: 0,
+    capabilityActionMatchCount: 0,
   };
 }
 
@@ -442,12 +590,8 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
           { packed: true });
       const diagnostics = powerboxDescriptorDiagnostics(queryDescriptor, index);
 
-      if (!queryDescriptor.tags || queryDescriptor.tags.length === 0) {
-        return { descriptor: queryDescriptor, diagnostics, matches: {} };
-      }
-
       // Expand each tag into a match map.
-        const tagMatches = await Promise.all(queryDescriptor.tags.map(async tag => {
+        const tagMatches = await Promise.all((queryDescriptor.tags || []).map(async tag => {
           const result = {};
           const options = await frontendRefRegistry.query(db, this.userId, tag);
           options.forEach(option => {
@@ -459,7 +603,7 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
         }));
 
       // Intersect two tags' matches.
-      const matches = tagMatches.reduce((a, b) => {
+      const matches = tagMatches.slice(1).reduce((a, b) => {
         for (const id in a) {
           if (id in b) {
             if (!a[id].intersect(b[id])) {
@@ -473,7 +617,40 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
         }
 
         return a;
-      });
+      }, tagMatches.length === 0 ? {} : tagMatches[0]);
+
+      if (this.userId) {
+        const capabilityActions = await db.collections.userActions.find({
+          userId: this.userId,
+          "output.capability": { $exists: true },
+        }).fetchAsync();
+        capabilityActions.forEach(action => {
+          diagnostics.capabilityActionsChecked++;
+          const capability = action.output.capability;
+          const provision = capability.descriptor || {};
+          if (!descriptorTagsMatch(
+              queryDescriptor.tags || [], provision.tags || [], diagnostics)) {
+            return;
+          }
+
+          diagnostics.capabilityActionMatchCount++;
+          const displayInfo = capability.displayInfo || {};
+          const title = (displayInfo.title || {}).defaultText ||
+              (action.nounPhrase || {}).defaultText || "Capability provider";
+          const option = new PowerboxOption({
+            _id: "capability-action-" + action._id,
+            capabilityAction: { actionId: action._id },
+            capabilityDisplayInfo: displayInfo,
+            cardTemplate: "capabilityActionPowerboxCard",
+            searchTerms: [title, (displayInfo.description || {}).defaultText],
+          });
+          if (option._id in matches) {
+            matches[option._id].union(option);
+          } else {
+            matches[option._id] = option;
+          }
+        });
+      }
 
       // Search among the user's grains for hosted objects that match.
 
@@ -488,7 +665,7 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
             .find({
               $or: [{ userId: this.userId }, { _id: { $in: sharedGrainIds } }],
               "cachedViewInfo.matchRequests.tags.id":
-                  { $in: queryDescriptor.tags.map(tag => tag.id) },
+                  { $in: (queryDescriptor.tags || []).map(tag => tag.id) },
             }, { fields: { "cachedViewInfo.matchRequests": 1, packageId: 1 } })
             .fetchAsync();
         diagnostics.grainsWithMatchingTagIds = grains.length;
@@ -499,7 +676,8 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
             if (alreadyMatched) return;
             diagnostics.grainDescriptorsChecked++;
 
-            if (descriptorTagsMatch(queryDescriptor.tags, grainDescriptor.tags, diagnostics)) {
+            if (descriptorTagsMatch(
+                queryDescriptor.tags || [], grainDescriptor.tags || [], diagnostics)) {
               diagnostics.hostedObjectMatchCount++;
               alreadyMatched = true;
               const option = new PowerboxOption({
@@ -520,7 +698,12 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
 
       }
 
-        return { descriptor: queryDescriptor, diagnostics, matches };
+        return {
+          descriptor: queryDescriptor,
+          diagnostics,
+          matches,
+          matchQuality: queryDescriptor.quality || "acceptable",
+        };
       }));
 
     // TODO(someday): The implementation of matchQuality here is not quite right. In theory, we're

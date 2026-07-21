@@ -164,7 +164,19 @@ const pkgdef :Spk.PackageDefinition = (
       ),
       ( title = (defaultText = "New Service-only Test Instance"),
         nounPhrase = (defaultText = "service"),
-        command = .isolateServiceCommand
+        command = .isolateServiceCommand,
+        output = (
+          capability = (
+            exportName = "greeter",
+            interfaceId = 0xb66316217ceedb1b,
+            descriptor = (tags = [(id = 0xb66316217ceedb1b)]),
+            displayInfo = (
+              title = (defaultText = "Service-only greeter"),
+              verbPhrase = (defaultText = "can greet"),
+              description = (defaultText = "A typed greeter with no browser UI")
+            )
+          )
+        )
       )
     ],
 

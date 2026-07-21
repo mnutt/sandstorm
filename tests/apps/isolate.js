@@ -75,3 +75,25 @@ module.exports["Test isolate grain health and storage after restart"] = function
         .assert.textContains("#read-result", "read: persisted across restart");
     });
 };
+
+module.exports["Test service-only capability action through Powerbox"] = function (browser) {
+  var capabilityActionCard =
+      ".powerbox-card button[data-card-id^=\"capability-action-\"]";
+
+  installAndOpenIsolateTestApp(browser)
+    .grainFrame()
+    .execute(function () {
+      window.location.href = "/browser-powerbox";
+    })
+    .waitForElementVisible("#request-service", medium_wait)
+    .click("#request-service")
+    .frameParent()
+    .waitForElementVisible(capabilityActionCard, medium_wait)
+    .assert.textContains(capabilityActionCard, "Service-only greeter")
+    .click(capabilityActionCard)
+    .grainFrame()
+    .waitForElementVisible("#service-result", medium_wait)
+    .assert.textContains("#service-result", "service: success service-only hello from Powerbox")
+    .assert.textContains("#service-result", "service-only hello after Powerbox restore")
+    .assert.textContains("#service-result", "revoked=true");
+};
