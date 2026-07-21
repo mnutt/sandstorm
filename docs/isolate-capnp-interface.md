@@ -604,11 +604,12 @@ Implemented checkpoint (partial):
 - The event transport uses workerd's `AsyncLocalStorage` support to retain the correct native
   frame sink across asynchronous continuations. Concurrent calls and facade-owned streams no
   longer send callback traffic through whichever RPC event happened to run most recently.
-- Dual-path conformance covers streaming uploads and a multi-megabyte streamed response. The
-  correctness checkpoint buffers a streaming request up to 64 MiB because workerd I/O objects
-  cannot move between the independent `RequestStream` RPC events. Response metadata returns while
-  the body pump continues through tracked event-scoped `waitUntil()` work; the native host routes
-  post-Return `Finish` separately so it cannot deadlock callback Returns from that body pump.
+- Dual-path conformance covers pull-based streaming uploads and a multi-megabyte streamed response.
+  `ByteStreamSource` keeps each upload chunk in the WebSession call's event context, so the facade
+  can expose a real Fetch `ReadableStream` without buffering the complete request or moving a
+  workerd I/O object between RPC events. Response metadata returns while the response-body pump
+  continues through tracked event-scoped `waitUntil()` work; the native host routes post-Return
+  `Finish` separately so it cannot deadlock callback Returns from that body pump.
 - Fetch requests created by the JS `WebSession` facade retain their originating UI session in a
   private weak association. Powerbox offer, fulfill, tie, and claim helpers use the actual
   `SessionContext` capability passed to `newSession()` instead of asking the legacy isolate bridge
@@ -636,13 +637,16 @@ Implemented checkpoint (partial):
   adapts messages directly to `kj::WebSocket`, falling back to the raw method only for old session
   implementations. `mainViewFromFetch()` exposes a message-handler facade whose callbacks each run
   as their own worker RPC event; new isolate sessions do not implement the raw-frame method.
-- `Util.ByteStreamSource` and the additive pull-streaming WebSession methods define the analogous
-  event-safe upload contract. The native and JavaScript adapters still need to be connected before
-  this replaces the current buffered correctness path.
+- `Util.ByteStreamSource` and the additive pull-streaming WebSession methods now provide the
+  event-safe upload contract from the shell's KJ request body to the worker's Fetch
+  `ReadableStream`. New `mainViewFromFetch()` sessions implement only the pull methods; the old
+  push-stream methods remain solely in the shell compatibility fallback for older session
+  implementations. Integration coverage verifies full consumption as well as an early response
+  that cancels the unread source, rather than disguising complete-body buffering as streaming.
 
 This checkpoint includes request/response conversion and streaming scaffolding, but it is not
 yet the Phase 5 compatibility switch. Logical WebSockets now pass through the direct worker path;
-full-duplex request streaming and end-to-end browser-shell conformance remain before cutover.
+end-to-end browser-shell conformance remains before cutover.
 
 ### Phase 6: Support service-only grains in packages and the shell
 

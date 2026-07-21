@@ -350,6 +350,62 @@ private:
   kj::Own<kj::PromiseFulfiller<uint64_t>> doneFulfiller;
 };
 
+class FixedByteStreamSource final: public ByteStreamSource::Server {
+public:
+  explicit FixedByteStreamSource(kj::String data): data(kj::mv(data)) {}
+
+  kj::Promise<void> read(ReadContext context) override {
+    auto maxBytes = context.getParams().getMaxBytes();
+    KJ_REQUIRE(maxBytes > 0);
+    auto result = context.getResults().initResult();
+    if (offset == data.size()) {
+      result.setDone();
+    } else {
+      auto size = kj::min(static_cast<size_t>(maxBytes), data.size() - offset);
+      result.setData(data.asBytes().slice(offset, offset + size));
+      offset += size;
+    }
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> cancel(CancelContext context) override {
+    (void)context;
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::String data;
+  size_t offset = 0;
+};
+
+class CancelAfterFirstByteStreamSource final: public ByteStreamSource::Server {
+public:
+  explicit CancelAfterFirstByteStreamSource(
+      kj::Own<kj::PromiseFulfiller<void>> cancelFulfiller)
+      : cancelFulfiller(kj::mv(cancelFulfiller)) {}
+
+  kj::Promise<void> read(ReadContext context) override {
+    KJ_REQUIRE(!readCalled, "duplex upload source was read past its first chunk");
+    readCalled = true;
+    context.getResults().initResult().setData(kj::StringPtr("first-chunk").asBytes());
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> cancel(CancelContext context) override {
+    (void)context;
+    if (!cancelled) {
+      cancelled = true;
+      cancelFulfiller->fulfill();
+    }
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Own<kj::PromiseFulfiller<void>> cancelFulfiller;
+  bool readCalled = false;
+  bool cancelled = false;
+};
+
 class GatedCountingByteStream final: public ByteStream::Server {
 public:
   GatedCountingByteStream(kj::Promise<void> firstWriteGate,
@@ -472,11 +528,12 @@ kj::String fetchViewPath(
 
 void testWorkerUiStreaming(kj::WaitScope& waitScope, UiView::Client view) {
   auto session = newWebSessionFromView(waitScope, view);
-  auto request = session.postStreamingRequest();
+  auto request = session.postStreamingPullRequest();
   request.setPath("upload-stream");
   request.setMimeType("application/octet-stream");
   request.setEncoding("");
   request.setExpectedSize(17);
+  request.setBody(kj::heap<FixedByteStreamSource>(kj::str("worker-ui-stream!")));
   auto context = request.initContext();
   auto streamedBody = kj::newPromiseAndFulfiller<kj::String>();
   context.setResponseStream(kj::heap<CollectByteStream>(kj::mv(streamedBody.fulfiller)));
@@ -484,13 +541,7 @@ void testWorkerUiStreaming(kj::WaitScope& waitScope, UiView::Client view) {
   context.initAccept(0);
   context.initAcceptEncoding(0);
   context.initAdditionalHeaders(0);
-  auto stream = request.send().wait(waitScope).getStream();
-  auto responsePromise = stream.getResponseRequest().send();
-  auto write = stream.writeRequest();
-  write.setData(kj::StringPtr("worker-ui-stream!").asBytes());
-  write.send().wait(waitScope);
-  stream.doneRequest().send().wait(waitScope);
-  auto response = responsePromise.wait(waitScope);
+  auto response = request.send().wait(waitScope);
   KJ_REQUIRE(response.which() == WebSession::Response::CONTENT, response.which());
   auto body = response.getContent().getBody();
   auto text = body.isBytes()
@@ -498,6 +549,32 @@ void testWorkerUiStreaming(kj::WaitScope& waitScope, UiView::Client view) {
       : streamedBody.promise.wait(waitScope);
   KJ_REQUIRE(contains(text, "\"bodyBytes\":17"),
       "JS WebSession facade did not stream a request body", text);
+
+  auto duplex = session.postStreamingPullRequest();
+  duplex.setPath("upload-duplex");
+  duplex.setMimeType("application/octet-stream");
+  duplex.setEncoding("");
+  duplex.setExpectedSize(0);
+  auto cancelled = kj::newPromiseAndFulfiller<void>();
+  duplex.setBody(kj::heap<CancelAfterFirstByteStreamSource>(kj::mv(cancelled.fulfiller)));
+  auto duplexContext = duplex.initContext();
+  auto duplexStreamedBody = kj::newPromiseAndFulfiller<kj::String>();
+  duplexContext.setResponseStream(
+      kj::heap<CollectByteStream>(kj::mv(duplexStreamedBody.fulfiller)));
+  duplexContext.initCookies(0);
+  duplexContext.initAccept(0);
+  duplexContext.initAcceptEncoding(0);
+  duplexContext.initAdditionalHeaders(0);
+  auto duplexResponse = duplex.send().wait(waitScope);
+  KJ_REQUIRE(duplexResponse.which() == WebSession::Response::CONTENT,
+      duplexResponse.which());
+  auto duplexBody = duplexResponse.getContent().getBody();
+  auto duplexText = duplexBody.isBytes()
+      ? kj::str(duplexBody.getBytes().asChars())
+      : duplexStreamedBody.promise.wait(waitScope);
+  KJ_REQUIRE(contains(duplexText, "\"firstChunkBytes\":11"),
+      "worker did not respond before consuming the whole upload", duplexText);
+  cancelled.promise.wait(waitScope);
 
   auto download = session.getRequest();
   download.setPath("download-stream?bytes=2097169");

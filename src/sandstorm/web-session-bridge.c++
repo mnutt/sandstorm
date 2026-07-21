@@ -169,6 +169,67 @@ private:
   kj::Own<MessageWebSocketState> state;
 };
 
+class HttpRequestByteStreamSource final: public ByteStreamSource::Server,
+                                         public kj::Refcounted {
+public:
+  explicit HttpRequestByteStreamSource(kj::AsyncInputStream& input): input(&input) {}
+
+  ~HttpRequestByteStreamSource() noexcept {
+    detach();
+  }
+
+  void detach() noexcept {
+    if (input != nullptr) {
+      input = nullptr;
+      canceler.cancel("HTTP request byte source was detached");
+    }
+  }
+
+protected:
+  kj::Promise<void> read(ReadContext context) override {
+    auto maxBytes = context.getParams().getMaxBytes();
+    KJ_REQUIRE(maxBytes > 0, "ByteStreamSource.read() maxBytes must be nonzero");
+    KJ_REQUIRE(maxBytes <= 1024 * 1024,
+        "ByteStreamSource.read() exceeds the one-megabyte chunk limit", maxBytes);
+    KJ_REQUIRE(!readPending, "ByteStreamSource permits only one outstanding read");
+    KJ_REQUIRE(input != nullptr, "HTTP request byte source is no longer available");
+
+    if (eof) {
+      context.getResults().initResult().setDone();
+      return kj::READY_NOW;
+    }
+
+    readPending = true;
+    auto buffer = kj::heapArray<byte>(maxBytes);
+    return canceler.wrap(input->tryRead(buffer.begin(), 1, buffer.size())).then(
+        [this, context, buffer = kj::mv(buffer)](size_t size) mutable {
+      readPending = false;
+      auto result = context.getResults().initResult();
+      if (size == 0) {
+        eof = true;
+        result.setDone();
+      } else {
+        result.setData(buffer.slice(0, size));
+      }
+    }, [this](kj::Exception&& exception) {
+      readPending = false;
+      kj::throwRecoverableException(kj::mv(exception));
+    });
+  }
+
+  kj::Promise<void> cancel(CancelContext context) override {
+    (void)context;
+    detach();
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::AsyncInputStream* input;
+  kj::Canceler canceler;
+  bool readPending = false;
+  bool eof = false;
+};
+
 WebSessionBridge::Tables::Tables(kj::HttpHeaderTable::Builder& headerTableBuilder)
     : headerTable(headerTableBuilder.getFutureTable()),
       hAccessControlAllowHeaders(headerTableBuilder.add("Access-Control-Allow-Headers")),
@@ -278,33 +339,50 @@ kj::Promise<void> WebSessionBridge::request(
         }
       }
 
-      // Fall back to streaming.
-      auto req = session.postStreamingRequest();
+      auto doLegacyStreaming =
+          [this, path, &headers, &requestBody, &response,
+              doNonStreaming = kj::mv(doNonStreaming)]() mutable {
+        auto req = session.postStreamingRequest();
+        req.setPath(path);
+        initContent(req, headers);
+        KJ_IF_MAYBE(length, requestBody.tryGetLength()) {
+          req.setExpectedSize(*length);
+        }
+        auto streamer = initContext(req.initContext(), headers);
+        return req.send().then(
+            [this, &requestBody, &response, KJ_MVCAP(streamer)]
+                (capnp::Response<WebSession::PostStreamingResults> result) mutable {
+          return handleStreamingRequestResponse(
+              result.getStream(), requestBody, kj::mv(streamer), response);
+        }, [doNonStreaming = kj::mv(doNonStreaming)](kj::Exception&& e) mutable
+                -> kj::Promise<void> {
+          if (e.getType() == kj::Exception::Type::UNIMPLEMENTED ||
+              (e.getType() == kj::Exception::Type::FAILED &&
+               strstr(e.getDescription().cStr(), "not implemented") != nullptr)) {
+            return doNonStreaming();
+          }
+          return kj::mv(e);
+        });
+      };
+
+      auto source = kj::refcounted<HttpRequestByteStreamSource>(requestBody);
+      auto req = session.postStreamingPullRequest();
       req.setPath(path);
       initContent(req, headers);
       KJ_IF_MAYBE(length, requestBody.tryGetLength()) {
         req.setExpectedSize(*length);
       }
+      req.setBody(kj::addRef(*source));
       auto streamer = initContext(req.initContext(), headers);
-
-      // TODO(apibump): Currently we can't pipeline on the stream because we have to handle the
-      //   case of old apps which don't support streaming. That fallback should move into the
-      //   compat layer, then we can avoid the round-trip here.
-      return req.send()
-          .then([this,&requestBody,&response,KJ_MVCAP(streamer)]
-                (capnp::Response<WebSession::PostStreamingResults> result) mutable {
-        return handleStreamingRequestResponse(
-            result.getStream(), requestBody, kj::mv(streamer), response);
-      }, [KJ_MVCAP(doNonStreaming)](kj::Exception&& e) -> kj::Promise<void> {
-        // Unfortunately, some apps are so old that they don't know about UNIMPLEMENTED exceptions,
-        // so we have to check the description.
+      auto pull = handleResponse(req.send(), kj::mv(streamer), response)
+          .attach(kj::defer([source = kj::mv(source)]() mutable { source->detach(); }));
+      return pull.catch_([doLegacyStreaming = kj::mv(doLegacyStreaming)](
+          kj::Exception&& e) mutable -> kj::Promise<void> {
         if (e.getType() == kj::Exception::Type::UNIMPLEMENTED ||
             (e.getType() == kj::Exception::Type::FAILED &&
              strstr(e.getDescription().cStr(), "not implemented") != nullptr)) {
-          // OK, fine. Fall back to non-streaming.
-          return doNonStreaming();
+          return doLegacyStreaming();
         }
-
         return kj::mv(e);
       });
     }
@@ -330,33 +408,50 @@ kj::Promise<void> WebSessionBridge::request(
         }
       }
 
-      // Fall back to streaming.
-      auto req = session.putStreamingRequest();
+      auto doLegacyStreaming =
+          [this, path, &headers, &requestBody, &response,
+              doNonStreaming = kj::mv(doNonStreaming)]() mutable {
+        auto req = session.putStreamingRequest();
+        req.setPath(path);
+        initContent(req, headers);
+        KJ_IF_MAYBE(length, requestBody.tryGetLength()) {
+          req.setExpectedSize(*length);
+        }
+        auto streamer = initContext(req.initContext(), headers);
+        return req.send().then(
+            [this, &requestBody, &response, KJ_MVCAP(streamer)]
+                (capnp::Response<WebSession::PutStreamingResults> result) mutable {
+          return handleStreamingRequestResponse(
+              result.getStream(), requestBody, kj::mv(streamer), response);
+        }, [doNonStreaming = kj::mv(doNonStreaming)](kj::Exception&& e) mutable
+                -> kj::Promise<void> {
+          if (e.getType() == kj::Exception::Type::UNIMPLEMENTED ||
+              (e.getType() == kj::Exception::Type::FAILED &&
+               strstr(e.getDescription().cStr(), "not implemented") != nullptr)) {
+            return doNonStreaming();
+          }
+          return kj::mv(e);
+        });
+      };
+
+      auto source = kj::refcounted<HttpRequestByteStreamSource>(requestBody);
+      auto req = session.putStreamingPullRequest();
       req.setPath(path);
       initContent(req, headers);
       KJ_IF_MAYBE(length, requestBody.tryGetLength()) {
         req.setExpectedSize(*length);
       }
+      req.setBody(kj::addRef(*source));
       auto streamer = initContext(req.initContext(), headers);
-
-      // TODO(apibump): Currently we can't pipeline on the stream because we have to handle the
-      //   case of old apps which don't support streaming. That fallback should move into the
-      //   compat layer, then we can avoid the round-trip here.
-      return req.send()
-          .then([this,&requestBody,&response,KJ_MVCAP(streamer)]
-                (capnp::Response<WebSession::PutStreamingResults> result) mutable {
-        return handleStreamingRequestResponse(
-            result.getStream(), requestBody, kj::mv(streamer), response);
-      }, [KJ_MVCAP(doNonStreaming)](kj::Exception&& e) -> kj::Promise<void> {
-        // Unfortunately, some apps are so old that they don't know about UNIMPLEMENTED exceptions,
-        // so we have to check the description.
+      auto pull = handleResponse(req.send(), kj::mv(streamer), response)
+          .attach(kj::defer([source = kj::mv(source)]() mutable { source->detach(); }));
+      return pull.catch_([doLegacyStreaming = kj::mv(doLegacyStreaming)](
+          kj::Exception&& e) mutable -> kj::Promise<void> {
         if (e.getType() == kj::Exception::Type::UNIMPLEMENTED ||
             (e.getType() == kj::Exception::Type::FAILED &&
              strstr(e.getDescription().cStr(), "not implemented") != nullptr)) {
-          // OK, fine. Fall back to non-streaming.
-          return doNonStreaming();
+          return doLegacyStreaming();
         }
-
         return kj::mv(e);
       });
     }

@@ -513,59 +513,65 @@ async function runUiFetch(session, request, context, callContext) {
   }
 }
 
-function streamingRequestTarget(session, method, params) {
-  const expectedSize = Number(params.expectedSize || 0n);
-  const chunks = [];
-  let written = 0;
-  let closed = false;
-  let failure = null;
-
-  return {
-    async write({ data }) {
-      if (closed) throw new Error("streaming request is closed");
-      const bytes = new Uint8Array(capnpDataBytes(data));
-      const copy = new Uint8Array(bytes);
-      written += copy.byteLength;
-      if (written > MAX_WEB_SESSION_BODY_BYTES || (expectedSize !== 0 && written > expectedSize)) {
-        closed = true;
-        failure = new Error("streaming request exceeds declared limit");
-        chunks.length = 0;
-        throw failure;
-      }
-      chunks.push(copy);
-    },
-    async done() {
-      if (closed) return;
-      closed = true;
-      if (expectedSize !== 0 && written !== expectedSize) {
-        failure = new Error("streaming request size did not match declaration");
-        chunks.length = 0;
-        throw failure;
-      }
-    },
-    async getResponse(_params, callContext) {
-      // A workerd I/O object belongs to the request context that created it. ByteStream.write()
-      // calls intentionally run in independent RPC events, so retain only plain copied bytes
-      // between calls and create the Fetch Request here, in getResponse()'s own context.
-      while (!closed) {
-        if (callContext.signal.aborted) throw callContext.signal.reason;
-        await new Promise(resolve => setTimeout(resolve, 0));
-      }
-      if (failure) throw failure;
-      const body = new Blob(chunks, { type: params.mimeType || "application/octet-stream" });
-      chunks.length = 0;
-      const request = webSessionRequest(
-        session, method, params.path, params.context, body, params.mimeType, params.encoding);
-      return await runUiFetch(session, request, params.context, callContext);
-    },
-    [Symbol.for("capnp-es.dispose")]() {
-      if (!closed) {
-        closed = true;
-        failure = new Error("streaming request was canceled");
-        chunks.length = 0;
-      }
-    },
+function readableFromByteStreamSource(source, expectedSize, signal) {
+  const expected = Number(expectedSize || 0n);
+  let read = 0;
+  let finished = false;
+  const abort = () => {
+    if (!finished) source.cancel({}).catch(() => {});
   };
+  signal.addEventListener("abort", abort, { once: true });
+
+  return new ReadableStream({
+    async pull(controller) {
+      if (signal.aborted) {
+        finished = true;
+        controller.error(signal.reason);
+        return;
+      }
+      const { result } = await source.read({ maxBytes: 65536 });
+      switch (result.which()) {
+        case 0: {
+          const bytes = new Uint8Array(capnpDataBytes(result.data));
+          if (bytes.byteLength === 0) {
+            throw new Error("ByteStreamSource returned an empty data chunk");
+          }
+          read += bytes.byteLength;
+          if (read > MAX_WEB_SESSION_BODY_BYTES || (expected !== 0 && read > expected)) {
+            finished = true;
+            await source.cancel({}).catch(() => {});
+            throw new Error("streaming request exceeds declared limit");
+          }
+          controller.enqueue(bytes);
+          return;
+        }
+        case 1:
+          finished = true;
+          signal.removeEventListener("abort", abort);
+          if (expected !== 0 && read !== expected) {
+            throw new Error("streaming request size did not match declaration");
+          }
+          controller.close();
+          return;
+        default:
+          throw new Error("ByteStreamSource returned an unknown result");
+      }
+    },
+    async cancel() {
+      if (finished) return;
+      finished = true;
+      signal.removeEventListener("abort", abort);
+      await source.cancel({}).catch(() => {});
+    },
+  });
+}
+
+async function runPullStreamingUiFetch(session, method, params, callContext) {
+  const body = readableFromByteStreamSource(
+    params.body, params.expectedSize, callContext.signal);
+  const request = webSessionRequest(
+    session, method, params.path, params.context, body, params.mimeType, params.encoding);
+  return await runUiFetch(session, request, params.context, callContext);
 }
 
 function webSocketFacade(clientStream) {
@@ -660,19 +666,10 @@ function webSessionFromFetchTarget(session) {
     put: invoke("PUT", params => capnpDataBytes(params.content.content)),
     patch: invoke("PATCH", params => capnpDataBytes(params.content.content)),
     delete: invoke("DELETE"),
-    postStreaming(params) {
-      const streamTarget = streamingRequestTarget(session, "POST", params);
-      return { stream: createWorkerCapnpClient(
-        WebSession.RequestStream, streamTarget, "Fetch request stream") };
-    },
-    putStreaming(params) {
-      const streamTarget = streamingRequestTarget(session, "PUT", params);
-      return { stream: createWorkerCapnpClient(
-        WebSession.RequestStream, streamTarget, "Fetch request stream") };
-    },
-    openWebSocket() {
-      throw new Error("raw WebSession WebSocket framing is only available on the legacy path");
-    },
+    postStreamingPull: (params, callContext) =>
+      runPullStreamingUiFetch(session, "POST", params, callContext),
+    putStreamingPull: (params, callContext) =>
+      runPullStreamingUiFetch(session, "PUT", params, callContext),
     propfind: invoke("PROPFIND", params => new TextEncoder().encode(params.xmlContent),
       (headers, params) => {
         headers.set("content-type", "application/xml;charset=utf-8");

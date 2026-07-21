@@ -782,6 +782,18 @@ async function isolateTestFetch(request, env, ctx) {
       });
     }
 
+    if (url.pathname === "/upload-duplex") {
+      const reader = request.body.getReader();
+      const { done, value } = await reader.read();
+      if (done) throw new Error("duplex upload ended before its first chunk");
+      await reader.cancel("response completed before upload EOF");
+      return Response.json({
+        ok: true,
+        method: request.method,
+        firstChunkBytes: value.byteLength,
+      });
+    }
+
     if (url.pathname === "/upload") {
       const body = new Uint8Array(await request.arrayBuffer());
       return Response.json({
