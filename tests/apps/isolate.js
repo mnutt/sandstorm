@@ -45,6 +45,28 @@ function installAndOpenIsolateTestApp(browser) {
     .waitForElementVisible("#grainTitle", medium_wait);
 }
 
+function installAndOpenDirectMainView(browser) {
+  var directActionSelector =
+      "//table[contains(@class, 'grain-list-table')]//button[contains(@class, 'action') and " +
+      "normalize-space(.)='Create new direct MainView instance']";
+  return browser
+    .init()
+    .loginDevAccount()
+    .url(browser.launch_url + "/upload-test")
+    .waitForElementVisible("#upload-app", short_wait)
+    .setValue("#upload-app", isolateTestAppPath)
+    .waitForElementVisible("#step-confirm", long_wait)
+    .click("#confirmInstall")
+    .waitForElementNotPresent("#confirmInstall", long_wait)
+    .disableGuidedTour()
+    .url(browser.launch_url + "/apps/" + isolateTestAppId)
+    .useXpath()
+    .waitForElementVisible(directActionSelector, long_wait)
+    .click(directActionSelector)
+    .useCss()
+    .waitForElementVisible("#grainTitle", medium_wait);
+}
+
 module.exports["Test isolate grain health and storage after restart"] = function (browser) {
   installAndOpenIsolateTestApp(browser)
     .url(function (grainUrl) {
@@ -96,4 +118,18 @@ module.exports["Test service-only capability action through Powerbox"] = functio
     .assert.textContains("#service-result", "service: success service-only hello from Powerbox")
     .assert.textContains("#service-result", "service-only hello after Powerbox restore")
     .assert.textContains("#service-result", "revoked=true");
+};
+
+module.exports["Test direct MainView browser fetch and WebSocket"] = function (browser) {
+  installAndOpenDirectMainView(browser)
+    .grainFrame()
+    .execute(function () {
+      window.location.href = "/browser-direct-main-view";
+    })
+    .waitForElementVisible("#fetch", medium_wait)
+    .click("#fetch")
+    .assert.textContains("#fetch-result", "fetch: direct MainView success ok")
+    .click("#websocket")
+    .assert.textContains(
+      "#websocket-result", "websocket: direct MainView success text binary close");
 };

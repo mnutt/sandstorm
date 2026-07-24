@@ -68,37 +68,43 @@ public:
   kj::Promise<void> sendText(kj::StringPtr message) {
     auto copy = kj::heapString(message);
     return enqueue([this, copy = kj::mv(copy)]() mutable {
-      return webSocket->send(copy.asArray()).attach(kj::mv(copy));
+      return KJ_REQUIRE_NONNULL(webSocket)->send(copy.asArray()).attach(kj::mv(copy));
     });
   }
 
   kj::Promise<void> sendData(kj::ArrayPtr<const byte> message) {
     auto copy = kj::heapArray(message);
     return enqueue([this, copy = kj::mv(copy)]() mutable {
-      return webSocket->send(copy.asPtr()).attach(kj::mv(copy));
+      return KJ_REQUIRE_NONNULL(webSocket)->send(copy.asPtr()).attach(kj::mv(copy));
     });
   }
 
   kj::Promise<void> close(uint16_t code, kj::StringPtr reason) {
-    KJ_REQUIRE(!closed, "WebSocket is already closed");
+    if (closed) return kj::READY_NOW;
     closed = true;
     auto copy = kj::heapString(reason);
     auto fork = sendQueue.then([this, code, copy = kj::mv(copy)]() mutable {
-      return webSocket->close(code, copy).attach(kj::mv(copy));
+      return KJ_REQUIRE_NONNULL(webSocket)->close(code, copy).attach(kj::mv(copy));
     }).fork();
     sendQueue = fork.addBranch();
     return fork.addBranch();
   }
 
   void abort() noexcept {
-    if (!closed) {
-      closed = true;
-      webSocket->abort();
+    closed = true;
+    KJ_IF_MAYBE(socket, webSocket) {
+      (*socket)->abort();
+      webSocket = nullptr;
     }
   }
 
+  void releaseWebSocket() noexcept {
+    closed = true;
+    webSocket = nullptr;
+  }
+
   kj::Promise<void> pumpToWorker() {
-    return webSocket->receive().then(
+    return KJ_REQUIRE_NONNULL(webSocket)->receive().then(
         [self = kj::addRef(*this)](kj::WebSocket::Message&& message) mutable
             -> kj::Promise<void> {
       KJ_SWITCH_ONEOF(message) {
@@ -117,11 +123,17 @@ public:
           });
         }
         KJ_CASE_ONEOF(close, kj::WebSocket::Close) {
-          self->closed = true;
-          auto request = self->outgoing.closeRequest();
-          request.setCode(close.code);
-          request.setReason(close.reason);
-          return request.send();
+          auto code = close.code;
+          auto reason = kj::heapString(close.reason);
+          return self->close(code, reason).then(
+              [self = kj::mv(self), code, reason = kj::mv(reason)]() mutable {
+            auto request = self->outgoing.closeRequest();
+            request.setCode(code);
+            request.setReason(reason);
+            return request.send().then([self = kj::mv(self)]() mutable {
+              self->releaseWebSocket();
+            }).attach(kj::mv(reason));
+          });
         }
       }
       KJ_UNREACHABLE;
@@ -129,7 +141,7 @@ public:
   }
 
 private:
-  kj::Own<kj::WebSocket> webSocket;
+  kj::Maybe<kj::Own<kj::WebSocket>> webSocket;
   WebSession::WebSocketMessageStream::Client outgoing;
   kj::Promise<void> sendQueue = kj::READY_NOW;
   bool closed = false;
@@ -797,7 +809,13 @@ kj::Promise<void> WebSessionBridge::openWebSocketMessages(
         response.acceptWebSocket(headers), rpcResponse.getServerStream());
     clientStreamFulfillerRef.fulfill(
         kj::heap<MessageWebSocketSink>(kj::addRef(*state)));
-    return state->pumpToWorker().attach(kj::mv(state));
+    return state->pumpToWorker().then(
+        [state = kj::addRef(*state)]() mutable {
+      state->releaseWebSocket();
+    }, [state = kj::addRef(*state)](kj::Exception&& exception) mutable {
+      state->abort();
+      kj::throwRecoverableException(kj::mv(exception));
+    }).attach(kj::mv(state));
   }, [&clientStreamFulfillerRef](kj::Exception&& exception) -> kj::Promise<void> {
     clientStreamFulfillerRef.reject(kj::cp(exception));
     return kj::mv(exception);

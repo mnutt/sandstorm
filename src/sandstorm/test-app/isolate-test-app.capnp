@@ -159,7 +159,7 @@ const pkgdef :Spk.PackageDefinition = (
         command = .isolateCommand
       ),
       ( title = (defaultText = "New Direct MainView Test Instance"),
-        nounPhrase = (defaultText = "instance"),
+        nounPhrase = (defaultText = "direct MainView instance"),
         command = .isolateMainViewCommand
       ),
       ( title = (defaultText = "New Service-only Test Instance"),

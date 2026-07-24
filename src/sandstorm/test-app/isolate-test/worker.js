@@ -510,6 +510,81 @@ function renderBrowserStoragePage() {
 </html>`;
 }
 
+function renderDirectMainViewPage() {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Direct MainView Browser Conformance</title>
+  </head>
+  <body>
+    <button id="fetch" type="button">test direct fetch</button>
+    <button id="websocket" type="button">test direct websocket</button>
+    <pre id="fetch-result">fetch not tested</pre>
+    <pre id="websocket-result">websocket not tested</pre>
+
+    <script type="module">
+      document.querySelector("#fetch").addEventListener("click", async () => {
+        const result = document.querySelector("#fetch-result");
+        result.textContent = "fetching";
+        try {
+          const response = await fetch("/browser-storage-health");
+          const body = await response.json();
+          result.textContent = response.ok && body.ok
+            ? "fetch: direct MainView success " + body.status
+            : JSON.stringify(body);
+        } catch (error) {
+          result.textContent = (error.message || String(error)) +
+            "\\n" + (error.stack || "");
+        }
+      });
+
+      document.querySelector("#websocket").addEventListener("click", () => {
+        const result = document.querySelector("#websocket-result");
+        result.textContent = "websocket: connecting";
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const socket = new WebSocket(protocol + "//" + location.host + "/websocket-echo");
+        socket.binaryType = "arraybuffer";
+        let textSeen = false;
+        let binarySeen = false;
+        let closing = false;
+
+        function maybeClose() {
+          if (textSeen && binarySeen && !closing) {
+            closing = true;
+            socket.close(4000, "browser conformance complete");
+          }
+        }
+
+        socket.addEventListener("open", () => {
+          socket.send("browser-text");
+          socket.send(new Uint8Array([1, 2, 3, 255]));
+        });
+        socket.addEventListener("message", (event) => {
+          if (typeof event.data === "string") {
+            textSeen = event.data === "capnp:browser-text";
+          } else {
+            const bytes = new Uint8Array(event.data);
+            binarySeen = bytes.length === 4 && bytes[0] === 1 && bytes[1] === 2 &&
+              bytes[2] === 3 && bytes[3] === 255;
+          }
+          maybeClose();
+        });
+        socket.addEventListener("close", (event) => {
+          result.textContent = textSeen && binarySeen && event.code === 4000
+            ? "websocket: direct MainView success text binary close"
+            : "websocket failed: text=" + textSeen + " binary=" + binarySeen +
+              " close=" + event.code + " reason=" + event.reason;
+        });
+        socket.addEventListener("error", () => {
+          result.textContent = "websocket failed: browser error";
+        });
+      });
+    </script>
+  </body>
+</html>`;
+}
+
 async function isolateTestFetch(request, env, ctx) {
     const api = sandstorm(request, env);
     const url = new URL(request.url);
@@ -735,6 +810,12 @@ async function isolateTestFetch(request, env, ctx) {
 
     if (url.pathname === "/browser-storage-test") {
       return new Response(renderBrowserStoragePage(), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (url.pathname === "/browser-direct-main-view") {
+      return new Response(renderDirectMainViewPage(), {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }

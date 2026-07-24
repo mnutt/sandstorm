@@ -653,6 +653,9 @@ Implemented checkpoint (partial):
   push-stream methods remain solely in the shell compatibility fallback for older session
   implementations. Integration coverage verifies full consumption as well as an early response
   that cancels the unread source, rather than disguising complete-body buffering as streaming.
+- Browser-shell conformance now opens the package's direct `MainView` action rather than resolving
+  the legacy route-backed adapter. It verifies a browser Fetch request plus logical text, binary,
+  and close WebSocket messages through the JS-exported `MainView`/`WebSession` capability path.
 
 This checkpoint includes request/response conversion and streaming scaffolding, but it is not
 yet the Phase 5 compatibility switch. Logical WebSockets now pass through the direct worker path;
