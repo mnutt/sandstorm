@@ -7,6 +7,7 @@ import {
   defineWorker,
   readCapnpStruct,
   serveCapnp,
+  storage,
 } from "sandstorm:api";
 
 const makeGreeter = () => ({
@@ -18,6 +19,26 @@ const makeGreeter = () => ({
   },
   async hello({ name }) {
     return { message: `service-only hello ${name}` };
+  },
+
+  async storageRoundTrip({ key, value }, callContext) {
+    const typedOnlyEnv = new Proxy(callContext.env, {
+      get(target, property, receiver) {
+        if (property === "STORAGE") {
+          throw new Error("typed storage helper accessed the legacy Fetcher binding");
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const store = storage(typedOnlyEnv);
+    await store.put(key, value);
+    const stored = await store.getBytes(key);
+    const listing = await store.list();
+    await store.delete(key);
+    return {
+      value: stored,
+      listed: listing.keys.some((entry) => entry.name === key),
+    };
   },
 });
 

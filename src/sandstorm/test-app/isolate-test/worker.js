@@ -831,31 +831,26 @@ async function isolateTestFetch(request, env, ctx) {
     if (url.pathname === "/browser-storage-write" && request.method === "POST") {
       const body = await request.json();
       const value = String(body.value || "");
-      const put = await env.STORAGE.fetch("http://storage/browser-storage-test", {
-        method: "PUT",
-        body: value,
-      });
-      const putBody = await put.json();
+      const put = await sandstorm(request, env).storage().put("browser-storage-test", value);
       return Response.json({
-        ok: put.ok && putBody.ok,
+        ok: put.ok,
         value,
-        put: putBody,
-      }, { status: put.ok ? 200 : 500 });
+        put,
+      });
     }
 
     if (url.pathname === "/browser-storage-read") {
-      const get = await env.STORAGE.fetch("http://storage/browser-storage-test");
-      if (get.status === 404) {
+      const value = await sandstorm(request, env).storage().get("browser-storage-test");
+      if (value === undefined) {
         return Response.json({
           ok: false,
           error: "missing storage value",
         }, { status: 404 });
       }
-      const value = await get.text();
       return Response.json({
-        ok: get.ok,
+        ok: true,
         value,
-      }, { status: get.ok ? 200 : 500 });
+      });
     }
 
     if (url.pathname === "/service-target") {

@@ -983,6 +983,16 @@ int main(int argc, char** argv) {
         "service-only hello without UI",
         "service-only worker export did not answer directly");
 
+    auto storage = greeter.storageRoundTripRequest();
+    storage.setKey("service-only-typed-storage");
+    storage.setValue(kj::StringPtr("typed storage without Fetch").asBytes());
+    auto storageResult = storage.send().wait(io.waitScope);
+    KJ_REQUIRE(storageResult.getValue() ==
+        kj::StringPtr("typed storage without Fetch").asBytes(),
+        "service-only typed storage returned the wrong value");
+    KJ_REQUIRE(storageResult.getListed(),
+        "service-only typed storage did not list the stored value");
+
     auto saveRequest = greeter.castAs<sandstorm::SystemPersistent>().saveRequest();
     auto tokenOwner = saveRequest.getSealFor().initGrain();
     tokenOwner.setGrainId(argv[2]);

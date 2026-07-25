@@ -1065,54 +1065,51 @@ class NativeCapnpBridgeUnavailableError extends Error {
   }
 }
 
-function storageUrl(key = "") {
-  return `http://storage/${encodeURIComponent(key === "" ? "" : validate.storageKey(key))}`;
+async function withIsolateStorageRpc(env, operation) {
+  return withIsolateBridgeRpc(env, async (bridge) => {
+    const result = await bridge.getStorage({});
+    if (!result.storage || typeof result.storage !== "object") {
+      throw new Error("isolate bridge returned an invalid storage capability");
+    }
+    return operation(result.storage);
+  });
 }
 
-async function readStorageJson(response) {
-  if (!response.ok) {
-    return { ok: false, status: response.status, body: await response.text() };
+function storageValueBytes(value) {
+  if (value instanceof Uint8Array ||
+      value instanceof ArrayBuffer ||
+      ArrayBuffer.isView(value) ||
+      (value && typeof value.toUint8Array === "function")) {
+    return capnpDataBytes(value);
   }
-  return response.json();
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return new TextEncoder().encode(text);
 }
 
 export function storage(env) {
   return {
     async put(key, value) {
-      const response = await env.STORAGE.fetch(storageUrl(key), {
-        method: "PUT",
-        body: typeof value === "string" || value instanceof Uint8Array
-          ? value
-          : JSON.stringify(value),
-      });
-      return readStorageJson(response);
+      key = validate.storageKey(key);
+      const result = await withIsolateStorageRpc(env, (store) => store.put({
+        key,
+        value: storageValueBytes(value),
+      }));
+      return { ok: true, bytes: Number(result.bytes) };
     },
 
     async putJson(key, value) {
-      const response = await env.STORAGE.fetch(storageUrl(key), {
-        method: "PUT",
-        headers: { "content-type": "application/json; charset=utf-8" },
-        body: JSON.stringify(value),
-      });
-      return readStorageJson(response);
+      return this.put(key, JSON.stringify(value));
     },
 
     async get(key) {
-      const response = await env.STORAGE.fetch(storageUrl(key));
-      if (response.status === 404) return undefined;
-      if (!response.ok) {
-        throw new Error(`storage get ${key} failed with ${response.status}`);
-      }
-      return response.text();
+      const value = await this.getBytes(key);
+      return value === undefined ? undefined : new TextDecoder().decode(value);
     },
 
     async getBytes(key) {
-      const response = await env.STORAGE.fetch(storageUrl(key));
-      if (response.status === 404) return undefined;
-      if (!response.ok) {
-        throw new Error(`storage getBytes ${key} failed with ${response.status}`);
-      }
-      return new Uint8Array(await response.arrayBuffer());
+      key = validate.storageKey(key);
+      const result = await withIsolateStorageRpc(env, (store) => store.get({ key }));
+      return result.found ? new Uint8Array(capnpDataBytes(result.value)) : undefined;
     },
 
     async getJson(key) {
@@ -1121,20 +1118,31 @@ export function storage(env) {
     },
 
     async head(key) {
-      const response = await env.STORAGE.fetch(storageUrl(key), { method: "HEAD" });
+      key = validate.storageKey(key);
+      const result = await withIsolateStorageRpc(env, (store) => store.stat({ key }));
       return {
-        ok: response.ok,
-        status: response.status,
-        bytes: response.headers.get("x-sandstorm-storage-bytes"),
+        ok: result.found,
+        status: result.found ? 200 : 404,
+        bytes: result.found ? String(result.bytes) : null,
       };
     },
 
     async delete(key) {
-      return readStorageJson(await env.STORAGE.fetch(storageUrl(key), { method: "DELETE" }));
+      key = validate.storageKey(key);
+      await withIsolateStorageRpc(env, (store) => store.remove({ key }));
+      return { ok: true };
     },
 
     async list() {
-      return readStorageJson(await env.STORAGE.fetch(storageUrl()));
+      const result = await withIsolateStorageRpc(env, (store) => store.list({}));
+      return {
+        ok: true,
+        keys: Array.from(result.entries, (entry) => ({
+          name: String(entry.name),
+          bytes: Number(entry.bytes),
+        })),
+        totalBytes: Number(result.totalBytes),
+      };
     },
   };
 }

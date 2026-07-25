@@ -8,6 +8,7 @@ declare module "sandstorm:api" {
   export interface SandstormEnv {
     SANDSTORM_API: Fetcher;
     POWERBOX?: Fetcher;
+    /** @deprecated Use sandstorm(request, env).storage(). */
     STORAGE: Fetcher;
     [binding: string]: unknown;
   }

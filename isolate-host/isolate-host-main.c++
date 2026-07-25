@@ -1598,7 +1598,6 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
   workerd::Frankenvalue env;
   capnp::JsonCodec json;
   kj::Vector<kj::Own<SelfServiceTarget>> selfServices;
-  bool needsNativeBridge = false;
   for (auto& binding: bundle.bindings) {
     switch (binding.type) {
       case IsolateWorkerSource::Binding::TEXT: {
@@ -1620,7 +1619,6 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
         switch (binding.type) {
           case IsolateWorkerSource::Binding::SANDSTORM_API:
             request.setBinding(IsolateBindingServices::Binding::SANDSTORM_API);
-            needsNativeBridge = true;
             break;
           case IsolateWorkerSource::Binding::STORAGE:
             request.setBinding(IsolateBindingServices::Binding::STORAGE);
@@ -1653,14 +1651,12 @@ LoadedWorkerSource buildWorkerSource(IsolateBindingServices::Client services,
         break;
     }
   }
-  if (needsNativeBridge) {
-    auto request = services.getBridgeRequest();
-    env.setProperty(kj::str("__SANDSTORM_NATIVE_CAPNP"),
-        workerd::Frankenvalue::fromDirectCapability(
-            kj::heap<NativeCapnpChannelCapTableEntry>(
-                kj::atomicRefcounted<NativeCapnpChannelProvider>(
-                    request.send().getBridge()))));
-  }
+  auto bridgeRequest = services.getBridgeRequest();
+  env.setProperty(kj::str("__SANDSTORM_NATIVE_CAPNP"),
+      workerd::Frankenvalue::fromDirectCapability(
+          kj::heap<NativeCapnpChannelCapTableEntry>(
+              kj::atomicRefcounted<NativeCapnpChannelProvider>(
+                  bridgeRequest.send().getBridge()))));
   auto compatibility = backing->compatibility.initRoot<workerd::CompatibilityFlags>();
   auto flagsBuilder = kj::heapArrayBuilder<kj::String>(bundle.compatibilityFlags.size() + 1);
   bool hasNodeJsAls = false;

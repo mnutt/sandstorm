@@ -56,6 +56,25 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
   # Publishes the worker's MainView over the native bridge for one supervisor-initiated
   # restore/drop operation. The call remains pending for the lifetime of the registration so the
   # request-scoped worker RPC connection stays alive while returned capabilities are in use.
+
+  getStorage @8 () -> (storage :IsolateStorage);
+  # Returns the grain's private storage as a typed capability. The public JavaScript storage
+  # facade uses this instead of the legacy Fetcher binding.
+}
+
+interface IsolateStorage @0xeeef9ad97721b1d2 {
+  # Supervisor-private typed storage service for isolate workers.
+
+  struct Entry {
+    name @0 :Text;
+    bytes @1 :UInt64;
+  }
+
+  put @0 (key :Text, value :Data) -> (bytes :UInt64);
+  get @1 (key :Text) -> (found :Bool, value :Data);
+  stat @2 (key :Text) -> (found :Bool, bytes :UInt64);
+  remove @3 (key :Text);
+  list @4 () -> (entries :List(Entry), totalBytes :UInt64);
 }
 
 interface BrowserIsolateBridge @0x93fb2746c97b5bea {

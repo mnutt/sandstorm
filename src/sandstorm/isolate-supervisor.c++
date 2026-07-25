@@ -3695,6 +3695,9 @@ kj::Array<kj::String> findIsolateRawQueryParams(kj::StringPtr url, kj::StringPtr
   return results.releaseAsArray();
 }
 
+IsolateStorage::Client makeIsolateStorage(
+    kj::HttpHeaderTable& headerTable, kj::StringPtr storageRootPath);
+
 class SandstormApiBindingService final: public kj::HttpService {
 public:
   SandstormApiBindingService(
@@ -3889,6 +3892,12 @@ private:
       auto params = context.getParams();
       KJ_REQUIRE(params.hasView(), "Cannot register a null MainView capability.");
       return host.registerMainView(params.getRegistrationId(), params.getView());
+    }
+
+    kj::Promise<void> getStorage(GetStorageContext context) override {
+      context.getResults().setStorage(
+          makeIsolateStorage(host.headerTable, config.storageRootPath));
+      return kj::READY_NOW;
     }
 
   private:
@@ -4686,7 +4695,7 @@ IsolateBridge::Client SandstormApiBindingService::makeBridge(
   return kj::heap<IsolateBridgeImpl>(config, host);
 }
 
-class StorageBindingService final: public kj::HttpService {
+class StorageBindingService final: public kj::HttpService, public IsolateStorage::Server {
 public:
   StorageBindingService(kj::HttpHeaderTable& headerTable, kj::StringPtr storageRootPath)
       : headerTable(headerTable), storageRoot(openStorageRoot(storageRootPath)) {}
@@ -4740,6 +4749,89 @@ public:
     }
   }
 
+protected:
+  kj::Promise<void> put(PutContext context) override {
+    auto params = context.getParams();
+    auto key = params.getKey();
+    auto value = params.getValue();
+    requireValidKey(key);
+    KJ_REQUIRE(value.size() <= MAX_STORAGE_VALUE_BYTES,
+        "isolate storage value exceeds maximum allowed size",
+        value.size(), MAX_STORAGE_VALUE_BYTES);
+    KJ_REQUIRE(storagePathIsMissingOrRegular(key),
+        "storage key is blocked by a non-regular file", key);
+    writeStorageFile(key, value.asBytes());
+    context.getResults().setBytes(value.size());
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> get(GetContext context) override {
+    auto key = context.getParams().getKey();
+    requireValidKey(key);
+    KJ_IF_MAYBE(fd, openStorageFileIfExists(key)) {
+      auto body = readAllBytes(*fd);
+      context.getResults().setFound(true);
+      context.getResults().setValue(body);
+    }
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> stat(StatContext context) override {
+    auto key = context.getParams().getKey();
+    requireValidKey(key);
+    KJ_IF_MAYBE(fd, openStorageFileIfExists(key)) {
+      struct stat stats;
+      KJ_SYSCALL(fstat(*fd, &stats));
+      context.getResults().setFound(true);
+      context.getResults().setBytes(stats.st_size);
+    }
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> remove(RemoveContext context) override {
+    auto key = context.getParams().getKey();
+    requireValidKey(key);
+    switch (inspectStoragePath(key)) {
+      case StoragePathState::MISSING:
+        break;
+      case StoragePathState::REGULAR:
+        KJ_SYSCALL(unlinkat(storageRoot, key.cStr(), 0), key);
+        break;
+      case StoragePathState::NON_REGULAR:
+        KJ_FAIL_REQUIRE("storage key is blocked by a non-regular file", key);
+    }
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> list(ListContext context) override {
+    auto files = listStorageDirectory();
+    struct Entry {
+      kj::String name;
+      uint64_t bytes;
+    };
+    kj::Vector<Entry> entries;
+    uint64_t totalBytes = 0;
+    for (auto& file: files) {
+      if (!isValidIsolateStorageKey(file)) continue;
+      KJ_IF_MAYBE(fd, openStorageFileIfExists(file)) {
+        struct stat stats;
+        KJ_SYSCALL(fstat(*fd, &stats));
+        auto bytes = static_cast<uint64_t>(stats.st_size);
+        totalBytes += bytes;
+        entries.add(Entry{kj::mv(file), bytes});
+      }
+    }
+
+    auto results = context.getResults();
+    auto output = results.initEntries(entries.size());
+    for (auto i: kj::indices(entries)) {
+      output[i].setName(entries[i].name);
+      output[i].setBytes(entries[i].bytes);
+    }
+    results.setTotalBytes(totalBytes);
+    return kj::READY_NOW;
+  }
+
 private:
   static constexpr size_t MAX_STORAGE_VALUE_BYTES = 1024 * 1024;
 
@@ -4751,6 +4843,10 @@ private:
 
   kj::HttpHeaderTable& headerTable;
   kj::AutoCloseFd storageRoot;
+
+  static void requireValidKey(kj::StringPtr key) {
+    KJ_REQUIRE(isValidIsolateStorageKey(key), "invalid storage key", key);
+  }
 
   static kj::AutoCloseFd openStorageRoot(kj::StringPtr path) {
     int fd;
@@ -4939,6 +5035,11 @@ private:
     return result;
   }
 };
+
+IsolateStorage::Client makeIsolateStorage(
+    kj::HttpHeaderTable& headerTable, kj::StringPtr storageRootPath) {
+  return kj::heap<StorageBindingService>(headerTable, storageRootPath);
+}
 
 class HostedIsolateBindingServices final: public IsolateBindingServices::Server {
 public:

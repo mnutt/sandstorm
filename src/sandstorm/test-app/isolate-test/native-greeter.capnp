@@ -12,4 +12,5 @@ interface NativeGreeter extends(Grain.AppPersistent(NativeGreeterObjectId)) {
   greetWith @2 (greeter :NativeGreeter, name :Text) -> (message :Text);
   inspectData @3 (content :Data) -> (byteCount :UInt64, checksum :UInt32, firstEightHex :Text);
   ping @4 (payload :Data) -> (payload :Data);
+  storageRoundTrip @5 (key :Text, value :Data) -> (value :Data, listed :Bool);
 }

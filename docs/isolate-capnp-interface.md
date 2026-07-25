@@ -658,8 +658,8 @@ Implemented checkpoint (partial):
   and close WebSocket messages through the JS-exported `MainView`/`WebSession` capability path.
 
 This checkpoint includes request/response conversion and streaming scaffolding, but it is not
-yet the Phase 5 compatibility switch. Logical WebSockets now pass through the direct worker path;
-end-to-end browser-shell conformance remains before cutover.
+yet the Phase 5 compatibility switch. The remaining cutover work is compatibility-date policy,
+performance gating, and keeping the old route-backed reader available for supported apps.
 
 ### Phase 6: Support service-only grains in packages and the shell
 
@@ -719,6 +719,19 @@ Exit criteria:
   `Response`; and
 - the only HTTP present in a UI worker is HTTP the app intentionally uses,
   such as its Fetch facade or outbound network access.
+
+Implemented checkpoint (partial):
+
+- The public storage helper now obtains a private typed `IsolateStorage` capability from the
+  worker's native bridge. Its get, put, stat, remove, and list operations no longer construct
+  `Request` or `Response` objects or traverse a workerd `Fetcher`. The `STORAGE` Fetcher remains
+  only as an old-app compatibility binding.
+- Service-only integration coverage performs a typed storage round trip from a worker with no
+  Fetch handler, `MainView`, `WebSession`, or HTTP binding. The fixture rejects any accidental
+  access to `env.STORAGE`, proving the public helper uses only Cap'n Proto.
+- The host injects the private native bridge into every worker, independent of its declared
+  Fetcher bindings. A headless exported capability can therefore acquire typed platform services
+  without opting into `SANDSTORM_API` or any HTTP-shaped interface.
 
 ### Phase 8: Consolidate and remove obsolete paths
 
