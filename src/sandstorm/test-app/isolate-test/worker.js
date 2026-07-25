@@ -530,9 +530,24 @@ function renderDirectMainViewPage() {
         try {
           const response = await fetch("/browser-storage-health");
           const body = await response.json();
-          result.textContent = response.ok && body.ok
-            ? "fetch: direct MainView success " + body.status
-            : JSON.stringify(body);
+          if (!response.ok || !body.ok) {
+            throw new Error(JSON.stringify(body));
+          }
+
+          const handoffResponse = await fetch("/direct-native-greeter-handoff");
+          const handoff = await handoffResponse.json();
+          if (!handoffResponse.ok || typeof handoff.id !== "string") {
+            throw new Error(JSON.stringify(handoff));
+          }
+          const [{ connectBrowserNativeCapnp }, { NativeGreeter }] = await Promise.all([
+            import("/__sandstorm/native-capnp/client.js"),
+            import("/__sandstorm/capnp/native-greeter.capnp.js"),
+          ]);
+          const greeter = await connectBrowserNativeCapnp(handoff, NativeGreeter);
+          const greeting = await greeter.hello({ name: "direct browser" });
+          greeter.connection.transport.close();
+          result.textContent = "fetch: direct MainView success " + body.status +
+            " / native RPC success " + greeting.message;
         } catch (error) {
           result.textContent = (error.message || String(error)) +
             "\\n" + (error.stack || "");
@@ -621,7 +636,9 @@ async function runTypedPlatformProbe(request, env, expectedMainModule) {
   const ok = runtimeStatus.ok === true &&
     runtimeStatus.binding === "nativeCapnp" &&
     runtimeStatus.status === "ready" &&
-    runtimeStatus.mainModule === expectedMainModule &&
+    (expectedMainModule === undefined
+      ? runtimeStatus.mainModule.length > 0
+      : runtimeStatus.mainModule === expectedMainModule) &&
     descriptors.every((descriptor) =>
       typeof descriptor === "string" && descriptor.length > 0);
   return {
@@ -776,6 +793,16 @@ async function isolateTestFetch(request, env, ctx) {
       });
     }
 
+    if (url.pathname === "/direct-native-greeter-handoff") {
+      const capability = await exportFixtureCapnp(api, NativeGreeter, {
+        async hello(params) {
+          return { message: `direct browser hello ${params.name}` };
+        },
+      }, { interfaceName: "NativeGreeter" });
+      const handoff = await capability.browserHandoff({ request });
+      return Response.json(handoff);
+    }
+
     if (url.pathname === "/direct-ui-metadata") {
       const headers = new Headers({
         "cache-control": "public, immutable, max-age=31536000",
@@ -867,7 +894,7 @@ async function isolateTestFetch(request, env, ctx) {
     }
 
     if (url.pathname === "/browser-storage-health") {
-      const probe = await runTypedPlatformProbe(request, env, "worker.js");
+      const probe = await runTypedPlatformProbe(request, env);
       return Response.json({
         ...probe,
         ok: probe.ok,

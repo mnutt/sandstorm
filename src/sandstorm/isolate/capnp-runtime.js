@@ -819,6 +819,12 @@ export function createCapnpRpcEventDispatcher(InterfaceClass, target, options = 
 }
 
 let activeWorkerCapnpCallContext = null;
+let workerPlatformBridge = null;
+
+function setWorkerPlatformBridge(platform) {
+  workerPlatformBridge = new IsolateBridge.Client(nativeCapnpClientReference(
+    platform, "worker platform bridge"));
+}
 
 function contextualizeWorkerTarget(name, target) {
   return new Proxy(target, {
@@ -892,7 +898,8 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
     }
   };
   const dispatcher = createCapnpRpcEventDispatcher(IsolateExportBroker, {
-    getExport({ name: inputName, interfaceId }) {
+    getExport({ name: inputName, interfaceId, platform }) {
+      setWorkerPlatformBridge(platform);
       const name = String(inputName);
       const resolveExport = () => {
         const workerExport = exportsByName.get(name);
@@ -911,7 +918,8 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
         ? resolveExport()
         : Promise.resolve(beforeGetExport).then(resolveExport);
     },
-    restoreExport({ name: inputName, interfaceId, objectId }) {
+    restoreExport({ name: inputName, interfaceId, objectId, platform }) {
+      setWorkerPlatformBridge(platform);
       const name = String(inputName);
       const workerExport = exportsByName.get(name);
       if (!workerExport || workerExport.interfaceId !== interfaceId ||
@@ -943,7 +951,8 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
         };
       });
     },
-    dropExport({ name: inputName, interfaceId, objectId }) {
+    dropExport({ name: inputName, interfaceId, objectId, platform }) {
+      setWorkerPlatformBridge(platform);
       const name = String(inputName);
       const workerExport = exportsByName.get(name);
       if (!workerExport || workerExport.interfaceId !== interfaceId ||
@@ -1013,8 +1022,10 @@ export async function exportCapnp(api, InterfaceClass, target) {
 
   const interfaceMetadata = nativeCapnpInterfaceMetadata(InterfaceClass, "exportCapnp()");
 
-  const server = new InterfaceClass.Server(target);
-  const client = server.client();
+  const server = workerPlatformBridge === null ? new InterfaceClass.Server(target) : null;
+  const client = server === null
+    ? createWorkerCapnpClient(InterfaceClass, target, "local export capability")
+    : server.client();
   const publicInterfaceId = interfaceMetadata.interfaceIdHex;
   const browserHandoffs = new Map();
   let dropped = false;
@@ -1026,17 +1037,17 @@ export async function exportCapnp(api, InterfaceClass, target) {
 
     dropped = true;
     let firstError;
-    for (const [handoffId, bridge] of browserHandoffs) {
+    for (const [handoffId, handoff] of browserHandoffs) {
       try {
-        await bridge.dropBrowserHandoff({ id: handoffId });
-        bridge.close();
+        await handoff.bridge.dropBrowserHandoff({ id: handoffId });
+        if (handoff.ownsBridge) handoff.bridge.close();
       } catch (error) {
-        bridge.close(error);
+        if (handoff.ownsBridge) handoff.bridge.close(error);
         if (firstError === undefined) firstError = error;
       }
     }
     browserHandoffs.clear();
-    server.close?.();
+    server?.close?.();
     if (firstError) {
       throw firstError;
     }
@@ -1052,29 +1063,25 @@ export async function exportCapnp(api, InterfaceClass, target) {
       throw new TypeError("CapnpExport.browserHandoff() requires a Request");
     }
     const sessionId = nativeCapnpBrowserHandoffSessionId({ request });
-    const bridge = connectIsolateBridge(api);
-    try {
-      const stored = await bridge.createBrowserHandoff((params) => {
-        initCapnpCapabilityParam(params, client, "local export capability");
-        params.sessionId = sessionId;
-      });
-      if (!stored || typeof stored.id !== "string" || stored.id.length === 0) {
-        throw new NativeCapnpBridgeProtocolError(
-          "isolate bridge returned an invalid local export browser handoff id");
-      }
-      browserHandoffs.set(stored.id, bridge);
-      return Object.freeze({
-        type: "capability",
-        id: stored.id,
-        kind: "receiverHosted",
-        residence: "browserHandoff",
-        interfaceId: publicInterfaceId,
-        interfaceName: interfaceMetadata.interfaceName,
-      });
-    } catch (error) {
-      bridge.close(error);
-      throw error;
+    const ownsBridge = workerPlatformBridge === null;
+    const bridge = workerPlatformBridge ?? connectIsolateBridge(api);
+    const stored = await bridge.createBrowserHandoff((params) => {
+      initCapnpCapabilityParam(params, client, "local export capability");
+      params.sessionId = sessionId;
+    });
+    if (!stored || typeof stored.id !== "string" || stored.id.length === 0) {
+      throw new NativeCapnpBridgeProtocolError(
+        "isolate bridge returned an invalid local export browser handoff id");
     }
+    browserHandoffs.set(stored.id, { bridge, ownsBridge });
+    return Object.freeze({
+      type: "capability",
+      id: stored.id,
+      kind: "receiverHosted",
+      residence: "browserHandoff",
+      interfaceId: publicInterfaceId,
+      interfaceName: interfaceMetadata.interfaceName,
+    });
   }
 
   return Object.freeze({

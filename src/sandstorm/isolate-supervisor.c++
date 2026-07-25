@@ -269,6 +269,7 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
         headerTable(*ownedHeaderTable) {}
 
   void setHosted(HostedIsolate::Client value) { hosted = kj::mv(value); }
+  void setPlatformBridge(IsolateBridge::Client value) { platformBridge = kj::mv(value); }
 
   kj::Promise<kj::Own<kj::HttpClient>> getHttpClient() {
     auto& hostedClient = KJ_REQUIRE_NONNULL(hosted, "hosted isolate ingress is not ready");
@@ -295,14 +296,17 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
     capnp::MallocMessageBuilder objectIdMessage;
     objectIdMessage.getRoot<capnp::AnyPointer>().set(objectId);
     auto objectIdWords = capnp::messageToFlatArray(objectIdMessage);
+    IsolateBridge::Client platform = KJ_REQUIRE_NONNULL(
+        platformBridge, "isolate platform bridge is not ready");
     auto bootstrapRequest = hostedClient.getRpcBootstrapRequest();
     return bootstrapRequest.send().then(
-        [name = kj::heapString(name), interfaceId,
+        [name = kj::heapString(name), interfaceId, platform = kj::mv(platform),
             objectIdWords = kj::mv(objectIdWords)](auto response) mutable {
       capnp::Capability::Client bootstrap = response.getCap();
       auto request = bootstrap.castAs<IsolateExportBroker>().restoreExportRequest();
       request.setName(name);
       request.setInterfaceId(interfaceId);
+      request.setPlatform(platform);
       capnp::FlatArrayMessageReader objectIdReader(objectIdWords.asPtr());
       request.getObjectId().set(objectIdReader.getRoot<capnp::AnyPointer>());
       return request.send().then([](auto result) -> capnp::Capability::Client {
@@ -317,14 +321,17 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
     capnp::MallocMessageBuilder objectIdMessage;
     objectIdMessage.getRoot<capnp::AnyPointer>().set(objectId);
     auto objectIdWords = capnp::messageToFlatArray(objectIdMessage);
+    IsolateBridge::Client platform = KJ_REQUIRE_NONNULL(
+        platformBridge, "isolate platform bridge is not ready");
     auto bootstrapRequest = hostedClient.getRpcBootstrapRequest();
     return bootstrapRequest.send().then(
-        [name = kj::heapString(name), interfaceId,
+        [name = kj::heapString(name), interfaceId, platform = kj::mv(platform),
             objectIdWords = kj::mv(objectIdWords)](auto response) mutable {
       capnp::Capability::Client bootstrap = response.getCap();
       auto request = bootstrap.castAs<IsolateExportBroker>().dropExportRequest();
       request.setName(name);
       request.setInterfaceId(interfaceId);
+      request.setPlatform(platform);
       capnp::FlatArrayMessageReader objectIdReader(objectIdWords.asPtr());
       request.getObjectId().set(objectIdReader.getRoot<capnp::AnyPointer>());
       return request.send().ignoreResult();
@@ -345,6 +352,7 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
   kj::Timer& timer;
   kj::String grainId;
   SandstormCore::Client sandstormCore;
+  kj::Maybe<IsolateBridge::Client> platformBridge;
   SpoolIoWorker& spoolIo;
   kj::Own<IsolateSessionRegistry> sessions;
   capnp::ByteStreamFactory byteStreamFactory;
@@ -3379,6 +3387,36 @@ capnp::Capability::Client makeIsolateWorkerPersistentCapability(
       kj::mv(requirementState));
 }
 
+kj::Maybe<kj::Array<byte>> loadIsolateBrowserModule(
+    IsolateRuntimeConfig& config, kj::StringPtr path);
+
+WebSession::WebSocketMessageStream::Client makeIsolateBrowserRpcStream(
+    IsolateRuntimeConfig& config, IsolateRuntimeHost& host,
+    kj::StringPtr sessionId, WebSession::WebSocketMessageStream::Client outgoing);
+
+kj::Maybe<kj::StringPtr> isolateBrowserModulePath(kj::StringPtr path) {
+  if (path.startsWith("/")) {
+    path = path.slice(1);
+  }
+
+  const kj::StringPtr capnpPrefix = "__sandstorm/capnp/";
+  if (path.startsWith(capnpPrefix)) {
+    return path.slice(capnpPrefix.size());
+  }
+  if (path.startsWith("capnp-es/")) {
+    return path;
+  }
+  return nullptr;
+}
+
+bool isIsolateBrowserRpcPath(kj::StringPtr path) {
+  if (path.startsWith("/")) {
+    path = path.slice(1);
+  }
+  const kj::StringPtr prefix = "__sandstorm/native-capnp/rpc-session?";
+  return path.startsWith(prefix) && path.slice(prefix.size()).startsWith("connectionId=");
+}
+
 class IsolateDirectSessionState final: public kj::Refcounted {
 public:
   IsolateDirectSessionState(kj::Own<IsolateRuntimeHost> host, kj::String id)
@@ -3443,6 +3481,69 @@ private:
   kj::Own<IsolateDirectSessionState> state;
 };
 
+class IsolateBrowserWebSessionMethods final: public WebSession::Server {
+public:
+  IsolateBrowserWebSessionMethods(
+      kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
+      kj::Own<IsolateDirectSessionState> state, WebSession::Client inner)
+      : config(kj::mv(config)), host(kj::mv(host)), state(kj::mv(state)),
+        inner(kj::mv(inner)) {}
+
+  kj::Promise<void> get(GetContext context) override {
+    auto params = context.getParams();
+    KJ_IF_MAYBE(path, isolateBrowserModulePath(params.getPath())) {
+      KJ_IF_MAYBE(source, loadIsolateBrowserModule(*config, *path)) {
+        auto response = context.getResults();
+        response.initSetCookies(0);
+        auto content = response.initContent();
+        content.setStatusCode(WebSession::Response::SuccessCode::OK);
+        content.setMimeType("text/javascript; charset=utf-8");
+        content.initBody().setBytes(*source);
+        content.getDisposition().setNormal();
+        return kj::READY_NOW;
+      }
+
+      auto response = context.getResults();
+      response.initSetCookies(0);
+      auto error = response.initClientError();
+      error.setStatusCode(WebSession::Response::ClientErrorCode::NOT_FOUND);
+      error.setDescriptionHtml("browser capnp-es module not found");
+      return kj::READY_NOW;
+    }
+
+    auto request = inner.getRequest();
+    request.setPath(params.getPath());
+    request.setContext(params.getContext());
+    request.setIgnoreBody(params.getIgnoreBody());
+    return context.tailCall(kj::mv(request));
+  }
+
+  kj::Promise<void> openWebSocketMessages(OpenWebSocketMessagesContext context) override {
+    auto params = context.getParams();
+    if (isIsolateBrowserRpcPath(params.getPath())) {
+      KJ_REQUIRE(params.getProtocol().size() == 0,
+          "browser isolate bridge RPC does not use WebSocket subprotocols");
+      context.getResults().initProtocol(0);
+      context.getResults().setServerStream(makeIsolateBrowserRpcStream(
+          *config, *host, state->getId(), params.getClientStream()));
+      return kj::READY_NOW;
+    }
+
+    auto request = inner.openWebSocketMessagesRequest();
+    request.setPath(params.getPath());
+    request.setContext(params.getContext());
+    request.setProtocol(params.getProtocol());
+    request.setClientStream(params.getClientStream());
+    return context.tailCall(kj::mv(request));
+  }
+
+private:
+  kj::Own<IsolateRuntimeConfig> config;
+  kj::Own<IsolateRuntimeHost> host;
+  kj::Own<IsolateDirectSessionState> state;
+  WebSession::Client inner;
+};
+
 class IsolateSessionLifetimeMembrane final:
     public capnp::MembranePolicy, public kj::Refcounted {
 public:
@@ -3475,8 +3576,10 @@ private:
 
 class IsolateDirectMainView final: public MainView<>::Server {
 public:
-  IsolateDirectMainView(kj::Own<IsolateRuntimeHost> host, MainView<>::Client inner)
-      : host(kj::mv(host)), inner(kj::mv(inner)) {}
+  IsolateDirectMainView(
+      kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
+      MainView<>::Client inner)
+      : config(kj::mv(config)), host(kj::mv(host)), inner(kj::mv(inner)) {}
 
   kj::Promise<void> getViewInfo(GetViewInfoContext context) override {
     return inner.getViewInfoRequest().send().then([context](auto response) mutable {
@@ -3490,7 +3593,8 @@ public:
     auto state = kj::refcounted<IsolateDirectSessionState>(kj::addRef(*host), kj::mv(id));
     auto request = inner.newSessionRequest();
     copyCommonSessionParams(params, request, *state);
-    return finishSession(request.send(), context, kj::mv(state));
+    return finishSession(
+        request.send(), context, kj::mv(state), params.getSessionType());
   }
 
   kj::Promise<void> newRequestSession(NewRequestSessionContext context) override {
@@ -3500,7 +3604,8 @@ public:
     auto request = inner.newRequestSessionRequest();
     copyCommonSessionParams(params, request, *state);
     request.setRequestInfo(params.getRequestInfo());
-    return finishSession(request.send(), context, kj::mv(state));
+    return finishSession(
+        request.send(), context, kj::mv(state), params.getSessionType());
   }
 
   kj::Promise<void> newOfferSession(NewOfferSessionContext context) override {
@@ -3511,7 +3616,8 @@ public:
     copyCommonSessionParams(params, request, *state);
     request.setOffer(params.getOffer());
     request.setDescriptor(params.getDescriptor());
-    return finishSession(request.send(), context, kj::mv(state));
+    return finishSession(
+        request.send(), context, kj::mv(state), params.getSessionType());
   }
 
   kj::Promise<void> restore(RestoreContext context) override {
@@ -3529,6 +3635,7 @@ public:
   }
 
 private:
+  kj::Own<IsolateRuntimeConfig> config;
   kj::Own<IsolateRuntimeHost> host;
   MainView<>::Client inner;
 
@@ -3546,22 +3653,33 @@ private:
 
   template <typename RemotePromise, typename Context>
   kj::Promise<void> finishSession(
-      RemotePromise promise, Context context, kj::Own<IsolateDirectSessionState> state) {
-    return promise.then([context, state = kj::mv(state)](auto response) mutable {
-      context.getResults().setSession(capnp::membrane(
+      RemotePromise promise, Context context, kj::Own<IsolateDirectSessionState> state,
+      uint64_t sessionType) {
+    return promise.then(
+        [this, context, state = kj::mv(state), sessionType](auto response) mutable {
+      auto protectedSession = capnp::membrane(
           response.getSession(),
-          kj::refcounted<IsolateSessionLifetimeMembrane>(kj::mv(state)))
-          .template castAs<UiSession>());
+          kj::refcounted<IsolateSessionLifetimeMembrane>(kj::addRef(*state)))
+          .template castAs<UiSession>();
+      if (sessionType == capnp::typeId<WebSession>()) {
+        context.getResults().setSession(
+            WebSession::Client(kj::heap<IsolateBrowserWebSessionMethods>(
+                kj::addRef(*config), kj::addRef(*host), kj::mv(state),
+                protectedSession.template castAs<WebSession>()))
+            .template castAs<UiSession>());
+      } else {
+        context.getResults().setSession(protectedSession);
+      }
     });
   }
 };
 
 capnp::Capability::Client wrapIsolateWorkerExport(
-    kj::Own<IsolateRuntimeHost> host, kj::StringPtr exportName,
+    kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host, kj::StringPtr exportName,
     uint64_t interfaceId, capnp::Capability::Client cap) {
   if (interfaceId == capnp::typeId<MainView<>>()) {
     cap = kj::heap<IsolateDirectMainView>(
-        kj::addRef(*host), kj::mv(cap).castAs<MainView<>>());
+        kj::addRef(*config), kj::addRef(*host), kj::mv(cap).castAs<MainView<>>());
   }
   return kj::heap<IsolateWorkerPersistentCapability>(
       kj::mv(host), exportName, interfaceId, kj::mv(cap));
@@ -3707,6 +3825,12 @@ public:
 
   static IsolateBridge::Client makeBridge(
       IsolateRuntimeConfig& config, IsolateRuntimeHost& host);
+
+  static BrowserIsolateBridge::Client makeBrowserBridge(
+      IsolateRuntimeConfig& config, IsolateRuntimeHost& host, kj::String sessionId);
+
+  static kj::Maybe<kj::Array<byte>> loadBrowserModule(
+      IsolateRuntimeConfig& config, kj::StringPtr path);
 
   kj::Promise<void> request(
       kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
@@ -4701,6 +4825,238 @@ private:
 
 };
 
+class IsolateBrowserRpcMessageStream final: public capnp::MessageStream {
+public:
+  explicit IsolateBrowserRpcMessageStream(
+      WebSession::WebSocketMessageStream::Client outgoing)
+      : outgoing(kj::mv(outgoing)) {}
+
+  ~IsolateBrowserRpcMessageStream() noexcept(false) {
+    closeIncoming();
+  }
+
+  kj::Promise<void> receive(capnp::Data::Reader message) {
+    KJ_REQUIRE(!incomingClosed,
+        "browser isolate bridge RPC session received a message after close");
+    KJ_REQUIRE(message.size() <= MAX_NATIVE_CAPNP_RPC_WEBSOCKET_MESSAGE_BYTES,
+        "browser isolate bridge RPC message exceeds maximum allowed size",
+        message.size(), MAX_NATIVE_CAPNP_RPC_WEBSOCKET_MESSAGE_BYTES);
+
+    auto bytes = kj::heapArray<byte>(message.size());
+    memcpy(bytes.begin(), message.begin(), message.size());
+    KJ_IF_MAYBE(pending, pendingRead) {
+      auto pendingValue = kj::mv(*pending);
+      pendingRead = nullptr;
+      auto result = readFrame(
+          kj::mv(bytes), pendingValue.options, pendingValue.scratchSpace);
+      pendingValue.fulfiller->fulfill(kj::mv(result));
+      return kj::READY_NOW;
+    }
+
+    auto consumed = kj::newPromiseAndFulfiller<void>();
+    incoming.push(QueuedFrame { kj::mv(bytes), kj::mv(consumed.fulfiller) });
+    return kj::mv(consumed.promise);
+  }
+
+  void closeIncoming() {
+    if (incomingClosed) return;
+    incomingClosed = true;
+    KJ_IF_MAYBE(pending, pendingRead) {
+      auto pendingValue = kj::mv(*pending);
+      pendingRead = nullptr;
+      pendingValue.fulfiller->fulfill(nullptr);
+    }
+    while (!incoming.empty()) {
+      auto frame = kj::mv(incoming.front());
+      incoming.pop();
+      frame.consumed->reject(KJ_EXCEPTION(DISCONNECTED,
+          "browser isolate bridge RPC session closed before consuming message"));
+    }
+  }
+
+  kj::Promise<kj::Maybe<capnp::MessageReaderAndFds>> tryReadMessage(
+      kj::ArrayPtr<kj::AutoCloseFd> fdSpace,
+      capnp::ReaderOptions options = capnp::ReaderOptions(),
+      kj::ArrayPtr<capnp::word> scratchSpace = nullptr) override {
+    (void)fdSpace;
+    KJ_REQUIRE(pendingRead == nullptr,
+        "browser isolate bridge RPC stream cannot have concurrent reads");
+    if (!incoming.empty()) {
+      auto frame = kj::mv(incoming.front());
+      incoming.pop();
+      auto result = readFrame(kj::mv(frame.bytes), options, scratchSpace);
+      frame.consumed->fulfill();
+      return kj::mv(result);
+    }
+    if (incomingClosed) {
+      return kj::Maybe<capnp::MessageReaderAndFds>(nullptr);
+    }
+
+    auto pending = kj::newPromiseAndFulfiller<
+        kj::Maybe<capnp::MessageReaderAndFds>>();
+    pendingRead = PendingRead {
+      kj::mv(pending.fulfiller), options, scratchSpace
+    };
+    return kj::mv(pending.promise);
+  }
+
+  kj::Promise<void> writeMessage(kj::ArrayPtr<const int> fds,
+      kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) override {
+    KJ_REQUIRE(fds.size() == 0,
+        "browser isolate bridge RPC does not support file descriptors");
+    return sendSerialized(serializeMessageSegments(segments));
+  }
+
+  kj::Promise<void> writeMessages(
+      kj::ArrayPtr<kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>>> messages) override {
+    kj::Vector<kj::Array<byte>> serialized(messages.size());
+    for (auto message: messages) {
+      serialized.add(serializeMessageSegments(message));
+    }
+    auto fork = writeQueue.then(
+        [this, serialized = serialized.releaseAsArray()]() mutable {
+      kj::Promise<void> result = kj::READY_NOW;
+      for (auto& data: serialized) {
+        result = result.then([this, data = kj::mv(data)]() mutable {
+          auto request = outgoing.sendDataRequest();
+          request.setMessage(data);
+          return request.send().attach(kj::mv(data));
+        });
+      }
+      return kj::mv(result).attach(kj::mv(serialized));
+    }).fork();
+    writeQueue = fork.addBranch();
+    return fork.addBranch();
+  }
+
+  kj::Maybe<int> getSendBufferSize() override {
+    return nullptr;
+  }
+
+  kj::Promise<void> end() override {
+    auto fork = writeQueue.then([this]() {
+      auto request = outgoing.closeRequest();
+      request.setCode(1000);
+      request.setReason("native Cap'n Proto bridge RPC session ended");
+      return request.send();
+    }).fork();
+    writeQueue = fork.addBranch();
+    return fork.addBranch();
+  }
+
+private:
+  struct QueuedFrame {
+    kj::Array<byte> bytes;
+    kj::Own<kj::PromiseFulfiller<void>> consumed;
+  };
+
+  struct PendingRead {
+    kj::Own<kj::PromiseFulfiller<kj::Maybe<capnp::MessageReaderAndFds>>> fulfiller;
+    capnp::ReaderOptions options;
+    kj::ArrayPtr<capnp::word> scratchSpace;
+  };
+
+  WebSession::WebSocketMessageStream::Client outgoing;
+  kj::Promise<void> writeQueue = kj::READY_NOW;
+  std::queue<QueuedFrame> incoming;
+  kj::Maybe<PendingRead> pendingRead;
+  bool incomingClosed = false;
+
+  static kj::Maybe<capnp::MessageReaderAndFds> readFrame(
+      kj::Array<byte> bytes, capnp::ReaderOptions options,
+      kj::ArrayPtr<capnp::word> scratchSpace) {
+    auto reader = parseIsolateCapnpRpcFrame(bytes, options, scratchSpace);
+    capnp::MessageReaderAndFds result { kj::mv(reader), nullptr };
+    return kj::Maybe<capnp::MessageReaderAndFds>(kj::mv(result));
+  }
+
+  static kj::Array<byte> serializeMessageSegments(
+      kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments) {
+    kj::VectorOutputStream output;
+    capnp::writeMessage(output, segments);
+    auto data = output.getArray();
+    auto result = kj::heapArray<byte>(data.size());
+    memcpy(result.begin(), data.begin(), data.size());
+    return result;
+  }
+
+  kj::Promise<void> sendSerialized(kj::Array<byte> data) {
+    auto fork = writeQueue.then([this, data = kj::mv(data)]() mutable {
+      auto request = outgoing.sendDataRequest();
+      request.setMessage(data);
+      return request.send().attach(kj::mv(data));
+    }).fork();
+    writeQueue = fork.addBranch();
+    return fork.addBranch();
+  }
+};
+
+class IsolateBrowserRpcWebSocketStream final:
+    public WebSession::WebSocketMessageStream::Server {
+public:
+  IsolateBrowserRpcWebSocketStream(
+      WebSession::WebSocketMessageStream::Client outgoing,
+      BrowserIsolateBridge::Client bootstrap)
+      : stream(kj::mv(outgoing)),
+        network(stream, capnp::rpc::twoparty::Side::SERVER),
+        rpcSystem(capnp::makeRpcServer(network, kj::mv(bootstrap))) {}
+
+  ~IsolateBrowserRpcWebSocketStream() noexcept(false) {
+    stream.closeIncoming();
+  }
+
+  kj::Promise<void> sendText(SendTextContext context) override {
+    KJ_FAIL_REQUIRE(
+        "browser isolate bridge RPC requires binary WebSocket messages",
+        context.getParams().getMessage());
+  }
+
+  kj::Promise<void> sendData(SendDataContext context) override {
+    return stream.receive(context.getParams().getMessage());
+  }
+
+  kj::Promise<void> close(CloseContext context) override {
+    (void)context;
+    stream.closeIncoming();
+    return kj::READY_NOW;
+  }
+
+private:
+  IsolateBrowserRpcMessageStream stream;
+  capnp::TwoPartyVatNetwork network;
+  capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
+};
+
+kj::Maybe<kj::Array<byte>> loadIsolateBrowserModule(
+    IsolateRuntimeConfig& config, kj::StringPtr path) {
+  return SandstormApiBindingService::loadBrowserModule(config, path);
+}
+
+WebSession::WebSocketMessageStream::Client makeIsolateBrowserRpcStream(
+    IsolateRuntimeConfig& config, IsolateRuntimeHost& host,
+    kj::StringPtr sessionId, WebSession::WebSocketMessageStream::Client outgoing) {
+  return kj::heap<IsolateBrowserRpcWebSocketStream>(
+      kj::mv(outgoing),
+      SandstormApiBindingService::makeBrowserBridge(config, host, kj::str(sessionId)));
+}
+
+BrowserIsolateBridge::Client SandstormApiBindingService::makeBrowserBridge(
+    IsolateRuntimeConfig& config, IsolateRuntimeHost& host, kj::String sessionId) {
+  return kj::heap<BrowserIsolateBridgeImpl>(config, host, kj::mv(sessionId));
+}
+
+kj::Maybe<kj::Array<byte>> SandstormApiBindingService::loadBrowserModule(
+    IsolateRuntimeConfig& config, kj::StringPtr path) {
+  KJ_IF_MAYBE(moduleName, browserCapnpEsModuleName(path)) {
+    for (auto& module: config.modules) {
+      if (module.name == *moduleName) {
+        return rewriteBrowserCapnpEsModuleImports(module.content.asPtr());
+      }
+    }
+  }
+  return nullptr;
+}
+
 IsolateBridge::Client SandstormApiBindingService::makeBridge(
     IsolateRuntimeConfig& config, IsolateRuntimeHost& host) {
   return kj::heap<IsolateBridgeImpl>(config, host);
@@ -5158,7 +5514,8 @@ public:
             [this, context, exportName = kj::mv(exportName), interfaceId](
                 capnp::Capability::Client cap) mutable {
           auto persistent = wrapIsolateWorkerExport(
-              kj::addRef(*runtimeHost), exportName, interfaceId, kj::mv(cap));
+              kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
+              exportName, interfaceId, kj::mv(cap));
           context.getResults().setView(persistent.castAs<UiView>());
         });
       }
@@ -5183,7 +5540,8 @@ public:
         [this, context, name = kj::mv(name), interfaceId](
             capnp::Capability::Client cap) mutable {
       context.getResults().setCap(wrapIsolateWorkerExport(
-          kj::addRef(*runtimeHost), name, interfaceId, kj::mv(cap)));
+          kj::addRef(*runtimeConfig), kj::addRef(*runtimeHost),
+          name, interfaceId, kj::mv(cap)));
     });
   }
 
@@ -5616,6 +5974,8 @@ public:
           kj::addRef(*coreRedirector)).castAs<SandstormCore>();
       auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
           network, timer, grainId, coreCap, spoolIo);
+      runtimeHost->setPlatformBridge(SandstormApiBindingService::makeBridge(
+          *admitted->runtimeConfig, *runtimeHost));
 
       auto nativeStart = nativeHost.startGrainRequest();
       nativeStart.setGrainId(grainId);

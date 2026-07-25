@@ -339,19 +339,37 @@ bin/isolate-host: tmp/bazel-$(BAZEL_VERSION) tmp/.workerd-embed-source
 isolate-host: bin/isolate-host
 
 isolate-host-control-test: bin/isolate-host tmp/.ekam-run
-	@socket="$(PWD)/tmp/isolate-host-control-test.sock"; \
+	@set -e; \
+		socket="$(PWD)/tmp/isolate-host-control-test.sock"; \
 		log="$(PWD)/tmp/isolate-host-control-test.log"; \
-		rm -f "$$socket" "$$log"; \
+		baseline_tasks="$$log.baseline-tasks"; \
+		rm -f "$$socket" "$$log" "$$baseline_tasks"; \
 		bin/isolate-host "$$socket" >"$$log" 2>&1 & host_pid=$$!; \
-		trap 'kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; rm -f "$$socket" "$$log"' EXIT; \
+		trap 'status=$$?; kill $$host_pid 2>/dev/null || true; wait $$host_pid 2>/dev/null || true; \
+			if test $$status -ne 0; then cat "$$log"; fi; \
+			rm -f "$$socket" "$$log" "$$baseline_tasks"; exit $$status' EXIT; \
 		for attempt in $$(seq 1 100); do test -S "$$socket" && break; sleep 0.05; done; \
 		test -S "$$socket"; \
 		set -- /proc/$$host_pid/task/*; baseline_threads=$$#; \
+		for task in "$$@"; do printf '%s %s\n' "$${task##*/}" "$$(cat "$$task/comm")"; done \
+			>"$$baseline_tasks"; \
 		tmp/sandstorm/isolate-host-client "$$socket"; \
+		for attempt in $$(seq 1 100); do \
+			set -- /proc/$$host_pid/task/*; \
+			test "$$#" -le "$$((baseline_threads + 2))" && break; \
+			sleep 0.01; \
+		done; \
 		set -- /proc/$$host_pid/task/*; final_threads=$$#; \
-		test "$$final_threads" -le "$$((baseline_threads + 2))"; \
-		grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:testgrain123"' "$$log"; \
-		grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:cpugrain123"' "$$log"; \
+		test "$$final_threads" -le "$$((baseline_threads + 2))" || { \
+			echo "isolate host leaked threads: $$baseline_threads -> $$final_threads" >&2; \
+			echo "baseline threads:" >&2; cat "$$baseline_tasks" >&2; \
+			echo "final threads:" >&2; \
+			for task in "$$@"; do printf '%s %s\n' "$${task##*/}" "$$(cat "$$task/comm")"; done >&2; \
+			exit 1; }; \
+		grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:testgrain123"' "$$log" || { \
+			echo "isolate host log omitted testgrain123 worker attribution" >&2; exit 1; }; \
+		grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:cpugrain123"' "$$log" || { \
+			echo "isolate host log omitted cpugrain123 worker attribution" >&2; exit 1; }; \
 		kill $$host_pid; wait $$host_pid 2>/dev/null || true; rm -f "$$socket"; \
 		SANDSTORM_ISOLATE_HOST_IDLE_TIMEOUT_MS=200 \
 			bin/isolate-host "$$socket" >>"$$log" 2>&1 & host_pid=$$!; \

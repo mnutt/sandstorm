@@ -129,6 +129,7 @@ module.exports["Test direct MainView browser fetch and WebSocket"] = function (b
     .waitForElementVisible("#fetch", medium_wait)
     .click("#fetch")
     .assert.textContains("#fetch-result", "fetch: direct MainView success ok")
+    .assert.textContains("#fetch-result", "native RPC success direct browser hello direct browser")
     .click("#websocket")
     .assert.textContains(
       "#websocket-result", "websocket: direct MainView success text binary close");

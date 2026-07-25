@@ -1781,6 +1781,7 @@ class AdmissionPool {
 
 void initRuntimeConfig(capnp::MallocMessageBuilder& message, kj::StringPtr bootstrapAddress) {
   auto config = message.initRoot<workerd::server::config::Config>();
+  config.setStructuredLogging(true);
   auto service = config.initServices(1)[0];
   service.setName("sandstorm-loader-bootstrap");
   auto worker = service.initWorker();
@@ -2363,6 +2364,7 @@ class HostedIsolateImpl final: public HostedIsolate::Server {
     auto request = rpcBootstrap().castAs<IsolateExportBroker>().getExportRequest();
     request.setName(name);
     request.setInterfaceId(interfaceId);
+    request.setPlatform(state->bindingServices.getBridgeRequest().send().getBridge());
     return request.send().then([context](auto response) mutable {
       context.getResults().setCap(response.getCap());
     });
@@ -2541,14 +2543,12 @@ int main(int argc, char** argv) {
   workerd::server::WorkerdPlatform v8Platform(*defaultPlatform);
   workerd::jsg::V8System v8System(v8Platform, {}, defaultPlatform.get());
   sandstorm::SandstormLimitEnforcerFactory limitEnforcers(io.provider->getTimer());
-  auto loggingOptions = workerd::Worker::LoggingOptions(workerd::Worker::ConsoleMode::STDOUT);
-  loggingOptions.structuredLogging = workerd::StructuredLogging::YES;
   workerd::server::Server runtime(*filesystem,
       io.provider->getTimer(),
       kj::systemPreciseMonotonicClock(),
       io.provider->getNetwork(),
       entropy,
-      kj::mv(loggingOptions),
+      workerd::Worker::LoggingOptions(workerd::Worker::ConsoleMode::STDOUT),
       [](kj::String error) { KJ_FAIL_REQUIRE("embedded workerd configuration error", error); });
   runtime.setLimitEnforcerFactory(limitEnforcers);
   runtime.allowExperimental();

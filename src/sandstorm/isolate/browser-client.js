@@ -454,6 +454,9 @@ function capnpCapabilityFromResult(result, name) {
   if (typeof result?.getCap === "function") {
     return result.getCap();
   }
+  if (result?.cap !== undefined) {
+    return result.cap;
+  }
   const pipeline = typeof result?.pipeline?.getPipeline === "function"
     ? result.pipeline.getPipeline(CapnpEsInterface, 0)
     : null;
@@ -611,14 +614,14 @@ export function createBrowserNativeCapnpConnection(options = {}) {
   return Object.assign(connection, { transport });
 }
 
-export function connectBrowserNativeCapnp(target, InterfaceClass, options = {}) {
+export async function connectBrowserNativeCapnp(target, InterfaceClass, options = {}) {
   if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
     throw new TypeError("connectBrowserNativeCapnp() requires a capnp-es generated interface");
   }
   const normalizedTarget = normalizeNativeCapnpCapabilitySlot(target);
   const connection = createBrowserNativeCapnpConnection(options);
   const bridge = connection.bootstrap(BrowserIsolateBridge);
-  const claimed = bridge.getHandoffCapability({ id: normalizedTarget.id });
+  const claimed = await bridge.getHandoffCapability({ id: normalizedTarget.id });
   const cap = capnpCapabilityFromResult(claimed, "browser handoff capability pipeline");
   if (!cap) {
     connection.transport.close();

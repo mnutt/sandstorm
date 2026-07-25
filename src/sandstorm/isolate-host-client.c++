@@ -126,7 +126,9 @@ int main(int argc, char** argv) {
 import { createCapnpWorkerExportDispatcher } from "sandstorm-internal:capnp-runtime";
 import { Interface } from "capnp-es/index.mjs";
 import { IsolateBridge } from "capnp:/sandstorm/isolate-bridge.capnp";
+import { AsyncLocalStorage } from "node:async_hooks";
 
+const rpcEventContext = new AsyncLocalStorage();
 const rpcState = {
   previousContext: undefined,
   currentContext: undefined,
@@ -148,10 +150,10 @@ const rpcDispatcher = createCapnpWorkerExportDispatcher({
         let callbackReleased = false;
         let callbackStayedInEvent = false;
         if (sessionId === "first") {
-          const eventContext = rpcState.currentContext;
+          const eventContext = rpcEventContext.getStore();
           const callback = new IsolateBridge.Client(Interface.fromPointer(cap).getClient());
           callbackReleased = (await callback.dropBrowserHandoff({ id: sessionId })).released;
-          callbackStayedInEvent = rpcState.currentContext === eventContext;
+          callbackStayedInEvent = rpcEventContext.getStore() === eventContext;
         }
         return {
           id: `rpc-${rpcState.callCount}-${rpcState.sameContext ? 1 : 0}-${sessionId}` +
@@ -175,7 +177,7 @@ export default {
     rpcState.previousContext = ctx;
     rpcState.currentContext = ctx;
     rpcState.callCount++;
-    await rpcDispatcher.handler(request, send, receive);
+    await rpcEventContext.run(ctx, () => rpcDispatcher.handler(request, send, receive));
   },
 
   async fetch(request, env) {
@@ -402,6 +404,7 @@ export default { fetch() { return new Response("memory limit failed"); } };
     restore.setName("bridge");
     restore.setInterfaceId(capnp::typeId<sandstorm::IsolateBridge>());
     restore.getObjectId().setAs<capnp::Text>("missing durable registry");
+    restore.setPlatform(kj::heap<sandstorm::RpcCallbackImpl>());
     restore.send().wait(waitScope);
   });
 
