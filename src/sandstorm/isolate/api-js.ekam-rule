@@ -24,22 +24,15 @@ read OUTPUT_DISK_FILE
 
 python3 - "$INPUT_DISK_FILE" "$BROWSER_INPUT_DISK_FILE" \
     "$VALIDATION_INPUT_DISK_FILE" "$OUTPUT_DISK_FILE" <<'PY'
-import json
 import sys
 
 input_path, browser_input_path, validation_input_path, output_path = sys.argv[1:]
 with open(input_path, "rb") as f:
     data = f.read()
-with open(browser_input_path, "r", encoding="utf-8") as f:
-    browser_source = f.read()
+with open(browser_input_path, "rb") as f:
+    browser_data = f.read()
 with open(validation_input_path, "rb") as f:
     validation_data = f.read()
-
-marker = b'"__SANDSTORM_BROWSER_CLIENT_SOURCE__"'
-replacement = json.dumps(browser_source, ensure_ascii=True).encode("ascii")
-if data.count(marker) != 1:
-    raise RuntimeError("api.js browser client source marker must occur exactly once")
-data = data.replace(marker, replacement)
 
 def escape_chunk(chunk):
     out = []
@@ -72,6 +65,7 @@ with open(output_path, "w", encoding="utf-8") as out:
             out.write("\"\n")
         out.write("    ;\n")
     write_source("ISOLATE_API_HELPER_SOURCE", data)
+    write_source("ISOLATE_BROWSER_CLIENT_SOURCE", browser_data)
     write_source("ISOLATE_VALIDATION_HELPER_SOURCE", validation_data)
     out.write("}  // namespace sandstorm\n")
 PY

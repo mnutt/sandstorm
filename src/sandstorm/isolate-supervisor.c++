@@ -3285,7 +3285,8 @@ public:
       kj::StringPtr exportName, uint64_t interfaceId, capnp::Capability::Client cap,
       kj::Maybe<kj::Array<const byte>> parentToken = nullptr,
       kj::Own<PersistentRequirementState> requirementState =
-          kj::refcounted<PersistentRequirementState>())
+          kj::refcounted<PersistentRequirementState>(),
+      kj::Maybe<kj::Own<IsolateWorkerMembranePolicy>> membranePolicy = nullptr)
       : host(kj::mv(host)),
         exportName(kj::heapString(exportName)),
         interfaceId(interfaceId),
@@ -3294,9 +3295,13 @@ public:
         parentToken(kj::mv(parentToken)),
         requirementState(kj::mv(requirementState)) {
     appCap = cap;
-    this->cap = capnp::membrane(kj::mv(cap), kj::refcounted<IsolateWorkerMembranePolicy>(
-        kj::addRef(*this->host), this->exportName, this->interfaceId,
-        kj::addRef(*this->requirementState)));
+    KJ_IF_MAYBE(policy, membranePolicy) {
+      this->cap = capnp::membrane(kj::mv(cap), kj::mv(*policy));
+    } else {
+      this->cap = capnp::membrane(kj::mv(cap), kj::refcounted<IsolateWorkerMembranePolicy>(
+          kj::addRef(*this->host), this->exportName, this->interfaceId,
+          kj::addRef(*this->requirementState)));
+    }
   }
 
   DispatchCallResult dispatchCall(uint64_t requestedInterfaceId, uint16_t methodId,
@@ -3403,6 +3408,9 @@ kj::Maybe<kj::StringPtr> isolateBrowserModulePath(kj::StringPtr path) {
   if (path.startsWith(capnpPrefix)) {
     return path.slice(capnpPrefix.size());
   }
+  if (path == "__sandstorm/native-capnp/client.js") {
+    return path;
+  }
   if (path.startsWith("capnp-es/")) {
     return path;
   }
@@ -3488,6 +3496,19 @@ public:
       kj::Own<IsolateDirectSessionState> state, WebSession::Client inner)
       : config(kj::mv(config)), host(kj::mv(host)), state(kj::mv(state)),
         inner(kj::mv(inner)) {}
+
+  DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
+      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer> context) override {
+    // WebSession.get() and openWebSocketMessages() are ordinals 0 and 18.
+    if (interfaceId == capnp::typeId<WebSession>() && (methodId == 0 || methodId == 18)) {
+      return WebSession::Server::dispatchCall(interfaceId, methodId, context);
+    }
+
+    auto params = context.getParams();
+    auto request = inner.typelessRequest(interfaceId, methodId, params.targetSize());
+    request.set(params);
+    return { context.tailCall(kj::mv(request)), false };
+  }
 
   kj::Promise<void> get(GetContext context) override {
     auto params = context.getParams();
@@ -3578,18 +3599,35 @@ class IsolateDirectMainView final: public MainView<>::Server {
 public:
   IsolateDirectMainView(
       kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
-      MainView<>::Client inner)
-      : config(kj::mv(config)), host(kj::mv(host)), inner(kj::mv(inner)) {}
+      MainView<>::Client inner, kj::Own<IsolateWorkerMembranePolicy> workerMembranePolicy)
+      : config(kj::mv(config)), host(kj::mv(host)), inner(kj::mv(inner)),
+        workerMembranePolicy(kj::mv(workerMembranePolicy)) {}
+
+  DispatchCallResult dispatchCall(uint64_t interfaceId, uint16_t methodId,
+      capnp::CallContext<capnp::AnyPointer, capnp::AnyPointer> context) override {
+    if (interfaceId == capnp::typeId<MainView<>>() || interfaceId == capnp::typeId<UiView>()) {
+      return MainView<>::Server::dispatchCall(interfaceId, methodId, context);
+    }
+
+    auto params = context.getParams();
+    auto request = inner.typelessRequest(interfaceId, methodId, params.targetSize());
+    request.set(params);
+    return { context.tailCall(kj::mv(request)), false };
+  }
 
   kj::Promise<void> getViewInfo(GetViewInfoContext context) override {
-    return inner.getViewInfoRequest().send().then([context](auto response) mutable {
+    return inner.getViewInfoRequest().send().then([this, context](auto response) mutable {
+      config->viewInfoMessage = kj::heap<capnp::MallocMessageBuilder>(
+          response.totalSize().wordCount + 4);
+      config->viewInfoMessage->setRoot(response);
+      config->appTitle = kj::heapString(response.getAppTitle().getDefaultText());
       context.setResults(response);
     });
   }
 
   kj::Promise<void> newSession(NewSessionContext context) override {
     auto params = context.getParams();
-    auto id = host->sessions->registerSession(params.getContext());
+    auto id = host->sessions->registerSession(unwrapExternal(params.getContext()));
     auto state = kj::refcounted<IsolateDirectSessionState>(kj::addRef(*host), kj::mv(id));
     auto request = inner.newSessionRequest();
     copyCommonSessionParams(params, request, *state);
@@ -3599,7 +3637,7 @@ public:
 
   kj::Promise<void> newRequestSession(NewRequestSessionContext context) override {
     auto params = context.getParams();
-    auto id = host->sessions->registerSession(params.getContext());
+    auto id = host->sessions->registerSession(unwrapExternal(params.getContext()));
     auto state = kj::refcounted<IsolateDirectSessionState>(kj::addRef(*host), kj::mv(id));
     auto request = inner.newRequestSessionRequest();
     copyCommonSessionParams(params, request, *state);
@@ -3610,7 +3648,8 @@ public:
 
   kj::Promise<void> newOfferSession(NewOfferSessionContext context) override {
     auto params = context.getParams();
-    auto id = host->sessions->registerOfferSession(params.getContext(), params.getOffer());
+    auto id = host->sessions->registerOfferSession(
+        unwrapExternal(params.getContext()), unwrapExternal(params.getOffer()));
     auto state = kj::refcounted<IsolateDirectSessionState>(kj::addRef(*host), kj::mv(id));
     auto request = inner.newOfferSessionRequest();
     copyCommonSessionParams(params, request, *state);
@@ -3638,6 +3677,12 @@ private:
   kj::Own<IsolateRuntimeConfig> config;
   kj::Own<IsolateRuntimeHost> host;
   MainView<>::Client inner;
+  kj::Own<IsolateWorkerMembranePolicy> workerMembranePolicy;
+
+  template <typename Client>
+  Client unwrapExternal(Client client) {
+    return capnp::membrane(kj::mv(client), workerMembranePolicy->addRef());
+  }
 
   template <typename Params, typename Request>
   void copyCommonSessionParams(
@@ -3677,12 +3722,17 @@ private:
 capnp::Capability::Client wrapIsolateWorkerExport(
     kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host, kj::StringPtr exportName,
     uint64_t interfaceId, capnp::Capability::Client cap) {
+  auto requirementState = kj::refcounted<PersistentRequirementState>();
+  auto membranePolicy = kj::refcounted<IsolateWorkerMembranePolicy>(
+      kj::addRef(*host), exportName, interfaceId, kj::addRef(*requirementState));
   if (interfaceId == capnp::typeId<MainView<>>()) {
     cap = kj::heap<IsolateDirectMainView>(
-        kj::addRef(*config), kj::addRef(*host), kj::mv(cap).castAs<MainView<>>());
+        kj::mv(config), kj::addRef(*host), kj::mv(cap).castAs<MainView<>>(),
+        kj::addRef(*membranePolicy));
   }
   return kj::heap<IsolateWorkerPersistentCapability>(
-      kj::mv(host), exportName, interfaceId, kj::mv(cap));
+      kj::mv(host), exportName, interfaceId, kj::mv(cap), nullptr,
+      kj::mv(requirementState), kj::mv(membranePolicy));
 }
 
 class IsolateUiViewImpl final: public UiView::Server {
@@ -3950,6 +4000,26 @@ private:
     IsolateBridgeImpl(IsolateRuntimeConfig& config, IsolateRuntimeHost& host)
         : config(config), host(host) {}
 
+    class CapabilitySaver final: public IsolateCapabilitySaver::Server {
+    public:
+      CapabilitySaver(IsolateRuntimeHost& host, capnp::Capability::Client cap)
+          : host(host), cap(kj::mv(cap)) {}
+
+      kj::Promise<void> save(SaveContext context) override {
+        auto request = cap.castAs<SystemPersistent>().saveRequest();
+        auto owner = request.getSealFor().initGrain();
+        owner.setGrainId(host.grainId);
+        owner.setSaveLabel(context.getParams().getLabel());
+        return request.send().then([context](auto result) mutable {
+          context.getResults().setToken(result.getSturdyRef());
+        });
+      }
+
+    private:
+      IsolateRuntimeHost& host;
+      capnp::Capability::Client cap;
+    };
+
     kj::Promise<void> getSandstormApi(GetSandstormApiContext context) override {
       context.getResults().setApi(kj::heap<IsolateBridgeSandstormApi>(host));
       return kj::READY_NOW;
@@ -4035,6 +4105,69 @@ private:
       return kj::READY_NOW;
     }
 
+    kj::Promise<void> claimPowerboxRequest(ClaimPowerboxRequestContext context) override {
+      auto params = context.getParams();
+      KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(params.getSessionId())) {
+        auto request = sessionContext->claimRequestRequest();
+        request.setRequestToken(params.getRequestToken());
+        request.setRequiredPermissions(params.getRequiredPermissions());
+        return request.send().then([this, context](auto result) mutable {
+          auto cap = result.getCap();
+          context.getResults().setCap(cap);
+          context.getResults().setSaver(kj::heap<CapabilitySaver>(host, kj::mv(cap)));
+        });
+      }
+
+      KJ_FAIL_REQUIRE("isolate bridge session ID not found", params.getSessionId());
+    }
+
+    kj::Promise<void> offerPowerboxCapability(
+        OfferPowerboxCapabilityContext context) override {
+      auto params = context.getParams();
+      KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(params.getSessionId())) {
+        auto request = sessionContext->offerRequest();
+        request.setCap(params.getCap());
+        request.setRequiredPermissions(params.getRequiredPermissions());
+        request.setDescriptor(params.getDescriptor());
+        request.setDisplayInfo(params.getDisplayInfo());
+        return request.send().ignoreResult();
+      }
+
+      KJ_FAIL_REQUIRE("isolate bridge session ID not found", params.getSessionId());
+    }
+
+    kj::Promise<void> fulfillPowerboxRequest(
+        FulfillPowerboxRequestContext context) override {
+      auto params = context.getParams();
+      KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(params.getSessionId())) {
+        auto request = sessionContext->fulfillRequestRequest();
+        request.setCap(params.getCap());
+        request.setRequiredPermissions(params.getRequiredPermissions());
+        request.setDescriptor(params.getDescriptor());
+        request.setDisplayInfo(params.getDisplayInfo());
+        return request.send().ignoreResult();
+      }
+
+      KJ_FAIL_REQUIRE("isolate bridge session ID not found", params.getSessionId());
+    }
+
+    kj::Promise<void> tieCapabilityToUser(
+        TieCapabilityToUserContext context) override {
+      auto params = context.getParams();
+      KJ_IF_MAYBE(sessionContext, host.sessions->findSessionContext(params.getSessionId())) {
+        auto request = sessionContext->tieToUserRequest();
+        request.setCap(params.getCap());
+        request.setRequiredPermissions(params.getRequiredPermissions());
+        request.setDisplayInfo(params.getDisplayInfo());
+        return request.send().then([this, context](auto result) mutable {
+          auto cap = result.getTiedCap();
+          context.getResults().setCap(cap);
+          context.getResults().setSaver(kj::heap<CapabilitySaver>(host, kj::mv(cap)));
+        });
+      }
+
+      KJ_FAIL_REQUIRE("isolate bridge session ID not found", params.getSessionId());
+    }
   private:
     IsolateRuntimeConfig& config;
     IsolateRuntimeHost& host;
@@ -5047,6 +5180,9 @@ BrowserIsolateBridge::Client SandstormApiBindingService::makeBrowserBridge(
 
 kj::Maybe<kj::Array<byte>> SandstormApiBindingService::loadBrowserModule(
     IsolateRuntimeConfig& config, kj::StringPtr path) {
+  if (path == "__sandstorm/native-capnp/client.js") {
+    return kj::heapArray<byte>(kj::StringPtr(ISOLATE_BROWSER_CLIENT_SOURCE).asBytes());
+  }
   KJ_IF_MAYBE(moduleName, browserCapnpEsModuleName(path)) {
     for (auto& module: config.modules) {
       if (module.name == *moduleName) {

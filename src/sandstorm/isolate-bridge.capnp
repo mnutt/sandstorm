@@ -3,6 +3,8 @@
 $import "/capnp/c++.capnp".namespace("sandstorm");
 
 using Grain = import "grain.capnp";
+using Powerbox = import "powerbox.capnp";
+using Util = import "util.capnp";
 
 interface IsolateSessionContext @0xc8b2a7f6dfd3c48a extends(Grain.SessionContext) {
   # Supervisor-private extension placed around SessionContext capabilities passed to a direct
@@ -67,6 +69,43 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
 
   getRuntimeStatus @10 () -> (mainModule :Text);
   # Returns the small supervisor status payload exposed through sandstorm().unstable.status().
+
+  claimPowerboxRequest @11 (
+      sessionId :Text,
+      requestToken :Text,
+      requiredPermissions :List(Bool))
+      -> (cap :Capability, saver :IsolateCapabilitySaver);
+  # Claims a Powerbox token and returns both the requested capability and narrowly-scoped
+  # authority to save exactly that capability for this grain.
+
+  offerPowerboxCapability @12 (
+      sessionId :Text,
+      cap :Capability,
+      requiredPermissions :List(Bool),
+      descriptor :Powerbox.PowerboxDescriptor,
+      displayInfo :Powerbox.PowerboxDisplayInfo);
+  # Offers a capability through the real SessionContext without routing that capability through
+  # the worker export membrane.
+
+  fulfillPowerboxRequest @13 (
+      sessionId :Text,
+      cap :Capability,
+      requiredPermissions :List(Bool),
+      descriptor :Powerbox.PowerboxDescriptor,
+      displayInfo :Powerbox.PowerboxDisplayInfo);
+  # Fulfills the current Powerbox request through the real SessionContext.
+
+  tieCapabilityToUser @14 (
+      sessionId :Text,
+      cap :Capability,
+      requiredPermissions :List(Bool),
+      displayInfo :Powerbox.PowerboxDisplayInfo)
+      -> (cap :Capability, saver :IsolateCapabilitySaver);
+  # Applies the session's user membrane and returns narrowly-scoped save authority for the result.
+}
+
+interface IsolateCapabilitySaver @0xdd105b03d66c3c67 {
+  save @0 (label :Util.LocalizedText) -> (token :Data);
 }
 
 interface IsolateStorage @0xeeef9ad97721b1d2 {

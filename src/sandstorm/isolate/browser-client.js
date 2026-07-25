@@ -4,7 +4,14 @@ import {
   Interface as CapnpEsInterface,
   Message,
 } from "/capnp-es/index.mjs";
+import {
+  IsolateApiSessionPowerboxTag,
+} from "/__sandstorm/capnp/sandstorm/isolate-api-session-tag.capnp.js";
 import { BrowserIsolateBridge } from "/__sandstorm/capnp/sandstorm/isolate-bridge.capnp.js";
+import {
+  OutboundHttpSession,
+} from "/__sandstorm/capnp/sandstorm/outbound-http-session.capnp.js";
+import { PowerboxDescriptor } from "/__sandstorm/capnp/sandstorm/powerbox.capnp.js";
 
 class NativeCapnpBridgeUnavailableError extends Error {
   constructor(message, details = {}) {
@@ -19,18 +26,6 @@ export class NativeCapnpBridgeProtocolError extends Error {
     super(message);
     this.name = "NativeCapnpBridgeProtocolError";
     this.details = details;
-  }
-}
-
-async function readJsonResponse(response) {
-  const text = await response.text();
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    return {
-      ok: false,
-      error: text || "HTTP " + response.status,
-    };
   }
 }
 
@@ -233,12 +228,44 @@ export function openBrowserNativeCapnpRpcSession(connectionId) {
 }
 
 const nativeCapnpPowerboxDescriptorCache = new Map();
+const API_SESSION_INTERFACE_ID = 0xc879e379c625cdc7n;
+const OUTBOUND_HTTP_METHOD_ENUMS = new Map([
+  ["GET", OutboundHttpSession.Method.GET],
+  ["POST", OutboundHttpSession.Method.POST],
+  ["PUT", OutboundHttpSession.Method.PUT],
+  ["PATCH", OutboundHttpSession.Method.PATCH],
+  ["DELETE", OutboundHttpSession.Method.DELETE],
+  ["HEAD", OutboundHttpSession.Method.HEAD],
+  ["OPTIONS", OutboundHttpSession.Method.OPTIONS],
+]);
 
-function validateNativeCapnpPowerboxDescriptor(descriptor, name = "descriptor") {
-  if (typeof descriptor !== "string" || descriptor.length === 0) {
-    throw new TypeError(name + " must be a non-empty packed Powerbox descriptor string");
+function base64UrlEncodeBytes(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; ++i) {
+    binary += String.fromCharCode(bytes[i]);
   }
-  return descriptor;
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function createCapnpStructValue(StructClass, initializer) {
+  const message = new Message();
+  const value = message.initRoot(StructClass);
+  StructClass._applyInit(value, initializer);
+  return value;
+}
+
+function packedPowerboxDescriptorInfo(tagId, tagValue, decoded) {
+  const message = new Message();
+  const descriptor = message.initRoot(PowerboxDescriptor);
+  const tag = descriptor._initTags(1).get(0);
+  tag.id = tagId;
+  if (tagValue !== null) tag.value = tagValue;
+  return {
+    ok: true,
+    type: "packedPowerboxDescriptor",
+    descriptor: base64UrlEncodeBytes(message.toPackedUint8Array()),
+    decoded,
+  };
 }
 
 async function fetchNativeCapnpPowerboxDescriptorInfo(InterfaceClass, options = {}) {
@@ -247,24 +274,17 @@ async function fetchNativeCapnpPowerboxDescriptorInfo(InterfaceClass, options = 
     throw new TypeError("native Cap'n Proto Powerbox descriptor requires an interface id");
   }
 
-  const descriptorUrl = options.descriptorUrl ||
-    "/__sandstorm/powerbox/app-interface-descriptor";
-  const url = new URL(descriptorUrl, globalThis.location?.href || "http://sandstorm/");
-  url.searchParams.set("interfaceId", metadata.interfaceIdText);
-  url.searchParams.set("interfaceName", metadata.interfaceName);
-  const cacheKey = url.href;
+  const cacheKey = `${metadata.interfaceIdText}\n${metadata.interfaceName}`;
   if (nativeCapnpPowerboxDescriptorCache.has(cacheKey)) {
     return cloneNativeCapnpJsonValue(nativeCapnpPowerboxDescriptorCache.get(cacheKey));
   }
 
-  const response = await fetch(url);
-  const result = await readJsonResponse(response);
-  if (!response.ok || !result.ok) {
-    throw new NativeCapnpBridgeUnavailableError(
-      result.error || "Powerbox descriptor request failed with " + response.status,
-      { response, result });
-  }
-  validateNativeCapnpPowerboxDescriptor(result.descriptor, "native Cap'n Proto descriptor");
+  const decoded = {
+    kind: "appInterface",
+    interfaceId: metadata.interfaceIdText,
+  };
+  if (metadata.interfaceName) decoded.interfaceName = metadata.interfaceName;
+  const result = packedPowerboxDescriptorInfo(metadata.interfaceId, null, decoded);
   nativeCapnpPowerboxDescriptorCache.set(cacheKey, cloneNativeCapnpJsonValue(result));
   return cloneNativeCapnpJsonValue(result);
 }
@@ -288,32 +308,26 @@ function validatePackedPowerboxDescriptor(descriptor, label = "descriptor") {
   return descriptor;
 }
 
-async function fetchPowerboxDescriptorInfo(path, params) {
-  const url = new URL(path, globalThis.location?.href || "http://sandstorm/");
-  for (const [name, value] of params) {
-    url.searchParams.append(name, value);
-  }
-  const response = await fetch(url);
-  const result = await readJsonResponse(response);
-  if (!response.ok || !result.ok) {
-    throw new NativeCapnpBridgeUnavailableError(
-      result.error || "Powerbox descriptor request failed with " + response.status,
-      { response, result });
-  }
-  validatePackedPowerboxDescriptor(result.descriptor);
-  return result;
-}
-
 export async function apiSessionPowerboxDescriptorInfo(options = {}) {
-  const descriptor = options.apiSession ?? options.apiSessionDescriptor ?? options;
-  const params = [];
-  if (descriptor.canonicalUrl !== undefined) {
-    params.push(["canonicalUrl", String(descriptor.canonicalUrl)]);
+  const input = options.apiSession ?? options.apiSessionDescriptor ?? options;
+  const canonicalUrl = String(input.canonicalUrl || "");
+  if (!canonicalUrl || canonicalUrl.length > 2048 || canonicalUrl.endsWith("/")) {
+    throw new TypeError(
+      "API session canonicalUrl must be non-empty, at most 2048 characters, and not end in '/'");
   }
-  for (const scope of descriptor.oauthScopes || []) {
-    params.push(["oauthScope", String(scope)]);
+  const oauthScopes = Array.from(input.oauthScopes || [], String);
+  if (oauthScopes.some((scope) => scope.length === 0 || scope.length > 256)) {
+    throw new TypeError("API session OAuth scopes must be 1-256 characters");
   }
-  return fetchPowerboxDescriptorInfo("/__sandstorm/powerbox/api-session-descriptor", params);
+  const tagValue = createCapnpStructValue(IsolateApiSessionPowerboxTag, {
+    canonicalUrl,
+    oauthScopes: oauthScopes.map((name) => ({ name })),
+  });
+  return packedPowerboxDescriptorInfo(API_SESSION_INTERFACE_ID, tagValue, {
+    type: "apiSession",
+    canonicalUrl,
+    oauthScopes,
+  });
 }
 
 export async function apiSessionPowerboxDescriptor(options = {}) {
@@ -321,12 +335,27 @@ export async function apiSessionPowerboxDescriptor(options = {}) {
 }
 
 export async function outboundHttpPowerboxDescriptorInfo(options = {}) {
-  const descriptor = options.outboundHttp ?? options.outboundHttpDescriptor ?? options;
-  const params = [["baseUrl", String(descriptor.baseUrl || "")]];
-  for (const method of descriptor.methods || []) {
-    params.push(["method", String(method)]);
+  const input = options.outboundHttp ?? options.outboundHttpDescriptor ?? options;
+  const baseUrl = String(input.baseUrl || "");
+  if (!baseUrl || baseUrl.length > 2048) {
+    throw new TypeError("outbound HTTP baseUrl must be non-empty and at most 2048 characters");
   }
-  return fetchPowerboxDescriptorInfo("/__sandstorm/powerbox/outbound-http-descriptor", params);
+  const methods = Array.from(input.methods || [], (method) => String(method).toUpperCase());
+  const methodValues = methods.map((method) => {
+    if (!OUTBOUND_HTTP_METHOD_ENUMS.has(method)) {
+      throw new TypeError("unsupported outbound HTTP method: " + method);
+    }
+    return OUTBOUND_HTTP_METHOD_ENUMS.get(method);
+  });
+  const tagValue = createCapnpStructValue(OutboundHttpSession.PowerboxTag, {
+    baseUrl,
+    methods: methodValues,
+  });
+  return packedPowerboxDescriptorInfo(OutboundHttpSession._capnp.typeId, tagValue, {
+    type: "outboundHttp",
+    baseUrl,
+    methods,
+  });
 }
 
 export async function outboundHttpPowerboxDescriptor(options = {}) {

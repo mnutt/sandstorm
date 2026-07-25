@@ -1,8 +1,26 @@
-import { sandstorm } from "sandstorm:api";
+import {
+  defineWorker,
+  mainViewFromFetch,
+  sandstorm,
+} from "sandstorm:api";
 
 const TOKEN_KEY = "api-powerbox-token";
 const API_CANONICAL_URL = "https://api.example.test/v1";
 const API_OAUTH_SCOPES = ["read"];
+const VIEW_INFO = {
+  appTitle: { defaultText: "Isolate API Powerbox" },
+  permissions: [{
+    name: "view",
+    title: { defaultText: "view" },
+    description: { defaultText: "allows opening the API Powerbox example" },
+  }],
+  roles: [{
+    title: { defaultText: "viewer" },
+    permissions: [true],
+    verbPhrase: { defaultText: "can view" },
+    default: true,
+  }],
+};
 
 function htmlEscape(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
@@ -216,17 +234,11 @@ async function readJsonBody(request) {
   }
 }
 
-export default {
-  async fetch(request, env) {
+async function powerboxFetch(request, env) {
     const url = new URL(request.url);
     const api = sandstorm(request, env);
 
     try {
-      const systemRoute = await api.serveSystemRoutes();
-      if (systemRoute) {
-        return systemRoute;
-      }
-
       if (request.method === "POST" && url.pathname === "/claim") {
         const body = await readJsonBody(request);
         const canonicalUrl = String(body.canonicalUrl || API_CANONICAL_URL);
@@ -296,5 +308,13 @@ export default {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
+}
+
+export default defineWorker({
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: powerboxFetch,
+      viewInfo: VIEW_INFO,
+    }),
   },
-};
+});

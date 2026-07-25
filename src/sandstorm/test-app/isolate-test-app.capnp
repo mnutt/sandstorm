@@ -41,10 +41,6 @@ const isolateBindings :List(Spk.Manifest.IsolateConfig.Binding) = [
     data = "\x00\x01\x7f\x80\xffSandstorm"
   ),
   (
-    name = "SANDSTORM_API",
-    sandstormApi = void
-  ),
-  (
     name = "LOOPBACK_SERVICE",
     service = "main"
   )
@@ -58,7 +54,7 @@ const isolateCommand :Spk.Manifest.Command = (
 
     exports = [
       (name = "greeter", interfaceId = 0xb66316217ceedb1b),
-      (name = "ui", interfaceId = 0xc277e9822ae2c8fc)
+      (name = "ui", interfaceId = 0xc277e9822ae2c8fc, role = mainView)
     ],
 
     modules = [
@@ -76,12 +72,7 @@ const isolateCommand :Spk.Manifest.Command = (
       )
     ],
 
-    bindings = .isolateBindings,
-
-    bridgeConfig = (
-      viewInfo = .isolateTestViewInfo,
-      apiPath = "/api/"
-    )
+    bindings = .isolateBindings
   )
 );
 

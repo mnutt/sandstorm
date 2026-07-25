@@ -111,11 +111,12 @@ function makePersistentNativeGreeterTarget(id) {
 
     async hello(params, callContext) {
       if (id === "supervisor-export" &&
-          (!callContext?.env?.SANDSTORM_API ||
+          (Object.hasOwn(callContext?.env ?? {}, "SANDSTORM_API") ||
            typeof callContext?.ctx?.waitUntil !== "function" ||
            typeof callContext?.signal?.addEventListener !== "function" ||
            callContext.signal.aborted)) {
-        throw new Error("named Cap'n Proto export did not receive its workerd call context");
+        throw new Error(
+          "named Cap'n Proto export received a legacy binding or no workerd call context");
       }
       if (id === "supervisor-export" && params.name === "concurrent second") {
         if (blockedCallContext === null) {
@@ -379,7 +380,13 @@ function renderBrowserPowerboxPage() {
     <pre id="service-result">service not requested</pre>
 
     <script type="module">
-      import { requestPowerbox } from "/__sandstorm/native-capnp/client.js";
+      import {
+        nativeCapnpPowerboxDescriptor,
+        requestPowerbox,
+      } from "/__sandstorm/native-capnp/client.js";
+      import {
+        NativeGreeter,
+      } from "/__sandstorm/capnp/native-greeter.capnp.js";
 
       const offerResult = document.querySelector("#offer-result");
       const requestResult = document.querySelector("#request-result");
@@ -416,14 +423,8 @@ function renderBrowserPowerboxPage() {
       document.querySelector("#request-service").addEventListener("click", async () => {
         serviceResult.textContent = "requesting service";
         try {
-          const descriptorResponse = await fetch(
-            "/__sandstorm/powerbox/app-interface-descriptor" +
-            "?interfaceId=0xb66316217ceedb1b&interfaceName=NativeGreeter");
-          const descriptor = await descriptorResponse.json();
-          if (!descriptorResponse.ok || !descriptor.ok) {
-            throw new Error(descriptor.error || "failed to build NativeGreeter descriptor");
-          }
-          const requested = await requestPowerbox([descriptor.descriptor], {
+          const descriptor = await nativeCapnpPowerboxDescriptor(NativeGreeter);
+          const requested = await requestPowerbox([descriptor], {
             saveLabel: { defaultText: "Service-only greeter" },
           });
           const response = await fetch("/browser-service-powerbox-finish", {
@@ -431,7 +432,11 @@ function renderBrowserPowerboxPage() {
             headers: { "content-type": "application/json" },
             body: JSON.stringify(requested),
           });
-          const body = await response.json();
+          const responseText = await response.text();
+          if (!response.ok) {
+            throw new Error(responseText || "service request failed with HTTP " + response.status);
+          }
+          const body = JSON.parse(responseText);
           serviceResult.textContent = body.ok
             ? "service: success " + body.hello + " / " + body.restoredHello +
               " / revoked=" + body.revoked
@@ -649,31 +654,19 @@ async function runTypedPlatformProbe(request, env, expectedMainModule) {
 }
 
 async function isolateTestFetch(request, env, ctx) {
-    const api = sandstorm(request, env);
-    const url = new URL(request.url);
-    const systemResponse = await api.serveSystemRoutes({
-      mainView: {
-        async restore(objectId) {
-          return new NativeGreeter.Server(
-            makePersistentNativeGreeterTarget(readNativeGreeterObjectId(objectId))).client();
-        },
-        async drop(objectId) {
-          readNativeGreeterObjectId(objectId);
-        },
-      },
-    });
-    if (systemResponse) return systemResponse;
-    if (url.pathname.startsWith("/__sandstorm/")) {
-      return new Response("not found", { status: 404 });
-    }
+  const api = sandstorm(request, env);
+  const url = new URL(request.url);
+  if (url.pathname.startsWith("/__sandstorm/")) {
+    return new Response("not found", { status: 404 });
+  }
 
-    const headers = {};
-    for (const [name, value] of request.headers) {
-      if (name.startsWith("x-sandstorm-") || name === "host" ||
-          name === "if-match" || name === "if-none-match" || name === "cookie") {
-        headers[name] = value;
-      }
+  const headers = {};
+  for (const [name, value] of request.headers) {
+    if (name.startsWith("x-sandstorm-") || name === "host" ||
+        name === "if-match" || name === "if-none-match" || name === "cookie") {
+      headers[name] = value;
     }
+  }
 
     if (url.pathname === "/echo") {
       const body = new Uint8Array(await request.arrayBuffer());
@@ -1570,5 +1563,4 @@ export default defineWorker({
       drop: dropNativeGreeter,
     }),
   },
-  fetch: isolateTestFetch,
 });

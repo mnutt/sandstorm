@@ -826,6 +826,21 @@ function setWorkerPlatformBridge(platform) {
     platform, "worker platform bridge"));
 }
 
+export function connectWorkerPlatformBridge() {
+  if (workerPlatformBridge === null) {
+    throw new NativeCapnpBridgeProtocolError(
+      "worker platform bridge is unavailable before the export broker is initialized");
+  }
+
+  const bridge = new IsolateBridge.Client(nativeCapnpClientReference(
+    workerPlatformBridge, "worker platform bridge"));
+  return Object.assign(bridge, {
+    connection: null,
+    transport: Object.freeze({ kind: "workerEventCapnp" }),
+    close() {},
+  });
+}
+
 function contextualizeWorkerTarget(name, target) {
   return new Proxy(target, {
     get(target, property, receiver) {

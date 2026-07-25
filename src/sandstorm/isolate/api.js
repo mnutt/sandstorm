@@ -1,6 +1,7 @@
 import {
   CAPNP_CLIENT_SYMBOL,
   connectIsolateBridge,
+  connectWorkerPlatformBridge,
   createCapnpWorkerExportDispatcher,
   createWorkerCapnpClient,
   nativeCapnpInterfaceMetadata,
@@ -869,10 +870,10 @@ function capnpClientReference(value, name = "capability") {
   throw new Error(`${name} is not a capnp-es client reference`);
 }
 
-function initCapnpCapabilityParam(params, cap, name = "capability") {
+function initCapnpCapabilityParam(params, cap, name = "capability", pointerIndex = 0) {
   CapnpEsUtils.setInterfacePointer(
     params.segment.message.addCap(capnpClientReference(cap, name)),
-    CapnpEsUtils.getPointer(0, params));
+    CapnpEsUtils.getPointer(pointerIndex, params));
 }
 
 function initPermissionSetParam(params, permissions) {
@@ -884,7 +885,13 @@ function initPermissionSetParam(params, permissions) {
 
 function initPowerboxDescriptorParam(params, descriptor) {
   if (descriptor !== null && descriptor !== undefined) {
-    PowerboxDescriptor._applyInit(params._initDescriptor(), descriptor);
+    if (descriptor instanceof PowerboxDescriptor) {
+      // Preserve opaque AnyPointer tag values by copying the descriptor as one Cap'n Proto
+      // pointer. Re-applying it field-by-field can reinterpret an unknown tag payload.
+      params.descriptor = descriptor;
+    } else {
+      PowerboxDescriptor._applyInit(params._initDescriptor(), descriptor);
+    }
   }
 }
 
@@ -978,10 +985,7 @@ function nativeCapnpBridgeApi(env) {
 }
 
 async function withIsolateBridgeRpc(env, operation, options = {}) {
-  const bridge = connectIsolateBridge(nativeCapnpBridgeApi(env), {
-    connectionId: options.connectionId,
-    finalize: options.finalize,
-  });
+  const bridge = connectWorkerPlatformBridge();
 
   try {
     const value = await operation(bridge);
@@ -1116,20 +1120,6 @@ function sessionIdForPowerbox(request) {
   return sessionId;
 }
 
-async function sessionContextForRequest(request, bridge, sessionId) {
-  const directContext = directUiFetchSessions.get(request)?.sessionContext;
-  if (directContext) return directContext;
-
-  if (typeof bridge.getSessionContext !== "function") {
-    throw new Error("isolate bridge returned no session-context resolver");
-  }
-  const session = await bridge.getSessionContext({ sessionId });
-  if (!session?.context) {
-    throw new Error("isolate bridge returned no SessionContext capability");
-  }
-  return session.context;
-}
-
 function capabilityId(value, name = "capability") {
   if (value instanceof Capability) {
     return value.id;
@@ -1187,9 +1177,7 @@ function sessionActionCapability(env, capability, name = "session action capabil
 
   return {
     cap,
-    bridge: connectIsolateBridge(nativeCapnpBridgeApi(env), {
-      connectionId: makeLiveCapabilityId("session-action"),
-    }),
+    bridge: connectWorkerPlatformBridge(),
     temporaryBridge: true,
     wrapAppPersistent: true,
   };
@@ -1218,6 +1206,7 @@ export class Capability {
   #env;
   #cap;
   #bridge;
+  #saver;
   #browserSessionId = "";
   #dropped = false;
 
@@ -1238,13 +1227,23 @@ export class Capability {
     if (metadata?.bridge) {
       this.#bridge = retainCapabilityBridge(metadata.bridge);
     }
+    if (metadata?.saver) {
+      if (typeof metadata.saver.save !== "function") {
+        throw new TypeError("capability saver must implement save()");
+      }
+      this.#saver = metadata.saver;
+    }
     if (typeof metadata?.browserSessionId === "string" && metadata.browserSessionId.length > 0) {
       this.#browserSessionId = validate.string(
         metadata.browserSessionId, "browserSessionId", { minLength: 1, maxLength: 4096 });
     }
     if (metadata !== undefined && metadata !== null) {
-      const { bridge: _bridge, browserSessionId: _browserSessionId, ...metadataWithoutBridge } =
-          metadata;
+      const {
+        bridge: _bridge,
+        saver: _saver,
+        browserSessionId: _browserSessionId,
+        ...metadataWithoutBridge
+      } = metadata;
       cacheCapabilityMetadata(this.id, metadataWithoutBridge);
     }
   }
@@ -1275,6 +1274,10 @@ export class Capability {
     return this.#browserSessionId;
   }
 
+  _saver() {
+    return this.#saver;
+  }
+
   _release(error = undefined) {
     if (this.#dropped) {
       return false;
@@ -1282,6 +1285,7 @@ export class Capability {
     this.#dropped = true;
     releaseCapabilityBridge(this.#bridge, error);
     this.#bridge = null;
+    this.#saver = null;
     this.#cap = null;
     forgetCapabilityHandle(this.id);
     return true;
@@ -1701,22 +1705,23 @@ async function saveCapabilityRecord(env, capability, options = {}) {
   const rawId = capabilityId(capability);
   const label = saveLabel(options);
   const info = await capabilityInfo(env, capability);
-  const bridge = capabilityBridge(capability);
-  if (typeof bridge.getSandstormApi !== "function") {
-    throw new Error("capability bridge returned no SandstormApi resolver");
+  const saver = capability instanceof Capability ? capability._saver() : null;
+  let saved;
+  if (saver) {
+    saved = await saver.save({ label: { defaultText: label } });
+  } else {
+    const bridge = capabilityBridge(capability);
+    const apiResult = await bridge.getSandstormApi({});
+    const sandstormApi = apiResult.api;
+    if (!sandstormApi || typeof sandstormApi.save !== "function") {
+      throw new Error("isolate bridge returned a SandstormApi without save()");
+    }
+    saved = await sandstormApi.save((params) => {
+      initCapnpCapabilityParam(params, capabilityCapnpClient(capability, "saved capability"),
+        "saved capability");
+      params._initLabel().defaultText = label;
+    });
   }
-
-  const apiResult = await bridge.getSandstormApi({});
-  const sandstormApi = apiResult.api;
-  if (!sandstormApi || typeof sandstormApi.save !== "function") {
-    throw new Error("isolate bridge returned a SandstormApi without save()");
-  }
-
-  const saved = await sandstormApi.save((params) => {
-    initCapnpCapabilityParam(params, capabilityCapnpClient(capability, "saved capability"),
-      "saved capability");
-    params._initLabel().defaultText = label;
-  });
   return savedCapabilityRecord({
     ok: true,
     type: "savedCapability",
@@ -1753,12 +1758,12 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
 
   try {
     const cap = await wrapSessionActionCapability(actionCapability);
-    const sessionContext = await sessionContextForRequest(request, bridge, sessionId);
 
     switch (endpoint) {
       case "offer":
-        await sessionContext.offer((params) => {
-          initCapnpCapabilityParam(params, cap, "offered capability");
+        await bridge.offerPowerboxCapability((params) => {
+          params.sessionId = sessionId;
+          initCapnpCapabilityParam(params, cap, "offered capability", 1);
           initPermissionSetParam(params, permissions);
           initPowerboxDescriptorParam(params, descriptor);
           initPowerboxDisplayInfoParam(params, displayInfo);
@@ -1766,8 +1771,9 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
         if (temporaryBridge) bridge.close();
         return { ok: true };
       case "fulfill-request":
-        await sessionContext.fulfillRequest((params) => {
-          initCapnpCapabilityParam(params, cap, "fulfilled capability");
+        await bridge.fulfillPowerboxRequest((params) => {
+          params.sessionId = sessionId;
+          initCapnpCapabilityParam(params, cap, "fulfilled capability", 1);
           initPermissionSetParam(params, permissions);
           initPowerboxDescriptorParam(params, descriptor);
           initPowerboxDisplayInfoParam(params, displayInfo);
@@ -1775,8 +1781,9 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
         if (temporaryBridge) bridge.close();
         return { ok: true };
       case "tie-to-user": {
-        const tiedPromise = sessionContext.tieToUser((params) => {
-          initCapnpCapabilityParam(params, cap, "tied capability");
+        const tiedPromise = bridge.tieCapabilityToUser((params) => {
+          params.sessionId = sessionId;
+          initCapnpCapabilityParam(params, cap, "tied capability", 1);
           initPermissionSetParam(params, permissions);
           initPowerboxDisplayInfoParam(params, displayInfo);
         });
@@ -1784,10 +1791,11 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
         if (!tiedCap) {
           throw new Error("SessionContext.tieToUser() returned no capability");
         }
-        await tiedPromise;
+        const tied = await tiedPromise;
         return new Capability(env, tiedCap, {
           kind: "tied",
           bridge,
+          saver: tied.saver,
           nativeInterface: "unknown",
           pathPrefix: "",
           browserSessionId: sessionId,
@@ -2866,9 +2874,7 @@ async function serveMainViewRegistration(request, env, options = {}) {
     });
   }
 
-  const bridge = connectIsolateBridge(nativeCapnpBridgeApi(env), {
-    connectionId: `main-view-${registrationId}`,
-  });
+  const bridge = connectWorkerPlatformBridge();
   const view = new MainView.Server(mainViewRpcTarget(request, env, options)).client();
   try {
     await bridge.registerMainView((params) => {
@@ -2882,48 +2888,8 @@ async function serveMainViewRegistration(request, env, options = {}) {
 }
 
 export async function serveSystemRoutes(request, env, options = {}) {
-  return await serveBrowserSystemRoute(request, env) ||
-    await serveMainViewRegistration(request, env, options) ||
+  return await serveMainViewRegistration(request, env, options) ||
     await servePowerboxDescriptors(request, env);
-}
-
-async function serveBrowserSystemRoute(request, env) {
-  const url = new URL(request.url);
-
-  if (url.pathname === "/__sandstorm/native-capnp/client.js" && request.method === "GET") {
-    return new Response(nativeCapnpBrowserClientScript(), {
-      headers: { "content-type": "text/javascript; charset=utf-8" },
-    });
-  }
-
-  if (url.pathname === "/__sandstorm/native-capnp/rpc-session" &&
-      request.method === "GET") {
-    const headers = {};
-    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
-      headers.Upgrade = "websocket";
-    }
-    const sessionId = request.headers.get("x-sandstorm-session-id");
-    if (sessionId) {
-      headers["X-Sandstorm-Session-Id"] = sessionId;
-    }
-
-    const response = await env.SANDSTORM_API.fetch(
-      `http://sandstorm/capnp/rpc-session${url.search}`, { headers });
-    if (response.webSocket) {
-      return new Response(null, { status: 101, webSocket: response.webSocket });
-    }
-
-    return new Response(await response.text(), {
-      status: response.status,
-      statusText: response.statusText,
-      headers: {
-        "content-type": response.headers.get("content-type") ||
-          "application/json; charset=utf-8",
-      },
-    });
-  }
-
-  return null;
 }
 
 function webSessionPathPrefix(options = {}) {
@@ -2959,9 +2925,7 @@ function webSessionPersistent(options = {}) {
 async function createRouteBackedCapability(env, nativeInterface, options = {}) {
   const pathPrefix = webSessionPathPrefix(options);
   const persistent = webSessionPersistent(options);
-  const bridge = connectIsolateBridge(nativeCapnpBridgeApi(env), {
-    connectionId: makeLiveCapabilityId("route-backed"),
-  });
+  const bridge = connectWorkerPlatformBridge();
   try {
     if (typeof bridge.createRouteBackedCapability !== "function") {
       throw new Error("isolate bridge returned no route-backed capability creator");
@@ -3743,9 +3707,7 @@ function safeOutboundHttpStatus(statusCode) {
 async function restoreCapabilityToken(env, token, options = {}) {
   const tokenText = savedCapabilityToken(token);
   const metadata = savedCapabilityEnvelopeMetadata(tokenText);
-  const bridge = connectIsolateBridge(nativeCapnpBridgeApi(env), {
-    connectionId: makeLiveCapabilityId("restore"),
-  });
+  const bridge = connectWorkerPlatformBridge();
   try {
     const apiResult = await bridge.getSandstormApi({});
     const sandstormApi = apiResult.api;
@@ -4028,12 +3990,10 @@ export function powerbox(request, env) {
     const nativeInterface = claimNativeInterface(options);
     const sessionId = sessionIdForPowerbox(request);
 
-    const bridge = connectIsolateBridge(nativeCapnpBridgeApi(env), {
-      connectionId: makeLiveCapabilityId("powerbox-claim"),
-    });
+    const bridge = connectWorkerPlatformBridge();
     try {
-      const sessionContext = await sessionContextForRequest(request, bridge, sessionId);
-      const claimedPromise = sessionContext.claimRequest({
+      const claimedPromise = bridge.claimPowerboxRequest({
+        sessionId,
         requestToken: token,
         requiredPermissions: permissions,
       });
@@ -4041,11 +4001,12 @@ export function powerbox(request, env) {
       if (!cap) {
         throw new Error("SessionContext.claimRequest() returned no capability");
       }
-      await claimedPromise;
+      const claimed = await claimedPromise;
 
       return new Capability(env, cap, {
         kind: "powerboxClaim",
         bridge,
+        saver: claimed.saver,
         nativeInterface,
         pathPrefix: "",
         browserSessionId: sessionId,
@@ -4107,9 +4068,7 @@ export function powerbox(request, env) {
         return undefined;
       }
 
-      const bridge = connectIsolateBridge(nativeCapnpBridgeApi(env), {
-        connectionId: makeLiveCapabilityId("powerbox-offer"),
-      });
+      const bridge = connectWorkerPlatformBridge();
       let result;
       let cap;
       try {
@@ -4201,13 +4160,6 @@ async function runtimeStatus(env) {
       mainModule: String(result.mainModule),
     };
   });
-}
-
-// Replaced with the contents of browser-client.js when the generated helper module is built.
-const NATIVE_CAPNP_BROWSER_CLIENT_SOURCE = "__SANDSTORM_BROWSER_CLIENT_SOURCE__";
-
-function nativeCapnpBrowserClientScript() {
-  return NATIVE_CAPNP_BROWSER_CLIENT_SOURCE;
 }
 
 export function sandstorm(request, env) {

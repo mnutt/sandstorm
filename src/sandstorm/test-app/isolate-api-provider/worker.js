@@ -1,6 +1,34 @@
-import { sandstorm } from "sandstorm:api";
+import {
+  createCapnpStruct,
+  defineWorker,
+  mainViewFromFetch,
+  sandstorm,
+} from "sandstorm:api";
+import { TestPowerboxCap } from "capnp:/sandstorm/test-app/test-app.capnp";
 
 const PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
+const PROVIDER_TAG = createCapnpStruct(
+  TestPowerboxCap.PowerboxTag, { i: 123, s: "foo" });
+const VIEW_INFO = {
+  appTitle: { defaultText: "Isolate Capability Provider" },
+  permissions: [{
+    name: "view",
+    title: { defaultText: "view" },
+    description: { defaultText: "allows opening the isolate capability provider" },
+  }],
+  roles: [{
+    title: { defaultText: "viewer" },
+    permissions: [true],
+    verbPhrase: { defaultText: "can view" },
+    default: true,
+  }],
+  matchRequests: [{
+    tags: [{
+      id: 0xdf9518c9479ddfcbn,
+      value: PROVIDER_TAG,
+    }],
+  }],
+};
 
 function htmlEscape(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
@@ -52,14 +80,8 @@ function providerApi(request, env) {
   return sandstorm(request, env);
 }
 
-export default {
-  async fetch(request, env) {
+async function providerFetch(request, env) {
     const api = providerApi(request, env);
-    const systemResponse = await api.serveSystemRoutes();
-    if (systemResponse) {
-      return systemResponse;
-    }
-
     const session = api.session();
     const url = new URL(request.url);
     const fulfillApi = api.powerboxFulfillment({
@@ -96,5 +118,14 @@ export default {
     return new Response(renderRequestPage(session), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
+}
+
+export default defineWorker({
+  fetch: providerFetch,
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: providerFetch,
+      viewInfo: VIEW_INFO,
+    }),
   },
-};
+});

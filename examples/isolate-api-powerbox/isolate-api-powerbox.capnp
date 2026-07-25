@@ -28,6 +28,10 @@ const command :Spk.Manifest.Command = (
     compatibilityDate = "2025-01-01",
     compatibilityFlags = [],
 
+    exports = [
+      (name = "ui", interfaceId = 0xc277e9822ae2c8fc, role = mainView)
+    ],
+
     modules = [
       (
         name = "worker.js",
@@ -35,17 +39,7 @@ const command :Spk.Manifest.Command = (
       )
     ],
 
-    bindings = [
-      (
-        name = "SANDSTORM_API",
-        sandstormApi = void
-      )
-    ],
-
-    bridgeConfig = (
-      viewInfo = .viewInfo,
-      apiPath = "/api/"
-    )
+    bindings = []
   )
 );
 
