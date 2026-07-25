@@ -1,4 +1,10 @@
-import { capnpClient, exportCapnp, sandstorm } from "sandstorm:api";
+import {
+  capnpClient,
+  defineWorker,
+  exportCapnp,
+  mainViewFromFetch,
+  sandstorm,
+} from "sandstorm:api";
 import { ObjectStore } from "capnp:./object-store.capnp";
 import { WebSession } from "capnp:/sandstorm/web-session.capnp";
 
@@ -20,6 +26,9 @@ const OBJECTS = Object.freeze({
     },
   }),
 });
+const VIEW_INFO = {
+  appTitle: { defaultText: "Isolate Object Store" },
+};
 
 function findObject(bucket, key) {
   return OBJECTS[bucket]?.[key] || null;
@@ -97,12 +106,8 @@ function serveObject(url) {
   });
 }
 
-export default {
-  async fetch(request, env) {
+async function objectStoreFetch(request, env) {
     const api = sandstorm(request, env);
-
-    const system = await api.serveSystemRoutes();
-    if (system) return system;
 
     const url = new URL(request.url);
     const objectResponse = serveObject(url);
@@ -146,5 +151,16 @@ export default {
         body: new TextDecoder().decode(bodyBytes),
       },
     });
+}
+
+export default defineWorker({
+  // api.webSession() still routes its derived WebSession through worker Fetch ingress. This
+  // disappears with the route-backed capability compatibility layer.
+  fetch: objectStoreFetch,
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: objectStoreFetch,
+      viewInfo: VIEW_INFO,
+    }),
   },
-};
+});

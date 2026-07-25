@@ -1,6 +1,15 @@
-import { exportCapnp, sandstorm } from "sandstorm:api";
+import {
+  defineWorker,
+  exportCapnp,
+  mainViewFromFetch,
+  sandstorm,
+} from "sandstorm:api";
 import { Greeting } from "capnp:./greeting.capnp";
 import { Greeter } from "capnp:./greeter.capnp";
+
+const VIEW_INFO = {
+  appTitle: { defaultText: "Cap'n Proto RPC" },
+};
 
 function makeGreeting(message) {
   return new Greeting.Server({
@@ -29,12 +38,8 @@ const greeterMethods = {
   },
 };
 
-export default {
-  async fetch(request, env) {
+async function capnpRpcFetch(request, env) {
     const api = sandstorm(request, env);
-
-    const system = await api.serveSystemRoutes();
-    if (system) return system;
 
     const url = new URL(request.url);
     if (url.pathname === "/export-greeter") {
@@ -83,5 +88,13 @@ export default {
         message: useGreetingResult.message,
       },
     });
+}
+
+export default defineWorker({
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: capnpRpcFetch,
+      viewInfo: VIEW_INFO,
+    }),
   },
-};
+});

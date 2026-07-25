@@ -1,7 +1,11 @@
+import { defineWorker, mainViewFromFetch } from "sandstorm:api";
 import { renderPage } from "./ui.js";
 import metadata from "./metadata.json";
 
 const encoder = new TextEncoder();
+const VIEW_INFO = {
+  appTitle: { defaultText: "Isolate Streaming" },
+};
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -119,8 +123,7 @@ async function roundTrip(request) {
   });
 }
 
-export default {
-  async fetch(request) {
+async function streamingFetch(request) {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/") {
@@ -145,5 +148,13 @@ export default {
       status: 404,
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
+}
+
+export default defineWorker({
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: streamingFetch,
+      viewInfo: VIEW_INFO,
+    }),
   },
-};
+});

@@ -1,5 +1,13 @@
-import { sandstorm } from "sandstorm:api";
+import {
+  defineWorker,
+  mainViewFromFetch,
+  sandstorm,
+} from "sandstorm:api";
 import { renderCapabilityProviderDemo } from "./ui.js";
+
+const VIEW_INFO = {
+  appTitle: { defaultText: "Isolate Capability Provider" },
+};
 
 function jsonError(error) {
   return Response.json({
@@ -55,8 +63,7 @@ async function exerciseCapability(api, capability, options) {
   };
 }
 
-export default {
-  async fetch(request, env) {
+async function capabilityProviderFetch(request, env) {
     const api = sandstorm(request, env);
     const url = new URL(request.url);
 
@@ -122,5 +129,14 @@ export default {
     } catch (error) {
       return jsonError(error);
     }
+}
+
+export default defineWorker({
+  fetch: capabilityProviderFetch,
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: capabilityProviderFetch,
+      viewInfo: VIEW_INFO,
+    }),
   },
-};
+});

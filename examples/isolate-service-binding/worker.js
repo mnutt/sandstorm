@@ -58,8 +58,7 @@ function checksum(bytes) {
   return result;
 }
 
-export default {
-  async fetch(request, env) {
+async function serviceBindingFetch(request, env) {
     const url = new URL(request.url);
 
     if (url.pathname === "/target") {
@@ -102,5 +101,19 @@ export default {
     return new Response(renderPage(result), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
+}
+
+export default defineWorker({
+  fetch: serviceBindingFetch,
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: serviceBindingFetch,
+      viewInfo: VIEW_INFO,
+    }),
   },
+});
+import { defineWorker, mainViewFromFetch } from "sandstorm:api";
+
+const VIEW_INFO = {
+  appTitle: { defaultText: "Isolate Service Binding" },
 };

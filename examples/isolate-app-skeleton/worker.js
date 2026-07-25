@@ -1,5 +1,13 @@
-import { sandstorm } from "sandstorm:api";
+import {
+  defineWorker,
+  mainViewFromFetch,
+  sandstorm,
+} from "sandstorm:api";
 import { renderSkeletonPage } from "./ui.js";
+
+const VIEW_INFO = {
+  appTitle: { defaultText: "Isolate App Skeleton" },
+};
 
 function hello(api, name) {
   const session = api.session();
@@ -19,13 +27,9 @@ async function increment(api) {
   return { value: next };
 }
 
-export default {
-  async fetch(request, env) {
+async function skeletonFetch(request, env) {
     const api = sandstorm(request, env);
     const url = new URL(request.url);
-
-    const systemRoute = await api.serveSystemRoutes();
-    if (systemRoute) return systemRoute;
 
     if (url.pathname === "/hello") {
       return Response.json(hello(api, url.searchParams.get("name")));
@@ -53,5 +57,13 @@ export default {
     return new Response(renderSkeletonPage(), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
+}
+
+export default defineWorker({
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: skeletonFetch,
+      viewInfo: VIEW_INFO,
+    }),
   },
-};
+});

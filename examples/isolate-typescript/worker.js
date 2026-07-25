@@ -1,8 +1,17 @@
 // Generated from worker.ts with npm run build.
 
 // worker.ts
-import { exportCapnp, sandstorm, validate } from "sandstorm:api";
+import {
+  defineWorker,
+  exportCapnp,
+  mainViewFromFetch,
+  sandstorm,
+  validate
+} from "sandstorm:api";
 import { TypedCounter } from "capnp:./typed-counter.capnp";
+var VIEW_INFO = {
+  appTitle: { defaultText: "TypeScript Isolate" }
+};
 async function increment(api, step = 1) {
   const amount = validate.integer(step, "step", { min: 1, max: 100 });
   const store = api.storage();
@@ -94,31 +103,35 @@ function html() {
   </body>
 </html>`;
 }
-var worker_default = {
-  async fetch(request, env) {
-    const api = sandstorm(request, env);
-    const systemRoute = await api.serveSystemRoutes();
-    if (systemRoute) return systemRoute;
-    const url = new URL(request.url);
-    if (url.pathname === "/session") {
-      const session = api.session();
-      return Response.json(session);
-    }
-    if (request.method === "POST" && url.pathname === "/increment") {
-      return Response.json(await increment(api, Number(url.searchParams.get("step") || "1")));
-    }
-    if (request.method === "POST" && url.pathname === "/export-counter") {
-      const exported = await exportCapnp(api, TypedCounter, typedCounter(api));
-      return Response.json({
-        ok: true,
-        token: await exported.save({ label: "Typed counter" })
-      });
-    }
-    return new Response(html(), {
-      headers: { "content-type": "text/html; charset=utf-8" }
+async function typescriptFetch(request, env) {
+  const api = sandstorm(request, env);
+  const url = new URL(request.url);
+  if (url.pathname === "/session") {
+    const session = api.session();
+    return Response.json(session);
+  }
+  if (request.method === "POST" && url.pathname === "/increment") {
+    return Response.json(await increment(api, Number(url.searchParams.get("step") || "1")));
+  }
+  if (request.method === "POST" && url.pathname === "/export-counter") {
+    const exported = await exportCapnp(api, TypedCounter, typedCounter(api));
+    return Response.json({
+      ok: true,
+      token: await exported.save({ label: "Typed counter" })
     });
   }
-};
+  return new Response(html(), {
+    headers: { "content-type": "text/html; charset=utf-8" }
+  });
+}
+var worker_default = defineWorker({
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: typescriptFetch,
+      viewInfo: VIEW_INFO
+    })
+  }
+});
 export {
   worker_default as default
 };

@@ -1,8 +1,17 @@
-import { exportCapnp, sandstorm, validate } from "sandstorm:api";
+import {
+  defineWorker,
+  exportCapnp,
+  mainViewFromFetch,
+  sandstorm,
+  validate,
+} from "sandstorm:api";
 import { BrowserCounter } from "capnp:./browser-counter.capnp";
 
 let value = 0;
 let exportedCounter = null;
+const VIEW_INFO = {
+  appTitle: { defaultText: "Browser Cap'n Proto Counter" },
+};
 
 const counterMethods = {
   async read() {
@@ -179,12 +188,8 @@ function renderPage() {
 </html>`;
 }
 
-export default {
-  async fetch(request, env) {
+async function browserCounterFetch(request, env) {
     const api = sandstorm(request, env);
-
-    const system = await api.serveSystemRoutes();
-    if (system) return system;
 
     const url = new URL(request.url);
     if (url.pathname === "/counter-capability" && request.method === "POST") {
@@ -198,5 +203,13 @@ export default {
     return new Response(renderPage(), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
+}
+
+export default defineWorker({
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: browserCounterFetch,
+      viewInfo: VIEW_INFO,
+    }),
   },
-};
+});

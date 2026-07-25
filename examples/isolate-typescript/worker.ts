@@ -1,6 +1,12 @@
 /// <reference path="./sandstorm-isolate.d.ts" />
 
-import { exportCapnp, sandstorm, validate } from "sandstorm:api";
+import {
+  defineWorker,
+  exportCapnp,
+  mainViewFromFetch,
+  sandstorm,
+  validate,
+} from "sandstorm:api";
 import type {
   SandstormApi,
   SandstormEnv,
@@ -12,6 +18,10 @@ import { TypedCounter } from "capnp:./typed-counter.capnp";
 interface Env extends SandstormEnv {
   STORAGE: SandstormEnv["STORAGE"];
 }
+
+const VIEW_INFO = {
+  appTitle: { defaultText: "TypeScript Isolate" },
+};
 
 async function increment(api: SandstormApi, step: number = 1): Promise<{ value: number }> {
   const amount = validate.integer(step, "step", { min: 1, max: 100 });
@@ -107,11 +117,8 @@ function html(): string {
 </html>`;
 }
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+async function typescriptFetch(request: Request, env: Env): Promise<Response> {
     const api = sandstorm(request, env);
-    const systemRoute = await api.serveSystemRoutes();
-    if (systemRoute) return systemRoute;
 
     const url = new URL(request.url);
     if (url.pathname === "/session") {
@@ -134,5 +141,13 @@ export default {
     return new Response(html(), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
+}
+
+export default defineWorker({
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch: typescriptFetch,
+      viewInfo: VIEW_INFO,
+    }),
   },
-};
+});

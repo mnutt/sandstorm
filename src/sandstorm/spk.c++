@@ -2050,7 +2050,6 @@ private:
   kj::Vector<DevIsolateValueBinding> devIsolateTextBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateJsonBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateDataBindings;
-  kj::Vector<DevIsolateAppInterface> devIsolateAppInterfaces;
   kj::String devIsolateSupportDir = nullptr;
 
   kj::MainFunc getDevMain() {
@@ -2148,8 +2147,7 @@ private:
             "--service-binding LOOPBACK=main")
         .addOptionWithArg({"app-interface"}, KJ_BIND_METHOD(*this, addDevIsolateAppInterface),
             "<capnp-specifier>#<Interface>",
-            "Advertise a schema-defined app capability through ViewInfo.matchRequests. For "
-            "example: --app-interface capnp:./greeter.capnp#Greeter")
+            "Removed. Declare ViewInfo.matchRequests in the worker's typed MainView export.")
         .addOption({"print-manifest-json"}, KJ_BIND_METHOD(*this, enableDevIsolatePrintManifestJson),
             "Print the generated dynamic isolate manifest as JSON and exit without mounting or "
             "connecting to a Sandstorm server.")
@@ -2306,13 +2304,9 @@ private:
     return "service binding must be NAME=SERVICE with a unique non-built-in name and non-empty service";
   }
 
-  kj::MainBuilder::Validity addDevIsolateAppInterface(kj::StringPtr spec) {
-    KJ_IF_MAYBE(appInterface, parseAppInterfaceSpec(spec)) {
-      devIsolateAppInterfaces.add(kj::mv(*appInterface));
-      return true;
-    } else {
-      return "app interface must be CAPNP-SPECIFIER#INTERFACE";
-    }
+  kj::MainBuilder::Validity addDevIsolateAppInterface(kj::StringPtr) {
+    return "`spk dev-isolate --app-interface` has been removed; declare "
+        "ViewInfo.matchRequests in the worker's typed MainView export";
   }
 
   kj::Maybe<DevIsolateAppInterface> parseAppInterfaceSpec(kj::StringPtr spec) {
@@ -2680,29 +2674,9 @@ private:
     capnp.addAll(kj::StringPtr(
         "@0xf0fa7edd08cd0aa9;\n\n"
         "using Spk = import \"/sandstorm/package.capnp\";\n\n"));
-    capnp.addAll(kj::StringPtr("const placeholderCommand :Spk.Manifest.Command = (\n"));
     capnp.addAll(kj::StringPtr(
-        "  isolate = (\n"
-        "    mainModule = "));
-    appendCapnpText(capnp, "__sandstorm_dev_isolate_placeholder__.js");
-    capnp.addAll(kj::StringPtr(",\n    compatibilityDate = "));
-    appendCapnpText(capnp, devIsolateCompatibilityDate);
-    capnp.addAll(kj::StringPtr(
-        ",\n    compatibilityFlags = [],\n"
-        "    modules = [\n"
-        "      ( name = \"__sandstorm_dev_isolate_placeholder__.js\",\n"
-        "        esModulePath = \"__sandstorm_isolate_runtime/placeholder.js\" )\n"
-        "    ],\n"));
-    capnp.addAll(kj::StringPtr(
-        "    bindings = [\n"
-        "      ( name = \"SANDSTORM_API\", sandstormApi = void ),\n"
-        "      ( name = \"STORAGE\", storage = void )\n"
-        "    ],\n"
-        "    bridgeConfig = ( viewInfo = ( appTitle = (defaultText = "));
-    appendCapnpText(capnp, devIsolateTitle);
-    capnp.addAll(kj::StringPtr(
-        ") ) )\n"
-        "  )\n"
+        "const placeholderCommand :Spk.Manifest.Command = (\n"
+        "  argv = [\"/bin/false\"]\n"
         ");\n\n"
         "const pkgdef :Spk.PackageDefinition = (\n"
         "  id = "));
@@ -2863,6 +2837,10 @@ private:
     isolate.setMainModule(modules[0].name);
     isolate.setCompatibilityDate(devIsolateCompatibilityDate);
     isolate.initCompatibilityFlags(0);
+    auto workerExports = isolate.initExports(1);
+    workerExports[0].setName("ui");
+    workerExports[0].setInterfaceId(0xc277e9822ae2c8fcull);
+    workerExports[0].setRole(spk::Manifest::IsolateConfig::Export::Role::MAIN_VIEW);
 
     auto moduleList = isolate.initModules(
         modules.size() + 3 + (3 * ISOLATE_CAPNP_ES_MODULE_COUNT));
@@ -2919,15 +2897,9 @@ private:
           "__sandstorm_isolate_runtime/", capnpEsRuntimePath(runtimeModule.name)));
     }
     auto bindings = isolate.initBindings(
-        3 + devIsolateTextBindings.size() + devIsolateJsonBindings.size() +
+        devIsolateTextBindings.size() + devIsolateJsonBindings.size() +
         devIsolateDataBindings.size() + devIsolateServiceBindings.size());
-    bindings[0].setName("SANDSTORM_API");
-    bindings[0].setSandstormApi();
-    bindings[1].setName("POWERBOX");
-    bindings[1].setPowerbox();
-    bindings[2].setName("STORAGE");
-    bindings[2].setStorage();
-    size_t bindingIndex = 3;
+    size_t bindingIndex = 0;
     for (auto i: kj::indices(devIsolateTextBindings)) {
       auto binding = bindings[bindingIndex++];
       binding.setName(devIsolateTextBindings[i].name);
@@ -2948,24 +2920,6 @@ private:
       auto binding = bindings[bindingIndex++];
       binding.setName(devIsolateServiceBindings[i].name);
       binding.setService(devIsolateServiceBindings[i].service);
-    }
-
-    initDevIsolateBridgeConfig(isolate.initBridgeConfig());
-  }
-
-  void initDevIsolateBridgeConfig(spk::BridgeConfig::Builder bridgeConfig) {
-    auto viewInfo = bridgeConfig.initViewInfo();
-    viewInfo.initAppTitle().setDefaultText(devIsolateTitle);
-
-    if (devIsolateAppInterfaces.size() == 0) {
-      return;
-    }
-
-    auto rootDir = dirnameForPath(devIsolateWorkerPath);
-    auto matchRequests = viewInfo.initMatchRequests(devIsolateAppInterfaces.size());
-    for (auto i: kj::indices(devIsolateAppInterfaces)) {
-      auto tag = matchRequests[i].initTags(1)[0];
-      tag.setId(resolveAppInterfaceId(rootDir, devIsolateAppInterfaces[i]).interfaceId);
     }
   }
 

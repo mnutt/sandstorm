@@ -175,7 +175,6 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
     "dev-isolate",
     "--print-manifest-json",
     "--title", "Capnp Manifest Test",
-    "--app-interface", "capnp:./greeter.capnp#Greeter",
     workerPath,
   ], {
     env: {
@@ -190,9 +189,13 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
 
   assert.equal(manifest.appTitle.defaultText, "Capnp Manifest Test");
   assert.equal(isolate.mainModule, "worker.js");
+  assert.equal(isolate.bridgeConfig, undefined);
+  assert.equal(isolate.exports.length, 1);
+  assert.equal(isolate.exports[0].name, "ui");
   assert.equal(
-    String(isolate.bridgeConfig.viewInfo.matchRequests[0].tags[0].id),
-    BigInt("0x85d0f155d6c54b6d").toString());
+    String(isolate.exports[0].interfaceId),
+    BigInt("0xc277e9822ae2c8fc").toString());
+  assert.equal(isolate.exports[0].role, "mainView");
   assert.equal(modules.get("worker.js").esModulePath, "__sandstorm_dev_isolate_app/worker.js");
   assert.equal(
     modules.get("capnp:./greeter.capnp").esModulePath,
@@ -232,19 +235,7 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
     assert.equal(modules.get(name).esModulePath, esModulePath);
   }
 
-  assert.deepEqual([...bindings.keys()], ["SANDSTORM_API", "POWERBOX", "STORAGE"]);
-  assert.deepEqual(bindings.get("SANDSTORM_API"), {
-    name: "SANDSTORM_API",
-    sandstormApi: null,
-  });
-  assert.deepEqual(bindings.get("POWERBOX"), {
-    name: "POWERBOX",
-    powerbox: null,
-  });
-  assert.deepEqual(bindings.get("STORAGE"), {
-    name: "STORAGE",
-    storage: null,
-  });
+  assert.deepEqual([...bindings.keys()], []);
 
   const generated = await runCommand(SPK_BIN, [
     "dev-isolate",
@@ -289,7 +280,7 @@ test("spk dev-isolate rejects service targets outside the worker", async () => {
     /service binding target must be the worker-local main service/);
 });
 
-test("spk dev-isolate resolves app-interface schemas outside the repo", async (t) => {
+test("spk dev-isolate resolves imported schemas outside the repo", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   try {
     await requireFile(
@@ -336,7 +327,6 @@ test("spk dev-isolate resolves app-interface schemas outside the repo", async (t
     "dev-isolate",
     "--print-manifest-json",
     "--title", "Object Store",
-    "--app-interface", "capnp:./object-store.capnp#UploadTarget",
     "worker.js",
   ], options);
   const manifest = JSON.parse(stdout);
@@ -350,9 +340,7 @@ test("spk dev-isolate resolves app-interface schemas outside the repo", async (t
   assert.equal(
     modules.get("capnp:/sandstorm/grain.capnp").esModulePath,
     "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/grain.js");
-  assert.equal(
-    String(manifest.continueCommand.isolate.bridgeConfig.viewInfo.matchRequests[0].tags[0].id),
-    BigInt("0x970c38b4ce585d56").toString());
+  assert.equal(manifest.continueCommand.isolate.bridgeConfig, undefined);
 
   const generated = await runCommand(SPK_BIN, [
     "dev-isolate",
@@ -370,14 +358,10 @@ test("spk dev-isolate resolves app-interface schemas outside the repo", async (t
     runCommand(SPK_BIN, [
       "dev-isolate",
       "--print-manifest-json",
-      "--app-interface", "capnp:./missing/object-store.capnp#UploadTarget",
+      "--app-interface", "capnp:./object-store.capnp#UploadTarget",
       "worker.js",
     ], options),
-    (err) => {
-      assert.match(err.message, /Could not resolve isolate import/);
-      assert.doesNotMatch(err.message, /Received signal #11|Segmentation fault/);
-      return true;
-    });
+    /--app-interface` has been removed/);
 });
 
 test("spk powerbox-descriptor emits schema interface descriptors", async () => {
