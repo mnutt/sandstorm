@@ -23,18 +23,10 @@
       "superclasses": [],
       "methods": [
         {
-          "name": "getService",
+          "name": "getBridge",
           "ordinal": 0,
           "paramStructId": "0xdf2f3459f08c99bf",
           "resultStructId": "0x9858a4fb8b22b9cb",
-          "params": [{"name": "binding", "type": "Binding"}],
-          "results": [{"name": "service", "type": "Http.HttpService"}]
-        },
-        {
-          "name": "getBridge",
-          "ordinal": 1,
-          "paramStructId": "0xfdb5ed634441a833",
-          "resultStructId": "0xbe20a297f24d964b",
           "params": [],
           "results": [{"name": "bridge", "type": "Capability"}]
         }
@@ -62,34 +54,18 @@
           "results": []
         },
         {
-          "name": "getHttpService",
+          "name": "getRpcBootstrap",
           "ordinal": 2,
           "paramStructId": "0xbe043e659c1299aa",
           "resultStructId": "0xd94a9bf7a8b06c5e",
-          "params": [],
-          "results": [{"name": "service", "type": "Http.HttpService"}]
-        },
-        {
-          "name": "invokeRpcEvent",
-          "ordinal": 3,
-          "paramStructId": "0xb4dfee2c3369f77d",
-          "resultStructId": "0xdab23bdc5f32ed0d",
-          "params": [{"name": "request", "type": "Data"}],
-          "results": [{"name": "response", "type": "Data"}]
-        },
-        {
-          "name": "getRpcBootstrap",
-          "ordinal": 4,
-          "paramStructId": "0xcc045d48e5bd10f9",
-          "resultStructId": "0xbd57805cf9da6ed9",
           "params": [],
           "results": [{"name": "cap", "type": "Capability"}]
         },
         {
           "name": "getExport",
-          "ordinal": 5,
-          "paramStructId": "0xabe6322d2489715f",
-          "resultStructId": "0xa5676ccf14f83940",
+          "ordinal": 3,
+          "paramStructId": "0xb4dfee2c3369f77d",
+          "resultStructId": "0xdab23bdc5f32ed0d",
           "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}],
           "results": [{"name": "cap", "type": "Capability"}]
         }

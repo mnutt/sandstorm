@@ -1,8 +1,8 @@
 import {
   CAPNP_CLIENT_SYMBOL,
-  connectIsolateBridge,
   connectWorkerPlatformBridge,
   createCapnpWorkerExportDispatcher,
+  createCapnpStruct,
   createWorkerCapnpClient,
   nativeCapnpInterfaceMetadata,
   nativeCapnpSavedTokenData,
@@ -20,6 +20,11 @@ import { MainView } from "/sandstorm/grain.capnp";
 import {
   IsolateApiSessionPowerboxTag,
 } from "/sandstorm/isolate-api-session-tag.capnp";
+import {
+  WorkerApiSession,
+  WorkerSessionRef,
+  WorkerWebSession,
+} from "/sandstorm/isolate-session-exports.capnp";
 import { IsolateSessionContext } from "/sandstorm/isolate-bridge.capnp";
 import { OutboundHttpSession } from "/sandstorm/outbound-http-session.capnp";
 import { PowerboxDescriptor, PowerboxDisplayInfo } from "/sandstorm/powerbox.capnp";
@@ -45,6 +50,8 @@ export {
 export const SANDSTORM_API_VERSION = 0;
 
 const workerCapnpExports = new WeakMap();
+const namedWorkerCapnpExports = new WeakMap();
+const workerSessionKinds = new WeakMap();
 
 /** Declares one generated Cap'n Proto server as a named worker capability. */
 export function serveCapnp(InterfaceClass, target, options = undefined) {
@@ -73,7 +80,7 @@ export function serveCapnp(InterfaceClass, target, options = undefined) {
   return descriptor;
 }
 
-/** Defines a worker with optional Fetch handling and named Cap'n Proto capabilities. */
+/** Defines a worker with named Cap'n Proto capabilities. */
 export function defineWorker(definition) {
   if (!definition || typeof definition !== "object" || Array.isArray(definition)) {
     throw new TypeError("defineWorker() requires a worker definition object");
@@ -81,10 +88,6 @@ export function defineWorker(definition) {
   if (Object.hasOwn(definition, "sandstormRpcEvent")) {
     throw new TypeError("sandstormRpcEvent is reserved for Sandstorm's Cap'n Proto runtime");
   }
-  if (definition.fetch !== undefined && typeof definition.fetch !== "function") {
-    throw new TypeError("defineWorker() fetch must be a function");
-  }
-
   const capabilities = definition.capabilities ?? {};
   if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) {
     throw new TypeError("defineWorker() capabilities must be an object");
@@ -96,12 +99,28 @@ export function defineWorker(definition) {
       throw new TypeError(
         `defineWorker() capability ${name} must be created with serveCapnp()`);
     }
+    if (namedWorkerCapnpExports.has(descriptor)) {
+      throw new TypeError(
+        `defineWorker() capability ${name} reuses a declaration under multiple names`);
+    }
+    const interfaceMetadata = nativeCapnpInterfaceMetadata(
+      internal.interface, `defineWorker() capability ${name}`);
+    namedWorkerCapnpExports.set(descriptor, Object.freeze({
+      name,
+      interfaceId: interfaceMetadata.interfaceId,
+      interfaceName: interfaceMetadata.interfaceName,
+    }));
     internalExports[name] = internal;
   }
 
   const worker = {};
   for (const property of Reflect.ownKeys(definition)) {
     if (property === "capabilities") continue;
+    if (property === "fetch") {
+      throw new TypeError(
+        "defineWorker() does not accept a top-level fetch handler; " +
+        "export a typed capability such as mainViewFromFetch() instead");
+    }
     Object.defineProperty(worker, property, Object.getOwnPropertyDescriptor(definition, property));
   }
 
@@ -784,10 +803,61 @@ export function mainViewFromFetch(inputOptions) {
   return serveCapnp(MainView, target, durable);
 }
 
-const POWERBOX_DESCRIPTOR_PREFIX = "/__sandstorm/powerbox";
+function workerSessionFromFetch(InterfaceClass, inputOptions, helperName) {
+  if (!inputOptions || typeof inputOptions !== "object" || Array.isArray(inputOptions)) {
+    throw new TypeError(`${helperName}() requires an options object`);
+  }
+  if (typeof inputOptions.fetch !== "function") {
+    throw new TypeError(`${helperName}() requires a fetch handler`);
+  }
+  if (inputOptions.webSocket !== undefined && typeof inputOptions.webSocket !== "function") {
+    throw new TypeError(`${helperName}() webSocket must be a function`);
+  }
+  const pathPrefix = webSessionPathPrefix(inputOptions);
+  const prefixFetch = pathPrefix.length === 0
+    ? inputOptions.fetch
+    : (request, env, ctx) => {
+      const url = new URL(request.url);
+      url.pathname = `${pathPrefix}${url.pathname}`;
+      return inputOptions.fetch(new Request(url, request), env, ctx);
+    };
+  const session = {
+    fetch: prefixFetch,
+    webSocket: inputOptions.webSocket,
+    headers: new Headers(),
+    basePath: "http://sandstorm-session",
+    sessionContext: null,
+  };
+  const target = {
+    ...webSessionFromFetchTarget(session),
+    save() {
+      return {
+        objectId: createCapnpStruct(WorkerSessionRef, {}),
+        label: { defaultText: inputOptions.label || "worker WebSession" },
+      };
+    },
+  };
+  const declaration = serveCapnp(InterfaceClass, target, {
+    restore: async () => target,
+    drop: async () => undefined,
+  });
+  workerSessionKinds.set(
+    declaration, InterfaceClass === WorkerApiSession ? "apiSession" : "webSession");
+  return declaration;
+}
+
+/** Declares a durable WebSession capability whose application-facing facade uses Fetch. */
+export function webSessionFromFetch(options) {
+  return workerSessionFromFetch(WorkerWebSession, options, "webSessionFromFetch");
+}
+
+/** Declares a durable ApiSession capability whose application-facing facade uses Fetch. */
+export function apiSessionFromFetch(options) {
+  return workerSessionFromFetch(WorkerApiSession, options, "apiSessionFromFetch");
+}
+
 const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";
 const POWERBOX_FULFILLMENT_PREFIX = "/__sandstorm/powerbox-fulfillment";
-const MAIN_VIEW_REGISTRATION_PATH = "/__sandstorm/main-view/register";
 const capabilityMetadata = new Map();
 const capabilityBridgeRefs = new WeakMap();
 let nextCapabilityId = 0;
@@ -971,19 +1041,6 @@ async function capabilityInfo(env, capability, options = {}) {
   return null;
 }
 
-function nativeCapnpBridgeApi(env) {
-  return {
-    nativeCapnpBridgeOpenChannel: () => {
-      const factory = env.__SANDSTORM_NATIVE_CAPNP;
-      if (!factory || typeof factory.open !== "function") {
-        throw new NativeCapnpBridgeUnavailableError(
-          "native isolate bridge binding is unavailable");
-      }
-      return factory.open();
-    },
-  };
-}
-
 async function withIsolateBridgeRpc(env, operation, options = {}) {
   const bridge = connectWorkerPlatformBridge();
 
@@ -997,32 +1054,12 @@ async function withIsolateBridgeRpc(env, operation, options = {}) {
   }
 }
 
-async function withSandstormApiRpc(env, operation, options = {}) {
-  return withIsolateBridgeRpc(env, async (bridge) => {
-    const result = await bridge.getSandstormApi({});
-    const sandstormApi = result.api;
-    if (!sandstormApi || typeof sandstormApi !== "object") {
-      throw new Error("isolate bridge returned an invalid SandstormApi capability");
-    }
-
-    return operation(sandstormApi, bridge);
-  }, options);
-}
-
 export class UnsupportedCapabilityError extends Error {
   constructor(capability, operation, message = undefined) {
     super(message || `${capability}.${operation}() is not implemented by isolate grains yet`);
     this.name = "UnsupportedCapabilityError";
     this.capability = capability;
     this.operation = operation;
-  }
-}
-
-class NativeCapnpBridgeUnavailableError extends Error {
-  constructor(message, details = {}) {
-    super(message);
-    this.name = "NativeCapnpBridgeUnavailableError";
-    this.details = details;
   }
 }
 
@@ -1164,13 +1201,25 @@ function capabilityBridge(value) {
   throw new ValidationError("operation requires a live capability handle");
 }
 
-function sessionActionCapability(env, capability, name = "session action capability") {
+async function sessionActionCapability(env, capability, name = "session action capability") {
+  if (namedWorkerCapnpExports.has(capability)) {
+    const resolved = await resolveWorkerCapability(env, capability);
+    return {
+      cap: resolved._capnpClient(name),
+      bridge: resolved._bridge(),
+      temporaryBridge: false,
+      temporaryCapability: resolved,
+      wrapAppPersistent: false,
+    };
+  }
+
   const cap = capabilityCapnpClient(capability, name);
   if (capability instanceof Capability) {
     return {
       cap,
       bridge: capability._bridge(),
       temporaryBridge: false,
+      temporaryCapability: null,
       wrapAppPersistent: false,
     };
   }
@@ -1179,6 +1228,7 @@ function sessionActionCapability(env, capability, name = "session action capabil
     cap,
     bridge: connectWorkerPlatformBridge(),
     temporaryBridge: true,
+    temporaryCapability: null,
     wrapAppPersistent: true,
   };
 }
@@ -1333,6 +1383,39 @@ export class Capability {
       type: "capability",
       id: this.id,
     };
+  }
+}
+
+async function resolveWorkerCapability(env, declaration, options = {}) {
+  const named = namedWorkerCapnpExports.get(declaration);
+  if (!named) {
+    throw new ValidationError(
+      "worker capability must be a declaration registered by defineWorker()");
+  }
+  const bridge = connectWorkerPlatformBridge();
+  try {
+    const resultPromise = bridge.getWorkerExport({
+      name: named.name,
+      interfaceId: named.interfaceId,
+    });
+    const cap = capnpCapabilityFromResult(resultPromise, `worker export ${named.name}`);
+    if (!cap) {
+      throw new Error(`isolate bridge returned no capability for worker export ${named.name}`);
+    }
+    const result = await resultPromise;
+    return new Capability(env, cap, {
+      kind: "workerExport",
+      bridge,
+      saver: result.saver,
+      residence: "localExport",
+      nativeInterface: workerSessionKinds.get(declaration) ?? "unknown",
+      interfaceId: `0x${named.interfaceId.toString(16)}`,
+      interfaceName: named.interfaceName,
+      browserSessionId: options.browserSessionId,
+    });
+  } catch (error) {
+    bridge.close(error);
+    throw error;
   }
 }
 
@@ -1711,12 +1794,10 @@ async function saveCapabilityRecord(env, capability, options = {}) {
     saved = await saver.save({ label: { defaultText: label } });
   } else {
     const bridge = capabilityBridge(capability);
-    const apiResult = await bridge.getSandstormApi({});
-    const sandstormApi = apiResult.api;
-    if (!sandstormApi || typeof sandstormApi.save !== "function") {
-      throw new Error("isolate bridge returned a SandstormApi without save()");
+    if (typeof bridge.saveAppCapability !== "function") {
+      throw new Error("isolate bridge returned no app-capability saver");
     }
-    saved = await sandstormApi.save((params) => {
+    saved = await bridge.saveAppCapability((params) => {
       initCapnpCapabilityParam(params, capabilityCapnpClient(capability, "saved capability"),
         "saved capability");
       params._initLabel().defaultText = label;
@@ -1753,8 +1834,8 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
   const descriptor = endpoint === "tie-to-user"
     ? null
     : await sessionActionDescriptor(env, options);
-  const actionCapability = sessionActionCapability(env, capability);
-  const { bridge, temporaryBridge } = actionCapability;
+  const actionCapability = await sessionActionCapability(env, capability);
+  const { bridge, temporaryBridge, temporaryCapability } = actionCapability;
 
   try {
     const cap = await wrapSessionActionCapability(actionCapability);
@@ -1769,6 +1850,7 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
           initPowerboxDisplayInfoParam(params, displayInfo);
         });
         if (temporaryBridge) bridge.close();
+        temporaryCapability?._release();
         return { ok: true };
       case "fulfill-request":
         await bridge.fulfillPowerboxRequest((params) => {
@@ -1779,6 +1861,7 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
           initPowerboxDisplayInfoParam(params, displayInfo);
         });
         if (temporaryBridge) bridge.close();
+        temporaryCapability?._release();
         return { ok: true };
       case "tie-to-user": {
         const tiedPromise = bridge.tieCapabilityToUser((params) => {
@@ -1792,20 +1875,22 @@ async function sessionPowerboxAction(env, request, endpoint, capability, options
           throw new Error("SessionContext.tieToUser() returned no capability");
         }
         const tied = await tiedPromise;
-        return new Capability(env, tiedCap, {
+        const tiedCapability = new Capability(env, tiedCap, {
           kind: "tied",
           bridge,
           saver: tied.saver,
           nativeInterface: "unknown",
-          pathPrefix: "",
           browserSessionId: sessionId,
         });
+        temporaryCapability?._release();
+        return tiedCapability;
       }
       default:
         throw new Error(`unsupported session powerbox action: ${endpoint}`);
     }
   } catch (error) {
     if (temporaryBridge) bridge.close(error);
+    temporaryCapability?._release(error);
     throw error;
   }
 }
@@ -1936,105 +2021,6 @@ async function appInterfacePowerboxDescriptorInfo(env, options = {}) {
     }
     return packedPowerboxDescriptorInfo(interfaceId, null, decoded);
   });
-}
-
-async function servePowerboxDescriptors(request, env) {
-  const url = new URL(request.url);
-
-  if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/api-session-descriptor`) {
-    try {
-      const scopes = url.searchParams.getAll("oauthScope");
-      const scopeList = scopes.length > 0
-        ? scopes
-        : String(url.searchParams.get("oauthScopes") || "")
-            .split(/[,\s]+/)
-            .map((scope) => scope.trim())
-            .filter(Boolean);
-      const descriptor = await apiSessionPowerboxDescriptorInfo(env, {
-        canonicalUrl: url.searchParams.get("canonicalUrl") || "",
-        oauthScopes: scopeList,
-      });
-      return Response.json(descriptor);
-    } catch (error) {
-      return Response.json({
-        ok: false,
-        error: String(error?.message || error),
-      }, { status: 400 });
-    }
-  }
-
-  if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/outbound-http-descriptor`) {
-    try {
-      const methods = url.searchParams.getAll("method");
-      const methodList = methods.length > 0
-        ? methods
-        : String(url.searchParams.get("methods") || "")
-            .split(/[,\s]+/)
-            .map((method) => method.trim())
-            .filter(Boolean);
-      const descriptor = await outboundHttpPowerboxDescriptorInfo(env, {
-        baseUrl: url.searchParams.get("baseUrl") || "",
-        methods: methodList,
-      });
-      return Response.json(descriptor);
-    } catch (error) {
-      return Response.json({
-        ok: false,
-        error: String(error?.message || error),
-      }, { status: 400 });
-    }
-  }
-
-  if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/app-interface-descriptor`) {
-    try {
-      const descriptor = await appInterfacePowerboxDescriptorInfo(env, {
-        interfaceId: url.searchParams.get("interfaceId") || "",
-        interfaceName: url.searchParams.get("interfaceName") || undefined,
-      });
-      return Response.json(descriptor);
-    } catch (error) {
-      return Response.json({
-        ok: false,
-        error: error.message || String(error),
-      }, { status: 400 });
-    }
-  }
-
-  if (url.pathname === `${POWERBOX_DESCRIPTOR_PREFIX}/claim` && request.method === "POST") {
-    try {
-      const body = await request.json();
-      const claimOptions = {
-        requiredPermissions: Array.isArray(body.requiredPermissions)
-          ? body.requiredPermissions
-          : [],
-      };
-      for (const name of [
-        "apiSession",
-        "apiSessionDescriptor",
-        "outboundHttp",
-        "outboundHttpDescriptor",
-        "descriptor",
-        "powerboxDescriptor",
-        "nativeInterface",
-      ]) {
-        if (body[name] !== undefined) {
-          claimOptions[name] = body[name];
-        }
-      }
-      const capability = await powerbox(request, env).claim(body.token, claimOptions);
-      return Response.json({
-        ok: true,
-        capability: JSON.parse(JSON.stringify(capability)),
-      });
-    } catch (error) {
-      return Response.json({
-        ok: false,
-        error: String(error?.message || error),
-      }, { status: 400 });
-    }
-  }
-
-  return null;
 }
 
 function escapeHtml(value) {
@@ -2366,6 +2352,13 @@ function normalizePowerboxFulfillmentCapability(env, value) {
       typeof value[CAPNP_CLIENT_SYMBOL] !== "function" && value.capability
     ? value.capability
     : value;
+  if (namedWorkerCapnpExports.has(raw)) {
+    return {
+      capability: raw,
+      handle: { ok: true, type: "capabilityTransferred" },
+    };
+  }
+
   const capability = wrapCapability(env, raw);
   if (capability instanceof Capability ||
       (capability && typeof capability === "object" &&
@@ -2816,82 +2809,6 @@ export function powerboxGrants(request, env, options = {}) {
   };
 }
 
-function normalizeMainViewHandlers(options = {}) {
-  const mainView = options.mainView;
-  if (!mainView || typeof mainView !== "object") {
-    return {};
-  }
-  return mainView;
-}
-
-function mainViewRpcTarget(request, env, options = {}) {
-  const handlers = normalizeMainViewHandlers(options);
-  return {
-    async restore(params) {
-      if (typeof handlers.restore !== "function") {
-        throw new UnsupportedCapabilityError("mainView", "restore");
-      }
-
-      const restored = await handlers.restore(params.objectId, {
-        request,
-        env,
-        params,
-      });
-      const cap = restored && typeof restored === "object" && restored.cap !== undefined ?
-        restored.cap :
-        restored;
-      return { cap: capnpCapabilityPointer(cap) };
-    },
-
-    async drop(params) {
-      if (typeof handlers.drop !== "function") {
-        return undefined;
-      }
-
-      return await handlers.drop(params.objectId, {
-        request,
-        env,
-        params,
-      });
-    },
-  };
-}
-
-async function serveMainViewRegistration(request, env, options = {}) {
-  const url = new URL(request.url);
-  if (url.pathname !== MAIN_VIEW_REGISTRATION_PATH) {
-    return null;
-  }
-
-  if (request.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405 });
-  }
-
-  const registrationId = url.searchParams.get("registrationId");
-  if (!registrationId) {
-    return Response.json({ ok: false, error: "missing MainView registration id" }, {
-      status: 400,
-    });
-  }
-
-  const bridge = connectWorkerPlatformBridge();
-  const view = new MainView.Server(mainViewRpcTarget(request, env, options)).client();
-  try {
-    await bridge.registerMainView((params) => {
-      initCapnpCapabilityParam(params, view, "MainView registration");
-      params.registrationId = registrationId;
-    });
-    return new Response(null, { status: 204 });
-  } finally {
-    bridge.close();
-  }
-}
-
-export async function serveSystemRoutes(request, env, options = {}) {
-  return await serveMainViewRegistration(request, env, options) ||
-    await servePowerboxDescriptors(request, env);
-}
-
 function webSessionPathPrefix(options = {}) {
   const value = options.pathPrefix ?? "";
   const pathPrefix = validate.string(value, "pathPrefix", { maxLength: 1024 });
@@ -2910,55 +2827,6 @@ function webSessionPathPrefix(options = {}) {
     }
   }
   return pathPrefix;
-}
-
-function webSessionPersistent(options = {}) {
-  if (options.persistent === undefined || options.persistent === null) {
-    return true;
-  }
-  if (typeof options.persistent !== "boolean") {
-    throw new ValidationError("persistent must be a boolean");
-  }
-  return options.persistent;
-}
-
-async function createRouteBackedCapability(env, nativeInterface, options = {}) {
-  const pathPrefix = webSessionPathPrefix(options);
-  const persistent = webSessionPersistent(options);
-  const bridge = connectWorkerPlatformBridge();
-  try {
-    if (typeof bridge.createRouteBackedCapability !== "function") {
-      throw new Error("isolate bridge returned no route-backed capability creator");
-    }
-
-    const resultPromise = bridge.createRouteBackedCapability({
-      nativeInterface,
-      pathPrefix,
-      persistent,
-    });
-    const cap = capnpCapabilityFromResult(resultPromise, "route-backed capability");
-    if (!cap) {
-      throw new Error("isolate bridge returned no route-backed capability");
-    }
-    await resultPromise;
-    const kind = nativeInterface === "apiSession"
-      ? "routeBackedApiSession"
-      : "routeBackedWebSession";
-    return new Capability(env, cap, {
-      kind,
-      bridge,
-      residence: "localExport",
-      nativeInterface,
-      pathPrefix,
-      persistent,
-      hasNativeCapability: true,
-      liveForwardable: true,
-      browserSessionId: options.browserSessionId,
-    });
-  } catch (error) {
-    bridge.close(error);
-    throw error;
-  }
 }
 
 function browserHandoffSessionId(capability, options = {}) {
@@ -3008,14 +2876,6 @@ async function browserHandoffCapability(env, capability, options = {}) {
   };
 }
 
-async function createWebSessionCapability(env, options = {}) {
-  return createRouteBackedCapability(env, "webSession", options);
-}
-
-async function createApiSessionCapability(env, options = {}) {
-  return createRouteBackedCapability(env, "apiSession", options);
-}
-
 function forgetCapabilityHandle(capabilityId) {
   capabilityMetadata.delete(capabilityId);
 }
@@ -3037,7 +2897,6 @@ function cacheCapabilityMetadata(id, metadata = {}) {
     kind: metadata.kind || "unknown",
     residence: metadata.residence || "imported",
     nativeInterface,
-    pathPrefix: typeof metadata.pathPrefix === "string" ? metadata.pathPrefix : "",
     persistent: metadata.persistent !== undefined ? Boolean(metadata.persistent) : true,
     supportsWebFetch: metadata.supportsWebFetch !== undefined
       ? Boolean(metadata.supportsWebFetch)
@@ -3079,13 +2938,6 @@ function savedCapabilityEnvelopeType(info = {}) {
   }
 }
 
-function savedCapabilityEnvelopePathPrefix(info = {}) {
-  if (info.kind === "routeBackedWebSession" || info.kind === "routeBackedApiSession") {
-    return typeof info.pathPrefix === "string" ? info.pathPrefix : "";
-  }
-  return "";
-}
-
 function encodeSavedCapabilityToken(tokenData, info = {}) {
   const sturdyRef = nativeCapnpSavedTokenText(tokenData);
   const type = savedCapabilityEnvelopeType(info);
@@ -3094,9 +2946,8 @@ function encodeSavedCapabilityToken(tokenData, info = {}) {
   }
 
   const payload = [
-    "isolate-saved-capability-v1",
+    "isolate-saved-capability-v2",
     type,
-    base64UrlEncodeText(savedCapabilityEnvelopePathPrefix(info)),
     sturdyRef,
   ].join("\n");
   return base64UrlEncodeText(payload);
@@ -3105,15 +2956,14 @@ function encodeSavedCapabilityToken(tokenData, info = {}) {
 function savedCapabilityEnvelopeMetadata(token) {
   const fallback = {
     nativeInterface: "unknown",
-    pathPrefix: "",
   };
 
   const text = base64UrlDecodeText(token, "saved capability token");
   const lines = text.split("\n");
-  if (lines[0] !== "isolate-saved-capability-v1") {
+  if (lines[0] !== "isolate-saved-capability-v2") {
     return fallback;
   }
-  if (lines.length < 4) {
+  if (lines.length !== 3) {
     throw new ValidationError("saved capability token envelope is incomplete");
   }
 
@@ -3137,7 +2987,6 @@ function savedCapabilityEnvelopeMetadata(token) {
 
   return {
     nativeInterface,
-    pathPrefix: base64UrlDecodeText(lines[2], "saved capability token path prefix"),
   };
 }
 
@@ -3709,25 +3558,24 @@ async function restoreCapabilityToken(env, token, options = {}) {
   const metadata = savedCapabilityEnvelopeMetadata(tokenText);
   const bridge = connectWorkerPlatformBridge();
   try {
-    const apiResult = await bridge.getSandstormApi({});
-    const sandstormApi = apiResult.api;
-    if (!sandstormApi || typeof sandstormApi.restore !== "function") {
-      throw new Error("isolate bridge returned a SandstormApi without restore()");
+    if (typeof bridge.restoreCapability !== "function") {
+      throw new Error("isolate bridge returned no capability restorer");
     }
 
-    const restoredPromise = sandstormApi.restore({
+    const restoredPromise = bridge.restoreCapability({
       token: nativeCapnpSavedTokenData(tokenText),
     });
     const cap = capnpCapabilityFromResult(restoredPromise, "restored capability");
     if (!cap) {
-      throw new Error("SandstormApi.restore() returned no capability");
+      throw new Error("isolate bridge restore returned no capability");
     }
-    await restoredPromise;
+    const restored = await restoredPromise;
 
     return new Capability(env, cap, {
       ...metadata,
       kind: metadata.kind || "restored",
       bridge,
+      saver: restored.saver,
       browserSessionId: options.browserSessionId,
     });
   } catch (error) {
@@ -3738,12 +3586,12 @@ async function restoreCapabilityToken(env, token, options = {}) {
 
 async function revokeCapabilityToken(env, token) {
   const tokenData = nativeCapnpSavedTokenData(savedCapabilityToken(token));
-  await withSandstormApiRpc(env, async (sandstormApi) => {
-    if (typeof sandstormApi.drop !== "function") {
-      throw new Error("isolate bridge returned a SandstormApi without drop()");
+  await withIsolateBridgeRpc(env, async (bridge) => {
+    if (typeof bridge.dropCapability !== "function") {
+      throw new Error("isolate bridge returned no capability revoker");
     }
 
-    await sandstormApi.drop({ token: tokenData });
+    await bridge.dropCapability({ token: tokenData });
   });
   return { ok: true };
 }
@@ -4008,7 +3856,6 @@ export function powerbox(request, env) {
         bridge,
         saver: claimed.saver,
         nativeInterface,
-        pathPrefix: "",
         browserSessionId: sessionId,
       });
     } catch (error) {
@@ -4088,9 +3935,9 @@ export function powerbox(request, env) {
       const capability = new Capability(env, cap, {
         kind: "powerboxOffer",
         bridge,
+        saver: result.saver,
         residence: "imported",
         nativeInterface: offerDescriptorNativeInterface(descriptor),
-        pathPrefix: "",
         browserSessionId: sessionId,
       });
       return {
@@ -4164,9 +4011,6 @@ async function runtimeStatus(env) {
 
 export function sandstorm(request, env) {
   const browserSessionId = header(request, "x-sandstorm-session-id");
-  const withBrowserSession = (options = {}) => browserSessionId
-    ? { ...options, browserSessionId }
-    : options;
 
   const api = {
     session: () => getSession(request),
@@ -4175,24 +4019,14 @@ export function sandstorm(request, env) {
     }),
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),
-    webSession: (options = {}) => createWebSessionCapability(env, withBrowserSession(options)),
-    apiSession: (options = {}) => createApiSessionCapability(env, withBrowserSession(options)),
+    capability: (declaration) =>
+      resolveWorkerCapability(env, declaration, { browserSessionId }),
     restore: (token) => restoreCapabilityToken(env, token, { browserSessionId }),
     revoke: (token) => revokeCapabilityToken(env, token),
     use: (token, fn) => useCapabilityToken(env, token, fn, { browserSessionId }),
     powerboxFulfillment: (options = {}) => powerboxFulfillment(request, env, options),
     powerboxGrants: (options = {}) => powerboxGrants(request, env, options),
-    serveSystemRoutes: async (options = {}) => await serveSystemRoutes(request, env, options),
   };
-
-  // These hooks are a private protocol between sandstorm:api and the trusted
-  // Cap'n Proto runtime. They deliberately remain absent from the enumerable,
-  // app-facing API surface.
-  Object.defineProperties(api, {
-    nativeCapnpBridgeOpenChannel: {
-      value: () => nativeCapnpBridgeApi(env).nativeCapnpBridgeOpenChannel(),
-    },
-  });
 
   return api;
 }

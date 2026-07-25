@@ -1,15 +1,7 @@
 declare module "sandstorm:api" {
   export const SANDSTORM_API_VERSION: 0;
 
-  export interface Fetcher {
-    fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
-  }
-
   export interface SandstormEnv {
-    SANDSTORM_API: Fetcher;
-    POWERBOX?: Fetcher;
-    /** @deprecated Use sandstorm(request, env).storage(). */
-    STORAGE: Fetcher;
     [binding: string]: unknown;
   }
 
@@ -105,14 +97,6 @@ declare module "sandstorm:api" {
     list(): Promise<unknown>;
   }
 
-  export interface WebSessionCapabilityOptions {
-    pathPrefix?: string;
-    persistent?: boolean;
-    title?: string | { defaultText: string };
-    label?: string | { defaultText: string };
-    description?: string | { defaultText: string };
-  }
-
   export interface SaveCapabilityOptions {
     label?: string | { defaultText: string };
   }
@@ -152,7 +136,10 @@ declare module "sandstorm:api" {
     descriptor?: unknown;
   }
 
-  export type LiveCapability = Capability | CapnpExport<object>;
+  export type LiveCapability =
+    | Capability
+    | CapnpExport<object>
+    | WorkerCapnpExport<CapnpServerInterface>;
 
   export interface PowerboxClaimOptions {
     requiredPermissions?: string[];
@@ -238,27 +225,6 @@ declare module "sandstorm:api" {
     serve(request?: Request): Promise<Response | null>;
   }
 
-  export interface MainViewRouteContext {
-    readonly request: Request;
-    readonly env: SandstormEnv;
-    readonly params: unknown;
-  }
-
-  export interface MainViewRouteHandlers {
-    restore?(
-      objectId: unknown,
-      context: MainViewRouteContext,
-    ): unknown | { cap: unknown } | Promise<unknown | { cap: unknown }>;
-    drop?(
-      objectId: unknown,
-      context: MainViewRouteContext,
-    ): unknown | Promise<unknown>;
-  }
-
-  export interface SystemRouteOptions {
-    mainView?: MainViewRouteHandlers;
-  }
-
   /**
    * Operational diagnostics with no compatibility guarantee for member names
    * or response shapes. The namespace itself is stable so experimental tools
@@ -273,14 +239,12 @@ declare module "sandstorm:api" {
     readonly unstable: UnstableSandstormDiagnostics;
     storage(): StorageApi;
     powerbox(): PowerboxApi;
-    webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
-    apiSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
+    capability(declaration: WorkerCapnpExport<CapnpServerInterface>): Promise<Capability>;
     restore(token: string): Promise<Capability>;
     revoke(token: string): Promise<{ ok: true }>;
     use<T>(token: string, fn: (capability: Capability) => T | Promise<T>): Promise<T>;
     powerboxFulfillment(options: PowerboxFulfillmentOptions): PowerboxFulfillmentApi;
     powerboxGrants(options: PowerboxGrantsOptions): PowerboxGrantsApi;
-    serveSystemRoutes(options?: SystemRouteOptions): Promise<Response | null>;
   }
 
   export function storage(env: SandstormEnv): StorageApi;
@@ -296,10 +260,5 @@ declare module "sandstorm:api" {
     options: PowerboxFulfillmentOptions,
   ): PowerboxFulfillmentApi;
   export function getSession(request: Request): SessionInfo;
-  export function serveSystemRoutes(
-    request: Request,
-    env: SandstormEnv,
-    options?: SystemRouteOptions,
-  ): Promise<Response | null>;
   export function sandstorm(request: Request, env: SandstormEnv): SandstormApi;
 }

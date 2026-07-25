@@ -22,7 +22,7 @@ worker uses those generated classes to:
 - pass returned capabilities through normal Cap'n Proto RPC cap tables
 
 This is the native Cap'n Proto RPC path used for schema-defined isolate
-protocols, isolate-to-isolate calls, browser generated clients, and legacy
+protocols, isolate-to-isolate calls, browser generated clients, and traditional
 grain interop. Authority still comes from Sandstorm capabilities: the export
 route returns a durable string token, while live authority is passed as Cap'n
 Proto capability references or saved/restored through Sandstorm when the

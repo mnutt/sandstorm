@@ -1,7 +1,9 @@
 import {
+  apiSessionFromFetch,
   defineWorker,
   mainViewFromFetch,
   sandstorm,
+  webSessionFromFetch,
 } from "sandstorm:api";
 import { renderCapabilityProviderDemo } from "./ui.js";
 
@@ -100,7 +102,7 @@ async function capabilityProviderFetch(request, env) {
       }
 
       if (request.method === "POST" && url.pathname === "/api/export-web-session") {
-        const capability = await api.webSession({ pathPrefix: "/shared" });
+        const capability = await api.capability(SHARED_WEB_SESSION);
         return Response.json(await exerciseCapability(api, capability, {
           label: "Isolate provider WebSession",
           path: "/info?source=direct",
@@ -115,7 +117,7 @@ async function capabilityProviderFetch(request, env) {
       }
 
       if (request.method === "POST" && url.pathname === "/api/export-api-session") {
-        const capability = await api.apiSession({ pathPrefix: "/api/v1" });
+        const capability = await api.capability(PROVIDER_API_SESSION);
         return Response.json(await exerciseCapability(api, capability, {
           label: "Isolate provider ApiSession",
           path: "/status?source=direct",
@@ -131,9 +133,21 @@ async function capabilityProviderFetch(request, env) {
     }
 }
 
-export default defineWorker({
+const SHARED_WEB_SESSION = webSessionFromFetch({
   fetch: capabilityProviderFetch,
+  pathPrefix: "/shared",
+  label: "Isolate provider WebSession",
+});
+const PROVIDER_API_SESSION = apiSessionFromFetch({
+  fetch: capabilityProviderFetch,
+  pathPrefix: "/api/v1",
+  label: "Isolate provider ApiSession",
+});
+
+export default defineWorker({
   capabilities: {
+    api: PROVIDER_API_SESSION,
+    shared: SHARED_WEB_SESSION,
     ui: mainViewFromFetch({
       fetch: capabilityProviderFetch,
       viewInfo: VIEW_INFO,

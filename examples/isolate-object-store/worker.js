@@ -1,12 +1,10 @@
 import {
-  capnpClient,
   defineWorker,
   exportCapnp,
   mainViewFromFetch,
   sandstorm,
 } from "sandstorm:api";
-import { ObjectStore } from "capnp:./object-store.capnp";
-import { WebSession } from "capnp:/sandstorm/web-session.capnp";
+import { ObjectStore, StoredObject } from "capnp:./object-store.capnp";
 
 const OBJECTS = Object.freeze({
   photos: Object.freeze({
@@ -34,10 +32,6 @@ function findObject(bucket, key) {
   return OBJECTS[bucket]?.[key] || null;
 }
 
-function objectPath(bucket, key) {
-  return `/objects/${encodeURIComponent(bucket)}/${encodeURIComponent(key)}`;
-}
-
 function objectInfo(key, object) {
   return {
     key,
@@ -61,7 +55,7 @@ function jsonObjectListing(listing) {
   };
 }
 
-function makeObjectStore(api) {
+function makeObjectStore() {
   return {
     async listObjects({ bucket = "", prefix = "", cursor = "" } = {}) {
       const entries = Object.entries(OBJECTS[bucket] || {})
@@ -79,49 +73,36 @@ function makeObjectStore(api) {
       if (!findObject(bucket, key)) {
         throw new Error(`object not found: ${bucket}/${key}`);
       }
-      const capability = await api.webSession({ pathPrefix: objectPath(bucket, key) });
+      const object = findObject(bucket, key);
       return {
-        object: capnpClient(WebSession, capability),
+        object: new StoredObject.Server({
+          read() {
+            return {
+              body: new TextEncoder().encode(object.body),
+              contentType: object.contentType,
+              eTag: `"${bucket}/${key}"`,
+            };
+          },
+        }).client(),
       };
     },
   };
-}
-
-function serveObject(url) {
-  const match = url.pathname.match(/^\/objects\/([^/]+)\/([^/]+)$/);
-  if (!match) return null;
-
-  const bucket = decodeURIComponent(match[1]);
-  const key = decodeURIComponent(match[2]);
-  const object = findObject(bucket, key);
-  if (!object) {
-    return Response.json({ ok: false, error: "object not found" }, { status: 404 });
-  }
-
-  return new Response(object.body, {
-    headers: {
-      "content-type": object.contentType,
-      "etag": `"${bucket}/${key}"`,
-    },
-  });
 }
 
 async function objectStoreFetch(request, env) {
     const api = sandstorm(request, env);
 
     const url = new URL(request.url);
-    const objectResponse = serveObject(url);
-    if (objectResponse) return objectResponse;
 
     if (url.pathname === "/export-object-store") {
-      const exported = await exportCapnp(api, ObjectStore, makeObjectStore(api));
+      const exported = await exportCapnp(api, ObjectStore, makeObjectStore());
       return Response.json({
         ok: true,
         token: await exported.save({ label: "ObjectStore" }),
       });
     }
 
-    const store = new ObjectStore.Server(makeObjectStore(api)).client();
+    const store = new ObjectStore.Server(makeObjectStore()).client();
     const listing = await store.listObjects({
       bucket: "photos",
       prefix: "2026/",
@@ -131,14 +112,10 @@ async function objectStoreFetch(request, env) {
       bucket: "photos",
       key: "2026/cover.txt",
     });
-    const response = await object.object.get({
-      path: "",
-      context: {},
-      ignoreBody: false,
-    });
-    const content = response.content;
-    const body = content.body.bytes;
-    const bodyBytes = typeof body.toUint8Array === "function" ? body.toUint8Array() : body;
+    const content = await object.object.read({});
+    const bodyBytes = typeof content.body.toUint8Array === "function"
+      ? content.body.toUint8Array()
+      : content.body;
 
     return Response.json({
       ok: true,
@@ -146,17 +123,14 @@ async function objectStoreFetch(request, env) {
       interfaceId: `0x${ObjectStore._capnp.typeIdHex}`,
       listing: jsonObjectListing(listing),
       object: {
-        statusCode: content.statusCode,
-        contentType: content.mimeType,
+        contentType: content.contentType,
+        eTag: content.eTag,
         body: new TextDecoder().decode(bodyBytes),
       },
     });
 }
 
 export default defineWorker({
-  // api.webSession() still routes its derived WebSession through worker Fetch ingress. This
-  // disappears with the route-backed capability compatibility layer.
-  fetch: objectStoreFetch,
   capabilities: {
     ui: mainViewFromFetch({
       fetch: objectStoreFetch,

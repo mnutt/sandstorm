@@ -94,25 +94,14 @@ declare module "sandstorm:api" {
 
   export interface SandstormWorkerDefinition<E extends SandstormEnv = SandstormEnv> {
     readonly capabilities?: Readonly<Record<string, WorkerCapnpExport<any, E>>>;
-    fetch?(
-      request: Request,
-      env: E,
-      ctx: WorkerExecutionContext,
-    ): Response | Promise<Response>;
   }
 
-  export interface DefinedSandstormWorker<E extends SandstormEnv = SandstormEnv> {
-    fetch?(
-      request: Request,
-      env: E,
-      ctx: WorkerExecutionContext,
-    ): Response | Promise<Response>;
-  }
+  export interface DefinedSandstormWorker {}
 
   /** Builds the default workerd export and installs Sandstorm's private RPC event handler. */
   export function defineWorker<E extends SandstormEnv = SandstormEnv>(
     definition: SandstormWorkerDefinition<E>,
-  ): Readonly<DefinedSandstormWorker<E>>;
+  ): Readonly<DefinedSandstormWorker>;
 
   export interface MainViewFromFetchOptions<E extends SandstormEnv = SandstormEnv> {
     readonly viewInfo: object;
@@ -169,6 +158,32 @@ declare module "sandstorm:api" {
   /** Implements MainView/WebSession in capnp-es and adapts those UI calls to Fetch. */
   export function mainViewFromFetch<E extends SandstormEnv = SandstormEnv>(
     options: MainViewFromFetchOptions<E>,
+  ): WorkerCapnpExport<CapnpServerInterface, E>;
+
+  export interface WorkerSessionFromFetchOptions<E extends SandstormEnv = SandstormEnv> {
+    readonly pathPrefix?: string;
+    readonly label?: string;
+    fetch(
+      request: Request,
+      env: E,
+      ctx: WorkerExecutionContext,
+    ): Response | Promise<Response>;
+    webSocket?(
+      request: Request,
+      socket: SandstormWebSocket,
+      env: E,
+      ctx: WorkerExecutionContext,
+    ): SandstormWebSocketHandler<E> | Promise<SandstormWebSocketHandler<E>>;
+  }
+
+  /** Declares a named, durable WebSession export backed by an explicit Fetch facade. */
+  export function webSessionFromFetch<E extends SandstormEnv = SandstormEnv>(
+    options: WorkerSessionFromFetchOptions<E>,
+  ): WorkerCapnpExport<CapnpServerInterface, E>;
+
+  /** Declares a named, durable ApiSession export backed by an explicit Fetch facade. */
+  export function apiSessionFromFetch<E extends SandstormEnv = SandstormEnv>(
+    options: WorkerSessionFromFetchOptions<E>,
   ): WorkerCapnpExport<CapnpServerInterface, E>;
 
   /**

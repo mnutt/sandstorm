@@ -5,7 +5,7 @@ using Spk = import "/sandstorm/package.capnp";
 
 # Local validation package for the account-shared isolate runtime path.
 #
-# This uses a dedicated checked-in test key so local validation cannot collide with the legacy
+# This uses a dedicated checked-in test key so local validation cannot collide with the older
 # test app's app ID or grains.
 
 const isolateTestViewInfo :Grain.UiView.ViewInfo = (
@@ -39,10 +39,6 @@ const isolateBindings :List(Spk.Manifest.IsolateConfig.Binding) = [
   (
     name = "DATA_BINDING",
     data = "\x00\x01\x7f\x80\xffSandstorm"
-  ),
-  (
-    name = "LOOPBACK_SERVICE",
-    service = "main"
   )
 ];
 

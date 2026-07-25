@@ -3,6 +3,7 @@ import {
   defineWorker,
   mainViewFromFetch,
   sandstorm,
+  webSessionFromFetch,
 } from "sandstorm:api";
 import { TestPowerboxCap } from "capnp:/sandstorm/test-app/test-app.capnp";
 
@@ -49,7 +50,7 @@ function renderRequestPage(session) {
   </head>
   <body>
     <h1>Isolate Capability Provider</h1>
-    <p>Provides a route-backed WebSession capability.</p>
+    <p>Provides a typed WebSession capability.</p>
     <button id="fulfill-api" type="button">Use this provider</button>
     <pre id="result">${htmlEscape(JSON.stringify(session, null, 2))}</pre>
 
@@ -87,13 +88,13 @@ async function providerFetch(request, env) {
     const fulfillApi = api.powerboxFulfillment({
       routePrefix: "/__sandstorm/provider-api",
       title: "Isolate Capability Provider",
-      description: "Provides a route-backed WebSession from an isolate grain.",
+      description: "Provides a typed WebSession from an isolate grain.",
       buttonLabel: "Use this provider",
-      capability: () => api.webSession({ pathPrefix: "/provided" }),
+      capability: () => PROVIDED_WEB_SESSION,
       fulfill: {
         title: "Isolate Capability Provider",
         verbPhrase: "can provide isolate capability responses",
-        description: "Provides a route-backed WebSession from an isolate grain.",
+        description: "Provides a typed WebSession from an isolate grain.",
         requiredPermissions: ["view"],
         descriptor: PROVIDER_DESCRIPTOR,
       },
@@ -120,9 +121,15 @@ async function providerFetch(request, env) {
     });
 }
 
-export default defineWorker({
+const PROVIDED_WEB_SESSION = webSessionFromFetch({
   fetch: providerFetch,
+  pathPrefix: "/provided",
+  label: "Isolate capability provider WebSession",
+});
+
+export default defineWorker({
   capabilities: {
+    provided: PROVIDED_WEB_SESSION,
     ui: mainViewFromFetch({
       fetch: providerFetch,
       viewInfo: VIEW_INFO,

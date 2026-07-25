@@ -49,8 +49,6 @@ async function skeletonFetch(request, env) {
         ok: true,
         user: session.user.displayName || null,
         permissions: session.permissions,
-        hasStorageBinding: Boolean(env.STORAGE),
-        hasPowerboxBinding: Boolean(env.POWERBOX),
       });
     }
 

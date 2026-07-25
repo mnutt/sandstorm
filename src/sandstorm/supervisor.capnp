@@ -398,23 +398,9 @@ struct SupervisorObjectId(AppObjectId) {
     # implements an `OngoingNotification`, the supervisor wraps it in order to detect the `cancel`
     # call.
 
-    routeBackedSession @2 :RouteBackedSession;
-    # A WebSession or ApiSession implemented by the supervisor by routing requests back through
-    # the grain's ordinary web entry point. This is supervisor-owned rather than an app ref.
-
-    isolateWorkerRef @3 :IsolateWorkerRef;
+    isolateWorkerRef @2 :IsolateWorkerRef;
     # An application object restored directly through a named isolate worker export. This is
     # separate from appRef so existing persisted objects retain their MainView restoration path.
-  }
-
-  struct RouteBackedSession {
-    enum Type {
-      web @0;
-      api @1;
-    }
-
-    type @0 :Type;
-    pathPrefix @1 :Text;
   }
 
   struct IsolateWorkerRef {

@@ -17,7 +17,7 @@
     {
       "name": "IsolateWorkerSource.Binding",
       "structId": "0xe2e96e6f4464b7b2",
-      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "text", "ordinal": 1, "type": "Data", "discriminant": 0}, {"name": "data", "ordinal": 2, "type": "Data", "discriminant": 1}, {"name": "json", "ordinal": 3, "type": "Data", "discriminant": 2}, {"name": "sandstormApi", "ordinal": 4, "type": "Void", "discriminant": 3}, {"name": "storage", "ordinal": 5, "type": "Void", "discriminant": 4}, {"name": "powerbox", "ordinal": 6, "type": "Void", "discriminant": 5}, {"name": "service", "ordinal": 7, "type": "Text", "discriminant": 6}]
+      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "text", "ordinal": 1, "type": "Data", "discriminant": 0}, {"name": "data", "ordinal": 2, "type": "Data", "discriminant": 1}, {"name": "json", "ordinal": 3, "type": "Data", "discriminant": 2}]
     },
     {
       "name": "IsolateWorkerSource.Export",

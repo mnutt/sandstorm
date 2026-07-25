@@ -196,12 +196,10 @@ const worker = defineWorker({
       fetch: async () => new Response("ok"),
     }),
   },
-  async fetch(_request, env, ctx) {
-    ctx.waitUntil(storage(env).put("fetch", "value").then(() => undefined));
-    return new Response("ok");
-  },
 });
 void worker;
+// @ts-expect-error workers expose capabilities, not a top-level HTTP handler
+defineWorker({ fetch: async () => new Response("not exposed") });
 // @ts-expect-error worker capabilities must be opaque serveCapnp() declarations
 defineWorker({ capabilities: { collision: { interface: Collision, target: workerTarget } } });
 // @ts-expect-error worker target context is not a generated results builder

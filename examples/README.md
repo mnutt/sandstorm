@@ -11,8 +11,8 @@ These examples are organized around the current isolate capability model:
 - browser RPC clients use `/__sandstorm/native-capnp/client.js` plus generated
   `/__sandstorm/capnp/*.capnp.js` schema modules when the browser has been
   handed a live Sandstorm capability
-- service bindings are for local development wiring and mocks, not cross-grain
-  authority
+- manifest bindings are inert text, data, or JSON configuration values, not
+  service authority
 
 Use `examples/isolate-capnp-rpc` and `examples/isolate-object-store` when
 starting a typed public capability. Use

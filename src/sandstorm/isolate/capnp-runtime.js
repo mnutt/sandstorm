@@ -2,7 +2,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   Conn as CapnpEsConn,
-  DeferredTransport as CapnpEsDeferredTransport,
   Interface as CapnpEsInterface,
   Message as CapnpEsMessage,
   utils as CapnpEsUtils,
@@ -38,8 +37,8 @@ function initCapnpCapabilityParam(params, cap, name = "capability") {
     CapnpEsUtils.getPointer(0, params));
 }
 
-function initSandstormApiSaveParams(params, cap, label) {
-  initCapnpCapabilityParam(params, cap, "SandstormApi.save() capability");
+function initAppCapabilitySaveParams(params, cap, label) {
+  initCapnpCapabilityParam(params, cap, "app capability");
   initLocalizedText(params._initLabel(), label);
 }
 
@@ -370,8 +369,8 @@ export function nativeCapnpSavedTokenData(token) {
   const decoded = nativeCapnpBase64UrlDecode(token, "saved capability token");
   const text = nativeCapnpUtf8(decoded);
   const lines = text.split("\n");
-  if (lines[0] === "isolate-saved-capability-v1" && lines.length >= 4) {
-    return nativeCapnpBase64UrlDecode(lines[3], "saved capability token sturdy ref");
+  if (lines[0] === "isolate-saved-capability-v2" && lines.length === 3) {
+    return nativeCapnpBase64UrlDecode(lines[2], "saved capability token sturdy ref");
   }
 
   return decoded;
@@ -457,83 +456,6 @@ export function nativeCapnpInterfaceMetadata(InterfaceClass, operation = "Cap'n 
   });
 }
 
-export class IsolateBridgeNativeTransport extends CapnpEsDeferredTransport {
-  #channel;
-
-  constructor(api) {
-    super();
-    if (!api || typeof api.nativeCapnpBridgeOpenChannel !== "function") {
-      throw new NativeCapnpBridgeProtocolError(
-        "IsolateBridgeNativeTransport requires api.nativeCapnpBridgeOpenChannel()");
-    }
-
-    this.api = api;
-    this.connection = null;
-    this.kind = "isolateBridgeNative";
-    this.#channel = api.nativeCapnpBridgeOpenChannel();
-    if (!this.#channel || typeof this.#channel.send !== "function" ||
-        typeof this.#channel.receive !== "function" ||
-        typeof this.#channel.close !== "function") {
-      throw new NativeCapnpBridgeProtocolError(
-        "native isolate bridge binding returned an invalid channel");
-    }
-    this.#readLoop();
-  }
-
-  sendMessage(message) {
-    if (this.closed) {
-      throw new CapnpUnavailableError(
-        "native isolate bridge transport is closed");
-    }
-
-    const bytes = nativeCapnpRootMessageBytes(message);
-    const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
-      ? bytes.buffer
-      : bytes.slice().buffer;
-    try {
-      this.#channel.send(buffer);
-    } catch (error) {
-      this.abort(error);
-      throw error;
-    }
-  }
-
-  abort(error) {
-    if (this.connection && !this.connection.closed) {
-      this.connection.shutdown(error instanceof Error ? error : new Error(String(error)));
-      return;
-    }
-
-    this.close(error);
-  }
-
-  close(error) {
-    if (this.closed) {
-      return;
-    }
-
-    try {
-      this.#channel.close();
-    } catch (_) {}
-
-    super.close(error);
-  }
-
-  async #readLoop() {
-    try {
-      while (!this.closed) {
-        this.resolve(nativeCapnpMessageBytes(await this.#channel.receive()));
-      }
-    } catch (error) {
-      this.abort(error);
-    }
-  }
-}
-
-// A capnp-es Conn normally owns an async receive loop. That is correct for sockets, but not for
-// workerd events: a receive promise created by one event would retain that event's async context
-// and resume it when a later call arrived. Override the constructor hook so each inbound message
-// is instead dispatched explicitly by CapnpRpcEventTransport in the current event.
 class EventDrivenCapnpConn extends CapnpEsConn {
   startWork() {}
 
@@ -992,23 +914,6 @@ export function createCapnpWorkerExportDispatcher(workerExports, options = {}) {
   });
 }
 
-export function createIsolateBridgeConnection(api, options = {}) {
-  const transport = new IsolateBridgeNativeTransport(api);
-  const connection = new CapnpEsConn(transport, options.finalize);
-  transport.connection = connection;
-  return Object.assign(connection, { transport });
-}
-
-export function connectIsolateBridge(api, options = {}) {
-  const connection = createIsolateBridgeConnection(api, options);
-  const bridge = connection.bootstrap(IsolateBridge);
-  return Object.assign(bridge, {
-    connection,
-    transport: connection.transport,
-    close: (...args) => connection.transport.close(...args),
-  });
-}
-
 function validateNativeCapnpGeneratedInterface(InterfaceClass, operation) {
   nativeCapnpInterfaceMetadata(InterfaceClass, operation);
 }
@@ -1027,20 +932,13 @@ export async function exportCapnp(api, InterfaceClass, target) {
   if (typeof InterfaceClass.Server !== "function") {
     throw new TypeError("exportCapnp() requires a generated server interface class");
   }
-  if (!api || typeof api.nativeCapnpBridgeOpenChannel !== "function") {
-    throw new TypeError("exportCapnp() requires a Sandstorm API object");
-  }
-
   if (!target || typeof target !== "object") {
     throw new TypeError("exportCapnp() requires a generated server target object");
   }
 
   const interfaceMetadata = nativeCapnpInterfaceMetadata(InterfaceClass, "exportCapnp()");
 
-  const server = workerPlatformBridge === null ? new InterfaceClass.Server(target) : null;
-  const client = server === null
-    ? createWorkerCapnpClient(InterfaceClass, target, "local export capability")
-    : server.client();
+  const client = createWorkerCapnpClient(InterfaceClass, target, "local export capability");
   const publicInterfaceId = interfaceMetadata.interfaceIdHex;
   const browserHandoffs = new Map();
   let dropped = false;
@@ -1062,7 +960,6 @@ export async function exportCapnp(api, InterfaceClass, target) {
       }
     }
     browserHandoffs.clear();
-    server?.close?.();
     if (firstError) {
       throw firstError;
     }
@@ -1078,8 +975,7 @@ export async function exportCapnp(api, InterfaceClass, target) {
       throw new TypeError("CapnpExport.browserHandoff() requires a Request");
     }
     const sessionId = nativeCapnpBrowserHandoffSessionId({ request });
-    const ownsBridge = workerPlatformBridge === null;
-    const bridge = workerPlatformBridge ?? connectIsolateBridge(api);
+    const bridge = connectWorkerPlatformBridge();
     const stored = await bridge.createBrowserHandoff((params) => {
       initCapnpCapabilityParam(params, client, "local export capability");
       params.sessionId = sessionId;
@@ -1088,7 +984,7 @@ export async function exportCapnp(api, InterfaceClass, target) {
       throw new NativeCapnpBridgeProtocolError(
         "isolate bridge returned an invalid local export browser handoff id");
     }
-    browserHandoffs.set(stored.id, { bridge, ownsBridge });
+    browserHandoffs.set(stored.id, { bridge, ownsBridge: false });
     return Object.freeze({
       type: "capability",
       id: stored.id,
@@ -1108,22 +1004,18 @@ export async function exportCapnp(api, InterfaceClass, target) {
       if (dropped) {
         throw new CapnpUnavailableError("CapnpExport has been dropped");
       }
-      const bridge = connectIsolateBridge(api);
+      const bridge = connectWorkerPlatformBridge();
       try {
-        const result = await bridge.getSandstormApi({});
-        const sandstormApi = result.api;
-        if (!sandstormApi || typeof sandstormApi.save !== "function") {
+        if (typeof bridge.saveAppCapability !== "function") {
           throw new NativeCapnpBridgeProtocolError(
-            "isolate bridge returned an invalid SandstormApi capability");
+            "isolate bridge returned no app-capability saver");
         }
 
-        const saved = await sandstormApi.save((params) => {
-          initSandstormApiSaveParams(params, client, nativeCapnpSaveLabel(saveOptions));
+        const saved = await bridge.saveAppCapability((params) => {
+          initAppCapabilitySaveParams(params, client, nativeCapnpSaveLabel(saveOptions));
         });
-        bridge.close();
         return nativeCapnpSavedTokenText(saved.token);
       } catch (error) {
-        bridge.close(error);
         throw error;
       }
     },

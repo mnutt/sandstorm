@@ -155,6 +155,7 @@ ISOLATE_CAPNP_ABI_BASELINES= \
     tests/capnp-abi/isolate-bridge.capnp-abi.json \
     tests/capnp-abi/isolate-exports.capnp-abi.json \
     tests/capnp-abi/isolate-host.capnp-abi.json \
+    tests/capnp-abi/isolate-session-exports.capnp-abi.json \
     tests/capnp-abi/isolate-supervisor-internal.capnp-abi.json \
     tests/capnp-abi/isolate-worker-source.capnp-abi.json \
     tests/capnp-abi/outbound-http-session.capnp-abi.json
@@ -310,6 +311,7 @@ tmp/bazel-$(BAZEL_VERSION):
 
 tmp/.workerd-embed-source: deps/workerd isolate-host/isolate-host-main.c++ \
 		src/sandstorm/isolate-host.capnp \
+		src/sandstorm/isolate-session-exports.capnp \
 		src/sandstorm/isolate-exports.capnp \
 		src/sandstorm/isolate-worker-source.capnp \
 		patches/workerd/0001-add-sandstorm-isolate-host-target.patch
@@ -715,6 +717,8 @@ isolate-capnp-abi-check: tmp/.ekam-run $(ISOLATE_CAPNP_ABI_BASELINES) \
 		capnp:/sandstorm/isolate-exports.capnp
 	bin/spk capnp-abi --check tests/capnp-abi/isolate-host.capnp-abi.json \
 		capnp:/sandstorm/isolate-host.capnp
+	bin/spk capnp-abi --check tests/capnp-abi/isolate-session-exports.capnp-abi.json \
+		capnp:/sandstorm/isolate-session-exports.capnp
 	bin/spk capnp-abi --check tests/capnp-abi/isolate-supervisor-internal.capnp-abi.json \
 		capnp:/sandstorm/isolate-supervisor-internal.capnp
 	bin/spk capnp-abi --check tests/capnp-abi/isolate-worker-source.capnp-abi.json \

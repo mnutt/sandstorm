@@ -12,7 +12,6 @@
 #include <sandstorm/isolate/platform-capnp-es.js.h>
 
 #include <capnp/ez-rpc.h>
-#include <capnp/compat/http-over-capnp.h>
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
 #include <kj/debug.h>
@@ -22,63 +21,20 @@
 namespace sandstorm {
 namespace {
 
-class TestStorageService final: public kj::HttpService {
-public:
-  TestStorageService(kj::HttpHeaderTable& headerTable, kj::String& stored)
-      : headerTable(headerTable), stored(stored) {}
-
-  kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr,
-      const kj::HttpHeaders&, kj::AsyncInputStream& requestBody,
-      kj::HttpService::Response& response) override {
-    if (method == kj::HttpMethod::PUT) {
-      return requestBody.readAllText().then([this, &response](kj::String body) {
-        stored = kj::mv(body);
-        return send(response, stored);
-      });
-    }
-    KJ_REQUIRE(method == kj::HttpMethod::GET, "unexpected test storage method");
-    return send(response, stored);
-  }
-
-private:
-  kj::HttpHeaderTable& headerTable;
-  kj::String& stored;
-
-  kj::Promise<void> send(kj::HttpService::Response& response, kj::StringPtr body) {
-    kj::HttpHeaders headers(headerTable);
-    auto stream = response.send(200, "OK", headers, body.size());
-    return stream->write(body.begin(), body.size()).attach(kj::mv(stream));
-  }
-};
-
-class BindingServicesImpl final: public IsolateBindingServices::Server {
-public:
-  BindingServicesImpl()
-      : httpFactory(byteStreamFactory, headerTableBuilder),
-        headerTable(headerTableBuilder.build()) {}
-
-  kj::Promise<void> getService(GetServiceContext context) override {
-    KJ_REQUIRE(context.getParams().getBinding() == IsolateBindingServices::Binding::STORAGE,
-        "control test requested an unexpected binding service");
-    context.getResults().setService(httpFactory.kjToCapnp(
-        kj::heap<TestStorageService>(*headerTable, stored)));
-    return kj::READY_NOW;
-  }
-
-private:
-  capnp::ByteStreamFactory byteStreamFactory;
-  kj::HttpHeaderTable::Builder headerTableBuilder;
-  capnp::HttpOverCapnpFactory httpFactory;
-  kj::Own<kj::HttpHeaderTable> headerTable;
-  kj::String stored = kj::str("shared-storage-ok");
-};
-
 class RpcCallbackImpl final: public IsolateBridge::Server {
  public:
   kj::Promise<void> dropBrowserHandoff(DropBrowserHandoffContext context) override {
     KJ_REQUIRE(context.getParams().getId() == "first",
         "worker callback carried the wrong value", context.getParams().getId());
     context.getResults().setReleased(true);
+    return kj::READY_NOW;
+  }
+};
+
+class BindingServicesImpl final: public IsolateBindingServices::Server {
+public:
+  kj::Promise<void> getBridge(GetBridgeContext context) override {
+    context.getResults().setBridge(kj::heap<RpcCallbackImpl>());
     return kj::READY_NOW;
   }
 };
@@ -142,6 +98,14 @@ const rpcDispatcher = createCapnpWorkerExportDispatcher({
     interface: IsolateBridge,
     target: {
       async createBrowserHandoff({ cap, sessionId }) {
+        console.log("sandstorm-grain-log-marker");
+        if (sessionId === "cpu-loop") {
+          while (true) {}
+        }
+        if (sessionId === "memory-loop") {
+          const allocations = [];
+          while (true) allocations.push(new Array(1024 * 1024).fill(allocations.length));
+        }
         if (sessionId === "cancel-before-pipeline-dispatch") {
           rpcState.canceledPipelinedCallRan = true;
         } else if (rpcState.canceledPipelinedCallRan) {
@@ -179,28 +143,6 @@ export default {
     rpcState.callCount++;
     await rpcEventContext.run(ctx, () => rpcDispatcher.handler(request, send, receive));
   },
-
-  async fetch(request, env) {
-    console.log("sandstorm-grain-log-marker");
-    if (new URL(request.url).pathname === "/cpu-loop") {
-      while (true) {}
-    }
-    if (new URL(request.url).pathname === "/storage-test") {
-      if (request.headers.get("X-Sandstorm-Ingress-Test") !== "ingress-ok") {
-        return new Response("missing ingress header", { status: 400 });
-      }
-      const put = await env.STORAGE.fetch("http://storage/shared-host-test", {
-        method: "PUT",
-        body: "shared-storage-ok",
-      });
-      if (!put.ok) return new Response(`storage PUT failed: ${put.status}`, { status: 500 });
-      const get = await env.STORAGE.fetch("http://storage/shared-host-test");
-      const headers = new Headers(get.headers);
-      headers.set("X-Sandstorm-Egress-Test", "egress-ok");
-      return new Response(get.body, { status: get.status, headers });
-    }
-    return new Response("ok");
-  },
 };
 )JS");
   module.setEsModule(script.asBytes());
@@ -222,36 +164,18 @@ export default {
     output.setEsModule(kj::StringPtr(platformModule.source).asBytes());
   }
   KJ_ASSERT(moduleIndex == modules.size());
-  auto bindings = source.initBindings(3);
+  auto bindings = source.initBindings(2);
   bindings[0].setName("MESSAGE");
   bindings[0].setText(kj::StringPtr("hello").asBytes());
   bindings[1].setName("SETTINGS");
   bindings[1].setJson(kj::StringPtr("{\"enabled\":true}").asBytes());
-  bindings[2].setName("STORAGE");
-  bindings[2].setStorage();
   kj::VectorOutputStream sourceOutput;
   capnp::writePackedMessage(sourceOutput, sourceMessage);
   auto sourceBytes = sourceOutput.getArray();
 
-  capnp::MallocMessageBuilder memorySourceMessage;
-  auto memorySource = memorySourceMessage.initRoot<sandstorm::IsolateWorkerSource>();
-  memorySource.setFormatVersion(1);
-  memorySource.setMainModule("main.js");
-  memorySource.setCompatibilityDate("2026-06-10");
-  auto memoryModule = memorySource.initModules(1)[0];
-  memoryModule.setName("main.js");
-  memoryModule.setEsModule(kj::StringPtr(R"JS(
-const allocations = [];
-while (true) allocations.push(new Array(1024 * 1024).fill(allocations.length));
-export default { fetch() { return new Response("memory limit failed"); } };
-)JS").asBytes());
-  kj::VectorOutputStream memoryOutput;
-  capnp::writePackedMessage(memoryOutput, memorySourceMessage);
-  auto memoryBytes = memoryOutput.getArray();
-
   capnp::MallocMessageBuilder invalidMessage;
   auto invalidSource = invalidMessage.initRoot<sandstorm::IsolateWorkerSource>();
-  invalidSource.setFormatVersion(1);
+  invalidSource.setFormatVersion(2);
   invalidSource.setMainModule("main.js");
   invalidSource.setCompatibilityDate("2026-06-10");
   auto invalidModule = invalidSource.initModules(1)[0];
@@ -282,15 +206,12 @@ export default { fetch() { return new Response("memory limit failed"); } };
   auto grain = start.send().wait(waitScope).getGrain();
   grain.keepAliveRequest().send().wait(waitScope);
 
-  capnp::ByteStreamFactory byteStreamFactory;
-  kj::HttpHeaderTable::Builder headerTableBuilder;
-  capnp::HttpOverCapnpFactory httpFactory(byteStreamFactory, headerTableBuilder);
-  auto ingressTestHeader = headerTableBuilder.add("X-Sandstorm-Ingress-Test");
-  auto egressTestHeader = headerTableBuilder.add("X-Sandstorm-Egress-Test");
-  auto headerTable = headerTableBuilder.build();
-  auto getHttp = grain.getHttpServiceRequest().send().wait(waitScope);
-  auto service = httpFactory.capnpToKj(getHttp.getService());
-  auto httpClient = kj::newHttpClient(*service);
+  auto resolveBridge = [&](sandstorm::HostedIsolate::Client hosted) {
+    auto request = hosted.getExportRequest();
+    request.setName("bridge");
+    request.setInterfaceId(capnp::typeId<sandstorm::IsolateBridge>());
+    return request.send().wait(waitScope).getCap().castAs<sandstorm::IsolateBridge>();
+  };
 
   if (idleEvictionOnly) {
     // The host runs in another process, so its timer advances while this client sleeps without
@@ -298,25 +219,19 @@ export default { fetch() { return new Response("memory limit failed"); } };
     usleep(120 * 1000);
     grain.keepAliveRequest().send().wait(waitScope);
     usleep(120 * 1000);
-    kj::HttpHeaders refreshedHeaders(*headerTable);
-    auto refreshedRequest = httpClient->request(
-        kj::HttpMethod::GET, "https://grain.invalid/", refreshedHeaders);
-    auto refreshedResponse = refreshedRequest.response.wait(waitScope);
-    KJ_REQUIRE(refreshedResponse.statusCode == 200,
-        "keepalive did not extend the hosted grain idle deadline",
-        refreshedResponse.statusCode);
-    KJ_REQUIRE(refreshedResponse.body->readAllText().wait(waitScope) == "ok",
-        "hosted grain returned the wrong response after keepalive");
+    auto refreshed = resolveBridge(grain);
+    auto refreshedCall = refreshed.createBrowserHandoffRequest();
+    refreshedCall.setSessionId("refreshed");
+    refreshedCall.send().wait(waitScope);
 
     usleep(220 * 1000);
     sandstorm::expectFailure([&]() {
       grain.keepAliveRequest().send().wait(waitScope);
     });
     sandstorm::expectFailure([&]() {
-      kj::HttpHeaders staleHeaders(*headerTable);
-      auto staleRequest = httpClient->request(
-          kj::HttpMethod::GET, "https://grain.invalid/", staleHeaders);
-      (void)staleRequest.response.wait(waitScope);
+      auto staleCall = refreshed.createBrowserHandoffRequest();
+      staleCall.setSessionId("stale");
+      staleCall.send().wait(waitScope);
     });
 
     auto restart = host.startGrainRequest();
@@ -324,31 +239,13 @@ export default { fetch() { return new Response("memory limit failed"); } };
     restart.setServices(services);
     restart.setWorkerSource(sourceBytes);
     auto restarted = restart.send().wait(waitScope).getGrain();
-    auto restartedHttp = restarted.getHttpServiceRequest().send().wait(waitScope);
-    auto restartedService = httpFactory.capnpToKj(restartedHttp.getService());
-    auto restartedClient = kj::newHttpClient(*restartedService);
-    kj::HttpHeaders restartedHeaders(*headerTable);
-    auto restartedRequest = restartedClient->request(
-        kj::HttpMethod::GET, "https://grain.invalid/", restartedHeaders);
-    auto restartedResponse = restartedRequest.response.wait(waitScope);
-    KJ_REQUIRE(restartedResponse.statusCode == 200,
-        "idle-evicted grain did not restart", restartedResponse.statusCode);
-    KJ_REQUIRE(restartedResponse.body->readAllText().wait(waitScope) == "ok",
-        "idle-evicted grain returned the wrong response after restart");
+    auto restartedBridge = resolveBridge(restarted);
+    auto restartedCall = restartedBridge.createBrowserHandoffRequest();
+    restartedCall.setSessionId("restarted");
+    restartedCall.send().wait(waitScope);
     restarted.stopRequest().send().wait(waitScope);
     return 0;
   }
-
-  kj::HttpHeaders requestHeaders(*headerTable);
-  requestHeaders.set(ingressTestHeader, "ingress-ok"_kj);
-  auto httpRequest = httpClient->request(
-      kj::HttpMethod::GET, "https://grain.invalid/storage-test", requestHeaders);
-  auto httpResponse = httpRequest.response.wait(waitScope);
-  KJ_REQUIRE(httpResponse.statusCode == 200, "hosted worker request failed", httpResponse.statusCode);
-  KJ_REQUIRE(httpResponse.headers->get(egressTestHeader) == "egress-ok"_kj,
-      "hosted worker response header was not preserved");
-  KJ_REQUIRE(httpResponse.body->readAllText().wait(waitScope) == "shared-storage-ok",
-      "hosted worker did not round-trip through its storage binding");
 
   sandstorm::expectFailure([&]() {
     auto undeclared = grain.getExportRequest();
@@ -413,53 +310,35 @@ export default { fetch() { return new Response("memory limit failed"); } };
   cpuStart.setServices(services);
   cpuStart.setWorkerSource(sourceBytes);
   auto cpuGrain = cpuStart.send().wait(waitScope).getGrain();
-  auto cpuHttp = cpuGrain.getHttpServiceRequest().send().wait(waitScope);
-  auto cpuService = httpFactory.capnpToKj(cpuHttp.getService());
-  auto cpuClient = kj::newHttpClient(*cpuService);
-  kj::HttpHeaders cpuHeaders(*headerTable);
-  auto cpuRequest = cpuClient->request(
-      kj::HttpMethod::GET, "https://grain.invalid/cpu-loop", cpuHeaders);
-  bool cpuRejected = false;
+  auto cpuBridge = resolveBridge(cpuGrain);
   auto cpuFailure = kj::runCatchingExceptions([&]() {
-    auto response = cpuRequest.response.wait(waitScope);
-    cpuRejected = response.statusCode >= 500;
+    auto request = cpuBridge.createBrowserHandoffRequest();
+    request.setSessionId("cpu-loop");
+    request.send().wait(waitScope);
   });
-  if (cpuFailure != nullptr) cpuRejected = true;
-  KJ_REQUIRE(cpuRejected, "CPU watchdog did not terminate the worker request");
+  KJ_REQUIRE(cpuFailure != nullptr, "CPU watchdog did not terminate the worker RPC");
 
   // A condemned grain must not stall or poison unrelated isolates in the shared process.
-  kj::HttpHeaders neighborHeaders(*headerTable);
-  auto neighborRequest = httpClient->request(
-      kj::HttpMethod::GET, "https://grain.invalid/", neighborHeaders);
-  auto neighborResponse = neighborRequest.response.wait(waitScope);
-  KJ_REQUIRE(neighborResponse.statusCode == 200,
-      "CPU watchdog affected an unrelated worker", neighborResponse.statusCode);
-  KJ_REQUIRE(neighborResponse.body->readAllText().wait(waitScope) == "ok",
-      "unrelated worker returned the wrong response after watchdog termination");
+  auto neighborRequest = rpcBootstrap.createBrowserHandoffRequest();
+  neighborRequest.setSessionId("neighbor");
+  neighborRequest.send().wait(waitScope);
   cpuGrain.stopRequest().send().wait(waitScope);
 
   sandstorm::expectFailure([&]() {
     auto memoryStart = host.startGrainRequest();
     memoryStart.setGrainId("memorygrain123");
     memoryStart.setServices(services);
-    memoryStart.setWorkerSource(memoryBytes);
+    memoryStart.setWorkerSource(sourceBytes);
     auto memoryGrain = memoryStart.send().wait(waitScope).getGrain();
-    auto memoryHttp = memoryGrain.getHttpServiceRequest().send().wait(waitScope);
-    auto memoryService = httpFactory.capnpToKj(memoryHttp.getService());
-    auto memoryClient = kj::newHttpClient(*memoryService);
-    kj::HttpHeaders memoryHeaders(*headerTable);
-    auto memoryRequest = memoryClient->request(
-        kj::HttpMethod::GET, "https://grain.invalid/", memoryHeaders);
-    auto memoryResponse = memoryRequest.response.wait(waitScope);
-    KJ_REQUIRE(memoryResponse.statusCode < 500, "memory-bound worker request rejected");
+    auto memoryBridge = resolveBridge(memoryGrain);
+    auto memoryRequest = memoryBridge.createBrowserHandoffRequest();
+    memoryRequest.setSessionId("memory-loop");
+    memoryRequest.send().wait(waitScope);
   });
 
-  kj::HttpHeaders postMemoryHeaders(*headerTable);
-  auto postMemoryRequest = httpClient->request(
-      kj::HttpMethod::GET, "https://grain.invalid/", postMemoryHeaders);
-  auto postMemoryResponse = postMemoryRequest.response.wait(waitScope);
-  KJ_REQUIRE(postMemoryResponse.statusCode == 200,
-      "heap-limit termination affected an unrelated worker", postMemoryResponse.statusCode);
+  auto postMemoryRequest = rpcBootstrap.createBrowserHandoffRequest();
+  postMemoryRequest.setSessionId("post-memory");
+  postMemoryRequest.send().wait(waitScope);
   grain.stopRequest().send().wait(waitScope);
 
   sandstorm::expectFailure([&]() {
@@ -471,36 +350,16 @@ export default { fetch() { return new Response("memory limit failed"); } };
   sandstorm::expectFailure([&]() {
     grain.keepAliveRequest().send().wait(waitScope);
   });
-  sandstorm::expectFailure([&]() {
-    grain.invokeRpcEventRequest().send().wait(waitScope);
-  });
-  sandstorm::expectFailure([&]() {
-    kj::HttpHeaders staleHeaders(*headerTable);
-    auto staleRequest = httpClient->request(
-        kj::HttpMethod::GET, "https://grain.invalid/", staleHeaders);
-    (void)staleRequest.response.wait(waitScope);
-  });
-
   auto restart = host.startGrainRequest();
   restart.setGrainId("testgrain123");
   restart.setServices(services);
   restart.setWorkerSource(sourceBytes);
   auto restartedGrain = restart.send().wait(waitScope).getGrain();
   restartedGrain.keepAliveRequest().send().wait(waitScope);
-  auto restartedHttp = restartedGrain.getHttpServiceRequest().send().wait(waitScope);
-  auto restartedService = httpFactory.capnpToKj(restartedHttp.getService());
-  auto restartedClient = kj::newHttpClient(*restartedService);
-  kj::HttpHeaders restartedHeaders(*headerTable);
-  restartedHeaders.set(ingressTestHeader, "ingress-ok"_kj);
-  auto restartedRequest = restartedClient->request(
-      kj::HttpMethod::GET, "https://grain.invalid/storage-test", restartedHeaders);
-  auto restartedResponse = restartedRequest.response.wait(waitScope);
-  KJ_REQUIRE(restartedResponse.statusCode == 200,
-      "restarted hosted worker request failed", restartedResponse.statusCode);
-  KJ_REQUIRE(restartedResponse.headers->get(egressTestHeader) == "egress-ok"_kj,
-      "restarted hosted worker response header was not preserved");
-  KJ_REQUIRE(restartedResponse.body->readAllText().wait(waitScope) == "shared-storage-ok",
-      "restarted worker lost its STORAGE capability");
+  auto restartedBridge = resolveBridge(restartedGrain);
+  auto restartedRequest = restartedBridge.createBrowserHandoffRequest();
+  restartedRequest.setSessionId("restarted");
+  restartedRequest.send().wait(waitScope);
   sandstorm::expectFailure([&]() {
     grain.keepAliveRequest().send().wait(waitScope);
   });

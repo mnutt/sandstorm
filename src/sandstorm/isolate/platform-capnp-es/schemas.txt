@@ -2,12 +2,16 @@
 #
 # Keep this as the complete closure needed by sandstorm:api.
 sandstorm/activity.capnp
+sandstorm/api-session.capnp
 sandstorm/grain.capnp
 sandstorm/identity.capnp
+sandstorm/ip.capnp
 sandstorm/isolate-api-session-tag.capnp
 sandstorm/isolate-bridge.capnp
 sandstorm/isolate-exports.capnp
+sandstorm/isolate-session-exports.capnp
 sandstorm/outbound-http-session.capnp
 sandstorm/powerbox.capnp
+sandstorm/supervisor.capnp
 sandstorm/util.capnp
 sandstorm/web-session.capnp

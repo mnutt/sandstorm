@@ -2025,10 +2025,6 @@ private:
   bool devIsolatePrintManifestJson = false;
   kj::String devIsolatePrintGeneratedModule = nullptr;
   kj::String devIsolatePrintGeneratedDeclaration = nullptr;
-  struct DevIsolateServiceBinding {
-    kj::String name;
-    kj::String service;
-  };
   struct DevIsolateValueBinding {
     kj::String name;
     kj::String value;
@@ -2046,7 +2042,6 @@ private:
     JS,
     DTS,
   };
-  kj::Vector<DevIsolateServiceBinding> devIsolateServiceBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateTextBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateJsonBindings;
   kj::Vector<DevIsolateValueBinding> devIsolateDataBindings;
@@ -2141,10 +2136,6 @@ private:
         .addOptionWithArg({"data-binding"}, KJ_BIND_METHOD(*this, addDevIsolateDataBinding),
             "<name>=<path>",
             "Add a binary data binding from a file to the generated isolate manifest.")
-        .addOptionWithArg({"service-binding"}, KJ_BIND_METHOD(*this, addDevIsolateServiceBinding),
-            "<name>=<service>",
-            "Add a workerd service binding to the generated isolate manifest. For example: "
-            "--service-binding LOOPBACK=main")
         .addOptionWithArg({"app-interface"}, KJ_BIND_METHOD(*this, addDevIsolateAppInterface),
             "<capnp-specifier>#<Interface>",
             "Removed. Declare ViewInfo.matchRequests in the worker's typed MainView export.")
@@ -2210,9 +2201,6 @@ private:
   }
 
   bool devIsolateBindingNameExists(kj::StringPtr name) {
-    if (name == "SANDSTORM_API" || name == "POWERBOX" || name == "STORAGE") {
-      return true;
-    }
     for (auto& binding: devIsolateTextBindings) {
       if (binding.name == name) return true;
     }
@@ -2220,9 +2208,6 @@ private:
       if (binding.name == name) return true;
     }
     for (auto& binding: devIsolateDataBindings) {
-      if (binding.name == name) return true;
-    }
-    for (auto& binding: devIsolateServiceBindings) {
       if (binding.name == name) return true;
     }
     return false;
@@ -2287,21 +2272,6 @@ private:
     }
 
     return "data binding must be NAME=PATH with a unique non-built-in name and non-empty path";
-  }
-
-  kj::MainBuilder::Validity addDevIsolateServiceBinding(kj::StringPtr spec) {
-    KJ_IF_MAYBE(binding, parseDevIsolateValueBinding(spec)) {
-      if (binding->value != "main") {
-        return "service binding target must be the worker-local main service";
-      }
-      devIsolateServiceBindings.add(DevIsolateServiceBinding {
-        kj::mv(binding->name),
-        kj::mv(binding->value),
-      });
-      return true;
-    }
-
-    return "service binding must be NAME=SERVICE with a unique non-built-in name and non-empty service";
   }
 
   kj::MainBuilder::Validity addDevIsolateAppInterface(kj::StringPtr) {
@@ -2898,7 +2868,7 @@ private:
     }
     auto bindings = isolate.initBindings(
         devIsolateTextBindings.size() + devIsolateJsonBindings.size() +
-        devIsolateDataBindings.size() + devIsolateServiceBindings.size());
+        devIsolateDataBindings.size());
     size_t bindingIndex = 0;
     for (auto i: kj::indices(devIsolateTextBindings)) {
       auto binding = bindings[bindingIndex++];
@@ -2915,11 +2885,6 @@ private:
       binding.setName(devIsolateDataBindings[i].name);
       auto data = readAll(raiiOpen(devIsolateDataBindings[i].value, O_RDONLY | O_CLOEXEC));
       binding.setData(data.asBytes());
-    }
-    for (auto i: kj::indices(devIsolateServiceBindings)) {
-      auto binding = bindings[bindingIndex++];
-      binding.setName(devIsolateServiceBindings[i].name);
-      binding.setService(devIsolateServiceBindings[i].service);
     }
   }
 
@@ -5219,14 +5184,6 @@ private:
   }
 
   bool augmentPackIsolateConfig(spk::Manifest::IsolateConfig::Builder isolate) {
-    for (auto binding: isolate.getBindings()) {
-      if (binding.which() == spk::Manifest::IsolateConfig::Binding::SERVICE) {
-        KJ_REQUIRE(binding.getService().asString() == "main",
-            "Isolate service bindings may only target the worker-local main service.",
-            binding.getName(), binding.getService());
-      }
-    }
-
     auto oldModuleList = isolate.getModules();
     kj::Vector<PackIsolateModuleSpec> oldModules;
     std::set<std::string> existingModuleNames;

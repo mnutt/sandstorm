@@ -155,12 +155,7 @@ struct Manifest {
     bindings @4 :List(Binding);
     # Explicit capabilities exposed to the isolate as properties of the `env` object.
 
-    bridgeConfig @5 :BridgeConfig;
-    # Optional view/session metadata for legacy HTTP-style isolate apps. This mirrors the role of
-    # BridgeConfig for sandstorm-http-bridge apps. Omit it for service-only workers and for workers
-    # whose UI is supplied by a `mainView` capability export.
-
-    exports @6 :List(Export);
+    exports @5 :List(Export);
     # Named Cap'n Proto capabilities implemented by the worker. The runtime registration must use
     # the same interface ID. Declaring an interface does not itself grant the worker authority.
 
@@ -198,10 +193,6 @@ struct Manifest {
         text @1 :Text;
         data @2 :Data;
         json @3 :Text;
-        sandstormApi @4 :Void;
-        storage @5 :Void;
-        powerbox @6 :Void;
-        service @7 :Text;
       }
     }
   }

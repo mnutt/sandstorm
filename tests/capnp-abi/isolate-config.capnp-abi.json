@@ -7,7 +7,7 @@
     {
       "name": "Manifest.IsolateConfig",
       "structId": "0xd5b4dacda9ef3910",
-      "fields": [{"name": "mainModule", "ordinal": 0, "type": "Text"}, {"name": "modules", "ordinal": 1, "type": "List(Struct(0xa691c983138f8206))"}, {"name": "compatibilityDate", "ordinal": 2, "type": "Text"}, {"name": "compatibilityFlags", "ordinal": 3, "type": "List(Text)"}, {"name": "bindings", "ordinal": 4, "type": "List(Struct(0x8b2734f75ad2d39b))"}, {"name": "bridgeConfig", "ordinal": 5, "type": "Struct(0xdd8c82383168c096)"}, {"name": "exports", "ordinal": 6, "type": "List(Struct(0xd3a117e6374a8618))"}]
+      "fields": [{"name": "mainModule", "ordinal": 0, "type": "Text"}, {"name": "modules", "ordinal": 1, "type": "List(Struct(0xa691c983138f8206))"}, {"name": "compatibilityDate", "ordinal": 2, "type": "Text"}, {"name": "compatibilityFlags", "ordinal": 3, "type": "List(Text)"}, {"name": "bindings", "ordinal": 4, "type": "List(Struct(0x8b2734f75ad2d39b))"}, {"name": "exports", "ordinal": 5, "type": "List(Struct(0xd3a117e6374a8618))"}]
     },
     {
       "name": "Manifest.IsolateConfig.Export",
@@ -22,7 +22,7 @@
     {
       "name": "Manifest.IsolateConfig.Binding",
       "structId": "0x8b2734f75ad2d39b",
-      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "text", "ordinal": 1, "type": "Text", "discriminant": 0}, {"name": "data", "ordinal": 2, "type": "Data", "discriminant": 1}, {"name": "json", "ordinal": 3, "type": "Text", "discriminant": 2}, {"name": "sandstormApi", "ordinal": 4, "type": "Void", "discriminant": 3}, {"name": "storage", "ordinal": 5, "type": "Void", "discriminant": 4}, {"name": "powerbox", "ordinal": 6, "type": "Void", "discriminant": 5}, {"name": "service", "ordinal": 7, "type": "Text", "discriminant": 6}]
+      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "text", "ordinal": 1, "type": "Text", "discriminant": 0}, {"name": "data", "ordinal": 2, "type": "Data", "discriminant": 1}, {"name": "json", "ordinal": 3, "type": "Text", "discriminant": 2}]
     }
   ]
 }

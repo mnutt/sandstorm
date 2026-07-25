@@ -7,7 +7,7 @@ $Cxx.namespace("sandstorm");
 # workerd host. Paths and worker identity are deliberately absent.
 struct IsolateWorkerSource {
   formatVersion @5 :UInt16;
-  # Persisted handoff format version. Version 1 has modules and bindings; version 2 adds exports.
+  # Persisted handoff format version. The current and only accepted value is 2.
 
   mainModule @0 :Text;
   compatibilityDate @1 :Text;
@@ -33,10 +33,6 @@ struct IsolateWorkerSource {
       text @1 :Data;
       data @2 :Data;
       json @3 :Data;
-      sandstormApi @4 :Void;
-      storage @5 :Void;
-      powerbox @6 :Void;
-      service @7 :Text;
     }
   }
 

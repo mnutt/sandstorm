@@ -13,10 +13,11 @@ import {
   readCapnpStruct,
   sandstorm,
   serveCapnp,
+  webSessionFromFetch,
 } from "sandstorm:api";
 import {
   CAPNP_CLIENT_SYMBOL,
-  connectIsolateBridge,
+  connectWorkerPlatformBridge,
 } from "sandstorm-internal:capnp-runtime";
 
 const MAX_TEST_DOWNLOAD_BYTES = 70 * 1024 * 1024;
@@ -116,7 +117,7 @@ function makePersistentNativeGreeterTarget(id) {
            typeof callContext?.signal?.addEventListener !== "function" ||
            callContext.signal.aborted)) {
         throw new Error(
-          "named Cap'n Proto export received a legacy binding or no workerd call context");
+          "named Cap'n Proto export received a removed ambient binding or no workerd call context");
       }
       if (id === "supervisor-export" && params.name === "concurrent second") {
         if (blockedCallContext === null) {
@@ -610,7 +611,7 @@ async function runTypedPlatformProbe(request, env, expectedMainModule) {
     get(target, property, receiver) {
       if (property === "SANDSTORM_API" || property === "POWERBOX" ||
           property === "STORAGE") {
-        throw new Error(`typed platform API accessed legacy binding ${property}`);
+        throw new Error(`typed platform API accessed removed ambient binding ${property}`);
       }
       return Reflect.get(target, property, receiver);
     },
@@ -690,22 +691,6 @@ async function isolateTestFetch(request, env, ctx) {
       return new Response(null, { status: 101, webSocket: client });
     }
 
-    if (url.pathname === "/native-capnp-direct-probe") {
-      const bridge = connectIsolateBridge(api);
-      try {
-        const result = await bridge.getSandstormApi({});
-        return Response.json({
-          ok: true,
-          transportKind: bridge.transport.kind,
-          hasSave: typeof result.api?.save === "function",
-          hasRestore: typeof result.api?.restore === "function",
-          hasDrop: typeof result.api?.drop === "function",
-        });
-      } finally {
-        bridge.close();
-      }
-    }
-
     if (url.pathname === "/app-persistent-save-restore-self-test") {
       const greeter = await exportFixtureCapnp(api, NativeGreeter, {
         async save() {
@@ -752,9 +737,7 @@ async function isolateTestFetch(request, env, ctx) {
     }
 
     if (url.pathname === "/browser-powerbox-offer" && request.method === "POST") {
-      const capability = await api.webSession({
-        pathPrefix: "/browser-powerbox-shared",
-      });
+      const capability = await api.capability(BROWSER_SHARED_WEB_SESSION);
       const offer = await capability.offer(request, {
         title: "Isolate browser Powerbox capability",
         verbPhrase: "can use isolate browser Powerbox capability",
@@ -765,7 +748,7 @@ async function isolateTestFetch(request, env, ctx) {
     }
 
     if (url.pathname === "/direct-session-context-offer") {
-      const capability = await api.webSession({ pathPrefix: "/browser-powerbox-shared" });
+      const capability = await api.capability(BROWSER_SHARED_WEB_SESSION);
       await capability.offer(request, {
         title: "Direct worker SessionContext probe",
         requiredPermissions: [],
@@ -775,9 +758,7 @@ async function isolateTestFetch(request, env, ctx) {
     }
 
     if (url.pathname === "/direct-browser-handoff") {
-      const capability = await sandstorm(request, env).webSession({
-        pathPrefix: "/browser-powerbox-shared",
-      });
+      const capability = await sandstorm(request, env).capability(BROWSER_SHARED_WEB_SESSION);
       const handoff = await capability.browserHandoff({ request });
       return Response.json({
         ok: true,
@@ -918,37 +899,6 @@ async function isolateTestFetch(request, env, ctx) {
       return Response.json({
         ok: true,
         value,
-      });
-    }
-
-    if (url.pathname === "/service-target") {
-      const body = await request.text();
-      return Response.json({
-        ok: true,
-        source: "loopback-service-target",
-        method: request.method,
-        pathname: url.pathname,
-        search: url.search,
-        body,
-        customHeader: request.headers.get("x-isolate-service-test"),
-      });
-    }
-
-    if (url.pathname === "/service-loopback") {
-      const targetResponse = await env.LOOPBACK_SERVICE.fetch(
-        "http://loopback/service-target?source=service-binding",
-        {
-          method: "POST",
-          headers: {
-            "content-type": "text/plain; charset=utf-8",
-            "x-isolate-service-test": "present",
-          },
-          body: "hello through service binding",
-        });
-      return Response.json({
-        ok: true,
-        status: targetResponse.status,
-        body: await targetResponse.json(),
       });
     }
 
@@ -1306,9 +1256,7 @@ async function isolateTestFetch(request, env, ctx) {
     }
 
     if (url.pathname === "/web-session-save-restore-self-test") {
-      const capability = await sandstorm(request, env).webSession({
-        pathPrefix: "/exported",
-      });
+      const capability = await sandstorm(request, env).capability(EXPORTED_WEB_SESSION);
       let wrongOutboundError;
       try {
         await capability.fetch("https://api.example.test/v1/test");
@@ -1318,7 +1266,7 @@ async function isolateTestFetch(request, env, ctx) {
           message: String(error?.message || error),
         };
       }
-      const saved = await capability.save({ label: "Route-backed WebSession fixture" });
+      const saved = await capability.save({ label: "Typed WebSession fixture" });
       const dropOriginal = (await capability.drop()) ?? null;
       const restored = await sandstorm(request, env).restore(saved);
       const fetchedResponse = await restored.fetch("/capability-echo?source=js-restore", {
@@ -1403,9 +1351,9 @@ async function isolateTestFetch(request, env, ctx) {
 
     if (url.pathname === "/outbound-http-restore-self-test") {
       const api = sandstorm(request, env);
-      // isolate-saved-capability-v1 envelope for the fake core token "outbound-http-saved-token".
-      const saved = "aXNvbGF0ZS1zYXZlZC1jYXBhYmlsaXR5LXYxCm91dGJvdW5kSHR0cAoKYjNWMF" +
-        "ltOTFibVF0YUhSMGNDMXpZWFpsWkMxMGIydGxiZw";
+      // isolate-saved-capability-v2 envelope for the fake core token "outbound-http-saved-token".
+      const saved = "aXNvbGF0ZS1zYXZlZC1jYXBhYmlsaXR5LXYyCm91dGJvdW5kSHR0cA" +
+        "piM1YwWW05MWJtUXRhSFIwY0MxellYWmxaQzEwYjJ0bGJn";
       const restored = await api.restore(saved);
       const restoredInfo = await restored.info();
       let fetchError = null;
@@ -1527,8 +1475,21 @@ const dropNativeGreeter = async (objectId) => {
   readNativeGreeterObjectId(objectId);
 };
 
+const BROWSER_SHARED_WEB_SESSION = webSessionFromFetch({
+  fetch: isolateTestFetch,
+  pathPrefix: "/browser-powerbox-shared",
+  label: "Isolate browser Powerbox capability",
+});
+const EXPORTED_WEB_SESSION = webSessionFromFetch({
+  fetch: isolateTestFetch,
+  pathPrefix: "/exported",
+  label: "Isolate WebSession fixture",
+});
+
 export default defineWorker({
   capabilities: {
+    browserShared: BROWSER_SHARED_WEB_SESSION,
+    exportedWebSession: EXPORTED_WEB_SESSION,
     greeter: serveCapnp(
       NativeGreeter,
       makePersistentNativeGreeterTarget("supervisor-export"),

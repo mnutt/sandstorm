@@ -26,7 +26,7 @@ const makeGreeter = () => ({
       get(target, property, receiver) {
         if (property === "SANDSTORM_API" || property === "POWERBOX" ||
             property === "STORAGE") {
-          throw new Error(`typed service helper accessed legacy binding ${property}`);
+          throw new Error(`typed service helper accessed removed ambient binding ${property}`);
         }
         return Reflect.get(target, property, receiver);
       },

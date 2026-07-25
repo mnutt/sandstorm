@@ -15,9 +15,7 @@ import type {
 } from "sandstorm:api";
 import { TypedCounter } from "capnp:./typed-counter.capnp";
 
-interface Env extends SandstormEnv {
-  STORAGE: SandstormEnv["STORAGE"];
-}
+type Env = SandstormEnv;
 
 const VIEW_INFO = {
   appTitle: { defaultText: "TypeScript Isolate" },

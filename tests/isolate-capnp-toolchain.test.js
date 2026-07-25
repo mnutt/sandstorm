@@ -267,19 +267,6 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
     /`capnp-es:` isolate schema imports have been renamed; use `capnp:`/);
 });
 
-test("spk dev-isolate rejects service targets outside the worker", async () => {
-  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
-  const workerPath = path.join(REPO_DIR, "examples/isolate-capnp-rpc/worker.js");
-  await assert.rejects(
-    runCommand(SPK_BIN, [
-      "dev-isolate",
-      "--print-manifest-json",
-      "--service-binding", "REMOTE=another-service",
-      workerPath,
-    ]),
-    /service binding target must be the worker-local main service/);
-});
-
 test("spk dev-isolate resolves imported schemas outside the repo", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   try {
@@ -770,8 +757,15 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     path.join(REPO_DIR, "examples/isolate-capnp-rpc/greeting.capnp"),
     path.join(appSchemaDir, "greeting.capnp"));
   await fs.writeFile(path.join(appSrcDir, "worker.js"), [
+    "import { defineWorker, serveCapnp } from \"sandstorm:api\";",
     "import { Greeter } from \"capnp:../schemas/greeter.capnp\";",
-    "export default { fetch() { return Response.json({ name: Greeter.name, interfaceId: Greeter._capnp.typeIdHex }); } };",
+    "export default defineWorker({",
+    "  capabilities: {",
+    "    greeter: serveCapnp(Greeter, {",
+    "      hello({ name = \"world\" } = {}) { return { message: `Hello, ${name}` }; },",
+    "    }),",
+    "  },",
+    "});",
     "",
   ].join("\n"));
 
@@ -779,24 +773,20 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
   const pkgdefSource = [
     "@0xbeba1a4a7a55e001;",
     "",
-    "using Grain = import \"/sandstorm/grain.capnp\";",
     "using Spk = import \"/sandstorm/package.capnp\";",
-    "",
-    "const viewInfo :Grain.UiView.ViewInfo = (",
-    "  appTitle = (defaultText = \"Pack Capnp Es Test\"),",
-    "  matchRequests = [ (tags = [(id = 0x85d0f155d6c54b6d)]) ]",
-    ");",
     "",
     "const command :Spk.Manifest.Command = (",
     "  isolate = (",
     "    mainModule = \"worker.js\",",
     "    compatibilityDate = \"2025-01-01\",",
     "    compatibilityFlags = [],",
+    "    exports = [",
+    "      (name = \"greeter\", interfaceId = 0x85d0f155d6c54b6d)",
+    "    ],",
     "    modules = [",
     "      ( name = \"worker.js\", esModulePath = \"app/src/worker.js\" )",
     "    ],",
-    "    bindings = [],",
-    "    bridgeConfig = ( viewInfo = .viewInfo )",
+    "    bindings = []",
     "  )",
     ");",
     "",
@@ -821,26 +811,6 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     "",
   ].join("\n");
   await fs.writeFile(pkgdefPath, pkgdefSource);
-
-  const unsupportedPkgdefPath = path.join(fixtureRoot, "unsupported-service-pkgdef.capnp");
-  await fs.writeFile(unsupportedPkgdefPath, pkgdefSource.replace(
-    "    bindings = [],",
-    "    bindings = [ (name = \"REMOTE\", service = \"another-service\") ],"));
-  await assert.rejects(
-    runCommand(SPK_BIN, [
-      "pack",
-      `-k${path.join(REPO_DIR, "src/sandstorm/test-app/isolate-test-app.key")}`,
-      "-Isrc",
-      "-p", `${unsupportedPkgdefPath}:pkgdef`,
-      path.join(fixtureRoot, "unsupported-service.spk"),
-    ], {
-      cwd: REPO_DIR,
-      env: {
-        ...process.env,
-        SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
-      },
-    }),
-    /Isolate service bindings may only target the worker-local main service/);
 
   const spkPath = path.join(fixtureRoot, "pkg.spk");
   await runCommand(SPK_BIN, [
@@ -898,7 +868,7 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
   assert.equal(modules.has("sandstorm:browser-capnp:../schemas/greeter.capnp"), false);
   assert.equal(modules.has("sandstorm:browser-capnp:../schemas/greeting.capnp"), false);
   assert.equal(
-    String(manifest.continueCommand.isolate.bridgeConfig.viewInfo.matchRequests[0].tags[0].id),
+    String(manifest.continueCommand.isolate.exports[0].interfaceId),
     BigInt("0x85d0f155d6c54b6d").toString());
 
 });

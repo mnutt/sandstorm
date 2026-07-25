@@ -76,7 +76,13 @@ Supervisor::Client startGrain(kj::WaitScope& waitScope, Backend::Client backend,
 }
 
 void shutdown(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
-  supervisor.shutdownRequest().send().wait(waitScope);
+  try {
+    supervisor.shutdownRequest().send().wait(waitScope);
+    KJ_FAIL_REQUIRE("Supervisor.shutdown() returned successfully");
+  } catch (const kj::Exception& exception) {
+    KJ_REQUIRE(exception.getType() == kj::Exception::Type::DISCONNECTED,
+        "Supervisor.shutdown() returned the wrong exception", exception);
+  }
 }
 
 void keepAlive(kj::WaitScope& waitScope, Supervisor::Client supervisor) {

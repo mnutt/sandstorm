@@ -12,7 +12,7 @@
           "ordinal": 0,
           "paramStructId": "0xf452e0e869004663",
           "resultStructId": "0xb1c81ae48ce76b74",
-          "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}],
+          "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}, {"name": "platform", "type": "Capability"}],
           "results": [{"name": "cap", "type": "Capability"}]
         },
         {
@@ -20,7 +20,7 @@
           "ordinal": 1,
           "paramStructId": "0xf3bf9915b0d91b28",
           "resultStructId": "0xcdc75c503c3e67cc",
-          "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}, {"name": "objectId", "type": "AnyPointer"}],
+          "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}, {"name": "objectId", "type": "AnyPointer"}, {"name": "platform", "type": "Capability"}],
           "results": [{"name": "cap", "type": "Capability"}]
         },
         {
@@ -28,7 +28,7 @@
           "ordinal": 2,
           "paramStructId": "0xac65301eb0c6a5db",
           "resultStructId": "0xee119b0c19dadcc0",
-          "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}, {"name": "objectId", "type": "AnyPointer"}],
+          "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}, {"name": "objectId", "type": "AnyPointer"}, {"name": "platform", "type": "Capability"}],
           "results": []
         }
       ]
