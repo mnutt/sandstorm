@@ -60,6 +60,13 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
   getStorage @8 () -> (storage :IsolateStorage);
   # Returns the grain's private storage as a typed capability. The public JavaScript storage
   # facade uses this instead of the legacy Fetcher binding.
+
+  getViewInfo @9 () -> (viewInfo :Grain.UiView.ViewInfo);
+  # Returns the package-declared view metadata used by the worker facade for permission names
+  # and other non-authority-bearing metadata.
+
+  getRuntimeStatus @10 () -> (mainModule :Text);
+  # Returns the small supervisor status payload exposed through sandstorm().unstable.status().
 }
 
 interface IsolateStorage @0xeeef9ad97721b1d2 {

@@ -24,8 +24,9 @@ const makeGreeter = () => ({
   async storageRoundTrip({ key, value }, callContext) {
     const typedOnlyEnv = new Proxy(callContext.env, {
       get(target, property, receiver) {
-        if (property === "STORAGE") {
-          throw new Error("typed storage helper accessed the legacy Fetcher binding");
+        if (property === "SANDSTORM_API" || property === "POWERBOX" ||
+            property === "STORAGE") {
+          throw new Error(`typed service helper accessed legacy binding ${property}`);
         }
         return Reflect.get(target, property, receiver);
       },

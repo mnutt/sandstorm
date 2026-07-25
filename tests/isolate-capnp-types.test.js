@@ -118,6 +118,7 @@ import {
   mainViewFromFetch,
   pipeReadableToByteStream,
   serveCapnp,
+  storage,
 } from "sandstorm:api";
 import type {
   ByteStreamClient,
@@ -168,7 +169,7 @@ void revoked;
 
 const workerTarget: WorkerCapnpServerTargetFor<typeof Collision> = {
   save: async ({ value }, { env, ctx, signal }) => {
-    ctx.waitUntil(env.STORAGE.fetch("http://storage/capnp-call").then(() => undefined));
+    ctx.waitUntil(storage(env).put("capnp-call", value).then(() => undefined));
     const canceled: boolean = signal.aborted;
     void canceled;
     return { value };
@@ -187,7 +188,7 @@ const worker = defineWorker({
         return workerTarget;
       },
       drop: async (_objectId, { env }) => {
-        await env.STORAGE.fetch("http://storage/drop");
+        await storage(env).delete("drop");
       },
     }),
     ui: mainViewFromFetch({
@@ -196,7 +197,7 @@ const worker = defineWorker({
     }),
   },
   async fetch(_request, env, ctx) {
-    ctx.waitUntil(env.STORAGE.fetch("http://storage/fetch").then(() => undefined));
+    ctx.waitUntil(storage(env).put("fetch", "value").then(() => undefined));
     return new Response("ok");
   },
 });

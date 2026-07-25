@@ -1340,8 +1340,7 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(sandstorm::contains(appPersistence,
       "\"message\":\"classic native greeter account-host-app-persistent hello parity\""),
       appPersistence);
-  sandstorm::fetchPath(io.waitScope, supervisor, core, "sandstorm-api-binding-probe");
-  sandstorm::fetchPath(io.waitScope, supervisor, core, "powerbox-binding-probe");
+  sandstorm::fetchPath(io.waitScope, supervisor, core, "typed-platform-probe");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "storage-helper-self-test");
   auto bindingValues = sandstorm::fetchPath(
       io.waitScope, supervisor, core, "binding-values-probe");
@@ -1434,8 +1433,7 @@ int main(int argc, char** argv) {
       io.waitScope, account, core, argv[2], argv[3], false);
   coreImpl.setSupervisor(argv[2], restarted);
   sandstorm::fetchPath(io.waitScope, restarted, core, "echo");
-  sandstorm::fetchPath(io.waitScope, restarted, core, "sandstorm-api-binding-probe");
-  sandstorm::fetchPath(io.waitScope, restarted, core, "powerbox-binding-probe");
+  sandstorm::fetchPath(io.waitScope, restarted, core, "typed-platform-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "storage-helper-self-test");
   sandstorm::fetchPath(io.waitScope, restarted, core, "binding-values-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "data-binding-probe");

@@ -4,6 +4,7 @@
 sandstorm/activity.capnp
 sandstorm/grain.capnp
 sandstorm/identity.capnp
+sandstorm/isolate-api-session-tag.capnp
 sandstorm/isolate-bridge.capnp
 sandstorm/isolate-exports.capnp
 sandstorm/outbound-http-session.capnp

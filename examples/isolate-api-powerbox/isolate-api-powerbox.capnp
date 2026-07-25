@@ -39,14 +39,6 @@ const command :Spk.Manifest.Command = (
       (
         name = "SANDSTORM_API",
         sandstormApi = void
-      ),
-      (
-        name = "POWERBOX",
-        powerbox = void
-      ),
-      (
-        name = "STORAGE",
-        storage = void
       )
     ],
 

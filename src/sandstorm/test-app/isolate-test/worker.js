@@ -585,6 +585,52 @@ function renderDirectMainViewPage() {
 </html>`;
 }
 
+async function runTypedPlatformProbe(request, env, expectedMainModule) {
+  const typedOnlyEnv = new Proxy(env, {
+    get(target, property, receiver) {
+      if (property === "SANDSTORM_API" || property === "POWERBOX" ||
+          property === "STORAGE") {
+        throw new Error(`typed platform API accessed legacy binding ${property}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const typedApi = sandstorm(request, typedOnlyEnv);
+  const [
+    runtimeStatus,
+    apiSessionDescriptor,
+    outboundHttpDescriptor,
+    appInterfaceDescriptor,
+  ] = await Promise.all([
+    typedApi.unstable.status(),
+    typedApi.powerbox().apiSessionDescriptor({
+      canonicalUrl: "https://api.example.test",
+      oauthScopes: ["read", "write"],
+    }),
+    typedApi.powerbox().outboundHttpDescriptor({
+      baseUrl: "https://api.example.test/v1",
+      methods: ["GET", "POST"],
+    }),
+    typedApi.powerbox().appInterfaceDescriptor(NativeGreeter),
+  ]);
+  const descriptors = [
+    apiSessionDescriptor,
+    outboundHttpDescriptor,
+    appInterfaceDescriptor,
+  ];
+  const ok = runtimeStatus.ok === true &&
+    runtimeStatus.binding === "nativeCapnp" &&
+    runtimeStatus.status === "ready" &&
+    runtimeStatus.mainModule === expectedMainModule &&
+    descriptors.every((descriptor) =>
+      typeof descriptor === "string" && descriptor.length > 0);
+  return {
+    ok,
+    status: runtimeStatus,
+    descriptorLengths: descriptors.map((descriptor) => descriptor.length),
+  };
+}
+
 async function isolateTestFetch(request, env, ctx) {
     const api = sandstorm(request, env);
     const url = new URL(request.url);
@@ -821,11 +867,13 @@ async function isolateTestFetch(request, env, ctx) {
     }
 
     if (url.pathname === "/browser-storage-health") {
+      const probe = await runTypedPlatformProbe(request, env, "worker.js");
       return Response.json({
-        ok: true,
+        ...probe,
+        ok: probe.ok,
         status: "ok",
-        mainModule: metadata.fixture,
-      });
+        mainModule: probe.status.mainModule,
+      }, { status: probe.ok ? 200 : 500 });
     }
 
     if (url.pathname === "/browser-storage-write" && request.method === "POST") {
@@ -1378,43 +1426,9 @@ async function isolateTestFetch(request, env, ctx) {
       });
     }
 
-    if (url.pathname === "/sandstorm-api-binding-probe") {
-      const statusResponse = await env.SANDSTORM_API.fetch("http://sandstorm/status");
-      const statusBody = await statusResponse.json();
-      const ok = statusResponse.status === 200 &&
-        statusBody.ok === true &&
-        statusBody.binding === "sandstormApi" &&
-        statusBody.mainModule === "worker.js";
-      return Response.json({
-        ok,
-        status: statusResponse.status,
-        body: statusBody,
-      }, { status: ok ? 200 : 500 });
-    }
-
-    if (url.pathname === "/powerbox-binding-probe") {
-      const statusResponse = await env.POWERBOX.fetch("http://sandstorm/status");
-      const descriptorResponse = await env.POWERBOX.fetch(
-        "http://sandstorm/powerbox/api-session-descriptor" +
-        "?apiCanonicalUrl=https%3A%2F%2Fapi.example.test");
-      const statusBody = await statusResponse.json();
-      const descriptorBody = await descriptorResponse.json();
-      const ok = statusResponse.status === 404 &&
-        statusBody.ok === false &&
-        descriptorResponse.status === 200 &&
-        descriptorBody.ok === true &&
-        descriptorBody.type === "packedPowerboxDescriptor";
-      return Response.json({
-        ok,
-        statusEndpoint: {
-          status: statusResponse.status,
-          body: statusBody,
-        },
-        powerboxEndpoint: {
-          status: descriptorResponse.status,
-          body: descriptorBody,
-        },
-      }, { status: ok ? 200 : 500 });
+    if (url.pathname === "/typed-platform-probe") {
+      const probe = await runTypedPlatformProbe(request, env, "worker.js");
+      return Response.json(probe, { status: probe.ok ? 200 : 500 });
     }
 
     if (url.pathname === "/storage-helper-self-test") {
@@ -1456,21 +1470,16 @@ async function isolateTestFetch(request, env, ctx) {
 
     if (url.pathname === "/shared-storage-isolation") {
       const key = "shared-host-isolation";
+      const store = sandstorm(request, env).storage();
       if (url.searchParams.has("value")) {
-        const put = await env.STORAGE.fetch(`http://storage/${key}`, {
-          method: "PUT",
-          body: url.searchParams.get("value"),
-        });
-        if (!put.ok) {
-          return Response.json({ ok: false, status: put.status }, { status: 500 });
-        }
+        await store.put(key, url.searchParams.get("value"));
       }
 
-      const read = await env.STORAGE.fetch(`http://storage/${key}`);
+      const value = await store.get(key);
       return Response.json({
-        ok: read.ok,
-        value: read.ok ? await read.text() : null,
-      }, { status: read.ok ? 200 : 500 });
+        ok: value !== undefined,
+        value: value ?? null,
+      }, { status: value !== undefined ? 200 : 500 });
     }
 
 

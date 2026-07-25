@@ -16,6 +16,9 @@ import {
   utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
 import { MainView } from "/sandstorm/grain.capnp";
+import {
+  IsolateApiSessionPowerboxTag,
+} from "/sandstorm/isolate-api-session-tag.capnp";
 import { IsolateSessionContext } from "/sandstorm/isolate-bridge.capnp";
 import { OutboundHttpSession } from "/sandstorm/outbound-http-session.capnp";
 import { PowerboxDescriptor, PowerboxDisplayInfo } from "/sandstorm/powerbox.capnp";
@@ -952,30 +955,6 @@ function base64UrlDecodeText(text, name = "base64url value") {
   return new TextDecoder().decode(base64UrlDecodeBytes(text, name));
 }
 
-async function callSandstorm(env, path) {
-  const response = await env.SANDSTORM_API.fetch(`http://sandstorm/${path}`);
-  if (!response.ok) {
-    throw new Error(`Sandstorm API ${path} failed with ${response.status}`);
-  }
-  return response.json();
-}
-
-async function parseApiResponseBody(response) {
-  const text = await response.text();
-  if (text.length === 0) {
-    return { ok: response.ok };
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    return {
-      ok: false,
-      error: text,
-    };
-  }
-}
-
 async function capabilityInfo(env, capability, options = {}) {
   const id = capabilityId(capability);
   const cached = capabilityMetadata.get(id);
@@ -983,28 +962,6 @@ async function capabilityInfo(env, capability, options = {}) {
     return cached;
   }
   return null;
-}
-
-function powerboxFetcher(env) {
-  return env.POWERBOX || env.SANDSTORM_API;
-}
-
-async function callPowerbox(env, path) {
-  const response = await powerboxFetcher(env).fetch(`http://sandstorm/${path}`);
-  const body = await parseApiResponseBody(response);
-  if (!response.ok || !body.ok) {
-    throw new Error(body.error || `Powerbox API ${path} failed with ${response.status}`);
-  }
-  return body;
-}
-
-async function callSandstormApi(env, path) {
-  const response = await env.SANDSTORM_API.fetch(`http://sandstorm/${path}`);
-  const body = await parseApiResponseBody(response);
-  if (!response.ok || !body.ok) {
-    throw new Error(body.error || `Sandstorm API ${path} failed with ${response.status}`);
-  }
-  return body;
 }
 
 function nativeCapnpBridgeApi(env) {
@@ -1585,7 +1542,17 @@ const CLAIM_NATIVE_INTERFACES = new Set([
   "apiSession",
   "outboundHttpSession",
 ]);
+const API_SESSION_INTERFACE_ID = 0xc879e379c625cdc7n;
 const powerboxDescriptorInfoCache = new Map();
+const OUTBOUND_HTTP_METHOD_ENUMS = new Map([
+  ["GET", OutboundHttpSession.Method.GET],
+  ["POST", OutboundHttpSession.Method.POST],
+  ["PUT", OutboundHttpSession.Method.PUT],
+  ["PATCH", OutboundHttpSession.Method.PATCH],
+  ["DELETE", OutboundHttpSession.Method.DELETE],
+  ["HEAD", OutboundHttpSession.Method.HEAD],
+  ["OPTIONS", OutboundHttpSession.Method.OPTIONS],
+]);
 
 function cloneDescriptorJsonValue(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -1599,6 +1566,30 @@ async function cachedPowerboxDescriptorInfo(cacheKey, loader) {
   const result = await loader();
   powerboxDescriptorInfoCache.set(cacheKey, cloneDescriptorJsonValue(result));
   return cloneDescriptorJsonValue(result);
+}
+
+function createCapnpStructValue(StructClass, initializer) {
+  const message = new CapnpEsMessage();
+  const value = message.initRoot(StructClass);
+  StructClass._applyInit(value, initializer);
+  return value;
+}
+
+function packedPowerboxDescriptorInfo(tagId, tagValue, decoded) {
+  const message = new CapnpEsMessage();
+  const descriptor = message.initRoot(PowerboxDescriptor);
+  const tag = descriptor._initTags(1).get(0);
+  tag.id = tagId;
+  if (tagValue !== null) {
+    tag.value = tagValue;
+  }
+
+  return {
+    ok: true,
+    type: "packedPowerboxDescriptor",
+    descriptor: base64UrlEncodeBytes(message.toPackedUint8Array()),
+    decoded,
+  };
 }
 
 function explicitClaimNativeInterface(options = {}) {
@@ -1853,7 +1844,19 @@ async function apiSessionPowerboxDescriptorInfo(env, options = {}) {
     }
   }
   const path = `powerbox/api-session-descriptor?${params}`;
-  return cachedPowerboxDescriptorInfo(path, () => callPowerbox(env, path));
+  return cachedPowerboxDescriptorInfo(path, () => {
+    const canonicalUrl = params.get("apiCanonicalUrl");
+    const oauthScopes = params.getAll("apiOauthScope");
+    const tagValue = createCapnpStructValue(IsolateApiSessionPowerboxTag, {
+      canonicalUrl,
+      oauthScopes: oauthScopes.map((name) => ({ name })),
+    });
+    return packedPowerboxDescriptorInfo(API_SESSION_INTERFACE_ID, tagValue, {
+      type: "apiSession",
+      canonicalUrl,
+      oauthScopes,
+    });
+  });
 }
 
 async function outboundHttpPowerboxDescriptor(env, options = {}) {
@@ -1869,7 +1872,19 @@ async function outboundHttpPowerboxDescriptorInfo(env, options = {}) {
     }
   }
   const path = `powerbox/outbound-http-descriptor?${params}`;
-  return cachedPowerboxDescriptorInfo(path, () => callPowerbox(env, path));
+  return cachedPowerboxDescriptorInfo(path, () => {
+    const baseUrl = params.get("outboundHttpBaseUrl");
+    const methodNames = params.getAll("outboundHttpMethod");
+    const tagValue = createCapnpStructValue(OutboundHttpSession.PowerboxTag, {
+      baseUrl,
+      methods: methodNames.map((method) => OUTBOUND_HTTP_METHOD_ENUMS.get(method)),
+    });
+    return packedPowerboxDescriptorInfo(OutboundHttpSession._capnp.typeId, tagValue, {
+      type: "outboundHttp",
+      baseUrl,
+      methods: methodNames,
+    });
+  });
 }
 
 function appInterfaceRequestOptions(options = {}) {
@@ -1893,7 +1908,26 @@ async function appInterfacePowerboxDescriptorInfo(env, options = {}) {
     }
   }
   const path = `powerbox/app-interface-descriptor?${params}`;
-  return cachedPowerboxDescriptorInfo(path, () => callPowerbox(env, path));
+  return cachedPowerboxDescriptorInfo(path, () => {
+    const rawInterfaceId = params.get("interfaceId");
+    const interfaceId = BigInt(rawInterfaceId);
+    if (interfaceId === 0n) {
+      throw new ValidationError("appInterface.interfaceId must not be zero");
+    }
+    if (interfaceId > 0xffffffffffffffffn) {
+      throw new ValidationError("appInterface.interfaceId must fit in an unsigned 64-bit integer");
+    }
+
+    const decoded = {
+      kind: "appInterface",
+      interfaceId: `0x${interfaceId.toString(16)}`,
+    };
+    const interfaceName = params.get("interfaceName");
+    if (interfaceName !== null) {
+      decoded.interfaceName = interfaceName;
+    }
+    return packedPowerboxDescriptorInfo(interfaceId, null, decoded);
+  });
 }
 
 async function servePowerboxDescriptors(request, env) {
@@ -3994,10 +4028,13 @@ function permissionNames(options = {}) {
 }
 
 async function requiredPermissionSet(env, names) {
-  const declared = await callSandstormApi(env, "permissions");
-  const declaredNames = Array.isArray(declared.permissions)
-    ? declared.permissions.map((permission) => permission.name).filter((name) => typeof name === "string")
-    : [];
+  const declaredNames = await withIsolateBridgeRpc(env, async (bridge) => {
+    const result = await bridge.getViewInfo({});
+    if (!result.viewInfo) {
+      throw new Error("isolate bridge returned no view metadata");
+    }
+    return Array.from(result.viewInfo.permissions, (permission) => String(permission.name));
+  });
   const declaredSet = new Set(declaredNames);
   const unknown = names.filter((name) => !declaredSet.has(name));
   if (unknown.length > 0) {
@@ -4183,6 +4220,18 @@ export function getSession(request) {
   };
 }
 
+async function runtimeStatus(env) {
+  return withIsolateBridgeRpc(env, async (bridge) => {
+    const result = await bridge.getRuntimeStatus({});
+    return {
+      ok: true,
+      binding: "nativeCapnp",
+      status: "ready",
+      mainModule: String(result.mainModule),
+    };
+  });
+}
+
 // Replaced with the contents of browser-client.js when the generated helper module is built.
 const NATIVE_CAPNP_BROWSER_CLIENT_SOURCE = "__SANDSTORM_BROWSER_CLIENT_SOURCE__";
 
@@ -4199,7 +4248,7 @@ export function sandstorm(request, env) {
   const api = {
     session: () => getSession(request),
     unstable: Object.freeze({
-      status: () => callSandstorm(env, "status"),
+      status: () => runtimeStatus(env),
     }),
     storage: () => storage(env),
     powerbox: () => powerbox(request, env),

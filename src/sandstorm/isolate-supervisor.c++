@@ -3900,6 +3900,17 @@ private:
       return kj::READY_NOW;
     }
 
+    kj::Promise<void> getViewInfo(GetViewInfoContext context) override {
+      context.getResults().setViewInfo(
+          config.viewInfoMessage->getRoot<UiView::ViewInfo>().asReader());
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<void> getRuntimeStatus(GetRuntimeStatusContext context) override {
+      context.getResults().setMainModule(config.mainModule);
+      return kj::READY_NOW;
+    }
+
   private:
     IsolateRuntimeConfig& config;
     IsolateRuntimeHost& host;

@@ -724,14 +724,25 @@ Implemented checkpoint (partial):
 
 - The public storage helper now obtains a private typed `IsolateStorage` capability from the
   worker's native bridge. Its get, put, stat, remove, and list operations no longer construct
-  `Request` or `Response` objects or traverse a workerd `Fetcher`. The `STORAGE` Fetcher remains
-  only as an old-app compatibility binding.
+  `Request` or `Response` objects or traverse a workerd `Fetcher`.
 - Service-only integration coverage performs a typed storage round trip from a worker with no
   Fetch handler, `MainView`, `WebSession`, or HTTP binding. The fixture rejects any accidental
   access to `env.STORAGE`, proving the public helper uses only Cap'n Proto.
 - The host injects the private native bridge into every worker, independent of its declared
   Fetcher bindings. A headless exported capability can therefore acquire typed platform services
   without opting into `SANDSTORM_API` or any HTTP-shaped interface.
+- Runtime status and package-declared `UiView` metadata now come from typed `IsolateBridge`
+  methods. Permission-name validation no longer calls a private HTTP endpoint.
+- Powerbox descriptors for `ApiSession`, outbound HTTP, and arbitrary application interfaces are
+  packed locally with capnp-es from their typed tag schemas. Descriptor construction no longer
+  calls a supervisor-backed Fetcher.
+- UI and service integration manifests no longer declare the `POWERBOX` or `STORAGE` bindings.
+  The browser storage conformance route rejects access to all three legacy binding names while it
+  exercises typed status, all descriptor forms, and storage.
+- The only remaining `SANDSTORM_API` calls in the public worker library serve generated browser
+  modules and relay the browser's Cap'n Proto WebSocket connection. The next cutover replaces
+  these with typed bridge methods and native message streams, after which the private Fetcher
+  binding and its routes can be deleted.
 
 ### Phase 8: Consolidate and remove obsolete paths
 

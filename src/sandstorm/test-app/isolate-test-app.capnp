@@ -45,14 +45,6 @@ const isolateBindings :List(Spk.Manifest.IsolateConfig.Binding) = [
     sandstormApi = void
   ),
   (
-    name = "POWERBOX",
-    powerbox = void
-  ),
-  (
-    name = "STORAGE",
-    storage = void
-  ),
-  (
     name = "LOOPBACK_SERVICE",
     service = "main"
   )
