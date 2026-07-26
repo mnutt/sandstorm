@@ -40,7 +40,8 @@ jobs:
             which go || (sudo apt-get update && sudo apt-get install golang-go)
 
             sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ccache
+                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ccache \
+                clang-19 lld-19 libc++-19-dev libc++abi-19-dev
 
             # Install OpenSSL 1.1 (required for Meteor/Node compatibility)
             # Ubuntu 24.04 only ships OpenSSL 3.x, so we need to install 1.1 from older release
@@ -74,6 +75,7 @@ jobs:
             export CCACHE_MAXSIZE="1G"
             #     export CCACHE_DEBUG=1
             export CCACHE_SLOPPINESS="time_macros"
+            export CLANGDIR=/usr/lib/llvm-19/bin
             export PATH=/usr/lib/ccache:$CLANGDIR:$PATH
             # Use Python 3.10 for node-gyp (3.11+ removed 'rU' mode)
             export npm_config_python=$(which python)
