@@ -267,6 +267,61 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
     /`capnp-es:` isolate schema imports have been renamed; use `capnp:`/);
 });
 
+test("isolate tutorial entry points generate typed MainView manifests", async (t) => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+  try {
+    await requireFile(
+      CAPNP_ES_COMPILER_MODULE,
+      "Set CAPNP_ES_COMPILER_MODULE to the @mnutt/capnp-es compiler module.");
+  } catch (err) {
+    t.skip(err.message);
+    return;
+  }
+
+  const tutorialDir = path.join(REPO_DIR, "examples/isolate-tutorial");
+  const options = {
+    cwd: tutorialDir,
+    env: {
+      ...process.env,
+      SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
+    },
+  };
+
+  for (const [worker, title] of [
+    ["object-store.js", "Object Store"],
+    ["dropbox-upload.js", "Dropbox Upload"],
+  ]) {
+    const { stdout } = await runCommand(SPK_BIN, [
+      "dev-isolate",
+      "--print-manifest-json",
+      "--title", title,
+      worker,
+    ], options);
+    const manifest = JSON.parse(stdout);
+    const isolate = manifest.continueCommand.isolate;
+    const modules = new Map(isolate.modules.map((module) => [module.name, module]));
+
+    assert.equal(manifest.appTitle.defaultText, title);
+    assert.equal(isolate.mainModule, worker);
+    assert.equal(isolate.bridgeConfig, undefined);
+    assert.deepEqual(isolate.exports, [{
+      name: "ui",
+      interfaceId: BigInt("0xc277e9822ae2c8fc").toString(),
+      role: "mainView",
+    }]);
+    assert.equal(
+      modules.get("capnp:./object-store.capnp").esModulePath,
+      "__sandstorm_isolate_runtime/capnp-es-generated/object-store.js");
+  }
+
+  const descriptor = await runCommand(SPK_BIN, [
+    "powerbox-descriptor",
+    "--format", "capnp",
+    "capnp:./object-store.capnp#ObjectUploadTarget",
+  ], options);
+  assert.equal(descriptor.stdout.trim(), "(tags = [(id = 0x9303d28a2f2de33a)])");
+});
+
 test("spk dev-isolate resolves imported schemas outside the repo", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   try {
