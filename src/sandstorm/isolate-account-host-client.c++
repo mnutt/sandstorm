@@ -281,6 +281,12 @@ public:
       kj::Own<kj::PromiseFulfiller<kj::String>> messageFulfiller)
       : messageFulfiller(kj::mv(messageFulfiller)) {}
 
+  CapturingWebSocketMessageStream(
+      kj::Own<kj::PromiseFulfiller<kj::String>> messageFulfiller,
+      kj::Own<kj::PromiseFulfiller<kj::String>> closeFulfiller)
+      : messageFulfiller(kj::mv(messageFulfiller)),
+        closeFulfiller(kj::mv(closeFulfiller)) {}
+
   kj::Promise<void> sendText(SendTextContext context) override {
     KJ_REQUIRE(messageFulfiller.get() != nullptr,
         "direct WebSocket sent more than one message");
@@ -295,12 +301,47 @@ public:
   }
 
   kj::Promise<void> close(CloseContext context) override {
-    (void)context;
+    if (closeFulfiller.get() != nullptr) {
+      auto params = context.getParams();
+      closeFulfiller->fulfill(kj::str(params.getCode(), ":", params.getReason()));
+      closeFulfiller = nullptr;
+    }
     return kj::READY_NOW;
   }
 
 private:
   kj::Own<kj::PromiseFulfiller<kj::String>> messageFulfiller;
+  kj::Own<kj::PromiseFulfiller<kj::String>> closeFulfiller;
+};
+
+class CapturingWebSocketCloseStream final:
+    public WebSession::WebSocketMessageStream::Server {
+public:
+  explicit CapturingWebSocketCloseStream(
+      kj::Own<kj::PromiseFulfiller<kj::String>> closeFulfiller)
+      : closeFulfiller(kj::mv(closeFulfiller)) {}
+
+  kj::Promise<void> sendText(SendTextContext context) override {
+    KJ_FAIL_REQUIRE("direct WebSocket unexpectedly returned text",
+        context.getParams().getMessage());
+  }
+
+  kj::Promise<void> sendData(SendDataContext context) override {
+    KJ_FAIL_REQUIRE("direct WebSocket unexpectedly returned binary data",
+        context.getParams().getMessage().size());
+  }
+
+  kj::Promise<void> close(CloseContext context) override {
+    KJ_REQUIRE(closeFulfiller.get() != nullptr,
+        "direct WebSocket closed more than once");
+    auto params = context.getParams();
+    closeFulfiller->fulfill(kj::str(params.getCode(), ":", params.getReason()));
+    closeFulfiller = nullptr;
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Own<kj::PromiseFulfiller<kj::String>> closeFulfiller;
 };
 
 class CollectByteStream final: public ByteStream::Server {
@@ -772,6 +813,53 @@ void testLogicalWebSocket(kj::WaitScope& waitScope, Supervisor::Client superviso
   close.setCode(1000);
   close.setReason("test complete");
   close.send().wait(waitScope);
+
+  auto failedReceived = kj::newPromiseAndFulfiller<kj::String>();
+  auto failedClose = kj::newPromiseAndFulfiller<kj::String>();
+  auto failedRequest = session.openWebSocketMessagesRequest();
+  failedRequest.setPath("websocket-echo");
+  failedRequest.initProtocol(0);
+  failedRequest.setClientStream(kj::heap<CapturingWebSocketMessageStream>(
+      kj::mv(failedReceived.fulfiller), kj::mv(failedClose.fulfiller)));
+  auto failedContext = failedRequest.initContext();
+  failedContext.setResponseStream(kj::heap<IgnoreByteStream>());
+  failedContext.initCookies(0);
+  failedContext.initAccept(0);
+  failedContext.initAcceptEncoding(0);
+  failedContext.initAdditionalHeaders(0);
+
+  auto failedResponse = failedRequest.send().wait(waitScope);
+  auto failedStream = failedResponse.getServerStream();
+  auto failedSend = failedStream.sendTextRequest();
+  failedSend.setMessage("fail");
+  failedSend.send().wait(waitScope);
+  KJ_REQUIRE(failedReceived.promise.wait(waitScope) ==
+      "error:message:intentional direct WebSocket failure",
+      "direct WebSocket error callback returned the wrong payload");
+  KJ_REQUIRE(failedClose.promise.wait(waitScope) ==
+      "1011:WebSocket handler failed",
+      "direct WebSocket handler failure returned the wrong close status");
+
+  auto workerClose = kj::newPromiseAndFulfiller<kj::String>();
+  auto workerCloseRequest = session.openWebSocketMessagesRequest();
+  workerCloseRequest.setPath("websocket-echo");
+  workerCloseRequest.initProtocol(0);
+  workerCloseRequest.setClientStream(kj::heap<CapturingWebSocketCloseStream>(
+      kj::mv(workerClose.fulfiller)));
+  auto workerCloseContext = workerCloseRequest.initContext();
+  workerCloseContext.setResponseStream(kj::heap<IgnoreByteStream>());
+  workerCloseContext.initCookies(0);
+  workerCloseContext.initAccept(0);
+  workerCloseContext.initAcceptEncoding(0);
+  workerCloseContext.initAdditionalHeaders(0);
+
+  auto workerCloseResponse = workerCloseRequest.send().wait(waitScope);
+  auto workerCloseStream = workerCloseResponse.getServerStream();
+  auto workerCloseSend = workerCloseStream.sendTextRequest();
+  workerCloseSend.setMessage("close-from-worker");
+  workerCloseSend.send().wait(waitScope);
+  KJ_REQUIRE(workerClose.promise.wait(waitScope) == "4001:worker complete",
+      "direct WebSocket worker close returned the wrong status");
 }
 
 void testBrowserBootstrap(kj::WaitScope& waitScope, Supervisor::Client supervisor) {

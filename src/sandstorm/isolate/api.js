@@ -598,10 +598,38 @@ async function runPullStreamingUiFetch(session, method, params, callContext) {
 }
 
 function webSocketFacade(clientStream) {
-  let closed = false;
-  return Object.freeze({
+  const CONNECTING = 0;
+  const OPEN = 1;
+  const CLOSING = 2;
+  const CLOSED = 3;
+  let readyState = OPEN;
+  let closeInfo = null;
+
+  const close = async (code, reason, source) => {
+    if (readyState === CLOSING || readyState === CLOSED) return;
+    readyState = CLOSING;
+    closeInfo = Object.freeze({ code, reason, source });
+    try {
+      await clientStream.close({ code, reason });
+    } catch (error) {
+      closeInfo = Object.freeze({
+        code: 1006,
+        reason: error instanceof Error ? error.message : String(error),
+        source: "error",
+      });
+      throw error;
+    } finally {
+      readyState = CLOSED;
+    }
+  };
+
+  const socket = Object.freeze({
+    CONNECTING,
+    OPEN,
+    CLOSING,
+    CLOSED,
     async send(message) {
-      if (closed) throw new Error("WebSocket is closed");
+      if (readyState !== OPEN) throw new Error("WebSocket is not open");
       if (typeof message === "string") {
         await clientStream.sendText({ message });
       } else {
@@ -609,14 +637,48 @@ function webSocketFacade(clientStream) {
       }
     },
     async close(code = 1000, reason = "") {
-      if (closed) return;
-      closed = true;
-      await clientStream.close({ code, reason });
+      await close(code, reason, "local");
+    },
+    get readyState() {
+      return readyState;
     },
     get closed() {
-      return closed;
+      return readyState === CLOSING || readyState === CLOSED;
+    },
+    get closeInfo() {
+      return closeInfo;
     },
   });
+
+  return Object.freeze({
+    socket,
+    async closeForError() {
+      await close(1011, "WebSocket handler failed", "error");
+    },
+    closeFromPeer(code, reason) {
+      if (readyState === CLOSED) return;
+      readyState = CLOSED;
+      if (closeInfo === null) {
+        closeInfo = Object.freeze({ code, reason, source: "peer" });
+      }
+    },
+  });
+}
+
+async function runWebSocketHandler(handler, phase, callback, connection, env, ctx) {
+  try {
+    await callback();
+  } catch (error) {
+    if (typeof handler.error === "function") {
+      try {
+        await handler.error({ error, phase }, connection.socket, env, ctx);
+      } catch (errorHandlerError) {
+        console.error("Sandstorm WebSocket error handler failed", errorHandlerError);
+      }
+    }
+    await connection.closeForError().catch(() => {});
+    throw error;
+  }
 }
 
 async function openWebSocketMessages(session, params, callContext) {
@@ -628,10 +690,11 @@ async function openWebSocketMessages(session, params, callContext) {
     request.headers.set("sec-websocket-protocol", protocols.join(", "));
   }
 
-  const socket = webSocketFacade(params.clientStream);
+  const connection = webSocketFacade(params.clientStream);
+  const socket = connection.socket;
   const handler = await session.webSocket(request, socket, callContext.env, callContext.ctx);
   if (!handler || typeof handler !== "object" || typeof handler.message !== "function") {
-    await socket.close(1011, "invalid WebSocket handler");
+    await connection.closeForError();
     throw new TypeError("mainViewFromFetch() webSocket must return a message handler");
   }
   const selectedProtocol = handler.protocol === undefined ? "" : String(handler.protocol);
@@ -644,23 +707,27 @@ async function openWebSocketMessages(session, params, callContext) {
   const streamTarget = {
     async sendText(messageParams, messageContext) {
       if (peerClosed) throw new Error("WebSocket peer is closed");
-      await handler.message(
+      await runWebSocketHandler(handler, "message", () => handler.message(
         { data: String(messageParams.message), type: "text" },
-        socket, messageContext.env, messageContext.ctx);
+        socket, messageContext.env, messageContext.ctx),
+      connection, messageContext.env, messageContext.ctx);
     },
     async sendData(messageParams, messageContext) {
       if (peerClosed) throw new Error("WebSocket peer is closed");
       const data = new Uint8Array(capnpDataBytes(messageParams.message));
-      await handler.message(
-        { data, type: "data" }, socket, messageContext.env, messageContext.ctx);
+      await runWebSocketHandler(handler, "message", () => handler.message(
+        { data, type: "data" }, socket, messageContext.env, messageContext.ctx),
+      connection, messageContext.env, messageContext.ctx);
     },
     async close(closeParams, closeContext) {
       if (peerClosed) return;
       peerClosed = true;
+      connection.closeFromPeer(closeParams.code, String(closeParams.reason));
       if (typeof handler.close === "function") {
-        await handler.close(
+        await runWebSocketHandler(handler, "close", () => handler.close(
           { code: closeParams.code, reason: String(closeParams.reason) },
-          socket, closeContext.env, closeContext.ctx);
+          socket, closeContext.env, closeContext.ctx),
+        connection, closeContext.env, closeContext.ctx);
       }
     },
   };

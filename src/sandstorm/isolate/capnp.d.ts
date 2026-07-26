@@ -142,9 +142,21 @@ declare module "sandstorm:api" {
   }
 
   export interface SandstormWebSocket {
+    readonly CONNECTING: 0;
+    readonly OPEN: 1;
+    readonly CLOSING: 2;
+    readonly CLOSED: 3;
+    readonly readyState: 0 | 1 | 2 | 3;
     readonly closed: boolean;
+    readonly closeInfo: SandstormWebSocketCloseInfo | null;
     send(message: string | ArrayBuffer | ArrayBufferView): Promise<void>;
     close(code?: number, reason?: string): Promise<void>;
+  }
+
+  export interface SandstormWebSocketCloseInfo {
+    readonly code: number;
+    readonly reason: string;
+    readonly source: "local" | "peer" | "error";
   }
 
   export interface SandstormWebSocketMessageEvent {
@@ -157,6 +169,11 @@ declare module "sandstorm:api" {
     readonly reason: string;
   }
 
+  export interface SandstormWebSocketErrorEvent {
+    readonly error: unknown;
+    readonly phase: "message" | "close";
+  }
+
   export interface SandstormWebSocketHandler<E extends SandstormEnv = SandstormEnv> {
     readonly protocol?: string;
     message(
@@ -167,6 +184,12 @@ declare module "sandstorm:api" {
     ): void | Promise<void>;
     close?(
       event: SandstormWebSocketCloseEvent,
+      socket: SandstormWebSocket,
+      env: E,
+      ctx: WorkerExecutionContext,
+    ): void | Promise<void>;
+    error?(
+      event: SandstormWebSocketErrorEvent,
       socket: SandstormWebSocket,
       env: E,
       ctx: WorkerExecutionContext,

@@ -1501,13 +1501,39 @@ export default defineWorker({
       }),
     ui: mainViewFromFetch({
       fetch: isolateTestFetch,
-      async webSocket(request) {
+      async webSocket(request, socket) {
         const url = new URL(request.url);
         if (url.pathname !== "/websocket-echo") {
           throw new Error(`unknown direct WebSocket path: ${url.pathname}`);
         }
+        if (socket.readyState !== socket.OPEN || socket.closed || socket.closeInfo !== null ||
+            socket.CONNECTING !== 0 || socket.OPEN !== 1 ||
+            socket.CLOSING !== 2 || socket.CLOSED !== 3) {
+          throw new Error("direct WebSocket did not start in the open state");
+        }
         return {
           async message(event, socket) {
+            if (event.type === "text" && event.data === "fail") {
+              throw new Error("intentional direct WebSocket failure");
+            }
+            if (socket.readyState !== socket.OPEN || socket.closed) {
+              throw new Error("direct WebSocket message ran on a non-open socket");
+            }
+            if (event.type === "text" && event.data === "close-from-worker") {
+              const closing = socket.close(4001, "worker complete");
+              if (socket.readyState !== socket.CLOSING || !socket.closed ||
+                  socket.closeInfo?.source !== "local" ||
+                  socket.closeInfo.code !== 4001 ||
+                  socket.closeInfo.reason !== "worker complete") {
+                throw new Error("direct WebSocket did not enter the local closing state");
+              }
+              await closing;
+              if (socket.readyState !== socket.CLOSED ||
+                  socket.closeInfo?.source !== "local") {
+                throw new Error("direct WebSocket did not finish the local close");
+              }
+              return;
+            }
             if (event.type === "text") {
               await socket.send(`capnp:${event.data}`);
             } else {
@@ -1515,7 +1541,22 @@ export default defineWorker({
             }
           },
           async close(event, socket) {
-            await socket.close(event.code, event.reason);
+            if (socket.readyState !== socket.CLOSED || !socket.closed ||
+                socket.closeInfo?.source !== "peer" ||
+                socket.closeInfo.code !== event.code ||
+                socket.closeInfo.reason !== event.reason) {
+              throw new Error("direct WebSocket close state did not describe the peer close");
+            }
+          },
+          async error(event, socket) {
+            if (event.phase !== "message" ||
+                !(event.error instanceof Error) ||
+                event.error.message !== "intentional direct WebSocket failure" ||
+                socket.readyState !== socket.OPEN ||
+                socket.closeInfo !== null) {
+              throw new Error("direct WebSocket error callback received the wrong state");
+            }
+            await socket.send(`error:${event.phase}:${event.error.message}`);
           },
         };
       },

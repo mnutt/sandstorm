@@ -175,6 +175,30 @@ const simpleFetch: SandstormFetchHandler = async (_request, _env, ctx) => {
 };
 const simpleWorker: SandstormFetchWorker = {
   fetch: simpleFetch,
+  async webSocket(_request, socket) {
+    const initialState: 0 | 1 | 2 | 3 = socket.readyState;
+    const isOpen: boolean = initialState === socket.OPEN;
+    const isClosed: boolean = socket.closed;
+    const closeSource: "local" | "peer" | "error" | undefined =
+      socket.closeInfo?.source;
+    void isOpen;
+    void isClosed;
+    void closeSource;
+    return {
+      async message(event, socket) {
+        await socket.send(event.data);
+      },
+      async close(event, socket) {
+        await socket.close(event.code, event.reason);
+      },
+      error(event) {
+        const phase: "message" | "close" = event.phase;
+        const error: unknown = event.error;
+        void phase;
+        void error;
+      },
+    };
+  },
 };
 void simpleWorker;
 

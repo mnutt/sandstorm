@@ -160,6 +160,38 @@ defineWorker({
 });
 ```
 
+The object form can handle a WebSocket without adopting the browser event
+API:
+
+```js
+export default {
+  fetch: request => new Response(`ordinary request: ${request.url}`),
+
+  async webSocket(request, socket) {
+    return {
+      async message(event, socket) {
+        await socket.send(event.data);
+      },
+      close(event, socket) {
+        console.log(`peer closed with ${event.code}: ${event.reason}`);
+      },
+      error(event, socket) {
+        console.error(`WebSocket ${event.phase} handler failed`, event.error);
+      },
+    };
+  },
+};
+```
+
+`socket.readyState` uses the standard numeric `CONNECTING`, `OPEN`, `CLOSING`,
+and `CLOSED` values, which are also available as properties on the socket.
+`socket.closed` is a convenience predicate for closing or closed connections.
+`socket.closeInfo` is `null` while open and otherwise records the close code,
+reason, and whether the local worker, peer, or a handler error initiated the
+close. If `message()` or `close()` throws, Sandstorm calls the optional
+`error()` hook with the original exception and phase. A message-handler
+failure then closes the connection with status 1011.
+
 This shorthand declares no `ViewInfo` metadata, durable object restoration, or
 additional named exports. Workers needing those features use
 `defineWorker()` and `mainViewFromFetch()` explicitly. `mainViewFromFetch()`
