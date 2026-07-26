@@ -22,3 +22,12 @@ interface WorkerApiSession @0xb67a196b3d6556b1
     extends(ApiSession, Grain.AppPersistent(WorkerSessionRef)) {
   # ApiSession counterpart to WorkerWebSession.
 }
+
+interface WorkerMainViewSession @0xc153c342b5536294 extends(WebSession) {
+  # Private extension implemented by the worker-side MainView facade. The supervisor keeps this
+  # capability behind the ordinary WebSession interface, but uses it to attach the worker's
+  # optional typed browser API to the native Cap'n Proto connection for this exact UI session.
+
+  getBrowserBootstrap @0 ()
+      -> (found :Bool, interfaceId :UInt64, interfaceName :Text, cap :Capability);
+}

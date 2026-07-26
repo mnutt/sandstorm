@@ -153,15 +153,6 @@ function normalizeNativeCapnpCapabilitySlot(slot) {
   });
 }
 
-function normalizeConnectionId(connectionId) {
-  if (typeof connectionId === "string" && connectionId.length > 0) return connectionId;
-  if (typeof globalThis.crypto?.randomUUID === "function") {
-    return "browser-native-capnp-" + globalThis.crypto.randomUUID();
-  }
-  return "browser-native-capnp-" + Date.now().toString(36) + "-" +
-    Math.random().toString(36).slice(2);
-}
-
 async function nativeCapnpBrowserMessageBytes(data) {
   if (typeof Blob !== "undefined" && data instanceof Blob) {
     return new Uint8Array(await data.arrayBuffer());
@@ -169,8 +160,7 @@ async function nativeCapnpBrowserMessageBytes(data) {
   return nativeCapnpMessageBytes(data);
 }
 
-export function browserNativeCapnpRpcSessionUrl(connectionId) {
-  const normalizedConnectionId = normalizeConnectionId(connectionId);
+function browserNativeCapnpRpcSessionUrl() {
   const url = new URL(
     "/__sandstorm/native-capnp/rpc-session",
     globalThis.location?.href || "http://sandstorm/");
@@ -179,12 +169,11 @@ export function browserNativeCapnpRpcSessionUrl(connectionId) {
   } else if (url.protocol === "http:") {
     url.protocol = "ws:";
   }
-  url.searchParams.set("connectionId", normalizedConnectionId);
   return url;
 }
 
-export function openBrowserNativeCapnpRpcSession(connectionId) {
-  const url = browserNativeCapnpRpcSessionUrl(connectionId);
+function openBrowserNativeCapnpRpcSession() {
+  const url = browserNativeCapnpRpcSessionUrl();
   return new Promise((resolve, reject) => {
     const webSocket = new WebSocket(url.href);
     let settled = false;
@@ -509,35 +498,8 @@ export async function claimBrowserNativeCapnpToken(token, InterfaceClass, option
     validatePackedPowerboxDescriptor(options.descriptor, "descriptor");
   }
 
-  const connection = createBrowserNativeCapnpConnection(options);
-  const bridge = connection.bootstrap(BrowserIsolateBridge);
-  try {
-  const claimed = await bridge.claimPowerboxRequest({
-      requestToken: token,
-      requiredPermissions: browserRequiredPermissionNames(options),
-    });
-    const cap = capnpCapabilityFromResult(claimed, "browser Powerbox claimed capability");
-    if (!cap) {
-      throw new NativeCapnpBridgeProtocolError(
-        "browser isolate bridge did not return a claimed Powerbox capability");
-    }
-    const metadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
-    const client = browserNativeCapnpClient(
-      cap, InterfaceClass, "browser Powerbox claimed capability");
-    return Object.freeze({
-      type: "browserNativeCapnpCapability",
-      interfaceId: metadata.interfaceId,
-      interfaceName: metadata.interfaceName,
-      kind: "receiverHosted",
-      cap,
-      client,
-      connection,
-      transport: connection.transport,
-    });
-  } catch (error) {
-    connection.transport.close();
-    throw error;
-  }
+  const session = options.session ?? defaultBrowserNativeCapnpSession;
+  return session.claimPowerboxToken(token, InterfaceClass, options);
 }
 
 export async function requestBrowserNativeCapnpPowerbox(InterfaceClass, options = {}) {
@@ -559,21 +521,29 @@ export async function requestBrowserNativeCapnp(InterfaceClass, options = {}) {
     ...requested,
     capability,
     client: capability.client,
-    connection: capability.connection,
-    transport: capability.transport,
   });
 }
 
-export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTransport {
+const DEFAULT_MAX_BROWSER_CAPNP_MESSAGE_BYTES = 8 * 1024 * 1024;
+const DEFAULT_MAX_BROWSER_CAPNP_BUFFERED_BYTES = 2 * 1024 * 1024;
+
+class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTransport {
   #webSocket = null;
   #openPromise = null;
   #sendQueue = Promise.resolve();
+  #closedResolve;
+  #onStateChange;
 
   constructor(options = {}) {
     super();
-    this.connectionId = normalizeConnectionId(options.connectionId);
     this.connection = null;
     this.kind = "browserIsolateBridgeWebSocketRpc";
+    this.maxMessageBytes = DEFAULT_MAX_BROWSER_CAPNP_MESSAGE_BYTES;
+    this.maxBufferedBytes = DEFAULT_MAX_BROWSER_CAPNP_BUFFERED_BYTES;
+    this.#onStateChange = options.onStateChange;
+    this.closedPromise = new Promise(resolve => {
+      this.#closedResolve = resolve;
+    });
   }
 
   sendMessage(message) {
@@ -583,9 +553,20 @@ export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTranspor
     }
 
     const bytes = nativeCapnpRootMessageBytes(message);
+    if (bytes.byteLength > this.maxMessageBytes) {
+      throw new RangeError(
+        "native Cap'n Proto browser message exceeds " + this.maxMessageBytes + " bytes");
+    }
     this.#sendQueue = this.#sendQueue
       .then(async () => {
         const webSocket = await this.#open();
+        while (webSocket.bufferedAmount > this.maxBufferedBytes) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          if (this.closed || webSocket.readyState !== WebSocket.OPEN) {
+            throw new NativeCapnpBridgeUnavailableError(
+              "native Cap'n Proto browser WebSocket RPC transport closed while buffering");
+          }
+        }
         webSocket.send(bytes);
       })
       .catch((error) => this.abort(error));
@@ -605,6 +586,9 @@ export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTranspor
       this.#webSocket?.close(error === undefined ? 1000 : 1011);
     } catch (_) {}
     super.close(error);
+    this.#closedResolve?.(error);
+    this.#closedResolve = null;
+    this.#onStateChange?.(error === undefined ? "closed" : "failed", error);
   }
 
   async #open() {
@@ -613,7 +597,8 @@ export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTranspor
     }
 
     if (!this.#openPromise) {
-      this.#openPromise = openBrowserNativeCapnpRpcSession(this.connectionId).then((webSocket) => {
+      this.#onStateChange?.("connecting");
+      this.#openPromise = openBrowserNativeCapnpRpcSession().then((webSocket) => {
         webSocket.addEventListener("message", async (event) => {
           try {
             this.resolve(await nativeCapnpBrowserMessageBytes(event.data));
@@ -624,6 +609,7 @@ export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTranspor
         webSocket.addEventListener("close", () => this.close());
         webSocket.addEventListener("error", (event) => this.abort(event.error || event));
         this.#webSocket = webSocket;
+        this.#onStateChange?.("open");
         return webSocket;
       });
     }
@@ -632,7 +618,7 @@ export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTranspor
   }
 }
 
-export function createBrowserNativeCapnpConnection(options = {}) {
+function createBrowserNativeCapnpConnection(options = {}) {
   if (typeof WebSocket !== "function") {
     throw new NativeCapnpBridgeUnavailableError(
       "native Cap'n Proto browser RPC requires WebSocket");
@@ -643,25 +629,276 @@ export function createBrowserNativeCapnpConnection(options = {}) {
   return Object.assign(connection, { transport });
 }
 
+export class BrowserNativeCapnpSession {
+  #options;
+  #connection = null;
+  #bridge = null;
+  #state = "idle";
+  #generation = 0;
+  #closed = false;
+  #listeners = new Set();
+
+  constructor(options = {}) {
+    this.#options = { ...options };
+  }
+
+  get state() {
+    return this.#state;
+  }
+
+  get generation() {
+    return this.#generation;
+  }
+
+  get closed() {
+    return this.#closed;
+  }
+
+  onStateChange(listener) {
+    if (typeof listener !== "function") {
+      throw new TypeError("onStateChange() requires a function");
+    }
+    this.#listeners.add(listener);
+    listener(Object.freeze({
+      state: this.#state,
+      generation: this.#generation,
+      error: null,
+    }));
+    return () => this.#listeners.delete(listener);
+  }
+
+  async application(InterfaceClass, options = {}) {
+    const metadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
+    if (metadata.interfaceId === 0n) {
+      throw new TypeError("application() requires a generated interface with a type ID");
+    }
+    const { bridge } = this.#current();
+    const result = await bridge.getApplicationBootstrap({});
+    if (!result?.found) {
+      throw new NativeCapnpBridgeProtocolError(
+        "this worker did not declare a browser application capability");
+    }
+    const actualId = nativeCapnpInterfaceId(result.interfaceId);
+    if (actualId !== metadata.interfaceId) {
+      throw new NativeCapnpBridgeProtocolError(
+        "browser application interface mismatch: expected " +
+        metadata.interfaceIdText + ", received " + nativeCapnpInterfaceIdText(actualId));
+    }
+    const cap = capnpCapabilityFromResult(result, "browser application capability");
+    if (!cap) {
+      throw new NativeCapnpBridgeProtocolError(
+        "browser isolate bridge returned no application capability");
+    }
+    return browserNativeCapnpClient(cap, InterfaceClass, "browser application capability");
+  }
+
+  async handoff(target, InterfaceClass, options = {}) {
+    const metadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
+    const normalizedTarget = normalizeNativeCapnpCapabilitySlot(target);
+    if (metadata.interfaceId === 0n || normalizedTarget.interfaceId === 0n) {
+      throw new NativeCapnpBridgeProtocolError(
+        "browser handoff requires typed interface metadata");
+    }
+    if (normalizedTarget.interfaceId !== metadata.interfaceId) {
+      throw new NativeCapnpBridgeProtocolError(
+        "browser handoff interface mismatch: expected " + metadata.interfaceIdText +
+        ", received " + nativeCapnpInterfaceIdText(normalizedTarget.interfaceId));
+    }
+    const { bridge } = this.#current();
+    const claimed = await bridge.takeHandoffCapability({
+      id: normalizedTarget.id,
+      interfaceId: metadata.interfaceId,
+    });
+    const cap = capnpCapabilityFromResult(claimed, "browser handoff capability pipeline");
+    if (!cap) {
+      throw new NativeCapnpBridgeProtocolError(
+        "browser isolate bridge did not return a handoff capability pipeline");
+    }
+    return browserNativeCapnpClient(
+      cap, InterfaceClass, "browser handoff capability pipeline");
+  }
+
+  async claimPowerboxToken(token, InterfaceClass, options = {}) {
+    const metadata = nativeCapnpInterfaceMetadata(InterfaceClass, options);
+    const { bridge } = this.#current();
+    const claimed = await bridge.claimPowerboxRequest({
+      requestToken: token,
+      requiredPermissions: browserRequiredPermissionNames(options),
+    });
+    const cap = capnpCapabilityFromResult(claimed, "browser Powerbox claimed capability");
+    if (!cap) {
+      throw new NativeCapnpBridgeProtocolError(
+        "browser isolate bridge did not return a claimed Powerbox capability");
+    }
+    return Object.freeze({
+      type: "browserNativeCapnpCapability",
+      interfaceId: metadata.interfaceId,
+      interfaceName: metadata.interfaceName,
+      kind: "receiverHosted",
+      cap,
+      client: browserNativeCapnpClient(
+        cap, InterfaceClass, "browser Powerbox claimed capability"),
+    });
+  }
+
+  whenDisconnected() {
+    const { transport } = this.#current();
+    return transport.closedPromise;
+  }
+
+  reconnect() {
+    if (this.#closed) {
+      throw new NativeCapnpBridgeUnavailableError(
+        "native Cap'n Proto browser session has been closed");
+    }
+    this.#connection?.transport.close();
+    this.#connection = null;
+    this.#bridge = null;
+    this.#setState("idle");
+  }
+
+  close() {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#connection?.transport.close();
+    this.#connection = null;
+    this.#bridge = null;
+    this.#setState("closed");
+  }
+
+  #current() {
+    if (this.#closed) {
+      throw new NativeCapnpBridgeUnavailableError(
+        "native Cap'n Proto browser session has been closed");
+    }
+    if (!this.#connection || this.#connection.transport.closed) {
+      this.#generation += 1;
+      this.#connection = createBrowserNativeCapnpConnection({
+        ...this.#options,
+        onStateChange: (state, error) => this.#setState(state, error),
+      });
+      this.#bridge = this.#connection.bootstrap(BrowserIsolateBridge);
+      this.#setState("idle");
+    }
+    return {
+      connection: this.#connection,
+      transport: this.#connection.transport,
+      bridge: this.#bridge,
+    };
+  }
+
+  #setState(state, error = null) {
+    if (this.#closed && state !== "closed") return;
+    this.#state = state;
+    const event = Object.freeze({ state, generation: this.#generation, error });
+    for (const listener of this.#listeners) {
+      try {
+        listener(event);
+      } catch (listenerError) {
+        queueMicrotask(() => { throw listenerError; });
+      }
+    }
+  }
+}
+
+const defaultBrowserNativeCapnpSession = new BrowserNativeCapnpSession();
+
+export function getBrowserNativeCapnpSession() {
+  return defaultBrowserNativeCapnpSession;
+}
+
+export function observeBrowserNativeCapnpApplication(
+    InterfaceClass, listener, options = {}) {
+  if (typeof listener !== "function") {
+    throw new TypeError("observeBrowserNativeCapnpApplication() requires a listener");
+  }
+  const session = options.session ?? defaultBrowserNativeCapnpSession;
+  const initialRetryDelay = Number(options.retryDelayMs ?? 250);
+  const maximumRetryDelay = Number(options.maxRetryDelayMs ?? 5000);
+  if (!Number.isFinite(initialRetryDelay) || initialRetryDelay <= 0 ||
+      !Number.isFinite(maximumRetryDelay) || maximumRetryDelay < initialRetryDelay) {
+    throw new RangeError(
+      "browser application retry delays must be finite, positive, and ordered");
+  }
+  let stopped = false;
+  let retryDelay = initialRetryDelay;
+  let current = null;
+  let stopWaiting;
+  const stoppedPromise = new Promise(resolve => {
+    stopWaiting = resolve;
+  });
+  const reportError = (error) => {
+    try {
+      options.onError?.(error);
+    } catch (callbackError) {
+      queueMicrotask(() => { throw callbackError; });
+    }
+  };
+
+  const done = (async () => {
+    while (!stopped) {
+      try {
+        current = await session.application(InterfaceClass, options);
+        retryDelay = initialRetryDelay;
+        await listener(current, Object.freeze({
+          generation: session.generation,
+          state: session.state,
+        }));
+        await Promise.race([session.whenDisconnected(), stoppedPromise]);
+      } catch (error) {
+        if (stopped) break;
+        reportError(error);
+      } finally {
+        if (current !== null) {
+          current = null;
+          try {
+            await listener(null, Object.freeze({
+              generation: session.generation,
+              state: session.state,
+            }));
+          } catch (error) {
+            reportError(error);
+          }
+        }
+      }
+      if (stopped) break;
+      await Promise.race([
+        new Promise(resolve => setTimeout(resolve, retryDelay)),
+        stoppedPromise,
+      ]);
+      if (stopped) break;
+      retryDelay = Math.min(retryDelay * 2, maximumRetryDelay);
+      session.reconnect();
+    }
+  })();
+
+  return Object.freeze({
+    get client() {
+      return current;
+    },
+    done,
+    close() {
+      stopped = true;
+      stopWaiting();
+    },
+  });
+}
+
 export async function connectBrowserNativeCapnp(target, InterfaceClass, options = {}) {
   if (!InterfaceClass || typeof InterfaceClass.Client !== "function") {
     throw new TypeError("connectBrowserNativeCapnp() requires a capnp-es generated interface");
   }
-  const normalizedTarget = normalizeNativeCapnpCapabilitySlot(target);
-  const connection = createBrowserNativeCapnpConnection(options);
-  const bridge = connection.bootstrap(BrowserIsolateBridge);
-  const claimed = await bridge.getHandoffCapability({ id: normalizedTarget.id });
-  const cap = capnpCapabilityFromResult(claimed, "browser handoff capability pipeline");
-  if (!cap) {
-    connection.transport.close();
-    throw new NativeCapnpBridgeProtocolError(
-      "browser isolate bridge did not return a handoff capability pipeline");
-  }
-  const client = browserNativeCapnpClient(
-    cap, InterfaceClass, "browser handoff capability pipeline");
-  return Object.assign(client, {
-    capability: normalizedTarget,
-    connection,
-    transport: connection.transport,
+  const session = options.session ?? defaultBrowserNativeCapnpSession;
+  return session.handoff(target, InterfaceClass, options);
+}
+
+export async function connectBrowserNativeCapnpApplication(InterfaceClass, options = {}) {
+  const session = options.session ?? defaultBrowserNativeCapnpSession;
+  return session.application(InterfaceClass, options);
+}
+
+if (typeof globalThis.addEventListener === "function") {
+  globalThis.addEventListener("pagehide", () => defaultBrowserNativeCapnpSession.close(), {
+    once: true,
   });
 }

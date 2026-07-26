@@ -1,13 +1,10 @@
 import {
-  exportCapnp,
-  sandstorm,
+  serveCapnp,
   validate,
 } from "sandstorm:api";
 import { BrowserCounter } from "capnp:./browser-counter.capnp";
 
 let value = 0;
-let exportedCounter = null;
-
 const counterMethods = {
   async read() {
     return { value };
@@ -24,12 +21,7 @@ const counterMethods = {
   },
 };
 
-async function exportCounter(api) {
-  if (!exportedCounter) {
-    exportedCounter = await exportCapnp(api, BrowserCounter, counterMethods);
-  }
-  return exportedCounter;
-}
+const browserCounter = serveCapnp(BrowserCounter, counterMethods);
 
 function renderPage() {
   return `<!doctype html>
@@ -111,7 +103,9 @@ function renderPage() {
 
     <script type="module">
       import { BrowserCounter } from "/__sandstorm/capnp/browser-counter.capnp.js";
-      import { connectBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
+      import {
+        connectBrowserNativeCapnpApplication,
+      } from "/__sandstorm/native-capnp/client.js";
 
       const valueOutput = document.querySelector("#value");
       const amountInput = document.querySelector("#amount");
@@ -155,15 +149,7 @@ function renderPage() {
       }
 
       async function connect() {
-        const response = await fetch("/counter-capability", { method: "POST" });
-        const result = await response.json();
-        if (!response.ok || !result.ok) {
-          throw new Error(result.error || "counter capability request failed");
-        }
-
-        counter = connectBrowserNativeCapnp(result.capability, BrowserCounter, {
-          connectionId: "browser-counter-" + result.capability.id,
-        });
+        counter = await connectBrowserNativeCapnpApplication(BrowserCounter);
         show(await requestCounter("read"), "read");
         incrementButton.disabled = false;
         resetButton.disabled = false;
@@ -183,23 +169,13 @@ function renderPage() {
 </html>`;
 }
 
-async function browserCounterFetch(request, env) {
-    const api = sandstorm(request, env);
-
-    const url = new URL(request.url);
-    if (url.pathname === "/counter-capability" && request.method === "POST") {
-      const counter = await exportCounter(api);
-      return Response.json({
-        ok: true,
-        capability: await counter.browserHandoff(request),
-      });
-    }
-
-    return new Response(renderPage(), {
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
+async function browserCounterFetch() {
+  return new Response(renderPage(), {
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
 }
 
 export default {
+  browser: browserCounter,
   fetch: browserCounterFetch,
 };

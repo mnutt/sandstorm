@@ -267,6 +267,51 @@ test("spk dev-isolate prints manifests and native generated capnp modules", asyn
     /`capnp-es:` isolate schema imports have been renamed; use `capnp:`/);
 });
 
+test("browser Cap'n Proto counter example produces a complete module graph", async (t) => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+  try {
+    await requireFile(
+      CAPNP_ES_COMPILER_MODULE,
+      "Set CAPNP_ES_COMPILER_MODULE to the @mnutt/capnp-es compiler module.");
+  } catch (err) {
+    t.skip(err.message);
+    return;
+  }
+
+  const workerPath = path.join(REPO_DIR, "examples/isolate-websockets/worker.js");
+  const { stdout } = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-manifest-json",
+    "--title", "Browser Capnp Counter Test",
+    workerPath,
+  ], {
+    env: {
+      ...process.env,
+      SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
+    },
+  });
+  const manifest = JSON.parse(stdout);
+  const isolate = manifest.continueCommand.isolate;
+  const modules = new Map(isolate.modules.map((module) => [module.name, module]));
+
+  assert.equal(manifest.appTitle.defaultText, "Browser Capnp Counter Test");
+  assert.equal(isolate.mainModule, "worker.js");
+  assert.deepEqual(isolate.exports, [{
+    name: "ui",
+    interfaceId: BigInt("0xc277e9822ae2c8fc").toString(),
+    role: "mainView",
+  }]);
+  assert.equal(
+    modules.get("worker.js").esModulePath,
+    "__sandstorm_dev_isolate_app/worker.js");
+  assert.equal(
+    modules.get("capnp:./counter.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/counter.js");
+  assert.equal(
+    modules.get("sandstorm:api").esModulePath,
+    "__sandstorm_isolate_runtime/api.js");
+});
+
 test("isolate tutorial entry points generate typed MainView manifests", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   try {

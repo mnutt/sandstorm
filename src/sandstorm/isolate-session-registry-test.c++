@@ -38,14 +38,33 @@ KJ_TEST("isolate session unregister releases browser handoff capabilities") {
   bool released = false;
   SessionContext::Client tracked = kj::heap<TrackedSessionContext>(released);
   capnp::Capability::Client capability = tracked;
-  auto handoffId = registry.storeBrowserHandoffCapability(sessionId, kj::mv(capability));
+  auto handoffId = registry.storeBrowserHandoffCapability(
+      sessionId, 0xdeadbeef, "test.Interface", kj::mv(capability));
   tracked = nullptr;
 
-  KJ_EXPECT(registry.findBrowserHandoffCapability(sessionId, handoffId) != nullptr);
   KJ_EXPECT(!released);
   registry.unregisterSession(sessionId);
-  KJ_EXPECT(registry.findBrowserHandoffCapability(sessionId, handoffId) == nullptr);
+  KJ_EXPECT(registry.takeBrowserHandoffCapability(
+      sessionId, handoffId, 0xdeadbeef) == nullptr);
   KJ_EXPECT(released);
+}
+
+KJ_TEST("browser handoff validates its interface and can be consumed only once") {
+  IsolateSessionRegistry registry;
+  auto sessionId = registry.registerSession(kj::heap<EmptySessionContext>());
+  SessionContext::Client capability = kj::heap<EmptySessionContext>();
+  auto handoffId = registry.storeBrowserHandoffCapability(
+      sessionId, 0x1234, "test.Interface", capability);
+
+  KJ_EXPECT(registry.takeBrowserHandoffCapability(sessionId, handoffId, 0x5678) == nullptr);
+  KJ_IF_MAYBE(handoff,
+      registry.takeBrowserHandoffCapability(sessionId, handoffId, 0x1234)) {
+    KJ_EXPECT(handoff->interfaceId == 0x1234);
+    KJ_EXPECT(handoff->interfaceName == "test.Interface");
+  } else {
+    KJ_FAIL_EXPECT("typed browser handoff was not found");
+  }
+  KJ_EXPECT(registry.takeBrowserHandoffCapability(sessionId, handoffId, 0x1234) == nullptr);
 }
 
 }  // namespace

@@ -196,8 +196,10 @@ This shorthand declares no `ViewInfo` metadata, durable object restoration, or
 additional named exports. Workers needing those features use
 `defineWorker()` and `mainViewFromFetch()` explicitly. `mainViewFromFetch()`
 returns a typed `MainView` export. Its sessions are capnp-es implementations
-of `WorkerWebSession` or `WorkerApiSession`, which extend the standard
-Sandstorm session interfaces and `Grain.AppPersistent`.
+of the private `WorkerMainViewSession`, which extends the standard WebSession
+with the optional typed browser bootstrap. Named Fetch-backed exports use
+`WorkerWebSession` or `WorkerApiSession`; those also implement
+`Grain.AppPersistent`.
 
 The facade performs these conversions in worker JavaScript:
 
@@ -219,6 +221,102 @@ facade for exported session capabilities that are not the grain's main view.
 Because these are ordinary named capability declarations, they can also be
 offered or used to fulfill a Powerbox request without first converting them to
 an HTTP handle.
+
+## Browser Application Capabilities
+
+A MainView worker can attach one schema-defined application capability to each
+UI session:
+
+```js
+import { sandstorm, serveCapnp } from "sandstorm:api";
+import { Counter } from "capnp:./counter.capnp";
+
+const counter = serveCapnp(Counter, {
+  async read(_params, { env }) {
+    const stored = await sandstorm(env).storage().get("counter");
+    return { value: BigInt(stored ?? "0") };
+  },
+});
+
+export default {
+  browser: counter,
+  fetch: () => new Response(renderPage(), {
+    headers: { "content-type": "text/html; charset=utf-8" },
+  }),
+};
+```
+
+The generated main-view entry forwards the shorthand's `browser` declaration
+to `mainViewFromFetch()`. The worker implements the private
+`WorkerMainViewSession` extension, whose `getBrowserBootstrap()` method returns
+the declaration's interface ID and capability. The account host holds that
+derived session behind the ordinary public `WebSession`, so the shell API does
+not change.
+
+Browser code imports the schema generated for its package and asks for the
+session application:
+
+```js
+import { Counter } from "/__sandstorm/capnp/counter.capnp.js";
+import {
+  connectBrowserNativeCapnpApplication,
+} from "/__sandstorm/native-capnp/client.js";
+
+const counter = await connectBrowserNativeCapnpApplication(Counter);
+const result = await counter.read();
+```
+
+The browser helper checks the generated interface ID against the worker's
+declaration before constructing the client. It lazily creates one Cap'n Proto
+RPC connection for the whole grain frame. Application bootstrap, explicit
+browser handoffs, and browser Powerbox claims all share that connection;
+individual returned clients do not own transports.
+
+The full path is:
+
+```text
+generated browser client
+  -> one page-scoped capnp-es Conn
+  -> binary WebSocket frames
+  -> BrowserIsolateBridge bound to the actual WebSession
+  -> WorkerMainViewSession.getBrowserBootstrap()
+  -> generated worker server
+```
+
+The browser never supplies a session ID and never receives the worker's
+platform bridge or `SessionContext`. The C++ WebSession wrapper binds the
+connection to the session it already serves. Closing the tab releases the
+connection and the session lifetime membrane releases its capabilities.
+
+Callbacks use ordinary Cap'n Proto capabilities. A browser can construct a
+generated `Listener.Server(...).client()`, pass it to a worker method, and let
+the worker call it over the same bidirectional connection. This is the
+preferred foundation for live UI subscriptions; no application WebSocket
+protocol or JSON message envelope is necessary.
+
+`observeBrowserNativeCapnpApplication()` adds connection lifecycle handling for
+subscriptions. It reports a current client, reports `null` after disconnect,
+reconnects with bounded exponential delay, reacquires the session application
+capability, and invokes the observer again so the application can resubscribe.
+Old generated clients are not made to masquerade as valid after a reconnect.
+
+The browser transport rejects an individual outgoing message larger than 8 MiB
+and pauses its send queue while the browser reports more than 2 MiB buffered.
+Large payloads should use Cap'n Proto stream capabilities instead of one giant
+RPC message. Incoming native RPC frames retain the supervisor's existing
+65 MiB hard limit.
+
+Explicit `browserHandoff()` remains for a dynamic capability that cannot be
+reached from the session application graph. Its JSON record contains the
+declared interface ID, the browser must request that exact interface, and the
+supervisor consumes the record on the first successful lookup. It is not the
+normal application bootstrap and cannot pin a live capability until the tab
+closes.
+
+Raw application WebSockets remain available through the optional `webSocket()`
+Fetch facade for compatibility with an existing browser protocol or a
+non-Cap'n-Proto peer. First-party grain UI code should prefer a typed browser
+application capability and callbacks.
 
 ## Runtime and Process Model
 
@@ -300,8 +398,9 @@ so worker callbacks into Sandstorm use the same RPC connection rather than an
 ambient binding or side channel.
 
 `src/sandstorm/isolate-session-exports.capnp` is deliberately separate. It
-contains the concrete persistent session interfaces used by the optional Fetch
-facade; those UI details do not belong in the native host's generic protocol.
+contains the concrete persistent session interfaces used by named Fetch
+facades and the private MainView-session browser-bootstrap extension. Those UI
+details do not belong in the native host's generic protocol.
 
 ## RPC Event Scheduling
 
@@ -329,15 +428,11 @@ Important lifecycle rules:
 
 ## Browser Cap'n Proto
 
-Browser code can receive a live capability through an opaque handoff ID.
-Sandstorm serves generated browser schema modules and a restricted browser
-client. The browser's Cap'n Proto frames travel in binary, message-oriented
-WebSocket messages through `BrowserIsolateBridge`.
-
-The bridge can resolve only capabilities explicitly handed to that browser
-session or claim a Powerbox request for that session. It does not expose the
-worker platform bridge, full `SessionContext`, grain IDs, or an account-wide
-service locator.
+Sandstorm serves generated browser schema modules and the restricted client
+described in “Browser Application Capabilities” above. The bridge exposes only
+the current session's declared application bootstrap, explicitly handed
+capabilities, and Powerbox claims. It does not expose the worker platform
+bridge, full `SessionContext`, grain IDs, or an account-wide service locator.
 
 Browser RPC is still native Cap'n Proto at the application layer. The
 WebSocket is a browser transport for Cap'n Proto frames, not a conversion to
@@ -404,8 +499,8 @@ explicit.
   are bounded.
 - Each top-level call gets workerd resource accounting and cancellation.
 - Platform authority arrives only as an attenuated Cap'n Proto capability.
-- Browser access is session-scoped and requires an explicit handoff or
-  Powerbox claim.
+- Browser access is session-scoped and limited to the declared application
+  bootstrap, a typed one-shot handoff, or a Powerbox claim.
 - Persistence and membrane policy remain outside untrusted JavaScript.
 - Stopping one grain revokes its live worker capabilities without stopping
   neighboring grains in the same account host.
@@ -436,7 +531,8 @@ The release gate covers:
 - host control, limits, cancellation, pipelining, callbacks, eviction, memory,
   and structured-log attribution;
 - account-shared multi-grain behavior and backend recovery;
-- typed MainView browser fetch and message-oriented WebSockets;
+- typed MainView browser bootstrap, browser-hosted callbacks, shared native
+  transport, Fetch, and message-oriented application WebSockets;
 - service-only grains with no UI or HTTP facade;
 - durable named exports, save/restore/drop, Powerbox actions, and browser
   handoffs;

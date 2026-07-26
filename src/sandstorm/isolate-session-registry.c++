@@ -89,10 +89,13 @@ kj::Maybe<capnp::Capability::Client> IsolateSessionRegistry::findOfferedCapabili
 }
 
 kj::String IsolateSessionRegistry::storeBrowserHandoffCapability(
-    kj::StringPtr sessionId, capnp::Capability::Client cap) {
+    kj::StringPtr sessionId, uint64_t interfaceId, kj::StringPtr interfaceName,
+    capnp::Capability::Client cap) {
   KJ_REQUIRE(findSessionIndex(sessionId) != nullptr,
       "browser handoff requires a registered session", sessionId);
-  return storeBrowserHandoffCapabilityInternal(sessionId, kj::mv(cap));
+  KJ_REQUIRE(interfaceId != 0, "browser handoff requires a typed interface");
+  return storeBrowserHandoffCapabilityInternal(
+      sessionId, interfaceId, interfaceName, kj::mv(cap));
 }
 
 bool IsolateSessionRegistry::dropBrowserHandoffCapability(kj::StringPtr id) {
@@ -103,23 +106,30 @@ bool IsolateSessionRegistry::dropBrowserHandoffCapability(kj::StringPtr id) {
   return false;
 }
 
-kj::Maybe<capnp::Capability::Client> IsolateSessionRegistry::findBrowserHandoffCapability(
-    kj::StringPtr sessionId, kj::StringPtr id) {
+kj::Maybe<IsolateSessionRegistry::BrowserHandoffCapability>
+IsolateSessionRegistry::takeBrowserHandoffCapability(
+    kj::StringPtr sessionId, kj::StringPtr id, uint64_t interfaceId) {
   KJ_IF_MAYBE(index, findBrowserHandoffCapabilityIndex(id)) {
-    if (browserHandoffCapabilities[*index].sessionId == sessionId) {
-      return browserHandoffCapabilities[*index].cap;
+    auto& record = browserHandoffCapabilities[*index];
+    if (record.sessionId == sessionId && record.interfaceId == interfaceId) {
+      BrowserHandoffCapability result {
+        record.interfaceId, kj::mv(record.interfaceName), kj::mv(record.cap) };
+      removeBrowserHandoffCapability(*index);
+      return kj::mv(result);
     }
   }
   return nullptr;
 }
 
 kj::String IsolateSessionRegistry::storeBrowserHandoffCapabilityInternal(
-    kj::StringPtr sessionId, capnp::Capability::Client cap) {
+    kj::StringPtr sessionId, uint64_t interfaceId, kj::StringPtr interfaceName,
+    capnp::Capability::Client cap) {
   for (;;) {
     auto id = makeOpaqueToken();
     if (findBrowserHandoffCapabilityIndex(id) == nullptr) {
       browserHandoffCapabilities.add(BrowserHandoffCapabilityRecord {
-        kj::heapString(id), kj::heapString(sessionId), cap });
+        kj::heapString(id), kj::heapString(sessionId), interfaceId,
+        kj::heapString(interfaceName), cap });
       return id;
     }
   }

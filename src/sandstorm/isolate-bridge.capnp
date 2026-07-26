@@ -50,7 +50,11 @@ interface IsolateBridge @0xc4b06a6915ad0e3c {
   # persistence records its export name and application-defined object ID. Public callers still
   # resolve only exports declared by the package manifest.
 
-  createBrowserHandoff @5 (cap :Capability, sessionId :Text) -> (id :Text);
+  createBrowserHandoff @5 (
+      cap :Capability,
+      sessionId :Text,
+      interfaceId :UInt64,
+      interfaceName :Text) -> (id :Text);
   # Stores a capability explicitly handed to the current browser session so a
   # browser-scoped bridge can resolve it later. This is not a worker-side
   # authority lookup; it exists only for JSON-safe browser handoff slots.
@@ -135,9 +139,11 @@ interface BrowserIsolateBridge @0x93fb2746c97b5bea {
   # to the current browser session by opaque id. It does not expose the worker
   # SandstormApi or SessionContext authority.
 
-  getHandoffCapability @0 (id :Text) -> (cap :Capability);
-  # Resolves a capability that the worker explicitly handed to this browser
-  # session as a JSON-safe handoff slot.
+  takeHandoffCapability @0 (id :Text, interfaceId :UInt64) -> (cap :Capability);
+  # Consumes a capability that the worker explicitly handed to this browser
+  # session as a JSON-safe handoff slot. The declared interface ID must match;
+  # a slot can be consumed only once and therefore cannot pin authority for the
+  # rest of a long-lived tab.
 
   claimPowerboxRequest @1 (requestToken :Text, requiredPermissions :List(Text))
       -> (cap :Capability);
@@ -145,4 +151,10 @@ interface BrowserIsolateBridge @0x93fb2746c97b5bea {
   # supervisor resolves permission names against this app's ViewInfo and calls
   # the standard SessionContext.claimRequest(); the browser never receives the
   # full SessionContext authority.
+
+  getApplicationBootstrap @2 ()
+      -> (found :Bool, interfaceId :UInt64, interfaceName :Text, cap :Capability);
+  # Returns the worker's optional typed application capability for this exact
+  # MainView session. This is the normal browser entry point; it carries no
+  # WebSession or HTTP vocabulary.
 }

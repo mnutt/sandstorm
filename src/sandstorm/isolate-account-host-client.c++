@@ -865,8 +865,7 @@ void testLogicalWebSocket(kj::WaitScope& waitScope, Supervisor::Client superviso
 void testBrowserBootstrap(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
   auto session = newWebSession(waitScope, supervisor);
   auto request = session.openWebSocketMessagesRequest();
-  request.setPath(
-      "/__sandstorm/native-capnp/rpc-session?connectionId=account-host-test");
+  request.setPath("/__sandstorm/native-capnp/rpc-session");
   request.initProtocol(0);
   request.setClientStream(kj::heap<IgnoreWebSocketMessageStream>());
   auto context = request.initContext();

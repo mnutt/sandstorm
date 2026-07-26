@@ -84,17 +84,42 @@ For local experiments, start with:
 spk dev-isolate --title "Isolate Hello" examples/isolate-hello/worker.js
 ```
 
-For a fuller app shape, see `examples/isolate-app-skeleton/`. Its request
-handler follows the current recommended order:
+For a fuller app shape, see `examples/isolate-app-skeleton/`. For bidirectional
+same-grain UI updates, `examples/isolate-websockets/` combines durable storage
+with a typed browser application capability and callback subscriptions. The
+app-skeleton request handler follows the current recommended order:
 
 1. Create `const api = sandstorm(request, env)`.
-2. Serve Sandstorm helper routes with `api.serveSystemRoutes()`.
-3. Handle normal app routes.
+2. Handle normal app routes.
 
-Use ordinary `fetch()` routes for UI actions, app HTTP APIs, and large data
-transfers. Use schema-first `capnp:` imports for public typed capability
-protocols that other isolates, browser code, or legacy Cap'n Proto grains
-should call.
+Sandstorm's generated browser modules and native RPC endpoint are supervisor
+routes. Application workers do not forward or serve them.
+
+Use ordinary `fetch()` routes for document and large data transfers. Use the
+session's typed browser application capability for interactive UI operations
+and subscriptions, and schema-first `capnp:` exports for public protocols that
+other isolates or Cap'n Proto grains should call.
+
+Declare the browser capability with the same `serveCapnp()` helper used for
+other typed servers:
+
+```js
+import { serveCapnp } from "sandstorm:api";
+import { App } from "capnp:./app.capnp";
+
+export default {
+  browser: serveCapnp(App, appTarget),
+  fetch: () => new Response(appHtml),
+};
+```
+
+In browser modules, import `App` from
+`/__sandstorm/capnp/app.capnp.js` and call
+`connectBrowserNativeCapnpApplication(App)` from
+`/__sandstorm/native-capnp/client.js`. Use
+`observeBrowserNativeCapnpApplication()` when the view maintains callback
+subscriptions and must reacquire them after a connection loss. See
+`examples/isolate-websockets/` for a durable counter using this pattern.
 
 ### Benchmarking isolate-to-isolate RPC
 
@@ -227,7 +252,6 @@ methods in application code:
   durable saved capability tokens
 - `api.powerboxGrants()` for storage-backed Powerbox connection helpers
 - `api.powerboxFulfillment()` for provider-side Powerbox fulfillment routes
-- `api.serveSystemRoutes()` before normal app routes
 
 The declarations in `src/sandstorm/isolate/api.d.ts` define the supported named
 exports. App code should prefer the `sandstorm()` facade unless it has a
@@ -262,9 +286,6 @@ const greeterTarget = {
 export default {
   async fetch(request, env) {
     const api = sandstorm(request, env);
-    const system = await api.serveSystemRoutes();
-    if (system) return system;
-
     const url = new URL(request.url);
 
     if (url.pathname === "/export-greeter") {
@@ -306,33 +327,38 @@ not get access to a raw Cap'n Proto vat network.
 Connection negotiation, transport, token encoding, and RPC framing are runtime
 details and are not exported by `sandstorm:api`.
 
-To advertise a schema-defined capability from `spk dev-isolate`, pass the
-schema and interface name:
+To advertise that a typed MainView can fulfill a Powerbox request, declare the
+match in the worker's `viewInfo`:
 
-```sh
-spk dev-isolate \
-  --app-interface capnp:./greeter.capnp#Greeter \
-  worker.js
+```js
+import { defineWorker, mainViewFromFetch } from "sandstorm:api";
+import { Greeter } from "capnp:./greeter.capnp";
+
+const VIEW_INFO = {
+  matchRequests: [{
+    tags: [{ id: Greeter._capnp.typeId }],
+  }],
+};
+
+export default defineWorker({
+  capabilities: {
+    ui: mainViewFromFetch({
+      fetch,
+      viewInfo: VIEW_INFO,
+    }),
+  },
+});
 ```
 
-For packaged isolate apps, put the same descriptor in the normal
-`bridgeConfig.viewInfo.matchRequests` field. `spk powerbox-descriptor` can
-derive the descriptor from the schema:
+This one worker declaration is used by both `spk dev-isolate` and packaged
+apps. The removed `spk dev-isolate --app-interface` and
+`bridgeConfig.viewInfo.matchRequests` paths must not be used.
+`spk powerbox-descriptor` can derive the equivalent descriptor when tooling or
+another schema field needs one:
 
 ```sh
 spk powerbox-descriptor --format capnp capnp:./greeter.capnp#Greeter
 # (tags = [(id = 0x85d0f155d6c54b6d)])
-```
-
-Then include it in the package definition:
-
-```capnp
-const viewInfo :Grain.UiView.ViewInfo = (
-  appTitle = (defaultText = "Greeter"),
-  matchRequests = [
-    (tags = [(id = 0x85d0f155d6c54b6d)])
-  ]
-);
 ```
 
 For CI, `spk capnp-abi` dumps the public interface metadata that should remain
@@ -369,18 +395,12 @@ const { client } = await requestBrowserNativeCapnp(Greeter, {
 const result = await client.hello({ name: "Ada" });
 ```
 
-Serve those routes before normal app routes:
-
-```js
-const api = sandstorm(request, env);
-const system = await api.serveSystemRoutes();
-if (system) return system;
-```
-
-The native browser helper exposes descriptor, request, claim, connect, restore,
-and one-shot request helpers. These helpers use Sandstorm's normal Powerbox
-request/claim flow and then connect a generated `capnp-es` client over the
-restricted native browser bridge.
+The isolate supervisor serves these reserved routes before it dispatches app
+requests; workers do not need to route or authorize them. The native browser
+helper exposes descriptor, request, claim, connect, restore, and one-shot
+request helpers. These helpers use Sandstorm's normal Powerbox request/claim
+flow and then connect a generated `capnp-es` client over the restricted native
+browser bridge.
 
 If browser code is bundled, keep Sandstorm-served URLs external. A browser
 bundler should not try to resolve `capnp:` or compile `.capnp` files itself
@@ -404,18 +424,17 @@ app state and later use of that authority.
 
 The recommended flow is:
 
-1. The worker serves helper endpoints with `api.serveSystemRoutes()`.
-2. Browser code imports request helpers from
+1. Browser code imports request helpers from
    `/__sandstorm/native-capnp/client.js`.
-3. The browser helper uses Sandstorm's existing `postMessage` Powerbox flow,
+2. The browser helper uses Sandstorm's existing `postMessage` Powerbox flow,
    so the shell can show the normal picker UI.
-4. The browser sends the returned token to the worker in an app-defined
+3. The browser sends the returned token to the worker in an app-defined
    request.
-5. The worker claims the token, optionally saves it, stores the saved token in
+4. The worker claims the token, optionally saves it, stores the saved token in
    app storage, and uses the resulting `Capability`.
-6. On later requests, the worker restores a saved token from storage before
+5. On later requests, the worker restores a saved token from storage before
    using it.
-7. When the grant is no longer needed, the worker drops the live handle and
+6. When the grant is no longer needed, the worker drops the live handle and
    revokes the saved token.
 
 For the common browser-to-worker `ApiSession` flow:

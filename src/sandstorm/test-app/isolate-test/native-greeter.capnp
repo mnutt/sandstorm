@@ -6,6 +6,10 @@ struct NativeGreeterObjectId {
   id @0 :Text;
 }
 
+interface NativeGreetingListener {
+  greeting @0 (message :Text);
+}
+
 interface NativeGreeter extends(Grain.AppPersistent(NativeGreeterObjectId)) {
   hello @0 (name :Text) -> (message :Text);
   makeGreeter @1 (prefix :Text) -> (greeter :NativeGreeter);
@@ -13,4 +17,5 @@ interface NativeGreeter extends(Grain.AppPersistent(NativeGreeterObjectId)) {
   inspectData @3 (content :Data) -> (byteCount :UInt64, checksum :UInt32, firstEightHex :Text);
   ping @4 (payload :Data) -> (payload :Data);
   storageRoundTrip @5 (key :Text, value :Data) -> (value :Data, listed :Bool);
+  greetListener @6 (listener :NativeGreetingListener, name :Text);
 }

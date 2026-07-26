@@ -42,6 +42,8 @@ declare module "sandstorm:api" {
   /** Cloudflare-style main-view shorthand accepted as a module's default export. */
   export interface SandstormFetchWorker<E extends SandstormEnv = SandstormEnv> {
     fetch: SandstormFetchHandler<E>;
+    /** Optional typed application capability exposed to this UI session's browser. */
+    browser?: WorkerCapnpExport<any, E>;
     webSocket?(
       request: Request,
       socket: SandstormWebSocket,
@@ -123,6 +125,8 @@ declare module "sandstorm:api" {
 
   export interface MainViewFromFetchOptions<E extends SandstormEnv = SandstormEnv> {
     readonly viewInfo: object;
+    /** Optional typed application capability exposed to this UI session's browser. */
+    readonly browser?: WorkerCapnpExport<any, E>;
     fetch(
       request: Request,
       env: E,

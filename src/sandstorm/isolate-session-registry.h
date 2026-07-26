@@ -27,6 +27,12 @@ namespace sandstorm {
 
 class IsolateSessionRegistry final: public kj::Refcounted {
 public:
+  struct BrowserHandoffCapability {
+    uint64_t interfaceId;
+    kj::String interfaceName;
+    capnp::Capability::Client cap;
+  };
+
   kj::String registerSession(SessionContext::Client context);
   kj::String registerOfferSession(
       SessionContext::Client context, capnp::Capability::Client offer);
@@ -36,16 +42,18 @@ public:
   kj::Maybe<capnp::Capability::Client> findOfferedCapability(kj::StringPtr sessionId);
 
   kj::String storeBrowserHandoffCapability(
-      kj::StringPtr sessionId, capnp::Capability::Client cap);
+      kj::StringPtr sessionId, uint64_t interfaceId, kj::StringPtr interfaceName,
+      capnp::Capability::Client cap);
   bool dropBrowserHandoffCapability(kj::StringPtr id);
-  kj::Maybe<capnp::Capability::Client> findBrowserHandoffCapability(
-      kj::StringPtr sessionId, kj::StringPtr id);
+  kj::Maybe<BrowserHandoffCapability> takeBrowserHandoffCapability(
+      kj::StringPtr sessionId, kj::StringPtr id, uint64_t interfaceId);
 
 private:
   kj::String registerSession(
       SessionContext::Client context, kj::Maybe<capnp::Capability::Client> offeredCapability);
   kj::String storeBrowserHandoffCapabilityInternal(
-      kj::StringPtr sessionId, capnp::Capability::Client cap);
+      kj::StringPtr sessionId, uint64_t interfaceId, kj::StringPtr interfaceName,
+      capnp::Capability::Client cap);
   void removeBrowserHandoffCapability(size_t index);
 
   struct SessionRecord {
@@ -57,6 +65,8 @@ private:
   struct BrowserHandoffCapabilityRecord {
     kj::String id;
     kj::String sessionId;
+    uint64_t interfaceId;
+    kj::String interfaceName;
     capnp::Capability::Client cap;
   };
 

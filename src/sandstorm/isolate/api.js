@@ -22,6 +22,7 @@ import {
 } from "/sandstorm/isolate-api-session-tag.capnp";
 import {
   WorkerApiSession,
+  WorkerMainViewSession,
   WorkerSessionRef,
   WorkerWebSession,
 } from "/sandstorm/isolate-session-exports.capnp";
@@ -156,6 +157,10 @@ function uiFacadeOptions(options) {
   }
   if (options.webSocket !== undefined && typeof options.webSocket !== "function") {
     throw new TypeError("mainViewFromFetch() webSocket must be a function");
+  }
+  if (options.browser !== undefined && !workerCapnpExports.has(options.browser)) {
+    throw new TypeError(
+      "mainViewFromFetch() browser must be a capability created with serveCapnp()");
   }
   if (!options.viewInfo || typeof options.viewInfo !== "object") {
     throw new TypeError("mainViewFromFetch() requires ViewInfo initialization data");
@@ -832,8 +837,22 @@ async function mainViewSession(options, params, callContext, kind) {
   if (kind === "offer" && params.descriptor !== undefined) {
     session.headers.set("x-sandstorm-offer-descriptor", JSON.stringify({}));
   }
+  const target = webSessionFromFetchTarget(session);
+  target.getBrowserBootstrap = () => {
+    if (options.browser === undefined) return { found: false };
+    const browser = workerCapnpExports.get(options.browser);
+    const metadata = nativeCapnpInterfaceMetadata(
+      browser.interface, "mainViewFromFetch() browser capability");
+    return {
+      found: true,
+      interfaceId: metadata.interfaceId,
+      interfaceName: metadata.interfaceName,
+      cap: capnpCapabilityPointer(createWorkerCapnpClient(
+        browser.interface, browser.target, "MainView browser application capability")),
+    };
+  };
   return createWorkerCapnpClient(
-    WebSession, webSessionFromFetchTarget(session), `Fetch ${kind} WebSession`);
+    WorkerMainViewSession, target, `Fetch ${kind} WebSession`);
 }
 
 /** Implements MainView and WebSession in capnp-es, translating only the selected UI to Fetch. */
@@ -2923,11 +2942,22 @@ async function browserHandoffCapability(env, capability, options = {}) {
   if (typeof bridge.createBrowserHandoff !== "function") {
     throw new Error("capability bridge returned no browser handoff creator");
   }
+  const interfaceId = options.interfaceId ?? info?.interfaceId;
+  if (interfaceId === undefined || interfaceId === null || interfaceId === "") {
+    throw new Error(
+      "browser handoff requires typed Cap'n Proto interface metadata");
+  }
+  const normalizedInterfaceId = typeof interfaceId === "bigint"
+    ? interfaceId
+    : BigInt(interfaceId);
+  const interfaceName = options.interfaceName ?? info?.interfaceName ?? "";
 
   const stored = await bridge.createBrowserHandoff((params) => {
     initCapnpCapabilityParam(params, capabilityCapnpClient(capability, "browser handoff capability"),
       "browser handoff capability");
     params.sessionId = sessionId;
+    params.interfaceId = normalizedInterfaceId;
+    params.interfaceName = interfaceName;
   });
   if (!stored || typeof stored.id !== "string" || stored.id.length === 0) {
     throw new Error("isolate bridge returned an invalid browser handoff id");
@@ -2940,6 +2970,8 @@ async function browserHandoffCapability(env, capability, options = {}) {
     kind: "receiverHosted",
     residence: "browserHandoff",
     nativeInterface: info?.nativeInterface || options.nativeInterface || "unknown",
+    interfaceId: `0x${normalizedInterfaceId.toString(16)}`,
+    interfaceName,
   };
 }
 
@@ -2977,6 +3009,8 @@ function cacheCapabilityMetadata(id, metadata = {}) {
     liveForwardable: metadata.liveForwardable !== undefined
       ? Boolean(metadata.liveForwardable)
       : true,
+    interfaceId: metadata.interfaceId,
+    interfaceName: metadata.interfaceName,
   });
 }
 
@@ -4076,7 +4110,11 @@ async function runtimeStatus(env) {
   });
 }
 
-export function sandstorm(request, env) {
+export function sandstorm(requestOrEnv, optionalEnv) {
+  const request = typeof Request === "function" && requestOrEnv instanceof Request
+    ? requestOrEnv
+    : new Request("http://sandstorm-worker/");
+  const env = request === requestOrEnv ? optionalEnv : requestOrEnv;
   const browserSessionId = header(request, "x-sandstorm-session-id");
 
   const api = {

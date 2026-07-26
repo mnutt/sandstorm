@@ -67,7 +67,7 @@
           "ordinal": 5,
           "paramStructId": "0xc726ffc691879ad8",
           "resultStructId": "0xf32dbd7971e3b55d",
-          "params": [{"name": "cap", "type": "Capability"}, {"name": "sessionId", "type": "Text"}],
+          "params": [{"name": "cap", "type": "Capability"}, {"name": "sessionId", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}, {"name": "interfaceName", "type": "Text"}],
           "results": [{"name": "id", "type": "Text"}]
         },
         {
@@ -212,11 +212,11 @@
       "superclasses": [],
       "methods": [
         {
-          "name": "getHandoffCapability",
+          "name": "takeHandoffCapability",
           "ordinal": 0,
           "paramStructId": "0xef0670ac3654ad32",
           "resultStructId": "0xdd3554252dd8763e",
-          "params": [{"name": "id", "type": "Text"}],
+          "params": [{"name": "id", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}],
           "results": [{"name": "cap", "type": "Capability"}]
         },
         {
@@ -226,6 +226,14 @@
           "resultStructId": "0xa0a8c1829dde6035",
           "params": [{"name": "requestToken", "type": "Text"}, {"name": "requiredPermissions", "type": "List"}],
           "results": [{"name": "cap", "type": "Capability"}]
+        },
+        {
+          "name": "getApplicationBootstrap",
+          "ordinal": 2,
+          "paramStructId": "0xbbb39ca8ebea42ee",
+          "resultStructId": "0xd77d3fff5618e3f0",
+          "params": [],
+          "results": [{"name": "found", "type": "Bool"}, {"name": "interfaceId", "type": "UInt64"}, {"name": "interfaceName", "type": "Text"}, {"name": "cap", "type": "Capability"}]
         }
       ]
     }

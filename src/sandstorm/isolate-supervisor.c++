@@ -54,6 +54,7 @@
 #include <sandstorm/isolate-exports.capnp.h>
 #include <sandstorm/isolate-account-host.capnp.h>
 #include <sandstorm/isolate-host.capnp.h>
+#include <sandstorm/isolate-session-exports.capnp.h>
 #include <sandstorm/isolate-supervisor-internal.capnp.h>
 #include <sandstorm/isolate-worker-source.capnp.h>
 #include <sandstorm/outbound-http-session.capnp.h>
@@ -748,6 +749,9 @@ kj::String makeIsolateMainViewEntrySource(kj::StringPtr userMainModule) {
       "  }\n"
       "\n"
       "  const options = { fetch, viewInfo: {} };\n"
+      "  if (workerLike && worker.browser !== undefined) {\n"
+      "    options.browser = worker.browser;\n"
+      "  }\n"
       "  if (workerLike && worker.webSocket !== undefined) {\n"
       "    if (typeof worker.webSocket !== \"function\") {\n"
       "      throw new TypeError(\"simple isolate webSocket must be a function\");\n"
@@ -1575,7 +1579,8 @@ kj::Maybe<kj::Array<byte>> loadIsolateBrowserModule(
 
 WebSession::WebSocketMessageStream::Client makeIsolateBrowserRpcStream(
     IsolateRuntimeConfig& config, IsolateRuntimeHost& host,
-    kj::StringPtr sessionId, WebSession::WebSocketMessageStream::Client outgoing);
+    kj::StringPtr sessionId, WorkerMainViewSession::Client session,
+    WebSession::WebSocketMessageStream::Client outgoing);
 
 kj::Maybe<kj::StringPtr> isolateBrowserModulePath(kj::StringPtr path) {
   if (path.startsWith("/")) {
@@ -1599,8 +1604,7 @@ bool isIsolateBrowserRpcPath(kj::StringPtr path) {
   if (path.startsWith("/")) {
     path = path.slice(1);
   }
-  const kj::StringPtr prefix = "__sandstorm/native-capnp/rpc-session?";
-  return path.startsWith(prefix) && path.slice(prefix.size()).startsWith("connectionId=");
+  return path == "__sandstorm/native-capnp/rpc-session";
 }
 
 class IsolateDirectSessionState final: public kj::Refcounted {
@@ -1671,7 +1675,7 @@ class IsolateBrowserWebSessionMethods final: public WebSession::Server {
 public:
   IsolateBrowserWebSessionMethods(
       kj::Own<IsolateRuntimeConfig> config, kj::Own<IsolateRuntimeHost> host,
-      kj::Own<IsolateDirectSessionState> state, WebSession::Client inner)
+      kj::Own<IsolateDirectSessionState> state, WorkerMainViewSession::Client inner)
       : config(kj::mv(config)), host(kj::mv(host)), state(kj::mv(state)),
         inner(kj::mv(inner)) {}
 
@@ -1724,7 +1728,7 @@ public:
           "browser isolate bridge RPC does not use WebSocket subprotocols");
       context.getResults().initProtocol(0);
       context.getResults().setServerStream(makeIsolateBrowserRpcStream(
-          *config, *host, state->getId(), params.getClientStream()));
+          *config, *host, state->getId(), inner, params.getClientStream()));
       return kj::READY_NOW;
     }
 
@@ -1740,7 +1744,7 @@ private:
   kj::Own<IsolateRuntimeConfig> config;
   kj::Own<IsolateRuntimeHost> host;
   kj::Own<IsolateDirectSessionState> state;
-  WebSession::Client inner;
+  WorkerMainViewSession::Client inner;
 };
 
 class IsolateSessionLifetimeMembrane final:
@@ -1887,7 +1891,7 @@ private:
         context.getResults().setSession(
             WebSession::Client(kj::heap<IsolateBrowserWebSessionMethods>(
                 kj::addRef(*config), kj::addRef(*host), kj::mv(state),
-                protectedSession.template castAs<WebSession>()))
+                protectedSession.template castAs<WorkerMainViewSession>()))
             .template castAs<UiSession>());
       } else {
         context.getResults().setSession(protectedSession);
@@ -1921,7 +1925,8 @@ public:
       IsolateRuntimeConfig& config, IsolateRuntimeHost& host);
 
   static BrowserIsolateBridge::Client makeBrowserBridge(
-      IsolateRuntimeConfig& config, IsolateRuntimeHost& host, kj::String sessionId);
+      IsolateRuntimeConfig& config, IsolateRuntimeHost& host, kj::String sessionId,
+      WorkerMainViewSession::Client session);
 
   static kj::Maybe<kj::Array<byte>> loadBrowserModule(
       IsolateRuntimeConfig& config, kj::StringPtr path);
@@ -2015,7 +2020,8 @@ private:
       KJ_REQUIRE(params.hasCap(), "Cannot hand off a null browser capability.");
 
       auto id = host.sessions->storeBrowserHandoffCapability(
-          params.getSessionId(), params.getCap());
+          params.getSessionId(), params.getInterfaceId(), params.getInterfaceName(),
+          params.getCap());
       context.getResults().setId(id);
       return kj::READY_NOW;
     }
@@ -2123,19 +2129,41 @@ private:
   class BrowserIsolateBridgeImpl final: public BrowserIsolateBridge::Server {
   public:
     BrowserIsolateBridgeImpl(IsolateRuntimeConfig& config, IsolateRuntimeHost& host,
-        kj::String sessionId)
-        : config(config), host(host), sessionId(kj::mv(sessionId)) {}
+        kj::String sessionId, WorkerMainViewSession::Client session)
+        : config(config), host(host), sessionId(kj::mv(sessionId)), session(kj::mv(session)) {}
 
-    kj::Promise<void> getHandoffCapability(GetHandoffCapabilityContext context) override {
+    kj::Promise<void> takeHandoffCapability(TakeHandoffCapabilityContext context) override {
       KJ_REQUIRE(sessionId.size() > 0,
           "browser isolate bridge has no SessionContext for handoff resolution");
-      auto id = context.getParams().getId();
-      KJ_IF_MAYBE(cap, host.sessions->findBrowserHandoffCapability(sessionId, id)) {
-        context.getResults().setCap(*cap);
+      auto params = context.getParams();
+      auto id = params.getId();
+      KJ_IF_MAYBE(handoff,
+          host.sessions->takeBrowserHandoffCapability(
+              sessionId, id, params.getInterfaceId())) {
+        context.getResults().setCap(handoff->cap);
       } else {
-        KJ_FAIL_REQUIRE("browser isolate bridge handoff capability ID not found", id);
+        KJ_FAIL_REQUIRE(
+            "browser isolate bridge handoff capability ID or interface not found", id);
       }
       return kj::READY_NOW;
+    }
+
+    kj::Promise<void> getApplicationBootstrap(
+        GetApplicationBootstrapContext context) override {
+      auto request = session.getBrowserBootstrapRequest();
+      return request.send().then([context](auto response) mutable {
+        auto results = context.getResults();
+        results.setFound(response.getFound());
+        if (response.getFound()) {
+          KJ_REQUIRE(response.getInterfaceId() != 0,
+              "worker returned an untyped browser application capability");
+          KJ_REQUIRE(response.hasCap(),
+              "worker returned a null browser application capability");
+          results.setInterfaceId(response.getInterfaceId());
+          results.setInterfaceName(response.getInterfaceName());
+          results.setCap(response.getCap());
+        }
+      });
     }
 
     kj::Promise<void> claimPowerboxRequest(ClaimPowerboxRequestContext context) override {
@@ -2181,6 +2209,7 @@ private:
     IsolateRuntimeConfig& config;
     IsolateRuntimeHost& host;
     kj::String sessionId;
+    WorkerMainViewSession::Client session;
   };
 
   static bool isValidBrowserModulePath(kj::StringPtr path) {
@@ -2538,15 +2567,19 @@ kj::Maybe<kj::Array<byte>> loadIsolateBrowserModule(
 
 WebSession::WebSocketMessageStream::Client makeIsolateBrowserRpcStream(
     IsolateRuntimeConfig& config, IsolateRuntimeHost& host,
-    kj::StringPtr sessionId, WebSession::WebSocketMessageStream::Client outgoing) {
+    kj::StringPtr sessionId, WorkerMainViewSession::Client session,
+    WebSession::WebSocketMessageStream::Client outgoing) {
   return kj::heap<IsolateBrowserRpcWebSocketStream>(
       kj::mv(outgoing),
-      IsolatePlatformServices::makeBrowserBridge(config, host, kj::str(sessionId)));
+      IsolatePlatformServices::makeBrowserBridge(
+          config, host, kj::str(sessionId), kj::mv(session)));
 }
 
 BrowserIsolateBridge::Client IsolatePlatformServices::makeBrowserBridge(
-    IsolateRuntimeConfig& config, IsolateRuntimeHost& host, kj::String sessionId) {
-  return kj::heap<BrowserIsolateBridgeImpl>(config, host, kj::mv(sessionId));
+    IsolateRuntimeConfig& config, IsolateRuntimeHost& host, kj::String sessionId,
+    WorkerMainViewSession::Client session) {
+  return kj::heap<BrowserIsolateBridgeImpl>(
+      config, host, kj::mv(sessionId), kj::mv(session));
 }
 
 kj::Maybe<kj::Array<byte>> IsolatePlatformServices::loadBrowserModule(

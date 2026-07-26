@@ -1,5 +1,6 @@
 import metadata from "metadata.json";
 import {
+  NativeGreetingListener,
   NativeGreeter,
   NativeGreeterObjectId,
 } from "capnp:./native-greeter.capnp";
@@ -202,6 +203,12 @@ function makePersistentNativeGreeterTarget(id) {
 
     async ping(params) {
       return { payload: capnpDataBytes(params.payload) };
+    },
+
+    async greetListener({ listener, name }) {
+      await listener.greeting({
+        message: `classic native greeter ${id} called browser listener for ${name}`,
+      });
     },
   };
 }
@@ -540,20 +547,37 @@ function renderDirectMainViewPage() {
             throw new Error(JSON.stringify(body));
           }
 
+          const [{
+            connectBrowserNativeCapnp,
+            connectBrowserNativeCapnpApplication,
+          }, { NativeGreeter, NativeGreetingListener }] = await Promise.all([
+            import("/__sandstorm/native-capnp/client.js"),
+            import("/__sandstorm/capnp/native-greeter.capnp.js"),
+          ]);
+          const application = await connectBrowserNativeCapnpApplication(NativeGreeter);
+          const applicationGreeting = await application.hello({ name: "application browser" });
+          let callbackGreeting = "";
+          const listener = new NativeGreetingListener.Server({
+            greeting({ message }) {
+              callbackGreeting = message;
+            },
+          }).client();
+          await application.greetListener({ listener, name: "browser callback" });
+          if (!callbackGreeting) {
+            throw new Error("worker did not invoke the browser callback capability");
+          }
+
           const handoffResponse = await fetch("/direct-native-greeter-handoff");
           const handoff = await handoffResponse.json();
           if (!handoffResponse.ok || typeof handoff.id !== "string") {
             throw new Error(JSON.stringify(handoff));
           }
-          const [{ connectBrowserNativeCapnp }, { NativeGreeter }] = await Promise.all([
-            import("/__sandstorm/native-capnp/client.js"),
-            import("/__sandstorm/capnp/native-greeter.capnp.js"),
-          ]);
-          const greeter = await connectBrowserNativeCapnp(handoff, NativeGreeter);
-          const greeting = await greeter.hello({ name: "direct browser" });
-          greeter.connection.transport.close();
+          const handedGreeter = await connectBrowserNativeCapnp(handoff, NativeGreeter);
+          const handoffGreeting = await handedGreeter.hello({ name: "handoff browser" });
           result.textContent = "fetch: direct MainView success " + body.status +
-            " / native RPC success " + greeting.message;
+            " / application RPC success " + applicationGreeting.message +
+            " / callback RPC success " + callbackGreeting +
+            " / handoff RPC success " + handoffGreeting.message;
         } catch (error) {
           result.textContent = (error.message || String(error)) +
             "\\n" + (error.stack || "");
@@ -1485,6 +1509,8 @@ const EXPORTED_WEB_SESSION = webSessionFromFetch({
   pathPrefix: "/exported",
   label: "Isolate WebSession fixture",
 });
+const BROWSER_APPLICATION = serveCapnp(
+  NativeGreeter, makePersistentNativeGreeterTarget("browser-application"));
 
 export default defineWorker({
   capabilities: {
@@ -1501,6 +1527,7 @@ export default defineWorker({
       }),
     ui: mainViewFromFetch({
       fetch: isolateTestFetch,
+      browser: BROWSER_APPLICATION,
       async webSocket(request, socket) {
         const url = new URL(request.url);
         if (url.pathname !== "/websocket-echo") {

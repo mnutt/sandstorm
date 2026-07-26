@@ -979,6 +979,8 @@ export async function exportCapnp(api, InterfaceClass, target) {
     const stored = await bridge.createBrowserHandoff((params) => {
       initCapnpCapabilityParam(params, client, "local export capability");
       params.sessionId = sessionId;
+      params.interfaceId = interfaceMetadata.interfaceId;
+      params.interfaceName = interfaceMetadata.interfaceName;
     });
     if (!stored || typeof stored.id !== "string" || stored.id.length === 0) {
       throw new NativeCapnpBridgeProtocolError(

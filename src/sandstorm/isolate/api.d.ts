@@ -119,6 +119,8 @@ declare module "sandstorm:api" {
       nativeInterface?: string;
       request?: Request;
       sessionId?: string;
+      interfaceId?: bigint | string;
+      interfaceName?: string;
     }): Promise<{
       ok: true;
       type: "capability";
@@ -126,6 +128,8 @@ declare module "sandstorm:api" {
       kind: "receiverHosted";
       residence: "browserHandoff";
       nativeInterface: string;
+      interfaceId: string;
+      interfaceName: string;
     }>;
     toJSON(): { ok: true; type: "capability"; id: string };
   }
@@ -260,5 +264,8 @@ declare module "sandstorm:api" {
     options: PowerboxFulfillmentOptions,
   ): PowerboxFulfillmentApi;
   export function getSession(request: Request): SessionInfo;
+  /** Worker-global services, such as durable storage, for a typed Cap'n Proto call. */
+  export function sandstorm(env: SandstormEnv): SandstormApi;
+  /** Session-aware services for a Fetch-facade request. */
   export function sandstorm(request: Request, env: SandstormEnv): SandstormApi;
 }
