@@ -204,7 +204,7 @@ test: sandstorm-$(BUILD)-fast.tar.xz test-app.spk tests/assets/meteor-testapp.sp
 isolate-examples-test: sandstorm-$(BUILD)-fast.tar.xz test-app.spk \
 		tests/assets/isolate-api-powerbox-test-app.spk \
 		tests/assets/isolate-api-provider-test-app.spk
-	TESTCASE=tests/apps/isolate-examples.js \
+	TESTCASE=apps/isolate-examples.js \
 		tests/run-local.sh sandstorm-$(BUILD)-fast.tar.xz test-app.spk
 
 lint: shell-env

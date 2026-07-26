@@ -143,6 +143,7 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   };
 
   kj::String mainModule;
+  kj::String declaredMainModule;  // Manifest identity, before any internal entry adapter.
   kj::String compatibilityDate;
   kj::String runtimeStateDir;
   kj::String storageRootPath;
@@ -692,11 +693,101 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
   }
 }
 
+kj::String quoteIsolateJavaScriptString(kj::StringPtr value) {
+  static constexpr char HEX[] = "0123456789abcdef";
+  kj::Vector<char> output(value.size() + 3);
+  output.add('"');
+  for (char raw: value) {
+    auto c = static_cast<unsigned char>(raw);
+    switch (c) {
+      case '"': output.addAll(kj::StringPtr("\\\"")); break;
+      case '\\': output.addAll(kj::StringPtr("\\\\")); break;
+      case '\b': output.addAll(kj::StringPtr("\\b")); break;
+      case '\f': output.addAll(kj::StringPtr("\\f")); break;
+      case '\n': output.addAll(kj::StringPtr("\\n")); break;
+      case '\r': output.addAll(kj::StringPtr("\\r")); break;
+      case '\t': output.addAll(kj::StringPtr("\\t")); break;
+      default:
+        if (c < 0x20) {
+          output.addAll(kj::StringPtr("\\u00"));
+          output.add(HEX[c >> 4]);
+          output.add(HEX[c & 0x0f]);
+        } else {
+          output.add(raw);
+        }
+        break;
+    }
+  }
+  output.add('"');
+  output.add('\0');
+  return kj::String(output.releaseAsArray());
+}
+
+kj::String makeIsolateMainViewEntrySource(kj::StringPtr userMainModule) {
+  auto quotedMainModule = quoteIsolateJavaScriptString(userMainModule);
+  return kj::str(
+      "import worker from ", quotedMainModule, ";\n"
+      "import { defineWorker, mainViewFromFetch } from \"sandstorm:api\";\n"
+      "\n"
+      "function normalizeWorker(worker) {\n"
+      "  const workerLike = worker !== null &&\n"
+      "      (typeof worker === \"object\" || typeof worker === \"function\");\n"
+      "  if (workerLike && typeof worker.sandstormRpcEvent === \"function\") {\n"
+      "    return worker;\n"
+      "  }\n"
+      "\n"
+      "  let fetch;\n"
+      "  if (typeof worker === \"function\") {\n"
+      "    fetch = worker;\n"
+      "  } else if (workerLike && typeof worker.fetch === \"function\") {\n"
+      "    fetch = worker.fetch.bind(worker);\n"
+      "  } else {\n"
+      "    throw new TypeError(\n"
+      "        \"main-view isolate must default-export defineWorker(), a fetch function, \" +\n"
+      "        \"or an object with fetch()\");\n"
+      "  }\n"
+      "\n"
+      "  const options = { fetch, viewInfo: {} };\n"
+      "  if (workerLike && worker.webSocket !== undefined) {\n"
+      "    if (typeof worker.webSocket !== \"function\") {\n"
+      "      throw new TypeError(\"simple isolate webSocket must be a function\");\n"
+      "    }\n"
+      "    options.webSocket = worker.webSocket.bind(worker);\n"
+      "  }\n"
+      "\n"
+      "  return defineWorker({\n"
+      "    capabilities: { ui: mainViewFromFetch(options) },\n"
+      "  });\n"
+      "}\n"
+      "\n"
+      "export default normalizeWorker(worker);\n");
+}
+
+void wrapIsolateMainViewEntry(IsolateRuntimeConfig& config) {
+  bool hasMainView = false;
+  for (auto& workerExport: config.exports) {
+    if (workerExport.role == IsolateRuntimeConfig::Export::Role::MAIN_VIEW) {
+      hasMainView = true;
+      break;
+    }
+  }
+  if (!hasMainView) return;
+
+  constexpr kj::StringPtr WRAPPER_MODULE = "sandstorm-internal:main-view-entry"_kj;
+  KJ_REQUIRE(!hasIsolateModule(config, WRAPPER_MODULE),
+      "Isolate command uses a reserved module name.", WRAPPER_MODULE);
+  auto source = makeIsolateMainViewEntrySource(config.mainModule);
+  addGeneratedIsolateModule(
+      config, WRAPPER_MODULE, IsolateRuntimeConfig::ModuleType::ES_MODULE, source);
+  config.mainModule = kj::str(WRAPPER_MODULE);
+}
+
 kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
     spk::Manifest::IsolateConfig::Reader config, kj::StringPtr pkgPath,
     bool enforceSharedHostLimits) {
   auto result = kj::refcounted<IsolateRuntimeConfig>();
   result->mainModule = kj::heapString(config.getMainModule());
+  result->declaredMainModule = kj::heapString(config.getMainModule());
   result->compatibilityDate = kj::heapString(config.getCompatibilityDate());
   result->viewInfoMessage = kj::heap<capnp::MallocMessageBuilder>();
   result->viewInfoMessage->initRoot<UiView::ViewInfo>();
@@ -763,6 +854,7 @@ kj::Own<IsolateRuntimeConfig> copyIsolateConfig(
     });
   }
 
+  wrapIsolateMainViewEntry(*result);
   validateIsolateRuntimeConfig(*result, enforceSharedHostLimits);
   return result;
 }
@@ -1956,7 +2048,7 @@ private:
     }
 
     kj::Promise<void> getRuntimeStatus(GetRuntimeStatusContext context) override {
-      context.getResults().setMainModule(config.mainModule);
+      context.getResults().setMainModule(config.declaredMainModule);
       return kj::READY_NOW;
     }
 

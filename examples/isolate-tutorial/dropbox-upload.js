@@ -1,17 +1,11 @@
 import {
   capnpClient,
-  defineWorker,
-  mainViewFromFetch,
   sandstorm,
 } from "sandstorm:api";
 import { ObjectUploadTarget } from "capnp:./object-store.capnp";
 
 const UPLOAD_TOKEN_PREFIX = "saved-upload-target";
 const MAX_UPLOAD_BYTES = 1024 * 1024;
-const VIEW_INFO = {
-  appTitle: { defaultText: "Dropbox Upload" },
-};
-
 function htmlEscape(value) {
   return String(value).replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;",
@@ -219,11 +213,6 @@ async function dropboxUploadFetch(request, env) {
   }
 }
 
-export default defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: dropboxUploadFetch,
-      viewInfo: VIEW_INFO,
-    }),
-  },
-});
+export default {
+  fetch: dropboxUploadFetch,
+};

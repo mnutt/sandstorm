@@ -1,7 +1,5 @@
 import {
-  defineWorker,
   exportCapnp,
-  mainViewFromFetch,
   sandstorm,
 } from "sandstorm:api";
 import { ObjectStore, StoredObject } from "capnp:./object-store.capnp";
@@ -24,9 +22,6 @@ const OBJECTS = Object.freeze({
     },
   }),
 });
-const VIEW_INFO = {
-  appTitle: { defaultText: "Isolate Object Store" },
-};
 
 function findObject(bucket, key) {
   return OBJECTS[bucket]?.[key] || null;
@@ -130,11 +125,6 @@ async function objectStoreFetch(request, env) {
     });
 }
 
-export default defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: objectStoreFetch,
-      viewInfo: VIEW_INFO,
-    }),
-  },
-});
+export default {
+  fetch: objectStoreFetch,
+};

@@ -1,15 +1,7 @@
-import {
-  defineWorker,
-  mainViewFromFetch,
-  sandstorm,
-} from "sandstorm:api";
+import { sandstorm } from "sandstorm:api";
 import { renderCounter } from "./ui.js";
 import metadata from "./metadata.json";
 import helpText from "./help.txt";
-
-const VIEW_INFO = {
-  appTitle: { defaultText: "Isolate Counter" },
-};
 
 async function counterFetch(request, env) {
     const api = sandstorm(request, env);
@@ -29,11 +21,6 @@ async function counterFetch(request, env) {
     });
 }
 
-export default defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: counterFetch,
-      viewInfo: VIEW_INFO,
-    }),
-  },
-});
+export default {
+  fetch: counterFetch,
+};

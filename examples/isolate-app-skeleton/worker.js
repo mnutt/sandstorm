@@ -1,13 +1,5 @@
-import {
-  defineWorker,
-  mainViewFromFetch,
-  sandstorm,
-} from "sandstorm:api";
+import { sandstorm } from "sandstorm:api";
 import { renderSkeletonPage } from "./ui.js";
-
-const VIEW_INFO = {
-  appTitle: { defaultText: "Isolate App Skeleton" },
-};
 
 function hello(api, name) {
   const session = api.session();
@@ -57,11 +49,6 @@ async function skeletonFetch(request, env) {
     });
 }
 
-export default defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: skeletonFetch,
-      viewInfo: VIEW_INFO,
-    }),
-  },
-});
+export default {
+  fetch: skeletonFetch,
+};

@@ -7,10 +7,6 @@ import {
 } from "sandstorm:api";
 import { renderCapabilityProviderDemo } from "./ui.js";
 
-const VIEW_INFO = {
-  appTitle: { defaultText: "Isolate Capability Provider" },
-};
-
 function jsonError(error) {
   return Response.json({
     ok: false,
@@ -150,7 +146,7 @@ export default defineWorker({
     shared: SHARED_WEB_SESSION,
     ui: mainViewFromFetch({
       fetch: capabilityProviderFetch,
-      viewInfo: VIEW_INFO,
+      viewInfo: {},
     }),
   },
 });

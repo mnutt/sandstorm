@@ -1,25 +1,20 @@
 /// <reference path="./sandstorm-isolate.d.ts" />
 
 import {
-  defineWorker,
   exportCapnp,
-  mainViewFromFetch,
   sandstorm,
   validate,
 } from "sandstorm:api";
 import type {
   SandstormApi,
   SandstormEnv,
+  SandstormFetchWorker,
   ServerTargetFor,
   SessionInfo,
 } from "sandstorm:api";
 import { TypedCounter } from "capnp:./typed-counter.capnp";
 
 type Env = SandstormEnv;
-
-const VIEW_INFO = {
-  appTitle: { defaultText: "TypeScript Isolate" },
-};
 
 async function increment(api: SandstormApi, step: number = 1): Promise<{ value: number }> {
   const amount = validate.integer(step, "step", { min: 1, max: 100 });
@@ -141,11 +136,8 @@ async function typescriptFetch(request: Request, env: Env): Promise<Response> {
     });
 }
 
-export default defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: typescriptFetch,
-      viewInfo: VIEW_INFO,
-    }),
-  },
-});
+const worker: SandstormFetchWorker<Env> = {
+  fetch: typescriptFetch,
+};
+
+export default worker;

@@ -124,6 +124,8 @@ import type {
   ByteStreamClient,
   Capability,
   SandstormApi,
+  SandstormFetchHandler,
+  SandstormFetchWorker,
   ServerTargetFor,
   WorkerCapnpServerTargetFor,
 } from "sandstorm:api";
@@ -166,6 +168,15 @@ void piped;
 void descriptor;
 void restored;
 void revoked;
+
+const simpleFetch: SandstormFetchHandler = async (_request, _env, ctx) => {
+  ctx.waitUntil(Promise.resolve());
+  return new Response("simple");
+};
+const simpleWorker: SandstormFetchWorker = {
+  fetch: simpleFetch,
+};
+void simpleWorker;
 
 const workerTarget: WorkerCapnpServerTargetFor<typeof Collision> = {
   save: async ({ value }, { env, ctx, signal }) => {

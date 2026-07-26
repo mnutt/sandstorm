@@ -1,15 +1,9 @@
 import {
-  defineWorker,
   exportCapnp,
-  mainViewFromFetch,
   sandstorm,
 } from "sandstorm:api";
 import { Greeting } from "capnp:./greeting.capnp";
 import { Greeter } from "capnp:./greeter.capnp";
-
-const VIEW_INFO = {
-  appTitle: { defaultText: "Cap'n Proto RPC" },
-};
 
 function makeGreeting(message) {
   return new Greeting.Server({
@@ -90,11 +84,6 @@ async function capnpRpcFetch(request, env) {
     });
 }
 
-export default defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: capnpRpcFetch,
-      viewInfo: VIEW_INFO,
-    }),
-  },
-});
+export default {
+  fetch: capnpRpcFetch,
+};

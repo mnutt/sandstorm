@@ -115,11 +115,12 @@ const exported = await exportCapnp(api, ObjectUploadTarget, methods);
 
 ### Typed MainView and Powerbox Matching
 
-Every isolate worker declares named Cap'n Proto exports with `defineWorker()`. This app chooses the optional Fetch facade for its UI:
+Workers that need explicit Cap'n Proto exports declare them with
+`defineWorker()`. This app needs Powerbox matching and durable restore hooks,
+so it chooses an explicit typed `MainView` with a Fetch facade for its UI:
 
 ```js
 const VIEW_INFO = {
-  appTitle: { defaultText: "Object Store" },
   matchRequests: [{
     tags: [{
       id: ObjectUploadTarget._capnp.typeId,
@@ -393,8 +394,6 @@ It also imports the same schema:
 ```js
 import {
   capnpClient,
-  defineWorker,
-  mainViewFromFetch,
   sandstorm,
 } from "sandstorm:api";
 import { ObjectUploadTarget } from "capnp:./object-store.capnp";
@@ -561,17 +560,16 @@ async function dropboxUploadFetch(request, env) {
   });
 }
 
-export default defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: dropboxUploadFetch,
-      viewInfo: {
-        appTitle: { defaultText: "Dropbox Upload" },
-      },
-    }),
-  },
-});
+export default {
+  fetch: dropboxUploadFetch,
+};
 ```
+
+Because this app only consumes a capability and serves a normal browser UI,
+its Cloudflare-style `fetch` export is enough. Sandstorm automatically adapts
+it to the package's typed `ui: MainView` export. Use the explicit
+`defineWorker()` form when an app needs additional named capabilities,
+`ViewInfo` metadata, or durable restore/drop hooks, as the Object Store does.
 
 ## Summary
 

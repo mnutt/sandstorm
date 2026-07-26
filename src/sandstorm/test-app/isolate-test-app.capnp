@@ -123,6 +123,48 @@ const isolateServiceCommand :Spk.Manifest.Command = (
   )
 );
 
+const isolateSimpleObjectCommand :Spk.Manifest.Command = (
+  isolate = (
+    mainModule = "simple-object-worker.js",
+    compatibilityDate = "2025-01-01",
+    compatibilityFlags = [],
+
+    exports = [
+      (name = "ui", interfaceId = 0xc277e9822ae2c8fc, role = mainView)
+    ],
+
+    modules = [
+      (
+        name = "simple-object-worker.js",
+        esModulePath = "isolate-test/simple-object-worker.js"
+      )
+    ],
+
+    bindings = []
+  )
+);
+
+const isolateSimpleFunctionCommand :Spk.Manifest.Command = (
+  isolate = (
+    mainModule = "simple-function-worker.js",
+    compatibilityDate = "2025-01-01",
+    compatibilityFlags = [],
+
+    exports = [
+      (name = "ui", interfaceId = 0xc277e9822ae2c8fc, role = mainView)
+    ],
+
+    modules = [
+      (
+        name = "simple-function-worker.js",
+        esModulePath = "isolate-test/simple-function-worker.js"
+      )
+    ],
+
+    bindings = []
+  )
+);
+
 const pkgdef :Spk.PackageDefinition = (
   id = "d2jw0rpnkydeupwend6dk0ugfkz3xfkygg21awx478pzz29gdtp0",
 
@@ -140,6 +182,14 @@ const pkgdef :Spk.PackageDefinition = (
       ( title = (defaultText = "New Direct MainView Test Instance"),
         nounPhrase = (defaultText = "direct MainView instance"),
         command = .isolateMainViewCommand
+      ),
+      ( title = (defaultText = "New Simple Object Worker Test Instance"),
+        nounPhrase = (defaultText = "simple object worker"),
+        command = .isolateSimpleObjectCommand
+      ),
+      ( title = (defaultText = "New Simple Function Worker Test Instance"),
+        nounPhrase = (defaultText = "simple function worker"),
+        command = .isolateSimpleFunctionCommand
       ),
       ( title = (defaultText = "New Service-only Test Instance"),
         nounPhrase = (defaultText = "service"),

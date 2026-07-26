@@ -904,6 +904,35 @@ int main(int argc, char** argv) {
         browserHandoff);
     sandstorm::testLogicalWebSocket(io.waitScope, supervisor);
     sandstorm::expectShutdown(io.waitScope, supervisor);
+
+    auto objectWorker = sandstorm::startGrain(
+        io.waitScope, account, core, "simpleobjectgrain", argv[3], true,
+        "simple-object-worker.js");
+    coreImpl.setSupervisor("simpleobjectgrain", objectWorker);
+    auto objectView =
+        objectWorker.getMainViewRequest().send().wait(io.waitScope).getView();
+    auto objectResponse = sandstorm::fetchViewPath(io.waitScope, objectView, "simple-object");
+    KJ_REQUIRE(sandstorm::contains(objectResponse, "\"ok\":true") &&
+        sandstorm::contains(objectResponse, "\"style\":\"object\"") &&
+        sandstorm::contains(objectResponse, "\"pathname\":\"/simple-object\"") &&
+        sandstorm::contains(objectResponse, "\"hasEnv\":true"),
+        "Cloudflare-style object worker was not adapted to MainView", objectResponse);
+    sandstorm::expectShutdown(io.waitScope, objectWorker);
+
+    auto functionWorker = sandstorm::startGrain(
+        io.waitScope, account, core, "simplefunctiongrain", argv[3], true,
+        "simple-function-worker.js");
+    coreImpl.setSupervisor("simplefunctiongrain", functionWorker);
+    auto functionView =
+        functionWorker.getMainViewRequest().send().wait(io.waitScope).getView();
+    auto functionResponse = sandstorm::fetchViewPath(
+        io.waitScope, functionView, "simple-function");
+    KJ_REQUIRE(sandstorm::contains(functionResponse, "\"ok\":true") &&
+        sandstorm::contains(functionResponse, "\"style\":\"function\"") &&
+        sandstorm::contains(functionResponse, "\"pathname\":\"/simple-function\"") &&
+        sandstorm::contains(functionResponse, "\"hasEnv\":true"),
+        "default function worker was not adapted to MainView", functionResponse);
+    sandstorm::expectShutdown(io.waitScope, functionWorker);
     return 0;
   }
 

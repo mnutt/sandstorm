@@ -32,6 +32,24 @@ declare module "sandstorm:api" {
     passThroughOnException(): void;
   }
 
+  /** Fetch-only main-view shorthand accepted as a module's default export. */
+  export type SandstormFetchHandler<E extends SandstormEnv = SandstormEnv> = (
+    request: Request,
+    env: E,
+    ctx: WorkerExecutionContext,
+  ) => Response | Promise<Response>;
+
+  /** Cloudflare-style main-view shorthand accepted as a module's default export. */
+  export interface SandstormFetchWorker<E extends SandstormEnv = SandstormEnv> {
+    fetch: SandstormFetchHandler<E>;
+    webSocket?(
+      request: Request,
+      socket: SandstormWebSocket,
+      env: E,
+      ctx: WorkerExecutionContext,
+    ): SandstormWebSocketHandler<E> | Promise<SandstormWebSocketHandler<E>>;
+  }
+
   /** Environment and event lifetime for one inbound Cap'n Proto method call. */
   export interface WorkerCapnpCallContext<E extends SandstormEnv = SandstormEnv> {
     readonly env: E;

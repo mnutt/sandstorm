@@ -8,7 +8,6 @@ const TOKEN_KEY = "api-powerbox-token";
 const API_CANONICAL_URL = "https://api.example.test/v1";
 const API_OAUTH_SCOPES = ["read"];
 const VIEW_INFO = {
-  appTitle: { defaultText: "Isolate API Powerbox" },
   permissions: [{
     name: "view",
     title: { defaultText: "view" },

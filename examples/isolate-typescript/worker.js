@@ -2,16 +2,11 @@
 
 // worker.ts
 import {
-  defineWorker,
   exportCapnp,
-  mainViewFromFetch,
   sandstorm,
   validate
 } from "sandstorm:api";
 import { TypedCounter } from "capnp:./typed-counter.capnp";
-var VIEW_INFO = {
-  appTitle: { defaultText: "TypeScript Isolate" }
-};
 async function increment(api, step = 1) {
   const amount = validate.integer(step, "step", { min: 1, max: 100 });
   const store = api.storage();
@@ -124,14 +119,10 @@ async function typescriptFetch(request, env) {
     headers: { "content-type": "text/html; charset=utf-8" }
   });
 }
-var worker_default = defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: typescriptFetch,
-      viewInfo: VIEW_INFO
-    })
-  }
-});
+var worker = {
+  fetch: typescriptFetch
+};
+var worker_default = worker;
 export {
   worker_default as default
 };

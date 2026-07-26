@@ -55,6 +55,10 @@ against a local Sandstorm instance. The test file covers browser-mediated
 Powerbox selection, saved provider tokens, native `capnp:` browser helpers,
 durable capability tokens, and returned child/session capabilities.
 
+The equivalent invocation through the general test target is:
+
+    make test TESTCASE=apps/isolate-examples.js
+
 When running `tests/apps/isolate-examples.js` directly, set
 `ISOLATE_API_POWERBOX_TEST_SPK` or `ISOLATE_API_PROVIDER_TEST_SPK` to use
 prebuilt example packages outside `tests/assets/`.

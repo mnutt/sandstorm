@@ -13,7 +13,6 @@ const INDEX_KEY = "object-index";
 const MAX_OBJECT_BYTES = 1024 * 1024;
 let indexUpdateQueue = Promise.resolve();
 const VIEW_INFO = {
-  appTitle: { defaultText: "Object Store" },
   matchRequests: [{
     tags: [{
       id: ObjectUploadTarget._capnp.typeId,

@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented as of 2026-07-25.
+Implemented as of 2026-07-26.
 
 Cap'n Proto is the foundational interface to isolate workers. A worker exports
 named, schema-defined capabilities. `MainView`, `WebSession`, and `ApiSession`
@@ -99,8 +99,9 @@ export default defineWorker({
 ```
 
 The package and worker declarations must agree on name and interface ID.
-`defineWorker()` owns the reserved `sandstormRpcEvent` handler and rejects a
-top-level Fetch handler. Each incoming top-level RPC call receives:
+`defineWorker()` owns the reserved `sandstormRpcEvent` handler. Fetch-only
+workers do not call it; Sandstorm's generated main-view entry adapter wraps
+their default export instead. Each incoming top-level RPC call receives:
 
 - a distinct workerd execution context;
 - the worker's inert `env` bindings;
@@ -135,27 +136,36 @@ Powerbox policy, and user requirements.
 
 ## Optional UI and Fetch Facades
 
-`mainViewFromFetch()` returns a typed `MainView` export. Its sessions are
-capnp-es implementations of `WorkerWebSession` or `WorkerApiSession`, which
-extend the standard Sandstorm session interfaces and
-`Grain.AppPersistent`.
+For a worker that only needs its normal browser UI, default-export a
+Cloudflare-style object:
 
 ```js
-import { defineWorker, mainViewFromFetch } from "sandstorm:api";
+export default {
+  async fetch(request, env, ctx) {
+    return new Response("hello");
+  },
+};
+```
 
-async function appFetch(request, env, ctx) {
-  return new Response("hello");
-}
+The default export may instead be the fetch function itself. The object form
+may also supply the optional `webSocket()` handler accepted by
+`mainViewFromFetch()`. When the package declares a `mainView` export,
+Sandstorm's generated entry module recognizes either form and wraps it as:
 
-export default defineWorker({
+```js
+defineWorker({
   capabilities: {
-    ui: mainViewFromFetch({
-      fetch: appFetch,
-      viewInfo: { appTitle: { defaultText: "Hello" } },
-    }),
+    ui: mainViewFromFetch({ fetch, viewInfo: {} }),
   },
 });
 ```
+
+This shorthand declares no `ViewInfo` metadata, durable object restoration, or
+additional named exports. Workers needing those features use
+`defineWorker()` and `mainViewFromFetch()` explicitly. `mainViewFromFetch()`
+returns a typed `MainView` export. Its sessions are capnp-es implementations
+of `WorkerWebSession` or `WorkerApiSession`, which extend the standard
+Sandstorm session interfaces and `Grain.AppPersistent`.
 
 The facade performs these conversions in worker JavaScript:
 
@@ -269,8 +279,9 @@ application schemas.
 
 For each top-level `Call`, it schedules a workerd custom event and invokes the
 reserved JavaScript `sandstormRpcEvent(request, send, receive, env, ctx)`
-handler installed by `defineWorker()`. Replies and callback traffic are routed
-back to that event through an `awaitIo()`-backed queue.
+handler installed by `defineWorker()` directly or by the generated simple
+Fetch adapter. Replies and callback traffic are routed back to that event
+through an `awaitIo()`-backed queue.
 
 Important lifecycle rules:
 

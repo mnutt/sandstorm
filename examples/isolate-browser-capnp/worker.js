@@ -1,7 +1,5 @@
 import {
-  defineWorker,
   exportCapnp,
-  mainViewFromFetch,
   sandstorm,
   validate,
 } from "sandstorm:api";
@@ -9,9 +7,6 @@ import { BrowserCounter } from "capnp:./browser-counter.capnp";
 
 let value = 0;
 let exportedCounter = null;
-const VIEW_INFO = {
-  appTitle: { defaultText: "Browser Cap'n Proto Counter" },
-};
 
 const counterMethods = {
   async read() {
@@ -205,11 +200,6 @@ async function browserCounterFetch(request, env) {
     });
 }
 
-export default defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: browserCounterFetch,
-      viewInfo: VIEW_INFO,
-    }),
-  },
-});
+export default {
+  fetch: browserCounterFetch,
+};

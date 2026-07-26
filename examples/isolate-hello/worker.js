@@ -1,9 +1,3 @@
-import { defineWorker, mainViewFromFetch } from "sandstorm:api";
-
-const VIEW_INFO = {
-  appTitle: { defaultText: "Hello Isolate" },
-};
-
 function helloFetch(request) {
     const url = new URL(request.url);
     return Response.json({
@@ -15,11 +9,6 @@ function helloFetch(request) {
     });
 }
 
-export default defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: helloFetch,
-      viewInfo: VIEW_INFO,
-    }),
-  },
-});
+export default {
+  fetch: helloFetch,
+};

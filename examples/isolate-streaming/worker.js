@@ -1,11 +1,7 @@
-import { defineWorker, mainViewFromFetch } from "sandstorm:api";
 import { renderPage } from "./ui.js";
 import metadata from "./metadata.json";
 
 const encoder = new TextEncoder();
-const VIEW_INFO = {
-  appTitle: { defaultText: "Isolate Streaming" },
-};
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -150,11 +146,6 @@ async function streamingFetch(request) {
     });
 }
 
-export default defineWorker({
-  capabilities: {
-    ui: mainViewFromFetch({
-      fetch: streamingFetch,
-      viewInfo: VIEW_INFO,
-    }),
-  },
-});
+export default {
+  fetch: streamingFetch,
+};
