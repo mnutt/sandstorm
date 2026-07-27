@@ -794,6 +794,12 @@ async function isolateTestFetch(request, env, ctx) {
       });
     }
 
+    if (url.pathname === "/log-error-probe") {
+      console.log("sandstorm-grain-log-marker");
+      console.error("sandstorm-grain-console-error-marker");
+      throw new Error("sandstorm-grain-uncaught-error-marker");
+    }
+
     if (url.pathname === "/websocket-echo") {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);

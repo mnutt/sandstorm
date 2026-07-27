@@ -773,7 +773,25 @@ function contextualizeWorkerTarget(name, target) {
           throw new NativeCapnpBridgeProtocolError(
             `worker Cap'n Proto server ${name} was called outside an RPC event`);
         }
-        return Reflect.apply(value, target, [params, activeWorkerCapnpCallContext, results]);
+        const reportError = (error) => {
+          const callerCanceled = error instanceof DOMException &&
+              error.name === "AbortError" &&
+              error.message === "Cap'n Proto caller canceled the worker method";
+          if (!callerCanceled) {
+            console.error(`Uncaught exception in worker Cap'n Proto server ${name}.${property}():`,
+                error);
+          }
+          throw error;
+        };
+        try {
+          const result =
+              Reflect.apply(value, target, [params, activeWorkerCapnpCallContext, results]);
+          return result !== null && result !== undefined && typeof result.then === "function"
+            ? Promise.resolve(result).catch(reportError)
+            : result;
+        } catch (error) {
+          return reportError(error);
+        }
       };
     },
   });

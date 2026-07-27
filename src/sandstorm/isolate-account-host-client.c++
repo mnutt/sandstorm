@@ -1282,6 +1282,14 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(requirementRevoked,
       "worker export remained callable after its membrane requirements were revoked");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
+  bool logErrorProbeRejected = false;
+  try {
+    sandstorm::fetchPath(io.waitScope, supervisor, core, "log-error-probe");
+  } catch (const kj::Exception&) {
+    logErrorProbeRejected = true;
+  }
+  KJ_REQUIRE(logErrorProbeRejected,
+      "worker log error probe unexpectedly returned successfully");
   sandstorm::testLogicalWebSocket(io.waitScope, supervisor);
   sandstorm::testBrowserBootstrap(io.waitScope, supervisor);
   sandstorm::testStreamingResponse(io.waitScope, supervisor);

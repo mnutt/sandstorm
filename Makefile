@@ -407,7 +407,18 @@ isolate-account-host-integration-test: bin/isolate-host tmp/.ekam-run \
 		grep -q '"topology": "accountSharedHost"' \
 			"$$grain_root/testgrain456/isolate-runtime/runtime-manifest.json"; \
 		grep -q '"topology": "accountSharedHost"' \
-			"$$grain_root/concurrentgrain789/isolate-runtime/runtime-manifest.json"
+			"$$grain_root/concurrentgrain789/isolate-runtime/runtime-manifest.json"; \
+		log="$$grain_root/testgrain123/log"; \
+		grep -q '"message":"sandstorm-grain-log-marker","worker":"sandstorm-grains:testgrain123"' \
+			"$$log" || { echo "grain log omitted console.log record" >&2; cat "$$log" >&2; exit 1; }; \
+		grep -q '"message":"sandstorm-grain-console-error-marker","worker":"sandstorm-grains:testgrain123"' \
+			"$$log" || { echo "grain log omitted console.error record" >&2; cat "$$log" >&2; exit 1; }; \
+		grep -q 'sandstorm-grain-uncaught-error-marker' "$$log" || { \
+			echo "grain log omitted fetch-handler exception" >&2; cat "$$log" >&2; exit 1; }; \
+		grep -q 'intentional direct WebSocket failure' "$$log" || { \
+			echo "grain log omitted Cap'n Proto handler exception" >&2; cat "$$log" >&2; exit 1; }; \
+		! grep -q "Cap'n Proto caller canceled the worker method" "$$log" || { \
+			echo "grain log included expected RPC cancellation" >&2; cat "$$log" >&2; exit 1; }
 
 isolate-main-view-role-integration-test: bin/isolate-host tmp/.ekam-run \
 		tests/assets/isolate-test-app.spk

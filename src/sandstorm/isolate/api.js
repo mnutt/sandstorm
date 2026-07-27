@@ -537,6 +537,7 @@ async function runUiFetch(session, request, context, callContext) {
     return await responseToWebSession(
       response, context, callContext, request.method.toUpperCase() === "HEAD");
   } catch (error) {
+    console.error("Sandstorm fetch handler failed", error);
     return webSessionError(error);
   }
 }

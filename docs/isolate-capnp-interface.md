@@ -342,6 +342,14 @@ There is no wrapper process per isolate. The backend starts or reuses an
 account host. The account host starts one native workerd host child and asks it
 to load one dynamic worker per running grain.
 
+The account host also drains the shared native host's structured stdout.
+Records carry a trusted `sandstorm-grains:<grainId>` worker identity and are
+appended to that grain's normal `log`; native diagnostics without a worker
+identity remain in the account-host log. Worker facade boundaries log thrown
+application errors, including their JavaScript stack, before converting them
+to WebSession or Cap'n Proto failures. Expected RPC cancellation is not logged
+as an application error.
+
 The trusted account host:
 
 - reads package modules and grain storage;
@@ -473,8 +481,9 @@ The patch contains only these runtime hooks:
    binary data bindings, which `Frankenvalue` cannot represent.
 5. Isolate- and request-level limit-enforcer factories for dynamically loaded
    workers.
-6. Stable worker identity in structured console records, so logs from an
-   account-shared process remain attributable to a grain.
+6. Stable worker identity in structured console, warning, and V8 error
+   records, so logs from an account-shared process remain attributable to a
+   grain.
 
 The patch does not add an HTTP ingress, service binding, native byte channel,
 or direct capability in `env`.

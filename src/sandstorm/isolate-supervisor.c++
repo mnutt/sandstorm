@@ -3447,6 +3447,103 @@ private:
   kj::HashMap<kj::String, kj::ForkedPromise<Supervisor::Client>> supervisors;
 };
 
+constexpr size_t MAX_NATIVE_LOG_LINE_BYTES = 1024 * 1024;
+
+kj::Maybe<kj::String> getStructuredLogGrainId(kj::StringPtr line) {
+  capnp::MallocMessageBuilder message;
+  auto value = message.initRoot<capnp::JsonValue>();
+  try {
+    capnp::JsonCodec().decodeRaw(kj::arrayPtr(line.begin(), line.size()), value);
+  } catch (const kj::Exception&) {
+    return nullptr;
+  }
+
+  if (value.which() != capnp::JsonValue::OBJECT) return nullptr;
+  for (auto field: value.getObject()) {
+    if ("worker" != field.getName() ||
+        field.getValue().which() != capnp::JsonValue::STRING) {
+      continue;
+    }
+    auto workerText = field.getValue().getString();
+    auto worker = kj::StringPtr(workerText.cStr(), workerText.size());
+    constexpr auto prefix = "sandstorm-grains:"_kj;
+    if (!worker.startsWith(prefix)) return nullptr;
+    auto grainId = worker.slice(prefix.size());
+    if (grainId.size() < 8 || grainId.startsWith(".") || grainId.findFirst('/') != nullptr) {
+      return nullptr;
+    }
+    return kj::str(grainId);
+  }
+  return nullptr;
+}
+
+void writeNativeLogLine(kj::StringPtr grainRoot, kj::ArrayPtr<const char> line) {
+  auto text = kj::StringPtr(line.begin(), line.size());
+  KJ_IF_MAYBE(grainId, getStructuredLogGrainId(text)) {
+    auto logPath = kj::str(grainRoot, "/", *grainId, "/log");
+    KJ_IF_MAYBE(logFile, raiiOpenIfExists(
+        logPath, O_WRONLY | O_APPEND | O_CLOEXEC | O_NOFOLLOW)) {
+      kj::FdOutputStream output(logFile->get());
+      output.write(line.begin(), line.size());
+      output.write("\n", 1);
+      return;
+    }
+    KJ_LOG(WARNING, "Dropping isolate console record because its grain log is unavailable.",
+        *grainId);
+    return;
+  }
+
+  // Preserve native-host diagnostics that are not worker console records in the account-host log.
+  kj::FdOutputStream output(STDOUT_FILENO);
+  output.write(line.begin(), line.size());
+  output.write("\n", 1);
+}
+
+class NativeLogRouter final {
+public:
+  NativeLogRouter(kj::Own<kj::AsyncInputStream> input, kj::String grainRoot)
+      : input(kj::mv(input)), grainRoot(kj::mv(grainRoot)),
+        readBuffer(kj::heapArray<byte>(4096)) {}
+
+  kj::Promise<void> run() {
+    return input->tryRead(readBuffer.begin(), 1, readBuffer.size())
+        .then([this](size_t size) -> kj::Promise<void> {
+      if (size == 0) {
+        if (line.size() > 0 && !discardingOversizedLine) routeLine();
+        return kj::READY_NOW;
+      }
+
+      for (auto byte: readBuffer.asPtr().slice(0, size)) {
+        if (byte == '\n') {
+          if (!discardingOversizedLine) routeLine();
+          line.clear();
+          discardingOversizedLine = false;
+        } else if (!discardingOversizedLine) {
+          if (line.size() == MAX_NATIVE_LOG_LINE_BYTES) {
+            line.clear();
+            discardingOversizedLine = true;
+            KJ_LOG(WARNING, "Dropping oversized isolate native-host log record.");
+          } else {
+            line.add(static_cast<char>(byte));
+          }
+        }
+      }
+      return run();
+    });
+  }
+
+private:
+  kj::Own<kj::AsyncInputStream> input;
+  kj::String grainRoot;
+  kj::Array<byte> readBuffer;
+  kj::Vector<char> line;
+  bool discardingOversizedLine = false;
+
+  void routeLine() {
+    writeNativeLogLine(grainRoot, line.asPtr());
+  }
+};
+
 }  // namespace
 
 IsolateAccountHostMain::IsolateAccountHostMain(kj::ProcessContext& context): context(context) {}
@@ -3534,12 +3631,19 @@ kj::MainBuilder::Validity IsolateAccountHostMain::run() {
   }
 
   auto nativePipe = Pipe::makeTwoWayAsync();
+  auto nativeLogPipe = Pipe::make();
+  int nativeLogFlags;
+  KJ_SYSCALL(nativeLogFlags = fcntl(nativeLogPipe.readEnd.get(), F_GETFL));
+  KJ_SYSCALL(fcntl(nativeLogPipe.readEnd.get(), F_SETFL, nativeLogFlags | O_NONBLOCK));
   Subprocess nativeProcess(
       [nativeHostPath = kj::str(nativeHostPath), control = kj::mv(nativePipe.writeEnd),
+       nativeLog = kj::mv(nativeLogPipe.writeEnd),
        sandboxUid = sandboxUid, logSeccompViolations = logSeccompViolations]() mutable {
+    KJ_SYSCALL(dup2(nativeLog.get(), STDOUT_FILENO));
     return runConfinedNativeIsolateHost(kj::mv(nativeHostPath), kj::mv(control),
         sandboxUid, logSeccompViolations);
   });
+  nativeLogPipe.writeEnd = nullptr;
   KJ_IF_MAYBE(u, sandboxUid) {
     KJ_SYSCALL(setresuid(*u, *u, *u));
   }
@@ -3548,6 +3652,12 @@ kj::MainBuilder::Validity IsolateAccountHostMain::run() {
   auto listener = io.lowLevelProvider->wrapListenSocketFd(
       kj::mv(accountListenerFd), kj::LowLevelAsyncIoProvider::ALREADY_CLOEXEC);
   auto nativeStream = io.lowLevelProvider->wrapSocketFd(kj::mv(nativePipe.readEnd));
+  auto nativeLogInput = io.lowLevelProvider->wrapInputFd(nativeLogPipe.readEnd.release(),
+      kj::LowLevelAsyncIoProvider::TAKE_OWNERSHIP |
+      kj::LowLevelAsyncIoProvider::ALREADY_CLOEXEC);
+  auto nativeLogs = kj::heap<NativeLogRouter>(
+      kj::mv(nativeLogInput), kj::str(grainRoot));
+  auto nativeLogTask = nativeLogs->run().attach(kj::mv(nativeLogs));
   capnp::TwoPartyClient nativeRpc(*nativeStream);
   auto nativeHost = nativeRpc.bootstrap().castAs<IsolateHost>();
 
@@ -3556,7 +3666,10 @@ kj::MainBuilder::Validity IsolateAccountHostMain::run() {
       kj::str(appRoot), kj::str(grainRoot)));
   KJ_LOG(INFO, "Account-scoped isolate host listening.", trustDomain, controlSocket,
       nativeHostPath, nativeProcess.getPid());
-  server.listen(*listener).exclusiveJoin(nativeRpc.onDisconnect()).wait(io.waitScope);
+  server.listen(*listener)
+      .exclusiveJoin(nativeRpc.onDisconnect())
+      .exclusiveJoin(kj::mv(nativeLogTask))
+      .wait(io.waitScope);
   return true;
 }
 

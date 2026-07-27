@@ -96,7 +96,67 @@ diff --git a/src/workerd/io/worker.c++ b/src/workerd/io/worker.c++
 index 2394e06..f711773 100644
 --- a/src/workerd/io/worker.c++
 +++ b/src/workerd/io/worker.c++
-@@ -2127,8 +2127,8 @@ void Worker::handleLog(jsg::Lock& js,
+@@ -83,6 +83,27 @@ constexpr kj::StringPtr logLevelToString(LogLevel level) {
+   }
+ }
+ 
++bool writeStructuredWorkerLog(
++    const Worker::LoggingOptions& loggingOptions, LogLevel level, kj::StringPtr message) {
++  if (!loggingOptions.structuredLogging.toBool() ||
++      loggingOptions.consoleMode != Worker::ConsoleMode::STDOUT) {
++    return false;
++  }
++
++  capnp::JsonCodec json;
++  auto timestamp =
++      (kj::systemPreciseCalendarClock().now() - kj::UNIX_EPOCH) / kj::MILLISECONDS;
++  auto record = kj::str(
++      "{\"timestamp\":", timestamp,
++      ",\"level\":", json.encode(capnp::Text::Reader(logLevelToString(level))),
++      ",\"message\":", json.encode(capnp::Text::Reader(message)),
++      ",\"worker\":", json.encode(capnp::Text::Reader(loggingOptions.workerName)),
++      "}\n");
++  fwrite(record.begin(), 1, record.size(), stdout);
++  fflush(stdout);
++  return true;
++}
++
+ void headersToCDP(const kj::HttpHeaders& in, capnp::JsonValue::Builder out) {
+   std::map<kj::StringPtr, kj::Vector<kj::StringPtr>> inMap;
+   in.forEach([&](kj::StringPtr name, kj::StringPtr value) {
+@@ -1150,12 +1171,15 @@ Worker::Isolate::Impl::Impl(Api& api,
+       lock->setUsingFastJsgStruct();
+     }
+ 
+-    if (impl->inspector != kj::none || ::kj::_::Debug::shouldLog(::kj::LogSeverity::INFO)) {
++    if (impl->inspector != kj::none || loggingOptions.structuredLogging.toBool() ||
++        ::kj::_::Debug::shouldLog(::kj::LogSeverity::INFO)) {
+       lock->setLoggerCallback([this](jsg::Lock& js, kj::StringPtr message) {
+         if (impl->inspector != kj::none) {
+           logMessage(js, static_cast<uint16_t>(cdp::LogType::WARNING), message);
+         }
+-        KJ_LOG(INFO, "console warning", message);
++        if (!writeStructuredWorkerLog(this->loggingOptions, LogLevel::WARN, message)) {
++          KJ_LOG(INFO, "console warning", message);
++        }
+       });
+       lock->setErrorReporterCallback([this](jsg::Lock& js, kj::String desc,
+                                          const jsg::JsValue& error, const jsg::JsMessage& message) {
+@@ -1171,8 +1195,11 @@ Worker::Isolate::Impl::Impl(Api& api,
+           jsg::sendExceptionToInspector(js, *i.get(), kj::str(desc), error, message);
+         }
+ 
+-        // Run with --verbose to log JS exceptions to stderr. Useful when running tests.
+-        KJ_LOG(INFO, "uncaught exception", desc);
++        // Structured embeddings need exceptions even when verbose KJ logging is disabled.
++        if (!writeStructuredWorkerLog(this->loggingOptions, LogLevel::ERROR, desc)) {
++          // Run with --verbose to log JS exceptions to stderr. Useful when running tests.
++          KJ_LOG(INFO, "uncaught exception", desc);
++        }
+       });
+     }
+ 
+@@ -2127,8 +2154,8 @@ void Worker::handleLog(jsg::Lock& js,
    int length = info.Length();
    // to pass additional arguments from this function to js' `formatLog` we add arguments to the end
    // of the arguments vector, then in formatLog we `pop` these from the vector.
@@ -107,7 +167,7 @@ index 2394e06..f711773 100644
    for (auto i: kj::zeroTo(length)) args[i] = info[i];
    jsg::check(original.Get(js.v8Isolate)->Call(context, info.This(), length, args.data()));
  
-@@ -2256,8 +2256,9 @@ void Worker::handleLog(jsg::Lock& js,
+@@ -2256,8 +2283,9 @@ void Worker::handleLog(jsg::Lock& js,
      args[length] = js.boolean(colors);
      args[length + 1] = js.boolean(loggingOptions.structuredLogging.toBool());
      args[length + 2] = js.strIntern(levelStr);
