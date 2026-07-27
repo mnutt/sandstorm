@@ -32,7 +32,7 @@ const counter = serveCapnp(Counter, {
     return { value: await readCounter(env) };
   },
 
-  async change({ delta }, { env }) {
+  async change({ delta }, { env, ctx }) {
     if (delta !== 1 && delta !== -1) {
       throw new RangeError("counter delta must be +1 or -1");
     }
@@ -43,7 +43,8 @@ const counter = serveCapnp(Counter, {
       `Durable counter ${delta > 0 ? "increment" : "decrement"}: ` +
       `${durabilityMillis.toFixed(1)} ms`,
     );
-    await notifySubscribers(value);
+    // Do not add a browser callback round trip to the mutation's response latency.
+    ctx.waitUntil(notifySubscribers(value));
     return { value };
   },
 
@@ -136,10 +137,14 @@ function renderPage() {
         renderState();
       }
 
+      function renderValue(nextValue) {
+        value.value = String(nextValue);
+        value.textContent = String(nextValue);
+      }
+
       const listener = new CounterListener.Server({
         update({ value: nextValue }) {
-          value.value = String(nextValue);
-          value.textContent = String(nextValue);
+          renderValue(nextValue);
         },
       }).client();
 
@@ -163,19 +168,22 @@ function renderPage() {
         });
 
       async function change(delta) {
+        const changeStart = performance.now();
         const counter = observed.client;
         if (!counter) return;
         ++pendingChanges;
         statusError = "";
         renderState();
         try {
-          await counter.change({ delta });
+          const result = await counter.change({ delta });
+          renderValue(result.value);
         } catch (error) {
           statusError = error.message || String(error);
         } finally {
           --pendingChanges;
           renderState();
         }
+        console.log('Change duration: ' + (performance.now() - changeStart) + 'ms');
       }
 
       document.querySelector("#decrement").addEventListener("click", () => change(-1));
