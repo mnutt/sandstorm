@@ -110,10 +110,24 @@ function renderPage() {
         document.querySelector("#increment"),
       ];
       let subscription = null;
+      let connected = false;
+      let pendingChanges = 0;
+      let statusError = "";
 
-      function setConnected(connected) {
-        for (const button of buttons) button.disabled = !connected;
-        status.textContent = connected ? "Live" : "Disconnected; reconnecting…";
+      function renderState() {
+        for (const button of buttons) {
+          button.disabled = !connected || pendingChanges > 0;
+        }
+        status.textContent = statusError ||
+          (connected
+            ? (pendingChanges > 0 ? "Updating…" : "Live")
+            : "Disconnected; reconnecting…");
+      }
+
+      function setConnected(nextConnected) {
+        connected = nextConnected;
+        if (connected) statusError = "";
+        renderState();
       }
 
       const listener = new CounterListener.Server({
@@ -137,18 +151,24 @@ function renderPage() {
         },
         {
           onError(error) {
-            status.textContent = error.message || String(error);
+            statusError = error.message || String(error);
+            renderState();
           },
         });
 
       async function change(delta) {
-        if (!observed.client) return;
-        setConnected(false);
+        const counter = observed.client;
+        if (!counter) return;
+        ++pendingChanges;
+        statusError = "";
+        renderState();
         try {
-          await observed.client.change({ delta });
-          setConnected(true);
+          await counter.change({ delta });
         } catch (error) {
-          status.textContent = error.message || String(error);
+          statusError = error.message || String(error);
+        } finally {
+          --pendingChanges;
+          renderState();
         }
       }
 
