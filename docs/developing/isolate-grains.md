@@ -259,6 +259,11 @@ specific framework integration reason to pass `request` and `env` through
 manually. Undocumented exports and the raw injected bindings are implementation
 details.
 
+For counters and sequence numbers, use
+`await api.storage().increment(key, delta)`. It atomically updates a signed
+64-bit decimal integer and returns a `bigint`; a missing key starts at zero.
+Avoid implementing a cross-request lock with a module-global Promise.
+
 Operational tooling can use `api.unstable.status()` for a liveness probe. The
 namespace is a deliberate quarantine boundary: its member names and response
 shape are not part of the compatibility contract and application behavior must

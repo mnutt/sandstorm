@@ -2690,6 +2690,36 @@ protected:
     return kj::READY_NOW;
   }
 
+  kj::Promise<void> increment(IncrementContext context) override {
+    auto params = context.getParams();
+    auto key = params.getKey();
+    requireValidKey(key);
+    KJ_REQUIRE(storagePathIsMissingOrRegular(key),
+        "storage key is blocked by a non-regular file", key);
+
+    int64_t current = 0;
+    KJ_IF_MAYBE(fd, openStorageFileIfExists(key)) {
+      auto body = readAllBytes(*fd);
+      auto text = kj::heapString(body.asChars());
+      size_t digitStart = text.startsWith("-") ? 1 : 0;
+      KJ_REQUIRE(digitStart < text.size(),
+          "isolate storage increment found a non-decimal value", key);
+      for (auto c: text.slice(digitStart)) {
+        KJ_REQUIRE(c >= '0' && c <= '9',
+            "isolate storage increment found a non-decimal value", key);
+      }
+      current = text.parseAs<int64_t>();
+    }
+
+    int64_t value;
+    KJ_REQUIRE(!__builtin_add_overflow(current, params.getDelta(), &value),
+        "isolate storage integer overflow", key, current, params.getDelta());
+    auto text = kj::str(value);
+    writeStorageFile(key, text.asBytes());
+    context.getResults().setValue(value);
+    return kj::READY_NOW;
+  }
+
 private:
   static constexpr size_t MAX_STORAGE_VALUE_BYTES = 1024 * 1024;
 

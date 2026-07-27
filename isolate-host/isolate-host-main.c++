@@ -1441,17 +1441,27 @@ class WorkerRpcConnection final {
   ~WorkerRpcConnection() noexcept { stream.close(); }
 
   capnp::Capability::Client bootstrap() {
+    // A TwoPartyVatNetwork represents one physical connection. Reuse its bootstrap capability
+    // instead of asking RpcSystem to reconnect the same network after an RPC failure; doing the
+    // latter creates a second connection state with inconsistent idle accounting.
+    KJ_IF_SOME(cap, bootstrapCapability) {
+      return cap;
+    }
+
     capnp::word scratch[4] = {};
     capnp::MallocMessageBuilder message(scratch);
     auto vatId = message.getRoot<capnp::rpc::twoparty::VatId>();
     vatId.setSide(capnp::rpc::twoparty::Side::SERVER);
-    return rpcSystem.bootstrap(vatId);
+    auto cap = rpcSystem.bootstrap(vatId);
+    bootstrapCapability = cap;
+    return cap;
   }
 
  private:
   WorkerRpcMessageStream stream;
   capnp::TwoPartyVatNetwork network;
   capnp::RpcSystem<capnp::rpc::twoparty::VatId> rpcSystem;
+  kj::Maybe<capnp::Capability::Client> bootstrapCapability;
 };
 
 HostedState::HostedState(workerd::server::Server& runtime,

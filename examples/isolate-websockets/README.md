@@ -28,6 +28,11 @@ Disconnected callbacks are also removed when a notification fails. Only the
 counter value is durable; subscription capabilities are deliberately
 connection-scoped.
 
+`storage().increment()` performs each update as one atomic storage RPC. The
+worker therefore does not retain a Promise-based lock across workerd request
+contexts, and simultaneous changes from different tabs cannot overwrite each
+other.
+
 The WebSocket visible in browser developer tools frames Cap'n Proto RPC. It is
 not an application WebSocket, and neither the schema nor worker methods contain
 HTTP or WebSocket concepts.

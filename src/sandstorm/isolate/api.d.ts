@@ -92,6 +92,7 @@ declare module "sandstorm:api" {
     get(key: string): Promise<string | undefined>;
     getBytes(key: string): Promise<Uint8Array | undefined>;
     getJson<T = unknown>(key: string): Promise<T | undefined>;
+    increment(key: string, delta?: number | bigint): Promise<bigint>;
     head(key: string): Promise<{ ok: boolean; status: number; bytes: string | null }>;
     delete(key: string): Promise<unknown>;
     list(): Promise<unknown>;

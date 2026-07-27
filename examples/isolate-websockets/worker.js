@@ -9,13 +9,6 @@ import {
 
 const COUNTER_KEY = "counter";
 const subscribers = new Set();
-let counterQueue = Promise.resolve();
-
-function withCounterLock(operation) {
-  const result = counterQueue.then(operation);
-  counterQueue = result.then(() => undefined, () => undefined);
-  return result;
-}
 
 async function readCounter(env) {
   const stored = await sandstorm(env).storage().get(COUNTER_KEY);
@@ -36,25 +29,22 @@ async function notifySubscribers(value) {
 
 const counter = serveCapnp(Counter, {
   async read(_params, { env }) {
-    return { value: await withCounterLock(() => readCounter(env)) };
+    return { value: await readCounter(env) };
   },
 
   async change({ delta }, { env }) {
     if (delta !== 1 && delta !== -1) {
       throw new RangeError("counter delta must be +1 or -1");
     }
-    return withCounterLock(async () => {
-      const value = await readCounter(env) + BigInt(delta);
-      await sandstorm(env).storage().put(COUNTER_KEY, String(value));
-      await notifySubscribers(value);
-      return { value };
-    });
+    const value = await sandstorm(env).storage().increment(COUNTER_KEY, delta);
+    await notifySubscribers(value);
+    return { value };
   },
 
   async subscribe({ listener }, { env }) {
     subscribers.add(listener);
     try {
-      await listener.update({ value: await withCounterLock(() => readCounter(env)) });
+      await listener.update({ value: await readCounter(env) });
     } catch (error) {
       subscribers.delete(listener);
       throw error;

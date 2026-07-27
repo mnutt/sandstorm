@@ -205,6 +205,8 @@ void simpleWorker;
 const workerTarget: WorkerCapnpServerTargetFor<typeof Collision> = {
   save: async ({ value }, { env, ctx, signal }) => {
     ctx.waitUntil(storage(env).put("capnp-call", value).then(() => undefined));
+    const incremented: bigint = await storage(env).increment("capnp-counter", 1);
+    void incremented;
     const canceled: boolean = signal.aborted;
     void canceled;
     return { value };

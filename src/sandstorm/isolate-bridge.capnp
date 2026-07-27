@@ -130,6 +130,8 @@ interface IsolateStorage @0xeeef9ad97721b1d2 {
   stat @2 (key :Text) -> (found :Bool, bytes :UInt64);
   remove @3 (key :Text);
   list @4 () -> (entries :List(Entry), totalBytes :UInt64);
+  increment @5 (key :Text, delta :Int64) -> (value :Int64);
+  # Atomically adds delta to a signed decimal integer. A missing key starts at zero.
 }
 
 interface BrowserIsolateBridge @0x93fb2746c97b5bea {

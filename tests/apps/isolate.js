@@ -138,6 +138,12 @@ module.exports["Test direct MainView browser fetch and WebSocket"] = function (b
         "called browser listener for browser callback")
     .assert.textContains(
       "#fetch-result",
+      "retained callback RPC success two browser listeners retained across calls")
+    .assert.textContains(
+      "#fetch-result",
+      "two-session callback RPC success two browser listeners retained across calls")
+    .assert.textContains(
+      "#fetch-result",
       "handoff RPC success direct browser hello handoff browser")
     .click("#websocket")
     .assert.textContains(

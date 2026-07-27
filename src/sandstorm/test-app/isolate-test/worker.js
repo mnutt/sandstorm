@@ -1,6 +1,7 @@
 import metadata from "metadata.json";
 import {
   NativeGreetingListener,
+  NativeGreetingSubscription,
   NativeGreeter,
   NativeGreeterObjectId,
 } from "capnp:./native-greeter.capnp";
@@ -102,6 +103,7 @@ function readNativeGreeterObjectId(objectId) {
 function makePersistentNativeGreeterTarget(id) {
   let blockedCallContext = null;
   let cancellationObserved = false;
+  const nativeGreetingListeners = new Set();
 
   return {
     async save() {
@@ -205,10 +207,34 @@ function makePersistentNativeGreeterTarget(id) {
       return { payload: capnpDataBytes(params.payload) };
     },
 
-    async greetListener({ listener, name }) {
+    async greetListener({ listener, name }, { env }) {
+      await sandstorm(env).storage().put("browser-callback-listener", name);
+      nativeGreetingListeners.add(listener);
       await listener.greeting({
         message: `classic native greeter ${id} called browser listener for ${name}`,
       });
+      return {
+        subscription: new NativeGreetingSubscription.Server({
+          close() {
+            nativeGreetingListeners.delete(listener);
+          },
+        }).client(),
+      };
+    },
+
+    async notifyListeners({ message }, { env }) {
+      await sandstorm(env).storage().get("browser-callback-listener");
+      await Promise.all(Array.from(nativeGreetingListeners, (listener) =>
+        listener.greeting({ message })));
+      return { count: nativeGreetingListeners.size };
+    },
+
+    async changeCounter({ delta }, { env }) {
+      const value =
+        await sandstorm(env).storage().increment("browser-callback-counter", delta);
+      await Promise.all(Array.from(nativeGreetingListeners, (listener) =>
+        listener.greeting({ message: `counter ${value}` })));
+      return { value };
     },
   };
 }
@@ -548,6 +574,7 @@ function renderDirectMainViewPage() {
           }
 
           const [{
+            BrowserNativeCapnpSession,
             connectBrowserNativeCapnp,
             connectBrowserNativeCapnpApplication,
           }, { NativeGreeter, NativeGreetingListener }] = await Promise.all([
@@ -562,10 +589,69 @@ function renderDirectMainViewPage() {
               callbackGreeting = message;
             },
           }).client();
-          await application.greetListener({ listener, name: "browser callback" });
+          const callbackResult =
+            await application.greetListener({ listener, name: "browser callback" });
           if (!callbackGreeting) {
             throw new Error("worker did not invoke the browser callback capability");
           }
+          const initialCallbackGreeting = callbackGreeting;
+          const notified = await application.notifyListeners({
+            message: "browser listener retained across calls",
+          });
+          if (notified.count !== 1 ||
+              callbackGreeting !== "browser listener retained across calls") {
+            throw new Error("retained browser callback capability did not receive notification");
+          }
+
+          const secondSession = new BrowserNativeCapnpSession();
+          const secondApplication =
+            await secondSession.application(NativeGreeter);
+          let secondCallbackGreeting = "";
+          const secondListener = new NativeGreetingListener.Server({
+            greeting({ message }) {
+              secondCallbackGreeting = message;
+            },
+          }).client();
+          const secondCallbackResult = await secondApplication.greetListener({
+            listener: secondListener,
+            name: "second browser callback",
+          });
+          const notifiedAgain = await application.notifyListeners({
+            message: "two browser listeners retained across calls",
+          });
+          if (notifiedAgain.count !== 2 ||
+              callbackGreeting !== "two browser listeners retained across calls" ||
+              secondCallbackGreeting !== "two browser listeners retained across calls") {
+            throw new Error("multiple retained browser callback capabilities missed notification");
+          }
+          const twoSessionCallbackGreeting = callbackGreeting;
+          const concurrentNotifications = await Promise.all([
+            application.notifyListeners({ message: "concurrent notification one" }),
+            secondApplication.notifyListeners({ message: "concurrent notification two" }),
+          ]);
+          if (concurrentNotifications.some(({ count }) => count !== 2) ||
+              !callbackGreeting.startsWith("concurrent notification ") ||
+              callbackGreeting !== secondCallbackGreeting) {
+            throw new Error("concurrent browser callback notifications were not delivered");
+          }
+          const changed = await application.changeCounter({ delta: 1 });
+          if (changed.value !== 1n ||
+              callbackGreeting !== "counter 1" ||
+              secondCallbackGreeting !== "counter 1") {
+            throw new Error("stored counter callback update was not delivered");
+          }
+          const changedConcurrently = await Promise.all([
+            application.changeCounter({ delta: 1 }),
+            secondApplication.changeCounter({ delta: 1 }),
+          ]);
+          const concurrentValues =
+            changedConcurrently.map(({ value }) => value).sort((a, b) => a < b ? -1 : 1);
+          if (concurrentValues[0] !== 2n || concurrentValues[1] !== 3n) {
+            throw new Error("concurrent stored counter changes lost an update");
+          }
+          await secondCallbackResult.subscription.close();
+          secondSession.close();
+          await callbackResult.subscription.close();
 
           const handoffResponse = await fetch("/direct-native-greeter-handoff");
           const handoff = await handoffResponse.json();
@@ -576,7 +662,10 @@ function renderDirectMainViewPage() {
           const handoffGreeting = await handedGreeter.hello({ name: "handoff browser" });
           result.textContent = "fetch: direct MainView success " + body.status +
             " / application RPC success " + applicationGreeting.message +
-            " / callback RPC success " + callbackGreeting +
+            " / callback RPC success " + initialCallbackGreeting +
+            " / retained callback RPC success " + twoSessionCallbackGreeting +
+            " / two-session callback RPC success " + twoSessionCallbackGreeting +
+            " / concurrent callback RPC success " + callbackGreeting +
             " / handoff RPC success " + handoffGreeting.message;
         } catch (error) {
           result.textContent = (error.message || String(error)) +

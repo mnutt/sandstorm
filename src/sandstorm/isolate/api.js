@@ -1201,6 +1201,24 @@ export function storage(env) {
       return text === undefined ? undefined : JSON.parse(text);
     },
 
+    async increment(key, delta = 1n) {
+      key = validate.storageKey(key);
+      if (typeof delta === "number") {
+        if (!Number.isSafeInteger(delta)) {
+          throw new TypeError("storage increment delta must be a safe integer or bigint");
+        }
+        delta = BigInt(delta);
+      } else if (typeof delta !== "bigint") {
+        throw new TypeError("storage increment delta must be a safe integer or bigint");
+      }
+      if (delta < -(1n << 63n) || delta >= (1n << 63n)) {
+        throw new RangeError("storage increment delta must fit in a signed 64-bit integer");
+      }
+      const result = await withIsolateStorageRpc(env, (store) =>
+        store.increment({ key, delta }));
+      return BigInt(result.value);
+    },
+
     async head(key) {
       key = validate.storageKey(key);
       const result = await withIsolateStorageRpc(env, (store) => store.stat({ key }));
