@@ -36,7 +36,13 @@ const counter = serveCapnp(Counter, {
     if (delta !== 1 && delta !== -1) {
       throw new RangeError("counter delta must be +1 or -1");
     }
+    const durabilityStarted = performance.now();
     const value = await sandstorm(env).storage().increment(COUNTER_KEY, delta);
+    const durabilityMillis = performance.now() - durabilityStarted;
+    console.log(
+      `Durable counter ${delta > 0 ? "increment" : "decrement"}: ` +
+      `${durabilityMillis.toFixed(1)} ms`,
+    );
     await notifySubscribers(value);
     return { value };
   },
