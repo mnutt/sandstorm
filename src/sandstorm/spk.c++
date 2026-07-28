@@ -4695,6 +4695,35 @@ private:
     return nullptr;
   }
 
+  static kj::Maybe<kj::String> devIsolateCapnpCompiler() {
+    auto compiler = getenv("SANDSTORM_CAPNP_COMPILER");
+    if (compiler != nullptr && strlen(compiler) > 0) {
+      KJ_IF_MAYBE(resolved, realpathIfExists(compiler)) {
+        if (access(resolved->cStr(), X_OK) == 0) {
+          return kj::mv(*resolved);
+        }
+      }
+      return nullptr;
+    }
+
+    kj::Vector<kj::String> candidates;
+    candidates.add(kj::heapString("tmp/capnp/compiler/capnp"));
+    addDevIsolateInstallHomeCandidates(candidates, "/tmp/capnp/compiler/capnp");
+    addDevIsolateInstallHomeCandidates(candidates, "/bin/capnp");
+    candidates.add(kj::heapString("/usr/local/bin/capnp"));
+    candidates.add(kj::heapString("/usr/bin/capnp"));
+
+    for (auto& candidate: candidates) {
+      KJ_IF_MAYBE(resolved, realpathIfExists(candidate)) {
+        if (access(resolved->cStr(), X_OK) == 0) {
+          return kj::mv(*resolved);
+        }
+      }
+    }
+
+    return nullptr;
+  }
+
   static kj::String generateDevIsolateCapnpEsOutput(
       kj::StringPtr resolvedPath, kj::StringPtr rootDir, DevIsolateCapnpEsOutputKind kind) {
     auto compilerModule = devIsolateCapnpEsCompilerModule();
@@ -4702,24 +4731,35 @@ private:
         "`capnp:` isolate schema imports require the @mnutt/capnp-es compiler module. "
         "Install Sandstorm with bundled capnp-es support or set "
         "SANDSTORM_CAPNP_ES_COMPILER_MODULE.");
+    auto capnpCompiler = devIsolateCapnpCompiler();
+    KJ_REQUIRE(capnpCompiler != nullptr,
+        "`capnp:` isolate schema imports require the Cap'n Proto compiler. "
+        "Install Sandstorm with bundled Cap'n Proto support or set "
+        "SANDSTORM_CAPNP_COMPILER.");
 
-    auto capnpcOutPipe = Pipe::make();
-    auto capnpcErrPipe = Pipe::make();
+    auto capnpOutPipe = Pipe::make();
+    auto capnpErrPipe = Pipe::make();
     auto rootInclude = kj::str("-I", rootDir);
     auto sandstormInclude = kj::str("-I", devIsolateSandstormSchemaIncludeDir());
-    Subprocess::Options capnpcOptions({
-        "capnpc", "-o-", rootInclude, sandstormInclude, "-I/usr/include", resolvedPath});
-    capnpcOptions.stdout = capnpcOutPipe.writeEnd;
-    capnpcOptions.stderr = capnpcErrPipe.writeEnd;
-    Subprocess capnpc(kj::mv(capnpcOptions));
-    capnpcOutPipe.writeEnd = nullptr;
-    capnpcErrPipe.writeEnd = nullptr;
+    kj::String capnpCompilerPath = nullptr;
+    KJ_IF_MAYBE(path, capnpCompiler) {
+      capnpCompilerPath = kj::mv(*path);
+    } else {
+      KJ_UNREACHABLE;
+    }
+    Subprocess::Options capnpOptions({capnpCompilerPath, "compile", "-o-",
+        rootInclude, sandstormInclude, "-I/usr/include", resolvedPath});
+    capnpOptions.stdout = capnpOutPipe.writeEnd;
+    capnpOptions.stderr = capnpErrPipe.writeEnd;
+    Subprocess capnp(kj::mv(capnpOptions));
+    capnpOutPipe.writeEnd = nullptr;
+    capnpErrPipe.writeEnd = nullptr;
 
-    auto codegenRequest = readAllBytes(capnpcOutPipe.readEnd);
-    auto capnpcStderr = readAll(capnpcErrPipe.readEnd);
-    auto capnpcExit = capnpc.waitForExit();
-    KJ_REQUIRE(capnpcExit == 0, "capnpc failed while generating capnp-es module.",
-        resolvedPath, capnpcStderr);
+    auto codegenRequest = readAllBytes(capnpOutPipe.readEnd);
+    auto capnpStderr = readAll(capnpErrPipe.readEnd);
+    auto capnpExit = capnp.waitForExit();
+    KJ_REQUIRE(capnpExit == 0, "capnp compile failed while generating capnp-es module.",
+        resolvedPath, capnpStderr);
 
     auto nodeInPipe = Pipe::make();
     auto nodeOutPipe = Pipe::make();
