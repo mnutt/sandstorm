@@ -333,7 +333,8 @@ bin/isolate-host: tmp/bazel-$(BAZEL_VERSION) tmp/.workerd-embed-source
 	# Bazel resolves /usr/lib/ccache/clang to the ccache binary, then invokes it
 	# directly with Clang flags. Hide the symlink farm so it finds Clang itself.
 	cd tmp/workerd-embed && PATH="$${PATH#/usr/lib/ccache:}" \
-		../../tmp/bazel-$(BAZEL_VERSION) build --config=release \
+		../../tmp/bazel-$(BAZEL_VERSION) build --config=ci --config=release \
+		--experimental_disk_cache_gc_max_size=7G \
 		//src/workerd/server:sandstorm-isolate-host
 	cp tmp/workerd-embed/bazel-bin/src/workerd/server/sandstorm-isolate-host $@.new
 	mv -f $@.new $@
