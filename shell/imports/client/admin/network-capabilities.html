@@ -42,6 +42,14 @@
       {{/if}}
     {{/if}}
   </div>
+  <div class="grant-details" role="gridcell">
+    {{#if capInfo.outboundHttp}}
+      <span class="http-methods">{{capInfo.outboundHttp.methods}}</span>
+      <span class="http-url">{{capInfo.outboundHttp.baseUrl}}</span>
+    {{else}}
+      {{_ (con txt "networkAccess")}}
+    {{/if}}
+  </div>
   <div class="grant-time" role="gridcell">{{dateString capInfo.created}}</div>
   <div class="actions" role="gridcell">
     {{#if capInfo.revoked}}
@@ -68,6 +76,7 @@
     <div class="header-row" role="row">
       <div class="grant-by" role="columnheader">{{_ (con txt "header.grantBy")}}</div>
       <div class="grant-to" role="columnheader">{{_ (con txt "header.grantTo")}}</div>
+      <div class="grant-details" role="columnheader">{{_ (con txt "header.grantDetails")}}</div>
       <div class="grant-time" role="columnheader">{{_ (con txt "header.grantTime")}}</div>
       <div class="actions" role="columnheader">{{_ (con txt "header.actions")}}</div>
     </div>
@@ -152,6 +161,9 @@
 
 <h2>{{_ (con txt "interfaceCaps")}}</h2>
 {{>newAdminNetworkCapabilitiesSection caps=ipInterfaceCaps}}
+
+<h2>{{_ (con txt "outboundHttpCaps")}}</h2>
+{{>newAdminNetworkCapabilitiesSection caps=outboundHttpCaps}}
 
 {{/let}}
 </template>

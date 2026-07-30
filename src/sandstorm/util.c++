@@ -31,6 +31,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/sendfile.h>
+#include <sys/prctl.h>
 
 namespace sandstorm {
 
@@ -614,6 +615,13 @@ Subprocess::Subprocess(Options&& options)
       sigemptyset(&sigmask);
       KJ_SYSCALL(sigprocmask(SIG_SETMASK, &sigmask, nullptr));
 
+      KJ_IF_MAYBE(signal, options.parentDeathSignal) {
+        KJ_SYSCALL(prctl(PR_SET_PDEATHSIG, *signal));
+        if (getppid() == 1) {
+          _exit(1);
+        }
+      }
+
       // Make sure all of the incoming FDs are outside of our map range (except for standard I/O if
       // it is already exactly in the right slot).
       int minFd = STDERR_FILENO + options.moreFds.size() + 1;
@@ -938,8 +946,10 @@ capnp::Capability::Server::DispatchCallResult CapRedirector::dispatchCall(
 // =======================================================================================
 
 TwoPartyServerWithClientBootstrap::TwoPartyServerWithClientBootstrap(
-  capnp::Capability::Client bootstrapInterface, kj::Own<CapRedirector> redirector)
+  capnp::Capability::Client bootstrapInterface, kj::Own<CapRedirector> redirector,
+  bool updateRedirectorFromClientBootstrap)
     : bootstrapInterface(kj::mv(bootstrapInterface)), redirector(kj::mv(redirector)),
+      updateRedirectorFromClientBootstrap(updateRedirectorFromClientBootstrap),
       tasks(*this) {}
 
 struct TwoPartyServerWithClientBootstrap::AcceptedConnection {
@@ -961,16 +971,21 @@ kj::Promise<void> TwoPartyServerWithClientBootstrap::listen(
     auto connectionState = kj::heap<AcceptedConnection>(bootstrapInterface, kj::mv(connection));
 
     // Update the bootstrap redirector to point at the new connection's bootstrap.
-    capnp::MallocMessageBuilder message(8);
-    auto vatId = message.getRoot<capnp::rpc::twoparty::VatId>();
-    vatId.setSide(capnp::rpc::twoparty::Side::CLIENT);
-    uint iteration = redirector->setTarget(connectionState->rpcSystem.bootstrap(vatId));
+    uint iteration = 0;
+    if (updateRedirectorFromClientBootstrap) {
+      capnp::MallocMessageBuilder message(8);
+      auto vatId = message.getRoot<capnp::rpc::twoparty::VatId>();
+      vatId.setSide(capnp::rpc::twoparty::Side::CLIENT);
+      iteration = redirector->setTarget(connectionState->rpcSystem.bootstrap(vatId));
+    }
 
     // Run the connection until disconnect.
     auto promise = connectionState->network.onDisconnect();
     tasks.add(promise.attach(kj::mv(connectionState), kj::defer([this,iteration]() {
       // Disconnect the redirector when the client disconnects.
-      redirector->setDisconnected(iteration);
+      if (updateRedirectorFromClientBootstrap) {
+        redirector->setDisconnected(iteration);
+      }
     })));
 
     return listen(kj::mv(listener));

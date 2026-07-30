@@ -1,0 +1,4156 @@
+import {
+  CAPNP_CLIENT_SYMBOL,
+  connectWorkerPlatformBridge,
+  createCapnpWorkerExportDispatcher,
+  createCapnpStruct,
+  createWorkerCapnpClient,
+  nativeCapnpInterfaceMetadata,
+  nativeCapnpSavedTokenData,
+  nativeCapnpSavedTokenText,
+  pipeReadableToByteStream,
+  readCapnpStruct,
+} from "sandstorm-internal:capnp-runtime";
+import {
+  dataBytes as CapnpEsDataBytes,
+  Interface as CapnpEsInterface,
+  Message as CapnpEsMessage,
+  utils as CapnpEsUtils,
+} from "capnp-es/index.mjs";
+import { MainView } from "/sandstorm/grain.capnp";
+import {
+  IsolateApiSessionPowerboxTag,
+} from "/sandstorm/isolate-api-session-tag.capnp";
+import {
+  WorkerApiSession,
+  WorkerMainViewSession,
+  WorkerSessionRef,
+  WorkerWebSession,
+} from "/sandstorm/isolate-session-exports.capnp";
+import { IsolateSessionContext } from "/sandstorm/isolate-bridge.capnp";
+import { OutboundHttpSession } from "/sandstorm/outbound-http-session.capnp";
+import { PowerboxDescriptor, PowerboxDisplayInfo } from "/sandstorm/powerbox.capnp";
+import { ByteStream, Handle } from "/sandstorm/util.capnp";
+import { WebSession } from "/sandstorm/web-session.capnp";
+import { ValidationError, validate } from "sandstorm-internal:validation";
+
+export { ValidationError, validate } from "sandstorm-internal:validation";
+
+// Cap'n Proto is part of the same application-facing API surface. Keep the
+// transport implementation private while exposing the schema helpers here.
+export {
+  CapnpUnavailableError,
+  byteStreamFromWritable,
+  capnpClient,
+  createCapnpStruct,
+  exportCapnp,
+  pipeReadableToByteStream,
+  readCapnpStruct,
+  writableFromByteStream,
+} from "sandstorm-internal:capnp-runtime";
+
+export const SANDSTORM_API_VERSION = 0;
+
+const workerCapnpExports = new WeakMap();
+const namedWorkerCapnpExports = new WeakMap();
+const workerSessionKinds = new WeakMap();
+
+/** Declares one generated Cap'n Proto server as a named worker capability. */
+export function serveCapnp(InterfaceClass, target, options = undefined) {
+  nativeCapnpInterfaceMetadata(InterfaceClass, "serveCapnp()");
+  if (typeof InterfaceClass.Server !== "function") {
+    throw new TypeError("serveCapnp() requires a generated server interface class");
+  }
+  if (!target || typeof target !== "object") {
+    throw new TypeError("serveCapnp() requires a server target object");
+  }
+
+  let durable = null;
+  if (options !== undefined) {
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw new TypeError("serveCapnp() options must be an object");
+    }
+    if (typeof options.restore !== "function" || typeof options.drop !== "function") {
+      throw new TypeError("durable serveCapnp() exports require restore and drop functions");
+    }
+    durable = Object.freeze({ restore: options.restore, drop: options.drop });
+  }
+
+  const descriptor = Object.freeze({});
+  workerCapnpExports.set(
+    descriptor, Object.freeze({ interface: InterfaceClass, target, durable }));
+  return descriptor;
+}
+
+/** Defines a worker with named Cap'n Proto capabilities. */
+export function defineWorker(definition) {
+  if (!definition || typeof definition !== "object" || Array.isArray(definition)) {
+    throw new TypeError("defineWorker() requires a worker definition object");
+  }
+  if (Object.hasOwn(definition, "sandstormRpcEvent")) {
+    throw new TypeError("sandstormRpcEvent is reserved for Sandstorm's Cap'n Proto runtime");
+  }
+  const capabilities = definition.capabilities ?? {};
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) {
+    throw new TypeError("defineWorker() capabilities must be an object");
+  }
+  const internalExports = Object.create(null);
+  for (const [name, descriptor] of Object.entries(capabilities)) {
+    const internal = workerCapnpExports.get(descriptor);
+    if (!internal) {
+      throw new TypeError(
+        `defineWorker() capability ${name} must be created with serveCapnp()`);
+    }
+    if (namedWorkerCapnpExports.has(descriptor)) {
+      throw new TypeError(
+        `defineWorker() capability ${name} reuses a declaration under multiple names`);
+    }
+    const interfaceMetadata = nativeCapnpInterfaceMetadata(
+      internal.interface, `defineWorker() capability ${name}`);
+    namedWorkerCapnpExports.set(descriptor, Object.freeze({
+      name,
+      interfaceId: interfaceMetadata.interfaceId,
+      interfaceName: interfaceMetadata.interfaceName,
+    }));
+    internalExports[name] = internal;
+  }
+
+  const worker = {};
+  for (const property of Reflect.ownKeys(definition)) {
+    if (property === "capabilities") continue;
+    if (property === "fetch") {
+      throw new TypeError(
+        "defineWorker() does not accept a top-level fetch handler; " +
+        "export a typed capability such as mainViewFromFetch() instead");
+    }
+    Object.defineProperty(worker, property, Object.getOwnPropertyDescriptor(definition, property));
+  }
+
+  if (Object.keys(internalExports).length > 0) {
+    const dispatcher = createCapnpWorkerExportDispatcher(internalExports);
+    Object.defineProperty(worker, "sandstormRpcEvent", {
+      configurable: false,
+      enumerable: true,
+      value(request, send, receive, env, ctx) {
+        return dispatcher.handler(request, send, receive, env, ctx);
+      },
+      writable: false,
+    });
+  }
+
+  return Object.freeze(worker);
+}
+
+const MAX_WEB_SESSION_BODY_BYTES = 64 * 1024 * 1024;
+const directUiFetchSessions = new WeakMap();
+const WEB_SESSION_RESPONSE_HEADERS = new Set([
+  "accept-ranges",
+  "content-range",
+  "x-oc-mtime",
+]);
+
+function uiFacadeOptions(options) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("mainViewFromFetch() requires an options object");
+  }
+  if (typeof options.fetch !== "function") {
+    throw new TypeError("mainViewFromFetch() requires a fetch handler");
+  }
+  if (options.webSocket !== undefined && typeof options.webSocket !== "function") {
+    throw new TypeError("mainViewFromFetch() webSocket must be a function");
+  }
+  if (options.browser !== undefined && !workerCapnpExports.has(options.browser)) {
+    throw new TypeError(
+      "mainViewFromFetch() browser must be a capability created with serveCapnp()");
+  }
+  if (!options.viewInfo || typeof options.viewInfo !== "object") {
+    throw new TypeError("mainViewFromFetch() requires ViewInfo initialization data");
+  }
+  if ((options.restore === undefined) !== (options.drop === undefined)) {
+    throw new TypeError("mainViewFromFetch() restore and drop must be supplied together");
+  }
+  if (options.restore !== undefined &&
+      (typeof options.restore !== "function" || typeof options.drop !== "function")) {
+    throw new TypeError("mainViewFromFetch() restore and drop must be functions");
+  }
+  return options;
+}
+
+function hexBytes(value) {
+  return Array.from(capnpDataBytes(value), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function uiSessionHeaders(params, sessionParams, viewInfo, kind) {
+  const headers = new Headers();
+  headers.set("x-sandstorm-session-type", kind);
+  const displayName = params.userInfo?.displayName?.defaultText;
+  if (displayName) headers.set("x-sandstorm-username", displayName);
+  const identityId = params.userInfo?.identityId;
+  if (identityId && capnpDataBytes(identityId).byteLength > 0) {
+    headers.set("x-sandstorm-user-id", hexBytes(identityId).slice(0, 32));
+  }
+  if (params.userInfo?.preferredHandle) {
+    headers.set("x-sandstorm-preferred-handle", params.userInfo.preferredHandle);
+  }
+  if (params.userInfo?.pictureUrl) {
+    headers.set("x-sandstorm-user-picture", params.userInfo.pictureUrl);
+  }
+
+  const permissionNames = [];
+  const permissionDefs = Array.from(viewInfo.permissions ?? []);
+  const permissions = params.userInfo?.permissions ?? [];
+  for (let i = 0; i < permissionDefs.length && i < permissions.length; ++i) {
+    if (permissions.get ? permissions.get(i) : permissions[i]) {
+      const name = permissionDefs[i]?.name;
+      if (name) permissionNames.push(name);
+    }
+  }
+  if (permissionNames.length > 0) {
+    headers.set("x-sandstorm-permissions", permissionNames.join(","));
+  }
+
+  if (params.tabId && capnpDataBytes(params.tabId).byteLength > 0) {
+    headers.set("x-sandstorm-tab-id", hexBytes(params.tabId));
+  }
+  if (sessionParams.basePath) {
+    headers.set("x-sandstorm-base-path", sessionParams.basePath);
+    const base = new URL(sessionParams.basePath);
+    headers.set("host", base.host);
+    headers.set("x-forwarded-proto", base.protocol.slice(0, -1));
+  } else {
+    headers.set("host", "sandbox");
+    headers.set("x-forwarded-proto", "http");
+  }
+  if (sessionParams.userAgent) headers.set("user-agent", sessionParams.userAgent);
+  const languages = Array.from(sessionParams.acceptableLanguages ?? [], String);
+  if (languages.length > 0) headers.set("accept-language", languages.join(","));
+  return headers;
+}
+
+function formatETag(eTag) {
+  return `${eTag.weak ? "W/" : ""}\"${eTag.value}\"`;
+}
+
+function addWebSessionRequestContext(headers, context) {
+  const cookies = Array.from(context.cookies ?? [], cookie => `${cookie.name}=${cookie.value}`);
+  if (cookies.length > 0) headers.set("cookie", cookies.join("; "));
+
+  const accepted = Array.from(context.accept ?? [], item =>
+    item.qValue === 1 ? item.mimeType : `${item.mimeType};q=${item.qValue}`);
+  if (accepted.length > 0) headers.set("accept", accepted.join(", "));
+  const encodings = Array.from(context.acceptEncoding ?? [], item =>
+    item.qValue === 1 ? item.contentCoding : `${item.contentCoding};q=${item.qValue}`);
+  if (encodings.length > 0) headers.set("accept-encoding", encodings.join(", "));
+
+  const precondition = context.eTagPrecondition;
+  switch (precondition.which()) {
+    case 1:
+      headers.set("if-match", "*");
+      break;
+    case 4:
+      headers.set("if-none-match", "*");
+      break;
+    case 2:
+      headers.set("if-match", Array.from(precondition.matchesOneOf, formatETag).join(", "));
+      break;
+    case 3:
+      headers.set("if-none-match", Array.from(precondition.matchesNoneOf, formatETag).join(", "));
+      break;
+  }
+  for (const header of context.additionalHeaders ?? []) {
+    headers.append(header.name, header.value);
+  }
+}
+
+function webSessionRequest(session, method, path, context, body, contentType, encoding) {
+  const headers = new Headers(session.headers);
+  addWebSessionRequestContext(headers, context);
+  if (contentType) headers.set("content-type", contentType);
+  if (encoding) headers.set("content-encoding", encoding);
+  const normalized = String(path).replace(/^\/+/, "");
+  const init = { method, headers };
+  if (body !== undefined && body !== null) {
+    init.body = body;
+    if (body instanceof ReadableStream) init.duplex = "half";
+  }
+  return new Request(new URL(normalized, "http://sandstorm-session/"), init);
+}
+
+function webSessionError(error) {
+  const message = error?.message || String(error);
+  return {
+    serverError: {
+      descriptionHtml: "",
+      nonHtmlBody: {
+        data: new TextEncoder().encode(message),
+        mimeType: "text/plain; charset=utf-8",
+      },
+    },
+  };
+}
+
+function webSessionSuccessCode(status) {
+  switch (status) {
+    case 201: return WebSession.Response.SuccessCode.CREATED;
+    case 202: return WebSession.Response.SuccessCode.ACCEPTED;
+    case 206: return WebSession.Response.SuccessCode.PARTIAL_CONTENT;
+    case 207: return WebSession.Response.SuccessCode.MULTI_STATUS;
+    default: return WebSession.Response.SuccessCode.OK;
+  }
+}
+
+function webSessionClientErrorCode(status) {
+  switch (status) {
+    case 403: return WebSession.Response.ClientErrorCode.FORBIDDEN;
+    case 404: return WebSession.Response.ClientErrorCode.NOT_FOUND;
+    case 405: return WebSession.Response.ClientErrorCode.METHOD_NOT_ALLOWED;
+    case 406: return WebSession.Response.ClientErrorCode.NOT_ACCEPTABLE;
+    case 409: return WebSession.Response.ClientErrorCode.CONFLICT;
+    case 410: return WebSession.Response.ClientErrorCode.GONE;
+    case 412: return WebSession.Response.ClientErrorCode.PRECONDITION_FAILED;
+    case 413: return WebSession.Response.ClientErrorCode.REQUEST_ENTITY_TOO_LARGE;
+    case 414: return WebSession.Response.ClientErrorCode.REQUEST_URI_TOO_LONG;
+    case 415: return WebSession.Response.ClientErrorCode.UNSUPPORTED_MEDIA_TYPE;
+    case 418: return WebSession.Response.ClientErrorCode.IM_ATEAPOT;
+    case 422: return WebSession.Response.ClientErrorCode.UNPROCESSABLE_ENTITY;
+    default: return WebSession.Response.ClientErrorCode.BAD_REQUEST;
+  }
+}
+
+function responseAdditionalHeaders(headers) {
+  const result = [];
+  for (const [name, value] of headers) {
+    if (WEB_SESSION_RESPONSE_HEADERS.has(name) || name.startsWith("x-sandstorm-app-")) {
+      result.push({ name, value });
+    }
+  }
+  return result;
+}
+
+function responseETag(headers) {
+  const value = headers.get("etag");
+  if (!value) return undefined;
+  const match = value.match(/^(W\/)?\"(.*)\"$/);
+  return match ? { weak: Boolean(match[1]), value: match[2] } : undefined;
+}
+
+function responseSetCookieHeaderValues(headers) {
+  if (typeof headers.getSetCookie === "function") return headers.getSetCookie();
+  const combined = headers.get("set-cookie");
+  if (combined === null) return [];
+  // A Fetch implementation may expose multiple Set-Cookie fields as one value. An Expires date
+  // contains a comma, but it is not followed by another cookie name and '='.
+  return combined.split(/,(?=\s*[^;,\s=]+\s*=)/);
+}
+
+function responseCookies(headers) {
+  const result = [];
+  for (const header of responseSetCookieHeaderValues(headers)) {
+    const parts = header.split(";");
+    const first = parts.shift()?.trim() ?? "";
+    const equals = first.indexOf("=");
+    if (equals <= 0) continue;
+    const name = first.slice(0, equals).trim();
+    const value = first.slice(equals + 1).trim();
+    if (/[;,=]/.test(name) || /[;,]/.test(value)) continue;
+
+    let path = "";
+    let httpOnly = false;
+    let absolute;
+    let relative;
+    for (const rawPart of parts) {
+      const part = rawPart.trim();
+      const attributeEquals = part.indexOf("=");
+      const attributeName = (attributeEquals < 0 ? part : part.slice(0, attributeEquals))
+        .trim().toLowerCase();
+      const attributeValue = attributeEquals < 0 ? "" : part.slice(attributeEquals + 1).trim();
+      if (attributeName === "httponly") {
+        httpOnly = true;
+      } else if (attributeName === "path" && !/[;,]/.test(attributeValue)) {
+        path = attributeValue;
+      } else if (attributeName === "max-age" && /^\d+$/.test(attributeValue)) {
+        relative = BigInt(attributeValue);
+      } else if (attributeName === "expires") {
+        const milliseconds = Date.parse(attributeValue);
+        if (Number.isFinite(milliseconds)) absolute = BigInt(Math.floor(milliseconds / 1000));
+      }
+    }
+
+    const expires = relative !== undefined ? { relative }
+      : absolute !== undefined ? { absolute }
+      : { none: true };
+    result.push({ name, value, expires, httpOnly, path });
+  }
+  return result;
+}
+
+function responseCachePolicy(headers) {
+  let withCheck = WebSession.CachePolicy.Scope.NONE;
+  let permanent = WebSession.CachePolicy.Scope.NONE;
+  let noStore = false;
+  let noCache = false;
+  let explicitlyCacheable = false;
+  let immutable = false;
+  let maxAge;
+  for (const rawDirective of (headers.get("cache-control") ?? "").split(",")) {
+    const [rawName, ...rawValue] = rawDirective.trim().split("=");
+    const name = rawName.toLowerCase();
+    const value = rawValue.join("=").trim().replace(/^"|"$/g, "");
+    if (name === "no-store") noStore = true;
+    else if (name === "no-cache" || name === "must-revalidate") noCache = true;
+    else if (name === "private" || name === "public") explicitlyCacheable = true;
+    else if (name === "immutable") immutable = true;
+    else if (name === "max-age" && /^\d+$/.test(value)) maxAge = BigInt(value);
+  }
+  if (!noStore) {
+    if (immutable && maxAge !== undefined && maxAge > 0n && !noCache) {
+      permanent = WebSession.CachePolicy.Scope.PER_SESSION;
+    } else if (noCache || explicitlyCacheable || maxAge !== undefined) {
+      withCheck = WebSession.CachePolicy.Scope.PER_SESSION;
+    }
+  }
+  const vary = new Set((headers.get("vary") ?? "").split(",")
+    .map(value => value.trim().toLowerCase()).filter(Boolean));
+  if (Array.from(vary).some(name => name !== "cookie" && name !== "accept")) {
+    // CachePolicy cannot describe any other varying request fields, so caching such a response
+    // would risk returning it for a request with a different value.
+    withCheck = WebSession.CachePolicy.Scope.NONE;
+    permanent = WebSession.CachePolicy.Scope.NONE;
+  }
+  return {
+    withCheck,
+    permanent,
+    variesOnCookie: vary.has("cookie"),
+    variesOnAccept: vary.has("accept"),
+  };
+}
+
+function responseDisposition(headers) {
+  const raw = headers.get("content-disposition");
+  if (raw === null) return { normal: true };
+  const parts = raw.split(";");
+  if (parts.shift()?.trim().toLowerCase() !== "attachment") return { normal: true };
+  for (const part of parts) {
+    const equals = part.indexOf("=");
+    if (equals < 0 || part.slice(0, equals).trim().toLowerCase() !== "filename") continue;
+    let filename = part.slice(equals + 1).trim();
+    if (filename.startsWith('"') && filename.endsWith('"')) {
+      filename = filename.slice(1, -1).replace(/\\(.)/g, "$1");
+    }
+    return { download: filename };
+  }
+  return { normal: true };
+}
+
+function responseErrorBody(bytes, headers) {
+  return {
+    data: bytes,
+    encoding: headers.get("content-encoding") || "",
+    language: headers.get("content-language") || "",
+    mimeType: headers.get("content-type") || "text/plain; charset=utf-8",
+  };
+}
+
+async function responseToWebSession(response, context, callContext, omitBody = false) {
+  if (!(response instanceof Response)) {
+    throw new TypeError("mainViewFromFetch() fetch handler must return a Response");
+  }
+  const declaredSize = response.headers.get("content-length");
+  if (declaredSize !== null && Number(declaredSize) > MAX_WEB_SESSION_BODY_BYTES) {
+    await response.body?.cancel();
+    return webSessionError(new Error("response body exceeds 64 MiB limit"));
+  }
+  const common = {
+    additionalHeaders: responseAdditionalHeaders(response.headers),
+    setCookies: responseCookies(response.headers),
+    cachePolicy: responseCachePolicy(response.headers),
+  };
+  const eTag = responseETag(response.headers);
+
+  if (response.status === 204 || response.status === 205) {
+    return { ...common, noContent: { shouldResetForm: response.status === 205, eTag } };
+  }
+  if (response.status === 304 || response.status === 412) {
+    return { ...common, preconditionFailed: { matchingETag: eTag } };
+  }
+  if ([301, 302, 303, 307, 308].includes(response.status)) {
+    return {
+      ...common,
+      redirect: {
+        isPermanent: response.status === 301 || response.status === 308,
+        switchToGet: response.status === 301 || response.status === 302 || response.status === 303,
+        location: response.headers.get("location") || "",
+      },
+    };
+  }
+  if (response.status >= 400 && response.status < 500) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return {
+      ...common,
+      clientError: {
+        statusCode: webSessionClientErrorCode(response.status),
+        descriptionHtml: "",
+        nonHtmlBody: responseErrorBody(bytes, response.headers),
+      },
+    };
+  }
+  if (response.status >= 500) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return {
+      ...common,
+      serverError: {
+        descriptionHtml: "",
+        nonHtmlBody: responseErrorBody(bytes, response.headers),
+      },
+    };
+  }
+
+  let body = { bytes: new Uint8Array() };
+  if (omitBody) {
+    await response.body?.cancel();
+  } else if (response.body) {
+    const handle = new Handle.Server({ ping() {} }).client();
+    const pump = pipeReadableToByteStream(response.body, context.responseStream, {
+      size: declaredSize === null ? undefined : BigInt(declaredSize),
+      maxBytes: MAX_WEB_SESSION_BODY_BYTES,
+    });
+    callContext.ctx.waitUntil(pump);
+    body = { stream: handle };
+  }
+  return {
+    ...common,
+    content: {
+      statusCode: webSessionSuccessCode(response.status),
+      encoding: response.headers.get("content-encoding") || "",
+      language: response.headers.get("content-language") || "",
+      mimeType: response.headers.get("content-type") || "application/octet-stream",
+      eTag,
+      body,
+      disposition: responseDisposition(response.headers),
+    },
+  };
+}
+
+async function runUiFetch(session, request, context, callContext) {
+  try {
+    directUiFetchSessions.set(request, session);
+    const response = await session.fetch(request, callContext.env, callContext.ctx);
+    return await responseToWebSession(
+      response, context, callContext, request.method.toUpperCase() === "HEAD");
+  } catch (error) {
+    console.error("Sandstorm fetch handler failed", error);
+    return webSessionError(error);
+  }
+}
+
+function readableFromByteStreamSource(source, expectedSize, signal) {
+  const expected = Number(expectedSize || 0n);
+  let read = 0;
+  let finished = false;
+  const abort = () => {
+    if (!finished) source.cancel({}).catch(() => {});
+  };
+  signal.addEventListener("abort", abort, { once: true });
+
+  return new ReadableStream({
+    async pull(controller) {
+      if (signal.aborted) {
+        finished = true;
+        controller.error(signal.reason);
+        return;
+      }
+      const { result } = await source.read({ maxBytes: 65536 });
+      switch (result.which()) {
+        case 0: {
+          const bytes = new Uint8Array(capnpDataBytes(result.data));
+          if (bytes.byteLength === 0) {
+            throw new Error("ByteStreamSource returned an empty data chunk");
+          }
+          read += bytes.byteLength;
+          if (read > MAX_WEB_SESSION_BODY_BYTES || (expected !== 0 && read > expected)) {
+            finished = true;
+            await source.cancel({}).catch(() => {});
+            throw new Error("streaming request exceeds declared limit");
+          }
+          controller.enqueue(bytes);
+          return;
+        }
+        case 1:
+          finished = true;
+          signal.removeEventListener("abort", abort);
+          if (expected !== 0 && read !== expected) {
+            throw new Error("streaming request size did not match declaration");
+          }
+          controller.close();
+          return;
+        default:
+          throw new Error("ByteStreamSource returned an unknown result");
+      }
+    },
+    async cancel() {
+      if (finished) return;
+      finished = true;
+      signal.removeEventListener("abort", abort);
+      await source.cancel({}).catch(() => {});
+    },
+  });
+}
+
+async function runPullStreamingUiFetch(session, method, params, callContext) {
+  const body = readableFromByteStreamSource(
+    params.body, params.expectedSize, callContext.signal);
+  const request = webSessionRequest(
+    session, method, params.path, params.context, body, params.mimeType, params.encoding);
+  return await runUiFetch(session, request, params.context, callContext);
+}
+
+function webSocketFacade(clientStream) {
+  const CONNECTING = 0;
+  const OPEN = 1;
+  const CLOSING = 2;
+  const CLOSED = 3;
+  let readyState = OPEN;
+  let closeInfo = null;
+
+  const close = async (code, reason, source) => {
+    if (readyState === CLOSING || readyState === CLOSED) return;
+    readyState = CLOSING;
+    closeInfo = Object.freeze({ code, reason, source });
+    try {
+      await clientStream.close({ code, reason });
+    } catch (error) {
+      closeInfo = Object.freeze({
+        code: 1006,
+        reason: error instanceof Error ? error.message : String(error),
+        source: "error",
+      });
+      throw error;
+    } finally {
+      readyState = CLOSED;
+    }
+  };
+
+  const socket = Object.freeze({
+    CONNECTING,
+    OPEN,
+    CLOSING,
+    CLOSED,
+    async send(message) {
+      if (readyState !== OPEN) throw new Error("WebSocket is not open");
+      if (typeof message === "string") {
+        await clientStream.sendText({ message });
+      } else {
+        await clientStream.sendData({ message: new Uint8Array(capnpDataBytes(message)) });
+      }
+    },
+    async close(code = 1000, reason = "") {
+      await close(code, reason, "local");
+    },
+    get readyState() {
+      return readyState;
+    },
+    get closed() {
+      return readyState === CLOSING || readyState === CLOSED;
+    },
+    get closeInfo() {
+      return closeInfo;
+    },
+  });
+
+  return Object.freeze({
+    socket,
+    async closeForError() {
+      await close(1011, "WebSocket handler failed", "error");
+    },
+    closeFromPeer(code, reason) {
+      if (readyState === CLOSED) return;
+      readyState = CLOSED;
+      if (closeInfo === null) {
+        closeInfo = Object.freeze({ code, reason, source: "peer" });
+      }
+    },
+  });
+}
+
+async function runWebSocketHandler(handler, phase, callback, connection, env, ctx) {
+  try {
+    await callback();
+  } catch (error) {
+    if (typeof handler.error === "function") {
+      try {
+        await handler.error({ error, phase }, connection.socket, env, ctx);
+      } catch (errorHandlerError) {
+        console.error("Sandstorm WebSocket error handler failed", errorHandlerError);
+      }
+    }
+    await connection.closeForError().catch(() => {});
+    throw error;
+  }
+}
+
+async function openWebSocketMessages(session, params, callContext) {
+  const request = webSessionRequest(session, "GET", params.path, params.context);
+  request.headers.set("upgrade", "websocket");
+  request.headers.set("connection", "Upgrade");
+  const protocols = Array.from(params.protocol ?? [], String);
+  if (protocols.length > 0) {
+    request.headers.set("sec-websocket-protocol", protocols.join(", "));
+  }
+
+  const connection = webSocketFacade(params.clientStream);
+  const socket = connection.socket;
+  const handler = await session.webSocket(request, socket, callContext.env, callContext.ctx);
+  if (!handler || typeof handler !== "object" || typeof handler.message !== "function") {
+    await connection.closeForError();
+    throw new TypeError("mainViewFromFetch() webSocket must return a message handler");
+  }
+  const selectedProtocol = handler.protocol === undefined ? "" : String(handler.protocol);
+  if (selectedProtocol !== "" && !protocols.includes(selectedProtocol)) {
+    await socket.close(1002, "invalid WebSocket protocol");
+    throw new TypeError("mainViewFromFetch() selected an unoffered WebSocket protocol");
+  }
+
+  let peerClosed = false;
+  const streamTarget = {
+    async sendText(messageParams, messageContext) {
+      if (peerClosed) throw new Error("WebSocket peer is closed");
+      await runWebSocketHandler(handler, "message", () => handler.message(
+        { data: String(messageParams.message), type: "text" },
+        socket, messageContext.env, messageContext.ctx),
+      connection, messageContext.env, messageContext.ctx);
+    },
+    async sendData(messageParams, messageContext) {
+      if (peerClosed) throw new Error("WebSocket peer is closed");
+      const data = new Uint8Array(capnpDataBytes(messageParams.message));
+      await runWebSocketHandler(handler, "message", () => handler.message(
+        { data, type: "data" }, socket, messageContext.env, messageContext.ctx),
+      connection, messageContext.env, messageContext.ctx);
+    },
+    async close(closeParams, closeContext) {
+      if (peerClosed) return;
+      peerClosed = true;
+      connection.closeFromPeer(closeParams.code, String(closeParams.reason));
+      if (typeof handler.close === "function") {
+        await runWebSocketHandler(handler, "close", () => handler.close(
+          { code: closeParams.code, reason: String(closeParams.reason) },
+          socket, closeContext.env, closeContext.ctx),
+        connection, closeContext.env, closeContext.ctx);
+      }
+    },
+  };
+  return {
+    protocol: selectedProtocol === "" ? [] : [selectedProtocol],
+    serverStream: createWorkerCapnpClient(
+      WebSession.WebSocketMessageStream, streamTarget, "Fetch WebSocket message stream"),
+  };
+}
+
+function webSessionFromFetchTarget(session) {
+  const invoke = (method, body = undefined, configure = undefined) => async (params, callContext) => {
+    const request = webSessionRequest(
+      session, method, params.path, params.context, body?.(params),
+      params.content?.mimeType, params.content?.encoding);
+    configure?.(request.headers, params);
+    return await runUiFetch(session, request, params.context, callContext);
+  };
+  const target = {
+    get: async (params, callContext) => {
+      const request = webSessionRequest(
+        session, params.ignoreBody ? "HEAD" : "GET", params.path, params.context);
+      return await runUiFetch(session, request, params.context, callContext);
+    },
+    post: invoke("POST", params => capnpDataBytes(params.content.content)),
+    put: invoke("PUT", params => capnpDataBytes(params.content.content)),
+    patch: invoke("PATCH", params => capnpDataBytes(params.content.content)),
+    delete: invoke("DELETE"),
+    postStreamingPull: (params, callContext) =>
+      runPullStreamingUiFetch(session, "POST", params, callContext),
+    putStreamingPull: (params, callContext) =>
+      runPullStreamingUiFetch(session, "PUT", params, callContext),
+    propfind: invoke("PROPFIND", params => new TextEncoder().encode(params.xmlContent),
+      (headers, params) => {
+        headers.set("content-type", "application/xml;charset=utf-8");
+        headers.set("depth", ["infinity", "0", "1"][params.depth] ?? "infinity");
+      }),
+    proppatch: invoke("PROPPATCH", params => new TextEncoder().encode(params.xmlContent),
+      headers => headers.set("content-type", "application/xml;charset=utf-8")),
+    mkcol: invoke("MKCOL", params => capnpDataBytes(params.content.content)),
+    copy: invoke("COPY", undefined, (headers, params) => {
+      headers.set("destination", new URL(String(params.destination).replace(/^\/+/, ""),
+        `${session.basePath || "http://sandstorm-session"}/`).href);
+      headers.set("overwrite", params.noOverwrite ? "F" : "T");
+      headers.set("depth", params.shallow ? "0" : "infinity");
+    }),
+    move: invoke("MOVE", undefined, (headers, params) => {
+      headers.set("destination", new URL(String(params.destination).replace(/^\/+/, ""),
+        `${session.basePath || "http://sandstorm-session"}/`).href);
+      headers.set("overwrite", params.noOverwrite ? "F" : "T");
+    }),
+    lock: invoke("LOCK", params => new TextEncoder().encode(params.xmlContent),
+      (headers, params) => {
+        headers.set("content-type", "application/xml;charset=utf-8");
+        headers.set("depth", params.shallow ? "0" : "infinity");
+      }),
+    unlock: invoke("UNLOCK", undefined,
+      (headers, params) => headers.set("lock-token", params.lockToken)),
+    acl: invoke("ACL", params => new TextEncoder().encode(params.xmlContent),
+      headers => headers.set("content-type", "application/xml;charset=utf-8")),
+    report: invoke("REPORT", params => capnpDataBytes(params.content.content)),
+    options: async (params, callContext) => {
+      const request = webSessionRequest(session, "OPTIONS", params.path, params.context);
+      directUiFetchSessions.set(request, session);
+      const response = await session.fetch(request, callContext.env, callContext.ctx);
+      const dav = response.headers.get("dav") || "";
+      return {
+        davClass1: /(^|,)\s*1\s*(,|$)/.test(dav),
+        davClass2: /(^|,)\s*2\s*(,|$)/.test(dav),
+        davClass3: /(^|,)\s*3\s*(,|$)/.test(dav),
+        davExtensions: dav.split(",").map(value => value.trim()).filter(value => !/^[123]$/.test(value)),
+      };
+    },
+  };
+  if (session.webSocket !== undefined) {
+    target.openWebSocketMessages = (params, callContext) =>
+      openWebSocketMessages(session, params, callContext);
+  }
+  return target;
+}
+
+async function mainViewSession(options, params, callContext, kind) {
+  if (params.sessionType !== WebSession._capnp.typeId) {
+    throw new Error(`mainViewFromFetch() does not support session type 0x${
+      params.sessionType.toString(16)}`);
+  }
+  const sessionParams = readCapnpStruct(WebSession.Params, params.sessionParams);
+  const session = {
+    fetch: options.fetch,
+    webSocket: options.webSocket,
+    headers: uiSessionHeaders(params, sessionParams, options.viewInfo, kind),
+    basePath: sessionParams.basePath,
+    sessionContext: params.context,
+  };
+  const extendedContext = new IsolateSessionContext.Client(
+    capnpClientReference(params.context, "direct UI SessionContext"));
+  const registration = await extendedContext.getSessionId({});
+  if (!registration?.id) {
+    throw new Error("direct UI SessionContext returned no browser session ID");
+  }
+  session.headers.set("x-sandstorm-session-id", registration.id);
+  if (kind === "offer" && params.descriptor !== undefined) {
+    session.headers.set("x-sandstorm-offer-descriptor", JSON.stringify({}));
+  }
+  const target = webSessionFromFetchTarget(session);
+  target.getBrowserBootstrap = () => {
+    if (options.browser === undefined) return { found: false };
+    const browser = workerCapnpExports.get(options.browser);
+    const metadata = nativeCapnpInterfaceMetadata(
+      browser.interface, "mainViewFromFetch() browser capability");
+    return {
+      found: true,
+      interfaceId: metadata.interfaceId,
+      interfaceName: metadata.interfaceName,
+      cap: capnpCapabilityPointer(createWorkerCapnpClient(
+        browser.interface, browser.target, "MainView browser application capability")),
+    };
+  };
+  return createWorkerCapnpClient(
+    WorkerMainViewSession, target, `Fetch ${kind} WebSession`);
+}
+
+/** Implements MainView and WebSession in capnp-es, translating only the selected UI to Fetch. */
+export function mainViewFromFetch(inputOptions) {
+  const options = uiFacadeOptions(inputOptions);
+  const target = {
+    getViewInfo() {
+      return options.viewInfo;
+    },
+    async newSession(params, callContext) {
+      return { session: await mainViewSession(options, params, callContext, "normal") };
+    },
+    async newRequestSession(params, callContext) {
+      return { session: await mainViewSession(options, params, callContext, "request") };
+    },
+    async newOfferSession(params, callContext) {
+      return { session: await mainViewSession(options, params, callContext, "offer") };
+    },
+    async restore(params, callContext) {
+      if (options.restore === undefined) {
+        throw new UnsupportedCapabilityError("mainView", "restore");
+      }
+      return { cap: capnpCapabilityPointer(await options.restore(params.objectId, callContext)) };
+    },
+    async drop(params, callContext) {
+      if (options.drop !== undefined) await options.drop(params.objectId, callContext);
+    },
+  };
+
+  const durable = options.restore === undefined ? undefined : {
+    restore: options.restore,
+    drop: options.drop,
+  };
+  return serveCapnp(MainView, target, durable);
+}
+
+function workerSessionFromFetch(InterfaceClass, inputOptions, helperName) {
+  if (!inputOptions || typeof inputOptions !== "object" || Array.isArray(inputOptions)) {
+    throw new TypeError(`${helperName}() requires an options object`);
+  }
+  if (typeof inputOptions.fetch !== "function") {
+    throw new TypeError(`${helperName}() requires a fetch handler`);
+  }
+  if (inputOptions.webSocket !== undefined && typeof inputOptions.webSocket !== "function") {
+    throw new TypeError(`${helperName}() webSocket must be a function`);
+  }
+  const pathPrefix = webSessionPathPrefix(inputOptions);
+  const prefixFetch = pathPrefix.length === 0
+    ? inputOptions.fetch
+    : (request, env, ctx) => {
+      const url = new URL(request.url);
+      url.pathname = `${pathPrefix}${url.pathname}`;
+      return inputOptions.fetch(new Request(url, request), env, ctx);
+    };
+  const session = {
+    fetch: prefixFetch,
+    webSocket: inputOptions.webSocket,
+    headers: new Headers(),
+    basePath: "http://sandstorm-session",
+    sessionContext: null,
+  };
+  const target = {
+    ...webSessionFromFetchTarget(session),
+    save() {
+      return {
+        objectId: createCapnpStruct(WorkerSessionRef, {}),
+        label: { defaultText: inputOptions.label || "worker WebSession" },
+      };
+    },
+  };
+  const declaration = serveCapnp(InterfaceClass, target, {
+    restore: async () => target,
+    drop: async () => undefined,
+  });
+  workerSessionKinds.set(
+    declaration, InterfaceClass === WorkerApiSession ? "apiSession" : "webSession");
+  return declaration;
+}
+
+/** Declares a durable WebSession capability whose application-facing facade uses Fetch. */
+export function webSessionFromFetch(options) {
+  return workerSessionFromFetch(WorkerWebSession, options, "webSessionFromFetch");
+}
+
+/** Declares a durable ApiSession capability whose application-facing facade uses Fetch. */
+export function apiSessionFromFetch(options) {
+  return workerSessionFromFetch(WorkerApiSession, options, "apiSessionFromFetch");
+}
+
+const POWERBOX_GRANTS_PREFIX = "/__sandstorm/powerbox-grants";
+const POWERBOX_FULFILLMENT_PREFIX = "/__sandstorm/powerbox-fulfillment";
+const capabilityMetadata = new Map();
+const capabilityBridgeRefs = new WeakMap();
+let nextCapabilityId = 0;
+
+function makeLiveCapabilityId(kind = "capability") {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return `${kind}-${globalThis.crypto.randomUUID()}`;
+  }
+  nextCapabilityId = (nextCapabilityId + 1) >>> 0;
+  return `${kind}-${Date.now().toString(36)}-${nextCapabilityId.toString(36)}`;
+}
+
+function retainCapabilityBridge(bridge) {
+  if (!bridge || typeof bridge.close !== "function") {
+    return null;
+  }
+  capabilityBridgeRefs.set(bridge, (capabilityBridgeRefs.get(bridge) || 0) + 1);
+  return bridge;
+}
+
+function releaseCapabilityBridge(bridge, error = undefined) {
+  if (!bridge || typeof bridge.close !== "function") {
+    return;
+  }
+  const refs = capabilityBridgeRefs.get(bridge) || 0;
+  if (refs <= 1) {
+    capabilityBridgeRefs.delete(bridge);
+    bridge.close(error);
+  } else {
+    capabilityBridgeRefs.set(bridge, refs - 1);
+  }
+}
+
+function capnpCapabilityPointer(capability) {
+  if (capability && capability.segment && typeof capability.byteOffset === "number") {
+    return capability;
+  }
+
+  const client = capability?.client ?? capability;
+  if (!client) {
+    throw new TypeError("mainView.restore() must return a Cap'n Proto capability");
+  }
+
+  const message = new CapnpEsMessage();
+  const pointer = new CapnpEsInterface(message.getSegment(0), 0);
+  CapnpEsUtils.setInterfacePointer(message.addCap(client), pointer);
+  return pointer;
+}
+
+function capnpClientReference(value, name = "capability") {
+  if (value && typeof value[CAPNP_CLIENT_SYMBOL] === "function") {
+    const client = value[CAPNP_CLIENT_SYMBOL]();
+    if (client && typeof client.call === "function") {
+      return client;
+    }
+  }
+
+  if (value && typeof value.call === "function") {
+    return value;
+  }
+
+  if (value && typeof value.client?.call === "function") {
+    return value.client;
+  }
+
+  if (value && typeof value.getClient === "function") {
+    const client = value.getClient();
+    if (client && typeof client.call === "function") {
+      return client;
+    }
+  }
+
+  if (value && typeof CapnpEsInterface?.fromPointer === "function") {
+    const client = CapnpEsInterface.fromPointer(value)?.getClient();
+    if (client && typeof client.call === "function") {
+      return client;
+    }
+  }
+
+  throw new Error(`${name} is not a capnp-es client reference`);
+}
+
+function initCapnpCapabilityParam(params, cap, name = "capability", pointerIndex = 0) {
+  CapnpEsUtils.setInterfacePointer(
+    params.segment.message.addCap(capnpClientReference(cap, name)),
+    CapnpEsUtils.getPointer(pointerIndex, params));
+}
+
+function initPermissionSetParam(params, permissions) {
+  const list = params._initRequiredPermissions(permissions.length);
+  permissions.forEach((permission, index) => {
+    list.set(index, permission);
+  });
+}
+
+function initPowerboxDescriptorParam(params, descriptor) {
+  if (descriptor !== null && descriptor !== undefined) {
+    if (descriptor instanceof PowerboxDescriptor) {
+      // Preserve opaque AnyPointer tag values by copying the descriptor as one Cap'n Proto
+      // pointer. Re-applying it field-by-field can reinterpret an unknown tag payload.
+      params.descriptor = descriptor;
+    } else {
+      PowerboxDescriptor._applyInit(params._initDescriptor(), descriptor);
+    }
+  }
+}
+
+function initPowerboxDisplayInfoParam(params, displayInfo) {
+  PowerboxDisplayInfo._applyInit(params._initDisplayInfo(), displayInfo);
+}
+
+function capnpCapabilityFromResult(result, name) {
+  if (typeof result?.getCap === "function") {
+    return result.getCap();
+  }
+  const pipeline = typeof result?.pipeline?.getPipeline === "function"
+    ? result.pipeline.getPipeline(CapnpEsInterface, 0)
+    : null;
+  return typeof pipeline?.client === "function" ? pipeline.client() : null;
+}
+
+function header(request, name) {
+  return request.headers.get(name) || "";
+}
+
+function list(value) {
+  return value ? value.split(",").filter((item) => item.length > 0) : [];
+}
+
+function jsonHeader(request, name) {
+  const value = header(request, name);
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    return JSON.parse(atob(padded));
+  } catch (error) {
+    throw new ValidationError(`${name} contained invalid JSON`);
+  }
+}
+
+function base64UrlEncodeBytes(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; ++i) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlDecodeBytes(text, name = "base64url value") {
+  try {
+    const normalized = text.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; ++i) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch (error) {
+    throw new ValidationError(`${name} is not valid base64url`);
+  }
+}
+
+function base64UrlEncodeText(text) {
+  return base64UrlEncodeBytes(new TextEncoder().encode(text));
+}
+
+function base64UrlDecodeText(text, name = "base64url value") {
+  return new TextDecoder().decode(base64UrlDecodeBytes(text, name));
+}
+
+async function capabilityInfo(env, capability, options = {}) {
+  const id = capabilityId(capability);
+  const cached = capabilityMetadata.get(id);
+  if (cached?.ok) {
+    return cached;
+  }
+  return null;
+}
+
+async function withIsolateBridgeRpc(env, operation, options = {}) {
+  const bridge = connectWorkerPlatformBridge();
+
+  try {
+    const value = await operation(bridge);
+    bridge.close();
+    return value;
+  } catch (error) {
+    bridge.close(error);
+    throw error;
+  }
+}
+
+export class UnsupportedCapabilityError extends Error {
+  constructor(capability, operation, message = undefined) {
+    super(message || `${capability}.${operation}() is not implemented by isolate grains yet`);
+    this.name = "UnsupportedCapabilityError";
+    this.capability = capability;
+    this.operation = operation;
+  }
+}
+
+async function withIsolateStorageRpc(env, operation) {
+  return withIsolateBridgeRpc(env, async (bridge) => {
+    const result = await bridge.getStorage({});
+    if (!result.storage || typeof result.storage !== "object") {
+      throw new Error("isolate bridge returned an invalid storage capability");
+    }
+    return operation(result.storage);
+  });
+}
+
+function storageValueBytes(value) {
+  if (value instanceof Uint8Array ||
+      value instanceof ArrayBuffer ||
+      ArrayBuffer.isView(value) ||
+      (value && typeof value.toUint8Array === "function")) {
+    return capnpDataBytes(value);
+  }
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return new TextEncoder().encode(text);
+}
+
+export function storage(env) {
+  return {
+    async put(key, value) {
+      key = validate.storageKey(key);
+      const result = await withIsolateStorageRpc(env, (store) => store.put({
+        key,
+        value: storageValueBytes(value),
+      }));
+      return { ok: true, bytes: Number(result.bytes) };
+    },
+
+    async putJson(key, value) {
+      return this.put(key, JSON.stringify(value));
+    },
+
+    async get(key) {
+      const value = await this.getBytes(key);
+      return value === undefined ? undefined : new TextDecoder().decode(value);
+    },
+
+    async getBytes(key) {
+      key = validate.storageKey(key);
+      const result = await withIsolateStorageRpc(env, (store) => store.get({ key }));
+      return result.found ? new Uint8Array(capnpDataBytes(result.value)) : undefined;
+    },
+
+    async getJson(key) {
+      const text = await this.get(key);
+      return text === undefined ? undefined : JSON.parse(text);
+    },
+
+    async increment(key, delta = 1n) {
+      key = validate.storageKey(key);
+      if (typeof delta === "number") {
+        if (!Number.isSafeInteger(delta)) {
+          throw new TypeError("storage increment delta must be a safe integer or bigint");
+        }
+        delta = BigInt(delta);
+      } else if (typeof delta !== "bigint") {
+        throw new TypeError("storage increment delta must be a safe integer or bigint");
+      }
+      if (delta < -(1n << 63n) || delta >= (1n << 63n)) {
+        throw new RangeError("storage increment delta must fit in a signed 64-bit integer");
+      }
+      const result = await withIsolateStorageRpc(env, (store) =>
+        store.increment({ key, delta }));
+      return BigInt(result.value);
+    },
+
+    async head(key) {
+      key = validate.storageKey(key);
+      const result = await withIsolateStorageRpc(env, (store) => store.stat({ key }));
+      return {
+        ok: result.found,
+        status: result.found ? 200 : 404,
+        bytes: result.found ? String(result.bytes) : null,
+      };
+    },
+
+    async delete(key) {
+      key = validate.storageKey(key);
+      await withIsolateStorageRpc(env, (store) => store.remove({ key }));
+      return { ok: true };
+    },
+
+    async list() {
+      const result = await withIsolateStorageRpc(env, (store) => store.list({}));
+      return {
+        ok: true,
+        keys: Array.from(result.entries, (entry) => ({
+          name: String(entry.name),
+          bytes: Number(entry.bytes),
+        })),
+        totalBytes: Number(result.totalBytes),
+      };
+    },
+  };
+}
+
+function unsupportedPowerbox(operation, details = "") {
+  throw new UnsupportedCapabilityError("powerbox", operation);
+}
+
+function sessionIdForPowerbox(request) {
+  const sessionId = header(request, "x-sandstorm-session-id");
+  if (!sessionId) {
+    throw new Error("Powerbox operations require a live Sandstorm WebSession");
+  }
+  return sessionId;
+}
+
+function capabilityId(value, name = "capability") {
+  if (value instanceof Capability) {
+    return value.id;
+  }
+
+  if (typeof value === "string") {
+    return validate.string(value, name, { minLength: 1, maxLength: 4096 });
+  }
+
+  if (value && typeof value === "object" &&
+      (value.type === "capability" || value.type === "claimedCapability")) {
+    return validate.string(value.id, `${name}.id`, { minLength: 1, maxLength: 4096 });
+  }
+
+  throw new ValidationError(`${name} must be a capability handle or id string`);
+}
+
+function capabilityCapnpClient(value, name = "capability") {
+  if (value instanceof Capability) {
+    return value._capnpClient(name);
+  }
+
+  if (value && typeof value[CAPNP_CLIENT_SYMBOL] === "function") {
+    return capnpClientReference(value, name);
+  }
+
+  if (value && typeof value === "object" && typeof value.call === "function") {
+    return value;
+  }
+
+  if (value && typeof value === "object" && typeof value.client?.call === "function") {
+    return value.client;
+  }
+
+  throw new ValidationError(`${name} must be a live capability handle`);
+}
+
+function capabilityBridge(value) {
+  if (value instanceof Capability) {
+    return value._bridge();
+  }
+  throw new ValidationError("operation requires a live capability handle");
+}
+
+async function sessionActionCapability(env, capability, name = "session action capability") {
+  if (namedWorkerCapnpExports.has(capability)) {
+    const resolved = await resolveWorkerCapability(env, capability);
+    return {
+      cap: resolved._capnpClient(name),
+      bridge: resolved._bridge(),
+      temporaryBridge: false,
+      temporaryCapability: resolved,
+      wrapAppPersistent: false,
+    };
+  }
+
+  const cap = capabilityCapnpClient(capability, name);
+  if (capability instanceof Capability) {
+    return {
+      cap,
+      bridge: capability._bridge(),
+      temporaryBridge: false,
+      temporaryCapability: null,
+      wrapAppPersistent: false,
+    };
+  }
+
+  return {
+    cap,
+    bridge: connectWorkerPlatformBridge(),
+    temporaryBridge: true,
+    temporaryCapability: null,
+    wrapAppPersistent: true,
+  };
+}
+
+async function wrapSessionActionCapability(actionCapability) {
+  const { bridge, cap, wrapAppPersistent } = actionCapability;
+  if (!wrapAppPersistent) return cap;
+  if (typeof bridge.wrapAppPersistentCapability !== "function") {
+    throw new Error("isolate bridge returned no app-persistent capability wrapper");
+  }
+
+  const wrappedPromise = bridge.wrapAppPersistentCapability((params) => {
+    initCapnpCapabilityParam(params, cap, "app-persistent session action capability");
+  });
+  const wrappedCap = capnpCapabilityFromResult(
+    wrappedPromise, "wrapped app-persistent session action capability");
+  if (!wrappedCap) {
+    throw new Error("isolate bridge returned no wrapped app-persistent capability");
+  }
+  await wrappedPromise;
+  return wrappedCap;
+}
+
+export class Capability {
+  #env;
+  #cap;
+  #bridge;
+  #saver;
+  #browserSessionId = "";
+  #dropped = false;
+
+  constructor(env, capOrId, metadata = undefined) {
+    this.#env = env;
+    this.ok = true;
+    this.type = "capability";
+    if (typeof capOrId === "string") {
+      this.id = validate.string(capOrId, "capability.id", { minLength: 1, maxLength: 4096 });
+      this.#cap = null;
+    } else {
+      this.#cap = capnpClientReference(capOrId, "capability");
+      this.id = validate.string(
+        metadata?.id || makeLiveCapabilityId(metadata?.kind || "capability"),
+        "capability.id",
+        { minLength: 1, maxLength: 4096 });
+    }
+    if (metadata?.bridge) {
+      this.#bridge = retainCapabilityBridge(metadata.bridge);
+    }
+    if (metadata?.saver) {
+      if (typeof metadata.saver.save !== "function") {
+        throw new TypeError("capability saver must implement save()");
+      }
+      this.#saver = metadata.saver;
+    }
+    if (typeof metadata?.browserSessionId === "string" && metadata.browserSessionId.length > 0) {
+      this.#browserSessionId = validate.string(
+        metadata.browserSessionId, "browserSessionId", { minLength: 1, maxLength: 4096 });
+    }
+    if (metadata !== undefined && metadata !== null) {
+      const {
+        bridge: _bridge,
+        saver: _saver,
+        browserSessionId: _browserSessionId,
+        ...metadataWithoutBridge
+      } = metadata;
+      cacheCapabilityMetadata(this.id, metadataWithoutBridge);
+    }
+  }
+
+  get env() {
+    return this.#env;
+  }
+
+  _capnpClient(name = "capability") {
+    if (!this.#cap) {
+      throw new Error(`${name} is not a live RPC capability`);
+    }
+    return this.#cap;
+  }
+
+  [CAPNP_CLIENT_SYMBOL]() {
+    return this._capnpClient("capability");
+  }
+
+  _bridge() {
+    if (!this.#bridge) {
+      throw new Error("capability does not own a live isolate bridge connection");
+    }
+    return this.#bridge;
+  }
+
+  _browserSessionId() {
+    return this.#browserSessionId;
+  }
+
+  _saver() {
+    return this.#saver;
+  }
+
+  _release(error = undefined) {
+    if (this.#dropped) {
+      return false;
+    }
+    this.#dropped = true;
+    releaseCapabilityBridge(this.#bridge, error);
+    this.#bridge = null;
+    this.#saver = null;
+    this.#cap = null;
+    forgetCapabilityHandle(this.id);
+    return true;
+  }
+
+  fetch(input, init) {
+    return fetchCapability(this.#env, this, input, init);
+  }
+
+  info(options = {}) {
+    return capabilityInfo(this.#env, this, options);
+  }
+
+  save(options = {}) {
+    return saveCapability(this.#env, this, options);
+  }
+
+  async drop() {
+    return dropCapability(this.#env, this);
+  }
+
+  offer(request, options = {}) {
+    return offerCapability(this.#env, request, this, options);
+  }
+
+  fulfillRequest(request, options = {}) {
+    return fulfillRequestWithCapability(this.#env, request, this, options);
+  }
+
+  tieToUser(request, options = {}) {
+    return tieCapabilityToUser(this.#env, request, this, options);
+  }
+
+  browserHandoff(options = {}) {
+    return browserHandoffCapability(this.#env, this, options);
+  }
+
+  [Symbol.dispose]() {
+    this.drop().catch(() => {});
+  }
+
+  toJSON() {
+    return {
+      ok: true,
+      type: "capability",
+      id: this.id,
+    };
+  }
+}
+
+async function resolveWorkerCapability(env, declaration, options = {}) {
+  const named = namedWorkerCapnpExports.get(declaration);
+  if (!named) {
+    throw new ValidationError(
+      "worker capability must be a declaration registered by defineWorker()");
+  }
+  const bridge = connectWorkerPlatformBridge();
+  try {
+    const resultPromise = bridge.getWorkerExport({
+      name: named.name,
+      interfaceId: named.interfaceId,
+    });
+    const cap = capnpCapabilityFromResult(resultPromise, `worker export ${named.name}`);
+    if (!cap) {
+      throw new Error(`isolate bridge returned no capability for worker export ${named.name}`);
+    }
+    const result = await resultPromise;
+    return new Capability(env, cap, {
+      kind: "workerExport",
+      bridge,
+      saver: result.saver,
+      residence: "localExport",
+      nativeInterface: workerSessionKinds.get(declaration) ?? "unknown",
+      interfaceId: `0x${named.interfaceId.toString(16)}`,
+      interfaceName: named.interfaceName,
+      browserSessionId: options.browserSessionId,
+    });
+  } catch (error) {
+    bridge.close(error);
+    throw error;
+  }
+}
+
+function saveLabel(options = {}) {
+  let label = options.label ?? "Sandstorm capability";
+  if (label && typeof label === "object" && typeof label.defaultText === "string") {
+    label = label.defaultText;
+  }
+  return validate.string(label, "label", { minLength: 1, maxLength: 256 });
+}
+
+function requiredSaveLabel(options = {}, context = "label") {
+  let label = options.label;
+  if (label && typeof label === "object" && typeof label.defaultText === "string") {
+    label = label.defaultText;
+  }
+  if (label === undefined || label === null) {
+    throw new ValidationError(`${context} is required`);
+  }
+  return validate.string(label, context, { minLength: 1, maxLength: 256 });
+}
+
+function displayText(options, names, fallback, label, maxLength = 1024) {
+  for (const name of names) {
+    let value = options[name];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (value && typeof value === "object" && typeof value.defaultText === "string") {
+      value = value.defaultText;
+    }
+    return validate.string(value, label, { minLength: 1, maxLength });
+  }
+
+  if (fallback === undefined || fallback === null) {
+    return undefined;
+  }
+  return validate.string(fallback, label, { minLength: 1, maxLength });
+}
+
+function displayTitle(options = {}) {
+  return displayText(
+    options,
+    ["title", "displayTitle", "label"],
+    "Claimed Sandstorm capability",
+    "title",
+    256);
+}
+
+function sessionDisplayInfo(options = {}) {
+  const result = {
+    title: { defaultText: displayTitle(options) },
+  };
+  const verbPhrase = displayText(
+    options, ["verbPhrase", "displayVerbPhrase"], undefined, "verbPhrase");
+  if (verbPhrase !== undefined) {
+    result.verbPhrase = { defaultText: verbPhrase };
+  }
+  const description = displayText(
+    options, ["description", "displayDescription"], undefined, "description");
+  if (description !== undefined) {
+    result.description = { defaultText: description };
+  }
+  return result;
+}
+
+function apiSessionDescriptorParams(options = {}) {
+  const descriptor = options.apiSession ?? options.apiSessionDescriptor ?? null;
+  if (descriptor === null || descriptor === undefined) {
+    return [];
+  }
+  if (typeof descriptor !== "object") {
+    throw new ValidationError("apiSession descriptor must be an object");
+  }
+
+  const canonicalUrl = validate.string(descriptor.canonicalUrl, "apiSession.canonicalUrl", {
+    minLength: 1,
+    maxLength: 2048,
+  });
+  if (canonicalUrl.endsWith("/")) {
+    throw new ValidationError("apiSession.canonicalUrl must not end with '/'");
+  }
+
+  const result = [
+    ["descriptor", "apiSession"],
+    ["apiCanonicalUrl", canonicalUrl],
+  ];
+
+  const scopes = descriptor.oauthScopes ?? [];
+  if (!Array.isArray(scopes)) {
+    throw new ValidationError("apiSession.oauthScopes must be an array");
+  }
+  for (let i = 0; i < scopes.length; ++i) {
+    result.push(["apiOauthScope", validate.string(scopes[i], `apiSession.oauthScopes[${i}]`, {
+      minLength: 1,
+      maxLength: 256,
+    })]);
+  }
+
+  return result;
+}
+
+const OUTBOUND_HTTP_METHODS = new Set([
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+]);
+
+function outboundHttpMethod(value, label) {
+  const method = validate.string(value, label, { minLength: 1, maxLength: 16 }).toUpperCase();
+  if (!OUTBOUND_HTTP_METHODS.has(method)) {
+    throw new ValidationError(`${label} must be one of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS`);
+  }
+  return method;
+}
+
+function outboundHttpDescriptorParams(options = {}) {
+  const descriptor = options.outboundHttp ?? options.outboundHttpDescriptor ?? null;
+  if (descriptor === null || descriptor === undefined) {
+    return [];
+  }
+  if (typeof descriptor !== "object") {
+    throw new ValidationError("outboundHttp descriptor must be an object");
+  }
+
+  const baseUrl = validate.string(descriptor.baseUrl, "outboundHttp.baseUrl", {
+    minLength: 1,
+    maxLength: 2048,
+  });
+
+  const result = [
+    ["descriptor", "outboundHttp"],
+    ["outboundHttpBaseUrl", baseUrl],
+  ];
+
+  const methods = descriptor.methods ?? [];
+  if (!Array.isArray(methods)) {
+    throw new ValidationError("outboundHttp.methods must be an array");
+  }
+  for (let i = 0; i < methods.length; ++i) {
+    result.push(["outboundHttpMethod", outboundHttpMethod(
+      methods[i], `outboundHttp.methods[${i}]`)]);
+  }
+
+  return result;
+}
+
+function appInterfaceDescriptorParams(options = {}) {
+  const descriptor = options.appInterface ?? options.appInterfaceDescriptor ?? null;
+  if (descriptor === null || descriptor === undefined) {
+    return [];
+  }
+  if (typeof descriptor !== "object") {
+    throw new ValidationError("appInterface descriptor must be an object");
+  }
+
+  const interfaceId = validate.string(descriptor.interfaceId, "appInterface.interfaceId", {
+    minLength: 1,
+    maxLength: 32,
+  });
+  if (!/^(0x[0-9a-fA-F]+|[0-9]+)$/.test(interfaceId)) {
+    throw new ValidationError(
+      "appInterface.interfaceId must be a decimal integer or 0x-prefixed hex integer");
+  }
+
+  const result = [
+    ["descriptor", "appInterface"],
+    ["interfaceId", interfaceId],
+  ];
+  if (descriptor.interfaceName !== undefined && descriptor.interfaceName !== null) {
+    result.push(["interfaceName", validate.string(
+      descriptor.interfaceName, "appInterface.interfaceName", {
+        minLength: 1,
+        maxLength: 512,
+      })]);
+  }
+
+  return result;
+}
+
+function validatePackedPowerboxDescriptor(descriptor, label = "descriptor") {
+  const value = validate.string(descriptor, label, {
+    minLength: 1,
+    maxLength: 65536,
+  });
+  if (value.length % 4 === 1 || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new ValidationError(`${label} must be a base64url packed Powerbox descriptor`);
+  }
+  return value;
+}
+
+function packedPowerboxDescriptorParams(options = {}) {
+  const descriptor = options.powerboxDescriptor ?? options.descriptor ?? null;
+  if (descriptor === null || descriptor === undefined) {
+    return [];
+  }
+  return [
+    ["descriptor", "packed"],
+    ["packedPowerboxDescriptor", validatePackedPowerboxDescriptor(
+      descriptor, options.powerboxDescriptor === undefined ? "descriptor" : "powerboxDescriptor")],
+  ];
+}
+
+const CLAIM_NATIVE_INTERFACES = new Set([
+  "unknown",
+  "webSession",
+  "apiSession",
+  "outboundHttpSession",
+]);
+const API_SESSION_INTERFACE_ID = 0xc879e379c625cdc7n;
+const powerboxDescriptorInfoCache = new Map();
+const OUTBOUND_HTTP_METHOD_ENUMS = new Map([
+  ["GET", OutboundHttpSession.Method.GET],
+  ["POST", OutboundHttpSession.Method.POST],
+  ["PUT", OutboundHttpSession.Method.PUT],
+  ["PATCH", OutboundHttpSession.Method.PATCH],
+  ["DELETE", OutboundHttpSession.Method.DELETE],
+  ["HEAD", OutboundHttpSession.Method.HEAD],
+  ["OPTIONS", OutboundHttpSession.Method.OPTIONS],
+]);
+
+function cloneDescriptorJsonValue(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+async function cachedPowerboxDescriptorInfo(cacheKey, loader) {
+  if (powerboxDescriptorInfoCache.has(cacheKey)) {
+    return cloneDescriptorJsonValue(powerboxDescriptorInfoCache.get(cacheKey));
+  }
+
+  const result = await loader();
+  powerboxDescriptorInfoCache.set(cacheKey, cloneDescriptorJsonValue(result));
+  return cloneDescriptorJsonValue(result);
+}
+
+function createCapnpStructValue(StructClass, initializer) {
+  const message = new CapnpEsMessage();
+  const value = message.initRoot(StructClass);
+  StructClass._applyInit(value, initializer);
+  return value;
+}
+
+function packedPowerboxDescriptorInfo(tagId, tagValue, decoded) {
+  const message = new CapnpEsMessage();
+  const descriptor = message.initRoot(PowerboxDescriptor);
+  const tag = descriptor._initTags(1).get(0);
+  tag.id = tagId;
+  if (tagValue !== null) {
+    tag.value = tagValue;
+  }
+
+  return {
+    ok: true,
+    type: "packedPowerboxDescriptor",
+    descriptor: base64UrlEncodeBytes(message.toPackedUint8Array()),
+    decoded,
+  };
+}
+
+function explicitClaimNativeInterface(options = {}) {
+  const nativeInterface = validate.string(options.nativeInterface, "nativeInterface", {
+    minLength: 1,
+    maxLength: 64,
+  });
+  if (!CLAIM_NATIVE_INTERFACES.has(nativeInterface)) {
+    throw new ValidationError(
+      "nativeInterface must be one of unknown, webSession, apiSession, outboundHttpSession");
+  }
+  return nativeInterface;
+}
+
+function inferredClaimNativeInterface(options = {}) {
+  let inferred = "unknown";
+  if (options.apiSession !== undefined || options.apiSessionDescriptor !== undefined) {
+    inferred = "apiSession";
+  }
+  if (options.outboundHttp !== undefined || options.outboundHttpDescriptor !== undefined) {
+    if (inferred !== "unknown") {
+      throw new ValidationError("Powerbox options must specify only one descriptor type");
+    }
+    inferred = "outboundHttpSession";
+  }
+  return inferred;
+}
+
+function claimNativeInterface(options = {}) {
+  const inferred = inferredClaimNativeInterface(options);
+  if (options.nativeInterface === undefined || options.nativeInterface === null) {
+    return inferred;
+  }
+
+  const explicit = explicitClaimNativeInterface(options);
+  if (inferred !== "unknown" && explicit !== inferred) {
+    throw new ValidationError(
+      `nativeInterface ${explicit} conflicts with powerbox descriptor native interface ${inferred}`);
+  }
+  return explicit;
+}
+
+function offerDescriptorNativeInterface(descriptor) {
+  switch (descriptor?.type) {
+    case "apiSession":
+      return "apiSession";
+    case "outboundHttp":
+      return "outboundHttpSession";
+    default:
+      return "unknown";
+  }
+}
+
+function powerboxDescriptorParams(options = {}) {
+  const apiSession = apiSessionDescriptorParams(options);
+  const outboundHttp = outboundHttpDescriptorParams(options);
+  const appInterface = appInterfaceDescriptorParams(options);
+  const packed = packedPowerboxDescriptorParams(options);
+  const descriptorCount =
+    (apiSession.length > 0 ? 1 : 0) +
+    (outboundHttp.length > 0 ? 1 : 0) +
+    (appInterface.length > 0 ? 1 : 0) +
+    (packed.length > 0 ? 1 : 0);
+  if (descriptorCount > 1) {
+    throw new ValidationError("Powerbox options must specify only one descriptor type");
+  }
+  if (apiSession.length > 0) {
+    return apiSession;
+  } else if (outboundHttp.length > 0) {
+    return outboundHttp;
+  } else if (appInterface.length > 0) {
+    return appInterface;
+  } else {
+    return packed;
+  }
+}
+
+function decodePackedPowerboxDescriptor(descriptor) {
+  return new CapnpEsMessage(
+    base64UrlDecodeBytes(validatePackedPowerboxDescriptor(descriptor, "descriptor")))
+    .getRoot(PowerboxDescriptor);
+}
+
+async function sessionActionDescriptor(env, options = {}) {
+  const params = powerboxDescriptorParams(options);
+  const descriptorType = params.find(([name]) => name === "descriptor")?.[1] || "";
+  switch (descriptorType) {
+    case "":
+      return { tags: [] };
+    case "packed": {
+      const packed = params.find(([name]) => name === "packedPowerboxDescriptor")?.[1];
+      return decodePackedPowerboxDescriptor(packed);
+    }
+    case "apiSession":
+      return decodePackedPowerboxDescriptor(
+        (await apiSessionPowerboxDescriptorInfo(env, options)).descriptor);
+    case "outboundHttp":
+      return decodePackedPowerboxDescriptor(
+        (await outboundHttpPowerboxDescriptorInfo(env, options)).descriptor);
+    case "appInterface":
+      return decodePackedPowerboxDescriptor(
+        (await appInterfacePowerboxDescriptorInfo(env, options)).descriptor);
+    default:
+      throw new ValidationError(`unsupported powerbox descriptor type: ${descriptorType}`);
+  }
+}
+
+async function saveCapabilityRecord(env, capability, options = {}) {
+  const rawId = capabilityId(capability);
+  const label = saveLabel(options);
+  const info = await capabilityInfo(env, capability);
+  const saver = capability instanceof Capability ? capability._saver() : null;
+  let saved;
+  if (saver) {
+    saved = await saver.save({ label: { defaultText: label } });
+  } else {
+    const bridge = capabilityBridge(capability);
+    if (typeof bridge.saveAppCapability !== "function") {
+      throw new Error("isolate bridge returned no app-capability saver");
+    }
+    saved = await bridge.saveAppCapability((params) => {
+      initCapnpCapabilityParam(params, capabilityCapnpClient(capability, "saved capability"),
+        "saved capability");
+      params._initLabel().defaultText = label;
+    });
+  }
+  return savedCapabilityRecord({
+    ok: true,
+    type: "savedCapability",
+    id: rawId,
+    token: encodeSavedCapabilityToken(saved.token, info || {}),
+    tokenEncoding: "base64url",
+  });
+}
+
+async function saveCapability(env, capability, options = {}) {
+  return (await saveCapabilityRecord(env, capability, options)).token;
+}
+
+async function dropCapability(env, capability) {
+  const id = capabilityId(capability);
+  if (capability instanceof Capability) {
+    capability._release();
+  } else {
+    forgetCapabilityHandle(id);
+  }
+  return undefined;
+}
+
+async function sessionPowerboxAction(env, request, endpoint, capability, options = {}) {
+  const requiredPermissions = permissionNames(options);
+  const permissions = await requiredPermissionSet(env, requiredPermissions);
+  const sessionId = sessionIdForPowerbox(request);
+  const displayInfo = sessionDisplayInfo(options);
+  const descriptor = endpoint === "tie-to-user"
+    ? null
+    : await sessionActionDescriptor(env, options);
+  const actionCapability = await sessionActionCapability(env, capability);
+  const { bridge, temporaryBridge, temporaryCapability } = actionCapability;
+
+  try {
+    const cap = await wrapSessionActionCapability(actionCapability);
+
+    switch (endpoint) {
+      case "offer":
+        await bridge.offerPowerboxCapability((params) => {
+          params.sessionId = sessionId;
+          initCapnpCapabilityParam(params, cap, "offered capability", 1);
+          initPermissionSetParam(params, permissions);
+          initPowerboxDescriptorParam(params, descriptor);
+          initPowerboxDisplayInfoParam(params, displayInfo);
+        });
+        if (temporaryBridge) bridge.close();
+        temporaryCapability?._release();
+        return { ok: true };
+      case "fulfill-request":
+        await bridge.fulfillPowerboxRequest((params) => {
+          params.sessionId = sessionId;
+          initCapnpCapabilityParam(params, cap, "fulfilled capability", 1);
+          initPermissionSetParam(params, permissions);
+          initPowerboxDescriptorParam(params, descriptor);
+          initPowerboxDisplayInfoParam(params, displayInfo);
+        });
+        if (temporaryBridge) bridge.close();
+        temporaryCapability?._release();
+        return { ok: true };
+      case "tie-to-user": {
+        const tiedPromise = bridge.tieCapabilityToUser((params) => {
+          params.sessionId = sessionId;
+          initCapnpCapabilityParam(params, cap, "tied capability", 1);
+          initPermissionSetParam(params, permissions);
+          initPowerboxDisplayInfoParam(params, displayInfo);
+        });
+        const tiedCap = capnpCapabilityFromResult(tiedPromise, "tied capability");
+        if (!tiedCap) {
+          throw new Error("SessionContext.tieToUser() returned no capability");
+        }
+        const tied = await tiedPromise;
+        const tiedCapability = new Capability(env, tiedCap, {
+          kind: "tied",
+          bridge,
+          saver: tied.saver,
+          nativeInterface: "unknown",
+          browserSessionId: sessionId,
+        });
+        temporaryCapability?._release();
+        return tiedCapability;
+      }
+      default:
+        throw new Error(`unsupported session powerbox action: ${endpoint}`);
+    }
+  } catch (error) {
+    if (temporaryBridge) bridge.close(error);
+    temporaryCapability?._release(error);
+    throw error;
+  }
+}
+
+async function offerCapability(env, request, capability, options = {}) {
+  return sessionPowerboxAction(env, request, "offer", capability, options);
+}
+
+async function fulfillRequestWithCapability(env, request, capability, options = {}) {
+  return sessionPowerboxAction(env, request, "fulfill-request", capability, options);
+}
+
+async function tieCapabilityToUser(env, request, capability, options = {}) {
+  return wrapCapability(
+    env, await sessionPowerboxAction(env, request, "tie-to-user", capability, options));
+}
+
+function apiSessionRequestOptions(options = {}) {
+  if (options.apiSession !== undefined || options.apiSessionDescriptor !== undefined) {
+    return options;
+  }
+
+  return { ...options, apiSession: options };
+}
+
+function outboundHttpRequestOptions(options = {}) {
+  if (options.outboundHttp !== undefined || options.outboundHttpDescriptor !== undefined) {
+    return options;
+  }
+
+  return { ...options, outboundHttp: options };
+}
+
+async function apiSessionPowerboxDescriptor(env, options = {}) {
+  const result = await apiSessionPowerboxDescriptorInfo(env, options);
+  return result.descriptor;
+}
+
+async function apiSessionPowerboxDescriptorInfo(env, options = {}) {
+  const params = new URLSearchParams();
+  for (const [name, value] of apiSessionDescriptorParams(apiSessionRequestOptions(options))) {
+    if (name !== "descriptor") {
+      params.append(name, value);
+    }
+  }
+  const path = `powerbox/api-session-descriptor?${params}`;
+  return cachedPowerboxDescriptorInfo(path, () => {
+    const canonicalUrl = params.get("apiCanonicalUrl");
+    const oauthScopes = params.getAll("apiOauthScope");
+    const tagValue = createCapnpStructValue(IsolateApiSessionPowerboxTag, {
+      canonicalUrl,
+      oauthScopes: oauthScopes.map((name) => ({ name })),
+    });
+    return packedPowerboxDescriptorInfo(API_SESSION_INTERFACE_ID, tagValue, {
+      type: "apiSession",
+      canonicalUrl,
+      oauthScopes,
+    });
+  });
+}
+
+async function outboundHttpPowerboxDescriptor(env, options = {}) {
+  const result = await outboundHttpPowerboxDescriptorInfo(env, options);
+  return result.descriptor;
+}
+
+async function outboundHttpPowerboxDescriptorInfo(env, options = {}) {
+  const params = new URLSearchParams();
+  for (const [name, value] of outboundHttpDescriptorParams(outboundHttpRequestOptions(options))) {
+    if (name !== "descriptor") {
+      params.append(name, value);
+    }
+  }
+  const path = `powerbox/outbound-http-descriptor?${params}`;
+  return cachedPowerboxDescriptorInfo(path, () => {
+    const baseUrl = params.get("outboundHttpBaseUrl");
+    const methodNames = params.getAll("outboundHttpMethod");
+    const tagValue = createCapnpStructValue(OutboundHttpSession.PowerboxTag, {
+      baseUrl,
+      methods: methodNames.map((method) => OUTBOUND_HTTP_METHOD_ENUMS.get(method)),
+    });
+    return packedPowerboxDescriptorInfo(OutboundHttpSession._capnp.typeId, tagValue, {
+      type: "outboundHttp",
+      baseUrl,
+      methods: methodNames,
+    });
+  });
+}
+
+function appInterfaceRequestOptions(options = {}) {
+  if (options.appInterface !== undefined || options.appInterfaceDescriptor !== undefined) {
+    return options;
+  }
+
+  return { ...options, appInterface: options };
+}
+
+async function appInterfacePowerboxDescriptor(env, options = {}) {
+  const result = await appInterfacePowerboxDescriptorInfo(env, options);
+  return result.descriptor;
+}
+
+async function appInterfacePowerboxDescriptorInfo(env, options = {}) {
+  const params = new URLSearchParams();
+  for (const [name, value] of appInterfaceDescriptorParams(appInterfaceRequestOptions(options))) {
+    if (name !== "descriptor") {
+      params.append(name, value);
+    }
+  }
+  const path = `powerbox/app-interface-descriptor?${params}`;
+  return cachedPowerboxDescriptorInfo(path, () => {
+    const rawInterfaceId = params.get("interfaceId");
+    const interfaceId = BigInt(rawInterfaceId);
+    if (interfaceId === 0n) {
+      throw new ValidationError("appInterface.interfaceId must not be zero");
+    }
+    if (interfaceId > 0xffffffffffffffffn) {
+      throw new ValidationError("appInterface.interfaceId must fit in an unsigned 64-bit integer");
+    }
+
+    const decoded = {
+      kind: "appInterface",
+      interfaceId: `0x${interfaceId.toString(16)}`,
+    };
+    const interfaceName = params.get("interfaceName");
+    if (interfaceName !== null) {
+      decoded.interfaceName = interfaceName;
+    }
+    return packedPowerboxDescriptorInfo(interfaceId, null, decoded);
+  });
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
+function routePrefix(options = {}, fallback, name) {
+  const value = options.routePrefix ?? fallback;
+  const prefix = validate.string(value, name, { minLength: 1, maxLength: 1024 });
+  if (!prefix.startsWith("/")) {
+    throw new ValidationError(`${name} must start with '/'`);
+  }
+  if (prefix.length > 1 && prefix.endsWith("/")) {
+    throw new ValidationError(`${name} must not end with '/'`);
+  }
+  if (prefix.includes("://") || prefix.includes("?") || prefix.includes("#")) {
+    throw new ValidationError(`${name} must be a path prefix`);
+  }
+  return prefix;
+}
+
+function normalizePowerboxGrantId(id, name = "grant id") {
+  const value = validate.string(id, name, { minLength: 1, maxLength: 128 });
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
+    throw new ValidationError(`${name} must contain only letters, numbers, '.', '_', and '-'`);
+  }
+  return value;
+}
+
+function normalizePowerboxGrantText(value, fallback, name, maxLength = 256) {
+  let text = value ?? fallback;
+  if (text && typeof text === "object" && typeof text.defaultText === "string") {
+    text = text.defaultText;
+  }
+  return validate.string(text, name, { minLength: 1, maxLength });
+}
+
+function normalizePowerboxGrantSaveLabel(value, fallback, name) {
+  if (value === undefined || value === null) {
+    return { defaultText: fallback };
+  }
+  if (typeof value === "string") {
+    return { defaultText: validate.string(value, name, { minLength: 1, maxLength: 256 }) };
+  }
+  if (value && typeof value === "object" && typeof value.defaultText === "string") {
+    return {
+      defaultText: validate.string(value.defaultText, `${name}.defaultText`, {
+        minLength: 1,
+        maxLength: 256,
+      }),
+    };
+  }
+  throw new ValidationError(`${name} must be a string or { defaultText }`);
+}
+
+function cloneJsonValue(value, name) {
+  if (value === undefined) return undefined;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    throw new ValidationError(`${name} must be JSON-serializable`);
+  }
+}
+
+function publicPowerboxGrantQuery(spec) {
+  if (spec.query !== undefined) {
+    return cloneJsonValue(spec.query, "grant.query");
+  }
+  if (spec.descriptors !== undefined) {
+    if (!Array.isArray(spec.descriptors)) {
+      throw new ValidationError("grant.descriptors must be an array");
+    }
+    return spec.descriptors.map((descriptor, index) =>
+      validatePackedPowerboxDescriptor(descriptor, `grant.descriptors[${index}]`));
+  }
+  if (spec.descriptor !== undefined || spec.powerboxDescriptor !== undefined) {
+    return [validatePackedPowerboxDescriptor(
+      spec.powerboxDescriptor ?? spec.descriptor,
+      spec.powerboxDescriptor === undefined ? "grant.descriptor" : "grant.powerboxDescriptor")];
+  }
+  if (spec.apiSession !== undefined || spec.apiSessionDescriptor !== undefined) {
+    const descriptor = spec.apiSession ?? spec.apiSessionDescriptor;
+    return { apiSession: cloneJsonValue(descriptor, "grant.apiSession") };
+  }
+  if (spec.outboundHttp !== undefined || spec.outboundHttpDescriptor !== undefined) {
+    const descriptor = spec.outboundHttp ?? spec.outboundHttpDescriptor;
+    return { outboundHttp: cloneJsonValue(descriptor, "grant.outboundHttp") };
+  }
+  if (spec.query === null) {
+    return null;
+  }
+  throw new ValidationError("Powerbox grant must specify query, descriptor, descriptors, apiSession, or outboundHttp");
+}
+
+function powerboxGrantClaimDescriptorOptions(spec) {
+  if (spec.claimOptions) {
+    const claimOptions = { ...spec.claimOptions };
+    if (spec.nativeInterface !== undefined && claimOptions.nativeInterface === undefined) {
+      claimOptions.nativeInterface = spec.nativeInterface;
+    }
+    return claimOptions;
+  }
+  if (spec.descriptor !== undefined || spec.powerboxDescriptor !== undefined) {
+    return {
+      descriptor: spec.powerboxDescriptor ?? spec.descriptor,
+      ...(spec.nativeInterface === undefined ? {} : { nativeInterface: spec.nativeInterface }),
+    };
+  }
+  if (spec.apiSession !== undefined || spec.apiSessionDescriptor !== undefined) {
+    return { apiSession: spec.apiSession ?? spec.apiSessionDescriptor };
+  }
+  if (spec.outboundHttp !== undefined || spec.outboundHttpDescriptor !== undefined) {
+    return { outboundHttp: spec.outboundHttp ?? spec.outboundHttpDescriptor };
+  }
+  return {};
+}
+
+function normalizePowerboxGrant(id, spec) {
+  if (!spec || typeof spec !== "object") {
+    throw new ValidationError(`Powerbox grant ${id} must be an object`);
+  }
+
+  const grantId = normalizePowerboxGrantId(spec.id ?? id);
+  const title = normalizePowerboxGrantText(spec.title ?? spec.label, grantId, `grants.${grantId}.title`);
+  const description = spec.description === undefined || spec.description === null
+    ? ""
+    : normalizePowerboxGrantText(spec.description, "", `grants.${grantId}.description`, 1024);
+  const storageKey = validate.storageKey(spec.storageKey ?? spec.key ?? grantId, `grants.${grantId}.storageKey`);
+  const requiredPermissions = permissionNames({
+    requiredPermissions: spec.requiredPermissions ?? spec.claimOptions?.requiredPermissions,
+  });
+  const saveOptions = {
+    ...(spec.save || {}),
+    label: spec.save?.label ?? spec.label ?? title,
+  };
+  requiredSaveLabel(saveOptions, `grants.${grantId}.save.label`);
+
+  return {
+    id: grantId,
+    title,
+    description,
+    storageKey,
+    query: publicPowerboxGrantQuery(spec),
+    saveLabel: normalizePowerboxGrantSaveLabel(
+      saveOptions.label, title, `grants.${grantId}.save.label`),
+    requiredPermissions,
+    saveOptions,
+    claimOptions: {
+      ...powerboxGrantClaimDescriptorOptions(spec),
+      requiredPermissions,
+    },
+    test: spec.test,
+  };
+}
+
+function normalizePowerboxGrantList(options = {}) {
+  const source = options.grants ?? options;
+  const entries = Array.isArray(source)
+    ? source.map((spec) => [spec && spec.id, spec])
+    : Object.entries(source || {});
+  const grants = new Map();
+
+  for (const [id, spec] of entries) {
+    const grant = normalizePowerboxGrant(id, spec);
+    if (grants.has(grant.id)) {
+      throw new ValidationError(`duplicate Powerbox grant id: ${grant.id}`);
+    }
+    grants.set(grant.id, grant);
+  }
+
+  return grants;
+}
+
+function publicPowerboxGrant(grant, connected = false) {
+  return {
+    id: grant.id,
+    title: grant.title,
+    description: grant.description,
+    storageKey: grant.storageKey,
+    query: grant.query,
+    saveLabel: grant.saveLabel,
+    requiredPermissions: grant.requiredPermissions,
+    connected,
+  };
+}
+
+async function powerboxGrantStatus(env, grant) {
+  const token = await storage(env).get(grant.storageKey);
+  return {
+    ok: true,
+    id: grant.id,
+    title: grant.title,
+    description: grant.description,
+    storageKey: grant.storageKey,
+    connected: Boolean(token),
+  };
+}
+
+async function powerboxGrantConfig(env, grants, prefix = POWERBOX_GRANTS_PREFIX) {
+  const publicGrants = [];
+  for (const grant of grants.values()) {
+    const status = await powerboxGrantStatus(env, grant);
+    publicGrants.push(publicPowerboxGrant(grant, status.connected));
+  }
+  return {
+    ok: true,
+    routePrefix: prefix,
+    grants: publicGrants,
+  };
+}
+
+function powerboxGrantErrorResponse(error, status = 400) {
+  return Response.json({
+    ok: false,
+    error: String(error?.message || error),
+  }, { status });
+}
+
+function normalizePowerboxFulfillmentOptions(options = {}) {
+  if (!options || typeof options !== "object") {
+    throw new ValidationError("Powerbox fulfillment options must be an object");
+  }
+  if (typeof options.capability !== "function") {
+    throw new ValidationError("Powerbox fulfillment capability must be a function");
+  }
+  if (!options.fulfill || typeof options.fulfill !== "object") {
+    throw new ValidationError("Powerbox fulfillment fulfill options must be an object");
+  }
+
+  return {
+    title: normalizePowerboxGrantText(
+      options.title, undefined, "Powerbox fulfillment title"),
+    description: options.description === undefined || options.description === null
+      ? ""
+      : normalizePowerboxGrantText(
+        options.description, "", "Powerbox fulfillment description", 1024),
+    buttonLabel: normalizePowerboxGrantText(
+      options.buttonLabel, "Use this provider", "Powerbox fulfillment buttonLabel"),
+    capability: options.capability,
+    fulfill: options.fulfill,
+  };
+}
+
+function powerboxFulfillmentPage(options, prefix) {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>${escapeHtml(options.title)}</title>
+    <style>
+      body {
+        color: #1f2933;
+        font: 15px/1.5 system-ui, sans-serif;
+        margin: 2rem;
+        max-width: 42rem;
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin: 0 0 0.75rem;
+      }
+      p {
+        color: #52616f;
+        margin: 0 0 1.25rem;
+      }
+      button {
+        background: #174ea6;
+        border: 1px solid #174ea6;
+        color: white;
+        cursor: pointer;
+        font: inherit;
+        padding: 0.5rem 0.8rem;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+      pre {
+        background: #f5f7fa;
+        border: 1px solid #d8e0e8;
+        margin-top: 1.25rem;
+        overflow: auto;
+        padding: 0.75rem;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(options.title)}</h1>
+    ${options.description ? `<p>${escapeHtml(options.description)}</p>` : ""}
+    <button id="fulfill" type="button">${escapeHtml(options.buttonLabel)}</button>
+    <pre id="result"></pre>
+    <script>
+      const button = document.querySelector("#fulfill");
+      const result = document.querySelector("#result");
+      async function readBody(response) {
+        const text = await response.text();
+        try {
+          return JSON.parse(text);
+        } catch (error) {
+          return { ok: false, error: text || "HTTP " + response.status };
+        }
+      }
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        result.textContent = "fulfilling";
+        try {
+          const response = await fetch(${JSON.stringify(`${prefix}/fulfill`)}, {
+            method: "POST",
+          });
+          result.textContent = JSON.stringify(await readBody(response), null, 2);
+        } catch (error) {
+          result.textContent = (error.message || String(error)) + "\\n" + (error.stack || "");
+          button.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>`;
+}
+
+function normalizePowerboxFulfillmentCapability(env, value) {
+  const raw = value && typeof value === "object" &&
+      typeof value[CAPNP_CLIENT_SYMBOL] !== "function" && value.capability
+    ? value.capability
+    : value;
+  if (namedWorkerCapnpExports.has(raw)) {
+    return {
+      capability: raw,
+      handle: { ok: true, type: "capabilityTransferred" },
+    };
+  }
+
+  const capability = wrapCapability(env, raw);
+  if (capability instanceof Capability ||
+      (capability && typeof capability === "object" &&
+        (capability.type === "capability" || capability.type === "claimedCapability"))) {
+    const id = capabilityId(capability, "Powerbox fulfillment capability");
+    return { capability, handle: { ok: true, type: "capability", id } };
+  }
+
+  capabilityCapnpClient(capability, "Powerbox fulfillment capability");
+  return {
+    capability,
+    handle: { ok: true, type: "capabilityTransferred" },
+  };
+}
+
+export function powerboxFulfillment(request, env, options = {}) {
+  const prefix = routePrefix(
+    options, POWERBOX_FULFILLMENT_PREFIX, "Powerbox fulfillment routePrefix");
+  const config = normalizePowerboxFulfillmentOptions(options);
+
+  async function fulfill(routeRequest = request) {
+    const produced = await config.capability();
+    const { capability, handle } = normalizePowerboxFulfillmentCapability(env, produced);
+    const fulfilled = await fulfillRequestWithCapability(
+      env, routeRequest, capability, config.fulfill);
+    return {
+      ok: true,
+      fulfill: fulfilled,
+      capability: handle,
+    };
+  }
+
+  return {
+    fulfill,
+    async serve(routeRequest = request) {
+      const url = new URL(routeRequest.url);
+      if (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) {
+        return null;
+      }
+
+      try {
+        if ((url.pathname === prefix || url.pathname === `${prefix}/`) &&
+            routeRequest.method === "GET") {
+          return new Response(powerboxFulfillmentPage(config, prefix), {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+
+        if (url.pathname === `${prefix}/fulfill` && routeRequest.method === "POST") {
+          return Response.json(await fulfill(routeRequest));
+        }
+
+        return new Response("Not Found", { status: 404 });
+      } catch (error) {
+        return powerboxGrantErrorResponse(error);
+      }
+    },
+  };
+}
+
+function powerboxGrantClientScript(prefix) {
+  return `import {
+  inspectPowerboxQuery,
+  requestPowerbox,
+} from "/__sandstorm/native-capnp/client.js";
+
+const ROUTE_PREFIX = ${JSON.stringify(prefix)};
+
+async function readJsonResponse(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return { ok: false, error: text || "HTTP " + response.status };
+  }
+}
+
+async function jsonFetch(path, options = {}) {
+  const response = await fetch(new URL(path, window.location.href), options);
+  const body = await readJsonResponse(response);
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || "Powerbox grant request failed with " + response.status);
+  }
+  return body;
+}
+
+export async function grantConfig() {
+  return jsonFetch(ROUTE_PREFIX + "/config");
+}
+
+export async function grantStatus(id = undefined) {
+  const suffix = id === undefined ? "" : "?id=" + encodeURIComponent(id);
+  return jsonFetch(ROUTE_PREFIX + "/status" + suffix);
+}
+
+async function grantById(id) {
+  const config = await grantConfig();
+  const grant = config.grants.find((candidate) => candidate.id === id);
+  if (!grant) {
+    throw new Error("Unknown Powerbox grant: " + id);
+  }
+  return grant;
+}
+
+export async function requestGrant(id) {
+  const grant = await grantById(id);
+  let query = null;
+  if (grant.query !== null && grant.query !== undefined) {
+    const inspection = await inspectPowerboxQuery(grant.query);
+    query = inspection.descriptors.map((descriptor) => descriptor.descriptor);
+  }
+  const requested = await requestPowerbox(query, { saveLabel: grant.saveLabel });
+  return jsonFetch(ROUTE_PREFIX + "/grants/" + encodeURIComponent(id) + "/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json; charset=utf-8" },
+    body: JSON.stringify(requested),
+  });
+}
+
+export async function revokeGrant(id) {
+  return jsonFetch(ROUTE_PREFIX + "/grants/" + encodeURIComponent(id) + "/revoke", {
+    method: "POST",
+  });
+}
+
+function renderGrant(element, state) {
+  element.textContent = "";
+  const root = document.createElement("span");
+  root.className = "sandstorm-powerbox-grant";
+
+  const status = document.createElement("span");
+  status.className = "sandstorm-powerbox-grant-status";
+  status.textContent = state.connected ? "connected" : "not connected";
+  root.append(status);
+
+  const connect = document.createElement("button");
+  connect.type = "button";
+  connect.textContent = state.connected ? "Reconnect" : "Connect";
+  connect.addEventListener("click", async () => {
+    connect.disabled = true;
+    revoke.disabled = true;
+    try {
+      const result = await requestGrant(state.id);
+      renderGrant(element, result.status);
+      element.dispatchEvent(new CustomEvent("sandstorm-powerbox-grant", { detail: result }));
+    } catch (error) {
+      renderError(element, state, error);
+    }
+  });
+  root.append(connect);
+
+  const revoke = document.createElement("button");
+  revoke.type = "button";
+  revoke.textContent = "Disconnect";
+  revoke.disabled = !state.connected;
+  revoke.addEventListener("click", async () => {
+    connect.disabled = true;
+    revoke.disabled = true;
+    try {
+      const result = await revokeGrant(state.id);
+      renderGrant(element, result.status);
+      element.dispatchEvent(new CustomEvent("sandstorm-powerbox-revoke", { detail: result }));
+    } catch (error) {
+      renderError(element, state, error);
+    }
+  });
+  root.append(revoke);
+
+  element.append(root);
+}
+
+function renderError(element, state, error) {
+  renderGrant(element, state);
+  const message = document.createElement("span");
+  message.className = "sandstorm-powerbox-grant-error";
+  message.textContent = error.message || String(error);
+  element.append(message);
+}
+
+class SandstormPowerboxGrantElement extends HTMLElement {
+  connectedCallback() {
+    this.refresh();
+  }
+
+  async refresh() {
+    const id = this.getAttribute("grant") || this.getAttribute("grant-id");
+    if (!id) {
+      this.textContent = "missing grant";
+      return;
+    }
+    try {
+      const result = await grantStatus(id);
+      renderGrant(this, result.status);
+    } catch (error) {
+      this.textContent = error.message || String(error);
+    }
+  }
+}
+
+if (typeof customElements !== "undefined" &&
+    !customElements.get("sandstorm-powerbox-grant")) {
+  customElements.define("sandstorm-powerbox-grant", SandstormPowerboxGrantElement);
+}
+`;
+}
+
+function powerboxGrantPage(grants, prefix) {
+  const rows = Array.from(grants.values()).map((grant) => `
+        <section>
+          <div>
+            <h2>${escapeHtml(grant.title)}</h2>
+            ${grant.description ? `<p>${escapeHtml(grant.description)}</p>` : ""}
+          </div>
+          <sandstorm-powerbox-grant grant="${escapeHtml(grant.id)}"></sandstorm-powerbox-grant>
+        </section>`).join("");
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Powerbox Grants</title>
+    <style>
+      body {
+        color: #1f2933;
+        font: 15px/1.5 system-ui, sans-serif;
+        margin: 2rem;
+        max-width: 52rem;
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin: 0 0 1.25rem;
+      }
+      section {
+        align-items: center;
+        border-top: 1px solid #d8e0e8;
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: minmax(0, 1fr) auto;
+        padding: 1rem 0;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 0;
+      }
+      p {
+        color: #52616f;
+        margin: 0.25rem 0 0;
+      }
+      .sandstorm-powerbox-grant {
+        align-items: center;
+        display: inline-flex;
+        gap: 0.5rem;
+      }
+      .sandstorm-powerbox-grant-status {
+        color: #52616f;
+        min-width: 7rem;
+      }
+      .sandstorm-powerbox-grant-error {
+        color: #8a1f11;
+        display: block;
+        margin-top: 0.35rem;
+      }
+      button {
+        background: #174ea6;
+        border: 1px solid #174ea6;
+        color: white;
+        cursor: pointer;
+        font: inherit;
+        padding: 0.45rem 0.7rem;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+      button + button {
+        background: white;
+        color: #174ea6;
+      }
+      @media (max-width: 640px) {
+        body {
+          margin: 1rem;
+        }
+        section {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+    <script type="module" src="${escapeHtml(prefix)}/client.js"></script>
+  </head>
+  <body>
+    <h1>Powerbox Grants</h1>
+    <main>${rows}</main>
+  </body>
+</html>`;
+}
+
+function powerboxGrantFromRoute(grants, encodedId) {
+  const id = normalizePowerboxGrantId(decodeURIComponent(encodedId || ""), "grant id");
+  const grant = grants.get(id);
+  if (!grant) {
+    throw new ValidationError(`unknown Powerbox grant: ${id}`);
+  }
+  return grant;
+}
+
+export function powerboxGrants(request, env, options = {}) {
+  const prefix = routePrefix(options, POWERBOX_GRANTS_PREFIX, "Powerbox grants routePrefix");
+  const grants = normalizePowerboxGrantList(options);
+  const store = storage(env);
+
+  async function status(id = undefined) {
+    if (id !== undefined && id !== null) {
+      const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
+      return {
+        ok: true,
+        status: await powerboxGrantStatus(env, grant),
+      };
+    }
+
+    const statuses = [];
+    for (const grant of grants.values()) {
+      statuses.push(await powerboxGrantStatus(env, grant));
+    }
+    return {
+      ok: true,
+      statuses,
+    };
+  }
+
+  async function claim(id, result) {
+    const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
+    const cap = await powerbox(request, env).claim(result, grant.claimOptions);
+    let token;
+    try {
+      token = await cap.save(grant.saveOptions);
+      await store.put(grant.storageKey, token);
+      let testResult;
+      if (grant.test !== undefined) {
+        if (typeof grant.test !== "function") {
+          throw new ValidationError(`Powerbox grant ${grant.id} test must be a function`);
+        }
+        testResult = await grant.test(cap);
+      }
+      return {
+        ok: true,
+        id: grant.id,
+        storageKey: grant.storageKey,
+        status: await powerboxGrantStatus(env, grant),
+        test: testResult,
+      };
+    } catch (error) {
+      if (token) {
+        await revokeCapabilityToken(env, token).catch(() => {});
+        await store.delete(grant.storageKey).catch(() => {});
+      }
+      throw error;
+    } finally {
+      await cap.drop();
+    }
+  }
+
+  async function revoke(id) {
+    const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
+    const token = await store.get(grant.storageKey);
+    if (!token) {
+      return {
+        ok: true,
+        id: grant.id,
+        storageKey: grant.storageKey,
+        revoked: false,
+        deleted: await store.delete(grant.storageKey),
+        status: await powerboxGrantStatus(env, grant),
+      };
+    }
+
+    const revoked = await revokeCapabilityToken(env, token);
+    const deleted = await store.delete(grant.storageKey);
+    return {
+      ok: true,
+      id: grant.id,
+      storageKey: grant.storageKey,
+      revoked: true,
+      revoke: revoked,
+      deleted,
+      status: await powerboxGrantStatus(env, grant),
+    };
+  }
+
+  return {
+    config: () => powerboxGrantConfig(env, grants, prefix),
+    status,
+    claim,
+    revoke,
+    async use(id, fn) {
+      const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
+      const token = await store.get(grant.storageKey);
+      if (!token) {
+        throw new Error(`missing saved token for Powerbox grant: ${grant.id}`);
+      }
+      return useCapabilityToken(env, token, fn);
+    },
+    token(id) {
+      const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
+      return store.get(grant.storageKey);
+    },
+    async serve(routeRequest = request) {
+      const url = new URL(routeRequest.url);
+      if (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) {
+        return null;
+      }
+
+      try {
+        if ((url.pathname === prefix || url.pathname === `${prefix}/`) &&
+            routeRequest.method === "GET") {
+          return new Response(powerboxGrantPage(grants, prefix), {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          });
+        }
+
+        if (url.pathname === `${prefix}/client.js` && routeRequest.method === "GET") {
+          return new Response(powerboxGrantClientScript(prefix), {
+            headers: { "content-type": "text/javascript; charset=utf-8" },
+          });
+        }
+
+        if (url.pathname === `${prefix}/config` && routeRequest.method === "GET") {
+          return Response.json(await powerboxGrantConfig(env, grants, prefix));
+        }
+
+        if (url.pathname === `${prefix}/status` && routeRequest.method === "GET") {
+          return Response.json(await status(url.searchParams.get("id") ?? undefined));
+        }
+
+        const match = url.pathname.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/grants/([^/]+)/(claim|revoke)$`));
+        if (match && routeRequest.method === "POST") {
+          const grant = powerboxGrantFromRoute(grants, match[1]);
+          if (match[2] === "claim") {
+            return Response.json(await claim(grant.id, await routeRequest.json()));
+          }
+          return Response.json(await revoke(grant.id));
+        }
+
+        return new Response("Not Found", { status: 404 });
+      } catch (error) {
+        return powerboxGrantErrorResponse(error);
+      }
+    },
+  };
+}
+
+function webSessionPathPrefix(options = {}) {
+  const value = options.pathPrefix ?? "";
+  const pathPrefix = validate.string(value, "pathPrefix", { maxLength: 1024 });
+  if (pathPrefix.length > 0 && !pathPrefix.startsWith("/")) {
+    throw new ValidationError("pathPrefix must be empty or start with '/'");
+  }
+  if (pathPrefix.includes("://")) {
+    throw new ValidationError("pathPrefix must be path-relative");
+  }
+  if (pathPrefix.includes("?") || pathPrefix.includes("#")) {
+    throw new ValidationError("pathPrefix must not contain query strings or fragments");
+  }
+  for (const segment of pathPrefix.split("/")) {
+    if (segment === "." || segment === "..") {
+      throw new ValidationError("pathPrefix must not contain dot segments");
+    }
+  }
+  return pathPrefix;
+}
+
+function browserHandoffSessionId(capability, options = {}) {
+  let sessionId = "";
+  if (typeof Request === "function" && options.request instanceof Request) {
+    sessionId = header(options.request, "x-sandstorm-session-id");
+  }
+  if (!sessionId && typeof options.sessionId === "string") {
+    sessionId = options.sessionId;
+  }
+  if (!sessionId && capability instanceof Capability) {
+    sessionId = capability._browserSessionId();
+  }
+  if (!sessionId) {
+    throw new Error("browser handoff requires a live Sandstorm WebSession");
+  }
+  return validate.string(sessionId, "browser handoff sessionId", {
+    minLength: 1,
+    maxLength: 4096,
+  });
+}
+
+async function browserHandoffCapability(env, capability, options = {}) {
+  const info = await capabilityInfo(env, capability);
+  const bridge = capabilityBridge(capability);
+  const sessionId = browserHandoffSessionId(capability, options);
+  if (typeof bridge.createBrowserHandoff !== "function") {
+    throw new Error("capability bridge returned no browser handoff creator");
+  }
+  const interfaceId = options.interfaceId ?? info?.interfaceId;
+  if (interfaceId === undefined || interfaceId === null || interfaceId === "") {
+    throw new Error(
+      "browser handoff requires typed Cap'n Proto interface metadata");
+  }
+  const normalizedInterfaceId = typeof interfaceId === "bigint"
+    ? interfaceId
+    : BigInt(interfaceId);
+  const interfaceName = options.interfaceName ?? info?.interfaceName ?? "";
+
+  const stored = await bridge.createBrowserHandoff((params) => {
+    initCapnpCapabilityParam(params, capabilityCapnpClient(capability, "browser handoff capability"),
+      "browser handoff capability");
+    params.sessionId = sessionId;
+    params.interfaceId = normalizedInterfaceId;
+    params.interfaceName = interfaceName;
+  });
+  if (!stored || typeof stored.id !== "string" || stored.id.length === 0) {
+    throw new Error("isolate bridge returned an invalid browser handoff id");
+  }
+
+  return {
+    ok: true,
+    type: "capability",
+    id: stored.id,
+    kind: "receiverHosted",
+    residence: "browserHandoff",
+    nativeInterface: info?.nativeInterface || options.nativeInterface || "unknown",
+    interfaceId: `0x${normalizedInterfaceId.toString(16)}`,
+    interfaceName,
+  };
+}
+
+function forgetCapabilityHandle(capabilityId) {
+  capabilityMetadata.delete(capabilityId);
+}
+
+function capabilitySupportsWebFetch(nativeInterface) {
+  return nativeInterface !== "outboundHttpSession";
+}
+
+function capabilitySupportsOutboundHttpFetch(nativeInterface) {
+  return nativeInterface === "unknown" || nativeInterface === "outboundHttpSession";
+}
+
+function cacheCapabilityMetadata(id, metadata = {}) {
+  const nativeInterface = metadata.nativeInterface || "unknown";
+  capabilityMetadata.set(id, {
+    ok: true,
+    type: "capabilityInfo",
+    id,
+    kind: metadata.kind || "unknown",
+    residence: metadata.residence || "imported",
+    nativeInterface,
+    persistent: metadata.persistent !== undefined ? Boolean(metadata.persistent) : true,
+    supportsWebFetch: metadata.supportsWebFetch !== undefined
+      ? Boolean(metadata.supportsWebFetch)
+      : capabilitySupportsWebFetch(nativeInterface),
+    supportsOutboundHttpFetch: metadata.supportsOutboundHttpFetch !== undefined
+      ? Boolean(metadata.supportsOutboundHttpFetch)
+      : capabilitySupportsOutboundHttpFetch(nativeInterface),
+    hasNativeCapability: metadata.hasNativeCapability !== undefined
+      ? Boolean(metadata.hasNativeCapability)
+      : true,
+    liveForwardable: metadata.liveForwardable !== undefined
+      ? Boolean(metadata.liveForwardable)
+      : true,
+    interfaceId: metadata.interfaceId,
+    interfaceName: metadata.interfaceName,
+  });
+}
+
+function savedCapabilityToken(value, name = "token") {
+  if (typeof value === "string") {
+    const token = validate.string(value, name, { minLength: 1, maxLength: 4096 });
+    if (!/^[A-Za-z0-9_-]+$/.test(token)) {
+      throw new ValidationError(`${name} does not look like a saved capability token`);
+    }
+    return token;
+  }
+
+  throw new ValidationError(`${name} must be a saved capability token string`);
+}
+
+function savedCapabilityEnvelopeType(info = {}) {
+  switch (info.nativeInterface) {
+    case "webSession":
+      return "web";
+    case "apiSession":
+      return "api";
+    case "outboundHttpSession":
+      return "outboundHttp";
+    default:
+      return null;
+  }
+}
+
+function encodeSavedCapabilityToken(tokenData, info = {}) {
+  const sturdyRef = nativeCapnpSavedTokenText(tokenData);
+  const type = savedCapabilityEnvelopeType(info);
+  if (!type) {
+    return sturdyRef;
+  }
+
+  const payload = [
+    "isolate-saved-capability-v2",
+    type,
+    sturdyRef,
+  ].join("\n");
+  return base64UrlEncodeText(payload);
+}
+
+function savedCapabilityEnvelopeMetadata(token) {
+  const fallback = {
+    nativeInterface: "unknown",
+  };
+
+  const text = base64UrlDecodeText(token, "saved capability token");
+  const lines = text.split("\n");
+  if (lines[0] !== "isolate-saved-capability-v2") {
+    return fallback;
+  }
+  if (lines.length !== 3) {
+    throw new ValidationError("saved capability token envelope is incomplete");
+  }
+
+  let nativeInterface;
+  switch (lines[1]) {
+    case "web":
+      nativeInterface = "webSession";
+      break;
+    case "api":
+      nativeInterface = "apiSession";
+      break;
+    case "outboundHttp":
+      nativeInterface = "outboundHttpSession";
+      break;
+    case "unknown":
+      nativeInterface = "unknown";
+      break;
+    default:
+      throw new ValidationError("saved capability token envelope has unknown capability type");
+  }
+
+  return {
+    nativeInterface,
+  };
+}
+
+function savedCapabilityRecord(value, name = "saved capability") {
+  if (!value || typeof value !== "object" || value.type !== "savedCapability") {
+    failValidation(name, "a saved capability record", value);
+  }
+
+  return {
+    ok: true,
+    type: "savedCapability",
+    id: validate.string(value.id, `${name}.id`, { minLength: 1, maxLength: 4096 }),
+    token: savedCapabilityToken(value.token, `${name}.token`),
+    tokenEncoding: validate.string(value.tokenEncoding || "base64url", `${name}.tokenEncoding`, {
+      minLength: 1,
+      maxLength: 32,
+    }),
+  };
+}
+
+const CAPABILITY_FETCH_HEADER_NAMES = new Set([
+  "if-match",
+  "if-none-match",
+  "oc-total-length",
+  "oc-chunk-size",
+  "x-oc-mtime",
+  "oc-fileid",
+  "oc-chunked",
+  "oc-checksum",
+  "oc-chunk-offset",
+  "oc-lazyops",
+  "x-requested-with",
+  "x-csrftoken",
+  "x-csrf-token",
+]);
+
+const CAPABILITY_FETCH_HEADER_PREFIXES = [
+  "x-sandstorm-app-",
+  "x-hgarg-",
+  "x-phabricator-",
+];
+
+const MAX_CAPABILITY_FETCH_BODY_BYTES = 64 * 1024 * 1024;
+
+function shouldForwardCapabilityFetchHeader(name) {
+  name = String(name).toLowerCase();
+  return CAPABILITY_FETCH_HEADER_NAMES.has(name) ||
+    CAPABILITY_FETCH_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
+function isValidCapabilityFetchHeaderName(name) {
+  name = String(name);
+  if (name.length === 0 || name.length > 256) return false;
+  return /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name);
+}
+
+function isValidCapabilityFetchHeaderValue(value) {
+  value = String(value);
+  if (value.length > 8192) return false;
+  for (let i = 0; i < value.length; ++i) {
+    const code = value.charCodeAt(i);
+    if ((code >= 0 && code < 0x20 && code !== 0x09) || code === 0x7f) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function capnpDataBytes(value) {
+  let bytes;
+  if (value instanceof Uint8Array) {
+    bytes = value;
+  } else if (value instanceof ArrayBuffer) {
+    bytes = new Uint8Array(value);
+  } else if (ArrayBuffer.isView(value)) {
+    bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  } else if (value && typeof value.toUint8Array === "function") {
+    bytes = value.toUint8Array();
+  } else {
+    bytes = CapnpEsDataBytes(value);
+  }
+  return new Uint8Array(bytes);
+}
+
+async function requestBodyBytes(request) {
+  if (request.method === "GET" || request.method === "HEAD" || request.body === null) {
+    return new Uint8Array();
+  }
+
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength > MAX_CAPABILITY_FETCH_BODY_BYTES) {
+    throw new ValidationError(
+      `claimed capability fetch request body exceeds maximum allowed size`);
+  }
+  return bytes;
+}
+
+function parseFetchETag(input) {
+  input = String(input).trim();
+  const result = { value: "", weak: false };
+  if (input.startsWith("W/")) {
+    input = input.slice(2);
+    result.weak = true;
+  }
+
+  if (!input.startsWith("\"") || !input.endsWith("\"") || input.length <= 1) {
+    throw new ValidationError(`claimed capability fetch ETag precondition is invalid`);
+  }
+
+  let escaped = false;
+  let value = "";
+  for (const c of input.slice(1, -1)) {
+    if (escaped) {
+      escaped = false;
+    } else if (c === "\"") {
+      throw new ValidationError(`claimed capability fetch ETag precondition is invalid`);
+    } else if (c === "\\") {
+      escaped = true;
+      continue;
+    }
+    value += c;
+  }
+  result.value = value;
+  return result;
+}
+
+function parseFetchETagList(value) {
+  const parts = String(value).split(",");
+  if (parts.length === 0) {
+    throw new ValidationError(`claimed capability fetch ETag precondition is empty`);
+  }
+  return parts.map(parseFetchETag);
+}
+
+function formatWebSessionETag(eTag) {
+  return `${eTag.weak ? "W/" : ""}"${eTag.value}"`;
+}
+
+function escapeHttpQuotedString(value) {
+  return String(value).replace(/[\\"]/g, "\\$&").replace(/[\r\n]/g, "_");
+}
+
+function appendValidatedHeader(headers, name, value) {
+  if (!isValidCapabilityFetchHeaderName(name) || !isValidCapabilityFetchHeaderValue(value)) {
+    return;
+  }
+  headers.append(name, value);
+}
+
+function webSessionSuccessStatus(code) {
+  switch (code) {
+    case WebSession.Response.SuccessCode.OK: return 200;
+    case WebSession.Response.SuccessCode.CREATED: return 201;
+    case WebSession.Response.SuccessCode.ACCEPTED: return 202;
+    case WebSession.Response.SuccessCode.NO_CONTENT: return 204;
+    case WebSession.Response.SuccessCode.PARTIAL_CONTENT: return 206;
+    case WebSession.Response.SuccessCode.MULTI_STATUS: return 207;
+    case WebSession.Response.SuccessCode.NOT_MODIFIED: return 304;
+    default: return 200;
+  }
+}
+
+function webSessionClientErrorStatus(code) {
+  switch (code) {
+    case WebSession.Response.ClientErrorCode.BAD_REQUEST: return 400;
+    case WebSession.Response.ClientErrorCode.FORBIDDEN: return 403;
+    case WebSession.Response.ClientErrorCode.NOT_FOUND: return 404;
+    case WebSession.Response.ClientErrorCode.METHOD_NOT_ALLOWED: return 405;
+    case WebSession.Response.ClientErrorCode.NOT_ACCEPTABLE: return 406;
+    case WebSession.Response.ClientErrorCode.CONFLICT: return 409;
+    case WebSession.Response.ClientErrorCode.GONE: return 410;
+    case WebSession.Response.ClientErrorCode.PRECONDITION_FAILED: return 412;
+    case WebSession.Response.ClientErrorCode.REQUEST_ENTITY_TOO_LARGE: return 413;
+    case WebSession.Response.ClientErrorCode.REQUEST_URI_TOO_LONG: return 414;
+    case WebSession.Response.ClientErrorCode.UNSUPPORTED_MEDIA_TYPE: return 415;
+    case WebSession.Response.ClientErrorCode.IM_ATEAPOT: return 418;
+    case WebSession.Response.ClientErrorCode.UNPROCESSABLE_ENTITY: return 422;
+    default: return 400;
+  }
+}
+
+function createCapabilityByteStream() {
+  let controller;
+  let finished = false;
+  let finishError;
+  let expectedBytes;
+  let receivedBytes = 0;
+  let resolveClosed;
+  const closed = new Promise((resolve) => {
+    resolveClosed = resolve;
+  });
+
+  const readable = new ReadableStream({
+    start(streamController) {
+      controller = streamController;
+    },
+
+    cancel(reason) {
+      const error = reason instanceof Error ? reason :
+        new Error("capability fetch response body was canceled");
+      finish(error);
+    },
+  });
+
+  function finish(error) {
+    if (finished) return;
+    finished = true;
+    finishError = error;
+    try {
+      if (error === undefined) {
+        controller.close();
+      } else {
+        controller.error(error);
+      }
+    } catch (_) {}
+    resolveClosed(error);
+  }
+
+  function fail(error) {
+    finish(error);
+    throw error;
+  }
+
+  const server = new ByteStream.Server({
+    async write(params) {
+      if (finished) {
+        if (finishError) throw finishError;
+        throw new Error("capability fetch response stream is closed");
+      }
+
+      const bytes = capnpDataBytes(params.data);
+      if (receivedBytes + bytes.byteLength > MAX_CAPABILITY_FETCH_BODY_BYTES) {
+        fail(new ValidationError(
+          `claimed capability fetch response body exceeds maximum allowed size`));
+      }
+      receivedBytes += bytes.byteLength;
+      if (expectedBytes !== undefined && receivedBytes > expectedBytes) {
+        fail(new ValidationError(
+          `claimed capability fetch response body exceeded the expected size`));
+      }
+
+      try {
+        controller.enqueue(bytes);
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
+      return {};
+    },
+
+    async done() {
+      if (expectedBytes !== undefined && receivedBytes !== expectedBytes) {
+        fail(new ValidationError(
+          `claimed capability fetch response body did not match the expected size`));
+      }
+      finish();
+      return {};
+    },
+
+    async expectSize(params) {
+      const size = typeof params.size === "bigint" ? params.size : BigInt(params.size || 0);
+      const remaining = BigInt(MAX_CAPABILITY_FETCH_BODY_BYTES - receivedBytes);
+      if (size > remaining) {
+        fail(new ValidationError(
+          `claimed capability fetch response body exceeds maximum allowed size`));
+      }
+      const nextExpectedBytes = receivedBytes + Number(size);
+      if (expectedBytes !== undefined && expectedBytes !== nextExpectedBytes) {
+        fail(new ValidationError(
+          `claimed capability fetch response body expected size changed`));
+      }
+      expectedBytes = nextExpectedBytes;
+      return {};
+    },
+  });
+
+  return {
+    client: server.client(),
+    readable,
+    closed,
+    finish,
+  };
+}
+
+function webSessionResponseHeaders(webResponse) {
+  const headers = new Headers();
+  for (const header of webResponse.additionalHeaders) {
+    appendValidatedHeader(headers, header.name, header.value);
+  }
+  return headers;
+}
+
+function addWebSessionContentHeaders(headers, content) {
+  headers.set("content-type", content.mimeType || "application/octet-stream");
+  if (content.encoding) headers.append("content-encoding", content.encoding);
+  if (content.language) headers.append("content-language", content.language);
+  if (content._hasETag()) headers.append("etag", formatWebSessionETag(content.eTag));
+  if (content.disposition._isDownload) {
+    headers.append("content-disposition",
+      `attachment; filename="${escapeHttpQuotedString(content.disposition.download)}"`);
+  }
+}
+
+function webSessionErrorResponse(error, status) {
+  const headers = new Headers();
+  if (typeof error._hasNonHtmlBody === "function" && error._hasNonHtmlBody()) {
+    const body = error.nonHtmlBody;
+    headers.set("content-type", body.mimeType || "application/octet-stream");
+    return new Response(capnpDataBytes(body.data), { status, statusText: "Error", headers });
+  } else if (error.descriptionHtml) {
+    headers.set("content-type", "text/html; charset=utf-8");
+    return new Response(error.descriptionHtml, { status, statusText: "Error", headers });
+  } else {
+    return new Response(null, { status, statusText: "Error", headers });
+  }
+}
+
+function responseFromWebSession(webResponse, bodyStream, fetchContext) {
+  switch (webResponse.which()) {
+    case WebSession.Response.CONTENT: {
+      const content = webResponse.content;
+      const headers = webSessionResponseHeaders(webResponse);
+      addWebSessionContentHeaders(headers, content);
+      const status = webSessionSuccessStatus(content.statusCode);
+      if (content.body._isStream) {
+        return {
+          response: new Response(bodyStream.readable, { status, statusText: "OK", headers }),
+          streaming: true,
+        };
+      }
+
+      bodyStream.finish();
+      const body = status === 204 || status === 304 ? null : capnpDataBytes(content.body.bytes);
+      return {
+        response: new Response(body, { status, statusText: "OK", headers }),
+        streaming: false,
+      };
+    }
+
+    case WebSession.Response.NO_CONTENT: {
+      bodyStream.finish();
+      const noContent = webResponse.noContent;
+      const headers = webSessionResponseHeaders(webResponse);
+      if (noContent._hasETag()) headers.append("etag", formatWebSessionETag(noContent.eTag));
+      return {
+        response: new Response(null, {
+          status: noContent.shouldResetForm ? 205 : 204,
+          statusText: "No Content",
+          headers,
+        }),
+        streaming: false,
+      };
+    }
+
+    case WebSession.Response.PRECONDITION_FAILED: {
+      bodyStream.finish();
+      const preconditionFailed = webResponse.preconditionFailed;
+      const headers = webSessionResponseHeaders(webResponse);
+      if (preconditionFailed._hasMatchingETag()) {
+        headers.append("etag", formatWebSessionETag(preconditionFailed.matchingETag));
+      }
+      return {
+        response: new Response(null, {
+          status: fetchContext.sendNotModifiedForPrecondition ? 304 : 412,
+          statusText: fetchContext.sendNotModifiedForPrecondition
+            ? "Not Modified"
+            : "Precondition Failed",
+          headers,
+        }),
+        streaming: false,
+      };
+    }
+
+    case WebSession.Response.REDIRECT: {
+      bodyStream.finish();
+      const redirect = webResponse.redirect;
+      const headers = webSessionResponseHeaders(webResponse);
+      headers.set("location", redirect.location);
+      const status = redirect.isPermanent
+        ? (redirect.switchToGet ? 301 : 308)
+        : (redirect.switchToGet ? 303 : 307);
+      return {
+        response: new Response(null, { status, statusText: "Redirect", headers }),
+        streaming: false,
+      };
+    }
+
+    case WebSession.Response.CLIENT_ERROR:
+      bodyStream.finish();
+      return {
+        response: webSessionErrorResponse(
+          webResponse.clientError,
+          webSessionClientErrorStatus(webResponse.clientError.statusCode)),
+        streaming: false,
+      };
+
+    case WebSession.Response.SERVER_ERROR:
+      bodyStream.finish();
+      return {
+        response: webSessionErrorResponse(webResponse.serverError, 500),
+        streaming: false,
+      };
+
+    default:
+      bodyStream.finish();
+      return {
+        response: Response.json({ ok: false, error: "unsupported WebSession response" }, {
+          status: 502,
+        }),
+        streaming: false,
+      };
+  }
+}
+
+function webSessionFetchContext(request, responseStream) {
+  let ifMatch = null;
+  let ifNoneMatch = null;
+  const additionalHeaders = [];
+
+  for (const [rawName, rawValue] of request.headers) {
+    const name = String(rawName).toLowerCase();
+    const value = String(rawValue);
+    if (name === "content-type" || !shouldForwardCapabilityFetchHeader(name)) {
+      continue;
+    }
+    if (!isValidCapabilityFetchHeaderName(name) || !isValidCapabilityFetchHeaderValue(value)) {
+      throw new ValidationError(`claimed capability fetch header is invalid`);
+    }
+
+    if (name === "if-match") {
+      if (ifMatch !== null) {
+        throw new ValidationError(`claimed capability fetch can only include one If-Match header`);
+      }
+      ifMatch = value;
+    } else if (name === "if-none-match") {
+      if (ifNoneMatch !== null) {
+        throw new ValidationError(
+          `claimed capability fetch can only include one If-None-Match header`);
+      }
+      ifNoneMatch = value;
+    } else {
+      additionalHeaders.push({ name, value });
+    }
+  }
+
+  let eTagPrecondition = { none: true };
+  let sendNotModifiedForPrecondition = false;
+  if (ifMatch !== null) {
+    const value = ifMatch.trim();
+    eTagPrecondition = value === "*"
+      ? { exists: true }
+      : { matchesOneOf: parseFetchETagList(value) };
+  } else if (ifNoneMatch !== null) {
+    const value = ifNoneMatch.trim();
+    sendNotModifiedForPrecondition = true;
+    eTagPrecondition = value === "*"
+      ? { doesntExist: true }
+      : { matchesNoneOf: parseFetchETagList(value) };
+  }
+
+  return {
+    context: {
+      cookies: [],
+      responseStream,
+      accept: [],
+      acceptEncoding: [],
+      eTagPrecondition,
+      additionalHeaders,
+    },
+    sendNotModifiedForPrecondition,
+  };
+}
+
+function normalizeWebSessionFetchPath(path) {
+  if (path.length > 8192) {
+    throw new ValidationError(`claimed capability fetch path is too long`);
+  }
+  let start = 0;
+  while (start < path.length && path[start] === "/") ++start;
+  return path.slice(start);
+}
+
+function outboundHttpSessionRequestMethod(method) {
+  switch (String(method).toUpperCase()) {
+    case "GET": return 0;
+    case "POST": return 1;
+    case "PUT": return 2;
+    case "PATCH": return 3;
+    case "DELETE": return 4;
+    case "HEAD": return 5;
+    case "OPTIONS": return 6;
+    default:
+      throw new ValidationError(`unsupported outbound HTTP method: ${method}`);
+  }
+}
+
+function shouldForwardOutboundHttpResponseHeader(name) {
+  if (!isValidCapabilityFetchHeaderName(name)) return false;
+  switch (String(name).toLowerCase()) {
+    case "connection":
+    case "content-length":
+    case "keep-alive":
+    case "te":
+    case "trailer":
+    case "transfer-encoding":
+    case "upgrade":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function normalizeOutboundHttpFetchPath(path) {
+  if (path.length > 8192) {
+    throw new ValidationError(`outbound HTTP fetch path is too long`);
+  }
+  if (path.startsWith("/")) {
+    throw new ValidationError(
+      `outbound HTTP fetch path must be relative to the granted base URL`);
+  }
+  if (path.includes("://")) {
+    throw new ValidationError(`outbound HTTP fetch path must not be an absolute URL`);
+  }
+
+  const pathOnly = path.split("?", 1)[0];
+  if (pathOnly.includes("#")) {
+    throw new ValidationError(`outbound HTTP fetch path must not contain a fragment`);
+  }
+  for (const segment of pathOnly.split("/")) {
+    if (segment === "." || segment === "..") {
+      throw new ValidationError(`outbound HTTP fetch path must not contain dot segments`);
+    }
+  }
+  for (let i = 0; i < path.length; ++i) {
+    const code = path.charCodeAt(i);
+    if (code === 0 || code === 0x0a || code === 0x0d) {
+      throw new ValidationError(`outbound HTTP fetch path contains invalid characters`);
+    }
+  }
+
+  return path;
+}
+
+function outboundHttpResponseHeaders(headersList) {
+  const headers = new Headers();
+  for (const header of headersList) {
+    if (shouldForwardOutboundHttpResponseHeader(header.name) &&
+        isValidCapabilityFetchHeaderValue(header.value)) {
+      headers.append(header.name, header.value);
+    }
+  }
+  return headers;
+}
+
+function safeOutboundHttpStatusText(statusText) {
+  statusText = String(statusText || "");
+  return statusText.length > 0 && statusText.length <= 128 &&
+      isValidCapabilityFetchHeaderValue(statusText)
+    ? statusText
+    : "OK";
+}
+
+function safeOutboundHttpStatus(statusCode) {
+  const status = Number(statusCode);
+  return Number.isInteger(status) && status >= 200 && status <= 599 ? status : 502;
+}
+
+async function restoreCapabilityToken(env, token, options = {}) {
+  const tokenText = savedCapabilityToken(token);
+  const metadata = savedCapabilityEnvelopeMetadata(tokenText);
+  const bridge = connectWorkerPlatformBridge();
+  try {
+    if (typeof bridge.restoreCapability !== "function") {
+      throw new Error("isolate bridge returned no capability restorer");
+    }
+
+    const restoredPromise = bridge.restoreCapability({
+      token: nativeCapnpSavedTokenData(tokenText),
+    });
+    const cap = capnpCapabilityFromResult(restoredPromise, "restored capability");
+    if (!cap) {
+      throw new Error("isolate bridge restore returned no capability");
+    }
+    const restored = await restoredPromise;
+
+    return new Capability(env, cap, {
+      ...metadata,
+      kind: metadata.kind || "restored",
+      bridge,
+      saver: restored.saver,
+      browserSessionId: options.browserSessionId,
+    });
+  } catch (error) {
+    bridge.close(error);
+    throw error;
+  }
+}
+
+async function revokeCapabilityToken(env, token) {
+  const tokenData = nativeCapnpSavedTokenData(savedCapabilityToken(token));
+  await withIsolateBridgeRpc(env, async (bridge) => {
+    if (typeof bridge.dropCapability !== "function") {
+      throw new Error("isolate bridge returned no capability revoker");
+    }
+
+    await bridge.dropCapability({ token: tokenData });
+  });
+  return { ok: true };
+}
+
+async function useCapabilityToken(env, token, fn, options = {}) {
+  if (typeof fn !== "function") {
+    failValidation("capability use callback", "a function", fn);
+  }
+
+  const capability = await restoreCapabilityToken(env, token, options);
+  try {
+    return await fn(capability);
+  } finally {
+    await capability.drop();
+  }
+}
+
+async function fetchCapability(env, capability, input, init = {}) {
+  const info = await capabilityInfo(env, capability);
+  if (info?.nativeInterface === "outboundHttpSession" ||
+      (info?.supportsOutboundHttpFetch === true && info?.supportsWebFetch === false)) {
+    return fetchOutboundHttpSession(capability, input, init, info);
+  }
+
+  if (info?.supportsWebFetch === false || (
+      info?.supportsWebFetch === undefined &&
+      info?.nativeInterface === "outboundHttpSession")) {
+    const nativeInterface = info?.nativeInterface || "unknown";
+    throw new UnsupportedCapabilityError(
+      nativeInterface,
+      "fetch",
+      `cap.fetch() is only for WebSession, ApiSession, and OutboundHttpSession capabilities; ` +
+      `nativeInterface ${nativeInterface} cannot be fetched. Use a generated capnp: client ` +
+      `for typed RPC capabilities`);
+  }
+
+  let request;
+  if (input instanceof Request) {
+    request = init === undefined ? input : new Request(input, init);
+  } else {
+    const url = new URL(String(input), "http://sandstorm-capability");
+    request = new Request(url, init);
+  }
+
+  const url = new URL(request.url);
+  if (url.origin !== "http://sandstorm-capability") {
+    throw new ValidationError(
+      `cap.fetch() on WebSession and ApiSession capabilities accepts only a relative path ` +
+      `such as "/path?query"; absolute URLs are rejected`);
+  }
+
+  try {
+    const webSession = new WebSession.Client(
+      capabilityCapnpClient(capability, "WebSession capability"));
+    const bodyStream = createCapabilityByteStream();
+    const fetchContext = webSessionFetchContext(request, bodyStream.client);
+    const context = fetchContext.context;
+    const method = String(request.method || "GET").toLowerCase();
+    const path = normalizeWebSessionFetchPath(`${url.pathname}${url.search}`);
+    const bodyBytes = await requestBodyBytes(request);
+    const contentType = request.headers.get("content-type") || "";
+
+    let result;
+    if (method === "get" || method === "head") {
+      result = await webSession.get({ path, context, ignoreBody: method === "head" });
+    } else if (method === "post") {
+      result = await webSession.post({
+        path,
+        content: { mimeType: contentType, content: bodyBytes },
+        context,
+      });
+    } else if (method === "put") {
+      result = await webSession.put({
+        path,
+        content: { mimeType: contentType, content: bodyBytes },
+        context,
+      });
+    } else if (method === "patch") {
+      result = await webSession.patch({
+        path,
+        content: { mimeType: contentType, content: bodyBytes },
+        context,
+      });
+    } else if (method === "delete") {
+      result = await webSession.delete({ path, context });
+    } else {
+      bodyStream.finish();
+      return Response.json({
+        ok: false,
+        error: "claimed capability fetch method is not supported",
+      }, { status: 405 });
+    }
+
+    const converted = responseFromWebSession(result, bodyStream, fetchContext);
+    return converted.response;
+  } catch (error) {
+    return Response.json({
+      ok: false,
+      error: `claimed capability fetch failed: ${error?.message || String(error)}`,
+    }, { status: 502 });
+  }
+}
+
+function outboundHttpSessionRequest(input, init = {}) {
+  let request;
+  if (input instanceof Request) {
+    request = init === undefined ? input : new Request(input, init);
+  } else {
+    const url = new URL(String(input), "http://sandstorm-outbound/");
+    request = new Request(url, init);
+  }
+
+  const url = new URL(request.url);
+  if (url.origin !== "http://sandstorm-outbound") {
+    throw new ValidationError(
+      `cap.fetch() on OutboundHttpSession capabilities accepts only a relative path ` +
+      `such as "v1/resource" or "/v1/resource"; absolute URLs are rejected because ` +
+      `the capability descriptor supplies the origin`);
+  }
+
+  let path = url.pathname;
+  while (path.startsWith("/")) {
+    path = path.slice(1);
+  }
+  return { request, path: `${path}${url.search}` };
+}
+
+async function fetchOutboundHttpSession(capability, input, init = {}, info = undefined) {
+  if (info === undefined) {
+    info = await capabilityInfo(capability.env, capability);
+  }
+  if (info?.supportsOutboundHttpFetch === false || (
+      info?.supportsOutboundHttpFetch === undefined &&
+      info?.nativeInterface !== undefined &&
+      info.nativeInterface !== "unknown" &&
+      info.nativeInterface !== "outboundHttpSession")) {
+    const nativeInterface = info?.nativeInterface || "unknown";
+    throw new UnsupportedCapabilityError(
+      nativeInterface,
+      "fetch",
+      `cap.fetch() on OutboundHttpSession capabilities cannot use nativeInterface ` +
+      `${nativeInterface}; use a generated capnp: client for typed RPC capabilities`);
+  }
+
+  const { request, path } = outboundHttpSessionRequest(input, init);
+  const headers = [];
+  for (const [name, value] of request.headers) {
+    if (!isValidCapabilityFetchHeaderName(name) || !isValidCapabilityFetchHeaderValue(value)) {
+      throw new ValidationError(`outbound HTTP fetch header is invalid`);
+    }
+    headers.push({ name: String(name).toLowerCase(), value: String(value) });
+  }
+
+  try {
+    const outbound = new OutboundHttpSession.Client(
+      capabilityCapnpClient(capability, "OutboundHttpSession capability"));
+    const bodyStream = createCapabilityByteStream();
+    const result = await outbound.request({
+      method: outboundHttpSessionRequestMethod(request.method || "GET"),
+      path: normalizeOutboundHttpFetchPath(path),
+      headers,
+      body: await requestBodyBytes(request),
+      responseStream: bodyStream.client,
+    });
+    const status = safeOutboundHttpStatus(result.statusCode);
+    const emptyBody = status === 204 || status === 304;
+    if (emptyBody) {
+      bodyStream.finish();
+    }
+    return new Response(emptyBody ? null : bodyStream.readable, {
+      status,
+      statusText: safeOutboundHttpStatusText(result.statusText),
+      headers: outboundHttpResponseHeaders(result.headers),
+    });
+  } catch (error) {
+    return Response.json({
+      ok: false,
+      error: `outbound HTTP fetch failed: ${error?.message || String(error)}`,
+    }, { status: 502 });
+  }
+}
+
+function wrapCapability(env, capability) {
+  if (capability instanceof Capability) {
+    return capability;
+  }
+  if (!capability || typeof capability !== "object" ||
+      (capability.type !== "capability" && capability.type !== "claimedCapability") ||
+      typeof capability.id !== "string") {
+    return capability;
+  }
+
+  return new Capability(env, capability.id);
+}
+
+function permissionNames(options = {}) {
+  if (options.requiredPermissions === undefined || options.requiredPermissions === null) {
+    return [];
+  }
+
+  if (!Array.isArray(options.requiredPermissions)) {
+    throw new ValidationError("requiredPermissions must be an array of permission names");
+  }
+
+  return options.requiredPermissions.map((permission, index) => {
+    const name = validate.string(permission, `requiredPermissions[${index}]`, {
+      minLength: 1,
+      maxLength: 128,
+    });
+    if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+      throw new ValidationError(`requiredPermissions[${index}] is not a valid permission name`);
+    }
+    return name;
+  });
+}
+
+async function requiredPermissionSet(env, names) {
+  const declaredNames = await withIsolateBridgeRpc(env, async (bridge) => {
+    const result = await bridge.getViewInfo({});
+    if (!result.viewInfo) {
+      throw new Error("isolate bridge returned no view metadata");
+    }
+    return Array.from(result.viewInfo.permissions, (permission) => String(permission.name));
+  });
+  const declaredSet = new Set(declaredNames);
+  const unknown = names.filter((name) => !declaredSet.has(name));
+  if (unknown.length > 0) {
+    throw new ValidationError(
+      `unknown required permission: ${unknown[0]}; this app defines permissions: ` +
+      `${declaredNames.length > 0 ? declaredNames.join(", ") : "(none)"}. ` +
+      "requiredPermissions must use names from this app's viewInfo.permissions.");
+  }
+
+  const required = new Set(names);
+  return declaredNames.map((name) => required.has(name));
+}
+
+export function powerbox(request, env) {
+  const claimToken = async (token, options = {}) => {
+    token = validate.string(token, "token", { minLength: 1, maxLength: 4096 });
+    const requiredPermissions = permissionNames(options);
+    const permissions = await requiredPermissionSet(env, requiredPermissions);
+    powerboxDescriptorParams(options);
+    const nativeInterface = claimNativeInterface(options);
+    const sessionId = sessionIdForPowerbox(request);
+
+    const bridge = connectWorkerPlatformBridge();
+    try {
+      const claimedPromise = bridge.claimPowerboxRequest({
+        sessionId,
+        requestToken: token,
+        requiredPermissions: permissions,
+      });
+      const cap = capnpCapabilityFromResult(claimedPromise, "Powerbox claimed capability");
+      if (!cap) {
+        throw new Error("SessionContext.claimRequest() returned no capability");
+      }
+      const claimed = await claimedPromise;
+
+      return new Capability(env, cap, {
+        kind: "powerboxClaim",
+        bridge,
+        saver: claimed.saver,
+        nativeInterface,
+        browserSessionId: sessionId,
+      });
+    } catch (error) {
+      bridge.close(error);
+      throw error;
+    }
+  };
+
+  return {
+    async apiSessionDescriptor(options = {}) {
+      return apiSessionPowerboxDescriptor(env, options);
+    },
+
+    async outboundHttpDescriptor(options = {}) {
+      return outboundHttpPowerboxDescriptor(env, options);
+    },
+
+    async appInterfaceDescriptor(InterfaceClass) {
+      const metadata = nativeCapnpInterfaceMetadata(
+        InterfaceClass, "PowerboxApi.appInterfaceDescriptor()");
+      return appInterfacePowerboxDescriptor(env, {
+        appInterface: {
+          interfaceId: metadata.interfaceIdHex,
+          interfaceName: metadata.interfaceName,
+        },
+      });
+    },
+
+    async claim(result, options = {}) {
+      if (typeof result === "string") {
+        return claimToken(result, options);
+      }
+
+      if (!result || typeof result !== "object") {
+        throw new ValidationError("Powerbox claim result must be a token string or result object");
+      }
+
+      if (result.capability) {
+        if (result.capability instanceof Capability) {
+          return result.capability;
+        }
+        throw new ValidationError(
+          "Powerbox claim result capability must be a live Sandstorm Capability");
+      }
+
+      if (typeof result.token === "string") {
+        return claimToken(result.token, options);
+      }
+
+      throw new ValidationError("Powerbox claim result must contain token or capability");
+    },
+
+    async offered() {
+      const sessionId = header(request, "x-sandstorm-session-id");
+      const descriptor = jsonHeader(request, "x-sandstorm-offer-descriptor");
+      if (!sessionId || !descriptor) {
+        return undefined;
+      }
+
+      const bridge = connectWorkerPlatformBridge();
+      let result;
+      let cap;
+      try {
+        const resultPromise = bridge.getOfferedCapability({ sessionId });
+        cap = capnpCapabilityFromResult(resultPromise, "offered capability");
+        result = await resultPromise;
+      } catch (error) {
+        bridge.close(error);
+        throw error;
+      }
+
+      if (!result?.found || !cap) {
+        bridge.close();
+        return undefined;
+      }
+
+      const capability = new Capability(env, cap, {
+        kind: "powerboxOffer",
+        bridge,
+        saver: result.saver,
+        residence: "imported",
+        nativeInterface: offerDescriptorNativeInterface(descriptor),
+        browserSessionId: sessionId,
+      });
+      return {
+        capability,
+        id: capability.id,
+        descriptor,
+      };
+    },
+
+    async offer() {
+      if (arguments.length < 1) {
+        unsupportedPowerbox("offer");
+      }
+      return offerCapability(env, request, arguments[0], arguments[1] || {});
+    },
+
+    async fulfillRequest() {
+      if (arguments.length < 1) {
+        unsupportedPowerbox("fulfillRequest");
+      }
+      return fulfillRequestWithCapability(env, request, arguments[0], arguments[1] || {});
+    },
+
+    async tieToUser() {
+      if (arguments.length < 1) {
+        unsupportedPowerbox("tieToUser");
+      }
+      return tieCapabilityToUser(env, request, arguments[0], arguments[1] || {});
+    },
+
+  };
+}
+
+export function getSession(request) {
+  return {
+    sessionType: header(request, "x-sandstorm-session-type"),
+    user: {
+      displayName: header(request, "x-sandstorm-username"),
+      id: header(request, "x-sandstorm-user-id"),
+      preferredHandle: header(request, "x-sandstorm-preferred-handle"),
+      pictureUrl: header(request, "x-sandstorm-user-picture"),
+      pronouns: header(request, "x-sandstorm-user-pronouns"),
+    },
+    permissions: list(header(request, "x-sandstorm-permissions")),
+    request: {
+      sessionId: header(request, "x-sandstorm-session-id"),
+      tabId: header(request, "x-sandstorm-tab-id"),
+      basePath: header(request, "x-sandstorm-base-path"),
+      host: header(request, "host"),
+      forwardedProto: header(request, "x-forwarded-proto"),
+      userAgent: header(request, "user-agent"),
+      acceptableLanguages: list(header(request, "accept-language")),
+    },
+    offer: {
+      descriptor: jsonHeader(request, "x-sandstorm-offer-descriptor"),
+    },
+  };
+}
+
+async function runtimeStatus(env) {
+  return withIsolateBridgeRpc(env, async (bridge) => {
+    const result = await bridge.getRuntimeStatus({});
+    return {
+      ok: true,
+      binding: "nativeCapnp",
+      status: "ready",
+      mainModule: String(result.mainModule),
+    };
+  });
+}
+
+export function sandstorm(requestOrEnv, optionalEnv) {
+  const request = typeof Request === "function" && requestOrEnv instanceof Request
+    ? requestOrEnv
+    : new Request("http://sandstorm-worker/");
+  const env = request === requestOrEnv ? optionalEnv : requestOrEnv;
+  const browserSessionId = header(request, "x-sandstorm-session-id");
+
+  const api = {
+    session: () => getSession(request),
+    unstable: Object.freeze({
+      status: () => runtimeStatus(env),
+    }),
+    storage: () => storage(env),
+    powerbox: () => powerbox(request, env),
+    capability: (declaration) =>
+      resolveWorkerCapability(env, declaration, { browserSessionId }),
+    restore: (token) => restoreCapabilityToken(env, token, { browserSessionId }),
+    revoke: (token) => revokeCapabilityToken(env, token),
+    use: (token, fn) => useCapabilityToken(env, token, fn, { browserSessionId }),
+    powerboxFulfillment: (options = {}) => powerboxFulfillment(request, env, options),
+    powerboxGrants: (options = {}) => powerboxGrants(request, env, options),
+  };
+
+  return api;
+}

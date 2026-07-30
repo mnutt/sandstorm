@@ -118,6 +118,8 @@ export class SandstormPowerboxRequest {
       this._selectedProvider.set(card);
     } else if (card.option.frontendRef) {
       this.completeNewFrontendRef(card.option.frontendRef);
+    } else if (card.option.capabilityAction) {
+      this.completeCapabilityAction(card.option.capabilityAction.actionId);
     } else {
       this.failRequest(new Error("not sure how to complete powerbox request for non-frontendRef " +
                                  "that didn't provide a configureTemplate"));
@@ -144,6 +146,8 @@ export class SandstormPowerboxRequest {
     // configureTemplate: The Template object named by option.configureTemplate.
 
     const cards = PowerboxOptions.find({ requestId: this._requestId }).map(option => {
+      if (option.powerboxDiagnostic) return null;
+
       const result = {
         db: this._db,
         powerboxRequest: this,
@@ -161,9 +165,19 @@ export class SandstormPowerboxRequest {
 
     const now = new Date();
     return _.chain(cards)
+        .compact()
         .filter(compileMatchFilter(this._filter.get()))
         .sortBy(card => -((card.grainInfo || {}).lastUsed || now).getTime())
         .value();
+  }
+
+  diagnosticsText() {
+    const option = PowerboxOptions.findOne({
+      requestId: this._requestId,
+      powerboxDiagnostic: { $exists: true },
+    });
+
+    return option && JSON.stringify(option.powerboxDiagnostic, null, 2);
   }
 
   collectGrainInfo(grainId) {
@@ -245,6 +259,23 @@ export class SandstormPowerboxRequest {
       }
     );
   }
+
+  completeCapabilityAction(actionId) {
+    Meteor.call(
+      "fulfillCapabilityActionRequest",
+      this._requestInfo.sessionId,
+      actionId,
+      this._requestInfo.grainId,
+      this.getQuery(),
+      (err, result) => {
+        if (err) {
+          this.failRequest(err);
+        } else {
+          this.completeRequest(result.sturdyRef, result.descriptor);
+        }
+      }
+    );
+  }
 }
 
 const matchesCard = function (needle, grainInfo, searchTerms) {
@@ -317,6 +348,11 @@ Template.powerboxRequest.helpers({
   error() {
     const ref = Template.instance().data.get();
     return ref && ref._error.get();
+  },
+
+  diagnosticsText() {
+    const ref = Template.instance().data.get();
+    return ref && ref.diagnosticsText();
   },
 
   iconSrc() {

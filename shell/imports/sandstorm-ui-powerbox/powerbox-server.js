@@ -16,13 +16,29 @@
 
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
+import { Random } from "meteor/random";
 import { _ } from "meteor/underscore";
 
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
+import { SandstormDb } from "/imports/sandstorm-db/db";
 import Capnp from "/imports/server/capnp";
+import { getGlobalBackend } from "/imports/server/backend-instance";
+import { hashSturdyRef } from "/imports/server/persistent";
+import { isTesting } from "/imports/shared/testing";
 
 const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
 const Grain = Capnp.importSystem("sandstorm/grain.capnp");
+const SystemPersistent = Capnp.importSystem("sandstorm/supervisor.capnp").SystemPersistent;
+
+const OUTBOUND_HTTP_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+];
 
 function encodePowerboxDescriptor(desc) {
   return Capnp.serializePacked(Powerbox.PowerboxDescriptor, desc)
@@ -44,6 +60,239 @@ const resolveAccountIdForPowerbox = async (userId) => {
 
   return account ? account._id : userId;
 };
+
+function normalizeOutboundHttpMethods(methods) {
+  if (!methods || methods.length === 0) return null;
+
+  const present = {};
+  methods.forEach(method => {
+    present[String(method).toUpperCase()] = true;
+  });
+
+  return OUTBOUND_HTTP_METHODS.filter(method => present[method]);
+}
+
+function intersectOutboundHttpMethods(left, right) {
+  left = normalizeOutboundHttpMethods(left);
+  right = normalizeOutboundHttpMethods(right);
+
+  if (!left) return right;
+  if (!right) return left;
+
+  const rightSet = {};
+  right.forEach(method => {
+    rightSet[method] = true;
+  });
+
+  return left.filter(method => rightSet[method]);
+}
+
+function unionOutboundHttpMethods(left, right) {
+  left = normalizeOutboundHttpMethods(left);
+  right = normalizeOutboundHttpMethods(right);
+
+  if (!left || !right) return null;
+
+  const present = {};
+  left.concat(right).forEach(method => {
+    present[method] = true;
+  });
+
+  return OUTBOUND_HTTP_METHODS.filter(method => present[method]);
+}
+
+function outboundHttpMethodAccessor(option) {
+  if (option.frontendRef && option.frontendRef.outboundHttp) {
+    return {
+      methods: option.frontendRef.outboundHttp.methods,
+      setMethods(methods) {
+        if (methods && methods.length > 0) {
+          option.frontendRef.outboundHttp.methods = methods;
+        } else {
+          delete option.frontendRef.outboundHttp.methods;
+        }
+      },
+    };
+  } else if (option.outboundHttpArbitrary) {
+    return {
+      methods: option.methods,
+      setMethods(methods) {
+        if (methods && methods.length > 0) {
+          option.methods = methods;
+        } else {
+          delete option.methods;
+        }
+      },
+    };
+  }
+}
+
+function normalizePowerboxTagId(tagId) {
+  const text = String(tagId || "");
+  if (!/^(0x[0-9a-fA-F]+|[0-9]+)$/.test(text)) return undefined;
+
+  const value = BigInt(text);
+  if (value <= 0n || value > 0xffffffffffffffffn) return undefined;
+  return value.toString(10);
+}
+
+function descriptorTagsMatch(queryTags, provisionTags, diagnostics) {
+  const provisionTagsById = {};
+  provisionTags.forEach(tag => {
+    const tagId = normalizePowerboxTagId(tag.id);
+    if (tagId) provisionTagsById[tagId] = tag.value;
+  });
+
+  let allMatched = true;
+  queryTags.forEach(queryTag => {
+    if (!allMatched) return;
+
+    const queryTagId = normalizePowerboxTagId(queryTag.id);
+    if (queryTagId && queryTagId in provisionTagsById) {
+      const value = provisionTagsById[queryTagId];
+      // Null values match everything, so only pay attention if non-null.
+      if (value && queryTag.value) {
+        if (!Capnp.matchPowerboxQuery(queryTag.value, value)) {
+          diagnostics.grainDescriptorValueMismatchCount++;
+          allMatched = false;
+        }
+      }
+    } else {
+      diagnostics.grainDescriptorMissingTagCount++;
+      allMatched = false;
+    }
+  });
+
+  return allMatched;
+}
+
+export function powerboxRequestMatchesProvision(queryDescriptors, provisionTags) {
+  let included = false;
+  (queryDescriptors || []).forEach(query => {
+    const matches = descriptorTagsMatch(query.tags || [], provisionTags || [], {
+      grainDescriptorMissingTagCount: 0,
+      grainDescriptorValueMismatchCount: 0,
+    });
+    if (matches) included = query.quality !== "unacceptable";
+  });
+
+  return included;
+}
+
+export async function provisionCapabilityAction(
+    methodContext, sessionId, actionId, ownerGrainId, requestDescriptors, dependencies = {}) {
+  const userId = methodContext.userId;
+  if (!userId) throw new Meteor.Error(403, "Must be logged in");
+
+  const db = methodContext.connection.sandstormDb;
+  const session = await db.collections.sessions.findOneAsync({
+    _id: sessionId,
+    userId,
+    grainId: ownerGrainId,
+  });
+  if (!session) {
+    throw new Meteor.Error(403, "Invalid requesting grain session");
+  }
+
+  const action = await db.collections.userActions.findOneAsync({
+    _id: actionId,
+    userId,
+    "output.capability": { $exists: true },
+  });
+  if (!action) throw new Meteor.Error(404, "Capability action not found");
+
+  const capability = action.output.capability;
+  const provisionTags = ((capability.descriptor || {}).tags || []);
+  if (!powerboxRequestMatchesProvision(
+      requestDescriptors, provisionTags)) {
+    throw new Meteor.Error(403, "Capability action does not match this Powerbox request");
+  }
+
+  const pkg = await db.collections.packages.findOneAsync({
+    _id: action.packageId,
+    status: "ready",
+  });
+  if (!pkg) throw new Meteor.Error(404, "Capability action package is not installed");
+
+  const users = dependencies.users || Meteor.users;
+  const account = await users.findOneAsync({ _id: userId });
+  if (!await db.isAccountSignedUpOrDemoAsync(account)) {
+    throw new Meteor.Error(403, "Only invited users or demo users can create grains");
+  }
+  if (await db.isUserOverQuotaAsync(account)) {
+    throw new Meteor.Error(402, "You are out of storage space");
+  }
+
+  const grainId = dependencies.grainId || Random.id(22);
+  const displayTitle = (((capability.displayInfo || {}).title || {}).defaultText) ||
+      (((action.nounPhrase || {}).defaultText)) || "capability service";
+  const generateIdentityId = dependencies.generateIdentityId || SandstormDb.generateIdentityId;
+  await db.collections.grains.insertAsync({
+    _id: grainId,
+    packageId: action.packageId,
+    appId: action.appId,
+    appVersion: action.appVersion,
+    userId,
+    identityId: generateIdentityId(),
+    title: displayTitle,
+    private: true,
+    isService: true,
+    size: 0,
+  });
+
+  const backend = dependencies.backend || getGlobalBackend();
+  let supervisor;
+  let exported;
+  let savedSturdyRef;
+  try {
+    supervisor = (await backend.startGrainInternal(
+        action.packageId, grainId, userId, action.command, true, false, false)).supervisor;
+    exported = (await supervisor.getExport(
+        capability.exportName, capability.interfaceId)).cap;
+    const owner = {
+      clientPowerboxRequest: {
+        grainId: ownerGrainId,
+        sessionId,
+      },
+    };
+    const saved = await exported.castAs(SystemPersistent).save(owner);
+    const sturdyRef = saved.sturdyRef;
+    savedSturdyRef = sturdyRef;
+    const updated = await db.collections.apiTokens.updateAsync(
+        { _id: hashSturdyRef(sturdyRef) },
+        { $set: {
+          powerbox: {
+            descriptor: capability.descriptor,
+            displayInfo: capability.displayInfo,
+          },
+        } });
+    if (updated !== 1) {
+      throw new Error("Capability action save did not create exactly one API token");
+    }
+    return {
+      sturdyRef: sturdyRef.toString(),
+      descriptor: encodePowerboxDescriptor(capability.descriptor),
+    };
+  } catch (error) {
+    if (savedSturdyRef) {
+      await db.collections.apiTokens.removeAsync({
+        _id: hashSturdyRef(savedSturdyRef),
+      }).catch(cleanupError => {
+        console.error("Failed to clean up capability-action token", grainId, cleanupError);
+      });
+    }
+    await db.collections.grains.removeAsync(grainId).catch(cleanupError => {
+      console.error("Failed to clean up capability-action grain record", grainId, cleanupError);
+    });
+    await backend.deleteGrain(grainId, userId).catch(cleanupError => {
+      console.error("Failed to clean up capability-action grain", grainId, cleanupError);
+    });
+    throw error;
+  } finally {
+    if (exported) exported.close();
+    if (supervisor) supervisor.close();
+  }
+}
 
 Meteor.methods({
   async newFrontendRef(sessionId, frontendRefRequest) {
@@ -123,6 +372,19 @@ Meteor.methods({
       descriptor,
     };
   },
+
+  async fulfillCapabilityActionRequest(sessionId, actionId, ownerGrainId, descriptorList) {
+    check(sessionId, String);
+    check(actionId, String);
+    check(ownerGrainId, String);
+    check(descriptorList, [String]);
+    const requestDescriptors = descriptorList.map(packedDescriptor => Capnp.parse(
+        Powerbox.PowerboxDescriptor,
+        new Buffer(packedDescriptor, "base64"),
+        { packed: true }));
+    return await provisionCapabilityAction(
+        this, sessionId, actionId, ownerGrainId, requestDescriptors);
+  },
 });
 
 class PowerboxOption {
@@ -162,6 +424,18 @@ class PowerboxOption {
 
       return true;
     } else {
+      // Outbound HTTP methods are attenuation, so conjunctive tags must narrow the method set.
+      const thisOutboundHttp = outboundHttpMethodAccessor(this);
+      const otherOutboundHttp = outboundHttpMethodAccessor(other);
+      if (thisOutboundHttp && otherOutboundHttp) {
+        const methods = intersectOutboundHttpMethods(
+            thisOutboundHttp.methods, otherOutboundHttp.methods);
+        if (methods && methods.length === 0) return false;
+
+        thisOutboundHttp.setMethods(methods);
+        return true;
+      }
+
       // No intersection logic needed for other types.
       return true;
     }
@@ -186,6 +460,13 @@ class PowerboxOption {
           other.frontendRef.verifiedEmail.verifierId) {
         this.frontendRef.verifiedEmail.verifierId = other.frontendRef.verifiedEmail.verifierId;
       }
+    } else {
+      const thisOutboundHttp = outboundHttpMethodAccessor(this);
+      const otherOutboundHttp = outboundHttpMethodAccessor(other);
+      if (thisOutboundHttp && otherOutboundHttp) {
+        thisOutboundHttp.setMethods(
+            unionOutboundHttpMethods(thisOutboundHttp.methods, otherOutboundHttp.methods));
+      }
     }
   }
 
@@ -205,6 +486,22 @@ class PowerboxOption {
       return false;
     }
   }
+}
+
+function powerboxDescriptorDiagnostics(queryDescriptor, index) {
+  return {
+    index,
+    tagIds: (queryDescriptor.tags || []).map(tag => String(tag.id)),
+    tagCount: (queryDescriptor.tags || []).length,
+    frontendRefMatchCounts: [],
+    grainsWithMatchingTagIds: 0,
+    grainDescriptorsChecked: 0,
+    grainDescriptorMissingTagCount: 0,
+    grainDescriptorValueMismatchCount: 0,
+    hostedObjectMatchCount: 0,
+    capabilityActionsChecked: 0,
+    capabilityActionMatchCount: 0,
+  };
 }
 
 export function registerUiViewQueryHandler(frontendRefRegistry) {
@@ -282,7 +579,7 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
 
   const runQuery = async () => {
     if (descriptorList.length > 0) {
-      const descriptorMatches = await Promise.all(descriptorList.map(async packedDescriptor => {
+      const descriptorMatches = await Promise.all(descriptorList.map(async (packedDescriptor, index) => {
       // Decode the descriptor.
       // TODO(now): Also single-segment? Canonical?
 
@@ -291,24 +588,22 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
           Powerbox.PowerboxDescriptor,
           new Buffer(packedDescriptor, "base64"),
           { packed: true });
-
-      if (!queryDescriptor.tags || queryDescriptor.tags.length === 0) {
-        return { descriptor: queryDescriptor, matches: {} };
-      }
+      const diagnostics = powerboxDescriptorDiagnostics(queryDescriptor, index);
 
       // Expand each tag into a match map.
-        const tagMatches = await Promise.all(queryDescriptor.tags.map(async tag => {
+        const tagMatches = await Promise.all((queryDescriptor.tags || []).map(async tag => {
           const result = {};
           const options = await frontendRefRegistry.query(db, this.userId, tag);
           options.forEach(option => {
             result[option._id] = new PowerboxOption(option);
           });
+          diagnostics.frontendRefMatchCounts.push(Object.keys(result).length);
 
           return result;
         }));
 
       // Intersect two tags' matches.
-      const matches = tagMatches.reduce((a, b) => {
+      const matches = tagMatches.slice(1).reduce((a, b) => {
         for (const id in a) {
           if (id in b) {
             if (!a[id].intersect(b[id])) {
@@ -322,7 +617,40 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
         }
 
         return a;
-      });
+      }, tagMatches.length === 0 ? {} : tagMatches[0]);
+
+      if (this.userId) {
+        const capabilityActions = await db.collections.userActions.find({
+          userId: this.userId,
+          "output.capability": { $exists: true },
+        }).fetchAsync();
+        capabilityActions.forEach(action => {
+          diagnostics.capabilityActionsChecked++;
+          const capability = action.output.capability;
+          const provision = capability.descriptor || {};
+          if (!descriptorTagsMatch(
+              queryDescriptor.tags || [], provision.tags || [], diagnostics)) {
+            return;
+          }
+
+          diagnostics.capabilityActionMatchCount++;
+          const displayInfo = capability.displayInfo || {};
+          const title = (displayInfo.title || {}).defaultText ||
+              (action.nounPhrase || {}).defaultText || "Capability provider";
+          const option = new PowerboxOption({
+            _id: "capability-action-" + action._id,
+            capabilityAction: { actionId: action._id },
+            capabilityDisplayInfo: displayInfo,
+            cardTemplate: "capabilityActionPowerboxCard",
+            searchTerms: [title, (displayInfo.description || {}).defaultText],
+          });
+          if (option._id in matches) {
+            matches[option._id].union(option);
+          } else {
+            matches[option._id] = option;
+          }
+        });
+      }
 
       // Search among the user's grains for hosted objects that match.
 
@@ -337,39 +665,20 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
             .find({
               $or: [{ userId: this.userId }, { _id: { $in: sharedGrainIds } }],
               "cachedViewInfo.matchRequests.tags.id":
-                  { $in: queryDescriptor.tags.map(tag => tag.id) },
-            }, { fields: { "cachedViewInfo.matchRequests": 1 } })
+                  { $in: (queryDescriptor.tags || []).map(tag => tag.id) },
+            }, { fields: { "cachedViewInfo.matchRequests": 1, packageId: 1 } })
             .fetchAsync();
+        diagnostics.grainsWithMatchingTagIds = grains.length;
         grains.forEach((grain) => {
           // Filter down to grains that actually have a matching descriptor.
           let alreadyMatched = false;
           grain.cachedViewInfo.matchRequests.forEach(grainDescriptor => {
             if (alreadyMatched) return;
+            diagnostics.grainDescriptorsChecked++;
 
-            // Build map of descriptor tags by ID.
-            const grainTagsById = {};
-            grainDescriptor.tags.forEach(tag => {
-              grainTagsById[tag.id] = tag.value;
-            });
-
-            let allMatched = true;
-            queryDescriptor.tags.forEach(queryTag => {
-              if (!allMatched) return;
-
-              if (queryTag.id in grainTagsById) {
-                const value = grainTagsById[queryTag.id];
-                // Null values match everything, so only pay attention if non-null.
-                if (value && queryTag.value) {
-                  if (!Capnp.matchPowerboxQuery(queryTag.value, value)) {
-                    allMatched = false;
-                  }
-                }
-              } else {
-                allMatched = false;
-              }
-            });
-
-            if (allMatched) {
+            if (descriptorTagsMatch(
+                queryDescriptor.tags || [], grainDescriptor.tags || [], diagnostics)) {
+              diagnostics.hostedObjectMatchCount++;
               alreadyMatched = true;
               const option = new PowerboxOption({
                 _id: "grain-" + grain._id,
@@ -386,9 +695,15 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
             }
           });
         });
+
       }
 
-        return { descriptor: queryDescriptor, matches };
+        return {
+          descriptor: queryDescriptor,
+          diagnostics,
+          matches,
+          matchQuality: queryDescriptor.quality || "acceptable",
+        };
       }));
 
     // TODO(someday): The implementation of matchQuality here is not quite right. In theory, we're
@@ -426,6 +741,16 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
           return finalMatches;
         }
       }, {});
+
+      if (Object.keys(matches).length === 0 && (isTesting || await db.allowDevAccountsAsync())) {
+        this.added("powerboxOptions", "diagnostic-" + requestId, {
+          requestId,
+          powerboxDiagnostic: {
+            descriptorCount: descriptorList.length,
+            descriptors: descriptorMatches.map(clause => clause.diagnostics),
+          },
+        });
+      }
 
       for (const id in matches) {
         if (!matches[id].matchQuality) {

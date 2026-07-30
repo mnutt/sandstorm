@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "allowJs": false,
+    "lib": ["ES2022", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "paths": {
+      "capnp:./typed-counter.capnp": ["./typed-counter"]
+    },
+    "strict": true,
+    "target": "ES2022"
+  },
+  "include": ["sandstorm-isolate.d.ts", "worker.ts"]
+}

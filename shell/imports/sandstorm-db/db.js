@@ -240,6 +240,8 @@ const UserActions = new Mongo.Collection("userActions", collectionOptions);
 //       `{defaultText: "New Spreadsheet"}`.
 //   nounPhrase: JSON-encoded LocalizedText describing what is created when this action is run.
 //   command:  Manifest.Command to run this action (see package.capnp).
+//   output: Manifest.Action.output. Capability-output actions remain installed here for Powerbox
+//       discovery but are excluded by SandstormDb.userActions() from ordinary launch UI.
 
 const Grains = new Mongo.Collection("grains", collectionOptions);
 // Grains belonging to users.
@@ -260,6 +262,8 @@ const Grains = new Mongo.Collection("grains", collectionOptions);
 //   title:  Human-readable string title, as chosen by the user.
 //   lastUsed:  Date when the grain was last used by a user.
 //   private: If true, then knowledge of `_id` does not suffice to open this grain.
+//   isService: If true, this grain hosts a capability rather than a browser UI. It remains
+//       visible to capability and audit code but is omitted from ordinary grain lists.
 //   cachedViewInfo: The JSON-encoded result of `UiView.getViewInfo()`, cached from the most recent
 //                   time a session to this grain was opened.
 //   trashed: If present, the Date when this grain was moved to the trash bin. Thirty days after
@@ -493,6 +497,10 @@ const ApiTokens = new Mongo.Collection("apiTokens", collectionOptions);
 //                   want to encrypt the full URL since this would make it hard to show a
 //                   meaningful audit UI, but maybe we could figure out a way to extract the key
 //                   part and encrypt it separately?
+//       outboundHttp: An OutboundHttpSession capability pointing to an external HTTP service.
+//                     Object containing:
+//           baseUrl: Base URL to which the capability is scoped.
+//           methods: Optional list of HTTP methods allowed by this capability.
 //       scheduledJob:
 //           id: _id in the ScheduledJobs table
 //   parentToken: If present, then this token represents exactly the capability represented by
@@ -573,6 +581,10 @@ const ApiTokens = new Mongo.Collection("apiTokens", collectionOptions);
 //           basic :group { username :Text; password :Text; }
 //           refresh :Text;
 //         }
+//       }
+//       outboundHttp :group {
+//         baseUrl :Text;
+//         methods :List(Text);
 //       }
 //     }
 //     child :group {
@@ -1548,9 +1560,14 @@ _.extend(SandstormDb.prototype, {
   userGrains(userId, options) {
     check(userId, Match.OneOf(String, undefined, null));
     check(options, Match.OneOf(undefined, null,
-        { includeTrashOnly: Match.Optional(Boolean), includeTrash: Match.Optional(Boolean), }));
+        { includeTrashOnly: Match.Optional(Boolean),
+          includeTrash: Match.Optional(Boolean),
+          includeServices: Match.Optional(Boolean), }));
 
     const query = { userId: userId };
+    if (!options || !options.includeServices) {
+      query.isService = { $exists: false };
+    }
     if (options && options.includeTrashOnly) {
       query.trashed = { $exists: true };
     } else if (options && options.includeTrash) {
@@ -1590,7 +1607,10 @@ _.extend(SandstormDb.prototype, {
   },
 
   userActions(user) {
-    return this.collections.userActions.find({ userId: user });
+    return this.collections.userActions.find({
+      userId: user,
+      "output.capability": { $exists: false },
+    });
   },
 
   currentUserActions() {
@@ -1771,6 +1791,7 @@ _.extend(SandstormDb.prototype, {
             title: action.title,
             nounPhrase: action.nounPhrase,
             command: action.command,
+            output: action.output,
           };
           await this.collections.userActions.insertAsync(userAction);
         } else {
@@ -3249,7 +3270,7 @@ if (Meteor.isServer) {
     });
 
     // package source 2: packages referred to by grains directly
-    const grains = db.userGrains(this.userId, { includeTrash: true });
+    const grains = db.userGrains(this.userId, { includeTrash: true, includeServices: true });
     const grainsHandle = await grains.observeAsync({
       added(newGrain) {
         // Watch out: DevApp grains can lack a packageId.
@@ -3435,6 +3456,7 @@ Meteor.methods({
               title: action.title,
               nounPhrase: action.nounPhrase,
               command: action.command,
+              output: action.output,
             });
           }
         }

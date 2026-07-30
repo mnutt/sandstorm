@@ -32,6 +32,10 @@ interface Supervisor {
   getMainView @0 () -> (view :Grain.UiView);
   # Get the grain's main UiView.
 
+  getExport @10 (name :Text, interfaceId :UInt64) -> (cap :Capability);
+  # Resolve a named Cap'n Proto capability exported by this grain. Possession of this Supervisor
+  # capability authorizes lookup; callers must supply the interface ID they intend to use.
+
   keepAlive @1 (core :SandstormCore);
   # Must call periodically to prevent supervisor from killing itself off.  Call at least once
   # per minute.
@@ -393,5 +397,15 @@ struct SupervisorObjectId(AppObjectId) {
     # This refers to an OngoingNotification for a wake lock. Note that although the app itself
     # implements an `OngoingNotification`, the supervisor wraps it in order to detect the `cancel`
     # call.
+
+    isolateWorkerRef @2 :IsolateWorkerRef;
+    # An application object restored directly through a named isolate worker export. This is
+    # separate from appRef so existing persisted objects retain their MainView restoration path.
+  }
+
+  struct IsolateWorkerRef {
+    exportName @0 :Text;
+    interfaceId @1 :UInt64;
+    objectId @2 :AnyPointer;
   }
 }

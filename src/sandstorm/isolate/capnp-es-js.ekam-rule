@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+input="sandstorm/isolate/capnp-es/runtime-modules.txt"
+output="sandstorm/isolate/capnp-es.js.h"
+
+if test $# = 0; then
+  echo "trigger canonical:${input}"
+  exit 0
+fi
+
+echo "findInput ${input}"
+read MANIFEST_DISK_FILE
+
+echo "newOutput ${output}"
+read OUTPUT_DISK_FILE
+
+python3 - "$OUTPUT_DISK_FILE" "$MANIFEST_DISK_FILE" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+output_path = sys.argv[1]
+manifest_path = Path(sys.argv[2]).resolve()
+repo_root = None
+for parent in manifest_path.parents:
+    if (parent / "deps/capnp-es-npm/package.json").exists():
+        repo_root = parent
+        break
+if repo_root is None:
+    raise SystemExit(f"could not find repository root from {manifest_path}")
+runtime_root = repo_root / "tmp/capnp-es-npm/node_modules/@mnutt/capnp-es/dist"
+if not runtime_root.exists():
+    raise SystemExit(
+        f"{runtime_root} does not exist; run `make tmp/.capnp-es-npm` before Ekam.")
+
+entry_modules = []
+for line in manifest_path.read_text(encoding="utf-8").splitlines():
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    parts = line.split()
+    if len(parts) != 2:
+        raise ValueError(f"expected '<module-name> <runtime-path>' in {manifest_path}: {line}")
+    entry_modules.append((parts[0], parts[1]))
+IMPORT_RE = re.compile(
+    r"(?:import|export)\s+(?:[^'\"\n]*?\s+from\s+)?[\"']([^\"']+)[\"']")
+
+
+def runtime_file(relative_path):
+    path = (runtime_root / relative_path).resolve()
+    path.relative_to(runtime_root)
+    if path.suffix != ".mjs":
+        raise ValueError(f"runtime module is not an .mjs file: {path}")
+    return path
+
+
+def module_name_for_path(path):
+    rel = path.relative_to(runtime_root).as_posix()
+    if rel.startswith("shared/"):
+        return "@mnutt/shared/" + rel.removeprefix("shared/")
+    if rel == "index.mjs":
+        return "@mnutt/capnp-es"
+    if rel.startswith("capnp/"):
+        return "@mnutt/capnp-es/" + rel.removesuffix(".mjs")
+    raise ValueError(f"unexpected runtime module path: {rel}")
+
+
+def discover_runtime_modules():
+    records = []
+    queued = []
+    seen_aliases = set()
+    scanned_paths = set()
+
+    def add_record(module_name, path):
+        if module_name in seen_aliases:
+            return
+        seen_aliases.add(module_name)
+        records.append((module_name, path))
+        queued.append(path)
+
+    for module_name, relative_path in entry_modules:
+        add_record(module_name, runtime_file(relative_path))
+
+    while queued:
+        path = queued.pop(0)
+        if path in scanned_paths:
+            continue
+        scanned_paths.add(path)
+        source = path.read_text(encoding="utf-8")
+        for match in IMPORT_RE.finditer(source):
+            specifier = match.group(1)
+            if not specifier.startswith("."):
+                continue
+            imported = runtime_file((path.parent / specifier).relative_to(runtime_root))
+            add_record(module_name_for_path(imported), imported)
+
+    return records
+
+
+module_records = discover_runtime_modules()
+
+def escape_chunk(chunk):
+    out = []
+    for b in chunk:
+        if b == 0x0a:
+            out.append(r"\n")
+        elif b == 0x0d:
+            out.append(r"\r")
+        elif b == 0x09:
+            out.append(r"\t")
+        elif b == 0x22:
+            out.append(r"\"")
+        elif b == 0x5c:
+            out.append(r"\\")
+        elif 0x20 <= b <= 0x7e:
+            out.append(chr(b))
+        else:
+            out.append("\\x%02x" % b)
+    return "".join(out)
+
+with open(output_path, "w", encoding="utf-8") as out:
+    out.write("// Generated from the pinned @mnutt/capnp-es npm package. Do not edit.\n")
+    out.write("#pragma once\n\n")
+    out.write("namespace sandstorm {\n\n")
+    out.write("struct IsolateCapnpEsModuleSource {\n")
+    out.write("  const char* name;\n")
+    out.write("  const char* source;\n")
+    out.write("};\n\n")
+
+    source_names = []
+    for i, (_module_name, path) in enumerate(module_records):
+        source_name = "ISOLATE_CAPNP_ES_SOURCE_%u" % i
+        source_names.append(source_name)
+        with open(path, "rb") as f:
+            data = f.read()
+        out.write("static constexpr const char %s[] =\n" % source_name)
+        for offset in range(0, len(data), 100):
+            out.write("    \"")
+            out.write(escape_chunk(data[offset:offset + 100]))
+            out.write("\"\n")
+        out.write("    ;\n\n")
+
+    out.write("static constexpr IsolateCapnpEsModuleSource ISOLATE_CAPNP_ES_MODULES[] = {\n")
+    for (module_name, _path), source_name in zip(module_records, source_names):
+        out.write("  { \"")
+        out.write(module_name)
+        out.write("\", ")
+        out.write(source_name)
+        out.write(" },\n")
+    out.write("};\n\n")
+    out.write("static constexpr uint ISOLATE_CAPNP_ES_MODULE_COUNT = %u;\n\n" % len(module_records))
+    out.write("}  // namespace sandstorm\n")
+PY

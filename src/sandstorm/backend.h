@@ -18,18 +18,30 @@
 #define SANDSTORM_BACKEND_H_
 
 #include <sandstorm/backend.capnp.h>
+#include <sandstorm/isolate-account-host.capnp.h>
 #include <map>
 #include <kj/async-io.h>
 #include <capnp/rpc-twoparty.h>
 #include <kj/one-of.h>
 #include <kj/vector.h>
 #include <sandstorm/cgroup2.h>
+#include <sandstorm/util.h>
 
 namespace kj {
   class InputStream;
 }
 
 namespace sandstorm {
+
+struct IsolateAccountHostPaths {
+  kj::String executable;
+  kj::String nativeHost;
+  kj::String appRoot;
+  kj::String grainRoot;
+  kj::String stateRoot;
+
+  static IsolateAccountHostPaths production();
+};
 
 class BackendImpl final: public Backend::Server, private kj::TaskSet::ErrorHandler {
 public:
@@ -40,6 +52,14 @@ public:
               kj::Maybe<uid_t> sandboxUid,
               bool useExperimentalSeccompFilter,
               bool logSeccompViolations);
+  BackendImpl(kj::LowLevelAsyncIoProvider& ioProvider,
+              kj::Network& network,
+              SandstormCoreFactory::Client&& sandstormCoreFactory,
+              kj::Maybe<Cgroup>&& cgroup,
+              kj::Maybe<uid_t> sandboxUid,
+              bool useExperimentalSeccompFilter,
+              bool logSeccompViolations,
+              IsolateAccountHostPaths accountHostPaths);
 
 protected:
   kj::Promise<void> ping(PingContext context) override;
@@ -67,6 +87,7 @@ private:
   kj::Maybe<Cgroup> cgroup;
   bool useExperimentalSeccompFilter;
   bool logSeccompViolations;
+  IsolateAccountHostPaths accountHostPaths;
 
   class RunningGrain {
   public:
@@ -92,6 +113,7 @@ private:
   struct StartingGrain {
     kj::String grainId;
     kj::ForkedPromise<Supervisor::Client> promise;
+    bool accountHosted;
   };
 
   struct BackingUpGrain {
@@ -108,9 +130,44 @@ private:
   class PackageUploadStreamImpl;
   class FileUploadStream;
 
-  kj::Promise<Supervisor::Client> bootGrain(kj::StringPtr grainId, kj::StringPtr packageId,
+  class RunningAccountHost {
+  public:
+    RunningAccountHost(BackendImpl& backend, kj::String ownerId,
+        uint64_t generation,
+        Subprocess accountProcess,
+        kj::Own<kj::AsyncIoStream> stream);
+    ~RunningAccountHost() noexcept(false);
+
+    IsolateAccountHost::Client getHost();
+    kj::Promise<void> onDisconnect();
+
+  private:
+    BackendImpl& backend;
+    kj::String ownerId;
+    uint64_t generation;
+    Subprocess accountProcess;
+    kj::Own<kj::AsyncIoStream> stream;
+    capnp::TwoPartyClient client;
+  };
+
+  struct StartingAccountHost {
+    kj::String ownerId;
+    kj::ForkedPromise<IsolateAccountHost::Client> promise;
+    uint64_t generation;
+  };
+
+  std::map<kj::StringPtr, StartingAccountHost> accountHosts;
+  uint64_t nextAccountHostGeneration = 0;
+
+  kj::Promise<Supervisor::Client> bootGrain(kj::StringPtr ownerId, kj::StringPtr grainId,
+      kj::StringPtr packageId,
       spk::Manifest::Command::Reader command, bool isNew, bool devMode, bool mountProce,
       bool isRetry);
+
+  kj::Promise<IsolateAccountHost::Client> getAccountHost(kj::StringPtr ownerId);
+  void eraseAccountHost(kj::StringPtr ownerId, uint64_t generation);
+  kj::Promise<kj::Own<kj::AsyncIoStream>> connectUnixSocket(
+      kj::String path, uint attemptsRemaining = 500);
 
   static kj::Promise<void> ignoreAll(kj::AsyncInputStream& input);
   static kj::Promise<kj::String> readAll(kj::AsyncInputStream& input,

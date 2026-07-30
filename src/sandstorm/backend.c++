@@ -21,6 +21,7 @@
 #include <capnp/serialize.h>
 #include <capnp/serialize-async.h>
 #include <stdio.h>  // rename()
+#include <signal.h>
 
 namespace sandstorm {
 
@@ -48,6 +49,16 @@ static void tryRecursivelyDelete(kj::StringPtr path) {
   recursivelyDelete(tmpPath);
 }
 
+IsolateAccountHostPaths IsolateAccountHostPaths::production() {
+  return {
+    kj::heapString("/sandstorm"),
+    kj::heapString("/bin/isolate-host"),
+    kj::heapString("/var/sandstorm/apps"),
+    kj::heapString("/var/sandstorm/grains"),
+    kj::heapString("/var/sandstorm/tmp/isolate-hosts"),
+  };
+}
+
 BackendImpl::BackendImpl(
   kj::LowLevelAsyncIoProvider& ioProvider,
   kj::Network& network,
@@ -56,12 +67,26 @@ BackendImpl::BackendImpl(
   kj::Maybe<uid_t> sandboxUid,
   bool useExperimentalSeccompFilter,
   bool logSeccompViolations)
+    : BackendImpl(ioProvider, network, kj::mv(sandstormCoreFactory), kj::mv(cgroup), sandboxUid,
+          useExperimentalSeccompFilter, logSeccompViolations,
+          IsolateAccountHostPaths::production()) {}
+
+BackendImpl::BackendImpl(
+  kj::LowLevelAsyncIoProvider& ioProvider,
+  kj::Network& network,
+  SandstormCoreFactory::Client&& sandstormCoreFactory,
+  kj::Maybe<Cgroup>&& cgroup,
+  kj::Maybe<uid_t> sandboxUid,
+  bool useExperimentalSeccompFilter,
+  bool logSeccompViolations,
+  IsolateAccountHostPaths accountHostPaths)
     : ioProvider(ioProvider), network(network), coreFactory(kj::mv(sandstormCoreFactory)),
       sandboxUid(sandboxUid),
       tasks(*this),
       cgroup(kj::mv(cgroup)),
       useExperimentalSeccompFilter(useExperimentalSeccompFilter),
-      logSeccompViolations(logSeccompViolations)
+      logSeccompViolations(logSeccompViolations),
+      accountHostPaths(kj::mv(accountHostPaths))
     {}
 
 void BackendImpl::taskFailed(kj::Exception&& exception) {
@@ -70,20 +95,150 @@ void BackendImpl::taskFailed(kj::Exception&& exception) {
 
 // =======================================================================================
 
+BackendImpl::RunningAccountHost::RunningAccountHost(
+    BackendImpl& backend, kj::String ownerId,
+    uint64_t generation,
+    Subprocess accountProcess,
+    kj::Own<kj::AsyncIoStream> stream)
+    : backend(backend), ownerId(kj::mv(ownerId)),
+      generation(generation),
+      accountProcess(kj::mv(accountProcess)),
+      stream(kj::mv(stream)), client(*this->stream) {}
+
+BackendImpl::RunningAccountHost::~RunningAccountHost() noexcept(false) {
+  backend.eraseAccountHost(ownerId, generation);
+}
+
+IsolateAccountHost::Client BackendImpl::RunningAccountHost::getHost() {
+  return client.bootstrap().castAs<IsolateAccountHost>();
+}
+
+kj::Promise<void> BackendImpl::RunningAccountHost::onDisconnect() {
+  return client.onDisconnect();
+}
+
+void BackendImpl::eraseAccountHost(kj::StringPtr ownerId, uint64_t generation) {
+  auto iter = accountHosts.find(ownerId);
+  if (iter != accountHosts.end() && iter->second.generation == generation) {
+    accountHosts.erase(iter);
+    KJ_IF_MAYBE(cg, cgroup) {
+      cg->removeChild(kj::str("isolate-account-", ownerId));
+    }
+  }
+}
+
+kj::Promise<kj::Own<kj::AsyncIoStream>> BackendImpl::connectUnixSocket(
+    kj::String path, uint attemptsRemaining) {
+  auto addressPromise = network.parseAddress(kj::str("unix:", path), 0);
+  return addressPromise.then([](kj::Own<kj::NetworkAddress>&& address) {
+    return address->connect();
+  }).then([](kj::Own<kj::AsyncIoStream>&& stream)
+      -> kj::Promise<kj::Own<kj::AsyncIoStream>> {
+    return kj::mv(stream);
+  }, [this, path = kj::mv(path), attemptsRemaining](kj::Exception&& exception) mutable
+      -> kj::Promise<kj::Own<kj::AsyncIoStream>> {
+    if (attemptsRemaining == 0) return kj::mv(exception);
+    return ioProvider.getTimer().afterDelay(20 * kj::MILLISECONDS).then(
+        [this, path = kj::mv(path), attemptsRemaining]() mutable {
+      return connectUnixSocket(kj::mv(path), attemptsRemaining - 1);
+    });
+  });
+}
+
+kj::Promise<IsolateAccountHost::Client> BackendImpl::getAccountHost(kj::StringPtr ownerId) {
+  auto iter = accountHosts.find(ownerId);
+  if (iter != accountHosts.end()) {
+    return iter->second.promise.addBranch();
+  }
+
+  auto hostDir = kj::str(accountHostPaths.stateRoot, "/", ownerId);
+  recursivelyCreateParent(hostDir);
+  if (mkdir(hostDir.cStr(), 0700) < 0) {
+    KJ_REQUIRE(errno == EEXIST, "failed to create isolate account host directory", hostDir,
+        strerror(errno));
+  }
+  auto accountSocket = kj::str(hostDir, "/account.sock");
+  unlink(accountSocket.cStr());
+
+  kj::Vector<kj::String> argv;
+  argv.add(kj::heapString("isolate-account-host"));
+  argv.add(kj::heapString("--trust-domain"));
+  argv.add(kj::str(ownerId));
+  argv.add(kj::heapString("--control-socket"));
+  argv.add(kj::str(accountSocket));
+  argv.add(kj::heapString("--native-host"));
+  argv.add(kj::str(accountHostPaths.nativeHost));
+  argv.add(kj::heapString("--app-root"));
+  argv.add(kj::str(accountHostPaths.appRoot));
+  argv.add(kj::heapString("--grain-root"));
+  argv.add(kj::str(accountHostPaths.grainRoot));
+  KJ_IF_MAYBE(u, sandboxUid) {
+    argv.add(kj::heapString("--uid"));
+    argv.add(kj::str(*u));
+  }
+  if (logSeccompViolations) argv.add(kj::heapString("--log-seccomp-violations"));
+  argv.add(kj::heapString("--wait-for-startup"));
+  auto startupGate = Pipe::make();
+  Subprocess::Options accountOptions(
+      KJ_MAP(arg, argv) -> const kj::StringPtr { return arg; });
+  accountOptions.executable = accountHostPaths.executable;
+  accountOptions.parentDeathSignal = SIGKILL;
+  accountOptions.stdin = startupGate.readEnd;
+  if (sandboxUid != nullptr) accountOptions.uid = uid_t(0);
+  Subprocess accountProcess(kj::mv(accountOptions));
+  startupGate.readEnd = nullptr;
+
+  KJ_IF_MAYBE(cg, cgroup) {
+    cg->getOrMakeChild(kj::str("isolate-account-", ownerId))
+        .addPid(accountProcess.getPid());
+  }
+  KJ_SYSCALL(write(startupGate.writeEnd, "x", 1));
+  startupGate.writeEnd = nullptr;
+
+  auto generation = ++nextAccountHostGeneration;
+  auto finalPromise = connectUnixSocket(kj::str(accountSocket)).then(
+      [this, ownerId = kj::str(ownerId), generation,
+       accountProcess = kj::mv(accountProcess)]
+      (kj::Own<kj::AsyncIoStream>&& connection) mutable {
+    auto host = kj::heap<RunningAccountHost>(*this, kj::str(ownerId), generation,
+        kj::mv(accountProcess), kj::mv(connection));
+    auto client = host->getHost();
+    tasks.add(host->onDisconnect().attach(kj::mv(host)));
+    return client;
+  }).fork();
+  tasks.add(finalPromise.addBranch().then(
+      [](IsolateAccountHost::Client&&) {},
+      [this, ownerId = kj::str(ownerId), generation](kj::Exception&& exception) {
+    eraseAccountHost(ownerId, generation);
+    KJ_LOG(WARNING, "Failed to start isolate account host.", ownerId, exception);
+  }));
+
+  StartingAccountHost starting = { kj::str(ownerId), kj::mv(finalPromise), generation };
+  kj::StringPtr ownerIdPtr = starting.ownerId;
+  auto result = starting.promise.addBranch();
+  KJ_ASSERT(accountHosts.insert(std::make_pair(ownerIdPtr, kj::mv(starting))).second);
+  return result;
+}
+
+// =======================================================================================
+
 kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
-    kj::StringPtr grainId, kj::StringPtr packageId,
+    kj::StringPtr ownerId, kj::StringPtr grainId, kj::StringPtr packageId,
     spk::Manifest::Command::Reader command, bool isNew, bool devMode, bool mountProc,
     bool isRetry) {
+  bool useIsolateRuntime = command.hasIsolate();
   auto iter = supervisors.find(grainId);
   if (iter != supervisors.end()) {
     KJ_SWITCH_ONEOF(iter->second) {
       KJ_CASE_ONEOF(g, BackingUpGrain) {
         // Wait until it's done backing up, and try again.
         return g.promise.addBranch().then([=]() {
-            return bootGrain(grainId, packageId, command, isNew, devMode, mountProc, isRetry);
+            return bootGrain(ownerId, grainId, packageId,
+                command, isNew, devMode, mountProc, isRetry);
         });
       }
       KJ_CASE_ONEOF(g, StartingGrain) {
+        bool accountHosted = g.accountHosted;
         KJ_REQUIRE(!isNew, "new grain matched existing grainId");
 
         // Supervisor for this grain is already running. Join that.
@@ -101,13 +256,24 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
             return kj::mv(client);
           }, [=](kj::Exception&& exception) mutable -> kj::Promise<Supervisor::Client> {
             // Exception?
-            if (exception.getType() == kj::Exception::Type::DISCONNECTED) {
-              // Oops, disconnected. onDisconnect() should have already fired causing the RunningGrain
-              // to unregister itself. Give it an extra turn using evalLater() just in case, then
-              // re-run.
+            if (exception.getType() == kj::Exception::Type::DISCONNECTED || accountHosted) {
+              // A non-disconnect failure from an account-hosted Supervisor usually means only that
+              // the native worker was idle-evicted or stopped. Remove this grain entry and ask the
+              // same account host to start it again. Tear down the account process and cgroup only
+              // when its RPC connection is actually disconnected.
               KJ_ASSERT(!isRetry, "retry supervisor startup logic failed");
+              if (accountHosted) {
+                supervisors.erase(grainId);
+                if (exception.getType() == kj::Exception::Type::DISCONNECTED) {
+                  auto host = accountHosts.find(ownerId);
+                  if (host != accountHosts.end()) {
+                    eraseAccountHost(ownerId, host->second.generation);
+                  }
+                }
+              }
               return kj::evalLater([=]() mutable {
-                return bootGrain(grainId, packageId, command, isNew, devMode, mountProc, true);
+                return bootGrain(ownerId, grainId, packageId,
+                    command, isNew, devMode, mountProc, true);
               });
             } else {
               return kj::mv(exception);
@@ -119,9 +285,48 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
   }
 
   // Grain is not currently running, so let's start it.
+  if (useIsolateRuntime) {
+    auto isolateConfig = command.getIsolate();
+    auto mainModule = kj::str(isolateConfig.getMainModule());
+    auto compatibilityDate = isolateConfig.hasCompatibilityDate()
+        ? kj::str(isolateConfig.getCompatibilityDate()) : kj::String();
+    auto finalPromise = getAccountHost(ownerId).then(
+        [this, grainId = kj::str(grainId), packageId = kj::str(packageId),
+         mainModule = kj::mv(mainModule), compatibilityDate = kj::mv(compatibilityDate), isNew]
+        (IsolateAccountHost::Client host) mutable {
+      auto coreRequest = coreFactory.getSandstormCoreRequest();
+      coreRequest.setGrainId(grainId);
+      auto request = host.startGrainRequest();
+      request.setGrainId(grainId);
+      request.setPackageId(packageId);
+      request.setMainModule(mainModule);
+      request.setCompatibilityDate(compatibilityDate);
+      request.setIsNew(isNew);
+      request.setCore(coreRequest.send().getCore());
+      return request.send().then([](auto response) {
+        return response.getSupervisor();
+      });
+    }).fork();
+
+    StartingGrain startingGrain = {
+      kj::heapString(grainId),
+      kj::mv(finalPromise),
+      true
+    };
+    kj::StringPtr grainIdPtr = startingGrain.grainId;
+    auto result = startingGrain.promise.addBranch();
+    KJ_ASSERT(supervisors.insert(
+        std::make_pair(grainIdPtr, kj::mv(startingGrain))).second);
+    return result;
+  }
+
   kj::Own<kj::AsyncInputStream> stdoutPipe;
   kj::Vector<kj::String> argv;
 
+  auto commandArgv = command.getArgv();
+  auto commandName = commandArgv.size() > 0 ? commandArgv[0] : kj::StringPtr("");
+  KJ_LOG(WARNING, "Starting grain supervisor.",
+      grainId, packageId, isNew, commandName);
   argv.add(kj::heapString("supervisor"));
 
   KJ_IF_MAYBE(u, sandboxUid) {
@@ -221,7 +426,8 @@ kj::Promise<Supervisor::Client> BackendImpl::bootGrain(
   // Add the promise to our map.
   StartingGrain startingGrain = {
     kj::heapString(grainId),
-    kj::mv(finalPromise)
+    kj::mv(finalPromise),
+    false
   };
   kj::StringPtr grainIdPtr = startingGrain.grainId;
   auto result = startingGrain.promise.addBranch();
@@ -276,7 +482,7 @@ kj::Promise<void> BackendImpl::ping(PingContext context) {
 
 kj::Promise<void> BackendImpl::startGrain(StartGrainContext context) {
   auto params = context.getParams();
-  return bootGrain(validateId(params.getGrainId()),
+  return bootGrain(validateId(params.getOwnerId()), validateId(params.getGrainId()),
                    validateId(params.getPackageId()), params.getCommand(),
                    params.getIsNew(), params.getDevMode(), params.getMountProc(), false)
       .then([context](Supervisor::Client client) mutable {
@@ -296,8 +502,9 @@ kj::Promise<void> BackendImpl::getGrain(GetGrainContext context) {
         });
       }
       KJ_CASE_ONEOF(g, StartingGrain) {
+        bool accountHosted = g.accountHosted;
         return g.promise.addBranch()
-            .then([this,context,grainId](Supervisor::Client client) mutable {
+            .then([this,context,grainId,accountHosted](Supervisor::Client client) mutable {
           // We should send a keepAlive() to make sure the supervisor is still up. We should also
           // send a new SandstormCore capability in case the front-end has restarted.
           auto coreReq = coreFactory.getSandstormCoreRequest();
@@ -308,7 +515,8 @@ kj::Promise<void> BackendImpl::getGrain(GetGrainContext context) {
               .then([context,KJ_MVCAP(client)](auto&&) mutable -> kj::Promise<void> {
             context.getResults().setSupervisor(kj::mv(client));
             return kj::READY_NOW;
-          }, [](kj::Exception&& e) -> kj::Promise<void> {
+          }, [this, grainId, accountHosted](kj::Exception&& e) -> kj::Promise<void> {
+            if (accountHosted) supervisors.erase(grainId);
             if (e.getType() != kj::Exception::Type::DISCONNECTED) {
               KJ_LOG(ERROR, "Exception when trying to keepAlive() a supervisor in getGrain().", e);
               return KJ_EXCEPTION(DISCONNECTED, "grain is not running");
@@ -336,12 +544,21 @@ kj::Promise<void> BackendImpl::deleteGrain(DeleteGrainContext context) {
         });
       }
       KJ_CASE_ONEOF(g, StartingGrain) {
+        bool accountHosted = g.accountHosted;
+        auto ownedGrainId = kj::str(grainId);
         shutdownPromise = g.promise.addBranch()
             .then([](Supervisor::Client client) mutable {
           return client.shutdownRequest().send().ignoreResult();
-        }).then([]() -> kj::Promise<void> {
+        }).then([this, accountHosted, grainId = kj::mv(ownedGrainId)]()
+            -> kj::Promise<void> {
+          if (accountHosted) {
+            supervisors.erase(grainId);
+            return kj::READY_NOW;
+          }
           return KJ_EXCEPTION(FAILED, "expected shutdown() to throw disconnected exception");
-        }, [](kj::Exception&& e) -> kj::Promise<void> {
+        }, [this, accountHosted, grainId = kj::str(grainId)](kj::Exception&& e)
+            -> kj::Promise<void> {
+          if (accountHosted) supervisors.erase(grainId);
           if (e.getType() == kj::Exception::Type::DISCONNECTED) {
             return kj::READY_NOW;
           } else {
@@ -776,4 +993,3 @@ kj::Promise<void> BackendImpl::getGrainStorageUsage(GetGrainStorageUsageContext 
 }
 
 } // namespace sandstorm
-

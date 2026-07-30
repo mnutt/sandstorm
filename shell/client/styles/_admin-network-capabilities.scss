@@ -70,6 +70,25 @@
     flex: 1 1 auto;
   }
 
+  .grant-details {
+    width: 260px;
+    flex: none;
+  }
+
+  div[role=gridcell].grant-details {
+    gap: 6px;
+    flex-wrap: wrap;
+    word-break: break-word;
+  }
+
+  .http-methods {
+    flex: none;
+  }
+
+  .http-url {
+    min-width: 0;
+  }
+
   .grant-time {
     width: 100px;
     flex: none;
@@ -105,4 +124,3 @@
     }
   }
 }
-

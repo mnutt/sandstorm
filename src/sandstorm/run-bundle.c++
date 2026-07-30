@@ -60,6 +60,7 @@
 
 #include "version.h"
 #include "send-fd.h"
+#include "isolate-supervisor.h"
 #include "supervisor.h"
 #include "util.h"
 #include "spk.h"
@@ -360,7 +361,10 @@ public:
 
     {
       auto programName = context.getProgramName();
-      if (programName.endsWith("supervisor")) {  // historically "sandstorm-supervisor"
+      if (programName.endsWith("isolate-account-host")) {
+        alternateMain = kj::heap<IsolateAccountHostMain>(context);
+        return alternateMain->getMain();
+      } else if (programName.endsWith("supervisor")) {  // historically "sandstorm-supervisor"
         alternateMain = kj::heap<SupervisorMain>(context);
         return alternateMain->getMain();
       } else if (programName == "spk" || programName.endsWith("/spk")) {
@@ -3463,6 +3467,12 @@ private:
       if (runningAsRoot) { KJ_SYSCALL(chown(dir, config.uids.uid, config.uids.gid)); }
 
       char* pkgId = strrchr(dir, '/') + 1;
+      context.warning(kj::str(
+          "Dev package identity:\n"
+          "    appId: ", appId, "\n"
+          "    packageId: ", pkgId, "\n\n"
+          "If an existing grain has this appId, Sandstorm will run it against this active dev\n"
+          "package while the dev session is connected."));
 
       // We dont use fusermount(1) because it doesn't live in our namespace. For now, this is not
       // a problem because we're root anyway. If in the future we use UID namespaces to avoid being
@@ -3537,11 +3547,39 @@ private:
     }
   };
 
+  class MongoJsonAnyPointerHandler: public capnp::JsonCodec::Handler<capnp::DynamicValue> {
+  public:
+    void encode(const capnp::JsonCodec& codec, capnp::DynamicValue::Reader input,
+                capnp::JsonValue::Builder output) const override {
+      auto anyPointer = input.as<capnp::AnyPointer>();
+      capnp::MallocMessageBuilder message(anyPointer.targetSize().wordCount + 1);
+      message.setRoot(anyPointer);
+      auto flat = capnp::messageToFlatArray(message);
+      auto bytes = flat.asBytes();
+
+      auto call = output.initCall();
+      call.setFunction("BinData");
+      auto params = call.initParams(2);
+      params[0].setNumber(0);
+      params[1].setString(kj::encodeBase64(bytes, false));
+    }
+
+    capnp::Orphan<capnp::DynamicValue> decode(
+        const capnp::JsonCodec& codec, capnp::JsonValue::Reader input,
+        capnp::Orphanage orphanage) const override {
+      KJ_UNIMPLEMENTED("MongoJsonAnyPointerHandler::decode");
+    }
+  };
+
   template <typename T>
   kj::StringTree toMongoJson(T&& value) {
     capnp::JsonCodec json;
     MongoJsonBinaryHandler binHandler;
+    MongoJsonAnyPointerHandler anyPointerHandler;
     json.addTypeHandler(binHandler);
+    json.addTypeHandler(
+        capnp::Type(capnp::schema::Type::AnyPointer::Unconstrained::ANY_KIND),
+        anyPointerHandler);
     return json.encode(kj::fwd<T>(value));
   }
 
@@ -3549,7 +3587,7 @@ private:
                         kj::StringPtr pkgId, spk::Manifest::Reader manifest) {
     FdBundle fakeBundle(nullptr);
     mongoCommand(config, fakeBundle, kj::str(
-        "db.devpackages.insert({"
+        "void db.devpackages.insertOne({"
           "_id:\"", pkgId, "\","
           "appId:\"", appId, "\","
           "timestamp:", time(nullptr), ","
@@ -3561,7 +3599,7 @@ private:
   void updateDevPackage(const Config& config, kj::StringPtr pkgId, spk::Manifest::Reader manifest) {
     FdBundle fakeBundle(nullptr);
     mongoCommand(config, fakeBundle, kj::str(
-        "db.devpackages.update({_id:\"", pkgId, "\"}, {$set: {"
+        "void db.devpackages.updateOne({_id:\"", pkgId, "\"}, {$set: {"
           "timestamp:", time(nullptr), ","
           "manifest:", toMongoJson(manifest),
         "}})"));
@@ -3570,12 +3608,12 @@ private:
   void removeDevPackage(const Config& config, kj::StringPtr pkgId) {
     FdBundle fakeBundle(nullptr);
     mongoCommand(config, fakeBundle, kj::str(
-        "db.devpackages.remove({_id:\"", pkgId, "\"})"));
+        "void db.devpackages.deleteOne({_id:\"", pkgId, "\"})"));
   }
 
   void clearDevPackages(const Config& config) {
     FdBundle fakeBundle(nullptr);
-    mongoCommand(config, fakeBundle, kj::str("db.devpackages.remove({})"));
+    mongoCommand(config, fakeBundle, kj::str("void db.devpackages.deleteMany({})"));
   }
 
   void mongoCommand(const Config& config, FdBundle& fdBundle,

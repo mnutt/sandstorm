@@ -1,0 +1,75 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/isolate-host.capnp",
+  "interfaces": [
+    {
+      "name": "IsolateHost",
+      "interfaceId": "0xb15098c984fb8f32",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "startGrain",
+          "ordinal": 0,
+          "paramStructId": "0xb5a7ca26b34ff476",
+          "resultStructId": "0x8fdf1a99638978ff",
+          "params": [{"name": "grainId", "type": "Text"}, {"name": "services", "type": "IsolateBindingServices"}, {"name": "workerSource", "type": "Data"}],
+          "results": [{"name": "grain", "type": "HostedIsolate"}]
+        }
+      ]
+    },
+    {
+      "name": "IsolateBindingServices",
+      "interfaceId": "0xd8b8ffcb9dbf83ea",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "getBridge",
+          "ordinal": 0,
+          "paramStructId": "0xdf2f3459f08c99bf",
+          "resultStructId": "0x9858a4fb8b22b9cb",
+          "params": [],
+          "results": [{"name": "bridge", "type": "Capability"}]
+        }
+      ]
+    },
+    {
+      "name": "HostedIsolate",
+      "interfaceId": "0xae62f18e41ff24cb",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "keepAlive",
+          "ordinal": 0,
+          "paramStructId": "0xd9155c437d33ca74",
+          "resultStructId": "0x9c69338aa91638fa",
+          "params": [],
+          "results": []
+        },
+        {
+          "name": "stop",
+          "ordinal": 1,
+          "paramStructId": "0xc23ce9ea936cbb06",
+          "resultStructId": "0xf69e659bf4e5fe0c",
+          "params": [],
+          "results": []
+        },
+        {
+          "name": "getRpcBootstrap",
+          "ordinal": 2,
+          "paramStructId": "0xbe043e659c1299aa",
+          "resultStructId": "0xd94a9bf7a8b06c5e",
+          "params": [],
+          "results": [{"name": "cap", "type": "Capability"}]
+        },
+        {
+          "name": "getExport",
+          "ordinal": 3,
+          "paramStructId": "0xb4dfee2c3369f77d",
+          "resultStructId": "0xdab23bdc5f32ed0d",
+          "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}],
+          "results": [{"name": "cap", "type": "Capability"}]
+        }
+      ]
+    }
+  ]
+}

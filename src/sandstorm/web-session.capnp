@@ -66,15 +66,18 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   delete @4 (path :Text, context :Context) -> Response;
   patch @17 (path :Text, content :PostContent, context :Context) -> Response;
 
-  postStreaming @5 (path :Text, mimeType :Text, context :Context, encoding :Text)
+  postStreaming @5 (path :Text, mimeType :Text, context :Context, encoding :Text,
+                    expectedSize :UInt64 = 0)
       -> (stream :RequestStream);
-  putStreaming @6 (path :Text, mimeType :Text, context :Context, encoding :Text)
+  putStreaming @6 (path :Text, mimeType :Text, context :Context, encoding :Text,
+                   expectedSize :UInt64 = 0)
       -> (stream :RequestStream);
   # Streaming post/put requests, useful when the input is large. If these throw `unimplemented`
   # exceptions, the caller should fall back to regular post() / put() on the assumption that the
   # app doesn't implement streaming.
   #
   # The optional `encoding` field represents the Content-Encoding header.
+  # `expectedSize`, when non-zero, is the exact number of bytes that will be written to the stream.
 
   openWebSocket @2 (path :Text, context :Context,
                     protocol :List(Text), clientStream :WebSocketStream)
@@ -82,6 +85,22 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   # Open a new WebSocket.  `protocol` corresponds to the `Sec-WebSocket-Protocol` header.
   # `clientStream` is the capability which will receive server -> client messages, while
   # serverStream represents client -> server.
+
+  openWebSocketMessages @18 (path :Text, context :Context,
+                             protocol :List(Text), clientStream :WebSocketMessageStream)
+                         -> (protocol :List(Text), serverStream :WebSocketMessageStream);
+  # Message-oriented WebSocket transport. New implementations should prefer this method over
+  # openWebSocket(), whose streams expose raw RFC 6455 framing. Text, binary, and close messages
+  # retain their logical boundaries; ping/pong and fragmentation remain transport details.
+
+  postStreamingPull @19 (path :Text, mimeType :Text, context :Context, encoding :Text,
+                         expectedSize :UInt64 = 0, body :Util.ByteStreamSource) -> Response;
+  putStreamingPull @20 (path :Text, mimeType :Text, context :Context, encoding :Text,
+                        expectedSize :UInt64 = 0, body :Util.ByteStreamSource) -> Response;
+  # Pull-oriented streaming requests. These preserve full-duplex behavior when the callee's input
+  # stream is scoped to the event handling this method: the callee pulls chunks from body while it
+  # computes and streams the response. Callers should fall back to postStreaming()/putStreaming()
+  # if these methods are unimplemented.
 
   propfind @7 (path :Text, xmlContent :Text, depth :PropfindDepth, context :Context) -> Response;
   proppatch @8 (path :Text, xmlContent :Text, context :Context) -> Response;
@@ -155,6 +174,8 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
       # Values in this list that end with '*' whitelist a prefix.
 
       "x-sandstorm-app-*",     # For new headers introduced by Sandstorm apps.
+
+      "range",                 # Range requests.
 
       "oc-total-length",       # Owncloud client
       "oc-chunk-size",         # Owncloud client
@@ -444,6 +465,9 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
 
       "x-sandstorm-app-*",     # For new headers introduced by Sandstorm apps.
 
+      "accept-ranges",         # Range requests.
+      "content-range",         # Range requests.
+
       "x-oc-mtime",            # Owncloud protocol
     ];
 
@@ -476,6 +500,15 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
     # datagram at a time.
     #
     # TODO(apibump): Send whole WebSocket messages.
+  }
+
+  interface WebSocketMessageStream {
+    # One direction of a logical WebSocket connection. Dropping the capability aborts that
+    # direction without a close message.
+
+    sendText @0 (message :Text) -> stream;
+    sendData @1 (message :Data) -> stream;
+    close @2 (code :UInt16 = 1000, reason :Text) -> stream;
   }
 
   struct CachePolicy {
@@ -545,9 +578,6 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   # * Caching:
   #   * Cache-Control
   #   * If-*
-  # * Range requests:
-  #   * Range
-  #
   # Request headers that could be added later, but don't seem terribly important:
   # * Accept
   # * Accept-Charset
@@ -592,10 +622,6 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
   #   * Expires
   #   * Last-Modified
   #   * Vary (but Sandstorm will always add "Authorization")
-  # * Range requests:
-  #   * Accept-Ranges
-  #   * Content-Range
-  #
   # Response headers that could be added later, but don't seem terribly important:
   # * Allow
   # * Content-Location

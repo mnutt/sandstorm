@@ -2,11 +2,19 @@ name: build_and_test
 
 on: [push, pull_request, workflow_dispatch]
 
+# A push to a branch with an open pull request produces both push and pull_request
+# events for the same commit. Keep only one copy of that expensive build.
+concurrency:
+  group: build-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
 env:
-  CCACHE_DIR: ${{ github.workspace }}/.ccache"
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
 jobs:
   build_and_test:
-    runs-on: ubuntu-24.04
+    # Set the BUILD_RUNNER repository variable to the label of a configured
+    # larger runner; otherwise use the standard four-core hosted runner.
+    runs-on: ${{ vars.BUILD_RUNNER || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -17,9 +25,9 @@ jobs:
           # Generate a hash based on all submodule SHAs
           DEPS_HASH=$(git submodule status | sha256sum | cut -d' ' -f1)
           echo "hash=$DEPS_HASH" >> $GITHUB_OUTPUT
-      - name: cache deps build artifacts
+      - name: restore deps build artifacts
         id: deps-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             deps/llvm-build
@@ -27,7 +35,18 @@ jobs:
             deps/libsodium/build
             deps/ekam/bin
             tmp/.deps
-          key: deps-${{ runner.os }}-${{ steps.deps-cache-key.outputs.hash }}
+          key: deps-v2-${{ runner.os }}-clang19-${{ steps.deps-cache-key.outputs.hash }}
+          restore-keys: |
+            deps-v2-${{ runner.os }}-clang19-
+      - name: restore Bazel disk cache
+        id: bazel-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/bazel-disk-cache
+          key: bazel-v1-${{ runner.os }}-9.1.0-clang19-${{ steps.deps-cache-key.outputs.hash }}-${{ hashFiles('Makefile', 'patches/workerd/**', 'isolate-host/**', 'src/sandstorm/isolate*.capnp') }}
+          restore-keys: |
+            bazel-v1-${{ runner.os }}-9.1.0-clang19-${{ steps.deps-cache-key.outputs.hash }}-
+            bazel-v1-${{ runner.os }}-9.1.0-clang19-
       - name: setup python 3.10
         uses: actions/setup-python@v5
         with:
@@ -40,7 +59,8 @@ jobs:
             which go || (sudo apt-get update && sudo apt-get install golang-go)
 
             sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ccache
+                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ccache \
+                clang-19 lld-19 libc++-19-dev libc++abi-19-dev
 
             # Install OpenSSL 1.1 (required for Meteor/Node compatibility)
             # Ubuntu 24.04 only ships OpenSSL 3.x, so we need to install 1.1 from older release
@@ -55,18 +75,21 @@ jobs:
       - name: install meteor
         run: |
             curl https://install.meteor.com/ | sh
-      - name: cache ccache files
-        uses: actions/cache@v4
+      - name: restore ccache files
+        id: ccache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ github.run_number }}
-          restore-keys: ccache-
+          key: ccache-v2-${{ runner.os }}-clang19-${{ github.run_id }}
+          restore-keys: |
+            ccache-v2-${{ runner.os }}-clang19-
       - name: print and zero ccache stats
         run: |
             mkdir -p "$CCACHE_DIR"
             ccache -s
             ccache -z
       - name: make fast
+        id: make-fast
         run: |
             set -x
             export CCACHE_COMPRESS="true"
@@ -74,6 +97,7 @@ jobs:
             export CCACHE_MAXSIZE="1G"
             #     export CCACHE_DEBUG=1
             export CCACHE_SLOPPINESS="time_macros"
+            export CLANGDIR=/usr/lib/llvm-19/bin
             export PATH=/usr/lib/ccache:$CLANGDIR:$PATH
             # Use Python 3.10 for node-gyp (3.11+ removed 'rU' mode)
             export npm_config_python=$(which python)
@@ -82,9 +106,43 @@ jobs:
               CC="$(which clang)" \
               CXX="$(which clang++)" \
               fast
-      - name: print ccache stats
+      - name: print cache stats
+        if: always()
         run: |
             ccache -s
+            du -sh ~/bazel-disk-cache 2>/dev/null || true
+      # Save immediately after the build. The tests below may fail, and the
+      # combined actions/cache action only saves after a successful whole job.
+      - name: save deps build artifacts
+        if: ${{ always() && steps.make-fast.outcome == 'success' && steps.deps-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            deps/llvm-build
+            deps/boringssl/build
+            deps/libsodium/build
+            deps/ekam/bin
+            tmp/.deps
+          key: deps-v2-${{ runner.os }}-clang19-${{ steps.deps-cache-key.outputs.hash }}
+      - name: save Bazel disk cache
+        if: ${{ always() && steps.make-fast.outcome == 'success' && steps.bazel-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/bazel-disk-cache
+          key: bazel-v1-${{ runner.os }}-9.1.0-clang19-${{ steps.deps-cache-key.outputs.hash }}-${{ hashFiles('Makefile', 'patches/workerd/**', 'isolate-host/**', 'src/sandstorm/isolate*.capnp') }}
+      - name: save ccache files
+        if: ${{ always() && steps.make-fast.outcome == 'success' && steps.ccache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-v2-${{ runner.os }}-clang19-${{ github.run_id }}
+      - name: upload Bazel profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bazel-build-profile
+          path: tmp/workerd-embed/build.bazel-profile.gz
+          if-no-files-found: ignore
       #      # for debugging ccache misses
       #      find . -iname *ccache* | tar -czf ccache-debug.tar.gz -T /dev/stdin
       #- name: upload ccache debug tarball
@@ -108,7 +166,7 @@ jobs:
           # the constant below.
           make lint | tee lint.log
           num_problems=$(cat lint.log | grep ' problems (0 errors, ' | awk '{print $2}')
-          [ "$num_problems" = 532 ]
+          [ "$num_problems" = 344 ]
       - name: setup java 11
         uses: actions/setup-java@v4
         with:
@@ -125,7 +183,10 @@ jobs:
       - name: test
         run: |
           set -o pipefail
-          (make test |& tee testlog.txt; echo "Result: $?")
+          make test |& tee testlog.txt
+      - name: isolate release gate
+        run: |
+          make isolate-ci
       - name: upload test log
         if: always()
         uses: actions/upload-artifact@v4

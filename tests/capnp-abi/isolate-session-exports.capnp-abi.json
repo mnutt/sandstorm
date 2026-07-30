@@ -1,0 +1,42 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/isolate-session-exports.capnp",
+  "interfaces": [
+    {
+      "name": "WorkerWebSession",
+      "interfaceId": "0xa0dcf62fa4965d72",
+      "superclasses": [{"name": "sandstorm/web-session.capnp:WebSession", "interfaceId": "0xa50711a14d35a8ce"}, {"name": "sandstorm/grain.capnp:AppPersistent", "interfaceId": "0xaffa789add8747b8"}],
+      "methods": [
+      ]
+    },
+    {
+      "name": "WorkerApiSession",
+      "interfaceId": "0xb67a196b3d6556b1",
+      "superclasses": [{"name": "sandstorm/api-session.capnp:ApiSession", "interfaceId": "0xc879e379c625cdc7"}, {"name": "sandstorm/grain.capnp:AppPersistent", "interfaceId": "0xaffa789add8747b8"}],
+      "methods": [
+      ]
+    },
+    {
+      "name": "WorkerMainViewSession",
+      "interfaceId": "0xc153c342b5536294",
+      "superclasses": [{"name": "sandstorm/web-session.capnp:WebSession", "interfaceId": "0xa50711a14d35a8ce"}],
+      "methods": [
+        {
+          "name": "getBrowserBootstrap",
+          "ordinal": 0,
+          "paramStructId": "0xd6ace405f738c774",
+          "resultStructId": "0x88a22b291d070322",
+          "params": [],
+          "results": [{"name": "found", "type": "Bool"}, {"name": "interfaceId", "type": "UInt64"}, {"name": "interfaceName", "type": "Text"}, {"name": "cap", "type": "Capability"}]
+        }
+      ]
+    }
+  ],
+  "structs": [
+    {
+      "name": "WorkerSessionRef",
+      "structId": "0x834255f56c74dbcc",
+      "fields": [{"name": "singleton", "ordinal": 0, "type": "Void"}]
+    }
+  ]
+}

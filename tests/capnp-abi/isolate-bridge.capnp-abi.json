@@ -1,0 +1,248 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/isolate-bridge.capnp",
+  "interfaces": [
+    {
+      "name": "IsolateSessionContext",
+      "interfaceId": "0xc8b2a7f6dfd3c48a",
+      "superclasses": [{"name": "sandstorm/grain.capnp:SessionContext", "interfaceId": "0xbf3e401d5a63f336"}],
+      "methods": [
+        {
+          "name": "getSessionId",
+          "ordinal": 0,
+          "paramStructId": "0xed75d6ec57feccc9",
+          "resultStructId": "0x89ed34d071c9b18b",
+          "params": [],
+          "results": [{"name": "id", "type": "Text"}]
+        }
+      ]
+    },
+    {
+      "name": "IsolateBridge",
+      "interfaceId": "0xc4b06a6915ad0e3c",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "saveAppCapability",
+          "ordinal": 0,
+          "paramStructId": "0xd250ec60f9e4c9a4",
+          "resultStructId": "0xef470dde7f0583df",
+          "params": [{"name": "cap", "type": "Capability"}, {"name": "label", "type": "Util.LocalizedText"}],
+          "results": [{"name": "token", "type": "Data"}]
+        },
+        {
+          "name": "restoreCapability",
+          "ordinal": 1,
+          "paramStructId": "0x84b98ce22f09bb27",
+          "resultStructId": "0xde49998b39ea36c5",
+          "params": [{"name": "token", "type": "Data"}],
+          "results": [{"name": "cap", "type": "Capability"}, {"name": "saver", "type": "IsolateCapabilitySaver"}]
+        },
+        {
+          "name": "dropCapability",
+          "ordinal": 2,
+          "paramStructId": "0x82d2be2f6dea4844",
+          "resultStructId": "0x86e838c390b6babb",
+          "params": [{"name": "token", "type": "Data"}],
+          "results": []
+        },
+        {
+          "name": "getOfferedCapability",
+          "ordinal": 3,
+          "paramStructId": "0xd18f4cbc25be3b37",
+          "resultStructId": "0xc1957398fe2ffec9",
+          "params": [{"name": "sessionId", "type": "Text"}],
+          "results": [{"name": "found", "type": "Bool"}, {"name": "cap", "type": "Capability"}, {"name": "saver", "type": "IsolateCapabilitySaver"}]
+        },
+        {
+          "name": "getWorkerExport",
+          "ordinal": 4,
+          "paramStructId": "0xbff115a6130293eb",
+          "resultStructId": "0xb3991ed299237e03",
+          "params": [{"name": "name", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}],
+          "results": [{"name": "cap", "type": "Capability"}, {"name": "saver", "type": "IsolateCapabilitySaver"}]
+        },
+        {
+          "name": "createBrowserHandoff",
+          "ordinal": 5,
+          "paramStructId": "0xc726ffc691879ad8",
+          "resultStructId": "0xf32dbd7971e3b55d",
+          "params": [{"name": "cap", "type": "Capability"}, {"name": "sessionId", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}, {"name": "interfaceName", "type": "Text"}],
+          "results": [{"name": "id", "type": "Text"}]
+        },
+        {
+          "name": "dropBrowserHandoff",
+          "ordinal": 6,
+          "paramStructId": "0xba722c30637c4ed5",
+          "resultStructId": "0xbbac2e6c92f5c9f2",
+          "params": [{"name": "id", "type": "Text"}],
+          "results": [{"name": "released", "type": "Bool"}]
+        },
+        {
+          "name": "wrapAppPersistentCapability",
+          "ordinal": 7,
+          "paramStructId": "0xea72cbe1106d8f80",
+          "resultStructId": "0xde6e2c97080cbe21",
+          "params": [{"name": "cap", "type": "Capability"}],
+          "results": [{"name": "cap", "type": "Capability"}]
+        },
+        {
+          "name": "getStorage",
+          "ordinal": 8,
+          "paramStructId": "0xe26eb2a272059fb5",
+          "resultStructId": "0xfc4df834c563f03a",
+          "params": [],
+          "results": [{"name": "storage", "type": "IsolateStorage"}]
+        },
+        {
+          "name": "getViewInfo",
+          "ordinal": 9,
+          "paramStructId": "0xcd1ae90bbe4a256e",
+          "resultStructId": "0xa7be3dd440995ee6",
+          "params": [],
+          "results": [{"name": "viewInfo", "type": "Grain.UiView.ViewInfo"}]
+        },
+        {
+          "name": "getRuntimeStatus",
+          "ordinal": 10,
+          "paramStructId": "0x8ea3648da47a8137",
+          "resultStructId": "0xac672c7fb2b221d3",
+          "params": [],
+          "results": [{"name": "mainModule", "type": "Text"}]
+        },
+        {
+          "name": "claimPowerboxRequest",
+          "ordinal": 11,
+          "paramStructId": "0xd57792ebfe3e9c51",
+          "resultStructId": "0xf3dd4a8e9b0cd8c0",
+          "params": [{"name": "sessionId", "type": "Text"}, {"name": "requestToken", "type": "Text"}, {"name": "requiredPermissions", "type": "List"}],
+          "results": [{"name": "cap", "type": "Capability"}, {"name": "saver", "type": "IsolateCapabilitySaver"}]
+        },
+        {
+          "name": "offerPowerboxCapability",
+          "ordinal": 12,
+          "paramStructId": "0xc7453aa81a54231e",
+          "resultStructId": "0xfa4046ac81a192ec",
+          "params": [{"name": "sessionId", "type": "Text"}, {"name": "cap", "type": "Capability"}, {"name": "requiredPermissions", "type": "List"}, {"name": "descriptor", "type": "Powerbox.PowerboxDescriptor"}, {"name": "displayInfo", "type": "Powerbox.PowerboxDisplayInfo"}],
+          "results": []
+        },
+        {
+          "name": "fulfillPowerboxRequest",
+          "ordinal": 13,
+          "paramStructId": "0x806447135f996410",
+          "resultStructId": "0xeb1f502fef69b712",
+          "params": [{"name": "sessionId", "type": "Text"}, {"name": "cap", "type": "Capability"}, {"name": "requiredPermissions", "type": "List"}, {"name": "descriptor", "type": "Powerbox.PowerboxDescriptor"}, {"name": "displayInfo", "type": "Powerbox.PowerboxDisplayInfo"}],
+          "results": []
+        },
+        {
+          "name": "tieCapabilityToUser",
+          "ordinal": 14,
+          "paramStructId": "0xf58e36f756cea84f",
+          "resultStructId": "0xb271694e71e9a010",
+          "params": [{"name": "sessionId", "type": "Text"}, {"name": "cap", "type": "Capability"}, {"name": "requiredPermissions", "type": "List"}, {"name": "displayInfo", "type": "Powerbox.PowerboxDisplayInfo"}],
+          "results": [{"name": "cap", "type": "Capability"}, {"name": "saver", "type": "IsolateCapabilitySaver"}]
+        }
+      ]
+    },
+    {
+      "name": "IsolateCapabilitySaver",
+      "interfaceId": "0xdd105b03d66c3c67",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "save",
+          "ordinal": 0,
+          "paramStructId": "0xaeda7c371152b2aa",
+          "resultStructId": "0x95c25bacfccba9e2",
+          "params": [{"name": "label", "type": "Util.LocalizedText"}],
+          "results": [{"name": "token", "type": "Data"}]
+        }
+      ]
+    },
+    {
+      "name": "IsolateStorage",
+      "interfaceId": "0xeeef9ad97721b1d2",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "put",
+          "ordinal": 0,
+          "paramStructId": "0xaa83f62a29c8dacd",
+          "resultStructId": "0x82f12b47f698aa2e",
+          "params": [{"name": "key", "type": "Text"}, {"name": "value", "type": "Data"}],
+          "results": [{"name": "bytes", "type": "UInt64"}]
+        },
+        {
+          "name": "get",
+          "ordinal": 1,
+          "paramStructId": "0xb3b8c67691db068d",
+          "resultStructId": "0x9f35741ba28de8f2",
+          "params": [{"name": "key", "type": "Text"}],
+          "results": [{"name": "found", "type": "Bool"}, {"name": "value", "type": "Data"}]
+        },
+        {
+          "name": "stat",
+          "ordinal": 2,
+          "paramStructId": "0x8c2d7425b2b5f909",
+          "resultStructId": "0xc1961c3ad46da4a4",
+          "params": [{"name": "key", "type": "Text"}],
+          "results": [{"name": "found", "type": "Bool"}, {"name": "bytes", "type": "UInt64"}]
+        },
+        {
+          "name": "remove",
+          "ordinal": 3,
+          "paramStructId": "0xc451d6fefa47ae55",
+          "resultStructId": "0xb7e7b952d03d9cc1",
+          "params": [{"name": "key", "type": "Text"}],
+          "results": []
+        },
+        {
+          "name": "list",
+          "ordinal": 4,
+          "paramStructId": "0xc4071cbf5b7d3bd2",
+          "resultStructId": "0xa28fc6a1a657d266",
+          "params": [],
+          "results": [{"name": "entries", "type": "List"}, {"name": "totalBytes", "type": "UInt64"}]
+        }
+      ]
+    },
+    {
+      "name": "BrowserIsolateBridge",
+      "interfaceId": "0x93fb2746c97b5bea",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "takeHandoffCapability",
+          "ordinal": 0,
+          "paramStructId": "0xef0670ac3654ad32",
+          "resultStructId": "0xdd3554252dd8763e",
+          "params": [{"name": "id", "type": "Text"}, {"name": "interfaceId", "type": "UInt64"}],
+          "results": [{"name": "cap", "type": "Capability"}]
+        },
+        {
+          "name": "claimPowerboxRequest",
+          "ordinal": 1,
+          "paramStructId": "0x9b553df74c3e723f",
+          "resultStructId": "0xa0a8c1829dde6035",
+          "params": [{"name": "requestToken", "type": "Text"}, {"name": "requiredPermissions", "type": "List"}],
+          "results": [{"name": "cap", "type": "Capability"}]
+        },
+        {
+          "name": "getApplicationBootstrap",
+          "ordinal": 2,
+          "paramStructId": "0xbbb39ca8ebea42ee",
+          "resultStructId": "0xd77d3fff5618e3f0",
+          "params": [],
+          "results": [{"name": "found", "type": "Bool"}, {"name": "interfaceId", "type": "UInt64"}, {"name": "interfaceName", "type": "Text"}, {"name": "cap", "type": "Capability"}]
+        }
+      ]
+    }
+  ],
+  "structs": [
+    {
+      "name": "IsolateStorage.Entry",
+      "structId": "0xac1331282d985a26",
+      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "bytes", "ordinal": 1, "type": "UInt64"}]
+    }
+  ]
+}

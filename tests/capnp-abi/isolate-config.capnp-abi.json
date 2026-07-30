@@ -1,0 +1,28 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/package.capnp",
+  "interfaces": [
+  ],
+  "structs": [
+    {
+      "name": "Manifest.IsolateConfig",
+      "structId": "0xd5b4dacda9ef3910",
+      "fields": [{"name": "mainModule", "ordinal": 0, "type": "Text"}, {"name": "modules", "ordinal": 1, "type": "List(Struct(0xa691c983138f8206))"}, {"name": "compatibilityDate", "ordinal": 2, "type": "Text"}, {"name": "compatibilityFlags", "ordinal": 3, "type": "List(Text)"}, {"name": "bindings", "ordinal": 4, "type": "List(Struct(0x8b2734f75ad2d39b))"}, {"name": "exports", "ordinal": 5, "type": "List(Struct(0xd3a117e6374a8618))"}]
+    },
+    {
+      "name": "Manifest.IsolateConfig.Export",
+      "structId": "0xd3a117e6374a8618",
+      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "interfaceId", "ordinal": 1, "type": "UInt64"}, {"name": "role", "ordinal": 2, "type": "Enum(0xda2359fa7d961470)"}]
+    },
+    {
+      "name": "Manifest.IsolateConfig.Module",
+      "structId": "0xa691c983138f8206",
+      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "esModulePath", "ordinal": 1, "type": "Text", "discriminant": 0}, {"name": "commonJsModulePath", "ordinal": 2, "type": "Text", "discriminant": 1}, {"name": "textPath", "ordinal": 3, "type": "Text", "discriminant": 2}, {"name": "dataPath", "ordinal": 4, "type": "Text", "discriminant": 3}, {"name": "wasmPath", "ordinal": 5, "type": "Text", "discriminant": 4}, {"name": "jsonPath", "ordinal": 6, "type": "Text", "discriminant": 5}]
+    },
+    {
+      "name": "Manifest.IsolateConfig.Binding",
+      "structId": "0x8b2734f75ad2d39b",
+      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "text", "ordinal": 1, "type": "Text", "discriminant": 0}, {"name": "data", "ordinal": 2, "type": "Data", "discriminant": 1}, {"name": "json", "ordinal": 3, "type": "Text", "discriminant": 2}]
+    }
+  ]
+}

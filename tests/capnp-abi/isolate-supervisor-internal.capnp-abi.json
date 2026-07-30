@@ -1,0 +1,20 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/isolate-supervisor-internal.capnp",
+  "interfaces": [
+    {
+      "name": "IsolateWebSession",
+      "interfaceId": "0xa8e9655582dcde6f",
+      "superclasses": [{"name": "sandstorm/web-session.capnp:WebSession", "interfaceId": "0xa50711a14d35a8ce"}, {"name": "sandstorm/supervisor.capnp:SystemPersistent", "interfaceId": "0xc38cedd77cbed5b4"}],
+      "methods": [
+      ]
+    },
+    {
+      "name": "IsolateApiSession",
+      "interfaceId": "0x8a6e6d3fbd442b6a",
+      "superclasses": [{"name": "sandstorm/api-session.capnp:ApiSession", "interfaceId": "0xc879e379c625cdc7"}, {"name": "sandstorm/supervisor.capnp:SystemPersistent", "interfaceId": "0xc38cedd77cbed5b4"}],
+      "methods": [
+      ]
+    }
+  ]
+}

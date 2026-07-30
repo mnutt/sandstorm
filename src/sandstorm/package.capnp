@@ -128,6 +128,73 @@ struct Manifest {
     # because you should just specify the program as argv[0]. To be clear, this does not and did
     # never provide a way to make argv[0] contain something other than the executable name, as
     # you can technically do with the `exec` system call.
+
+    isolate @3 :IsolateConfig;
+    # If present, run this command as an isolate grain rather than as a Linux process inside the
+    # traditional Sandstorm sandbox. `argv`, `environ`, and `deprecatedExecutablePath` are ignored
+    # for isolate commands; the trusted native host instantiates the declared modules and bindings
+    # directly rather than launching an application-selected runtime process.
+  }
+
+  struct IsolateConfig {
+    # Configuration for grains implemented as V8 isolates.
+    #
+    # This intentionally resembles workerd's Worker configuration model: code is supplied as
+    # modules, access to outside resources is supplied as explicit bindings, and compatibility
+    # dates/flags define the runtime API surface.
+
+    mainModule @0 :Text;
+    # Name of the module containing the default Worker-style entrypoint.
+
+    modules @1 :List(Module);
+    # JavaScript, Wasm, and data modules available to the isolate.
+
+    compatibilityDate @2 :Text;
+    compatibilityFlags @3 :List(Text);
+
+    bindings @4 :List(Binding);
+    # Explicit capabilities exposed to the isolate as properties of the `env` object.
+
+    exports @5 :List(Export);
+    # Named Cap'n Proto capabilities implemented by the worker. The runtime registration must use
+    # the same interface ID. Declaring an interface does not itself grant the worker authority.
+
+    struct Export {
+      name @0 :Text;
+      interfaceId @1 :UInt64;
+      role @2 :Role;
+      # Optional platform interpretation of this export. `ordinary` exports are only resolved by
+      # name and interface ID. `mainView` supplies Supervisor.getMainView() while still traveling
+      # over the same generic worker-export path.
+
+      enum Role {
+        ordinary @0;
+        mainView @1;
+      }
+    }
+
+    struct Module {
+      name @0 :Text;
+
+      union {
+        esModulePath @1 :Text;
+        commonJsModulePath @2 :Text;
+        textPath @3 :Text;
+        dataPath @4 :Text;
+        wasmPath @5 :Text;
+        jsonPath @6 :Text;
+      }
+    }
+
+    struct Binding {
+      name @0 :Text;
+
+      union {
+        text @1 :Text;
+        data @2 :Data;
+        json @3 :Text;
+      }
+    }
   }
 
   struct Action {
@@ -157,6 +224,29 @@ struct Manifest {
 
     description @4 :Util.LocalizedText;
     # Description of this action, suitable for help text.
+
+    output :union {
+      mainView @6 :Void;
+      # The default for existing actions. Running the action creates a grain and opens its
+      # Supervisor.getMainView() result in a browser tab.
+
+      capability @7 :CapabilityOutput;
+      # Running this action from Powerbox creates a grain and returns one declared worker export
+      # directly to the requester. It does not create a browser tab or a WebSession.
+    }
+
+    struct CapabilityOutput {
+      exportName @0 :Text;
+      interfaceId @1 :UInt64;
+      # Must exactly match an export declared by the action's isolate command.
+
+      descriptor @2 :Powerbox.PowerboxDescriptor;
+      # Used to match this action against Powerbox queries. By convention this includes a tag whose
+      # ID is `interfaceId`.
+
+      displayInfo @3 :Powerbox.PowerboxDisplayInfo;
+      # Human-readable presentation in the Powerbox chooser and capability audit UI.
+    }
   }
 
   actions @2 :List(Action);

@@ -1,0 +1,530 @@
+diff --git a/src/node/internal/internal_inspect.ts b/src/node/internal/internal_inspect.ts
+index ae41e49..0a6e80b 100644
+--- a/src/node/internal/internal_inspect.ts
++++ b/src/node/internal/internal_inspect.ts
+@@ -2998,8 +2998,10 @@ export function formatLog(
+     colors: boolean,
+     structuredLogging: boolean,
+     level: string,
++    worker: string,
+   ]
+ ): string {
++  const worker = args.pop() as string;
+   const level = args.pop() as string;
+   const structuredLogging = args.pop() as boolean;
+   const colors = args.pop() as boolean;
+@@ -3012,6 +3014,7 @@ export function formatLog(
+         timestamp: Date.now(),
+         level,
+         message,
++        worker,
+       });
+     } else {
+       return message;
+diff --git a/src/workerd/io/io-channels.c++ b/src/workerd/io/io-channels.c++
+index a4015d2..8d5ed72 100644
+--- a/src/workerd/io/io-channels.c++
++++ b/src/workerd/io/io-channels.c++
+@@ -5,6 +5,22 @@
+ 
+ namespace workerd {
+ 
++DynamicWorkerSource DynamicWorkerSource::clone(kj::Own<void> newOwnContent) {
++  return {
++    .source = source.clone(),
++    .compatibilityFlags = compatibilityFlags,
++    .limits = limits.map([](auto& limits) { return limits.clone(); }),
++    .env = env.clone(),
++    .envCompiler = envCompiler.map(
++        [](auto& compiler) { return kj::atomicAddRef(*compiler); }),
++    .globalOutbound = mapAddRef(globalOutbound),
++    .tails = KJ_MAP(t, tails) { return kj::addRef(*t); },
++    .streamingTails = KJ_MAP(t, streamingTails) { return kj::addRef(*t); },
++    .ownContent = kj::mv(newOwnContent),
++    .ownContentIsRpcResponse = ownContentIsRpcResponse,
++  };
++}
++
+ kj::Promise<kj::Array<byte>> IoChannelFactory::SubrequestChannel::getToken(
+     ChannelTokenUsage usage) {
+   KJ_SWITCH_ONEOF(getTokenMaybeSync(usage)) {
+diff --git a/src/workerd/io/io-channels.h b/src/workerd/io/io-channels.h
+index a45b969..1fb63a5 100644
+--- a/src/workerd/io/io-channels.h
++++ b/src/workerd/io/io-channels.h
+@@ -23,6 +23,7 @@ class Network;
+ namespace workerd {
+ 
+ class WorkerInterface;
++class DynamicWorkerEnvCompiler;
+ 
+ // Interface for talking to the Cache API. Needs to be declared here so that IoContext can
+ // contain it.
+@@ -419,6 +420,10 @@ struct DynamicWorkerSource {
+   // a `Frankenvalue` (which should eventually include all binding types, RPC stubs, etc.).
+   Frankenvalue env;
+ 
++  // Optional embedding strategy for materializing values that Frankenvalue cannot represent.
++  // The ordinary dynamic loader leaves this null and uses Frankenvalue directly.
++  kj::Maybe<kj::Own<DynamicWorkerEnvCompiler>> envCompiler;
++
+   // Where should global fetch() (and connect()) be sent?
+   kj::Maybe<kj::Own<IoChannelFactory::SubrequestChannel>> globalOutbound;
+ 
+@@ -441,19 +446,7 @@ struct DynamicWorkerSource {
+   // which must be a refcount on the same content since the pointers will not be updated. Note
+   // that if `ownContentIsRpcResponse` is false, then `ownContent` could be passed off to other
+   // threads and as such the refcount had better be atomic.
+-  DynamicWorkerSource clone(kj::Own<void> newOwnContent) {
+-    return {
+-      .source = source.clone(),
+-      .compatibilityFlags = compatibilityFlags,
+-      .limits = limits.map([](auto& limits) { return limits.clone(); }),
+-      .env = env.clone(),
+-      .globalOutbound = mapAddRef(globalOutbound),
+-      .tails = KJ_MAP(t, tails) { return kj::addRef(*t); },
+-      .streamingTails = KJ_MAP(t, streamingTails) { return kj::addRef(*t); },
+-      .ownContent = kj::mv(newOwnContent),
+-      .ownContentIsRpcResponse = ownContentIsRpcResponse,
+-    };
+-  }
++  DynamicWorkerSource clone(kj::Own<void> newOwnContent);
+ 
+   // Walks through all channels in `env` and other properties and ensures that they point at
+   // resolved objects by calling their `getResolved()` methods.
+diff --git a/src/workerd/io/worker.c++ b/src/workerd/io/worker.c++
+index 2394e06..f711773 100644
+--- a/src/workerd/io/worker.c++
++++ b/src/workerd/io/worker.c++
+@@ -83,6 +83,27 @@ constexpr kj::StringPtr logLevelToString(LogLevel level) {
+   }
+ }
+ 
++bool writeStructuredWorkerLog(
++    const Worker::LoggingOptions& loggingOptions, LogLevel level, kj::StringPtr message) {
++  if (!loggingOptions.structuredLogging.toBool() ||
++      loggingOptions.consoleMode != Worker::ConsoleMode::STDOUT) {
++    return false;
++  }
++
++  capnp::JsonCodec json;
++  auto timestamp =
++      (kj::systemPreciseCalendarClock().now() - kj::UNIX_EPOCH) / kj::MILLISECONDS;
++  auto record = kj::str(
++      "{\"timestamp\":", timestamp,
++      ",\"level\":", json.encode(capnp::Text::Reader(logLevelToString(level))),
++      ",\"message\":", json.encode(capnp::Text::Reader(message)),
++      ",\"worker\":", json.encode(capnp::Text::Reader(loggingOptions.workerName)),
++      "}\n");
++  fwrite(record.begin(), 1, record.size(), stdout);
++  fflush(stdout);
++  return true;
++}
++
+ void headersToCDP(const kj::HttpHeaders& in, capnp::JsonValue::Builder out) {
+   std::map<kj::StringPtr, kj::Vector<kj::StringPtr>> inMap;
+   in.forEach([&](kj::StringPtr name, kj::StringPtr value) {
+@@ -1150,12 +1171,15 @@ Worker::Isolate::Impl::Impl(Api& api,
+       lock->setUsingFastJsgStruct();
+     }
+ 
+-    if (impl->inspector != kj::none || ::kj::_::Debug::shouldLog(::kj::LogSeverity::INFO)) {
++    if (impl->inspector != kj::none || loggingOptions.structuredLogging.toBool() ||
++        ::kj::_::Debug::shouldLog(::kj::LogSeverity::INFO)) {
+       lock->setLoggerCallback([this](jsg::Lock& js, kj::StringPtr message) {
+         if (impl->inspector != kj::none) {
+           logMessage(js, static_cast<uint16_t>(cdp::LogType::WARNING), message);
+         }
+-        KJ_LOG(INFO, "console warning", message);
++        if (!writeStructuredWorkerLog(this->loggingOptions, LogLevel::WARN, message)) {
++          KJ_LOG(INFO, "console warning", message);
++        }
+       });
+       lock->setErrorReporterCallback([this](jsg::Lock& js, kj::String desc,
+                                          const jsg::JsValue& error, const jsg::JsMessage& message) {
+@@ -1171,8 +1195,11 @@ Worker::Isolate::Impl::Impl(Api& api,
+           jsg::sendExceptionToInspector(js, *i.get(), kj::str(desc), error, message);
+         }
+ 
+-        // Run with --verbose to log JS exceptions to stderr. Useful when running tests.
+-        KJ_LOG(INFO, "uncaught exception", desc);
++        // Structured embeddings need exceptions even when verbose KJ logging is disabled.
++        if (!writeStructuredWorkerLog(this->loggingOptions, LogLevel::ERROR, desc)) {
++          // Run with --verbose to log JS exceptions to stderr. Useful when running tests.
++          KJ_LOG(INFO, "uncaught exception", desc);
++        }
+       });
+     }
+ 
+@@ -2127,8 +2154,8 @@ void Worker::handleLog(jsg::Lock& js,
+   int length = info.Length();
+   // to pass additional arguments from this function to js' `formatLog` we add arguments to the end
+   // of the arguments vector, then in formatLog we `pop` these from the vector.
+-  // 3 is just the number of args we currently pass.
+-  v8::LocalVector<v8::Value> args(js.v8Isolate, length + 3);
++  // 4 is just the number of args we currently pass.
++  v8::LocalVector<v8::Value> args(js.v8Isolate, length + 4);
+   for (auto i: kj::zeroTo(length)) args[i] = info[i];
+   jsg::check(original.Get(js.v8Isolate)->Call(context, info.This(), length, args.data()));
+ 
+@@ -2256,8 +2283,9 @@ void Worker::handleLog(jsg::Lock& js,
+     args[length] = js.boolean(colors);
+     args[length + 1] = js.boolean(loggingOptions.structuredLogging.toBool());
+     args[length + 2] = js.strIntern(levelStr);
++    args[length + 3] = js.str(loggingOptions.workerName);
+     auto formatted = js.toString(
+-        jsg::check(formatLog->Call(context, js.v8Undefined(), length + 3, args.data())));
++        jsg::check(formatLog->Call(context, js.v8Undefined(), length + 4, args.data())));
+     fprintf(fd, "%s\n", formatted.cStr());
+     fflush(fd);
+   }
+diff --git a/src/workerd/io/worker.h b/src/workerd/io/worker.h
+index 626f6e8..693a4c8 100644
+--- a/src/workerd/io/worker.h
++++ b/src/workerd/io/worker.h
+@@ -131,6 +131,8 @@ class Worker: public kj::AtomicRefcounted {
+     ProcessStdioPrefixed processStdioPrefixed = ProcessStdioPrefixed::YES;
+     kj::ConstString stdoutPrefix = "stdout:"_kjc;
+     kj::ConstString stderrPrefix = "stderr:"_kjc;
++    // Stable runtime identity included in structured console records.
++    kj::String workerName = kj::str("");
+ 
+     LoggingOptions() = default;
+     LoggingOptions(LoggingOptions&&) = default;
+@@ -143,7 +145,8 @@ class Worker: public kj::AtomicRefcounted {
+           structuredLogging(other.structuredLogging),
+           processStdioPrefixed(other.processStdioPrefixed),
+           stdoutPrefix(other.stdoutPrefix.clone()),
+-          stderrPrefix(other.stderrPrefix.clone()) {}
++          stderrPrefix(other.stderrPrefix.clone()),
++          workerName(kj::str(other.workerName)) {}
+ 
+     LoggingOptions& operator=(const LoggingOptions& other) {
+       consoleMode = other.consoleMode;
+@@ -151,6 +154,7 @@ class Worker: public kj::AtomicRefcounted {
+       processStdioPrefixed = other.processStdioPrefixed;
+       stdoutPrefix = other.stdoutPrefix.clone();
+       stderrPrefix = other.stderrPrefix.clone();
++      workerName = kj::str(other.workerName);
+       return *this;
+     }
+   };
+@@ -686,6 +690,19 @@ class Worker::Api {
+   }
+ };
+ 
++// An optional embedding hook for environment values which cannot use Frankenvalue's standard
++// representation. Implementations own the materialization policy; the dynamic loader only invokes
++// the hook while the destination worker's V8 context is active.
++class DynamicWorkerEnvCompiler: public kj::AtomicRefcounted {
++ public:
++  virtual void compile(jsg::Lock& js,
++      const Worker::Api& api,
++      Frankenvalue& env,
++      v8::Local<v8::Object> target) = 0;
++
++  virtual ~DynamicWorkerEnvCompiler() noexcept(false) = default;
++};
++
+ // A Worker may bounce between threads as it handles multiple requests, but can only actually
+ // execute on one thread at a time. Each thread must therefore lock the Worker while executing
+ // code.
+diff --git a/src/workerd/server/BUILD.bazel b/src/workerd/server/BUILD.bazel
+index ece98ee..5780587 100644
+--- a/src/workerd/server/BUILD.bazel
++++ b/src/workerd/server/BUILD.bazel
+@@ -81,6 +81,42 @@ wd_cc_binary(
+     ],
+ )
+ 
++wd_cc_binary(
++    name = "sandstorm-isolate-host",
++    srcs = ["sandstorm-isolate-host.c++"],
++    malloc = ":malloc",
++    visibility = ["//visibility:public"],
++    deps = [
++        ":sandstorm-isolate-exports_capnp",
++        ":sandstorm-isolate-host_capnp",
++        ":sandstorm-isolate-worker-source_capnp",
++        ":server",
++        ":v8-platform-impl",
++        "//src/workerd/api:worker-loader",
++        "//src/workerd/jsg",
++        "//src/workerd/util",
++        "@capnp-cpp//src/capnp:capnp-rpc",
++        "@capnp-cpp//src/capnp/compat:http-over-capnp",
++        "@capnp-cpp//src/capnp/compat:json",
++        "@capnp-cpp//src/kj:kj-async",
++    ],
++)
++
++wd_capnp_library(
++    src = "sandstorm-isolate-exports.capnp",
++    visibility = [":__pkg__"],
++)
++
++wd_capnp_library(
++    src = "sandstorm-isolate-host.capnp",
++    visibility = [":__pkg__"],
++)
++
++wd_capnp_library(
++    src = "sandstorm-isolate-worker-source.capnp",
++    visibility = [":__pkg__"],
++)
++
+ wd_cc_library(
+     name = "alarm-scheduler",
+     srcs = [
+diff --git a/src/workerd/server/server.c++ b/src/workerd/server/server.c++
+index a298e80..01fa356 100644
+--- a/src/workerd/server/server.c++
++++ b/src/workerd/server/server.c++
+@@ -1954,6 +1954,7 @@ class Server::WorkerService final: public Service,
+   using DeleteActorsCallback = kj::Function<void(kj::Maybe<const kj::Exception&> reason)>;
+ 
+   WorkerService(ChannelTokenHandler& channelTokenHandler,
++      kj::String workerName,
+       kj::Maybe<kj::StringPtr> serviceName,
+       ThreadContext& threadContext,
+       const kj::MonotonicClock& monotonicClock,
+@@ -1967,8 +1968,10 @@ class Server::WorkerService final: public Service,
+       kj::Maybe<kj::String> dockerPathParam,
+       kj::Maybe<kj::String> containerEgressInterceptorImageParam,
+       bool isDynamic,
++      kj::Maybe<LimitEnforcerFactory&> limitEnforcerFactory,
+       kj::Maybe<kj::Function<void()>> abortIsolateCallback = kj::none)
+       : channelTokenHandler(channelTokenHandler),
++        workerName(kj::mv(workerName)),
+         serviceName(serviceName),
+         threadContext(threadContext),
+         monotonicClock(monotonicClock),
+@@ -1983,6 +1986,7 @@ class Server::WorkerService final: public Service,
+         dockerPath(kj::mv(dockerPathParam)),
+         containerEgressInterceptorImage(kj::mv(containerEgressInterceptorImageParam)),
+         isDynamic(isDynamic),
++        limitEnforcerFactory(limitEnforcerFactory),
+         abortIsolateCallback(kj::mv(abortIsolateCallback)) {}
+ 
+   // Call immediately after the constructor to set up `actorNamespaces`. This can't happen during
+@@ -2279,8 +2283,15 @@ class Server::WorkerService final: public Service,
+       }
+     }
+ 
++    kj::Own<LimitEnforcer> requestLimitEnforcer(this, kj::NullDisposer::instance);
++    KJ_IF_SOME(factory, limitEnforcerFactory) {
++      KJ_IF_SOME(custom, factory.newRequestLimitEnforcer(workerName, isDynamic)) {
++        requestLimitEnforcer = kj::mv(custom);
++      }
++    }
++
+     return newWorkerEntrypoint(threadContext, kj::atomicAddRef(*worker), entrypointName,
+-        kj::mv(props), kj::mv(actor), kj::Own<LimitEnforcer>(this, kj::NullDisposer::instance),
++        kj::mv(props), kj::mv(actor), kj::mv(requestLimitEnforcer),
+         {},  // ioContextDependency
+         kj::Own<IoChannelFactory>(this, kj::NullDisposer::instance), kj::mv(observer),
+         waitUntilTasks,
+@@ -3360,6 +3371,7 @@ class Server::WorkerService final: public Service,
+   };
+ 
+   ChannelTokenHandler& channelTokenHandler;
++  kj::String workerName;
+ 
+   // This service's name as defined in the original config, or null if it's a dynamic isolate.
+   // Used only for serialization.
+@@ -3382,6 +3394,7 @@ class Server::WorkerService final: public Service,
+   kj::Maybe<kj::String> dockerPath;
+   kj::Maybe<kj::String> containerEgressInterceptorImage;
+   bool isDynamic;
++  kj::Maybe<LimitEnforcerFactory&> limitEnforcerFactory;
+   kj::Maybe<kj::Function<void()>> abortIsolateCallback;
+ 
+   class ActorChannelImpl final: public IoChannelFactory::ActorChannel {
+@@ -4286,6 +4299,8 @@ class Server::WorkerLoaderNamespace: public kj::Refcounted, private kj::TaskSet:
+     isolates.erase(name);
+   }
+ 
++  void evictIsolate(kj::StringPtr name);
++
+  private:
+   Server& server;
+   kj::String namespaceName;
+@@ -4448,9 +4465,14 @@ class Server::WorkerLoaderNamespace: public kj::Refcounted, private kj::TaskSet {
+           };
+         },
+ 
+-        .compileBindings = [env = kj::mv(source.env)](
++        .compileBindings = [env = kj::mv(source.env),
++                               envCompiler = kj::mv(source.envCompiler)](
+             jsg::Lock& js, const Worker::Api& api, v8::Local<v8::Object> target) mutable {
+-          env.populateJsObject(js, jsg::JsObject(target));
++          KJ_IF_SOME(compiler, envCompiler) {
++            compiler->compile(js, api, env, target);
++          } else {
++            env.populateJsObject(js, jsg::JsObject(target));
++          }
+         },
+ 
+         // Note here that we always keep the ownContent from the source, even if
+@@ -4611,6 +4631,24 @@ class Server::WorkerLoaderNamespace: public kj::Refcounted, private kj::TaskSet:
+   };
+ };
+ 
++void Server::WorkerLoaderNamespace::evictIsolate(kj::StringPtr name) {
++  isolates.erase(name);
++}
++
++kj::Own<WorkerStubChannel> Server::loadDynamicWorker(kj::StringPtr loaderNamespace,
++    kj::String workerName,
++    kj::Function<kj::Promise<DynamicWorkerSource>()> fetchSource) {
++  auto& loader = KJ_REQUIRE_NONNULL(workerLoaderNamespaces.find(loaderNamespace),
++      "worker loader namespace is not configured", loaderNamespace);
++  return loader->loadIsolate(kj::mv(workerName), kj::mv(fetchSource));
++}
++
++void Server::evictDynamicWorker(kj::StringPtr loaderNamespace, kj::StringPtr workerName) {
++  auto& loader = KJ_REQUIRE_NONNULL(workerLoaderNamespaces.find(loaderNamespace),
++      "worker loader namespace is not configured", loaderNamespace);
++  loader->evictIsolate(workerName);
++}
++
+ void Server::unlinkWorkerLoaders() {
+   for (auto& loader: workerLoaderNamespaces) {
+     loader.value->unlink();
+@@ -4741,7 +4783,12 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
+ 
+   auto jsgobserver = kj::atomicRefcounted<JsgIsolateObserver>();
+   auto observer = kj::atomicRefcounted<IsolateObserver>();
+-  auto limitEnforcer = kj::refcounted<NullIsolateLimitEnforcer>();
++  kj::Own<IsolateLimitEnforcer> limitEnforcer = kj::refcounted<NullIsolateLimitEnforcer>();
++  KJ_IF_SOME(factory, limitEnforcerFactory) {
++    KJ_IF_SOME(custom, factory.newIsolateLimitEnforcer(name, def.isDynamic)) {
++      limitEnforcer = kj::mv(custom);
++    }
++  }
+ 
+   // Create the FsMap that will be used to map known file system
+   // roots to configurable locations.
+@@ -4803,6 +4850,7 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
+     inspectorPolicy = Worker::Isolate::InspectorPolicy::ALLOW_FULLY_TRUSTED;
+   }
+   Worker::LoggingOptions isolateLoggingOptions = loggingOptions;
++  isolateLoggingOptions.workerName = kj::str(name);
+   isolateLoggingOptions.consoleMode =
+       def.source.variant.is<WorkerSource::ScriptSource>() && !usingNewModuleRegistry
+       ? Worker::ConsoleMode::INSPECTOR_ONLY
+@@ -5120,12 +5168,14 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
+   if (!def.isDynamic) serviceName = name;
+ 
+   auto result =
+-      kj::refcounted<WorkerService>(channelTokenHandler, serviceName, globalContext->threadContext,
++      kj::refcounted<WorkerService>(channelTokenHandler, kj::str(name), serviceName,
++          globalContext->threadContext,
+           monotonicClock, kj::mv(worker), kj::mv(errorReporter.defaultEntrypoint),
+           kj::mv(errorReporter.namedEntrypoints), kj::mv(errorReporter.actorClasses),
+           kj::mv(linkCallback), KJ_BIND_METHOD(*this, abortAllActors),
+           KJ_BIND_METHOD(*this, deleteAllActors), kj::mv(dockerPath),
+-          kj::mv(containerEgressInterceptorImage), def.isDynamic, kj::mv(abortIsolateCallback));
++          kj::mv(containerEgressInterceptorImage), def.isDynamic, limitEnforcerFactory,
++          kj::mv(abortIsolateCallback));
+   result->initActorNamespaces(def.localActorConfigs, network);
+   co_return result;
+ }
+diff --git a/src/workerd/server/server.h b/src/workerd/server/server.h
+index 4ddfd54..ce0f7d3 100644
+--- a/src/workerd/server/server.h
++++ b/src/workerd/server/server.h
+@@ -35,6 +35,17 @@ using api::pyodide::PythonConfig;
+ // in such a way that it can be unit-tested. workerd.c++ implements the CLI wrapper around this.
+ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandler::Resolver {
+  public:
++  // Optional embedding seam for supplying isolate- and request-level resource policy. Returning
++  // none preserves workerd's normal unlimited single-tenant behavior. The factory must outlive
++  // the Server and every service obtained from it.
++  class LimitEnforcerFactory {
++   public:
++    virtual kj::Maybe<kj::Own<IsolateLimitEnforcer>> newIsolateLimitEnforcer(
++        kj::StringPtr workerName, bool isDynamic) = 0;
++    virtual kj::Maybe<kj::Own<LimitEnforcer>> newRequestLimitEnforcer(
++        kj::StringPtr workerName, bool isDynamic) = 0;
++  };
++
+   Server(kj::Filesystem& fs,
+       kj::Timer& timer,
+       const kj::MonotonicClock& monotonicClock,
+@@ -50,6 +61,12 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
+     experimental = true;
+   }
+ 
++  void setLimitEnforcerFactory(LimitEnforcerFactory& factory) {
++    KJ_REQUIRE(globalContext.get() == nullptr,
++        "limit enforcer factory must be installed before the server starts");
++    limitEnforcerFactory = factory;
++  }
++
+   void overrideSocket(kj::String name, kj::Own<kj::ConnectionReceiver> port) {
+     socketOverrides.upsert(kj::mv(name), kj::mv(port));
+   }
+@@ -112,6 +129,16 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
+       kj::StringPtr servicePattern = "*"_kj,
+       kj::StringPtr entrypointPattern = "*"_kj);
+ 
++  // Sandstorm's shared host uses workerd's loader cache directly. The loader namespace must
++  // already have been declared by the server config passed to run().
++  kj::Own<WorkerStubChannel> loadDynamicWorker(kj::StringPtr loaderNamespace,
++      kj::String workerName,
++      kj::Function<kj::Promise<DynamicWorkerSource>()> fetchSource);
++
++  // Removes a named worker from the loader cache. Existing channels retain their normal workerd
++  // lifetime; a later load of the same name constructs a fresh worker.
++  void evictDynamicWorker(kj::StringPtr loaderNamespace, kj::StringPtr workerName);
++
+   struct Durable {
+     kj::String uniqueKey;
+     bool isEvictable;
+@@ -147,6 +177,7 @@ class Server final: private kj::TaskSet::ErrorHandler, private ChannelTokenHandl
+     .loadSnapshotFromDisk = kj::none};
+ 
+   bool experimental = false;
++  kj::Maybe<LimitEnforcerFactory&> limitEnforcerFactory;
+ 
+   // When set, overrides compatibilityDate for all workers and enforces that workers don't
+   // specify their own compatibilityDate.
+diff --git a/src/workerd/api/global-scope.c++ b/src/workerd/api/global-scope.c++
+index 21ff2274..85a2bb03 100644
+--- a/src/workerd/api/global-scope.c++
++++ b/src/workerd/api/global-scope.c++
+@@ -125,6 +125,7 @@ ExportedHandler ExportedHandler::clone(jsg::Lock& js) {
+     .scheduled{mapAddRef(js, scheduled)},
+     .alarm{mapAddRef(js, alarm)},
+     .test{mapAddRef(js, test)},
++    .sandstormRpcEvent{mapAddRef(js, sandstormRpcEvent)},
+     .webSocketMessage{mapAddRef(js, webSocketMessage)},
+     .webSocketClose{mapAddRef(js, webSocketClose)},
+     .webSocketError{mapAddRef(js, webSocketError)},
+diff --git a/src/workerd/api/global-scope.h b/src/workerd/api/global-scope.h
+index 0abc00c2..480c1f97 100644
+--- a/src/workerd/api/global-scope.h
++++ b/src/workerd/api/global-scope.h
+@@ -450,6 +450,13 @@ struct ExportedHandler {
+       jsg::Optional<jsg::Ref<ExecutionContext>> ctx);
+   jsg::LenientOptional<jsg::Function<TestHandler>> test;
+ 
++  using SandstormRpcEventHandler = jsg::Promise<void>(jsg::BufferSource request,
++      jsg::Function<void(jsg::BufferSource)> send,
++      jsg::Function<jsg::Promise<jsg::BufferSource>()> receive,
++      jsg::Value env,
++      jsg::Optional<jsg::Ref<ExecutionContext>> ctx);
++  jsg::LenientOptional<jsg::Function<SandstormRpcEventHandler>> sandstormRpcEvent;
++
+   using HibernatableWebSocketMessageHandler = kj::Promise<void>(
+       jsg::Ref<WebSocket>, kj::OneOf<kj::String, kj::Array<byte>> message);
+   jsg::LenientOptional<jsg::Function<HibernatableWebSocketMessageHandler>> webSocketMessage;
+@@ -472,6 +479,7 @@ struct ExportedHandler {
+       scheduled,
+       alarm,
+       test,
++      sandstormRpcEvent,
+       webSocketMessage,
+       webSocketClose,
+       webSocketError,
