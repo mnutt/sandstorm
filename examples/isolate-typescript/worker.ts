@@ -8,7 +8,6 @@ import {
 import type {
   SandstormApi,
   SandstormEnv,
-  SandstormFetchWorker,
   ServerTargetFor,
   SessionInfo,
 } from "sandstorm:api";
@@ -110,7 +109,10 @@ function html(): string {
 </html>`;
 }
 
-async function typescriptFetch(request: Request, env: Env): Promise<Response> {
+export default async function typescriptFetch(
+  request: Request,
+  env: Env,
+): Promise<Response> {
     const api = sandstorm(request, env);
 
     const url = new URL(request.url);
@@ -135,9 +137,3 @@ async function typescriptFetch(request: Request, env: Env): Promise<Response> {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
 }
-
-const worker: SandstormFetchWorker<Env> = {
-  fetch: typescriptFetch,
-};
-
-export default worker;

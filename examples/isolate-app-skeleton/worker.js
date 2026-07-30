@@ -19,7 +19,7 @@ async function increment(api) {
   return { value: next };
 }
 
-async function skeletonFetch(request, env) {
+export default async function skeletonFetch(request, env) {
     const api = sandstorm(request, env);
     const url = new URL(request.url);
 
@@ -48,7 +48,3 @@ async function skeletonFetch(request, env) {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
 }
-
-export default {
-  fetch: skeletonFetch,
-};

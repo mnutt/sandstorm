@@ -10,7 +10,7 @@ This example is the current recommended structure for an isolate app that wants
 normal page routes plus Sandstorm helpers:
 
 1. Import `sandstorm` from `sandstorm:api`.
-2. Default-export a Cloudflare-style object with a `fetch()` method.
+2. Default-export the `fetch()` function.
 3. Create `const api = sandstorm(request, env)` inside the fetch facade.
 4. Handle normal app routes.
 

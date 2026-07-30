@@ -32,7 +32,7 @@ const greeterMethods = {
   },
 };
 
-async function capnpRpcFetch(request, env) {
+export default async function capnpRpcFetch(request, env) {
     const api = sandstorm(request, env);
 
     const url = new URL(request.url);
@@ -83,7 +83,3 @@ async function capnpRpcFetch(request, env) {
       },
     });
 }
-
-export default {
-  fetch: capnpRpcFetch,
-};

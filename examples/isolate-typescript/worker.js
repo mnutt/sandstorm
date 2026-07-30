@@ -119,10 +119,6 @@ async function typescriptFetch(request, env) {
     headers: { "content-type": "text/html; charset=utf-8" }
   });
 }
-var worker = {
-  fetch: typescriptFetch
-};
-var worker_default = worker;
 export {
-  worker_default as default
+  typescriptFetch as default
 };

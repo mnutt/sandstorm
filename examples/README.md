@@ -2,7 +2,7 @@
 
 These examples are organized around the current isolate capability model:
 
-- ordinary app UI and same-grain browser calls use Worker `fetch()`
+- ordinary app UI default-exports a Worker `fetch()` function
 - HTTP-shaped Sandstorm capabilities use `WebSession` or `ApiSession`
 - public typed cross-grain protocols use schema-defined native Cap'n Proto
   RPC with `capnp:` imports and helpers from `sandstorm:api`

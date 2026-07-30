@@ -1,4 +1,4 @@
-function helloFetch(request) {
+export default function helloFetch(request) {
     const url = new URL(request.url);
     return Response.json({
       ok: true,
@@ -8,7 +8,3 @@ function helloFetch(request) {
       hasAmbientPlatformBindings: false,
     });
 }
-
-export default {
-  fetch: helloFetch,
-};

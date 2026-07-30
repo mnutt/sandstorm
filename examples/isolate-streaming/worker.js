@@ -119,7 +119,7 @@ async function roundTrip(request) {
   });
 }
 
-async function streamingFetch(request) {
+export default async function streamingFetch(request) {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/") {
@@ -145,7 +145,3 @@ async function streamingFetch(request) {
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
 }
-
-export default {
-  fetch: streamingFetch,
-};

@@ -84,7 +84,7 @@ function makeObjectStore() {
   };
 }
 
-async function objectStoreFetch(request, env) {
+export default async function objectStoreFetch(request, env) {
     const api = sandstorm(request, env);
 
     const url = new URL(request.url);
@@ -124,7 +124,3 @@ async function objectStoreFetch(request, env) {
       },
     });
 }
-
-export default {
-  fetch: objectStoreFetch,
-};

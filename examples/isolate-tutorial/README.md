@@ -543,7 +543,7 @@ async function uploadFromWorker(request, env) {
 ### Dropbox Worker Skeleton
 
 ```js
-async function dropboxUploadFetch(request, env) {
+export default async function dropboxUploadFetch(request, env) {
   const api = sandstorm(request, env);
   const url = new URL(request.url);
 
@@ -559,14 +559,10 @@ async function dropboxUploadFetch(request, env) {
     headers: { "content-type": "text/html; charset=utf-8" },
   });
 }
-
-export default {
-  fetch: dropboxUploadFetch,
-};
 ```
 
 Because this app only consumes a capability and serves a normal browser UI,
-its Cloudflare-style `fetch` export is enough. Sandstorm automatically adapts
+its default `fetch` function is enough. Sandstorm automatically adapts
 it to the package's typed `ui: MainView` export. Use the explicit
 `defineWorker()` form when an app needs additional named capabilities,
 `ViewInfo` metadata, or durable restore/drop hooks, as the Object Store does.

@@ -3,7 +3,7 @@ import { renderCounter } from "./ui.js";
 import metadata from "./metadata.json";
 import helpText from "./help.txt";
 
-async function counterFetch(request, env) {
+export default async function counterFetch(request, env) {
     const api = sandstorm(request, env);
     const store = api.storage();
     const key = "counter";
@@ -20,7 +20,3 @@ async function counterFetch(request, env) {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
 }
-
-export default {
-  fetch: counterFetch,
-};

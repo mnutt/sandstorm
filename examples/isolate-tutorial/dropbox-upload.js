@@ -190,7 +190,7 @@ async function renderUploadPage(api) {
 </html>`;
 }
 
-async function dropboxUploadFetch(request, env) {
+export default async function dropboxUploadFetch(request, env) {
   const api = sandstorm(request, env);
   const url = new URL(request.url);
   try {
@@ -212,7 +212,3 @@ async function dropboxUploadFetch(request, env) {
     });
   }
 }
-
-export default {
-  fetch: dropboxUploadFetch,
-};
