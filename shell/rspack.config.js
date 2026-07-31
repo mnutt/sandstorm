@@ -2,11 +2,22 @@ const { defineConfig } = require("@meteorjs/rspack");
 const { IgnorePlugin } = require("@rspack/core");
 
 module.exports = defineConfig((Meteor) => ({
+  performance: {
+    maxAssetSize: 1024 * 1024,
+    maxEntrypointSize: 1536 * 1024,
+  },
   resolve: Meteor.isServer
     ? {
-        // Undici exposes an optional SQLite cache implementation from its
-        // package root. Sandstorm does not enable that interceptor.
-        alias: { "node:sqlite": false },
+        alias: {
+          // Undici exposes an optional SQLite cache implementation from its
+          // package root. Sandstorm does not enable that interceptor.
+          "node:sqlite": false,
+
+          // @root/keypairs probes these native packages only on very old Node
+          // releases. Meteor's dev bundle has crypto.generateKeyPairSync().
+          ursa: false,
+          "ursa-optional": false,
+        },
       }
     : undefined,
   module: {
@@ -27,12 +38,10 @@ module.exports = defineConfig((Meteor) => ({
     ],
   },
   plugins: Meteor.isServer
-    ? [new IgnorePlugin({ resourceRegExp: /^node:sqlite$/ })]
+    ? [
+        new IgnorePlugin({
+          resourceRegExp: /^(node:sqlite|ursa|ursa-optional)$/,
+        }),
+      ]
     : [],
-  externals: Meteor.isServer
-    ? {
-        ursa: "commonjs ursa",
-        "ursa-optional": "commonjs ursa-optional",
-      }
-    : undefined,
 }));
