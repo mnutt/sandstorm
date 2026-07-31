@@ -19,7 +19,8 @@
     "@meteorjs/rspack": "^2.0.1",
     "@rsdoctor/rspack-plugin": "^1.5.7",
     "@rspack/cli": "^1.7.1",
-    "@rspack/core": "^1.7.1"
+    "@rspack/core": "^1.7.1",
+    "@swc/core": "^1.15.47"
   },
   "overrides": {
     "uuid": "^11.1.1"
