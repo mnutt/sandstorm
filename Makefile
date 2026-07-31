@@ -243,7 +243,7 @@ deps/boringssl/build/Makefile: | tmp/.deps deps/llvm-build
 
 deps/boringssl/build/libssl.a: deps/boringssl/build/Makefile
 	@$(call color,building BoringSSL)
-	cd deps/boringssl/build && make -j$(PARALLEL)
+	cd deps/boringssl/build && make ssl -j$(PARALLEL)
 
 # ====================================================================
 # build libsodium
