@@ -16,8 +16,8 @@
 
 # You may override the following vars on the command line to suit
 # your config.
-CC=$(shell pwd)/deps/llvm-build/Release+Asserts/bin/clang
-CXX=$(shell pwd)/deps/llvm-build/Release+Asserts/bin/clang++
+CC=$(shell pwd)/deps/llvm-build/bin/clang
+CXX=$(shell pwd)/deps/llvm-build/bin/clang++
 CFLAGS=-O2 -Wall -g
 CXXFLAGS=$(CFLAGS)
 BUILD=0
@@ -137,7 +137,7 @@ IMAGES= \
 # Meta rules
 
 .SUFFIXES:
-.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test installer-test app-index-dev lint shell-build-debug meteor-testapp-stage release-gate-upgrade-308
+.PHONY: all install clean clean-deps ci-clean continuous shell-env fast deps bootstrap-ekam update-deps test installer-test app-index-dev lint shell-build-debug meteor-testapp-stage release-gate-upgrade-308 FORCE
 
 all: sandstorm-$(BUILD).tar.xz
 
@@ -227,11 +227,11 @@ update-deps:
 # up-to-date version of Clang which is used to build Chrome, conveniently maintained as a git repo
 # (which we can pin to a commit) containing a nice script that will download precompiled binaries.
 
-deps/llvm-build: | tmp/.deps
-	@$(call color,downloading Clang binaries from Chromium project)
-	@deps/clang/scripts/update.py
-	@mv third_party/llvm-build deps
-	@rmdir third_party
+deps/llvm-build: FORCE | tmp/.deps
+	@$(call color,checking Clang binaries from Chromium project)
+	@if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git submodule update --init deps/clang; fi
+	@deps/clang/scripts/update.py --output-dir deps/llvm-build
+	@test -e deps/llvm-build/bin/clang++ || ln -s clang deps/llvm-build/bin/clang++
 
 # ====================================================================
 # build BoringSSL
