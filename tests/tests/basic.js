@@ -37,6 +37,9 @@ module.exports = {
       .assert.textContains(".topbar .account>.show-popup", "TestingLogin")
       .captureVisualSnapshot("body>.topbar", "shell-topbar-logged-in")
       .captureVisualSnapshot(".main-content>.app-list", "apps-page-empty")
+      .click(".topbar .account>.show-popup")
+      .waitForElementVisible(".popup.account", short_wait)
+      .captureVisualSnapshot(".popup.account", "account-menu")
       .end();
   },
 };

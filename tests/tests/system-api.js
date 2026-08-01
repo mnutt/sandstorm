@@ -36,6 +36,7 @@ module.exports["Test system api"] = function(browser) {
     .pause(short_wait)
     .windowHandles(windows => browser.switchWindow(windows.value[1]))
     .waitForElementVisible(".grainlog-contents > pre", short_wait)
+    .captureVisualSnapshot(".grainlog-contents", "grain-debug-log")
     .assert.textContains(".grainlog-contents > pre", "testSystemApi() passed.")
 
   // Close the grain log, and switch back to to the main window, to avoid

@@ -161,10 +161,12 @@ module.exports["Test share popup no permission"] = function (browser) {
         .url(browser.launch_url)
         .url(grainUrl.value)
         .waitForElementVisible(".grain-interstitial.request-access", medium_wait)
+        .captureVisualSnapshot(".grain-interstitial", "share-request-access-logged-out")
         .assert.not.elementPresent(sharePopupSelector)
         .loginDevAccount()
         .url(grainUrl.value)
         .waitForElementVisible(".grain-interstitial.request-access", medium_wait)
+        .captureVisualSnapshot(".grain-interstitial", "share-request-access-logged-in")
         .assert.not.elementPresent(sharePopupSelector)
     }).end();
 }

@@ -105,6 +105,7 @@ module.exports['Test startSharing'] = function (browser) {
       .click('#startSharing')
     .frameParent()
     .waitForElementVisible('.popup.share', short_wait)
+    .captureVisualSnapshot(".popup.share", "postmessage-share-popup")
     .click('button.close-popup')
     .waitForElementNotPresent('.popup.share', short_wait)
 };
@@ -131,6 +132,7 @@ module.exports['Test startSharing with pathname and hash'] = function (browser) 
     // Find the link and remove it.
     .click('button.who-has-access')
     .waitForElementVisible('table.shared-links', short_wait)
+    .captureVisualSnapshot(".popup.who-has-access", "postmessage-share-token-access-popup")
     .assert.textContains('table.shared-links tr:last-child span.token-petname', linkLabel)
     .click('table.shared-links tr:last-child button.revoke-token')
     // Close the sharing popup.
@@ -144,6 +146,7 @@ module.exports['Test showConnectionGraph'] = function (browser) {
       .click('#showConnectionGraph')
     .frameParent()
     .waitForElementVisible('.popup.who-has-access', short_wait)
+    .captureVisualSnapshot(".popup.who-has-access", "postmessage-connection-graph-popup")
     .click('button.close-popup')
     .waitForElementNotPresent('.popup.who-has-access', short_wait)
 };

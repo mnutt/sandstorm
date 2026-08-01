@@ -80,6 +80,7 @@ module.exports = utils.testAllLogins({
           .click('#confirmInstall')
           .disableGuidedTour()
           .waitForElementVisible(".app-details .older-version", short_wait)
+          .captureVisualSnapshot(".app-details", "app-details-upgrade-available")
           .click(".app-details .older-version .upgradeGrains")
           .waitForElementNotPresent(".app-details .older-version", short_wait);
       });
@@ -104,7 +105,8 @@ module.exports = utils.testAllLogins({
           .waitForElementVisible('#step-confirm', long_wait)
           .click('#confirmInstall')
           .disableGuidedTour()
-          .waitForElementVisible(".app-details .newer-version", short_wait);
+          .waitForElementVisible(".app-details .newer-version", short_wait)
+          .captureVisualSnapshot(".app-details", "app-details-newer-version-installed");
       });
   },
 
@@ -169,6 +171,7 @@ module.exports["Test grain not found"] = function (browser) {
     .disableGuidedTour()
     .url(browser.launch_url + "/grain/BogusGrainId")
     .waitForElementVisible(".grain-not-found", medium_wait)
+    .captureVisualSnapshot(".grain-not-found", "grain-not-found")
     .assert.textContains(".grain-not-found", "No grain found")
     .end()
 }
@@ -311,6 +314,7 @@ module.exports["Test grain anonymous user"] = function (browser) {
         .waitForElementVisible('#grainTitle', medium_wait)
         .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
         .waitForElementVisible(".popup.login button.dismiss", short_wait)
+        .captureVisualSnapshot(".popup.login", "anonymous-share-login-popup")
         .click(".popup.login button.dismiss") // "Stay anonymous"
         .waitForElementNotPresent(".popup.login", short_wait)
         .grainFrame()
@@ -350,6 +354,7 @@ module.exports["Test roleless sharing"] = function (browser) {
         })
         .url(response.value)
         .waitForElementVisible("button.reveal-identity-button", short_wait)
+        .captureVisualSnapshot(".grain-interstitial", "share-reveal-identity")
         .click("button.reveal-identity-button")
         .waitForElementVisible('.grain-frame', medium_wait)
         .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
@@ -393,6 +398,7 @@ module.exports["Test roleless sharing"] = function (browser) {
             .click('.popup.share .who-has-access')
             .waitForElementVisible('.popup.who-has-access', medium_wait)
             .waitForElementVisible('.popup.who-has-access .people td', medium_wait)
+            .captureVisualSnapshot(".popup.who-has-access", "grain-who-has-access-popup")
             .assert.textContains('.popup.who-has-access .people td', secondUserName)
             .end();
         });
@@ -494,6 +500,7 @@ module.exports["Test grain reveal identity interstitial"] = function (browser) {
         // Try incognito
         .url(shareLink.value)
         .waitForElementVisible(".incognito-button", short_wait)
+        .captureVisualSnapshot(".grain-interstitial", "share-incognito-or-reveal")
         .click(".incognito-button")
         .waitForElementVisible('.grain-frame', medium_wait)
         .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
