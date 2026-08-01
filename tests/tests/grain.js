@@ -47,6 +47,7 @@ module.exports = utils.testAllLogins({
       .ifNotDemo(function () {
         browser
           .waitForElementVisible("#step-confirm", long_wait)
+          .captureVisualSnapshot("#step-confirm", "install-confirm-local-app")
           .click('#confirmInstall')
           .disableGuidedTour()
           .waitForElementVisible(actionSelector, short_wait)
@@ -114,6 +115,7 @@ module.exports = utils.testAllLogins({
       .waitForElementVisible('#step-confirm', very_long_wait)
       .click('#confirmInstall')
       .waitForElementVisible(appDetailsTitleSelector, short_wait)
+      .captureVisualSnapshot(".app-details", "app-details-hacker-cms")
       .assert.textContains(appDetailsTitleSelector, 'Hacker CMS');
   },
 
@@ -122,6 +124,7 @@ module.exports = utils.testAllLogins({
       .waitForElementVisible(actionSelector, short_wait)
       .click(actionSelector)
       .waitForElementVisible('#grainTitle', medium_wait)
+      .captureVisualSnapshot("body>.topbar", "grain-topbar-hacker-cms")
       .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle);
   },
 
@@ -185,6 +188,7 @@ module.exports["Sign in at grain URL"] = function (browser) {
             .url(grainUrl.value)
             .waitForElementVisible(".request-access", medium_wait)
             .assert.textContains(".request-access", "Please sign in to request access.")
+            .captureVisualSnapshot(".request-access", "grain-request-access")
             .execute(function (name) { window.loginDevAccount(name) }, [devName.value])
             .waitForElementVisible("iframe.grain-frame", medium_wait)
             .waitForElementVisible("#grainTitle", medium_wait)
@@ -196,6 +200,7 @@ module.exports["Sign in at grain URL"] = function (browser) {
             // Now try it with a /shared/ path.
             .click('.topbar .share > .show-popup')
             .waitForElementVisible('#shareable-link-tab-header', short_wait)
+            .captureVisualSnapshot(".popup.share", "grain-share-popup")
             .click('#shareable-link-tab-header')
             .waitForElementVisible(".new-share-token", short_wait)
             .submitForm('.new-share-token')

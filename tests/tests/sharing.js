@@ -137,6 +137,7 @@ module.exports["Test revoked share link"] = function (browser) {
           .url(browser.launch_url + "/shared/" + result.value.result.token)
           .waitForElementVisible(".grain-interstitial", medium_wait)
           .assert.textContains(".grain-interstitial", "Sorry, this link has been revoked")
+          .captureVisualSnapshot(".grain-interstitial", "revoked-share-link")
           .loginDevAccount()
           .url(browser.launch_url + "/shared/" + result.value.result.token)
           .waitForElementVisible(".grain-interstitial", medium_wait)

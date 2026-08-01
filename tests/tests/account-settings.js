@@ -39,6 +39,7 @@ module.exports["Test profile changes passing to testapp"] = function (browser) {
     .waitForElementVisible("a[href='/account']", medium_wait)
     .click("a[href='/account']")
     .waitForElementVisible("form.account-profile-editor", short_wait)
+    .captureVisualSnapshot("form.account-profile-editor", "account-profile-editor")
 
 
     // Change profile picture

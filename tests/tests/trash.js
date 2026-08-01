@@ -85,6 +85,7 @@ module.exports["Test grain trash"] = function (browser) {
             .click(grainTabLinkSelector)
             .waitForElementVisible(".grain-interstitial", short_wait)
             .assert.textContains(".grain-interstitial>p", "This grain is in your trash.")
+            .captureVisualSnapshot(".grain-interstitial", "grain-in-trash-interstitial")
             .click("button.restore-from-trash")
             .waitForElementVisible('.grain-frame', medium_wait)
             .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)

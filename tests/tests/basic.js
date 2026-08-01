@@ -25,14 +25,18 @@ module.exports = {
     browser
       .init()
       .assert.title('Sandstorm')
+      .captureVisualSnapshot("body", "shell-root-logged-out")
       .end();
   },
 
   "Test login command" : function (browser) {
     browser
       .loginDevAccount("TestingLogin")
+      .disableGuidedTour()
       .waitForElementVisible('.topbar .account>.show-popup', short_wait)
       .assert.textContains(".topbar .account>.show-popup", "TestingLogin")
+      .captureVisualSnapshot("body>.topbar", "shell-topbar-logged-in")
+      .captureVisualSnapshot(".main-content>.app-list", "apps-page-empty")
       .end();
   },
 };
