@@ -160,7 +160,7 @@ jobs:
       - name: download baseline visual snapshots
         env:
           # Temporary baseline until visual snapshot baselines are published from master.
-          BASELINE_RUN_ID: "30719026287"
+          BASELINE_RUN_ID: "30721959653"
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail

@@ -151,12 +151,8 @@ function renderReport(rows) {
     ["baselinePath", "currentPath", "diffPath"].forEach(function(key) {
       if (row[key]) {
         var url = imageUrl(row[key]);
-        if (inlineImages) {
-          cells.push("<td><img src=\"" + htmlEscape(url) + "\"></td>");
-        } else {
-          cells.push("<td><a href=\"" + htmlEscape(url) + "\"><img src=\"" +
-              htmlEscape(url) + "\"></a></td>");
-        }
+        cells.push("<td><button class=\"thumbnail-button\" type=\"button\"><img src=\"" +
+            htmlEscape(url) + "\"></button></td>");
       } else {
         cells.push("<td></td>");
       }
@@ -170,7 +166,12 @@ function renderReport(rows) {
     "<style>\n" +
     "body{font-family:system-ui,sans-serif;margin:24px;color:#222}table{border-collapse:collapse;width:100%}" +
     "th,td{border:1px solid #ddd;padding:8px;vertical-align:top}th{background:#f5f5f5;text-align:left}" +
-    "img{max-width:320px;max-height:240px;border:1px solid #ccc}.changed{background:#fff7e6}.added{background:#eef9ee}.removed{background:#fbeeee}" +
+    ".thumbnail-button{appearance:none;background:transparent;border:0;padding:0;cursor:zoom-in;text-align:left}" +
+    ".thumbnail-button img{display:block;max-width:320px;max-height:240px;border:1px solid #ccc}" +
+    ".changed{background:#fff7e6}.added{background:#eef9ee}.removed{background:#fbeeee}" +
+    ".modal{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.82);padding:32px}" +
+    ".modal.open{display:flex}.modal img{max-width:96vw;max-height:92vh;background:white;border:1px solid #444;box-shadow:0 12px 48px rgba(0,0,0,.5)}" +
+    ".modal-close{position:fixed;top:16px;right:16px;width:40px;height:40px;border:1px solid rgba(255,255,255,.45);border-radius:4px;background:rgba(0,0,0,.55);color:white;font-size:28px;line-height:34px;cursor:pointer}" +
     "code{white-space:nowrap}\n" +
     "</style>\n" +
     "<h1>" + title + "</h1>\n" +
@@ -180,7 +181,22 @@ function renderReport(rows) {
     " | Unchanged: " + (counts.unchanged || 0) + "</p>\n" +
     "<table><thead><tr><th>Snapshot</th><th>Status</th><th>Diff</th><th>Detail</th>" +
     "<th>Baseline</th><th>Current</th><th>Diff image</th></tr></thead><tbody>\n" +
-    body + "\n</tbody></table>\n";
+    body + "\n</tbody></table>\n" +
+    "<div class=\"modal\" id=\"image-modal\" aria-hidden=\"true\"><button class=\"modal-close\" type=\"button\" aria-label=\"Close\">&times;</button><img alt=\"Expanded visual snapshot\"></div>\n" +
+    "<script>\n" +
+    "(function(){\n" +
+    "  var modal = document.getElementById('image-modal');\n" +
+    "  var image = modal.querySelector('img');\n" +
+    "  function close(){ modal.classList.remove('open'); modal.setAttribute('aria-hidden','true'); image.removeAttribute('src'); }\n" +
+    "  document.addEventListener('click', function(event){\n" +
+    "    var target = event.target && event.target.nodeType === 1 ? event.target : event.target.parentElement;\n" +
+    "    var button = target && target.closest('.thumbnail-button');\n" +
+    "    if (button) { image.src = button.querySelector('img').src; modal.classList.add('open'); modal.setAttribute('aria-hidden','false'); return; }\n" +
+    "    if (event.target === modal || event.target.classList.contains('modal-close')) close();\n" +
+    "  });\n" +
+    "  document.addEventListener('keydown', function(event){ if (event.key === 'Escape') close(); });\n" +
+    "}());\n" +
+    "</script>\n";
 }
 
 async function main() {
