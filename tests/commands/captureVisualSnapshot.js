@@ -41,11 +41,11 @@ exports.command = function(selector, name, callback) {
     safePathSegment(moduleName),
     safePathSegment(name) + ".png");
 
-  return browser.takeElementScreenshot(selector, function(result) {
+  return browser.screenshot(false, function(result) {
     var screenshotData = typeof result === "string" ? result : result && result.value;
 
     if (!screenshotData || result && result.status === -1) {
-      console.warn("Skipping visual snapshot " + name + ": no screenshot data for " + selector);
+      console.warn("Skipping visual snapshot " + name + ": no screenshot data near " + selector);
       if (typeof callback === "function") {
         callback.call(browser, { status: -1, value: null });
       }
