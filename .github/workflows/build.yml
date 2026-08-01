@@ -2,6 +2,10 @@ name: build_and_test
 
 on: [push, pull_request, workflow_dispatch]
 
+permissions:
+  actions: read
+  contents: read
+
 env:
   CCACHE_DIR: ${{ github.workspace }}/.ccache"
 jobs:
@@ -146,34 +150,48 @@ jobs:
           name: visual-snapshots
           path: tests/visual-snapshots/current
           if-no-files-found: ignore
-      - name: download master visual snapshots
-        if: always()
+
+  visual_snapshot_comparison:
+    runs-on: ubuntu-24.04
+    needs: build_and_test
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: download baseline visual snapshots
         env:
+          # Temporary baseline until visual snapshot baselines are published from master.
+          BASELINE_RUN_ID: "30717297404"
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p tests/visual-snapshots/master
-          run_id="$(gh run list \
-            --repo "$GITHUB_REPOSITORY" \
-            --workflow "$GITHUB_WORKFLOW" \
-            --branch master \
-            --status success \
-            --json databaseId \
-            --jq '.[0].databaseId // ""')"
+          run_id="$BASELINE_RUN_ID"
           if [ -n "$run_id" ]; then
             gh run download "$run_id" \
               --repo "$GITHUB_REPOSITORY" \
               --name visual-snapshots \
               --dir tests/visual-snapshots/master || true
           fi
-      - name: compare visual snapshots
-        if: always()
+      - name: download current visual snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p tests/visual-snapshots/current
+          gh run download "$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name visual-snapshots \
+            --dir tests/visual-snapshots/current || true
+      - name: install visual comparison dependencies
         run: |
           cd tests
-          npm run compare-visual-snapshots -- visual-snapshots/master visual-snapshots/current visual-report
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund jimp@0.16.13
+      - name: compare visual snapshots
+        run: |
+          cd tests
+          node compare-visual-snapshots.js visual-snapshots/master visual-snapshots/current visual-report
       - name: upload visual snapshot report
         id: upload-visual-report
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: visual-snapshot-report
@@ -183,7 +201,7 @@ jobs:
             tests/visual-snapshots/current
           if-no-files-found: ignore
       - name: summarize visual snapshot report
-        if: always() && steps.upload-visual-report.outputs.artifact-url != ''
+        if: steps.upload-visual-report.outputs.artifact-url != ''
         run: |
           {
             echo "## Visual snapshot report"
