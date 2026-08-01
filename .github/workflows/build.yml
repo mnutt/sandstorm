@@ -160,7 +160,7 @@ jobs:
       - name: download baseline visual snapshots
         env:
           # Temporary baseline until visual snapshot baselines are published from master.
-          BASELINE_RUN_ID: "30717297404"
+          BASELINE_RUN_ID: "30719026287"
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -189,7 +189,14 @@ jobs:
       - name: compare visual snapshots
         run: |
           cd tests
-          node compare-visual-snapshots.js visual-snapshots/master visual-snapshots/current visual-report
+          VISUAL_REPORT_INLINE_IMAGES=true node compare-visual-snapshots.js visual-snapshots/master visual-snapshots/current visual-report
+          cp visual-report/index.html visual-snapshot-report.html
+      - name: upload viewable visual snapshot report
+        id: upload-viewable-visual-report
+        uses: actions/upload-artifact@v7
+        with:
+          path: tests/visual-snapshot-report.html
+          archive: false
       - name: upload visual snapshot report
         id: upload-visual-report
         uses: actions/upload-artifact@v4
@@ -201,12 +208,14 @@ jobs:
             tests/visual-snapshots/current
           if-no-files-found: ignore
       - name: summarize visual snapshot report
-        if: steps.upload-visual-report.outputs.artifact-url != ''
+        if: steps.upload-viewable-visual-report.outputs.artifact-url != ''
         run: |
           {
             echo "## Visual snapshot report"
             echo
-            echo "Snapshot comparison report: ${{ steps.upload-visual-report.outputs.artifact-url }}"
+            echo "View report: ${{ steps.upload-viewable-visual-report.outputs.artifact-url }}"
+            echo
+            echo "Downloadable report artifact: ${{ steps.upload-visual-report.outputs.artifact-url }}"
             echo
             if [ -f tests/visual-report/summary.json ]; then
               node -e '

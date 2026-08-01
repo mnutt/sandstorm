@@ -24,6 +24,7 @@ var baselineDir = path.resolve(process.argv[2] || "visual-snapshots/master");
 var currentDir = path.resolve(process.argv[3] || "visual-snapshots/current");
 var reportDir = path.resolve(process.argv[4] || "visual-report");
 var diffDir = path.join(reportDir, "diff");
+var inlineImages = process.env.VISUAL_REPORT_INLINE_IMAGES === "true";
 
 function walkPngs(root) {
   var result = [];
@@ -74,6 +75,12 @@ function htmlEscape(value) {
 
 function relToReport(filePath) {
   return path.relative(reportDir, filePath).split(path.sep).join("/");
+}
+
+function imageUrl(filePath) {
+  if (!inlineImages) return relToReport(filePath);
+
+  return "data:image/png;base64," + fs.readFileSync(filePath).toString("base64");
 }
 
 async function compareOne(relativePath) {
@@ -143,8 +150,13 @@ function renderReport(rows) {
     ];
     ["baselinePath", "currentPath", "diffPath"].forEach(function(key) {
       if (row[key]) {
-        cells.push("<td><a href=\"" + htmlEscape(relToReport(row[key])) + "\"><img src=\"" +
-            htmlEscape(relToReport(row[key])) + "\"></a></td>");
+        var url = imageUrl(row[key]);
+        if (inlineImages) {
+          cells.push("<td><img src=\"" + htmlEscape(url) + "\"></td>");
+        } else {
+          cells.push("<td><a href=\"" + htmlEscape(url) + "\"><img src=\"" +
+              htmlEscape(url) + "\"></a></td>");
+        }
       } else {
         cells.push("<td></td>");
       }
