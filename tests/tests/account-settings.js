@@ -48,6 +48,7 @@ module.exports["Test profile changes passing to testapp"] = function (browser) {
     // its older Intro.js overlay after the guided tour has been dismissed.
     .url(browser.launch_url + "/account")
     .waitForElementVisible("form.account-profile-editor", short_wait)
+    .captureVisualSnapshot("form.account-profile-editor", "account-profile-editor")
 
 
     // Change profile picture

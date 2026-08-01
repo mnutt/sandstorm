@@ -81,10 +81,12 @@ module.exports["Test powerbox request contact"] = function (browser) {
                     .click("#powerbox-request-identity")
                     .frameParent()
                     .waitForElementVisible(powerboxCardSelector, short_wait)
+                    .captureVisualSnapshot(".popup.request", "powerbox-identity-contact-picker")
                     .click(powerboxCardSelector)
 
                     .waitForElementVisible(".popup.request .selected-card>form button.connect-button",
                                            short_wait)
+                    .captureVisualSnapshot(".popup.request", "powerbox-identity-contact-confirm")
                     .click(".popup.request .selected-card>form button.connect-button")
                     .grainFrame()
                     .waitForElementVisible("span.token", short_wait)

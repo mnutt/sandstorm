@@ -115,6 +115,7 @@ module.exports["Test Collections"] = function (browser) {
 
                   .grainFrame()
                   .waitForElementVisible("table.grain-list-table>tbody tr:nth-child(3).grain", short_wait)
+                  .captureVisualSnapshot("body", "collections-table-with-linked-grains")
                   .click("table.grain-list-table>tbody tr:nth-child(3).grain .click-to-go")
                   .frame(null)
 
@@ -244,6 +245,7 @@ module.exports["Test Collections"] = function (browser) {
                       .url(browser.launch_url + "/grain/" + grainIdA + "/#")
 
                       .waitForElementVisible(".grain-interstitial.request-access", medium_wait)
+                      .captureVisualSnapshot(".grain-interstitial", "collections-request-access")
                       .end();
                   });
               });

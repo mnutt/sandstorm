@@ -44,10 +44,12 @@ module.exports["Test appdemo link"] = function (browser) {
       if (tooltip) tooltip.parentNode.removeChild(tooltip);
     }, [])
     .assert.textContains(".demo-startup-modal .start", "Hacker CMS")
+    .captureVisualSnapshot(".demo-startup-modal", "appdemo-startup-modal")
     .click(".demo-startup-modal .start")
     .waitForElementPresent("iframe.grain-frame", short_wait)
     .grainFrame()
     .waitForElementPresent("#publish", medium_wait)
     .assert.textContains("#publish", "Publish")
+    .captureVisualSnapshot("body", "appdemo-hacker-cms-frame")
     .end();
 };

@@ -251,6 +251,7 @@ module.exports["Test revoked share link"] = function (browser) {
           .url(browser.launch_url + "/shared/" + result.value.result.token)
           .waitForElementVisible(".grain-interstitial", medium_wait)
           .assert.textContains(".grain-interstitial", "Sorry, this link has been revoked")
+          .captureVisualSnapshot(".grain-interstitial", "revoked-share-link")
           .loginDevAccount()
           .url(browser.launch_url + "/shared/" + result.value.result.token)
           .waitForElementVisible(".grain-interstitial", medium_wait)
@@ -273,10 +274,12 @@ module.exports["Test share popup no permission"] = function (browser) {
         .url(browser.launch_url)
         .url(grainUrl.value)
         .waitForElementVisible(".grain-interstitial.request-access", medium_wait)
+        .captureVisualSnapshot(".grain-interstitial", "share-request-access-logged-out")
         .assert.not.elementPresent(sharePopupSelector)
         .loginDevAccount()
         .url(grainUrl.value)
         .waitForElementVisible(".grain-interstitial.request-access", medium_wait)
+        .captureVisualSnapshot(".grain-interstitial", "share-request-access-logged-in")
         .assert.not.elementPresent(sharePopupSelector)
     }).end();
 }

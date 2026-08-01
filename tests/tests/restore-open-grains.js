@@ -74,6 +74,7 @@ module.exports["Test restore open grains"] = function (browser) {
           .waitForElementVisible(".navbar-grains>li[data-grainid='" + grainIds[0] + "']", medium_wait)
           .waitForElementVisible(".navbar-grains>li[data-grainid='" + grainIds[1] + "']", medium_wait)
           .waitForElementVisible(".navbar-grains>li[data-grainid='" + grainIds[2] + "']", medium_wait)
+          .captureVisualSnapshot(".navbar", "grain-navbar-multiple-open")
           .execute(function (){
             return document.querySelectorAll(".navbar-grains>li").length;
           }, [], function (response) {
