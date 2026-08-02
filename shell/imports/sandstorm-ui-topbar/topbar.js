@@ -262,7 +262,7 @@ Template.sandstormTopbar.events({
     topbar._shrinkNavbar.set(!topbar._shrinkNavbar.get());
   },
 
-  "click .menu-button": function (event) {
+  "click .topbar-menu-button": function (event) {
     const topbar = Template.instance().data;
     topbar._menuExpanded.set(!topbar._menuExpanded.get());
   },
