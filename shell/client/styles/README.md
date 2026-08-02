@@ -28,6 +28,9 @@ New and migrated styles should use this ownership model:
   template/client module, and import them from that module.
 - Vendor CSS and narrow vendor overrides: keep near the application entrypoint
   unless the vendor is only used by one feature.
+- Keep feature styles in `shell.scss` when they depend on CSS-emitting shared
+  styles such as `_icons.scss`; move those after the shared CSS has been split
+  from Sass-only mixins/placeholders.
 
 ## Migration Rules
 

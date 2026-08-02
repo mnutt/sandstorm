@@ -10,6 +10,8 @@ import { introJs } from "intro.js";
 import { isDevelopmentServer } from "/imports/client/dev-mode";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
+import "/imports/client/apps/styles/applist.scss";
+
 const SandstormAppList = function (db, quotaEnforcer) {
   this._filter = new ReactiveVar("");
   this._sortOrder = new ReactiveVar([["appTitle", 1]]);

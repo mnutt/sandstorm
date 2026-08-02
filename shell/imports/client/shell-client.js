@@ -35,6 +35,8 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { coerceTemplateText } from "/imports/shared/template-values";
 
+import "/imports/client/shell/styles/shell.scss";
+
 // Subscribe to basic grain information first and foremost, since
 // without it we might e.g. redirect to the wrong place on login.
 const globalSubs = [

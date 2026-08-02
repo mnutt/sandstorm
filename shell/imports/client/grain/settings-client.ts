@@ -5,6 +5,8 @@ import { Match, check } from "meteor/check";
 import { globalDb } from "/imports/db-deprecated";
 import { GrainView } from "/imports/client/grain/grainview";
 
+import "/imports/client/grain/styles/settings.scss";
+
 Template.sandstormGrainSettingsPage.onCreated(function() {
   const instance = Template.instance();
   instance.subscribe("scheduledJobs");
