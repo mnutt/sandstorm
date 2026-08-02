@@ -4,7 +4,7 @@
 @use "partials";
 @use "topbar-primitives";
 
-body>.topbar {
+.sandstorm-topbar {
   >.navbar {
     @media #{geometry.$desktop} {
       .navbar-shrink-item {

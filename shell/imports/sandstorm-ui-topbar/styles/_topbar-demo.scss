@@ -2,7 +2,7 @@
 @use "geometry";
 @use "partials";
 
-body>.topbar {
+.sandstorm-topbar {
   .demo-notice {
     width: 100%;
     overflow: hidden;
@@ -66,7 +66,7 @@ body>.topbar {
   }
 }
 
-body>.topbar .share {
+.sandstorm-topbar .share {
   @media #{geometry.$mobile} {
     margin-top: 48px;
   }

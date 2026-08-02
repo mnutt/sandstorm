@@ -5,7 +5,7 @@
 
 @media #{geometry.$mobile} {
   // Only show the menu button on mobile
-  body>.menu-button {
+  .topbar-menu-button {
     background-color: colors.$topbar-background-color;
     display: inline-block;
     vertical-align: top;
@@ -31,7 +31,7 @@
   }
 }
 
-body>.topbar-update {
+.topbar-update-button {
   @include partials.unstyled-button();
   position: fixed;
   width: 100%;
@@ -52,7 +52,7 @@ body>.topbar-update {
   }
 }
 
-body>.topbar {
+.sandstorm-topbar {
   position: fixed;
   top: 0;
   margin: 0;
