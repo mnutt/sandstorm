@@ -1,0 +1,14 @@
+@use "partials";
+
+.login-suggestion {
+  >button {
+    @include partials.button-base();
+    @include partials.button-primary();
+    width: calc(100% - 20px);
+    display: block;
+    margin: 10px;
+  }
+  >button.dismiss {
+    @include partials.button-secondary();
+  }
+}
