@@ -148,8 +148,6 @@ function checkOrganization(report) {
     "client/styles/_icons.scss",
     "client/styles/_partials.scss",
     "client/styles/_shell-base.scss",
-    "client/styles/introjs-customizations.scss",
-    "client/styles/introjs.css",
     "client/styles/shell.scss",
   ]);
   const allowedShellImports = new Set([

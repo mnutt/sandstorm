@@ -40,8 +40,8 @@
 
 // Global styles are compiled by Rspack. Keep this order aligned with the
 // historical Meteor/fourseven bundle order.
-import "./styles/introjs.css";
-import "./styles/introjs-customizations.scss";
+import "../imports/client/vendor/introjs/styles/introjs.css";
+import "../imports/client/vendor/introjs/styles/introjs-customizations.scss";
 import "./styles/shell.scss";
 
 // sandstorm-db.
