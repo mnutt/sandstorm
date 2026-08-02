@@ -1,0 +1,47 @@
+@use "partials";
+
+.login-buttons-list {
+  >form.login.dev:hover {
+    background-color: white;
+    cursor: auto
+  }
+
+  >form.login.dev, >button.login.dev {
+    background-image: url("/debug.svg");
+    background-position: 16px 0px;
+    height: auto;
+    button.unexpand {
+      @include partials.unstyled-button();
+    }
+    &:hover {
+      background-image: url("/debug-m.svg");
+    }
+    button.login-dev-account {
+      @include partials.button-base();
+      @include partials.button-secondary();
+      width: 100%;
+    }
+    ul.dev-credentials {
+      text-indent: 0;
+      list-style-type: none;
+      padding-left: 0;
+      li {
+        margin: 2px;
+        width: auto;
+        &.custom-name {
+          display: flex;
+          justify-content: space-between;
+          input {
+            width: 50%;
+            display: inline-block;
+          }
+          button {
+            @include partials.button-base();
+            @include partials.button-secondary();
+            width: 45%;
+          }
+        }
+      }
+    }
+  }
+}
