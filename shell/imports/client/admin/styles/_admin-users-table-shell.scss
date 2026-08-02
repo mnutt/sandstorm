@@ -1,0 +1,92 @@
+@use "colors";
+@use "partials";
+
+.admin-user-table {
+  border: 1px solid colors.$default-table-border-color;
+
+  div[role=columnheader] {
+    // Column header text should "stick" to the bottom of the row, to be
+    // closest to the contents of the column.
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: flex-start;
+  }
+
+  div[role=columnheader], div[role=gridcell] {
+    padding: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .header-row {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch; // so the border-left covers the whole height of the row
+    justify-content: flex-start;
+    background-color: colors.$default-table-header-background-color;
+    color: colors.$default-table-header-foreground-color;
+    border-bottom: 1px solid colors.$default-table-header-border-color;
+    >div[role=columnheader]:not(:first-child) {
+      border-left: 1px solid colors.$default-table-header-border-color;
+    }
+    .created, .last-active {
+      cursor: pointer;
+    }
+  }
+
+  .loading-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .invite-row {
+    height: 36px;
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    background-color: colors.$default-table-row-action-background-color;
+    cursor: pointer;
+
+    .plus-icon {
+      @include partials.pseudo-img-tag();
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      background-image: url("/plus-9E40B5.svg");
+    }
+
+    &:hover {
+      background-color: colors.$default-table-row-action-background-color-hover;
+      .plus-icon {
+        background-image: url("/plus-6A237C.svg");
+      }
+    }
+
+    .invite-link {
+      padding-left: 8px;
+      padding-top: 8px;
+      >a {
+        color: #000000;
+      }
+    }
+  }
+
+  .account-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    background-color: colors.$default-table-row-background-color;
+    cursor: pointer;
+    &:not(:last-child) {
+      border-bottom: 1px solid #dddddd;
+    }
+    &:hover {
+      background-color: colors.$default-table-row-background-color-hover;
+    }
+  }
+}

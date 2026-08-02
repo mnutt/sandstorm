@@ -1,0 +1,105 @@
+@use "partials";
+
+.admin-user-table {
+  div.account-role {
+    flex: none;
+    width: 32px;
+    text-align: center;
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    &[role=gridcell] {
+      padding-top: 6px;
+    }
+  }
+
+  div.profile-name {
+    display: inline-block;
+    flex: 2 1 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    &[role=gridcell] {
+      padding-top: 8px;
+    }
+  }
+
+  div.credentials {
+    display: inline-block;
+    flex: 2 1 0;
+    &[role=gridcell] {
+      overflow: hidden;
+      text-overflow: ellipsis;
+
+      .credential-list {
+        margin: 0;
+        padding-left: 0;
+        padding-right: 0;
+        padding-top: 4px;
+        padding-bottom: 0;
+        list-style-type: none;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch; // so the childrens borders will span the whole row
+        justify-content: flex-start;
+
+        .credential {
+          display: flex;
+          flex-direction: row;
+          align-items: flex-start;
+          justify-content: flex-start;
+
+          &:not(:first-child) {
+            padding-top: 4px;
+            border-top: 1px solid #dddddd;
+          }
+
+          &:not(:last-child) {
+            padding-bottom: 4px;
+          }
+
+          .login-provider-icon {
+            align-self: flex-start;
+            @include partials.login-provider-icon();
+            width: 32px;
+            height: 24px;
+          }
+
+          .credential-intrinsic-name {
+            flex: 0 1 1;
+            padding-left: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+        }
+      }
+    }
+  }
+
+  div.created, div.last-active {
+    display: inline-block;
+    max-width: 20%;
+    flex: 1 1 0;
+
+    &[role=gridcell] {
+      padding-top: 8px;
+    }
+  }
+
+  div.actions {
+    flex: none;
+    width: 70px;
+
+    &[role=gridcell] {
+      text-align: right;
+
+      .manage-user-button {
+        display: inline-block;
+        font-weight: normal;
+        @include partials.button-base();
+        @include partials.button-secondary();
+      }
+    }
+  }
+}
