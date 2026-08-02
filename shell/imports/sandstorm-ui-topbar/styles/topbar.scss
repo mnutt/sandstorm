@@ -1229,7 +1229,7 @@ body>.popup {
             outline: colors.$focus-outline-color solid 1px;
           }
         }
-        #send-invite-tab-header {
+        .send-invite-tab-header {
           left: 2%;
           @include icon-api.icon("email");
 
@@ -1238,7 +1238,7 @@ body>.popup {
             padding: 0 8px 2px 12px;
           }
         }
-        #shareable-link-tab-header {
+        .shareable-link-tab-header {
           right: 2%;
           @include icon-api.icon("link");
 

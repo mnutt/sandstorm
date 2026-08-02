@@ -1,17 +1,6 @@
 @use "colors";
 @use "partials";
 
-#storage-usage {
-  margin: 16px 4px;
-  font-size: 75%;
-  font-weight: bold;
-  color: #777;
-}
-
-#storage-usage.over-quota {
-  color: red;
-}
-
 .main-content .grain-interstitial {
   display: flex;
   align-items: center;
@@ -63,7 +52,7 @@ iframe.grain-frame {
   background-color: white;
 }
 
-#grain-loading-spinner {
+.grain-loading-spinner {
   display: table;
   position: absolute;
   width: 100%;

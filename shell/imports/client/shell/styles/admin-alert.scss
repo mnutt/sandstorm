@@ -1,7 +1,7 @@
 @use "colors";
 @use "geometry";
 
-#admin-alert-icon {
+.admin-alert-icon {
   display: inline-block;
   background-color: colors.$sandstorm-purple-color;
   color: white;
@@ -16,8 +16,8 @@
   cursor: pointer;
 }
 
-#admin-alert-icon.countdown-second,
-#admin-alert-icon.countdown-now {
+.admin-alert-icon.countdown-second,
+.admin-alert-icon.countdown-now {
   // Turn red when there's less than a minute left.
   background-color: #e82538;
 }
@@ -25,14 +25,4 @@
 body>.popup.admin-alert>.frame>p {
   display: block;
   margin: 16px;
-}
-
-@media screen and #{geometry.$mobile} {
-  #demo.centered-box {
-    width: 80%;
-  }
-
-  button#createDemoUser, #demo h2 {
-    font-size: 30px;
-  }
 }

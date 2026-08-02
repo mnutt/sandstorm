@@ -2,7 +2,7 @@
 @use "geometry";
 @use "partials";
 
-#intro {
+.intro {
   background-color: #b6b6b6;
   overflow: auto;
   height: 100%;
@@ -124,7 +124,7 @@
   }
 }
 
-#demo-expired {
+.demo-expired-main-content {
   z-index: 1;
   >p, >h1, >h2, >h3, >h4 {
     margin-left: auto;

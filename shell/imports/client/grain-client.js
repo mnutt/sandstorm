@@ -400,7 +400,7 @@ Template.grainSharePopup.events({
 
 Template.shareWithOthers.onRendered(function () {
   if (globalDb.isDemoUser()) {
-    activateElementTab(this.find("#shareable-link-tab-header"), this);
+    activateElementTab(this.find(".shareable-link-tab-header"), this);
   }
 
   this.find("[role=tab][aria-selected=true]").focus();
@@ -429,8 +429,7 @@ const activateElementTab = function (elementToActivate, instance) {
 };
 
 Template.shareWithOthers.events({
-  "click #send-invite-tab-header": activateTargetTab,
-  "click #shareable-link-tab-header": activateTargetTab,
+  "click [role=tab]": activateTargetTab,
   "keydown [role=tab]": function (event, template) {
     if (event.keyCode == 38 || event.keyCode == 40) { // up and down arrows
       event.preventDefault();

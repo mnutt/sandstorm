@@ -679,7 +679,7 @@ Template.layout.helpers({
 });
 
 Template.layout.events({
-  "click #demo-expired button[name=logout]"(evt) {
+  "click .demo-expired-main-content button[name=logout]"(evt) {
     evt.preventDefault();
     evt.stopPropagation();
     logoutSandstorm();

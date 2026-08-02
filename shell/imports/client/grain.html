@@ -479,8 +479,8 @@
   <h4 class="share-with-others">{{_ "grains.shareWithOthers.title"}}</h4>
   <div class="share-tabs" role="presentation">
     <ul role="tablist">
-      <li id="send-invite-tab-header" tabindex="0" role="tab" aria-controls="send-invite-tab" aria-selected="true"> {{_ "grains.shareWithOthers.sendInviteTab"}} </li>
-      <li id="shareable-link-tab-header" tabindex="-1" role="tab" aria-controls="shareable-link-tab" aria-selected="false"> {{_ "grains.shareWithOthers.shareableLinkTab"}} </li>
+      <li id="send-invite-tab-header" class="send-invite-tab-header" tabindex="0" role="tab" aria-controls="send-invite-tab" aria-selected="true"> {{_ "grains.shareWithOthers.sendInviteTab"}} </li>
+      <li id="shareable-link-tab-header" class="shareable-link-tab-header" tabindex="-1" role="tab" aria-controls="shareable-link-tab" aria-selected="false"> {{_ "grains.shareWithOthers.shareableLinkTab"}} </li>
     </ul>
     <div id="send-invite-tab" role="tabpanel" class="tabpanel" aria-labelledby="send-invite-tab-header" aria-hidden="false">
       {{> emailInviteTab viewInfo=grain.viewInfo title=grain.title grainId=grain.grainId }}
@@ -622,7 +622,7 @@
   {{!-- This is a terrible hack to center this thing. The styles shold go in css, but it's
     arguably more confusing to put them there when all they're doing is this archaic pattern to
     get a horizontally+vertically centered div --}}
-  <div id="grain-loading-spinner">
+  <div class="grain-loading-spinner">
     <div style="display:table-cell;vertical-align:middle;">
       <div style="margin-left:auto;margin-right:auto;text-align:center;">
         <img src="/spinner_96.gif" alt="loading">
