@@ -1,56 +1,60 @@
-a.copy-me {
-  // A link which is intended to be copy/pasted, not followed. Clicking on the link will select
-  // it for copying.
+.topbar-popup {
+  a.copy-me {
+    // A link which is intended to be copy/pasted, not followed. Clicking on the link will select
+    // it for copying.
 
-  display: block;
-  margin: 8px;
-  border: 1px solid #ccc;
-  overflow: hidden;
-  font-family: monospace;
-  text-decoration: none;
-  color: inherit;
-}
+    display: block;
+    margin: 8px;
+    border: 1px solid #ccc;
+    overflow: hidden;
+    font-family: monospace;
+    text-decoration: none;
+    color: inherit;
+  }
 
-.popup .token-petname:hover {
-  cursor: pointer;
-  color: white;
-  background-color: #888;
-}
+  .token-petname:hover {
+    cursor: pointer;
+    color: white;
+    background-color: #888;
+  }
 
-button.revoke-token, button.revoke-access {
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: contain;
-  width: 24px;
-  height: 24px;
-  border: none;
-  color: transparent;
-  background-color: transparent;
-  cursor: pointer;
-  background-image: url("/close.svg");
-}
+  button.revoke-token, button.revoke-access {
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: contain;
+    width: 24px;
+    height: 24px;
+    border: none;
+    color: transparent;
+    background-color: transparent;
+    cursor: pointer;
+    background-image: url("/close.svg");
+  }
 
-div.popup>p {
-  margin-top: 0;
-}
+  >.frame-container>.frame {
+    >p {
+      margin-top: 0;
+    }
 
-div.popup h1 {
-  font-size: 125%;
-  font-weight: bold;
-  text-align: center;
-  border-bottom: 1px solid #ccc;
-  padding: 4px;
-  margin: 0;
-}
+    h1 {
+      font-size: 125%;
+      font-weight: bold;
+      text-align: center;
+      border-bottom: 1px solid #ccc;
+      padding: 4px;
+      margin: 0;
+    }
 
-div.popup hr {
-  border: none;
-  border-bottom: 2px solid #ccc;
-  margin: 4px;
-}
+    hr {
+      border: none;
+      border-bottom: 2px solid #ccc;
+      margin: 4px;
+    }
 
-div.popup h2 {
-  font-size: 110%;
-  font-weight: bold;
-  margin: 4px;
+    h2 {
+      font-size: 110%;
+      font-weight: bold;
+      margin: 4px;
+    }
+  }
 }
