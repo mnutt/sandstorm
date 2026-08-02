@@ -39,7 +39,15 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { coerceTemplateText } from "/imports/shared/template-values";
 
-import "/imports/client/accounts/styles/login-buttons.scss";
+import "/imports/client/accounts/styles/_account-topbar-popups.scss";
+import "/imports/client/accounts/styles/_account-buttons-list.scss";
+import "/imports/client/accounts/styles/_login-suggestion.scss";
+import "/imports/client/accounts/styles/_login-buttons-list-base.scss";
+import "/imports/client/accounts/styles/_login-buttons-list-providers.scss";
+import "/imports/client/accounts/styles/_login-buttons-list-dev.scss";
+import "/imports/client/accounts/styles/_login-buttons-list-forms.scss";
+import "/imports/client/accounts/styles/_login-buttons-list-misc.scss";
+import "/imports/client/accounts/styles/_login-dialog.scss";
 
 // for convenience
 const loginButtonsSession = Accounts._loginButtonsSession;
