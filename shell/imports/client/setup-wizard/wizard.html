@@ -164,7 +164,7 @@
     <p>
       {{{_ (con txt "noIdpEnabled.explanation")}}}
     </p>
-    <p class="center">
+    <p class="setup-center">
       {{#linkTo route="setupWizardLogin" class="setup-button-primary"}}{{_ "wizard.setupWizardIntro.revisitWizardLink"}}{{/linkTo}}
     </p>
     {{else}}
@@ -190,14 +190,14 @@
 
     {{#if currentUser}}
       {{#if currentUserIsAdmin}}
-        <p class="center">
+        <p class="setup-center">
           {{#linkTo route="newAdminRoot" class="admin-settings-button"}}{{_ "wizard.setupWizardIntro.idpEnabled.isAdmin.adminPanelLink"}}{{/linkTo}}
         </p>
       {{else}}
         {{#if credentialUser}}
           {{> credentialLoginInterstitial "" }}
         {{else}}
-          <p class="center">
+          <p class="setup-center">
             <button class="make-self-admin">{{_ (con txt "idpEnabled.isAdmin.suButton")}}</button>
           </p>
         {{/if}}
@@ -207,7 +207,7 @@
         {{_ (con txt "idpEnabled.isNotAdmin.explanation")}}
       </p>
       <p>
-        <div class="center">
+        <div class="setup-center">
           {{#if showSignInPanel}}
             {{#with linkingNewCredential=notLinkingNewCredential}}
               {{> loginButtonsDialog label=(_ (con txt "idpEnabled.isNotAdmin.signInLabel")) accountsUi=freshAccountsUi}}
@@ -219,7 +219,7 @@
       </p>
     {{/if}}
 
-    <p class="center">
+    <p class="setup-center">
       {{#linkTo route="setupWizardLogin" class="rerun-wizard-button"}}{{_ "wizard.setupWizardIntro.revisitWizardLink"}}{{/linkTo}}
     </p>
     {{/if}}
@@ -527,7 +527,7 @@
 {{else}}
   {{#if currentUser}}
     {{#if currentUserFirstLogin}}
-      <div class="center">
+      <div class="setup-center">
         <h2>{{_ (con txt "firstLogin.title")}}</h2>
         <div class="single-credential-editor">
           {{#with accountProfileEditorData}}
@@ -547,7 +547,7 @@
           <p>
             {{_ (con txt "hasAdmin.explanation")}}
           </p>
-          <div class="center">
+          <div class="setup-center">
             <button class="make-self-admin">{{_ (con txt "hasAdmin.adminButton")}}</button>
           </div>
         {{else}}
@@ -558,7 +558,7 @@
     {{/if}}
   {{else}}
     <p>{{_ (con txt "loggedOut.explanation")}}</p>
-    <div class="center">
+    <div class="setup-center">
       <p>{{_ (con txt "loggedOut.description")}}</p>
 
       {{!-- The loginButtonsDialog apparently requires this in the parent data context, which seems
