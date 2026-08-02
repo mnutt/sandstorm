@@ -3,7 +3,7 @@
 @use "geometry";
 @use "partials";
 
-body>.main-content>.account {
+.main-content>.account {
   text-align: left;
 
   @media #{geometry.$desktop} {
