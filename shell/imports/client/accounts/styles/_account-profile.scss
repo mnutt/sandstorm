@@ -1,6 +1,5 @@
 @use "geometry";
 @use "partials";
-@use "account-primitives";
 
 .danger-zone {
   button.delete-account {
@@ -95,20 +94,6 @@ div.profile-editor {
 
     .handle input[type="text"] {
       font-family: monospace;
-    }
-  }
-}
-
-.main-content>.account,
-.topbar-popup,
-.popup.request,
-.first-time-billing-prompt {
-  .mobile-iframe-hack {
-    border: 0px;
-    opacity: .01;
-
-    &.fullscreen {
-      @include account-primitives.fullscreen-iframe-hack();
     }
   }
 }

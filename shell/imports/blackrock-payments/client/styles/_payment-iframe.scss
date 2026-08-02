@@ -1,0 +1,10 @@
+@use "payment-iframe-primitives";
+
+.mobile-iframe-hack {
+  border: 0px;
+  opacity: .01;
+
+  &.fullscreen {
+    @include payment-iframe-primitives.fullscreen-iframe-hack();
+  }
+}

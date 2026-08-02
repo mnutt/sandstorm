@@ -1,7 +1,7 @@
 @use "colors";
 @use "geometry";
 @use "partials";
-@use "account-primitives";
+@use "../../../blackrock-payments/client/styles/payment-iframe-primitives";
 
 div.billing {
   >section.payment-methods {
@@ -120,7 +120,7 @@ div.billing {
                 height: 24px;
                 width: 300px;
                 &.fullscreen {
-                  @include account-primitives.fullscreen-iframe-hack();
+                  @include payment-iframe-primitives.fullscreen-iframe-hack();
                 }
               }
             }
