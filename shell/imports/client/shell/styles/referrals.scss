@@ -1,9 +1,9 @@
 @use "partials";
-@use "about";
+@use "about-primitives";
 @use "geometry";
 
 .referrals {
-  @include about.padded-info-page();
+  @include about-primitives.padded-info-page();
 
   header {
     color: white;
@@ -42,7 +42,7 @@
   }
 
   section {
-    @include about.content-section();
+    @include about-primitives.content-section();
     width: 100%;
     padding-left: 50px;
     padding-right: 50px;
