@@ -1,7 +1,8 @@
-@use "icon-api";
 @use "colors";
-@use "geometry";
 @use "partials";
+@use "app-details-widget-info";
+@use "app-details-widget-links";
+@use "app-details-widget-publisher";
 
 @mixin app-details-widget () {
   margin: 0;
@@ -28,173 +29,15 @@
     }
 
     >ul.app-links {
-      display: block;
-      float: right;
-      margin-left: 0px;
-      margin-right: 0px;
-      margin-top: 10px;
-      margin-bottom: 10px;
-      padding-left: 0px;
-      list-style: none;
-      >li {
-        display: inline-block;
-        float: left;
-        margin-left: 24px;
-
-        >a {
-          padding-left: 28px;
-
-          background-size: 24px 24px;
-          background-position: 0px center;
-          background-repeat: no-repeat;
-          &.website-link {
-            background-image: url("/web-m.svg");
-          }
-          &.app-market-link {
-            background-image: url("/appmarket-m.svg");
-          }
-          &.source-code-link {
-            background-image: url("/source-m.svg");
-          }
-          &.bug-report-link {
-            background-image: url("/bug-m.svg");
-          }
-          // TODO: these need more styles and less overrides
-          display: inline-block;
-          font-weight: normal;
-          color: #000000;
-          &:hover {
-            color: colors.$sandstorm-purple-color;
-          }
-        }
-      }
+      @include app-details-widget-links.app-links();
     }
 
     >div.info-row {
-      display: block;
-      clear: both;
-      float: left;
-      border-top: 1px solid #909090;
-      padding-top: 4px;
-      width: 100%;
-      >ul.package-info {
-        position: relative;
-        margin: 0px;
-        padding: 0px;
-        list-style: none;
-        >li {
-          display: block;
-          float: left;
-          margin-right: 32px;
-          >span {
-            padding-left: 8px;
-            display: block;
-            clear: both;
-          }
-          >span.label, >span.name {
-            font-weight: 600;
-          }
-          >button.show-authorship-button {
-            @include partials.unstyled-button();
-            padding-left: 8px;
-            padding-right: 24px;
-
-            >.expanded-icon {
-              font-size: 10px;
-              @include icon-api.icon-element("down");
-            }
-            &.expanded>.expanded-icon {
-              &::before {
-                @include icon-api.icon-content("up");
-              }
-            }
-          }
-        }
-        display: block;
-        float: left;
-      }
-
-      >button.uninstall-button, >button.restore-button, >button.toggle-show-trash {
-        @include partials.button-base();
-        @include partials.button-secondary();
-        display: block;
-        float: right;
-        min-height: 32px;
-        margin-left: 4px;
-      }
+      @include app-details-widget-info.info-row();
     }
 
     >div.publisher-details {
-      display: block;
-      clear: both;
-      background-color: #ffffff;
-      vertical-align: top;
-
-      >p.no-fingerprint {
-        padding: 8px;
-      }
-
-      >p.has-fingerprint {
-        vertical-align: top;
-        padding-left: 8px;
-        @media #{geometry.$desktop} {
-          display: inline-block;
-          max-width: 30%;
-        }
-        @media #{geometry.$mobile} {
-          display: block;
-          width: 100%;
-        }
-      }
-
-      >ul.publisher-proofs {
-        @media #{geometry.$desktop} {
-          display: inline-block;
-          width: 65%;
-        }
-        @media #{geometry.$mobile} {
-          display: block;
-          width: 100%;
-        }
-        padding: 8px;
-        list-style: none;
-        >li.publisher-proof {
-          display: block;
-          >a, >span.pgpkey {
-            display: block;
-            padding-left: 32px;
-            background-size: 24px 24px;
-            background-position: 0px center;
-            background-repeat: no-repeat;
-          }
-          >span.pgpkey {
-            background-image: url("/key-m.svg");
-            >span {
-              padding-right: 4px;
-              overflow-wrap: break-word;
-            }
-          }
-          >a.keybase {
-            background-image: url("/keybase-m.svg");
-          }
-          >a.twitter {
-            background-image: url("/twitter-m.svg");
-          }
-          >a.github {
-            background-image: url("/github-m.svg");
-          }
-          >a.dns {
-            background-image: url("/link-m.svg");
-          }
-          >a.https {
-            background-image: url("/link-m.svg");
-          }
-        }
-      }
-
-      &.hide {
-        display:none;
-      }
+      @include app-details-widget-publisher.publisher-details();
     }
   }
 }
