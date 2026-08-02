@@ -14,6 +14,8 @@ import { identiconForApp } from "/imports/sandstorm-identicons/helpers";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { makeAndDownloadBackup } from "/imports/client/backups";
 
+import "/imports/client/grain/styles/grainlist.scss";
+
 const SandstormGrainListPage = {};
 globalThis.SandstormGrainListPage = SandstormGrainListPage;
 
