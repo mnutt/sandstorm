@@ -1,5 +1,5 @@
 @use "partials";
-%idp-status {
+@mixin idp-status () {
   display: inline-block;
   padding-left: 8px;
   padding-right: 8px;
@@ -9,7 +9,7 @@
   margin: 2px;
 }
 
-%idp-table-row {
+@mixin idp-table-row () {
   width: 100%;
   min-height: 32px;
   display: flex;
@@ -34,7 +34,7 @@
     align-items: center;
   }
   .idp-header-row {
-    @extend %idp-table-row;
+    @include idp-table-row();
     span {
       min-height: 32px;
       color: black;
@@ -46,7 +46,7 @@
     width: 100%;
   }
   .idp-table-row {
-    @extend %idp-table-row;
+    @include idp-table-row();
     color: #5b5b5b;
     background-color: white;
     button.configure-idp {
@@ -72,12 +72,12 @@
     justify-content: space-between;
   }
   .idp-enabled {
-    @extend %idp-status;
+    @include idp-status();
     color: #366456;
     background-color: #d9ebcd;
   }
   .idp-disabled {
-    @extend %idp-status;
+    @include idp-status();
     color: #656565;
     background-color: #e9e9e9;
   }

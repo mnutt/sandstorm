@@ -18,8 +18,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+@mixin padded-info-page () {
+  color: #191919;
+
+  padding: 64px;
+  max-width: 1238px;
+  @media #{geometry.$mobile} {
+    padding: 8px;
+  }
+  text-align: center;
+
+  h1, h2 {
+    font-weight: normal;
+    text-align: left;
+  }
+
+  h1 {
+    font-size: 25pt;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #6d6d6d;
+    margin-top: 0;
+  }
+
+  h2 {
+    font-size: 20pt;
+  }
+}
+
+@mixin content-section () {
+    background-color: white;
+    display: inline-block;
+}
+
 .main-content>.about {
-  @extend %padded-info-page;
+  @include padded-info-page();
 
   >section.intro {
     text-align: left;
@@ -175,36 +207,4 @@
       }
     }
   }
-}
-
-%padded-info-page {
-  color: #191919;
-
-  padding: 64px;
-  max-width: 1238px;
-  @media #{geometry.$mobile} {
-    padding: 8px;
-  }
-  text-align: center;
-
-  h1, h2 {
-    font-weight: normal;
-    text-align: left;
-  }
-
-  h1 {
-    font-size: 25pt;
-    padding-bottom: 8px;
-    border-bottom: 1px solid #6d6d6d;
-    margin-top: 0;
-  }
-
-  h2 {
-    font-size: 20pt;
-  }
-}
-
-%content-section {
-    background-color: white;
-    display: inline-block;
 }

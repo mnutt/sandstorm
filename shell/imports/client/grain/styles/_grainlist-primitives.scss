@@ -14,10 +14,6 @@
   }
 }
 
-%trash-explanation {
-  @include trash-explanation();
-}
-
 @mixin bulk-action-buttons () {
   float: left;
   clear: left;
@@ -33,10 +29,6 @@
     margin-bottom: 10px;
     margin-right: 10px;
   }
-}
-
-%bulk-action-buttons {
-  @include bulk-action-buttons();
 }
 
 @mixin grain-table () {
@@ -172,8 +164,4 @@
       }
     }
   }
-}
-
-%grain-table {
-  @include grain-table();
 }

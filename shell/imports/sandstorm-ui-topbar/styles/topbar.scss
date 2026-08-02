@@ -106,7 +106,7 @@ body>.topbar {
     }
   }
 
-  %topbar-button {
+  @mixin topbar-button () {
     // Common styling for buttons in the topbar (on desktop).
 
     @include partials.unstyled-button();
@@ -124,11 +124,11 @@ body>.topbar {
     }
   }
 
-  %icon-button {
+  @mixin icon-button () {
     // Common styling for topbar buttons that are displayed as a bare icon with no text label
     // (on desktop).
 
-    @extend %topbar-button;
+    @include topbar-button();
 
     @media #{geometry.$desktop} {
       background-position: center;
@@ -141,7 +141,7 @@ body>.topbar {
     }
   }
 
-  %mobile-icon-button {
+  @mixin mobile-icon-button () {
     // Common styling for topbar buttons that are displayed as a bare icon with no text label
     // (on mobile).
 
@@ -165,7 +165,7 @@ body>.topbar {
     }
   }
 
-  %hamburger-menu-item {
+  @mixin hamburger-menu-item () {
     // Common styling for topbar items that are displayed as a hamburger menu item on mobile.
     @media #{geometry.$desktop} {
       height: geometry.$topbar-height-desktop;
@@ -199,7 +199,7 @@ body>.topbar {
     vertical-align: top;
 
     >button.show-popup {
-      @extend %topbar-button;
+      @include topbar-button();
     }
 
     @media #{geometry.$mobile} {
@@ -338,8 +338,8 @@ body>.topbar {
     }
 
     >.share>button.show-popup {
-      @extend %topbar-button;
-      @extend %hamburger-menu-item;
+      @include topbar-button();
+      @include hamburger-menu-item();
 
       @include icon-api.icon("share");
 
@@ -371,8 +371,8 @@ body>.topbar {
 
     // Buttons for misc grain actions.
     >li>button.grain-button, >.webkey>button.show-popup {
-      @extend %icon-button;
-      @extend %hamburger-menu-item;
+      @include icon-button();
+      @include hamburger-menu-item();
     }
     >.delete>button    { background-image: url("/trash.svg"); }
     >.debug-log>button { background-image: url("/debug.svg"); }
@@ -398,8 +398,8 @@ body>.topbar {
       }
 
       >button.show-popup {
-        @extend %icon-button;
-        @extend %mobile-icon-button;
+        @include icon-button();
+        @include mobile-icon-button();
       }
 
       .alert {
@@ -440,8 +440,8 @@ body>.topbar {
       }
 
       >button.show-popup {
-        @extend %icon-button;
-        @extend %mobile-icon-button;
+        @include icon-button();
+        @include mobile-icon-button();
 
         @include webfont-icon(#CCCCCC, #CCCCCC, 24px, 40px);
 
@@ -469,7 +469,7 @@ body>.topbar {
 
     >.account, >.login {
       >button.show-popup {
-        @extend %hamburger-menu-item;
+        @include hamburger-menu-item();
         position: relative;
         >.profile-picture {
           position: absolute;

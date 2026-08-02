@@ -3,7 +3,7 @@
 @use "geometry";
 
 .referrals {
-  @extend %padded-info-page;
+  @include about.padded-info-page();
 
   header {
     color: white;
@@ -42,7 +42,7 @@
   }
 
   section {
-    @extend %content-section;
+    @include about.content-section();
     width: 100%;
     padding-left: 50px;
     padding-right: 50px;

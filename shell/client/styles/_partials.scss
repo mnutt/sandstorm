@@ -16,14 +16,6 @@
   cursor: pointer;
 }
 
-%google-icon {
-  background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAADCklEQVQ4jSXSy2ucVRjA4d97zvdNJpPJbTJJE9rYaCINShZtRCFIA1bbLryBUlyoLQjqVl12W7UbN4qb1gtuYhFRRBCDBITaesFbbI3RFBLSptEY05l0ZjLfnMvrov/Bs3gAcF71x6VVHTk+o8nDH+hrH89rUK9Z9Yaen57S3wVtGaMBNGC0IegWKIDxTtVaOHVugZVmH3HX3Zz+4l+W1xvkOjuZfPsspY4CNkZELEgEIJKwYlBjEwjec/mfCMVuorVs76R8+P0KYMmP30U2dT8eIZqAR2ipRcWjEYxGSCRhV08e04oYMoxYLi97EI9YCJ0FHBYbIVGDlUBLwRlLIuYW6chEmQt/rJO09RJjhjEJEYvJYGNhkbUhw43OXtIWDFRq9G87nAaSK6sVRm8r8fzRMWbOX2Xx7ypd7ZET03sQhDOz73DqSJOrd+7HSo4QIu0Nx/4rOzx+cRXZ9+z7+uqJ+3hiepxK3fHZT2tMjXYzOtzL6dmznPzhLexgN0QlxAAYxAlqUqRmkf5j59RlNQ6MFHhgcpCTTx8EUb5e+plD7x4jjg1ANCAgrRQAdR7xKXjBlGyLYi7PxaUmb8z8xcpGHVXLHaXdjI0egKyJiQYTEhSPREVIEUBNC+Mqm+xpz3j0njLPHB2nsh1QgeG+IS48dYbD5YNoo0ZUAbVEuTUoKuBSZOarX/WhyQn6eg2+usDWf0s0tq8zNPYk+WI/Lnge++hlvlyfQ3NdECzGRWKwEEA0qNY251n69kV6+Y0kbaCZoebG2X3oU7pKoyxuXOPe945zs9DCeosGIXoBDyaLdf6ce4Hbk+/Y299ksKtAuaeNsiyw8c1LKIZ95b0MdgxA5giixACpTxEPSau6QdFfI5/2cLPmEW+JAQrtJUJzDXF1dkwHzVodJMX4HFEcQQMaFdPeM0Jb/4PUtzzaLKAhRyJFwo6lbegRNFfk819muV5dR4JBQoQdQ2xFiDmSNDHiaptamR9Gq5cQ18AledrGDpOfeI5Lq8u88smbhMRisoSAgAYghdfn5H/JkHuRZ1owLAAAAABJRU5ErkJggg==");
-}
-
-%github-icon {
-  background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAAZiS0dEAP8A/wD/oL2nkwAAAAlwSFlzAAALEwAACxMBAJqcGAAAAAd0SU1FB9wJGBYxHYxl31wAAAHpSURBVDjLpZI/aFNRFMZ/973bJqGRPopV4qNq/+SpTYnWRhCKilShg9BGcHOM+GfQoZuLk4iLgw4qZNBaHLuIdBNHl7Ta1qdNFI3SihnaNG1MpH3vuiQYQnwZvHCG893zffc751z4z6PX5T5gA1DAKnAaOAQEgAfAVeCpl+CeCrlRuEC6maO4h0A1wl4tPAHMqNUthvrDdHYY7A3t4rDVjeO6rBU2FaABM1WCrBNoi48Mi+nH9yj+KtPibAKwJXfQ5vcRG7soUnYmWEuQgAEIYBv4cGpoILI0Z4tyYYPegS6UguyijZQ6J45GSNmZHzUcJYD2ii2Ajv7efZ8WZ6ZwXFj79hXpayW4O0SL1Nl/8jzZlZ9dQLFS70pgvZKIyGD0yvu5eRmMnrk1PjI81ir1qBACTdPevXj95mVuNX8XKDQc/+T334bZZ104cvzYw2s3J3qAL5WXSsDbf61NNMBu+wOBs+VSyQ84Nfhg028ZGx3/qyy0lC7lgi7lghBitoon03lvB8l0/k7Wnk+8mny0cyXzEcfZxgwfZPTyRMHsOzAFXE9YhtNQIJnOx4FpJXT1eSkn2g0frqMoFrfoCXcqlCOAGwnLuO/l4JymcWl5uRxzXUKghBAiZ5r+WaV4lrCM555zqO+x2d0ftGmpiA/0k70AAAAASUVORK5CYII=");
-}
-
 @mixin overflow-ellipsis () {
   // For when you want a block of text to fit within a box on a single line and
   // use ellipsis if it would overflow the box.
@@ -48,10 +40,6 @@
   background-repeat: no-repeat;
 }
 
-%pseudo-img-tag {
-  @include pseudo-img-tag();
-}
-
 @mixin button-base () {
   // Default button shape, layout, and size.
   cursor: pointer;
@@ -62,10 +50,6 @@
   font-family: inherit;
   text-align: center;
   text-decoration: none;
-}
-
-%button-base {
-  @include button-base();
 }
 
 @mixin button-disabled () {
@@ -80,19 +64,11 @@
   }
 }
 
-%button-disabled {
-  @include button-disabled();
-}
-
 @mixin button-link () {
   background: none;
   border: none;
   color: black;
   text-decoration: underline;
-}
-
-%button-link {
-  @include button-link();
 }
 
 @mixin button-primary () {
@@ -108,10 +84,6 @@
   }
 }
 
-%button-primary {
-  @include button-primary();
-}
-
 @mixin button-secondary () {
   // A button coloring for secondary (less important) actions.
   background-color: white;
@@ -123,10 +95,6 @@
   &:disabled {
     @include button-disabled();
   }
-}
-
-%button-secondary {
-  @include button-secondary();
 }
 
 @mixin button-danger () {
@@ -142,10 +110,6 @@
   }
 }
 
-%button-danger {
-  @include button-danger();
-}
-
 @mixin button-dark () {
   background-color: #303030;
   color: #ffffff;
@@ -154,10 +118,6 @@
   &:hover {
     background-color: #4e4e4e;
   }
-}
-
-%button-dark {
-  @include button-dark();
 }
 
 @mixin standard-form () {
@@ -258,10 +218,6 @@
   }
 }
 
-%standard-form {
-  @include standard-form();
-}
-
 @mixin search-row () {
   // A search bar that grows to the size of its container.
   >label {
@@ -292,10 +248,6 @@
       }
     }
   }
-}
-
-%search-row {
-  @include search-row();
 }
 
 @mixin login-provider-icon () {
@@ -332,8 +284,4 @@
       background-image: url('/ldap.svg');
     }
   }
-}
-
-%login-provider-icon {
-  @include login-provider-icon();
 }

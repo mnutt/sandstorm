@@ -4,7 +4,7 @@
 
 // Styles used for the Admin Users page and Users details page
 
-%user-class-label {
+@mixin user-class-label () {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 2px;
@@ -13,7 +13,7 @@
   color: #ffffff;
 }
 
-%credential-property-label {
+@mixin credential-property-label () {
   display: inline-block;
   padding: 2px 4px;
   border-radius: 2px;
@@ -65,15 +65,15 @@
 }
 
 .user-class-admin {
-  @extend %user-class-label;
+  @include user-class-label();
   background-color: #C66822;
 }
 .user-class-user {
-  @extend %user-class-label;
+  @include user-class-label();
   background-color: #7EB54D;
 }
 .user-class-visitor {
-  @extend %user-class-label;
+  @include user-class-label();
   background-color: #939393;
 }
 
@@ -564,27 +564,27 @@
   }
 
   .login-credential {
-    @extend %credential-property-label;
+    @include credential-property-label();
     background-color: #dcefdd;
   }
 
   .org-member {
-    @extend %credential-property-label;
+    @include credential-property-label();
     background-color: #dbdbdb;
   }
 
   .email-primary {
-    @extend %credential-property-label;
+    @include credential-property-label();
     background-color: #e5e1ef;
   }
 
   .email-verified {
-    @extend %credential-property-label;
+    @include credential-property-label();
     background-color: #dcefdd;
   }
 
   .email-unverified {
-    @extend %credential-property-label;
+    @include credential-property-label();
     background-color: #efdcdd;
   }
 }

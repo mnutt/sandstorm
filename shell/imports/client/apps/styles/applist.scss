@@ -150,7 +150,7 @@
         }
       }
     }
-    %apptext {
+    @mixin apptext () {
       @include partials.overflow-ellipsis();
       position: absolute;
       left: 0px;
@@ -165,7 +165,7 @@
       }
     }
     >.app-title, >.action-title {
-      @extend %apptext;
+      @include apptext();
       @media #{geometry.$desktop} {
         top: 148px;
         font-size: 14pt;
@@ -176,7 +176,7 @@
       }
     }
     >.action-text {
-      @extend %apptext;
+      @include apptext();
       color: colors.$applist-action-text-color;
       @media #{geometry.$desktop} {
         top: 168px;

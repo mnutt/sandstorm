@@ -4,6 +4,17 @@
 @use "geometry";
 @use "partials";
 
+@mixin fullscreen-iframe-hack () {
+  display: inline;
+  width: 100%;
+  height: 100%;
+  position: fixed;
+  top: 32px;
+  left: 0px;
+  z-index: 10000000;
+  opacity: 1;
+}
+
 body>.popup.login>.frame-container {
   width: 202px; // 2px of border
   >.frame {
@@ -853,7 +864,7 @@ div.billing {
                 height: 24px;
                 width: 300px;
                 &.fullscreen {
-                  @extend %fullscreen-iframe-hack;
+                  @include fullscreen-iframe-hack();
                 }
               }
             }
@@ -1153,17 +1164,6 @@ div.profile-editor {
   }
 }
 
-%fullscreen-iframe-hack {
-  display: inline;
-  width: 100%;
-  height: 100%;
-  position: fixed;
-  top: 32px;
-  left: 0px;
-  z-index: 10000000;
-  opacity: 1;
-}
-
 body>.main-content>.account,
 body>.popup,
 .first-time-billing-prompt {
@@ -1172,7 +1172,7 @@ body>.popup,
     opacity: .01;
 
     &.fullscreen {
-      @extend %fullscreen-iframe-hack;
+      @include fullscreen-iframe-hack();
     }
   }
 }
@@ -1339,7 +1339,7 @@ body>.popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
         top: 0px;
         left: 0px;
         &.fullscreen {
-          @extend %fullscreen-iframe-hack;
+          @include fullscreen-iframe-hack();
         }
       }
 

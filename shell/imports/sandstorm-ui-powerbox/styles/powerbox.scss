@@ -1,6 +1,31 @@
 @use "colors";
 @use "partials";
 
+@mixin powerbox-card () {
+  border-top: 1px solid #dddddd;
+  border-left: 1px solid #dddddd;
+  border-right: 1px solid #dddddd;
+  &:last-child {
+    border-bottom: 1px solid #dddddd;
+  }
+  background-color: #eeeeee;
+  display: block;
+  vertical-align: middle;
+  min-height: 32px;
+  >button.card-button {
+    @include partials.unstyled-button();
+    white-space: normal;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    width: 100%;
+    background-size: 24px 24px;
+    background-position: 4px 4px;
+    background-repeat: no-repeat;
+    padding: 4px 4px 4px 32px;
+    min-height: 31px;
+  }
+}
+
 body>.popup.request>.frame-container>.frame {
   display: flex;
   flex-direction: column;
@@ -56,7 +81,7 @@ body>.popup.request>.frame-container>.frame {
     margin-top: 10px;
     width: calc(100% - 20px);
     >li.powerbox-card {
-      @extend %powerbox-card;
+      @include powerbox-card();
     }
   }
   >.selected-card {
@@ -135,30 +160,5 @@ body>.popup.request>.frame-container>.frame {
         }
       }
     }
-  }
-}
-
-%powerbox-card {
-  border-top: 1px solid #dddddd;
-  border-left: 1px solid #dddddd;
-  border-right: 1px solid #dddddd;
-  &:last-child {
-    border-bottom: 1px solid #dddddd;
-  }
-  background-color: #eeeeee;
-  display: block;
-  vertical-align: middle;
-  min-height: 32px;
-  >button.card-button {
-    @include partials.unstyled-button();
-    white-space: normal;
-    word-break: break-all;
-    overflow-wrap: break-word;
-    width: 100%;
-    background-size: 24px 24px;
-    background-position: 4px 4px;
-    background-repeat: no-repeat;
-    padding: 4px 4px 4px 32px;
-    min-height: 31px;
   }
 }
