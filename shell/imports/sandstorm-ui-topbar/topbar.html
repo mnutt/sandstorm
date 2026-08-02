@@ -23,7 +23,7 @@ limitations under the License.
       {{_ (con txt "updated")}}
     </button>
   {{/if}}
-  <ul class="sandstorm-topbar topbar{{#if _menuExpanded.get}} expanded{{/if}}{{#if isCurrentRoute "standalone"}} standalone{{/if}}">
+  <ul class="sandstorm-topbar{{#if _menuExpanded.get}} expanded{{/if}}{{#if isCurrentRoute "standalone"}} standalone{{/if}}">
     <ul class="menubar {{#if shrinkNavbar}}shrink-desktop{{/if}}">
       {{#each items}}
         {{#unless onlyPopup}}

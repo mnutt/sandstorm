@@ -154,7 +154,7 @@ Template.sandstormTopbar.helpers({
     const item = instance.data._items[instance.data._expanded.get()];
     if (item) {
       Meteor.defer(function () {
-        const element = instance.find(".topbar>.menubar>." + item.name);
+        const element = instance.find(".sandstorm-topbar>.menubar>." + item.name);
         if (element) {
           // This positions the popup under the topbar item that spawned it. As a hacky heuristic,
           // we position the popup from the left if the item is closer to the left of the window,
@@ -221,7 +221,7 @@ Template.sandstormTopbar.events({
     unblockUpdate();
   },
 
-  "click .topbar>.menubar>li": function (event) {
+  "click .sandstorm-topbar>.menubar>li": function (event) {
     const data = Blaze.getData(event.currentTarget);
     if (data.popupTemplate) {
       event.stopPropagation();
