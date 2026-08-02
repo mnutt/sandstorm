@@ -1,0 +1,201 @@
+@use "colors";
+@use "geometry";
+@use "partials";
+
+.app-list {
+  overflow: auto; // Needed to make the background span everything on screen.
+  @media #{geometry.$desktop} {
+    padding: 32px;
+  }
+  @media #{geometry.$mobile} {
+    padding: 0px 8px;
+  }
+  background-color: colors.$applist-background-color;
+  color: colors.$applist-foreground-color;
+  >h1 {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+
+    margin-top: 0px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid colors.$applist-rule-color;
+    margin-bottom: 12px;
+
+    font-size: 24pt;
+    font-weight: 400;
+  }
+  .hide {
+    // !important used to override other classes that might assign e.g. display: block
+    display: none !important;
+  }
+  >.search-row {
+    @extend %search-row;
+    position: relative;
+    margin-bottom: 8px;
+  }
+  >.popular-container {
+    // Restricts the visible portion of the "most used" section to a single row.
+    display: block;
+    overflow: hidden;
+    @media #{geometry.$desktop} {
+      height: 280px;
+    }
+    @media #{geometry.$mobile} {
+      height: 142px;
+    }
+  }
+  >h2, >.popular-container>h2 {
+    display: block;
+    font-weight: 400;
+    border-bottom: 1px solid colors.$applist-rule-color;
+    margin-top: 0px;
+    @media #{geometry.$mobile} {
+      margin-bottom: 8px;
+    }
+  }
+  >.app-button, >.popular-container>.app-button {
+    @include partials.unstyled-button();
+    float: left;
+    display: block;
+    // Browsers render button contents vertically-centered by default.
+    // I can't figure out how to suggest that the browser align contents to the top instead, so I
+    // specify position: relative here and position: absolute for the image and text label.
+    position: relative;
+    @media #{geometry.$desktop} {
+      width: 148px;
+      height: 200px;
+      margin-left: 10px;
+      margin-right: 10px;
+      margin-bottom: 20px;
+    }
+    @media #{geometry.$mobile} {
+      width: 74px;
+      height: 102px;
+      margin-left: 5px;
+      margin-right: 5px;
+      margin-bottom: 10px;
+    }
+    //box-shadow: 0 0 1px black;
+    overflow: hidden;
+    &.app-action {
+    }
+    &.dev-background {
+      background-image: url("/devmode.png");
+      background-size: 100% auto;
+      background-color: #ccc;
+    }
+    &.uninstall-action>.app-icon {
+      &::before {
+        position: absolute;
+        content: " ";
+        display: block;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border-radius: 6px;
+        background-color: rgba(0, 0, 0, 0.5);
+        background-image: url("/close-FFFFFF.svg");
+        background-position: center;
+        background-size: 50% 50%;
+        background-repeat: no-repeat;
+        z-index: 1;
+      }
+    }
+    >.app-icon {
+      @extend %pseudo-img-tag;
+      display: block;
+      position: absolute;
+      top: 0px;
+      left: 0px;
+      @media #{geometry.$desktop} {
+        width: 128px;
+        height: 128px;
+        margin: 10px;
+      }
+      @media #{geometry.$mobile} {
+        width: 64px;
+        height: 64px;
+        margin: 5px;
+      }
+      border-radius: 6px;
+      vertical-align: top;
+      &.pseudoapp {
+        background-color: colors.$applist-pseudoapp-background-color;
+        border: 1px colors.$applist-pseudoapp-outline-color;
+      }
+
+      &.restore-icon {
+        background-image: url('/restore-B7B7B7.svg');
+
+        &:hover {
+          background-image: url('/restore-5D5D5D.svg');
+        }
+      }
+      &.upload-icon {
+        background-image: url('/upload-B7B7B7.svg');
+
+        &:hover {
+          background-image: url('/upload-5D5D5D.svg');
+        }
+      }
+      &.install-icon {
+        background-image: url('/install-714DAA.svg');
+        border: 1px solid colors.$generic-border-color;
+
+        &:hover {
+          background-image: url('/install-896AC6.svg');
+        }
+      }
+    }
+    %apptext {
+      @include partials.overflow-ellipsis();
+      position: absolute;
+      left: 0px;
+      width: 100%;
+      vertical-align: top;
+      text-align: left;
+      @media #{geometry.$desktop} {
+        margin-left: 10px;
+      }
+      @media #{geometry.$mobile} {
+        margin-left: 5px;
+      }
+    }
+    >.app-title, >.action-title {
+      @extend %apptext;
+      @media #{geometry.$desktop} {
+        top: 148px;
+        font-size: 14pt;
+      }
+      @media #{geometry.$mobile} {
+        top: 74px;
+        font-size: 8pt;
+      }
+    }
+    >.action-text {
+      @extend %apptext;
+      color: colors.$applist-action-text-color;
+      @media #{geometry.$desktop} {
+        top: 168px;
+        font-size: 13pt;
+      }
+      @media #{geometry.$mobile} {
+        top: 88px;
+        font-size: 8pt;
+      }
+    }
+  }
+}
+
+.main-content>.not-signed-up {
+  max-width: 300px;
+  background-color: white;
+  margin: 32px auto;
+  padding: 16px;
+  border-radius: 4px;
+  h1 { margin-top: 0; }
+  p { margin-bottom: 0; }
+}
