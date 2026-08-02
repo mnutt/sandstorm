@@ -1,0 +1,23 @@
+@use "geometry";
+
+.main-content>.account {
+  .profile {
+    @media #{geometry.$not-mobile-only} {
+      display: inline-block;
+    }
+    @media #{geometry.$mobile-only} {
+      display: block;
+    }
+
+    white-space: normal;
+
+    div[aria-hidden=true] {
+      display: none;
+    }
+
+    ul {
+      margin-top: 0;
+      padding: 0;
+    }
+  }
+}
