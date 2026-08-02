@@ -24,7 +24,24 @@ import { ReactiveVar } from "meteor/reactive-var";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { sortBy, deepEqual } from "/imports/shared/collection-utils";
 
-import "/imports/sandstorm-ui-topbar/styles/topbar.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-frame.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-menubar-layout.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-menubar-actions.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-menubar-status.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-menubar-account.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-navbar-shrink.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-navbar-layout.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-navbar-grains.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-navbar-demo.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-demo.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-popup-specials.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-demo-modal.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-popup-container.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-share-contacts.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-share-frame.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-share-forms.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-notification-popups.scss";
+import "/imports/sandstorm-ui-topbar/styles/_topbar-backup-popups.scss";
 
 let reloadBlockingCount = 0;
 const blockedReload = new ReactiveVar(null);
