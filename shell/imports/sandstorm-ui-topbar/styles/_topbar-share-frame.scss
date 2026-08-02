@@ -1,0 +1,100 @@
+@use "icon-api";
+@use "colors";
+@use "geometry";
+@use "partials";
+
+.topbar-popup {
+  &.share>.frame-container {
+    width: 400px;
+  }
+  &.webkey>.frame-container {
+    width: 450px;
+  }
+
+  &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
+    $popup-background-color: #ededed;
+
+    >h4 {
+      text-transform: uppercase;
+      background-color: $popup-background-color;
+      margin-bottom: 0;
+      padding: geometry.$topbar-popup-padding 20px;
+    }
+
+    >h4.share-with-others {
+      border-bottom: none;
+      padding-bottom: 30px;
+    }
+    >h4.who-has-access {
+      padding-bottom: geometry.$topbar-popup-padding;
+      border-bottom: 1px solid #ccc;
+    }
+
+    button.who-has-access {
+      @include partials.unstyled-button();
+    }
+
+    .share-tabs {
+      width: 100%;
+      padding: geometry.$topbar-popup-padding;
+      border-top: 1px solid #ccc;
+      position: relative;
+      margin: 0;
+      >ul {
+        list-style: none;
+        >li {
+          border-top-left-radius: 4px;
+          border-top-right-radius: 4px;
+          background-color: #f7f7f7;
+          border: 1px solid #ccc;
+          border-bottom: none;
+          position: absolute;
+          margin: 0;
+          padding: 3px;
+          width: 45%;
+          text-align: left;
+          font-size: 14px; // Size must be the same on mobile and desktop for correct absolute position.
+          top: -26px;
+          height: 25px;
+          background-position: 15px 2px, left;
+          background-size: 20px, 20px;
+          background-repeat: no-repeat;
+          cursor: pointer;
+          &:focus {
+            outline: colors.$focus-outline-color solid 1px;
+          }
+        }
+        .send-invite-tab-header {
+          left: 2%;
+          @include icon-api.icon("email");
+
+          &::before {
+            font-size: 18px;
+            padding: 0 8px 2px 12px;
+          }
+        }
+        .shareable-link-tab-header {
+          right: 2%;
+          @include icon-api.icon("link");
+
+          &::before {
+            font-size: 20px;
+            padding: 0 8px 2px 12px;
+          }
+        }
+        [aria-selected=true] {
+          background-color: white;
+          border-bottom: 1px solid white;
+          height: 26px;
+        }
+      }
+      >div.tabpanel {
+        margin-left: 16px;
+        margin-right: 16px;
+        &[aria-hidden=true] {
+          display: none;
+        }
+      }
+    }
+  }
+}
