@@ -148,6 +148,15 @@ function checkOrganization(report) {
     "client/styles/introjs.css",
     "client/styles/shell.scss",
   ]);
+  const allowedShellImports = new Set([
+    "_fonts.scss",
+    "_icons.scss",
+    "_geometry.scss",
+    "_colors.scss",
+    "_partials.scss",
+    "_focus.scss",
+    "_shell-base.scss",
+  ]);
 
   for (const item of report.files) {
     if (item.imports.some((styleImport) => styleImport.type === "import")) {
@@ -156,6 +165,16 @@ function checkOrganization(report) {
 
     if (item.file.startsWith("client/styles/") && !allowedRootFiles.has(item.file)) {
       errors.push(`${item.file} lives in client/styles; colocate feature styles under imports/ instead.`);
+    }
+
+    if (item.file === "client/styles/shell.scss") {
+      for (const styleImport of item.imports) {
+        if (!allowedShellImports.has(styleImport.target)) {
+          errors.push(
+            `${item.file} imports ${styleImport.target}; import feature styles from their owning module instead.`,
+          );
+        }
+      }
     }
   }
 

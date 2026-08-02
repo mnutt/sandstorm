@@ -80,6 +80,10 @@ To enforce the current organization boundary:
 npm run css:check
 ```
 
+This check permits only shared/global styles in `client/styles` and only
+shared/base imports in `client/styles/shell.scss`; feature styles should be
+imported from their owning client module.
+
 Use the inventory to choose migration order, identify broad selectors, and
 verify that risk is going down as files move out of the global cascade. The
 inventory scans this legacy directory, migrated feature styles under
