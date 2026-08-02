@@ -8,14 +8,14 @@
   }
 
   .save {
-    @extend %button-base;
-    @extend %button-primary;
+    @include partials.button-base();
+    @include partials.button-primary();
     margin-left: 10px;
   }
 
   .restore {
-    @extend %button-base;
-    @extend %button-secondary;
+    @include partials.button-base();
+    @include partials.button-secondary();
     margin-left: 10px;
   }
 }

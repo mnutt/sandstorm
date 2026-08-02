@@ -97,7 +97,7 @@
       justify-content: flex-start;
       margin-right: 10px;
       .app-icon {
-        @extend %pseudo-img-tag;
+        @include partials.pseudo-img-tag();
         display: inline-block;
         width: 24px;
         height: 24px;

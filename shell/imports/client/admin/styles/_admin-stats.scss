@@ -14,12 +14,12 @@ form.stats-request {
   }
 
   button.button-link {
-    @extend %button-link;
+    @include partials.button-link();
   }
 
   button[name=enable-stats] {
-    @extend %button-base;
-    @extend %button-primary;
+    @include partials.button-base();
+    @include partials.button-primary();
   }
 }
 

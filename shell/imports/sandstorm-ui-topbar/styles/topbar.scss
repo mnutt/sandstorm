@@ -739,7 +739,7 @@ body>.topbar {
           color: colors.$topbar-foreground-color-active;
         }
         .app-icon {
-          @extend %pseudo-img-tag;
+          @include partials.pseudo-img-tag();
           position: absolute;
           top: 4px;
           left: math.div(geometry.$navbar-width-desktop-shrunk - 24px, 2);
@@ -769,7 +769,7 @@ body>.topbar {
         }
         .close-button {
           @include partials.unstyled-button();
-          @extend %pseudo-img-tag;
+          @include partials.pseudo-img-tag();
           position: absolute;
           top: 1px;
           right: 0px;
@@ -813,7 +813,7 @@ body>.topbar {
       a.get-sandstorm-button {
         margin-top: 6px;
         display: block;
-        @extend %button-base;
+        @include partials.button-base();
         background-color: #606060;
         color: white;
         &:hover {
@@ -1277,8 +1277,8 @@ body>.popup {
       margin-top: 10px;
     }
     .share-tabs form button {
-      @extend %button-base;
-      @extend %button-primary;
+      @include partials.button-base();
+      @include partials.button-primary();
       border: 1px solid #ccc;
       border-radius: 4px;
       padding: 5px 16px;
@@ -1504,12 +1504,12 @@ body>.popup {
       justify-content: flex-end;
 
       button {
-        @extend %button-base;
+        @include partials.button-base();
         &[name=confirm] {
-          @extend %button-primary;
+          @include partials.button-primary();
         }
         &[name=cancel] {
-          @extend %button-secondary;
+          @include partials.button-secondary();
         }
       }
 

@@ -11,8 +11,8 @@
     padding: 0px 8px;
   }
   button {
-    @extend %button-base;
-    @extend %button-primary;
+    @include partials.button-base();
+    @include partials.button-primary();
     font-size: 150%;
     font-weight: bold;
     padding: 10px 16px;

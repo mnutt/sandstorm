@@ -3,6 +3,7 @@
 @use "../../grain/styles/grainlist-primitives";
 @use "app-details-primitives";
 @use "geometry";
+@use "partials";
 
 .app-details {
   position: relative;
@@ -28,8 +29,8 @@
     background-color: color.adjust(colors.$app-details-background-color, $lightness: -10%);
     >p {
       >button {
-        @extend %button-base;
-        @extend %button-primary;
+        @include partials.button-base();
+        @include partials.button-primary();
       }
     }
   }

@@ -5,8 +5,8 @@
   align-items: stretch;
   justify-content: space-between;
   button {
-    @extend %button-base;
-    @extend %button-primary;
+    @include partials.button-base();
+    @include partials.button-primary();
   }
 }
 

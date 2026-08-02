@@ -33,7 +33,7 @@
   white-space: nowrap;
 }
 
-%pseudo-img-tag {
+@mixin pseudo-img-tag () {
   // Use this, and background-image: url();, when you want to
   // create a DIV that feels like an IMG tag.
   //
@@ -48,7 +48,11 @@
   background-repeat: no-repeat;
 }
 
-%button-base {
+%pseudo-img-tag {
+  @include pseudo-img-tag();
+}
+
+@mixin button-base () {
   // Default button shape, layout, and size.
   cursor: pointer;
   border-radius: 5px;
@@ -60,7 +64,11 @@
   text-decoration: none;
 }
 
-%button-disabled {
+%button-base {
+  @include button-base();
+}
+
+@mixin button-disabled () {
   cursor: auto;
   color: #777777;
   background-color: #efefef;
@@ -72,14 +80,22 @@
   }
 }
 
-%button-link {
+%button-disabled {
+  @include button-disabled();
+}
+
+@mixin button-link () {
   background: none;
   border: none;
   color: black;
   text-decoration: underline;
 }
 
-%button-primary {
+%button-link {
+  @include button-link();
+}
+
+@mixin button-primary () {
   // A button coloring for the primary action of a form.
   background-color: colors.$darker-purple-color;
   color: white;
@@ -88,11 +104,15 @@
     background-color: #714daa;
   }
   &:disabled {
-    @extend %button-disabled;
+    @include button-disabled();
   }
 }
 
-%button-secondary {
+%button-primary {
+  @include button-primary();
+}
+
+@mixin button-secondary () {
   // A button coloring for secondary (less important) actions.
   background-color: white;
   color: black;
@@ -101,11 +121,15 @@
     background-color: color.adjust(white, $lightness: -10%);
   }
   &:disabled {
-    @extend %button-disabled;
+    @include button-disabled();
   }
 }
 
-%button-danger {
+%button-secondary {
+  @include button-secondary();
+}
+
+@mixin button-danger () {
   color: #900;
   background-color: white;
   border: 1px solid color.adjust(white, $lightness: -30%);
@@ -114,11 +138,15 @@
     color: white;
   }
   &:disabled {
-    @extend %button-disabled;
+    @include button-disabled();
   }
 }
 
-%button-dark {
+%button-danger {
+  @include button-danger();
+}
+
+@mixin button-dark () {
   background-color: #303030;
   color: #ffffff;
   border: 1px solid #4e4e4e;
@@ -126,6 +154,10 @@
   &:hover {
     background-color: #4e4e4e;
   }
+}
+
+%button-dark {
+  @include button-dark();
 }
 
 %standard-form {
@@ -195,26 +227,26 @@
   }
 
   button[type="submit"] {
-    @extend %button-base;
-    @extend %button-primary;
+    @include button-base();
+    @include button-primary();
   }
 
   button[type=button] {
-    @extend %button-base;
-    @extend %button-secondary;
+    @include button-base();
+    @include button-secondary();
     &.danger {
-      @extend %button-danger;
+      @include button-danger();
     }
   }
 
   a.button {
-    @extend %button-base;
-    @extend %button-secondary;
+    @include button-base();
+    @include button-secondary();
     &.primary {
-      @extend %button-primary;
+      @include button-primary();
     }
     &.danger {
-      @extend %button-danger;
+      @include button-danger();
     }
     font-weight: inherit;
   }
@@ -235,7 +267,7 @@
     justify-content: flex-start;
 
     >span.search-icon {
-      @extend %pseudo-img-tag;
+      @include pseudo-img-tag();
       background-image: url("/search.svg");
       background-size: 24px 24px;
       background-position: center;
@@ -264,7 +296,7 @@
   align-items: center;
   justify-content: center;
   .provider-icon {
-    @extend %pseudo-img-tag;
+    @include pseudo-img-tag();
     display: inline-block;
     width: 24px;
     height: 24px;

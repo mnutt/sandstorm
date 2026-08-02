@@ -3,18 +3,18 @@
 
 
 .button-primary {
-  @extend %button-base;
-  @extend %button-primary;
+  @include partials.button-base();
+  @include partials.button-primary();
 }
 
 .button-secondary {
-  @extend %button-base;
-  @extend %button-secondary;
+  @include partials.button-base();
+  @include partials.button-secondary();
 }
 
 .button-danger {
-  @extend %button-base;
-  @extend %button-danger;
+  @include partials.button-base();
+  @include partials.button-danger();
 }
 
 .button-link {

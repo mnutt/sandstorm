@@ -9,7 +9,7 @@
   position: relative;
   >.app-icon {
     position: absolute;
-    @extend %pseudo-img-tag;
+    @include partials.pseudo-img-tag();
     width: 128px;
     height: 128px;
   }
@@ -115,8 +115,8 @@
       }
 
       >button.uninstall-button, >button.restore-button, >button.toggle-show-trash {
-        @extend %button-base;
-        @extend %button-secondary;
+        @include partials.button-base();
+        @include partials.button-secondary();
         display: block;
         float: right;
         min-height: 32px;

@@ -18,8 +18,8 @@
   flex-direction: column;
   background-color: colors.$default-content-background-color;
   button.request-access, button.reveal-identity-button, button.restore-from-trash {
-    @extend %button-base;
-    @extend %button-primary;
+    @include partials.button-base();
+    @include partials.button-primary();
     font-weight: 600;
     padding: 8px;
     line-height: 1.33;
@@ -27,8 +27,8 @@
     margin-bottom: 1em;
   }
   button.incognito-button {
-    @extend %button-base;
-    @extend %button-secondary;
+    @include partials.button-base();
+    @include partials.button-secondary();
     font-weight: 600;
     padding: 8px;
     line-height: 1.33;

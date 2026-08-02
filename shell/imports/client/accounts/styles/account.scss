@@ -85,14 +85,14 @@ body>.popup.account>.frame-container {
 
 .login-suggestion {
   >button {
-    @extend %button-base;
-    @extend %button-primary;
+    @include partials.button-base();
+    @include partials.button-primary();
     width: calc(100% - 20px);
     display: block;
     margin: 10px;
   }
   >button.dismiss {
-    @extend %button-secondary;
+    @include partials.button-secondary();
   }
 }
 
@@ -199,8 +199,8 @@ body>.popup.account>.frame-container {
       background-image: url("/debug-m.svg");
     }
     button.login-dev-account {
-      @extend %button-base;
-      @extend %button-secondary;
+      @include partials.button-base();
+      @include partials.button-secondary();
       width: 100%;
     }
     ul.dev-credentials {
@@ -218,8 +218,8 @@ body>.popup.account>.frame-container {
             display: inline-block;
           }
           button {
-            @extend %button-base;
-            @extend %button-secondary;
+            @include partials.button-base();
+            @include partials.button-secondary();
             width: 45%;
           }
         }
@@ -374,7 +374,7 @@ body>.popup.account>.frame-container {
     margin: 0;
 
     .logo {
-      @extend %pseudo-img-tag;
+      @include partials.pseudo-img-tag();
       background-position: bottom;
       display: inline-block;
       width: 64px;
@@ -584,8 +584,8 @@ body>.main-content>.account {
     }
 
     button.account-button {
-      @extend %button-base;
-      @extend %button-secondary;
+      @include partials.button-base();
+      @include partials.button-secondary();
       @media #{geometry.$not-mobile-only} {
         margin-right: 7px;
       }
@@ -603,7 +603,7 @@ body>.main-content>.account {
 
       &.link-new-credential {
         @include icon-api.icon("link");
-        @extend %button-primary;
+        @include partials.button-primary();
         &::before {
           font-size: 20px;
         }
@@ -667,8 +667,8 @@ body>.main-content>.account {
             width: 66%;
           }
           button.make-primary {
-            @extend %button-base;
-            @extend %button-secondary;
+            @include partials.button-base();
+            @include partials.button-secondary();
             width: 33%;
             height: 26px;
             margin-top: 2px;
@@ -728,8 +728,8 @@ body>.main-content>.account {
       div.button-box {
         display: inline-block;
         >button {
-          @extend %button-base;
-          @extend %button-secondary;
+          @include partials.button-base();
+          @include partials.button-secondary();
         }
       }
     }
@@ -987,8 +987,8 @@ div.billing {
 
     button {
       &.change-plan {
-        @extend %button-base;
-        @extend %button-primary;
+        @include partials.button-base();
+        @include partials.button-primary();
         font-size: 16px;
         width: 125px;
         position: absolute;
@@ -997,15 +997,15 @@ div.billing {
       }
 
       &.subscribe {
-        @extend %button-base;
-        @extend %button-primary;
+        @include partials.button-base();
+        @include partials.button-primary();
         font-size: 16px;
         width: 125px;
       }
 
       &.unsubscribe {
-        @extend %button-base;
-        @extend %button-secondary;
+        @include partials.button-base();
+        @include partials.button-secondary();
         font-size: 90%;
         padding: 4px 16px;
         margin-left: 16px;
@@ -1044,8 +1044,8 @@ div.billing {
       }
 
       a.like-a-button, button {
-        @extend %button-base;
-        @extend %button-primary;
+        @include partials.button-base();
+        @include partials.button-primary();
         font-family: Arial;
         font-size: 16px;
         font-weight: normal;
@@ -1058,8 +1058,8 @@ div.billing {
 
 .danger-zone {
   button.delete-account {
-    @extend %button-base;
-    @extend %button-danger;
+    @include partials.button-base();
+    @include partials.button-danger();
   }
 }
 
@@ -1082,15 +1082,15 @@ div.billing {
     display: block;
     margin: auto;
     font-size: 18px;
-    @extend %button-base;
+    @include partials.button-base();
 
     &.restore-account {
-      @extend %button-primary;
+      @include partials.button-primary();
       margin-bottom: 20px;
     }
 
     &.logout {
-      @extend %button-secondary;
+      @include partials.button-secondary();
     }
   }
 }
@@ -1628,8 +1628,8 @@ body>.popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
         position: relative;
         padding-bottom: 10px;
         button.unlink {
-          @extend %button-base;
-          @extend %button-secondary;
+          @include partials.button-base();
+          @include partials.button-secondary();
           position: absolute;
           right: 25px;
           top: 10px;
@@ -1637,12 +1637,12 @@ body>.popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
       }
     }
     button.danger {
-      @extend %button-base;
-      @extend %button-danger;
+      @include partials.button-base();
+      @include partials.button-danger();
     }
     button.logout {
-      @extend %button-base;
-      @extend %button-primary;
+      @include partials.button-base();
+      @include partials.button-primary();
     }
   }
 }
@@ -1685,8 +1685,8 @@ body>.popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
           border: 1px solid black;
         }
         button.unlink {
-          @extend %button-base;
-          @extend %button-secondary;
+          @include partials.button-base();
+          @include partials.button-secondary();
           position: absolute;
           left: 240px;
           top: 15px;
@@ -1694,17 +1694,17 @@ body>.popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
       }
     }
     button.hide-other-accounts {
-      @extend %button-base;
-      @extend %button-secondary;
+      @include partials.button-base();
+      @include partials.button-secondary();
     }
   }
   button.show-other-accounts {
-    @extend %button-base;
-    @extend %button-secondary;
+    @include partials.button-base();
+    @include partials.button-secondary();
   }
   button.unlink-credential {
-    @extend %button-base;
-    @extend %button-secondary;
+    @include partials.button-base();
+    @include partials.button-secondary();
     width: 80px;
     height: 30px;
     padding-left: 30px;

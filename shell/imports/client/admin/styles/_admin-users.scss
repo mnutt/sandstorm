@@ -30,7 +30,7 @@
   margin-bottom: 20px;
 
   >.search-icon {
-    @extend %pseudo-img-tag;
+    @include partials.pseudo-img-tag();
     background-image: url("/search.svg");
     background-size: 24px 24px;
     background-position: center;
@@ -128,7 +128,7 @@
     cursor: pointer;
 
     .plus-icon {
-      @extend %pseudo-img-tag;
+      @include partials.pseudo-img-tag();
       display: inline-block;
       width: 24px;
       height: 24px;
@@ -262,8 +262,8 @@
       .manage-user-button {
         display: inline-block;
         font-weight: normal;
-        @extend %button-base;
-        @extend %button-secondary;
+        @include partials.button-base();
+        @include partials.button-secondary();
       }
     }
   }
@@ -353,7 +353,7 @@
     justify-content: flex-start;
 
     .profile-picture {
-      @extend %pseudo-img-tag;
+      @include partials.pseudo-img-tag();
       flex: none;
       display: inline-block;
       width: 36px;
@@ -397,7 +397,7 @@
       width: 36px;
       height: 36px;
       .profile-pronouns-icon {
-        @extend %pseudo-img-tag;
+        @include partials.pseudo-img-tag();
         width: 24px;
         height: 24px;
         background-image: url('/pronoun-m.svg');
@@ -423,8 +423,8 @@
   display: inline-block;
 
   .make-admin, .make-user, .make-visitor {
-    @extend %button-base;
-    @extend %button-secondary;
+    @include partials.button-base();
+    @include partials.button-secondary();
   }
 }
 
@@ -541,7 +541,7 @@
       width: 36px;
       height: 36px;
       .credential-emails-icon {
-        @extend %pseudo-img-tag;
+        @include partials.pseudo-img-tag();
         width: 24px;
         height: 24px;
         background-image: url('/email.svg');

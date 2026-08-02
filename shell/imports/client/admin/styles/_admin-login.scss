@@ -50,8 +50,8 @@
     color: #5b5b5b;
     background-color: white;
     button.configure-idp {
-      @extend %button-base;
-      @extend %button-secondary;
+      @include partials.button-base();
+      @include partials.button-secondary();
       min-height: 26px;
     }
   }
@@ -98,18 +98,18 @@
   align-items: flex-start;
   justify-content: flex-start;
   .idp-modal-save {
-    @extend %button-base;
-    @extend %button-primary;
+    @include partials.button-base();
+    @include partials.button-primary();
     margin-left: 10px;
   }
   .idp-modal-cancel {
-    @extend %button-base;
-    @extend %button-secondary;
+    @include partials.button-base();
+    @include partials.button-secondary();
     margin-left: 10px;
   }
   .idp-modal-disable {
-    @extend %button-base;
-    @extend %button-danger;
+    @include partials.button-base();
+    @include partials.button-danger();
     margin-left: 10px;
   }
 }

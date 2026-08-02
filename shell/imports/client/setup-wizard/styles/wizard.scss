@@ -51,8 +51,8 @@
 
   .setup-help-link {
     display: inline-block;
-    @extend %button-base;
-    @extend %button-dark;
+    @include partials.button-base();
+    @include partials.button-dark();
     font-weight: normal; // overriding default bold links
     margin: 4px;
     text-decoration: none;
@@ -157,7 +157,7 @@ button.setup-sandstorm {
   width: 300px;
   margin: 0 auto;
   display: block;
-  @extend %button-base;
+  @include partials.button-base();
   height: 32px;
   font-size: 16px;
   background-color: #962751;
@@ -167,7 +167,7 @@ button.setup-sandstorm {
     background-color: color.adjust(#962751, $lightness: 10%);
   }
   &:disabled {
-    @extend %button-disabled;
+    @include partials.button-disabled();
   }
 }
 
@@ -296,31 +296,31 @@ button.setup-sandstorm {
 }
 
 .setup-next-button {
-  @extend %button-base;
-  @extend %button-primary;
+  @include partials.button-base();
+  @include partials.button-primary();
   margin-left: 10px;
 }
 
 .setup-back-button {
-  @extend %button-base;
-  @extend %button-secondary;
+  @include partials.button-base();
+  @include partials.button-secondary();
   margin-right: auto;
 }
 
 .setup-test-email-button, .setup-skip-email, .setup-skip-button {
-  @extend %button-base;
-  @extend %button-secondary;
+  @include partials.button-base();
+  @include partials.button-secondary();
   margin-left: 10px;
 }
 
 .setup-button-primary {
-  @extend %button-base;
-  @extend %button-primary;
+  @include partials.button-base();
+  @include partials.button-primary();
 }
 
 .setup-button-secondary {
-  @extend %button-base;
-  @extend %button-secondary;
+  @include partials.button-base();
+  @include partials.button-secondary();
 }
 
 .center {
@@ -331,17 +331,17 @@ button.setup-sandstorm {
 }
 
 .make-self-admin, .sign-in-button, .admin-settings-button, .rerun-wizard-button {
-  @extend %button-base;
+  @include partials.button-base();
   display: block;
   width: 200px;
 }
 
 .make-self-admin, .sign-in-button, .admin-settings-button {
-  @extend %button-primary;
+  @include partials.button-primary();
 }
 
 .rerun-wizard-button {
-  @extend %button-secondary;
+  @include partials.button-secondary();
 }
 
 .sandstorm-logo-row {
@@ -356,6 +356,6 @@ button.setup-sandstorm {
   flex: none;
   width: 200px;
   height: 200px;
-  @extend %pseudo-img-tag;
+  @include partials.pseudo-img-tag();
   background-image: url('/sandstorm-gradient-logo.svg')
 }

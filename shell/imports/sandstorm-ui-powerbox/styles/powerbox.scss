@@ -27,7 +27,7 @@ body>.popup.request>.frame-container>.frame {
     vertical-align: top;
     >label {
       >span.search-icon {
-        @extend %pseudo-img-tag;
+        @include partials.pseudo-img-tag();
         background-image: url("/search.svg");
         background-size: 24px 24px;
         background-position: center;
@@ -97,12 +97,12 @@ body>.popup.request>.frame-container>.frame {
     div.choose-buttons {
       text-align: right;
       >button {
-        @extend %button-base;
+        @include partials.button-base();
         &.connect-button {
-          @extend %button-primary;
+          @include partials.button-primary();
         }
         &.choose-hosted-object {
-          @extend %button-secondary;
+          @include partials.button-secondary();
         }
       }
     }
@@ -115,8 +115,8 @@ body>.popup.request>.frame-container>.frame {
       display: flex;
       justify-content: flex-end;
       button[name=reset] {
-        @extend %button-base;
-        @extend %button-secondary;
+        @include partials.button-base();
+        @include partials.button-secondary();
       }
     }
     >div.powerbox-iframe-mount {

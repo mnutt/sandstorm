@@ -3,8 +3,8 @@
   @extend %standard-form;
 
   .save {
-    @extend %button-base;
-    @extend %button-primary;
+    @include partials.button-base();
+    @include partials.button-primary();
     margin-left: 10px;
   }
 }

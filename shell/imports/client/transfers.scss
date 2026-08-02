@@ -26,18 +26,18 @@
   }
 
   button.cancel, button.deny {
-    @extend %button-base;
-    @extend %button-danger;
+    @include partials.button-base();
+    @include partials.button-danger();
   }
 
   button.accept, button.continue, button.start, button.finish {
-    @extend %button-base;
-    @extend %button-primary;
+    @include partials.button-base();
+    @include partials.button-primary();
   }
 
   button.pause, button.clear-errors {
-    @extend %button-base;
-    @extend %button-secondary;
+    @include partials.button-base();
+    @include partials.button-secondary();
   }
 
   input[name="destination"] {
@@ -77,7 +77,7 @@
     .state-downloading {
       width: 32px;
       height: 24px;
-      @extend %pseudo-img-tag;
+      @include partials.pseudo-img-tag();
       background-image: url("/spinner_96.gif");
       background-position-x: center;
     }
