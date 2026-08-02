@@ -1,0 +1,21 @@
+@use "sass:color";
+@use "partials";
+
+button.setup-sandstorm {
+  text-align: center;
+  width: 300px;
+  margin: 0 auto;
+  display: block;
+  @include partials.button-base();
+  height: 32px;
+  font-size: 16px;
+  background-color: #962751;
+  color: white;
+  border: 1px solid color.adjust(#962751, $lightness: -10%);
+  &:hover {
+    background-color: color.adjust(#962751, $lightness: 10%);
+  }
+  &:disabled {
+    @include partials.button-disabled();
+  }
+}
