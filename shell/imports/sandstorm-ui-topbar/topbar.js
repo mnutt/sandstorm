@@ -217,7 +217,7 @@ window.addEventListener("resize", function () {
 });
 
 Template.sandstormTopbar.events({
-  "click .topbar-update": function (event) {
+  "click .topbar-update-button": function (event) {
     unblockUpdate();
   },
 
