@@ -1,0 +1,53 @@
+@use "icon-api";
+@use "geometry";
+@use "topbar-primitives";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.share>button.show-popup {
+      @include topbar-primitives.topbar-button();
+      @include topbar-primitives.hamburger-menu-item();
+
+      @include icon-api.icon("share");
+
+      @media #{geometry.$desktop} {
+        background-position: 2px center;
+        color: #cccccc; // Have the text match the icon.
+                        // This is the single place the button text is visible.
+        padding-left: 8px;
+        padding-right: 8px;
+        height: 32px;
+        line-height: 32px;
+        font-size: 12pt;
+        &::before {
+          font-size: 32px;
+          vertical-align: top;
+        }
+      }
+      @media #{geometry.$mobile} {
+        background-position: 10px center;
+        position: relative;
+        &::before {
+          position: absolute;
+          left: 8px;
+          top: 8px;
+          font-size: 32px;
+        }
+      }
+    }
+
+    // Buttons for misc grain actions.
+    >li>button.grain-button, >.webkey>button.show-popup {
+      @include topbar-primitives.icon-button();
+      @include topbar-primitives.hamburger-menu-item();
+    }
+    >.delete>button    { background-image: url("/trash.svg"); }
+    >.debug-log>button { background-image: url("/debug.svg"); }
+    >.backup>button    { background-image: url("/download.svg"); }
+    >.clone>button     { background-image: url("/copy.svg"); }
+    >.restart>button   { background-image: url("/restart.svg"); }
+    >.settings>button  { background-image: url("/settings.svg"); }
+    >.webkey>button    { background-image: url("/key.svg"); }
+    >.who-has-access img { width: 20px; }
+  }
+}

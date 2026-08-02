@@ -1,0 +1,52 @@
+@use "geometry";
+@use "topbar-primitives";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.account, >.login {
+      >button.show-popup {
+        @include topbar-primitives.hamburger-menu-item();
+        position: relative;
+        >.profile-picture {
+          position: absolute;
+          display: block;
+          background-size: contain;
+          background-repeat: no-repeat;
+          background-position: center;
+          @media #{geometry.$desktop} {
+            width: 24px;
+            height: 24px;
+            top: 4px;
+            left: 4px;
+          }
+          @media #{geometry.$mobile} {
+            width: 32px;
+            height: 32px;
+            left: 8px;
+            top: 8px;
+          }
+        }
+      }
+
+      @media #{geometry.$desktop} {
+        float: right;
+        display: block;
+
+        >button.show-popup {
+          padding-left: 8px;
+          padding-right: 8px;
+          display: block;
+          &.has-picture {
+            padding-left: 32px;
+          }
+        }
+      }
+
+      @media #{geometry.$mobile} {
+        >button.show-popup {
+          font-weight: normal;
+        }
+      }
+    }
+  }
+}

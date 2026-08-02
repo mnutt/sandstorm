@@ -1,0 +1,131 @@
+@use "colors";
+@use "geometry";
+@use "partials";
+
+.sandstorm-topbar {
+  >.menubar {
+    padding-left: 0;
+    margin-left: 0;
+    border-bottom: 1px solid colors.$topbar-border-color;
+    overflow: hidden;
+    @media #{geometry.$desktop} {
+      height: geometry.$topbar-height-desktop;
+      &.shrink-desktop {
+        >.home-button {
+          width: geometry.$navbar-width-desktop-shrunk;
+          >a {
+            width: geometry.$navbar-width-desktop-shrunk;
+            padding-right: 0;
+          }
+        }
+      }
+    }
+
+    >.home-button {
+      @media #{geometry.$desktop} {
+        width: geometry.$navbar-width-desktop;
+        transition: width 0.2s;
+        float:left;
+        overflow: hidden;
+
+        >a {
+          @include partials.overflow-ellipsis();
+          color: inherit;
+          margin: 0px;
+          text-decoration: none;
+          height: geometry.$topbar-height-desktop;
+          padding-left: geometry.$navbar-width-desktop-shrunk;
+          padding-right: 8px;
+
+          background-image: url("/icon.png");
+          background-repeat: no-repeat;
+          background-position: 16px center, 6px 24px;
+          background-size: auto, 16px 8px;
+
+          &:hover {
+            background-color: colors.$topbar-background-color-hover;
+            color: colors.$topbar-foreground-color-hover;
+          }
+        }
+      }
+
+      @media #{geometry.$mobile} {
+        // Hide home link -- it's not very useful anyway.
+        display: none;
+      }
+    }
+
+    >.title {
+      padding-left: 8px;
+      overflow: hidden;
+      @media #{geometry.$desktop} {
+        // Heuristically try to prevent the title from bumping everything else off the top bar.
+        // The size of 700px was empirically found to provide enough space for "everything else".
+        max-width: calc(100% - 700px);
+        border-left: 1px solid #666;
+      }
+      @media #{geometry.$mobile} {
+        width: 100%; // needs to span the whole row because the border-bottom is needed to draw
+                     // the horizontal rule when the menu is expanded
+        background-color: colors.$topbar-background-color;
+        color: colors.$topbar-foreground-color;
+        padding-left: 56px;
+        font-size: 120%;
+        position: fixed;
+        z-index: 1;
+      }
+
+      >div.editable {
+        white-space: nowrap;
+        text-overflow: ellipsis;  // Doesn't seem to work since size is dynamic. Left here in vain.
+        overflow: hidden;
+        display: inline-block;
+        padding: 0 8px;
+        margin-left: -8px;
+        @media #{geometry.$desktop} {
+          min-height: geometry.$topbar-height-desktop;
+        }
+        @media #{geometry.$mobile} {
+          min-height: geometry.$topbar-height-mobile;
+          max-width: calc(100% - 150px);
+        }
+
+        &:hover {
+          cursor: pointer;
+          color: colors.$topbar-foreground-color-hover;
+          background-color: colors.$topbar-background-color-hover;
+        }
+
+        .main-title {
+          height: geometry.$topbar-height-desktop - 8px;
+          line-height: geometry.$topbar-height-desktop - 8px;
+          @media #{geometry.$mobile} {
+            height: geometry.$topbar-height-mobile - 12px;
+            line-height: geometry.$topbar-height-mobile - 12px;
+          }
+        }
+
+        .subtitle {
+          color: #9b9b9b;
+          height: 10px;
+          line-height: 10px;
+          font-size: 10px;
+          margin-top: -4px;
+
+          @media #{geometry.$mobile} {
+            height: 12px;
+            line-height: 12px;
+            font-size: 12px;
+            margin-top: -4px;
+          }
+        }
+      }
+    }
+
+    >.grain-size {
+      @media #{geometry.$mobile} {
+        display: none;
+      }
+    }
+  }
+}
