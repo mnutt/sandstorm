@@ -1,0 +1,128 @@
+@use "partials";
+@use "about";
+@use "geometry";
+
+.referrals {
+  @extend %padded-info-page;
+
+  header {
+    color: white;
+
+    // Most text in a padded-info-page is text-align: center by default. However, H1 and H2 elements
+    // override that to be aligned left. By contrast, we want to center everything in our header.
+    h1, h2 {
+      text-align: center;
+    }
+
+    background: left/contain no-repeat url("/referral-graphics/referral-edge.svg"),
+                right/contain no-repeat url("/referral-graphics/referral-edge-rotated.svg"),
+                #6d5eb7;
+
+    // Use padding so that text appears within the image.
+    padding-top: 1em;
+    padding-bottom: 1em;
+    padding-left: 8em;
+    padding-right: 8em;
+
+    // Minimize the padding on mobile, since 8em ends up being a large fraction
+    // of a small screen.
+    @media #{geometry.$mobile} {
+      padding-left: 10%;
+      padding-right: 10%;
+    }
+
+    // Remove the image background on very small screens, where it renders strangely.
+    @media (max-width: 450px) {
+      background: #6d5eb7;
+    }
+
+    .reward-amount {
+      font-size: 150%;
+    }
+  }
+
+  section {
+    @extend %content-section;
+    width: 100%;
+    padding-left: 50px;
+    padding-right: 50px;
+    padding-top: 40px;
+    padding-bottom: 75px;
+
+    // On mobile, use 8px padding, which is the same as the rest of the page,
+    // to avoid wasting precious horizontal space.
+    @media #{geometry.$mobile} {
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
+    // Left-align all text in the SECTION element by default.
+    text-align: left;
+
+    h1, h2, h3 {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+    h3 {
+      font-weight: normal;
+      border-bottom: 1px solid #6d6d6d;
+    }
+    p {
+      font-size: 125%;
+      margin-top: 0;
+    }
+    p.gentle-hint {
+      font-size: inherit;
+      color: #636363;
+    }
+    .comma-separated-ul {
+      list-style-type: none;
+      li {
+        display: inline;
+      }
+      li:after {
+        content: ", ";
+      }
+      li:last-child:after {
+        content: "";
+      }
+    }
+
+    .image-tutorial {
+      // Step text, numbered list items, and images show up centered in the visual tutorial.
+      text-align: center;
+      list-style-position: inside;
+
+      ol {
+        @media #{geometry.$mobile} {
+          padding-left: 0;
+        }
+      }
+
+      li {
+        padding: 1em;
+
+        @media #{geometry.$mobile} {
+          padding-left: 0;
+          padding-right: 0;
+        }
+      }
+
+      img {
+        display: block;
+        margin: auto;
+        max-width: 50%;
+
+        @media #{geometry.$mobile} {
+          width: 100%;
+          max-width: 100%;
+        }
+      }
+    }
+
+    .fine-print {
+      margin-top: 1.5em;
+    }
+  }
+}
