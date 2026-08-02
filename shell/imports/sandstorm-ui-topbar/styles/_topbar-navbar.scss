@@ -1,0 +1,290 @@
+@use "sass:math";
+@use "colors";
+@use "geometry";
+@use "partials";
+@use "topbar-primitives";
+
+body>.topbar {
+  >.navbar {
+    @media #{geometry.$desktop} {
+      .navbar-shrink-item {
+        &:hover {
+          button.navbar-shrink {
+            background-color: #717171;
+            border-color: #343434;
+          }
+        }
+      }
+
+      button.navbar-shrink {
+        @include partials.unstyled-button();
+        @include topbar-primitives.webfont-icon(#CCCCCC, #CCCCCC, 28px, 28px);
+        display: block;
+        width: 100%;
+        height: geometry.$navbar-shrink-button-height;
+        border: 0px solid #303030;
+        border-left-width: (geometry.$navbar-width-desktop - geometry.$navbar-width-desktop-shrunk);
+        background-color: #606060;
+        color: #ddd;
+        text-align: center;
+        line-height: geometry.$navbar-shrink-button-height;
+        padding: 0;
+
+        transition: border-left-width 0.2s;
+
+        &.shrunk {
+          &::before {
+            display: inline-block; // this is needed to allow transforms.
+            transform: rotate(180deg);
+          }
+        }
+      }
+
+      &.shrink-desktop {
+        // !important used to override other classes that might assign e.g. display: block
+        width: geometry.$navbar-width-desktop-shrunk !important;
+
+        button.navbar-shrink {
+          border-left-width: 0;
+        }
+        button.close-button {
+          display: none !important;
+        }
+        >ul.navbar-grains>li.navitem-grain a {
+          padding-right: 0 !important;
+        }
+        .demo-notice {
+          p { font-size: 0 !important; padding: 0px; }
+          span { display: none !important; }
+          button { display: none !important; }
+          a { display: none !important; }
+        }
+        .demo-timer {
+          p { font-size: 0 !important; padding: 4px !important; }
+        }
+      }
+      &.hide-desktop {
+        display: none;
+      }
+
+      transition: width 0.2s;
+    }
+    @media #{geometry.$mobile} {
+      li.navbar-shrink-item {
+        display: none;
+      }
+    }
+    @media #{geometry.$desktop} {
+      position: fixed;
+      top: geometry.$topbar-height-desktop;
+      bottom: 0px;
+      left: 0px;
+      width: geometry.$navbar-width-desktop;
+      background-color: #303030;
+      color: #606060;
+      overflow-y: auto;
+      li {
+        display: block;
+        position: relative;
+        border-bottom: 1px solid colors.$topbar-border-color;
+        margin: 0;
+        list-style-type: none;
+
+        &.navitem-open-grain, &.navitem-create-grain, &.navitem-grain {
+          a {
+            display: block;
+            min-height: 32px;
+            padding-left: geometry.$navbar-width-desktop-shrunk;
+            text-decoration: none;
+            text-overflow: ellipsis;
+            overflow: hidden;
+            white-space: nowrap;
+            &, &:visited, &:active, &:hover {
+              color: inherit;
+            }
+          }
+        }
+        &.navitem-grain {
+          line-height: 32px;
+          height: 32px;
+        }
+        &.navitem-open-grain, &.navitem-create-grain {
+          display: block;
+          position: relative;
+          background-repeat: no-repeat;
+          background-position: math.div(geometry.$navbar-width-desktop-shrunk - 24px, 2) center;
+          background-size: 24px 24px;
+          font-size: 150%;
+          line-height: 48px;
+          height: 48px;
+          background-color: colors.$topbar-background-color;
+          color: colors.$topbar-foreground-color;
+          &:hover {
+            background-color: colors.$topbar-background-color-hover;
+            color: colors.$topbar-foreground-color-hover;
+          }
+          &.current, &.current:hover {
+            background-color: colors.$topbar-background-color-active;
+            color: colors.$topbar-foreground-color-active;
+          }
+        }
+        &.navitem-open-grain {
+          background-image: url('/open-grain.svg');
+          &.current, &.current:hover {
+            background-image: url('/open-grain-m.svg');
+          }
+          border-bottom: none;
+        }
+        &.navitem-create-grain {
+          background-image: url('/apps.svg');
+          &.current, &.current:hover {
+            background-image: url('/apps-m.svg');
+          }
+        }
+        &.navbar-shrink-item {
+          border: none;
+          height: auto;
+          width: auto;
+        }
+        &.navitem-demo-timer {
+          position: absolute;
+          bottom: 0;
+          height: auto;
+          width: 100%;
+        }
+      }
+    }
+    @media #{geometry.$mobile} {
+      position: relative;
+      li {
+        font-size: 14pt;
+        line-height: 48px;
+        height: 48px;
+        display: block;
+        position: relative;
+        border-bottom: 1px solid #676767;
+        margin: 0;
+        &.navitem-open-grain, &.navitem-create-grain, &.navitem-grain {
+          a {
+            display: block;
+            padding-left: 48px;
+            text-decoration: none;
+            text-overflow: ellipsis;
+            overflow: hidden;
+            white-space: nowrap;
+            &, &:visited, &:active, &:hover {
+              color: inherit;
+            }
+          }
+        }
+        &.navitem-open-grain, &.navitem-create-grain {
+          background-repeat: no-repeat;
+          background-position: 12px center;
+          background-size: 24px 24px;
+        }
+        &.navitem-open-grain {
+          background-image: url('/open-grain.svg');
+        }
+        &.navitem-create-grain {
+          background-image: url('/apps.svg');
+        }
+        &.navitem-demo-timer {
+          height: auto;
+        }
+      }
+    }
+    margin: 0;
+    padding: 0;
+    >ul.navbar-grains {
+      margin: 0;
+      padding: 0;
+      bottom: 0px;
+      left: 0px;
+      width: 100%;
+      //height: 100%; // TODO: fix this, it should be 100% - (height of Open + New)
+      overflow-y: auto;
+      >li.navitem-grain {
+        a {
+          padding-right: 32px;
+          transition: padding-right 0.2s;
+
+          // Stack above .app-icon so the icon doesn't block clicks.
+          position: relative;
+          z-index: 1;
+        }
+        background-color: colors.$topbar-background-color;
+        color: colors.$topbar-foreground-color;
+        &:hover {
+          background-color: colors.$topbar-background-color-hover;
+          color: colors.$topbar-foreground-color-hover;
+        }
+        &.unread {
+          background-color: colors.$topbar-background-color-unread;
+          color: colors.$topbar-foreground-color-unread;
+        }
+        &.unread:hover {
+          background-color: colors.$topbar-background-color-unread-hover;
+        }
+        &.current, &.current:hover {
+          background-color: colors.$topbar-background-color-active;
+          color: colors.$topbar-foreground-color-active;
+        }
+        .app-icon {
+          @include partials.pseudo-img-tag();
+          position: absolute;
+          top: 4px;
+          left: math.div(geometry.$navbar-width-desktop-shrunk - 24px, 2);
+          width: 24px;
+          height: 24px;
+          @media #{geometry.$mobile} {
+            left: math.div(geometry.$navbar-width-desktop-shrunk - 40px, 2);
+            width: 40px;
+            height: 40px;
+          }
+        }
+        .notification-count {
+          position: absolute;
+          display: block;
+          top: 16px;
+          left: 28px;
+          width: 16px;
+          height: 16px;
+          background-color: red;
+          color: white;
+          border-radius: 50%;
+          z-index: 2;
+          font-size: 12px;
+          font-weight: bold;
+          line-height: 16px;
+          text-align: center;
+        }
+        .close-button {
+          @include partials.unstyled-button();
+          @include partials.pseudo-img-tag();
+          position: absolute;
+          top: 1px;
+          right: 0px;
+          width: 24px;
+          height: 24px;
+          @media #{geometry.$mobile} {
+            height: 40px;
+            width: 40px;
+          }
+          margin: 2px;
+          display: block;
+          background-image: url("/close.svg");
+          border: 1px solid transparent;
+          border-radius: 4px;
+          &:hover {
+            border: 1px solid colors.$topbar-foreground-color-hover;
+          }
+          z-index: 2;  // Stack above <a>.
+        }
+      }
+    }
+
+    li.navitem-demo-notice {
+      height: auto !important;
+    }
+  }
+}
