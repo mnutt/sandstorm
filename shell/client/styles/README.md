@@ -11,7 +11,7 @@ that render them.
   rules out of it.
 - Most existing styles compile as one global cascade through Rspack and Sass.
 - `_colors.scss`, `_geometry.scss`, `_partials.scss`, `_icons.scss`, and
-  `_widgets.scss` are shared infrastructure, but they still contain legacy
+  `_focus.scss` are shared infrastructure, but they still contain legacy
   patterns that should be tightened during migration.
 - Files with `legacy` in the name are known cleanup targets, not examples to
   copy.
@@ -70,5 +70,5 @@ npm run css:inventory -- --json
 
 Use the inventory to choose migration order, identify broad selectors, and
 verify that risk is going down as files move out of the global cascade. The
-inventory scans both this legacy directory and migrated feature styles under
-`imports/client`.
+inventory scans this legacy directory, migrated feature styles under
+`imports/client`, and colocated `sandstorm-ui-*` package styles.

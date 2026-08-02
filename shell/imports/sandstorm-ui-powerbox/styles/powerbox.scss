@@ -7,7 +7,7 @@ body>.popup.request>.frame-container>.frame {
   align-items: stretch;
   justify-content: flex-start;
 
-  // View height - 100px: In "modal" view, the popup has margin: 64px auto 32px (see _topbar.scss)
+  // View height - 100px: In "modal" view, the popup has margin: 64px auto 32px (see topbar.scss)
   // plus a couple pixels of border. To avoid any unwanted scrollbars, we need to make sure we
   // don't exceed the space remaining.
   max-height: calc(100vh - 100px);
