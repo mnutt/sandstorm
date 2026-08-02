@@ -28,7 +28,7 @@
   {{else}}
     {{#if mayJumpTo}}
       {{#if linkRoute}}
-        {{#linkTo route=linkRoute class=linkClassName}}
+        {{#linkTo route=linkRoute data=. class=linkClassName}}
           {{> Template.contentBlock}}
         {{/linkTo}}
       {{else}}

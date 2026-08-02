@@ -16,6 +16,7 @@
 
 import { Meteor } from "meteor/meteor";
 import { Blaze } from "meteor/blaze";
+import { Spacebars } from "meteor/spacebars";
 import { Template } from "meteor/templating";
 import { Session } from "meteor/session";
 import { Iron, Router } from "meteor/vlasky:galvanized-iron-router";
@@ -182,6 +183,7 @@ const installRouterTemplateHelpers = () => {
   });
 
   UI.registerHelper("linkTo", new Blaze.Template("linkTo", function () {
+    const self = this;
     const opts = unwrapTemplateValue(Iron.DynamicTemplate.getInclusionArguments(this)) || {};
     if (typeof opts !== "object" || Array.isArray(opts)) {
       throw new Error("linkTo options must be key value pairs such as {{#linkTo route='my.route.name'}}.");
@@ -193,8 +195,15 @@ const installRouterTemplateHelpers = () => {
     const route = Router.routes[routeName];
     warn(route, "linkTo couldn't find a route named " + JSON.stringify(routeName));
 
-    const parentData = unwrapTemplateValue(Iron.DynamicTemplate.getParentDataContext(this));
     const baseData = unwrapTemplateValue(opts.data);
+    const getContentData = function () {
+      if (baseData && typeof baseData === "object" && !Array.isArray(baseData)) {
+        return baseData;
+      }
+
+      return unwrapTemplateValue(Iron.DynamicTemplate.getParentDataContext(self));
+    };
+    const parentData = getContentData();
     const data = Object.assign(
       {},
       (parentData && typeof parentData === "object" && !Array.isArray(parentData)) ? parentData : {},
@@ -216,7 +225,9 @@ const installRouterTemplateHelpers = () => {
     });
 
     attrs.href = route ? route.path(data, { query, hash }) : "";
-    return HTML.A(attrs, this.templateContentBlock);
+    return HTML.A(attrs, Blaze._TemplateWith(getContentData, function () {
+      return Spacebars.include(self.templateContentBlock);
+    }));
   }));
 
   globalThis.__sandstormRouterHelperPatchInstalled = true;
