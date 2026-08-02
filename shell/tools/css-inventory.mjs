@@ -159,6 +159,18 @@ function checkOrganization(report) {
   ]);
 
   for (const item of report.files) {
+    if (item.metrics.idSelectors > 0) {
+      errors.push(`${item.file} contains ID selectors; use class hooks for styling.`);
+    }
+
+    if (item.metrics.extends > 0) {
+      errors.push(`${item.file} uses Sass @extend; use mixins or local selectors instead.`);
+    }
+
+    if (item.metrics.placeholders > 0) {
+      errors.push(`${item.file} defines Sass placeholders; use mixins or local selectors instead.`);
+    }
+
     if (item.imports.some((styleImport) => styleImport.type === "import")) {
       errors.push(`${item.file} uses Sass @import; use @use or @forward instead.`);
     }
