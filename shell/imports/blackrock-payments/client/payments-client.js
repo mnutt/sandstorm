@@ -17,7 +17,12 @@
 import { Meteor } from "meteor/meteor";
 import { Mongo } from "meteor/mongo";
 
-import "/imports/blackrock-payments/client/styles/payments.scss";
+import "/imports/blackrock-payments/client/styles/_payment-iframe.scss";
+import "/imports/blackrock-payments/client/styles/_billing-prompt-frame.scss";
+import "/imports/blackrock-payments/client/styles/_billing-prompt-subscriptions.scss";
+import "/imports/blackrock-payments/client/styles/_billing-prompt-faq.scss";
+import "/imports/blackrock-payments/client/styles/_billing-payment-methods.scss";
+import "/imports/blackrock-payments/client/styles/_billing-usage.scss";
 
 export const StripeCustomerData = new Mongo.Collection(null);  // see getStripeData for where this is produced
 export const StripeCards = new Mongo.Collection(null);
