@@ -1,0 +1,208 @@
+@use "colors";
+@use "partials";
+@use "admin-users-primitives";
+
+.user-class-admin {
+  @include admin-users-primitives.user-class-label();
+  background-color: #C66822;
+}
+.user-class-user {
+  @include admin-users-primitives.user-class-label();
+  background-color: #7EB54D;
+}
+.user-class-visitor {
+  @include admin-users-primitives.user-class-label();
+  background-color: #939393;
+}
+
+.admin-user-table {
+  border: 1px solid colors.$default-table-border-color;
+
+  div[role=columnheader] {
+    // Column header text should "stick" to the bottom of the row, to be
+    // closest to the contents of the column.
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: flex-start;
+  }
+
+  div[role=columnheader], div[role=gridcell] {
+    padding: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .header-row {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch; // so the border-left covers the whole height of the row
+    justify-content: flex-start;
+    background-color: colors.$default-table-header-background-color;
+    color: colors.$default-table-header-foreground-color;
+    border-bottom: 1px solid colors.$default-table-header-border-color;
+    >div[role=columnheader]:not(:first-child) {
+      border-left: 1px solid colors.$default-table-header-border-color;
+    }
+    .created, .last-active {
+      cursor: pointer;
+    }
+  }
+
+  .loading-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .invite-row {
+    height: 36px;
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    background-color: colors.$default-table-row-action-background-color;
+    cursor: pointer;
+
+    .plus-icon {
+      @include partials.pseudo-img-tag();
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      background-image: url("/plus-9E40B5.svg");
+    }
+
+    &:hover {
+      background-color: colors.$default-table-row-action-background-color-hover;
+      .plus-icon {
+        background-image: url("/plus-6A237C.svg");
+      }
+    }
+
+    .invite-link {
+      padding-left: 8px;
+      padding-top: 8px;
+      >a {
+        color: #000000;
+      }
+    }
+  }
+
+  .account-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    background-color: colors.$default-table-row-background-color;
+    cursor: pointer;
+    &:not(:last-child) {
+      border-bottom: 1px solid #dddddd;
+    }
+    &:hover {
+      background-color: colors.$default-table-row-background-color-hover;
+    }
+  }
+
+  div.account-role {
+    flex: none;
+    width: 32px;
+    text-align: center;
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    &[role=gridcell] {
+      padding-top: 6px;
+    }
+  }
+
+  div.profile-name {
+    display: inline-block;
+    flex: 2 1 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    &[role=gridcell] {
+      padding-top: 8px;
+    }
+  }
+
+  div.credentials {
+    display: inline-block;
+    flex: 2 1 0;
+    &[role=gridcell] {
+      overflow: hidden;
+      text-overflow: ellipsis;
+
+      .credential-list {
+        margin: 0;
+        padding-left: 0;
+        padding-right: 0;
+        padding-top: 4px;
+        padding-bottom: 0;
+        list-style-type: none;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch; // so the childrens borders will span the whole row
+        justify-content: flex-start;
+
+        .credential {
+          display: flex;
+          flex-direction: row;
+          align-items: flex-start;
+          justify-content: flex-start;
+
+          &:not(:first-child) {
+            padding-top: 4px;
+            border-top: 1px solid #dddddd;
+          }
+
+          &:not(:last-child) {
+            padding-bottom: 4px;
+          }
+
+          .login-provider-icon {
+            align-self: flex-start;
+            @include partials.login-provider-icon();
+            width: 32px;
+            height: 24px;
+          }
+
+          .credential-intrinsic-name {
+            flex: 0 1 1;
+            padding-left: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+        }
+      }
+    }
+  }
+
+  div.created, div.last-active {
+    display: inline-block;
+    max-width: 20%;
+    flex: 1 1 0;
+
+    &[role=gridcell] {
+      padding-top: 8px;
+    }
+  }
+
+  div.actions {
+    flex: none;
+    width: 70px;
+
+    &[role=gridcell] {
+      text-align: right;
+
+      .manage-user-button {
+        display: inline-block;
+        font-weight: normal;
+        @include partials.button-base();
+        @include partials.button-secondary();
+      }
+    }
+  }
+}
