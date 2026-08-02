@@ -122,11 +122,6 @@ MAIL_URL=smtp://127.0.0.1:${SMTP_OUTGOING_PORT}
 UPDATE_CHANNEL=none
 " >> "$SANDSTORM_DIR/sandstorm.conf"
 
-# For fresh installs, configure MongoDB 7 directly (no migration needed)
-# The version file tells Sandstorm which MongoDB to use
-mkdir -p "$SANDSTORM_DIR/var/mongo"
-echo "7" > "$SANDSTORM_DIR/var/mongo/version"
-
 "$SANDSTORM_DIR/sandstorm" start
 
 echo -n "Waiting for sandstorm to start."
@@ -140,6 +135,19 @@ while ! curl -s localhost:$PORT > /dev/null; do
   echo -n .
   sleep .1
 done;
+echo
+
+echo -n "Waiting for front-end runtime to be ready."
+COUNT=0
+while ! curl -sf "$LAUNCH_URL/apps" | grep -q "__meteor_runtime_config__"; do
+  if [ "$COUNT" -gt 1800 ]; then  # wait up to 180 seconds for front-end startup/migrations
+    echo "Sandstorm front-end failed to become ready"
+    cleanExit 1
+  fi
+  COUNT=$(($COUNT+1))
+  echo -n .
+  sleep .1
+done
 echo
 
 set +e

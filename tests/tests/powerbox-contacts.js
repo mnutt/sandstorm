@@ -81,10 +81,12 @@ module.exports["Test powerbox request contact"] = function (browser) {
                     .click("#powerbox-request-identity")
                     .frameParent()
                     .waitForElementVisible(powerboxCardSelector, short_wait)
+                    .captureVisualSnapshot(".popup.request", "powerbox-identity-contact-picker")
                     .click(powerboxCardSelector)
 
                     .waitForElementVisible(".popup.request .selected-card>form button.connect-button",
                                            short_wait)
+                    .captureVisualSnapshot(".popup.request", "powerbox-identity-contact-confirm")
                     .click(".popup.request .selected-card>form button.connect-button")
                     .grainFrame()
                     .waitForElementVisible("span.token", short_wait)
@@ -102,6 +104,22 @@ module.exports["Test powerbox request contact"] = function (browser) {
                     .waitForElementVisible(".grain-list-table .select-all-grains>input", short_wait)
                     .click(".grain-list-table .select-all-grains>input")
                     .click(".bulk-action-buttons button.move-to-trash")
+                    .timeouts("script", long_wait)
+                    .executeAsync(function (grainId, done) {
+                      // The bulk-action handler intentionally does not await callMeteor(). Send an
+                      // idempotent follow-up on the same DDP connection so this test does not move
+                      // on until the server has processed the UI-triggered trash operation.
+                      Meteor.call("moveGrainsToTrash", [grainId], function (error) {
+                        done({
+                          ok: !error,
+                          reason: error && (error.reason || error.message),
+                        });
+                      });
+                    }, [grainId], function (result) {
+                      browser.assert.equal(result.value && result.value.ok, true,
+                          "Bob's shared grain should be moved to trash before checking its capability; got: " +
+                          (result.value && result.value.reason || "unknown"));
+                    })
 
                     // Now check that the grain can no longer restore the Identity capability.
                     .execute("window.Meteor.logout()")

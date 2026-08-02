@@ -33,7 +33,6 @@ module.exports["Test appdemo link"] = function (browser) {
                 "nqmcqs9spcdpmqyuxemf0tsgwn8awfvswc58wgk375g4u25xv6yh",
                 true)
     .execute("window.Meteor.logout()")
-    .pause(short_wait)
     .init()
     .url(browser.launch_url + "/appdemo/nqmcqs9spcdpmqyuxemf0tsgwn8awfvswc58wgk375g4u25xv6yh")
     .waitForElementVisible(".demo-startup-modal .start", medium_wait)
@@ -45,10 +44,12 @@ module.exports["Test appdemo link"] = function (browser) {
       if (tooltip) tooltip.parentNode.removeChild(tooltip);
     }, [])
     .assert.textContains(".demo-startup-modal .start", "Hacker CMS")
+    .captureVisualSnapshot(".demo-startup-modal", "appdemo-startup-modal")
     .click(".demo-startup-modal .start")
     .waitForElementPresent("iframe.grain-frame", short_wait)
     .grainFrame()
     .waitForElementPresent("#publish", medium_wait)
     .assert.textContains("#publish", "Publish")
+    .captureVisualSnapshot("body", "appdemo-hacker-cms-frame")
     .end();
 };

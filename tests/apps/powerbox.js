@@ -54,6 +54,7 @@ module.exports["Test Powerbox"] = function (browser) {
           .click("#request")
           .frameParent()
           .waitForElementVisible("#powerbox-request-input", short_wait)
+          .captureVisualSnapshot(".popup.request", "powerbox-request-token-popup")
           .setValue("#powerbox-request-input", result.value)
           .click("#powerbox-request-form button")
           .grainFrame()
@@ -107,7 +108,7 @@ module.exports["Test Powerbox with failing requirements"] = function (browser) {
     .assert.textContains("#grainTitle", "Untitled PowerboxTest")
 
     // We'll use the debugLog at the bottom of the test, but it's nice to open it early and give it time to load.
-    .click("#openDebugLog")
+    .openDebugLog()
     .waitForElementVisible('.grain-frame', short_wait)
     .grainFrame()
     .waitForElementVisible("#offer", short_wait)
@@ -198,7 +199,10 @@ module.exports["Test Powerbox query"] = function (browser) {
                 .waitForElementPresent(buttonId, medium_wait)
                 .click(buttonId)
                 .frame(null)
-                .waitForElementVisible(".popup ul.candidate-cards", short_wait);
+                .waitForElementVisible(".popup ul.candidate-cards", short_wait)
+                .captureVisualSnapshot(
+                  ".popup.request",
+                  "powerbox-candidate-cards-" + buttonId.replace(/^#/, ""));
 
             for (var id in expectedMatches) {
               var cardSelector = ".powerbox-card button[data-card-id=\"grain-" + id + "\"]";

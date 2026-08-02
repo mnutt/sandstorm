@@ -25,16 +25,54 @@ module.exports = {
     browser
       .init()
       .assert.title('Sandstorm')
+      .captureVisualSnapshot("body", "shell-root-logged-out")
       .end();
   },
 
   "Test login command" : function (browser) {
     browser
       .loginDevAccount("TestingLogin")
+      .disableGuidedTour()
       .waitForElementVisible('.topbar .account>.show-popup', short_wait)
       .assert.textContains(".topbar .account>.show-popup", "TestingLogin")
+      .captureVisualSnapshot("body>.topbar", "shell-topbar-logged-in")
+      .captureVisualSnapshot(".main-content>.app-list", "apps-page-empty")
+      .click(".topbar .account>.show-popup")
+      .waitForElementVisible(".popup.account", short_wait)
+      .captureVisualSnapshot(".popup.account", "account-menu")
       .end();
   },
+
+  "Test setup session clear invalidates token": function (browser) {
+    browser
+      .url(browser.launch_url + "/")
+      .timeouts("script", utils.medium_wait);
+
+    utils.callMeteorTestMethod(browser, "testRegressionSetupSessionClear");
+
+    browser.end();
+  },
+
+  "Test OIDC signin URL and index migration coverage": function (browser) {
+    browser
+      .url(browser.launch_url + "/")
+      .timeouts("script", utils.medium_wait);
+
+    utils.callMeteorTestMethod(browser, "testRegressionOidcSigninAndIndexMigration");
+
+    browser.end();
+  },
+
+  "Test replica migration coordination": function (browser) {
+    browser
+      .url(browser.launch_url + "/")
+      .timeouts("script", utils.medium_wait);
+
+    utils.callMeteorTestMethod(browser, "testRegressionReplicaMigrationCoordination");
+
+    browser.end();
+  },
+
 };
 if (run_xfail) {
   // https://github.com/sandstorm-io/sandstorm/issues/3615

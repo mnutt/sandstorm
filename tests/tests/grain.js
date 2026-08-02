@@ -47,6 +47,7 @@ module.exports = utils.testAllLogins({
       .ifNotDemo(function () {
         browser
           .waitForElementVisible("#step-confirm", long_wait)
+          .captureVisualSnapshot("#step-confirm", "install-confirm-local-app")
           .click('#confirmInstall')
           .disableGuidedTour()
           .waitForElementVisible(actionSelector, short_wait)
@@ -79,6 +80,7 @@ module.exports = utils.testAllLogins({
           .click('#confirmInstall')
           .disableGuidedTour()
           .waitForElementVisible(".app-details .older-version", short_wait)
+          .captureVisualSnapshot(".app-details", "app-details-upgrade-available")
           .click(".app-details .older-version .upgradeGrains")
           .waitForElementNotPresent(".app-details .older-version", short_wait);
       });
@@ -103,7 +105,8 @@ module.exports = utils.testAllLogins({
           .waitForElementVisible('#step-confirm', long_wait)
           .click('#confirmInstall')
           .disableGuidedTour()
-          .waitForElementVisible(".app-details .newer-version", short_wait);
+          .waitForElementVisible(".app-details .newer-version", short_wait)
+          .captureVisualSnapshot(".app-details", "app-details-newer-version-installed");
       });
   },
 
@@ -114,6 +117,7 @@ module.exports = utils.testAllLogins({
       .waitForElementVisible('#step-confirm', very_long_wait)
       .click('#confirmInstall')
       .waitForElementVisible(appDetailsTitleSelector, short_wait)
+      .captureVisualSnapshot(".app-details", "app-details-hacker-cms")
       .assert.textContains(appDetailsTitleSelector, 'Hacker CMS');
   },
 
@@ -122,6 +126,7 @@ module.exports = utils.testAllLogins({
       .waitForElementVisible(actionSelector, short_wait)
       .click(actionSelector)
       .waitForElementVisible('#grainTitle', medium_wait)
+      .captureVisualSnapshot("body>.topbar", "grain-topbar-hacker-cms")
       .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle);
   },
 
@@ -136,7 +141,6 @@ module.exports = utils.testAllLogins({
   "Test grain restart" : function (browser) {
     browser
       .click('#restartGrain')
-      .pause(short_wait)
       .grainFrame()
       .waitForElementPresent('#publish', medium_wait)
       .assert.textContains('#publish', 'Publish')
@@ -145,12 +149,11 @@ module.exports = utils.testAllLogins({
 
   "Test grain debug" : function (browser) {
     browser
-      .click('#openDebugLog')
-      .pause(short_wait)
+      .openDebugLog()
       .windowHandles(function (windows) {
         browser.switchWindow(windows.value[1]);
       })
-      .pause(short_wait)
+      .waitForElementVisible('.grainlog-title', medium_wait)
       .assert.textContains('.grainlog-title', 'Debug log: ' + expectedHackerCMSGrainTitle)
       .closeWindow()
       .end();
@@ -166,8 +169,49 @@ module.exports["Test grain not found"] = function (browser) {
     .disableGuidedTour()
     .url(browser.launch_url + "/grain/BogusGrainId")
     .waitForElementVisible(".grain-not-found", medium_wait)
+    .captureVisualSnapshot(".grain-not-found", "grain-not-found")
     .assert.textContains(".grain-not-found", "No grain found")
     .end()
+}
+
+module.exports["Test clone grain title"] = function(browser) {
+  var originalTitle = 'Untitled Test App test page';
+  var copyTitle = 'Copy of ' + originalTitle;
+
+  browser
+    .loginDevAccount()
+    // sandstorm-test-python, v0
+    .installApp("https://alpha-hlngxit86q1mrs2iplnx.sandstorm.io/test-0.spk", "9111a8c70938276d28a00468a18a25c7", "rwyva77wj1pnj01cjdj2kvap7c059n9ephyyg5k4s5enh5yw9rxh")
+    .assert.textContains('#grainTitle', originalTitle)
+    .clickTopbarButton("#cloneGrain")
+    .executeAsync(function (expectedTitle, timeout, done) {
+      var start = Date.now();
+
+      (function waitForTitle() {
+        var title = document.querySelector("#grainTitle");
+        var text = title && title.textContent;
+        if (text && text.indexOf(expectedTitle) !== -1) {
+          done({ success: true, title: text });
+          return;
+        }
+
+        if (Date.now() - start > timeout) {
+          done({
+            success: false,
+            title: text,
+            url: window.location.href,
+          });
+          return;
+        }
+
+        setTimeout(waitForTitle, 100);
+      })();
+    }, [copyTitle, medium_wait], function (result) {
+      var value = result && result.value;
+      browser.assert.ok(value && value.success,
+          "cloned grain title should be " + copyTitle + ", got " + (value && value.title));
+    })
+    .end();
 }
 
 module.exports["Sign in at grain URL"] = function (browser) {
@@ -185,6 +229,7 @@ module.exports["Sign in at grain URL"] = function (browser) {
             .url(grainUrl.value)
             .waitForElementVisible(".request-access", medium_wait)
             .assert.textContains(".request-access", "Please sign in to request access.")
+            .captureVisualSnapshot(".request-access", "grain-request-access")
             .execute(function (name) { window.loginDevAccount(name) }, [devName.value])
             .waitForElementVisible("iframe.grain-frame", medium_wait)
             .waitForElementVisible("#grainTitle", medium_wait)
@@ -196,6 +241,7 @@ module.exports["Sign in at grain URL"] = function (browser) {
             // Now try it with a /shared/ path.
             .click('.topbar .share > .show-popup')
             .waitForElementVisible('#shareable-link-tab-header', short_wait)
+            .captureVisualSnapshot(".popup.share", "grain-share-popup")
             .click('#shareable-link-tab-header')
             .waitForElementVisible(".new-share-token", short_wait)
             .submitForm('.new-share-token')
@@ -306,6 +352,7 @@ module.exports["Test grain anonymous user"] = function (browser) {
         .waitForElementVisible('#grainTitle', medium_wait)
         .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
         .waitForElementVisible(".popup.login button.dismiss", short_wait)
+        .captureVisualSnapshot(".popup.login", "anonymous-share-login-popup")
         .click(".popup.login button.dismiss") // "Stay anonymous"
         .waitForElementNotPresent(".popup.login", short_wait)
         .grainFrame()
@@ -344,7 +391,8 @@ module.exports["Test roleless sharing"] = function (browser) {
           secondUserName = result.value;
         })
         .url(response.value)
-        .waitForElementVisible("button.reveal-identity-button", short_wait)
+        .waitForElementVisible("button.reveal-identity-button", medium_wait)
+        .captureVisualSnapshot(".grain-interstitial", "share-reveal-identity")
         .click("button.reveal-identity-button")
         .waitForElementVisible('.grain-frame', medium_wait)
         .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
@@ -364,7 +412,7 @@ module.exports["Test roleless sharing"] = function (browser) {
             .loginDevAccount()
             .disableGuidedTour()
             .url(response.value)
-            .waitForElementVisible("button.reveal-identity-button", short_wait)
+            .waitForElementVisible("button.reveal-identity-button", medium_wait)
             .click("button.reveal-identity-button")
             .waitForElementVisible('.grain-frame', medium_wait)
             .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
@@ -388,6 +436,7 @@ module.exports["Test roleless sharing"] = function (browser) {
             .click('.popup.share .who-has-access')
             .waitForElementVisible('.popup.who-has-access', medium_wait)
             .waitForElementVisible('.popup.who-has-access .people td', medium_wait)
+            .captureVisualSnapshot(".popup.who-has-access", "grain-who-has-access-popup")
             .assert.textContains('.popup.who-has-access .people td', secondUserName)
             .end();
         });
@@ -418,7 +467,7 @@ module.exports["Test role sharing"] = function (browser) {
         .loginDevAccount()
         .disableGuidedTour()
         .url(response.value)
-        .waitForElementVisible("button.reveal-identity-button", short_wait)
+        .waitForElementVisible("button.reveal-identity-button", medium_wait)
         .click("button.reveal-identity-button")
         .waitForElementVisible('.grain-frame', medium_wait)
         .assert.textContains('#grainTitle', expectedGitWebGrainTitle)
@@ -438,7 +487,7 @@ module.exports["Test role sharing"] = function (browser) {
             .loginDevAccount()
             .disableGuidedTour()
             .url(response.value)
-            .waitForElementVisible("button.reveal-identity-button", short_wait)
+            .waitForElementVisible("button.reveal-identity-button", medium_wait)
             .click("button.reveal-identity-button")
             .waitForElementVisible('.grain-frame', medium_wait)
             .assert.textContains('#grainTitle', expectedGitWebGrainTitle)
@@ -489,6 +538,7 @@ module.exports["Test grain reveal identity interstitial"] = function (browser) {
         // Try incognito
         .url(shareLink.value)
         .waitForElementVisible(".incognito-button", short_wait)
+        .captureVisualSnapshot(".grain-interstitial", "share-incognito-or-reveal")
         .click(".incognito-button")
         .waitForElementVisible('.grain-frame', medium_wait)
         .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
@@ -506,7 +556,7 @@ module.exports["Test grain reveal identity interstitial"] = function (browser) {
         .click(".topbar .share > .show-popup")
         .waitForElementVisible('a.open-non-anonymously', short_wait)
         .click("a.open-non-anonymously")
-        .waitForElementVisible("button.reveal-identity-button", short_wait)
+        .waitForElementVisible("button.reveal-identity-button", medium_wait)
         .click("button.reveal-identity-button")
         .waitForElementVisible('.grain-frame', medium_wait)
         .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)

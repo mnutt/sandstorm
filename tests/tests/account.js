@@ -128,8 +128,10 @@ module.exports["Test try login with non-login credential"] = function (browser) 
     .loginDevAccount()
     .url(browser.launch_url + "/account")
     .waitForElementVisible("button.link-new-credential", short_wait)
+    .captureVisualSnapshot(".linked-credentials", "account-linked-credentials")
     .click("button.link-new-credential")
     .waitForElementVisible(".login-buttons-list button.dev", short_wait)
+    .captureVisualSnapshot(".linked-credentials", "account-link-credential-picker")
     .click(".login-buttons-list button.dev")
     .waitForElementVisible("input[name=name]", short_wait)
     .setValue("input[name=name]", otherCredentialName)
@@ -152,6 +154,7 @@ module.exports["Test try login with non-login credential"] = function (browser) 
     .setValue("input[name=name]", otherCredentialName)
     .submitForm(".login-buttons-list form.dev")
     .waitForElementVisible(".credential-login-interstitial .warning-banner", short_wait)
+    .captureVisualSnapshot(".credential-login-interstitial", "credential-not-login-interstitial")
     .assert.textContains(".credential-login-interstitial .warning-banner",
                          "is not a login credential")
     .end();
@@ -183,3 +186,33 @@ module.exports["Test link credential from unused account"] = function (browser) 
         .end()
     });
 }
+
+module.exports["Test LDAP quota lookup returns current value"] = function (browser) {
+  browser
+    .url(browser.launch_url + "/")
+    .timeouts("script", medium_wait);
+
+  utils.callMeteorTestMethod(browser, "testRegressionLdapQuotaReturnValue");
+
+  browser.end();
+};
+
+module.exports["Test email credential link waits for link result"] = function (browser) {
+  browser
+    .url(browser.launch_url + "/")
+    .timeouts("script", medium_wait);
+
+  utils.callMeteorTestMethod(browser, "testRegressionEmailCredentialLinkAwaitsFailure");
+
+  browser.end();
+};
+
+module.exports["Test email token creation and login behavior"] = function (browser) {
+  browser
+    .url(browser.launch_url + "/")
+    .timeouts("script", medium_wait);
+
+  utils.callMeteorTestMethod(browser, "testRegressionEmailTokenCreationAndLogin");
+
+  browser.end();
+};

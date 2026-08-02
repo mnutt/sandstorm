@@ -115,6 +115,7 @@ module.exports["Test Collections"] = function (browser) {
 
                   .grainFrame()
                   .waitForElementVisible("table.grain-list-table>tbody tr:nth-child(3).grain", short_wait)
+                  .captureVisualSnapshot("body", "collections-table-with-linked-grains")
                   .click("table.grain-list-table>tbody tr:nth-child(3).grain .click-to-go")
                   .frame(null)
 
@@ -244,6 +245,7 @@ module.exports["Test Collections"] = function (browser) {
                       .url(browser.launch_url + "/grain/" + grainIdA + "/#")
 
                       .waitForElementVisible(".grain-interstitial.request-access", medium_wait)
+                      .captureVisualSnapshot(".grain-interstitial", "collections-request-access")
                       .end();
                   });
               });
@@ -287,6 +289,7 @@ module.exports["Test collections anonymous user"] = function (browser) {
         .waitForElementVisible(".popup.request .selected-card>form input[value='0']", short_wait)
         .click(".popup.request .selected-card>form input[value='0']")
         .click(".popup.request .selected-card>form button.connect-button")
+        .waitForElementNotPresent(".popup.request", medium_wait)
 
         // Visit token A anonymously. The link should still work.
         .frame(null)
