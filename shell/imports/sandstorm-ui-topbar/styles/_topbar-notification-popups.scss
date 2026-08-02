@@ -1,7 +1,7 @@
 @use "colors";
 @use "geometry";
 
-body>.popup {
+.topbar-popup {
   &.notifications {
     >.frame-container {
       width: 400px;

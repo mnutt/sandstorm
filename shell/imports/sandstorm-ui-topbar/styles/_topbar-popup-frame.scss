@@ -1,6 +1,6 @@
 @use "geometry";
 
-body>.popup.who-has-access {
+.topbar-popup.who-has-access {
   img.spinner {
     display: block;
     margin: auto;
@@ -13,7 +13,7 @@ body>.popup.who-has-access {
   }
 }
 
-body>.popup.modal {
+.topbar-popup.modal {
   background-color: rgba(0, 0, 0, 0.5);
 
   >.frame-container {
@@ -76,7 +76,7 @@ body>.popup.modal {
   }
 }
 
-body>.popup {
+.topbar-popup {
   // Popup windows hang off the topbar, usually appearing when a topbar item is clicked.
 
   position: fixed;
