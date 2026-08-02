@@ -20,7 +20,21 @@ import { Session } from "meteor/session";
 import { Tracker } from "meteor/tracker";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 
-import "/imports/client/admin/styles/admin.scss";
+import "/imports/client/admin/styles/_new-admin-base.scss";
+import "/imports/client/admin/styles/_admin-login.scss";
+import "/imports/client/admin/styles/_admin-email.scss";
+import "/imports/client/admin/styles/_admin-organization.scss";
+import "/imports/client/admin/styles/_admin-status.scss";
+import "/imports/client/admin/styles/_admin-personalization.scss";
+import "/imports/client/admin/styles/_admin-network-capabilities.scss";
+import "/imports/client/admin/styles/_admin-apps.scss";
+import "/imports/client/admin/styles/_admin-preinstalled-apps.scss";
+import "/imports/client/admin/styles/_admin-maintenance.scss";
+import "/imports/client/admin/styles/_admin-users.scss";
+import "/imports/client/admin/styles/_admin-stats.scss";
+import "/imports/client/admin/styles/_admin-hosting-management.scss";
+import "/imports/client/admin/styles/_admin-networking.scss";
+import "/imports/client/admin/styles/_admin-certificates.scss";
 
 Meteor.subscribe("publicAdminSettings");
 
