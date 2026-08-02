@@ -1,7 +1,7 @@
 @use "sass:color";
 @use "partials";
 
-body>.popup.login>.frame-container {
+.topbar-popup.login>.frame-container {
   width: 202px; // 2px of border
   >.frame {
     width: 200px;
@@ -21,7 +21,7 @@ body>.popup.login>.frame-container {
   }
 }
 
-body>.popup.account>.frame-container {
+.topbar-popup.account>.frame-container {
   width: 252px; // includes 2px of border
   >.frame {
     width: 250px;

@@ -3,7 +3,7 @@
 @use "partials";
 @use "account-primitives";
 
-body>.popup.billing-prompt>.frame-container {
+.topbar-popup.billing-prompt>.frame-container {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 
@@ -34,7 +34,7 @@ body>.popup.billing-prompt>.frame-container {
   overflow: hidden;
 }
 
-body>.popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
   text-align: center;
 
   >h2 {

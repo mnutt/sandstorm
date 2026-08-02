@@ -100,7 +100,8 @@ div.profile-editor {
 }
 
 body>.main-content>.account,
-body>.popup,
+.topbar-popup,
+.popup.request,
 .first-time-billing-prompt {
   .mobile-iframe-hack {
     border: 0px;
