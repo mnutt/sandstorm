@@ -48,7 +48,18 @@
   }
 }
 
-#sign-in-arrow {
+.onboarding-arrow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 300px;
+  height: 400px;
+  z-index: -1;
+
+  background-image: url(/files-arrow.svg);
+}
+
+.sign-in-arrow {
   left: auto;
   right: 0;
 

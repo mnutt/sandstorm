@@ -267,7 +267,7 @@ Template.sandstormAppInstallPage.events({
     Router.go("apps");
   },
 
-  "click #confirmInstall": function (event) {
+  "click .confirm-install-button": function (event) {
     const ref = Template.instance().data;
     globalThis.callMeteor("addUserActions", ref.packageId());
   },

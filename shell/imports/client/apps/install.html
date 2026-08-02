@@ -13,12 +13,12 @@
   {{else}}
     <div class="install">
     {{#if isCurrentStep "wait"}}
-      <div id="step-wait">
+      <div class="install-step install-step-wait">
         <h1>{{_ (con txt "stepWait.title")}}</h1>
       </div>
     {{/if}}
     {{#if isCurrentStep "download"}}
-      <div id="step-download">
+      <div class="install-step install-step-download">
         <h1>{{_ (con txt "stepDownload.title")}}</h1>
         <p class="centered">
           {{#if hasFractionalProgress}}
@@ -31,22 +31,22 @@
       </div>
     {{/if}}
     {{#if isCurrentStep "verify"}}
-      <div id="step-verify">
+      <div class="install-step install-step-verify">
         <h1>{{_ (con txt "stepVerify.title")}}</h1>
       </div>
     {{/if}}
     {{#if isCurrentStep "unpack"}}
-      <div id="step-unpack">
+      <div class="install-step install-step-unpack">
         <h1>{{_ (con txt "stepUnpack.title")}}</h1>
       </div>
     {{/if}}
     {{#if isCurrentStep "analyze"}}
-      <div id="step-analyze">
+      <div class="install-step install-step-analyze">
         <h1>{{_ (con txt "stepAnalyze.title")}}</h1>
       </div>
     {{/if}}
     {{#if isCurrentStep "confirm"}}
-      <div id="step-confirm">
+      <div class="install-step install-step-confirm">
         {{> sandstormAppDetails
            showPublisherDetails=true
            showToggleTrash=false
@@ -60,13 +60,13 @@
         <div class="confirm-form">
           {{#if hasOlderVersion}}
             <p>{{_ (con txt "stepConfirm.upgrade.explanation")}}</p>
-            <p><button id="confirmInstall">{{_ (con txt "stepConfirm.upgrade.button") appTitle}}</button></p>
+            <p><button class="confirm-install-button">{{_ (con txt "stepConfirm.upgrade.button") appTitle}}</button></p>
           {{else}}
             {{#if hasNewerVersion}}
               <p>{{_ (con txt "stepConfirm.downgrade.explanation")}}</p>
-              <p><button id="confirmInstall">{{_ (con txt "stepConfirm.downgrade.button") appTitle}}</button></p>
+              <p><button class="confirm-install-button">{{_ (con txt "stepConfirm.downgrade.button") appTitle}}</button></p>
             {{else}}
-              <p><button id="confirmInstall">{{_ (con txt "stepConfirm.install.button") appTitle}}</button></p>
+              <p><button class="confirm-install-button">{{_ (con txt "stepConfirm.install.button") appTitle}}</button></p>
             {{/if}}
           {{/if}}
         </div>
@@ -75,7 +75,7 @@
     {{#if isCurrentStep "run"}}
       {{!-- Note that this step should never really be shown -- you should be redirected to the app
             page in this scenario automatically. --}}
-      <div id="step-run">
+      <div class="install-step install-step-run">
         <h1>{{_ (con txt "stepRun.title") appTitle}}</h1>
         <div class="done-notice">
           <p>{{_ (con txt "stepRun.explanation")}}</p>
@@ -84,7 +84,7 @@
       </div>
     {{/if}}
     {{#if isCurrentStep "delete"}}
-      <div id="step-delete">
+      <div class="install-step install-step-delete">
         <h1>{{_ (con txt "stepDelete.title")}}</h1>
         <p>{{_ (con txt "stepDelete.explanation")}}</p>
       </div>

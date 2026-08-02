@@ -23,10 +23,10 @@
     font-size: inherit;
   }
 
-  #step-wait {
+  .install-step {
     display: block;
   }
-  #step-download {
+  .install-step-download {
     display: block;
     >p {
       width: 100%;
@@ -37,16 +37,7 @@
       }
     }
   }
-  #step-verify {
-    display: block;
-  }
-  #step-unpack {
-    display: block;
-  }
-  #step-analyze {
-    display: block;
-  }
-  #step-confirm {
+  .install-step-confirm {
     display: block;
     >.app-details-widget {
       @include app-details-primitives.app-details-widget();
@@ -54,28 +45,14 @@
     .confirm-form {
       display: block;
 
-      #confirmInstall {
+      .confirm-install-button {
         /* Adding up the margin-left + padding-left of .app-details-box within app-details.scss, for alignment. */
         margin-left: 140px;
       }
     }
   }
-  #step-run {
+  .install-step-run {
     display: block;
     .done-notice { display: block; }
   }
-  #step-delete {
-    display: block;
-  }
-}
-
-#my-files-arrow, #sign-in-arrow {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 300px;
-  height: 400px;
-  z-index: -1;
-
-  background-image: url(/files-arrow.svg);
 }
