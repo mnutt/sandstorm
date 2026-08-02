@@ -13,12 +13,15 @@ const styleRoots = [
 ];
 
 const options = new Map();
+let check = false;
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
   if (arg === "--json") {
     options.set("format", "json");
   } else if (arg === "--markdown") {
     options.set("format", "markdown");
+  } else if (arg === "--check") {
+    check = true;
   } else if (arg === "--help" || arg === "-h") {
     printHelp();
     process.exit(0);
@@ -99,14 +102,26 @@ const report = {
   rankedRisk: rankedRisk.map(({ file, risk, metrics }) => ({ file, risk, metrics })),
 };
 
-if (format === "json") {
+if (check) {
+  const errors = checkOrganization(report);
+  if (errors.length > 0) {
+    console.error("CSS organization check failed:");
+    for (const error of errors) {
+      console.error(`- ${error}`);
+    }
+
+    process.exit(1);
+  }
+
+  console.log("CSS organization check passed.");
+} else if (format === "json") {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 } else {
   process.stdout.write(renderMarkdown(report));
 }
 
 function printHelp() {
-  console.log("Usage: npm run css:inventory [-- --markdown|--json]");
+  console.log("Usage: npm run css:inventory [-- --markdown|--json|--check]");
 }
 
 function countMatches(source, pattern) {
@@ -116,6 +131,34 @@ function countMatches(source, pattern) {
 function collectImports(source) {
   return [...source.matchAll(/@(use|import|forward)\s+["']([^"']+)["']/g)]
     .map((match) => ({ type: match[1], target: match[2] }));
+}
+
+function checkOrganization(report) {
+  const errors = [];
+  const allowedRootFiles = new Set([
+    "client/styles/_colors.scss",
+    "client/styles/_focus.scss",
+    "client/styles/_fonts.scss",
+    "client/styles/_geometry.scss",
+    "client/styles/_icons.scss",
+    "client/styles/_partials.scss",
+    "client/styles/_shell-base.scss",
+    "client/styles/introjs-customizations.scss",
+    "client/styles/introjs.css",
+    "client/styles/shell.scss",
+  ]);
+
+  for (const item of report.files) {
+    if (item.imports.some((styleImport) => styleImport.type === "import")) {
+      errors.push(`${item.file} uses Sass @import; use @use or @forward instead.`);
+    }
+
+    if (item.file.startsWith("client/styles/") && !allowedRootFiles.has(item.file)) {
+      errors.push(`${item.file} lives in client/styles; colocate feature styles under imports/ instead.`);
+    }
+  }
+
+  return errors;
 }
 
 function collectStyleFiles(directory) {

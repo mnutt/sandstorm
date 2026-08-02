@@ -6,6 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "css:inventory": "node tools/css-inventory.mjs",
+    "css:check": "node tools/css-inventory.mjs --check",
     "lint": "eslint .",
     "typecheck": "meteor lint && tsc"
   },

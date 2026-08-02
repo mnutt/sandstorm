@@ -69,6 +69,12 @@ For machine-readable output:
 npm run css:inventory -- --json
 ```
 
+To enforce the current organization boundary:
+
+```sh
+npm run css:check
+```
+
 Use the inventory to choose migration order, identify broad selectors, and
 verify that risk is going down as files move out of the global cascade. The
 inventory scans this legacy directory, migrated feature styles under
