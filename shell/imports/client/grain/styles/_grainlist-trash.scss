@@ -1,0 +1,13 @@
+@use "colors";
+@use "partials";
+
+@mixin trash-explanation () {
+  width: 100%;
+  font-size: 10pt;
+
+  button.empty-trash {
+    @include partials.unstyled-button();
+    color: colors.$sandstorm-purple-color;
+    font-weight: bold;
+  }
+}

@@ -1,0 +1,18 @@
+@use "partials";
+
+@mixin bulk-action-buttons () {
+  float: left;
+  clear: left;
+  >button {
+    @include partials.button-base();
+    @include partials.button-secondary();
+    display: inline-block;
+    float: left;
+    font-size: 14pt;
+    line-height: 16pt;
+    height: 32px;
+    margin-top: 10px;
+    margin-bottom: 10px;
+    margin-right: 10px;
+  }
+}
