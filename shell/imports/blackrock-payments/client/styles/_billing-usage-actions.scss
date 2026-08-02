@@ -1,0 +1,32 @@
+@use "partials";
+
+div.billing {
+  div.usage {
+    button {
+      &.change-plan {
+        @include partials.button-base();
+        @include partials.button-primary();
+        font-size: 16px;
+        width: 125px;
+        position: absolute;
+        top: 0;
+        right: 0;
+      }
+
+      &.subscribe {
+        @include partials.button-base();
+        @include partials.button-primary();
+        font-size: 16px;
+        width: 125px;
+      }
+
+      &.unsubscribe {
+        @include partials.button-base();
+        @include partials.button-secondary();
+        font-size: 90%;
+        padding: 4px 16px;
+        margin-left: 16px;
+      }
+    }
+  }
+}
