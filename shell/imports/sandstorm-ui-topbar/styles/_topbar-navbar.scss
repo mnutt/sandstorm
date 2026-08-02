@@ -41,26 +41,25 @@ body>.topbar {
       }
 
       &.shrink-desktop {
-        // !important used to override other classes that might assign e.g. display: block
-        width: geometry.$navbar-width-desktop-shrunk !important;
+        width: geometry.$navbar-width-desktop-shrunk;
 
         button.navbar-shrink {
           border-left-width: 0;
         }
-        button.close-button {
-          display: none !important;
-        }
         >ul.navbar-grains>li.navitem-grain a {
-          padding-right: 0 !important;
+          padding-right: 0;
+        }
+        >ul.navbar-grains>li.navitem-grain button.close-button {
+          display: none;
         }
         .demo-notice {
-          p { font-size: 0 !important; padding: 0px; }
-          span { display: none !important; }
-          button { display: none !important; }
-          a { display: none !important; }
+          p { font-size: 0; padding: 0px; }
+          span { display: none; }
+          button { display: none; }
+          a { display: none; }
         }
         .demo-timer {
-          p { font-size: 0 !important; padding: 4px !important; }
+          p { font-size: 0; padding: 4px; }
         }
       }
       &.hide-desktop {
@@ -284,7 +283,7 @@ body>.topbar {
     }
 
     li.navitem-demo-notice {
-      height: auto !important;
+      height: auto;
     }
   }
 }

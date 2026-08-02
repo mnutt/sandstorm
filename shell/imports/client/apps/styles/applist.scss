@@ -26,9 +26,9 @@
     font-size: 24pt;
     font-weight: 400;
   }
-  .hide {
-    // !important used to override other classes that might assign e.g. display: block
-    display: none !important;
+  .toggle-uninstall.hide,
+  >.install-button.hide {
+    display: none;
   }
   >.search-row {
     @include partials.search-row();

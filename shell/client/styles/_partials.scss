@@ -214,7 +214,7 @@
   &.disabled {
     // Used for marking that the entire form is disabled.  Note that this does not disable the
     // <input>s; you should still add the disabled attribute to each control.
-    color: #666 !important; // Grey out all text uniformly.
+    color: #666;
   }
 }
 

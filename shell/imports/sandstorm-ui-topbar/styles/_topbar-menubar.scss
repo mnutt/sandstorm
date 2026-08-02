@@ -14,9 +14,9 @@ body>.topbar {
       height: geometry.$topbar-height-desktop;
       &.shrink-desktop {
         >.home-button {
-          width: geometry.$navbar-width-desktop-shrunk !important;
+          width: geometry.$navbar-width-desktop-shrunk;
           >a {
-            width: geometry.$navbar-width-desktop-shrunk !important;
+            width: geometry.$navbar-width-desktop-shrunk;
             padding-right: 0;
           }
         }
