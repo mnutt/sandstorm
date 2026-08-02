@@ -330,20 +330,19 @@ function selectTargetContents(event) {
 Template.grainApiTokenPopup.events({
   "click .copy-me": selectTargetContents,
   "focus .copy-me": selectTargetContents,
-  "submit .newApiToken": function (event) {
+  "submit .newApiToken": function (event, instance) {
     event.preventDefault();
     const activeGrain = globalGrains.getActive();
     const grainId = activeGrain.grainId();
     activeGrain.setGeneratedApiToken("pending");
-    const roleList = document.getElementById("api-token-role");
-    // TODO(cleanup): avoid using global ids; select a child of the current template instead
+    const roleList = instance.find(".api-token-role");
     let assignment = { allAccess: null };
     if (roleList && roleList.selectedIndex > 0) {
       assignment = { roleId: roleList.selectedIndex - 1 };
     }
 
     Meteor.call("newApiToken", { accountId: Meteor.userId() }, grainId,
-                document.getElementById("api-token-petname").value,
+                instance.find(".api-token-petname").value,
                 assignment, { webkey: { forSharing: false } },
                 function (error, result) {
       if (error) {
@@ -358,7 +357,7 @@ Template.grainApiTokenPopup.events({
     });
   },
 
-  "click #resetApiToken": function (event) {
+  "click .reset-api-token": function (event) {
     const activeGrain = globalGrains.getActive();
     activeGrain.setGeneratedApiToken(undefined);
   },
@@ -382,16 +381,12 @@ Template.grainApiTokenPopup.events({
 Template.grainSharePopup.events({
   "click .copy-me": selectTargetContents,
   "focus .copy-me": selectTargetContents,
-  "click #share-grain-popup-closer": function (event) {
-    Session.set("show-share-grain", false);
-  },
-
   "click button.who-has-access": function (event, instance) {
     event.preventDefault();
     showConnectionGraph();
   },
 
-  "click #privatize-grain": function (event) {
+  "click .privatize-grain": function (event) {
     Meteor.call("privatizeGrain", globalGrains.getActive().grainId());
   },
 

@@ -224,22 +224,22 @@
   {{#if generatedApiToken}}
     {{#if generatedApiTokenPending}}
       <p>{{_ "grains.grainApiTokenPopup.processing"}}</p>
-      <p><button id="resetApiToken">{{_ "grains.grainApiTokenPopup.cancel"}}</button></p>
+      <p><button class="reset-api-token">{{_ "grains.grainApiTokenPopup.cancel"}}</button></p>
     {{else}}
       <p>{{_ "grains.grainApiTokenPopup.copyForExternalApp"}}</p>
-        <a id="apiTokenText" class="copy-me" href="{{generatedApiToken}}">{{generatedApiToken}}</a>
+        <a class="copy-me" href="{{generatedApiToken}}">{{generatedApiToken}}</a>
       {{#if currentUser}}
-        <p><button id="resetApiToken">{{_ "grains.grainApiTokenPopup.back"}}</button></p>
+        <p><button class="reset-api-token">{{_ "grains.grainApiTokenPopup.back"}}</button></p>
       {{/if}}
     {{/if}}
   {{else}}
     <p>{{_ "grains.grainApiTokenPopup.description"}}</p>
     <p><form class="newApiToken">
-    {{_ "grains.grainApiTokenPopup.labelTitle"}} <input type="text" id="api-token-petname" placeholder="{{_ "grains.grainApiTokenPopup.labelPlaceholder"}}">
+    {{_ "grains.grainApiTokenPopup.labelTitle"}} <input type="text" class="api-token-petname" placeholder="{{_ "grains.grainApiTokenPopup.labelPlaceholder"}}">
     {{#with viewInfo}}
       {{#if roles}}
         {{_ "grains.grainApiTokenPopup.roleTitle"}}
-        <select id="api-token-role">
+        <select class="api-token-role">
           <option title="has every app permission" selected=true>{{_ "grains.grainApiTokenPopup.permissionTitle"}}</option>
           {{#each roles}}
             <option title={{verbPhrase.defaultText}}
@@ -465,7 +465,7 @@
   {{#with completionState}}
     {{#if success}}
       <p><span class="icon icon-copy"></span> {{_ "grains.shareableLinkTab.success"}}</p>
-      <a id="share-token-text" class="copy-me" href="{{success.url}}">{{success.url}}</a>
+      <a class="copy-me" href="{{success.url}}">{{success.url}}</a>
       <p><button class="reset-share-token">{{_ "grains.shareableLinkTab.reset"}}</button></p>
     {{/if}}
     {{#if pending}}
@@ -502,7 +502,7 @@
     {{#if currentGrain.isOwner}}
       <p>{{_ "grains.grainSharePopup.upgradeDescription"}}</p>
       <p>{{_ "grains.grainSharePopup.upgradeWarning"}}</p>
-      <p><button id="privatize-grain">{{_ "grains.grainSharePopup.upgrade"}}</button></p>
+      <p><button class="privatize-grain">{{_ "grains.grainSharePopup.upgrade"}}</button></p>
     {{/if}}
   {{else}}
     {{#if incognito}}
@@ -512,7 +512,7 @@
       {{#with currentTokenUrl}}
         <p>
           {{_ "grains.grainSharePopup.toShareAccess"}}
-          <a id="share-token-text" class="copy-me" href="{{.}}">{{.}}</a>
+          <a class="copy-me" href="{{.}}">{{.}}</a>
         </p>
       {{/with}}
       <p>
@@ -549,7 +549,7 @@
   <h4>{{_ "grains.grainPowerboxOfferPopup.title"}}</h4>
   {{#if state.webkey}}
   <div>
-    <a class="copy-me" href="{{state.webkey}}" id="powerbox-offer-url">{{state.webkey}}</a>
+    <a class="copy-me" href="{{state.webkey}}">{{state.webkey}}</a>
     <button class="dismiss">{{_ "grains.grainPowerboxOfferPopup.dismiss"}}</button>
   </div>
   {{/if}}

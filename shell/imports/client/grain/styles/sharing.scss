@@ -30,42 +30,6 @@ button.revoke-token, button.revoke-access {
   background-image: url("/close.svg");
 }
 
-#api-token-popup {
-  left: 250px;
-  width: 450px;
-}
-
-#share-grain-popup {
-  left: 250px;
-  width: 450px;
-}
-
-#powerbox-offer-popup,
-#powerbox-request-popup {
-  left: 250px;
-  width: 450px;
-}
-
-#powerbox-offer-popup h3,
-#powerbox-request-popup > h3 {
-  margin-top: 0px;
-}
-
-#powerbox-request-popup .error {
-  color: red;
-}
-
-#powerbox-request-popup input {
-  width: 250px;
-}
-
-.powerboxIcon {
-  font-size: 32px;
-  display: inline;
-  position: fixed;
-  margin-left: 2px;
-}
-
 div.popup>p {
   margin-top: 0;
 }
