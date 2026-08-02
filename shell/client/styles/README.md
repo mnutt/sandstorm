@@ -31,6 +31,8 @@ New and migrated styles should use this ownership model:
 - Keep feature styles in `shell.scss` when they depend on CSS-emitting shared
   styles such as `_icons.scss`; move those after the shared CSS has been split
   from Sass-only mixins/placeholders.
+- Use `_icon-api.scss` for Sass-only icon mixins. `_icons.scss` should remain
+  the single global source of the emitted icon font and `.icon-*` classes.
 
 ## Migration Rules
 

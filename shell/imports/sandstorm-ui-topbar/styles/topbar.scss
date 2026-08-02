@@ -1,4 +1,4 @@
-@use "icons";
+@use "icon-api";
 @use "sass:color";
 @use "sass:math";
 @use "colors";
@@ -341,10 +341,7 @@ body>.topbar {
       @extend %topbar-button;
       @extend %hamburger-menu-item;
 
-      @extend .icon-share;
-      &::before {
-        @extend .icon;
-      }
+      @include icon-api.icon("share");
 
       @media #{geometry.$desktop} {
         background-position: 2px center;
@@ -1234,23 +1231,21 @@ body>.popup {
         }
         #send-invite-tab-header {
           left: 2%;
+          @include icon-api.icon("email");
 
           &::before {
-            @extend .icon;
             font-size: 18px;
             padding: 0 8px 2px 12px;
           }
-          @extend .icon-email;
         }
         #shareable-link-tab-header {
           right: 2%;
+          @include icon-api.icon("link");
 
           &::before {
-            @extend .icon;
             font-size: 20px;
             padding: 0 8px 2px 12px;
           }
-          @extend .icon-link;
         }
         [aria-selected=true] {
           background-color: white;

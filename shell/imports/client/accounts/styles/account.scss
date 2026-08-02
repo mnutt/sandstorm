@@ -1,4 +1,4 @@
-@use "icons";
+@use "icon-api";
 @use "sass:color";
 @use "colors";
 @use "geometry";
@@ -602,11 +602,10 @@ body>.main-content>.account {
       margin-bottom: 12px;
 
       &.link-new-credential {
-        @extend .icon-link;
+        @include icon-api.icon("link");
         @extend %button-primary;
         &::before {
           font-size: 20px;
-          @extend .icon;
         }
       }
 
@@ -1712,13 +1711,12 @@ body>.popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
 
     position: relative;
 
-    @extend .icon-unlink;
+    @include icon-api.icon("unlink");
     &::before {
       position: absolute;
       left: 5px;
       top: 2px;
       font-size: 24px;
-      @extend .icon;
     }
   }
 }
@@ -1805,31 +1803,30 @@ ul.credential-card-list {
     &::before {
       color: #9E9E9E;
       font-size: 16px;
-      @extend .icon;
     }
 
     &[data-service-name=github] {
-      @extend .icon-github;
+      @include icon-api.icon("github");
     }
 
     &[data-service-name=google] {
-      @extend .icon-google;
+      @include icon-api.icon("google");
     }
 
     &[data-service-name=dev] {
-      @extend .icon-debug;
+      @include icon-api.icon("debug");
     }
 
     &[data-service-name=email] {
-      @extend .icon-email;
+      @include icon-api.icon("email");
     }
 
     &[data-service-name=ldap] {
-      @extend .icon-ldap;
+      @include icon-api.icon("ldap");
     }
 
     &[data-service-name=saml] {
-      @extend .icon-ldap;
+      @include icon-api.icon("ldap");
     }
 
     margin-left: 55px;

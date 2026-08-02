@@ -1,6 +1,6 @@
 @use "colors";
 @use "grain/styles/grainlist.scss";
-@use "icons";
+@use "icon-api";
 @use "partials";
 
 .transfers {
@@ -55,10 +55,9 @@
     .state-error {
       width: 32px;
       height: 24px;
-      @extend .icon-close;
+      @include icon-api.icon("close");
       &::before {
         font-size: 20px;
-        @extend .icon;
       }
 
       color: #a00;
@@ -67,10 +66,9 @@
     .state-done {
       width: 32px;
       height: 24px;
-      @extend .icon-check;
+      @include icon-api.icon("check");
       &::before {
         font-size: 20px;
-        @extend .icon;
       }
 
       color: #0a0;

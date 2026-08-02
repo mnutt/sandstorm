@@ -24,6 +24,8 @@ import { ReactiveVar } from "meteor/reactive-var";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { sortBy, deepEqual } from "/imports/shared/collection-utils";
 
+import "/imports/sandstorm-ui-topbar/styles/topbar.scss";
+
 let reloadBlockingCount = 0;
 const blockedReload = new ReactiveVar(null);
 let explicitlyUnblocked = false;

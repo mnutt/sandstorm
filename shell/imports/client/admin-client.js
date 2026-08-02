@@ -20,6 +20,8 @@ import { Session } from "meteor/session";
 import { Tracker } from "meteor/tracker";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 
+import "/imports/client/admin/styles/admin.scss";
+
 Meteor.subscribe("publicAdminSettings");
 
 const newAdminRoute = RouteController.extend({

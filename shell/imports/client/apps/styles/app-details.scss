@@ -1,4 +1,4 @@
-@use "icons";
+@use "icon-api";
 @use "sass:color";
 @use "colors";
 @use "../../grain/styles/grainlist.scss";
@@ -159,11 +159,12 @@
 
             >.expanded-icon {
               font-size: 10px;
-              @extend .icon;
-              @extend .icon-down;
+              @include icon-api.icon-element("down");
             }
             &.expanded>.expanded-icon {
-              @extend .icon-up;
+              &::before {
+                @include icon-api.icon-content("up");
+              }
             }
           }
         }

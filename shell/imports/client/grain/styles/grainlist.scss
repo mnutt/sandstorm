@@ -1,4 +1,4 @@
-@use "icons";
+@use "icon-api";
 @use "colors";
 @use "geometry";
 @use "partials";
@@ -197,13 +197,12 @@
         &.in-trash {
           padding-left: 30px;
 
-          @extend .icon-trash;
+          @include icon-api.icon("trash");
           &::before {
             position: absolute;
             left: 4px;
             top: 4px;
             font-size: 20px;
-            @extend .icon;
           }
         }
       }

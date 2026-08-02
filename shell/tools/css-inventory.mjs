@@ -139,6 +139,7 @@ function checkOrganization(report) {
     "client/styles/_colors.scss",
     "client/styles/_focus.scss",
     "client/styles/_fonts.scss",
+    "client/styles/_icon-api.scss",
     "client/styles/_geometry.scss",
     "client/styles/_icons.scss",
     "client/styles/_partials.scss",

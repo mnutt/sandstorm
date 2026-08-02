@@ -1,6 +1,6 @@
 @use "sass:color";
 @use "colors";
-@use "icons";
+@use "icon-api";
 @use "partials";
 
 .setup-root {
@@ -254,14 +254,12 @@ button.setup-sandstorm {
           color: #888888;
           i.download-checkmark {
             color: green;
-            @extend .icon;
-            @extend .icon-check;
+            @include icon-api.icon-element("check");
             margin-right: 5px;
           }
           i.download-x-mark {
             color: red;
-            @extend .icon;
-            @extend .icon-plus;
+            @include icon-api.icon-element("plus");
             margin-right: 5px;
             -ms-transform: rotate(45deg);
             -webkit-transform: rotate(45deg);
