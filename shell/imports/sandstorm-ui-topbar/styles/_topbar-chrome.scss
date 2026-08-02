@@ -3,20 +3,7 @@
 @use "colors";
 @use "geometry";
 @use "partials";
-
-@mixin webfont-icon ($color, $mobile-color, $font-size, $mobile-font-size) {
-  text-align: center;
-  &:before {
-    font-size: $font-size;
-    color: $color;
-    font-family: "icons";
-
-    @media #{geometry.$mobile} {
-      font-size: $mobile-font-size;
-      color: $mobile-color;
-    }
-  }
-}
+@use "topbar-primitives";
 
 @media #{geometry.$mobile} {
   // Only show the menu button on mobile
@@ -105,91 +92,6 @@ body>.topbar {
     }
   }
 
-  @mixin topbar-button () {
-    // Common styling for buttons in the topbar (on desktop).
-
-    @include partials.unstyled-button();
-
-    @media #{geometry.$desktop} {
-      display: block;
-      height: 100%;
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-
-      &:hover {
-        background-color: colors.$topbar-background-color-hover;
-      }
-    }
-  }
-
-  @mixin icon-button () {
-    // Common styling for topbar buttons that are displayed as a bare icon with no text label
-    // (on desktop).
-
-    @include topbar-button();
-
-    @media #{geometry.$desktop} {
-      background-position: center;
-      background-repeat: no-repeat;
-      background-size: 24px 24px;
-      color: transparent;  // hide text
-      width: 32px;
-      height: 32px;
-      position: relative;
-    }
-  }
-
-  @mixin mobile-icon-button () {
-    // Common styling for topbar buttons that are displayed as a bare icon with no text label
-    // (on mobile).
-
-    @include partials.unstyled-button();
-
-    @media #{geometry.$mobile} {
-      display: block;
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      background-position: center;
-      background-repeat: no-repeat;
-      background-size: 40px 40px;
-      color: transparent;  // hide text
-      width: 48px;
-      height: 48px;
-
-      &:hover {
-        background-color: colors.$topbar-background-color-hover;
-      }
-    }
-  }
-
-  @mixin hamburger-menu-item () {
-    // Common styling for topbar items that are displayed as a hamburger menu item on mobile.
-    @media #{geometry.$desktop} {
-      height: geometry.$topbar-height-desktop;
-    }
-
-    @media #{geometry.$mobile} {
-      display: block;
-      width: 100%;
-      background-position: 8px center;
-      background-size: 32px 32px;
-      background-repeat: no-repeat;
-      background-color: transparent;
-      text-align: left;
-      padding-left: 48px;
-      font-size: 14pt;
-      height: geometry.$topbar-height-mobile;
-      font-weight: normal;
-      text-decoration: none;
-
-      &:hover {
-        background-color: colors.$topbar-background-color-hover;
-      }
-    }
-  }
-
   >ul>li, >ul>ul>li, >ul>ul>ul>li {
     // Each "item" in the topbar is an <li>, so this style applies to all of them.
 
@@ -198,7 +100,7 @@ body>.topbar {
     vertical-align: top;
 
     >button.show-popup {
-      @include topbar-button();
+      @include topbar-primitives.topbar-button();
     }
 
     @media #{geometry.$mobile} {
@@ -337,8 +239,8 @@ body>.topbar {
     }
 
     >.share>button.show-popup {
-      @include topbar-button();
-      @include hamburger-menu-item();
+      @include topbar-primitives.topbar-button();
+      @include topbar-primitives.hamburger-menu-item();
 
       @include icon-api.icon("share");
 
@@ -370,8 +272,8 @@ body>.topbar {
 
     // Buttons for misc grain actions.
     >li>button.grain-button, >.webkey>button.show-popup {
-      @include icon-button();
-      @include hamburger-menu-item();
+      @include topbar-primitives.icon-button();
+      @include topbar-primitives.hamburger-menu-item();
     }
     >.delete>button    { background-image: url("/trash.svg"); }
     >.debug-log>button { background-image: url("/debug.svg"); }
@@ -397,8 +299,8 @@ body>.topbar {
       }
 
       >button.show-popup {
-        @include icon-button();
-        @include mobile-icon-button();
+        @include topbar-primitives.icon-button();
+        @include topbar-primitives.mobile-icon-button();
       }
 
       .alert {
@@ -439,10 +341,10 @@ body>.topbar {
       }
 
       >button.show-popup {
-        @include icon-button();
-        @include mobile-icon-button();
+        @include topbar-primitives.icon-button();
+        @include topbar-primitives.mobile-icon-button();
 
-        @include webfont-icon(#CCCCCC, #CCCCCC, 24px, 40px);
+        @include topbar-primitives.webfont-icon(#CCCCCC, #CCCCCC, 24px, 40px);
 
         >.count {
           display: block;
@@ -468,7 +370,7 @@ body>.topbar {
 
     >.account, >.login {
       >button.show-popup {
-        @include hamburger-menu-item();
+        @include topbar-primitives.hamburger-menu-item();
         position: relative;
         >.profile-picture {
           position: absolute;
@@ -526,7 +428,7 @@ body>.topbar {
 
       button.navbar-shrink {
         @include partials.unstyled-button();
-        @include webfont-icon(#CCCCCC, #CCCCCC, 28px, 28px);
+        @include topbar-primitives.webfont-icon(#CCCCCC, #CCCCCC, 28px, 28px);
         display: block;
         width: 100%;
         height: geometry.$navbar-shrink-button-height;
