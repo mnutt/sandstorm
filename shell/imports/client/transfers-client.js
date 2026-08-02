@@ -22,7 +22,7 @@ import { TAPi18n } from "/imports/tapi18n";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/transfers.scss";
+import "/imports/client/transfers/styles/transfers.scss";
 
 function isValidServerUrl(str) {
   let url;
