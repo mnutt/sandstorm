@@ -1,7 +1,7 @@
 @use "colors";
 @use "geometry";
 @use "partials";
-@use "../../../blackrock-payments/client/styles/payment-iframe-primitives";
+@use "payment-iframe-primitives";
 
 .topbar-popup.billing-prompt>.frame-container {
   overflow-y: auto;

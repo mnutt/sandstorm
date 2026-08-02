@@ -1,5 +1,5 @@
 @use "colors";
-@use "../../../blackrock-payments/client/styles/payment-iframe-primitives";
+@use "payment-iframe-primitives";
 
 div.billing {
   >section.payment-methods {
