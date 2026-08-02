@@ -31,7 +31,7 @@
     display: none !important;
   }
   >.search-row {
-    @extend %search-row;
+    @include partials.search-row();
     position: relative;
     margin-bottom: 8px;
   }

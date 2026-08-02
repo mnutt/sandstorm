@@ -23,7 +23,7 @@
   }
 
   >.app-details-widget {
-    @extend %app-details-widget;
+    @include app-details-primitives.app-details-widget();
   }
   >.newer-version, >.older-version {
     background-color: color.adjust(colors.$app-details-background-color, $lightness: -10%);
@@ -36,13 +36,13 @@
   }
 
   >.search-row {
-    @extend %search-row;
+    @include partials.search-row();
     margin-bottom: 12px;
     clear: both;
   }
 
   >.trash-explanation {
-    @extend %trash-explanation;
+    @include grainlist-primitives.trash-explanation();
   }
 
   >.no-grains {
@@ -57,6 +57,6 @@
   }
 
   >table.grain-list-table {
-    @extend %grain-table;
+    @include grainlist-primitives.grain-table();
   }
 }

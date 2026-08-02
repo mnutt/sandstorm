@@ -60,7 +60,7 @@
   }
 
   .search-row {
-    @extend %search-row;
+    @include partials.search-row();
 
     flex: 1 1 auto;
     vertical-align: top;
@@ -73,7 +73,7 @@
   }
 
   >.trash-explanation {
-    @extend %trash-explanation;
+    @include grainlist-primitives.trash-explanation();
   }
 
   .usage-info {
@@ -85,7 +85,7 @@
   }
 
   >table {
-    @extend %grain-table;
+    @include grainlist-primitives.grain-table();
   }
 
   >.no-grains {

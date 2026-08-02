@@ -226,7 +226,7 @@
 
           .login-provider-icon {
             align-self: flex-start;
-            @extend %login-provider-icon;
+            @include partials.login-provider-icon();
             width: 32px;
             height: 24px;
           }
@@ -515,7 +515,7 @@
     justify-content: flex-start;
 
     .login-provider-icon {
-      @extend %login-provider-icon;
+      @include partials.login-provider-icon();
       flex: none;
       width: 36px;
       height: 36px;
@@ -590,7 +590,7 @@
 }
 
 .admin-invite-email-form, .admin-invite-button-form {
-  @extend %standard-form;
+  @include partials.standard-form();
 }
 
 .admin-invite-email-form {

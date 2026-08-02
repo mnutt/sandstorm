@@ -3,7 +3,7 @@
 @use "geometry";
 @use "partials";
 
-%trash-explanation {
+@mixin trash-explanation () {
   width: 100%;
   font-size: 10pt;
 
@@ -14,7 +14,11 @@
   }
 }
 
-%bulk-action-buttons {
+%trash-explanation {
+  @include trash-explanation();
+}
+
+@mixin bulk-action-buttons () {
   float: left;
   clear: left;
   >button {
@@ -31,7 +35,11 @@
   }
 }
 
-%grain-table {
+%bulk-action-buttons {
+  @include bulk-action-buttons();
+}
+
+@mixin grain-table () {
   width: 100%;
   padding: 0;
   margin: 8px 0 0 0;
@@ -164,4 +172,8 @@
       }
     }
   }
+}
+
+%grain-table {
+  @include grain-table();
 }

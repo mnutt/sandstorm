@@ -1109,7 +1109,7 @@ div.profile-editor {
   padding: 22px;
 
   form.account-profile-editor {
-    @extend %standard-form;
+    @include partials.standard-form();
     display: block;
 
     .inline-icon {
@@ -1748,7 +1748,7 @@ ul.credential-card-list {
   background-color: white;
 
   .login-provider-icon {
-    @extend %login-provider-icon;
+    @include partials.login-provider-icon();
     width: 52px;
     height: 52px;
     float: left;

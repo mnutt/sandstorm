@@ -3,7 +3,7 @@
 @use "geometry";
 @use "partials";
 
-%app-details-widget {
+@mixin app-details-widget () {
   margin: 0;
   padding: 0;
   position: relative;
@@ -197,4 +197,8 @@
       }
     }
   }
+}
+
+%app-details-widget {
+  @include app-details-widget();
 }

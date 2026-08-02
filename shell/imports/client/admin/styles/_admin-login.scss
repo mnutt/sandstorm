@@ -84,7 +84,7 @@
 }
 
 .setup-idp-form {
-  @extend %standard-form;
+  @include partials.standard-form();
   margin-bottom: 10px;
 
   textarea {

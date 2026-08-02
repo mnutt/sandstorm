@@ -1,6 +1,6 @@
 @use "partials";
 .admin-app-sources {
-  @extend %standard-form;
+  @include partials.standard-form();
 
   .save {
     @include partials.button-base();

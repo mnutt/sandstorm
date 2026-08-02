@@ -1,6 +1,6 @@
 @use "partials";
 .admin-networking {
-  @extend %standard-form;
+  @include partials.standard-form();
 
   textarea {
     min-height: 200px;

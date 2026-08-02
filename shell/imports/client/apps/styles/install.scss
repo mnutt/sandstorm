@@ -49,7 +49,7 @@
   #step-confirm {
     display: block;
     >.app-details-widget {
-      @extend %app-details-widget;
+      @include app-details-primitives.app-details-widget();
     }
     .confirm-form {
       display: block;

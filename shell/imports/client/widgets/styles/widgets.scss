@@ -50,7 +50,7 @@
 }
 
 .standard-form {
-  @extend %standard-form;
+  @include partials.standard-form();
 }
 
 .modal-backdrop {

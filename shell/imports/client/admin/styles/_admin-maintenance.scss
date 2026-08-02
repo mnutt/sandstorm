@@ -1,6 +1,6 @@
 @use "partials";
 .maintenance-message-form {
-  @extend %standard-form;
+  @include partials.standard-form();
 
   .save {
     @include partials.button-base();

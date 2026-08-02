@@ -24,12 +24,12 @@ form.stats-request {
 }
 
 form.stats-json {
-  @extend %standard-form;
+  @include partials.standard-form();
   max-width: 500px;
 }
 
 form.stats-toggle {
-  @extend %standard-form;
+  @include partials.standard-form();
   display: inline-block;
 }
 

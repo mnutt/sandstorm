@@ -1,6 +1,6 @@
 @use "partials";
 form.admin-personalization-form {
-  @extend %standard-form;
+  @include partials.standard-form();
 
   .logo {
     @include partials.pseudo-img-tag();

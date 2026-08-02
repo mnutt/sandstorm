@@ -160,7 +160,7 @@
   @include button-dark();
 }
 
-%standard-form {
+@mixin standard-form () {
   // Styles that we tend to reuse in forms, particularly in the admin panel.
   .form-group {
     margin-bottom: 10px;
@@ -258,7 +258,11 @@
   }
 }
 
-%search-row {
+%standard-form {
+  @include standard-form();
+}
+
+@mixin search-row () {
   // A search bar that grows to the size of its container.
   >label {
     display: flex;
@@ -290,7 +294,11 @@
   }
 }
 
-%login-provider-icon {
+%search-row {
+  @include search-row();
+}
+
+@mixin login-provider-icon () {
   display: inline-flex;
   flex-direction: row;
   align-items: center;
@@ -324,4 +332,8 @@
       background-image: url('/ldap.svg');
     }
   }
+}
+
+%login-provider-icon {
+  @include login-provider-icon();
 }

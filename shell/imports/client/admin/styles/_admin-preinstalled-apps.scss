@@ -3,7 +3,7 @@
 @use "partials";
 
 .admin-preinstalled-apps {
-  @extend %standard-form;
+  @include partials.standard-form();
 
   .save {
     @include partials.button-base();

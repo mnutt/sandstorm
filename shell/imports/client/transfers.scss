@@ -45,7 +45,7 @@
   }
 
   .grain-list {
-    @extend %grain-table;
+    @include grainlist-primitives.grain-table();
 
     .td-state {
       width: 32px;
