@@ -1,5 +1,6 @@
 const { defineConfig } = require("@meteorjs/rspack");
 const { IgnorePlugin } = require("@rspack/core");
+const path = require("node:path");
 
 module.exports = defineConfig((Meteor) => ({
   performance: {
@@ -30,6 +31,11 @@ module.exports = defineConfig((Meteor) => ({
             options: {
               api: "modern-compiler",
               implementation: require.resolve("sass-embedded"),
+              sassOptions: {
+                loadPaths: [
+                  path.resolve(__dirname, "client/styles"),
+                ],
+              },
             },
           },
         ],

@@ -5,7 +5,10 @@ import path from "node:path";
 import process from "node:process";
 
 const root = process.cwd();
-const stylesDir = path.join(root, "client", "styles");
+const styleRoots = [
+  path.join(root, "client", "styles"),
+  path.join(root, "imports", "client"),
+];
 
 const options = new Map();
 for (let i = 2; i < process.argv.length; i++) {
@@ -26,18 +29,19 @@ for (let i = 2; i < process.argv.length; i++) {
 
 const format = options.get("format") || "markdown";
 
-if (!fs.existsSync(stylesDir)) {
-  console.error(`Expected styles directory at ${stylesDir}`);
-  process.exit(1);
+for (const styleRoot of styleRoots) {
+  if (!fs.existsSync(styleRoot)) {
+    console.error(`Expected styles directory at ${styleRoot}`);
+    process.exit(1);
+  }
 }
 
-const styleFiles = fs.readdirSync(stylesDir)
-  .filter((name) => name.endsWith(".scss") || name.endsWith(".css"))
+const styleFiles = styleRoots
+  .flatMap((styleRoot) => collectStyleFiles(styleRoot))
   .sort();
 
 const inventory = styleFiles.map((fileName) => {
-  const fullPath = path.join(stylesDir, fileName);
-  const source = fs.readFileSync(fullPath, "utf8");
+  const source = fs.readFileSync(fileName, "utf8");
   const lines = source.split(/\r?\n/);
   const selectors = collectSelectors(lines);
   const imports = collectImports(source);
@@ -56,7 +60,7 @@ const inventory = styleFiles.map((fileName) => {
   };
 
   return {
-    file: path.relative(root, fullPath),
+    file: path.relative(root, fileName),
     imports,
     metrics,
     topLevelSelectors: selectors
@@ -87,7 +91,7 @@ const rankedRisk = [...inventory]
 
 const report = {
   generatedAt: new Date().toISOString(),
-  stylesDir: path.relative(root, stylesDir),
+  styleRoots: styleRoots.map((styleRoot) => path.relative(root, styleRoot)),
   totals,
   files: inventory,
   rankedRisk: rankedRisk.map(({ file, risk, metrics }) => ({ file, risk, metrics })),
@@ -110,6 +114,24 @@ function countMatches(source, pattern) {
 function collectImports(source) {
   return [...source.matchAll(/@(use|import|forward)\s+["']([^"']+)["']/g)]
     .map((match) => ({ type: match[1], target: match[2] }));
+}
+
+function collectStyleFiles(directory) {
+  const entries = fs.readdirSync(directory, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectStyleFiles(fullPath));
+    } else if (entry.isFile() || entry.isSymbolicLink()) {
+      if (entry.name.endsWith(".scss") || entry.name.endsWith(".css")) {
+        files.push(fullPath);
+      }
+    }
+  }
+
+  return files;
 }
 
 function collectSelectors(lines) {

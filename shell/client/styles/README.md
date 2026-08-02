@@ -69,4 +69,6 @@ npm run css:inventory -- --json
 ```
 
 Use the inventory to choose migration order, identify broad selectors, and
-verify that risk is going down as files move out of the global cascade.
+verify that risk is going down as files move out of the global cascade. The
+inventory scans both this legacy directory and migrated feature styles under
+`imports/client`.
