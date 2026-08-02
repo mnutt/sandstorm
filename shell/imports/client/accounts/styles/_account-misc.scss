@@ -1,0 +1,16 @@
+
+
+.user-confirm-delete {
+  .confirm, .feedback {
+    width: 100%;
+  }
+  .feedback {
+    margin-bottom: 10px;
+  }
+}
+
+.free-plan-going-away, .oasis-shutting-down {
+  margin: -1em 1em 0;
+  padding: 4px;
+  background-color: #ffdddd;
+}
