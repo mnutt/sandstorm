@@ -13,8 +13,9 @@ that render them.
 - `_colors.scss`, `_geometry.scss`, `_partials.scss`, `_icons.scss`, and
   `_focus.scss` are shared infrastructure, but they still contain legacy
   patterns that should be tightened during migration.
-- Files with `legacy` in the name are known cleanup targets, not examples to
-  copy.
+- Shell frame styles that still emit global selectors now live under
+  `imports/client/shell/styles`; grain frame and sharing styles live under
+  `imports/client/grain/styles`.
 
 ## Target Shape
 

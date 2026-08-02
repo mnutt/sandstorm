@@ -1,0 +1,79 @@
+@use "colors";
+@use "geometry";
+
+.main-content,
+.first-sign-in-main-content,
+.demo-expired-main-content,
+.credential-login-interstitial,
+.suspended-main-content {
+  margin: 0;
+  padding: 0;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0px;
+  color: colors.$default-content-foreground-color;
+  background-color: colors.$default-content-background-color;
+  overflow: auto;
+
+  @media #{geometry.$desktop} {
+    top: 32px;
+    left: geometry.$navbar-width-desktop;
+    &.shrink-navbar {
+      left: geometry.$navbar-width-desktop-shrunk;
+    }
+    &.hide-navbar {
+      left: 0;
+    }
+    transition: left 0.2s;
+  }
+  @media #{geometry.$mobile} {
+    top: 48px;
+  }
+  a {
+    font-weight: bold;
+    text-decoration: none;
+    color: colors.$darker-purple-color;
+  }
+}
+
+.main-content {
+  // intro.js needs this element to have some numeric z-index, so that
+  // it knows to add the introjs-fixParent class to it. We use 0 because
+  // that is the value Chrome gives this element anyway, without specifying
+  // it explicitly.
+  z-index: 0;
+}
+
+.main-content.standalone {
+  top: 0px;
+  left: 0px;
+}
+
+.centered-box {
+  margin: 16px auto;
+  max-width: 800px;
+  font-size: 125%;
+  h2 {
+    margin-top: 0;
+    font-size: 60px;
+  }
+  p {
+    margin-bottom: 0;
+  }
+  p:nth-child(1) {
+    margin-top: 0;
+  }
+}
+
+body.ios .main-content {
+  /* iOS Safari refuses to scroll iframes inside fixed position divs. So under iOS, we change the
+   * main-content div to be position relative and explicitly give it a size, so that the div is the
+   * one scrolling.
+   * -webkit-overflow-scrolling is a hint to iOS that the div should scroll correctly.
+   */
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+  width: 100%;
+  height: calc(100vh - #{geometry.$topbar-height-mobile});
+}
