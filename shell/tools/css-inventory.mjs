@@ -8,6 +8,8 @@ const root = process.cwd();
 const styleRoots = [
   path.join(root, "client", "styles"),
   path.join(root, "imports", "client"),
+  path.join(root, "imports", "sandstorm-ui-powerbox"),
+  path.join(root, "imports", "sandstorm-ui-topbar"),
 ];
 
 const options = new Map();
