@@ -55,7 +55,7 @@ const inventory = styleFiles.map((fileName) => {
     bytes: Buffer.byteLength(source),
     selectors: selectors.length,
     topLevelSelectors: selectors.filter((selector) => selector.indent === 0).length,
-    bodySelectors: selectors.filter((selector) => selector.selector.includes("body")).length,
+    bodySelectors: selectors.filter((selector) => isBodySelector(selector.selector)).length,
     idSelectors: selectors.filter((selector) => /(^|[\s>+~,])#[A-Za-z0-9_-]+/.test(selector.selector)).length,
     important: countMatches(source, /!important/g),
     extends: countMatches(source, /@extend\b/g),
@@ -126,6 +126,10 @@ function printHelp() {
 
 function countMatches(source, pattern) {
   return [...source.matchAll(pattern)].length;
+}
+
+function isBodySelector(selector) {
+  return /(^|[\s>+~,(])body(?=$|[\s.#:[>+~,)])/.test(selector);
 }
 
 function collectImports(source) {
