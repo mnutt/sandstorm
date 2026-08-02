@@ -183,6 +183,10 @@ function checkOrganization(report) {
       errors.push(`${item.file} lives in client/styles; colocate feature styles under imports/ instead.`);
     }
 
+    if (item.file.startsWith("imports/") && !item.file.includes("/styles/")) {
+      errors.push(`${item.file} lives outside a styles/ directory; colocate feature styles under their owner.`);
+    }
+
     if (item.file === "client/styles/shell.scss") {
       for (const styleImport of item.imports) {
         if (!allowedShellImports.has(styleImport.target)) {
