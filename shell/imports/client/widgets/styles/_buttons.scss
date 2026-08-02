@@ -1,0 +1,32 @@
+@use "partials";
+
+.button-primary {
+  @include partials.button-base();
+  @include partials.button-primary();
+}
+
+.button-secondary {
+  @include partials.button-base();
+  @include partials.button-secondary();
+}
+
+.button-danger {
+  @include partials.button-base();
+  @include partials.button-danger();
+}
+
+.button-link {
+  background: none;
+  border: none;
+  display: inline;
+  font-weight: normal;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+button.upgrade-plan-now {
+  float: right;
+  margin: 6px;
+}

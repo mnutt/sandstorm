@@ -1,0 +1,22 @@
+@use "colors";
+
+.flash-message {
+  border-radius: 5px;
+  padding: 16px;
+}
+
+.error-message {
+  background-color: colors.$error-background-color;
+}
+
+.warning-message {
+  background-color: colors.$warning-background-color;
+}
+
+.success-message {
+  background-color: colors.$success-background-color;
+}
+
+.info-message {
+  background-color: colors.$info-background-color;
+}

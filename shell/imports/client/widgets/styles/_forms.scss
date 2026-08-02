@@ -1,0 +1,5 @@
+@use "partials";
+
+.standard-form {
+  @include partials.standard-form();
+}
