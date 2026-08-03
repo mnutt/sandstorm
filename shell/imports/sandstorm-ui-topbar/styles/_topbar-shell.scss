@@ -1,0 +1,63 @@
+@use "colors";
+@use "geometry";
+@use "topbar-primitives";
+
+.sandstorm-topbar {
+  position: fixed;
+  top: 0;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  text-align: left;
+
+  line-height: 32px;
+  height: 32px;
+  background-color: colors.$topbar-background-color;
+  color: #ccc;
+
+  // Using 0 rather than CSS default ("auto") allows introjs to highlight elements in the topbar.
+  z-index: 0;
+
+  &.standalone {
+    display: none;
+  }
+
+  @media #{geometry.$mobile} {
+    line-height: 48px;
+    height: 48px;
+    // TODO(now): figure out if these colors should be different
+    //background-color: #eee;
+    //color: black;
+    transition: height 0.2s;
+
+    &.expanded {
+      height: 100%;
+      box-shadow: 0px 2px 2px rgba(0, 0, 0, 0.2);
+      // We avoid placing a z-index on the topbar when not expanded, lest modal dialogs
+      // that don't live at the same depth in the DOM be made unable to cover the topbar.
+      z-index: 100;
+      overflow-y: auto;
+    }
+  }
+
+  >ul>li, >ul>ul>li, >ul>ul>ul>li {
+    // Each "item" in the topbar is an <li>, so this style applies to all of them.
+
+    display: inline-block;
+    list-style-type: none;
+    vertical-align: top;
+
+    >button.show-popup {
+      @include topbar-primitives.topbar-button();
+    }
+
+    @media #{geometry.$mobile} {
+      display: block;
+      float: none;
+      width: 100%;
+      height: 49px;
+      border-bottom: 1px solid #ddd;
+      padding: 0;
+    }
+  }
+}
