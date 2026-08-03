@@ -1,62 +1,7 @@
-@use "sass:color";
-@use "colors";
-@use "../../grain/styles/grainlist-primitives";
-@use "app-details-primitives";
-@use "geometry";
-@use "partials";
-
-.app-details {
-  position: relative;
-  @media #{geometry.$desktop} {
-    padding: 24px 32px;
-  }
-  @media #{geometry.$mobile} {
-    padding: 0px 8px;
-  }
-  background-color: colors.$app-details-background-color;
-  color: colors.$app-details-foreground-color;
-
-  &.dev-background {
-    background-image: url("/devmode.png");
-    background-size: auto;
-    background-color: #ccc;
-  }
-
-  >.app-details-widget {
-    @include app-details-primitives.app-details-widget();
-  }
-  >.newer-version, >.older-version {
-    background-color: color.adjust(colors.$app-details-background-color, $lightness: -10%);
-    >p {
-      >button {
-        @include partials.button-base();
-        @include partials.button-primary();
-      }
-    }
-  }
-
-  >.search-row {
-    @include partials.search-row();
-    margin-bottom: 12px;
-    clear: both;
-  }
-
-  >.trash-explanation {
-    @include grainlist-primitives.trash-explanation();
-  }
-
-  >.no-grains {
-    width: 100%;
-    background-color: white;
-    overflow: hidden;  // don't let margins escape box
-    >p {
-      max-width: 400px;
-      margin-left: auto;
-      margin-right: auto;
-    }
-  }
-
-  >table.grain-list-table {
-    @include grainlist-primitives.grain-table();
-  }
-}
+@use "app-details-frame";
+@use "app-details-widget";
+@use "app-details-version-notice";
+@use "app-details-search";
+@use "app-details-trash";
+@use "app-details-empty";
+@use "app-details-grain-table";

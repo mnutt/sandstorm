@@ -1,0 +1,22 @@
+.modal-close-button {
+  display: block;
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 32px;
+  height: 32px;
+  color: transparent;
+  overflow: hidden;
+  background-image: url("/close-m.svg");
+  background-size: 20px 20px;
+  background-repeat: no-repeat;
+  background-position: center;
+  border: none;
+  border-radius: 16px;
+  background-color: transparent;
+  margin: 0;
+  &:hover {
+    background-color: #eee;
+    cursor: pointer;
+  }
+}

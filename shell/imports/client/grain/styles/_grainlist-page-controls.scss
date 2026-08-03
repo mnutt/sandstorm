@@ -1,0 +1,30 @@
+@use "geometry";
+@use "partials";
+
+.grain-list {
+  >.maybe-row {
+    margin-bottom: 12px;
+    @media #{geometry.$desktop} {
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+    @media #{geometry.$mobile} {
+      display: block;
+    }
+  }
+
+  .search-row {
+    @include partials.search-row();
+
+    flex: 1 1 auto;
+    vertical-align: top;
+    clear: both;
+
+    @media #{geometry.$mobile} {
+      display: block;
+      margin-bottom: 12px;
+    }
+  }
+}

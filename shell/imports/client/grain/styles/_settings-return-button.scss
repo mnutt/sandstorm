@@ -1,0 +1,8 @@
+@use "partials";
+
+.grain-settings {
+  .grain-settings-return-to-grain-button {
+    @include partials.button-base();
+    @include partials.button-secondary();
+  }
+}

@@ -1,0 +1,7 @@
+@use "grainlist-primitives";
+
+.grain-list {
+  >table {
+    @include grainlist-primitives.grain-table();
+  }
+}

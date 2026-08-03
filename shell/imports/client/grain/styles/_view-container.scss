@@ -1,0 +1,14 @@
+div.grain-container {
+  &.active-grain {
+    z-index: 0;
+    background: white;
+  }
+  &.inactive-grain {
+    z-index: -2;
+    display: none;
+  }
+  .signin-frame {
+    position: absolute;
+    z-index: 100;
+  }
+}

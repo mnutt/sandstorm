@@ -1,0 +1,9 @@
+@use "partials";
+
+.app-details {
+  >.search-row {
+    @include partials.search-row();
+    margin-bottom: 12px;
+    clear: both;
+  }
+}

@@ -1,0 +1,7 @@
+@use "../../grain/styles/grainlist-primitives";
+
+.app-details {
+  >.trash-explanation {
+    @include grainlist-primitives.trash-explanation();
+  }
+}

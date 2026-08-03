@@ -1,0 +1,12 @@
+.modal-content {
+  min-height: 32px;
+  background-color: #fff;
+  opacity: 1;
+  padding: 24px;
+  >h2 {
+    font-weight: normal;
+    margin: 0;
+    margin-bottom: 24px;
+    border-bottom: 1px solid #ddd;
+  }
+}

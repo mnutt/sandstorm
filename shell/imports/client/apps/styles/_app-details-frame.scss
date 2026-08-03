@@ -1,0 +1,20 @@
+@use "colors";
+@use "geometry";
+
+.app-details {
+  position: relative;
+  @media #{geometry.$desktop} {
+    padding: 24px 32px;
+  }
+  @media #{geometry.$mobile} {
+    padding: 0px 8px;
+  }
+  background-color: colors.$app-details-background-color;
+  color: colors.$app-details-foreground-color;
+
+  &.dev-background {
+    background-image: url("/devmode.png");
+    background-size: auto;
+    background-color: #ccc;
+  }
+}

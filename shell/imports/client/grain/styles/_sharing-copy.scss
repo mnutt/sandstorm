@@ -1,0 +1,14 @@
+.topbar-popup {
+  a.copy-me {
+    // A link which is intended to be copy/pasted, not followed. Clicking on the link will select
+    // it for copying.
+
+    display: block;
+    margin: 8px;
+    border: 1px solid #ccc;
+    overflow: hidden;
+    font-family: monospace;
+    text-decoration: none;
+    color: inherit;
+  }
+}

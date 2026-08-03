@@ -1,0 +1,44 @@
+@use "colors";
+
+.grain-settings {
+  table {
+    border-collapse: collapse;
+    border: 1px solid colors.$default-table-border-color;
+    width: 100%;
+  }
+
+  th {
+    text-align: left;
+    font-weight: 400;
+  }
+  th:not(:last-child) {
+    border-right: solid 1px white;
+  }
+
+  td {
+    border-right: none;
+    border-left: none;
+  }
+
+  tr {
+    color: colors.$default-table-row-foreground-color;
+    background-color: colors.$default-table-row-background-color;
+  }
+  tr:hover {
+    background-color: colors.$default-table-row-background-color-hover;
+  }
+
+  tr {
+    width: 100%;
+    min-height: 32px;
+    margin-bottom: 1px;
+  }
+
+  tr.header-row {
+    background-color: colors.$default-table-header-background-color;
+    color: colors.$default-table-header-foreground-color;
+  }
+  th:hover {
+    background-color: colors.$default-table-header-background-color-hover;
+  }
+}

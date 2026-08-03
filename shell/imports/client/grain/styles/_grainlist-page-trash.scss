@@ -1,0 +1,7 @@
+@use "grainlist-primitives";
+
+.grain-list {
+  >.trash-explanation {
+    @include grainlist-primitives.trash-explanation();
+  }
+}
