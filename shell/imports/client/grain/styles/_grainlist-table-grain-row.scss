@@ -1,0 +1,14 @@
+@use "colors";
+
+@mixin grain-table-grain-row () {
+  >tbody>tr {
+    &.grain {
+      .click-to-go {
+        cursor: pointer;
+      }
+      &:hover {
+        background-color: colors.$grainlist-table-row-background-color-hover;
+      }
+    }
+  }
+}

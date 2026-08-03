@@ -1,0 +1,25 @@
+@use "geometry";
+
+@mixin grain-table-row-cells () {
+  >tbody>tr {
+    >td {
+      &.grain-size {
+        width: 70px;
+        // The mobile viewport is too small to display this much text
+        @media #{geometry.$mobile} {
+          display: none;
+        }
+      }
+      &.last-used {
+        width: 110px;
+      }
+      &.shared-or-owned {
+        width: 110px;
+        // The mobile viewport is too small to display this much text
+        @media #{geometry.$mobile} {
+          display: none;
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+@use "colors";
+@use "partials";
+
+@mixin grain-table-action-row () {
+  >tbody>tr {
+    &.action {
+      cursor: pointer;
+      background-color: colors.$grainlist-table-row-action-background-color;
+      &:hover {
+        background-color: colors.$grainlist-table-row-action-background-color-hover;
+        >td>.new-grain-icon {
+          background-image: url("/plus-6A237C.svg");
+        }
+      }
+      >td.td-app-icon {
+        font-weight: bold;
+        font-size: 32px;
+        color: #9E40B5;
+      }
+      >td {
+        >.new-grain-icon {
+          @include partials.pseudo-img-tag();
+          width: 24px;
+          height: 24px;
+          background-image: url("/plus-9E40B5.svg");
+        }
+      }
+      button {
+        @include partials.unstyled-button();
+        color: black;
+        font-weight: bold;
+      }
+    }
+  }
+}

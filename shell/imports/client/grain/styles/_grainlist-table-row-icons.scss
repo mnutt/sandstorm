@@ -1,0 +1,29 @@
+@use "icon-api";
+@use "partials";
+
+@mixin grain-table-row-icons () {
+  >tbody>tr {
+    >td {
+      &.td-app-icon {
+        >.app-icon {
+          @include partials.pseudo-img-tag();
+          width: 24px;
+          height: 24px;
+        }
+        width: 64px;
+        padding-left: 16px;
+        &.in-trash {
+          padding-left: 30px;
+
+          @include icon-api.icon("trash");
+          &::before {
+            position: absolute;
+            left: 4px;
+            top: 4px;
+            font-size: 20px;
+          }
+        }
+      }
+    }
+  }
+}
