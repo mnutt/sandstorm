@@ -1,0 +1,19 @@
+@use "partials";
+
+.admin-user-table {
+  div.actions {
+    flex: none;
+    width: 70px;
+
+    &[role=gridcell] {
+      text-align: right;
+
+      .manage-user-button {
+        display: inline-block;
+        font-weight: normal;
+        @include partials.button-base();
+        @include partials.button-secondary();
+      }
+    }
+  }
+}
