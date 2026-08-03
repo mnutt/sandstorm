@@ -1,0 +1,15 @@
+@use "partials";
+
+.main-content>.account {
+  .verified-emails-editor {
+    .add-new {
+      div.button-box {
+        display: inline-block;
+        >button {
+          @include partials.button-base();
+          @include partials.button-secondary();
+        }
+      }
+    }
+  }
+}
