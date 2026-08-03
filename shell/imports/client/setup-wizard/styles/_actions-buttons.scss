@@ -1,0 +1,29 @@
+@use "partials";
+
+.setup-next-button {
+  @include partials.button-base();
+  @include partials.button-primary();
+  margin-left: 10px;
+}
+
+.setup-back-button {
+  @include partials.button-base();
+  @include partials.button-secondary();
+  margin-right: auto;
+}
+
+.setup-test-email-button, .setup-skip-email, .setup-skip-button {
+  @include partials.button-base();
+  @include partials.button-secondary();
+  margin-left: 10px;
+}
+
+.setup-button-primary {
+  @include partials.button-base();
+  @include partials.button-primary();
+}
+
+.setup-button-secondary {
+  @include partials.button-base();
+  @include partials.button-secondary();
+}

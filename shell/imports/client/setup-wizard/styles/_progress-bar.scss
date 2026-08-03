@@ -1,0 +1,18 @@
+.setup-progress-bar {
+  display: flex;
+  >* {
+    flex: 1;
+    height: 12px;
+    border-left: 1px solid #9A94A0;
+  }
+  :last-child {
+    border-right: 1px solid #9A94A0;
+  }
+
+  .complete {
+    background-color: #6e3c8e;
+  }
+  .incomplete {
+    background-color: #e9e4ef;
+  }
+}

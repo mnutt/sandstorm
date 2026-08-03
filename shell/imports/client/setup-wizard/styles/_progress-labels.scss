@@ -1,0 +1,42 @@
+.setup-progress {
+  margin-bottom: 32px;
+}
+
+.setup-progress-labels {
+  margin-top: 0;
+  margin-bottom: 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.setup-current-step {
+  color: black;
+}
+
+span.setup-not-current-step {
+  color: #888;
+}
+
+a.setup-not-current-step {
+  text-decoration: none;
+}
+
+.setup-progress-step {
+  // base percent to flex: should be 100%/(num_steps + 1) to make the steps' labels line up with
+  // the endpoints of the progress bars below, but the number of steps varies, so we need to set
+  // the size depending on how many there are.
+  &.of-four {
+    flex: 0 1 20%;
+  }
+  &.of-five {
+    flex: 0 1 16.66%;
+  }
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+}

@@ -1,0 +1,15 @@
+@use "partials";
+
+.make-self-admin, .sign-in-button, .admin-settings-button, .rerun-wizard-button {
+  @include partials.button-base();
+  display: block;
+  width: 200px;
+}
+
+.make-self-admin, .sign-in-button, .admin-settings-button {
+  @include partials.button-primary();
+}
+
+.rerun-wizard-button {
+  @include partials.button-secondary();
+}

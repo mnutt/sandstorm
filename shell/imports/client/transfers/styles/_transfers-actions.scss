@@ -1,0 +1,22 @@
+@use "partials";
+
+.transfers {
+  button.cancel, button.deny {
+    @include partials.button-base();
+    @include partials.button-danger();
+  }
+
+  button.accept, button.continue, button.start, button.finish {
+    @include partials.button-base();
+    @include partials.button-primary();
+  }
+
+  button.pause, button.clear-errors {
+    @include partials.button-base();
+    @include partials.button-secondary();
+  }
+
+  input[name="destination"] {
+    width: 200px;
+  }
+}

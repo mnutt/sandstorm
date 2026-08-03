@@ -1,0 +1,17 @@
+@use "partials";
+
+.sandstorm-logo-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.sandstorm-logo {
+  display: block;
+  flex: none;
+  width: 200px;
+  height: 200px;
+  @include partials.pseudo-img-tag();
+  background-image: url('/sandstorm-gradient-logo.svg')
+}
