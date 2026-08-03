@@ -1,0 +1,29 @@
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.subscriptions {
+    >.subscription {
+      >table {
+        tr:nth-child(3)>td {
+          >p:nth-child(1) {
+            text-transform: capitalize;
+          }
+
+          >p:nth-child(2) {
+            font-size: 12px;
+          }
+        }
+
+        tr:nth-child(4) {
+          border-bottom: 0px;
+
+          >td>p:nth-child(2) {
+            font-size: 12px;
+          }
+          >td>p.no-free {
+            font-size: 16px;
+            padding: 0 16px;
+          }
+        }
+      }
+    }
+  }
+}
