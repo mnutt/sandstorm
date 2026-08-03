@@ -1,0 +1,30 @@
+@use "geometry";
+@use "partials";
+
+.app-list {
+  >.app-button, >.popular-container>.app-button {
+    @include partials.unstyled-button();
+    float: left;
+    display: block;
+    // Browsers render button contents vertically-centered by default.
+    // I can't figure out how to suggest that the browser align contents to the top instead, so I
+    // specify position: relative here and position: absolute for the image and text label.
+    position: relative;
+    @media #{geometry.$desktop} {
+      width: 148px;
+      height: 200px;
+      margin-left: 10px;
+      margin-right: 10px;
+      margin-bottom: 20px;
+    }
+    @media #{geometry.$mobile} {
+      width: 74px;
+      height: 102px;
+      margin-left: 5px;
+      margin-right: 5px;
+      margin-bottom: 10px;
+    }
+    //box-shadow: 0 0 1px black;
+    overflow: hidden;
+  }
+}

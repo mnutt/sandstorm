@@ -1,0 +1,45 @@
+@use "colors";
+@use "geometry";
+@use "partials";
+
+.app-list {
+  >.app-button, >.popular-container>.app-button {
+    @mixin apptext () {
+      @include partials.overflow-ellipsis();
+      position: absolute;
+      left: 0px;
+      width: 100%;
+      vertical-align: top;
+      text-align: left;
+      @media #{geometry.$desktop} {
+        margin-left: 10px;
+      }
+      @media #{geometry.$mobile} {
+        margin-left: 5px;
+      }
+    }
+    >.app-title, >.action-title {
+      @include apptext();
+      @media #{geometry.$desktop} {
+        top: 148px;
+        font-size: 14pt;
+      }
+      @media #{geometry.$mobile} {
+        top: 74px;
+        font-size: 8pt;
+      }
+    }
+    >.action-text {
+      @include apptext();
+      color: colors.$applist-action-text-color;
+      @media #{geometry.$desktop} {
+        top: 168px;
+        font-size: 13pt;
+      }
+      @media #{geometry.$mobile} {
+        top: 88px;
+        font-size: 8pt;
+      }
+    }
+  }
+}
