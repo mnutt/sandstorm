@@ -1,0 +1,25 @@
+@use "geometry";
+
+.topbar-popup.billing-prompt>.frame-container {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+
+  @media #{geometry.$desktop} {
+    width: 932px;
+    max-width: 90%;
+    margin: 0 auto;
+    position: relative;
+    border: 1px solid #ccc;  // prevent margin collapse
+  }
+
+  @media #{geometry.$mobile} {
+    max-width: 500px;
+  }
+
+  iframe.billing-prompt-local {
+    width: 100%;
+    height: 600px;
+    margin: 0px;
+    border: none;
+  }
+}
