@@ -1,0 +1,10 @@
+@use "partials";
+
+.setup-idp-form {
+  @include partials.standard-form();
+  margin-bottom: 10px;
+
+  textarea {
+    min-height: 200px;
+  }
+}

@@ -1,0 +1,23 @@
+@use "partials";
+
+.idp-modal-button-row {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-start;
+  justify-content: flex-start;
+  .idp-modal-save {
+    @include partials.button-base();
+    @include partials.button-primary();
+    margin-left: 10px;
+  }
+  .idp-modal-cancel {
+    @include partials.button-base();
+    @include partials.button-secondary();
+    margin-left: 10px;
+  }
+  .idp-modal-disable {
+    @include partials.button-base();
+    @include partials.button-danger();
+    margin-left: 10px;
+  }
+}
