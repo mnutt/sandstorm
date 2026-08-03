@@ -1,0 +1,23 @@
+@use "colors";
+@use "geometry";
+
+.sandstorm-topbar {
+  >.menubar {
+    padding-left: 0;
+    margin-left: 0;
+    border-bottom: 1px solid colors.$topbar-border-color;
+    overflow: hidden;
+    @media #{geometry.$desktop} {
+      height: geometry.$topbar-height-desktop;
+      &.shrink-desktop {
+        >.home-button {
+          width: geometry.$navbar-width-desktop-shrunk;
+          >a {
+            width: geometry.$navbar-width-desktop-shrunk;
+            padding-right: 0;
+          }
+        }
+      }
+    }
+  }
+}

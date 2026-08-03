@@ -1,0 +1,11 @@
+@use "geometry";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.grain-size {
+      @media #{geometry.$mobile} {
+        display: none;
+      }
+    }
+  }
+}

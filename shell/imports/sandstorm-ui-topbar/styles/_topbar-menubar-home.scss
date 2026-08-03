@@ -1,0 +1,41 @@
+@use "colors";
+@use "geometry";
+@use "partials";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.home-button {
+      @media #{geometry.$desktop} {
+        width: geometry.$navbar-width-desktop;
+        transition: width 0.2s;
+        float:left;
+        overflow: hidden;
+
+        >a {
+          @include partials.overflow-ellipsis();
+          color: inherit;
+          margin: 0px;
+          text-decoration: none;
+          height: geometry.$topbar-height-desktop;
+          padding-left: geometry.$navbar-width-desktop-shrunk;
+          padding-right: 8px;
+
+          background-image: url("/icon.png");
+          background-repeat: no-repeat;
+          background-position: 16px center, 6px 24px;
+          background-size: auto, 16px 8px;
+
+          &:hover {
+            background-color: colors.$topbar-background-color-hover;
+            color: colors.$topbar-foreground-color-hover;
+          }
+        }
+      }
+
+      @media #{geometry.$mobile} {
+        // Hide home link -- it's not very useful anyway.
+        display: none;
+      }
+    }
+  }
+}
