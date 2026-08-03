@@ -1,0 +1,85 @@
+@use "payment-iframe-primitives";
+
+div.billing {
+  >section.payment-methods {
+    >table {
+      >tbody {
+        >tr {
+          >td {
+            button {
+              background-color: transparent;
+              border: 1px solid #a199ad;
+              color: #5d5d5d;
+              cursor: pointer;
+              text-transform: uppercase;
+              border-radius: 2px;
+
+              &:hover {
+                color: #65468e;
+                background-color: #e6e1f4;
+              }
+            }
+
+            &.add-new-card {
+              position: relative;
+              text-align: left;
+
+              &.iframe-active {
+                position: static;
+              }
+
+              button {
+                padding: 2px 4px;
+                font-size: 16px;
+                font-weight: bold;
+                border-color: #6d6d6d;
+                color: #6d6d6d;
+
+                &:hover {
+                  background-color: white;
+                }
+                margin-right: 16px;
+              }
+
+              &:hover button {
+                background-color: white;
+              }
+              &:hover {
+                cursor: pointer;
+              }
+
+              >.mobile-iframe-hack {
+                position: absolute;
+                height: 24px;
+                width: 300px;
+                &.fullscreen {
+                  @include payment-iframe-primitives.fullscreen-iframe-hack();
+                }
+              }
+            }
+            &.checkbox {
+              >label {
+                font-size: 0;
+                position: relative;
+                display: inline-block;
+                vertical-align: top;
+                width: 16px;
+                height: 16px;
+                border: 1px solid #aaa;
+                cursor: pointer;
+                border-radius: 2px;
+                >input {
+                  visibility: hidden;
+                }
+                &.selected {
+                  background: #aaa;
+                  cursor: auto;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

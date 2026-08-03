@@ -1,0 +1,51 @@
+@use "colors";
+
+div.billing {
+  >section.payment-methods {
+    >table {
+      text-align: left;
+      width: 100%;
+      border-collapse: collapse;
+      border-spacing: 0;
+
+      >thead {
+        td {
+          border-right: 1px solid colors.$default-content-background-color;
+          background-color: #ccc;
+          padding-left: 10px;
+        }
+      }
+
+      td:nth-child(1) {
+        width: 75px;
+        text-align: center;
+      }
+
+      td:nth-child(2) {
+        width: 200px;
+        padding-right: 16px;
+        text-align: right;
+      }
+
+      td:nth-child(3) {
+        width: 75px;
+        text-align: center;
+      }
+
+      td:nth-child(4) {
+        width: 50px;
+        text-align: center;
+      }
+
+      >tbody {
+        background-color: white;
+        >tr {
+          border-bottom: 1px solid #ccc;
+          >td {
+            height: 2em;
+          }
+        }
+      }
+    }
+  }
+}
