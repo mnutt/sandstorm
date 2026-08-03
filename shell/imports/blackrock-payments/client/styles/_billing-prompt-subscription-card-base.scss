@@ -1,0 +1,31 @@
+@use "payment-iframe-primitives";
+
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.subscriptions {
+    >.subscription {
+      display: inline-block;
+      width: 180px;
+      margin: 4px;
+      padding: 0px;
+      cursor: pointer;
+      text-align: center;
+
+      position: relative;
+
+      &.iframe-active {
+        position: static;
+      }
+
+      >.mobile-iframe-hack {
+        position: absolute;
+        height: 100%;
+        width: 100%;
+        top: 0px;
+        left: 0px;
+        &.fullscreen {
+          @include payment-iframe-primitives.fullscreen-iframe-hack();
+        }
+      }
+    }
+  }
+}
