@@ -1,0 +1,30 @@
+div.billing {
+  div.usage {
+    table {
+      width: 100%;
+    }
+
+    tr:first-of-type {
+      height: 48px;
+      font-size: 18px;
+    }
+    td {
+      vertical-align: top;
+      padding-bottom: 1em;
+
+      p {
+        margin-top: 0;
+        margin-bottom: 0.7em;
+      }
+      p:last-child {
+        margin-bottom: 0;
+      }
+      &.current-plan {
+        position: relative;
+      }
+    }
+    td:first-of-type {
+      width: 140px;
+    }
+  }
+}

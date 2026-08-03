@@ -1,0 +1,32 @@
+div.billing {
+  >section.payment-methods {
+    >table {
+      >tbody {
+        >tr {
+          >td {
+            &.checkbox {
+              >label {
+                font-size: 0;
+                position: relative;
+                display: inline-block;
+                vertical-align: top;
+                width: 16px;
+                height: 16px;
+                border: 1px solid #aaa;
+                cursor: pointer;
+                border-radius: 2px;
+                >input {
+                  visibility: hidden;
+                }
+                &.selected {
+                  background: #aaa;
+                  cursor: auto;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
