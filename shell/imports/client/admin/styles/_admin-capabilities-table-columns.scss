@@ -1,0 +1,20 @@
+.admin-caps-table {
+  .grant-by {
+    width: 218px; // Width of an identity-card
+    flex: none;
+  }
+
+  .grant-to {
+    flex: 1 1 auto;
+  }
+
+  .grant-time {
+    width: 100px;
+    flex: none;
+  }
+
+  .actions {
+    width: 70px;
+    flex: none;
+  }
+}
