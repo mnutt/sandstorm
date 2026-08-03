@@ -1,0 +1,13 @@
+.topbar-popup {
+  &.notifications {
+    >.frame-container {
+      width: 400px;
+      >.frame>h4 {
+        margin: 0;
+      }
+
+      // TODO(soon): This makes the little triangle pointing at the top bar disappear. :(
+      overflow: auto;
+    }
+  }
+}

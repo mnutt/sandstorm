@@ -1,0 +1,19 @@
+.topbar-popup {
+  &.notifications {
+    ul.notification-list {
+      list-style: outside none none;
+      padding: 0px;
+      margin: 0;
+      &:last-child {
+        margin: 0;
+      }
+
+      >li {
+        border-bottom: 1px solid #ccc;
+        &:last-child {
+          border-bottom: 0px;
+        }
+      }
+    }
+  }
+}
