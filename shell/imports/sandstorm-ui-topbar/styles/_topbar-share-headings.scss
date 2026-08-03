@@ -1,0 +1,28 @@
+@use "geometry";
+@use "partials";
+
+.topbar-popup {
+  &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
+    $popup-background-color: #ededed;
+
+    >h4 {
+      text-transform: uppercase;
+      background-color: $popup-background-color;
+      margin-bottom: 0;
+      padding: geometry.$topbar-popup-padding 20px;
+    }
+
+    >h4.share-with-others {
+      border-bottom: none;
+      padding-bottom: 30px;
+    }
+    >h4.who-has-access {
+      padding-bottom: geometry.$topbar-popup-padding;
+      border-bottom: 1px solid #ccc;
+    }
+
+    button.who-has-access {
+      @include partials.unstyled-button();
+    }
+  }
+}
