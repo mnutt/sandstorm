@@ -1,0 +1,18 @@
+@use "colors";
+
+.admin-user-table {
+  .account-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    background-color: colors.$default-table-row-background-color;
+    cursor: pointer;
+    &:not(:last-child) {
+      border-bottom: 1px solid #dddddd;
+    }
+    &:hover {
+      background-color: colors.$default-table-row-background-color-hover;
+    }
+  }
+}

@@ -1,0 +1,37 @@
+@use "colors";
+@use "partials";
+
+.admin-user-table {
+  .invite-row {
+    height: 36px;
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    background-color: colors.$default-table-row-action-background-color;
+    cursor: pointer;
+
+    .plus-icon {
+      @include partials.pseudo-img-tag();
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      background-image: url("/plus-9E40B5.svg");
+    }
+
+    &:hover {
+      background-color: colors.$default-table-row-action-background-color-hover;
+      .plus-icon {
+        background-image: url("/plus-6A237C.svg");
+      }
+    }
+
+    .invite-link {
+      padding-left: 8px;
+      padding-top: 8px;
+      >a {
+        color: #000000;
+      }
+    }
+  }
+}

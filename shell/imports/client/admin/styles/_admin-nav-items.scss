@@ -1,0 +1,42 @@
+@use "colors";
+
+.nav-items {
+  margin: 0;
+  padding: 0;
+  font-size: 16px;
+
+  >li {
+    list-style-type: none;
+    display: block;
+
+    a {
+      display: block;
+
+      border: 1px solid #e8e8e8;
+      border-radius: 4px;
+
+      min-height: 32px;
+      padding: 8px 8px;
+      margin-bottom: 4px;
+
+      font-weight: normal;
+      color: black;
+      background-color: #fff;
+      &:hover {
+        background-color: #d8d8d8;
+      }
+
+      .item-name {
+        color: colors.$darker-purple-color;
+        font-weight: 600;
+        font-size: 16px;
+      }
+
+      .item-subtext {
+        font-size: 14px;
+        color: #666;
+      }
+    }
+  }
+
+}

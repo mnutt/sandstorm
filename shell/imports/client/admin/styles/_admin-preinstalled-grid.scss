@@ -1,0 +1,67 @@
+@use "icon-api";
+@use "colors";
+@use "partials";
+
+.admin-preinstalled-apps {
+  [role=grid] {
+    [role=row] {
+      display: flex;
+      flex-direction: row;
+      justify-content: flex-start;
+      border-top: 1px solid colors.$default-table-border-color;
+      flex-basis: 0;
+      width: 100%;
+
+      &.checked, &.toggle-more {
+        background-color: white;
+        [role=row] {
+          border-top: 1px solid colors.$default-content-background-color;
+        }
+      }
+
+      &.toggle-more {
+        cursor: pointer;
+        div {
+          margin-left: auto;
+        }
+      }
+
+      [role=gridcell] {
+        padding: 4px;
+        overflow: hidden;
+        @include partials.overflow-ellipsis();
+        flex-grow: 0;
+        &.name {
+          width: 20%;
+        }
+        &.description {
+          width: 70%;
+          color: #888888;
+        }
+        &.download {
+          width: 130px;
+          color: #888888;
+          i.download-checkmark {
+            color: green;
+            @include icon-api.icon-element("check");
+            margin-right: 5px;
+          }
+          i.download-x-mark {
+            color: red;
+            @include icon-api.icon-element("plus");
+            margin-right: 5px;
+            -ms-transform: rotate(45deg);
+            -webkit-transform: rotate(45deg);
+            transform: rotate(45deg);
+          }
+          progress {
+            width: 115px;
+            &::-webkit-progress-value {
+              background-color: green;
+            }
+          }
+        }
+      }
+    }
+  }
+}

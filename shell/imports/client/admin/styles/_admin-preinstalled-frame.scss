@@ -1,0 +1,23 @@
+@use "partials";
+
+.admin-preinstalled-apps {
+  @include partials.standard-form();
+
+  .save {
+    @include partials.button-base();
+    @include partials.button-primary();
+    margin-left: 10px;
+  }
+
+  .productivity-suite, .system-suite {
+    margin-bottom: 40px;
+  }
+
+  .toggle-more {
+    color: #888888;
+
+    button {
+      @include partials.unstyled-button();
+    }
+  }
+}

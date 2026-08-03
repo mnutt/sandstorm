@@ -1,0 +1,21 @@
+.admin-users-profile-information {
+  .profile-handle {
+    .profile-handle-decorator {
+      flex: none;
+      display: inline-flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      font-weight: bold;
+      color: #cccccc;
+    }
+    code {
+      flex: 1 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-left: 8px;
+    }
+  }
+}
