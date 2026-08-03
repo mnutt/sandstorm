@@ -1,0 +1,53 @@
+@use "about-primitives";
+@use "geometry";
+
+.referrals {
+  section {
+    @include about-primitives.content-section();
+    width: 100%;
+    padding-left: 50px;
+    padding-right: 50px;
+    padding-top: 40px;
+    padding-bottom: 75px;
+
+    // On mobile, use 8px padding, which is the same as the rest of the page,
+    // to avoid wasting precious horizontal space.
+    @media #{geometry.$mobile} {
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
+    // Left-align all text in the SECTION element by default.
+    text-align: left;
+
+    h1, h2, h3 {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+    h3 {
+      font-weight: normal;
+      border-bottom: 1px solid #6d6d6d;
+    }
+    p {
+      font-size: 125%;
+      margin-top: 0;
+    }
+    p.gentle-hint {
+      font-size: inherit;
+      color: #636363;
+    }
+    .comma-separated-ul {
+      list-style-type: none;
+      li {
+        display: inline;
+      }
+      li:after {
+        content: ", ";
+      }
+      li:last-child:after {
+        content: "";
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+@use "about-primitives";
+
+.referrals {
+  @include about-primitives.padded-info-page();
+}

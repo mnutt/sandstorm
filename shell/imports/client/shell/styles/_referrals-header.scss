@@ -1,0 +1,39 @@
+@use "geometry";
+
+.referrals {
+  header {
+    color: white;
+
+    // Most text in a padded-info-page is text-align: center by default. However, H1 and H2 elements
+    // override that to be aligned left. By contrast, we want to center everything in our header.
+    h1, h2 {
+      text-align: center;
+    }
+
+    background: left/contain no-repeat url("/referral-graphics/referral-edge.svg"),
+                right/contain no-repeat url("/referral-graphics/referral-edge-rotated.svg"),
+                #6d5eb7;
+
+    // Use padding so that text appears within the image.
+    padding-top: 1em;
+    padding-bottom: 1em;
+    padding-left: 8em;
+    padding-right: 8em;
+
+    // Minimize the padding on mobile, since 8em ends up being a large fraction
+    // of a small screen.
+    @media #{geometry.$mobile} {
+      padding-left: 10%;
+      padding-right: 10%;
+    }
+
+    // Remove the image background on very small screens, where it renders strangely.
+    @media (max-width: 450px) {
+      background: #6d5eb7;
+    }
+
+    .reward-amount {
+      font-size: 150%;
+    }
+  }
+}
