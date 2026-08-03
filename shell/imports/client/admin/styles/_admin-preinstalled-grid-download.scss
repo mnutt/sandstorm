@@ -1,0 +1,33 @@
+@use "icon-api";
+
+.admin-preinstalled-apps {
+  [role=grid] {
+    [role=row] {
+      [role=gridcell] {
+        &.download {
+          width: 130px;
+          color: #888888;
+          i.download-checkmark {
+            color: green;
+            @include icon-api.icon-element("check");
+            margin-right: 5px;
+          }
+          i.download-x-mark {
+            color: red;
+            @include icon-api.icon-element("plus");
+            margin-right: 5px;
+            -ms-transform: rotate(45deg);
+            -webkit-transform: rotate(45deg);
+            transform: rotate(45deg);
+          }
+          progress {
+            width: 115px;
+            &::-webkit-progress-value {
+              background-color: green;
+            }
+          }
+        }
+      }
+    }
+  }
+}

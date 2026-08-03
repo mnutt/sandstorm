@@ -1,0 +1,18 @@
+.login-provider-table {
+  .idp {
+    padding-left: 16px;
+    width: 200px;
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+  }
+  .idp-status {
+    padding-left: 16px;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}

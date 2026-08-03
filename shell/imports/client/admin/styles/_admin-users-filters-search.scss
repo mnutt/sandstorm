@@ -1,0 +1,19 @@
+@use "partials";
+
+.admin-user-filters {
+  >.search-icon {
+    @include partials.pseudo-img-tag();
+    background-image: url("/search.svg");
+    background-size: 24px 24px;
+    background-position: center;
+    display: inline-block;
+    width: 28px;
+    height: 28px;
+    flex: 0 1 auto;
+  }
+
+  >input.search-bar {
+    flex: 1 1 auto;
+    padding: 4px;
+  }
+}

@@ -1,0 +1,19 @@
+.admin-user-filters {
+  .filter-user-classes {
+    margin-left: 20px;
+    flex: 0 1 auto;
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    .show-label {
+    }
+    .filter-boxes {
+      flex: 0 1 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: flex-start;
+    }
+  }
+}
