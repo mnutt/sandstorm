@@ -1,0 +1,35 @@
+@use "colors";
+
+.sandstorm-topbar {
+  >.navbar {
+    >ul.navbar-grains {
+      >li.navitem-grain {
+        a {
+          padding-right: 32px;
+          transition: padding-right 0.2s;
+
+          // Stack above .app-icon so the icon doesn't block clicks.
+          position: relative;
+          z-index: 1;
+        }
+        background-color: colors.$topbar-background-color;
+        color: colors.$topbar-foreground-color;
+        &:hover {
+          background-color: colors.$topbar-background-color-hover;
+          color: colors.$topbar-foreground-color-hover;
+        }
+        &.unread {
+          background-color: colors.$topbar-background-color-unread;
+          color: colors.$topbar-foreground-color-unread;
+        }
+        &.unread:hover {
+          background-color: colors.$topbar-background-color-unread-hover;
+        }
+        &.current, &.current:hover {
+          background-color: colors.$topbar-background-color-active;
+          color: colors.$topbar-foreground-color-active;
+        }
+      }
+    }
+  }
+}

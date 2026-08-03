@@ -1,0 +1,13 @@
+.sandstorm-topbar {
+  >.navbar {
+    >ul.navbar-grains {
+      margin: 0;
+      padding: 0;
+      bottom: 0px;
+      left: 0px;
+      width: 100%;
+      //height: 100%; // TODO: fix this, it should be 100% - (height of Open + New)
+      overflow-y: auto;
+    }
+  }
+}

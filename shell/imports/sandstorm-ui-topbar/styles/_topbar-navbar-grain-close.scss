@@ -1,0 +1,34 @@
+@use "colors";
+@use "geometry";
+@use "partials";
+
+.sandstorm-topbar {
+  >.navbar {
+    >ul.navbar-grains {
+      >li.navitem-grain {
+        .close-button {
+          @include partials.unstyled-button();
+          @include partials.pseudo-img-tag();
+          position: absolute;
+          top: 1px;
+          right: 0px;
+          width: 24px;
+          height: 24px;
+          @media #{geometry.$mobile} {
+            height: 40px;
+            width: 40px;
+          }
+          margin: 2px;
+          display: block;
+          background-image: url("/close.svg");
+          border: 1px solid transparent;
+          border-radius: 4px;
+          &:hover {
+            border: 1px solid colors.$topbar-foreground-color-hover;
+          }
+          z-index: 2;  // Stack above <a>.
+        }
+      }
+    }
+  }
+}
