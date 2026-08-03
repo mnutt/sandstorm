@@ -1,0 +1,50 @@
+.topbar-popup {
+  &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
+    select {
+      background-color: white;
+      height: 25px;
+      text-transform: uppercase;
+      float: right;
+    }
+    input, textarea, select {
+      border: 1px solid #aaa;
+      padding: 4px;
+      border-radius: 2px;
+      vertical-align: top;
+    }
+
+    .label, .personal-message {
+      width: 100%;
+    }
+    .personal-message {
+      height: 100px;
+    }
+    .demo-mode-alert {
+      color: #a94442;
+      background-color: #f2dede;
+      border-color: #ebccd1;
+      padding: 5px;
+      margin: 0;
+      font-size: 10pt;
+    }
+    textarea.personal-message, input.emails, select.share-token-role {
+      &[disabled=true] {
+        background-color: #eaeaea;
+      }
+    }
+
+    .invitation-explanation {
+      max-width: 80%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .invitation-explanation, .label-explanation {
+      font-size: 8pt;
+      font-style: italic;
+    }
+
+    .icon-people {
+      font-size: 20px;
+    }
+  }
+}
