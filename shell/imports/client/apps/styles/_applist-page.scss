@@ -1,58 +1,6 @@
-@use "colors";
-@use "geometry";
-@use "partials";
-
-.app-list {
-  overflow: auto; // Needed to make the background span everything on screen.
-  @media #{geometry.$desktop} {
-    padding: 32px;
-  }
-  @media #{geometry.$mobile} {
-    padding: 0px 8px;
-  }
-  background-color: colors.$applist-background-color;
-  color: colors.$applist-foreground-color;
-  >h1 {
-    display: flex;
-    flex-direction: row;
-    align-items: flex-end;
-    justify-content: space-between;
-
-    margin-top: 0px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid colors.$applist-rule-color;
-    margin-bottom: 12px;
-
-    font-size: 24pt;
-    font-weight: 400;
-  }
-  .toggle-uninstall.hide,
-  >.install-button.hide {
-    display: none;
-  }
-  >.search-row {
-    @include partials.search-row();
-    position: relative;
-    margin-bottom: 8px;
-  }
-  >.popular-container {
-    // Restricts the visible portion of the "most used" section to a single row.
-    display: block;
-    overflow: hidden;
-    @media #{geometry.$desktop} {
-      height: 280px;
-    }
-    @media #{geometry.$mobile} {
-      height: 142px;
-    }
-  }
-  >h2, >.popular-container>h2 {
-    display: block;
-    font-weight: 400;
-    border-bottom: 1px solid colors.$applist-rule-color;
-    margin-top: 0px;
-    @media #{geometry.$mobile} {
-      margin-bottom: 8px;
-    }
-  }
-}
+@use "applist-page-frame";
+@use "applist-page-heading";
+@use "applist-page-actions";
+@use "applist-page-search";
+@use "applist-page-popular";
+@use "applist-page-section-headings";

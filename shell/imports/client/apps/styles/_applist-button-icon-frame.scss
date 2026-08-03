@@ -1,0 +1,31 @@
+@use "colors";
+@use "geometry";
+@use "partials";
+
+.app-list {
+  >.app-button, >.popular-container>.app-button {
+    >.app-icon {
+      @include partials.pseudo-img-tag();
+      display: block;
+      position: absolute;
+      top: 0px;
+      left: 0px;
+      @media #{geometry.$desktop} {
+        width: 128px;
+        height: 128px;
+        margin: 10px;
+      }
+      @media #{geometry.$mobile} {
+        width: 64px;
+        height: 64px;
+        margin: 5px;
+      }
+      border-radius: 6px;
+      vertical-align: top;
+      &.pseudoapp {
+        background-color: colors.$applist-pseudoapp-background-color;
+        border: 1px colors.$applist-pseudoapp-outline-color;
+      }
+    }
+  }
+}

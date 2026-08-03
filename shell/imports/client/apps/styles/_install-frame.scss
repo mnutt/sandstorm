@@ -1,0 +1,11 @@
+@use "geometry";
+
+.install {
+  position: relative;
+  @media #{geometry.$desktop} {
+    padding: 24px 32px;
+  }
+  @media #{geometry.$mobile} {
+    padding: 0px 8px;
+  }
+}

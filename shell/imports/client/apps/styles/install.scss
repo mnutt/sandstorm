@@ -1,58 +1,6 @@
-@use "partials";
-@use "app-details-primitives";
-@use "geometry";
-
-.install {
-  position: relative;
-  @media #{geometry.$desktop} {
-    padding: 24px 32px;
-  }
-  @media #{geometry.$mobile} {
-    padding: 0px 8px;
-  }
-  button {
-    @include partials.button-base();
-    @include partials.button-primary();
-    font-size: 150%;
-    font-weight: bold;
-    padding: 10px 16px;
-    line-height: 1.33;
-  }
-  pre {
-    font-family: inherit;
-    font-size: inherit;
-  }
-
-  .install-step {
-    display: block;
-  }
-  .install-step-download {
-    display: block;
-    >p {
-      width: 100%;
-      margin: 16px auto;
-      >.progress {
-        height: 32px;
-        width: 100%;
-      }
-    }
-  }
-  .install-step-confirm {
-    display: block;
-    >.app-details-widget {
-      @include app-details-primitives.app-details-widget();
-    }
-    .confirm-form {
-      display: block;
-
-      .confirm-install-button {
-        /* Adding up the margin-left + padding-left of .app-details-box within app-details.scss, for alignment. */
-        margin-left: 140px;
-      }
-    }
-  }
-  .install-step-run {
-    display: block;
-    .done-notice { display: block; }
-  }
-}
+@use "install-frame";
+@use "install-controls";
+@use "install-steps";
+@use "install-download";
+@use "install-confirm";
+@use "install-run";

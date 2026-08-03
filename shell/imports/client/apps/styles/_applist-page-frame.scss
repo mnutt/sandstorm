@@ -1,0 +1,14 @@
+@use "colors";
+@use "geometry";
+
+.app-list {
+  overflow: auto; // Needed to make the background span everything on screen.
+  @media #{geometry.$desktop} {
+    padding: 32px;
+  }
+  @media #{geometry.$mobile} {
+    padding: 0px 8px;
+  }
+  background-color: colors.$applist-background-color;
+  color: colors.$applist-foreground-color;
+}

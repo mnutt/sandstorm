@@ -1,0 +1,12 @@
+@use "partials";
+
+@mixin info-row-actions () {
+  >button.uninstall-button, >button.restore-button, >button.toggle-show-trash {
+    @include partials.button-base();
+    @include partials.button-secondary();
+    display: block;
+    float: right;
+    min-height: 32px;
+    margin-left: 4px;
+  }
+}

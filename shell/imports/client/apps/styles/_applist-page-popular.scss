@@ -1,0 +1,15 @@
+@use "geometry";
+
+.app-list {
+  >.popular-container {
+    // Restricts the visible portion of the "most used" section to a single row.
+    display: block;
+    overflow: hidden;
+    @media #{geometry.$desktop} {
+      height: 280px;
+    }
+    @media #{geometry.$mobile} {
+      height: 142px;
+    }
+  }
+}

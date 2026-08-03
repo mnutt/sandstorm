@@ -1,56 +1,9 @@
-@use "icon-api";
-@use "partials";
+@use "app-details-widget-info-frame";
+@use "app-details-widget-info-package";
+@use "app-details-widget-info-actions";
 
 @mixin info-row () {
-  display: block;
-  clear: both;
-  float: left;
-  border-top: 1px solid #909090;
-  padding-top: 4px;
-  width: 100%;
-  >ul.package-info {
-    position: relative;
-    margin: 0px;
-    padding: 0px;
-    list-style: none;
-    >li {
-      display: block;
-      float: left;
-      margin-right: 32px;
-      >span {
-        padding-left: 8px;
-        display: block;
-        clear: both;
-      }
-      >span.label, >span.name {
-        font-weight: 600;
-      }
-      >button.show-authorship-button {
-        @include partials.unstyled-button();
-        padding-left: 8px;
-        padding-right: 24px;
-
-        >.expanded-icon {
-          font-size: 10px;
-          @include icon-api.icon-element("down");
-        }
-        &.expanded>.expanded-icon {
-          &::before {
-            @include icon-api.icon-content("up");
-          }
-        }
-      }
-    }
-    display: block;
-    float: left;
-  }
-
-  >button.uninstall-button, >button.restore-button, >button.toggle-show-trash {
-    @include partials.button-base();
-    @include partials.button-secondary();
-    display: block;
-    float: right;
-    min-height: 32px;
-    margin-left: 4px;
-  }
+  @include app-details-widget-info-frame.info-row-frame();
+  @include app-details-widget-info-package.info-row-package();
+  @include app-details-widget-info-actions.info-row-actions();
 }

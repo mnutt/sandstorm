@@ -1,0 +1,14 @@
+@use "colors";
+@use "geometry";
+
+.app-list {
+  >h2, >.popular-container>h2 {
+    display: block;
+    font-weight: 400;
+    border-bottom: 1px solid colors.$applist-rule-color;
+    margin-top: 0px;
+    @media #{geometry.$mobile} {
+      margin-bottom: 8px;
+    }
+  }
+}

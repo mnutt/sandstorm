@@ -1,0 +1,18 @@
+@use "app-details-primitives";
+
+.install {
+  .install-step-confirm {
+    display: block;
+    >.app-details-widget {
+      @include app-details-primitives.app-details-widget();
+    }
+    .confirm-form {
+      display: block;
+
+      .confirm-install-button {
+        /* Adding up the margin-left + padding-left of .app-details-box within app-details.scss, for alignment. */
+        margin-left: 140px;
+      }
+    }
+  }
+}

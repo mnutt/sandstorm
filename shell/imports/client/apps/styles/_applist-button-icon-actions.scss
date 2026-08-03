@@ -1,0 +1,30 @@
+@use "colors";
+
+.app-list {
+  >.app-button, >.popular-container>.app-button {
+    >.app-icon {
+      &.restore-icon {
+        background-image: url('/restore-B7B7B7.svg');
+
+        &:hover {
+          background-image: url('/restore-5D5D5D.svg');
+        }
+      }
+      &.upload-icon {
+        background-image: url('/upload-B7B7B7.svg');
+
+        &:hover {
+          background-image: url('/upload-5D5D5D.svg');
+        }
+      }
+      &.install-icon {
+        background-image: url('/install-714DAA.svg');
+        border: 1px solid colors.$generic-border-color;
+
+        &:hover {
+          background-image: url('/install-896AC6.svg');
+        }
+      }
+    }
+  }
+}
