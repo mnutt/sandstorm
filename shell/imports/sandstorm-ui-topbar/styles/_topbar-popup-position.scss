@@ -1,0 +1,48 @@
+@use "geometry";
+
+.topbar-popup {
+  >.frame-container {
+    @media #{geometry.$desktop} {
+      // Adds a small white arrow pointing at the element this popup "descends" from.
+      position: fixed;
+      top: 32px;
+
+      &::before {
+        content: " ";
+        position: absolute;
+        top: -8px;
+
+        width: 0;
+        height: 0;
+        border-left: 8px solid transparent;
+        border-right: 8px solid transparent;
+        border-bottom: 8px solid white;
+      }
+
+      &.align-left::before {
+        left: 41px;
+      }
+
+      &.align-right::before {
+        right: 41px;
+      }
+    }
+
+    @media #{geometry.$mobile} {
+      position: static;
+      margin: 64px auto 32px;
+      font-size: 20px;
+      max-width: 90%;
+      border: 1px solid #ccc;
+      overflow-y: auto;
+    }
+
+    &.centered {
+      @media #{geometry.$desktop} {
+        margin: 0px auto;
+        width: 600px;
+        margin-left: calc(50% - 300px);
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+@use "geometry";
+
+.topbar-popup {
+  // Popup windows hang off the topbar, usually appearing when a topbar item is clicked.
+
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100000;
+
+  @media #{geometry.$mobile} {
+    // Gray the background on mobile.
+    background-color: rgba(0, 0, 0, 0.5);
+  }
+}
