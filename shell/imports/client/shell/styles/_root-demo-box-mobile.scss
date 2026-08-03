@@ -1,0 +1,17 @@
+@use "geometry";
+
+.demo-box {
+  @media #{geometry.$mobile} {
+    width: auto;
+    height: auto;
+    margin: 64px 8px;
+    h2 {
+      margin: 1em 32px;
+    }
+  }
+  @media (max-width: 500px) {
+    button {
+      font-size: 28px;
+    }
+  }
+}

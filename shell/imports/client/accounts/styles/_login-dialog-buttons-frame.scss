@@ -1,0 +1,17 @@
+.login-dialog {
+  >.login-buttons-list {
+    margin: 0 auto 32px;
+    width: 225px;
+
+    >button.login, >form, >a {
+      border: 1px solid #9e9e9e;
+      border-radius: 2px;
+      margin: 8px 0;
+      background-position: 48px center;
+      text-indent: 72px;
+      color: black;
+      font-weight: normal;
+      width: 225px;
+    }
+  }
+}

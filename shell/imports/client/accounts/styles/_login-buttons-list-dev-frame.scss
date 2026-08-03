@@ -1,0 +1,20 @@
+@use "partials";
+
+.login-buttons-list {
+  >form.login.dev:hover {
+    background-color: white;
+    cursor: auto
+  }
+
+  >form.login.dev, >button.login.dev {
+    background-image: url("/debug.svg");
+    background-position: 16px 0px;
+    height: auto;
+    button.unexpand {
+      @include partials.unstyled-button();
+    }
+    &:hover {
+      background-image: url("/debug-m.svg");
+    }
+  }
+}

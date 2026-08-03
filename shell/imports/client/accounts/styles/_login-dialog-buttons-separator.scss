@@ -1,0 +1,12 @@
+.login-dialog {
+  >.login-buttons-list {
+    >.or {
+      display: block;
+      text-align: center;
+      margin: 16px 0;
+      border-bottom: 1px solid #c1c1c1;
+      .hline { display: none; }
+      .or-text { display: none; }
+    }
+  }
+}

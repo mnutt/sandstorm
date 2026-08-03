@@ -1,0 +1,26 @@
+@use "geometry";
+
+.main-content>.account {
+  .verified-emails-editor {
+    .already-verified {
+      @media #{geometry.$not-mobile-only} {
+        display: inline-block;
+        width: 340px;
+        left: 0px;
+        vertical-align: top;
+      }
+
+      @media #{geometry.$mobile-only} {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: flex-start;
+      }
+
+      ul {
+        margin-top: 4px;
+        padding-left: 0px;
+      }
+    }
+  }
+}

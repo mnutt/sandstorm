@@ -1,0 +1,8 @@
+.demo-expired-main-content {
+  z-index: 1;
+  >p, >h1, >h2, >h3, >h4 {
+    margin-left: auto;
+    margin-right: auto;
+    width: 300px;
+  }
+}

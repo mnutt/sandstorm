@@ -1,0 +1,16 @@
+@use "geometry";
+
+.main-content>.account {
+  text-align: left;
+
+  @media #{geometry.$desktop} {
+    padding: 32px;
+  }
+
+  @media #{geometry.$mobile} {
+    padding-top: 0px;
+    padding-bottom: 32px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
