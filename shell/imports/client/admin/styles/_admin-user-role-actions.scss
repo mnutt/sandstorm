@@ -1,0 +1,15 @@
+@use "partials";
+
+.user-details-name {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #dddddd;
+}
+
+.admin-user-roles-form {
+  display: inline-block;
+
+  .make-admin, .make-user, .make-visitor {
+    @include partials.button-base();
+    @include partials.button-secondary();
+  }
+}

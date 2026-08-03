@@ -1,0 +1,63 @@
+.role-explanations {
+  list-style-type: none;
+  padding: 0;
+  margin-bottom: 16px;
+  >li {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    margin-bottom: 8px;
+
+    color: #5d5d5d;
+    &.current-role {
+      color: black;
+    }
+
+    .role {
+      flex: 0 1 auto;
+      width: 7em;
+    }
+
+    .explanation {
+      padding-left: 8px;
+      flex: 1 1 auto;
+    }
+
+    .current-role-label {
+      display: inline-block;
+      padding: 2px 4px;
+      border-radius: 2px;
+      margin-top: 2px;
+      margin-bottom: 2px;
+
+      background-color: #dcefdd;
+    }
+
+    .user-class-label {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 2px;
+      margin-top: 2px;
+      margin-bottom: 2px;
+
+    }
+
+    &.current-role {
+      .user-class-label {
+        &.admin {
+          color: #ffffff;
+          background-color: #C66822;
+        }
+        &.user {
+          color: #ffffff;
+          background-color: #7EB54D;
+        }
+        &.visitor {
+          color: #ffffff;
+          background-color: #939393;
+        }
+      }
+    }
+  }
+}
