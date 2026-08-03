@@ -1,0 +1,22 @@
+@use "partials";
+
+.suspended-main-content {
+  h2 {
+    text-align: center;
+  }
+  button {
+    display: block;
+    margin: auto;
+    font-size: 18px;
+    @include partials.button-base();
+
+    &.restore-account {
+      @include partials.button-primary();
+      margin-bottom: 20px;
+    }
+
+    &.logout {
+      @include partials.button-secondary();
+    }
+  }
+}
