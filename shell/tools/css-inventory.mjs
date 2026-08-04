@@ -207,8 +207,37 @@ function checkOrganization(report) {
     "_focus.scss",
     "_shell-base.scss",
   ]);
+  const retiredEntryStyles = new Set([
+    "imports/blackrock-payments/client/styles/payments.scss",
+    "imports/client/accounts/styles/account-settings.scss",
+    "imports/client/accounts/styles/credentials.scss",
+    "imports/client/accounts/styles/login-buttons.scss",
+    "imports/client/admin/styles/admin.scss",
+    "imports/client/apps/styles/app-details.scss",
+    "imports/client/apps/styles/applist.scss",
+    "imports/client/apps/styles/install.scss",
+    "imports/client/grain/styles/grain.scss",
+    "imports/client/grain/styles/grainlist.scss",
+    "imports/client/grain/styles/settings.scss",
+    "imports/client/grain/styles/sharing.scss",
+    "imports/client/grain/styles/view.scss",
+    "imports/client/setup-wizard/styles/setup-wizard.scss",
+    "imports/client/shell/styles/about.scss",
+    "imports/client/shell/styles/layout.scss",
+    "imports/client/shell/styles/referrals.scss",
+    "imports/client/shell/styles/root.scss",
+    "imports/client/shell/styles/shell.scss",
+    "imports/client/transfers/styles/transfers.scss",
+    "imports/client/widgets/styles/widgets.scss",
+    "imports/sandstorm-ui-powerbox/styles/powerbox.scss",
+    "imports/sandstorm-ui-topbar/styles/topbar.scss",
+  ]);
 
   for (const item of report.files) {
+    if (retiredEntryStyles.has(item.file)) {
+      errors.push(`${item.file} is a retired aggregate stylesheet; import owner-specific style entries instead.`);
+    }
+
     if (!item.vendor && item.metrics.bodySelectors > 0 && item.file !== "client/styles/_shell-base.scss") {
       errors.push(`${item.file} contains body selectors; keep global document selectors in client/styles/_shell-base.scss.`);
     }
@@ -271,6 +300,17 @@ function checkOrganization(report) {
         `${styleImport.file}:${styleImport.line} imports private Sass partial ${styleImport.target}; ` +
         "import a module-owned stylesheet entry instead.",
       );
+    }
+
+    const resolved = resolveStyleImport(path.join(root, styleImport.file), styleImport.target);
+    if (resolved) {
+      const resolvedFile = path.relative(root, resolved).split(path.sep).join(path.posix.sep);
+      if (retiredEntryStyles.has(resolvedFile)) {
+        errors.push(
+          `${styleImport.file}:${styleImport.line} imports retired aggregate stylesheet ${resolvedFile}; ` +
+          "import owner-specific style entries instead.",
+        );
+      }
     }
   }
 
