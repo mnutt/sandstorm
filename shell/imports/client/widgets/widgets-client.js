@@ -1,6 +1,9 @@
 import { Template } from "meteor/templating";
 
-import "/imports/client/widgets/styles/widgets.scss";
+import "/imports/client/widgets/styles/buttons.scss";
+import "/imports/client/widgets/styles/messages.scss";
+import "/imports/client/widgets/styles/forms.scss";
+import "/imports/client/widgets/styles/modals.scss";
 
 Template.modalDialogWithBackdrop.onCreated(function () {
   // This keypress event listener which closes the dialog when Escape is pressed should be scoped to
