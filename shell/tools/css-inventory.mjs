@@ -16,6 +16,20 @@ const scriptRoots = [
   path.join(root, "client"),
   path.join(root, "imports"),
 ];
+const styleLoadPaths = [
+  path.join(root, "client", "styles"),
+  path.join(root, "imports", "client", "accounts", "styles"),
+  path.join(root, "imports", "client", "admin", "styles"),
+  path.join(root, "imports", "client", "apps", "styles"),
+  path.join(root, "imports", "client", "grain", "styles"),
+  path.join(root, "imports", "client", "setup-wizard", "styles"),
+  path.join(root, "imports", "client", "shell", "styles"),
+  path.join(root, "imports", "client", "transfers", "styles"),
+  path.join(root, "imports", "client", "widgets", "styles"),
+  path.join(root, "imports", "blackrock-payments", "client", "styles"),
+  path.join(root, "imports", "sandstorm-ui-powerbox", "styles"),
+  path.join(root, "imports", "sandstorm-ui-topbar", "styles"),
+];
 
 const options = new Map();
 let check = false;
@@ -49,14 +63,16 @@ for (const styleRoot of styleRoots) {
 const styleFiles = styleRoots
   .flatMap((styleRoot) => collectStyleFiles(styleRoot))
   .sort();
-const scriptStyleImports = scriptRoots
+const scriptFiles = scriptRoots
   .filter((scriptRoot) => fs.existsSync(scriptRoot))
   .flatMap((scriptRoot) => collectScriptFiles(scriptRoot))
-  .sort()
+  .sort();
+const scriptStyleImports = scriptFiles
   .flatMap((fileName) => collectJsStyleImports(fileName).map((styleImport) => ({
     file: path.relative(root, fileName),
     ...styleImport,
   })));
+const unreachableStyleFiles = collectUnreachableStyleFiles(styleFiles, scriptFiles);
 
 const inventory = styleFiles.map((fileName) => {
   const source = fs.readFileSync(fileName, "utf8");
@@ -113,6 +129,7 @@ const report = {
   totals,
   files: inventory,
   scriptStyleImports,
+  unreachableStyleFiles,
   rankedRisk: rankedRisk.map(({ file, risk, metrics }) => ({ file, risk, metrics })),
 };
 
@@ -239,6 +256,10 @@ function checkOrganization(report) {
     }
   }
 
+  for (const file of report.unreachableStyleFiles) {
+    errors.push(`${file} is not reachable from any JS/TS stylesheet import.`);
+  }
+
   return errors;
 }
 
@@ -285,6 +306,88 @@ function collectJsStyleImports(fileName) {
       line: source.slice(0, match.index).split(/\r?\n/).length,
       target: match[1],
     }));
+}
+
+function collectUnreachableStyleFiles(styleFiles, scriptFiles) {
+  const allStyleFiles = new Set(styleFiles.map((fileName) => path.normalize(fileName)));
+  const rootStyleFiles = new Set();
+
+  for (const fileName of scriptFiles) {
+    for (const styleImport of collectJsStyleImports(fileName)) {
+      const resolved = resolveStyleImport(fileName, styleImport.target);
+      if (resolved) {
+        rootStyleFiles.add(resolved);
+      }
+    }
+  }
+
+  const reachable = new Set();
+  for (const fileName of rootStyleFiles) {
+    visitStyleFile(fileName, reachable);
+  }
+
+  return [...allStyleFiles]
+    .filter((fileName) => !reachable.has(fileName))
+    .map((fileName) => path.relative(root, fileName))
+    .sort();
+}
+
+function visitStyleFile(fileName, reachable) {
+  if (reachable.has(fileName) || !fs.existsSync(fileName)) {
+    return;
+  }
+
+  reachable.add(fileName);
+  const source = fs.readFileSync(fileName, "utf8");
+  for (const styleImport of collectImports(source)) {
+    const resolved = resolveStyleImport(fileName, styleImport.target);
+    if (resolved) {
+      visitStyleFile(resolved, reachable);
+    }
+  }
+}
+
+function resolveStyleImport(fromFile, target) {
+  if (target.startsWith("sass:")) {
+    return null;
+  }
+
+  const basePaths = [];
+  if (target.startsWith("/")) {
+    basePaths.push(path.join(root, target.slice(1)));
+  } else if (target.startsWith(".")) {
+    basePaths.push(path.resolve(path.dirname(fromFile), target));
+  } else {
+    basePaths.push(path.resolve(path.dirname(fromFile), target));
+    for (const loadPath of styleLoadPaths) {
+      basePaths.push(path.join(loadPath, target));
+    }
+  }
+
+  for (const basePath of basePaths) {
+    for (const candidate of styleImportCandidates(basePath)) {
+      if (fs.existsSync(candidate)) {
+        return path.normalize(candidate);
+      }
+    }
+  }
+
+  return null;
+}
+
+function styleImportCandidates(basePath) {
+  const extension = path.extname(basePath);
+  const directory = path.dirname(basePath);
+  const basename = path.basename(basePath, extension);
+  const candidates = extension ?
+    [basePath] :
+    [`${basePath}.scss`, `${basePath}.css`, path.join(basePath, "index.scss")];
+
+  if (!basename.startsWith("_")) {
+    candidates.push(path.join(directory, `_${basename}${extension || ".scss"}`));
+  }
+
+  return candidates;
 }
 
 function collectSelectors(lines) {
