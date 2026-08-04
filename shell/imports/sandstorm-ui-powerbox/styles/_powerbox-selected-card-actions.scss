@@ -1,0 +1,18 @@
+@use "partials";
+
+.topbar-popup.request>.frame-container>.frame {
+  >.selected-card {
+    div.choose-buttons {
+      text-align: right;
+      >button {
+        @include partials.button-base();
+        &.connect-button {
+          @include partials.button-primary();
+        }
+        &.choose-hosted-object {
+          @include partials.button-secondary();
+        }
+      }
+    }
+  }
+}

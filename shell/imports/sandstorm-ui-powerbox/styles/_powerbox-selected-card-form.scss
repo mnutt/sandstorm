@@ -1,0 +1,22 @@
+.topbar-popup.request>.frame-container>.frame {
+  >.selected-card {
+    >form {
+      margin-top: 10px;
+      >p {
+        margin-top: 0px;
+        margin-bottom: 5px;
+      }
+      >label {
+        display: block;
+      }
+      >button {
+        margin-top: 10px;
+      }
+      input[type="text"] {
+        width: 100%;
+        font-size: inherit;
+        padding: 4px;
+      }
+    }
+  }
+}

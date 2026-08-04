@@ -1,0 +1,20 @@
+.topbar-popup.request>.frame-container>.frame {
+  >.selected-card {
+    flex: none;
+    >div.powerbox-card {
+      border: 1px solid #dddddd;
+      background-color: #eeeeee;
+      display: block;
+      vertical-align: middle;
+      width: 100%;
+      min-height: 32px;
+      line-height: 1.4;
+      background-size: 24px 24px;
+      background-position: 4px 4px;
+      background-repeat: no-repeat;
+      padding: 4px 4px 4px 32px;
+      word-break: break-all;
+      overflow-wrap: break-word;
+    }
+  }
+}

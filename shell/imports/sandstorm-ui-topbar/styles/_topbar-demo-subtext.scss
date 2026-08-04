@@ -1,0 +1,10 @@
+@use "colors";
+
+.sandstorm-topbar {
+  .demo-notice {
+    .subtext {
+      font-size: 12px;
+      color: colors.$topbar-foreground-color;
+    }
+  }
+}

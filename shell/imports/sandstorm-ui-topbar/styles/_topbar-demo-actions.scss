@@ -1,0 +1,26 @@
+@use "partials";
+
+.sandstorm-topbar {
+  .demo-notice {
+    p {
+      a.get-sandstorm-button {
+        margin-top: 6px;
+        display: block;
+        @include partials.button-base();
+        background-color: #606060;
+        color: white;
+        &:hover {
+          background-color: #717171;
+        }
+      }
+    }
+
+    button {
+      display: block;
+      width: 100%;
+      text-align: center;
+      margin-top: 6px;
+      margin-bottom: 4px;
+    }
+  }
+}

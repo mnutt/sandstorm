@@ -1,0 +1,27 @@
+@use "colors";
+@use "geometry";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.title {
+      padding-left: 8px;
+      overflow: hidden;
+      @media #{geometry.$desktop} {
+        // Heuristically try to prevent the title from bumping everything else off the top bar.
+        // The size of 700px was empirically found to provide enough space for "everything else".
+        max-width: calc(100% - 700px);
+        border-left: 1px solid #666;
+      }
+      @media #{geometry.$mobile} {
+        width: 100%; // needs to span the whole row because the border-bottom is needed to draw
+                     // the horizontal rule when the menu is expanded
+        background-color: colors.$topbar-background-color;
+        color: colors.$topbar-foreground-color;
+        padding-left: 56px;
+        font-size: 120%;
+        position: fixed;
+        z-index: 1;
+      }
+    }
+  }
+}

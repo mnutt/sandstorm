@@ -1,0 +1,38 @@
+@use "geometry";
+@use "partials";
+@use "topbar-primitives";
+
+@mixin navbar-shrink-button () {
+  .navbar-shrink-item {
+    &:hover {
+      button.navbar-shrink {
+        background-color: #717171;
+        border-color: #343434;
+      }
+    }
+  }
+
+  button.navbar-shrink {
+    @include partials.unstyled-button();
+    @include topbar-primitives.webfont-icon(#CCCCCC, #CCCCCC, 28px, 28px);
+    display: block;
+    width: 100%;
+    height: geometry.$navbar-shrink-button-height;
+    border: 0px solid #303030;
+    border-left-width: (geometry.$navbar-width-desktop - geometry.$navbar-width-desktop-shrunk);
+    background-color: #606060;
+    color: #ddd;
+    text-align: center;
+    line-height: geometry.$navbar-shrink-button-height;
+    padding: 0;
+
+    transition: border-left-width 0.2s;
+
+    &.shrunk {
+      &::before {
+        display: inline-block; // this is needed to allow transforms.
+        transform: rotate(180deg);
+      }
+    }
+  }
+}

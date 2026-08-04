@@ -1,0 +1,25 @@
+@use "geometry";
+
+.topbar-popup {
+  &.notifications {
+    ul.notification-list {
+      .notification-item {
+        display: block;
+        font-size: 14px;
+        text-decoration: inherit;
+        font-weight: inherit;
+        color: inherit;
+
+        padding-left: geometry.$topbar-popup-padding + geometry.$topbar-popup-padding + 64px;
+        padding-right: geometry.$topbar-popup-padding;
+        padding-top: geometry.$topbar-popup-padding;
+        padding-bottom: geometry.$topbar-popup-padding;
+
+        position: relative;
+
+        // Guarantee position-absolute icons don't get cut off
+        min-height: geometry.$topbar-popup-padding + geometry.$topbar-popup-padding + 64px;
+      }
+    }
+  }
+}

@@ -1,76 +1,16 @@
-@use "colors";
 @use "geometry";
-@use "partials";
-@use "topbar-primitives";
+@use "topbar-navbar-shrink-button";
+@use "topbar-navbar-shrink-state";
+@use "topbar-navbar-shrink-mobile";
 
 .sandstorm-topbar {
   >.navbar {
     @media #{geometry.$desktop} {
-      .navbar-shrink-item {
-        &:hover {
-          button.navbar-shrink {
-            background-color: #717171;
-            border-color: #343434;
-          }
-        }
-      }
-
-      button.navbar-shrink {
-        @include partials.unstyled-button();
-        @include topbar-primitives.webfont-icon(#CCCCCC, #CCCCCC, 28px, 28px);
-        display: block;
-        width: 100%;
-        height: geometry.$navbar-shrink-button-height;
-        border: 0px solid #303030;
-        border-left-width: (geometry.$navbar-width-desktop - geometry.$navbar-width-desktop-shrunk);
-        background-color: #606060;
-        color: #ddd;
-        text-align: center;
-        line-height: geometry.$navbar-shrink-button-height;
-        padding: 0;
-
-        transition: border-left-width 0.2s;
-
-        &.shrunk {
-          &::before {
-            display: inline-block; // this is needed to allow transforms.
-            transform: rotate(180deg);
-          }
-        }
-      }
-
-      &.shrink-desktop {
-        width: geometry.$navbar-width-desktop-shrunk;
-
-        button.navbar-shrink {
-          border-left-width: 0;
-        }
-        >ul.navbar-grains>li.navitem-grain a {
-          padding-right: 0;
-        }
-        >ul.navbar-grains>li.navitem-grain button.close-button {
-          display: none;
-        }
-        .demo-notice {
-          p { font-size: 0; padding: 0px; }
-          span { display: none; }
-          button { display: none; }
-          a { display: none; }
-        }
-        .demo-timer {
-          p { font-size: 0; padding: 4px; }
-        }
-      }
-      &.hide-desktop {
-        display: none;
-      }
-
-      transition: width 0.2s;
+      @include topbar-navbar-shrink-button.navbar-shrink-button();
+      @include topbar-navbar-shrink-state.navbar-shrink-state();
     }
     @media #{geometry.$mobile} {
-      li.navbar-shrink-item {
-        display: none;
-      }
+      @include topbar-navbar-shrink-mobile.navbar-shrink-mobile();
     }
   }
 }

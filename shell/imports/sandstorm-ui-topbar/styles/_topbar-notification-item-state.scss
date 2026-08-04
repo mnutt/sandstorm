@@ -1,0 +1,17 @@
+@use "colors";
+
+.topbar-popup {
+  &.notifications {
+    ul.notification-list {
+      .notification-item {
+        &.urgent {
+          background-color: colors.$error-background-color;
+        }
+
+        &[href]:hover {
+          background-color: #eee;
+        }
+      }
+    }
+  }
+}

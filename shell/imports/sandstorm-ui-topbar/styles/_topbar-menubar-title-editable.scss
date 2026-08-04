@@ -1,0 +1,30 @@
+@use "colors";
+@use "geometry";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.title {
+      >div.editable {
+        white-space: nowrap;
+        text-overflow: ellipsis;  // Doesn't seem to work since size is dynamic. Left here in vain.
+        overflow: hidden;
+        display: inline-block;
+        padding: 0 8px;
+        margin-left: -8px;
+        @media #{geometry.$desktop} {
+          min-height: geometry.$topbar-height-desktop;
+        }
+        @media #{geometry.$mobile} {
+          min-height: geometry.$topbar-height-mobile;
+          max-width: calc(100% - 150px);
+        }
+
+        &:hover {
+          cursor: pointer;
+          color: colors.$topbar-foreground-color-hover;
+          background-color: colors.$topbar-background-color-hover;
+        }
+      }
+    }
+  }
+}

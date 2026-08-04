@@ -1,0 +1,16 @@
+.sandstorm-topbar {
+  .demo-notice {
+    width: 100%;
+    overflow: hidden;
+
+    p {
+      color: white;
+      padding: 8px;
+      margin: 0;
+      margin-bottom: 8px;
+      line-height: normal;
+      font-size: 14px;
+      transition: font-size 0.2s;
+    }
+  }
+}

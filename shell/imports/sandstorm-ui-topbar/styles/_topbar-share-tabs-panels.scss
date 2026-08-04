@@ -1,0 +1,13 @@
+.topbar-popup {
+  &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
+    .share-tabs {
+      >div.tabpanel {
+        margin-left: 16px;
+        margin-right: 16px;
+        &[aria-hidden=true] {
+          display: none;
+        }
+      }
+    }
+  }
+}

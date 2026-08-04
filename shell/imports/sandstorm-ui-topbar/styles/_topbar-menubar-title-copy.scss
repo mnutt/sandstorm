@@ -1,0 +1,33 @@
+@use "geometry";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.title {
+      >div.editable {
+        .main-title {
+          height: geometry.$topbar-height-desktop - 8px;
+          line-height: geometry.$topbar-height-desktop - 8px;
+          @media #{geometry.$mobile} {
+            height: geometry.$topbar-height-mobile - 12px;
+            line-height: geometry.$topbar-height-mobile - 12px;
+          }
+        }
+
+        .subtitle {
+          color: #9b9b9b;
+          height: 10px;
+          line-height: 10px;
+          font-size: 10px;
+          margin-top: -4px;
+
+          @media #{geometry.$mobile} {
+            height: 12px;
+            line-height: 12px;
+            font-size: 12px;
+            margin-top: -4px;
+          }
+        }
+      }
+    }
+  }
+}

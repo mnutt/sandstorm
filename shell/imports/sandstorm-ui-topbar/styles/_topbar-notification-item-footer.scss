@@ -1,0 +1,21 @@
+.topbar-popup {
+  &.notifications {
+    ul.notification-list {
+      .notification-item {
+        .notification-footer {
+          position: relative;
+          margin-top: 12px;
+          min-height: 18px;
+
+          .notification-timestamp {
+            position: absolute;
+            left: 0px;
+            top: 0px;
+            text-align: left;
+            color: #aaa;
+          }
+        }
+      }
+    }
+  }
+}

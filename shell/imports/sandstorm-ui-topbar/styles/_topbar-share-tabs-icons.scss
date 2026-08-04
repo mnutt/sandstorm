@@ -1,0 +1,33 @@
+@use "icon-api";
+
+.topbar-popup {
+  &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
+    .share-tabs {
+      >ul {
+        .send-invite-tab-header {
+          left: 2%;
+          @include icon-api.icon("email");
+
+          &::before {
+            font-size: 18px;
+            padding: 0 8px 2px 12px;
+          }
+        }
+        .shareable-link-tab-header {
+          right: 2%;
+          @include icon-api.icon("link");
+
+          &::before {
+            font-size: 20px;
+            padding: 0 8px 2px 12px;
+          }
+        }
+        [aria-selected=true] {
+          background-color: white;
+          border-bottom: 1px solid white;
+          height: 26px;
+        }
+      }
+    }
+  }
+}

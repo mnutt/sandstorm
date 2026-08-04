@@ -1,0 +1,17 @@
+@use "geometry";
+
+@mixin navbar-desktop-specials () {
+  li {
+    &.navbar-shrink-item {
+      border: none;
+      height: auto;
+      width: auto;
+    }
+    &.navitem-demo-timer {
+      position: absolute;
+      bottom: 0;
+      height: auto;
+      width: 100%;
+    }
+  }
+}
