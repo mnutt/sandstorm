@@ -154,7 +154,6 @@ function collectImports(source) {
 function checkOrganization(report) {
   const errors = [];
   const allowedRootFiles = new Set([
-    "client/styles/_colors.scss",
     "client/styles/_colors-app-details.scss",
     "client/styles/_colors-applist.scss",
     "client/styles/_colors-core.scss",
@@ -164,7 +163,6 @@ function checkOrganization(report) {
     "client/styles/_focus.scss",
     "client/styles/_fonts.scss",
     "client/styles/_icon-api.scss",
-    "client/styles/_geometry.scss",
     "client/styles/_geometry-breakpoints.scss",
     "client/styles/_geometry-shell.scss",
     "client/styles/_icons.scss",
@@ -179,8 +177,6 @@ function checkOrganization(report) {
   const allowedShellImports = new Set([
     "_fonts.scss",
     "_icons.scss",
-    "_geometry.scss",
-    "_colors.scss",
     "_focus.scss",
     "_shell-base.scss",
   ]);
