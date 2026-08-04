@@ -165,6 +165,8 @@ function checkOrganization(report) {
     "client/styles/_fonts.scss",
     "client/styles/_icon-api.scss",
     "client/styles/_geometry.scss",
+    "client/styles/_geometry-breakpoints.scss",
+    "client/styles/_geometry-shell.scss",
     "client/styles/_icons.scss",
     "client/styles/_partials-buttons.scss",
     "client/styles/_partials-form.scss",
