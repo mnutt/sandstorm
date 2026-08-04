@@ -18,17 +18,6 @@ const scriptRoots = [
 ];
 const styleLoadPaths = [
   path.join(root, "client", "styles"),
-  path.join(root, "imports", "client", "accounts", "styles"),
-  path.join(root, "imports", "client", "admin", "styles"),
-  path.join(root, "imports", "client", "apps", "styles"),
-  path.join(root, "imports", "client", "grain", "styles"),
-  path.join(root, "imports", "client", "setup-wizard", "styles"),
-  path.join(root, "imports", "client", "shell", "styles"),
-  path.join(root, "imports", "client", "transfers", "styles"),
-  path.join(root, "imports", "client", "widgets", "styles"),
-  path.join(root, "imports", "blackrock-payments", "client", "styles"),
-  path.join(root, "imports", "sandstorm-ui-powerbox", "styles"),
-  path.join(root, "imports", "sandstorm-ui-topbar", "styles"),
 ];
 
 const options = new Map();
