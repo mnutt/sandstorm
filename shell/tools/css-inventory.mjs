@@ -17,7 +17,7 @@ const scriptRoots = [
   path.join(root, "imports"),
 ];
 const styleLoadPaths = [
-  path.join(root, "client", "styles"),
+  path.join(root, "imports", "client", "styles"),
 ];
 
 const options = new Map();
@@ -184,23 +184,9 @@ function collectImports(source) {
 function checkOrganization(report) {
   const errors = [];
   const allowedRootFiles = new Set([
-    "client/styles/_colors-app-details.scss",
-    "client/styles/_colors-applist.scss",
-    "client/styles/_colors-core.scss",
-    "client/styles/_colors-defaults.scss",
-    "client/styles/_colors-grainlist.scss",
-    "client/styles/_colors-topbar.scss",
     "client/styles/_focus.scss",
     "client/styles/_fonts.scss",
-    "client/styles/_icon-api.scss",
-    "client/styles/_geometry-breakpoints.scss",
-    "client/styles/_geometry-shell.scss",
     "client/styles/_icons.scss",
-    "client/styles/_partials-buttons.scss",
-    "client/styles/_partials-form.scss",
-    "client/styles/_partials-login-provider.scss",
-    "client/styles/_partials-media.scss",
-    "client/styles/_partials-search.scss",
     "client/styles/_shell-base.scss",
     "client/styles/shell.scss",
   ]);

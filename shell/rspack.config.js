@@ -33,7 +33,7 @@ module.exports = defineConfig((Meteor) => ({
               implementation: require.resolve("sass-embedded"),
               sassOptions: {
                 loadPaths: [
-                  path.resolve(__dirname, "client/styles"),
+                  path.resolve(__dirname, "imports/client/styles"),
                 ],
               },
             },

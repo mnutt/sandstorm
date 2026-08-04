@@ -10,9 +10,8 @@ that render them.
 - `shell.scss` is an ordering-only manifest. Keep its order stable while moving
   rules out of it.
 - Most existing styles compile as one global cascade through Rspack and Sass.
-- `_colors.scss`, `_geometry.scss`, `_partials.scss`, `_icons.scss`, and
-  `_focus.scss` are shared infrastructure, but they still contain legacy
-  patterns that should be tightened during migration.
+- `client/styles` now contains emitted global CSS only. Sass-only tokens,
+  geometry values, icon mixins, and reusable mixins live in `imports/client/styles`.
 - Shell frame styles that still emit global selectors now live under
   `imports/client/shell/styles`; grain frame and sharing styles live under
   `imports/client/grain/styles`.
@@ -21,17 +20,14 @@ that render them.
 
 New and migrated styles should use this ownership model:
 
-- Application-wide defaults: keep in `client/styles`.
-- Shared tokens and primitives: keep in `client/styles`, exposed with Sass
+- Application-wide emitted defaults: keep in `client/styles`.
+- Shared tokens and primitives: keep in `imports/client/styles`, exposed with Sass
   `@use` or plain reusable classes.
 - Feature styles: colocate under `imports/client/...` beside the owning
   template/client module, and import them from that module.
 - Vendor CSS and narrow vendor overrides: keep near the application entrypoint
   unless the vendor is only used by one feature.
-- Keep feature styles in `shell.scss` when they depend on CSS-emitting shared
-  styles such as `_icons.scss`; move those after the shared CSS has been split
-  from Sass-only mixins/placeholders.
-- Use `_icon-api.scss` for Sass-only icon mixins. `_icons.scss` should remain
+- Use `icon-api` for Sass-only icon mixins. `_icons.scss` should remain
   the single global source of the emitted icon font and `.icon-*` classes.
 
 ## Migration Rules
@@ -80,8 +76,8 @@ To enforce the current organization boundary:
 npm run css:check
 ```
 
-This check permits only shared/global styles in `client/styles` and only
-shared/base imports in `client/styles/shell.scss`; feature styles should be
+This check permits only emitted global styles in `client/styles` and only
+global/base imports in `client/styles/shell.scss`; feature styles should be
 imported from their owning client module.
 
 Use the inventory to choose migration order, identify broad selectors, and
