@@ -1,0 +1,11 @@
+@use "colors-defaults" as defaults;
+
+///////// App list ("New...") styles
+$applist-background-color: defaults.$default-content-background-color;
+$applist-foreground-color: defaults.$default-content-foreground-color;
+
+$applist-action-text-color: #5d5d5d;
+
+$applist-rule-color: defaults.$default-rule-color;
+$applist-pseudoapp-background-color: #ffffff;
+$applist-pseudoapp-outline-color: #d3d3d3;

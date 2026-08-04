@@ -155,6 +155,12 @@ function checkOrganization(report) {
   const errors = [];
   const allowedRootFiles = new Set([
     "client/styles/_colors.scss",
+    "client/styles/_colors-app-details.scss",
+    "client/styles/_colors-applist.scss",
+    "client/styles/_colors-core.scss",
+    "client/styles/_colors-defaults.scss",
+    "client/styles/_colors-grainlist.scss",
+    "client/styles/_colors-topbar.scss",
     "client/styles/_focus.scss",
     "client/styles/_fonts.scss",
     "client/styles/_icon-api.scss",

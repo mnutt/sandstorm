@@ -1,0 +1,22 @@
+@use "colors-defaults" as defaults;
+
+//////// Grain list ("Open...") styles
+$grainlist-background-color: defaults.$default-content-background-color;
+$grainlist-foreground-color: defaults.$default-content-foreground-color;
+
+$grainlist-searchbar-background-color: defaults.$default-textinput-background-color;
+$grainlist-searchbar-outline-color: defaults.$default-textinput-outline-color;
+$grainlist-searchbar-outline-color-focus: defaults.$default-textinput-outline-color-focus;
+
+$grainlist-table-header-background-color: defaults.$default-table-header-background-color;
+$grainlist-table-header-foreground-color: defaults.$default-table-header-foreground-color;
+$grainlist-table-header-background-color-hover: defaults.$default-table-header-background-color-hover;
+// icons fills should be #9e9e9e
+
+$grainlist-table-row-background-color: defaults.$default-table-row-background-color;
+$grainlist-table-row-foreground-color: #5d5d5d;
+$grainlist-table-row-background-color-hover: defaults.$default-table-row-background-color-hover;
+$grainlist-table-row-background-color-unread: #eee9f4;
+$grainlist-table-row-action-background-color: defaults.$default-table-row-action-background-color;
+$grainlist-table-row-action-background-color-hover: defaults.$default-table-row-action-background-color-hover;
+$grainlist-table-row-outline-color: #d3d3d3;

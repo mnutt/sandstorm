@@ -1,0 +1,21 @@
+@use "sass:color";
+
+// Colors, mostly for the toolbar/navbar, but perhaps reusable elsewhere.
+
+// The purple that we use for
+$sandstorm-purple-color: #762F87;
+$darker-purple-color: #65468e;
+
+// The color that we use to outline focused elements, for accessibility
+// Keep $half-focus-outline-color's values in sync with the values from the outline color.
+$focus-outline-color: $sandstorm-purple-color;
+$half-focus-outline-color: rgba(118, 47, 135, 0.5);
+
+// The color to use for your border when you want to faintly outline something.
+$generic-border-color: color.adjust(white, $lightness: -30%);
+
+// Colors for success/error message box backgrounds.
+$error-background-color: #ffdddd;
+$success-background-color: #ddffdd;
+$warning-background-color: #ffffaa;
+$info-background-color: #d8bfd8;
