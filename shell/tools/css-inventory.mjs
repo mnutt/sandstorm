@@ -269,7 +269,7 @@ function collectScriptFiles(directory) {
     if (entry.isDirectory()) {
       files.push(...collectScriptFiles(fullPath));
     } else if (entry.isFile() || entry.isSymbolicLink()) {
-      if (entry.name.endsWith(".js")) {
+      if (/\.[jt]sx?$/.test(entry.name)) {
         files.push(fullPath);
       }
     }
