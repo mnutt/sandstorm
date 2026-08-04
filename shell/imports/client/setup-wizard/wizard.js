@@ -11,12 +11,7 @@ import { isDevelopmentServer } from "/imports/client/dev-mode";
 import downloadFile from "/imports/client/download-file";
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/setup-wizard/styles/_layout.scss";
-import "/imports/client/setup-wizard/styles/_progress.scss";
-import "/imports/client/setup-wizard/styles/_start.scss";
-import "/imports/client/setup-wizard/styles/_organization.scss";
-import "/imports/client/setup-wizard/styles/_preinstall.scss";
-import "/imports/client/setup-wizard/styles/_actions.scss";
+import "/imports/client/setup-wizard/styles/setup-wizard.scss";
 
 // Pseudocollection telling the client if there's an admin user yet.
 const HasAdmin = new Mongo.Collection("hasAdmin");

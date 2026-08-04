@@ -12,6 +12,10 @@ const styleRoots = [
   path.join(root, "imports", "sandstorm-ui-powerbox"),
   path.join(root, "imports", "sandstorm-ui-topbar"),
 ];
+const scriptRoots = [
+  path.join(root, "client"),
+  path.join(root, "imports"),
+];
 
 const options = new Map();
 let check = false;
@@ -45,6 +49,14 @@ for (const styleRoot of styleRoots) {
 const styleFiles = styleRoots
   .flatMap((styleRoot) => collectStyleFiles(styleRoot))
   .sort();
+const scriptStyleImports = scriptRoots
+  .filter((scriptRoot) => fs.existsSync(scriptRoot))
+  .flatMap((scriptRoot) => collectScriptFiles(scriptRoot))
+  .sort()
+  .flatMap((fileName) => collectJsStyleImports(fileName).map((styleImport) => ({
+    file: path.relative(root, fileName),
+    ...styleImport,
+  })));
 
 const inventory = styleFiles.map((fileName) => {
   const source = fs.readFileSync(fileName, "utf8");
@@ -100,6 +112,7 @@ const report = {
   styleRoots: styleRoots.map((styleRoot) => path.relative(root, styleRoot)),
   totals,
   files: inventory,
+  scriptStyleImports,
   rankedRisk: rankedRisk.map(({ file, risk, metrics }) => ({ file, risk, metrics })),
 };
 
@@ -202,6 +215,16 @@ function checkOrganization(report) {
     }
   }
 
+  for (const styleImport of report.scriptStyleImports) {
+    const importedBase = path.posix.basename(styleImport.target);
+    if (importedBase.startsWith("_") && importedBase.endsWith(".scss")) {
+      errors.push(
+        `${styleImport.file}:${styleImport.line} imports private Sass partial ${styleImport.target}; ` +
+        "import a module-owned stylesheet entry instead.",
+      );
+    }
+  }
+
   return errors;
 }
 
@@ -221,6 +244,33 @@ function collectStyleFiles(directory) {
   }
 
   return files;
+}
+
+function collectScriptFiles(directory) {
+  const entries = fs.readdirSync(directory, { withFileTypes: true });
+  const files = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectScriptFiles(fullPath));
+    } else if (entry.isFile() || entry.isSymbolicLink()) {
+      if (entry.name.endsWith(".js")) {
+        files.push(fullPath);
+      }
+    }
+  }
+
+  return files;
+}
+
+function collectJsStyleImports(fileName) {
+  const source = fs.readFileSync(fileName, "utf8");
+  return [...source.matchAll(/import\s+["']([^"']+\.(?:s?css))["'];?/g)]
+    .map((match) => ({
+      line: source.slice(0, match.index).split(/\r?\n/).length,
+      target: match[1],
+    }));
 }
 
 function collectSelectors(lines) {

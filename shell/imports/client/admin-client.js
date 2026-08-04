@@ -20,27 +20,7 @@ import { Session } from "meteor/session";
 import { Tracker } from "meteor/tracker";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 
-import "/imports/client/admin/styles/_new-admin-base.scss";
-import "/imports/client/admin/styles/_admin-login.scss";
-import "/imports/client/admin/styles/_admin-email.scss";
-import "/imports/client/admin/styles/_admin-organization.scss";
-import "/imports/client/admin/styles/_admin-status.scss";
-import "/imports/client/admin/styles/_admin-personalization.scss";
-import "/imports/client/admin/styles/_admin-network-capabilities.scss";
-import "/imports/client/admin/styles/_admin-apps.scss";
-import "/imports/client/admin/styles/_admin-preinstalled-apps.scss";
-import "/imports/client/admin/styles/_admin-maintenance.scss";
-import "/imports/client/admin/styles/_admin-users-filters.scss";
-import "/imports/client/admin/styles/_admin-user-class-labels.scss";
-import "/imports/client/admin/styles/_admin-users-table-shell.scss";
-import "/imports/client/admin/styles/_admin-users-table-columns.scss";
-import "/imports/client/admin/styles/_admin-user-details.scss";
-import "/imports/client/admin/styles/_admin-user-credentials.scss";
-import "/imports/client/admin/styles/_admin-user-invites.scss";
-import "/imports/client/admin/styles/_admin-stats.scss";
-import "/imports/client/admin/styles/_admin-hosting-management.scss";
-import "/imports/client/admin/styles/_admin-networking.scss";
-import "/imports/client/admin/styles/_admin-certificates.scss";
+import "/imports/client/admin/styles/admin.scss";
 
 Meteor.subscribe("publicAdminSettings");
 
