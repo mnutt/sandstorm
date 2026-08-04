@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-defaults" as default-colors;
 @use "partials-media" as media;
 
 .admin-user-table {
@@ -8,7 +8,7 @@
     flex-direction: row;
     align-items: flex-start;
     justify-content: flex-start;
-    background-color: colors.$default-table-row-action-background-color;
+    background-color: default-colors.$default-table-row-action-background-color;
     cursor: pointer;
 
     .plus-icon {
@@ -20,7 +20,7 @@
     }
 
     &:hover {
-      background-color: colors.$default-table-row-action-background-color-hover;
+      background-color: default-colors.$default-table-row-action-background-color-hover;
       .plus-icon {
         background-image: url("/plus-6A237C.svg");
       }

@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 @use "geometry";
 @use "partials-buttons" as buttons;
 
@@ -15,7 +15,7 @@
     overflow: hidden;
 
     &:hover {
-      background-color: colors.$topbar-background-color-hover;
+      background-color: topbar-colors.$topbar-background-color-hover;
     }
   }
 }
@@ -56,7 +56,7 @@
     height: 48px;
 
     &:hover {
-      background-color: colors.$topbar-background-color-hover;
+      background-color: topbar-colors.$topbar-background-color-hover;
     }
   }
 }

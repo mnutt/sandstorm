@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 @use "geometry";
 
 @mixin hamburger-menu-item () {
@@ -22,7 +22,7 @@
     text-decoration: none;
 
     &:hover {
-      background-color: colors.$topbar-background-color-hover;
+      background-color: topbar-colors.$topbar-background-color-hover;
     }
   }
 }

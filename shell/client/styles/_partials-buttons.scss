@@ -1,5 +1,5 @@
 @use "sass:color";
-@use "colors";
+@use "colors-core" as core-colors;
 
 @mixin unstyled-button () {
   // Styles for <button>s should @include this to remove the browser's default styling.
@@ -49,9 +49,9 @@
 
 @mixin button-primary () {
   // A button coloring for the primary action of a form.
-  background-color: colors.$darker-purple-color;
+  background-color: core-colors.$darker-purple-color;
   color: white;
-  border: 1px solid color.adjust(colors.$darker-purple-color, $lightness: -10%);
+  border: 1px solid color.adjust(core-colors.$darker-purple-color, $lightness: -10%);
   &:hover {
     background-color: #714daa;
   }

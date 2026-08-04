@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 .main-content>.about {
   >section.terms {
@@ -15,7 +15,7 @@
           color: black;
           font-weight: normal;
           &:hover {
-            color: colors.$darker-purple-color;
+            color: core-colors.$darker-purple-color;
           }
         }
       }

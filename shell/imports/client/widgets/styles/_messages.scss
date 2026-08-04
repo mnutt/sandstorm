@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 .flash-message {
   border-radius: 5px;
@@ -6,17 +6,17 @@
 }
 
 .error-message {
-  background-color: colors.$error-background-color;
+  background-color: core-colors.$error-background-color;
 }
 
 .warning-message {
-  background-color: colors.$warning-background-color;
+  background-color: core-colors.$warning-background-color;
 }
 
 .success-message {
-  background-color: colors.$success-background-color;
+  background-color: core-colors.$success-background-color;
 }
 
 .info-message {
-  background-color: colors.$info-background-color;
+  background-color: core-colors.$info-background-color;
 }

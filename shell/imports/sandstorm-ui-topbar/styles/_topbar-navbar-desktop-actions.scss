@@ -1,5 +1,5 @@
 @use "sass:math";
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 @use "geometry";
 
 @mixin navbar-desktop-actions () {
@@ -13,15 +13,15 @@
       font-size: 150%;
       line-height: 48px;
       height: 48px;
-      background-color: colors.$topbar-background-color;
-      color: colors.$topbar-foreground-color;
+      background-color: topbar-colors.$topbar-background-color;
+      color: topbar-colors.$topbar-foreground-color;
       &:hover {
-        background-color: colors.$topbar-background-color-hover;
-        color: colors.$topbar-foreground-color-hover;
+        background-color: topbar-colors.$topbar-background-color-hover;
+        color: topbar-colors.$topbar-foreground-color-hover;
       }
       &.current, &.current:hover {
-        background-color: colors.$topbar-background-color-active;
-        color: colors.$topbar-foreground-color-active;
+        background-color: topbar-colors.$topbar-background-color-active;
+        color: topbar-colors.$topbar-foreground-color-active;
       }
     }
   }

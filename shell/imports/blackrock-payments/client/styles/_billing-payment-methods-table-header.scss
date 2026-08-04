@@ -1,11 +1,11 @@
-@use "colors";
+@use "colors-defaults" as default-colors;
 
 div.billing {
   >section.payment-methods {
     >table {
       >thead {
         td {
-          border-right: 1px solid colors.$default-content-background-color;
+          border-right: 1px solid default-colors.$default-content-background-color;
           background-color: #ccc;
           padding-left: 10px;
         }

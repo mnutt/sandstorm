@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 .main-content>.about {
   >section.dependencies {
@@ -25,7 +25,7 @@
           display: block;
           color: black;
           &:hover {
-            color: colors.$darker-purple-color;
+            color: core-colors.$darker-purple-color;
           }
 
           &::after {

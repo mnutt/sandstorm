@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-defaults" as default-colors;
 
 .grain-list {
   >h1 {
@@ -10,7 +10,7 @@
     margin-top: 0px;
     padding-top: 0px;
     padding-bottom: 12px;
-    border-bottom: 1px solid colors.$default-rule-color;
+    border-bottom: 1px solid default-colors.$default-rule-color;
     margin-bottom: 12px;
 
     font-size: 24pt;

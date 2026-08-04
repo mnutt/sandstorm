@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 .app-list {
   >.app-button, >.popular-container>.app-button {
@@ -19,7 +19,7 @@
       }
       &.install-icon {
         background-image: url('/install-714DAA.svg');
-        border: 1px solid colors.$generic-border-color;
+        border: 1px solid core-colors.$generic-border-color;
 
         &:hover {
           background-image: url('/install-896AC6.svg');

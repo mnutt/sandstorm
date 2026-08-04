@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-grainlist" as grainlist-colors;
 @use "partials-media" as media;
 @use "partials-buttons" as buttons;
 
@@ -6,9 +6,9 @@
   >tbody>tr {
     &.action {
       cursor: pointer;
-      background-color: colors.$grainlist-table-row-action-background-color;
+      background-color: grainlist-colors.$grainlist-table-row-action-background-color;
       &:hover {
-        background-color: colors.$grainlist-table-row-action-background-color-hover;
+        background-color: grainlist-colors.$grainlist-table-row-action-background-color-hover;
         >td>.new-grain-icon {
           background-image: url("/plus-6A237C.svg");
         }

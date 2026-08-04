@@ -1,10 +1,10 @@
 @use "sass:color";
-@use "colors";
+@use "colors-app-details" as app-details-colors;
 @use "partials-buttons" as buttons;
 
 .app-details {
   >.newer-version, >.older-version {
-    background-color: color.adjust(colors.$app-details-background-color, $lightness: -10%);
+    background-color: color.adjust(app-details-colors.$app-details-background-color, $lightness: -10%);
     >p {
       >button {
         @include buttons.button-base();

@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 .topbar-popup {
   &.share {
@@ -23,7 +23,7 @@
           cursor: pointer;
 
           &.selected {
-            border: colors.$focus-outline-color solid 1px;
+            border: core-colors.$focus-outline-color solid 1px;
           }
           &:hover {
             background-color: #999;

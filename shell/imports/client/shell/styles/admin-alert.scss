@@ -1,9 +1,9 @@
-@use "colors";
+@use "colors-core" as core-colors;
 @use "geometry";
 
 .admin-alert-icon {
   display: inline-block;
-  background-color: colors.$sandstorm-purple-color;
+  background-color: core-colors.$sandstorm-purple-color;
   color: white;
   font-size: 20px;
   font-weight: bold;

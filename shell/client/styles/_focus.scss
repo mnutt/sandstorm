@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 // Styles relating to how elements should be styled when focused.
 // Resets aside, these should not change geometry.
@@ -12,8 +12,8 @@ input::-moz-focus-inner {
 }
 
 @mixin custom-focus-ring () {
-  outline: colors.$focus-outline-color solid 1px;
-  box-shadow: inset 0 1px 2px rgba(0,0,0,0.075), 0 0 5px colors.$half-focus-outline-color;
+  outline: core-colors.$focus-outline-color solid 1px;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.075), 0 0 5px core-colors.$half-focus-outline-color;
 }
 
 a:focus, button:focus, input:focus, select:focus, textarea:focus {

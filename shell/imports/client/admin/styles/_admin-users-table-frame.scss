@@ -1,7 +1,7 @@
-@use "colors";
+@use "colors-defaults" as default-colors;
 
 .admin-user-table {
-  border: 1px solid colors.$default-table-border-color;
+  border: 1px solid default-colors.$default-table-border-color;
 
   div[role=columnheader] {
     // Column header text should "stick" to the bottom of the row, to be

@@ -1,16 +1,16 @@
-@use "colors";
+@use "colors-grainlist" as grainlist-colors;
 @use "geometry";
 
 @mixin grain-table-header () {
   >thead>tr {
-    background-color: colors.$grainlist-table-header-background-color;
-    color: colors.$grainlist-table-header-foreground-color;
+    background-color: grainlist-colors.$grainlist-table-header-background-color;
+    color: grainlist-colors.$grainlist-table-header-foreground-color;
     font-weight: 600;
     border-bottom: 1px solid #aaa;
     >td {
       border: 1px solid white;
       &.grain-name:hover, &.grain-size:hover, &.last-used:hover {
-        background-color: colors.$grainlist-table-header-background-color-hover;
+        background-color: grainlist-colors.$grainlist-table-header-background-color-hover;
         cursor: pointer;
       }
       &.grain-size {

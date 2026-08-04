@@ -1,5 +1,5 @@
 @use "sass:color";
-@use "colors";
+@use "colors-core" as core-colors;
 
 .topbar-popup {
   &.share {
@@ -28,7 +28,7 @@
                 cursor: pointer;
               }
             }
-            background-color: color.adjust(colors.$sandstorm-purple-color, $lightness: 30%);
+            background-color: color.adjust(core-colors.$sandstorm-purple-color, $lightness: 30%);
           }
         }
       }

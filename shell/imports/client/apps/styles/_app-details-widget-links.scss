@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 @mixin app-links () {
   display: block;
@@ -37,7 +37,7 @@
       font-weight: normal;
       color: #000000;
       &:hover {
-        color: colors.$sandstorm-purple-color;
+        color: core-colors.$sandstorm-purple-color;
       }
     }
   }

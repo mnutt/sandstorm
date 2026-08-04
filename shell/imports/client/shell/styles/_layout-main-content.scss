@@ -1,4 +1,5 @@
-@use "colors";
+@use "colors-core" as core-colors;
+@use "colors-defaults" as default-colors;
 @use "geometry";
 
 .main-content,
@@ -12,8 +13,8 @@
   left: 0;
   right: 0;
   bottom: 0px;
-  color: colors.$default-content-foreground-color;
-  background-color: colors.$default-content-background-color;
+  color: default-colors.$default-content-foreground-color;
+  background-color: default-colors.$default-content-background-color;
   overflow: auto;
 
   @media #{geometry.$desktop} {
@@ -33,6 +34,6 @@
   a {
     font-weight: bold;
     text-decoration: none;
-    color: colors.$darker-purple-color;
+    color: core-colors.$darker-purple-color;
   }
 }

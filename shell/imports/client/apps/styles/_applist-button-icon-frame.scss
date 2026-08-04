@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-applist" as applist-colors;
 @use "geometry";
 @use "partials-media" as media;
 
@@ -23,8 +23,8 @@
       border-radius: 6px;
       vertical-align: top;
       &.pseudoapp {
-        background-color: colors.$applist-pseudoapp-background-color;
-        border: 1px colors.$applist-pseudoapp-outline-color;
+        background-color: applist-colors.$applist-pseudoapp-background-color;
+        border: 1px applist-colors.$applist-pseudoapp-outline-color;
       }
     }
   }

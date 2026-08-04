@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-defaults" as default-colors;
 
 .admin-user-table {
   .header-row {
@@ -6,11 +6,11 @@
     flex-direction: row;
     align-items: stretch; // so the border-left covers the whole height of the row
     justify-content: flex-start;
-    background-color: colors.$default-table-header-background-color;
-    color: colors.$default-table-header-foreground-color;
-    border-bottom: 1px solid colors.$default-table-header-border-color;
+    background-color: default-colors.$default-table-header-background-color;
+    color: default-colors.$default-table-header-foreground-color;
+    border-bottom: 1px solid default-colors.$default-table-header-border-color;
     >div[role=columnheader]:not(:first-child) {
-      border-left: 1px solid colors.$default-table-header-border-color;
+      border-left: 1px solid default-colors.$default-table-header-border-color;
     }
     .created, .last-active {
       cursor: pointer;

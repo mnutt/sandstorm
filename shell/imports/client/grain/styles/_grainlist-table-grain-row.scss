@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-grainlist" as grainlist-colors;
 
 @mixin grain-table-grain-row () {
   >tbody>tr {
@@ -7,7 +7,7 @@
         cursor: pointer;
       }
       &:hover {
-        background-color: colors.$grainlist-table-row-background-color-hover;
+        background-color: grainlist-colors.$grainlist-table-row-background-color-hover;
       }
     }
   }

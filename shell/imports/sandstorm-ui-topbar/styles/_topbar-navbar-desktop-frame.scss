@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 @use "geometry";
 
 @mixin navbar-desktop-frame () {
@@ -13,7 +13,7 @@
   li {
     display: block;
     position: relative;
-    border-bottom: 1px solid colors.$topbar-border-color;
+    border-bottom: 1px solid topbar-colors.$topbar-border-color;
     margin: 0;
     list-style-type: none;
   }

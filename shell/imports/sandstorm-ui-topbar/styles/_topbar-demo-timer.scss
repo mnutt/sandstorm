@@ -1,11 +1,11 @@
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 
 .sandstorm-topbar {
   .demo-timer {
     p {
       margin: 0;
       padding: 4px;
-      color: colors.$topbar-foreground-color;
+      color: topbar-colors.$topbar-foreground-color;
       font-size: 14px;
     }
   }
@@ -16,7 +16,7 @@
     font-weight: bold;
     color: #a0a0a0;
     text-align: center;
-    border: 1px solid colors.$topbar-foreground-color;
+    border: 1px solid topbar-colors.$topbar-foreground-color;
     border-radius: 4px;
 
     &.urgent {

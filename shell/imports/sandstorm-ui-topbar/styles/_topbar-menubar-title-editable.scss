@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 @use "geometry";
 
 .sandstorm-topbar {
@@ -21,8 +21,8 @@
 
         &:hover {
           cursor: pointer;
-          color: colors.$topbar-foreground-color-hover;
-          background-color: colors.$topbar-background-color-hover;
+          color: topbar-colors.$topbar-foreground-color-hover;
+          background-color: topbar-colors.$topbar-background-color-hover;
         }
       }
     }

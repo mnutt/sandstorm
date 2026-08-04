@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 @use "geometry";
 @use "partials-media" as media;
 
@@ -26,8 +26,8 @@
           background-size: auto, 16px 8px;
 
           &:hover {
-            background-color: colors.$topbar-background-color-hover;
-            color: colors.$topbar-foreground-color-hover;
+            background-color: topbar-colors.$topbar-background-color-hover;
+            color: topbar-colors.$topbar-foreground-color-hover;
           }
         }
       }

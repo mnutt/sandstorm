@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 .topbar-popup {
   &.share {
@@ -9,7 +9,7 @@
         display: inline;
         >li {
           display: inline-block;
-          background-color: colors.$sandstorm-purple-color;
+          background-color: core-colors.$sandstorm-purple-color;
           color: white;
           border-radius: 8px;
           padding: 2px 4px;

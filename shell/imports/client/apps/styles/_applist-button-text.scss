@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-applist" as applist-colors;
 @use "geometry";
 @use "partials-media" as media;
 
@@ -31,7 +31,7 @@
     }
     >.action-text {
       @include apptext();
-      color: colors.$applist-action-text-color;
+      color: applist-colors.$applist-action-text-color;
       @media #{geometry.$desktop} {
         top: 168px;
         font-size: 13pt;

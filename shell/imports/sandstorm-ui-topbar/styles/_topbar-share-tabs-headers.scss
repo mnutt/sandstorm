@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 .topbar-popup {
   &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
@@ -24,7 +24,7 @@
           background-repeat: no-repeat;
           cursor: pointer;
           &:focus {
-            outline: colors.$focus-outline-color solid 1px;
+            outline: core-colors.$focus-outline-color solid 1px;
           }
         }
       }

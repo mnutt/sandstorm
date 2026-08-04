@@ -1,11 +1,11 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 .topbar-popup {
   &.notifications {
     ul.notification-list {
       .notification-item {
         &.urgent {
-          background-color: colors.$error-background-color;
+          background-color: core-colors.$error-background-color;
         }
 
         &[href]:hover {

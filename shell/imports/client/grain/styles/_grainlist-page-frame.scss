@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-grainlist" as grainlist-colors;
 @use "geometry";
 
 .grain-list {
@@ -7,6 +7,6 @@
   @media #{geometry.$mobile} {
     padding: 0px 8px;
   }
-  background-color: colors.$grainlist-background-color;
-  color: colors.$grainlist-foreground-color;
+  background-color: grainlist-colors.$grainlist-background-color;
+  color: grainlist-colors.$grainlist-foreground-color;
 }

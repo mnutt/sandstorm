@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 
 .sandstorm-topbar {
   >.navbar {
@@ -12,22 +12,22 @@
           position: relative;
           z-index: 1;
         }
-        background-color: colors.$topbar-background-color;
-        color: colors.$topbar-foreground-color;
+        background-color: topbar-colors.$topbar-background-color;
+        color: topbar-colors.$topbar-foreground-color;
         &:hover {
-          background-color: colors.$topbar-background-color-hover;
-          color: colors.$topbar-foreground-color-hover;
+          background-color: topbar-colors.$topbar-background-color-hover;
+          color: topbar-colors.$topbar-foreground-color-hover;
         }
         &.unread {
-          background-color: colors.$topbar-background-color-unread;
-          color: colors.$topbar-foreground-color-unread;
+          background-color: topbar-colors.$topbar-background-color-unread;
+          color: topbar-colors.$topbar-foreground-color-unread;
         }
         &.unread:hover {
-          background-color: colors.$topbar-background-color-unread-hover;
+          background-color: topbar-colors.$topbar-background-color-unread-hover;
         }
         &.current, &.current:hover {
-          background-color: colors.$topbar-background-color-active;
-          color: colors.$topbar-foreground-color-active;
+          background-color: topbar-colors.$topbar-background-color-active;
+          color: topbar-colors.$topbar-foreground-color-active;
         }
       }
     }

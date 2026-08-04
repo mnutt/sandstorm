@@ -1,11 +1,11 @@
-@use "colors";
+@use "colors-defaults" as default-colors;
 
 .grain-settings {
   h1 {
     font-weight: normal;
     margin-top: 0;
     padding-bottom: 12px;
-    border-bottom: 1px solid colors.$default-rule-color;
+    border-bottom: 1px solid default-colors.$default-rule-color;
   }
 
   h2 {

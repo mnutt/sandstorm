@@ -1,10 +1,10 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 .sandstorm-topbar {
   >.menubar {
     >.admin-alert {
       .alert {
-        background-color: colors.$sandstorm-purple-color;
+        background-color: core-colors.$sandstorm-purple-color;
         color: white;
         text-decoration: none;
 

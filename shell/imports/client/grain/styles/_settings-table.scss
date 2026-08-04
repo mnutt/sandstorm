@@ -1,9 +1,9 @@
-@use "colors";
+@use "colors-defaults" as default-colors;
 
 .grain-settings {
   table {
     border-collapse: collapse;
-    border: 1px solid colors.$default-table-border-color;
+    border: 1px solid default-colors.$default-table-border-color;
     width: 100%;
   }
 
@@ -21,11 +21,11 @@
   }
 
   tr {
-    color: colors.$default-table-row-foreground-color;
-    background-color: colors.$default-table-row-background-color;
+    color: default-colors.$default-table-row-foreground-color;
+    background-color: default-colors.$default-table-row-background-color;
   }
   tr:hover {
-    background-color: colors.$default-table-row-background-color-hover;
+    background-color: default-colors.$default-table-row-background-color-hover;
   }
 
   tr {
@@ -35,10 +35,10 @@
   }
 
   tr.header-row {
-    background-color: colors.$default-table-header-background-color;
-    color: colors.$default-table-header-foreground-color;
+    background-color: default-colors.$default-table-header-background-color;
+    color: default-colors.$default-table-header-foreground-color;
   }
   th:hover {
-    background-color: colors.$default-table-header-background-color-hover;
+    background-color: default-colors.$default-table-header-background-color-hover;
   }
 }

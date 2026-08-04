@@ -1,11 +1,11 @@
-@use "colors";
+@use "colors-defaults" as default-colors;
 @use "partials-buttons" as buttons;
 
 .main-content .grain-interstitial {
   display: flex;
   align-items: center;
   flex-direction: column;
-  background-color: colors.$default-content-background-color;
+  background-color: default-colors.$default-content-background-color;
   button.request-access, button.reveal-identity-button, button.restore-from-trash {
     @include buttons.button-base();
     @include buttons.button-primary();

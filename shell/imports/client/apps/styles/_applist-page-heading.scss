@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-applist" as applist-colors;
 
 .app-list {
   >h1 {
@@ -9,7 +9,7 @@
 
     margin-top: 0px;
     padding-bottom: 12px;
-    border-bottom: 1px solid colors.$applist-rule-color;
+    border-bottom: 1px solid applist-colors.$applist-rule-color;
     margin-bottom: 12px;
 
     font-size: 24pt;

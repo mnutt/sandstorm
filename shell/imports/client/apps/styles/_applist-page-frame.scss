@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-applist" as applist-colors;
 @use "geometry";
 
 .app-list {
@@ -9,6 +9,6 @@
   @media #{geometry.$mobile} {
     padding: 0px 8px;
   }
-  background-color: colors.$applist-background-color;
-  color: colors.$applist-foreground-color;
+  background-color: applist-colors.$applist-background-color;
+  color: applist-colors.$applist-foreground-color;
 }

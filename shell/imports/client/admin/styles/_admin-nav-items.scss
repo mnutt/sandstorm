@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 
 .nav-items {
   margin: 0;
@@ -27,7 +27,7 @@
       }
 
       .item-name {
-        color: colors.$darker-purple-color;
+        color: core-colors.$darker-purple-color;
         font-weight: 600;
         font-size: 16px;
       }

@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-core" as core-colors;
 @use "partials-buttons" as buttons;
 
 .main-content>.account {
@@ -14,7 +14,7 @@
             margin-top: 2px;
           }
           span.primary-badge {
-            background-color: colors.$sandstorm-purple-color;
+            background-color: core-colors.$sandstorm-purple-color;
             color: white;
             width: 32%;
             text-align: center;

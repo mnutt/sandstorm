@@ -1,11 +1,11 @@
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 @use "geometry";
 
 .sandstorm-topbar {
   >.menubar {
     padding-left: 0;
     margin-left: 0;
-    border-bottom: 1px solid colors.$topbar-border-color;
+    border-bottom: 1px solid topbar-colors.$topbar-border-color;
     overflow: hidden;
     @media #{geometry.$desktop} {
       height: geometry.$topbar-height-desktop;

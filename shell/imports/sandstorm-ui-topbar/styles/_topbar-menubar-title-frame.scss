@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 @use "geometry";
 
 .sandstorm-topbar {
@@ -15,8 +15,8 @@
       @media #{geometry.$mobile} {
         width: 100%; // needs to span the whole row because the border-bottom is needed to draw
                      // the horizontal rule when the menu is expanded
-        background-color: colors.$topbar-background-color;
-        color: colors.$topbar-foreground-color;
+        background-color: topbar-colors.$topbar-background-color;
+        color: topbar-colors.$topbar-foreground-color;
         padding-left: 56px;
         font-size: 120%;
         position: fixed;

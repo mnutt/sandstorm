@@ -1,10 +1,10 @@
-@use "colors";
+@use "colors-topbar" as topbar-colors;
 @use "geometry";
 
 @media #{geometry.$mobile} {
   // Only show the menu button on mobile
   .topbar-menu-button {
-    background-color: colors.$topbar-background-color;
+    background-color: topbar-colors.$topbar-background-color;
     display: inline-block;
     vertical-align: top;
     background-image:url(/menu.svg);
@@ -21,7 +21,7 @@
     left: 0;
     top: 0;
     &:hover {
-      background-color: colors.$topbar-background-color-hover;
+      background-color: topbar-colors.$topbar-background-color-hover;
     }
     &.expanded {
       z-index: 101;

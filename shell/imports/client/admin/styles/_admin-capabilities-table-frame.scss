@@ -1,7 +1,7 @@
-@use "colors";
+@use "colors-defaults" as default-colors;
 
 .admin-caps-table {
-  border: 1px solid colors.$default-table-border-color;
+  border: 1px solid default-colors.$default-table-border-color;
 
   div[role=columnheader] {
     // Column header text should "stick" to the bottom of the row, to be
@@ -19,8 +19,8 @@
   }
 
   div[role=rowgroup].thead {
-    background-color: colors.$default-table-header-background-color;
-    color: colors.$default-table-header-foreground-color;
+    background-color: default-colors.$default-table-header-background-color;
+    color: default-colors.$default-table-header-foreground-color;
   }
 
   div[role=row], div[role=gridcell] {
@@ -31,7 +31,7 @@
   }
 
   .capability-row, .none-row {
-    background-color: colors.$default-table-row-background-color;
-    color: colors.$default-table-row-foreground-color;
+    background-color: default-colors.$default-table-row-background-color;
+    color: default-colors.$default-table-row-foreground-color;
   }
 }

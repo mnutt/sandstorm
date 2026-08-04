@@ -1,4 +1,4 @@
-@use "colors";
+@use "colors-grainlist" as grainlist-colors;
 @use "partials-media" as media;
 
 .topbar-popup.request>.frame-container>.frame {
@@ -25,10 +25,10 @@
         font-size: 16pt;
         height: 32px;
         width: calc(100% - 36px);
-        background-color: colors.$grainlist-searchbar-background-color;
-        border: 1px solid colors.$grainlist-searchbar-outline-color;
+        background-color: grainlist-colors.$grainlist-searchbar-background-color;
+        border: 1px solid grainlist-colors.$grainlist-searchbar-outline-color;
         &:focus {
-          border: 1px solid colors.$grainlist-searchbar-outline-color-focus;
+          border: 1px solid grainlist-colors.$grainlist-searchbar-outline-color-focus;
         }
       }
     }
