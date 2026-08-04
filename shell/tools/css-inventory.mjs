@@ -73,6 +73,7 @@ const scriptStyleImports = scriptFiles
     ...styleImport,
   })));
 const unreachableStyleFiles = collectUnreachableStyleFiles(styleFiles, scriptFiles);
+const unresolvedStyleImports = collectUnresolvedStyleImports(styleFiles, scriptFiles);
 
 const inventory = styleFiles.map((fileName) => {
   const source = fs.readFileSync(fileName, "utf8");
@@ -133,6 +134,7 @@ const report = {
   files: inventory,
   scriptStyleImports,
   unreachableStyleFiles,
+  unresolvedStyleImports,
   vendorFiles: inventory.filter((item) => item.vendor).map(({ file, metrics }) => ({ file, metrics })),
   rankedRisk: rankedRisk.map(({ file, risk, metrics }) => ({ file, risk, metrics })),
 };
@@ -276,6 +278,10 @@ function checkOrganization(report) {
     errors.push(`${file} is not reachable from any JS/TS stylesheet import.`);
   }
 
+  for (const styleImport of report.unresolvedStyleImports) {
+    errors.push(`${styleImport.file}:${styleImport.line} cannot resolve stylesheet import ${styleImport.target}.`);
+  }
+
   return errors;
 }
 
@@ -348,6 +354,39 @@ function collectUnreachableStyleFiles(styleFiles, scriptFiles) {
     .sort();
 }
 
+function collectUnresolvedStyleImports(styleFiles, scriptFiles) {
+  const unresolved = [];
+
+  for (const fileName of scriptFiles) {
+    for (const styleImport of collectJsStyleImports(fileName)) {
+      if (!resolveStyleImport(fileName, styleImport.target)) {
+        unresolved.push({
+          file: path.relative(root, fileName),
+          line: styleImport.line,
+          target: styleImport.target,
+        });
+      }
+    }
+  }
+
+  for (const fileName of styleFiles) {
+    const source = fs.readFileSync(fileName, "utf8");
+    const lineStarts = sourceLineStarts(source);
+    for (const match of source.matchAll(/@(use|import|forward)\s+["']([^"']+)["']/g)) {
+      const target = match[2];
+      if (!target.startsWith("sass:") && !resolveStyleImport(fileName, target)) {
+        unresolved.push({
+          file: path.relative(root, fileName),
+          line: lineNumberForIndex(lineStarts, match.index),
+          target,
+        });
+      }
+    }
+  }
+
+  return unresolved.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+}
+
 function visitStyleFile(fileName, reachable) {
   if (reachable.has(fileName) || !fs.existsSync(fileName)) {
     return;
@@ -404,6 +443,26 @@ function styleImportCandidates(basePath) {
   }
 
   return candidates;
+}
+
+function sourceLineStarts(source) {
+  const starts = [0];
+  for (let i = 0; i < source.length; i++) {
+    if (source[i] === "\n") {
+      starts.push(i + 1);
+    }
+  }
+
+  return starts;
+}
+
+function lineNumberForIndex(lineStarts, index) {
+  let line = 0;
+  while (line + 1 < lineStarts.length && lineStarts[line + 1] <= index) {
+    line++;
+  }
+
+  return line + 1;
 }
 
 function collectSelectors(lines) {
