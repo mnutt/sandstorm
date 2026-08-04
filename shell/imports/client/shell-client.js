@@ -35,25 +35,11 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { coerceTemplateText } from "/imports/shared/template-values";
 
-import "/imports/client/shell/styles/about-page-ui.scss";
-import "/imports/client/shell/styles/about-intro-ui.scss";
-import "/imports/client/shell/styles/about-changelog-ui.scss";
-import "/imports/client/shell/styles/about-dependencies-ui.scss";
-import "/imports/client/shell/styles/about-copyright-ui.scss";
-import "/imports/client/shell/styles/about-terms-ui.scss";
 import "/imports/client/shell/styles/layout-main-content-ui.scss";
 import "/imports/client/shell/styles/layout-main-content-state-ui.scss";
 import "/imports/client/shell/styles/layout-centered-box-ui.scss";
 import "/imports/client/shell/styles/layout-ios-ui.scss";
 import "/imports/client/shell/styles/admin-alert.scss";
-import "/imports/client/shell/styles/root-intro-ui.scss";
-import "/imports/client/shell/styles/root-onboarding-ui.scss";
-import "/imports/client/shell/styles/root-demo-ui.scss";
-import "/imports/client/shell/styles/referrals-page-ui.scss";
-import "/imports/client/shell/styles/referrals-header-ui.scss";
-import "/imports/client/shell/styles/referrals-content-ui.scss";
-import "/imports/client/shell/styles/referrals-tutorial-ui.scss";
-import "/imports/client/shell/styles/referrals-fine-print-ui.scss";
 
 // Subscribe to basic grain information first and foremost, since
 // without it we might e.g. redirect to the wrong place on login.
@@ -361,26 +347,6 @@ const makeDateString = function (date) {
 };
 globalThis.makeDateString = makeDateString;
 
-// export: used in sandstorm-ui-grainlist
-const prettySize = function (size) {
-  if (!size) return "";
-
-  let suffix = "B";
-  if (size >= 1000000000) {
-    size = size / 1000000000;
-    suffix = "GB";
-  } else if (size >= 1000000) {
-    size = size / 1000000;
-    suffix = "MB";
-  } else if (size >= 1000) {
-    size = size / 1000;
-    suffix = "kB";
-  }
-
-  return size.toPrecision(3) + suffix;
-};
-globalThis.prettySize = prettySize;
-
 // export: used in shared/demo.js
 const launchAndEnterGrainByPackageId = function (packageId, options) {
   const action = globalDb.collections.userActions.findOne({ packageId: packageId });
@@ -467,8 +433,6 @@ globalThis.globalQuotaEnforcer = globalQuotaEnforcer;
 
 const HasUsers = new Mongo.Collection("hasUsers");  // dummy collection defined above
 globalThis.HasUsers = HasUsers;
-const ReferralInfo = new Meteor.Collection("referralInfo"); // pseudo-collection
-globalThis.ReferralInfo = ReferralInfo;
 
 if (Meteor.settings.public.quotaEnabled) {
   window.testDisableQuotaClientSide = function () {
@@ -490,18 +454,6 @@ Template.layout.events({
     if (!event.isDefaultPrevented()) {
       globalTopbar.reset();
     }
-  },
-});
-
-Template.about.helpers({
-  setDocumentTitle: function () {
-    document.title = "About · " + globalDb.getServerTitle();
-  },
-});
-
-Template.referrals.helpers({
-  setDocumentTitle: function () {
-    document.title = "Referral Program · " + globalDb.getServerTitle();
   },
 });
 
@@ -530,20 +482,6 @@ Template.layout.onCreated(function () {
 Template.layout.onDestroyed(function () {
   Meteor.clearTimeout(this.timeout);
   window.removeEventListener("resize", this.resizeFunc, false);
-});
-
-Template.referrals.helpers({
-  isPaid: function () {
-    return (Meteor.user() && Meteor.user().plan && Meteor.user().plan !== "free");
-  },
-
-  notYetCompleteReferralNames: function () {
-    return ReferralInfo.find({ completed: false });
-  },
-
-  completeReferralNames: function () {
-    return ReferralInfo.find({ completed: true });
-  },
 });
 
 Template.layout.helpers({
@@ -741,21 +679,6 @@ Template.registerHelper("con", function () {
   return args.map((arg) => {
     return coerceTemplateText(arg) || "";
   }).join(".");
-});
-
-Template.root.helpers({
-  storageUsage: function () {
-    return Meteor.userId() ? prettySize(Meteor.user().storageUsage || 0) : undefined;
-  },
-
-  storageQuota: function () {
-    const plan = globalDb.getMyPlan();
-    return plan ? prettySize(plan.storage) : undefined;
-  },
-
-  overQuota: function () {
-    return !Meteor.settings.public.stripePublicKey && isUserOverQuota(Meteor.user());
-  },
 });
 
 Meteor.startup(function () {
