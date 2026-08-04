@@ -148,6 +148,11 @@ function checkOrganization(report) {
     "client/styles/_geometry.scss",
     "client/styles/_icons.scss",
     "client/styles/_partials.scss",
+    "client/styles/_partials-buttons.scss",
+    "client/styles/_partials-form.scss",
+    "client/styles/_partials-login-provider.scss",
+    "client/styles/_partials-media.scss",
+    "client/styles/_partials-search.scss",
     "client/styles/_shell-base.scss",
     "client/styles/shell.scss",
   ]);

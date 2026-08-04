@@ -1,0 +1,97 @@
+@use "sass:color";
+@use "colors";
+
+@mixin unstyled-button () {
+  // Styles for <button>s should @include this to remove the browser's default styling.
+  border: none;
+  font-size: inherit;
+  font-family: inherit;
+  font-weight: inherit;
+  text-decoration: inherit;
+  color: inherit;
+  line-height: inherit;
+  background-color: transparent;
+  text-align: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+@mixin button-base () {
+  // Default button shape, layout, and size.
+  cursor: pointer;
+  border-radius: 5px;
+  padding: 4px 8px;
+  min-height: 26px;
+  font-size: 13px;
+  font-family: inherit;
+  text-align: center;
+  text-decoration: none;
+}
+
+@mixin button-disabled () {
+  cursor: auto;
+  color: #777777;
+  background-color: #efefef;
+  border: 1px solid color.adjust(#afafaf, $lightness: 10%);
+  &:hover {
+    color: #777777;
+    background-color: #efefef;
+    border: 1px solid color.adjust(#afafaf, $lightness: 10%);
+  }
+}
+
+@mixin button-link () {
+  background: none;
+  border: none;
+  color: black;
+  text-decoration: underline;
+}
+
+@mixin button-primary () {
+  // A button coloring for the primary action of a form.
+  background-color: colors.$darker-purple-color;
+  color: white;
+  border: 1px solid color.adjust(colors.$darker-purple-color, $lightness: -10%);
+  &:hover {
+    background-color: #714daa;
+  }
+  &:disabled {
+    @include button-disabled();
+  }
+}
+
+@mixin button-secondary () {
+  // A button coloring for secondary (less important) actions.
+  background-color: white;
+  color: black;
+  border: 1px solid color.adjust(white, $lightness: -30%);
+  &:hover {
+    background-color: color.adjust(white, $lightness: -10%);
+  }
+  &:disabled {
+    @include button-disabled();
+  }
+}
+
+@mixin button-danger () {
+  color: #900;
+  background-color: white;
+  border: 1px solid color.adjust(white, $lightness: -30%);
+  &:hover {
+    background-color: #af1010;
+    color: white;
+  }
+  &:disabled {
+    @include button-disabled();
+  }
+}
+
+@mixin button-dark () {
+  background-color: #303030;
+  color: #ffffff;
+  border: 1px solid #4e4e4e;
+  transition: background-color .35s;
+  &:hover {
+    background-color: #4e4e4e;
+  }
+}

@@ -1,0 +1,23 @@
+@mixin overflow-ellipsis () {
+  // For when you want a block of text to fit within a box on a single line and
+  // use ellipsis if it would overflow the box.
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@mixin pseudo-img-tag () {
+  // Use this, and background-image: url();, when you want to
+  // create a DIV that feels like an IMG tag.
+  //
+  // Generally, we do this to allow Internet Explorer to show
+  // user-created SVG images (e.g., app icons) rescaled to
+  // the size of the (pseudo) IMG tag.
+  //
+  // Prefer contain to cover here, because downscaling an image is
+  // more likely to produce good results for user-provided images
+  // (e.g. whitelabel logo or app icons) than clipping the image will.
+  background-size: contain;
+  background-repeat: no-repeat;
+}
