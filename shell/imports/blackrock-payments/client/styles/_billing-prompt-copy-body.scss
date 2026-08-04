@@ -1,0 +1,42 @@
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >p {
+    text-align: center;
+    color: #494949;
+    font-size: 17pt;
+    max-width: 440px;
+    margin: 1em auto;
+
+    &.wider {
+      max-width: 590px;
+    }
+
+    >a {
+      color: inherit;
+    }
+
+    >.trash {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      background-image: url("/trash-m.svg");
+      font-size: 0;
+      vertical-align: top;
+    }
+
+    &.alternatives {
+      font-size: 10pt;
+      text-align: right;
+      width: 327px;
+      line-height: 22px;
+      margin-bottom: 32px;
+    }
+
+    &.custom-app {
+      max-width: 510px;
+    }
+  }
+
+  >.login {
+    margin-bottom: 16px;
+  }
+}

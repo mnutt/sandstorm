@@ -1,0 +1,26 @@
+div.billing {
+  >section.payment-methods {
+    >table {
+      td:nth-child(1) {
+        width: 75px;
+        text-align: center;
+      }
+
+      td:nth-child(2) {
+        width: 200px;
+        padding-right: 16px;
+        text-align: right;
+      }
+
+      td:nth-child(3) {
+        width: 75px;
+        text-align: center;
+      }
+
+      td:nth-child(4) {
+        width: 50px;
+        text-align: center;
+      }
+    }
+  }
+}

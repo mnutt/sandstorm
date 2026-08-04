@@ -1,0 +1,21 @@
+@use "geometry";
+
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.faq {
+    .answers {
+      display: flex;
+      @media #{geometry.$desktop} {
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        justify-content: space-between;
+      }
+      @media #{geometry.$mobile} {
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: flex-start;
+        justify-content: stretch;
+      }
+    }
+  }
+}

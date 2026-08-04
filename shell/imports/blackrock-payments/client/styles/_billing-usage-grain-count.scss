@@ -1,0 +1,14 @@
+div.billing {
+  div.usage {
+    span.grain-count {
+      color: #6d6d6d;
+
+      .used {
+        color: #444;
+      }
+      .total {
+        text-transform: capitalize;
+      }
+    }
+  }
+}

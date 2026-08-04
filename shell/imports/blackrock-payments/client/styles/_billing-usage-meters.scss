@@ -1,43 +1,4 @@
-div.billing {
-  div.usage {
-    span.grain-count {
-      color: #6d6d6d;
-
-      .used {
-        color: #444;
-      }
-      .total {
-        text-transform: capitalize;
-      }
-    }
-
-    div.used, div.total {
-      font-size: 90%;
-      color: #6d6d6d;
-
-      .amount {
-        color: #191919;
-      }
-    }
-
-    div.used { float: left; }
-    div.total { float: right; }
-
-    div.progress-bar {
-      height: 12px;
-      background-color: white;
-      border: 1px solid #b2b2b2;
-      margin: 4px 0;
-
-      >div {
-        height: 100%;
-        background-color: #65468e;
-      }
-    }
-
-    hr {
-      border: none;
-      border-bottom: 1px solid #6d6d6d;
-    }
-  }
-}
+@use "billing-usage-grain-count";
+@use "billing-usage-amounts";
+@use "billing-usage-progress";
+@use "billing-usage-rules";

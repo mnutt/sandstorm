@@ -1,0 +1,33 @@
+div.billing {
+  >section.payment-methods {
+    >table {
+      >tbody {
+        >tr {
+          >td {
+            &.add-new-card {
+              button {
+                padding: 2px 4px;
+                font-size: 16px;
+                font-weight: bold;
+                border-color: #6d6d6d;
+                color: #6d6d6d;
+
+                &:hover {
+                  background-color: white;
+                }
+                margin-right: 16px;
+              }
+
+              &:hover button {
+                background-color: white;
+              }
+              &:hover {
+                cursor: pointer;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

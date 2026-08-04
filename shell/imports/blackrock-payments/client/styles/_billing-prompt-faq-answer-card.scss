@@ -1,0 +1,21 @@
+@use "geometry";
+
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.faq {
+    .answers {
+      .answer {
+        @media #{geometry.$desktop} {
+          display: inline-block;
+          max-width: 390px;
+          margin-right: 16px;
+        }
+        @media #{geometry.$mobile} {
+          display: block;
+          margin: 0px;
+        }
+
+        vertical-align: top;
+      }
+    }
+  }
+}
