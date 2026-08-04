@@ -76,6 +76,7 @@ const unreachableStyleFiles = collectUnreachableStyleFiles(styleFiles, scriptFil
 
 const inventory = styleFiles.map((fileName) => {
   const source = fs.readFileSync(fileName, "utf8");
+  const relativeFile = path.relative(root, fileName);
   const lines = source.split(/\r?\n/);
   const selectors = collectSelectors(lines);
   const imports = collectImports(source);
@@ -94,7 +95,8 @@ const inventory = styleFiles.map((fileName) => {
   };
 
   return {
-    file: path.relative(root, fileName),
+    file: relativeFile,
+    vendor: isVendorStyle(relativeFile),
     imports,
     metrics,
     topLevelSelectors: selectors
@@ -112,7 +114,8 @@ const totals = inventory.reduce((acc, item) => {
   return acc;
 }, {});
 
-const rankedRisk = [...inventory]
+const rankedRisk = inventory
+  .filter((item) => !item.vendor)
   .map((item) => ({
     ...item,
     risk: item.metrics.bodySelectors * 4 +
@@ -130,6 +133,7 @@ const report = {
   files: inventory,
   scriptStyleImports,
   unreachableStyleFiles,
+  vendorFiles: inventory.filter((item) => item.vendor).map(({ file, metrics }) => ({ file, metrics })),
   rankedRisk: rankedRisk.map(({ file, risk, metrics }) => ({ file, risk, metrics })),
 };
 
@@ -161,6 +165,10 @@ function countMatches(source, pattern) {
 
 function isBodySelector(selector) {
   return /(^|[\s>+~,(])body(?=$|[\s.#:[>+~,)])/.test(selector);
+}
+
+function isVendorStyle(fileName) {
+  return fileName.startsWith("imports/client/vendor/");
 }
 
 function collectImports(source) {
@@ -505,9 +513,9 @@ function renderMarkdown(report) {
 
   lines.push(
     "",
-    "## Highest-Risk Files",
+    "## Highest-Risk Sandstorm Files",
     "",
-    "Risk is a rough migration triage score based on broad selectors, IDs, `!important`, `@extend`, and file size.",
+    "Risk is a rough migration triage score based on broad selectors, IDs, `!important`, `@extend`, and file size. Vendor files are listed separately.",
     "",
     "| File | Risk | Lines | Selectors | Body Selectors | ID Selectors | !important | @extend |",
     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -518,6 +526,20 @@ function renderMarkdown(report) {
       `| ${item.file} | ${item.risk} | ${item.metrics.lines} | ${item.metrics.selectors} | ` +
       `${item.metrics.bodySelectors} | ${item.metrics.idSelectors} | ${item.metrics.important} | ${item.metrics.extends} |`,
     );
+  }
+
+  if (report.vendorFiles.length) {
+    lines.push(
+      "",
+      "## Vendor Files",
+      "",
+      "| File | Lines | Selectors | !important |",
+      "| --- | ---: | ---: | ---: |",
+    );
+
+    for (const item of report.vendorFiles) {
+      lines.push(`| ${item.file} | ${item.metrics.lines} | ${item.metrics.selectors} | ${item.metrics.important} |`);
+    }
   }
 
   lines.push("", "## Files", "");
