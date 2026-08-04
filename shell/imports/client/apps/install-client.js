@@ -5,7 +5,12 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
-import "/imports/client/apps/styles/install.scss";
+import "/imports/client/apps/styles/install-frame-ui.scss";
+import "/imports/client/apps/styles/install-controls-ui.scss";
+import "/imports/client/apps/styles/install-steps-ui.scss";
+import "/imports/client/apps/styles/install-download-ui.scss";
+import "/imports/client/apps/styles/install-confirm-ui.scss";
+import "/imports/client/apps/styles/install-run-ui.scss";
 
 const INSTALL_STEPS = ["download", "verify", "unpack", "analyze", "ready", "failed", "delete"];
 const checkStep = function (step) {

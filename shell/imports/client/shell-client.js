@@ -35,11 +35,25 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { coerceTemplateText } from "/imports/shared/template-values";
 
-import "/imports/client/shell/styles/about.scss";
-import "/imports/client/shell/styles/layout.scss";
+import "/imports/client/shell/styles/about-page-ui.scss";
+import "/imports/client/shell/styles/about-intro-ui.scss";
+import "/imports/client/shell/styles/about-changelog-ui.scss";
+import "/imports/client/shell/styles/about-dependencies-ui.scss";
+import "/imports/client/shell/styles/about-copyright-ui.scss";
+import "/imports/client/shell/styles/about-terms-ui.scss";
+import "/imports/client/shell/styles/layout-main-content-ui.scss";
+import "/imports/client/shell/styles/layout-main-content-state-ui.scss";
+import "/imports/client/shell/styles/layout-centered-box-ui.scss";
+import "/imports/client/shell/styles/layout-ios-ui.scss";
 import "/imports/client/shell/styles/admin-alert.scss";
-import "/imports/client/shell/styles/root.scss";
-import "/imports/client/shell/styles/referrals.scss";
+import "/imports/client/shell/styles/root-intro-ui.scss";
+import "/imports/client/shell/styles/root-onboarding-ui.scss";
+import "/imports/client/shell/styles/root-demo-ui.scss";
+import "/imports/client/shell/styles/referrals-page-ui.scss";
+import "/imports/client/shell/styles/referrals-header-ui.scss";
+import "/imports/client/shell/styles/referrals-content-ui.scss";
+import "/imports/client/shell/styles/referrals-tutorial-ui.scss";
+import "/imports/client/shell/styles/referrals-fine-print-ui.scss";
 
 // Subscribe to basic grain information first and foremost, since
 // without it we might e.g. redirect to the wrong place on login.

@@ -41,7 +41,9 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPowerboxRequest } from "/imports/sandstorm-ui-powerbox/powerbox-client";
 
-import "/imports/client/grain/styles/sharing.scss";
+import "/imports/client/grain/styles/sharing-copy-ui.scss";
+import "/imports/client/grain/styles/sharing-token-actions-ui.scss";
+import "/imports/client/grain/styles/sharing-frame-content-ui.scss";
 import "/imports/client/grain/styles/grainlog.scss";
 
 // Pseudo-collections.

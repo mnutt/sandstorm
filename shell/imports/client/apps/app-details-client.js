@@ -7,7 +7,13 @@ import { groupBy } from "/imports/shared/collection-utils";
 import { iconSrcForPackage } from "/imports/sandstorm-identicons/helpers";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
-import "/imports/client/apps/styles/app-details.scss";
+import "/imports/client/apps/styles/app-details-frame-ui.scss";
+import "/imports/client/apps/styles/app-details-widget-ui.scss";
+import "/imports/client/apps/styles/app-details-version-notice-ui.scss";
+import "/imports/client/apps/styles/app-details-search-ui.scss";
+import "/imports/client/apps/styles/app-details-trash-ui.scss";
+import "/imports/client/apps/styles/app-details-empty-ui.scss";
+import "/imports/client/apps/styles/app-details-grain-table-ui.scss";
 
 const latestPackageForAppId = function (db, appId) {
   // Dev apps mask current package version.
