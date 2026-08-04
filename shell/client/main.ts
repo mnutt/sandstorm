@@ -160,6 +160,7 @@ import "../imports/client/notifications-client";
 import "../imports/client/powerbox-builtins";
 import "../imports/client/shell/about-client";
 import "../imports/client/shell-client";
+import "../imports/client/shell/layout-client";
 import "../imports/client/shell/root-client";
 import "../imports/client/shell/referrals-client";
 import "../imports/client/signup-client";
