@@ -72,6 +72,15 @@ const scriptStyleImports = scriptFiles
     file: path.relative(root, fileName),
     ...styleImport,
   })));
+const styleEntrypoints = scriptStyleImports
+  .map((styleImport) => {
+    const resolved = resolveStyleImport(path.join(root, styleImport.file), styleImport.target);
+    return {
+      ...styleImport,
+      resolved: resolved ? relativeProjectPath(resolved) : null,
+    };
+  })
+  .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.target.localeCompare(b.target));
 const unreachableStyleFiles = collectUnreachableStyleFiles(styleFiles, scriptFiles);
 const unresolvedStyleImports = collectUnresolvedStyleImports(styleFiles, scriptFiles);
 
@@ -133,6 +142,7 @@ const report = {
   totals,
   files: inventory,
   scriptStyleImports,
+  styleEntrypoints,
   unreachableStyleFiles,
   unresolvedStyleImports,
   vendorFiles: inventory.filter((item) => item.vendor).map(({ file, metrics }) => ({ file, metrics })),
@@ -171,6 +181,10 @@ function isBodySelector(selector) {
 
 function isVendorStyle(fileName) {
   return fileName.startsWith("imports/client/vendor/");
+}
+
+function relativeProjectPath(fileName) {
+  return path.relative(root, fileName).split(path.sep).join(path.posix.sep);
 }
 
 function collectImports(source) {
@@ -228,6 +242,10 @@ function checkOrganization(report) {
     "imports/client/shell/styles/root.scss",
     "imports/client/shell/styles/shell.scss",
     "imports/client/transfers/styles/transfers.scss",
+    "imports/client/widgets/styles/buttons.scss",
+    "imports/client/widgets/styles/forms.scss",
+    "imports/client/widgets/styles/messages.scss",
+    "imports/client/widgets/styles/modals.scss",
     "imports/client/widgets/styles/widgets.scss",
     "imports/sandstorm-ui-powerbox/styles/powerbox.scss",
     "imports/sandstorm-ui-topbar/styles/topbar.scss",
@@ -235,7 +253,7 @@ function checkOrganization(report) {
 
   for (const item of report.files) {
     if (retiredEntryStyles.has(item.file)) {
-      errors.push(`${item.file} is a retired aggregate stylesheet; import owner-specific style entries instead.`);
+      errors.push(`${item.file} is a retired public stylesheet; import owner-specific style entries instead.`);
     }
 
     if (!item.vendor && item.metrics.bodySelectors > 0 && item.file !== "client/styles/_shell-base.scss") {
@@ -293,7 +311,7 @@ function checkOrganization(report) {
     }
   }
 
-  for (const styleImport of report.scriptStyleImports) {
+  for (const styleImport of report.styleEntrypoints) {
     const importedBase = path.posix.basename(styleImport.target);
     if (importedBase.startsWith("_") && importedBase.endsWith(".scss")) {
       errors.push(
@@ -302,15 +320,11 @@ function checkOrganization(report) {
       );
     }
 
-    const resolved = resolveStyleImport(path.join(root, styleImport.file), styleImport.target);
-    if (resolved) {
-      const resolvedFile = path.relative(root, resolved).split(path.sep).join(path.posix.sep);
-      if (retiredEntryStyles.has(resolvedFile)) {
-        errors.push(
-          `${styleImport.file}:${styleImport.line} imports retired aggregate stylesheet ${resolvedFile}; ` +
-          "import owner-specific style entries instead.",
-        );
-      }
+    if (styleImport.resolved && retiredEntryStyles.has(styleImport.resolved)) {
+      errors.push(
+        `${styleImport.file}:${styleImport.line} imports retired public stylesheet ${styleImport.resolved}; ` +
+        "import owner-specific style entries instead.",
+      );
     }
   }
 
@@ -646,6 +660,20 @@ function renderMarkdown(report) {
 
     for (const item of report.vendorFiles) {
       lines.push(`| ${item.file} | ${item.metrics.lines} | ${item.metrics.selectors} | ${item.metrics.important} |`);
+    }
+  }
+
+  if (report.styleEntrypoints.length) {
+    lines.push(
+      "",
+      "## Stylesheet Entrypoints",
+      "",
+      "| Importer | Line | Stylesheet |",
+      "| --- | ---: | --- |",
+    );
+
+    for (const item of report.styleEntrypoints) {
+      lines.push(`| ${item.file} | ${item.line} | ${item.resolved || item.target} |`);
     }
   }
 
