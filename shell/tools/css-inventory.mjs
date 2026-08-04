@@ -160,7 +160,6 @@ function checkOrganization(report) {
     "client/styles/_icon-api.scss",
     "client/styles/_geometry.scss",
     "client/styles/_icons.scss",
-    "client/styles/_partials.scss",
     "client/styles/_partials-buttons.scss",
     "client/styles/_partials-form.scss",
     "client/styles/_partials-login-provider.scss",
@@ -174,7 +173,6 @@ function checkOrganization(report) {
     "_icons.scss",
     "_geometry.scss",
     "_colors.scss",
-    "_partials.scss",
     "_focus.scss",
     "_shell-base.scss",
   ]);
