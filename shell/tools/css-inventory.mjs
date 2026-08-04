@@ -250,6 +250,9 @@ function checkOrganization(report) {
     "imports/sandstorm-ui-powerbox/styles/powerbox.scss",
     "imports/sandstorm-ui-topbar/styles/topbar.scss",
   ]);
+  const retiredStyleImporters = new Set([
+    "imports/client/shell-client.js",
+  ]);
 
   for (const item of report.files) {
     if (retiredEntryStyles.has(item.file)) {
@@ -312,6 +315,13 @@ function checkOrganization(report) {
   }
 
   for (const styleImport of report.styleEntrypoints) {
+    if (retiredStyleImporters.has(styleImport.file)) {
+      errors.push(
+        `${styleImport.file}:${styleImport.line} imports ${styleImport.resolved || styleImport.target}; ` +
+        "move stylesheet imports to the owning shell page module instead.",
+      );
+    }
+
     const importedBase = path.posix.basename(styleImport.target);
     if (importedBase.startsWith("_") && importedBase.endsWith(".scss")) {
       errors.push(
