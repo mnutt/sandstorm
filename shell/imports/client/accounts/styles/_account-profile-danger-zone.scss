@@ -1,8 +1,8 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .danger-zone {
   button.delete-account {
-    @include partials.button-base();
-    @include partials.button-danger();
+    @include buttons.button-base();
+    @include buttons.button-danger();
   }
 }

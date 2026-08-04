@@ -1,5 +1,5 @@
 @use "icon-api";
-@use "partials";
+@use "partials-media" as media;
 
 .transfers {
   .grain-list {
@@ -28,7 +28,7 @@
     .state-downloading {
       width: 32px;
       height: 24px;
-      @include partials.pseudo-img-tag();
+      @include media.pseudo-img-tag();
       background-image: url("/spinner_96.gif");
       background-position-x: center;
     }

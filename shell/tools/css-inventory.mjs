@@ -196,6 +196,10 @@ function checkOrganization(report) {
       errors.push(`${item.file} uses Sass @import; use @use or @forward instead.`);
     }
 
+    if (item.imports.some((styleImport) => styleImport.type === "use" && styleImport.target === "partials")) {
+      errors.push(`${item.file} uses the catch-all partials Sass module; use a narrower partials-* module instead.`);
+    }
+
     if (item.file.startsWith("client/styles/") && !allowedRootFiles.has(item.file)) {
       errors.push(`${item.file} lives in client/styles; colocate feature styles under imports/ instead.`);
     }

@@ -1,11 +1,11 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 div.billing {
   div.usage {
     button {
       &.change-plan {
-        @include partials.button-base();
-        @include partials.button-primary();
+        @include buttons.button-base();
+        @include buttons.button-primary();
         font-size: 16px;
         width: 125px;
         position: absolute;
@@ -14,15 +14,15 @@ div.billing {
       }
 
       &.subscribe {
-        @include partials.button-base();
-        @include partials.button-primary();
+        @include buttons.button-base();
+        @include buttons.button-primary();
         font-size: 16px;
         width: 125px;
       }
 
       &.unsubscribe {
-        @include partials.button-base();
-        @include partials.button-secondary();
+        @include buttons.button-base();
+        @include buttons.button-secondary();
         font-size: 90%;
         padding: 4px 16px;
         margin-left: 16px;

@@ -1,8 +1,8 @@
-@use "partials";
+@use "partials-media" as media;
 
 .admin-user-filters {
   >.search-icon {
-    @include partials.pseudo-img-tag();
+    @include media.pseudo-img-tag();
     background-image: url("/search.svg");
     background-size: 24px 24px;
     background-position: center;

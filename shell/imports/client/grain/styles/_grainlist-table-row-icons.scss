@@ -1,12 +1,12 @@
 @use "icon-api";
-@use "partials";
+@use "partials-media" as media;
 
 @mixin grain-table-row-icons () {
   >tbody>tr {
     >td {
       &.td-app-icon {
         >.app-icon {
-          @include partials.pseudo-img-tag();
+          @include media.pseudo-img-tag();
           width: 24px;
           height: 24px;
         }

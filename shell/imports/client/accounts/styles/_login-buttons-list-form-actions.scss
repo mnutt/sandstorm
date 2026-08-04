@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .login-buttons-list {
   >form.email, >form.ldap {
@@ -8,7 +8,7 @@
       text-indent: 0;
 
       button {
-        @include partials.unstyled-button();
+        @include buttons.unstyled-button();
         border: 1px solid #9e9e9e;
         border-radius: 3px;
         line-height: normal;

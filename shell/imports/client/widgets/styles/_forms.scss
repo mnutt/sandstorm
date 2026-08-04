@@ -1,5 +1,5 @@
-@use "partials";
+@use "partials-form" as forms;
 
 .standard-form {
-  @include partials.standard-form();
+  @include forms.standard-form();
 }

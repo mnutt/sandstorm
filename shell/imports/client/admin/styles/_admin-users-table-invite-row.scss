@@ -1,5 +1,5 @@
 @use "colors";
-@use "partials";
+@use "partials-media" as media;
 
 .admin-user-table {
   .invite-row {
@@ -12,7 +12,7 @@
     cursor: pointer;
 
     .plus-icon {
-      @include partials.pseudo-img-tag();
+      @include media.pseudo-img-tag();
       display: inline-block;
       width: 24px;
       height: 24px;

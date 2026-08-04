@@ -1,8 +1,8 @@
-@use "partials";
+@use "partials-search" as search;
 
 .app-list {
   >.search-row {
-    @include partials.search-row();
+    @include search.search-row();
     position: relative;
     margin-bottom: 8px;
   }

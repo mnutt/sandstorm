@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .suspended-main-content {
   h2 {
@@ -8,15 +8,15 @@
     display: block;
     margin: auto;
     font-size: 18px;
-    @include partials.button-base();
+    @include buttons.button-base();
 
     &.restore-account {
-      @include partials.button-primary();
+      @include buttons.button-primary();
       margin-bottom: 20px;
     }
 
     &.logout {
-      @include partials.button-secondary();
+      @include buttons.button-secondary();
     }
   }
 }

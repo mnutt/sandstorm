@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-media" as media;
 
 .admin-users-profile-information {
   .profile-picture-name {
@@ -8,7 +8,7 @@
     justify-content: flex-start;
 
     .profile-picture {
-      @include partials.pseudo-img-tag();
+      @include media.pseudo-img-tag();
       flex: none;
       display: inline-block;
       width: 36px;

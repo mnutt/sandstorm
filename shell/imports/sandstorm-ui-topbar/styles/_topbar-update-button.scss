@@ -1,8 +1,8 @@
 @use "geometry";
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .topbar-update-button {
-  @include partials.unstyled-button();
+  @include buttons.unstyled-button();
   position: fixed;
   width: 100%;
   height: 32px;

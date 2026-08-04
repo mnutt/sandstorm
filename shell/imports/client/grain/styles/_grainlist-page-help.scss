@@ -1,9 +1,9 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .grain-list {
   .question-mark {
-    @include partials.button-base();
-    @include partials.button-secondary();
+    @include buttons.button-base();
+    @include buttons.button-secondary();
     border: none;
     background-color: inherit;
     background-image: url("/question-a9a9a9.svg");

@@ -1,12 +1,12 @@
 @use "sass:color";
-@use "partials";
+@use "partials-buttons" as buttons;
 
 button.setup-sandstorm {
   text-align: center;
   width: 300px;
   margin: 0 auto;
   display: block;
-  @include partials.button-base();
+  @include buttons.button-base();
   height: 32px;
   font-size: 16px;
   background-color: #962751;
@@ -16,6 +16,6 @@ button.setup-sandstorm {
     background-color: color.adjust(#962751, $lightness: 10%);
   }
   &:disabled {
-    @include partials.button-disabled();
+    @include buttons.button-disabled();
   }
 }

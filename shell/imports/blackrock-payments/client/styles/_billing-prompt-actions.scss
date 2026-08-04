@@ -1,8 +1,8 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
   button.continue, button.subscribe {
-    @include partials.unstyled-button();
+    @include buttons.unstyled-button();
 
     display: table;
     margin: 16px auto 64px;

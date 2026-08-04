@@ -1,5 +1,5 @@
 @use "colors";
-@use "partials";
+@use "partials-media" as media;
 @use "app-details-widget-info";
 @use "app-details-widget-links";
 @use "app-details-widget-publisher";
@@ -10,7 +10,7 @@
   position: relative;
   >.app-icon {
     position: absolute;
-    @include partials.pseudo-img-tag();
+    @include media.pseudo-img-tag();
     width: 128px;
     height: 128px;
   }

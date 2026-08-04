@@ -1,9 +1,10 @@
-@use "partials";
+@use "partials-media" as media;
+@use "partials-form" as forms;
 form.admin-personalization-form {
-  @include partials.standard-form();
+  @include forms.standard-form();
 
   .logo {
-    @include partials.pseudo-img-tag();
+    @include media.pseudo-img-tag();
     background-position: bottom;
     display: inline-block;
     width: 64px;

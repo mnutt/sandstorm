@@ -1,5 +1,6 @@
 @use "colors";
-@use "partials";
+@use "partials-media" as media;
+@use "partials-buttons" as buttons;
 
 @mixin grain-table-action-row () {
   >tbody>tr {
@@ -19,14 +20,14 @@
       }
       >td {
         >.new-grain-icon {
-          @include partials.pseudo-img-tag();
+          @include media.pseudo-img-tag();
           width: 24px;
           height: 24px;
           background-image: url("/plus-9E40B5.svg");
         }
       }
       button {
-        @include partials.unstyled-button();
+        @include buttons.unstyled-button();
         color: black;
         font-weight: bold;
       }

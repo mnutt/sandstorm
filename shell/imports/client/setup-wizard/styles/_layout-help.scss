@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .setup-help-row {
   margin-left: auto;
@@ -21,8 +21,8 @@
 
   .setup-help-link {
     display: inline-block;
-    @include partials.button-base();
-    @include partials.button-dark();
+    @include buttons.button-base();
+    @include buttons.button-dark();
     font-weight: normal; // overriding default bold links
     margin: 4px;
     text-decoration: none;

@@ -1,8 +1,8 @@
-@use "partials";
+@use "partials-form" as forms;
 
 div.profile-editor {
   form.account-profile-editor {
-    @include partials.standard-form();
+    @include forms.standard-form();
     display: block;
 
     .inline-icon {

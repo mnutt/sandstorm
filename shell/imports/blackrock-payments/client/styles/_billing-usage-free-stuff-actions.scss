@@ -1,11 +1,11 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 div.billing {
   div.usage {
     div.free-stuff {
       a.like-a-button, button {
-        @include partials.button-base();
-        @include partials.button-primary();
+        @include buttons.button-base();
+        @include buttons.button-primary();
         font-family: Arial;
         font-size: 16px;
         font-weight: normal;

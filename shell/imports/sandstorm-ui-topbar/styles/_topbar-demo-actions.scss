@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .sandstorm-topbar {
   .demo-notice {
@@ -6,7 +6,7 @@
       a.get-sandstorm-button {
         margin-top: 6px;
         display: block;
-        @include partials.button-base();
+        @include buttons.button-base();
         background-color: #606060;
         color: white;
         &:hover {

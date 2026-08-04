@@ -1,13 +1,13 @@
 @use "sass:math";
 @use "geometry";
-@use "partials";
+@use "partials-media" as media;
 
 .sandstorm-topbar {
   >.navbar {
     >ul.navbar-grains {
       >li.navitem-grain {
         .app-icon {
-          @include partials.pseudo-img-tag();
+          @include media.pseudo-img-tag();
           position: absolute;
           top: 4px;
           left: math.div(geometry.$navbar-width-desktop-shrunk - 24px, 2);

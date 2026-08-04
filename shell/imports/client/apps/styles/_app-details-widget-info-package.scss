@@ -1,5 +1,5 @@
 @use "icon-api";
-@use "partials";
+@use "partials-buttons" as buttons;
 
 @mixin info-row-package () {
   >ul.package-info {
@@ -20,7 +20,7 @@
         font-weight: 600;
       }
       >button.show-authorship-button {
-        @include partials.unstyled-button();
+        @include buttons.unstyled-button();
         padding-left: 8px;
         padding-right: 24px;
 

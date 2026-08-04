@@ -1,9 +1,9 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 @mixin info-row-actions () {
   >button.uninstall-button, >button.restore-button, >button.toggle-show-trash {
-    @include partials.button-base();
-    @include partials.button-secondary();
+    @include buttons.button-base();
+    @include buttons.button-secondary();
     display: block;
     float: right;
     min-height: 32px;

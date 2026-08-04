@@ -1,5 +1,5 @@
 @use "colors";
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .main-content>.account {
   .verified-emails-editor {
@@ -7,8 +7,8 @@
       ul {
         li {
           button.make-primary {
-            @include partials.button-base();
-            @include partials.button-secondary();
+            @include buttons.button-base();
+            @include buttons.button-secondary();
             width: 33%;
             height: 26px;
             margin-top: 2px;

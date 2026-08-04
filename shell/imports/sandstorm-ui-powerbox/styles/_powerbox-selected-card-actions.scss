@@ -1,16 +1,16 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .topbar-popup.request>.frame-container>.frame {
   >.selected-card {
     div.choose-buttons {
       text-align: right;
       >button {
-        @include partials.button-base();
+        @include buttons.button-base();
         &.connect-button {
-          @include partials.button-primary();
+          @include buttons.button-primary();
         }
         &.choose-hosted-object {
-          @include partials.button-secondary();
+          @include buttons.button-secondary();
         }
       }
     }

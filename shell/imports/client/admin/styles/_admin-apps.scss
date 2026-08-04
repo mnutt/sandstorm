@@ -1,16 +1,17 @@
-@use "partials";
+@use "partials-buttons" as buttons;
+@use "partials-form" as forms;
 .admin-app-sources {
-  @include partials.standard-form();
+  @include forms.standard-form();
 
   .save {
-    @include partials.button-base();
-    @include partials.button-primary();
+    @include buttons.button-base();
+    @include buttons.button-primary();
     margin-left: 10px;
   }
 
   .restore {
-    @include partials.button-base();
-    @include partials.button-secondary();
+    @include buttons.button-base();
+    @include buttons.button-secondary();
     margin-left: 10px;
   }
 }

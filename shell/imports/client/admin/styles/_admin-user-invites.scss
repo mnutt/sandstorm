@@ -1,7 +1,7 @@
-@use "partials";
+@use "partials-form" as forms;
 
 .admin-invite-email-form, .admin-invite-button-form {
-  @include partials.standard-form();
+  @include forms.standard-form();
 }
 
 .admin-invite-email-form {

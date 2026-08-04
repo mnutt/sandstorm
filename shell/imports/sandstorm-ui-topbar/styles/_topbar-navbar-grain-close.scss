@@ -1,14 +1,15 @@
 @use "colors";
 @use "geometry";
-@use "partials";
+@use "partials-media" as media;
+@use "partials-buttons" as buttons;
 
 .sandstorm-topbar {
   >.navbar {
     >ul.navbar-grains {
       >li.navitem-grain {
         .close-button {
-          @include partials.unstyled-button();
-          @include partials.pseudo-img-tag();
+          @include buttons.unstyled-button();
+          @include media.pseudo-img-tag();
           position: absolute;
           top: 1px;
           right: 0px;

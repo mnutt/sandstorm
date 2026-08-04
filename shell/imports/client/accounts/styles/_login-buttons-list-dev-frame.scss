@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .login-buttons-list {
   >form.login.dev:hover {
@@ -11,7 +11,7 @@
     background-position: 16px 0px;
     height: auto;
     button.unexpand {
-      @include partials.unstyled-button();
+      @include buttons.unstyled-button();
     }
     &:hover {
       background-image: url("/debug-m.svg");

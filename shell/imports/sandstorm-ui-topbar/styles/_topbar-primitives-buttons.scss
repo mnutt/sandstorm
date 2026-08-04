@@ -1,11 +1,11 @@
 @use "colors";
 @use "geometry";
-@use "partials";
+@use "partials-buttons" as buttons;
 
 @mixin topbar-button () {
   // Common styling for buttons in the topbar (on desktop).
 
-  @include partials.unstyled-button();
+  @include buttons.unstyled-button();
 
   @media #{geometry.$desktop} {
     display: block;
@@ -41,7 +41,7 @@
   // Common styling for topbar buttons that are displayed as a bare icon with no text label
   // (on mobile).
 
-  @include partials.unstyled-button();
+  @include buttons.unstyled-button();
 
   @media #{geometry.$mobile} {
     display: block;

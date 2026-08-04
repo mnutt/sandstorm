@@ -1,11 +1,11 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 @mixin bulk-action-buttons () {
   float: left;
   clear: left;
   >button {
-    @include partials.button-base();
-    @include partials.button-secondary();
+    @include buttons.button-base();
+    @include buttons.button-secondary();
     display: inline-block;
     float: left;
     font-size: 14pt;

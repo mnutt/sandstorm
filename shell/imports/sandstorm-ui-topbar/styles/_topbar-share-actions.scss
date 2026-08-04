@@ -1,9 +1,9 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .topbar-popup {
   &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
     button.reset-invite, button.reset-share-token, button.start-over-invite {
-      @include partials.unstyled-button();
+      @include buttons.unstyled-button();
       border: 1px solid #ccc;
       border-radius: 4px;
       padding: 5px 16px;
@@ -17,8 +17,8 @@
       margin-top: 10px;
     }
     .share-tabs form button {
-      @include partials.button-base();
-      @include partials.button-primary();
+      @include buttons.button-base();
+      @include buttons.button-primary();
       border: 1px solid #ccc;
       border-radius: 4px;
       padding: 5px 16px;

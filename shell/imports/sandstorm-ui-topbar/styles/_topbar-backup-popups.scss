@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .topbar-popup {
   &.backup {
@@ -18,12 +18,12 @@
       justify-content: flex-end;
 
       button {
-        @include partials.button-base();
+        @include buttons.button-base();
         &[name=confirm] {
-          @include partials.button-primary();
+          @include buttons.button-primary();
         }
         &[name=cancel] {
-          @include partials.button-secondary();
+          @include buttons.button-secondary();
         }
       }
 

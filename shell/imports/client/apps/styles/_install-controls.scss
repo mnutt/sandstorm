@@ -1,9 +1,9 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .install {
   button {
-    @include partials.button-base();
-    @include partials.button-primary();
+    @include buttons.button-base();
+    @include buttons.button-primary();
     font-size: 150%;
     font-weight: bold;
     padding: 10px 16px;

@@ -1,5 +1,5 @@
 @use "geometry";
-@use "partials";
+@use "partials-buttons" as buttons;
 @use "topbar-primitives";
 
 @mixin navbar-shrink-button () {
@@ -13,7 +13,7 @@
   }
 
   button.navbar-shrink {
-    @include partials.unstyled-button();
+    @include buttons.unstyled-button();
     @include topbar-primitives.webfont-icon(#CCCCCC, #CCCCCC, 28px, 28px);
     display: block;
     width: 100%;

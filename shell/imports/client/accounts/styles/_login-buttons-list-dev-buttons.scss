@@ -1,10 +1,10 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .login-buttons-list {
   >form.login.dev, >button.login.dev {
     button.login-dev-account {
-      @include partials.button-base();
-      @include partials.button-secondary();
+      @include buttons.button-base();
+      @include buttons.button-secondary();
       width: 100%;
     }
   }

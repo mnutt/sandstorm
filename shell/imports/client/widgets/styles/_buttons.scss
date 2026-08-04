@@ -1,18 +1,18 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .button-primary {
-  @include partials.button-base();
-  @include partials.button-primary();
+  @include buttons.button-base();
+  @include buttons.button-primary();
 }
 
 .button-secondary {
-  @include partials.button-base();
-  @include partials.button-secondary();
+  @include buttons.button-base();
+  @include buttons.button-secondary();
 }
 
 .button-danger {
-  @include partials.button-base();
-  @include partials.button-danger();
+  @include buttons.button-base();
+  @include buttons.button-danger();
 }
 
 .button-link {

@@ -1,19 +1,19 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .transfers {
   button.cancel, button.deny {
-    @include partials.button-base();
-    @include partials.button-danger();
+    @include buttons.button-base();
+    @include buttons.button-danger();
   }
 
   button.accept, button.continue, button.start, button.finish {
-    @include partials.button-base();
-    @include partials.button-primary();
+    @include buttons.button-base();
+    @include buttons.button-primary();
   }
 
   button.pause, button.clear-errors {
-    @include partials.button-base();
-    @include partials.button-secondary();
+    @include buttons.button-base();
+    @include buttons.button-secondary();
   }
 
   input[name="destination"] {

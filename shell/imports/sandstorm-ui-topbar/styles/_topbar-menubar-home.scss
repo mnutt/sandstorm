@@ -1,6 +1,6 @@
 @use "colors";
 @use "geometry";
-@use "partials";
+@use "partials-media" as media;
 
 .sandstorm-topbar {
   >.menubar {
@@ -12,7 +12,7 @@
         overflow: hidden;
 
         >a {
-          @include partials.overflow-ellipsis();
+          @include media.overflow-ellipsis();
           color: inherit;
           margin: 0px;
           text-decoration: none;

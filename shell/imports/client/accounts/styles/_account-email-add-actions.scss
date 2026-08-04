@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .main-content>.account {
   .verified-emails-editor {
@@ -6,8 +6,8 @@
       div.button-box {
         display: inline-block;
         >button {
-          @include partials.button-base();
-          @include partials.button-secondary();
+          @include buttons.button-base();
+          @include buttons.button-secondary();
         }
       }
     }

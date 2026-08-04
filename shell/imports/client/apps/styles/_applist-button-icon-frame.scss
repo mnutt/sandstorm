@@ -1,11 +1,11 @@
 @use "colors";
 @use "geometry";
-@use "partials";
+@use "partials-media" as media;
 
 .app-list {
   >.app-button, >.popular-container>.app-button {
     >.app-icon {
-      @include partials.pseudo-img-tag();
+      @include media.pseudo-img-tag();
       display: block;
       position: absolute;
       top: 0px;

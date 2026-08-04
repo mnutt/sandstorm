@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .idp-modal-button-row {
   display: flex;
@@ -6,18 +6,18 @@
   align-items: flex-start;
   justify-content: flex-start;
   .idp-modal-save {
-    @include partials.button-base();
-    @include partials.button-primary();
+    @include buttons.button-base();
+    @include buttons.button-primary();
     margin-left: 10px;
   }
   .idp-modal-cancel {
-    @include partials.button-base();
-    @include partials.button-secondary();
+    @include buttons.button-base();
+    @include buttons.button-secondary();
     margin-left: 10px;
   }
   .idp-modal-disable {
-    @include partials.button-base();
-    @include partials.button-danger();
+    @include buttons.button-base();
+    @include buttons.button-danger();
     margin-left: 10px;
   }
 }

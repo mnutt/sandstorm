@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-media" as media;
 
 .setup-preinstall {
   [role=grid] {
@@ -6,7 +6,7 @@
       [role=gridcell] {
         padding: 4px;
         overflow: hidden;
-        @include partials.overflow-ellipsis();
+        @include media.overflow-ellipsis();
         flex-grow: 0;
         &.name {
           width: 20%;

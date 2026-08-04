@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-media" as media;
 
 .admin-users-profile-information {
   .profile-pronouns {
@@ -11,7 +11,7 @@
       width: 36px;
       height: 36px;
       .profile-pronouns-icon {
-        @include partials.pseudo-img-tag();
+        @include media.pseudo-img-tag();
         width: 24px;
         height: 24px;
         background-image: url('/pronoun-m.svg');

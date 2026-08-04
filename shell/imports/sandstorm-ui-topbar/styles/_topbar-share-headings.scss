@@ -1,5 +1,5 @@
 @use "geometry";
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .topbar-popup {
   &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
@@ -22,7 +22,7 @@
     }
 
     button.who-has-access {
-      @include partials.unstyled-button();
+      @include buttons.unstyled-button();
     }
   }
 }

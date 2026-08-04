@@ -1,5 +1,5 @@
 @use "colors";
-@use "partials";
+@use "partials-media" as media;
 
 .topbar-popup.request>.frame-container>.frame {
   >.search-row {
@@ -12,7 +12,7 @@
     vertical-align: top;
     >label {
       >span.search-icon {
-        @include partials.pseudo-img-tag();
+        @include media.pseudo-img-tag();
         background-image: url("/search.svg");
         background-size: 24px 24px;
         background-position: center;

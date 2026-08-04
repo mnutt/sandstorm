@@ -1,12 +1,12 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 .system-log-header {
   display: flex;
   flex-direction: row;
   align-items: stretch;
   justify-content: space-between;
   button {
-    @include partials.button-base();
-    @include partials.button-primary();
+    @include buttons.button-base();
+    @include buttons.button-primary();
   }
 }
 

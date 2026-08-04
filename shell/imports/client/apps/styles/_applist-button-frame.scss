@@ -1,9 +1,9 @@
 @use "geometry";
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .app-list {
   >.app-button, >.popular-container>.app-button {
-    @include partials.unstyled-button();
+    @include buttons.unstyled-button();
     float: left;
     display: block;
     // Browsers render button contents vertically-centered by default.

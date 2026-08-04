@@ -1,11 +1,11 @@
 @use "colors";
 @use "geometry";
-@use "partials";
+@use "partials-media" as media;
 
 .app-list {
   >.app-button, >.popular-container>.app-button {
     @mixin apptext () {
-      @include partials.overflow-ellipsis();
+      @include media.overflow-ellipsis();
       position: absolute;
       left: 0px;
       width: 100%;

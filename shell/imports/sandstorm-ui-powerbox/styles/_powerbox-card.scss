@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 @mixin powerbox-card () {
   border-top: 1px solid #dddddd;
@@ -12,7 +12,7 @@
   vertical-align: middle;
   min-height: 32px;
   >button.card-button {
-    @include partials.unstyled-button();
+    @include buttons.unstyled-button();
     white-space: normal;
     word-break: break-all;
     overflow-wrap: break-word;

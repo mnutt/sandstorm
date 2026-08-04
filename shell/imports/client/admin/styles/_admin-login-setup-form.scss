@@ -1,7 +1,7 @@
-@use "partials";
+@use "partials-form" as forms;
 
 .setup-idp-form {
-  @include partials.standard-form();
+  @include forms.standard-form();
   margin-bottom: 10px;
 
   textarea {

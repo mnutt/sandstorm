@@ -1,5 +1,5 @@
 @use "colors";
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .main-content .grain-interstitial {
   display: flex;
@@ -7,8 +7,8 @@
   flex-direction: column;
   background-color: colors.$default-content-background-color;
   button.request-access, button.reveal-identity-button, button.restore-from-trash {
-    @include partials.button-base();
-    @include partials.button-primary();
+    @include buttons.button-base();
+    @include buttons.button-primary();
     font-weight: 600;
     padding: 8px;
     line-height: 1.33;
@@ -16,8 +16,8 @@
     margin-bottom: 1em;
   }
   button.incognito-button {
-    @include partials.button-base();
-    @include partials.button-secondary();
+    @include buttons.button-base();
+    @include buttons.button-secondary();
     font-weight: 600;
     padding: 8px;
     line-height: 1.33;

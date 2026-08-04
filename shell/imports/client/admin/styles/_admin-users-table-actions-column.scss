@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 .admin-user-table {
   div.actions {
@@ -11,8 +11,8 @@
       .manage-user-button {
         display: inline-block;
         font-weight: normal;
-        @include partials.button-base();
-        @include partials.button-secondary();
+        @include buttons.button-base();
+        @include buttons.button-secondary();
       }
     }
   }

@@ -1,11 +1,11 @@
-@use "partials";
+@use "partials-form" as forms;
 
 form.stats-json {
-  @include partials.standard-form();
+  @include forms.standard-form();
   max-width: 500px;
 }
 
 form.stats-toggle {
-  @include partials.standard-form();
+  @include forms.standard-form();
   display: inline-block;
 }

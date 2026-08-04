@@ -1,5 +1,5 @@
 @use "geometry";
-@use "partials";
+@use "partials-search" as search;
 
 .grain-list {
   >.maybe-row {
@@ -16,7 +16,7 @@
   }
 
   .search-row {
-    @include partials.search-row();
+    @include search.search-row();
 
     flex: 1 1 auto;
     vertical-align: top;

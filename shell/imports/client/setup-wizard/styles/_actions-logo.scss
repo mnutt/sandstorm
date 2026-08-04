@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-media" as media;
 
 .sandstorm-logo-row {
   display: flex;
@@ -12,6 +12,6 @@
   flex: none;
   width: 200px;
   height: 200px;
-  @include partials.pseudo-img-tag();
+  @include media.pseudo-img-tag();
   background-image: url('/sandstorm-gradient-logo.svg')
 }

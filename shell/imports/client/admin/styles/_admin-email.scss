@@ -1,6 +1,7 @@
-@use "partials";
+@use "partials-buttons" as buttons;
+@use "partials-form" as forms;
 .email-form {
-  @include partials.standard-form();
+  @include forms.standard-form();
 
   // Some custom styling needed to pack the two inputs on a row neatly with their labels.
   .host-port {
@@ -28,9 +29,9 @@
 }
 
 .email-test-form, .email-disable-form {
-  @include partials.standard-form();
+  @include forms.standard-form();
 
   button.danger {
-    @include partials.button-danger();
+    @include buttons.button-danger();
   }
 }

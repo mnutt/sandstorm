@@ -1,4 +1,4 @@
-@use "partials";
+@use "partials-buttons" as buttons;
 
 form.stats-request {
   // We eschew %standard-form here to avoid getting .button-link overridden by more specific
@@ -15,11 +15,11 @@ form.stats-request {
   }
 
   button.button-link {
-    @include partials.button-link();
+    @include buttons.button-link();
   }
 
   button[name=enable-stats] {
-    @include partials.button-base();
-    @include partials.button-primary();
+    @include buttons.button-base();
+    @include buttons.button-primary();
   }
 }
