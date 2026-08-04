@@ -1,0 +1,21 @@
+@use "geometry";
+
+.topbar-popup {
+  >.frame-container {
+    >.frame {
+      >h4 {
+        width: 100%;
+        margin: 0px;
+        font-size: 14px;
+        padding-left: geometry.$topbar-popup-padding;
+        line-height: 32px;
+        border-bottom: 1px solid #ccc;
+        margin-bottom: 16px;
+
+        @media #{geometry.$mobile} {
+          font-size: 14pt;
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+@use "geometry";
+
+.topbar-popup {
+  >.frame-container {
+    >.frame {
+      >* {
+        margin-left: geometry.$topbar-popup-padding;
+        margin-right: geometry.$topbar-popup-padding;
+      }
+
+      >*:last-child {
+        margin-bottom: geometry.$topbar-popup-padding;
+      }
+    }
+  }
+}

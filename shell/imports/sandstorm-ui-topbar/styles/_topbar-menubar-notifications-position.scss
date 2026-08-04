@@ -1,0 +1,22 @@
+@use "colors";
+@use "geometry";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.notifications {
+      @media #{geometry.$desktop} {
+        float: right;
+      }
+
+      @media #{geometry.$mobile} {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 48px;
+        height: 49px;
+        background-color: colors.$topbar-background-color; // needed to cover an overflowing title
+        z-index: 3; /* above the title and rest of menu */
+      }
+    }
+  }
+}

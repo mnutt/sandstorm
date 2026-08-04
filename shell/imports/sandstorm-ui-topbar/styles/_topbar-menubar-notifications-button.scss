@@ -1,0 +1,14 @@
+@use "topbar-primitives";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.notifications {
+      >button.show-popup {
+        @include topbar-primitives.icon-button();
+        @include topbar-primitives.mobile-icon-button();
+
+        @include topbar-primitives.webfont-icon(#CCCCCC, #CCCCCC, 24px, 40px);
+      }
+    }
+  }
+}

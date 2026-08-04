@@ -1,0 +1,13 @@
+@use "geometry";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.account, >.login {
+      @media #{geometry.$mobile} {
+        >button.show-popup {
+          font-weight: normal;
+        }
+      }
+    }
+  }
+}

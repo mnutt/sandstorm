@@ -1,0 +1,12 @@
+@use "topbar-primitives";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.admin-alert {
+      >button.show-popup {
+        @include topbar-primitives.icon-button();
+        @include topbar-primitives.mobile-icon-button();
+      }
+    }
+  }
+}

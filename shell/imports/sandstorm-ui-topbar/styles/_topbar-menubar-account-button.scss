@@ -1,0 +1,32 @@
+@use "geometry";
+@use "topbar-primitives";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.account, >.login {
+      >button.show-popup {
+        @include topbar-primitives.hamburger-menu-item();
+        position: relative;
+        >.profile-picture {
+          position: absolute;
+          display: block;
+          background-size: contain;
+          background-repeat: no-repeat;
+          background-position: center;
+          @media #{geometry.$desktop} {
+            width: 24px;
+            height: 24px;
+            top: 4px;
+            left: 4px;
+          }
+          @media #{geometry.$mobile} {
+            width: 32px;
+            height: 32px;
+            left: 8px;
+            top: 8px;
+          }
+        }
+      }
+    }
+  }
+}

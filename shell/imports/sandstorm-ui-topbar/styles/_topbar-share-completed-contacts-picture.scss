@@ -1,0 +1,18 @@
+.topbar-popup {
+  &.share {
+    .contact-box {
+      >ul.completed-contacts {
+        >li {
+          .picture {
+            width: 14px;
+            height: 14px;
+            background-size: contain;
+            background-repeat: no-repeat;
+            display: inline-block;
+            margin-right: 4px;
+           }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+@use "sass:color";
+@use "colors";
+
+.topbar-popup {
+  &.share {
+    .contact-box {
+      >ul.completed-contacts {
+        >li {
+          &:hover {
+            background-color: color.adjust(colors.$sandstorm-purple-color, $lightness: -10%);
+          }
+        }
+      }
+    }
+  }
+}

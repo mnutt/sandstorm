@@ -1,0 +1,29 @@
+@use "geometry";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.notifications {
+      >button.show-popup {
+        >.count {
+          display: block;
+          position: absolute;
+          top: 16px;
+          left: 16px;
+          width: 16px;
+          height: 16px;
+          background-color: red;
+          border-radius: 8px;
+          color: white;
+          line-height: 16px;
+          text-align: center;
+          font-size: 8pt;
+
+          @media #{geometry.$mobile} {
+            top: 24px;
+            left: 24px;
+          }
+        }
+      }
+    }
+  }
+}

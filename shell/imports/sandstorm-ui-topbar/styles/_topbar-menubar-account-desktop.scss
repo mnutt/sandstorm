@@ -1,0 +1,21 @@
+@use "geometry";
+
+.sandstorm-topbar {
+  >.menubar {
+    >.account, >.login {
+      @media #{geometry.$desktop} {
+        float: right;
+        display: block;
+
+        >button.show-popup {
+          padding-left: 8px;
+          padding-right: 8px;
+          display: block;
+          &.has-picture {
+            padding-left: 32px;
+          }
+        }
+      }
+    }
+  }
+}

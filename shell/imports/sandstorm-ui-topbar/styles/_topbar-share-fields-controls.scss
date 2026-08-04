@@ -1,0 +1,16 @@
+.topbar-popup {
+  &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
+    select {
+      background-color: white;
+      height: 25px;
+      text-transform: uppercase;
+      float: right;
+    }
+    input, textarea, select {
+      border: 1px solid #aaa;
+      padding: 4px;
+      border-radius: 2px;
+      vertical-align: top;
+    }
+  }
+}
