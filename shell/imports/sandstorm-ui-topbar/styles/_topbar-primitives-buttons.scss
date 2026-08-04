@@ -1,0 +1,62 @@
+@use "colors";
+@use "geometry";
+@use "partials";
+
+@mixin topbar-button () {
+  // Common styling for buttons in the topbar (on desktop).
+
+  @include partials.unstyled-button();
+
+  @media #{geometry.$desktop} {
+    display: block;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+
+    &:hover {
+      background-color: colors.$topbar-background-color-hover;
+    }
+  }
+}
+
+@mixin icon-button () {
+  // Common styling for topbar buttons that are displayed as a bare icon with no text label
+  // (on desktop).
+
+  @include topbar-button();
+
+  @media #{geometry.$desktop} {
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 24px 24px;
+    color: transparent;  // hide text
+    width: 32px;
+    height: 32px;
+    position: relative;
+  }
+}
+
+@mixin mobile-icon-button () {
+  // Common styling for topbar buttons that are displayed as a bare icon with no text label
+  // (on mobile).
+
+  @include partials.unstyled-button();
+
+  @media #{geometry.$mobile} {
+    display: block;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 40px 40px;
+    color: transparent;  // hide text
+    width: 48px;
+    height: 48px;
+
+    &:hover {
+      background-color: colors.$topbar-background-color-hover;
+    }
+  }
+}

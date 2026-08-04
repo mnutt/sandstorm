@@ -1,0 +1,15 @@
+@use "geometry";
+
+@mixin webfont-icon ($color, $mobile-color, $font-size, $mobile-font-size) {
+  text-align: center;
+  &:before {
+    font-size: $font-size;
+    color: $color;
+    font-family: "icons";
+
+    @media #{geometry.$mobile} {
+      font-size: $mobile-font-size;
+      color: $mobile-color;
+    }
+  }
+}

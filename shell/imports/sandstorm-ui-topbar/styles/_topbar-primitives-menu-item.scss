@@ -1,0 +1,28 @@
+@use "colors";
+@use "geometry";
+
+@mixin hamburger-menu-item () {
+  // Common styling for topbar items that are displayed as a hamburger menu item on mobile.
+  @media #{geometry.$desktop} {
+    height: geometry.$topbar-height-desktop;
+  }
+
+  @media #{geometry.$mobile} {
+    display: block;
+    width: 100%;
+    background-position: 8px center;
+    background-size: 32px 32px;
+    background-repeat: no-repeat;
+    background-color: transparent;
+    text-align: left;
+    padding-left: 48px;
+    font-size: 14pt;
+    height: geometry.$topbar-height-mobile;
+    font-weight: normal;
+    text-decoration: none;
+
+    &:hover {
+      background-color: colors.$topbar-background-color-hover;
+    }
+  }
+}
