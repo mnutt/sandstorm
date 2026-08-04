@@ -1,5 +1,5 @@
 @use "colors-applist" as applist-colors;
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "partials-media" as media;
 
 .app-list {
@@ -11,20 +11,20 @@
       width: 100%;
       vertical-align: top;
       text-align: left;
-      @media #{geometry.$desktop} {
+      @media #{breakpoints.$desktop} {
         margin-left: 10px;
       }
-      @media #{geometry.$mobile} {
+      @media #{breakpoints.$mobile} {
         margin-left: 5px;
       }
     }
     >.app-title, >.action-title {
       @include apptext();
-      @media #{geometry.$desktop} {
+      @media #{breakpoints.$desktop} {
         top: 148px;
         font-size: 14pt;
       }
-      @media #{geometry.$mobile} {
+      @media #{breakpoints.$mobile} {
         top: 74px;
         font-size: 8pt;
       }
@@ -32,11 +32,11 @@
     >.action-text {
       @include apptext();
       color: applist-colors.$applist-action-text-color;
-      @media #{geometry.$desktop} {
+      @media #{breakpoints.$desktop} {
         top: 168px;
         font-size: 13pt;
       }
-      @media #{geometry.$mobile} {
+      @media #{breakpoints.$mobile} {
         top: 88px;
         font-size: 8pt;
       }

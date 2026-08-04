@@ -1,12 +1,12 @@
 @use "colors-topbar" as topbar-colors;
-@use "geometry";
+@use "geometry-shell" as shell-geometry;
 
 @mixin navbar-desktop-frame () {
   position: fixed;
-  top: geometry.$topbar-height-desktop;
+  top: shell-geometry.$topbar-height-desktop;
   bottom: 0px;
   left: 0px;
-  width: geometry.$navbar-width-desktop;
+  width: shell-geometry.$navbar-width-desktop;
   background-color: #303030;
   color: #606060;
   overflow-y: auto;

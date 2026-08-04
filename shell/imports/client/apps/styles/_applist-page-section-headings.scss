@@ -1,5 +1,5 @@
 @use "colors-applist" as applist-colors;
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .app-list {
   >h2, >.popular-container>h2 {
@@ -7,7 +7,7 @@
     font-weight: 400;
     border-bottom: 1px solid applist-colors.$applist-rule-color;
     margin-top: 0px;
-    @media #{geometry.$mobile} {
+    @media #{breakpoints.$mobile} {
       margin-bottom: 8px;
     }
   }

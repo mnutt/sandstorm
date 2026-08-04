@@ -1,11 +1,11 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .main-content>.account {
   .profile {
-    @media #{geometry.$not-mobile-only} {
+    @media #{breakpoints.$not-mobile-only} {
       display: inline-block;
     }
-    @media #{geometry.$mobile-only} {
+    @media #{breakpoints.$mobile-only} {
       display: block;
     }
 

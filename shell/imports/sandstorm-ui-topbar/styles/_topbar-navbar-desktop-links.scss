@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-shell" as shell-geometry;
 
 @mixin navbar-desktop-links () {
   li {
@@ -6,7 +6,7 @@
       a {
         display: block;
         min-height: 32px;
-        padding-left: geometry.$navbar-width-desktop-shrunk;
+        padding-left: shell-geometry.$navbar-width-desktop-shrunk;
         text-decoration: none;
         text-overflow: ellipsis;
         overflow: hidden;

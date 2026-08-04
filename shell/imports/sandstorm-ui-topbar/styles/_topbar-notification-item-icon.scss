@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-shell" as shell-geometry;
 
 .topbar-popup {
   &.notifications {
@@ -8,8 +8,8 @@
           width: 64px;
           height: 64px;
           position: absolute;
-          top: geometry.$topbar-popup-padding;
-          left: geometry.$topbar-popup-padding;
+          top: shell-geometry.$topbar-popup-padding;
+          left: shell-geometry.$topbar-popup-padding;
 
           >img {
             display: block;

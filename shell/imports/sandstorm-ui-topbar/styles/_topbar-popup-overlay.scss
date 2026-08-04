@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .topbar-popup {
   // Popup windows hang off the topbar, usually appearing when a topbar item is clicked.
@@ -10,7 +10,7 @@
   right: 0;
   z-index: 100000;
 
-  @media #{geometry.$mobile} {
+  @media #{breakpoints.$mobile} {
     // Gray the background on mobile.
     background-color: rgba(0, 0, 0, 0.5);
   }

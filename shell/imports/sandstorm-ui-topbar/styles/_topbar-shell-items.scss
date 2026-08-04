@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "topbar-primitives";
 
 .sandstorm-topbar {
@@ -13,7 +13,7 @@
       @include topbar-primitives.topbar-button();
     }
 
-    @media #{geometry.$mobile} {
+    @media #{breakpoints.$mobile} {
       display: block;
       float: none;
       width: 100%;

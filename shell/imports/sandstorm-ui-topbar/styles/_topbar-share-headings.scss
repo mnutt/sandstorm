@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-shell" as shell-geometry;
 @use "partials-buttons" as buttons;
 
 .topbar-popup {
@@ -9,7 +9,7 @@
       text-transform: uppercase;
       background-color: $popup-background-color;
       margin-bottom: 0;
-      padding: geometry.$topbar-popup-padding 20px;
+      padding: shell-geometry.$topbar-popup-padding 20px;
     }
 
     >h4.share-with-others {
@@ -17,7 +17,7 @@
       padding-bottom: 30px;
     }
     >h4.who-has-access {
-      padding-bottom: geometry.$topbar-popup-padding;
+      padding-bottom: shell-geometry.$topbar-popup-padding;
       border-bottom: 1px solid #ccc;
     }
 

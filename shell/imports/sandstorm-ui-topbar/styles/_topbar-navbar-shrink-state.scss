@@ -1,8 +1,8 @@
-@use "geometry";
+@use "geometry-shell" as shell-geometry;
 
 @mixin navbar-shrink-state () {
   &.shrink-desktop {
-    width: geometry.$navbar-width-desktop-shrunk;
+    width: shell-geometry.$navbar-width-desktop-shrunk;
 
     button.navbar-shrink {
       border-left-width: 0;

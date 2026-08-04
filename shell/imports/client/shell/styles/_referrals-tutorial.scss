@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .referrals {
   section {
@@ -8,7 +8,7 @@
       list-style-position: inside;
 
       ol {
-        @media #{geometry.$mobile} {
+        @media #{breakpoints.$mobile} {
           padding-left: 0;
         }
       }
@@ -16,7 +16,7 @@
       li {
         padding: 1em;
 
-        @media #{geometry.$mobile} {
+        @media #{breakpoints.$mobile} {
           padding-left: 0;
           padding-right: 0;
         }
@@ -27,7 +27,7 @@
         margin: auto;
         max-width: 50%;
 
-        @media #{geometry.$mobile} {
+        @media #{breakpoints.$mobile} {
           width: 100%;
           max-width: 100%;
         }

@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "partials-buttons" as buttons;
 
 .app-list {
@@ -10,14 +10,14 @@
     // I can't figure out how to suggest that the browser align contents to the top instead, so I
     // specify position: relative here and position: absolute for the image and text label.
     position: relative;
-    @media #{geometry.$desktop} {
+    @media #{breakpoints.$desktop} {
       width: 148px;
       height: 200px;
       margin-left: 10px;
       margin-right: 10px;
       margin-bottom: 20px;
     }
-    @media #{geometry.$mobile} {
+    @media #{breakpoints.$mobile} {
       width: 74px;
       height: 102px;
       margin-left: 5px;

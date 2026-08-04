@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 @mixin publisher-fingerprint () {
   >p.no-fingerprint {
@@ -8,11 +8,11 @@
   >p.has-fingerprint {
     vertical-align: top;
     padding-left: 8px;
-    @media #{geometry.$desktop} {
+    @media #{breakpoints.$desktop} {
       display: inline-block;
       max-width: 30%;
     }
-    @media #{geometry.$mobile} {
+    @media #{breakpoints.$mobile} {
       display: block;
       width: 100%;
     }

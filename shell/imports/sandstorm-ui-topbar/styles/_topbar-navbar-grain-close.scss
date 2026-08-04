@@ -1,5 +1,5 @@
 @use "colors-topbar" as topbar-colors;
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "partials-media" as media;
 @use "partials-buttons" as buttons;
 
@@ -15,7 +15,7 @@
           right: 0px;
           width: 24px;
           height: 24px;
-          @media #{geometry.$mobile} {
+          @media #{breakpoints.$mobile} {
             height: 40px;
             width: 40px;
           }

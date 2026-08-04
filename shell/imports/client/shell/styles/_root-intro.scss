@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .intro {
   background-color: #b6b6b6;
@@ -21,7 +21,7 @@
     >.login-dialog {
       position: relative;
       z-index: 1;
-      @media #{geometry.$desktop} {
+      @media #{breakpoints.$desktop} {
         position: absolute;
         top: 64px;
         right: 64px;
@@ -39,7 +39,7 @@
       height: 100%;
       border: none;
 
-      @media #{geometry.$mobile} {
+      @media #{breakpoints.$mobile} {
         height: 1600px;
       }
     }

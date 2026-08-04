@@ -1,12 +1,12 @@
 @use "colors-app-details" as app-details-colors;
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .app-details {
   position: relative;
-  @media #{geometry.$desktop} {
+  @media #{breakpoints.$desktop} {
     padding: 24px 32px;
   }
-  @media #{geometry.$mobile} {
+  @media #{breakpoints.$mobile} {
     padding: 0px 8px;
   }
   background-color: app-details-colors.$app-details-background-color;

@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-shell" as shell-geometry;
 @use "partials-buttons" as buttons;
 @use "topbar-primitives";
 
@@ -17,13 +17,13 @@
     @include topbar-primitives.webfont-icon(#CCCCCC, #CCCCCC, 28px, 28px);
     display: block;
     width: 100%;
-    height: geometry.$navbar-shrink-button-height;
+    height: shell-geometry.$navbar-shrink-button-height;
     border: 0px solid #303030;
-    border-left-width: (geometry.$navbar-width-desktop - geometry.$navbar-width-desktop-shrunk);
+    border-left-width: (shell-geometry.$navbar-width-desktop - shell-geometry.$navbar-width-desktop-shrunk);
     background-color: #606060;
     color: #ddd;
     text-align: center;
-    line-height: geometry.$navbar-shrink-button-height;
+    line-height: shell-geometry.$navbar-shrink-button-height;
     padding: 0;
 
     transition: border-left-width 0.2s;

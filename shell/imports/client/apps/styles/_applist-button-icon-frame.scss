@@ -1,5 +1,5 @@
 @use "colors-applist" as applist-colors;
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "partials-media" as media;
 
 .app-list {
@@ -10,12 +10,12 @@
       position: absolute;
       top: 0px;
       left: 0px;
-      @media #{geometry.$desktop} {
+      @media #{breakpoints.$desktop} {
         width: 128px;
         height: 128px;
         margin: 10px;
       }
-      @media #{geometry.$mobile} {
+      @media #{breakpoints.$mobile} {
         width: 64px;
         height: 64px;
         margin: 5px;

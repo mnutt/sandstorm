@@ -1,15 +1,15 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "topbar-navbar-shrink-button";
 @use "topbar-navbar-shrink-state";
 @use "topbar-navbar-shrink-mobile";
 
 .sandstorm-topbar {
   >.navbar {
-    @media #{geometry.$desktop} {
+    @media #{breakpoints.$desktop} {
       @include topbar-navbar-shrink-button.navbar-shrink-button();
       @include topbar-navbar-shrink-state.navbar-shrink-state();
     }
-    @media #{geometry.$mobile} {
+    @media #{breakpoints.$mobile} {
       @include topbar-navbar-shrink-mobile.navbar-shrink-mobile();
     }
   }

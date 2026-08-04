@@ -1,15 +1,15 @@
-@use "geometry";
+@use "geometry-shell" as shell-geometry;
 
 .topbar-popup {
   >.frame-container {
     >.frame {
       >* {
-        margin-left: geometry.$topbar-popup-padding;
-        margin-right: geometry.$topbar-popup-padding;
+        margin-left: shell-geometry.$topbar-popup-padding;
+        margin-right: shell-geometry.$topbar-popup-padding;
       }
 
       >*:last-child {
-        margin-bottom: geometry.$topbar-popup-padding;
+        margin-bottom: shell-geometry.$topbar-popup-padding;
       }
     }
   }

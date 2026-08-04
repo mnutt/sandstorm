@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 @mixin grain-table-row-cells () {
   >tbody>tr {
@@ -6,7 +6,7 @@
       &.grain-size {
         width: 70px;
         // The mobile viewport is too small to display this much text
-        @media #{geometry.$mobile} {
+        @media #{breakpoints.$mobile} {
           display: none;
         }
       }
@@ -16,7 +16,7 @@
       &.shared-or-owned {
         width: 110px;
         // The mobile viewport is too small to display this much text
-        @media #{geometry.$mobile} {
+        @media #{breakpoints.$mobile} {
           display: none;
         }
       }

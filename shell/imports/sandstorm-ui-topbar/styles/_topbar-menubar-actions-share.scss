@@ -1,5 +1,5 @@
 @use "icon-api";
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "topbar-primitives";
 
 .sandstorm-topbar {
@@ -10,7 +10,7 @@
 
       @include icon-api.icon("share");
 
-      @media #{geometry.$desktop} {
+      @media #{breakpoints.$desktop} {
         background-position: 2px center;
         color: #cccccc; // Have the text match the icon.
                         // This is the single place the button text is visible.
@@ -24,7 +24,7 @@
           vertical-align: top;
         }
       }
-      @media #{geometry.$mobile} {
+      @media #{breakpoints.$mobile} {
         background-position: 10px center;
         position: relative;
         &::before {

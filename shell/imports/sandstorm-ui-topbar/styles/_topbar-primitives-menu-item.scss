@@ -1,13 +1,14 @@
 @use "colors-topbar" as topbar-colors;
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
+@use "geometry-shell" as shell-geometry;
 
 @mixin hamburger-menu-item () {
   // Common styling for topbar items that are displayed as a hamburger menu item on mobile.
-  @media #{geometry.$desktop} {
-    height: geometry.$topbar-height-desktop;
+  @media #{breakpoints.$desktop} {
+    height: shell-geometry.$topbar-height-desktop;
   }
 
-  @media #{geometry.$mobile} {
+  @media #{breakpoints.$mobile} {
     display: block;
     width: 100%;
     background-position: 8px center;
@@ -17,7 +18,7 @@
     text-align: left;
     padding-left: 48px;
     font-size: 14pt;
-    height: geometry.$topbar-height-mobile;
+    height: shell-geometry.$topbar-height-mobile;
     font-weight: normal;
     text-decoration: none;
 

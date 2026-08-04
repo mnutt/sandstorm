@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 @mixin webfont-icon ($color, $mobile-color, $font-size, $mobile-font-size) {
   text-align: center;
@@ -7,7 +7,7 @@
     color: $color;
     font-family: "icons";
 
-    @media #{geometry.$mobile} {
+    @media #{breakpoints.$mobile} {
       font-size: $mobile-font-size;
       color: $mobile-color;
     }

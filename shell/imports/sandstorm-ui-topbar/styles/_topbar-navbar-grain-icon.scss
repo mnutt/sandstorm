@@ -1,5 +1,6 @@
 @use "sass:math";
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
+@use "geometry-shell" as shell-geometry;
 @use "partials-media" as media;
 
 .sandstorm-topbar {
@@ -10,11 +11,11 @@
           @include media.pseudo-img-tag();
           position: absolute;
           top: 4px;
-          left: math.div(geometry.$navbar-width-desktop-shrunk - 24px, 2);
+          left: math.div(shell-geometry.$navbar-width-desktop-shrunk - 24px, 2);
           width: 24px;
           height: 24px;
-          @media #{geometry.$mobile} {
-            left: math.div(geometry.$navbar-width-desktop-shrunk - 40px, 2);
+          @media #{breakpoints.$mobile} {
+            left: math.div(shell-geometry.$navbar-width-desktop-shrunk - 40px, 2);
             width: 40px;
             height: 40px;
           }

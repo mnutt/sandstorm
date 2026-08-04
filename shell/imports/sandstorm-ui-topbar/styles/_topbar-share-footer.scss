@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-shell" as shell-geometry;
 
 .topbar-popup {
   &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
@@ -10,7 +10,7 @@
       border-top: 1px solid #ccc;
       margin: 0px;
       padding-top: 5px;
-      padding-bottom: geometry.$topbar-popup-padding;
+      padding-bottom: shell-geometry.$topbar-popup-padding;
       text-align: right;
       font-size: 10pt;
       >.who-has-access {

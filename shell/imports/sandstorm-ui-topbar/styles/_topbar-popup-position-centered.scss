@@ -1,9 +1,9 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .topbar-popup {
   >.frame-container {
     &.centered {
-      @media #{geometry.$desktop} {
+      @media #{breakpoints.$desktop} {
         margin: 0px auto;
         width: 600px;
         margin-left: calc(50% - 300px);

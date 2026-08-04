@@ -1,15 +1,16 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
+@use "geometry-shell" as shell-geometry;
 
 .sandstorm-topbar {
   >.menubar {
     >.title {
       >div.editable {
         .main-title {
-          height: geometry.$topbar-height-desktop - 8px;
-          line-height: geometry.$topbar-height-desktop - 8px;
-          @media #{geometry.$mobile} {
-            height: geometry.$topbar-height-mobile - 12px;
-            line-height: geometry.$topbar-height-mobile - 12px;
+          height: shell-geometry.$topbar-height-desktop - 8px;
+          line-height: shell-geometry.$topbar-height-desktop - 8px;
+          @media #{breakpoints.$mobile} {
+            height: shell-geometry.$topbar-height-mobile - 12px;
+            line-height: shell-geometry.$topbar-height-mobile - 12px;
           }
         }
 
@@ -20,7 +21,7 @@
           font-size: 10px;
           margin-top: -4px;
 
-          @media #{geometry.$mobile} {
+          @media #{breakpoints.$mobile} {
             height: 12px;
             line-height: 12px;
             font-size: 12px;

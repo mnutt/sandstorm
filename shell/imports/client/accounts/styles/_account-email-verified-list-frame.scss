@@ -1,16 +1,16 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .main-content>.account {
   .verified-emails-editor {
     .already-verified {
-      @media #{geometry.$not-mobile-only} {
+      @media #{breakpoints.$not-mobile-only} {
         display: inline-block;
         width: 340px;
         left: 0px;
         vertical-align: top;
       }
 
-      @media #{geometry.$mobile-only} {
+      @media #{breakpoints.$mobile-only} {
         display: flex;
         flex-direction: column;
         align-items: stretch;

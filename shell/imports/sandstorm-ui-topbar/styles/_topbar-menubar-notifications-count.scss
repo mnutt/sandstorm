@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .sandstorm-topbar {
   >.menubar {
@@ -18,7 +18,7 @@
           text-align: center;
           font-size: 8pt;
 
-          @media #{geometry.$mobile} {
+          @media #{breakpoints.$mobile} {
             top: 24px;
             left: 24px;
           }

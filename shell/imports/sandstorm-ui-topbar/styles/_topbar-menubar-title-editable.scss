@@ -1,5 +1,6 @@
 @use "colors-topbar" as topbar-colors;
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
+@use "geometry-shell" as shell-geometry;
 
 .sandstorm-topbar {
   >.menubar {
@@ -11,11 +12,11 @@
         display: inline-block;
         padding: 0 8px;
         margin-left: -8px;
-        @media #{geometry.$desktop} {
-          min-height: geometry.$topbar-height-desktop;
+        @media #{breakpoints.$desktop} {
+          min-height: shell-geometry.$topbar-height-desktop;
         }
-        @media #{geometry.$mobile} {
-          min-height: geometry.$topbar-height-mobile;
+        @media #{breakpoints.$mobile} {
+          min-height: shell-geometry.$topbar-height-mobile;
           max-width: calc(100% - 150px);
         }
 

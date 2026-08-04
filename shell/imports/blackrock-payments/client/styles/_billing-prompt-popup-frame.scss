@@ -1,10 +1,10 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .topbar-popup.billing-prompt>.frame-container {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 
-  @media #{geometry.$desktop} {
+  @media #{breakpoints.$desktop} {
     width: 932px;
     max-width: 90%;
     margin: 0 auto;
@@ -12,7 +12,7 @@
     border: 1px solid #ccc;  // prevent margin collapse
   }
 
-  @media #{geometry.$mobile} {
+  @media #{breakpoints.$mobile} {
     max-width: 500px;
   }
 

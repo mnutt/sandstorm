@@ -1,13 +1,13 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .main-content>.account {
   text-align: left;
 
-  @media #{geometry.$desktop} {
+  @media #{breakpoints.$desktop} {
     padding: 32px;
   }
 
-  @media #{geometry.$mobile} {
+  @media #{breakpoints.$mobile} {
     padding-top: 0px;
     padding-bottom: 32px;
     padding-left: 8px;

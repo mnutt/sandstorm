@@ -1,11 +1,11 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 div.billing {
   div.usage {
     display: inline-block;
     vertical-align: top;
 
-    @media #{geometry.$not-mobile-only} {
+    @media #{breakpoints.$not-mobile-only} {
       margin-right: 32px;
     }
 
@@ -17,7 +17,7 @@ div.billing {
       margin: 0;
     }
 
-    @media #{geometry.$not-mobile-only} {
+    @media #{breakpoints.$not-mobile-only} {
       max-width: 482px;
     }
   }

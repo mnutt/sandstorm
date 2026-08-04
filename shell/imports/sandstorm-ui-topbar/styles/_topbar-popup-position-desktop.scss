@@ -1,8 +1,8 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .topbar-popup {
   >.frame-container {
-    @media #{geometry.$desktop} {
+    @media #{breakpoints.$desktop} {
       // Adds a small white arrow pointing at the element this popup "descends" from.
       position: fixed;
       top: 32px;

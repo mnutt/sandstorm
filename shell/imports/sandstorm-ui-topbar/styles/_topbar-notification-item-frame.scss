@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-shell" as shell-geometry;
 
 .topbar-popup {
   &.notifications {
@@ -10,15 +10,15 @@
         font-weight: inherit;
         color: inherit;
 
-        padding-left: geometry.$topbar-popup-padding + geometry.$topbar-popup-padding + 64px;
-        padding-right: geometry.$topbar-popup-padding;
-        padding-top: geometry.$topbar-popup-padding;
-        padding-bottom: geometry.$topbar-popup-padding;
+        padding-left: shell-geometry.$topbar-popup-padding + shell-geometry.$topbar-popup-padding + 64px;
+        padding-right: shell-geometry.$topbar-popup-padding;
+        padding-top: shell-geometry.$topbar-popup-padding;
+        padding-bottom: shell-geometry.$topbar-popup-padding;
 
         position: relative;
 
         // Guarantee position-absolute icons don't get cut off
-        min-height: geometry.$topbar-popup-padding + geometry.$topbar-popup-padding + 64px;
+        min-height: shell-geometry.$topbar-popup-padding + shell-geometry.$topbar-popup-padding + 64px;
       }
     }
   }

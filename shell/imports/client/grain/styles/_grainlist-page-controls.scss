@@ -1,16 +1,16 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "partials-search" as search;
 
 .grain-list {
   >.maybe-row {
     margin-bottom: 12px;
-    @media #{geometry.$desktop} {
+    @media #{breakpoints.$desktop} {
       display: flex;
       flex-direction: row;
       align-items: flex-start;
       justify-content: space-between;
     }
-    @media #{geometry.$mobile} {
+    @media #{breakpoints.$mobile} {
       display: block;
     }
   }
@@ -22,7 +22,7 @@
     vertical-align: top;
     clear: both;
 
-    @media #{geometry.$mobile} {
+    @media #{breakpoints.$mobile} {
       display: block;
       margin-bottom: 12px;
     }

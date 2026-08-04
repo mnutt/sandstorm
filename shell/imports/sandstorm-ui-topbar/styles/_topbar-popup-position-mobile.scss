@@ -1,8 +1,8 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .topbar-popup {
   >.frame-container {
-    @media #{geometry.$mobile} {
+    @media #{breakpoints.$mobile} {
       position: static;
       margin: 64px auto 32px;
       font-size: 20px;

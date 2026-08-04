@@ -1,5 +1,5 @@
 @use "colors-topbar" as topbar-colors;
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "partials-buttons" as buttons;
 
 @mixin topbar-button () {
@@ -7,7 +7,7 @@
 
   @include buttons.unstyled-button();
 
-  @media #{geometry.$desktop} {
+  @media #{breakpoints.$desktop} {
     display: block;
     height: 100%;
     margin: 0;
@@ -26,7 +26,7 @@
 
   @include topbar-button();
 
-  @media #{geometry.$desktop} {
+  @media #{breakpoints.$desktop} {
     background-position: center;
     background-repeat: no-repeat;
     background-size: 24px 24px;
@@ -43,7 +43,7 @@
 
   @include buttons.unstyled-button();
 
-  @media #{geometry.$mobile} {
+  @media #{breakpoints.$mobile} {
     display: block;
     margin: 0;
     padding: 0;

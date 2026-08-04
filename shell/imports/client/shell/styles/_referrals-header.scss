@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .referrals {
   header {
@@ -22,7 +22,7 @@
 
     // Minimize the padding on mobile, since 8em ends up being a large fraction
     // of a small screen.
-    @media #{geometry.$mobile} {
+    @media #{breakpoints.$mobile} {
       padding-left: 10%;
       padding-right: 10%;
     }

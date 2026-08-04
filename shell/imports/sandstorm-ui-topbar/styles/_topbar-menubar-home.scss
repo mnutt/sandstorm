@@ -1,12 +1,13 @@
 @use "colors-topbar" as topbar-colors;
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
+@use "geometry-shell" as shell-geometry;
 @use "partials-media" as media;
 
 .sandstorm-topbar {
   >.menubar {
     >.home-button {
-      @media #{geometry.$desktop} {
-        width: geometry.$navbar-width-desktop;
+      @media #{breakpoints.$desktop} {
+        width: shell-geometry.$navbar-width-desktop;
         transition: width 0.2s;
         float:left;
         overflow: hidden;
@@ -16,8 +17,8 @@
           color: inherit;
           margin: 0px;
           text-decoration: none;
-          height: geometry.$topbar-height-desktop;
-          padding-left: geometry.$navbar-width-desktop-shrunk;
+          height: shell-geometry.$topbar-height-desktop;
+          padding-left: shell-geometry.$navbar-width-desktop-shrunk;
           padding-right: 8px;
 
           background-image: url("/icon.png");
@@ -32,7 +33,7 @@
         }
       }
 
-      @media #{geometry.$mobile} {
+      @media #{breakpoints.$mobile} {
         // Hide home link -- it's not very useful anyway.
         display: none;
       }

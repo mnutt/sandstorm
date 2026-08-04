@@ -1,13 +1,13 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .sandstorm-topbar {
   >.menubar {
     >.admin-alert {
-      @media #{geometry.$desktop} {
+      @media #{breakpoints.$desktop} {
         float: right;
       }
 
-      @media #{geometry.$mobile} {
+      @media #{breakpoints.$mobile} {
         position: fixed;
         top: 0;
         right: 48px;

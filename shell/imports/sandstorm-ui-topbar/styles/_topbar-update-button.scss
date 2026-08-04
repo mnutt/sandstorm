@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "partials-buttons" as buttons;
 
 .topbar-update-button {
@@ -14,7 +14,7 @@
   font-weight: bold;
   line-height: 32px;
 
-  @media #{geometry.$mobile} {
+  @media #{breakpoints.$mobile} {
     line-height: 24px;
     height: 48px;
     left: 0;

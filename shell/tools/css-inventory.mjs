@@ -210,6 +210,10 @@ function checkOrganization(report) {
       errors.push(`${item.file} uses the catch-all colors Sass module; use a narrower colors-* module instead.`);
     }
 
+    if (item.imports.some((styleImport) => styleImport.type === "use" && styleImport.target === "geometry")) {
+      errors.push(`${item.file} uses the catch-all geometry Sass module; use a narrower geometry-* module instead.`);
+    }
+
     if (item.file.startsWith("client/styles/") && !allowedRootFiles.has(item.file)) {
       errors.push(`${item.file} lives in client/styles; colocate feature styles under imports/ instead.`);
     }

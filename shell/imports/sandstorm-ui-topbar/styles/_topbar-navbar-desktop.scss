@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 @use "topbar-navbar-desktop-frame";
 @use "topbar-navbar-desktop-links";
 @use "topbar-navbar-desktop-actions";
@@ -7,7 +7,7 @@
 
 .sandstorm-topbar {
   >.navbar {
-    @media #{geometry.$desktop} {
+    @media #{breakpoints.$desktop} {
       @include topbar-navbar-desktop-frame.navbar-desktop-frame();
       @include topbar-navbar-desktop-links.navbar-desktop-links();
       @include topbar-navbar-desktop-actions.navbar-desktop-actions();

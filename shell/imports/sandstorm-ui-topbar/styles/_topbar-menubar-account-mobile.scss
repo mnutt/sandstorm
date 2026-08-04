@@ -1,9 +1,9 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 .sandstorm-topbar {
   >.menubar {
     >.account, >.login {
-      @media #{geometry.$mobile} {
+      @media #{breakpoints.$mobile} {
         >button.show-popup {
           font-weight: normal;
         }

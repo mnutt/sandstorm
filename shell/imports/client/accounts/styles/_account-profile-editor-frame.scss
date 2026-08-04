@@ -1,4 +1,4 @@
-@use "geometry";
+@use "geometry-breakpoints" as breakpoints;
 
 div.single-profile-editor {
   max-width: 660px;
@@ -6,7 +6,7 @@ div.single-profile-editor {
 }
 
 div.profile-editor {
-  @media #{geometry.$not-mobile-only} {
+  @media #{breakpoints.$not-mobile-only} {
     width: 660px;
   }
 
