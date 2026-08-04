@@ -207,8 +207,16 @@ function checkOrganization(report) {
   ]);
 
   for (const item of report.files) {
+    if (!item.vendor && item.metrics.bodySelectors > 0 && item.file !== "client/styles/_shell-base.scss") {
+      errors.push(`${item.file} contains body selectors; keep global document selectors in client/styles/_shell-base.scss.`);
+    }
+
     if (item.metrics.idSelectors > 0) {
       errors.push(`${item.file} contains ID selectors; use class hooks for styling.`);
+    }
+
+    if (!item.vendor && item.metrics.important > 0) {
+      errors.push(`${item.file} uses !important; use selector ownership or cascade order instead.`);
     }
 
     if (item.metrics.extends > 0) {
