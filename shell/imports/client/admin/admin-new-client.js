@@ -4,6 +4,8 @@ import { Session } from "meteor/session";
 
 import { globalDb } from "/imports/db-deprecated";
 
+import "/imports/client/admin/styles/admin-shell.scss";
+
 Template.adminNavItem.helpers({
   linkRoute() {
     const routeName = (Template.currentData() || {}).routeName;

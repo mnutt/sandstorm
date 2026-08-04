@@ -9,6 +9,8 @@ import { ServiceConfiguration } from "meteor/service-configuration";
 import { getClientLdapSettings, getClientSamlSettings } from "/imports/client/admin/client-settings";
 import { globalDb } from "/imports/db-deprecated";
 
+import "/imports/client/admin/styles/login.scss";
+
 const idpData = function (configureCallback) {
   const emailTokenEnabled = globalDb.getSettingWithFallback("emailToken", false);
   const oidcSetting = globalDb.collections.settings.findOne("oidc");

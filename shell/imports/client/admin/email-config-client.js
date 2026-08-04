@@ -4,6 +4,8 @@ import { ReactiveVar } from "meteor/reactive-var";
 
 import { globalDb } from "/imports/db-deprecated";
 
+import "/imports/client/admin/styles/email.scss";
+
 Template.newAdminEmailConfig.onCreated(function () {
   const c = globalDb.getSmtpConfig();
   this.hostname = new ReactiveVar(c && c.hostname || "");

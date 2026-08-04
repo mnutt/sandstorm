@@ -35,7 +35,11 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { coerceTemplateText } from "/imports/shared/template-values";
 
-import "/imports/client/shell/styles/shell.scss";
+import "/imports/client/shell/styles/about.scss";
+import "/imports/client/shell/styles/layout.scss";
+import "/imports/client/shell/styles/admin-alert.scss";
+import "/imports/client/shell/styles/root.scss";
+import "/imports/client/shell/styles/referrals.scss";
 
 // Subscribe to basic grain information first and foremost, since
 // without it we might e.g. redirect to the wrong place on login.

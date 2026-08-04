@@ -4,6 +4,8 @@ import { ReactiveVar } from "meteor/reactive-var";
 
 import { globalDb } from "/imports/db-deprecated";
 
+import "/imports/client/admin/styles/app-sources.scss";
+
 const DEFAULT_APP_MARKET_URL = "https://apps.sandstorm.io";
 const DEFAULT_APP_UPDATES_ENABLED = true;
 const DEFAULT_APP_INDEX_URL = "https://app-index.sandstorm.io";

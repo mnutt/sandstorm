@@ -5,6 +5,8 @@ import { ReactiveVar } from "meteor/reactive-var";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 
+import "/imports/client/admin/styles/network-capabilities.scss";
+
 function deriveIntroducer(cap) {
   // For a given ApiToken, determine the account ID of the user who should be attributed for
   // creating the token.

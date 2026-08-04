@@ -7,6 +7,8 @@ import { sortBy } from "/imports/shared/collection-utils";
 import { SandstormDb } from "/imports/sandstorm-db/db"
 import { globalDb } from "/imports/db-deprecated";
 
+import "/imports/client/admin/styles/users.scss";
+
 const matchesUser = function (searchKey, user) {
   // We match a user if we can find the searchKey in one of the following fields:
   //   * Account ID

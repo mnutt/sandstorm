@@ -31,6 +31,8 @@ import { identiconForApp, iconSrcForPackage } from "/imports/sandstorm-identicon
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 
+import "/imports/client/grain/styles/view.scss";
+
 let counter = 0;
 
 class GrainView {

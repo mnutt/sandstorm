@@ -17,8 +17,6 @@
 import { Meteor } from "meteor/meteor";
 import { Mongo } from "meteor/mongo";
 
-import "/imports/blackrock-payments/client/styles/payments.scss";
-
 export const StripeCustomerData = new Mongo.Collection(null);  // see getStripeData for where this is produced
 export const StripeCards = new Mongo.Collection(null);
 
