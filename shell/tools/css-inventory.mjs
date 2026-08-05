@@ -184,17 +184,13 @@ function collectImports(source) {
 function checkOrganization(report) {
   const errors = [];
   const allowedRootFiles = new Set([
-    "client/styles/_focus.scss",
-    "client/styles/_fonts.scss",
-    "client/styles/_icons.scss",
-    "client/styles/_shell-base.scss",
     "client/styles/shell.scss",
   ]);
   const allowedShellImports = new Set([
-    "_fonts.scss",
-    "_icons.scss",
-    "_focus.scss",
-    "_shell-base.scss",
+    "global/fonts",
+    "global/icons",
+    "global/focus",
+    "global/shell-base",
   ]);
   const retiredEntryStyles = new Set([
     "imports/blackrock-payments/client/styles/payments.scss",
@@ -234,8 +230,8 @@ function checkOrganization(report) {
       errors.push(`${item.file} is a retired public stylesheet; import owner-specific style entries instead.`);
     }
 
-    if (!item.vendor && item.metrics.bodySelectors > 0 && item.file !== "client/styles/_shell-base.scss") {
-      errors.push(`${item.file} contains body selectors; keep global document selectors in client/styles/_shell-base.scss.`);
+    if (!item.vendor && item.metrics.bodySelectors > 0 && item.file !== "imports/client/styles/global/_shell-base.scss") {
+      errors.push(`${item.file} contains body selectors; keep global document selectors in imports/client/styles/global/_shell-base.scss.`);
     }
 
     if (item.metrics.idSelectors > 0) {

@@ -8,8 +8,8 @@ const { generateFonts } = require("fantasticon");
 const root = __dirname;
 const generatedDir = path.join(root, ".generated");
 const publicDir = path.join(root, "..", "shell", "public", "icons");
-const stylesheetPath = path.join(root, "..", "shell", "client", "styles", "_icons.scss");
-const apiStylesheetPath = path.join(root, "..", "shell", "client", "styles", "_icon-api.scss");
+const stylesheetPath = path.join(root, "..", "shell", "imports", "client", "styles", "global", "_icons.scss");
+const apiStylesheetPath = path.join(root, "..", "shell", "imports", "client", "styles", "_icon-api.scss");
 const codepoints = require("./codepoints.json");
 const fontTypes = ["eot", "woff2", "woff", "ttf"];
 
@@ -55,6 +55,8 @@ async function main() {
   fs.rmSync(generatedDir, { recursive: true, force: true });
   fs.mkdirSync(generatedDir, { recursive: true });
   fs.mkdirSync(publicDir, { recursive: true });
+  fs.mkdirSync(path.dirname(stylesheetPath), { recursive: true });
+  fs.mkdirSync(path.dirname(apiStylesheetPath), { recursive: true });
 
   await generateFonts({
     inputDir: root,

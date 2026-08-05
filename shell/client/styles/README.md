@@ -10,7 +10,8 @@ that render them.
 - `shell.scss` is an ordering-only manifest. Keep its order stable while moving
   rules out of it.
 - Most existing styles compile as one global cascade through Rspack and Sass.
-- `client/styles` now contains emitted global CSS only. Sass-only tokens,
+- `client/styles` now contains only the shell-wide stylesheet entrypoint.
+  Shared global CSS lives in `imports/client/styles/global`; Sass-only tokens,
   geometry values, icon mixins, and reusable mixins live in `imports/client/styles`.
 - Shell frame styles that still emit global selectors now live under
   `imports/client/shell/styles`; grain frame and sharing styles live under
@@ -20,15 +21,16 @@ that render them.
 
 New and migrated styles should use this ownership model:
 
-- Application-wide emitted defaults: keep in `client/styles`.
+- Application-wide emitted defaults: keep in `imports/client/styles/global`, and
+  load them from `client/styles/shell.scss`.
 - Shared tokens and primitives: keep in `imports/client/styles`, exposed with Sass
   `@use` or plain reusable classes.
 - Feature styles: colocate under `imports/client/...` beside the owning
   template/client module, and import them from that module.
 - Vendor CSS and narrow vendor overrides: keep near the application entrypoint
   unless the vendor is only used by one feature.
-- Use `icon-api` for Sass-only icon mixins. `_icons.scss` should remain
-  the single global source of the emitted icon font and `.icon-*` classes.
+- Use `icon-api` for Sass-only icon mixins. `global/icons` should remain the
+  single global source of the emitted icon font and `.icon-*` classes.
 
 ## Migration Rules
 
@@ -76,7 +78,7 @@ To enforce the current organization boundary:
 npm run css:check
 ```
 
-This check permits only emitted global styles in `client/styles` and only
+This check permits only the global manifest in `client/styles` and only
 global/base imports in `client/styles/shell.scss`; feature styles should be
 imported from their owning client module.
 

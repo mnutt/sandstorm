@@ -285,7 +285,7 @@ shell-env: tmp/.shell-env
 
 # Note that we need Ekam to build node_modules before we can run Meteor, hence
 # the dependency on tmp/.ekam-run.
-tmp/.shell-env: tmp/.ekam-run $(IMAGES) shell/imports/client/changelog.html shell/client/styles/_icons.scss shell/client/styles/_icon-api.scss shell/package.json shell/package-lock.json
+tmp/.shell-env: tmp/.ekam-run $(IMAGES) shell/imports/client/changelog.html shell/imports/client/styles/global/_icons.scss shell/imports/client/styles/_icon-api.scss shell/package.json shell/package-lock.json
 	@$(call color,configuring meteor frontend)
 	@mkdir -p tmp
 	@mkdir -p node_modules/capnp
@@ -300,7 +300,7 @@ tmp/.shell-env: tmp/.ekam-run $(IMAGES) shell/imports/client/changelog.html shel
 icons/node_modules: icons/package.json
 	cd icons && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm install --no-fund
 
-shell/client/styles/_icons.scss shell/client/styles/_icon-api.scss: icons/node_modules icons/*svg icons/build.js icons/codepoints.json
+shell/imports/client/styles/global/_icons.scss shell/imports/client/styles/_icon-api.scss: icons/node_modules icons/*svg icons/build.js icons/codepoints.json
 	cd icons && PATH=$(METEOR_DEV_BUNDLE)/bin:$$PATH $(METEOR_DEV_BUNDLE)/bin/npm run build
 
 shell/imports/client/changelog.html: CHANGELOG.md
