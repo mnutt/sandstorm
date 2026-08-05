@@ -1,5 +1,5 @@
-@use "colors-applist" as applist-colors;
-@use "geometry-breakpoints" as breakpoints;
+@use "colors/applist" as applist-colors;
+@use "geometry/breakpoints" as breakpoints;
 
 .app-list {
   overflow: auto; // Needed to make the background span everything on screen.

@@ -1,6 +1,6 @@
 @use "sass:math";
-@use "colors-topbar" as topbar-colors;
-@use "geometry-shell" as shell-geometry;
+@use "colors/topbar" as topbar-colors;
+@use "geometry/shell" as shell-geometry;
 
 @mixin navbar-desktop-actions () {
   li {

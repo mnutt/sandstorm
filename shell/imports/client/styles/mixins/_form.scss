@@ -1,4 +1,4 @@
-@use "partials-buttons" as buttons;
+@use "mixins/buttons" as buttons;
 
 @mixin standard-form () {
   // Styles that we tend to reuse in forms, particularly in the admin panel.

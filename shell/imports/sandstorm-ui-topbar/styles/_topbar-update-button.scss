@@ -1,5 +1,5 @@
-@use "geometry-breakpoints" as breakpoints;
-@use "partials-buttons" as buttons;
+@use "geometry/breakpoints" as breakpoints;
+@use "mixins/buttons" as buttons;
 
 .topbar-update-button {
   @include buttons.unstyled-button();

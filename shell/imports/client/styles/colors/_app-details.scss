@@ -1,4 +1,4 @@
-@use "colors-defaults" as defaults;
+@use "colors/defaults" as defaults;
 
 ///////// App details page styles
 $app-details-background-color: defaults.$default-content-background-color;

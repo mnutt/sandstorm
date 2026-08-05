@@ -1,4 +1,4 @@
-@use "colors-defaults" as default-colors;
+@use "colors/defaults" as default-colors;
 
 div.billing {
   >section.payment-methods {

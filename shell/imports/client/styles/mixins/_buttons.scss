@@ -1,5 +1,5 @@
 @use "sass:color";
-@use "colors-core" as core-colors;
+@use "colors/core" as core-colors;
 
 @mixin unstyled-button () {
   // Styles for <button>s should @include this to remove the browser's default styling.

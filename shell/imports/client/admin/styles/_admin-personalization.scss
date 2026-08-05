@@ -1,5 +1,5 @@
-@use "partials-media" as media;
-@use "partials-form" as forms;
+@use "mixins/media" as media;
+@use "mixins/form" as forms;
 form.admin-personalization-form {
   @include forms.standard-form();
 

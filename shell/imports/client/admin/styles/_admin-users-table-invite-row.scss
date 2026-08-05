@@ -1,5 +1,5 @@
-@use "colors-defaults" as default-colors;
-@use "partials-media" as media;
+@use "colors/defaults" as default-colors;
+@use "mixins/media" as media;
 
 .admin-user-table {
   .invite-row {

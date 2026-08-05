@@ -12,7 +12,8 @@ that render them.
 - Most existing styles compile as one global cascade through Rspack and Sass.
 - `client/styles` now contains only the shell-wide stylesheet entrypoint.
   Shared global CSS lives in `imports/client/styles/global`; Sass-only tokens,
-  geometry values, icon mixins, and reusable mixins live in `imports/client/styles`.
+  geometry values, icon mixins, and reusable mixins live in namespaced
+  directories under `imports/client/styles`.
 - Shell frame styles that still emit global selectors now live under
   `imports/client/shell/styles`; grain frame and sharing styles live under
   `imports/client/grain/styles`.
@@ -23,13 +24,15 @@ New and migrated styles should use this ownership model:
 
 - Application-wide emitted defaults: keep in `imports/client/styles/global`, and
   load them from `client/styles/shell.scss`.
-- Shared tokens and primitives: keep in `imports/client/styles`, exposed with Sass
-  `@use` or plain reusable classes.
+- Shared tokens and primitives: keep in `imports/client/styles/colors`,
+  `imports/client/styles/geometry`, `imports/client/styles/mixins`, or
+  `imports/client/styles/icons`, exposed with Sass `@use` or plain reusable
+  classes.
 - Feature styles: colocate under `imports/client/...` beside the owning
   template/client module, and import them from that module.
 - Vendor CSS and narrow vendor overrides: keep near the application entrypoint
   unless the vendor is only used by one feature.
-- Use `icon-api` for Sass-only icon mixins. `global/icons` should remain the
+- Use `icons/api` for Sass-only icon mixins. `global/icons` should remain the
   single global source of the emitted icon font and `.icon-*` classes.
 
 ## Migration Rules

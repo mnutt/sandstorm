@@ -1,4 +1,4 @@
-@use "partials-buttons" as buttons;
+@use "mixins/buttons" as buttons;
 
 @mixin info-row-actions () {
   >button.uninstall-button, >button.restore-button, >button.toggle-show-trash {

@@ -1,5 +1,5 @@
-@use "icon-api";
-@use "partials-media" as media;
+@use "icons/api" as icon-api;
+@use "mixins/media" as media;
 
 .transfers {
   .grain-list {

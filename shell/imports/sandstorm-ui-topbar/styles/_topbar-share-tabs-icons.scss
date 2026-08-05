@@ -1,4 +1,4 @@
-@use "icon-api";
+@use "icons/api" as icon-api;
 
 .topbar-popup {
   &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {

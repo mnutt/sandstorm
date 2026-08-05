@@ -1,5 +1,5 @@
-@use "geometry-shell" as shell-geometry;
-@use "partials-buttons" as buttons;
+@use "geometry/shell" as shell-geometry;
+@use "mixins/buttons" as buttons;
 @use "topbar-primitives";
 
 @mixin navbar-shrink-button () {

@@ -1,4 +1,4 @@
-@use "geometry-shell" as shell-geometry;
+@use "geometry/shell" as shell-geometry;
 
 @mixin navbar-shrink-state () {
   &.shrink-desktop {

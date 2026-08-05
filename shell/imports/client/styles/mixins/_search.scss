@@ -1,5 +1,5 @@
-@use "colors-grainlist" as grainlist-colors;
-@use "partials-media" as media;
+@use "colors/grainlist" as grainlist-colors;
+@use "mixins/media" as media;
 
 @mixin search-row () {
   // A search bar that grows to the size of its container.

@@ -1,6 +1,6 @@
 @use "sass:color";
-@use "colors-app-details" as app-details-colors;
-@use "partials-buttons" as buttons;
+@use "colors/app-details" as app-details-colors;
+@use "mixins/buttons" as buttons;
 
 .app-details {
   >.newer-version, >.older-version {

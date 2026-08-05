@@ -1,7 +1,7 @@
-@use "colors-topbar" as topbar-colors;
-@use "geometry-breakpoints" as breakpoints;
-@use "geometry-shell" as shell-geometry;
-@use "partials-media" as media;
+@use "colors/topbar" as topbar-colors;
+@use "geometry/breakpoints" as breakpoints;
+@use "geometry/shell" as shell-geometry;
+@use "mixins/media" as media;
 
 .sandstorm-topbar {
   >.menubar {

@@ -1,5 +1,5 @@
-@use "colors-core" as core-colors;
-@use "partials-buttons" as buttons;
+@use "colors/core" as core-colors;
+@use "mixins/buttons" as buttons;
 
 @mixin trash-explanation () {
   width: 100%;

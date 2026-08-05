@@ -9,7 +9,7 @@ const root = __dirname;
 const generatedDir = path.join(root, ".generated");
 const publicDir = path.join(root, "..", "shell", "public", "icons");
 const stylesheetPath = path.join(root, "..", "shell", "imports", "client", "styles", "global", "_icons.scss");
-const apiStylesheetPath = path.join(root, "..", "shell", "imports", "client", "styles", "_icon-api.scss");
+const apiStylesheetPath = path.join(root, "..", "shell", "imports", "client", "styles", "icons", "_api.scss");
 const codepoints = require("./codepoints.json");
 const fontTypes = ["eot", "woff2", "woff", "ttf"];
 

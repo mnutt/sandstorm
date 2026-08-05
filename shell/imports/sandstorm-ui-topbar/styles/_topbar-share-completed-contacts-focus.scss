@@ -1,5 +1,5 @@
 @use "sass:color";
-@use "colors-core" as core-colors;
+@use "colors/core" as core-colors;
 
 .topbar-popup {
   &.share {

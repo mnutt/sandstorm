@@ -1,4 +1,4 @@
-@use "geometry-breakpoints" as breakpoints;
+@use "geometry/breakpoints" as breakpoints;
 
 .topbar-popup {
   // Popup windows hang off the topbar, usually appearing when a topbar item is clicked.

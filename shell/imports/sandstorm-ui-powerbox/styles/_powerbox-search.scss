@@ -1,5 +1,5 @@
-@use "colors-grainlist" as grainlist-colors;
-@use "partials-media" as media;
+@use "colors/grainlist" as grainlist-colors;
+@use "mixins/media" as media;
 
 .topbar-popup.request>.frame-container>.frame {
   >.search-row {

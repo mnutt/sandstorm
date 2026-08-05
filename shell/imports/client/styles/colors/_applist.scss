@@ -1,4 +1,4 @@
-@use "colors-defaults" as defaults;
+@use "colors/defaults" as defaults;
 
 ///////// App list ("New...") styles
 $applist-background-color: defaults.$default-content-background-color;

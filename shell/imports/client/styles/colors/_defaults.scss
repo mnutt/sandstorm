@@ -1,5 +1,5 @@
 @use "sass:color";
-@use "colors-core" as core;
+@use "colors/core" as core;
 
 //////// Default colors, which may be reused in other modules
 $default-content-background-color: #efefef;

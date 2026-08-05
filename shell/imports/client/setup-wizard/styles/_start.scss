@@ -1,5 +1,5 @@
 @use "sass:color";
-@use "partials-buttons" as buttons;
+@use "mixins/buttons" as buttons;
 
 button.setup-sandstorm {
   text-align: center;

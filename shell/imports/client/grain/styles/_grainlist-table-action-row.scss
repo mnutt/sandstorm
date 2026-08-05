@@ -1,6 +1,6 @@
-@use "colors-grainlist" as grainlist-colors;
-@use "partials-media" as media;
-@use "partials-buttons" as buttons;
+@use "colors/grainlist" as grainlist-colors;
+@use "mixins/media" as media;
+@use "mixins/buttons" as buttons;
 
 @mixin grain-table-action-row () {
   >tbody>tr {

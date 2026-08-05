@@ -1,4 +1,4 @@
-@use "partials-buttons" as buttons;
+@use "mixins/buttons" as buttons;
 .system-log-header {
   display: flex;
   flex-direction: row;

@@ -1,4 +1,4 @@
-@use "geometry-shell" as shell-geometry;
+@use "geometry/shell" as shell-geometry;
 
 .ios .main-content {
   /* iOS Safari refuses to scroll iframes inside fixed position divs. So under iOS, we change the

@@ -308,7 +308,15 @@ function checkOrganization(report) {
     }
 
     if (item.imports.some((styleImport) => styleImport.type === "use" && styleImport.target === "geometry")) {
-      errors.push(`${item.file} uses the catch-all geometry Sass module; use a narrower geometry-* module instead.`);
+      errors.push(`${item.file} uses the catch-all geometry Sass module; use a narrower geometry/* module instead.`);
+    }
+
+    const oldSharedApiImport = item.imports.find((styleImport) =>
+      styleImport.type === "use" &&
+      (/^(colors|geometry|partials)-/.test(styleImport.target) || styleImport.target === "icon-api")
+    );
+    if (oldSharedApiImport) {
+      errors.push(`${item.file} imports ${oldSharedApiImport.target}; use a namespaced shared Sass API instead.`);
     }
 
     if (item.file.startsWith("client/styles/") && !allowedRootFiles.has(item.file)) {

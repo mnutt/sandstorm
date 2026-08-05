@@ -1,5 +1,5 @@
-@use "colors-defaults" as default-colors;
-@use "partials-buttons" as buttons;
+@use "colors/defaults" as default-colors;
+@use "mixins/buttons" as buttons;
 
 .main-content .grain-interstitial {
   display: flex;

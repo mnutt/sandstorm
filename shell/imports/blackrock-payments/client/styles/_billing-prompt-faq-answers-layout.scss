@@ -1,4 +1,4 @@
-@use "geometry-breakpoints" as breakpoints;
+@use "geometry/breakpoints" as breakpoints;
 
 .topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
   >.faq {

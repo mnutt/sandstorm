@@ -1,7 +1,7 @@
 @use "sass:math";
-@use "geometry-breakpoints" as breakpoints;
-@use "geometry-shell" as shell-geometry;
-@use "partials-media" as media;
+@use "geometry/breakpoints" as breakpoints;
+@use "geometry/shell" as shell-geometry;
+@use "mixins/media" as media;
 
 .sandstorm-topbar {
   >.navbar {

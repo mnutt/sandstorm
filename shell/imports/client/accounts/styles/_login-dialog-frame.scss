@@ -1,4 +1,4 @@
-@use "partials-media" as media;
+@use "mixins/media" as media;
 
 .login-dialog {
   width: 325px;
