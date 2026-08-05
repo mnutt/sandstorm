@@ -280,6 +280,12 @@ function checkOrganization(report) {
   const retiredStyleImporters = new Set([
     "imports/client/shell-client.js",
   ]);
+  const explicitStyleImportOwners = new Map([
+    ["client/main.ts", ["imports/client/styles/global/"]],
+    ["imports/client/grain-client.js", ["imports/client/grain/styles/"]],
+    ["imports/client/styleguide.js", ["imports/client/styleguide/styles/"]],
+    ["imports/client/transfers-client.js", ["imports/client/transfers/styles/"]],
+  ]);
   const multiStyleImporters = new Map();
 
   for (const item of report.files) {
@@ -389,6 +395,13 @@ function checkOrganization(report) {
       multiStyleImporters.set(styleImport.file, imports);
     }
 
+    if (styleImport.resolved && !isOwnedStyleImport(styleImport, explicitStyleImportOwners)) {
+      errors.push(
+        `${styleImport.file}:${styleImport.line} imports ${styleImport.resolved}; ` +
+        "import styles from the owning module's styles/ directory.",
+      );
+    }
+
     if (retiredStyleImporters.has(styleImport.file)) {
       errors.push(
         `${styleImport.file}:${styleImport.line} imports ${styleImport.resolved || styleImport.target}; ` +
@@ -427,6 +440,26 @@ function checkOrganization(report) {
   }
 
   return errors;
+}
+
+function isOwnedStyleImport(styleImport, explicitStyleImportOwners) {
+  const explicitOwners = explicitStyleImportOwners.get(styleImport.file);
+  if (explicitOwners) {
+    return explicitOwners.some((styleRoot) => styleImport.resolved.startsWith(styleRoot));
+  }
+
+  const clientOwnerMatch = styleImport.file.match(/^imports\/client\/([^/]+)\//);
+  if (clientOwnerMatch) {
+    return styleImport.resolved.startsWith(`imports/client/${clientOwnerMatch[1]}/styles/`);
+  }
+
+  const packageOwnerMatch = styleImport.file.match(/^imports\/(blackrock-payments|sandstorm-ui-powerbox|sandstorm-ui-topbar)\//);
+  if (packageOwnerMatch) {
+    return styleImport.resolved.startsWith(`imports/${packageOwnerMatch[1]}/styles/`) ||
+      styleImport.resolved.startsWith(`imports/${packageOwnerMatch[1]}/client/styles/`);
+  }
+
+  return false;
 }
 
 function collectStyleFiles(directory) {

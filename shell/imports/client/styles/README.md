@@ -90,7 +90,8 @@ npm run css:check
 ```
 
 This check permits shared Sass APIs only in named directories here; feature
-styles should be imported from their owning client module.
+styles should be imported from their owning client module, and JS/TS stylesheet
+imports must resolve to the owning module's `styles/` directory.
 
 Use the inventory to choose migration order, identify broad selectors, and
 verify that risk is going down as files move out of the global cascade. The
