@@ -190,6 +190,10 @@ function checkOrganization(report) {
     "icons",
     "mixins",
   ]);
+  const sharedColorFiles = new Set([
+    "imports/client/styles/colors/_core.scss",
+    "imports/client/styles/colors/_defaults.scss",
+  ]);
   const retiredEntryStyles = new Set([
     "client/styles/shell.scss",
     "imports/client/shell/styles/introjs-customizations-ui.scss",
@@ -331,6 +335,10 @@ function checkOrganization(report) {
     const sharedStylePathMatch = item.file.match(/^imports\/client\/styles\/([^/]+)\//);
     if (sharedStylePathMatch && !sharedStyleDirs.has(sharedStylePathMatch[1])) {
       errors.push(`${item.file} lives in imports/client/styles/${sharedStylePathMatch[1]}; use a module-owned style directory instead.`);
+    }
+
+    if (item.file.startsWith("imports/client/styles/colors/") && !sharedColorFiles.has(item.file)) {
+      errors.push(`${item.file} is a feature-owned color API; move it to the owning module.`);
     }
 
     if (item.file.startsWith("imports/") && !item.file.includes("/styles/")) {

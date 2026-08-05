@@ -1,5 +1,5 @@
 @use "sass:color";
-@use "colors/app-details" as app-details-colors;
+@use "app-details-colors" as app-details-colors;
 @use "mixins/buttons" as buttons;
 
 .app-details {

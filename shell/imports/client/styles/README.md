@@ -27,6 +27,8 @@ New and migrated styles should use this ownership model:
   classes. Larger reusable component mixins should live under their own module
   owner, such as `imports/client/grainlist/styles/primitives`. Do not put loose
   Sass API files directly under `imports/client/styles`.
+- Shared color files should stay foundational. Put feature-specific palettes
+  beside the styles that consume them.
 - Feature styles: colocate under `imports/client/...` beside the owning
   template/client module, and import them from that module.
 - Vendor CSS and narrow vendor overrides: keep near the application entrypoint
