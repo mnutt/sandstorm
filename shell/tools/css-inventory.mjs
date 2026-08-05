@@ -183,6 +183,13 @@ function collectImports(source) {
 
 function checkOrganization(report) {
   const errors = [];
+  const sharedStyleDirs = new Set([
+    "colors",
+    "geometry",
+    "global",
+    "icons",
+    "mixins",
+  ]);
   const retiredEntryStyles = new Set([
     "client/styles/shell.scss",
     "imports/client/shell/styles/introjs-customizations-ui.scss",
@@ -319,6 +326,11 @@ function checkOrganization(report) {
 
     if (/^imports\/client\/styles\/[^/]+\.scss$/.test(item.file)) {
       errors.push(`${item.file} lives directly in imports/client/styles; use a named shared API directory.`);
+    }
+
+    const sharedStylePathMatch = item.file.match(/^imports\/client\/styles\/([^/]+)\//);
+    if (sharedStylePathMatch && !sharedStyleDirs.has(sharedStylePathMatch[1])) {
+      errors.push(`${item.file} lives in imports/client/styles/${sharedStylePathMatch[1]}; use a module-owned style directory instead.`);
     }
 
     if (item.file.startsWith("imports/") && !item.file.includes("/styles/")) {
