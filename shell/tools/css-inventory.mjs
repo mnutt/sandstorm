@@ -16,6 +16,7 @@ const scriptRoots = [
   path.join(root, "imports"),
 ];
 const styleLoadPaths = [
+  path.join(root, "imports", "client"),
   path.join(root, "imports", "client", "styles"),
 ];
 
@@ -184,6 +185,7 @@ function checkOrganization(report) {
   const errors = [];
   const retiredEntryStyles = new Set([
     "client/styles/shell.scss",
+    "imports/client/shell/styles/introjs-customizations-ui.scss",
     "imports/blackrock-payments/client/styles/payments.scss",
     "imports/blackrock-payments/client/styles/billing-prompt.scss",
     "imports/blackrock-payments/client/styles/billing-settings.scss",

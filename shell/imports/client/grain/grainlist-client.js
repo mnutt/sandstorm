@@ -8,9 +8,9 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { groupBy, indexBy, sortBy, unique } from "/imports/shared/collection-utils";
 import { TAPi18n } from "/imports/tapi18n";
 
-import { introJs } from "intro.js";
 import { isDevelopmentServer } from "/imports/client/dev-mode";
 import { identiconForApp } from "/imports/sandstorm-identicons/helpers";
+import { introJs } from "/imports/client/tours/introjs-client";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { makeAndDownloadBackup } from "/imports/client/backups";
 

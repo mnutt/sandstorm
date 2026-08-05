@@ -29,13 +29,12 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { TAPi18n } from "/imports/tapi18n";
 import { findWhere, where } from "/imports/shared/collection-utils";
 
-import { introJs } from "intro.js";
-
 import downloadFile from "/imports/client/download-file";
 import { makeAndDownloadBackup } from "/imports/client/backups";
 import { ContactProfiles } from "/imports/client/contacts";
 import { isDevelopmentServer } from "/imports/client/dev-mode";
 import { isStandalone } from "/imports/client/standalone";
+import { introJs } from "/imports/client/tours/introjs-client";
 import { GrainView } from "/imports/client/grain/grainview";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
