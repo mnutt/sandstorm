@@ -30,7 +30,8 @@ New and migrated styles should use this ownership model:
 - Shared color files should stay foundational. Put feature-specific palettes
   beside the styles that consume them.
 - Shared mixins should stay foundational. Put reusable component mixins under an
-  owning module such as `imports/client/search/styles`.
+  owning module such as `imports/client/search/styles` or
+  `imports/client/login-provider/styles`.
 - Feature styles: colocate under `imports/client/...` beside the owning
   template/client module, and import them from that module.
 - Vendor CSS and narrow vendor overrides: keep near the application entrypoint

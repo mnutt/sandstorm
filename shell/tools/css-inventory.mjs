@@ -197,7 +197,6 @@ function checkOrganization(report) {
   const sharedMixinFiles = new Set([
     "imports/client/styles/mixins/_buttons.scss",
     "imports/client/styles/mixins/_form.scss",
-    "imports/client/styles/mixins/_login-provider.scss",
     "imports/client/styles/mixins/_media.scss",
   ]);
   const retiredEntryStyles = new Set([
