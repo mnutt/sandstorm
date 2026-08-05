@@ -1,4 +1,4 @@
-@use "../../grain/styles/grainlist-primitives";
+@use "grainlist/grainlist-primitives" as grainlist-primitives;
 
 .app-details {
   >.trash-explanation {

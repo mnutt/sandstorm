@@ -299,6 +299,11 @@ function checkOrganization(report) {
       errors.push(`${item.file} uses Sass @import; use @use or @forward instead.`);
     }
 
+    const relativeStyleImport = item.imports.find((styleImport) => styleImport.target.startsWith("."));
+    if (relativeStyleImport) {
+      errors.push(`${item.file} imports ${relativeStyleImport.target}; use owner-local or shared Sass API imports instead.`);
+    }
+
     if (item.imports.some((styleImport) => styleImport.type === "use" && styleImport.target === "partials")) {
       errors.push(`${item.file} uses the catch-all partials Sass module; use a narrower partials-* module instead.`);
     }
