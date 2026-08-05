@@ -194,6 +194,9 @@ function checkOrganization(report) {
     "imports/client/styles/colors/_core.scss",
     "imports/client/styles/colors/_defaults.scss",
   ]);
+  const sharedGeometryFiles = new Set([
+    "imports/client/styles/geometry/_breakpoints.scss",
+  ]);
   const sharedMixinFiles = new Set([
     "imports/client/styles/mixins/_buttons.scss",
     "imports/client/styles/mixins/_form.scss",
@@ -344,6 +347,10 @@ function checkOrganization(report) {
 
     if (item.file.startsWith("imports/client/styles/colors/") && !sharedColorFiles.has(item.file)) {
       errors.push(`${item.file} is a feature-owned color API; move it to the owning module.`);
+    }
+
+    if (item.file.startsWith("imports/client/styles/geometry/") && !sharedGeometryFiles.has(item.file)) {
+      errors.push(`${item.file} is a feature-owned geometry API; move it to the owning module.`);
     }
 
     if (item.file.startsWith("imports/client/styles/mixins/") && !sharedMixinFiles.has(item.file)) {

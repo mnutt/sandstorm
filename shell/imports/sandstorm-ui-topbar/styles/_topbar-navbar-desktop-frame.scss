@@ -1,5 +1,5 @@
 @use "topbar-colors" as topbar-colors;
-@use "geometry/shell" as shell-geometry;
+@use "shell-frame/styles/geometry" as shell-geometry;
 
 @mixin navbar-desktop-frame () {
   position: fixed;

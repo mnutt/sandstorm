@@ -1,6 +1,6 @@
 @use "topbar-colors" as topbar-colors;
 @use "geometry/breakpoints" as breakpoints;
-@use "geometry/shell" as shell-geometry;
+@use "shell-frame/styles/geometry" as shell-geometry;
 
 @mixin hamburger-menu-item () {
   // Common styling for topbar items that are displayed as a hamburger menu item on mobile.

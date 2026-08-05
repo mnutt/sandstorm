@@ -29,6 +29,8 @@ New and migrated styles should use this ownership model:
   Sass API files directly under `imports/client/styles`.
 - Shared color files should stay foundational. Put feature-specific palettes
   beside the styles that consume them.
+- Shared geometry files should stay foundational. Put shell-frame dimensions
+  under `imports/client/shell-frame/styles`.
 - Shared mixins should stay foundational. Put reusable component mixins under an
   owning module such as `imports/client/search/styles` or
   `imports/client/login-provider/styles`.
