@@ -323,6 +323,10 @@ function checkOrganization(report) {
       errors.push(`${item.file} lives in client/styles; colocate feature styles under imports/ instead.`);
     }
 
+    if (/^imports\/client\/styles\/[^/]+\.scss$/.test(item.file)) {
+      errors.push(`${item.file} lives directly in imports/client/styles; use a named shared API directory.`);
+    }
+
     if (item.file.startsWith("imports/") && !item.file.includes("/styles/")) {
       errors.push(`${item.file} lives outside a styles/ directory; colocate feature styles under their owner.`);
     }

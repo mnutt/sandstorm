@@ -27,7 +27,7 @@ New and migrated styles should use this ownership model:
 - Shared tokens and primitives: keep in `imports/client/styles/colors`,
   `imports/client/styles/geometry`, `imports/client/styles/mixins`, or
   `imports/client/styles/icons`, exposed with Sass `@use` or plain reusable
-  classes.
+  classes. Do not put loose Sass API files directly under `imports/client/styles`.
 - Feature styles: colocate under `imports/client/...` beside the owning
   template/client module, and import them from that module.
 - Vendor CSS and narrow vendor overrides: keep near the application entrypoint
