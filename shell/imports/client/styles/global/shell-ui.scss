@@ -16,7 +16,7 @@
 
 // This file is intentionally an ordering-only manifest. Sass modules emit CSS
 // in first-use order, matching the historical fourseven:scss bundle.
-@use "global/fonts";
-@use "global/icons";
-@use "global/focus";
-@use "global/shell-base";
+@use "fonts";
+@use "icons";
+@use "focus";
+@use "shell-base";

@@ -6,7 +6,6 @@ import process from "node:process";
 
 const root = process.cwd();
 const styleRoots = [
-  path.join(root, "client", "styles"),
   path.join(root, "imports", "blackrock-payments"),
   path.join(root, "imports", "client"),
   path.join(root, "imports", "sandstorm-ui-powerbox"),
@@ -183,16 +182,8 @@ function collectImports(source) {
 
 function checkOrganization(report) {
   const errors = [];
-  const allowedRootFiles = new Set([
-    "client/styles/shell.scss",
-  ]);
-  const allowedShellImports = new Set([
-    "global/fonts",
-    "global/icons",
-    "global/focus",
-    "global/shell-base",
-  ]);
   const retiredEntryStyles = new Set([
+    "client/styles/shell.scss",
     "imports/blackrock-payments/client/styles/payments.scss",
     "imports/blackrock-payments/client/styles/billing-prompt.scss",
     "imports/blackrock-payments/client/styles/billing-settings.scss",
@@ -324,10 +315,6 @@ function checkOrganization(report) {
       errors.push(`${item.file} imports ${oldSharedApiImport.target}; use a namespaced shared Sass API instead.`);
     }
 
-    if (item.file.startsWith("client/styles/") && !allowedRootFiles.has(item.file)) {
-      errors.push(`${item.file} lives in client/styles; colocate feature styles under imports/ instead.`);
-    }
-
     if (/^imports\/client\/styles\/[^/]+\.scss$/.test(item.file)) {
       errors.push(`${item.file} lives directly in imports/client/styles; use a named shared API directory.`);
     }
@@ -348,15 +335,6 @@ function checkOrganization(report) {
       errors.push(`${item.file} is a public stylesheet entrypoint; name it with the -ui.scss suffix.`);
     }
 
-    if (item.file === "client/styles/shell.scss") {
-      for (const styleImport of item.imports) {
-        if (!allowedShellImports.has(styleImport.target)) {
-          errors.push(
-            `${item.file} imports ${styleImport.target}; import feature styles from their owning module instead.`,
-          );
-        }
-      }
-    }
   }
 
   for (const styleImport of report.styleEntrypoints) {

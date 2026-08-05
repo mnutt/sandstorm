@@ -42,7 +42,7 @@
 // historical Meteor/fourseven bundle order.
 import "../imports/client/vendor/introjs/styles/introjs.css";
 import "../imports/client/shell/styles/introjs-customizations-ui.scss";
-import "./styles/shell.scss";
+import "../imports/client/styles/global/shell-ui.scss";
 
 // sandstorm-db.
 import "../imports/sandstorm-db/db";

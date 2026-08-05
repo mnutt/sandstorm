@@ -1,19 +1,16 @@
 # Sandstorm Shell CSS
 
-This directory is the legacy global stylesheet entrypoint for the Sandstorm
-shell. The cleanup project should move it toward a small compatibility layer,
-with feature-owned styles colocated with the Blaze templates and client modules
-that render them.
+This directory contains shared stylesheet infrastructure for the Sandstorm
+shell. Feature-owned styles should be colocated with the Blaze templates and
+client modules that render them.
 
 ## Current State
 
-- `shell.scss` is an ordering-only manifest. Keep its order stable while moving
-  rules out of it.
+- `global/shell-ui.scss` is the shell-wide ordering-only manifest.
 - Most existing styles compile as one global cascade through Rspack and Sass.
-- `client/styles` now contains only the shell-wide stylesheet entrypoint.
-  Shared global CSS lives in `imports/client/styles/global`; Sass-only tokens,
+- Shared global CSS lives in `imports/client/styles/global`; Sass-only tokens,
   geometry values, icon mixins, and reusable mixins live in namespaced
-  directories under `imports/client/styles`.
+  directories here.
 - Shell frame styles that still emit global selectors now live under
   `imports/client/shell/styles`; grain frame and sharing styles live under
   `imports/client/grain/styles`.
@@ -23,7 +20,7 @@ that render them.
 New and migrated styles should use this ownership model:
 
 - Application-wide emitted defaults: keep in `imports/client/styles/global`, and
-  load them from `client/styles/shell.scss`.
+  load them from `global/shell-ui.scss`.
 - Shared tokens and primitives: keep in `imports/client/styles/colors`,
   `imports/client/styles/geometry`, `imports/client/styles/mixins`, or
   `imports/client/styles/icons`, exposed with Sass `@use` or plain reusable
@@ -85,11 +82,10 @@ To enforce the current organization boundary:
 npm run css:check
 ```
 
-This check permits only the global manifest in `client/styles` and only
-global/base imports in `client/styles/shell.scss`; feature styles should be
-imported from their owning client module.
+This check permits shared Sass APIs only in named directories here; feature
+styles should be imported from their owning client module.
 
 Use the inventory to choose migration order, identify broad selectors, and
 verify that risk is going down as files move out of the global cascade. The
-inventory scans this legacy directory, migrated feature styles under
+inventory scans shared styles here, migrated feature styles under
 `imports/client`, and colocated `sandstorm-ui-*` package styles.
