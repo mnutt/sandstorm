@@ -24,7 +24,7 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { StripeCards, StripeCustomerData, updateStripeData }
   from "/imports/blackrock-payments/client/payments-client";
 
-import "/imports/blackrock-payments/client/styles/billing-settings.scss";
+import "/imports/blackrock-payments/client/styles/billing-settings-ui.scss";
 
 var messageListener = function (showPrompt, template, event) {
   if (event.origin !== window.location.protocol + "//" + makeWildcardHost("payments")) {

@@ -44,7 +44,7 @@ import { SandstormPowerboxRequest } from "/imports/sandstorm-ui-powerbox/powerbo
 import "/imports/client/grain/styles/sharing-copy-ui.scss";
 import "/imports/client/grain/styles/sharing-token-actions-ui.scss";
 import "/imports/client/grain/styles/sharing-frame-content-ui.scss";
-import "/imports/client/grain/styles/grainlog.scss";
+import "/imports/client/grain/styles/grainlog-ui.scss";
 
 // Pseudo-collections.
 const TokenInfo = new Mongo.Collection("tokenInfo");

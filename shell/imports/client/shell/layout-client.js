@@ -22,7 +22,7 @@ import "/imports/client/shell/styles/layout-main-content-ui.scss";
 import "/imports/client/shell/styles/layout-main-content-state-ui.scss";
 import "/imports/client/shell/styles/layout-centered-box-ui.scss";
 import "/imports/client/shell/styles/layout-ios-ui.scss";
-import "/imports/client/shell/styles/admin-alert.scss";
+import "/imports/client/shell/styles/admin-alert-ui.scss";
 
 Template.layout.events({
   "click a": function (event) {

@@ -194,6 +194,9 @@ function checkOrganization(report) {
   ]);
   const retiredEntryStyles = new Set([
     "imports/blackrock-payments/client/styles/payments.scss",
+    "imports/blackrock-payments/client/styles/billing-prompt.scss",
+    "imports/blackrock-payments/client/styles/billing-settings.scss",
+    "imports/blackrock-payments/client/styles/payment-iframe.scss",
     "imports/client/accounts/styles/account-settings.scss",
     "imports/client/accounts/styles/credentials.scss",
     "imports/client/accounts/styles/login-buttons.scss",
@@ -220,15 +223,19 @@ function checkOrganization(report) {
     "imports/client/apps/styles/install.scss",
     "imports/client/grain/styles/grain.scss",
     "imports/client/grain/styles/grainlist.scss",
+    "imports/client/grain/styles/grainlog.scss",
     "imports/client/grain/styles/settings.scss",
     "imports/client/grain/styles/sharing.scss",
     "imports/client/grain/styles/view.scss",
     "imports/client/setup-wizard/styles/setup-wizard.scss",
     "imports/client/shell/styles/about.scss",
+    "imports/client/shell/styles/admin-alert.scss",
+    "imports/client/shell/styles/introjs-customizations.scss",
     "imports/client/shell/styles/layout.scss",
     "imports/client/shell/styles/referrals.scss",
     "imports/client/shell/styles/root.scss",
     "imports/client/shell/styles/shell.scss",
+    "imports/client/styleguide/styles/styleguide.scss",
     "imports/client/transfers/styles/transfers.scss",
     "imports/client/widgets/styles/buttons.scss",
     "imports/client/widgets/styles/forms.scss",
@@ -289,6 +296,18 @@ function checkOrganization(report) {
 
     if (item.file.startsWith("imports/") && !item.file.includes("/styles/")) {
       errors.push(`${item.file} lives outside a styles/ directory; colocate feature styles under their owner.`);
+    }
+
+    const fileBaseName = path.posix.basename(item.file);
+    if (
+      !item.vendor &&
+      item.file.startsWith("imports/") &&
+      item.file.includes("/styles/") &&
+      item.file.endsWith(".scss") &&
+      !fileBaseName.startsWith("_") &&
+      !fileBaseName.endsWith("-ui.scss")
+    ) {
+      errors.push(`${item.file} is a public stylesheet entrypoint; name it with the -ui.scss suffix.`);
     }
 
     if (item.file === "client/styles/shell.scss") {
