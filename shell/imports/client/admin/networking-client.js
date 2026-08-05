@@ -21,7 +21,7 @@ import { ReactiveVar } from "meteor/reactive-var";
 import { PRIVATE_IPV4_ADDRESSES, PRIVATE_IPV6_ADDRESSES } from "/imports/constants";
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/admin/styles/networking.scss";
+import "/imports/client/admin/styles/networking-ui.scss";
 
 const DEFAULT_IP_BLACKLIST = PRIVATE_IPV4_ADDRESSES.concat(PRIVATE_IPV6_ADDRESSES).join("\n");
 

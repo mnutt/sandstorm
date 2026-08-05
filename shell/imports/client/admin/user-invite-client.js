@@ -6,7 +6,7 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { getClientReturnAddressWithDisplayName } from "/imports/client/admin/client-settings";
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/admin/styles/user-invites.scss";
+import "/imports/client/admin/styles/user-invites-ui.scss";
 
 Template.newAdminUserInviteLink.onCreated(function () {
   this.formState = new ReactiveVar("default");

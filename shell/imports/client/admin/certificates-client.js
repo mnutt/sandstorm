@@ -19,7 +19,7 @@ import { Template } from "meteor/templating";
 import { ReactiveVar } from "meteor/reactive-var";
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/admin/styles/certificates.scss";
+import "/imports/client/admin/styles/certificates-ui.scss";
 
 Template.newAdminCertificates.onCreated(function () {
   this.formState = new ReactiveVar({

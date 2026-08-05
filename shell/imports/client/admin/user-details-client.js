@@ -8,7 +8,7 @@ import { ACCOUNT_DELETION_SUSPENSION_TIME } from "/imports/constants";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/admin/styles/user-details.scss";
+import "/imports/client/admin/styles/user-details-ui.scss";
 
 Template.newAdminUserDetailsCredentialTableRow.helpers({
   isOrganizationMember(credential) {

@@ -4,7 +4,7 @@ import { ReactiveVar } from "meteor/reactive-var";
 
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/admin/styles/maintenance.scss";
+import "/imports/client/admin/styles/maintenance-ui.scss";
 
 Template.newAdminMaintenance.onCreated(function () {
   const messageText = globalDb.getSettingWithFallback("adminAlert", "");

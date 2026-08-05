@@ -5,7 +5,7 @@ import { ReactiveVar } from "meteor/reactive-var";
 
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/admin/styles/organization.scss";
+import "/imports/client/admin/styles/organization-ui.scss";
 
 Template.newAdminOrganization.onCreated(function () {
   const emailChecked = globalDb.getOrganizationEmailEnabled() || false;
