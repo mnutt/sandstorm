@@ -26,12 +26,7 @@ import { ACCOUNT_DELETION_SUSPENSION_TIME } from "/imports/constants";
 import SandstormAccountSettingsUi from "/imports/client/accounts/account-settings-ui";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
-import "/imports/client/accounts/styles/account-page-ui.scss";
-import "/imports/client/accounts/styles/account-credentials-ui.scss";
-import "/imports/client/accounts/styles/account-profile-summary-ui.scss";
-import "/imports/client/accounts/styles/account-email-editor-ui.scss";
-import "/imports/client/accounts/styles/account-profile-ui.scss";
-import "/imports/client/accounts/styles/account-misc-ui.scss";
+import "/imports/client/accounts/styles/account-settings-ui.scss";
 
 Template.sandstormAccountSettings.onCreated(function () {
   this.autorun(() => {

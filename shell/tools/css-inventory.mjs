@@ -268,6 +268,7 @@ function checkOrganization(report) {
   const retiredStyleImporters = new Set([
     "imports/client/shell-client.js",
   ]);
+  const multiStyleImporters = new Map();
 
   for (const item of report.files) {
     if (retiredEntryStyles.has(item.file)) {
@@ -342,6 +343,12 @@ function checkOrganization(report) {
   }
 
   for (const styleImport of report.styleEntrypoints) {
+    if (styleImport.file.startsWith("imports/") && styleImport.resolved) {
+      const imports = multiStyleImporters.get(styleImport.file) || [];
+      imports.push(styleImport);
+      multiStyleImporters.set(styleImport.file, imports);
+    }
+
     if (retiredStyleImporters.has(styleImport.file)) {
       errors.push(
         `${styleImport.file}:${styleImport.line} imports ${styleImport.resolved || styleImport.target}; ` +
@@ -362,6 +369,12 @@ function checkOrganization(report) {
         `${styleImport.file}:${styleImport.line} imports retired public stylesheet ${styleImport.resolved}; ` +
         "import owner-specific style entries instead.",
       );
+    }
+  }
+
+  for (const [file, imports] of multiStyleImporters) {
+    if (imports.length > 1) {
+      errors.push(`${file} imports ${imports.length} stylesheets; import one owner-level stylesheet instead.`);
     }
   }
 

@@ -3,11 +3,7 @@ import { Template } from "meteor/templating";
 
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/shell/styles/referrals-page-ui.scss";
-import "/imports/client/shell/styles/referrals-header-ui.scss";
-import "/imports/client/shell/styles/referrals-content-ui.scss";
-import "/imports/client/shell/styles/referrals-tutorial-ui.scss";
-import "/imports/client/shell/styles/referrals-fine-print-ui.scss";
+import "/imports/client/shell/styles/referrals-ui.scss";
 
 export const ReferralInfo = new Meteor.Collection("referralInfo"); // pseudo-collection
 globalThis.ReferralInfo = ReferralInfo;

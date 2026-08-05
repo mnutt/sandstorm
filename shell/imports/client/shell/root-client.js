@@ -4,9 +4,7 @@ import { Template } from "meteor/templating";
 import { prettySize } from "/imports/client/shell/formatting";
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/shell/styles/root-intro-ui.scss";
-import "/imports/client/shell/styles/root-onboarding-ui.scss";
-import "/imports/client/shell/styles/root-demo-ui.scss";
+import "/imports/client/shell/styles/root-ui.scss";
 
 Template.root.helpers({
   storageUsage: function () {

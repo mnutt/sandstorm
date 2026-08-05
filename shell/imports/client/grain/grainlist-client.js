@@ -14,14 +14,7 @@ import { identiconForApp } from "/imports/sandstorm-identicons/helpers";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { makeAndDownloadBackup } from "/imports/client/backups";
 
-import "/imports/client/grain/styles/grainlist-page-frame-ui.scss";
-import "/imports/client/grain/styles/grainlist-page-help-ui.scss";
-import "/imports/client/grain/styles/grainlist-page-heading-ui.scss";
-import "/imports/client/grain/styles/grainlist-page-controls-ui.scss";
-import "/imports/client/grain/styles/grainlist-page-trash-ui.scss";
-import "/imports/client/grain/styles/grainlist-page-usage-ui.scss";
-import "/imports/client/grain/styles/grainlist-page-table-ui.scss";
-import "/imports/client/grain/styles/grainlist-page-empty-ui.scss";
+import "/imports/client/grain/styles/grainlist-ui.scss";
 
 const SandstormGrainListPage = {};
 globalThis.SandstormGrainListPage = SandstormGrainListPage;

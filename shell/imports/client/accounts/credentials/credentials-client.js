@@ -26,10 +26,7 @@ import { groupBy } from "/imports/shared/collection-utils";
 
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
-import "/imports/client/accounts/styles/credential-interstitial-ui.scss";
-import "/imports/client/accounts/styles/credential-sign-in-ui.scss";
-import "/imports/client/accounts/styles/credential-management-ui.scss";
-import "/imports/client/accounts/styles/credential-cards-ui.scss";
+import "/imports/client/accounts/styles/credentials-ui.scss";
 
 const LoginCredentialsOfLinkedAccounts = new Mongo.Collection("loginCredentialsOfLinkedAccounts");
 // Pseudocollection populated by the `accountsOfCredential(sourceCredentialId)` subscription. Contains

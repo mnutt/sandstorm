@@ -31,10 +31,7 @@ import { identiconForApp, iconSrcForPackage } from "/imports/sandstorm-identicon
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 
-import "/imports/client/grain/styles/view-interstitial-ui.scss";
-import "/imports/client/grain/styles/view-container-ui.scss";
-import "/imports/client/grain/styles/view-frame-ui.scss";
-import "/imports/client/grain/styles/view-loading-ui.scss";
+import "/imports/client/grain/styles/view-ui.scss";
 
 let counter = 0;
 

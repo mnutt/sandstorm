@@ -18,11 +18,7 @@ import {
   makeAccountSettingsUi,
 } from "/imports/client/shell-client";
 
-import "/imports/client/shell/styles/layout-main-content-ui.scss";
-import "/imports/client/shell/styles/layout-main-content-state-ui.scss";
-import "/imports/client/shell/styles/layout-centered-box-ui.scss";
-import "/imports/client/shell/styles/layout-ios-ui.scss";
-import "/imports/client/shell/styles/admin-alert-ui.scss";
+import "/imports/client/shell/styles/layout-ui.scss";
 
 Template.layout.events({
   "click a": function (event) {

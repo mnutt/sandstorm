@@ -5,10 +5,7 @@ import { Match, check } from "meteor/check";
 import { globalDb } from "/imports/db-deprecated";
 import { GrainView } from "/imports/client/grain/grainview";
 
-import "/imports/client/grain/styles/settings-frame-ui.scss";
-import "/imports/client/grain/styles/settings-return-button-ui.scss";
-import "/imports/client/grain/styles/settings-headings-ui.scss";
-import "/imports/client/grain/styles/settings-table-ui.scss";
+import "/imports/client/grain/styles/settings-ui.scss";
 
 Template.sandstormGrainSettingsPage.onCreated(function() {
   const instance = Template.instance();
