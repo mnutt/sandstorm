@@ -1,5 +1,5 @@
 @use "geometry/breakpoints" as breakpoints;
-@use "mixins/search" as search;
+@use "search/styles/search-row" as search;
 
 .grain-list {
   >.maybe-row {

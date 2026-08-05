@@ -1,4 +1,4 @@
-@use "mixins/search" as search;
+@use "search/styles/search-row" as search;
 
 .app-details {
   >.search-row {
