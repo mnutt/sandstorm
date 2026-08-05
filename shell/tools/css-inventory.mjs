@@ -615,6 +615,7 @@ function collectSelectors(lines) {
   let pendingSelector = "";
   let pendingLine = 0;
   let braceDepth = 0;
+  let ignoredBlockDepth = null;
 
   for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
     let line = lines[lineNumber];
@@ -646,6 +647,28 @@ function collectSelectors(lines) {
     }
 
     if (!line.trim()) {
+      continue;
+    }
+
+    if (ignoredBlockDepth !== null) {
+      braceDepth += countChar(line, "{") - countChar(line, "}");
+      if (braceDepth < ignoredBlockDepth) {
+        ignoredBlockDepth = null;
+      }
+
+      if (braceDepth < 0) braceDepth = 0;
+      continue;
+    }
+
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith("@mixin") && line.includes("{")) {
+      ignoredBlockDepth = braceDepth + 1;
+      braceDepth += countChar(line, "{") - countChar(line, "}");
+      if (braceDepth < ignoredBlockDepth) {
+        ignoredBlockDepth = null;
+      }
+
+      if (braceDepth < 0) braceDepth = 0;
       continue;
     }
 
