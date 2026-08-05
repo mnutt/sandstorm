@@ -316,6 +316,13 @@ function checkOrganization(report) {
       errors.push(`${item.file} imports ${relativeStyleImport.target}; use owner-local or shared Sass API imports instead.`);
     }
 
+    const privateStyleImport = item.imports.find((styleImport) =>
+      path.posix.basename(styleImport.target).startsWith("_")
+    );
+    if (privateStyleImport) {
+      errors.push(`${item.file} imports ${privateStyleImport.target}; omit the Sass partial underscore in @${privateStyleImport.type}.`);
+    }
+
     if (item.imports.some((styleImport) => styleImport.type === "use" && styleImport.target === "partials")) {
       errors.push(`${item.file} uses the catch-all partials Sass module; use a narrower partials-* module instead.`);
     }
