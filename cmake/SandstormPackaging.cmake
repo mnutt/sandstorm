@@ -44,6 +44,17 @@ function(sandstorm_add_packaging_targets)
     VERBATIM)
   add_custom_target(test-app-spk DEPENDS "${_test_app_spk}")
 
+  add_custom_target(test-app-dev
+    COMMAND "$<TARGET_FILE:spk>" dev
+      -I "${PROJECT_SOURCE_DIR}/src"
+      -I "${_spk_stage}"
+      -p "${_test_app_stage}/test-app.capnp:pkgdef"
+    DEPENDS spk "${_test_app_stage_stamp}"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Running the Sandstorm test app in development mode"
+    VERBATIM)
+
   set(_app_index_source "${PROJECT_SOURCE_DIR}/src/sandstorm/app-index")
   set(_app_index_stage "${_spk_stage}/sandstorm/app-index")
   set(_app_index_stage_stamp "${_package_dir}/app-index-stage.stamp")
@@ -80,6 +91,17 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Packing app-index.spk"
     VERBATIM)
   add_custom_target(app-index-spk DEPENDS "${_app_index_spk}")
+
+  add_custom_target(app-index-dev
+    COMMAND "$<TARGET_FILE:spk>" dev
+      -I "${PROJECT_SOURCE_DIR}/src"
+      -I "${_spk_stage}"
+      -p "${_app_index_stage}/app-index.capnp:pkgdef"
+    DEPENDS spk "${_app_index_stage_stamp}"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Running the Sandstorm app index in development mode"
+    VERBATIM)
 
   if(NOT SANDSTORM_BUILD_FRONTEND OR NOT TARGET shell-build)
     return()
@@ -138,6 +160,17 @@ function(sandstorm_add_packaging_targets)
     COMMENT "Packing meteor-testapp.spk"
     VERBATIM)
   add_custom_target(meteor-testapp-spk DEPENDS "${_meteor_testapp_spk}")
+
+  add_custom_target(meteor-testapp-dev
+    COMMAND "$<TARGET_FILE:spk>" dev
+      -I "${PROJECT_SOURCE_DIR}/src"
+      -I "${_spk_stage}"
+      -s /opt/sandstorm
+    DEPENDS spk "${_meteor_testapp_stage_stamp}"
+    WORKING_DIRECTORY "${_meteor_testapp_work}"
+    USES_TERMINAL
+    COMMENT "Running the Meteor test application in development mode"
+    VERBATIM)
 
   find_program(SANDSTORM_TAR_EXECUTABLE NAMES tar REQUIRED)
   find_program(SANDSTORM_XZ_EXECUTABLE NAMES xz REQUIRED)

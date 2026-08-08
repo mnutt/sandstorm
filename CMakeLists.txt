@@ -33,6 +33,8 @@ option(SANDSTORM_BUILD_NODE_CAPNP "Build the capnp.node addon" ON)
 option(SANDSTORM_BUILD_FRONTEND "Enable Meteor shell build targets" ON)
 option(SANDSTORM_STATIC_RUNTIME_BINARIES
   "Statically link the sandbox runtime binaries" ON)
+set(SANDSTORM_STODGY_TESTER "$ENV{HOME}/.local/bin/stodgy-tester" CACHE FILEPATH
+  "Path to stodgy-tester for the installer test suite")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -41,3 +43,18 @@ include(SandstormDependencies)
 
 add_subdirectory(src/bpf_asm)
 add_subdirectory(src/sandstorm)
+
+add_custom_target(installer-test
+  COMMAND bash "${PROJECT_SOURCE_DIR}/installer-tests/prepare-for-tests.sh"
+  COMMAND "${CMAKE_COMMAND}" -E env
+    "PYTHONUNBUFFERED=yes"
+    "TERM=xterm"
+    "SLOW_TEXT_TIMEOUT=120"
+    "${SANDSTORM_STODGY_TESTER}"
+      --plugin stodgy_tester.plugins.sandstorm_installer_tests
+      --on-vm-start=uninstall_sandstorm
+      --rsync
+  WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/installer-tests"
+  USES_TERMINAL
+  COMMENT "Running the Sandstorm installer test suite"
+  VERBATIM)
