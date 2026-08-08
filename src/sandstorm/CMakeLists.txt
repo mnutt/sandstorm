@@ -2,6 +2,7 @@ include(SandstormCapnp)
 include(SandstormFrontend)
 include(SandstormInstall)
 include(SandstormNodeCapnp)
+include(SandstormPackaging)
 
 set(_sandstorm_schema_relative_paths
   activity.capnp
@@ -151,3 +152,4 @@ endif()
 
 sandstorm_install_native()
 sandstorm_add_frontend_targets()
+sandstorm_add_packaging_targets()
