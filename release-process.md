@@ -12,7 +12,7 @@ Steps:
 2. `git pull` the master branch.
 
 3. Update dependencies. After each step, commit the changes using the command you ran as the commit message.
-    * Submodules: `make update-deps`
+    * Submodules: `git submodule update --init --remote --rebase`
     * Meteor: `cd shell && meteor update --all-packages`
         * If Meteor can't be updated for some reason (e.g. a new release will break Sandstorm and
           we can't fix it yet), use `meteor update --packages-only --all-packages`

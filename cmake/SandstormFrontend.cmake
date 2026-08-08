@@ -133,6 +133,19 @@ function(sandstorm_add_frontend_targets)
   add_custom_target(shell-env
     DEPENDS shell-assets stage-native "${_shell_npm_stamp}")
 
+  add_custom_target(clean-frontend
+    COMMAND "${CMAKE_COMMAND}" -E rm -rf
+      "${_frontend_dir}"
+      "${PROJECT_SOURCE_DIR}/icons/node_modules"
+      "${PROJECT_SOURCE_DIR}/shell/node_modules"
+      "${PROJECT_SOURCE_DIR}/shell/.meteor/local"
+      "${PROJECT_SOURCE_DIR}/meteor-testapp/node_modules"
+      "${CMAKE_BINARY_DIR}/packages/meteor-testapp-root"
+      "${CMAKE_BINARY_DIR}/packages/meteor-testapp-stage.stamp"
+      "${CMAKE_BINARY_DIR}/packages/meteor-testapp.spk"
+    COMMENT "Removing frontend dependency installs and CMake stamps"
+    VERBATIM)
+
   add_custom_target(lint
     COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_meteor_bin}:$ENV{PATH}"
       "${SANDSTORM_METEOR_EXECUTABLE}" npm run lint

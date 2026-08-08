@@ -1,21 +1,28 @@
 [submodule "deps/capnproto"]
 	path = deps/capnproto
 	url = https://github.com/capnproto/capnproto.git
+	branch = master
 [submodule "deps/ekam"]
 	path = deps/ekam
 	url = https://github.com/sandstorm-io/ekam.git
+	branch = master
 [submodule "deps/libseccomp"]
 	path = deps/libseccomp
 	url = https://github.com/seccomp/libseccomp.git
+	branch = master
 [submodule "deps/libsodium"]
 	path = deps/libsodium
 	url = https://github.com/jedisct1/libsodium.git
+	branch = stable
 [submodule "deps/node-capnp"]
 	path = deps/node-capnp
 	url = https://github.com/capnproto/node-capnp.git
+	branch = node10
 [submodule "deps/boringssl"]
 	path = deps/boringssl
 	url = https://boringssl.googlesource.com/boringssl
+	branch = main
 [submodule "deps/clang"]
 	path = deps/clang
 	url = https://chromium.googlesource.com/chromium/src/tools/clang.git
+	branch = main

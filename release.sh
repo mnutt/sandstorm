@@ -58,7 +58,8 @@ TARBALL=$RELEASE_DIR/packages/sandstorm-$BUILD.tar.xz
 echo "**** Building build $BUILD ****"
 
 if [ ! -x deps/llvm-build/bin/clang ] || [ ! -x deps/llvm-build/bin/clang++ ]; then
-  echo "Release compiler is missing; run 'make deps/llvm-build' first." >&2
+  echo "Release compiler is missing; run the Chromium Clang downloader documented in" >&2
+  echo "docs/developing/cmake.md first." >&2
   exit 1
 fi
 

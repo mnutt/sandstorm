@@ -195,14 +195,15 @@ machine running the latest stable Debian release. This is easy to set up using V
 
 Get the source code from the git repository:
 
-    git clone https://github.com/sandstorm-io/sandstorm.git
+    git clone --recurse-submodules https://github.com/sandstorm-io/sandstorm.git
 
 ### Building / installing the binaries
 
 Build the Sandstorm bundle:
 
     cd sandstorm
-    make deps/llvm-build
+    deps/clang/scripts/update.py --output-dir deps/llvm-build
+    test -e deps/llvm-build/bin/clang++ || ln -s clang deps/llvm-build/bin/clang++
     cmake --preset release
     cmake --build --preset release --target package-fast
 

@@ -184,18 +184,6 @@ stylecheck:
 # ====================================================================
 # Dependencies
 
-DEPS=capnproto ekam libsodium node-capnp boringssl clang
-
-# We list remotes so that if projects move hosts, we can pull from their new
-# canonical location.
-REMOTE_capnproto=https://github.com/sandstorm-io/capnproto.git master
-REMOTE_ekam=https://github.com/sandstorm-io/ekam.git master
-REMOTE_libseccomp=https://github.com/seccomp/libseccomp master
-REMOTE_libsodium=https://github.com/jedisct1/libsodium.git stable
-REMOTE_node-capnp=https://github.com/kentonv/node-capnp.git node10
-REMOTE_boringssl=https://boringssl.googlesource.com/boringssl main
-REMOTE_clang=https://chromium.googlesource.com/chromium/src/tools/clang.git main
-
 deps/capnproto/.git:
 	@# Probably user forgot to checkout submodules. Do it for them.
 	@$(call color,"fetching submodules")
@@ -209,12 +197,7 @@ tmp/.deps: | deps/capnproto/.git
 
 update-deps:
 	@$(call color,updating all dependencies)
-	@$(foreach DEP,$(DEPS), \
-	    cd deps/$(DEP) && \
-	    echo "pulling $(DEP)..." && \
-	    git fetch $(REMOTE_$(DEP)) && \
-	    git rebase FETCH_HEAD && \
-	    cd ../..;)
+	@git submodule update --init --remote --rebase
 
 # ====================================================================
 # Get Clang
