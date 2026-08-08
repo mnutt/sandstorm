@@ -142,7 +142,7 @@ jobs:
           name: sandstorm-0-fast.tar.xz
           path: build/ci/packages/sandstorm-0-fast.tar.xz
       - name: typecheck-ts
-        run: cd shell && meteor npm run typecheck
+        run: cmake --build --preset ci --target typecheck
       - name: lint
         run: |
           set -o pipefail
@@ -150,9 +150,7 @@ jobs:
           # we also want to make sure the number of warnings doesn't increase.
           # We check for equality; if the number decreases, great! But then update
           # the constant below.
-          cd shell
-          meteor npm run lint | tee ../lint.log
-          cd ..
+          cmake --build --preset ci --target lint | tee lint.log
           num_problems=$(cat lint.log | grep ' problems (0 errors, ' | awk '{print $2}')
           [ "$num_problems" = 537 ]
       - name: setup java 11

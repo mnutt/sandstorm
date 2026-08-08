@@ -16,7 +16,8 @@ Third, firefox must be installed on the system.
 
 In the parent directory, run:
 
-    make test
+    cmake --preset dev
+    cmake --build --preset dev --target system-test
 
 ## Run Tests -- Manual
 
@@ -27,22 +28,28 @@ this by running `xvfb-run java -jar selenium-server-standalone-2.53.0.jar`, or
 running `sudo Xvfb :10 -ac`, and then `export DISPLAY=:10` before starting selenium.
 
 Run the tests with `npm test`. This requires a running instance of sandstorm, and **WILL**
-potentially change the database. If you aren't comfortable with that, use the `run-local.sh` script.
-It takes a bundle as an argument, for example if you've run `make fast`, you can run
-`tests/run-local.sh ./sandstorm-0-fast.tar.xz`.
+potentially change the database. If you aren't comfortable with that, use the `run-local.sh`
+script. It takes a bundle and test application package as arguments. For example, after building
+the CMake packaging targets, run:
+
+    cmake --build --preset dev --target package-fast test-app-spk meteor-testapp-spk
+    SANDSTORM_METEOR_TESTAPP_PATH=build/dev/packages/meteor-testapp.spk \
+      tests/run-local.sh build/dev/packages/sandstorm-0-fast.tar.xz \
+        build/dev/packages/test-app.spk
 
 ## Running just one test case
 
 Say you want to run the test defined in `tests/grain.js` whose name is
 "Test grain anonymous user". You can do so like so:
 
-    TESTCASE="tests/grain.js Test grain anonymous user" make test
+    TESTCASE="tests/grain.js Test grain anonymous user" \
+        cmake --build --preset dev --target system-test
 
 The name must match exactly.
 
 You can also run all test cases in a file:
 
-    TESTCASE="tests/grain.js" make test
+    TESTCASE="tests/grain.js" cmake --build --preset dev --target system-test
 
 ## Displaying the browser's UI during tests
 
@@ -50,7 +57,7 @@ By default the tests run against a mock X server, so the browser windows
 are not displayed. However, it can be helpful to display the browser
 windows when debugging. You can do this by setting `SHOW_BROWSER=true`:
 
-    SHOW_BROWSER=true make test
+    SHOW_BROWSER=true cmake --build --preset dev --target system-test
 
 ## Dealing with tests which are expected to fail
 
@@ -59,7 +66,7 @@ we should fix these, but so that the full test suite can remain useful
 in the interim, we disable these tests by default; if you want to run
 them you can set `RUN_XFAIL=true`:
 
-    RUN_XFAIL=true make test
+    RUN_XFAIL=true cmake --build --preset dev --target system-test
 
 When writing tests, this variable is exposed as `run_xfail` in
 `tests/util.js`; you can disable a test by simply wrapping it in an

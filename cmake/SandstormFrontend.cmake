@@ -133,6 +133,24 @@ function(sandstorm_add_frontend_targets)
   add_custom_target(shell-env
     DEPENDS shell-assets stage-native "${_shell_npm_stamp}")
 
+  add_custom_target(lint
+    COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_meteor_bin}:$ENV{PATH}"
+      "${SANDSTORM_METEOR_EXECUTABLE}" npm run lint
+    DEPENDS shell-env
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/shell"
+    USES_TERMINAL
+    COMMENT "Linting the Meteor shell"
+    VERBATIM)
+
+  add_custom_target(typecheck
+    COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_meteor_bin}:$ENV{PATH}"
+      "${SANDSTORM_METEOR_EXECUTABLE}" npm run typecheck
+    DEPENDS shell-env
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/shell"
+    USES_TERMINAL
+    COMMENT "Type-checking the Meteor shell"
+    VERBATIM)
+
   file(GLOB_RECURSE _shell_sources CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/shell/client/*"
     "${PROJECT_SOURCE_DIR}/shell/i18n/*"

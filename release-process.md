@@ -19,8 +19,9 @@ Steps:
     * NPM modules: `cd shell && meteor npm update --depth 9999 --save`
 
 4. Test it:
-    * `make test` to run automated tests.
-    * `make update` to update your local install, then manually test anything that seems worth sanity-checking, such as things that changed since last release.
+    * `cmake --preset release`, `cmake --build --preset release`, and `ctest --preset release` to build and run the native tests.
+    * `cmake --build --preset release --target system-test` to run the browser system tests.
+    * `cmake --build --preset release --target update-local` to update your local install, then manually test anything that seems worth sanity-checking, such as things that changed since last release.
 
 5. Update `CHANGELOG.md` summarizing new changes.
 
@@ -39,4 +40,3 @@ If you discover after `release.sh` completes that the release is fatally broken,
 1. SSH into updates server and edit `/var/www/install.sandstorm.io/dev`. This file contains the current release number. Change it back to the previous release. This stops anyone else from updating.
 
 2. Fix or revert the breakage and do a new release as soon as possible, so that the people who did update to the broken release can update again to fix it. Sandstorm does not allow rolling back a release once it has been installed, so a new release is the only way forward.
-

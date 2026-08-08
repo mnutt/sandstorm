@@ -192,6 +192,24 @@ function(sandstorm_add_packaging_targets)
   _sandstorm_add_tarball(package "" FALSE)
   _sandstorm_add_tarball(package-fast "-fast" TRUE)
 
+  set(_fast_package
+    "${_package_dir}/sandstorm-${SANDSTORM_BUILD}-fast.tar.xz")
+  add_custom_target(install-local
+    COMMAND "${PROJECT_SOURCE_DIR}/install.sh" "${_fast_package}"
+    DEPENDS package-fast
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Installing the locally-built Sandstorm package"
+    VERBATIM)
+
+  add_custom_target(update-local
+    COMMAND sudo sandstorm update "${_fast_package}"
+    DEPENDS package-fast
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Updating the local Sandstorm installation"
+    VERBATIM)
+
   add_custom_target(system-test
     COMMAND "${CMAKE_COMMAND}" -E env
       "SANDSTORM_METEOR_TESTAPP_PATH=${_meteor_testapp_spk}"
