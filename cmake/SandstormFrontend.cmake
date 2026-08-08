@@ -140,8 +140,12 @@ function(sandstorm_add_frontend_targets)
     "${PROJECT_SOURCE_DIR}/shell/packages/*"
     "${PROJECT_SOURCE_DIR}/shell/private/*"
     "${PROJECT_SOURCE_DIR}/shell/public/*"
-    "${PROJECT_SOURCE_DIR}/shell/server/*"
-    "${PROJECT_SOURCE_DIR}/shell/.meteor/*")
+    "${PROJECT_SOURCE_DIR}/shell/server/*")
+  list(APPEND _shell_sources
+    "${PROJECT_SOURCE_DIR}/shell/.meteor/packages"
+    "${PROJECT_SOURCE_DIR}/shell/.meteor/platforms"
+    "${PROJECT_SOURCE_DIR}/shell/.meteor/release"
+    "${PROJECT_SOURCE_DIR}/shell/.meteor/versions")
   list(FILTER _shell_sources EXCLUDE REGEX
     "/(node_modules|\.meteor/local|_build|build-assets|build-chunks)/")
 

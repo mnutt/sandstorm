@@ -29,6 +29,20 @@
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
+    },
+    {
+      "name": "ci",
+      "displayName": "Sandstorm CI build",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/ci",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_C_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -40,6 +54,11 @@
     {
       "name": "release",
       "configurePreset": "release",
+      "jobs": 0
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
       "jobs": 0
     }
   ],
@@ -54,6 +73,13 @@
     {
       "name": "release",
       "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
       "output": {
         "outputOnFailure": true
       }

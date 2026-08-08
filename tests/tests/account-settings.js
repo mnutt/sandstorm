@@ -25,7 +25,8 @@ var utils       = require('../utils'),
 var path = require('path');
 // Use sandstorm qr code as new profile picture
 var newPicPath  = path.resolve(__dirname + "/../../sandstorm-qr.png");
-var testappPath = path.resolve(__dirname + "/../assets/meteor-testapp.spk");
+var testappPath = process.env.SANDSTORM_METEOR_TESTAPP_PATH ||
+  path.resolve(__dirname + "/../assets/meteor-testapp.spk");
 var expectedServerRuntime = process.env.EXPECTED_SERVER_RUNTIME === undefined
   ? "classic"
   : process.env.EXPECTED_SERVER_RUNTIME;

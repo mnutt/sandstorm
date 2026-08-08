@@ -85,6 +85,60 @@ function(sandstorm_add_packaging_targets)
     return()
   endif()
 
+  set(_meteor_testapp_source "${PROJECT_SOURCE_DIR}/meteor-testapp")
+  set(_meteor_testapp_root "${_package_dir}/meteor-testapp-root")
+  set(_meteor_testapp_work "${_meteor_testapp_root}/app")
+  set(_meteor_testapp_stage "${_meteor_testapp_work}/.meteor-spk")
+  set(_meteor_testapp_stage_stamp "${_package_dir}/meteor-testapp-stage.stamp")
+  file(GLOB_RECURSE _meteor_testapp_sources CONFIGURE_DEPENDS
+    "${_meteor_testapp_source}/client/*"
+    "${_meteor_testapp_source}/server/*"
+    "${_meteor_testapp_source}/scripts/*"
+    "${PROJECT_SOURCE_DIR}/shell/packages/accounts-sandstorm/*")
+  list(APPEND _meteor_testapp_sources
+    "${_meteor_testapp_source}/.meteor/packages"
+    "${_meteor_testapp_source}/.meteor/platforms"
+    "${_meteor_testapp_source}/.meteor/release"
+    "${_meteor_testapp_source}/.meteor/versions")
+  list(FILTER _meteor_testapp_sources EXCLUDE REGEX
+    "/(node_modules|\.meteor/local|_build|build-assets|build-chunks)/")
+  add_custom_command(
+    OUTPUT "${_meteor_testapp_stage_stamp}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_meteor_testapp_work}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${_meteor_testapp_source}/sandstorm-pkgdef.capnp"
+      "${_meteor_testapp_work}/sandstorm-pkgdef.capnp"
+    COMMAND "${CMAKE_COMMAND}" -E create_symlink
+      "${PROJECT_SOURCE_DIR}/src" "${_meteor_testapp_root}/src"
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "PATH=${SANDSTORM_METEOR_DEV_BUNDLE}/bin:$ENV{PATH}"
+      "SANDSTORM_METEOR_TESTAPP_STAGE_DIR=${_meteor_testapp_stage}"
+      "${_meteor_testapp_source}/scripts/stage-runtime.sh"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${_meteor_testapp_stage_stamp}"
+    DEPENDS
+      "${_meteor_testapp_source}/package.json"
+      "${_meteor_testapp_source}/package-lock.json"
+      "${_meteor_testapp_source}/sandstorm-pkgdef.capnp"
+      ${_meteor_testapp_sources}
+    COMMENT "Staging the Meteor system-test application"
+    VERBATIM)
+
+  set(_meteor_testapp_spk "${_package_dir}/meteor-testapp.spk")
+  add_custom_command(
+    OUTPUT "${_meteor_testapp_spk}"
+    COMMAND "$<TARGET_FILE:spk>" pack
+      -k "${_meteor_testapp_source}/meteor-testapp.key"
+      -I "${PROJECT_SOURCE_DIR}/src"
+      "${_meteor_testapp_spk}"
+    WORKING_DIRECTORY "${_meteor_testapp_work}"
+    DEPENDS
+      spk
+      "${_meteor_testapp_stage_stamp}"
+      "${_meteor_testapp_source}/meteor-testapp.key"
+    COMMENT "Packing meteor-testapp.spk"
+    VERBATIM)
+  add_custom_target(meteor-testapp-spk DEPENDS "${_meteor_testapp_spk}")
+
   find_program(SANDSTORM_TAR_EXECUTABLE NAMES tar REQUIRED)
   find_program(SANDSTORM_XZ_EXECUTABLE NAMES xz REQUIRED)
 
@@ -137,4 +191,16 @@ function(sandstorm_add_packaging_targets)
 
   _sandstorm_add_tarball(package "" FALSE)
   _sandstorm_add_tarball(package-fast "-fast" TRUE)
+
+  add_custom_target(system-test
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "SANDSTORM_METEOR_TESTAPP_PATH=${_meteor_testapp_spk}"
+      "${PROJECT_SOURCE_DIR}/tests/run-local.sh"
+      "${_package_dir}/sandstorm-${SANDSTORM_BUILD}-fast.tar.xz"
+      "${_test_app_spk}"
+    DEPENDS package-fast test-app-spk meteor-testapp-spk
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Running Sandstorm system tests"
+    VERBATIM)
 endfunction()
