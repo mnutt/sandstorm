@@ -49,15 +49,15 @@ module.exports["Test grain trash"] = function (browser) {
       grainTabLinkSelector = ".navbar-grains>li[data-grainid='" + grainId + "']>a";
     })
     .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
-    .waitForElementVisible('.topbar .share > .show-popup', short_wait)
-    .click('.topbar .share > .show-popup')
+    .waitForElementVisible('.sandstorm-topbar .share > .show-popup', short_wait)
+    .click('.sandstorm-topbar .share > .show-popup')
     .waitForElementVisible("#shareable-link-tab-header", short_wait)
     .click("#shareable-link-tab-header")
     .waitForElementVisible(".new-share-token", short_wait)
     .submitForm('.new-share-token')
-    .waitForElementVisible('#share-token-text', medium_wait)
+    .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
 
-    .getText('#share-token-text', function(tokenResponse) {
+    .getText('.topbar-popup.share .copy-me', function(tokenResponse) {
       browser
         .loginDevAccount(null, false, function (secondUserName) {
           browser

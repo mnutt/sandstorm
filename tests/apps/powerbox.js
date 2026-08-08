@@ -46,15 +46,15 @@ module.exports["Test Powerbox"] = function (browser) {
     .waitForElementVisible("#offer-result", short_wait)
     .assert.textContains("#offer-result", "offer: success")
     .frameParent()
-    .waitForElementVisible("#powerbox-offer-url", short_wait)
-    .getText("#powerbox-offer-url", function (result) {
+    .waitForElementVisible(".topbar-popup.offer .copy-me", short_wait)
+    .getText(".topbar-popup.offer .copy-me", function (result) {
         browser
-          .click(".popup.offer .frame button.dismiss")
+          .click(".topbar-popup.offer .frame button.dismiss")
           .grainFrame()
           .click("#request")
           .frameParent()
           .waitForElementVisible("#powerbox-request-input", short_wait)
-          .captureVisualSnapshot(".popup.request", "powerbox-request-token-popup")
+          .captureVisualSnapshot(".topbar-popup.request", "powerbox-request-token-popup")
           .setValue("#powerbox-request-input", result.value)
           .click("#powerbox-request-form button")
           .grainFrame()
@@ -80,10 +80,10 @@ module.exports["Test PowerboxSave"] = function (browser) {
     .waitForElementVisible("#offer-result", short_wait)
     .assert.textContains("#offer-result", "offer: success")
     .frameParent()
-    .waitForElementVisible("#powerbox-offer-url", short_wait)
-    .getText("#powerbox-offer-url", function (result) {
+    .waitForElementVisible(".topbar-popup.offer .copy-me", short_wait)
+    .getText(".topbar-popup.offer .copy-me", function (result) {
         browser
-          .click(".popup.offer .frame button.dismiss")
+          .click(".topbar-popup.offer .frame button.dismiss")
           .grainFrame()
           .click("#request-save-restore")
           .frameParent()
@@ -116,10 +116,10 @@ module.exports["Test Powerbox with failing requirements"] = function (browser) {
     .waitForElementVisible("#offer-result", short_wait)
     .assert.textContains("#offer-result", "offer: success")
     .frameParent()
-    .waitForElementVisible("#powerbox-offer-url", short_wait)
-    .getText("#powerbox-offer-url", function (result) {
+    .waitForElementVisible(".topbar-popup.offer .copy-me", short_wait)
+    .getText(".topbar-popup.offer .copy-me", function (result) {
        browser
-        .click(".popup.offer .frame button.dismiss")
+        .click(".topbar-popup.offer .frame button.dismiss")
         .grainFrame()
         .click("#request-failing-requirements")
         .frame(null)
@@ -199,9 +199,9 @@ module.exports["Test Powerbox query"] = function (browser) {
                 .waitForElementPresent(buttonId, medium_wait)
                 .click(buttonId)
                 .frame(null)
-                .waitForElementVisible(".popup ul.candidate-cards", short_wait)
+                .waitForElementVisible(".topbar-popup ul.candidate-cards", short_wait)
                 .captureVisualSnapshot(
-                  ".popup.request",
+                  ".topbar-popup.request",
                   "powerbox-candidate-cards-" + buttonId.replace(/^#/, ""));
 
             for (var id in expectedMatches) {

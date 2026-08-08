@@ -33,13 +33,13 @@ module.exports = {
     browser
       .loginDevAccount("TestingLogin")
       .disableGuidedTour()
-      .waitForElementVisible('.topbar .account>.show-popup', short_wait)
-      .assert.textContains(".topbar .account>.show-popup", "TestingLogin")
-      .captureVisualSnapshot("body>.topbar", "shell-topbar-logged-in")
+      .waitForElementVisible('.sandstorm-topbar .account>.show-popup', short_wait)
+      .assert.textContains(".sandstorm-topbar .account>.show-popup", "TestingLogin")
+      .captureVisualSnapshot("body>.sandstorm-topbar", "shell-topbar-logged-in")
       .captureVisualSnapshot(".main-content>.app-list", "apps-page-empty")
-      .click(".topbar .account>.show-popup")
-      .waitForElementVisible(".popup.account", short_wait)
-      .captureVisualSnapshot(".popup.account", "account-menu")
+      .click(".sandstorm-topbar .account>.show-popup")
+      .waitForElementVisible(".topbar-popup.account", short_wait)
+      .captureVisualSnapshot(".topbar-popup.account", "account-menu")
       .end();
   },
 
@@ -79,8 +79,8 @@ if (run_xfail) {
   module.exports["Test demo login command"] = function (browser) {
     browser
       .loginDemo()
-      .waitForElementVisible('.topbar .account>.show-popup', short_wait)
-      .assert.textContains(".topbar .account>.show-popup", "Demo")
+      .waitForElementVisible('.sandstorm-topbar .account>.show-popup', short_wait)
+      .assert.textContains(".sandstorm-topbar .account>.show-popup", "Demo")
       .end();
   };
 }

@@ -126,7 +126,7 @@ module.exports = utils.testAllLogins({
       .waitForElementVisible(actionSelector, short_wait)
       .click(actionSelector)
       .waitForElementVisible('#grainTitle', medium_wait)
-      .captureVisualSnapshot("body>.topbar", "grain-topbar-hacker-cms")
+      .captureVisualSnapshot("body>.sandstorm-topbar", "grain-topbar-hacker-cms")
       .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle);
   },
 
@@ -239,14 +239,14 @@ module.exports["Sign in at grain URL"] = function (browser) {
             .assert.textContains("#publish", "Publish")
             .frame(null)
             // Now try it with a /shared/ path.
-            .click('.topbar .share > .show-popup')
+            .click('.sandstorm-topbar .share > .show-popup')
             .waitForElementVisible('#shareable-link-tab-header', short_wait)
-            .captureVisualSnapshot(".popup.share", "grain-share-popup")
+            .captureVisualSnapshot(".topbar-popup.share", "grain-share-popup")
             .click('#shareable-link-tab-header')
             .waitForElementVisible(".new-share-token", short_wait)
             .submitForm('.new-share-token')
-            .waitForElementVisible('#share-token-text', medium_wait)
-            .getText('#share-token-text', function(response) {
+            .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
+            .getText('.topbar-popup.share .copy-me', function(response) {
               browser
                 .execute("window.Meteor.logout()")
                 .loginDevAccount(null, false, function (otherName) { // Generate a new user.
@@ -328,14 +328,14 @@ module.exports["Test grain anonymous user"] = function (browser) {
     .installApp("https://dl.sandstorm.org/testapps/ssjekyll8.spk", "ca690ad886bf920026f8b876c19539c1", "nqmcqs9spcdpmqyuxemf0tsgwn8awfvswc58wgk375g4u25xv6yh")
     .waitForElementVisible('#grainTitle', medium_wait)
     .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
-    .click('.topbar .share > .show-popup')
+    .click('.sandstorm-topbar .share > .show-popup')
     .waitForElementVisible('#shareable-link-tab-header', short_wait)
     .click('#shareable-link-tab-header')
     .waitForElementVisible(".new-share-token", short_wait)
     .submitForm('.new-share-token')
-    .waitForElementVisible('#share-token-text', medium_wait)
+    .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
     // Navigate to the url with an anonymous user
-    .getText('#share-token-text', function(response) {
+    .getText('.topbar-popup.share .copy-me', function(response) {
       browser
         .executeAsync(function (done) {
           var handle = new Promise(function (resolve, reject) {
@@ -351,10 +351,10 @@ module.exports["Test grain anonymous user"] = function (browser) {
         .url(response.value)
         .waitForElementVisible('#grainTitle', medium_wait)
         .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
-        .waitForElementVisible(".popup.login button.dismiss", short_wait)
-        .captureVisualSnapshot(".popup.login", "anonymous-share-login-popup")
-        .click(".popup.login button.dismiss") // "Stay anonymous"
-        .waitForElementNotPresent(".popup.login", short_wait)
+        .waitForElementVisible(".topbar-popup.login button.dismiss", short_wait)
+        .captureVisualSnapshot(".topbar-popup.login", "anonymous-share-login-popup")
+        .click(".topbar-popup.login button.dismiss") // "Stay anonymous"
+        .waitForElementNotPresent(".topbar-popup.login", short_wait)
         .grainFrame()
         .waitForElementVisible('#publish', medium_wait)
         .assert.textContains('#publish', 'Publish')
@@ -376,14 +376,14 @@ module.exports["Test roleless sharing"] = function (browser) {
     })
     .waitForElementVisible('.grain-frame', medium_wait)
     .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
-    .click('.topbar .share > .show-popup')
+    .click('.sandstorm-topbar .share > .show-popup')
     .waitForElementVisible("#shareable-link-tab-header", short_wait)
     .click("#shareable-link-tab-header")
     .waitForElementVisible(".new-share-token", short_wait)
     .submitForm('.new-share-token')
-    .waitForElementVisible('#share-token-text', medium_wait)
+    .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
     // Navigate to the url with 2nd user
-    .getText('#share-token-text', function(response) {
+    .getText('.topbar-popup.share .copy-me', function(response) {
       browser
         .loginDevAccount()
         .disableGuidedTour()
@@ -400,14 +400,14 @@ module.exports["Test roleless sharing"] = function (browser) {
         .waitForElementPresent('#publish', medium_wait)
         .assert.textContains('#publish', 'Publish')
         .frame(null)
-        .click('.topbar .share > .show-popup')
+        .click('.sandstorm-topbar .share > .show-popup')
         .waitForElementVisible("#shareable-link-tab-header", short_wait)
         .click("#shareable-link-tab-header")
         .waitForElementVisible(".new-share-token", short_wait)
         .submitForm('.new-share-token')
-        .waitForElementVisible('#share-token-text', medium_wait)
+        .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
         // Navigate to the re-shared url with 3rd user
-        .getText('#share-token-text', function(response) {
+        .getText('.topbar-popup.share .copy-me', function(response) {
           browser
             .loginDevAccount()
             .disableGuidedTour()
@@ -420,24 +420,24 @@ module.exports["Test roleless sharing"] = function (browser) {
             .waitForElementPresent('#publish', medium_wait)
             .assert.textContains('#publish', 'Publish')
             .frame(null)
-            .click('.topbar .share > .show-popup')
+            .click('.sandstorm-topbar .share > .show-popup')
             .waitForElementVisible("#shareable-link-tab-header", short_wait)
             .click("#shareable-link-tab-header")
             .waitForElementVisible(".new-share-token", short_wait)
             .submitForm('.new-share-token')
-            .waitForElementVisible('#share-token-text', medium_wait)
+            .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
 
             .loginDevAccount(firstUserName)
             .disableGuidedTour()
             .url(response.value)
             .waitForElementVisible('.grain-frame', medium_wait)
             .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
-            .click('.topbar .share > .show-popup')
-            .click('.popup.share .who-has-access')
-            .waitForElementVisible('.popup.who-has-access', medium_wait)
-            .waitForElementVisible('.popup.who-has-access .people td', medium_wait)
-            .captureVisualSnapshot(".popup.who-has-access", "grain-who-has-access-popup")
-            .assert.textContains('.popup.who-has-access .people td', secondUserName)
+            .click('.sandstorm-topbar .share > .show-popup')
+            .click('.topbar-popup.share .who-has-access')
+            .waitForElementVisible('.topbar-popup.who-has-access', medium_wait)
+            .waitForElementVisible('.topbar-popup.who-has-access .people td', medium_wait)
+            .captureVisualSnapshot(".topbar-popup.who-has-access", "grain-who-has-access-popup")
+            .assert.textContains('.topbar-popup.who-has-access .people td', secondUserName)
             .end();
         });
     });
@@ -454,15 +454,15 @@ module.exports["Test role sharing"] = function (browser) {
                 "6va4cjamc21j0znf5h5rrgnv0rpyvh1vaxurkrgknefvj0x63ash")
     .waitForElementVisible('.grain-frame', medium_wait)
     .assert.textContains('#grainTitle', expectedGitWebGrainTitle)
-    .click('.topbar .share > .show-popup')
+    .click('.sandstorm-topbar .share > .show-popup')
     .waitForElementVisible("#shareable-link-tab-header", short_wait)
     .click("#shareable-link-tab-header")
     .waitForElementVisible("#shareable-link-tab .share-token-role", medium_wait)
     .assert.valueContains("#shareable-link-tab .share-token-role", "can read and write")
     .submitForm('.new-share-token')
-    .waitForElementVisible('#share-token-text', medium_wait)
+    .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
      // Navigate to the url with 2nd user
-    .getText('#share-token-text', function(response) {
+    .getText('.topbar-popup.share .copy-me', function(response) {
       browser
         .loginDevAccount()
         .disableGuidedTour()
@@ -474,15 +474,15 @@ module.exports["Test role sharing"] = function (browser) {
         .grainFrame()
         .waitForElementPresent('#offer-iframe', medium_wait) // Wait for GitWeb's offer iframe.
         .frame(null)
-        .click('.topbar .share > .show-popup')
+        .click('.sandstorm-topbar .share > .show-popup')
         .waitForElementVisible("#shareable-link-tab-header", short_wait)
         .click("#shareable-link-tab-header")
         .waitForElementVisible("#shareable-link-tab .share-token-role", medium_wait)
         .assert.valueContains("#shareable-link-tab .share-token-role", "can read and write")
         .submitForm('.new-share-token')
-        .waitForElementVisible('#share-token-text', medium_wait)
+        .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
         // Navigate to the re-shared url with 3rd user
-        .getText('#share-token-text', function(response) {
+        .getText('.topbar-popup.share .copy-me', function(response) {
           browser
             .loginDevAccount()
             .disableGuidedTour()
@@ -494,13 +494,13 @@ module.exports["Test role sharing"] = function (browser) {
             .grainFrame()
             .waitForElementPresent('#offer-iframe', medium_wait) // Wait for GitWeb's offer iframe.
             .frame(null)
-            .click('.topbar .share > .show-popup')
+            .click('.sandstorm-topbar .share > .show-popup')
             .waitForElementVisible("#shareable-link-tab-header", short_wait)
             .click("#shareable-link-tab-header")
             .waitForElementVisible("#shareable-link-tab .share-token-role", medium_wait)
             .assert.valueContains("#shareable-link-tab .share-token-role", "can read and write")
             .submitForm('.new-share-token')
-            .waitForElementVisible('#share-token-text', medium_wait)
+            .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
             .end();
         });
     });
@@ -513,13 +513,13 @@ module.exports["Test grain reveal identity interstitial"] = function (browser) {
     .installApp("https://dl.sandstorm.org/testapps/ssjekyll8.spk", "ca690ad886bf920026f8b876c19539c1", "nqmcqs9spcdpmqyuxemf0tsgwn8awfvswc58wgk375g4u25xv6yh")
     .waitForElementVisible('.grain-frame', medium_wait)
     .assert.textContains('#grainTitle', expectedHackerCMSGrainTitle)
-    .click('.topbar .share > .show-popup')
+    .click('.sandstorm-topbar .share > .show-popup')
     .waitForElementVisible("#shareable-link-tab-header", short_wait)
     .click("#shareable-link-tab-header")
     .waitForElementVisible(".new-share-token", short_wait)
     .submitForm('.new-share-token')
-    .waitForElementVisible('#share-token-text', medium_wait)
-    .getText('#share-token-text', function(shareLink) {
+    .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
+    .getText('.topbar-popup.share .copy-me', function(shareLink) {
       browser
         .url(shareLink.value)
          // Reveal identity option should not come up on visiting our own link.
@@ -553,7 +553,7 @@ module.exports["Test grain reveal identity interstitial"] = function (browser) {
         // Try redeeming as current user
         // TODO(someday): pick a better app that shows off the different userid/username
         .frame(null)
-        .click(".topbar .share > .show-popup")
+        .click(".sandstorm-topbar .share > .show-popup")
         .waitForElementVisible('a.open-non-anonymously', short_wait)
         .click("a.open-non-anonymously")
         .waitForElementVisible("button.reveal-identity-button", medium_wait)
@@ -579,13 +579,13 @@ module.exports["Test grain reveal identity interstitial"] = function (browser) {
         .assert.textContains('#publish', 'Publish')
         .frame(null)
 
-        .click('.topbar .share > .show-popup')
+        .click('.sandstorm-topbar .share > .show-popup')
         .waitForElementVisible("#shareable-link-tab-header", short_wait)
         .click("#shareable-link-tab-header")
         .waitForElementVisible(".new-share-token", short_wait)
         .submitForm('.new-share-token')
-        .waitForElementVisible('#share-token-text', medium_wait)
-        .getText('#share-token-text', function(shareLink) {
+        .waitForElementVisible('.topbar-popup.share .copy-me', medium_wait)
+        .getText('.topbar-popup.share .copy-me', function(shareLink) {
           browser
             .url(shareLink.value)
              // Reveal identity option should not come up on visiting our own link.

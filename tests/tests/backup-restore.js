@@ -28,6 +28,8 @@ var medium_wait = utils.medium_wait;
 var very_long_wait = utils.very_long_wait;
 
 function rm_rfSync(pathToRemove) {
+  if (!fs.existsSync(pathToRemove)) return;
+
   try {
     var stats = fs.lstatSync(pathToRemove);
     if (stats.isSymbolicLink()) { // Check symlinks before targets
@@ -47,7 +49,6 @@ function rm_rfSync(pathToRemove) {
     }
   } catch (e) {
     console.log(e);
-    // silence exceptions (probably ENOENT on root node)
   }
 };
 
