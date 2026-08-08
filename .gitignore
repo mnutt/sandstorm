@@ -1,5 +1,6 @@
 bin
 tmp
+/build/
 node_modules
 meteor-spk-*
 .meteor-spk

@@ -405,6 +405,7 @@ class SubprocessSet {
   // Represents a set of subprocesses and allows you to asynchronously wait for them to complete.
   // In order to use SubprocessSet, it is necessary that *all* subprocesses of this process are
   // managed through it, and wait() is always called immediately on creation of a new subprocess.
+  // UnixEventPort::captureSignal(SIGCHLD) must be called before constructing the event port.
   //
   // TODO(cleanup): This functionality should be merged into KJ's async I/O library.
 

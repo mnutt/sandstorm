@@ -16,6 +16,7 @@
 
 #include "util.h"
 #include <kj/test.h>
+#include <kj/async-unix.h>
 #include <sys/wait.h>
 #include <kj/async-io.h>
 
@@ -202,6 +203,7 @@ KJ_TEST("Subprocess") {
 }
 
 KJ_TEST("SubprocessSet") {
+  kj::UnixEventPort::captureSignal(SIGCHLD);
   auto io = kj::setupAsyncIo();
 
   SubprocessSet set(io.unixEventPort);
