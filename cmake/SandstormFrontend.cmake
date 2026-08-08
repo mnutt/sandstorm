@@ -197,6 +197,8 @@ function(sandstorm_add_frontend_targets)
   endfunction()
 
   _sandstorm_add_shell_build(shell-build "${_shell_build_dir}")
+  set(SANDSTORM_SHELL_BUILD_STAMP "${_shell_build_dir}/.cmake-built"
+    CACHE INTERNAL "Stamp for the release Meteor shell build" FORCE)
   _sandstorm_add_shell_build(shell-build-debug
     "${CMAKE_BINARY_DIR}/shell-build-debug" --debug)
 endfunction()

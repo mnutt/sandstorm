@@ -193,8 +193,8 @@ function(sandstorm_add_packaging_targets)
     COMMAND "${CMAKE_COMMAND}" -E touch "${_bundle_stamp}"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     DEPENDS
-      shell-build
-      stage-native
+      "${SANDSTORM_SHELL_BUILD_STAMP}"
+      "${SANDSTORM_NATIVE_STAGE_STAMP}"
       "${PROJECT_SOURCE_DIR}/make-bundle.sh"
       "${PROJECT_SOURCE_DIR}/find-meteor-dev-bundle.sh"
       "${PROJECT_SOURCE_DIR}/localedata-C"
