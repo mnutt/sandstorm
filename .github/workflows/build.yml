@@ -170,7 +170,7 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          cmake --build --preset ci --target system-test |& tee testlog.txt
+          cmake --build --preset ci --target system-test -- -d explain |& tee testlog.txt
           result=${PIPESTATUS[0]}
           set -e
           echo "Result: $result"
