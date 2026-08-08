@@ -30,9 +30,9 @@ exports.command = function(dontStartGrain, callback) {
     .url(this.launch_url + "/upload-test")
     .waitForElementVisible("#upload-app", short_wait)
     .setValue("#upload-app", process.env.SANDSTORM_TESTAPP_PATH)
-    .waitForElementVisible("#step-confirm", long_wait)
-    .click("#confirmInstall")
-    .waitForElementNotPresent("#confirmInstall", long_wait)
+    .waitForElementVisible(".install-step-confirm", long_wait)
+    .click(".confirm-install-button")
+    .waitForElementNotPresent(".confirm-install-button", long_wait)
     .url(this.launch_url + "/apps")
     .waitForElementVisible(".app-list", medium_wait)
     .resizeWindow(utils.default_width, utils.default_height);

@@ -46,9 +46,9 @@ module.exports = utils.testAllLogins({
       })
       .ifNotDemo(function () {
         browser
-          .waitForElementVisible("#step-confirm", long_wait)
-          .captureVisualSnapshot("#step-confirm", "install-confirm-local-app")
-          .click('#confirmInstall')
+          .waitForElementVisible(".install-step-confirm", long_wait)
+          .captureVisualSnapshot(".install-step-confirm", "install-confirm-local-app")
+          .click('.confirm-install-button')
           .disableGuidedTour()
           .waitForElementVisible(actionSelector, short_wait)
           .assert.textContains(actionSelector, expectedHackerCMSButtonText)
@@ -76,8 +76,8 @@ module.exports = utils.testAllLogins({
       })
       .ifNotDemo(function () {
         browser
-          .waitForElementVisible('#step-confirm', long_wait)
-          .click('#confirmInstall')
+          .waitForElementVisible('.install-step-confirm', long_wait)
+          .click('.confirm-install-button')
           .disableGuidedTour()
           .waitForElementVisible(".app-details .older-version", short_wait)
           .captureVisualSnapshot(".app-details", "app-details-upgrade-available")
@@ -102,8 +102,8 @@ module.exports = utils.testAllLogins({
       })
       .ifNotDemo(function () {
         browser
-          .waitForElementVisible('#step-confirm', long_wait)
-          .click('#confirmInstall')
+          .waitForElementVisible('.install-step-confirm', long_wait)
+          .click('.confirm-install-button')
           .disableGuidedTour()
           .waitForElementVisible(".app-details .newer-version", short_wait)
           .captureVisualSnapshot(".app-details", "app-details-newer-version-installed");
@@ -114,8 +114,8 @@ module.exports = utils.testAllLogins({
     browser
       .url(browser.launch_url + "/install/ca690ad886bf920026f8b876c19539c1?url=https://dl.sandstorm.org/testapps/ssjekyll8.spk")
       .disableGuidedTour()
-      .waitForElementVisible('#step-confirm', very_long_wait)
-      .click('#confirmInstall')
+      .waitForElementVisible('.install-step-confirm', very_long_wait)
+      .click('.confirm-install-button')
       .waitForElementVisible(appDetailsTitleSelector, short_wait)
       .captureVisualSnapshot(".app-details", "app-details-hacker-cms")
       .assert.textContains(appDetailsTitleSelector, 'Hacker CMS');

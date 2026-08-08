@@ -37,8 +37,8 @@ exports.command = function(url, packageId, appId, dontStartGrain, callback) {
       }
 
       (function waitForInstallPage() {
-        if (isVisible("#step-confirm")) {
-          document.querySelector("#confirmInstall").click();
+        if (isVisible(".install-step-confirm")) {
+          document.querySelector(".confirm-install-button").click();
           done({ success: true, alreadyInstalled: false });
           return;
         }
@@ -62,16 +62,22 @@ exports.command = function(url, packageId, appId, dontStartGrain, callback) {
       })();
     }, [long_wait], function (result) {
       var value = result && result.value;
+      var details = "";
+      if (value && !value.success) {
+        details = "; url=" + value.url + "; title=" + value.title + "; body=" +
+            String(value.text || "").slice(0, 1000);
+      }
+
       browser.assert.ok(result.status === 0 && value && value.success,
-          "install page reached confirmation or existing app details");
+          "install page reached confirmation or existing app details" + details);
     })
     .pause(500)
-    .element("css selector", "#confirmInstall", function(result) {
+    .element("css selector", ".confirm-install-button", function(result) {
       if (result && result.status === 0) {
-        this.click("#confirmInstall");
+        this.click(".confirm-install-button");
       }
     })
-    .waitForElementNotPresent("#confirmInstall", long_wait)
+    .waitForElementNotPresent(".confirm-install-button", long_wait)
     .url(this.launch_url + "/apps")
     .waitForElementVisible(".app-list", medium_wait)
     .resizeWindow(utils.default_width, utils.default_height);
