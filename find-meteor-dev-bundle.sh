@@ -20,14 +20,8 @@
 # and mongo binaries and headers, so that we can borrow them rather than making
 # users install them separately.
 #
-# Currently this script is not quite right. It tries to find the most-recent
-# bundle, but we should probably take the bundle matching the Meteor version
-# that Sandstorm is currently using. Moreover, it appears that this script's
-# technique sometimes ends up with an *older* bundle than the most-recent, I
-# guess because Meteor is sometimes lazy about updating the main `meteor`
-# command's symlink. I have not yet deciphered enough about the Meteor
-# warehouse's layout to figure out how to map directly from a version to a
-# dev bundle.
+# Meteor's warehouse normally provides a version symlink for meteor-tool. Use
+# that local mapping first so configuring a build does not query the catalog.
 
 set -euo pipefail
 
@@ -48,16 +42,17 @@ if [ -s "$CACHE_FILE" ]; then
   exit
 fi
 
-echo -n "Finding meteor-tool installation (can take a few seconds)..." >&2
+RELEASE_VERSION=${METEOR_RELEASE#METEOR@}
+LOCAL_DEV_BUNDLE="$METEOR_WAREHOUSE_DIR/packages/meteor-tool/$RELEASE_VERSION/mt-os.linux.x86_64/dev_bundle"
+if [ -x "$LOCAL_DEV_BUNDLE/bin/node" ]; then
+  readlink -f "$LOCAL_DEV_BUNDLE" > "$CACHE_FILE"
+  cat "$CACHE_FILE"
+  exit
+fi
 
-# TODO(cleanup): It would be nice to use a real JSON parser here, but I don't particularly want
-#   to depend on one, nor do I want to depend on Node being installed.
-TOOL_VERSION=$(meteor show --ejson $METEOR_RELEASE | grep '^ *"tool":' |
-    sed -re 's/^.*"(meteor-tool@[^"]*)".*$/\1/g')
-
-TOOLDIR=$(echo $TOOL_VERSION | tr @ /)
-
-echo " $TOOL_VERSION" >&2
-
-readlink -f $METEOR_WAREHOUSE_DIR/packages/$TOOLDIR/mt-os.linux.x86_64/dev_bundle > "$CACHE_FILE"
+echo "Locating Meteor dev bundle from the pinned project release..." >&2
+NODE_PATH=$(meteor node -p process.execPath)
+DEV_BUNDLE=$(dirname "$(dirname "$NODE_PATH")")
+test -x "$DEV_BUNDLE/bin/node"
+readlink -f "$DEV_BUNDLE" > "$CACHE_FILE"
 cat "$CACHE_FILE"
