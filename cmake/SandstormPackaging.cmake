@@ -133,8 +133,8 @@ function(sandstorm_add_packaging_targets)
     COMMAND "${CMAKE_COMMAND}" -E create_symlink
       "${PROJECT_SOURCE_DIR}/src" "${_meteor_testapp_root}/src"
     COMMAND "${CMAKE_COMMAND}" -E env
-      "PATH=${SANDSTORM_METEOR_DEV_BUNDLE}/bin:$ENV{PATH}"
       "SANDSTORM_METEOR_TESTAPP_STAGE_DIR=${_meteor_testapp_stage}"
+      --modify "PATH=path_list_prepend:${SANDSTORM_METEOR_DEV_BUNDLE}/bin" --
       "${_meteor_testapp_source}/scripts/stage-runtime.sh"
     COMMAND "${CMAKE_COMMAND}" -E touch "${_meteor_testapp_stage_stamp}"
     DEPENDS

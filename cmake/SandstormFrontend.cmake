@@ -22,7 +22,8 @@ function(sandstorm_add_frontend_targets)
   set(_icons_npm_stamp "${_frontend_dir}/icons-npm.stamp")
   add_custom_command(
     OUTPUT "${_icons_npm_stamp}"
-    COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_meteor_bin}:$ENV{PATH}"
+    COMMAND "${CMAKE_COMMAND}" -E env
+      --modify "PATH=path_list_prepend:${_meteor_bin}" --
       "${_npm}" install --no-fund
     COMMAND "${CMAKE_COMMAND}" -E touch "${_icons_npm_stamp}"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/icons"
@@ -40,7 +41,8 @@ function(sandstorm_add_frontend_targets)
   add_custom_command(
     OUTPUT "${_icon_build_stamp}"
     BYPRODUCTS "${_icon_stylesheet}" "${_icon_api_stylesheet}"
-    COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_meteor_bin}:$ENV{PATH}"
+    COMMAND "${CMAKE_COMMAND}" -E env
+      --modify "PATH=path_list_prepend:${_meteor_bin}" --
       "${_npm}" run build
     COMMAND "${CMAKE_COMMAND}" -E touch "${_icon_build_stamp}"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/icons"
@@ -120,7 +122,8 @@ function(sandstorm_add_frontend_targets)
   set(_shell_npm_stamp "${_frontend_dir}/shell-npm.stamp")
   add_custom_command(
     OUTPUT "${_shell_npm_stamp}"
-    COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_meteor_bin}:$ENV{PATH}"
+    COMMAND "${CMAKE_COMMAND}" -E env
+      --modify "PATH=path_list_prepend:${_meteor_bin}" --
       "${_npm}" install --no-fund
     COMMAND "${CMAKE_COMMAND}" -E touch "${_shell_npm_stamp}"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/shell"
@@ -147,7 +150,8 @@ function(sandstorm_add_frontend_targets)
     VERBATIM)
 
   add_custom_target(lint
-    COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_meteor_bin}:$ENV{PATH}"
+    COMMAND "${CMAKE_COMMAND}" -E env
+      --modify "PATH=path_list_prepend:${_meteor_bin}" --
       "${SANDSTORM_METEOR_EXECUTABLE}" npm run lint
     DEPENDS shell-env
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/shell"
@@ -156,7 +160,8 @@ function(sandstorm_add_frontend_targets)
     VERBATIM)
 
   add_custom_target(typecheck
-    COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_meteor_bin}:$ENV{PATH}"
+    COMMAND "${CMAKE_COMMAND}" -E env
+      --modify "PATH=path_list_prepend:${_meteor_bin}" --
       "${SANDSTORM_METEOR_EXECUTABLE}" npm run typecheck
     DEPENDS shell-env
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/shell"
@@ -201,8 +206,8 @@ function(sandstorm_add_frontend_targets)
         "-DSHELL_DIR=${PROJECT_SOURCE_DIR}/shell"
         -P "${PROJECT_SOURCE_DIR}/cmake/CheckShellSymlinks.cmake"
       COMMAND "${CMAKE_COMMAND}" -E env
-        "PATH=${_meteor_bin}:$ENV{PATH}"
         "NODE_PATH=${CMAKE_BINARY_DIR}/stage/node_modules"
+        --modify "PATH=path_list_prepend:${_meteor_bin}" --
         "${SANDSTORM_METEOR_EXECUTABLE}" ${_meteor_args}
       COMMAND "${CMAKE_COMMAND}" -E touch "${_stamp}"
       WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/shell"
