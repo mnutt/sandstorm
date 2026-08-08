@@ -179,6 +179,14 @@ function(sandstorm_add_frontend_targets)
     "${PROJECT_SOURCE_DIR}/shell/.meteor/versions")
   list(FILTER _shell_sources EXCLUDE REGEX
     "/(node_modules|\.meteor/local|_build|build-assets|build-chunks)/")
+  # Some tracked shell symlinks point into node_modules. Their targets are
+  # provided by _shell_npm_stamp and validated by CheckShellSymlinks.cmake.
+  # Keeping them here makes Ninja reject a clean tree before npm can run.
+  foreach(_shell_source IN LISTS _shell_sources)
+    if(IS_SYMLINK "${_shell_source}")
+      list(REMOVE_ITEM _shell_sources "${_shell_source}")
+    endif()
+  endforeach()
 
   function(_sandstorm_add_shell_build target output_dir)
     set(_stamp "${output_dir}/.cmake-built")
