@@ -2636,6 +2636,10 @@ private:
       // stack traces.
       kj::_::Debug::setLogLevel(kj::LogSeverity::INFO);
 
+      // The server monitor blocks shutdown and child signals. Reset the inherited mask before
+      // UnixEventPort snapshots it; changing the mask afterwards violates its event-loop contract.
+      clearSignalMask();
+
       auto io = kj::setupAsyncIo();
       auto& network = io.provider->getNetwork();
 
@@ -2656,7 +2660,6 @@ private:
       if (avoidUserns) sandboxUid = config.uids.uid;
 
       dropPrivs(config.uids, avoidUserns);
-      clearSignalMask();  // TODO(soon): Is it bad to do this after setupAsyncIo()?
 
       auto paf = kj::newPromiseAndFulfiller<Backend::Client>();
       TwoPartyServerWithClientBootstrap server(kj::mv(paf.promise));
