@@ -63,11 +63,17 @@ function(sandstorm_install_native)
     list(APPEND _native_targets node_capnp)
   endif()
 
-  add_custom_target(stage-native
+  set(_native_stage_stamp "${CMAKE_BINARY_DIR}/stage/.native.stamp")
+  add_custom_command(
+    OUTPUT "${_native_stage_stamp}"
     COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}"
       --prefix "${CMAKE_BINARY_DIR}/stage"
       --component native
+    COMMAND "${CMAKE_COMMAND}" -E touch "${_native_stage_stamp}"
     DEPENDS ${_native_targets}
     COMMENT "Staging native Sandstorm build outputs"
     VERBATIM)
+  add_custom_target(stage-native DEPENDS "${_native_stage_stamp}")
+  set(SANDSTORM_NATIVE_STAGE_STAMP "${_native_stage_stamp}"
+    CACHE INTERNAL "Stamp for staged native Sandstorm outputs" FORCE)
 endfunction()

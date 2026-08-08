@@ -1,4 +1,5 @@
 include(SandstormCapnp)
+include(SandstormFrontend)
 include(SandstormInstall)
 include(SandstormNodeCapnp)
 
@@ -149,3 +150,4 @@ if(SANDSTORM_BUILD_NODE_CAPNP)
 endif()
 
 sandstorm_install_native()
+sandstorm_add_frontend_targets()
