@@ -1,0 +1,15 @@
+@use "mixins/buttons" as buttons;
+
+.user-details-name {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #dddddd;
+}
+
+.admin-user-roles-form {
+  display: inline-block;
+
+  .make-admin, .make-user, .make-visitor {
+    @include buttons.button-base();
+    @include buttons.button-secondary();
+  }
+}

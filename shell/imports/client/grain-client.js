@@ -29,17 +29,18 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { TAPi18n } from "/imports/tapi18n";
 import { findWhere, where } from "/imports/shared/collection-utils";
 
-import { introJs } from "intro.js";
-
 import downloadFile from "/imports/client/download-file";
 import { makeAndDownloadBackup } from "/imports/client/backups";
 import { ContactProfiles } from "/imports/client/contacts";
 import { isDevelopmentServer } from "/imports/client/dev-mode";
 import { isStandalone } from "/imports/client/standalone";
+import { introJs } from "/imports/client/tours/introjs-client";
 import { GrainView } from "/imports/client/grain/grainview";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPowerboxRequest } from "/imports/sandstorm-ui-powerbox/powerbox-client";
+
+import "/imports/client/grain/styles/grain-ui.scss";
 
 // Pseudo-collections.
 const TokenInfo = new Mongo.Collection("tokenInfo");
@@ -328,20 +329,19 @@ function selectTargetContents(event) {
 Template.grainApiTokenPopup.events({
   "click .copy-me": selectTargetContents,
   "focus .copy-me": selectTargetContents,
-  "submit .newApiToken": function (event) {
+  "submit .newApiToken": function (event, instance) {
     event.preventDefault();
     const activeGrain = globalGrains.getActive();
     const grainId = activeGrain.grainId();
     activeGrain.setGeneratedApiToken("pending");
-    const roleList = document.getElementById("api-token-role");
-    // TODO(cleanup): avoid using global ids; select a child of the current template instead
+    const roleList = instance.find(".api-token-role");
     let assignment = { allAccess: null };
     if (roleList && roleList.selectedIndex > 0) {
       assignment = { roleId: roleList.selectedIndex - 1 };
     }
 
     Meteor.call("newApiToken", { accountId: Meteor.userId() }, grainId,
-                document.getElementById("api-token-petname").value,
+                instance.find(".api-token-petname").value,
                 assignment, { webkey: { forSharing: false } },
                 function (error, result) {
       if (error) {
@@ -356,7 +356,7 @@ Template.grainApiTokenPopup.events({
     });
   },
 
-  "click #resetApiToken": function (event) {
+  "click .reset-api-token": function (event) {
     const activeGrain = globalGrains.getActive();
     activeGrain.setGeneratedApiToken(undefined);
   },
@@ -380,16 +380,12 @@ Template.grainApiTokenPopup.events({
 Template.grainSharePopup.events({
   "click .copy-me": selectTargetContents,
   "focus .copy-me": selectTargetContents,
-  "click #share-grain-popup-closer": function (event) {
-    Session.set("show-share-grain", false);
-  },
-
   "click button.who-has-access": function (event, instance) {
     event.preventDefault();
     showConnectionGraph();
   },
 
-  "click #privatize-grain": function (event) {
+  "click .privatize-grain": function (event) {
     Meteor.call("privatizeGrain", globalGrains.getActive().grainId());
   },
 
@@ -403,7 +399,7 @@ Template.grainSharePopup.events({
 
 Template.shareWithOthers.onRendered(function () {
   if (globalDb.isDemoUser()) {
-    activateElementTab(this.find("#shareable-link-tab-header"), this);
+    activateElementTab(this.find(".shareable-link-tab-header"), this);
   }
 
   this.find("[role=tab][aria-selected=true]").focus();
@@ -432,8 +428,7 @@ const activateElementTab = function (elementToActivate, instance) {
 };
 
 Template.shareWithOthers.events({
-  "click #send-invite-tab-header": activateTargetTab,
-  "click #shareable-link-tab-header": activateTargetTab,
+  "click [role=tab]": activateTargetTab,
   "keydown [role=tab]": function (event, template) {
     if (event.keyCode == 38 || event.keyCode == 40) { // up and down arrows
       event.preventDefault();

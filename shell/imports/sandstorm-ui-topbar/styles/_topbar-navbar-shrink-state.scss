@@ -1,0 +1,31 @@
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+@mixin navbar-shrink-state () {
+  &.shrink-desktop {
+    width: shell-geometry.$navbar-width-desktop-shrunk;
+
+    button.navbar-shrink {
+      border-left-width: 0;
+    }
+    >ul.navbar-grains>li.navitem-grain a {
+      padding-right: 0;
+    }
+    >ul.navbar-grains>li.navitem-grain button.close-button {
+      display: none;
+    }
+    .demo-notice {
+      p { font-size: 0; padding: 0px; }
+      span { display: none; }
+      button { display: none; }
+      a { display: none; }
+    }
+    .demo-timer {
+      p { font-size: 0; padding: 4px; }
+    }
+  }
+  &.hide-desktop {
+    display: none;
+  }
+
+  transition: width 0.2s;
+}

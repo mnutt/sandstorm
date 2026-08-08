@@ -23,6 +23,8 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { updateStripeData }
   from "/imports/blackrock-payments/client/payments-client";
 
+import "/imports/blackrock-payments/client/styles/payment-iframe-ui.scss";
+
 Template.stripePaymentAcceptorPowerboxConfiguration.events({
   "submit form"(event) {
     event.preventDefault();

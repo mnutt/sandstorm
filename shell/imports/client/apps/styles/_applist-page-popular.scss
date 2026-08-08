@@ -1,0 +1,15 @@
+@use "geometry/breakpoints" as breakpoints;
+
+.app-list {
+  >.popular-container {
+    // Restricts the visible portion of the "most used" section to a single row.
+    display: block;
+    overflow: hidden;
+    @media #{breakpoints.$desktop} {
+      height: 280px;
+    }
+    @media #{breakpoints.$mobile} {
+      height: 142px;
+    }
+  }
+}

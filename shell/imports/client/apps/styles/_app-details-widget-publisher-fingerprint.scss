@@ -1,0 +1,20 @@
+@use "geometry/breakpoints" as breakpoints;
+
+@mixin publisher-fingerprint () {
+  >p.no-fingerprint {
+    padding: 8px;
+  }
+
+  >p.has-fingerprint {
+    vertical-align: top;
+    padding-left: 8px;
+    @media #{breakpoints.$desktop} {
+      display: inline-block;
+      max-width: 30%;
+    }
+    @media #{breakpoints.$mobile} {
+      display: block;
+      width: 100%;
+    }
+  }
+}

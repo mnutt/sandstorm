@@ -1,0 +1,24 @@
+@use "colors/defaults" as default-colors;
+
+.transfers {
+  padding: 32px;
+
+  h1 {
+    font-weight: normal;
+    margin-top: 0;
+    //padding-top: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid default-colors.$default-rule-color;
+  }
+
+  h2 {
+    font-size: 24px;
+    font-weight: normal;
+  }
+
+  div.card {
+    background-color: white;
+    padding: 0 16px;
+    overflow: hidden;
+  }
+}

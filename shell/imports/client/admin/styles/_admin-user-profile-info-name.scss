@@ -1,0 +1,24 @@
+@use "mixins/media" as media;
+
+.admin-users-profile-information {
+  .profile-picture-name {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+
+    .profile-picture {
+      @include media.pseudo-img-tag();
+      flex: none;
+      display: inline-block;
+      width: 36px;
+      height: 36px;
+      font-size: 0px;
+    }
+
+    .profile-name {
+      flex: 1 1 auto;
+      margin-left: 8px;
+    }
+  }
+}

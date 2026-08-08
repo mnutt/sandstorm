@@ -1,0 +1,15 @@
+.login-dialog {
+  >.login-buttons-list {
+    >form.dev {
+      background-position: 48px 0px;
+    }
+
+    >form.email, >form.ldap {
+      background-position: 48px 4px;
+
+      .button-box {
+        text-indent: 0;
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+@use "admin-login-primitives";
+
+.login-provider-table {
+  .idp-enabled {
+    @include admin-login-primitives.idp-status();
+    color: #366456;
+    background-color: #d9ebcd;
+  }
+  .idp-disabled {
+    @include admin-login-primitives.idp-status();
+    color: #656565;
+    background-color: #e9e9e9;
+  }
+}

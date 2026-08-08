@@ -1,0 +1,28 @@
+@use "colors/defaults" as default-colors;
+
+.admin-preinstalled-apps {
+  [role=grid] {
+    [role=row] {
+      display: flex;
+      flex-direction: row;
+      justify-content: flex-start;
+      border-top: 1px solid default-colors.$default-table-border-color;
+      flex-basis: 0;
+      width: 100%;
+
+      &.checked, &.toggle-more {
+        background-color: white;
+        [role=row] {
+          border-top: 1px solid default-colors.$default-content-background-color;
+        }
+      }
+
+      &.toggle-more {
+        cursor: pointer;
+        div {
+          margin-left: auto;
+        }
+      }
+    }
+  }
+}

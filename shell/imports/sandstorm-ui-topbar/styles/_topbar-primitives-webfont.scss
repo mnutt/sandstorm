@@ -1,0 +1,15 @@
+@use "geometry/breakpoints" as breakpoints;
+
+@mixin webfont-icon ($color, $mobile-color, $font-size, $mobile-font-size) {
+  text-align: center;
+  &:before {
+    font-size: $font-size;
+    color: $color;
+    font-family: "icons";
+
+    @media #{breakpoints.$mobile} {
+      font-size: $mobile-font-size;
+      color: $mobile-color;
+    }
+  }
+}

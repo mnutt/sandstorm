@@ -1,0 +1,35 @@
+.topbar-popup {
+  &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
+    .share-token-role {
+      width: 40%;
+    }
+    table .share-token-role {
+      max-width: 160px;
+    }
+    div.tables-container {
+      position: relative;
+      overflow-y: auto;
+      overflow-x: hidden; // A vertical scrollbar can cause horizontal overflow.
+      max-height: calc(100vh - 130px);
+      // HACK. This should be computed from the max-height of the containing div. Is that even
+      // possible?
+    }
+    table.people, table.shared-links, table.grains {
+      border: 1px solid #ddd;
+      border-right: none;
+      border-left: none;
+      font-size: 10pt;
+      width: 100%;
+      border-collapse: collapse;
+      tr {
+        border-bottom: 1px solid #ddd;
+      }
+      ul {
+         margin: 0;
+      }
+    }
+    [data-obsolete=true] {
+      display: none;
+    }
+  }
+}

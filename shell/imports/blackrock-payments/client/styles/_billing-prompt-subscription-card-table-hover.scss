@@ -1,0 +1,26 @@
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.subscriptions {
+    >.subscription {
+      &:hover {
+        >table {
+          td {
+            background-color: white;
+          }
+          >tr:nth-child(1)>td {
+            background-color: #e4d6f4;
+          }
+        }
+      }
+      &.selected:hover {
+        >table {
+          td {
+            background-color: white;
+          }
+          >tr:nth-child(1)>td {
+            background-color: #e2e2e2;
+          }
+        }
+      }
+    }
+  }
+}

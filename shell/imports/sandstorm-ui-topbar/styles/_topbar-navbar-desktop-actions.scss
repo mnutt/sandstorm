@@ -1,0 +1,28 @@
+@use "sass:math";
+@use "topbar-colors" as topbar-colors;
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+@mixin navbar-desktop-actions () {
+  li {
+    &.navitem-open-grain, &.navitem-create-grain {
+      display: block;
+      position: relative;
+      background-repeat: no-repeat;
+      background-position: math.div(shell-geometry.$navbar-width-desktop-shrunk - 24px, 2) center;
+      background-size: 24px 24px;
+      font-size: 150%;
+      line-height: 48px;
+      height: 48px;
+      background-color: topbar-colors.$topbar-background-color;
+      color: topbar-colors.$topbar-foreground-color;
+      &:hover {
+        background-color: topbar-colors.$topbar-background-color-hover;
+        color: topbar-colors.$topbar-foreground-color-hover;
+      }
+      &.current, &.current:hover {
+        background-color: topbar-colors.$topbar-background-color-active;
+        color: topbar-colors.$topbar-foreground-color-active;
+      }
+    }
+  }
+}

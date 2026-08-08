@@ -19,11 +19,11 @@ limitations under the License.
 <template name="sandstormTopbar">
   {{#let txt="packages.topbar"}}
   {{#if isUpdateBlocked}}
-    <button class="topbar-update">
+    <button class="topbar-update-button">
       {{_ (con txt "updated")}}
     </button>
   {{/if}}
-  <ul class="topbar{{#if _menuExpanded.get}} expanded{{/if}}{{#if isCurrentRoute "standalone"}} standalone{{/if}}">
+  <ul class="sandstorm-topbar{{#if _menuExpanded.get}} expanded{{/if}}{{#if isCurrentRoute "standalone"}} standalone{{/if}}">
     <ul class="menubar {{#if shrinkNavbar}}shrink-desktop{{/if}}">
       {{#each items}}
         {{#unless onlyPopup}}
@@ -83,14 +83,14 @@ limitations under the License.
   {{!-- Becomes hamburger menu button in mobile view.  Placed after the topbar so it stacks above
         the other topbar items without needing z-index, which would make it impossible to have
         modals cover this button. --}}
-  <div class="menu-button {{#if _menuExpanded.get}}expanded{{/if}}"></div>
+  <div class="topbar-menu-button {{#if _menuExpanded.get}}expanded{{/if}}"></div>
   {{!-- We wish to block reload if there are *any* grains open, regardless of the current route --}}
   {{#if grainCount }}
     {{>sandstormTopbarBlockReload ""}}
   {{/if}}
 
   {{#with currentPopup}}
-    <div class="popup {{name}} {{#if modal}}modal{{/if}}">
+    <div class="topbar-popup {{name}} {{#if modal}}topbar-popup-modal{{/if}}">
       {{#if onlyPopup}}
         <div class="frame-container centered">
           <div class="frame">

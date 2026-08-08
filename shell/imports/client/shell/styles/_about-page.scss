@@ -1,0 +1,5 @@
+@use "about-primitives";
+
+.main-content>.about {
+  @include about-primitives.padded-info-page();
+}

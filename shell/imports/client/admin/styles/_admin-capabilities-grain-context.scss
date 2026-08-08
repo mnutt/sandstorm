@@ -1,0 +1,28 @@
+@use "mixins/media" as media;
+
+.admin-caps-table {
+  .grain-context {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    .grain-details {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+      justify-content: flex-start;
+      margin-right: 10px;
+      .app-icon {
+        @include media.pseudo-img-tag();
+        display: inline-block;
+        width: 24px;
+        height: 24px;
+      }
+    }
+    .identity-card {
+      flex: 0 1 auto;
+    }
+  }
+}

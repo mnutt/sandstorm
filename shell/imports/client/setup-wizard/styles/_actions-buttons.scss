@@ -1,0 +1,29 @@
+@use "mixins/buttons" as buttons;
+
+.setup-next-button {
+  @include buttons.button-base();
+  @include buttons.button-primary();
+  margin-left: 10px;
+}
+
+.setup-back-button {
+  @include buttons.button-base();
+  @include buttons.button-secondary();
+  margin-right: auto;
+}
+
+.setup-test-email-button, .setup-skip-email, .setup-skip-button {
+  @include buttons.button-base();
+  @include buttons.button-secondary();
+  margin-left: 10px;
+}
+
+.setup-button-primary {
+  @include buttons.button-base();
+  @include buttons.button-primary();
+}
+
+.setup-button-secondary {
+  @include buttons.button-base();
+  @include buttons.button-secondary();
+}

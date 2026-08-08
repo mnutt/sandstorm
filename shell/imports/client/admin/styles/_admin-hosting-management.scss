@@ -1,0 +1,4 @@
+@use "mixins/form" as forms;
+.admin-hosting-management-form {
+  @include forms.standard-form();
+}

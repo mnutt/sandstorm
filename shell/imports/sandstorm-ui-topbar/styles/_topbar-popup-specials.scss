@@ -1,0 +1,27 @@
+.topbar-popup.who-has-access {
+  img.spinner {
+    display: block;
+    margin: auto;
+    width: 48px;
+    height: 48px;
+  }
+
+  >.frame-container {
+    width: 500px;
+  }
+}
+
+.topbar-popup.topbar-popup-modal {
+  background-color: rgba(0, 0, 0, 0.5);
+
+  >.frame-container {
+    width: 600px;
+
+    position: static;
+    margin: 64px auto 32px;
+    font-size: 20px;
+    max-width: 90%;
+    border: 1px solid #ccc;
+    overflow-y: auto;
+  }
+}

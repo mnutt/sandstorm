@@ -1,0 +1,8 @@
+@use "mixins/buttons" as buttons;
+
+.danger-zone {
+  button.delete-account {
+    @include buttons.button-base();
+    @include buttons.button-danger();
+  }
+}

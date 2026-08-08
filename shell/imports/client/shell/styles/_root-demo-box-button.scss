@@ -1,0 +1,14 @@
+@use "mixins/buttons" as buttons;
+
+.demo-box {
+  button {
+    @include buttons.unstyled-button();
+    display: block;
+    width: 100%;
+    height: 100px;
+    background: linear-gradient(to right, black, #7f4b8c);
+    color: white;
+    font-size: 34pt;
+    margin: 48px 0;
+  }
+}

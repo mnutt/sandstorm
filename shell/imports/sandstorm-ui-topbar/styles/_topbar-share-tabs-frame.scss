@@ -1,0 +1,13 @@
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+.topbar-popup {
+  &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
+    .share-tabs {
+      width: 100%;
+      padding: shell-geometry.$topbar-popup-padding;
+      border-top: 1px solid #ccc;
+      position: relative;
+      margin: 0;
+    }
+  }
+}

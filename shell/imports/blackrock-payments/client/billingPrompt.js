@@ -24,6 +24,8 @@ import { MAILING_LIST_BONUS } from "/imports/blackrock-payments/constants";
 import { StripeCards, StripeCustomerData, updateStripeData }
   from "/imports/blackrock-payments/client/payments-client";
 
+import "/imports/blackrock-payments/client/styles/billing-prompt-ui.scss";
+
 var idCounter = 0;
 
 var messageListener = function (template, event) {

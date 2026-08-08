@@ -1,0 +1,16 @@
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+.topbar-popup {
+  >.frame-container {
+    >.frame {
+      >* {
+        margin-left: shell-geometry.$topbar-popup-padding;
+        margin-right: shell-geometry.$topbar-popup-padding;
+      }
+
+      >*:last-child {
+        margin-bottom: shell-geometry.$topbar-popup-padding;
+      }
+    }
+  }
+}

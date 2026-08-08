@@ -1,0 +1,27 @@
+@use "colors/core" as core-colors;
+
+.admin-alert-icon {
+  display: inline-block;
+  background-color: core-colors.$sandstorm-purple-color;
+  color: white;
+  font-size: 20px;
+  font-weight: bold;
+  text-align: center;
+  border-radius: 50%;
+  height: 28px;
+  width: 28px;
+  margin: 2px 2px;
+  line-height: 28px;
+  cursor: pointer;
+}
+
+.admin-alert-icon.countdown-second,
+.admin-alert-icon.countdown-now {
+  // Turn red when there's less than a minute left.
+  background-color: #e82538;
+}
+
+.topbar-popup.admin-alert>.frame-container>.frame>p {
+  display: block;
+  margin: 16px;
+}

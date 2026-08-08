@@ -1,0 +1,13 @@
+@use "geometry/breakpoints" as breakpoints;
+
+.sandstorm-topbar {
+  >.menubar {
+    >.account, >.login {
+      @media #{breakpoints.$mobile} {
+        >button.show-popup {
+          font-weight: normal;
+        }
+      }
+    }
+  }
+}

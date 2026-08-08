@@ -1,0 +1,22 @@
+@use "topbar-colors" as topbar-colors;
+
+.sandstorm-topbar {
+  position: fixed;
+  top: 0;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  text-align: left;
+
+  line-height: 32px;
+  height: 32px;
+  background-color: topbar-colors.$topbar-background-color;
+  color: #ccc;
+
+  // Using 0 rather than CSS default ("auto") allows introjs to highlight elements in the topbar.
+  z-index: 0;
+
+  &.standalone {
+    display: none;
+  }
+}

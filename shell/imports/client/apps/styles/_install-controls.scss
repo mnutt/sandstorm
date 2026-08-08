@@ -1,0 +1,16 @@
+@use "mixins/buttons" as buttons;
+
+.install {
+  button {
+    @include buttons.button-base();
+    @include buttons.button-primary();
+    font-size: 150%;
+    font-weight: bold;
+    padding: 10px 16px;
+    line-height: 1.33;
+  }
+  pre {
+    font-family: inherit;
+    font-size: inherit;
+  }
+}

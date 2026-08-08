@@ -1,0 +1,18 @@
+@use "mixins/buttons" as buttons;
+@use "admin-login-primitives";
+
+.login-provider-table {
+  .idp-table-rows {
+    width: 100%;
+  }
+  .idp-table-row {
+    @include admin-login-primitives.idp-table-row();
+    color: #5b5b5b;
+    background-color: white;
+    button.configure-idp {
+      @include buttons.button-base();
+      @include buttons.button-secondary();
+      min-height: 26px;
+    }
+  }
+}

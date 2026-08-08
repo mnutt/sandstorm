@@ -1,0 +1,15 @@
+div.billing {
+  div.usage {
+    div.used, div.total {
+      font-size: 90%;
+      color: #6d6d6d;
+
+      .amount {
+        color: #191919;
+      }
+    }
+
+    div.used { float: left; }
+    div.total { float: right; }
+  }
+}

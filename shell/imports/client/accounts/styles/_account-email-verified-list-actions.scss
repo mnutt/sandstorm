@@ -1,0 +1,29 @@
+@use "colors/core" as core-colors;
+@use "mixins/buttons" as buttons;
+
+.main-content>.account {
+  .verified-emails-editor {
+    .already-verified {
+      ul {
+        li {
+          button.make-primary {
+            @include buttons.button-base();
+            @include buttons.button-secondary();
+            width: 33%;
+            height: 26px;
+            margin-top: 2px;
+          }
+          span.primary-badge {
+            background-color: core-colors.$sandstorm-purple-color;
+            color: white;
+            width: 32%;
+            text-align: center;
+            display: inline-block;
+            height: 24px;
+            margin-top: 3px;
+          }
+        }
+      }
+    }
+  }
+}

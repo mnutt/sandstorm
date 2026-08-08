@@ -1,0 +1,18 @@
+@use "applist-colors" as applist-colors;
+
+.app-list {
+  >h1 {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+
+    margin-top: 0px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid applist-colors.$applist-rule-color;
+    margin-bottom: 12px;
+
+    font-size: 24pt;
+    font-weight: 400;
+  }
+}

@@ -1,0 +1,39 @@
+.main-content>.about {
+  >section.copyright {
+    margin-top: 64px;
+    border-top: 1px solid #6d6d6d;
+    border-bottom: 1px solid #6d6d6d;
+    padding-bottom: 40px;
+
+    h2 {
+      text-align: center;
+    }
+    text-align: left;
+
+    background-image: url("/sandstorm-gradient-logo.svg");
+    background-repeat: no-repeat;
+    background-size: 150px 150px;
+    background-position: 16px 40px;
+    @media (max-width: 625px) {
+      padding-top: 200px;
+      background-size: 200px 200px;
+      background-position: top center;
+    }
+
+    p {
+      padding-left: 200px;
+      @media (max-width: 625px) {
+        padding-left: 0;
+      }
+      font-size: 120%;
+      line-height: 150%;
+      @media (max-width: 1300px) {
+        line-height: inherit;
+        margin-top: 0;
+      }
+      @media (max-width: 1100px) {
+        font-size: inherit;
+      }
+    }
+  }
+}

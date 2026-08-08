@@ -1,0 +1,45 @@
+@use "geometry/breakpoints" as breakpoints;
+
+.sandstorm-topbar {
+  >.navbar {
+    @media #{breakpoints.$mobile} {
+      position: relative;
+      li {
+        font-size: 14pt;
+        line-height: 48px;
+        height: 48px;
+        display: block;
+        position: relative;
+        border-bottom: 1px solid #676767;
+        margin: 0;
+        &.navitem-open-grain, &.navitem-create-grain, &.navitem-grain {
+          a {
+            display: block;
+            padding-left: 48px;
+            text-decoration: none;
+            text-overflow: ellipsis;
+            overflow: hidden;
+            white-space: nowrap;
+            &, &:visited, &:active, &:hover {
+              color: inherit;
+            }
+          }
+        }
+        &.navitem-open-grain, &.navitem-create-grain {
+          background-repeat: no-repeat;
+          background-position: 12px center;
+          background-size: 24px 24px;
+        }
+        &.navitem-open-grain {
+          background-image: url('/open-grain.svg');
+        }
+        &.navitem-create-grain {
+          background-image: url('/apps.svg');
+        }
+        &.navitem-demo-timer {
+          height: auto;
+        }
+      }
+    }
+  }
+}

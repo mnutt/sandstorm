@@ -1,0 +1,18 @@
+@use "mixins/buttons" as buttons;
+
+.topbar-popup.request>.frame-container>.frame {
+  >.selected-card {
+    div.choose-buttons {
+      text-align: right;
+      >button {
+        @include buttons.button-base();
+        &.connect-button {
+          @include buttons.button-primary();
+        }
+        &.choose-hosted-object {
+          @include buttons.button-secondary();
+        }
+      }
+    }
+  }
+}

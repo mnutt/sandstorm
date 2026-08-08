@@ -1,0 +1,11 @@
+@use "mixins/buttons" as buttons;
+@use "mixins/form" as forms;
+.maintenance-message-form {
+  @include forms.standard-form();
+
+  .save {
+    @include buttons.button-base();
+    @include buttons.button-primary();
+    margin-left: 10px;
+  }
+}

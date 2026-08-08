@@ -5,6 +5,8 @@ import { ReactiveVar } from "meteor/reactive-var";
 import { DEFAULT_SIGNUP_DIALOG } from "/imports/client/personalization";
 import { globalDb } from "/imports/db-deprecated";
 
+import "/imports/client/admin/styles/personalization-ui.scss";
+
 Template.newAdminPersonalization.onCreated(function () {
   this.serverTitle = new ReactiveVar(globalDb.getSettingWithFallback("serverTitle", ""));
   this.splashUrl = new ReactiveVar(globalDb.getSettingWithFallback("splashUrl", ""));

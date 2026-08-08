@@ -1,0 +1,14 @@
+@use "mixins/buttons" as buttons;
+
+.topbar-popup.request>.frame-container>.frame {
+  >.selected-card {
+    div.reset-row {
+      display: flex;
+      justify-content: flex-end;
+      button[name=reset] {
+        @include buttons.button-base();
+        @include buttons.button-secondary();
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+@mixin navbar-desktop-links () {
+  li {
+    &.navitem-open-grain, &.navitem-create-grain, &.navitem-grain {
+      a {
+        display: block;
+        min-height: 32px;
+        padding-left: shell-geometry.$navbar-width-desktop-shrunk;
+        text-decoration: none;
+        text-overflow: ellipsis;
+        overflow: hidden;
+        white-space: nowrap;
+        &, &:visited, &:active, &:hover {
+          color: inherit;
+        }
+      }
+    }
+    &.navitem-grain {
+      line-height: 32px;
+      height: 32px;
+    }
+  }
+}

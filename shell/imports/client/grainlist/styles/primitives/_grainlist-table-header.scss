@@ -1,0 +1,42 @@
+@use "grainlist/styles/primitives/colors" as grainlist-colors;
+@use "geometry/breakpoints" as breakpoints;
+
+@mixin grain-table-header () {
+  >thead>tr {
+    background-color: grainlist-colors.$grainlist-table-header-background-color;
+    color: grainlist-colors.$grainlist-table-header-foreground-color;
+    font-weight: 600;
+    border-bottom: 1px solid #aaa;
+    >td {
+      border: 1px solid white;
+      &.grain-name:hover, &.grain-size:hover, &.last-used:hover {
+        background-color: grainlist-colors.$grainlist-table-header-background-color-hover;
+        cursor: pointer;
+      }
+      &.grain-size {
+        width: 70px;
+        // The mobile viewport is too small to display this much text
+        @media #{breakpoints.$mobile} {
+          display: none;
+        }
+      }
+      &.last-used {
+        width: 110px;
+      }
+      &.shared-or-owned {
+        width: 110px;
+        // The mobile viewport is too small to display this much text
+        @media #{breakpoints.$mobile} {
+          display: none;
+        }
+      }
+      &.td-app-icon {
+        width: 64px;
+        padding-left: 16px;
+      }
+      &.select-all-grains {
+        width: 20px;
+      }
+    }
+  }
+}

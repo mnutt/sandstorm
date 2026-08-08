@@ -5,6 +5,8 @@ import downloadFile from "/imports/client/download-file";
 import getBuildInfo from "/imports/client/build-info";
 import { allowDemo } from "/imports/demo";
 
+import "/imports/client/admin/styles/status-ui.scss";
+
 // Pseudocollection holding number of grains with open sessions and accounts with open sessions.
 const systemStatus = new Mongo.Collection("systemStatus");
 

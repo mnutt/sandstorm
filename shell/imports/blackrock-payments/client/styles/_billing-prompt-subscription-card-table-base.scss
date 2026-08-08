@@ -1,0 +1,33 @@
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.subscriptions {
+    >.subscription {
+      >table {
+        border-collapse: collapse;
+        border-spacing: 0;
+        margin: 0px auto 16px auto;
+        border: 1px solid #adadad;
+        border-radius: 4px;
+        width: 100%;
+
+        td {
+          padding-top: 8px;
+          padding-bottom: 8px;
+          font-size: 20px;
+          color: #6a237c;
+
+          text-align: middle;
+
+          >p {
+            margin: 0px;
+          }
+
+          background-color: #f2edf2;
+        }
+
+        tr {
+          border-bottom: 1px solid #d6c9d4;
+        }
+      }
+    }
+  }
+}

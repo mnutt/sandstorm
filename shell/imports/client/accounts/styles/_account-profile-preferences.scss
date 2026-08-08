@@ -1,0 +1,15 @@
+div.profile-editor {
+  form.account-profile-editor {
+    .terms, .mailingListOptin {
+      padding-left: 24px;
+      label {
+        font-weight: inherit;
+        text-indent: -24px;
+      }
+    }
+
+    .handle input[type="text"] {
+      font-family: monospace;
+    }
+  }
+}

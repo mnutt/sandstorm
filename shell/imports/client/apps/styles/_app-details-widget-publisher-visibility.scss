@@ -1,0 +1,5 @@
+@mixin publisher-visibility () {
+  &.hide {
+    display:none;
+  }
+}

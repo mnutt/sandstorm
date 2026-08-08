@@ -1,0 +1,36 @@
+@use "grainlist/styles/primitives/colors" as grainlist-colors;
+@use "mixins/media" as media;
+
+.topbar-popup.request>.frame-container>.frame {
+  >.search-row {
+    flex: none;
+    display: inline-block;
+    width: 100%;
+    margin: 0px;
+    padding-left: 10px;
+    padding-right: 10px;
+    vertical-align: top;
+    >label {
+      >span.search-icon {
+        @include media.pseudo-img-tag();
+        background-image: url("/search.svg");
+        background-size: 24px 24px;
+        background-position: center;
+        display: inline-block;
+        width: 32px;
+        height: 32px;
+        vertical-align: top;
+      }
+      >input.search-bar {
+        font-size: 16pt;
+        height: 32px;
+        width: calc(100% - 36px);
+        background-color: grainlist-colors.$grainlist-searchbar-background-color;
+        border: 1px solid grainlist-colors.$grainlist-searchbar-outline-color;
+        &:focus {
+          border: 1px solid grainlist-colors.$grainlist-searchbar-outline-color-focus;
+        }
+      }
+    }
+  }
+}

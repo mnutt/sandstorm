@@ -44,7 +44,7 @@ function setGrainTitle(browser, collectionTitle) {
 }
 
 function powerboxCardSelector(grainId) {
-  return ".popup.request .candidate-cards .powerbox-card button[data-card-id=grain-" + grainId + "]";
+  return ".topbar-popup.request .candidate-cards .powerbox-card button[data-card-id=grain-" + grainId + "]";
 }
 
 module.exports["Test Collections"] = function (browser) {
@@ -98,9 +98,9 @@ module.exports["Test Collections"] = function (browser) {
                   .waitForElementVisible(powerboxCardSelector(grainIdB), short_wait)
                   .click(powerboxCardSelector(grainIdB))
                   // Add with 'editor' permissions.
-                  .waitForElementVisible(".popup.request .selected-card>form input[value='0']", short_wait)
-                  .click(".popup.request .selected-card>form input[value='0']")
-                  .click(".popup.request .selected-card>form button.connect-button")
+                  .waitForElementVisible(".topbar-popup.request .selected-card>form input[value='0']", short_wait)
+                  .click(".topbar-popup.request .selected-card>form input[value='0']")
+                  .click(".topbar-popup.request .selected-card>form button.connect-button")
 
                   .grainFrame()
                   .waitForElementVisible("table.grain-list-table>tbody>tr.add-grain>td>button", short_wait)
@@ -109,9 +109,9 @@ module.exports["Test Collections"] = function (browser) {
                   .waitForElementVisible(powerboxCardSelector(grainIdC), short_wait)
                   .click(powerboxCardSelector(grainIdC))
                   // Add with 'viewer' permissions.
-                  .waitForElementVisible(".popup.request .selected-card>form input[value='1']", short_wait)
-                  .click(".popup.request .selected-card>form input[value='1']")
-                  .click(".popup.request .selected-card>form button.connect-button")
+                  .waitForElementVisible(".topbar-popup.request .selected-card>form input[value='1']", short_wait)
+                  .click(".topbar-popup.request .selected-card>form input[value='1']")
+                  .click(".topbar-popup.request .selected-card>form button.connect-button")
 
                   .grainFrame()
                   .waitForElementVisible("table.grain-list-table>tbody tr:nth-child(3).grain", short_wait)
@@ -154,9 +154,9 @@ module.exports["Test Collections"] = function (browser) {
                   .waitForElementVisible(powerboxCardSelector(grainIdA), short_wait)
                   .click(powerboxCardSelector(grainIdA))
                   // Add with 'viewer' permissions.
-                  .waitForElementVisible(".popup.request .selected-card>form input[value='1']", short_wait)
-                  .click(".popup.request .selected-card>form input[value='1']")
-                  .click(".popup.request .selected-card>form button.connect-button")
+                  .waitForElementVisible(".topbar-popup.request .selected-card>form input[value='1']", short_wait)
+                  .click(".topbar-popup.request .selected-card>form input[value='1']")
+                  .click(".topbar-popup.request .selected-card>form button.connect-button")
 
                   // Navigate back to collection A by clicking on it in collection B.
                   .grainFrame()
@@ -286,10 +286,10 @@ module.exports["Test collections anonymous user"] = function (browser) {
         .click(powerboxCardSelector(grainIdB))
 
         // Add with 'editor' permissions.
-        .waitForElementVisible(".popup.request .selected-card>form input[value='0']", short_wait)
-        .click(".popup.request .selected-card>form input[value='0']")
-        .click(".popup.request .selected-card>form button.connect-button")
-        .waitForElementNotPresent(".popup.request", medium_wait)
+        .waitForElementVisible(".topbar-popup.request .selected-card>form input[value='0']", short_wait)
+        .click(".topbar-popup.request .selected-card>form input[value='0']")
+        .click(".topbar-popup.request .selected-card>form button.connect-button")
+        .waitForElementNotPresent(".topbar-popup.request", medium_wait)
 
         // Visit token A anonymously. The link should still work.
         .frame(null)
@@ -300,8 +300,8 @@ module.exports["Test collections anonymous user"] = function (browser) {
         }, [])
 
         .url(browser.launch_url + "/shared/" + tokenA)
-        .waitForElementVisible(".popup.login button.close-popup", short_wait)
-        .click(".popup.login button.close-popup")
+        .waitForElementVisible(".topbar-popup.login button.close-popup", short_wait)
+        .click(".topbar-popup.login button.close-popup")
         .grainFrame()
         .waitForElementVisible(".description-row p", short_wait)
         .assert.textContains(".description-row p", "This is Collection A")

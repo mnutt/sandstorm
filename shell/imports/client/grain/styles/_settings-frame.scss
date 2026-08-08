@@ -1,0 +1,8 @@
+@use "colors/defaults" as default-colors;
+
+.grain-settings {
+  padding: 32px;
+
+  color: default-colors.$default-content-foreground-color;
+  background-color: default-colors.$default-content-background-color;
+}

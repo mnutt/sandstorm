@@ -1,0 +1,14 @@
+@use "applist-colors" as applist-colors;
+@use "geometry/breakpoints" as breakpoints;
+
+.app-list {
+  overflow: auto; // Needed to make the background span everything on screen.
+  @media #{breakpoints.$desktop} {
+    padding: 32px;
+  }
+  @media #{breakpoints.$mobile} {
+    padding: 0px 8px;
+  }
+  background-color: applist-colors.$applist-background-color;
+  color: applist-colors.$applist-foreground-color;
+}

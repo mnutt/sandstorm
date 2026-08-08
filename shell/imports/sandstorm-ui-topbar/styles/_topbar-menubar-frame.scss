@@ -1,0 +1,24 @@
+@use "topbar-colors" as topbar-colors;
+@use "geometry/breakpoints" as breakpoints;
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+.sandstorm-topbar {
+  >.menubar {
+    padding-left: 0;
+    margin-left: 0;
+    border-bottom: 1px solid topbar-colors.$topbar-border-color;
+    overflow: hidden;
+    @media #{breakpoints.$desktop} {
+      height: shell-geometry.$topbar-height-desktop;
+      &.shrink-desktop {
+        >.home-button {
+          width: shell-geometry.$navbar-width-desktop-shrunk;
+          >a {
+            width: shell-geometry.$navbar-width-desktop-shrunk;
+            padding-right: 0;
+          }
+        }
+      }
+    }
+  }
+}

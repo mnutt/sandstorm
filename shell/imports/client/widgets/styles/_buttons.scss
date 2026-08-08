@@ -1,0 +1,32 @@
+@use "mixins/buttons" as buttons;
+
+.button-primary {
+  @include buttons.button-base();
+  @include buttons.button-primary();
+}
+
+.button-secondary {
+  @include buttons.button-base();
+  @include buttons.button-secondary();
+}
+
+.button-danger {
+  @include buttons.button-base();
+  @include buttons.button-danger();
+}
+
+.button-link {
+  background: none;
+  border: none;
+  display: inline;
+  font-weight: normal;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+button.upgrade-plan-now {
+  float: right;
+  margin: 6px;
+}

@@ -1,0 +1,18 @@
+@use "mixins/form" as forms;
+
+div.profile-editor {
+  form.account-profile-editor {
+    @include forms.standard-form();
+    display: block;
+
+    .inline-icon {
+      width: 20px;
+    }
+
+    ul {
+      list-style-type: none;
+      margin: 0;
+      padding: 0;
+    }
+  }
+}

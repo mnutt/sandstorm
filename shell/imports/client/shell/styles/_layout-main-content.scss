@@ -1,0 +1,40 @@
+@use "colors/core" as core-colors;
+@use "colors/defaults" as default-colors;
+@use "geometry/breakpoints" as breakpoints;
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+.main-content,
+.first-sign-in-main-content,
+.demo-expired-main-content,
+.credential-login-interstitial,
+.suspended-main-content {
+  margin: 0;
+  padding: 0;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0px;
+  color: default-colors.$default-content-foreground-color;
+  background-color: default-colors.$default-content-background-color;
+  overflow: auto;
+
+  @media #{breakpoints.$desktop} {
+    top: 32px;
+    left: shell-geometry.$navbar-width-desktop;
+    &.shrink-navbar {
+      left: shell-geometry.$navbar-width-desktop-shrunk;
+    }
+    &.hide-navbar {
+      left: 0;
+    }
+    transition: left 0.2s;
+  }
+  @media #{breakpoints.$mobile} {
+    top: 48px;
+  }
+  a {
+    font-weight: bold;
+    text-decoration: none;
+    color: core-colors.$darker-purple-color;
+  }
+}

@@ -1,0 +1,11 @@
+@use "app-details-widget-publisher-frame";
+@use "app-details-widget-publisher-fingerprint";
+@use "app-details-widget-publisher-proofs";
+@use "app-details-widget-publisher-visibility";
+
+@mixin publisher-details () {
+  @include app-details-widget-publisher-frame.publisher-frame();
+  @include app-details-widget-publisher-fingerprint.publisher-fingerprint();
+  @include app-details-widget-publisher-proofs.publisher-proofs();
+  @include app-details-widget-publisher-visibility.publisher-visibility();
+}

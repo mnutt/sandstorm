@@ -1,0 +1,16 @@
+@use "geometry/breakpoints" as breakpoints;
+
+.main-content>.account {
+  text-align: left;
+
+  @media #{breakpoints.$desktop} {
+    padding: 32px;
+  }
+
+  @media #{breakpoints.$mobile} {
+    padding-top: 0px;
+    padding-bottom: 32px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}

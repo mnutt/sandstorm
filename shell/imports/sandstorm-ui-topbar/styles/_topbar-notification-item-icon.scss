@@ -1,0 +1,30 @@
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+.topbar-popup {
+  &.notifications {
+    ul.notification-list {
+      .notification-item {
+        >.notification-icon {
+          width: 64px;
+          height: 64px;
+          position: absolute;
+          top: shell-geometry.$topbar-popup-padding;
+          left: shell-geometry.$topbar-popup-padding;
+
+          >img {
+            display: block;
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            right: 0;
+            bottom: 0;
+          }
+          >img:first-of-type {
+            width: 100%;
+            height: 100%;
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+@use "topbar-colors" as topbar-colors;
+@use "geometry/breakpoints" as breakpoints;
+
+.sandstorm-topbar {
+  >.menubar {
+    >.title {
+      padding-left: 8px;
+      overflow: hidden;
+      @media #{breakpoints.$desktop} {
+        // Heuristically try to prevent the title from bumping everything else off the top bar.
+        // The size of 700px was empirically found to provide enough space for "everything else".
+        max-width: calc(100% - 700px);
+        border-left: 1px solid #666;
+      }
+      @media #{breakpoints.$mobile} {
+        width: 100%; // needs to span the whole row because the border-bottom is needed to draw
+                     // the horizontal rule when the menu is expanded
+        background-color: topbar-colors.$topbar-background-color;
+        color: topbar-colors.$topbar-foreground-color;
+        padding-left: 56px;
+        font-size: 120%;
+        position: fixed;
+        z-index: 1;
+      }
+    }
+  }
+}

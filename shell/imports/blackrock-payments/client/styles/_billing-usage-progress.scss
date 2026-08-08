@@ -1,0 +1,15 @@
+div.billing {
+  div.usage {
+    div.progress-bar {
+      height: 12px;
+      background-color: white;
+      border: 1px solid #b2b2b2;
+      margin: 4px 0;
+
+      >div {
+        height: 100%;
+        background-color: #65468e;
+      }
+    }
+  }
+}

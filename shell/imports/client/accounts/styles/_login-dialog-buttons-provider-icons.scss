@@ -1,0 +1,16 @@
+.login-dialog {
+  >.login-buttons-list {
+    >button.login.google {
+      background-image: url("/google-color.svg");
+      color: #a53232;
+    }
+    >button.login.github {
+      background-image: url("/github-color.svg");
+      color: #191919;
+    }
+    >button.login.oidc {
+      background-image: url("/openid-color.svg");
+      color: #191919;
+    }
+  }
+}

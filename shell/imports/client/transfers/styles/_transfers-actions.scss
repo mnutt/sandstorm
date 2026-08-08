@@ -1,0 +1,22 @@
+@use "mixins/buttons" as buttons;
+
+.transfers {
+  button.cancel, button.deny {
+    @include buttons.button-base();
+    @include buttons.button-danger();
+  }
+
+  button.accept, button.continue, button.start, button.finish {
+    @include buttons.button-base();
+    @include buttons.button-primary();
+  }
+
+  button.pause, button.clear-errors {
+    @include buttons.button-base();
+    @include buttons.button-secondary();
+  }
+
+  input[name="destination"] {
+    width: 200px;
+  }
+}

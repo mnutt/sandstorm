@@ -1,0 +1,33 @@
+@use "geometry/breakpoints" as breakpoints;
+
+@mixin padded-info-page () {
+  color: #191919;
+
+  padding: 64px;
+  max-width: 1238px;
+  @media #{breakpoints.$mobile} {
+    padding: 8px;
+  }
+  text-align: center;
+
+  h1, h2 {
+    font-weight: normal;
+    text-align: left;
+  }
+
+  h1 {
+    font-size: 25pt;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #6d6d6d;
+    margin-top: 0;
+  }
+
+  h2 {
+    font-size: 20pt;
+  }
+}
+
+@mixin content-section () {
+  background-color: white;
+  display: inline-block;
+}

@@ -1,0 +1,35 @@
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.subscriptions {
+    >.subscription {
+      &.selected {
+        td {
+          background-color: #efefef;
+          color: #494949;
+        }
+
+        >table {
+          >tr:nth-child(1)>td {
+            background-color: #cccccc;
+            color: #494949;
+          }
+          >tr:nth-child(5)>td {
+            button {
+              background-color: #cccccc;
+              background: #cccccc;
+              color: #494949;
+              border: 1px solid #9e9e9e;
+            }
+          }
+        }
+      }
+
+      &.selecting>table>tr:nth-child(2)>td {
+        background-size: 96px 96px;
+        // TODO(soon): need spinner with transparent or #eee background
+        background-image: url("/spinner_96.gif");
+        background-repeat: no-repeat;
+        background-position: center;
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+@use "grainlist-actions";
+@use "grainlist-table";
+@use "grainlist-trash";
+
+@mixin trash-explanation () {
+  @include grainlist-trash.trash-explanation();
+}
+
+@mixin bulk-action-buttons () {
+  @include grainlist-actions.bulk-action-buttons();
+}
+
+@mixin grain-table () {
+  @include grainlist-table.grain-table();
+}

@@ -1,0 +1,15 @@
+@use "mixins/buttons" as buttons;
+
+.make-self-admin, .sign-in-button, .admin-settings-button, .rerun-wizard-button {
+  @include buttons.button-base();
+  display: block;
+  width: 200px;
+}
+
+.make-self-admin, .sign-in-button, .admin-settings-button {
+  @include buttons.button-primary();
+}
+
+.rerun-wizard-button {
+  @include buttons.button-secondary();
+}

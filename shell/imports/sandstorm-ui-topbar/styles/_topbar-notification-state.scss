@@ -1,0 +1,11 @@
+.topbar-popup {
+  &.notifications {
+    .notification-selected button {
+      background-color: #666;
+    }
+
+    .notification-title {
+      margin-bottom: 14px;
+    }
+  }
+}

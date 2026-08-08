@@ -1,0 +1,14 @@
+@use "mixins/buttons" as buttons;
+
+.login-suggestion {
+  >button {
+    @include buttons.button-base();
+    @include buttons.button-primary();
+    width: calc(100% - 20px);
+    display: block;
+    margin: 10px;
+  }
+  >button.dismiss {
+    @include buttons.button-secondary();
+  }
+}

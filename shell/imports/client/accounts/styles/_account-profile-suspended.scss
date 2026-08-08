@@ -1,0 +1,22 @@
+@use "mixins/buttons" as buttons;
+
+.suspended-main-content {
+  h2 {
+    text-align: center;
+  }
+  button {
+    display: block;
+    margin: auto;
+    font-size: 18px;
+    @include buttons.button-base();
+
+    &.restore-account {
+      @include buttons.button-primary();
+      margin-bottom: 20px;
+    }
+
+    &.logout {
+      @include buttons.button-secondary();
+    }
+  }
+}

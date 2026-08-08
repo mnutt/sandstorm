@@ -1,0 +1,11 @@
+.admin-user-table {
+  div.created, div.last-active {
+    display: inline-block;
+    max-width: 20%;
+    flex: 1 1 0;
+
+    &[role=gridcell] {
+      padding-top: 8px;
+    }
+  }
+}

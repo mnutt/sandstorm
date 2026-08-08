@@ -1,0 +1,17 @@
+.setup-next-steps {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: center;
+  >* {
+    margin-left: 10px;
+  }
+  margin-bottom: 15px;
+}
+
+.setup-button-row {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: stretch;
+  justify-content: flex-start;
+}

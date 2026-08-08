@@ -1,0 +1,37 @@
+@use "colors/defaults" as default-colors;
+
+.admin-caps-table {
+  border: 1px solid default-colors.$default-table-border-color;
+
+  div[role=columnheader] {
+    // Column header text should "stick" to the bottom of the row, to be
+    // closest to the contents of the column.
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: flex-start;
+  }
+
+  div[role=columnheader], div[role=gridcell] {
+    padding: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  div[role=rowgroup].thead {
+    background-color: default-colors.$default-table-header-background-color;
+    color: default-colors.$default-table-header-foreground-color;
+  }
+
+  div[role=row], div[role=gridcell] {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+
+  .capability-row, .none-row {
+    background-color: default-colors.$default-table-row-background-color;
+    color: default-colors.$default-table-row-foreground-color;
+  }
+}

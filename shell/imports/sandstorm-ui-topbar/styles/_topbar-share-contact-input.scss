@@ -1,0 +1,16 @@
+@use "colors/core" as core-colors;
+
+.topbar-popup {
+  &.share {
+    .contact-box {
+      input.emails {
+        border: 0px;
+        outline: 0px;
+        width: 100%;
+      }
+      &.active {
+        outline: core-colors.$focus-outline-color solid 1px;
+      }
+    }
+  }
+}

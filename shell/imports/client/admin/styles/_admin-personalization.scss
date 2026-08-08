@@ -1,0 +1,15 @@
+@use "mixins/media" as media;
+@use "mixins/form" as forms;
+form.admin-personalization-form {
+  @include forms.standard-form();
+
+  .logo {
+    @include media.pseudo-img-tag();
+    background-position: bottom;
+    display: inline-block;
+    width: 64px;
+    height: 64px;
+    vertical-align: bottom;
+    margin-right: 32px;
+  }
+}

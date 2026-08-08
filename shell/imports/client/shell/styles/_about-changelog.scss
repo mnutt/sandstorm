@@ -1,0 +1,10 @@
+.main-content>.about {
+  >section.changelog {
+    text-align: left;
+    background-color: white;
+    border: 16px solid white;
+    overflow: auto;
+    height: 400px;
+    >* { margin-top: 0; }
+  }
+}

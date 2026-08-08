@@ -1,0 +1,13 @@
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+.ios .main-content {
+  /* iOS Safari refuses to scroll iframes inside fixed position divs. So under iOS, we change the
+   * main-content div to be position relative and explicitly give it a size, so that the div is the
+   * one scrolling.
+   * -webkit-overflow-scrolling is a hint to iOS that the div should scroll correctly.
+   */
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+  width: 100%;
+  height: calc(100vh - #{shell-geometry.$topbar-height-mobile});
+}

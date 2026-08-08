@@ -1,0 +1,16 @@
+@use "sass:color";
+
+.login-buttons-list {
+  >button.login, >form, >a {
+    &:hover {
+      background-color: #f5f5f5;
+    }
+
+    &.login-button-disabled, &.login-button-disabled:active {
+      color: #ddd;
+      background-color: #aaa;
+      border: 1px solid color.adjust(#aaa, $lightness: 10%);
+      box-shadow: none;
+    }
+  }
+}

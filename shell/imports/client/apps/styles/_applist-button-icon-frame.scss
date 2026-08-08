@@ -1,0 +1,31 @@
+@use "applist-colors" as applist-colors;
+@use "geometry/breakpoints" as breakpoints;
+@use "mixins/media" as media;
+
+.app-list {
+  >.app-button, >.popular-container>.app-button {
+    >.app-icon {
+      @include media.pseudo-img-tag();
+      display: block;
+      position: absolute;
+      top: 0px;
+      left: 0px;
+      @media #{breakpoints.$desktop} {
+        width: 128px;
+        height: 128px;
+        margin: 10px;
+      }
+      @media #{breakpoints.$mobile} {
+        width: 64px;
+        height: 64px;
+        margin: 5px;
+      }
+      border-radius: 6px;
+      vertical-align: top;
+      &.pseudoapp {
+        background-color: applist-colors.$applist-pseudoapp-background-color;
+        border: 1px applist-colors.$applist-pseudoapp-outline-color;
+      }
+    }
+  }
+}

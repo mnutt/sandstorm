@@ -1,0 +1,20 @@
+@use "app-details-colors" as app-details-colors;
+@use "geometry/breakpoints" as breakpoints;
+
+.app-details {
+  position: relative;
+  @media #{breakpoints.$desktop} {
+    padding: 24px 32px;
+  }
+  @media #{breakpoints.$mobile} {
+    padding: 0px 8px;
+  }
+  background-color: app-details-colors.$app-details-background-color;
+  color: app-details-colors.$app-details-foreground-color;
+
+  &.dev-background {
+    background-image: url("/devmode.png");
+    background-size: auto;
+    background-color: #ccc;
+  }
+}

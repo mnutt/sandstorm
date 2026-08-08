@@ -1,0 +1,12 @@
+.main-content {
+  // intro.js needs this element to have some numeric z-index, so that
+  // it knows to add the introjs-fixParent class to it. We use 0 because
+  // that is the value Chrome gives this element anyway, without specifying
+  // it explicitly.
+  z-index: 0;
+}
+
+.main-content.standalone {
+  top: 0px;
+  left: 0px;
+}

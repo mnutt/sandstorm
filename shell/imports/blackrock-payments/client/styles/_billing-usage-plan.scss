@@ -1,0 +1,13 @@
+div.billing {
+  div.usage {
+    span.plan-name {
+      text-transform: capitalize;
+    }
+
+    span.plan-ends {
+      color: #666;
+      font-size: 80%;
+      display: block;
+    }
+  }
+}

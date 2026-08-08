@@ -1,0 +1,13 @@
+.topbar-popup {
+  &.share>.frame-container>.frame, &.who-has-access>.frame-container>.frame {
+    .invitation-explanation {
+      max-width: 80%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .invitation-explanation, .label-explanation {
+      font-size: 8pt;
+      font-style: italic;
+    }
+  }
+}

@@ -1,0 +1,11 @@
+@use "billing-prompt-subscription-list";
+@use "billing-prompt-subscription-card";
+
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.discontinue-free {
+    font-size: 17px;
+    font-style: italic;
+    text-align: left;
+    text-indent: -9.5px;
+  }
+}

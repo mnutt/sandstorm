@@ -1,0 +1,23 @@
+@use "geometry/breakpoints" as breakpoints;
+
+.main-content>.account {
+  .profile {
+    @media #{breakpoints.$not-mobile-only} {
+      display: inline-block;
+    }
+    @media #{breakpoints.$mobile-only} {
+      display: block;
+    }
+
+    white-space: normal;
+
+    div[aria-hidden=true] {
+      display: none;
+    }
+
+    ul {
+      margin-top: 0;
+      padding: 0;
+    }
+  }
+}

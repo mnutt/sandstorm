@@ -1,0 +1,25 @@
+div.billing {
+  >section.payment-methods {
+    >table {
+      >tbody {
+        >tr {
+          >td {
+            button {
+              background-color: transparent;
+              border: 1px solid #a199ad;
+              color: #5d5d5d;
+              cursor: pointer;
+              text-transform: uppercase;
+              border-radius: 2px;
+
+              &:hover {
+                color: #65468e;
+                background-color: #e6e1f4;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

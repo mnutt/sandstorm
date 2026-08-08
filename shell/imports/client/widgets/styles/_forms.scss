@@ -1,0 +1,5 @@
+@use "mixins/form" as forms;
+
+.standard-form {
+  @include forms.standard-form();
+}

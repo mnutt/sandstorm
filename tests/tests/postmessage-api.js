@@ -104,10 +104,10 @@ module.exports['Test startSharing'] = function (browser) {
     .grainFrame()
       .click('#startSharing')
     .frameParent()
-    .waitForElementVisible('.popup.share', short_wait)
-    .captureVisualSnapshot(".popup.share", "postmessage-share-popup")
+    .waitForElementVisible('.topbar-popup.share', short_wait)
+    .captureVisualSnapshot(".topbar-popup.share", "postmessage-share-popup")
     .click('button.close-popup')
-    .waitForElementNotPresent('.popup.share', short_wait)
+    .waitForElementNotPresent('.topbar-popup.share', short_wait)
 };
 
 module.exports['Test startSharing with pathname and hash'] = function (browser) {
@@ -126,18 +126,18 @@ module.exports['Test startSharing with pathname and hash'] = function (browser) 
     .waitForElementVisible('input.label', short_wait)
     .setValue('input.label', linkLabel)
     .submitForm('.new-share-token')
-    // Get link from a#share-token-text.  Check for hash and pathname.
-    .waitForElementVisible('#share-token-text', short_wait)
-    .assert.textContains('#share-token-text', '/pathname/123#hash123')
+    // Get the generated link and check for the requested hash and pathname.
+    .waitForElementVisible('.topbar-popup.share .copy-me', short_wait)
+    .assert.textContains('.topbar-popup.share .copy-me', '/pathname/123#hash123')
     // Find the link and remove it.
     .click('button.who-has-access')
     .waitForElementVisible('table.shared-links', short_wait)
-    .captureVisualSnapshot(".popup.who-has-access", "postmessage-share-token-access-popup")
+    .captureVisualSnapshot(".topbar-popup.who-has-access", "postmessage-share-token-access-popup")
     .assert.textContains('table.shared-links tr:last-child span.token-petname', linkLabel)
     .click('table.shared-links tr:last-child button.revoke-token')
     // Close the sharing popup.
     .click('button.close-popup')
-    .waitForElementNotPresent('.popup.share', short_wait);
+    .waitForElementNotPresent('.topbar-popup.share', short_wait);
 };
 
 module.exports['Test showConnectionGraph'] = function (browser) {
@@ -145,10 +145,10 @@ module.exports['Test showConnectionGraph'] = function (browser) {
     .grainFrame()
       .click('#showConnectionGraph')
     .frameParent()
-    .waitForElementVisible('.popup.who-has-access', short_wait)
-    .captureVisualSnapshot(".popup.who-has-access", "postmessage-connection-graph-popup")
+    .waitForElementVisible('.topbar-popup.who-has-access', short_wait)
+    .captureVisualSnapshot(".topbar-popup.who-has-access", "postmessage-connection-graph-popup")
     .click('button.close-popup')
-    .waitForElementNotPresent('.popup.who-has-access', short_wait)
+    .waitForElementNotPresent('.topbar-popup.who-has-access', short_wait)
 };
 
 module.exports['Test renderTemplate'] = function (browser) {

@@ -1,0 +1,20 @@
+@use "geometry/breakpoints" as breakpoints;
+
+.sandstorm-topbar {
+  >.menubar {
+    >.admin-alert {
+      @media #{breakpoints.$desktop} {
+        float: right;
+      }
+
+      @media #{breakpoints.$mobile} {
+        position: fixed;
+        top: 0;
+        right: 48px;
+        width: 48px;
+        height: 49px;
+        text-align: center;
+      }
+    }
+  }
+}

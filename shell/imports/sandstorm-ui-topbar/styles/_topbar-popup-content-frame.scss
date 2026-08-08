@@ -1,0 +1,8 @@
+.topbar-popup {
+  >.frame-container {
+    >.frame {
+      position: relative;
+      overflow: hidden;  // prevent margin-collapse
+    }
+  }
+}

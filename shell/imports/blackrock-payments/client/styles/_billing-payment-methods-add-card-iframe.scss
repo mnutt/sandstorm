@@ -1,0 +1,24 @@
+@use "payment-iframe-primitives";
+
+div.billing {
+  >section.payment-methods {
+    >table {
+      >tbody {
+        >tr {
+          >td {
+            &.add-new-card {
+              >.mobile-iframe-hack {
+                position: absolute;
+                height: 24px;
+                width: 300px;
+                &.fullscreen {
+                  @include payment-iframe-primitives.fullscreen-iframe-hack();
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

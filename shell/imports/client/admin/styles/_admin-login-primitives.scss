@@ -1,0 +1,18 @@
+@mixin idp-status () {
+  display: inline-block;
+  padding-left: 8px;
+  padding-right: 8px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  min-height: 28px;
+  margin: 2px;
+}
+
+@mixin idp-table-row () {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 1px;
+}

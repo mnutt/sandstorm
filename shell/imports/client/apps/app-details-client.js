@@ -7,6 +7,8 @@ import { groupBy } from "/imports/shared/collection-utils";
 import { iconSrcForPackage } from "/imports/sandstorm-identicons/helpers";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
+import "/imports/client/apps/styles/app-details-ui.scss";
+
 const latestPackageForAppId = function (db, appId) {
   // Dev apps mask current package version.
   const devPackage = db.collections.devPackages.findOne({ appId: appId });

@@ -1,0 +1,20 @@
+div.billing {
+  >section.payment-methods {
+    >table {
+      >tbody {
+        >tr {
+          >td {
+            &.add-new-card {
+              position: relative;
+              text-align: left;
+
+              &.iframe-active {
+                position: static;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

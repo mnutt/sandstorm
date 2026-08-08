@@ -22,7 +22,7 @@ limitations under the License.
   {{#with demoExpired}}
     {{>title (_ "shell.layout.demoExpired.title")}}
 
-    <div id="demo-expired" class="demo-expired-main-content {{#if hideNavbar}}hide-navbar{{else}}{{#if shrinkNavbar}}shrink-navbar{{/if}}{{/if}}">
+    <div class="demo-expired-main-content {{#if hideNavbar}}hide-navbar{{else}}{{#if shrinkNavbar}}shrink-navbar{{/if}}{{/if}}">
       <h1>{{_ "shell.layout.demoExpired.title"}}</h1>
       {{#if canUpgradeDemo}}
         <p>{{_ "shell.layout.demoExpired.canUpgrade"}}</p>
@@ -78,7 +78,7 @@ limitations under the License.
             on this topbar item solely because the whole topbar itself is embedded inside the
             "layout" template. But, we shouldn't be relying on that! Move this to its own
             template... --}}
-        <span id="admin-alert-icon" class="{{className}}">{{_ "shell.layout.adminAlert.icon"}}</span>
+        <span class="admin-alert-icon {{className}}">{{_ "shell.layout.adminAlert.icon"}}</span>
       {{else}}
         <h4>{{_ "shell.layout.adminAlert.title"}}</h4>
         <p>
@@ -210,7 +210,7 @@ limitations under the License.
 </template>
 
 <template name="root">
-  <div id="intro" class="{{#if splashUrl}}has-splash{{/if}}">
+  <div class="intro {{#if splashUrl}}has-splash{{/if}}">
     {{> loginButtonsDialog accountsUi=globalAccountsUi}}
     {{#if splashUrl}}
       <iframe src="{{splashUrl}}"></iframe>
@@ -273,7 +273,7 @@ limitations under the License.
           <p>{{_ "shell.signup.processing"}}</p>
         {{else}}
           <p>{{signupDialog}} {{_ "shell.signup.signInGuide"}}</p>
-          <div id="sign-in-arrow"></div>
+          <div class="onboarding-arrow sign-in-arrow"></div>
         {{/if}}
       {{/if}}
     {{else}}

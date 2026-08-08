@@ -1,0 +1,62 @@
+@use "topbar-colors" as topbar-colors;
+@use "geometry/breakpoints" as breakpoints;
+@use "mixins/buttons" as buttons;
+
+@mixin topbar-button () {
+  // Common styling for buttons in the topbar (on desktop).
+
+  @include buttons.unstyled-button();
+
+  @media #{breakpoints.$desktop} {
+    display: block;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+
+    &:hover {
+      background-color: topbar-colors.$topbar-background-color-hover;
+    }
+  }
+}
+
+@mixin icon-button () {
+  // Common styling for topbar buttons that are displayed as a bare icon with no text label
+  // (on desktop).
+
+  @include topbar-button();
+
+  @media #{breakpoints.$desktop} {
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 24px 24px;
+    color: transparent;  // hide text
+    width: 32px;
+    height: 32px;
+    position: relative;
+  }
+}
+
+@mixin mobile-icon-button () {
+  // Common styling for topbar buttons that are displayed as a bare icon with no text label
+  // (on mobile).
+
+  @include buttons.unstyled-button();
+
+  @media #{breakpoints.$mobile} {
+    display: block;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 40px 40px;
+    color: transparent;  // hide text
+    width: 48px;
+    height: 48px;
+
+    &:hover {
+      background-color: topbar-colors.$topbar-background-color-hover;
+    }
+  }
+}

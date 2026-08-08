@@ -1,0 +1,17 @@
+@use "colors/core" as core-colors;
+
+.topbar-popup {
+  &.notifications {
+    ul.notification-list {
+      .notification-item {
+        &.urgent {
+          background-color: core-colors.$error-background-color;
+        }
+
+        &[href]:hover {
+          background-color: #eee;
+        }
+      }
+    }
+  }
+}

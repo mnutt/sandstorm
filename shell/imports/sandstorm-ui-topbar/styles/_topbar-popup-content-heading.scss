@@ -1,0 +1,22 @@
+@use "geometry/breakpoints" as breakpoints;
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+.topbar-popup {
+  >.frame-container {
+    >.frame {
+      >h4 {
+        width: 100%;
+        margin: 0px;
+        font-size: 14px;
+        padding-left: shell-geometry.$topbar-popup-padding;
+        line-height: 32px;
+        border-bottom: 1px solid #ccc;
+        margin-bottom: 16px;
+
+        @media #{breakpoints.$mobile} {
+          font-size: 14pt;
+        }
+      }
+    }
+  }
+}

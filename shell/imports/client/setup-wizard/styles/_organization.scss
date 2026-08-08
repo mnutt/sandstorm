@@ -1,0 +1,39 @@
+.setup-organization-management-form {
+  h4 {
+    font-size: 20px;
+  }
+  .org-options-group {
+    display: block;
+    position: relative;
+    padding-left: 24px;
+    margin-bottom: 20px;
+    input[type=checkbox] {
+      position: absolute;
+      margin-left: -24px;
+      font-size: 16px;
+    }
+    &::after {
+      border-bottom: 1px solid #ddd;
+    }
+  }
+  .form-group {
+    margin-bottom: 10px;
+  }
+  label {
+    display: block;
+    font-weight: normal;
+    font-size: 20px;
+  }
+  input[type=text] {
+    display: block;
+    background-color: white;
+    padding: 4px;
+    font-size: 16px;
+    border-radius: 2px;
+    border: 1px solid #d3d3d3;
+  }
+  .form-subtext {
+    font-size: 14px;
+    color: #666;
+  }
+}

@@ -1,0 +1,12 @@
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.faq {
+    .trash {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      background-image: url("/trash-m.svg");
+      font-size: 0;
+      vertical-align: top;
+    }
+  }
+}

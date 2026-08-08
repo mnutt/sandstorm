@@ -1,0 +1,6 @@
+.app-list {
+  .toggle-uninstall.hide,
+  >.install-button.hide {
+    display: none;
+  }
+}

@@ -1,0 +1,17 @@
+.topbar-popup.request>.frame-container>.frame {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+
+  // View height - 100px: In "modal" view, the popup has margin: 64px auto 32px (see topbar.scss)
+  // plus a couple pixels of border. To avoid any unwanted scrollbars, we need to make sure we
+  // don't exceed the space remaining.
+  max-height: calc(100vh - 100px);
+
+  >h4 {
+    flex: none;
+    margin-top: 0px;
+    margin-bottom: 10px;
+  }
+}

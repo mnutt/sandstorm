@@ -5,6 +5,8 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
+import "/imports/client/apps/styles/install-ui.scss";
+
 const INSTALL_STEPS = ["download", "verify", "unpack", "analyze", "ready", "failed", "delete"];
 const checkStep = function (step) {
   if (INSTALL_STEPS.indexOf(step) === -1) throw new Error("Invalid step " + step + ".");
@@ -265,7 +267,7 @@ Template.sandstormAppInstallPage.events({
     Router.go("apps");
   },
 
-  "click #confirmInstall": function (event) {
+  "click .confirm-install-button": function (event) {
     const ref = Template.instance().data;
     globalThis.callMeteor("addUserActions", ref.packageId());
   },

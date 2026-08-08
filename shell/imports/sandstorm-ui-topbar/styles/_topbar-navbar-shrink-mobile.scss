@@ -1,0 +1,6 @@
+
+@mixin navbar-shrink-mobile () {
+  li.navbar-shrink-item {
+    display: none;
+  }
+}

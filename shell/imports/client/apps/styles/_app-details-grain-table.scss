@@ -1,0 +1,7 @@
+@use "grainlist/styles/primitives/grainlist-primitives" as grainlist-primitives;
+
+.app-details {
+  >table.grain-list-table {
+    @include grainlist-primitives.grain-table();
+  }
+}

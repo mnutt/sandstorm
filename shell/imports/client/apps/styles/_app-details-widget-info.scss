@@ -1,0 +1,9 @@
+@use "app-details-widget-info-frame";
+@use "app-details-widget-info-package";
+@use "app-details-widget-info-actions";
+
+@mixin info-row () {
+  @include app-details-widget-info-frame.info-row-frame();
+  @include app-details-widget-info-package.info-row-package();
+  @include app-details-widget-info-actions.info-row-actions();
+}

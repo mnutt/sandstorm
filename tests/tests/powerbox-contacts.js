@@ -66,7 +66,7 @@ module.exports["Test powerbox request contact"] = function (browser) {
           }, [], function (result) {
             var bobAccountId = result.value;
             var powerboxCardSelector =
-                ".popup.request .candidate-cards .powerbox-card " +
+                ".topbar-popup.request .candidate-cards .powerbox-card " +
                 "button[data-card-id=frontendref-identity-" + bobAccountId + "]";
             browser.execute("window.Meteor.logout()")
               // OK, now create a new grain and share it to Bob through the powerbox.
@@ -81,13 +81,13 @@ module.exports["Test powerbox request contact"] = function (browser) {
                     .click("#powerbox-request-identity")
                     .frameParent()
                     .waitForElementVisible(powerboxCardSelector, short_wait)
-                    .captureVisualSnapshot(".popup.request", "powerbox-identity-contact-picker")
+                    .captureVisualSnapshot(".topbar-popup.request", "powerbox-identity-contact-picker")
                     .click(powerboxCardSelector)
 
-                    .waitForElementVisible(".popup.request .selected-card>form button.connect-button",
+                    .waitForElementVisible(".topbar-popup.request .selected-card>form button.connect-button",
                                            short_wait)
-                    .captureVisualSnapshot(".popup.request", "powerbox-identity-contact-confirm")
-                    .click(".popup.request .selected-card>form button.connect-button")
+                    .captureVisualSnapshot(".topbar-popup.request", "powerbox-identity-contact-confirm")
+                    .click(".topbar-popup.request .selected-card>form button.connect-button")
                     .grainFrame()
                     .waitForElementVisible("span.token", short_wait)
                     .waitForElementVisible("form.test-identity button", short_wait)

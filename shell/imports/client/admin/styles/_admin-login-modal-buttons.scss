@@ -1,0 +1,23 @@
+@use "mixins/buttons" as buttons;
+
+.idp-modal-button-row {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-start;
+  justify-content: flex-start;
+  .idp-modal-save {
+    @include buttons.button-base();
+    @include buttons.button-primary();
+    margin-left: 10px;
+  }
+  .idp-modal-cancel {
+    @include buttons.button-base();
+    @include buttons.button-secondary();
+    margin-left: 10px;
+  }
+  .idp-modal-disable {
+    @include buttons.button-base();
+    @include buttons.button-danger();
+    margin-left: 10px;
+  }
+}

@@ -1,0 +1,13 @@
+@use "colors/core" as core-colors;
+@use "mixins/buttons" as buttons;
+
+@mixin trash-explanation () {
+  width: 100%;
+  font-size: 10pt;
+
+  button.empty-trash {
+    @include buttons.unstyled-button();
+    color: core-colors.$sandstorm-purple-color;
+    font-weight: bold;
+  }
+}

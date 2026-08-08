@@ -40,9 +40,7 @@
 
 // Global styles are compiled by Rspack. Keep this order aligned with the
 // historical Meteor/fourseven bundle order.
-import "./styles/introjs.css";
-import "./styles/introjs-customizations.scss";
-import "./styles/shell.scss";
+import "../imports/client/styles/global/shell-ui.scss";
 
 // sandstorm-db.
 import "../imports/sandstorm-db/db";
@@ -148,6 +146,7 @@ import "../imports/client/setup-wizard/wizard";
 import "../imports/client/vendor/ansi-up";
 import "../imports/client/widgets/widgets-client";
 import "../imports/db-deprecated";
+import "../imports/client/shell/formatting";
 import "../imports/client/00-startup";
 import "../imports/client/admin-client";
 import "../imports/client/demo-client";
@@ -157,7 +156,11 @@ import "../imports/client/grain-client";
 import "../imports/client/install-client";
 import "../imports/client/notifications-client";
 import "../imports/client/powerbox-builtins";
+import "../imports/client/shell/about-client";
 import "../imports/client/shell-client";
+import "../imports/client/shell/layout-client";
+import "../imports/client/shell/root-client";
+import "../imports/client/shell/referrals-client";
 import "../imports/client/signup-client";
 import "../imports/client/styleguide";
 import "../imports/client/transfers-client";

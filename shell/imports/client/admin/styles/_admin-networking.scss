@@ -1,0 +1,22 @@
+@use "mixins/buttons" as buttons;
+@use "mixins/form" as forms;
+.admin-networking {
+  @include forms.standard-form();
+
+  textarea {
+    min-height: 200px;
+    font-family: monospace;
+  }
+
+  .save {
+    @include buttons.button-base();
+    @include buttons.button-primary();
+    margin-left: 10px;
+  }
+
+  .restore {
+    @include buttons.button-base();
+    @include buttons.button-secondary();
+    margin-left: 10px;
+  }
+}

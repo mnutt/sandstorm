@@ -1,0 +1,11 @@
+@use "mixins/form" as forms;
+
+form.stats-json {
+  @include forms.standard-form();
+  max-width: 500px;
+}
+
+form.stats-toggle {
+  @include forms.standard-form();
+  display: inline-block;
+}

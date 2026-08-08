@@ -1,0 +1,21 @@
+@use "mixins/media" as media;
+
+.setup-preinstall {
+  [role=grid] {
+    [role=row] {
+      [role=gridcell] {
+        padding: 4px;
+        overflow: hidden;
+        @include media.overflow-ellipsis();
+        flex-grow: 0;
+        &.name {
+          width: 20%;
+        }
+        &.description {
+          width: 70%;
+          color: #888888;
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+@use "mixins/form" as forms;
+
+.admin-invite-email-form, .admin-invite-button-form {
+  @include forms.standard-form();
+}
+
+.admin-invite-email-form {
+  textarea {
+    min-height: 200px;
+  }
+}

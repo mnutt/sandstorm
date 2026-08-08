@@ -1,0 +1,19 @@
+@use "mixins/buttons" as buttons;
+
+.admin-user-table {
+  div.actions {
+    flex: none;
+    width: 70px;
+
+    &[role=gridcell] {
+      text-align: right;
+
+      .manage-user-button {
+        display: inline-block;
+        font-weight: normal;
+        @include buttons.button-base();
+        @include buttons.button-secondary();
+      }
+    }
+  }
+}

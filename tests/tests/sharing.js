@@ -261,7 +261,7 @@ module.exports["Test revoked share link"] = function (browser) {
 }
 
 module.exports["Test share popup no permission"] = function (browser) {
-  var sharePopupSelector = ".topbar .share > .show-popup";
+  var sharePopupSelector = ".sandstorm-topbar .share > .show-popup";
   browser
     .loginDevAccount()
     .installApp("https://dl.sandstorm.org/testapps/ssjekyll8.spk", "ca690ad886bf920026f8b876c19539c1",

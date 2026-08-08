@@ -1,0 +1,19 @@
+@use "topbar-primitives";
+
+.sandstorm-topbar {
+  >.menubar {
+    // Buttons for misc grain actions.
+    >li>button.grain-button, >.webkey>button.show-popup {
+      @include topbar-primitives.icon-button();
+      @include topbar-primitives.hamburger-menu-item();
+    }
+    >.delete>button    { background-image: url("/trash.svg"); }
+    >.debug-log>button { background-image: url("/debug.svg"); }
+    >.backup>button    { background-image: url("/download.svg"); }
+    >.clone>button     { background-image: url("/copy.svg"); }
+    >.restart>button   { background-image: url("/restart.svg"); }
+    >.settings>button  { background-image: url("/settings.svg"); }
+    >.webkey>button    { background-image: url("/key.svg"); }
+    >.who-has-access img { width: 20px; }
+  }
+}

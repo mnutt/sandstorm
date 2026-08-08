@@ -1,0 +1,10 @@
+.first-sign-in-main-content, .suspended-main-content {
+  z-index: 1;
+  h1 {
+    text-align: center;
+  }
+  .profile-editor {
+    position: static;
+    margin: auto;
+  }
+}

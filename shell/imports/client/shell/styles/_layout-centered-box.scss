@@ -1,0 +1,15 @@
+.centered-box {
+  margin: 16px auto;
+  max-width: 800px;
+  font-size: 125%;
+  h2 {
+    margin-top: 0;
+    font-size: 60px;
+  }
+  p {
+    margin-bottom: 0;
+  }
+  p:nth-child(1) {
+    margin-top: 0;
+  }
+}

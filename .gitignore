@@ -4,7 +4,7 @@ node_modules
 meteor-spk-*
 .meteor-spk
 shell/imports/client/changelog.html
-shell/client/styles/_icons.scss
+shell/imports/client/styles/global/_icons.scss
 shell/sandstorm-shell.config
 shell/sandstorm-shell.creator
 shell/sandstorm-shell.creator.user

@@ -1,0 +1,32 @@
+@use "mixins/buttons" as buttons;
+
+div.billing {
+  div.usage {
+    button {
+      &.change-plan {
+        @include buttons.button-base();
+        @include buttons.button-primary();
+        font-size: 16px;
+        width: 125px;
+        position: absolute;
+        top: 0;
+        right: 0;
+      }
+
+      &.subscribe {
+        @include buttons.button-base();
+        @include buttons.button-primary();
+        font-size: 16px;
+        width: 125px;
+      }
+
+      &.unsubscribe {
+        @include buttons.button-base();
+        @include buttons.button-secondary();
+        font-size: 90%;
+        padding: 4px 16px;
+        margin-left: 16px;
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+@use "mixins/media" as media;
+
+.admin-users-profile-information {
+  .profile-pronouns {
+    .profile-pronouns-decorator {
+      flex: none;
+      display: inline-flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      .profile-pronouns-icon {
+        @include media.pseudo-img-tag();
+        width: 24px;
+        height: 24px;
+        background-image: url('/pronoun-m.svg');
+        opacity: .60; // Hack to get this to look a desired intermediate color.  The icon lines are
+                      // too thin for it to look normal if the color matches the rest.
+        display: inline-block;
+        font-size: 0px;
+      }
+    }
+
+    .profile-pronouns-preference {
+      margin-left: 8px;
+    }
+  }
+}

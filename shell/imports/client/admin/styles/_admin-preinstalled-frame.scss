@@ -1,0 +1,24 @@
+@use "mixins/buttons" as buttons;
+@use "mixins/form" as forms;
+
+.admin-preinstalled-apps {
+  @include forms.standard-form();
+
+  .save {
+    @include buttons.button-base();
+    @include buttons.button-primary();
+    margin-left: 10px;
+  }
+
+  .productivity-suite, .system-suite {
+    margin-bottom: 40px;
+  }
+
+  .toggle-more {
+    color: #888888;
+
+    button {
+      @include buttons.unstyled-button();
+    }
+  }
+}

@@ -1,0 +1,29 @@
+div.billing {
+  >section.payment-methods {
+    display: inline-block;
+    vertical-align: top;
+
+    h3 {
+      margin: 0.5em 0;
+    }
+
+    max-width: 478px;
+
+    >.balance {
+      margin-left: 16px;
+      margin: 1em auto 2em;
+      text-align: left;
+
+      >.amount {
+        border: 1px solid #ccc;
+        padding: 4px 16px;
+        margin: 0 16px;
+      }
+
+      >.details {
+        font-size: 80%;
+        color: #444;
+      }
+    }
+  }
+}

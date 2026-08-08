@@ -1,0 +1,17 @@
+@use "mixins/buttons" as buttons;
+
+div.billing {
+  div.usage {
+    div.free-stuff {
+      a.like-a-button, button {
+        @include buttons.button-base();
+        @include buttons.button-primary();
+        font-family: Arial;
+        font-size: 16px;
+        font-weight: normal;
+        width: 125px;
+        flex-shrink: 0;
+      }
+    }
+  }
+}

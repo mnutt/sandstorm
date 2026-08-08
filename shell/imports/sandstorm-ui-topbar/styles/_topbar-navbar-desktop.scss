@@ -1,0 +1,18 @@
+@use "geometry/breakpoints" as breakpoints;
+@use "topbar-navbar-desktop-frame";
+@use "topbar-navbar-desktop-links";
+@use "topbar-navbar-desktop-actions";
+@use "topbar-navbar-desktop-icons";
+@use "topbar-navbar-desktop-specials";
+
+.sandstorm-topbar {
+  >.navbar {
+    @media #{breakpoints.$desktop} {
+      @include topbar-navbar-desktop-frame.navbar-desktop-frame();
+      @include topbar-navbar-desktop-links.navbar-desktop-links();
+      @include topbar-navbar-desktop-actions.navbar-desktop-actions();
+      @include topbar-navbar-desktop-icons.navbar-desktop-icons();
+      @include topbar-navbar-desktop-specials.navbar-desktop-specials();
+    }
+  }
+}

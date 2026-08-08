@@ -1,0 +1,8 @@
+@use "mixins/buttons" as buttons;
+
+.grain-settings {
+  .grain-settings-return-to-grain-button {
+    @include buttons.button-base();
+    @include buttons.button-secondary();
+  }
+}

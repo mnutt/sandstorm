@@ -1,0 +1,42 @@
+@use "topbar-colors" as topbar-colors;
+@use "geometry/breakpoints" as breakpoints;
+@use "shell-frame/styles/geometry" as shell-geometry;
+@use "mixins/media" as media;
+
+.sandstorm-topbar {
+  >.menubar {
+    >.home-button {
+      @media #{breakpoints.$desktop} {
+        width: shell-geometry.$navbar-width-desktop;
+        transition: width 0.2s;
+        float:left;
+        overflow: hidden;
+
+        >a {
+          @include media.overflow-ellipsis();
+          color: inherit;
+          margin: 0px;
+          text-decoration: none;
+          height: shell-geometry.$topbar-height-desktop;
+          padding-left: shell-geometry.$navbar-width-desktop-shrunk;
+          padding-right: 8px;
+
+          background-image: url("/icon.png");
+          background-repeat: no-repeat;
+          background-position: 16px center, 6px 24px;
+          background-size: auto, 16px 8px;
+
+          &:hover {
+            background-color: topbar-colors.$topbar-background-color-hover;
+            color: topbar-colors.$topbar-foreground-color-hover;
+          }
+        }
+      }
+
+      @media #{breakpoints.$mobile} {
+        // Hide home link -- it's not very useful anyway.
+        display: none;
+      }
+    }
+  }
+}

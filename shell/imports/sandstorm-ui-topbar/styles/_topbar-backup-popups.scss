@@ -1,0 +1,38 @@
+@use "mixins/buttons" as buttons;
+
+.topbar-popup {
+  &.backup {
+    >.frame-container {
+      width: 400px;
+    }
+
+    .warning-intro, .error {
+      color: #a94442;
+      background-color: #f2dede;
+      border-color: #ebccd1;
+      padding: 5px;
+    }
+
+    .button-row {
+      display: flex;
+      justify-content: flex-end;
+
+      button {
+        @include buttons.button-base();
+        &[name=confirm] {
+          @include buttons.button-primary();
+        }
+        &[name=cancel] {
+          @include buttons.button-secondary();
+        }
+      }
+
+      .spinner {
+        width: 32px;
+        height: 32px;
+        background-image: url("/spinner_96.gif");
+        background-size: 32px 32px;
+      }
+    }
+  }
+}

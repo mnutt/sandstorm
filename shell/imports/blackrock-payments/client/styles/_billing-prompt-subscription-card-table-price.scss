@@ -1,0 +1,21 @@
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.subscriptions {
+    >.subscription {
+      >table {
+        tr:nth-child(2)>td {
+          padding: 20px 0px 20px;
+          background-color: white;
+
+          >p:nth-child(1) {
+            font-size: 36px;
+            font-weight: 600;
+          }
+
+          >p:nth-child(2) {
+            font-size: 12px;
+          }
+        }
+      }
+    }
+  }
+}

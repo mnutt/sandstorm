@@ -1,0 +1,25 @@
+.admin-user-table {
+  div.account-role {
+    flex: none;
+    width: 32px;
+    text-align: center;
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    &[role=gridcell] {
+      padding-top: 6px;
+    }
+  }
+
+  div.profile-name {
+    display: inline-block;
+    flex: 2 1 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    &[role=gridcell] {
+      padding-top: 8px;
+    }
+  }
+}

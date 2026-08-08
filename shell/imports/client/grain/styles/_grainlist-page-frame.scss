@@ -1,0 +1,12 @@
+@use "grainlist/styles/primitives/colors" as grainlist-colors;
+@use "geometry/breakpoints" as breakpoints;
+
+.grain-list {
+  overflow: auto;
+  padding: 32px;
+  @media #{breakpoints.$mobile} {
+    padding: 0px 8px;
+  }
+  background-color: grainlist-colors.$grainlist-background-color;
+  color: grainlist-colors.$grainlist-foreground-color;
+}

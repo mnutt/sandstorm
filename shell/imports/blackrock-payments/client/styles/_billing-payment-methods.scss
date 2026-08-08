@@ -1,0 +1,16 @@
+@use "billing-payment-methods-section";
+@use "billing-payment-methods-table";
+@use "billing-payment-methods-controls";
+
+div.billing {
+  >section.payment-methods {
+    >table {
+      >tbody {
+        >tr:last-child {
+          background-color: #efefef;
+          border-bottom: none;
+        }
+      }
+    }
+  }
+}

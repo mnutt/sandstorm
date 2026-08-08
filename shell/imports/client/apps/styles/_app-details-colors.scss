@@ -1,0 +1,9 @@
+@use "colors/defaults" as defaults;
+
+///////// App details page styles
+$app-details-background-color: defaults.$default-content-background-color;
+$app-details-foreground-color: defaults.$default-content-foreground-color;
+
+$app-details-searchbar-background-color: defaults.$default-textinput-background-color;
+$app-details-searchbar-outline-color: defaults.$default-textinput-outline-color;
+$app-details-searchbar-outline-color-focus: defaults.$default-textinput-outline-color-focus;

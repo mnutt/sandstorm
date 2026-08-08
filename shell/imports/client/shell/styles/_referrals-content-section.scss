@@ -1,0 +1,23 @@
+@use "about-primitives";
+@use "geometry/breakpoints" as breakpoints;
+
+.referrals {
+  section {
+    @include about-primitives.content-section();
+    width: 100%;
+    padding-left: 50px;
+    padding-right: 50px;
+    padding-top: 40px;
+    padding-bottom: 75px;
+
+    // On mobile, use 8px padding, which is the same as the rest of the page,
+    // to avoid wasting precious horizontal space.
+    @media #{breakpoints.$mobile} {
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
+    // Left-align all text in the SECTION element by default.
+    text-align: left;
+  }
+}

@@ -1,0 +1,31 @@
+@use "topbar-colors" as topbar-colors;
+@use "geometry/breakpoints" as breakpoints;
+@use "shell-frame/styles/geometry" as shell-geometry;
+
+.sandstorm-topbar {
+  >.menubar {
+    >.title {
+      >div.editable {
+        white-space: nowrap;
+        text-overflow: ellipsis;  // Doesn't seem to work since size is dynamic. Left here in vain.
+        overflow: hidden;
+        display: inline-block;
+        padding: 0 8px;
+        margin-left: -8px;
+        @media #{breakpoints.$desktop} {
+          min-height: shell-geometry.$topbar-height-desktop;
+        }
+        @media #{breakpoints.$mobile} {
+          min-height: shell-geometry.$topbar-height-mobile;
+          max-width: calc(100% - 150px);
+        }
+
+        &:hover {
+          cursor: pointer;
+          color: topbar-colors.$topbar-foreground-color-hover;
+          background-color: topbar-colors.$topbar-background-color-hover;
+        }
+      }
+    }
+  }
+}

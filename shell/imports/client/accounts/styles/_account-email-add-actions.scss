@@ -1,0 +1,15 @@
+@use "mixins/buttons" as buttons;
+
+.main-content>.account {
+  .verified-emails-editor {
+    .add-new {
+      div.button-box {
+        display: inline-block;
+        >button {
+          @include buttons.button-base();
+          @include buttons.button-secondary();
+        }
+      }
+    }
+  }
+}

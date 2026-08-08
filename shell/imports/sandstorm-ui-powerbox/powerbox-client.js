@@ -25,6 +25,8 @@ import { sortBy } from "/imports/shared/collection-utils";
 import { identiconForApp } from "/imports/sandstorm-identicons/helpers";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 
+import "/imports/sandstorm-ui-powerbox/styles/powerbox-ui.scss";
+
 const PowerboxOptions = new Mongo.Collection("powerboxOptions");
 
 export class SandstormPowerboxRequest {

@@ -7,6 +7,8 @@ import { sortBy } from "/imports/shared/collection-utils";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 
+import "/imports/client/admin/styles/stats-ui.scss";
+
 // Pseudo-collection defined via publish.
 const RealTimeStats = new Mongo.Collection("realTimeStats");
 

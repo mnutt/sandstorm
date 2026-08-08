@@ -1,0 +1,25 @@
+@use "geometry/breakpoints" as breakpoints;
+@use "topbar-primitives";
+
+.sandstorm-topbar {
+  >ul>li, >ul>ul>li, >ul>ul>ul>li {
+    // Each "item" in the topbar is an <li>, so this style applies to all of them.
+
+    display: inline-block;
+    list-style-type: none;
+    vertical-align: top;
+
+    >button.show-popup {
+      @include topbar-primitives.topbar-button();
+    }
+
+    @media #{breakpoints.$mobile} {
+      display: block;
+      float: none;
+      width: 100%;
+      height: 49px;
+      border-bottom: 1px solid #ddd;
+      padding: 0;
+    }
+  }
+}

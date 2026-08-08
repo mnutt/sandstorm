@@ -1,0 +1,12 @@
+@use "grainlist/styles/primitives/grainlist-primitives" as grainlist-primitives;
+
+.transfers {
+  .grain-list {
+    @include grainlist-primitives.grain-table();
+
+    .td-state {
+      width: 32px;
+      text-align: center;
+    }
+  }
+}

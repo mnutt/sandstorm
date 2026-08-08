@@ -1,0 +1,9 @@
+@use "search/styles/search-row" as search;
+
+.app-details {
+  >.search-row {
+    @include search.search-row();
+    margin-bottom: 12px;
+    clear: both;
+  }
+}

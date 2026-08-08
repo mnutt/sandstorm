@@ -1,0 +1,9 @@
+@use "search/styles/search-row" as search;
+
+.app-list {
+  >.search-row {
+    @include search.search-row();
+    position: relative;
+    margin-bottom: 8px;
+  }
+}

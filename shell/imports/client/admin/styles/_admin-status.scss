@@ -1,0 +1,22 @@
+@use "mixins/buttons" as buttons;
+.system-log-header {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: space-between;
+  button {
+    @include buttons.button-base();
+    @include buttons.button-primary();
+  }
+}
+
+.admin-log-box {
+  max-height: calc(100vh - 230px);
+  overflow: scroll;
+  background-color: white;
+  border: 1px solid #ccc;
+
+  pre {
+    white-space: pre-wrap;
+  }
+}

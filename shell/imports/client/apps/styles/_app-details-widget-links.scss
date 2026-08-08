@@ -1,0 +1,44 @@
+@use "colors/core" as core-colors;
+
+@mixin app-links () {
+  display: block;
+  float: right;
+  margin-left: 0px;
+  margin-right: 0px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  padding-left: 0px;
+  list-style: none;
+  >li {
+    display: inline-block;
+    float: left;
+    margin-left: 24px;
+
+    >a {
+      padding-left: 28px;
+
+      background-size: 24px 24px;
+      background-position: 0px center;
+      background-repeat: no-repeat;
+      &.website-link {
+        background-image: url("/web-m.svg");
+      }
+      &.app-market-link {
+        background-image: url("/appmarket-m.svg");
+      }
+      &.source-code-link {
+        background-image: url("/source-m.svg");
+      }
+      &.bug-report-link {
+        background-image: url("/bug-m.svg");
+      }
+      // TODO: these need more styles and less overrides
+      display: inline-block;
+      font-weight: normal;
+      color: #000000;
+      &:hover {
+        color: core-colors.$sandstorm-purple-color;
+      }
+    }
+  }
+}

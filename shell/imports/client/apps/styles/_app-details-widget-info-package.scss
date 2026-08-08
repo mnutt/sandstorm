@@ -1,0 +1,41 @@
+@use "icons/api" as icon-api;
+@use "mixins/buttons" as buttons;
+
+@mixin info-row-package () {
+  >ul.package-info {
+    position: relative;
+    margin: 0px;
+    padding: 0px;
+    list-style: none;
+    >li {
+      display: block;
+      float: left;
+      margin-right: 32px;
+      >span {
+        padding-left: 8px;
+        display: block;
+        clear: both;
+      }
+      >span.label, >span.name {
+        font-weight: 600;
+      }
+      >button.show-authorship-button {
+        @include buttons.unstyled-button();
+        padding-left: 8px;
+        padding-right: 24px;
+
+        >.expanded-icon {
+          font-size: 10px;
+          @include icon-api.icon-element("down");
+        }
+        &.expanded>.expanded-icon {
+          &::before {
+            @include icon-api.icon-content("up");
+          }
+        }
+      }
+    }
+    display: block;
+    float: left;
+  }
+}

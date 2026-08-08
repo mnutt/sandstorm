@@ -1,0 +1,33 @@
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.faq {
+    >.contact-button-wrapper {
+      display: flex;
+      flex-direction: row-reverse;
+      align-items: flex-start;
+      justify-content: flex-start;
+
+      >a.button {
+        text-decoration: none;
+        display: inline-block;
+        float: right;
+        border: 1px solid #b7b7b7;
+        padding: 8px 8px 8px 32px;
+        background-image: url("/email-494949.svg");
+        background-repeat: no-repeat;
+        background-position: 8px center;
+        background-size: 16px 16px;
+        color: #494949;
+        border-radius: 2px;
+        text-transform: uppercase;
+        font-size: 10pt;
+        position: relative;
+        z-index: 10;
+
+        &:hover {
+          background-color: white;
+          cursor: pointer;
+        }
+      }
+    }
+  }
+}

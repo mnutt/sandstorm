@@ -1,0 +1,25 @@
+.topbar-popup.billing-prompt>.frame-container>.frame, .first-time-billing-prompt {
+  >.faq {
+    .answers {
+      .answer {
+        >h4 {
+          margin: 0 0 16px;
+          font-size: 14pt;
+          font-weight: normal;
+        }
+
+        >p {
+          font-size: 10pt;
+          >a {
+            text-decoration: none;
+            font-weight: 600;
+            color: inherit;
+            &:hover {
+              color: #65468e;
+            }
+          }
+        }
+      }
+    }
+  }
+}

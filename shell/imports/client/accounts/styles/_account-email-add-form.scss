@@ -1,0 +1,45 @@
+@use "geometry/breakpoints" as breakpoints;
+
+.main-content>.account {
+  .verified-emails-editor {
+    .add-new {
+      @media #{breakpoints.$not-mobile-only} {
+        display: inline-block;
+        width: 330px;
+        vertical-align: top;
+        input[name="email"] {
+          width: 200px;
+          height: 26px;
+        }
+      }
+
+      @media #{breakpoints.$mobile-only} {
+        form.email {
+          display: flex;
+          flex-direction: row;
+          align-items: stretch;
+          justify-content: space-between;
+          label {
+            flex: 1;
+            display: flex;
+            flex-direction: row;
+            align-items: stretch;
+            justify-content: flex-start;
+          }
+          input[name="email"] {
+            flex: 1;
+            margin-right: 8px;
+          }
+
+          div.button-box {
+            flex: 0;
+          }
+        }
+      }
+
+      .info, .hidden {
+        display: none;
+      }
+    }
+  }
+}

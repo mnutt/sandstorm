@@ -66,12 +66,12 @@ module.exports["Test Notification"] = function (browser) {
   browser
     // We'll use the debugLog at the bottom of the test, but it's nice to open it early and give it time to load.
     .openDebugLog()
-    .waitForElementVisible(".topbar .notifications .count", short_wait)
-    .assert.textContains(".topbar .notifications .count", "1")
-    .click(".topbar .notifications>.show-popup")
+    .waitForElementVisible(".sandstorm-topbar .notifications .count", short_wait)
+    .assert.textContains(".sandstorm-topbar .notifications .count", "1")
+    .click(".sandstorm-topbar .notifications>.show-popup")
     .waitForElementVisible(".notification-list .notification-item", short_wait)
-    .captureVisualSnapshot(".popup.notifications", "notifications-backgrounding")
-    .waitForElementNotPresent(".topbar .notifications .count", short_wait)
+    .captureVisualSnapshot(".topbar-popup.notifications", "notifications-backgrounding")
+    .waitForElementNotPresent(".sandstorm-topbar .notifications .count", short_wait)
     .click(".notification-list .notification-item button")
     .windowHandles(function (windows) {
       browser
@@ -97,8 +97,8 @@ module.exports["Test Notification Wakelock Dropper"] = function (browser) {
   browser
     // We'll use the debugLog at the bottom of the test, but it's nice to open it early and give it time to load.
     .openDebugLog()
-    .waitForElementVisible(".topbar .notifications .count", short_wait)
-    .assert.textContains(".topbar .notifications .count", "1")
+    .waitForElementVisible(".sandstorm-topbar .notifications .count", short_wait)
+    .assert.textContains(".sandstorm-topbar .notifications .count", "1")
     .windowHandles(function (windows) {
       browser
         .switchWindow(windows.value[1])

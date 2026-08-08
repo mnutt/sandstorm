@@ -1,0 +1,8 @@
+.login-buttons-list {
+  >form.email, >form.ldap {
+    &:hover {
+      background-color: white;
+      cursor: auto;
+    }
+  }
+}

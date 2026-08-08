@@ -39,6 +39,6 @@ exports.command = function() {
       const testappFile = document.querySelector("input[type=file]").files[0];
       uploadApp(testappFile);
     }, [])
-    .waitForElementVisible('#confirmInstall', long_wait)
-    .click('#confirmInstall')
+    .waitForElementVisible('.confirm-install-button', long_wait)
+    .click('.confirm-install-button')
 }

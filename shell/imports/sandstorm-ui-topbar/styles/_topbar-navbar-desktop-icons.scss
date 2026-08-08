@@ -1,0 +1,18 @@
+
+@mixin navbar-desktop-icons () {
+  li {
+    &.navitem-open-grain {
+      background-image: url('/open-grain.svg');
+      &.current, &.current:hover {
+        background-image: url('/open-grain-m.svg');
+      }
+      border-bottom: none;
+    }
+    &.navitem-create-grain {
+      background-image: url('/apps.svg');
+      &.current, &.current:hover {
+        background-image: url('/apps-m.svg');
+      }
+    }
+  }
+}

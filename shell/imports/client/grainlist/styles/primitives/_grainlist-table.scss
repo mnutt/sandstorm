@@ -1,0 +1,17 @@
+@use "grainlist-table-frame";
+@use "grainlist-table-header";
+@use "grainlist-table-row-frame";
+@use "grainlist-table-row-icons";
+@use "grainlist-table-row-cells";
+@use "grainlist-table-action-row";
+@use "grainlist-table-grain-row";
+
+@mixin grain-table () {
+  @include grainlist-table-frame.grain-table-frame();
+  @include grainlist-table-header.grain-table-header();
+  @include grainlist-table-row-frame.grain-table-row-frame();
+  @include grainlist-table-row-icons.grain-table-row-icons();
+  @include grainlist-table-row-cells.grain-table-row-cells();
+  @include grainlist-table-action-row.grain-table-action-row();
+  @include grainlist-table-grain-row.grain-table-grain-row();
+}

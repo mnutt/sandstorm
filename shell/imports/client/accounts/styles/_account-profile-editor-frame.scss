@@ -1,0 +1,15 @@
+@use "geometry/breakpoints" as breakpoints;
+
+div.single-profile-editor {
+  max-width: 660px;
+  margin: auto;
+}
+
+div.profile-editor {
+  @media #{breakpoints.$not-mobile-only} {
+    width: 660px;
+  }
+
+  background-color: white;
+  padding: 22px;
+}

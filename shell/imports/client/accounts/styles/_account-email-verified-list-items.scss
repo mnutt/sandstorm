@@ -1,0 +1,23 @@
+.main-content>.account {
+  .verified-emails-editor {
+    .already-verified {
+      ul {
+        li {
+          background-color: white;
+          height: 30px;
+          list-style-type: none;
+          white-space: nowrap;
+          margin-top: 4px;
+          span.email {
+            line-height: 30px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            padding-left: 3%;
+            float: left;
+            width: 66%;
+          }
+        }
+      }
+    }
+  }
+}

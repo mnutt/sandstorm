@@ -1,0 +1,14 @@
+@use "admin-users-primitives";
+
+.user-class-admin {
+  @include admin-users-primitives.user-class-label();
+  background-color: #C66822;
+}
+.user-class-user {
+  @include admin-users-primitives.user-class-label();
+  background-color: #7EB54D;
+}
+.user-class-visitor {
+  @include admin-users-primitives.user-class-label();
+  background-color: #939393;
+}

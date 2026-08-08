@@ -1,0 +1,20 @@
+div.profile-editor {
+  form.account-profile-editor {
+    .picture-row {
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+      justify-content: flex-start;
+      .picture-box {
+        flex: none;
+        width: 128px;
+        height: 128px;
+        margin-right: 16px;
+        img {
+          max-width: 128px;
+          max-height: 128px;
+        }
+      }
+    }
+  }
+}

@@ -24,6 +24,8 @@ import { ReactiveVar } from "meteor/reactive-var";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 import { sortBy, deepEqual } from "/imports/shared/collection-utils";
 
+import "/imports/sandstorm-ui-topbar/styles/topbar-ui.scss";
+
 let reloadBlockingCount = 0;
 const blockedReload = new ReactiveVar(null);
 let explicitlyUnblocked = false;
@@ -152,7 +154,7 @@ Template.sandstormTopbar.helpers({
     const item = instance.data._items[instance.data._expanded.get()];
     if (item) {
       Meteor.defer(function () {
-        const element = instance.find(".topbar>.menubar>." + item.name);
+        const element = instance.find(".sandstorm-topbar>.menubar>." + item.name);
         if (element) {
           // This positions the popup under the topbar item that spawned it. As a hacky heuristic,
           // we position the popup from the left if the item is closer to the left of the window,
@@ -215,11 +217,11 @@ window.addEventListener("resize", function () {
 });
 
 Template.sandstormTopbar.events({
-  "click .topbar-update": function (event) {
+  "click .topbar-update-button": function (event) {
     unblockUpdate();
   },
 
-  "click .topbar>.menubar>li": function (event) {
+  "click .sandstorm-topbar>.menubar>li": function (event) {
     const data = Blaze.getData(event.currentTarget);
     if (data.popupTemplate) {
       event.stopPropagation();
@@ -232,7 +234,7 @@ Template.sandstormTopbar.events({
     }
   },
 
-  "click .popup": function (event) {
+  "click .topbar-popup": function (event) {
     if (event.target === event.currentTarget) {
       // Clicked outside the popup; close it.
       event.stopPropagation();
@@ -242,7 +244,7 @@ Template.sandstormTopbar.events({
 
   // The touchstart handler is to handle a bug in iOS with the click event above.
   // From what I can tell, mobile safari seems to be optimizing out the click.
-  "touchstart .popup": function (event) {
+  "touchstart .topbar-popup": function (event) {
     if (event.target === event.currentTarget) {
       // Clicked outside the popup; close it.
       event.stopPropagation();
@@ -250,7 +252,7 @@ Template.sandstormTopbar.events({
     }
   },
 
-  "click .popup>.frame-container>.frame>.close-popup": function (event) {
+  "click .topbar-popup>.frame-container>.frame>.close-popup": function (event) {
     event.stopPropagation();
     Template.instance().data.closePopup();
   },
@@ -260,7 +262,7 @@ Template.sandstormTopbar.events({
     topbar._shrinkNavbar.set(!topbar._shrinkNavbar.get());
   },
 
-  "click .menu-button": function (event) {
+  "click .topbar-menu-button": function (event) {
     const topbar = Template.instance().data;
     topbar._menuExpanded.set(!topbar._menuExpanded.get());
   },

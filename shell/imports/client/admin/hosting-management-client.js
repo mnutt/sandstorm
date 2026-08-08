@@ -4,6 +4,8 @@ import { ReactiveVar } from "meteor/reactive-var";
 
 import { globalDb } from "/imports/db-deprecated";
 
+import "/imports/client/admin/styles/hosting-management-ui.scss";
+
 const DEFAULT_QUOTA_ENABLED = false;
 const DEFAULT_QUOTA_LDAP_ATTRIBUTE = "quota";
 const DEFAULT_BILLING_PROMPT_URL = "";

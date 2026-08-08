@@ -1,0 +1,15 @@
+div.billing {
+  >section.payment-methods {
+    >table {
+      >tbody {
+        background-color: white;
+        >tr {
+          border-bottom: 1px solid #ccc;
+          >td {
+            height: 2em;
+          }
+        }
+      }
+    }
+  }
+}

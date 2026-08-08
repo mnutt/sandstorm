@@ -1,0 +1,20 @@
+div.billing {
+  div.usage {
+    div.free-stuff {
+      /* "Get free storage" area of /account */
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      >p {
+        color: #6d6d6d;
+        font-size: 90%;
+        padding-right: 0.3em;
+
+        .reward-amount {
+          font-weight: bold;
+        }
+      }
+    }
+  }
+}

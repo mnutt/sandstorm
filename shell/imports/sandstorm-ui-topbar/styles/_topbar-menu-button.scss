@@ -1,0 +1,30 @@
+@use "topbar-colors" as topbar-colors;
+@use "geometry/breakpoints" as breakpoints;
+
+@media #{breakpoints.$mobile} {
+  // Only show the menu button on mobile
+  .topbar-menu-button {
+    background-color: topbar-colors.$topbar-background-color;
+    display: inline-block;
+    vertical-align: top;
+    background-image:url(/menu.svg);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 32px 32px;
+    width: 48px;
+    height: 48px;
+    padding: 4px;
+    color: transparent;
+    cursor: pointer;
+    border-right: 1px solid #666;
+    position: fixed;
+    left: 0;
+    top: 0;
+    &:hover {
+      background-color: topbar-colors.$topbar-background-color-hover;
+    }
+    &.expanded {
+      z-index: 101;
+    }
+  }
+}

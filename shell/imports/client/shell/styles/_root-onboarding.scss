@@ -1,0 +1,21 @@
+.onboarding-arrow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 300px;
+  height: 400px;
+  z-index: -1;
+
+  background-image: url(/files-arrow.svg);
+}
+
+.sign-in-arrow {
+  left: auto;
+  right: 0;
+
+  -moz-transform: scaleX(-1);
+  -o-transform: scaleX(-1);
+  -webkit-transform: scaleX(-1);
+  -ms-transform: scaleX(-1);
+  transform: scaleX(-1);
+}

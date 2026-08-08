@@ -1,0 +1,18 @@
+div.billing {
+  div.usage {
+    tr.bonus {
+      color: #6d6d6d;
+      font-size: 90%;
+      p.bonus {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+      }
+    }
+
+    h4.free-stuff-section-header {
+      padding-bottom: 0.5em;
+    }
+  }
+}

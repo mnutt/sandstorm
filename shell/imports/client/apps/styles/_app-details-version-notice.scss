@@ -1,0 +1,15 @@
+@use "sass:color";
+@use "app-details-colors" as app-details-colors;
+@use "mixins/buttons" as buttons;
+
+.app-details {
+  >.newer-version, >.older-version {
+    background-color: color.adjust(app-details-colors.$app-details-background-color, $lightness: -10%);
+    >p {
+      >button {
+        @include buttons.button-base();
+        @include buttons.button-primary();
+      }
+    }
+  }
+}

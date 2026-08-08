@@ -1,0 +1,12 @@
+@use "mixins/buttons" as buttons;
+
+@mixin info-row-actions () {
+  >button.uninstall-button, >button.restore-button, >button.toggle-show-trash {
+    @include buttons.button-base();
+    @include buttons.button-secondary();
+    display: block;
+    float: right;
+    min-height: 32px;
+    margin-left: 4px;
+  }
+}

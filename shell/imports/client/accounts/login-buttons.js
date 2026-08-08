@@ -39,6 +39,8 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { coerceTemplateText } from "/imports/shared/template-values";
 
+import "/imports/client/accounts/styles/login-buttons-ui.scss";
+
 // for convenience
 const loginButtonsSession = Accounts._loginButtonsSession;
 

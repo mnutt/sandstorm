@@ -1,0 +1,7 @@
+@use "geometry/breakpoints" as breakpoints;
+
+.sandstorm-topbar .share {
+  @media #{breakpoints.$mobile} {
+    margin-top: 48px;
+  }
+}

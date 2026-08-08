@@ -1,0 +1,42 @@
+@use "mixins/media" as media;
+@use "app-details-widget-info";
+@use "app-details-widget-links";
+@use "app-details-widget-publisher";
+
+@mixin app-details-widget () {
+  margin: 0;
+  padding: 0;
+  position: relative;
+  >.app-icon {
+    position: absolute;
+    @include media.pseudo-img-tag();
+    width: 128px;
+    height: 128px;
+  }
+
+  >.app-details-box {
+    margin-left: 128px;
+    padding-left: 12px;
+    min-height: 128px;
+    margin-bottom: 12px;
+
+    >h1.app-title {
+      margin: 0px;
+      font-weight: normal;
+      display: block;
+      float: left;
+    }
+
+    >ul.app-links {
+      @include app-details-widget-links.app-links();
+    }
+
+    >div.info-row {
+      @include app-details-widget-info.info-row();
+    }
+
+    >div.publisher-details {
+      @include app-details-widget-publisher.publisher-details();
+    }
+  }
+}
