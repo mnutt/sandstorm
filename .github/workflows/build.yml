@@ -37,10 +37,6 @@ jobs:
           path: |
             build/ci/_deps/libsodium
           key: cmake-deps-${{ runner.os }}-${{ steps.deps-cache-key.outputs.hash }}
-      - name: setup python 3.10
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.10'
       - name: install dependencies
         run: |
             export DEBIAN_FRONTEND=noninteractive
@@ -135,8 +131,6 @@ jobs:
             #     export CCACHE_DEBUG=1
             export CCACHE_SLOPPINESS="time_macros"
             export PATH=/usr/lib/ccache:$CLANGDIR:$PATH
-            # Use Python 3.10 for node-gyp (3.11+ removed 'rU' mode)
-            export npm_config_python=$(which python)
 
             cmake --preset ci
             cmake --build --preset ci
