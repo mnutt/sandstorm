@@ -82,7 +82,9 @@ ctest --preset ci
 On a fresh worker, install the Meteor launcher and run a pinned-release command before configuring.
 The launcher does not guarantee that the toolchain named by `shell/.meteor/release` is present; the
 first such command downloads it and refreshes Meteor's catalog. CI performs that bootstrap in its
-Meteor installation step so CMake's dev-bundle lookup remains a local filesystem operation.
+Meteor installation step so CMake's dev-bundle lookup remains a local filesystem operation. The
+launcher, pinned `meteor-tool` package, and catalog metadata are cached by the release-file hash;
+unchanged releases therefore skip both the launcher installation and toolchain download.
 
 Build the signed test application package with:
 

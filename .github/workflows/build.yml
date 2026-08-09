@@ -15,6 +15,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+      - name: cache pinned Meteor toolchain
+        id: meteor-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.meteor/meteor
+            ~/.meteor/package-metadata
+            ~/.meteor/packages/meteor-tool
+          key: meteor-tool-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('shell/.meteor/release') }}
       - name: generate deps cache key
         id: deps-cache-key
         run: |
@@ -97,10 +106,14 @@ jobs:
       - name: install Meteor and pinned toolchain
         run: |
             set -o pipefail
-            curl https://install.meteor.com/ | sh
+            if [ ! -x "$HOME/.meteor/meteor" ]; then
+              curl https://install.meteor.com/ | sh
+            fi
+            export PATH="$HOME/.meteor:$PATH"
+            echo "$HOME/.meteor" >> "$GITHUB_PATH"
             # The installer provides the launcher, but CMake needs the Node
             # runtime and headers from the release pinned by shell/.meteor/release.
-            # Bootstrap it here so configure only performs a local warehouse lookup.
+            # Bootstrap it on a cache miss, or validate the restored toolchain.
             (cd shell && meteor node --version)
       - name: cache ccache files
         uses: actions/cache@v4
@@ -157,19 +170,6 @@ jobs:
           cmake --build --preset ci --target lint | tee lint.log
           num_problems=$(cat lint.log | grep ' problems (0 errors, ' | awk '{print $2}')
           [ "$num_problems" = 537 ]
-      - name: setup java 11
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '11'
-      - name: setup chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: 144
-      - name: remove system chrome
-        run: |
-          sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable
-          sudo rm -rf /opt/google/chrome
       - name: test
         run: |
           set -o pipefail
