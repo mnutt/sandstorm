@@ -12,12 +12,12 @@ jobs:
   build_and_test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
       - name: cache pinned Meteor toolchain
         id: meteor-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.meteor/meteor
@@ -32,13 +32,13 @@ jobs:
           echo "hash=$DEPS_HASH" >> $GITHUB_OUTPUT
       - name: cache deps build artifacts
         id: deps-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             build/ci/_deps/libsodium
           key: cmake-deps-${{ runner.os }}-${{ steps.deps-cache-key.outputs.hash }}
       - name: setup python 3.10
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
       - name: install dependencies
@@ -116,7 +116,7 @@ jobs:
             # Bootstrap it on a cache miss, or validate the restored toolchain.
             (cd shell && meteor node --version)
       - name: cache ccache files
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-${{ github.run_number }}
@@ -148,13 +148,13 @@ jobs:
       #      # for debugging ccache misses
       #      find . -iname *ccache* | tar -czf ccache-debug.tar.gz -T /dev/stdin
       #- name: upload ccache debug tarball
-      #  uses: actions/upload-artifact@v1
+      #  uses: actions/upload-artifact@v7
       #  with:
       #    name: ccache-debug.tar.gz
       #    path: ccache-debug.tar.gz
       - name: upload sandstorm tarball
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sandstorm-0-fast.tar.xz
           path: build/ci/packages/sandstorm-0-fast.tar.xz
@@ -181,20 +181,20 @@ jobs:
           exit "$result"
       - name: upload test log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: testlog.txt
           path: testlog.txt
       - name: upload screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screenshots
           path: tests/screenshots
       - name: upload visual snapshots
         id: upload-visual-snapshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-snapshots
           path: tests/visual-snapshots/current
@@ -205,7 +205,7 @@ jobs:
     needs: build_and_test
     if: always()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: download baseline visual snapshots
         env:
           # Temporary baseline until visual snapshot baselines are published from master.
@@ -248,7 +248,7 @@ jobs:
           archive: false
       - name: upload visual snapshot report
         id: upload-visual-report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-snapshot-report
           path: |
