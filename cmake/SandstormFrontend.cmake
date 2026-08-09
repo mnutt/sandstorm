@@ -169,7 +169,10 @@ function(sandstorm_add_frontend_targets)
     COMMENT "Type-checking the Meteor shell"
     VERBATIM)
 
-  file(GLOB_RECURSE _shell_sources CONFIGURE_DEPENDS
+  # Generated shell assets live alongside source files, so CONFIGURE_DEPENDS
+  # would observe them appearing after the first build and unnecessarily
+  # re-run CMake. Reconfigure explicitly after adding or removing shell files.
+  file(GLOB_RECURSE _shell_sources
     "${PROJECT_SOURCE_DIR}/shell/client/*"
     "${PROJECT_SOURCE_DIR}/shell/i18n/*"
     "${PROJECT_SOURCE_DIR}/shell/imports/*"

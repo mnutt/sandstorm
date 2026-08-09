@@ -48,6 +48,8 @@ in `shell/` for now because Meteor consumes that source layout.
 
 Ninja performs incremental rebuilds, so re-run `cmake --build --preset dev` after making changes.
 The former persistent watch mode does not have a direct CMake target.
+Run `cmake --preset dev` after adding or removing frontend source files; modifications to files that
+were present at configure time are tracked as normal build dependencies.
 
 Run the frontend checks with:
 
