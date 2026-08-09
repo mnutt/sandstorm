@@ -144,6 +144,7 @@ function(sandstorm_add_packaging_targets)
       ${_meteor_testapp_sources}
     COMMENT "Staging the Meteor system-test application"
     VERBATIM)
+  add_custom_target(meteor-testapp-stage DEPENDS "${_meteor_testapp_stage_stamp}")
 
   set(_meteor_testapp_spk "${_package_dir}/meteor-testapp.spk")
   add_custom_command(

@@ -7,7 +7,7 @@ find_path(SANDSTORM_ZLIB_INCLUDE_DIR zlib.h REQUIRED)
 if(NOT TARGET ZLIB::ZLIB)
   # Keep zlib as a linker name instead of an absolute library path. This lets
   # the static runtime binaries resolve libz.a while dynamic tools resolve the
-  # shared library, matching the existing ekam link behavior.
+  # shared library, matching the established Sandstorm link behavior.
   add_library(ZLIB::ZLIB INTERFACE IMPORTED GLOBAL)
   set_target_properties(ZLIB::ZLIB PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${SANDSTORM_ZLIB_INCLUDE_DIR}"
@@ -36,7 +36,7 @@ add_subdirectory(
 set(BUILD_TESTING "${_sandstorm_saved_build_testing}")
 unset(_sandstorm_saved_build_testing)
 
-# Ekam compiled all KJ/Cap'n Proto code with these compatibility settings.
+# The vendored KJ/Cap'n Proto code requires these compatibility settings.
 target_compile_features(kj PUBLIC cxx_std_17)
 target_compile_definitions(kj PUBLIC KJ_STD_COMPAT KJ_HAS_LIBDL)
 target_compile_options(kj PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:-include;cstdint>")

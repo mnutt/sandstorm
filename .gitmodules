@@ -2,10 +2,6 @@
 	path = deps/capnproto
 	url = https://github.com/capnproto/capnproto.git
 	branch = master
-[submodule "deps/ekam"]
-	path = deps/ekam
-	url = https://github.com/sandstorm-io/ekam.git
-	branch = master
 [submodule "deps/libseccomp"]
 	path = deps/libseccomp
 	url = https://github.com/seccomp/libseccomp.git
