@@ -79,6 +79,11 @@ cmake --build --preset ci
 ctest --preset ci
 ```
 
+On a fresh worker, install the Meteor launcher and run a pinned-release command before configuring.
+The launcher does not guarantee that the toolchain named by `shell/.meteor/release` is present; the
+first such command downloads it and refreshes Meteor's catalog. CI performs that bootstrap in its
+Meteor installation step so CMake's dev-bundle lookup remains a local filesystem operation.
+
 Build the signed test application package with:
 
 ```sh

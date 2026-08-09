@@ -94,10 +94,14 @@ jobs:
             EOF
             sudo mv /tmp/sandstorm-ci-apparmor /etc/apparmor.d/sandstorm-ci
             sudo apparmor_parser -r /etc/apparmor.d/sandstorm-ci
-      - name: install meteor
+      - name: install Meteor and pinned toolchain
         run: |
             set -o pipefail
             curl https://install.meteor.com/ | sh
+            # The installer provides the launcher, but CMake needs the Node
+            # runtime and headers from the release pinned by shell/.meteor/release.
+            # Bootstrap it here so configure only performs a local warehouse lookup.
+            (cd shell && meteor node --version)
       - name: cache ccache files
         uses: actions/cache@v4
         with:
