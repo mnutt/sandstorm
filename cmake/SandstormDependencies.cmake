@@ -28,10 +28,36 @@ set(WITH_OPENSSL OFF CACHE STRING
   "Use the separately-defined BoringSSL-backed kj-tls target" FORCE)
 set(WITH_ZLIB ON CACHE STRING "Build KJ's zlib support" FORCE)
 set(WITH_FIBERS OFF CACHE STRING "Disable KJ fibers" FORCE)
+
+# Cap'n Proto's minimum version declaration targets CMake releases older than
+# Sandstorm supports. Suppress that vendored warning without hiding
+# deprecations from Sandstorm's own CMake files. CMake 4.4 replaced the legacy
+# variable with scoped diagnostics.
+if(COMMAND cmake_diagnostic)
+  cmake_diagnostic(PUSH)
+  cmake_diagnostic(SET CMD_DEPRECATED IGNORE)
+else()
+  if(DEFINED CMAKE_WARN_DEPRECATED)
+    set(_sandstorm_saved_cmake_warn_deprecated "${CMAKE_WARN_DEPRECATED}")
+    set(_sandstorm_had_cmake_warn_deprecated TRUE)
+  else()
+    set(_sandstorm_had_cmake_warn_deprecated FALSE)
+  endif()
+  set(CMAKE_WARN_DEPRECATED OFF)
+endif()
 add_subdirectory(
   "${PROJECT_SOURCE_DIR}/deps/capnproto/c++"
   "${CMAKE_BINARY_DIR}/_deps/capnproto"
   EXCLUDE_FROM_ALL)
+if(COMMAND cmake_diagnostic)
+  cmake_diagnostic(POP)
+elseif(_sandstorm_had_cmake_warn_deprecated)
+  set(CMAKE_WARN_DEPRECATED "${_sandstorm_saved_cmake_warn_deprecated}")
+else()
+  unset(CMAKE_WARN_DEPRECATED)
+endif()
+unset(_sandstorm_saved_cmake_warn_deprecated)
+unset(_sandstorm_had_cmake_warn_deprecated)
 
 set(BUILD_TESTING "${_sandstorm_saved_build_testing}")
 unset(_sandstorm_saved_build_testing)
