@@ -191,6 +191,7 @@ jobs:
         with:
           name: screenshots
           path: tests/screenshots
+          if-no-files-found: ignore
       - name: upload visual snapshots
         id: upload-visual-snapshots
         if: always()
