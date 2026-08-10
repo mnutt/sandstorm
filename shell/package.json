@@ -50,7 +50,7 @@
     "connect": "^3.7.0",
     "content-type": "^1.0.4",
     "intro.js": "git+https://github.com/sandstorm-io/intro.js.git#8e1c7604f251ec874bf4ae4d7b4f11a14cee697e",
-    "ip-address": "^10.1.0",
+    "ip-address": "^10.5.0",
     "jquery": "^4.0.0",
     "ldapts": "^9.0.0",
     "mailparser": "^3.9.14",
@@ -61,7 +61,7 @@
     "smtp-server": "^3.18.1",
     "stripe": "^20.3.1",
     "supports-color": "^8.1.1",
-    "undici": "^8.8.0",
+    "undici": "^8.10.0",
     "xml-crypto": "^6.1.2",
     "xml2js": "^0.6.2",
     "xmlbuilder": "^15.1.1"
