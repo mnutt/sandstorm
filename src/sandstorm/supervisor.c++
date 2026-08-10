@@ -816,13 +816,12 @@ void SupervisorMain::closeFds() {
     KJ_DEFER(KJ_SYSCALL(closedir(dir)) { break; });
 
     for (;;) {
-      struct dirent entry;
-      struct dirent* eptr = nullptr;
-      int error = readdir_r(dir, &entry, &eptr);
-      if (error != 0) {
-        KJ_FAIL_SYSCALL("readdir_r(/proc/self/fd)", error);
-      }
+      errno = 0;
+      struct dirent* eptr = readdir(dir);
       if (eptr == nullptr) {
+        if (errno != 0) {
+          KJ_FAIL_SYSCALL("readdir(/proc/self/fd)", errno);
+        }
         // End of directory.
         break;
       }
