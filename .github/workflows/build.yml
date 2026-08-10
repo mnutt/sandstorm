@@ -229,7 +229,7 @@ jobs:
       - name: install visual comparison dependencies
         run: |
           cd tests
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund jimp@0.16.13
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund jimp@1.6.1
       - name: compare visual snapshots
         run: |
           cd tests
