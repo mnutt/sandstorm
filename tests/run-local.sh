@@ -85,8 +85,7 @@ cd "$THIS_DIR"
 
 "$NPM" install
 
-# Nightwatch v3 manages ChromeDriver automatically via the chromedriver npm package
-# No need to manually start selenium or chromedriver
+# run-tests.sh starts the ChromeDriver supplied by the chromedriver npm package.
 
 export SANDSTORM_DIR=$THIS_DIR/tmp-sandstorm
 export OVERRIDE_SANDSTORM_DEFAULT_DIR=$SANDSTORM_DIR

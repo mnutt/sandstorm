@@ -4,7 +4,7 @@
   "custom_commands_path": "commands",
 
   "webdriver": {
-    "start_process": true,
+    "start_process": false,
     "server_path": "",
     "host": "127.0.0.1",
     "port": 4444
@@ -17,7 +17,7 @@
         "waitForConditionPollInterval": 100
       },
       "webdriver": {
-        "start_process": true,
+        "start_process": false,
         "server_path": "node_modules/chromedriver/lib/chromedriver/chromedriver",
         "port": 4444
       },
