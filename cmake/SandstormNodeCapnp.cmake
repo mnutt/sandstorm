@@ -53,6 +53,8 @@ function(sandstorm_add_node_capnp)
     SUFFIX ".node")
   target_include_directories(node_capnp PRIVATE
     "${SANDSTORM_NODE_INCLUDE_DIR}")
+  # node-capnp's frozen Node 14 branch uses legacy Cap'n Proto and Node APIs.
+  target_compile_options(node_capnp PRIVATE -Wno-deprecated-declarations)
   target_link_libraries(node_capnp PRIVATE
     sandstorm_build_options
     CapnProto::capnp-rpc
