@@ -2866,6 +2866,13 @@ public:
     KJ_SYSCALL(setenv("HTTP_PROXY", proxyEnv.cStr(), true));
     KJ_SYSCALL(setenv("no_proxy", "localhost,127.0.0.1", true));
 
+    KJ_STACK_ARRAY(char*, argv, command.size() + 1, 32, 256);
+    for (uint i: kj::indices(command)) {
+      argv[i] = const_cast<char*>(command[i].cStr());
+    }
+    argv[command.size()] = nullptr;
+    char** argvp = argv.begin();
+
     pid_t child;
     KJ_SYSCALL(child = fork());
     if (child == 0) {
@@ -2881,14 +2888,6 @@ public:
       if (signal(SIGPIPE, SIG_DFL) == SIG_ERR) {
         KJ_FAIL_SYSCALL("signal(SIGPIPE, SIG_DFL)", errno);
       }
-
-      char* argv[command.size() + 1];
-      for (uint i: kj::indices(command)) {
-        argv[i] = const_cast<char*>(command[i].cStr());
-      }
-      argv[command.size()] = nullptr;
-
-      char** argvp = argv;  // work-around Clang not liking lambda + vararray
 
       KJ_SYSCALL(execvp(argvp[0], argvp), argvp[0]);
       KJ_UNREACHABLE;

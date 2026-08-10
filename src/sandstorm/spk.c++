@@ -1424,8 +1424,9 @@ private:
 
     // Check the magic number.
     auto expectedMagic = spk::MAGIC_NUMBER.get();
-    byte magic[expectedMagic.size()];
-    kj::FdInputStream(spkPipe.readEnd.get()).read(magic, expectedMagic.size());
+    byte magic[8];
+    KJ_ASSERT(expectedMagic.size() == sizeof(magic));
+    kj::FdInputStream(spkPipe.readEnd.get()).read(magic, sizeof(magic));
     for (uint i: kj::indices(expectedMagic)) {
       if (magic[i] != expectedMagic[i]) {
         return validationError("Does not appear to be an .spk (bad magic number).");
