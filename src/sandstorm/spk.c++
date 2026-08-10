@@ -1435,7 +1435,7 @@ private:
     // use as input below. We'll do all that in a thread to keep the code simple.
     byte packageHash[crypto_hash_sha256_BYTES];
     Pipe spkPipe = Pipe::make();
-    auto hashThread = new kj::Thread([&]() {
+    auto hashThread = kj::heap<kj::Thread>([&]() {
       crypto_hash_sha256_state packageHashState;
       KJ_ASSERT(crypto_hash_sha256_init(&packageHashState) == 0);
 
@@ -1449,7 +1449,7 @@ private:
         out.write(buffer, n);
       }
 
-      KJ_ASSERT(crypto_hash_sha256_final(&packageHashState, packageHash));
+      KJ_ASSERT(crypto_hash_sha256_final(&packageHashState, packageHash) == 0);
     });
 
     // Check the magic number.
