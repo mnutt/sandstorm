@@ -4,7 +4,7 @@ set -euo pipefail
 
 app_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repo_dir=$(cd "$app_dir/.." && pwd)
-stage_dir="$app_dir/.meteor-spk"
+stage_dir="${SANDSTORM_METEOR_TESTAPP_STAGE_DIR:-$app_dir/.meteor-spk}"
 runtime_dir="$stage_dir/runtime"
 bundle_dir="$stage_dir/bundle"
 package_dirs="$repo_dir/shell/packages"

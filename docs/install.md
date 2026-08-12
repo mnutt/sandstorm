@@ -131,6 +131,7 @@ Please install the following:
 * Linux x86_64, with kernel version 3.13 or later
 * C and C++ standard libraries and headers
 * GNU Make
+* Ninja
 * GNU diffutils
 * `g++`
 * `libcap` with headers
@@ -153,7 +154,7 @@ On Debian or Ubuntu, you should be able to get all these with:
 
     sudo apt-get install build-essential libcap-dev xz-utils zip \
         unzip strace curl discount git python3 zlib1g-dev \
-        cmake flex bison locales
+        cmake ninja-build flex bison locales
     GO_VERSION=$(curl 'https://go.dev/VERSION?m=text')
     curl -L "https://go.dev/dl/$GO_VERSION.linux-amd64.tar.gz" -o go.tar.gz \
         && sudo tar -C /usr/local -xvf go.tar.gz \
@@ -180,7 +181,7 @@ On Fedora 34 you should be able to get the prerequisites with:
     sudo dnf install make libcap-devel libstdc++-devel libstdc++-static \
        glibc-headers glibc-static glibc-locale-source gcc-c++ xz zip \
        unzip strace curl discount git python zlib-devel zlib-static \
-       golang cmake strace flex bison which diffutils
+       golang cmake ninja-build strace flex bison which diffutils
     curl https://install.meteor.com/ | sh
 
 If you have trouble getting the build to work on your distro, we recommend trying in a virtual
@@ -194,29 +195,33 @@ machine running the latest stable Debian release. This is easy to set up using V
 
 Get the source code from the git repository:
 
-    git clone https://github.com/sandstorm-io/sandstorm.git
+    git clone --recurse-submodules https://github.com/sandstorm-io/sandstorm.git
 
 ### Building / installing the binaries
 
 Build the Sandstorm bundle:
 
     cd sandstorm
-    make
+    deps/clang/scripts/update.py --output-dir deps/llvm-build
+    test -e deps/llvm-build/bin/clang++ || ln -s clang deps/llvm-build/bin/clang++
+    cmake --preset release
+    cmake --build --preset release --target package-fast
 
-(Note: You should *not* use `-j`, as we only use make as a meta-build system. The major components will utilize all CPU cores.)
+The first command bootstraps Sandstorm's pinned Clang toolchain and only needs to be rerun when that
+toolchain changes. The resulting archive is written to `build/release/packages`.
 
 Install it:
 
-    make install
+    cmake --build --preset release --target install-local
 
-This installs your locally-built bundle just as would get if you had installed using
+This installs your locally-built bundle just as you would get if you had installed using
 `https://install.sandstorm.io`. You will be asked various configuration questions. If you intend
 to hack on Sandstorm itself, you should choose to run the server to run under your local user
 account (the default is to create a separate user called `sandstorm`).
 
 If Sandstorm is already installed, you can update to your newly-built version like so:
 
-    make update
+    cmake --build --preset release --target update-local
 
 Note that this only works if you installed Sandstorm to run at startup. Otherwise, you will
 have to manually do:
@@ -234,15 +239,15 @@ Now connect to your local server like you normally would.
 
 ### Hacking on the C++
 
-If you're going to edit C++, you will want to install [Ekam](https://github.com/sandstorm-io/ekam), the build system used by Sandstorm. Be sure to read [how Ekam works](https://github.com/sandstorm-io/ekam).
+The `dev` preset provides an incremental debug build for C++ development:
 
-Once `ekam` is in your path, you can use `make continuous` in order to start an Ekam continuous build of Sandstorm. While this build is running, you can also run other `make` commands in a separate window. This will automatically synchronize with your continuous build rather than starting a second build.
+    cmake --preset dev
+    cmake --build --preset dev
+    ctest --preset dev
 
-To do a debug build, run make like:
-
-    make continuous CXXFLAGS="-g"
-
-If you suspect you'll be hacking on Sandstorm's dependencies as well, you may want to follow the dependency symlink trick described in the Ekam readme.
+Ninja rebuilds affected targets when the build command is rerun. See
+[the CMake development guide](developing/cmake.md) for frontend, packaging, and focused test
+targets.
 
 ### Running the test suite
 

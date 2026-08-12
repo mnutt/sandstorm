@@ -12,9 +12,18 @@ jobs:
   build_and_test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
+      - name: cache pinned Meteor toolchain
+        id: meteor-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.meteor/meteor
+            ~/.meteor/package-metadata
+            ~/.meteor/packages/meteor-tool
+          key: meteor-tool-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('shell/.meteor/release') }}
       - name: generate deps cache key
         id: deps-cache-key
         run: |
@@ -23,19 +32,11 @@ jobs:
           echo "hash=$DEPS_HASH" >> $GITHUB_OUTPUT
       - name: cache deps build artifacts
         id: deps-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
-            deps/llvm-build
-            deps/boringssl/build
-            deps/libsodium/build
-            deps/ekam/bin
-            tmp/.deps
-          key: deps-${{ runner.os }}-${{ steps.deps-cache-key.outputs.hash }}
-      - name: setup python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+            build/ci/_deps/libsodium
+          key: cmake-deps-${{ runner.os }}-${{ steps.deps-cache-key.outputs.hash }}
       - name: install dependencies
         run: |
             export DEBIAN_FRONTEND=noninteractive
@@ -44,7 +45,7 @@ jobs:
             which go || (sudo apt-get update && sudo apt-get install golang-go)
 
             sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ccache apparmor
+                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ninja-build ccache apparmor
 
             # Install OpenSSL 1.1 (required for Meteor/Node compatibility)
             # Ubuntu 24.04 only ships OpenSSL 3.x, so we need to install 1.1 from older release
@@ -68,6 +69,18 @@ jobs:
               userns,
             }
 
+            profile sandstorm-cmake-ci-bin $GITHUB_WORKSPACE/build/ci/bin/sandstorm flags=(unconfined) {
+              userns,
+            }
+
+            profile spk-cmake-ci-bin $GITHUB_WORKSPACE/build/ci/bin/spk flags=(unconfined) {
+              userns,
+            }
+
+            profile sandstorm-cmake-ci-bundle $GITHUB_WORKSPACE/build/ci/bundle/sandstorm flags=(unconfined) {
+              userns,
+            }
+
             profile sandstorm-ci-test $GITHUB_WORKSPACE/tests/tmp-sandstorm/sandstorm flags=(unconfined) {
               userns,
             }
@@ -86,12 +99,20 @@ jobs:
             EOF
             sudo mv /tmp/sandstorm-ci-apparmor /etc/apparmor.d/sandstorm-ci
             sudo apparmor_parser -r /etc/apparmor.d/sandstorm-ci
-      - name: install meteor
+      - name: install Meteor and pinned toolchain
         run: |
             set -o pipefail
-            curl https://install.meteor.com/ | sh
+            if [ ! -x "$HOME/.meteor/meteor" ]; then
+              curl https://install.meteor.com/ | sh
+            fi
+            export PATH="$HOME/.meteor:$PATH"
+            echo "$HOME/.meteor" >> "$GITHUB_PATH"
+            # The installer provides the launcher, but CMake needs the Node
+            # runtime and headers from the release pinned by shell/.meteor/release.
+            # Bootstrap it on a cache miss, or validate the restored toolchain.
+            (cd shell && meteor node --version)
       - name: cache ccache files
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-${{ github.run_number }}
@@ -101,7 +122,7 @@ jobs:
             mkdir -p "$CCACHE_DIR"
             ccache -s
             ccache -z
-      - name: make fast
+      - name: CMake build and package
         run: |
             set -x
             export CCACHE_COMPRESS="true"
@@ -110,31 +131,29 @@ jobs:
             #     export CCACHE_DEBUG=1
             export CCACHE_SLOPPINESS="time_macros"
             export PATH=/usr/lib/ccache:$CLANGDIR:$PATH
-            # Use Python 3.10 for node-gyp (3.11+ removed 'rU' mode)
-            export npm_config_python=$(which python)
 
-            make \
-              CC="$(which clang)" \
-              CXX="$(which clang++)" \
-              fast
+            cmake --preset ci
+            cmake --build --preset ci
+            ctest --preset ci
+            cmake --build --preset ci --target package-fast test-app-spk meteor-testapp-spk
       - name: print ccache stats
         run: |
             ccache -s
       #      # for debugging ccache misses
       #      find . -iname *ccache* | tar -czf ccache-debug.tar.gz -T /dev/stdin
       #- name: upload ccache debug tarball
-      #  uses: actions/upload-artifact@v1
+      #  uses: actions/upload-artifact@v7
       #  with:
       #    name: ccache-debug.tar.gz
       #    path: ccache-debug.tar.gz
       - name: upload sandstorm tarball
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sandstorm-0-fast.tar.xz
-          path: sandstorm-0-fast.tar.xz
+          path: build/ci/packages/sandstorm-0-fast.tar.xz
       - name: typecheck-ts
-        run: make typecheck-ts
+        run: cmake --build --preset ci --target typecheck
       - name: lint
         run: |
           set -o pipefail
@@ -142,47 +161,35 @@ jobs:
           # we also want to make sure the number of warnings doesn't increase.
           # We check for equality; if the number decreases, great! But then update
           # the constant below.
-          make lint | tee lint.log
+          cmake --build --preset ci --target lint | tee lint.log
           num_problems=$(cat lint.log | grep ' problems (0 errors, ' | awk '{print $2}')
           [ "$num_problems" = 537 ]
-      - name: setup java 11
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '11'
-      - name: setup chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: 144
-      - name: remove system chrome
-        run: |
-          sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable
-          sudo rm -rf /opt/google/chrome
       - name: test
         run: |
           set -o pipefail
           set +e
-          make test |& tee testlog.txt
+          cmake --build --preset ci --target system-test |& tee testlog.txt
           result=${PIPESTATUS[0]}
           set -e
           echo "Result: $result"
           exit "$result"
       - name: upload test log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: testlog.txt
           path: testlog.txt
       - name: upload screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screenshots
           path: tests/screenshots
+          if-no-files-found: ignore
       - name: upload visual snapshots
         id: upload-visual-snapshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-snapshots
           path: tests/visual-snapshots/current
@@ -193,7 +200,7 @@ jobs:
     needs: build_and_test
     if: always()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: download baseline visual snapshots
         env:
           # Temporary baseline until visual snapshot baselines are published from master.
@@ -236,7 +243,7 @@ jobs:
           archive: false
       - name: upload visual snapshot report
         id: upload-visual-report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-snapshot-report
           path: |

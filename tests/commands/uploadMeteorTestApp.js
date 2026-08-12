@@ -16,7 +16,8 @@
 'use strict';
 
 const {short_wait, medium_wait, long_wait} = require('../utils');
-const testappPath = require('path').resolve(__dirname + "/../assets/meteor-testapp.spk");
+const testappPath = process.env.SANDSTORM_METEOR_TESTAPP_PATH ||
+  require('path').resolve(__dirname + "/../assets/meteor-testapp.spk");
 
 exports.command = function() {
   return this

@@ -7,8 +7,6 @@ if (grep -r KJ_DBG src/* | egrep -v '/(debug(-test)?|exception)[.]'); then
   exit 1
 fi
 
-make clean
-
 # TODO(soon): Once we have a way to start a beta branch, refuse to do so if there are TODO(soon)s.
 # if (egrep -r 'TODO\(soon\)'); then
 #   echo '*** Error:  There are release-blocking TODOs in the code.' >&2
@@ -54,11 +52,21 @@ fi
 # build 75 within branch 0, or 2121 for build 121 within branch 2, so
 # that the Sandstorm auto-updater can avoid having complicated
 # version-comparison logic.
-TARBALL=sandstorm-$BUILD.tar.xz
+RELEASE_DIR=build/release
+TARBALL=$RELEASE_DIR/packages/sandstorm-$BUILD.tar.xz
 
 echo "**** Building build $BUILD ****"
 
-make BUILD=$BUILD
+if [ ! -x deps/llvm-build/bin/clang ] || [ ! -x deps/llvm-build/bin/clang++ ]; then
+  echo "Release compiler is missing; run the Chromium Clang downloader documented in" >&2
+  echo "docs/developing/cmake.md first." >&2
+  exit 1
+fi
+
+cmake --preset release -DSANDSTORM_BUILD="$BUILD"
+cmake --build --preset release
+ctest --preset release
+cmake --build --preset release --target package
 
 echo "**** Tagging this commit ****"
 
@@ -66,7 +74,7 @@ echo "**** Tagging this commit ****"
 # number, like 0.75 for build 75 within branch 0, or 2.121 for build
 # 121 within branch 2.
 
-GIT_REVISION="$(<bundle/git-revision)"
+GIT_REVISION="$(<"$RELEASE_DIR/bundle/git-revision")"
 git tag -u $SIGNING_KEY_ID "$TAG_NAME" "$GIT_REVISION" -m "Release Sandstorm ${DISPLAY_VERSION}"
 git push origin "$TAG_NAME"
 
@@ -86,13 +94,13 @@ gpg -u $SIGNING_KEY_ID --digest-algo SHA512 --detach-sig $TARBALL
 gpg -u $SIGNING_KEY_ID --digest-algo SHA512 --detach-sig install.sh
 
 # Create signature used to verify updates.
-tmp/sandstorm/update-tool sign ~/.sandstorm-update-keyring $TARBALL > $TARBALL.update-sig
+"$RELEASE_DIR/bin/update-tool" sign ~/.sandstorm-update-keyring "$TARBALL" > "$TARBALL.update-sig"
 
-echo $BUILD > tmp/$CHANNEL
+echo "$BUILD" > "$RELEASE_DIR/$CHANNEL"
 gce-ss copy-files $TARBALL alpha2:/var/www/dl.sandstorm.io
 gce-ss copy-files $TARBALL.sig alpha2:/var/www/dl.sandstorm.io
 gce-ss copy-files $TARBALL.update-sig alpha2:/var/www/dl.sandstorm.io
-gce-ss copy-files tmp/$CHANNEL alpha2:/var/www/install.sandstorm.io
+gce-ss copy-files "$RELEASE_DIR/$CHANNEL" alpha2:/var/www/install.sandstorm.io
 gce-ss copy-files install.sh alpha2:/var/www/install.sandstorm.io
 gce-ss copy-files install.sh.sig alpha2:/var/www/install.sandstorm.io
 

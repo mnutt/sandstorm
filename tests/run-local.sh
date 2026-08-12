@@ -48,13 +48,6 @@ cleanExit () {
   exit $rc
 }
 
-checkInstalled() {
-  if ! $(which $1 >/dev/null 2>/dev/null) ; then
-    echo "Couldn't find executable '$1' - try installing the $2 package?"
-    exit 1
-  fi
-}
-
 # Parse arguments.
 while [ $# -gt 0 ] ; do
   case $1 in
@@ -89,8 +82,6 @@ fi
 export SANDSTORM_TESTAPP_PATH
 
 cd "$THIS_DIR"
-
-checkInstalled chromium chromium
 
 "$NPM" install
 

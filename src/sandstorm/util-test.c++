@@ -16,6 +16,7 @@
 
 #include "util.h"
 #include <kj/test.h>
+#include <kj/async-unix.h>
 #include <sys/wait.h>
 #include <kj/async-io.h>
 
@@ -187,11 +188,6 @@ KJ_TEST("Subprocess") {
     auto fds = kj::heapArray<int>({pipe3.writeEnd, pipe4.writeEnd});
     options.moreFds = fds;
 
-    // We override the environment here in order to clear Ekam's LD_PRELOAD which otherwise expects
-    // FD 3 and 4 to belong to it.
-    auto env = kj::heapArray<const kj::StringPtr>({"PATH=/bin:/usr/bin"});
-    options.environment = env.asPtr();
-
     Subprocess child(kj::mv(options));
     pipe3.writeEnd = nullptr;
     pipe4.writeEnd = nullptr;
@@ -202,6 +198,7 @@ KJ_TEST("Subprocess") {
 }
 
 KJ_TEST("SubprocessSet") {
+  kj::UnixEventPort::captureSignal(SIGCHLD);
   auto io = kj::setupAsyncIo();
 
   SubprocessSet set(io.unixEventPort);

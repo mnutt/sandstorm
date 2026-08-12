@@ -8,7 +8,9 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$SCRIPT_DIR"
 
 run_build() {
-  (cd "$SCRIPT_DIR/.." && make shell-env)
+  (cd "$SCRIPT_DIR/.." && \
+    cmake --preset "${SANDSTORM_CMAKE_PRESET:-dev}" && \
+    cmake --build --preset "${SANDSTORM_CMAKE_PRESET:-dev}" --target shell-env)
   cd "$SCRIPT_DIR"
 }
 
