@@ -5,13 +5,13 @@
 
 Package.describe({
   name: "kenton:accounts-sandstorm",
-  version: "0.8.0",
+  version: "0.8.1",
   summary: "Login service for Sandstorm applications, updated for Meteor 3",
   git: "https://github.com/sandstorm-io/meteor-accounts-sandstorm.git",
 });
 
 Package.onUse((api) => {
-  api.versionsFrom("3.4.1");
+  api.versionsFrom("3.5.1");
   api.use(["ecmascript", "meteor", "random"], ["client", "server"]);
   api.use("accounts-base", ["client", "server"], { weak: true });
   api.use(["ddp-client", "tracker", "reactive-var"], "client");
@@ -22,7 +22,7 @@ Package.onUse((api) => {
 });
 
 Package.onTest((api) => {
-  api.versionsFrom("3.4.1");
+  api.versionsFrom("3.5.1");
   api.use(["ecmascript", "meteortesting:mocha"]);
   api.mainModule("rendezvous.tests.js", "server");
 });

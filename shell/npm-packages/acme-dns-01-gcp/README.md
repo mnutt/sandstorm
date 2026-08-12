@@ -1,6 +1,6 @@
 # Sandstorm's acme-dns-01-gcp fork
 
-This package is a Node 22 modernization of
+This package is a Node 22+ modernization of
 [`acme-dns-01-gcp`](https://github.com/latacora/acme-dns-01-gcp). It was
 imported from npm release 0.0.10, upstream Git revision
 `154ba7e2cfd04a676e8dcdb990a2f20975afc9f7`, and remains licensed under

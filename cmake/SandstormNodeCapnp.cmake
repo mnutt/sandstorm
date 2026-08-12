@@ -1,4 +1,8 @@
 function(sandstorm_add_node_capnp)
+  set(_meteor_release_file "${PROJECT_SOURCE_DIR}/shell/.meteor/release")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${_meteor_release_file}")
+
   set(SANDSTORM_METEOR_DEV_BUNDLE "${SANDSTORM_METEOR_DEV_BUNDLE}" CACHE PATH
     "Meteor dev bundle used to build capnp.node")
   set(SANDSTORM_NODE_EXECUTABLE "${SANDSTORM_NODE_EXECUTABLE}" CACHE FILEPATH
@@ -6,34 +10,73 @@ function(sandstorm_add_node_capnp)
   set(SANDSTORM_NODE_INCLUDE_DIR "${SANDSTORM_NODE_INCLUDE_DIR}" CACHE PATH
     "Directory containing Node headers")
 
-  if(NOT SANDSTORM_NODE_EXECUTABLE OR NOT SANDSTORM_NODE_INCLUDE_DIR)
-    if(NOT SANDSTORM_METEOR_DEV_BUNDLE)
-      execute_process(
-        COMMAND "${PROJECT_SOURCE_DIR}/find-meteor-dev-bundle.sh"
-        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
-        OUTPUT_VARIABLE _meteor_dev_bundle
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        RESULT_VARIABLE _meteor_result)
-      if(NOT _meteor_result EQUAL 0 OR NOT _meteor_dev_bundle)
-        message(FATAL_ERROR
-          "Could not locate the Meteor dev bundle for capnp.node. Set "
-          "SANDSTORM_NODE_EXECUTABLE and SANDSTORM_NODE_INCLUDE_DIR to "
-          "use a custom Node installation.")
-      endif()
-      set(SANDSTORM_METEOR_DEV_BUNDLE "${_meteor_dev_bundle}" CACHE PATH
-        "Meteor dev bundle used to build capnp.node" FORCE)
-    endif()
+  # Remember which paths CMake derived from Meteor so a release-file change can
+  # refresh them without overwriting explicit Node or dev-bundle overrides. The
+  # layout check adopts caches created before this marker existed.
+  set(_node_paths_match_bundle FALSE)
+  if(SANDSTORM_METEOR_DEV_BUNDLE AND
+      SANDSTORM_NODE_EXECUTABLE STREQUAL
+        "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node" AND
+      SANDSTORM_NODE_INCLUDE_DIR STREQUAL
+        "${SANDSTORM_METEOR_DEV_BUNDLE}/include/node")
+    set(_node_paths_match_bundle TRUE)
+  endif()
+  if(NOT DEFINED SANDSTORM_AUTO_METEOR_DEV_BUNDLE AND
+      _node_paths_match_bundle AND
+      SANDSTORM_METEOR_DEV_BUNDLE MATCHES "/packages/meteor-tool/")
+    set(SANDSTORM_AUTO_METEOR_DEV_BUNDLE
+      "${SANDSTORM_METEOR_DEV_BUNDLE}" CACHE INTERNAL
+      "Last automatically resolved Meteor dev bundle")
+  endif()
 
-    if(NOT SANDSTORM_NODE_EXECUTABLE)
-      set(SANDSTORM_NODE_EXECUTABLE
-        "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node" CACHE FILEPATH
-        "Node executable used to test capnp.node" FORCE)
+  set(_resolve_meteor_dev_bundle FALSE)
+  if(NOT SANDSTORM_METEOR_DEV_BUNDLE AND
+      NOT SANDSTORM_NODE_EXECUTABLE AND
+      NOT SANDSTORM_NODE_INCLUDE_DIR)
+    set(_resolve_meteor_dev_bundle TRUE)
+  elseif(DEFINED SANDSTORM_AUTO_METEOR_DEV_BUNDLE AND
+      SANDSTORM_METEOR_DEV_BUNDLE STREQUAL
+        "${SANDSTORM_AUTO_METEOR_DEV_BUNDLE}" AND
+      _node_paths_match_bundle)
+    set(_resolve_meteor_dev_bundle TRUE)
+  endif()
+
+  if(_resolve_meteor_dev_bundle)
+    execute_process(
+      COMMAND "${PROJECT_SOURCE_DIR}/find-meteor-dev-bundle.sh"
+      WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+      OUTPUT_VARIABLE _meteor_dev_bundle
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE _meteor_result)
+    if(NOT _meteor_result EQUAL 0 OR NOT _meteor_dev_bundle)
+      message(FATAL_ERROR
+        "Could not locate the Meteor dev bundle for capnp.node. Set "
+        "SANDSTORM_NODE_EXECUTABLE and SANDSTORM_NODE_INCLUDE_DIR to "
+        "use a custom Node installation.")
     endif()
-    if(NOT SANDSTORM_NODE_INCLUDE_DIR)
-      set(SANDSTORM_NODE_INCLUDE_DIR
-        "${SANDSTORM_METEOR_DEV_BUNDLE}/include/node" CACHE PATH
-        "Directory containing Node headers" FORCE)
-    endif()
+    set(SANDSTORM_METEOR_DEV_BUNDLE "${_meteor_dev_bundle}" CACHE PATH
+      "Meteor dev bundle used to build capnp.node" FORCE)
+    set(SANDSTORM_NODE_EXECUTABLE
+      "${_meteor_dev_bundle}/bin/node" CACHE FILEPATH
+      "Node executable used to test capnp.node" FORCE)
+    set(SANDSTORM_NODE_INCLUDE_DIR
+      "${_meteor_dev_bundle}/include/node" CACHE PATH
+      "Directory containing Node headers" FORCE)
+    set(SANDSTORM_AUTO_METEOR_DEV_BUNDLE "${_meteor_dev_bundle}"
+      CACHE INTERNAL "Last automatically resolved Meteor dev bundle" FORCE)
+  elseif(SANDSTORM_METEOR_DEV_BUNDLE AND
+      NOT SANDSTORM_NODE_EXECUTABLE AND
+      NOT SANDSTORM_NODE_INCLUDE_DIR)
+    set(SANDSTORM_NODE_EXECUTABLE
+      "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node" CACHE FILEPATH
+      "Node executable used to test capnp.node" FORCE)
+    set(SANDSTORM_NODE_INCLUDE_DIR
+      "${SANDSTORM_METEOR_DEV_BUNDLE}/include/node" CACHE PATH
+      "Directory containing Node headers" FORCE)
+  elseif(NOT SANDSTORM_NODE_EXECUTABLE OR NOT SANDSTORM_NODE_INCLUDE_DIR)
+    message(FATAL_ERROR
+      "Set both SANDSTORM_NODE_EXECUTABLE and SANDSTORM_NODE_INCLUDE_DIR "
+      "when using a custom Node installation.")
   endif()
 
   if(NOT EXISTS "${SANDSTORM_NODE_EXECUTABLE}")
@@ -53,8 +96,13 @@ function(sandstorm_add_node_capnp)
     SUFFIX ".node")
   target_include_directories(node_capnp PRIVATE
     "${SANDSTORM_NODE_INCLUDE_DIR}")
+  # Node 24's V8 headers require C++20. Keep that requirement scoped to the
+  # addon rather than changing Sandstorm's native runtime language standard.
+  target_compile_features(node_capnp PRIVATE cxx_std_20)
   # node-capnp's frozen Node 14 branch uses legacy Cap'n Proto and Node APIs.
-  target_compile_options(node_capnp PRIVATE -Wno-deprecated-declarations)
+  target_compile_options(node_capnp PRIVATE
+    -Wno-deprecated-declarations
+    "SHELL:-include ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/NodeCapnpCompat.h")
   target_link_libraries(node_capnp PRIVATE
     sandstorm_build_options
     CapnProto::capnp-rpc
