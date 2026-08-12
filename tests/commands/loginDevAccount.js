@@ -20,6 +20,7 @@ var crypto = require("crypto");
 var utils = require("../utils");
 
 exports.command = function (name, isAdmin, callback) {
+  var expectDifferentUser = !name;
   if (!name) {
     name = crypto.randomBytes(10).toString("hex");
   }
@@ -35,7 +36,7 @@ exports.command = function (name, isAdmin, callback) {
     .frame(null)
     .url(this.launch_url + "/")
     .timeouts("script", 10000)
-    .executeAsync(function (displayName, admin, done) {
+    .executeAsync(function (displayName, admin, expectDifferentUser, done) {
       var deadline = Date.now() + 9000;
 
       function waitFor(description, getValue, callback) {
@@ -70,6 +71,7 @@ exports.command = function (name, isAdmin, callback) {
       }
 
       waitFor("Meteor login API", getLoginApi, function (api) {
+        var previousUserId = api.Meteor.userId();
         var profile = {
           name: displayName,
           pronoun: "robot",
@@ -86,14 +88,15 @@ exports.command = function (name, isAdmin, callback) {
             }
 
             waitFor("userId after createDevAccount", function () {
-              return api.Meteor.userId();
+              var userId = api.Meteor.userId();
+              return userId && (!expectDifferentUser || userId !== previousUserId) && userId;
             }, function () {
               done({ success: true });
             });
           },
         });
       });
-    }, [loginName, !!isAdmin], function (result) {
+    }, [loginName, !!isAdmin, expectDifferentUser], function (result) {
       var ok = result.status === 0 && result.value && result.value.success;
       if (!ok && result.value && result.value.error) {
         console.log("Login error:", result.value.error);
