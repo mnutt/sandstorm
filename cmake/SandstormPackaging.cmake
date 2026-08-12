@@ -156,6 +156,7 @@ function(sandstorm_add_packaging_targets)
     WORKING_DIRECTORY "${_meteor_testapp_work}"
     DEPENDS
       spk
+      sandstorm-http-bridge
       "${_meteor_testapp_stage_stamp}"
       "${_meteor_testapp_source}/meteor-testapp.key"
     COMMENT "Packing meteor-testapp.spk"

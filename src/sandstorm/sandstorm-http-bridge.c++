@@ -2748,11 +2748,9 @@ class SandstormHttpBridgeMain {
 public:
   SandstormHttpBridgeMain(kj::ProcessContext& context)
       : context(context),
-        ioContext(kj::setupAsyncIo()),
+        ioContext(setupAsyncIo()),
         appMembranePolicy(kj::refcounted<SaveMembranePolicy>()),
-        appHooksFulfiller(nullptr) {
-    kj::UnixEventPort::captureSignal(SIGCHLD);
-  }
+        appHooksFulfiller(nullptr) {}
 
   kj::MainFunc getMain() {
     return kj::MainBuilder(context, "Sandstorm version " SANDSTORM_VERSION,
@@ -2992,6 +2990,14 @@ public:
   }
 
 private:
+  static kj::AsyncIoContext setupAsyncIo() {
+    // captureSignal() changes the calling thread's signal mask. KJ requires the mask to remain
+    // unchanged after UnixEventPort construction, so capture SIGCHLD before setupAsyncIo()
+    // snapshots it.
+    kj::UnixEventPort::captureSignal(SIGCHLD);
+    return kj::setupAsyncIo();
+  }
+
   kj::ProcessContext& context;
   kj::AsyncIoContext ioContext;
   kj::Own<kj::NetworkAddress> address;
