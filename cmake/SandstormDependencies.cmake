@@ -88,7 +88,16 @@ ExternalProject_Add(sandstorm_libsodium_external
       --enable-static
       --with-pic
       "CC=${CMAKE_C_COMPILER}"
+  # libsodium reuses its versioned-library flags for internal convenience
+  # archives, which libtool 2.5 warns it must ignore.
   BUILD_COMMAND "${SANDSTORM_MAKE_EXECUTABLE}" -j
+    "libaesni_la_LDFLAGS="
+    "libavx2_la_LDFLAGS="
+    "libavx512f_la_LDFLAGS="
+    "librdrand_la_LDFLAGS="
+    "libsse2_la_LDFLAGS="
+    "libsse41_la_LDFLAGS="
+    "libssse3_la_LDFLAGS="
   INSTALL_COMMAND ""
   BUILD_BYPRODUCTS
     "${SANDSTORM_SODIUM_BUILD_DIR}/src/libsodium/.libs/libsodium.a")

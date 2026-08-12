@@ -124,7 +124,8 @@ private:
   void maybeFinishMountingProc();
   void permanentlyDropSuperuser();
   void enterSandbox();
-  [[noreturn]] void runChild(int apiFd, kj::AutoCloseFd startEventFd);
+  [[noreturn]] void runChild(
+      int apiFd, kj::AutoCloseFd startEventFd, kj::ArrayPtr<char*> argv, kj::ArrayPtr<char*> env);
 
   [[noreturn]] void runSupervisor(int apiFd, kj::AutoCloseFd startEventFd);
 

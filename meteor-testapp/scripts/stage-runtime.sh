@@ -57,7 +57,8 @@ mkdir -p "$runtime_dir/bin"
     dependencies.underscore=1.13.8 \
     dependencies.node-gyp=12.4.0 \
     dependencies.@mapbox/node-pre-gyp=2.0.3
-  meteor npm install --omit=dev --no-audit
+  # Meteor otherwise passes npm rebuild's obsolete --update-binary option.
+  METEOR_NPM_REBUILD_FLAGS=" " meteor npm install --omit=dev --no-audit
   audit_runtime
 )
 

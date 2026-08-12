@@ -18,7 +18,7 @@
 
 var fs = require("fs");
 var path = require("path");
-var Jimp = require("jimp");
+var { Jimp, diff } = require("jimp");
 
 var baselineDir = path.resolve(process.argv[2] || "visual-snapshots/master");
 var currentDir = path.resolve(process.argv[3] || "visual-snapshots/current");
@@ -109,8 +109,8 @@ async function compareOne(relativePath) {
     };
   }
 
-  var diff = Jimp.diff(baseline, current);
-  if (diff.percent === 0) {
+  var difference = diff(baseline, current);
+  if (difference.percent === 0) {
     return {
       status: "unchanged",
       relativePath: relativePath,
@@ -122,7 +122,7 @@ async function compareOne(relativePath) {
 
   var diffPath = path.join(diffDir, relativePath);
   fs.mkdirSync(path.dirname(diffPath), { recursive: true });
-  await diff.image.writeAsync(diffPath);
+  await difference.image.write(diffPath);
 
   return {
     status: "changed",
@@ -130,7 +130,7 @@ async function compareOne(relativePath) {
     baselinePath: baselinePath,
     currentPath: currentPath,
     diffPath: diffPath,
-    percent: diff.percent
+    percent: difference.percent
   };
 }
 

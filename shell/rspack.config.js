@@ -3,10 +3,12 @@ const { IgnorePlugin } = require("@rspack/core");
 const path = require("node:path");
 
 module.exports = defineConfig((Meteor) => ({
-  performance: {
-    maxAssetSize: 1024 * 1024,
-    maxEntrypointSize: 1536 * 1024,
-  },
+  performance: Meteor.isServer
+    ? false
+    : {
+        maxAssetSize: 1024 * 1024,
+        maxEntrypointSize: 1536 * 1024,
+      },
   resolve: Meteor.isServer
     ? {
         alias: {

@@ -598,6 +598,29 @@ bool HeaderWhitelist::matches(kj::StringPtr header) const {
 
 Subprocess::Subprocess(Options&& options)
     : name(kj::heapString(options.argv.size() > 0 ? options.argv[0] : options.executable)) {
+  KJ_STACK_ARRAY(char*, argv, options.argv.size() + 1, 32, 256);
+  for (auto i: kj::indices(options.argv)) {
+    // exec*() is not const-correct. :(
+    argv[i] = const_cast<char*>(options.argv[i].cStr());
+  }
+  argv[options.argv.size()] = nullptr;
+
+  size_t environmentSize = 0;
+  KJ_IF_MAYBE(e, options.environment) {
+    environmentSize = e->size();
+  }
+  KJ_STACK_ARRAY(char*, environment, environmentSize + 1, 64, 256);
+  KJ_IF_MAYBE(e, options.environment) {
+    for (auto i: kj::indices(*e)) {
+      // exec*() is not const-correct. :(
+      environment[i] = const_cast<char*>((*e)[i].cStr());
+    }
+    environment[e->size()] = nullptr;
+  }
+
+  char** argvp = argv.begin();
+  char** environmentp = environment.begin();
+
   KJ_SYSCALL(pid = fork());
   if (pid == 0) {
     KJ_DEFER(_exit(1));  // Do not under any circumstances return from this stack frame!
@@ -649,29 +672,11 @@ Subprocess::Subprocess(Options&& options)
         KJ_SYSCALL(setresuid(*u, *u, *u));
       }
 
-      // Make the args vector.
-      char* argv[options.argv.size() + 1];
-      for (auto i: kj::indices(options.argv)) {
-        // exec*() is not const-correct. :(
-        argv[i] = const_cast<char*>(options.argv[i].cStr());
-      }
-      argv[options.argv.size()] = nullptr;
-      char** argvp = argv;  // lambda can't capture variable-size array
-
-      KJ_IF_MAYBE(e, options.environment) {
-        // Make the environment vector.
-        char* environ[e->size() + 1];
-        for (auto i: kj::indices(*e)) {
-          // exec*() is not const-correct. :(
-          environ[i] = const_cast<char*>((*e)[i].cStr());
-        }
-        environ[e->size()] = nullptr;
-        char** environp = environ;  // lambda can't capture variable-size array
-
+      if (options.environment != nullptr) {
         if (options.searchPath) {
-          KJ_SYSCALL(execvpe(options.executable.cStr(), argvp, environp), options.executable);
+          KJ_SYSCALL(execvpe(options.executable.cStr(), argvp, environmentp), options.executable);
         } else {
-          KJ_SYSCALL(execve(options.executable.cStr(), argvp, environp), options.executable);
+          KJ_SYSCALL(execve(options.executable.cStr(), argvp, environmentp), options.executable);
         }
       } else {
         if (options.searchPath) {

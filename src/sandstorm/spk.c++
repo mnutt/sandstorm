@@ -228,6 +228,9 @@ private:
   kj::Maybe<kj::String> installHome;
 
   // Used to parse package def.
+  kj::Own<kj::Filesystem> schemaFilesystem = kj::newDiskFilesystem();
+  kj::Vector<kj::Own<const kj::ReadableDirectory>> schemaDirectories;
+  kj::Vector<kj::Array<const kj::ReadableDirectory*>> schemaImportPaths;
   capnp::SchemaParser parser;
   kj::Vector<kj::String> importPath;
   spk::PackageDefinition::Reader packageDef;
@@ -290,11 +293,38 @@ private:
       importPath.add(kj::heapString("/usr/local/include"));
       importPath.add(kj::heapString("/usr/include"));
 
-      auto importPathPtrs = KJ_MAP(p, importPath) -> kj::StringPtr { return p; };
+      kj::Vector<const kj::ReadableDirectory*> importDirectories(importPath.size());
+      for (auto& importDirectory: importPath) {
+        auto path = schemaFilesystem->getCurrentPath().evalNative(importDirectory);
+        kj::Own<const kj::ReadableDirectory> directory;
+        KJ_IF_MAYBE(d, schemaFilesystem->getRoot().tryOpenSubdir(path)) {
+          directory = kj::mv(*d);
+        } else {
+          // Match parseDiskFile()'s behavior of ignoring import paths that do not exist.
+          directory = kj::newInMemoryDirectory(kj::nullClock());
+        }
+
+        importDirectories.add(directory.get());
+        schemaDirectories.add(kj::mv(directory));
+      }
+      schemaImportPaths.add(importDirectories.releaseAsArray());
+
+      auto schemaPath = schemaFilesystem->getCurrentPath().evalNative(filename);
+      auto schemaFilename = schemaPath.basename().clone();
+      kj::Own<const kj::ReadableDirectory> schemaDirectory;
+      if (schemaPath.parent().size() == 0) {
+        schemaDirectory = kj::Own<const kj::ReadableDirectory>(
+            &schemaFilesystem->getRoot(), kj::NullDisposer::instance);
+      } else {
+        schemaDirectory = schemaFilesystem->getRoot().openSubdir(schemaPath.parent());
+      }
+      const kj::ReadableDirectory* schemaDirectoryPtr = schemaDirectory.get();
+      schemaDirectories.add(kj::mv(schemaDirectory));
 
       parser.loadCompiledTypeAndDependencies<spk::PackageDefinition>();
 
-      auto schema = parser.parseDiskFile(filename, filename, importPathPtrs);
+      auto schema = parser.parseFromDirectory(
+          *schemaDirectoryPtr, kj::mv(schemaFilename), schemaImportPaths.back());
       KJ_IF_MAYBE(symbol, schema.findNested(constantName)) {
         if (!symbol->getProto().isConst()) {
           return kj::str("\"", constantName, "\" is not a constant");
@@ -1405,7 +1435,7 @@ private:
     // use as input below. We'll do all that in a thread to keep the code simple.
     byte packageHash[crypto_hash_sha256_BYTES];
     Pipe spkPipe = Pipe::make();
-    auto hashThread = new kj::Thread([&]() {
+    auto hashThread = kj::heap<kj::Thread>([&]() {
       crypto_hash_sha256_state packageHashState;
       KJ_ASSERT(crypto_hash_sha256_init(&packageHashState) == 0);
 
@@ -1419,13 +1449,14 @@ private:
         out.write(buffer, n);
       }
 
-      KJ_ASSERT(crypto_hash_sha256_final(&packageHashState, packageHash));
+      KJ_ASSERT(crypto_hash_sha256_final(&packageHashState, packageHash) == 0);
     });
 
     // Check the magic number.
     auto expectedMagic = spk::MAGIC_NUMBER.get();
-    byte magic[expectedMagic.size()];
-    kj::FdInputStream(spkPipe.readEnd.get()).read(magic, expectedMagic.size());
+    byte magic[8];
+    KJ_ASSERT(expectedMagic.size() == sizeof(magic));
+    kj::FdInputStream(spkPipe.readEnd.get()).read(magic, sizeof(magic));
     for (uint i: kj::indices(expectedMagic)) {
       if (magic[i] != expectedMagic[i]) {
         return validationError("Does not appear to be an .spk (bad magic number).");

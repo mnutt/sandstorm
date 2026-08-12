@@ -24,7 +24,7 @@ module.exports = {
   "Test title" : function (browser) {
     browser
       .init()
-      .assert.title('Sandstorm')
+      .assert.titleEquals('Sandstorm')
       .captureVisualSnapshot("body", "shell-root-logged-out")
       .end();
   },
