@@ -8,6 +8,7 @@ stage_dir="${SANDSTORM_METEOR_TESTAPP_STAGE_DIR:-$app_dir/.meteor-spk}"
 runtime_dir="$stage_dir/runtime"
 bundle_dir="$stage_dir/bundle"
 package_dirs="$repo_dir/shell/packages"
+meteor_release=$(<"$app_dir/.meteor/release")
 
 audit_runtime() {
   local attempt audit_log
@@ -99,4 +100,4 @@ if [ ! -x "$runtime_dir$interpreter" ]; then
   exit 1
 fi
 
-echo "Staged Node $expected_version for Meteor 3.4.1 without Mongo at $stage_dir"
+echo "Staged Node $expected_version for ${meteor_release#METEOR@} without Mongo at $stage_dir"

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Exercises a real build-308 installation through the MongoDB 2.6 -> 7.0 and
-# Meteor 2.16 -> 3.4.1 upgrade, including a deterministic migration failure and
-# restart recovery.
+# Meteor 2.16 -> current shell upgrade, including a deterministic migration
+# failure and restart recovery.
 
 set -euo pipefail
 
@@ -11,6 +11,7 @@ BUILD_308_URL=https://dl.sandstorm.io/sandstorm-308.tar.xz
 BUILD_308_SHA256=f1317754765b11f260a757724b28e92d5318d8b277f970c99662c01bd9291879
 GATE_PORT=${SANDSTORM_UPGRADE_GATE_PORT:-9120}
 GATE_MONGO_PORT=$((GATE_PORT + 1))
+GATE_SMTP_PORT=${SANDSTORM_UPGRADE_GATE_SMTP_PORT:-$((GATE_PORT + 2))}
 CACHE_DIR="$REPO_ROOT/tmp/release-gates"
 OLD_BUNDLE="$CACHE_DIR/sandstorm-308.tar.xz"
 CURRENT_BUNDLE=${SANDSTORM_UPGRADE_GATE_BUNDLE:-"$REPO_ROOT/sandstorm-0-fast.tar.xz"}
@@ -19,6 +20,7 @@ WORK_DIR=$(mktemp -d "$CACHE_DIR/upgrade-308.XXXXXXXX")
 INSTALL_DIR="$WORK_DIR/sandstorm"
 STATE_FILE="$WORK_DIR/build-308-state.json"
 LOG_FILE="$INSTALL_DIR/var/log/sandstorm.log"
+TARGET_METEOR_RELEASE=$(<"$REPO_ROOT/shell/.meteor/release")
 
 cleanup() {
   if [ -x "$INSTALL_DIR/sandstorm" ]; then
@@ -110,6 +112,7 @@ run_upgraded_grain_test() {
 
 assert_port_free "$GATE_PORT"
 assert_port_free "$GATE_MONGO_PORT"
+assert_port_free "$GATE_SMTP_PORT"
 test -f "$CURRENT_BUNDLE" || fail "current bundle not found: $CURRENT_BUNDLE"
 
 if [ ! -f "$OLD_BUNDLE" ]; then
@@ -124,6 +127,7 @@ OVERRIDE_SANDSTORM_DEFAULT_DIR="$INSTALL_DIR" \
 sed -i \
   -e "s/^PORT=.*/PORT=$GATE_PORT/" \
   -e "s/^MONGO_PORT=.*/MONGO_PORT=$GATE_MONGO_PORT/" \
+  -e "s/^SMTP_LISTEN_PORT=.*/SMTP_LISTEN_PORT=$GATE_SMTP_PORT/" \
   -e "s|^BASE_URL=.*|BASE_URL=http://local.sandstorm.io:$GATE_PORT|" \
   -e "s|^WILDCARD_HOST=.*|WILDCARD_HOST=*.local.sandstorm.io:$GATE_PORT|" \
   -e "s/^UPDATE_CHANNEL=.*/UPDATE_CHANNEL=none/" \
@@ -147,8 +151,8 @@ old_mongo_eval '
   var account = d.users.findOne({_id: grain.userId});
   var credential = d.users.findOne({_id: account.loginCredentials[0].id});
   d.settings.update(
-    {_id: "meteor34UpgradeGate"},
-    {_id: "meteor34UpgradeGate", value: "build308-preserved"},
+    {_id: "meteorUpgradeGate"},
+    {_id: "meteorUpgradeGate", value: "build308-preserved"},
     {upsert: true});
   print(JSON.stringify({
     migrations: d.migrations.findOne({_id: "migrations_applied"}).value,
@@ -172,7 +176,7 @@ node -e '
   }
 ' "$STATE_FILE"
 
-echo "Migrating the build-308 database and starting the Meteor 3.4.1 shell"
+echo "Migrating the build-308 database and starting the ${TARGET_METEOR_RELEASE#METEOR@} shell"
 "$INSTALL_DIR/sandstorm" stop
 "$INSTALL_DIR/sandstorm" update "$CURRENT_BUNDLE"
 "$INSTALL_DIR/sandstorm" migrate-mongo
@@ -188,13 +192,21 @@ fi
 current_mongo_eval '
   const d = db.getSiblingDB("meteor");
   const migration = d.migrations.findOne({_id: "migrations_applied"});
-  const marker = d.settings.findOne({_id: "meteor34UpgradeGate"});
+  const marker = d.settings.findOne({_id: "meteorUpgradeGate"});
   const oidc = d.users.getIndexes().find((idx) => idx.name === "services.oidc.id_1");
-  if (!migration || migration.value !== 42 ||
-      !marker || marker.value !== "build308-preserved" ||
-      d.users.countDocuments() < 2 || d.grains.countDocuments() < 1 ||
-      d.packages.countDocuments() < 1 || !oidc || !oidc.unique || !oidc.sparse) {
-    throw new Error("post-upgrade database validation failed");
+  const state = {
+    migration: migration && migration.value,
+    marker: marker && marker.value,
+    users: d.users.countDocuments(),
+    grains: d.grains.countDocuments(),
+    packages: d.packages.countDocuments(),
+    oidcUnique: oidc && oidc.unique,
+    oidcSparse: oidc && oidc.sparse,
+  };
+  if (state.migration !== 42 || state.marker !== "build308-preserved" ||
+      state.users < 2 || state.grains < 1 || state.packages < 1 ||
+      !state.oidcUnique || !state.oidcSparse) {
+    throw new Error(`post-upgrade database validation failed: ${JSON.stringify(state)}`);
   }
 '
 run_upgraded_grain_test
@@ -242,7 +254,7 @@ wait_for_shell
 current_mongo_eval '
   const d = db.getSiblingDB("meteor");
   const migration = d.migrations.findOne({_id: "migrations_applied"});
-  const marker = d.settings.findOne({_id: "meteor34UpgradeGate"});
+  const marker = d.settings.findOne({_id: "meteorUpgradeGate"});
   const oidc = d.users.getIndexes().find((idx) => idx.name === "services.oidc.id_1");
   if (!migration || migration.value !== 42 ||
       !marker || marker.value !== "build308-preserved" ||

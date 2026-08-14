@@ -18,6 +18,7 @@
 const {short_wait, medium_wait, long_wait} = require('../utils');
 const testappPath = process.env.SANDSTORM_METEOR_TESTAPP_PATH ||
   require('path').resolve(__dirname + "/../assets/meteor-testapp.spk");
+const confirmInstallSelector = '#confirmInstall, .confirm-install-button';
 
 exports.command = function() {
   return this
@@ -40,6 +41,6 @@ exports.command = function() {
       const testappFile = document.querySelector("input[type=file]").files[0];
       uploadApp(testappFile);
     }, [])
-    .waitForElementVisible('.confirm-install-button', long_wait)
-    .click('.confirm-install-button')
+    .waitForElementVisible(confirmInstallSelector, long_wait)
+    .click(confirmInstallSelector)
 }
