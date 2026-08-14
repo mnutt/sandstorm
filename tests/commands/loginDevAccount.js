@@ -20,7 +20,6 @@ var crypto = require("crypto");
 var utils = require("../utils");
 
 exports.command = function (name, isAdmin, callback) {
-  var expectDifferentUser = !name;
   if (!name) {
     name = crypto.randomBytes(10).toString("hex");
   }
@@ -36,7 +35,7 @@ exports.command = function (name, isAdmin, callback) {
     .frame(null)
     .url(this.launch_url + "/")
     .timeouts("script", 10000)
-    .executeAsync(function (displayName, admin, expectDifferentUser, done) {
+    .executeAsync(function (displayName, admin, done) {
       var deadline = Date.now() + 9000;
 
       function waitFor(description, getValue, callback) {
@@ -63,40 +62,35 @@ exports.command = function (name, isAdmin, callback) {
         var MeteorObj = meteorPkg && meteorPkg.Meteor;
 
         if (AccountsObj && typeof AccountsObj.callLoginMethod === "function" &&
-            MeteorObj && typeof MeteorObj.userId === "function") {
-          return { Accounts: AccountsObj, Meteor: MeteorObj };
+            MeteorObj && typeof MeteorObj.loggingIn === "function" && !MeteorObj.loggingIn()) {
+          return AccountsObj;
         }
 
         return null;
       }
 
-      waitFor("Meteor login API", getLoginApi, function (api) {
-        var previousUserId = api.Meteor.userId();
+      // A page load may still be resuming the previously-stored session. Starting another login
+      // concurrently can let that resume overwrite the new account after navigation.
+      waitFor("Meteor login API and initial login", getLoginApi, function (accounts) {
         var profile = {
           name: displayName,
           pronoun: "robot",
           handle: "_" + displayName.toLowerCase().replace(/[^a-z0-9_]+/g, "_"),
         };
 
-        api.Accounts.callLoginMethod({
+        accounts.callLoginMethod({
           methodName: "createDevAccount",
           methodArguments: [displayName, !!admin, profile, displayName + "@example.com"],
           userCallback: function (err) {
             if (err) {
               done({ success: false, error: err.reason || err.message || String(err) });
-              return;
-            }
-
-            waitFor("userId after createDevAccount", function () {
-              var userId = api.Meteor.userId();
-              return userId && (!expectDifferentUser || userId !== previousUserId) && userId;
-            }, function () {
+            } else {
               done({ success: true });
-            });
+            }
           },
         });
       });
-    }, [loginName, !!isAdmin, expectDifferentUser], function (result) {
+    }, [loginName, !!isAdmin], function (result) {
       var ok = result.status === 0 && result.value && result.value.success;
       if (!ok && result.value && result.value.error) {
         console.log("Login error:", result.value.error);
