@@ -747,12 +747,10 @@ Router.map(function () {
 
 export {
   billingPromptState,
-  credentialsSubscription,
   determineAppName,
   formatAccountExpires,
   formatAccountExpiresIn,
   formatInCountdown,
   isDemoExpired,
-  logoutSandstorm,
   makeAccountSettingsUi,
 };
