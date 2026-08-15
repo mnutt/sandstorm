@@ -348,6 +348,7 @@ function(sandstorm_add_packaging_targets)
       "SPK_BIN=$<TARGET_FILE:spk>"
       "CAPNP_BIN=$<TARGET_FILE:capnp_tool>"
       "CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
+      "SANDSTORM_DEV_ISOLATE_SCHEMA_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/src"
       "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
       "${PROJECT_SOURCE_DIR}/tests/isolate-capnp-toolchain.test.js"
     DEPENDS

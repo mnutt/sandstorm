@@ -6,7 +6,13 @@ function(sandstorm_generate_capnp output_sources output_headers)
   set(_sources)
   set(_headers)
   foreach(_schema IN LISTS ARGN)
-    file(RELATIVE_PATH _relative_schema "${_source_root}" "${_schema}")
+    set(_schema_source_root "${_source_root}")
+    set(_capnp_source_root "${PROJECT_SOURCE_DIR}/deps/capnproto/c++/src")
+    string(FIND "${_schema}" "${_capnp_source_root}/" _capnp_prefix_index)
+    if(_capnp_prefix_index EQUAL 0)
+      set(_schema_source_root "${_capnp_source_root}")
+    endif()
+    file(RELATIVE_PATH _relative_schema "${_schema_source_root}" "${_schema}")
     set(_output_base "${_output_root}/${_relative_schema}")
     get_filename_component(_output_dir "${_output_base}" DIRECTORY)
     file(MAKE_DIRECTORY "${_output_dir}")
@@ -17,7 +23,7 @@ function(sandstorm_generate_capnp output_sources output_headers)
       OUTPUT "${_source}" "${_header}"
       COMMAND $<TARGET_FILE:capnp_tool> compile
         -o "$<TARGET_FILE:capnpc_cpp>:${_output_root}"
-        --src-prefix "${_source_root}"
+        --src-prefix "${_schema_source_root}"
         -I "${_source_root}"
         -I "${PROJECT_SOURCE_DIR}/deps/capnproto/c++/src"
         "${_schema}"
@@ -32,4 +38,3 @@ function(sandstorm_generate_capnp output_sources output_headers)
   set(${output_sources} "${_sources}" PARENT_SCOPE)
   set(${output_headers} "${_headers}" PARENT_SCOPE)
 endfunction()
-

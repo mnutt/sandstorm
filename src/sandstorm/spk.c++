@@ -4740,18 +4740,20 @@ private:
     buf[n] = '\0';
     auto exePath = kj::StringPtr(buf, n);
     if (exePath.endsWith("/sandstorm")) {
-      auto installHome = kj::StringPtr(
-          exePath.begin(), exePath.size() - strlen("/sandstorm"));
-      candidates.add(kj::str(installHome, suffix));
+      candidates.add(kj::str(
+          exePath.slice(0, exePath.size() - strlen("/sandstorm")), suffix));
     } else if (exePath.endsWith("/bin/spk")) {
-      auto installHome = kj::StringPtr(
-          exePath.begin(), exePath.size() - strlen("/bin/spk"));
-      candidates.add(kj::str(installHome, suffix));
+      candidates.add(kj::str(
+          exePath.slice(0, exePath.size() - strlen("/bin/spk")), suffix));
     }
   }
 
   static kj::Maybe<kj::String> tryDevIsolateSandstormSchemaIncludeDir() {
     kj::Vector<kj::String> candidates;
+    auto configuredIncludeDir = getenv("SANDSTORM_DEV_ISOLATE_SCHEMA_INCLUDE_DIR");
+    if (configuredIncludeDir != nullptr && strlen(configuredIncludeDir) > 0) {
+      candidates.add(kj::heapString(configuredIncludeDir));
+    }
     candidates.add(kj::heapString("src"));
 
     addDevIsolateInstallHomeCandidates(candidates, "/src");
