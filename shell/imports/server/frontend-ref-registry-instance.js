@@ -1,3 +1,3 @@
-import { globalFrontendRefRegistry } from "/imports/server/frontend-ref";
+import { globalFrontendRefRegistry } from "/imports/server/global-frontend-ref-registry";
 
 export const frontendRefRegistry = globalFrontendRefRegistry;

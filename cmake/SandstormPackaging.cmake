@@ -602,6 +602,10 @@ function(sandstorm_add_packaging_targets)
       "${_bundle_dir}/usr/include/sandstorm/package.capnp"
     COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -f
       "${_bundle_dir}/usr/include/sandstorm/isolate-bridge.capnp"
+    COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -f
+      "${_bundle_dir}/node_modules/sandstorm/outbound-http-session.capnp"
+    COMMAND "${SANDSTORM_TEST_EXECUTABLE}" -f
+      "${_bundle_dir}/node_modules/sandstorm/outbound-http-session-impl.capnp"
     DEPENDS package-fast
     COMMENT "Verifying the isolate release bundle"
     VERBATIM)

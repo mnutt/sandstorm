@@ -139,6 +139,8 @@ function(sandstorm_install_native)
     identity-impl.capnp
     identity.capnp
     ip.capnp
+    outbound-http-session-impl.capnp
+    outbound-http-session.capnp
     package.capnp
     payments.capnp
     persistentuiview.capnp
@@ -184,7 +186,10 @@ function(sandstorm_install_native)
       --prefix "${CMAKE_BINARY_DIR}/stage"
       --component native
     COMMAND "${CMAKE_COMMAND}" -E touch "${_native_stage_stamp}"
-    DEPENDS ${_native_targets} isolate-host
+    DEPENDS
+      ${_native_targets}
+      isolate-host
+      "${PROJECT_SOURCE_DIR}/cmake/SandstormInstall.cmake"
     COMMENT "Staging native Sandstorm build outputs"
     VERBATIM)
   add_custom_target(stage-native DEPENDS "${_native_stage_stamp}")
