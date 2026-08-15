@@ -46,6 +46,9 @@ set(_sandstorm_schema_relative_paths
 list(TRANSFORM _sandstorm_schema_relative_paths
   PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/"
   OUTPUT_VARIABLE _sandstorm_schemas)
+list(APPEND _sandstorm_schemas
+  "${PROJECT_SOURCE_DIR}/deps/capnproto/c++/src/capnp/compat/byte-stream.capnp"
+  "${PROJECT_SOURCE_DIR}/deps/capnproto/c++/src/capnp/compat/http-over-capnp.capnp")
 
 sandstorm_generate_capnp(_sandstorm_schema_sources _sandstorm_schema_headers
   ${_sandstorm_schemas})
@@ -107,6 +110,40 @@ add_custom_command(
   VERBATIM)
 list(APPEND _isolate_generated_headers "${_capnp_es_runtime_header}")
 
+set(_platform_capnp_es_manifest
+  "${CMAKE_CURRENT_SOURCE_DIR}/isolate/platform-capnp-es/schemas.txt")
+file(STRINGS "${_platform_capnp_es_manifest}" _platform_capnp_es_schema_paths
+  REGEX "^[^#].*\\.capnp$")
+list(TRANSFORM _platform_capnp_es_schema_paths
+  PREPEND "${PROJECT_SOURCE_DIR}/src/")
+if(SANDSTORM_CAPNP_ES_COMPILER_MODULE)
+  set(_platform_capnp_es_compiler "${SANDSTORM_CAPNP_ES_COMPILER_MODULE}")
+else()
+  set(_platform_capnp_es_compiler
+    "${CMAKE_BINARY_DIR}/capnp-es-npm/node_modules/@mnutt/capnp-es/dist/compiler/index.mjs")
+endif()
+set(_platform_capnp_es_header
+  "${CMAKE_BINARY_DIR}/generated/sandstorm/isolate/platform-capnp-es.js.h")
+add_custom_command(
+  OUTPUT "${_platform_capnp_es_header}"
+  COMMAND "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/cmake/EmbedPlatformCapnpEs.py"
+    "${_platform_capnp_es_header}"
+    "${_platform_capnp_es_manifest}"
+    "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+    "$<TARGET_FILE:capnp_tool>"
+    "${_platform_capnp_es_compiler}"
+    "${PROJECT_SOURCE_DIR}/src"
+  DEPENDS
+    "${PROJECT_SOURCE_DIR}/cmake/EmbedPlatformCapnpEs.py"
+    "${_platform_capnp_es_manifest}"
+    ${_platform_capnp_es_schema_paths}
+    "${_platform_capnp_es_compiler}"
+    capnp_tool
+  COMMENT "Generating isolate platform capnp-es modules"
+  VERBATIM)
+list(APPEND _isolate_generated_headers "${_platform_capnp_es_header}")
+
 add_library(sandstorm_schemas STATIC
   ${_sandstorm_schema_sources}
   ${_sandstorm_schema_headers})
@@ -141,6 +178,8 @@ add_library(sandstorm_core STATIC
   util/http.c++
   web-session-bridge.c++
   "${PROJECT_SOURCE_DIR}/src/joyent-http/http_parser.c++"
+  "${PROJECT_SOURCE_DIR}/deps/capnproto/c++/src/capnp/compat/byte-stream.c++"
+  "${PROJECT_SOURCE_DIR}/deps/capnproto/c++/src/capnp/compat/http-over-capnp.c++"
   "${SANDSTORM_BPF_FILTER_HEADER}")
 add_dependencies(sandstorm_core sandstorm_seccomp_filter)
 target_include_directories(sandstorm_core PUBLIC
