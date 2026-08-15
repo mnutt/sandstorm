@@ -65,10 +65,31 @@ function(sandstorm_install_native)
   # directly with Clang flags. Hide the symlink farm so it finds Clang itself.
   set(_bazel_path "$ENV{PATH}")
   string(REGEX REPLACE "^/usr/lib/ccache:" "" _bazel_path "${_bazel_path}")
+
+  # Keep Bazel's compiler (and its detected standard-library include paths) in
+  # sync with the compiler selected by CMake. This also avoids stale Bazel
+  # toolchain detection when libc++ is installed after the first build.
+  set(_bazel_build_options
+    --config=release
+    "--repo_env=CC=${CMAKE_C_COMPILER}")
+
+  # Some Linux distributions, including Arch, package the static libc++ ABI
+  # runtime separately. Workerd's Linux configuration links libc++.a directly,
+  # so add libc++abi.a when the platform provides it as a separate archive.
+  set(_saved_find_library_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
+  set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+  find_library(SANDSTORM_LIBCXXABI_STATIC_LIBRARY NAMES c++abi)
+  set(CMAKE_FIND_LIBRARY_SUFFIXES "${_saved_find_library_suffixes}")
+  if(SANDSTORM_LIBCXXABI_STATIC_LIBRARY)
+    list(APPEND _bazel_build_options
+      "--linkopt=${SANDSTORM_LIBCXXABI_STATIC_LIBRARY}"
+      "--host_linkopt=${SANDSTORM_LIBCXXABI_STATIC_LIBRARY}")
+  endif()
+
   add_custom_command(
     OUTPUT "${_isolate_host_bin}"
     COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_bazel_path}"
-      "${_bazel}" build --config=release
+      "${_bazel}" build ${_bazel_build_options}
       //src/workerd/server:sandstorm-isolate-host
     COMMAND "${CMAKE_COMMAND}" -E copy
       "${_workerd_embed_dir}/bazel-bin/src/workerd/server/sandstorm-isolate-host"

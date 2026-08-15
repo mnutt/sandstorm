@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Sandstorm contributors
 // Licensed under the Apache License, Version 2.0.
 
-#include "isolate-host.capnp.h"
-#include "isolate-worker-source.capnp.h"
+#include "sandstorm/isolate-host.capnp.h"
+#include "sandstorm/isolate-worker-source.capnp.h"
 
 #include <capnp/ez-rpc.h>
 #include <capnp/compat/http-over-capnp.h>

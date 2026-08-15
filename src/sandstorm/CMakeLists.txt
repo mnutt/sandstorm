@@ -27,6 +27,7 @@ set(_sandstorm_schema_relative_paths
   ip.capnp
   mime.capnp
   package.capnp
+  outbound-http-session-impl.capnp
   outbound-http-session.capnp
   payments.capnp
   persistentuiview.capnp
@@ -165,9 +166,11 @@ add_library(sandstorm_core STATIC
   fuse.c++
   gateway.c++
   id-to-text.c++
+  isolate-capnp-framing.c++
   isolate-native-host-launch.c++
   isolate-session-registry.c++
   isolate-supervisor.c++
+  isolate-util.c++
   sandbox.c++
   send-fd.c++
   smtp-proxy.c++

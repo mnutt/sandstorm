@@ -1546,6 +1546,9 @@ class AdmissionPool {
 
 void initRuntimeConfig(capnp::MallocMessageBuilder& message, kj::StringPtr bootstrapAddress) {
   auto config = message.initRoot<workerd::server::config::Config>();
+  // Server::run() takes structured-logging policy from the runtime config,
+  // overriding the Worker::LoggingOptions passed to Server's constructor.
+  config.initLogging().setStructuredLogging(true);
   auto service = config.initServices(1)[0];
   service.setName("sandstorm-loader-bootstrap");
   auto worker = service.initWorker();
