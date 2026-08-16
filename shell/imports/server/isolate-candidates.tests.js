@@ -174,4 +174,21 @@ describe("isolate candidate persistence", function () {
     await expectCandidateError(
       removeOwnedIsolateCandidate(db, ownerId, candidate._id), "candidate-in-use");
   });
+
+  it("refuses to remove a candidate reserved by publication", async function () {
+    const candidate = {
+      _id: "publishing-candidate",
+      ownerId,
+      publishingOperationId: "publish-operation",
+    };
+    const db = {
+      collections: {
+        isolateCandidates: { findOneAsync: async () => candidate },
+        grains: { findOneAsync: async () => null },
+      },
+    };
+
+    await expectCandidateError(
+      removeOwnedIsolateCandidate(db, ownerId, candidate._id), "candidate-in-use");
+  });
 });

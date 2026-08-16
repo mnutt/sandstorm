@@ -165,6 +165,15 @@ async function removeOwnedIsolateCandidate(db, accountIdInput, candidateIdInput)
     fail("candidate-in-use", "This isolate candidate belongs to a published revision.");
   }
 
+  if (candidate.publishingOperationId ||
+      (db.collections.isolatePublishOperations &&
+       await db.collections.isolatePublishOperations.findOneAsync({
+         candidateId,
+         state: { $ne: "published" },
+       }))) {
+    fail("candidate-in-use", "This isolate candidate is reserved by a publication operation.");
+  }
+
   if (db.collections.isolateFactoryGrants &&
       await db.collections.isolateFactoryGrants.findOneAsync({
         candidateId,
@@ -177,6 +186,7 @@ async function removeOwnedIsolateCandidate(db, accountIdInput, candidateIdInput)
     _id: candidateId,
     ownerId: accountId,
     publishedRevisionId: { $exists: false },
+    publishingOperationId: { $exists: false },
   });
   if (removed !== 1) {
     fail("candidate-in-use", "This isolate candidate became referenced while it was removed.");

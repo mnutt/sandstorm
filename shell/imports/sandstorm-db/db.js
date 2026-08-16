@@ -207,6 +207,10 @@ const Packages = new Mongo.Collection("packages", collectionOptions);
 //     even if it has no users.
 //   authorPgpKeyFingerprint: Verified PGP key fingerprint (SHA-1, hex, all-caps) of the app
 //     packager.
+//   generatedIsolate: True for an unsigned package built by the isolate factory.
+//   generatedIsolateOwners: Accounts which materialized the package for preview or publication.
+//   generatedIsolatePublishedOwners: Accounts which materialized the package for publication. This
+//       is audit metadata only; createdIsolateApps/current revision ownership authorizes actions.
 
 const DevPackages = new Mongo.Collection("devpackages", collectionOptions);
 // List of packages currently made available via the dev tools running on the local machine.
@@ -252,6 +256,8 @@ const IsolateCandidates = new Mongo.Collection("isolateCandidates", collectionOp
 //   error: Sanitized failure information for the most recent materialization attempt.
 //   previewGrainId and previewedAt: Most recent preview installation, for audit only. A live grain
 //       references its current candidate through grains.isolatePreview.candidateId.
+//   publishingOperationId: Publication which has exclusively reserved this candidate, if any.
+//   publishedRevisionId, publishedPackageId, and publishedAt: Immutable promotion result.
 //
 // Package, preview-grain, diagnostic, and publication fields are added by later
 // idempotent state transitions. Mutable authoring projects do not belong here.
@@ -281,6 +287,45 @@ IsolatePreviewSlots.ensureIndexOnServer(
   { ownerId: 1, operationScope: 1 },
   { unique: true },
 );
+
+const CreatedIsolateApps = new Mongo.Collection("createdIsolateApps", collectionOptions);
+// Stable app identities created by the isolate publisher. These records contain published app
+// metadata and coordination state only; editable source remains in the authoring surface.
+//
+// Each contains:
+//   _id: Random internal created-app ID.
+//   ownerId: Account allowed to publish revisions and install its action.
+//   appId: Stable Sandstorm app ID allocated at first publication.
+//   publishedRevisionId: Current immutable createdIsolateRevisions record, once published.
+//   appVersion: Monotonically increasing version of the current revision.
+//   title, nounPhrase, shortDescription: Current published metadata.
+//   publishLock: Durable operation ID and timestamp while a revision is being installed.
+//   createdAt and updatedAt: Audit timestamps.
+
+CreatedIsolateApps.ensureIndexOnServer("ownerId");
+CreatedIsolateApps.ensureIndexOnServer("appId", { unique: true });
+
+const CreatedIsolateRevisions = new Mongo.Collection("createdIsolateRevisions", collectionOptions);
+// Immutable published isolate revisions. A revision permanently retains its generated package so
+// existing grains and backup restoration can continue to resolve the exact version they use.
+
+CreatedIsolateRevisions.ensureIndexOnServer("ownerId");
+CreatedIsolateRevisions.ensureIndexOnServer("createdAppId");
+CreatedIsolateRevisions.ensureIndexOnServer("candidateId", { unique: true });
+CreatedIsolateRevisions.ensureIndexOnServer("packageId");
+
+const IsolatePublishOperations = new Mongo.Collection("isolatePublishOperations", collectionOptions);
+// Idempotent publication state machines. operationScope is derived from trusted shell or
+// capability authority; a caller-provided requestId is meaningful only within that scope.
+// Operations reserve their candidate and target app, then advance through authorized,
+// package-ready, revision-recorded, user-action-installed, and published states. Completed records
+// retain their result so a disconnected caller can safely retry the same request.
+
+IsolatePublishOperations.ensureIndexOnServer(
+  { operationScope: 1, requestId: 1 },
+  { unique: true },
+);
+IsolatePublishOperations.ensureIndexOnServer("createdAppId");
 
 const UserActions = new Mongo.Collection("userActions", collectionOptions);
 // List of actions that each user has installed which create new grains.  Each app may install
@@ -1199,6 +1244,9 @@ class SandstormDb {
       devPackages: DevPackages,
       isolateCandidates: IsolateCandidates,
       isolatePreviewSlots: IsolatePreviewSlots,
+      createdIsolateApps: CreatedIsolateApps,
+      createdIsolateRevisions: CreatedIsolateRevisions,
+      isolatePublishOperations: IsolatePublishOperations,
       userActions: UserActions,
       grains: Grains,
       roleAssignments: RoleAssignments, // Deprecated, only used by the migration that eliminated it.
@@ -1834,6 +1882,25 @@ Object.assign(SandstormDb.prototype, {
 
     const pack = await this.collections.packages.findOneAsync({ _id: packageId });
     if (pack) {
+      if (pack.generatedIsolate) {
+        const createdApp = await this.collections.createdIsolateApps.findOneAsync({
+          ownerId: userId,
+          appId: pack.appId,
+          publishedRevisionId: { $exists: true },
+        });
+        const revision = createdApp &&
+          await this.collections.createdIsolateRevisions.findOneAsync({
+            _id: createdApp.publishedRevisionId,
+            ownerId: userId,
+            createdAppId: createdApp._id,
+            packageId: pack._id,
+        });
+        if (!revision) {
+          throw new Meteor.Error(
+            403, "Generated isolate packages can only be installed by their publisher.");
+        }
+      }
+
       // Remove old versions.
       const numRemoved = await this.collections.userActions.removeAsync({ userId: userId, appId: pack.appId });
 
@@ -3445,11 +3512,17 @@ if (Meteor.isServer) {
     await this.collections.userActions.removeAsync({ userId: userId });
     const isolateCandidates = await this.collections.isolateCandidates.find(
       { ownerId: userId }, { fields: { previewPackageId: 1 } }).fetchAsync();
+    const isolateRevisions = await this.collections.createdIsolateRevisions.find(
+      { ownerId: userId }, { fields: { packageId: 1 } }).fetchAsync();
     const isolatePackageIds = isolateCandidates
       .map(candidate => candidate.previewPackageId)
+      .concat(isolateRevisions.map(revision => revision.packageId))
       .filter(Boolean);
     await this.collections.isolateCandidates.removeAsync({ ownerId: userId });
     await this.collections.isolatePreviewSlots.removeAsync({ ownerId: userId });
+    await this.collections.createdIsolateRevisions.removeAsync({ ownerId: userId });
+    await this.collections.createdIsolateApps.removeAsync({ ownerId: userId });
+    await this.collections.isolatePublishOperations.removeAsync({ ownerId: userId });
     if (isolatePackageIds.length > 0) {
       await this.collections.packages.updateAsync({
         _id: { $in: isolatePackageIds },
@@ -3457,6 +3530,10 @@ if (Meteor.isServer) {
         generatedIsolate: true,
       }, {
         $set: { shouldCleanup: true },
+        $pull: {
+          generatedIsolateOwners: userId,
+          generatedIsolatePublishedOwners: userId,
+        },
       }, { multi: true });
     }
     await this.collections.notifications.removeAsync({ userId: userId });

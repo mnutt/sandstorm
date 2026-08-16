@@ -120,6 +120,24 @@ KJ_TEST("generated isolate package installs atomically and idempotently") {
   KJ_EXPECT(repeated.appId == installed.appId);
 }
 
+KJ_TEST("generated isolate package uses a requested published app identity") {
+  const kj::StringPtr PUBLISHED_APP_ID =
+      "000h40s40n30f209185hs38f1w8124hm2hajd5ss34e1q70x3sgh";
+  capnp::MallocMessageBuilder previewMessage;
+  auto preview = buildGeneratedIsolatePackage("", testMetadata(), initSource(previewMessage));
+  capnp::MallocMessageBuilder publishedMessage;
+  auto published = buildGeneratedIsolatePackage(
+      PUBLISHED_APP_ID, testMetadata(), initSource(publishedMessage));
+  capnp::MallocMessageBuilder repeatedMessage;
+  auto repeated = buildGeneratedIsolatePackage(
+      PUBLISHED_APP_ID, testMetadata(), initSource(repeatedMessage));
+
+  KJ_EXPECT(published.appId == PUBLISHED_APP_ID);
+  KJ_EXPECT(published.appId != preview.appId);
+  KJ_EXPECT(published.packageId != preview.packageId);
+  KJ_EXPECT(repeated.packageId == published.packageId);
+}
+
 KJ_TEST("generated isolate package rejects caller-controlled authority and paths") {
   capnp::MallocMessageBuilder bindingMessage;
   auto bindingSource = bindingMessage.initRoot<IsolateWorkerSource>();

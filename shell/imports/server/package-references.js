@@ -37,6 +37,11 @@ async function packageHasReferences(db, pkg) {
     return true;
   }
 
+  if (db.collections.isolatePublishOperations &&
+      await db.collections.isolatePublishOperations.findOneAsync({ packageId })) {
+    return true;
+  }
+
   return false;
 }
 
