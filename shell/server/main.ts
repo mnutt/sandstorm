@@ -101,6 +101,7 @@ import "../imports/server/hack-session";
 import "../imports/server/identity";
 import "../imports/server/installer";
 import "../imports/server/install-server";
+import "../imports/server/isolate-authoring-server";
 import "../imports/server/notifications-server";
 import "../imports/server/pre-meteor";
 import "../imports/server/sandcats";
