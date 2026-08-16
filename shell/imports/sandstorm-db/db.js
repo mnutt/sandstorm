@@ -260,6 +260,24 @@ IsolateCandidates.ensureIndexOnServer(
   { unique: true },
 );
 
+const IsolatePreviewSlots = new Mongo.Collection("isolatePreviewSlots", collectionOptions);
+// Mutable coordination records for preview grains. Candidate source remains in the immutable
+// isolateCandidates collection; a slot only binds one owner/authoring scope to its reusable grain
+// and serializes package replacement across frontend replicas.
+//
+// Each contains:
+//   _id: Random internal ID.
+//   ownerId: Account that owns the preview grain.
+//   operationScope: Server-derived authoring surface or grant scope.
+//   grainId: Reusable preview grain, once its first start succeeds.
+//   lock: Short-lived package/start operation lease with id, candidateId, and acquiredAt.
+//   createdAt and updatedAt: Audit timestamps.
+
+IsolatePreviewSlots.ensureIndexOnServer(
+  { ownerId: 1, operationScope: 1 },
+  { unique: true },
+);
+
 const UserActions = new Mongo.Collection("userActions", collectionOptions);
 // List of actions that each user has installed which create new grains.  Each app may install
 // some number of actions (usually, one).
@@ -308,6 +326,10 @@ const Grains = new Mongo.Collection("grains", collectionOptions);
 //   ownerSeenAllActivity: True if the owner has viewed the grain since the last activity event
 //       occurred. See also ApiTokenOwner.user.seenAllActivity.
 //   size: On-disk size of the grain in bytes.
+//   isolatePreview: If present, this is a hidden preview grain. `scope` identifies the authoring
+//                   slot whose revisions reuse this grain, `candidateId` identifies its current
+//                   code snapshot, and `initializing` marks recoverable first-start work. Ordinary
+//                   UiView sharing is rejected; access is returned through the authoring surface.
 //   oldUsers: Record of users who once held ApiTokens to this grain but no longer do. This exists
 //       to allow those users to regain their original identity IDs if they receive access again.
 //       The field is a list of GrainInfo.User objects as defined in grain.capnp. `oldUsers` may
@@ -321,6 +343,13 @@ const Grains = new Mongo.Collection("grains", collectionOptions);
 
 Grains.ensureIndexOnServer("userId");
 Grains.ensureIndexOnServer("cachedViewInfo.matchRequests.tags.id", { sparse: 1 });
+Grains.ensureIndexOnServer(
+  { userId: 1, "isolatePreview.scope": 1 },
+  {
+    unique: true,
+    partialFilterExpression: { "isolatePreview.scope": { $exists: true } },
+  },
+);
 
 const RoleAssignments = new Mongo.Collection("roleAssignments", collectionOptions);
 // *OBSOLETE* Before `user` was a variant of ApiTokenOwner, this collection was used to store edges
@@ -1165,6 +1194,7 @@ class SandstormDb {
       packages: Packages,
       devPackages: DevPackages,
       isolateCandidates: IsolateCandidates,
+      isolatePreviewSlots: IsolatePreviewSlots,
       userActions: UserActions,
       grains: Grains,
       roleAssignments: RoleAssignments, // Deprecated, only used by the migration that eliminated it.
