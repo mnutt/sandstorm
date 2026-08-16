@@ -1752,26 +1752,26 @@ void applyFetchCachePolicy(WebSession::Response::Builder builder,
     uint64_t maxAge = 0;
 
     for (auto& rawDirective: split(*cacheControl, ',')) {
-      auto directive = trim(rawDirective);
-      toLower(directive);
-
-      kj::StringPtr name = directive;
-      auto value = kj::heapString("");
+      auto directive = trimArray(rawDirective);
+      kj::ArrayPtr<const char> name = directive;
+      kj::ArrayPtr<const char> value;
       KJ_IF_MAYBE(eq, name.findFirst('=')) {
-        value = trim(name.slice(*eq + 1, name.size()));
-        name = kj::StringPtr(name.begin(), *eq);
+        value = trimArray(name.slice(*eq + 1, name.size()));
+        name = name.slice(0, *eq);
       }
 
-      if (name == "no-store") {
+      if (isolateEqualsIgnoreCase(name, "no-store")) {
         noStore = true;
-      } else if (name == "no-cache" || name == "must-revalidate") {
+      } else if (isolateEqualsIgnoreCase(name, "no-cache") ||
+          isolateEqualsIgnoreCase(name, "must-revalidate")) {
         noCache = true;
-      } else if (name == "private" || name == "public") {
+      } else if (isolateEqualsIgnoreCase(name, "private") ||
+          isolateEqualsIgnoreCase(name, "public")) {
         explicitlyCacheable = true;
-      } else if (name == "immutable") {
+      } else if (isolateEqualsIgnoreCase(name, "immutable")) {
         immutable = true;
-      } else if (name == "max-age") {
-        KJ_IF_MAYBE(parsed, parseUInt64(value, 10)) {
+      } else if (isolateEqualsIgnoreCase(name, "max-age")) {
+        KJ_IF_MAYBE(parsed, parseUInt64(kj::heapString(value), 10)) {
           hasMaxAge = true;
           maxAge = *parsed;
         }
@@ -3138,12 +3138,12 @@ private:
   kj::Own<IsolateRuntimeHost> runtimeHost;
 };
 
-kj::StringPtr urlPath(kj::StringPtr url) {
+kj::ArrayPtr<const char> urlPath(kj::StringPtr url) {
   KJ_IF_MAYBE(query, url.findFirst('?')) {
-    return kj::StringPtr(url.begin(), *query);
+    return url.slice(0, *query);
   }
 
-  return url;
+  return url.asArray();
 }
 
 kj::Array<kj::String> findIsolateRawQueryParams(kj::StringPtr url, kj::StringPtr name) {
@@ -3164,10 +3164,9 @@ kj::Array<kj::String> findIsolateRawQueryParams(kj::StringPtr url, kj::StringPtr
       if (end > start) {
         auto part = query.slice(start, end);
         KJ_IF_MAYBE(eq, part.findFirst('=')) {
-          auto paramName = decodeIsolateQueryComponent(kj::StringPtr(part.begin(), *eq));
+          auto paramName = decodeIsolateQueryComponent(part.slice(0, *eq));
           if (paramName == name) {
-            results.add(decodeIsolateQueryComponent(
-                kj::StringPtr(part.begin() + *eq + 1, part.size() - *eq - 1)));
+            results.add(decodeIsolateQueryComponent(part.slice(*eq + 1, part.size())));
           }
         }
       }
@@ -4041,22 +4040,24 @@ private:
     return nullptr;
   }
 
-  static kj::Maybe<kj::String> browserCapnpEsImportSpecifier(kj::StringPtr specifier) {
-    if (specifier.startsWith(kj::StringPtr("/sandstorm/")) &&
-        specifier.endsWith(kj::StringPtr(".capnp"))) {
+  static kj::Maybe<kj::String> browserCapnpEsImportSpecifier(
+      kj::ArrayPtr<const char> specifier) {
+    if (specifier.startsWith(kj::StringPtr("/sandstorm/").asArray()) &&
+        specifier.endsWith(kj::StringPtr(".capnp").asArray())) {
       return kj::str("/__sandstorm/capnp", specifier);
     }
 
-    if (specifier.startsWith(kj::StringPtr("capnp:/sandstorm/")) &&
-        specifier.endsWith(kj::StringPtr(".capnp"))) {
+    if (specifier.startsWith(kj::StringPtr("capnp:/sandstorm/").asArray()) &&
+        specifier.endsWith(kj::StringPtr(".capnp").asArray())) {
       return kj::str("/__sandstorm/capnp/",
-          specifier.slice(strlen("capnp:/")));
+          specifier.slice(strlen("capnp:/"), specifier.size()));
     }
 
     return nullptr;
   }
 
-  static kj::Maybe<size_t> findSubstring(kj::StringPtr text, kj::StringPtr pattern) {
+  static kj::Maybe<size_t> findSubstring(
+      kj::ArrayPtr<const char> text, kj::StringPtr pattern) {
     if (pattern.size() == 0) {
       return size_t(0);
     }
@@ -4074,14 +4075,15 @@ private:
     return nullptr;
   }
 
-  static void appendBrowserCapnpEsModuleLine(kj::Vector<char>& out, kj::StringPtr line) {
+  static void appendBrowserCapnpEsModuleLine(
+      kj::Vector<char>& out, kj::ArrayPtr<const char> line) {
     size_t quotePos = line.size();
     KJ_IF_MAYBE(fromPos, findSubstring(line, " from \"")) {
       quotePos = *fromPos + strlen(" from ");
     } else KJ_IF_MAYBE(fromPos, findSubstring(line, " from '")) {
       quotePos = *fromPos + strlen(" from ");
-    } else if (line.startsWith(kj::StringPtr("import \"")) ||
-        line.startsWith(kj::StringPtr("import '"))) {
+    } else if (line.startsWith(kj::StringPtr("import \"").asArray()) ||
+        line.startsWith(kj::StringPtr("import '").asArray())) {
       quotePos = strlen("import ");
     }
 
@@ -4106,29 +4108,26 @@ private:
       return;
     }
 
-    auto specifierSlice = line.slice(specifierStart, specifierEnd);
-    kj::StringPtr specifier(specifierSlice.begin(), specifierSlice.size());
+    auto specifier = line.slice(specifierStart, specifierEnd);
     KJ_IF_MAYBE(rewritten, browserCapnpEsImportSpecifier(specifier)) {
       out.addAll(line.slice(0, specifierStart));
       out.addAll(*rewritten);
-      out.addAll(line.slice(specifierEnd));
+      out.addAll(line.slice(specifierEnd, line.size()));
     } else {
       out.addAll(line);
     }
   }
 
   static kj::Array<byte> rewriteBrowserCapnpEsModuleImports(kj::ArrayPtr<const byte> content) {
-    kj::StringPtr source(reinterpret_cast<const char*>(content.begin()), content.size());
+    auto source = content.asChars();
     kj::Vector<char> out(content.size() + 64);
     size_t lineStart = 0;
     while (lineStart < source.size()) {
       size_t lineEnd = source.size();
-      KJ_IF_MAYBE(newline, source.slice(lineStart).findFirst('\n')) {
+      KJ_IF_MAYBE(newline, source.slice(lineStart, source.size()).findFirst('\n')) {
         lineEnd = lineStart + *newline + 1;
       }
-      auto lineSlice = source.slice(lineStart, lineEnd);
-      appendBrowserCapnpEsModuleLine(out,
-          kj::StringPtr(lineSlice.begin(), lineSlice.size()));
+      appendBrowserCapnpEsModuleLine(out, source.slice(lineStart, lineEnd));
       lineStart = lineEnd;
     }
 

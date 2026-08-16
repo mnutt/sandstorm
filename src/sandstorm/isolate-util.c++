@@ -94,7 +94,7 @@ bool isValidIsolateStorageKey(kj::StringPtr key) {
   return true;
 }
 
-kj::String decodeIsolateQueryComponent(kj::StringPtr value) {
+kj::String decodeIsolateQueryComponent(kj::ArrayPtr<const char> value) {
   return KJ_REQUIRE_NONNULL(kj::decodeWwwForm(value),
       "malformed isolate query parameter encoding", value);
 }
@@ -122,7 +122,7 @@ kj::Maybe<kj::String> findIsolateQueryParam(kj::StringPtr url, kj::StringPtr nam
   return nullptr;
 }
 
-bool isolateEqualsIgnoreCase(kj::StringPtr a, kj::StringPtr b) {
+bool isolateEqualsIgnoreCase(kj::ArrayPtr<const char> a, kj::StringPtr b) {
   if (a.size() != b.size()) {
     return false;
   }
@@ -150,12 +150,11 @@ bool isStructuredIsolateResponseHeader(kj::StringPtr name) {
 
 bool isHtmlMimeType(kj::StringPtr mimeType) {
   auto type = trimArray(mimeType);
-  auto typeString = kj::StringPtr(type.begin(), type.size());
-  KJ_IF_MAYBE(semi, typeString.findFirst(';')) {
+  KJ_IF_MAYBE(semi, type.findFirst(';')) {
     type = type.slice(0, *semi);
   }
   type = trimArray(type);
-  return isolateEqualsIgnoreCase(kj::StringPtr(type.begin(), type.size()), "text/html");
+  return isolateEqualsIgnoreCase(type, "text/html");
 }
 
 }  // namespace sandstorm

@@ -248,9 +248,9 @@ module.exports["Test isolate browser Powerbox claim save restore"] = function (b
     .url(browser.launch_url + "/upload-test")
     .waitForElementVisible("#upload-app", short_wait)
     .setValue("#upload-app", isolateTestAppPath)
-    .waitForElementVisible("#step-confirm", long_wait)
-    .click("#confirmInstall")
-    .waitForElementNotPresent("#confirmInstall", long_wait)
+    .waitForElementVisible(".install-step-confirm", long_wait)
+    .click(".confirm-install-button")
+    .waitForElementNotPresent(".confirm-install-button", long_wait)
     .disableGuidedTour()
     .url(browser.launch_url + "/apps/" + isolateTestAppId)
     .waitForElementVisible(actionSelector, long_wait)
@@ -265,10 +265,10 @@ module.exports["Test isolate browser Powerbox claim save restore"] = function (b
     .waitForElementVisible("#offer-result", medium_wait)
     .assert.textContains("#offer-result", "offer: success")
     .frameParent()
-    .waitForElementVisible("#powerbox-offer-url", medium_wait)
-    .getText("#powerbox-offer-url", function (result) {
+    .waitForElementVisible(".topbar-popup.offer .copy-me", medium_wait)
+    .getText(".topbar-popup.offer .copy-me", function (result) {
       browser
-        .click(".popup.offer .frame button.dismiss")
+        .click(".topbar-popup.offer .frame button.dismiss")
         .grainFrame()
         .click("#request")
         .frameParent()
