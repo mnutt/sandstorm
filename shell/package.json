@@ -32,6 +32,8 @@
     "@root/pem": "^1.0.4",
     "@swc/helpers": "^0.5.17",
     "@xmldom/xmldom": "^0.8.11",
+    "acorn": "^8.17.0",
+    "acorn-walk": "^8.3.5",
     "acme-dns-01-cloudflare": "https://github.com/sandstorm-org/acme-dns-01-cloudflare/archive/fdc51a7e78f5bddd6b42971fa690d3a3eb743c22.tar.gz",
     "acme-dns-01-desec": "^3.0.0",
     "acme-dns-01-digitalocean": "^3.0.1",
