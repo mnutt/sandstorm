@@ -243,8 +243,13 @@ const IsolateCandidates = new Mongo.Collection("isolateCandidates", collectionOp
 //   normalizedDigest: SHA-256 digest of the normalized candidate snapshot.
 //   normalizedBundle: Immutable normalized source and runtime configuration.
 //   totalModuleBytes: Admission-accounting size of the submitted modules.
+//   previewMetadata: Metadata fixed by the first package-materialization attempt.
+//   previewAppId: Internal app identity derived by the package generator.
+//   previewPackageId: Immutable generated package used by the preview grain.
+//   materializedAt: Time at which previewPackageId became ready.
 //   createdAt: Time at which this immutable candidate was first reserved.
 //   status: One of "preparing", "ready", "failed", or "published".
+//   error: Sanitized failure information for the most recent materialization attempt.
 //
 // Package, preview-grain, diagnostic, and publication fields are added by later
 // idempotent state transitions. Mutable authoring projects do not belong here.
