@@ -42,6 +42,7 @@ describe("package references", function () {
   afterEach(async function () {
     await globalDb.collections.grains.removeAsync(grainId);
     await globalDb.collections.isolateCandidates.removeAsync(candidateId);
+    await globalDb.collections.isolatePublishOperations.removeAsync({ packageId });
   });
 
   it("retains a generated package while an immutable candidate references it", async function () {
@@ -71,5 +72,21 @@ describe("package references", function () {
     });
 
     assert.isTrue(await packageHasReferences(globalDb, pkg));
+  });
+
+  it("retains a package while its publication operation is incomplete", async function () {
+    await globalDb.collections.isolatePublishOperations.insertAsync({
+      _id: Random.id(),
+      ownerId,
+      operationScope: Random.id(),
+      requestId: Random.id(),
+      packageId,
+      state: "package-ready",
+      createdAt: new Date(),
+    });
+
+    assert.isTrue(await packageHasReferences(globalDb, pkg));
+    await globalDb.collections.isolatePublishOperations.removeAsync({ packageId });
+    assert.isFalse(await packageHasReferences(globalDb, pkg));
   });
 });

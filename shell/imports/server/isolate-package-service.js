@@ -125,27 +125,30 @@ async function claimMetadata(db, accountId, candidateId, metadata) {
   return candidate;
 }
 
-async function registerGeneratedPackage(db, generated) {
+async function registerGeneratedPackage(db, generated, accountId, published) {
+  const update = {
+    $setOnInsert: {
+      manifest: generated.manifest,
+      status: "ready",
+      progress: 1,
+      error: null,
+    },
+    $addToSet: { generatedIsolateOwners: accountId },
+  };
+  if (published) {
+    update.$addToSet.generatedIsolatePublishedOwners = accountId;
+  }
+
   try {
     await db.collections.packages.rawCollection().findOneAndUpdate({
       _id: generated.packageId,
-      $or: [
-        { appId: generated.appId },
-        { appId: { $exists: false } },
-      ],
-    }, {
-      $set: {
-        appId: generated.appId,
-        manifest: generated.manifest,
-        status: "ready",
-        progress: 1,
-        error: null,
-        generatedIsolate: true,
-      },
-    }, { upsert: true, returnDocument: "after" });
+      appId: generated.appId,
+      generatedIsolate: true,
+    }, update, { upsert: true, returnDocument: "after" });
   } catch (error) {
     const conflicting = await db.collections.packages.findOneAsync(generated.packageId);
-    if (conflicting && conflicting.appId !== generated.appId) {
+    if (conflicting &&
+        (conflicting.appId !== generated.appId || !conflicting.generatedIsolate)) {
       fail("package-registration-failed",
           "The generated package conflicts with an existing package record.");
     }
@@ -154,7 +157,8 @@ async function registerGeneratedPackage(db, generated) {
   }
 
   const stored = await db.collections.packages.findOneAsync(generated.packageId);
-  if (!stored || stored.appId !== generated.appId || stored.status !== "ready") {
+  if (!stored || stored.appId !== generated.appId || stored.status !== "ready" ||
+      !stored.generatedIsolate) {
     fail("package-registration-failed",
         "The generated package conflicts with an existing package record.");
   }
@@ -183,7 +187,7 @@ async function materializeInternal(db, backendCap, accountId, candidateId, metad
   try {
     const generated = packageResult(await backendCap.generateIsolatePackage(
       "", metadata, bundleToWorkerSource(candidate.normalizedBundle)));
-    await registerGeneratedPackage(db, generated);
+    await registerGeneratedPackage(db, generated, accountId, false);
     const materializedAt = new Date();
     await db.collections.isolateCandidates.updateAsync({
       _id: candidateId,
@@ -210,6 +214,38 @@ async function materializeInternal(db, backendCap, accountId, candidateId, metad
     });
     throw error;
   }
+}
+
+async function materializePublishedIsolateCandidate(
+    db, backendCap, accountId, candidateId, appId, metadataInput) {
+  if (!backendCap || typeof backendCap.generateIsolatePackage !== "function") {
+    fail("invalid-context", "Published candidate materialization requires a backend capability.");
+  }
+
+  if (typeof appId !== "string" || appId.length === 0) {
+    fail("invalid-context", "Published candidate materialization requires a stable app ID.");
+  }
+
+  const metadata = normalizeGeneratedIsolateMetadata(metadataInput);
+  const candidate = await findOwnedIsolateCandidate(db, accountId, candidateId);
+  if (!candidate) fail("candidate-not-found", "No such isolate candidate exists for this account.");
+  if (!candidate.previewPackageId || !["ready", "published"].includes(candidate.status)) {
+    fail("candidate-not-ready", "The isolate candidate must be preview-ready before publication.");
+  }
+
+  const generated = packageResult(await backendCap.generateIsolatePackage(
+    appId, metadata, bundleToWorkerSource(candidate.normalizedBundle)));
+  if (generated.appId !== appId) {
+    fail("package-generation-failed", "The backend did not use the requested published app ID.");
+  }
+
+  await registerGeneratedPackage(db, generated, accountId, true);
+  return Object.freeze({
+    packageId: generated.packageId,
+    appId: generated.appId,
+    manifest: generated.manifest,
+    metadata,
+  });
 }
 
 function materializeIsolateCandidate(db, backendCap, accountId, candidateId, metadataInput) {
@@ -251,5 +287,7 @@ function materializeIsolateCandidate(db, backendCap, accountId, candidateId, met
 export {
   bundleToWorkerSource,
   materializeIsolateCandidate,
+  materializePublishedIsolateCandidate,
   normalizeGeneratedIsolateMetadata,
+  registerGeneratedPackage,
 };

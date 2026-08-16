@@ -137,6 +137,7 @@ describe("isolate candidate package materialization", function () {
     assert.instanceOf(ready.materializedAt, Date);
     assert.strictEqual(storedPackage.status, "ready");
     assert.isTrue(storedPackage.generatedIsolate);
+    assert.include(storedPackage.generatedIsolateOwners, ownerId);
     assert.strictEqual(backend.calls.length, 1);
     assert.strictEqual(backend.calls[0].requestedAppId, "");
     assert.deepEqual(backend.calls[0].source.bindings, []);
@@ -202,6 +203,23 @@ describe("isolate candidate package materialization", function () {
     assert.strictEqual(storedPackage.appId, "different-app-id");
     assert.strictEqual(storedPackage.marker, "keep");
     assert.strictEqual(failed.status, "failed");
+  });
+
+  it("does not convert an ordinary package record into a generated package", async function () {
+    const reserved = await reserveIsolateCandidate(
+      globalDb, actor, "ordinary-package-conflict", bundle());
+    await globalDb.collections.packages.insertAsync({
+      _id: backend.packageId,
+      appId: `preview-app-${backend.packageId}`,
+      status: "ready",
+      marker: "ordinary",
+    });
+
+    await expectCandidateError(materializeIsolateCandidate(
+      globalDb, backend, ownerId, reserved._id, metadata()), "package-registration-failed");
+    const storedPackage = await globalDb.collections.packages.findOneAsync(backend.packageId);
+    assert.strictEqual(storedPackage.marker, "ordinary");
+    assert.notProperty(storedPackage, "generatedIsolate");
   });
 
   it("does not reveal or materialize another account's candidate", async function () {
