@@ -165,6 +165,7 @@ add_library(sandstorm_core STATIC
   config.c++
   fuse.c++
   gateway.c++
+  generated-isolate-package.c++
   id-to-text.c++
   isolate-capnp-framing.c++
   isolate-native-host-launch.c++
@@ -267,6 +268,14 @@ if(BUILD_TESTING)
     CapnProto::kj-test)
   add_test(NAME sandstorm/isolate-session-registry
     COMMAND "$<TARGET_FILE:sandstorm-isolate-session-registry-test>")
+
+  add_executable(sandstorm-generated-isolate-package-test
+    generated-isolate-package-test.c++)
+  target_link_libraries(sandstorm-generated-isolate-package-test PRIVATE
+    sandstorm_core
+    CapnProto::kj-test)
+  add_test(NAME sandstorm/generated-isolate-package
+    COMMAND "$<TARGET_FILE:sandstorm-generated-isolate-package-test>")
 endif()
 
 if(SANDSTORM_BUILD_NODE_CAPNP)

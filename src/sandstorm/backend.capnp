@@ -23,6 +23,7 @@ using Package = import "package.capnp";
 using Supervisor = import "supervisor.capnp".Supervisor;
 using SandstormCore = import "supervisor.capnp".SandstormCore;
 using GrainInfo = import "grain.capnp".GrainInfo;
+using IsolateWorkerSource = import "isolate-worker-source.capnp".IsolateWorkerSource;
 
 using WebSession = import "web-session.capnp".WebSession;
 using ApiSession = import "api-session.capnp".ApiSession;
@@ -72,6 +73,15 @@ interface Backend {
   deletePackage @5 (packageId :Text);
   # Delete a package from disk. Succeeds silently if the package doesn't exist.
 
+  generateIsolatePackage @16 (
+      requestedAppId :Text,
+      metadata :GeneratedIsolatePackageMetadata,
+      source :IsolateWorkerSource)
+      -> (packageId :Text, appId :Text, manifest :Package.Manifest);
+  # Materialize a local, unsigned isolate-only package. If requestedAppId is
+  # empty, a deterministic internal preview identity is derived from source.
+  # This method never installs an action or creates a grain.
+
   # ----------------------------------------------------------------------------
   # backups
 
@@ -104,6 +114,14 @@ interface Backend {
   #
   # On single-machine Sandstorm, this walks the directory tree, which may be slow. Therefore,
   # it is recommended that this not be called often.
+}
+
+struct GeneratedIsolatePackageMetadata {
+  appTitle @0 :Text;
+  nounPhrase @1 :Text;
+  shortDescription @2 :Text;
+  appVersion @3 :UInt32;
+  marketingVersion @4 :Text;
 }
 
 interface GatewayRouter {

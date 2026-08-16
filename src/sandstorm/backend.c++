@@ -15,6 +15,7 @@
 // limitations under the License.
 
 #include "backend.h"
+#include "generated-isolate-package.h"
 #include <kj/debug.h>
 #include "util.h"
 #include "spk.h"
@@ -716,6 +717,31 @@ private:
 
 kj::Promise<void> BackendImpl::installPackage(InstallPackageContext context)  {
   context.getResults().setStream(kj::heap<PackageUploadStreamImpl>(*this));
+  return kj::READY_NOW;
+}
+
+kj::Promise<void> BackendImpl::generateIsolatePackage(GenerateIsolatePackageContext context) {
+  auto params = context.getParams();
+  auto metadata = params.getMetadata();
+  auto generated = installGeneratedIsolatePackage(
+      "/var/sandstorm/apps",
+      "/var/sandstorm/tmp",
+      params.getRequestedAppId(),
+      GeneratedIsolateMetadata{
+        metadata.getAppTitle(),
+        metadata.getNounPhrase(),
+        metadata.getShortDescription(),
+        metadata.getAppVersion(),
+        metadata.getMarketingVersion(),
+      },
+      params.getSource());
+
+  capnp::FlatArrayMessageReader manifestReader(generated.manifest.asPtr());
+  auto manifest = manifestReader.getRoot<spk::Manifest>();
+  auto results = context.getResults(manifest.totalSize());
+  results.setPackageId(generated.packageId);
+  results.setAppId(generated.appId);
+  results.setManifest(manifest);
   return kj::READY_NOW;
 }
 

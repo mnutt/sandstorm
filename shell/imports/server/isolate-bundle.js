@@ -21,10 +21,10 @@ import Path from "path";
 
 const ISOLATE_BUNDLE_FORMAT_VERSION = 1;
 
-// These are admission guardrails, not product quotas. Keep them aligned with
-// the shared isolate host's hard limits so accepted candidates can be launched.
+// These are admission guardrails, not product quotas. Keep byte limits aligned
+// with the shared isolate host and leave module-count room for injected helpers.
 const ISOLATE_BUNDLE_LIMITS = Object.freeze({
-  maxModules: 1024,
+  maxModules: 512,
   maxModuleBytes: 8 * 1024 * 1024,
   maxTotalModuleBytes: 16 * 1024 * 1024,
   maxNameBytes: 256,
