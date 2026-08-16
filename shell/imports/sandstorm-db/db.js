@@ -230,6 +230,31 @@ const DevPackages = new Mongo.Collection("devpackages", collectionOptions);
 //   manifest:  The app's manifest, as with Packages.manifest.
 //   mountProc: True if the supervisor should mount /proc.
 
+const IsolateCandidates = new Mongo.Collection("isolateCandidates", collectionOptions);
+// Immutable isolate source snapshots reserved by the preview/publishing service.
+// These records are server-internal and must never be broadly published to clients.
+//
+// Each contains:
+//   _id: Random candidate ID. This is an identifier, not an authorization token.
+//   ownerId: Account charged for and authorized to use the candidate.
+//   requestingGrainId: Authoring grain that requested the candidate, if any.
+//   operationScope: Server-derived shell or capability grant scope for idempotency.
+//   requestId: Caller-chosen retry ID within operationScope.
+//   normalizedDigest: SHA-256 digest of the normalized candidate snapshot.
+//   normalizedBundle: Immutable normalized source and runtime configuration.
+//   totalModuleBytes: Admission-accounting size of the submitted modules.
+//   createdAt: Time at which this immutable candidate was first reserved.
+//   status: One of "preparing", "ready", "failed", or "published".
+//
+// Package, preview-grain, diagnostic, and publication fields are added by later
+// idempotent state transitions. Mutable authoring projects do not belong here.
+
+IsolateCandidates.ensureIndexOnServer("ownerId");
+IsolateCandidates.ensureIndexOnServer(
+  { operationScope: 1, requestId: 1 },
+  { unique: true },
+);
+
 const UserActions = new Mongo.Collection("userActions", collectionOptions);
 // List of actions that each user has installed which create new grains.  Each app may install
 // some number of actions (usually, one).
@@ -1134,6 +1159,7 @@ class SandstormDb {
 
       packages: Packages,
       devPackages: DevPackages,
+      isolateCandidates: IsolateCandidates,
       userActions: UserActions,
       grains: Grains,
       roleAssignments: RoleAssignments, // Deprecated, only used by the migration that eliminated it.
@@ -3378,6 +3404,7 @@ if (Meteor.isServer) {
     await this.deleteGrains({ userId: userId }, backend, "grain");
     await this.removeApiTokens({ "owner.user.accountId": userId });
     await this.collections.userActions.removeAsync({ userId: userId });
+    await this.collections.isolateCandidates.removeAsync({ ownerId: userId });
     await this.collections.notifications.removeAsync({ userId: userId });
     for (const credential of user.loginCredentials) {
       if (await Meteor.users.find({ $or: [
