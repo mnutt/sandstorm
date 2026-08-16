@@ -473,8 +473,10 @@ source. The authoring application remains the mutable source of truth.
 - `_id`
 - `ownerId`
 - `requestingGrainId`, optional
+- `operationScope` and `requestId`, for idempotent reservation
 - `normalizedDigest`
 - `normalizedBundle`
+- `totalModuleBytes`
 - `previewPackageId`
 - `previewGrainId`
 - `validationWarnings`
