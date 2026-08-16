@@ -79,6 +79,7 @@ Meteor.startup(() => {
 
 // Allow anything to be loaded from the static asset host.
 import { staticAssetHost } from "/imports/server/constants";
+import { grainsMenuSelector } from "/imports/server/grain-visibility";
 BrowserPolicy.content.allowImageOrigin(staticAssetHost);
 BrowserPolicy.content.allowScriptOrigin(staticAssetHost);
 BrowserPolicy.content.allowFontOrigin(staticAssetHost);
@@ -115,7 +116,8 @@ Meteor.publish("grainsMenu", async function () {
 
     return [
       globalDb.collections.userActions.find({ userId: this.userId }),
-      globalDb.collections.grains.find({ userId: this.userId }, {fields: {oldUsers: 0}}),
+      globalDb.collections.grains.find(
+        grainsMenuSelector(this.userId), {fields: {oldUsers: 0}}),
       globalDb.collections.apiTokens.find({ "owner.user.accountId": this.userId }),
     ];
   } else {

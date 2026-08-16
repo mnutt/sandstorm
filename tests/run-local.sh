@@ -99,7 +99,7 @@ export IP_INTERFACE_TEST_PORT=9004
 export LAUNCH_URL="http://local.sandstorm.io:$PORT"
 
 rm -rf "$SANDSTORM_DIR"
-../install.sh -d -u "$BUNDLE_PATH"
+../install.sh -d -u -p "$PORT" "$BUNDLE_PATH"
 
 echo "IS_TESTING=true
 ALLOW_DEMO_ACCOUNTS=true

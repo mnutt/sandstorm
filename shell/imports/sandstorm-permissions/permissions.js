@@ -1772,6 +1772,11 @@ SandstormPermissions.createNewApiToken = async function (db, provider, grainId, 
     throw new Meteor.Error(403, "Unauthorized", "No grain found.");
   }
 
+  if (grain.isolatePreview) {
+    throw new Meteor.Error(
+      403, "Preview grains cannot be shared", "Open the preview through its authoring surface.");
+  }
+
   const token = Random.secret();
   if (encodeURIComponent(token) !== token) {
     // Sandstorm guarantees that tokens with a `clientPowerboxRequest` owner are URL-safe.
