@@ -143,8 +143,61 @@ async function findOwnedIsolateCandidate(db, accountIdInput, candidateIdInput) {
   return freezeCandidate(candidate || null);
 }
 
+async function removeOwnedIsolateCandidate(db, accountIdInput, candidateIdInput) {
+  const accountId = requireIdentifier(accountIdInput, "accountId", MAX_OPERATION_SCOPE_BYTES);
+  const candidateId = requireIdentifier(candidateIdInput, "candidateId", MAX_REQUEST_ID_BYTES);
+  const candidate = await db.collections.isolateCandidates.findOneAsync({
+    _id: candidateId,
+    ownerId: accountId,
+  });
+  if (!candidate) return false;
+
+  if (await db.collections.grains.findOneAsync({
+    userId: accountId,
+    "isolatePreview.candidateId": candidateId,
+  })) {
+    fail("candidate-in-use", "This isolate candidate is installed in its preview grain.");
+  }
+
+  if (candidate.publishedRevisionId ||
+      (db.collections.createdIsolateRevisions &&
+       await db.collections.createdIsolateRevisions.findOneAsync({ candidateId }))) {
+    fail("candidate-in-use", "This isolate candidate belongs to a published revision.");
+  }
+
+  if (db.collections.isolateFactoryGrants &&
+      await db.collections.isolateFactoryGrants.findOneAsync({
+        candidateId,
+        revokedAt: { $exists: false },
+      })) {
+    fail("candidate-in-use", "This isolate candidate is retained by a capability grant.");
+  }
+
+  const removed = await db.collections.isolateCandidates.removeAsync({
+    _id: candidateId,
+    ownerId: accountId,
+    publishedRevisionId: { $exists: false },
+  });
+  if (removed !== 1) {
+    fail("candidate-in-use", "This isolate candidate became referenced while it was removed.");
+  }
+
+  if (candidate.previewPackageId) {
+    await db.collections.packages.updateAsync({
+      _id: candidate.previewPackageId,
+      status: "ready",
+      generatedIsolate: true,
+    }, {
+      $set: { shouldCleanup: true },
+    });
+  }
+
+  return true;
+}
+
 export {
   IsolateCandidateError,
   findOwnedIsolateCandidate,
+  removeOwnedIsolateCandidate,
   reserveIsolateCandidate,
 };
