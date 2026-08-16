@@ -23,6 +23,7 @@ import { throttle } from "/imports/shared/collection-utils";
 import { inMeteor } from "/imports/server/async-helpers";
 import { withSsrfSafeFetch } from "/imports/server/networking";
 import { getGlobalBackend } from "/imports/server/backend-instance";
+import { packageHasReferences } from "/imports/server/package-references";
 import { globalDb } from "/imports/db-deprecated";
 
 let installers;  // set to {} on main replica
@@ -50,12 +51,7 @@ const deletePackageInternal = async (pkg) => {
   installers[packageId] = "uninstalling";
 
   try {
-    const action = await globalDb.collections.userActions.findOneAsync({ packageId: packageId });
-    const grain = await globalDb.collections.grains.findOneAsync({ packageId: packageId });
-    const notificationQuery = {};
-    notificationQuery["appUpdates." + pkg.appId + ".packageId"] = packageId;
-    if (!grain && !action && !await globalDb.collections.notifications.findOneAsync(notificationQuery)
-        && !await globalDb.getAppIdForPreinstalledPackage(packageId)) {
+    if (!await packageHasReferences(globalDb, pkg)) {
       await globalDb.collections.packages.updateAsync({
         _id: packageId,
       }, {

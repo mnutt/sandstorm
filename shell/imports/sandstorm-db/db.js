@@ -250,6 +250,8 @@ const IsolateCandidates = new Mongo.Collection("isolateCandidates", collectionOp
 //   createdAt: Time at which this immutable candidate was first reserved.
 //   status: One of "preparing", "ready", "failed", or "published".
 //   error: Sanitized failure information for the most recent materialization attempt.
+//   previewGrainId and previewedAt: Most recent preview installation, for audit only. A live grain
+//       references its current candidate through grains.isolatePreview.candidateId.
 //
 // Package, preview-grain, diagnostic, and publication fields are added by later
 // idempotent state transitions. Mutable authoring projects do not belong here.
@@ -270,6 +272,8 @@ const IsolatePreviewSlots = new Mongo.Collection("isolatePreviewSlots", collecti
 //   ownerId: Account that owns the preview grain.
 //   operationScope: Server-derived authoring surface or grant scope.
 //   grainId: Reusable preview grain, once its first start succeeds.
+//   candidateId: Candidate most recently installed successfully; permits reset recovery if
+//       replacement fails after the old grain has already been deleted.
 //   lock: Short-lived package/start operation lease with id, candidateId, and acquiredAt.
 //   createdAt and updatedAt: Audit timestamps.
 
@@ -3439,7 +3443,22 @@ if (Meteor.isServer) {
     await this.deleteGrains({ userId: userId }, backend, "grain");
     await this.removeApiTokens({ "owner.user.accountId": userId });
     await this.collections.userActions.removeAsync({ userId: userId });
+    const isolateCandidates = await this.collections.isolateCandidates.find(
+      { ownerId: userId }, { fields: { previewPackageId: 1 } }).fetchAsync();
+    const isolatePackageIds = isolateCandidates
+      .map(candidate => candidate.previewPackageId)
+      .filter(Boolean);
     await this.collections.isolateCandidates.removeAsync({ ownerId: userId });
+    await this.collections.isolatePreviewSlots.removeAsync({ ownerId: userId });
+    if (isolatePackageIds.length > 0) {
+      await this.collections.packages.updateAsync({
+        _id: { $in: isolatePackageIds },
+        status: "ready",
+        generatedIsolate: true,
+      }, {
+        $set: { shouldCleanup: true },
+      }, { multi: true });
+    }
     await this.collections.notifications.removeAsync({ userId: userId });
     for (const credential of user.loginCredentials) {
       if (await Meteor.users.find({ $or: [

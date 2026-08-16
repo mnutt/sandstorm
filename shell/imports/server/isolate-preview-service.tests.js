@@ -22,7 +22,7 @@ import chai from "chai";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import { grainsMenuSelector } from "/imports/server/grain-visibility";
-import { IsolatePreviewError, previewIsolateBundle } from
+import { IsolatePreviewError, previewIsolateBundle, resetIsolatePreview } from
   "/imports/server/isolate-preview-service";
 
 const { assert } = chai;
@@ -226,6 +226,73 @@ describe("isolate preview grain lifecycle", function () {
 
     assert.notStrictEqual(second.grainId, first.grainId);
     assert.strictEqual(await globalDb.collections.grains.find({ userId: ownerId }).countAsync(), 2);
+  });
+
+  it("resets preview data by replacing the grain with a fresh first start", async function () {
+    const first = await previewIsolateBundle(
+      globalDb, backend, actor, "before-reset", bundle(), metadata());
+    const firstGrain = await globalDb.collections.grains.findOneAsync(first.grainId);
+    const reset = await resetIsolatePreview(globalDb, backend, actor);
+    const replacement = await globalDb.collections.grains.findOneAsync(reset.grainId);
+    const candidate = await globalDb.collections.isolateCandidates.findOneAsync(
+      first.candidate._id);
+    const slot = await globalDb.collections.isolatePreviewSlots.findOneAsync({
+      ownerId,
+      operationScope,
+    });
+
+    assert.notStrictEqual(reset.grainId, first.grainId);
+    assert.notExists(await globalDb.collections.grains.findOneAsync(first.grainId));
+    assert.notStrictEqual(replacement.identityId, firstGrain.identityId);
+    assert.strictEqual(replacement.packageId, firstGrain.packageId);
+    assert.strictEqual(replacement.isolatePreview.candidateId, first.candidate._id);
+    assert.deepEqual(backend.deleteCalls, [{ grainId: first.grainId, ownerId }]);
+    assert.strictEqual(backend.startCalls.length, 2);
+    assert.strictEqual(backend.startCalls[1].isNew, true);
+    assert.strictEqual(backend.startCalls[1].command.isolate.phase, "new");
+    assert.strictEqual(candidate.previewGrainId, reset.grainId);
+    assert.strictEqual(slot.grainId, reset.grainId);
+    assert.strictEqual(slot.candidateId, first.candidate._id);
+    assert.notProperty(slot, "lock");
+  });
+
+  it("retries reset after deletion succeeds but the replacement start fails", async function () {
+    const first = await previewIsolateBundle(
+      globalDb, backend, actor, "reset-retry", bundle(), metadata());
+    backend.failStartsRemaining = 1;
+    const failure = await resetIsolatePreview(globalDb, backend, actor)
+      .then(() => null, error => error);
+
+    assert.match(failure.message, /simulated preview start failure/);
+    assert.notExists(await globalDb.collections.grains.findOneAsync(first.grainId));
+    assert.strictEqual(await globalDb.collections.grains.find({ userId: ownerId }).countAsync(), 0);
+
+    const retried = await resetIsolatePreview(globalDb, backend, actor);
+    const slot = await globalDb.collections.isolatePreviewSlots.findOneAsync({
+      ownerId,
+      operationScope,
+    });
+    assert.isNotNull(await globalDb.collections.grains.findOneAsync(retried.grainId));
+    assert.strictEqual(slot.grainId, retried.grainId);
+    assert.strictEqual(slot.candidateId, first.candidate._id);
+    assert.strictEqual(backend.deleteCalls.length, 2);
+    assert.strictEqual(backend.deleteCalls[0].grainId, first.grainId);
+    assert.strictEqual(backend.startCalls.length, 3);
+    assert.strictEqual(backend.startCalls[2].isNew, true);
+  });
+
+  it("does not let another owner reset a preview", async function () {
+    const first = await previewIsolateBundle(
+      globalDb, backend, actor, "owned-reset", bundle(), metadata());
+    const error = await resetIsolatePreview(globalDb, backend, {
+      ...actor,
+      accountId: `${ownerId}-other`,
+    }).then(() => null, error => error);
+
+    assert.instanceOf(error, IsolatePreviewError);
+    assert.strictEqual(error.code, "preview-not-found");
+    assert.isNotNull(await globalDb.collections.grains.findOneAsync(first.grainId));
+    assert.strictEqual(backend.deleteCalls.length, 0);
   });
 
   it("cleans up a failed first start and can retry the same request", async function () {

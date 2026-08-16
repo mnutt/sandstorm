@@ -21,7 +21,10 @@ import {
   recoverInitializingPreviewGrain,
   updatePreviewGrainPackage,
 } from "/imports/server/grain-creation";
-import { reserveIsolateCandidate } from "/imports/server/isolate-candidates";
+import {
+  findOwnedIsolateCandidate,
+  reserveIsolateCandidate,
+} from "/imports/server/isolate-candidates";
 import { materializeIsolateCandidate } from "/imports/server/isolate-package-service";
 
 class IsolatePreviewError extends Error {
@@ -101,11 +104,14 @@ async function claimPreviewSlot(db, candidate) {
     fail("preview-in-progress", "Another request is currently updating this preview.");
   }
 
-  return { slotId: slot._id, lockId: lock.id };
+  return { slotId: slot._id, lockId: lock.id, candidateId: candidate._id };
 }
 
 async function releasePreviewSlot(db, lease, grainId) {
-  const update = { $unset: { lock: "" }, $set: { updatedAt: new Date() } };
+  const update = {
+    $unset: { lock: "" },
+    $set: { candidateId: lease.candidateId, updatedAt: new Date() },
+  };
   if (grainId) update.$set.grainId = grainId;
   const released = await db.collections.isolatePreviewSlots.updateAsync({
     _id: lease.slotId,
@@ -251,9 +257,64 @@ async function previewIsolateBundle(db, backend, actor, requestId, bundle, metad
   });
 }
 
+async function resetIsolatePreview(db, backend, actor) {
+  if (!backend || typeof backend.deleteGrain !== "function" ||
+      typeof backend.cap !== "function") {
+    fail("invalid-context", "Isolate preview reset requires the Sandstorm backend.");
+  }
+
+  if (!actor || typeof actor.accountId !== "string" || actor.accountId.length === 0 ||
+      typeof actor.operationScope !== "string" || actor.operationScope.length === 0) {
+    fail("invalid-context", "Isolate preview reset requires an explicit owner and scope.");
+  }
+
+  return await enqueuePreview(actor.accountId, actor.operationScope, async () => {
+    const grain = await findPreviewGrain(db, actor.accountId, actor.operationScope);
+    const slot = await db.collections.isolatePreviewSlots.findOneAsync({
+      ownerId: actor.accountId,
+      operationScope: actor.operationScope,
+    });
+    const candidateId = grain?.isolatePreview.candidateId || slot?.candidateId;
+    if (!candidateId) fail("preview-not-found", "There is no preview grain to reset.");
+
+    const candidate = await findOwnedIsolateCandidate(
+      db, actor.accountId, candidateId);
+    if (!candidate || candidate.operationScope !== actor.operationScope ||
+        candidate.requestingGrainId !== actor.requestingGrainId ||
+        candidate.status !== "ready" || !candidate.previewPackageId) {
+      fail("candidate-not-ready", "The current preview candidate is not available.");
+    }
+
+    return await withPreviewSlot(db, candidate, async (lease) => {
+      const current = await findPreviewGrain(db, actor.accountId, actor.operationScope);
+      if (current && ((!grain || current._id !== grain._id) ||
+          current.isolatePreview.candidateId !== candidate._id)) {
+        fail("preview-changed", "The preview changed before its data could be reset.");
+      }
+
+      if (current) {
+        const deleted = await db.deleteGrains({
+          _id: current._id,
+          userId: actor.accountId,
+          "isolatePreview.scope": actor.operationScope,
+        }, backend, "grain");
+        if (deleted !== 1) {
+          fail("preview-delete-failed", "The old preview grain was not deleted.");
+        }
+      }
+
+      await refreshPreviewSlot(db, lease);
+      const replacement = await installCandidateInPreviewGrainLocked(
+        db, backend, candidate);
+      return { grainId: replacement._id };
+    });
+  });
+}
+
 export {
   IsolatePreviewError,
   findPreviewGrain,
   installCandidateInPreviewGrain,
   previewIsolateBundle,
+  resetIsolatePreview,
 };

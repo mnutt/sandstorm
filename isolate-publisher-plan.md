@@ -733,6 +733,8 @@ durable.
 - Launch one preview grain from one `worker.js` file.
 - Hide preview grains from the normal grain list while preserving ordinary
   grain sleep, wake, trash, and deletion behavior.
+- Reset preview storage by replacing the hidden grain and starting the current
+  candidate as a new grain.
 - Add reference-aware candidate and package cleanup.
 
 This milestone has no app publishing and no Powerbox capability.

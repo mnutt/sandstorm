@@ -21,6 +21,7 @@ import { globalDb } from "/imports/db-deprecated";
 import {
   IsolateCandidateError,
   findOwnedIsolateCandidate,
+  removeOwnedIsolateCandidate,
   reserveIsolateCandidate,
 } from "/imports/server/isolate-candidates";
 
@@ -125,5 +126,52 @@ describe("isolate candidate persistence", function () {
       reserveIsolateCandidate(globalDb, actor, "", bundle()), "invalid-context");
     assert.strictEqual(await globalDb.collections.isolateCandidates.find({ operationScope })
         .countAsync(), 0);
+  });
+
+  it("removes an unreferenced owned candidate and requests generated-package cleanup",
+      async function () {
+    const packageUpdates = [];
+    const candidate = {
+      _id: "candidate-id",
+      ownerId,
+      previewPackageId: "generated-package-id",
+    };
+    const db = {
+      collections: {
+        isolateCandidates: {
+          findOneAsync: async query => query.ownerId === ownerId ? candidate : null,
+          removeAsync: async () => 1,
+        },
+        grains: { findOneAsync: async () => null },
+        packages: {
+          updateAsync: async (...args) => {
+            packageUpdates.push(args);
+            return 1;
+          },
+        },
+      },
+    };
+
+    assert.isTrue(await removeOwnedIsolateCandidate(db, ownerId, candidate._id));
+    assert.deepEqual(packageUpdates, [[{
+      _id: candidate.previewPackageId,
+      status: "ready",
+      generatedIsolate: true,
+    }, {
+      $set: { shouldCleanup: true },
+    }]]);
+  });
+
+  it("refuses to remove the candidate currently installed in a preview grain", async function () {
+    const candidate = { _id: "current-candidate", ownerId };
+    const db = {
+      collections: {
+        isolateCandidates: { findOneAsync: async () => candidate },
+        grains: { findOneAsync: async () => ({ _id: "preview-grain" }) },
+      },
+    };
+
+    await expectCandidateError(
+      removeOwnedIsolateCandidate(db, ownerId, candidate._id), "candidate-in-use");
   });
 });
