@@ -48,16 +48,17 @@ class SandstormBackend {
     }
 
     const grain = this._backendCap.getGrain(ownerId, grainId).supervisor;
-    return grain.shutdown().then(function () {
-      grain.close();
-      throw new Error("expected shutdown() to throw disconnected");
-    }, function (err) {
-
-      grain.close();
+    // Legacy supervisors kill their process and therefore disconnect this call. Account-hosted
+    // isolate supervisors stop only the requested worker and return successfully.
+    try {
+      await grain.shutdown();
+    } catch (err) {
       if (err.kjType !== "disconnected") {
         throw err;
       }
-    });
+    } finally {
+      grain.close();
+    }
   }
 
   deleteGrain(grainId, ownerId) {

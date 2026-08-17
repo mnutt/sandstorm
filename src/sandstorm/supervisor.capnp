@@ -47,8 +47,9 @@ interface Supervisor {
   # Calls syncfs() on /var.
 
   shutdown @2 ();
-  # Shut down the grain immediately.  Useful e.g. when upgrading to a newer app version.  This
-  # call will never return successfully because the process kills itself.
+  # Shut down the grain immediately. Useful e.g. when upgrading to a newer app version. A legacy
+  # per-grain supervisor kills its process and disconnects this call. An account-hosted isolate
+  # supervisor may return successfully after stopping the requested worker.
 
   obsoleteGetGrainSize @3 () -> (size :UInt64);
   obsoleteGetGrainSizeWhenDifferent @4 (oldSize :UInt64) -> (size :UInt64);

@@ -437,6 +437,11 @@ export default {
       });
     }
 
+    if (url.pathname === "/grain-log-marker") {
+      console.log("sandstorm-account-grain-log-marker");
+      return new Response("logged");
+    }
+
     if (url.pathname === "/websocket-echo") {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair);

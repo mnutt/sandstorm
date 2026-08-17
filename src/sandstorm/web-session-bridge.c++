@@ -140,11 +140,26 @@ kj::Promise<void> WebSessionBridge::request(
   switch (method) {
     case kj::HttpMethod::GET:
     case kj::HttpMethod::HEAD: {
-      auto req = session.getRequest();
-      req.setPath(path);
-      req.setIgnoreBody(method == kj::HttpMethod::HEAD);
-      auto streamer = initContext(req.initContext(), headers);
-      return handleResponse(req.send(), kj::mv(streamer), response);
+      // A grain restart can disconnect the old session capability on the first request after the
+      // browser reloads. CapRedirector reconnects for subsequent calls, so retry this idempotent
+      // request once rather than leaving the iframe on a browser-generated network error page.
+      auto sendRequest = [this, path, &headers, &response,
+                          ignoreBody = method == kj::HttpMethod::HEAD]() {
+        auto req = session.getRequest();
+        req.setPath(path);
+        req.setIgnoreBody(ignoreBody);
+        auto streamer = initContext(req.initContext(), headers);
+        return handleResponse(req.send(), kj::mv(streamer), response);
+      };
+      return sendRequest().catch_(
+          [sendRequest = kj::mv(sendRequest)](kj::Exception&& exception) mutable
+              -> kj::Promise<void> {
+        if (exception.getType() == kj::Exception::Type::DISCONNECTED) {
+          return sendRequest();
+        } else {
+          return kj::mv(exception);
+        }
+      });
     }
 
     case kj::HttpMethod::POST: {
