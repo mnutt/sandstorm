@@ -47,6 +47,11 @@ done
 [[ -S "$account_socket" ]]
 
 "$client" "$account_socket" testgrain123 testpackage123
+for _attempt in $(seq 1 100); do
+  grep -q 'sandstorm-account-grain-log-marker' "$grain_root/testgrain123/log" && break
+  sleep 0.05
+done
+grep -q 'sandstorm-account-grain-log-marker' "$grain_root/testgrain123/log"
 grep -q '"topology": "accountSharedHost"' \
   "$grain_root/testgrain123/isolate-runtime/runtime-manifest.json"
 grep -q '"topology": "accountSharedHost"' \

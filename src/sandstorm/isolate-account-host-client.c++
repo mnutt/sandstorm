@@ -607,6 +607,8 @@ int main(int argc, char** argv) {
       io.waitScope, account, core, argv[2], argv[3], true);
   coreImpl.setSupervisor(argv[2], supervisor);
   sandstorm::fetchPath(io.waitScope, supervisor, core, "echo");
+  KJ_REQUIRE(sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "grain-log-marker") == "logged");
   sandstorm::testWebSocket(io.waitScope, supervisor);
   sandstorm::testBrowserBootstrap(io.waitScope, supervisor);
   sandstorm::testUnknownLengthUploads(io, supervisor, core);
@@ -681,6 +683,7 @@ int main(int argc, char** argv) {
   KJ_REQUIRE(sandstorm::contains(crossGrainCall,
       "\"message\":\"classic native greeter cross-grain-capnp-benchmark hello client isolate\""),
       "second isolate did not call the first isolate over Cap'n Proto RPC", crossGrainCall);
+  auto staleSession = sandstorm::newWebSession(io.waitScope, supervisor);
   supervisor.shutdownRequest().send().wait(io.waitScope);
 
   bool rejectedAfterShutdown = false;
@@ -690,6 +693,25 @@ int main(int argc, char** argv) {
     rejectedAfterShutdown = true;
   }
   KJ_REQUIRE(rejectedAfterShutdown, "shut-down Supervisor capability remained usable");
+
+  bool sessionDisconnectedAfterShutdown = false;
+  try {
+    auto get = staleSession.getRequest();
+    get.setPath("echo");
+    get.setIgnoreBody(false);
+    auto context = get.initContext();
+    context.setResponseStream(kj::heap<sandstorm::IgnoreByteStream>());
+    context.initCookies(0);
+    context.initAccept(0);
+    context.initAcceptEncoding(0);
+    context.initAdditionalHeaders(0);
+    (void)get.send().wait(io.waitScope);
+  } catch (const kj::Exception& exception) {
+    sessionDisconnectedAfterShutdown =
+        exception.getType() == kj::Exception::Type::DISCONNECTED;
+  }
+  KJ_REQUIRE(sessionDisconnectedAfterShutdown,
+      "session retained by the gateway did not disconnect after worker shutdown");
 
   auto restarted = sandstorm::startGrain(
       io.waitScope, account, core, argv[2], argv[3], false);
