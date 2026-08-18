@@ -24,7 +24,7 @@ import {
   createPublishGrant,
   requirePublishGrant,
   revokePublishGrantIfUnreferenced,
-} from "/imports/server/isolate-publisher-capability";
+} from "/imports/server/isolate-publisher-grants";
 
 const { assert } = chai;
 
