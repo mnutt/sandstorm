@@ -22,6 +22,7 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 
 import { globalDb } from "/imports/db-deprecated";
 import { globalSubs } from "/imports/client/shell-client";
+import { IsolatePreviewPane } from "/imports/client/apps/isolate-preview-pane";
 
 import "/imports/client/apps/styles/isolate-authoring.scss";
 
@@ -222,6 +223,17 @@ Template.isolateAuthoringPage.onCreated(function () {
   this.busy = new ReactiveVar(false);
   this.operationStatus = new ReactiveVar(null);
   this.publishedResult = new ReactiveVar(null);
+  this.previewTarget = new ReactiveVar(null);
+  this.previewPane = null;
+});
+
+Template.isolateAuthoringPage.onRendered(function () {
+  this.previewPane = new IsolatePreviewPane(
+    globalDb, this.find(".isolate-preview-frame-mount"));
+});
+
+Template.isolateAuthoringPage.onDestroyed(function () {
+  if (this.previewPane) this.previewPane.destroy();
 });
 
 Template.isolateAuthoringPage.helpers({
@@ -251,6 +263,16 @@ Template.isolateAuthoringPage.helpers({
   previewGrainId() {
     const slot = globalDb.collections.isolatePreviewSlots.findOne();
     return slot && slot.grainId || matchingPreview(Template.instance())?.grainId;
+  },
+
+  previewTarget() {
+    return Template.instance().previewTarget.get();
+  },
+
+  previewDigest() {
+    const target = Template.instance().previewTarget.get();
+    if (!target) return "";
+    return `${target.normalizedDigest.slice(0, 12)}…`;
   },
 
   publishDisabled() {
@@ -283,8 +305,6 @@ Template.isolateAuthoringPage.events({
     instance.busy.set(true);
     instance.publishedResult.set(null);
     setStatus(instance, "working", "Validating and starting the preview…");
-    const previewWindow = window.open("about:blank", "_blank");
-    if (previewWindow) previewWindow.opener = null;
     try {
       let draft = instance.draft.get();
       const inputKey = snapshotKey(draft);
@@ -308,10 +328,14 @@ Template.isolateAuthoringPage.events({
       const updated = { ...draft, preview, previewRequest: null };
       instance.draft.set(updated);
       saveDraft(updated);
+      const target = {
+        grainId: result.grainId,
+        normalizedDigest: result.candidate.normalizedDigest,
+      };
+      instance.previewTarget.set(target);
+      instance.previewPane.show(target);
       setStatus(instance, "success", "Preview is ready in a hidden grain.");
-      if (previewWindow) previewWindow.location = `/grain/${result.grainId}`;
     } catch (error) {
-      if (previewWindow) previewWindow.close();
       setStatus(instance, "error", errorMessage(error));
     } finally {
       instance.busy.set(false);
@@ -335,6 +359,15 @@ Template.isolateAuthoringPage.events({
       };
       instance.draft.set(updated);
       saveDraft(updated);
+      const target = instance.previewTarget.get();
+      if (target && preview) {
+        const replacement = {
+          grainId: result.grainId,
+          normalizedDigest: preview.normalizedDigest,
+        };
+        instance.previewTarget.set(replacement);
+        instance.previewPane.show(replacement);
+      }
       setStatus(instance, "success", "Preview data was reset in a replacement grain.");
     } catch (error) {
       setStatus(instance, "error", errorMessage(error));
@@ -352,5 +385,16 @@ Template.isolateAuthoringPage.events({
     event.preventDefault();
     const select = instance.find("select.existing-app");
     if (select && select.value) publish(instance, { existingApp: select.value });
+  },
+
+  "click .reload-inline-preview"(event, instance) {
+    event.preventDefault();
+    instance.previewPane.reload();
+  },
+
+  "click .close-inline-preview"(event, instance) {
+    event.preventDefault();
+    instance.previewPane.close();
+    instance.previewTarget.set(null);
   },
 });
