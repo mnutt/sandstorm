@@ -22,3 +22,7 @@ starting a typed public capability. Use
 native Cap'n Proto capability directly.
 Use `examples/isolate-capability-provider` and `examples/isolate-api-powerbox`
 for WebSession/ApiSession lifecycle and Powerbox flows.
+Use `examples/isolate-authoring-powerbox` for the isolate-authoring flow: an
+authoring grain requests an `IsolatePreviewer`, streams an immutable source
+snapshot, inspects the returned `IsolateCandidate`, and offers the returned
+preview `UiView` to the user.

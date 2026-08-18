@@ -327,6 +327,22 @@ IsolatePublishOperations.ensureIndexOnServer(
 );
 IsolatePublishOperations.ensureIndexOnServer("createdAppId");
 
+const IsolateFactoryGrants = new Mongo.Collection("isolateFactoryGrants", collectionOptions);
+// Durable authorization behind isolate factory frontend-ref capabilities.
+//
+// Each contains:
+//   _id: Random grant ID used only inside authenticated frontend-ref tokens.
+//   kind: "preview" or "publish".
+//   ownerId: Account charged for and authorized to use the grant.
+//   requestingGrainId: Authoring grain for which the Powerbox grant was issued.
+//   targetCreatedAppId: Specifically authorized update target for a future publish grant.
+//   createdAt and expiresAt: Grant lifetime audit data. Expiration policy is deferred.
+//   consumedAt, consumedRequestId, and result: One-shot publication state.
+//   revokedAt: Explicit server-side revocation state.
+
+IsolateFactoryGrants.ensureIndexOnServer("ownerId");
+IsolateFactoryGrants.ensureIndexOnServer("requestingGrainId");
+
 const UserActions = new Mongo.Collection("userActions", collectionOptions);
 // List of actions that each user has installed which create new grains.  Each app may install
 // some number of actions (usually, one).
@@ -1247,6 +1263,7 @@ class SandstormDb {
       createdIsolateApps: CreatedIsolateApps,
       createdIsolateRevisions: CreatedIsolateRevisions,
       isolatePublishOperations: IsolatePublishOperations,
+      isolateFactoryGrants: IsolateFactoryGrants,
       userActions: UserActions,
       grains: Grains,
       roleAssignments: RoleAssignments, // Deprecated, only used by the migration that eliminated it.
@@ -3523,6 +3540,7 @@ if (Meteor.isServer) {
     await this.collections.createdIsolateRevisions.removeAsync({ ownerId: userId });
     await this.collections.createdIsolateApps.removeAsync({ ownerId: userId });
     await this.collections.isolatePublishOperations.removeAsync({ ownerId: userId });
+    await this.collections.isolateFactoryGrants.removeAsync({ ownerId: userId });
     if (isolatePackageIds.length > 0) {
       await this.collections.packages.updateAsync({
         _id: { $in: isolatePackageIds },

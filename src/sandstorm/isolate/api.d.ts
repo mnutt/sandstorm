@@ -127,6 +127,7 @@ declare module "sandstorm:api" {
     info(options?: { refresh?: boolean }): Promise<unknown>;
     save(options?: SaveCapabilityOptions): Promise<string>;
     drop(): Promise<void>;
+    wrapDerived(capability: object): Capability;
     offer(request: Request, options?: PowerboxOfferOptions): Promise<unknown>;
     fulfillRequest(request: Request, options?: PowerboxFulfillOptions): Promise<unknown>;
     tieToUser(request: Request, options?: PowerboxTieOptions): Promise<unknown>;
@@ -180,6 +181,7 @@ declare module "sandstorm:api" {
     apiSessionDescriptor(options?: unknown): Promise<string>;
     outboundHttpDescriptor(options?: unknown): Promise<string>;
     appInterfaceDescriptor<I extends CapnpClientInterface>(InterfaceClass: I): Promise<string>;
+    uiViewDescriptor(options: { title: string }): Promise<string>;
     claim(result: string | PowerboxRequestResult, options?: PowerboxClaimOptions): Promise<Capability>;
     offered(): Promise<OfferedCapabilityInfo | undefined>;
     offer(capability: LiveCapability, options?: PowerboxOfferOptions): Promise<unknown>;

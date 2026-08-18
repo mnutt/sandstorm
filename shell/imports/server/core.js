@@ -280,7 +280,7 @@ class PersistentUiViewImpl extends PersistentImpl {
   // and grains can't call methods on UiViews because they lack the "is human" pseudopermission.
 }
 
-const makePersistentUiView = async function (db, saveTemplate, grainId) {
+export const makePersistentUiView = async function (db, saveTemplate, grainId) {
   check(grainId, String);
 
   // Verify that the grain exists and hasn't been trashed.
@@ -672,6 +672,9 @@ async function dropInternal(db, sturdyRef, ownerPattern) {
     });
 
     await db.removeApiTokens({ _id: hashedSturdyRef });
+  } else if (token.frontendRef) {
+    await db.removeApiTokens({ _id: hashedSturdyRef });
+    await frontendRefRegistry.drop(db, token.frontendRef);
   } else {
     await db.removeApiTokens({ _id: hashedSturdyRef });
   }

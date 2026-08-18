@@ -4,6 +4,7 @@
 sandstorm/activity.capnp
 sandstorm/grain.capnp
 sandstorm/identity.capnp
+sandstorm/isolate-authoring.capnp
 sandstorm/isolate-bridge.capnp
 sandstorm/outbound-http-session.capnp
 sandstorm/powerbox.capnp

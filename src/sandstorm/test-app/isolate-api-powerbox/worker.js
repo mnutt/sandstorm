@@ -1,4 +1,13 @@
-import { Capability, sandstorm } from "sandstorm:api";
+import {
+  IsolateBundle,
+  IsolatePreviewer,
+} from "capnp:/sandstorm/isolate-authoring.capnp";
+import {
+  Capability,
+  capnpClient,
+  exportCapnp,
+  sandstorm,
+} from "sandstorm:api";
 
 const TOKEN_KEY = "api-powerbox-token";
 const API_CANONICAL_URL = "https://api.example.test/v1";
@@ -17,6 +26,7 @@ function htmlEscape(value) {
 
 function renderPage(state) {
   const pretty = htmlEscape(JSON.stringify(state.result || state.error || {}, null, 2));
+  const previewerDescriptor = JSON.stringify(state.previewerDescriptor || "");
   return `<!doctype html>
 <html>
   <head>
@@ -86,6 +96,8 @@ function renderPage(state) {
       with OAuth scope <code>${htmlEscape(state.oauthScopes)}</code>.
     </p>
     ${state.providerFlow ? "<p id=\"provider-flow-mode\">Provider descriptor mode</p>" : ""}
+    ${state.previewerFlow ?
+      "<p id=\"isolate-previewer-flow-mode\">Isolate previewer descriptor mode</p>" : ""}
 
     <label>
       Canonical API URL
@@ -95,7 +107,8 @@ function renderPage(state) {
       OAuth scopes
       <input id="oauth-scopes" value="${htmlEscape(state.oauthScopes)}" autocomplete="off">
     </label>
-    <button id="connect-api" type="button">Connect API</button>
+    <button id="connect-api" type="button">${state.previewerFlow ?
+      "Create Isolate Preview" : "Connect API"}</button>
 
     <form method="post" action="/restore">
       <button type="submit" class="secondary">Restore Saved API</button>
@@ -104,6 +117,11 @@ function renderPage(state) {
     <form method="post" action="/disconnect">
       <button type="submit" class="secondary">Drop Saved API</button>
     </form>
+
+    ${state.result?.call?.candidate ? `
+    <form method="post" action="/offer-preview">
+      <button id="open-isolate-preview" type="submit">Open Isolate Preview</button>
+    </form>` : ""}
 
     <pre>${pretty}</pre>
 
@@ -123,6 +141,7 @@ function renderPage(state) {
         button.disabled = true;
         try {
           const providerFlow = new URLSearchParams(location.search).has("providerFlow");
+          const previewerFlow = new URLSearchParams(location.search).has("isolatePreviewer");
           const apiScopes = oauthScopes.value
             .split(/[,\\s]+/)
             .map((scope) => scope.trim())
@@ -130,6 +149,10 @@ function renderPage(state) {
           const queryInspection = await inspectPowerboxQuery(providerFlow
             ? {
                 descriptor: "${PROVIDER_DESCRIPTOR}",
+              }
+            : previewerFlow
+            ? {
+                descriptor: ${previewerDescriptor},
               }
             : {
                 canonicalUrl: canonicalUrl.value,
@@ -139,6 +162,8 @@ function renderPage(state) {
             JSON.stringify(queryInspection, null, 2);
           const query = providerFlow
             ? ["${PROVIDER_DESCRIPTOR}"]
+            : previewerFlow
+            ? [${previewerDescriptor}]
             : [await apiSessionPowerboxDescriptor({
                 canonicalUrl: canonicalUrl.value,
                 oauthScopes: apiScopes,
@@ -156,6 +181,7 @@ function renderPage(state) {
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               ...requested,
+              isolatePreviewer: previewerFlow,
               canonicalUrl: canonicalUrl.value,
               oauthScopes: oauthScopes.value,
               skipApiCall: new URLSearchParams(location.search).has("skipApiCall"),
@@ -197,6 +223,80 @@ async function callApi(capability) {
   return readApiResponse(response);
 }
 
+async function callIsolatePreviewer(
+  api, capability, offerView = false, responseText = "Powerbox isolate preview") {
+  const previewer = capnpClient(IsolatePreviewer, capability);
+  const source = new TextEncoder().encode(
+    `export default { fetch() { return new Response(${JSON.stringify(responseText)}); } };`);
+  const exportedBundle = await exportCapnp(api, IsolateBundle, {
+    async getInfo() {
+      return {
+        info: {
+          formatVersion: 1,
+          mainModule: "worker.js",
+          compatibilityDate: "2025-01-01",
+          compatibilityFlags: [],
+          modules: [{ name: "worker.js", type: "esModule", size: BigInt(source.byteLength) }],
+        },
+      };
+    },
+
+    async transfer(params) {
+      const { stream } = await params.receiver.beginModule({ index: 0 });
+      await stream.expectSize({ size: BigInt(source.byteLength) });
+      await stream.write({ data: source.subarray(0, 19) });
+      await stream.write({ data: source.subarray(19) });
+      await stream.done({});
+      await params.receiver.finish({});
+      return {};
+    },
+  });
+
+  try {
+    const result = await previewer.preview({
+      requestId: `powerbox-preview-${crypto.randomUUID()}`,
+      bundle: exportedBundle.client,
+      metadata: {
+        appTitle: "Powerbox Isolate Preview",
+        nounPhrase: "preview",
+        shortDescription: "Created through the IsolatePreviewer Powerbox capability.",
+      },
+    });
+    const { info } = await result.candidate.getInfo({});
+    const viewInfo = await result.view.getViewInfo({});
+    const uiViewDescriptor = await api.powerbox().uiViewDescriptor({
+      title: "Powerbox Isolate Preview",
+    });
+    if (offerView) {
+      const offeredView = capability.wrapDerived(result.view);
+      try {
+        await api.powerbox().offer(offeredView, {
+          descriptor: uiViewDescriptor,
+          title: "Open Powerbox isolate preview",
+        });
+      } finally {
+        await offeredView.drop();
+      }
+    }
+    return {
+      ok: true,
+      candidate: {
+        digestBytes: info.normalizedDigest.length,
+        compatibilityDate: info.compatibilityDate,
+        moduleNames: info.modules.map(module => module.name),
+        warnings: info.validationWarnings,
+      },
+      view: {
+        descriptorLength: uiViewDescriptor.length,
+        permissionCount: viewInfo.permissions.length,
+        roleCount: viewInfo.roles.length,
+      },
+    };
+  } finally {
+    await exportedBundle.drop();
+  }
+}
+
 async function callRestoredCapability(api) {
   const token = await api.storage().get(TOKEN_KEY);
   if (!token) {
@@ -227,13 +327,19 @@ async function readApiResponse(response) {
 }
 
 async function readState(request, env, result = null, error = null) {
-  const store = appApi(request, env).storage();
+  const api = appApi(request, env);
+  const store = api.storage();
   const savedToken = await store.get(TOKEN_KEY);
   const url = new URL(request.url);
+  const previewerFlow = url.searchParams.has("isolatePreviewer");
   return {
     canonicalUrl: API_CANONICAL_URL,
     oauthScopes: API_OAUTH_SCOPES.join(" "),
     providerFlow: url.searchParams.has("providerFlow"),
+    previewerFlow,
+    previewerDescriptor: previewerFlow
+      ? await api.powerbox().appInterfaceDescriptor(IsolatePreviewer)
+      : null,
     saved: Boolean(savedToken),
     result,
     error,
@@ -272,12 +378,16 @@ export default {
         const body = await readJsonBody(request);
         const canonicalUrl = String(body.canonicalUrl || API_CANONICAL_URL);
         const capability = await api.powerbox().claim(body);
-        const token = await capability.save({ label: `API: ${canonicalUrl}` });
+        const token = await capability.save({
+          label: body.isolatePreviewer ? "Isolate preview authority" : `API: ${canonicalUrl}`,
+        });
         const store = await api.storage().put(TOKEN_KEY, token);
         const savedCapability = await api.restore(token);
         const savedClass = savedCapability instanceof Capability;
+        const call = body.isolatePreviewer
+          ? await callIsolatePreviewer(api, savedCapability)
+          : await callApi(body.skipApiCall ? null : capability);
         const savedDrop = await savedCapability.drop();
-        const call = await callApi(body.skipApiCall ? null : capability);
         await capability.drop();
 
         return new Response(renderPage(await readState(request, env, {
@@ -305,6 +415,21 @@ export default {
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },
         });
+      }
+
+      if (request.method === "POST" && url.pathname === "/offer-preview") {
+        const token = await api.storage().get(TOKEN_KEY);
+        if (!token) throw new Error("No saved IsolatePreviewer capability.");
+        const capability = await api.restore(token);
+        try {
+          const responseText = url.searchParams.has("updated")
+            ? "Powerbox isolate preview updated"
+            : "Powerbox isolate preview";
+          const call = await callIsolatePreviewer(api, capability, true, responseText);
+          return Response.json({ ok: true, call });
+        } finally {
+          await capability.drop();
+        }
       }
 
       if (request.method === "POST" && url.pathname === "/disconnect") {

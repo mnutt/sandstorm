@@ -151,6 +151,8 @@ const savedCapability: string = await capability.save({ label: "Collision" });
 const restored: Promise<Capability> = api.restore(token);
 const revoked: Promise<{ ok: true }> = api.revoke(saved);
 const descriptor: Promise<string> = api.powerbox().appInterfaceDescriptor(Collision);
+const uiViewDescriptor: Promise<string> = api.powerbox().uiViewDescriptor({ title: "Preview" });
+const derived: Capability = capability.wrapDerived(exported.client);
 // @ts-expect-error durable tokens are strings, not byte arrays
 api.restore(new Uint8Array());
 void savedCapability;

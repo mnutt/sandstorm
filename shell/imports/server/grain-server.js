@@ -106,6 +106,7 @@ Meteor.publish("grainTopBar", function (grainId) {
         title: 1,
         userId: 1,
         private: 1,
+        isolatePreview: 1,
       },
     }),
   ];

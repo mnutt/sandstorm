@@ -145,3 +145,64 @@ module.exports["Test isolate API Powerbox provider flow"] = function (browser) {
         .assert.textContains("pre", "\"source\": \"isolate-capability-provider\"");
     });
 };
+
+module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
+  ensureApiPowerboxSpk();
+
+  installAndOpenExample(browser, apiPowerboxAppId, apiPowerboxSpk)
+    .grainFrame()
+    .execute(function () {
+      window.location.href = "/?isolatePreviewer=1";
+    })
+    .waitForElementVisible("#isolate-previewer-flow-mode", medium_wait)
+    .waitForElementVisible("#connect-api", medium_wait)
+    .click("#connect-api")
+    .frameParent()
+    .waitForElementVisible(
+      ".powerbox-card button[data-card-id^=\"frontendref-isolate-previewer-\"]",
+      medium_wait)
+    .click(".powerbox-card button[data-card-id^=\"frontendref-isolate-previewer-\"]")
+    .grainFrame()
+    .waitForElementVisible("pre", long_wait)
+    .assert.textContains("body", "Saved API capability token present")
+    .assert.textContains("pre", "\"ok\": true")
+    .assert.textContains("pre", "\"digestBytes\": 32")
+    .assert.textContains("pre", "\"compatibilityDate\": \"2025-01-01\"")
+    .assert.textContains("pre", "\"worker.js\"")
+    .assert.textContains("pre", "\"descriptorLength\":")
+    .assert.textContains("pre", "\"permissionCount\":")
+    .assert.textContains("pre", "\"roleCount\":")
+    .waitForElementVisible("#open-isolate-preview", medium_wait)
+    .frameParent()
+    .url(function (authoringUrl) {
+      const authoringGrainId = new URL(authoringUrl.value).pathname.split("/")[2];
+      const authoringTab = `.navbar-grains .navitem-grain[data-grainid="${authoringGrainId}"] a`;
+      browser
+        .grainFrame()
+        .click("#open-isolate-preview")
+        .frameParent()
+        .assert.textContains("#grainTitle", "Powerbox Isolate Preview")
+        .waitForElementPresent("iframe.grain-frame", long_wait)
+        .grainFrame()
+        .waitForElementVisible("body", long_wait)
+        .assert.textContains("body", "Powerbox isolate preview")
+        .frameParent()
+        .waitForElementVisible(authoringTab, medium_wait)
+        .click(authoringTab)
+        .waitForElementPresent("iframe.grain-frame", long_wait)
+        .grainFrame()
+        .execute(function () {
+          const form = document.createElement("form");
+          form.method = "post";
+          form.action = "/offer-preview?updated=1";
+          document.body.appendChild(form);
+          form.submit();
+        })
+        .frameParent()
+        .assert.textContains("#grainTitle", "Powerbox Isolate Preview")
+        .waitForElementPresent("iframe.grain-frame", long_wait)
+        .grainFrame()
+        .waitForElementVisible("body", long_wait)
+        .assert.textContains("body", "Powerbox isolate preview updated");
+    });
+};

@@ -289,6 +289,44 @@ test("spk dev-isolate rejects service targets outside the worker", async () => {
     /service binding target must be the worker-local main service/);
 });
 
+test("isolate authoring Powerbox example packages public schemas and bindings", async (t) => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+  try {
+    await requireFile(
+      CAPNP_ES_COMPILER_MODULE,
+      "Set CAPNP_ES_COMPILER_MODULE to the @mnutt/capnp-es compiler module.");
+  } catch (err) {
+    t.skip(err.message);
+    return;
+  }
+
+  const workerPath = path.join(
+    REPO_DIR, "examples/isolate-authoring-powerbox/worker.js");
+  const { stdout } = await runCommand(SPK_BIN, [
+    "dev-isolate",
+    "--print-manifest-json",
+    workerPath,
+  ], {
+    env: {
+      ...process.env,
+      SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
+    },
+  });
+  const isolate = JSON.parse(stdout).continueCommand.isolate;
+  const modules = new Map(isolate.modules.map((module) => [module.name, module]));
+  const bindings = new Map(isolate.bindings.map((binding) => [binding.name, binding]));
+
+  assert.equal(
+    modules.get("capnp:/sandstorm/isolate-authoring.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/isolate-authoring.js");
+  assert.equal(
+    modules.get("capnp:/sandstorm/grain.capnp").esModulePath,
+    "__sandstorm_isolate_runtime/capnp-es-generated/sandstorm/grain.js");
+  assert.ok(bindings.get("SANDSTORM_API").sandstormApi === null);
+  assert.ok(bindings.get("POWERBOX").powerbox === null);
+  assert.ok(bindings.get("STORAGE").storage === null);
+});
+
 test("spk dev-isolate resolves app-interface schemas outside the repo", async (t) => {
   await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
   try {
