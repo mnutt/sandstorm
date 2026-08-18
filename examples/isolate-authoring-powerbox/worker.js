@@ -1,6 +1,7 @@
 import {
   IsolateBundle,
   IsolatePreviewer,
+  IsolatePublisher,
 } from "capnp:/sandstorm/isolate-authoring.capnp";
 import {
   capnpClient,
@@ -9,6 +10,8 @@ import {
 } from "sandstorm:api";
 
 const PREVIEWER_TOKEN_KEY = "isolate-previewer-token";
+const CANDIDATE_INFO_KEY = "isolate-candidate-info";
+const PUBLISHED_APP_KEY = "isolate-published-app";
 const SOURCE_KEY = "isolate-authoring-source";
 const DEFAULT_SOURCE = `export default {
   async fetch(request) {
@@ -36,6 +39,7 @@ function jsonValue(value) {
 
 function renderPage(state) {
   const descriptor = JSON.stringify(state.previewerDescriptor);
+  const publisherDescriptor = JSON.stringify(state.publisherDescriptor || "");
   const output = htmlEscape(jsonValue(state.result || state.error || {}));
   return `<!doctype html>
 <html>
@@ -111,6 +115,10 @@ function renderPage(state) {
         ${state.saved ? "" : "disabled"}>Preview with saved grant</button>
       <button id="revoke-preview" class="danger" type="button"
         ${state.saved ? "" : "disabled"}>Revoke saved grant</button>
+      ${state.candidateInfo ? `
+      <button id="publish-candidate" type="button">${state.publishedApp
+        ? "Publish update"
+        : "Publish reviewed candidate"}</button>` : ""}
     </div>
 
     <pre id="output">${output}</pre>
@@ -183,6 +191,24 @@ function renderPage(state) {
           clearBusy();
         }
       });
+
+      document.querySelector("#publish-candidate")?.addEventListener("click", async () => {
+        try {
+          setBusy("Opening Powerbox for one-shot IsolatePublisher authority...");
+          const powerboxResult = await requestPowerbox([${publisherDescriptor}], {
+            saveLabel: { defaultText: "Publish reviewed isolate candidate" },
+          });
+          await replacePage(await fetch("/publish", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ powerboxResult }),
+          }));
+        } catch (error) {
+          output.textContent = (error.message || String(error)) + "\\n\\n" +
+            (error.stack || "");
+          clearBusy();
+        }
+      });
     </script>
   </body>
 </html>`;
@@ -247,6 +273,12 @@ async function previewSource(api, previewerCapability, sourceText) {
       },
     });
     const { info } = await candidate.getInfo({});
+    const candidateInfo = {
+      normalizedDigest: digestHex(info.normalizedDigest),
+      title: "Isolate Authoring Example",
+    };
+    await api.storage().putJson(CANDIDATE_INFO_KEY, candidateInfo);
+
     const viewInfo = await view.getViewInfo({});
     const uiViewDescriptor = await api.powerbox().uiViewDescriptor({
       title: "Isolate Authoring Example Preview",
@@ -267,7 +299,7 @@ async function previewSource(api, previewerCapability, sourceText) {
     return {
       ok: true,
       candidate: {
-        normalizedDigest: digestHex(info.normalizedDigest),
+        normalizedDigest: candidateInfo.normalizedDigest,
         compatibilityDate: info.compatibilityDate,
         compatibilityFlags: info.compatibilityFlags,
         modules: info.modules.map(module => ({
@@ -289,16 +321,56 @@ async function previewSource(api, previewerCapability, sourceText) {
   }
 }
 
+async function publishCandidate(api, publisherCapability, requestId) {
+  const candidateInfo = await api.storage().getJson(CANDIDATE_INFO_KEY);
+  if (!candidateInfo) throw new Error("Preview and save a candidate before publishing.");
+  const publisher = capnpClient(IsolatePublisher, publisherCapability);
+  const { result } = await publisher.publish({ requestId });
+  const publication = {
+    createdAppId: result.createdAppId,
+    revisionId: result.revisionId,
+    appId: result.appId,
+    appVersion: result.appVersion,
+    title: result.title,
+  };
+  await api.storage().putJson(PUBLISHED_APP_KEY, publication);
+  await api.storage().delete(CANDIDATE_INFO_KEY);
+  return {
+    ok: true,
+    publication,
+  };
+}
+
 async function readState(api, result = null, error = null) {
   const storage = api.storage();
-  const [token, source] = await Promise.all([
+  const [token, source, candidateInfo, publishedApp] = await Promise.all([
     storage.get(PREVIEWER_TOKEN_KEY),
     storage.get(SOURCE_KEY),
+    storage.getJson(CANDIDATE_INFO_KEY),
+    storage.getJson(PUBLISHED_APP_KEY),
   ]);
+  const publisherDescriptor = candidateInfo
+    ? await api.powerbox().appInterfaceDescriptor(IsolatePublisher, {
+        normalizedDigest: Uint8Array.from(candidateInfo.normalizedDigest.match(/../g),
+          byte => Number.parseInt(byte, 16)),
+        target: publishedApp
+          ? { existingApp: publishedApp.createdAppId }
+          : { newApp: undefined },
+        metadata: {
+          title: candidateInfo.title,
+          nounPhrase: "app",
+          shortDescription: "Published by the isolate authoring Powerbox example.",
+          marketingVersion: "1.0",
+        },
+      })
+    : null;
   return {
     saved: Boolean(token),
     source: typeof source === "string" ? source : DEFAULT_SOURCE,
     previewerDescriptor: await api.powerbox().appInterfaceDescriptor(IsolatePreviewer),
+    publisherDescriptor,
+    candidateInfo,
+    publishedApp,
     result,
     error,
   };
@@ -353,6 +425,18 @@ export default {
           return await render(api, await previewSource(api, restored, source));
         } finally {
           await restored.drop();
+        }
+      }
+
+      if (request.method === "POST" && url.pathname === "/publish") {
+        const body = await readJson(request);
+        if (!body.powerboxResult) throw new Error("Grant IsolatePublisher authority to publish.");
+        const claimed = await api.powerbox().claim(body.powerboxResult);
+        try {
+          return await render(api, await publishCandidate(
+            api, claimed, `example-publish-${crypto.randomUUID()}`));
+        } finally {
+          await claimed.drop();
         }
       }
 

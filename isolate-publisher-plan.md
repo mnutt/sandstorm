@@ -148,8 +148,8 @@ package data.
 ### Candidate
 
 An `IsolateCandidate` is an immutable, system-minted reference to a normalized
-bundle and its generated runtime artifact. It is the handoff between previewing
-and publishing.
+bundle and its generated runtime artifact. Its digest identifies the revision
+selected for a later publishing request.
 
 A candidate records:
 
@@ -166,10 +166,11 @@ A candidate records:
 The capability does not allow its holder to edit the candidate. Editing source
 creates another candidate.
 
-Publishing accepts a live `IsolateCandidate` capability or a server-authenticated
-candidate reference, not another copy of the source bundle. This prevents a
-caller from previewing one revision and substituting different source during
-publication.
+When the user approves a publisher Powerbox request, Sandstorm resolves its
+committed digest within the owning authoring grain and stores the matching
+server-side candidate ID in the grant. Publication never accepts another copy
+of the source bundle. This prevents a caller from previewing one revision and
+substituting different source during publication.
 
 ### Published app and revision
 
@@ -236,10 +237,7 @@ An illustrative interface is:
 ```capnp
 interface IsolatePublisher {
   publish @0 (
-    requestId :Text,
-    candidate :IsolateCandidate,
-    target :PublishTarget,
-    metadata :AppMetadata
+    requestId :Text
   ) -> (
     result :PublishedRevision
   );
@@ -284,9 +282,10 @@ interface IsolateCandidate {
 }
 ```
 
-The server should authenticate the capability itself when publishing. Fields
-returned by `getInfo()` are informational and must not be accepted back as
-proof of candidate identity. The preview operation returns the `UiView`
+Fields returned by `getInfo()` are informational and must not be accepted back
+as proof of candidate identity. The publisher provider instead resolves the
+requested digest in the owner- and grain-scoped candidate collection when it
+mints the grant. The preview operation returns the `UiView`
 separately because a reusable authoring session may later move that same hidden
 preview grain to another candidate while preserving its storage. A candidate's
 audit record proves what was installed at preview time; it does not promise
@@ -353,8 +352,8 @@ An App Studio or AI authoring grain uses two different Powerbox requests.
    usage will be charged. Detailed limit presentation is deferred.
 3. The authoring worker claims and saves the returned capability.
 4. Repeated Preview actions call `preview()` through the saved capability.
-5. The worker saves the returned candidate capability if the user may publish
-   it later.
+5. The worker records the returned candidate digest and summary if the user may
+   publish it later; it need not retain the candidate capability.
 6. The returned preview `UiView` is offered to the current user; the existing
    shell `UiView` offer behavior opens it.
 
@@ -369,10 +368,15 @@ authority to be charged to themselves or silently replace the owner's grant.
    or one specific existing-app intent.
 3. The Powerbox card presents the candidate summary and target.
 4. The worker immediately claims the one-shot publisher capability.
-5. The worker invokes `publish()` with the live candidate capability.
+5. The worker invokes `publish()`; the grant already contains the bound
+   server-side candidate identity and reviewed intent.
 6. The publisher consumes the grant atomically and records the idempotent
    result.
-7. The authoring app displays the published app/revision result.
+7. The authoring app displays the published app/revision result and records its
+   returned created-app ID in project state.
+8. After previewing a newer candidate, the app uses that ID as an
+   `existingApp` target so the next reviewed grant publishes a revision rather
+   than creating another app.
 
 The requesting grain never receives ambient access to the Packages collection,
 the backend, arbitrary grain creation, or another app's publishing authority.
@@ -665,8 +669,9 @@ durable.
 - Invalid paths, duplicate names, missing imports, bad JSON, bad dates,
   unsupported flags, and oversized inputs are rejected.
 - Generated manifests contain only the permitted isolate command and bindings.
-- Candidate capability identity cannot be forged from `CandidateInfo`.
-- Publisher refuses raw source in place of a candidate capability.
+- Candidate identity cannot be forged from `CandidateInfo`; grant validation
+  resolves the digest against the requesting grain's server-side candidates.
+- Publisher accepts neither raw source nor a caller-supplied candidate ID.
 
 ### Server integration tests
 
@@ -765,7 +770,8 @@ both are reached from the trusted shell UI.
 - Define the public `IsolatePublisher` schema.
 - Add new-app and existing-app-specific Powerbox requests.
 - Implement one-shot persistent grant consumption.
-- Accept the candidate capability directly across Cap'n Proto.
+- Bind the reviewed digest to a preview-ready server-side candidate when the
+  grant is minted; keep `publish()` limited to an idempotency request ID.
 - Add review UI, revocation, retry, and cross-user tests.
 
 ### Milestone 5: Product expansion

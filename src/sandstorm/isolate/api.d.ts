@@ -180,7 +180,10 @@ declare module "sandstorm:api" {
   export interface PowerboxApi {
     apiSessionDescriptor(options?: unknown): Promise<string>;
     outboundHttpDescriptor(options?: unknown): Promise<string>;
-    appInterfaceDescriptor<I extends CapnpClientInterface>(InterfaceClass: I): Promise<string>;
+    appInterfaceDescriptor<I extends CapnpClientInterface>(
+      InterfaceClass: I,
+      tagValue?: Record<string, unknown>,
+    ): Promise<string>;
     uiViewDescriptor(options: { title: string }): Promise<string>;
     claim(result: string | PowerboxRequestResult, options?: PowerboxClaimOptions): Promise<Capability>;
     offered(): Promise<OfferedCapabilityInfo | undefined>;

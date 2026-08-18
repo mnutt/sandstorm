@@ -60,8 +60,8 @@ interface BundleReceiver @0x85eb330db82a150f {
 }
 
 interface IsolateCandidate @0xe7ad8c1ea7bd077a {
-  # Immutable identity for one normalized snapshot. This capability, rather than CandidateInfo,
-  # must be presented to a separately-authorized publisher.
+  # Immutable identity for one normalized snapshot. A separately-authorized publisher grant is
+  # bound to the matching server-side candidate when the user approves its Powerbox request.
 
   getInfo @0 () -> (info :CandidateInfo);
 }
@@ -95,4 +95,44 @@ interface IsolatePreviewer @0xcd90b943c38e24c3 {
   );
 
   struct PowerboxTag {}
+}
+
+struct PublishTarget {
+  union {
+    newApp @0 :Void;
+    existingApp @1 :Text;
+    # Internal created-app identity returned by an earlier successful publication.
+  }
+}
+
+struct AppMetadata {
+  title @0 :Text;
+  nounPhrase @1 :Text;
+  shortDescription @2 :Text;
+  marketingVersion @3 :Text;
+}
+
+struct PublishedRevision {
+  createdAppId @0 :Text;
+  revisionId @1 :Text;
+  appId @2 :Text;
+  appVersion @3 :UInt32;
+  title @4 :Text;
+}
+
+interface IsolatePublisher @0x9cacf36bd0b3125d {
+  # One-shot, higher-authority capability granted for one exact candidate digest, publication
+  # target, and metadata snapshot. Restoring a saved copy does not reset its consumption state.
+
+  publish @0 (
+    requestId :Text
+  ) -> (
+    result :PublishedRevision
+  );
+
+  struct PowerboxTag {
+    normalizedDigest @0 :Data;
+    target @1 :PublishTarget;
+    metadata @2 :AppMetadata;
+  }
 }

@@ -26,3 +26,6 @@ interface PersistentIsolatePreviewer @0xc81b0d695fdfbe28
 
 interface PersistentIsolateCandidate @0xaf7a381bed64a441
     extends (Authoring.IsolateCandidate, SystemPersistent) {}
+
+interface PersistentIsolatePublisher @0x94d703d9ca821ab2
+    extends (Authoring.IsolatePublisher, SystemPersistent) {}

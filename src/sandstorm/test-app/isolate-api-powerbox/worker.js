@@ -1,6 +1,7 @@
 import {
   IsolateBundle,
   IsolatePreviewer,
+  IsolatePublisher,
 } from "capnp:/sandstorm/isolate-authoring.capnp";
 import {
   Capability,
@@ -10,6 +11,10 @@ import {
 } from "sandstorm:api";
 
 const TOKEN_KEY = "api-powerbox-token";
+const CANDIDATE_INFO_KEY = "isolate-candidate-info";
+const PUBLISHED_APP_KEY = "isolate-published-app";
+const PUBLISHER_TOKEN_KEY = "isolate-publisher-token";
+const PUBLISH_REQUEST_KEY = "isolate-publish-request";
 const API_CANONICAL_URL = "https://api.example.test/v1";
 const API_OAUTH_SCOPES = ["read"];
 const PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
@@ -27,6 +32,7 @@ function htmlEscape(value) {
 function renderPage(state) {
   const pretty = htmlEscape(JSON.stringify(state.result || state.error || {}, null, 2));
   const previewerDescriptor = JSON.stringify(state.previewerDescriptor || "");
+  const publisherDescriptor = JSON.stringify(state.publisherDescriptor || "");
   return `<!doctype html>
 <html>
   <head>
@@ -118,10 +124,13 @@ function renderPage(state) {
       <button type="submit" class="secondary">Drop Saved API</button>
     </form>
 
-    ${state.result?.call?.candidate ? `
+    ${state.candidateInfo ? `
     <form method="post" action="/offer-preview">
       <button id="open-isolate-preview" type="submit">Open Isolate Preview</button>
     </form>` : ""}
+
+    ${state.publisherDescriptor && !state.result?.call?.published ? `
+    <button id="publish-isolate" type="button">Publish Isolate as New App</button>` : ""}
 
     <pre>${pretty}</pre>
 
@@ -196,6 +205,34 @@ function renderPage(state) {
           button.disabled = false;
         }
       });
+
+      const publishButton = document.querySelector("#publish-isolate");
+      publishButton?.addEventListener("click", async () => {
+        output.textContent = "Opening one-shot isolate publisher grant...";
+        publishButton.disabled = true;
+        try {
+          const descriptor = ${publisherDescriptor};
+          const queryInspection = await inspectPowerboxQuery({ descriptor });
+          output.textContent = "Opening Powerbox with query:\\n" +
+            JSON.stringify(queryInspection, null, 2);
+          const requested = await requestPowerbox([descriptor], {
+            saveLabel: { defaultText: "Publish reviewed isolate candidate" },
+          });
+          const response = await fetch("/claim", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...requested, isolatePublisher: true }),
+          });
+          const html = await response.text();
+          document.open();
+          document.write(html);
+          document.close();
+        } catch (error) {
+          output.textContent = (error.message || String(error)) + "\\n\\n" +
+            (error.stack || "");
+          publishButton.disabled = false;
+        }
+      });
     </script>
   </body>
 </html>`;
@@ -263,6 +300,13 @@ async function callIsolatePreviewer(
       },
     });
     const { info } = await result.candidate.getInfo({});
+    const candidateDigest = Array.from(info.normalizedDigest, byte =>
+      byte.toString(16).padStart(2, "0")).join("");
+    await api.storage().putJson(CANDIDATE_INFO_KEY, {
+      normalizedDigest: candidateDigest,
+      title: "Powerbox Published Isolate",
+    });
+
     const viewInfo = await result.view.getViewInfo({});
     const uiViewDescriptor = await api.powerbox().uiViewDescriptor({
       title: "Powerbox Isolate Preview",
@@ -281,6 +325,7 @@ async function callIsolatePreviewer(
     return {
       ok: true,
       candidate: {
+        normalizedDigest: candidateDigest,
         digestBytes: info.normalizedDigest.length,
         compatibilityDate: info.compatibilityDate,
         moduleNames: info.modules.map(module => module.name),
@@ -295,6 +340,35 @@ async function callIsolatePreviewer(
   } finally {
     await exportedBundle.drop();
   }
+}
+
+async function callIsolatePublisher(api, capability) {
+  const candidateInfo = await api.storage().getJson(CANDIDATE_INFO_KEY);
+  if (!candidateInfo) throw new Error("No reviewed isolate candidate is available.");
+  let requestId = await api.storage().get(PUBLISH_REQUEST_KEY);
+  if (!requestId) {
+    requestId = `powerbox-publish-${crypto.randomUUID()}`;
+    await api.storage().put(PUBLISH_REQUEST_KEY, requestId);
+  }
+
+  const publisher = capnpClient(IsolatePublisher, capability);
+  const { result } = await publisher.publish({ requestId });
+  const publication = {
+    createdAppId: result.createdAppId,
+    revisionId: result.revisionId,
+    appId: result.appId,
+    appVersion: result.appVersion,
+    title: result.title,
+  };
+  await api.storage().putJson(PUBLISHED_APP_KEY, publication);
+  await api.storage().delete(CANDIDATE_INFO_KEY);
+  await api.storage().delete(PUBLISH_REQUEST_KEY);
+  return {
+    ok: true,
+    published: true,
+    requestId,
+    result: publication,
+  };
 }
 
 async function callRestoredCapability(api) {
@@ -332,6 +406,23 @@ async function readState(request, env, result = null, error = null) {
   const savedToken = await store.get(TOKEN_KEY);
   const url = new URL(request.url);
   const previewerFlow = url.searchParams.has("isolatePreviewer");
+  const candidateInfo = await store.getJson(CANDIDATE_INFO_KEY);
+  const publishedApp = await store.getJson(PUBLISHED_APP_KEY);
+  const publisherDescriptor = candidateInfo
+    ? await api.powerbox().appInterfaceDescriptor(IsolatePublisher, {
+        normalizedDigest: Uint8Array.from(candidateInfo.normalizedDigest.match(/../g),
+          byte => Number.parseInt(byte, 16)),
+        target: publishedApp
+          ? { existingApp: publishedApp.createdAppId }
+          : { newApp: undefined },
+        metadata: {
+          title: candidateInfo.title,
+          nounPhrase: "app",
+          shortDescription: "Published through a one-shot IsolatePublisher capability.",
+          marketingVersion: "1.0",
+        },
+      })
+    : null;
   return {
     canonicalUrl: API_CANONICAL_URL,
     oauthScopes: API_OAUTH_SCOPES.join(" "),
@@ -340,6 +431,9 @@ async function readState(request, env, result = null, error = null) {
     previewerDescriptor: previewerFlow
       ? await api.powerbox().appInterfaceDescriptor(IsolatePreviewer)
       : null,
+    publisherDescriptor,
+    candidateInfo,
+    publishedApp,
     saved: Boolean(savedToken),
     result,
     error,
@@ -378,13 +472,24 @@ export default {
         const body = await readJsonBody(request);
         const canonicalUrl = String(body.canonicalUrl || API_CANONICAL_URL);
         const capability = await api.powerbox().claim(body);
+        const tokenKey = body.isolatePublisher ? PUBLISHER_TOKEN_KEY : TOKEN_KEY;
+        const previousPublisherToken = body.isolatePublisher
+          ? await api.storage().get(tokenKey)
+          : null;
         const token = await capability.save({
-          label: body.isolatePreviewer ? "Isolate preview authority" : `API: ${canonicalUrl}`,
+          label: body.isolatePublisher
+            ? "One-shot isolate publication authority"
+            : body.isolatePreviewer
+            ? "Isolate preview authority"
+            : `API: ${canonicalUrl}`,
         });
-        const store = await api.storage().put(TOKEN_KEY, token);
+        const store = await api.storage().put(tokenKey, token);
+        if (previousPublisherToken) await api.revoke(previousPublisherToken);
         const savedCapability = await api.restore(token);
         const savedClass = savedCapability instanceof Capability;
-        const call = body.isolatePreviewer
+        const call = body.isolatePublisher
+          ? await callIsolatePublisher(api, savedCapability)
+          : body.isolatePreviewer
           ? await callIsolatePreviewer(api, savedCapability)
           : await callApi(body.skipApiCall ? null : capability);
         const savedDrop = await savedCapability.drop();
@@ -399,7 +504,7 @@ export default {
           token,
           store,
           savedDrop,
-          storageKey: TOKEN_KEY,
+          storageKey: tokenKey,
           call,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },
@@ -422,7 +527,10 @@ export default {
         if (!token) throw new Error("No saved IsolatePreviewer capability.");
         const capability = await api.restore(token);
         try {
-          const responseText = url.searchParams.has("updated")
+          const updated = url.searchParams.get("updated");
+          const responseText = updated === "2"
+            ? "Powerbox isolate preview revision two"
+            : updated
             ? "Powerbox isolate preview updated"
             : "Powerbox isolate preview";
           const call = await callIsolatePreviewer(api, capability, true, responseText);
