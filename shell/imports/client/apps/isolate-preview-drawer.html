@@ -7,15 +7,18 @@
         <code title="{{target.normalizedDigest}}">{{shortDigest}}</code>
       </div>
       <div class="isolate-preview-actions">
-        <button type="button" class="reload-isolate-preview">Reload</button>
-        <a href="/grain/{{target.grainId}}" target="_blank" rel="noopener">Open in tab</a>
-        <button type="button" class="toggle-isolate-preview-logs"
-                aria-expanded="false">Logs</button>
-        <a href="/grainlog/{{target.grainId}}" target="_blank" rel="noopener">Logs in tab</a>
-        <button type="button" class="close-isolate-preview">Close</button>
+        <button type="button" class="reload-isolate-preview isolate-preview-icon-action"
+                aria-label="Reload preview" title="Reload preview">
+          <span class="icon icon-refresh" aria-hidden="true"></span>
+        </button>
+        <a class="isolate-preview-icon-action" href="/grain/{{target.grainId}}"
+           target="_blank" rel="noopener" aria-label="Open preview in new tab"
+           title="Open preview in new tab">
+          <span class="icon icon-open-in-new" aria-hidden="true"></span>
+        </a>
       </div>
     </header>
     <div class="isolate-preview-frame-mount"></div>
-    <div class="isolate-preview-log-mount" hidden></div>
+    <div class="isolate-preview-log-mount"></div>
   </aside>
 </template>

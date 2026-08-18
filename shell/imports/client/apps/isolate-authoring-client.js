@@ -60,6 +60,7 @@ function isStoredDraft(value) {
   return value && typeof value === "object" &&
     typeof value.authoringSessionId === "string" &&
     /^[A-Za-z0-9_-]{8,128}$/.test(value.authoringSessionId) &&
+    (value.publishTargetId === undefined || typeof value.publishTargetId === "string") &&
     ["title", "nounPhrase", "shortDescription", "compatibilityDate", "source"]
       .every(field => typeof value[field] === "string");
 }
@@ -139,7 +140,6 @@ function updateDraft(instance, changes) {
     publishRequest: null,
   };
   instance.draft.set(draft);
-  instance.publishedResult.set(null);
   saveDraft(draft);
 }
 
@@ -155,12 +155,17 @@ function currentPreview(instance) {
   return preview;
 }
 
+function currentCandidateRecord(instance) {
+  const preview = matchingPreview(instance);
+  if (!preview) return null;
+  return globalDb.collections.isolateCandidates.findOne(preview.candidateId) || preview;
+}
+
 async function publish(instance, target) {
   const preview = currentPreview(instance);
-  if (!preview || instance.busy.get()) return;
+  if (!preview || instance.busy.get()) return false;
 
   instance.busy.set(true);
-  instance.publishedResult.set(null);
   setStatus(instance, "working", "Publishing the reviewed candidate…");
   try {
     let draft = instance.draft.get();
@@ -186,13 +191,15 @@ async function publish(instance, target) {
       ...draft,
       preview: { ...preview, publishedRevisionId: result.revisionId },
       publishRequest: null,
+      publishTargetId: result.createdAppId,
     };
     instance.draft.set(updated);
     saveDraft(updated);
-    instance.publishedResult.set(result);
     setStatus(instance, "success", `Published ${result.title} version ${result.appVersion}.`);
+    return true;
   } catch (error) {
     setStatus(instance, "error", errorMessage(error));
+    return false;
   } finally {
     instance.busy.set(false);
   }
@@ -222,8 +229,13 @@ Template.isolateAuthoringPage.onCreated(function () {
   this.draft = new ReactiveVar(loadDraft());
   this.busy = new ReactiveVar(false);
   this.operationStatus = new ReactiveVar(null);
-  this.publishedResult = new ReactiveVar(null);
   this.previewTarget = new ReactiveVar(null);
+  this.metadataDraft = new ReactiveVar(null);
+  this.detailsModalOpen = new ReactiveVar(false);
+  this.publishModalOpen = new ReactiveVar(false);
+  this.selectedPublishTarget = new ReactiveVar(null);
+  this.dismissDetailsModal = () => this.detailsModalOpen.set(false);
+  this.dismissPublishModal = () => this.publishModalOpen.set(false);
   this.previewPane = null;
 });
 
@@ -257,14 +269,7 @@ Template.isolateAuthoringPage.helpers({
   },
 
   currentCandidate() {
-    const preview = matchingPreview(Template.instance());
-    if (!preview) return null;
-    return globalDb.collections.isolateCandidates.findOne(preview.candidateId) || preview;
-  },
-
-  previewGrainId() {
-    const slot = globalDb.collections.isolatePreviewSlots.findOne();
-    return slot && slot.grainId || matchingPreview(Template.instance())?.grainId;
+    return currentCandidateRecord(Template.instance());
   },
 
   previewTarget() {
@@ -277,35 +282,77 @@ Template.isolateAuthoringPage.helpers({
     return `${target.normalizedDigest.slice(0, 12)}…`;
   },
 
+  resetDisabled() {
+    if (Template.instance().busy.get()) return true;
+    const slot = globalDb.collections.isolatePreviewSlots.findOne();
+    return !(slot && slot.grainId || matchingPreview(Template.instance())?.grainId);
+  },
+
   publishDisabled() {
     return Template.instance().busy.get() || !currentPreview(Template.instance());
   },
 
-  createdApps() {
-    return globalDb.collections.createdIsolateApps.find({}, { sort: { updatedAt: -1 } }).fetch();
+  detailsModalOpen() {
+    return Template.instance().detailsModalOpen.get();
   },
 
-  hasCreatedApps() {
-    return globalDb.collections.createdIsolateApps.find().count() > 0;
+  dismissDetailsModal() {
+    return Template.instance().dismissDetailsModal;
   },
 
-  publishedResult() {
-    return Template.instance().publishedResult.get();
+  metadataDraft() {
+    return Template.instance().metadataDraft.get();
+  },
+
+  publishModalOpen() {
+    return Template.instance().publishModalOpen.get();
+  },
+
+  dismissPublishModal() {
+    return Template.instance().dismissPublishModal;
+  },
+
+  publishTargetApp() {
+    const createdAppId = Template.instance().selectedPublishTarget.get();
+    return createdAppId && globalDb.collections.createdIsolateApps.findOne(createdAppId);
+  },
+
+  publishTargetNextVersion() {
+    const createdAppId = Template.instance().selectedPublishTarget.get();
+    const app = createdAppId && globalDb.collections.createdIsolateApps.findOne(createdAppId);
+    return app && app.appVersion + 1;
+  },
+
+  selectedRevisionHistory() {
+    const createdAppId = Template.instance().selectedPublishTarget.get();
+    if (!createdAppId) return [];
+    return globalDb.collections.createdIsolateRevisions.find(
+      { createdAppId }, { sort: { publishedAt: -1 } }).fetch();
+  },
+
+  revisionVersion() {
+    return this.metadataSnapshot && this.metadataSnapshot.appVersion;
+  },
+
+  publishedAtIso() {
+    return this.publishedAt instanceof Date ? this.publishedAt.toISOString() : "";
+  },
+
+  publishedAtLabel() {
+    return this.publishedAt instanceof Date ? this.publishedAt.toLocaleString() : "";
   },
 });
 
 Template.isolateAuthoringPage.events({
-  "input input, input textarea"(event, instance) {
-    if (!event.currentTarget.name) return;
-    updateDraft(instance, { [event.currentTarget.name]: event.currentTarget.value });
+  "input .source-editor textarea"(event, instance) {
+    updateDraft(instance, { source: event.currentTarget.value });
   },
 
-  async "submit .isolate-authoring-form"(event, instance) {
+  async "click .preview-draft"(event, instance) {
     event.preventDefault();
     if (instance.busy.get()) return;
 
     instance.busy.set(true);
-    instance.publishedResult.set(null);
     setStatus(instance, "working", "Validating and starting the preview…");
     try {
       let draft = instance.draft.get();
@@ -336,12 +383,46 @@ Template.isolateAuthoringPage.events({
       };
       instance.previewTarget.set(target);
       instance.previewPane.show(target);
-      setStatus(instance, "success", "Preview is ready in a hidden grain.");
+      instance.operationStatus.set(null);
     } catch (error) {
       setStatus(instance, "error", errorMessage(error));
     } finally {
       instance.busy.set(false);
     }
+  },
+
+  "click .edit-app-details"(event, instance) {
+    event.preventDefault();
+    const draft = instance.draft.get();
+    instance.metadataDraft.set({
+      title: draft.title,
+      nounPhrase: draft.nounPhrase,
+      shortDescription: draft.shortDescription,
+      compatibilityDate: draft.compatibilityDate,
+    });
+    instance.detailsModalOpen.set(true);
+  },
+
+  "input .edit-app-details-form input"(event, instance) {
+    const metadata = instance.metadataDraft.get();
+    if (!metadata || !event.currentTarget.name) return;
+    instance.metadataDraft.set({
+      ...metadata,
+      [event.currentTarget.name]: event.currentTarget.value,
+    });
+  },
+
+  "submit .edit-app-details-form"(event, instance) {
+    event.preventDefault();
+    const metadata = instance.metadataDraft.get();
+    if (!metadata) return;
+    updateDraft(instance, metadata);
+    instance.detailsModalOpen.set(false);
+  },
+
+  "click .cancel-app-details"(event, instance) {
+    event.preventDefault();
+    instance.detailsModalOpen.set(false);
   },
 
   async "click .reset-preview"(event, instance) {
@@ -378,15 +459,25 @@ Template.isolateAuthoringPage.events({
     }
   },
 
-  "click .publish-new"(event, instance) {
+  "click .open-publish-modal"(event, instance) {
     event.preventDefault();
-    publish(instance, { newApp: null });
+    const preferredTarget = instance.draft.get().publishTargetId;
+    const preferredApp = preferredTarget &&
+      globalDb.collections.createdIsolateApps.findOne(preferredTarget);
+    instance.selectedPublishTarget.set(preferredApp ? preferredTarget : null);
+    instance.publishModalOpen.set(true);
   },
 
-  "click .publish-update"(event, instance) {
+  async "submit .publish-isolate-form"(event, instance) {
     event.preventDefault();
-    const select = instance.find("select.existing-app");
-    if (select && select.value) publish(instance, { existingApp: select.value });
+    const createdAppId = instance.selectedPublishTarget.get();
+    const target = createdAppId ? { existingApp: createdAppId } : { newApp: null };
+    if (await publish(instance, target)) instance.publishModalOpen.set(false);
+  },
+
+  "click .cancel-publish"(event, instance) {
+    event.preventDefault();
+    instance.publishModalOpen.set(false);
   },
 
   "click .reload-inline-preview"(event, instance) {
@@ -394,14 +485,4 @@ Template.isolateAuthoringPage.events({
     instance.previewPane.reload();
   },
 
-  "click .toggle-inline-preview-logs"(event, instance) {
-    event.preventDefault();
-    instance.previewPane.toggleLogs(event.currentTarget);
-  },
-
-  "click .close-inline-preview"(event, instance) {
-    event.preventDefault();
-    instance.previewPane.close();
-    instance.previewTarget.set(null);
-  },
 });

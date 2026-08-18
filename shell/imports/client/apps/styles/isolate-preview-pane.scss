@@ -9,7 +9,7 @@
   flex: none;
   gap: 12px;
   min-height: 48px;
-  padding: 8px 10px;
+  padding: 7px 10px;
   color: #222;
   background: #f2f2f2;
   border-bottom: 1px solid #bbb;
@@ -25,6 +25,11 @@
 
 .isolate-preview-title {
   min-width: 0;
+
+  strong {
+    color: #555;
+    font-weight: 500;
+  }
 
   span {
     max-width: 220px;
@@ -42,12 +47,26 @@
 .isolate-preview-actions {
   justify-content: flex-end;
 
-  button,
-  a {
+  .isolate-preview-icon-action {
     @include buttons.button-base();
     @include buttons.button-secondary();
-    font-size: 13px;
-    padding: 5px 8px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 4px;
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .isolate-preview-publish {
+    @include buttons.button-base();
+    @include buttons.button-secondary();
+    height: 32px;
+    padding: 4px 10px;
   }
 }
 
@@ -67,10 +86,16 @@
   box-sizing: border-box;
   flex: none;
   height: min(220px, 38%);
-  min-height: 120px;
+  min-height: 34px;
+  overflow: hidden;
   color: #ddd;
-  background: #111;
-  border-top: 1px solid #777;
+  background: #292929;
+  border-top: 1px solid #666;
+  transition: height 120ms ease-out;
+
+  &.collapsed {
+    height: 34px;
+  }
 }
 
 .isolate-preview-log {
@@ -82,17 +107,45 @@
 
 .isolate-preview-log-heading {
   display: flex;
-  align-items: baseline;
+  align-items: stretch;
+  justify-content: space-between;
   flex: none;
-  gap: 8px;
-  padding: 5px 9px;
+  height: 33px;
   color: #eee;
-  background: #222;
+  background: #383838;
   border-bottom: 1px solid #555;
 
-  span {
-    color: #aaa;
-    font-size: 12px;
+  .toggle-isolate-preview-log {
+    @include buttons.unstyled-button();
+    display: flex;
+    align-items: baseline;
+    flex: 1;
+    min-width: 0;
+    padding: 5px 9px;
+
+    &:hover {
+      background: #444;
+    }
+
+    strong {
+      font-weight: 500;
+    }
+  }
+
+  .isolate-preview-log-new-tab {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 34px;
+    color: #ddd;
+    text-decoration: none;
+
+    &:hover {
+      color: white;
+      background: #4a4a4a;
+    }
   }
 }
 
@@ -101,7 +154,7 @@
   height: auto;
   min-height: 0;
   color: #ddd;
-  background: #111;
+  background: #292929;
 
   > pre {
     margin: 8px;
@@ -121,7 +174,7 @@
   width: min(720px, 58%);
   overflow: hidden;
   background: white;
-  border-left: 1px solid #999;
+  border-left: 1px solid #bbb;
   box-shadow: -8px 0 24px rgb(0 0 0 / 22%);
 
   @media #{breakpoints.$mobile} {

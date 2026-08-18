@@ -182,7 +182,6 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
         .waitForElementVisible("body", long_wait)
         .assert.textContains("body", "Powerbox isolate preview")
         .frameParent()
-        .click(".toggle-isolate-preview-logs")
         .waitForElementVisible(".isolate-preview-log-contents > pre", medium_wait)
         .assert.textContains(
           ".isolate-preview-log-contents > pre",

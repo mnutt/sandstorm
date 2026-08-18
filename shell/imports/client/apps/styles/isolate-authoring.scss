@@ -4,134 +4,167 @@
 
 .isolate-authoring-page {
   box-sizing: border-box;
-  margin: 0 auto;
-  max-width: 1600px;
+  height: 100%;
+  overflow: hidden;
   color: #222;
 
-  @media #{breakpoints.$desktop} {
-    padding: 32px;
-  }
+  .isolate-authoring-workspace {
+    height: 100%;
 
-  @media #{breakpoints.$mobile} {
-    padding: 16px 8px;
-  }
-
-  > header {
-    border-bottom: 1px solid #ccc;
-    margin-bottom: 24px;
-    max-width: 1100px;
-
-    h1 {
-      font-size: 32px;
-      font-weight: 400;
-      margin: 8px 0;
+    @media #{breakpoints.$desktop} {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      align-items: stretch;
     }
   }
 
-  h2 {
-    font-size: 22px;
-    font-weight: 500;
-    margin: 0 0 12px;
+  .isolate-authoring-editor {
+    position: relative;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    overflow: auto;
+    background: #f7f7f7;
+    border-right: 1px solid #bbb;
   }
 
-  .back-to-apps {
-    font-size: 16px;
+  .isolate-authoring-editor-heading {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: none;
+    gap: 16px;
+    padding: 8px 10px;
+    background: #f2f2f2;
   }
 
-  .isolate-authoring-form {
-    @include forms.standard-form();
+  .isolate-authoring-editor-heading {
+    min-height: 48px;
+    border-bottom: 1px solid #ccc;
   }
 
-  .isolate-authoring-workspace {
-    margin: 0 auto;
-    max-width: 1100px;
+  .isolate-authoring-app-title,
+  .isolate-authoring-heading-actions,
+  .modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
 
-    &.has-preview {
-      max-width: none;
+  .isolate-authoring-app-title {
+    align-items: baseline;
+    min-width: 0;
 
-      @media #{breakpoints.$desktop} {
-        display: grid;
-        gap: 24px;
-        grid-template-columns: minmax(500px, 9fr) minmax(480px, 11fr);
-        align-items: start;
+    h1 {
+      margin: 0;
+      overflow: hidden;
+      font-size: 21px;
+      font-weight: 500;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .edit-app-details {
+      @include buttons.unstyled-button();
+      flex: none;
+      color: #5b3f90;
+      font-size: 13px;
+      font-weight: 600;
+
+      &:hover {
+        text-decoration: underline;
       }
+
+      &:disabled {
+        cursor: default;
+        color: #888;
+        text-decoration: none;
+      }
+    }
+  }
+
+  .isolate-authoring-heading-actions,
+  .modal-actions {
+    button {
+      @include buttons.button-base();
+      @include buttons.button-secondary();
+
+      &.primary {
+        @include buttons.button-primary();
+      }
+    }
+  }
+
+  .source-editor {
+    box-sizing: border-box;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 360px;
+
+    textarea {
+      box-sizing: border-box;
+      flex: 1;
+      width: 100%;
+      min-height: 300px;
+      resize: none;
+      padding: 12px;
+      color: #222;
+      background: white;
+      border: 0;
+      border-radius: 0;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      outline: none;
+      tab-size: 2;
+    }
+  }
+
+  .operation-status {
+    position: absolute;
+    z-index: 5;
+    right: 18px;
+    bottom: 18px;
+    left: 18px;
+    max-width: max-content;
+    margin: 0;
+    padding: 6px 9px;
+    color: #333;
+    background: #fff;
+    border: 1px solid #aaa;
+    border-radius: 3px;
+    box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+    font-size: 13px;
+
+    &.working {
+      border-color: #c1a43a;
+    }
+
+    &.success {
+      border-color: #579557;
+    }
+
+    &.error {
+      color: #a12626;
+      border-color: #b84747;
     }
   }
 
   .isolate-inline-preview {
     display: none;
     min-width: 0;
+    min-height: 0;
     overflow: hidden;
     background: #fff;
-    border: 1px solid #bbb;
-    border-radius: 4px;
   }
 
   .isolate-authoring-workspace.has-preview .isolate-inline-preview {
     display: flex;
     flex-direction: column;
-    height: min(760px, calc(100vh - 96px));
-
-    @media #{breakpoints.$desktop} {
-      position: sticky;
-      top: 0;
-    }
-
-    @media #{breakpoints.$mobile} {
-      height: min(680px, calc(100vh - 72px));
-      margin-bottom: 20px;
-    }
-  }
-
-  .metadata-fields,
-  .source-editor,
-  .candidate-review,
-  .publish-controls {
-    background: #f8f8f8;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    margin-bottom: 20px;
-    padding: 20px;
-  }
-
-  .metadata-grid {
-    display: grid;
-    gap: 8px 18px;
-    grid-template-columns: 2fr 1fr;
-
-    .short-description-field {
-      grid-column: 1 / -1;
-    }
-
-    @media #{breakpoints.$mobile} {
-      grid-template-columns: 1fr;
-
-      .short-description-field {
-        grid-column: auto;
-      }
-    }
-  }
-
-  input[type=date] {
-    box-sizing: border-box;
-    display: block;
-    width: 100%;
-    min-height: 40px;
-    padding: 4px;
-    color: #222;
-    background: white;
-    border: 1px solid #d3d3d3;
-    border-radius: 2px;
-    font: inherit;
-  }
-
-  .source-editor textarea {
-    box-sizing: border-box;
-    min-height: 360px;
-    resize: vertical;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    line-height: 1.45;
-    tab-size: 2;
+    height: 100%;
   }
 
   .visually-hidden {
@@ -146,85 +179,112 @@
     border: 0;
   }
 
-  .authoring-actions,
-  .publish-new-row,
-  .publish-update-row {
-    display: flex;
-    align-items: end;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-bottom: 20px;
-
-    button,
-    a.button {
-      @include buttons.button-base();
-      @include buttons.button-secondary();
+  .isolate-details-modal,
+  .isolate-publish-modal {
+    form {
+      @include forms.standard-form();
     }
 
-    button[type=submit],
-    button.primary {
-      @include buttons.button-primary();
-    }
-  }
-
-  .operation-status {
-    border-radius: 3px;
-    border: 1px solid #999;
-    padding: 12px;
-
-    &.working {
-      background: #fff8d5;
-      border-color: #d1aa2f;
-    }
-
-    &.success {
-      background: #e8f6e8;
-      border-color: #579557;
-    }
-
-    &.error {
-      background: #fbe8e8;
-      border-color: #b84747;
-    }
-  }
-
-  .candidate-review dl {
-    margin: 0;
-
-    div {
-      display: grid;
-      gap: 12px;
-      grid-template-columns: 150px minmax(0, 1fr);
-      margin-bottom: 8px;
-    }
-
-    dt {
-      font-weight: 600;
-    }
-
-    dd {
-      margin: 0;
-      overflow-wrap: anywhere;
-    }
-  }
-
-  .publish-update-row {
-    label {
-      min-width: min(420px, 100%);
+    h2 {
+      margin: 0 0 20px;
+      padding-right: 24px;
+      font-size: 22px;
+      font-weight: 400;
     }
 
     select {
       box-sizing: border-box;
       display: block;
       width: 100%;
-      min-height: 36px;
-      margin-top: 4px;
+      min-height: 38px;
+      padding: 4px;
+      color: #222;
+      background: white;
+      border: 1px solid #d3d3d3;
+      border-radius: 2px;
+      font: inherit;
+    }
+
+    .modal-actions {
+      justify-content: flex-end;
+      margin-top: 24px;
     }
   }
 
-  .published-result {
-    background: #e8f6e8;
-    border-left: 4px solid #579557;
-    padding: 12px;
+  .metadata-details-row {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .publish-destination {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    background: #f3f3f3;
+    border-left: 3px solid #8b78ad;
+
+    code {
+      overflow-wrap: anywhere;
+    }
+  }
+
+  .revision-history {
+    margin-top: 22px;
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    ol {
+      max-height: 210px;
+      margin: 0;
+      padding: 0;
+      overflow: auto;
+      border: 1px solid #ddd;
+      list-style: none;
+    }
+
+    li {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 9px 11px;
+      border-bottom: 1px solid #e5e5e5;
+
+      &:last-child {
+        border-bottom: 0;
+      }
+
+      code {
+        overflow-wrap: anywhere;
+      }
+
+      time {
+        color: #666;
+        font-size: 12px;
+      }
+    }
+  }
+
+  @media #{breakpoints.$mobile} {
+    height: auto;
+    overflow: visible;
+
+    .isolate-authoring-workspace {
+      height: auto;
+    }
+
+    .isolate-authoring-editor,
+    .isolate-authoring-workspace.has-preview .isolate-inline-preview {
+      height: calc(100vh - 48px);
+    }
+
+    .isolate-authoring-editor-heading {
+      padding-right: 10px;
+      padding-left: 10px;
+    }
   }
 }

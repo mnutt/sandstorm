@@ -1,8 +1,13 @@
 <template name="isolatePreviewLog">
   <section class="isolate-preview-log" aria-label="Preview logs">
     <div class="isolate-preview-log-heading">
-      <strong>Logs</strong>
-      <span>Live output from the preview grain</span>
+      <button type="button" class="toggle-isolate-preview-log" aria-expanded="{{expanded}}">
+        <strong>Logs</strong>
+      </button>
+      <a class="isolate-preview-log-new-tab" href="/grainlog/{{grainId}}" target="_blank"
+         rel="noopener" aria-label="Open logs in new tab" title="Open logs in new tab">
+        <span class="icon icon-open-in-new" aria-hidden="true"></span>
+      </a>
     </div>
     <div class="grainlog-contents isolate-preview-log-contents" aria-live="polite">
       <pre>{{{logHtml}}}</pre>

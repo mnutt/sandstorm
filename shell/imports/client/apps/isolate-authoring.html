@@ -3,134 +3,31 @@
   {{#sandstormTopbarItem name="title" priority=5 topbar=globalTopbar}}Create app{{/sandstormTopbarItem}}
 
   <main class="isolate-authoring-page">
-    <header>
-      <a href="/apps" class="back-to-apps">← Apps</a>
-      <h1>Create an isolate app</h1>
-      <p>Edit a small Worker-style app, preview an immutable snapshot, and publish that exact
-        snapshot when it is ready.</p>
-    </header>
-
     <div class="isolate-authoring-workspace {{#if previewTarget}}has-preview{{/if}}">
-      <div class="isolate-authoring-editor">
-        <form class="standard-form isolate-authoring-form">
-          <section class="metadata-fields" aria-labelledby="isolate-app-details-heading">
-            <h2 id="isolate-app-details-heading">App details</h2>
-            <div class="metadata-grid">
-              <div class="form-group app-title-field">
-                <label>
-                  Title
-                  <input name="title" type="text" maxlength="80" required value="{{draft.title}}"
-                         disabled={{busy}}>
-                </label>
-              </div>
-              <div class="form-group noun-phrase-field">
-                <label>
-                  Noun phrase
-                  <input name="nounPhrase" type="text" maxlength="40" required
-                         value="{{draft.nounPhrase}}" disabled={{busy}}>
-                </label>
-                <span class="form-subtext">For example: document, site, or app.</span>
-              </div>
-              <div class="form-group compatibility-date-field">
-                <label>
-                  Compatibility date
-                  <input name="compatibilityDate" type="date" required
-                         value="{{draft.compatibilityDate}}" disabled={{busy}}>
-                </label>
-              </div>
-              <div class="form-group short-description-field">
-                <label>
-                  Short description
-                  <input name="shortDescription" type="text" maxlength="160" required
-                         value="{{draft.shortDescription}}" disabled={{busy}}>
-                </label>
-              </div>
-            </div>
-          </section>
-
-          <section class="source-editor" aria-labelledby="isolate-worker-heading">
-            <h2 id="isolate-worker-heading"><code>worker.js</code></h2>
-            <p>The default export handles requests with a Worker-compatible <code>fetch()</code>
-              method.</p>
-            <label class="visually-hidden" for="isolate-worker-source">worker.js source</label>
-            <textarea id="isolate-worker-source" name="source" required spellcheck="false"
-                      disabled={{busy}} value="{{draft.source}}"></textarea>
-          </section>
-
-          <div class="authoring-actions">
-            <button type="submit" disabled={{busy}}>Preview current draft</button>
-            {{#if previewGrainId}}
-              <button type="button" class="reset-preview" disabled={{busy}}>
-                Reset preview data
-              </button>
-            {{/if}}
+      <section class="isolate-authoring-editor" aria-label="Isolate app editor">
+        <header class="isolate-authoring-editor-heading">
+          <div class="isolate-authoring-app-title">
+            <h1>{{draft.title}}</h1>
+            <button type="button" class="edit-app-details" disabled={{busy}}>Edit</button>
           </div>
-        </form>
+          <div class="isolate-authoring-heading-actions">
+            <button type="button" class="reset-preview" disabled={{resetDisabled}}>Reset</button>
+            <button type="button" class="preview-draft primary" disabled={{busy}}>Preview</button>
+          </div>
+        </header>
+
+        <section class="source-editor" aria-label="Isolate JavaScript source">
+          <label class="visually-hidden" for="isolate-worker-source">Isolate JavaScript</label>
+          <textarea id="isolate-worker-source" name="source" required spellcheck="false"
+                    disabled={{busy}} value="{{draft.source}}"></textarea>
+        </section>
 
         {{#if operationStatus}}
           <p class="operation-status {{operationStatus.kind}}" role="status">
             {{operationStatus.message}}
           </p>
         {{/if}}
-
-        <section class="candidate-review" aria-labelledby="isolate-candidate-heading">
-          <h2 id="isolate-candidate-heading">Candidate snapshot</h2>
-          {{#if currentCandidate}}
-            <dl>
-              <div>
-                <dt>Digest</dt>
-                <dd><code>{{currentCandidate.normalizedDigest}}</code></dd>
-              </div>
-              <div>
-                <dt>Compatibility date</dt>
-                <dd>{{currentCandidate.compatibilityDate}}</dd>
-              </div>
-              <div>
-                <dt>Bindings</dt>
-                <dd>Sandstorm platform defaults</dd>
-              </div>
-            </dl>
-            <p>This candidate is the exact immutable snapshot that the publish actions below will
-              use. Editing the draft requires another preview.</p>
-          {{else}}
-            <p>Preview the current draft before publishing it.</p>
-          {{/if}}
-        </section>
-
-        <section class="publish-controls" aria-labelledby="isolate-publish-heading">
-          <h2 id="isolate-publish-heading">Publish</h2>
-          <p>Publishing installs an app action. It does not create a grain.</p>
-          <div class="publish-new-row">
-            <button type="button" class="publish-new primary" disabled={{publishDisabled}}>
-              Publish as new app
-            </button>
-          </div>
-
-          {{#if hasCreatedApps}}
-            <div class="publish-update-row">
-              <label>
-                Update an app you created
-                <select class="existing-app" disabled={{busy}}>
-                  {{#each createdApps}}
-                    <option value="{{_id}}">{{title}} (version {{appVersion}})</option>
-                  {{/each}}
-                </select>
-              </label>
-              <button type="button" class="publish-update" disabled={{publishDisabled}}>
-                Publish update
-              </button>
-            </div>
-          {{/if}}
-
-          {{#if publishedResult}}
-            <p class="published-result">
-              Published <strong>{{publishedResult.title}}</strong> version
-              {{publishedResult.appVersion}}.
-              <a href="/apps/{{publishedResult.appId}}">View app</a>
-            </p>
-          {{/if}}
-        </section>
-      </div>
+      </section>
 
       <aside class="isolate-inline-preview" aria-label="Isolate app preview">
         <header class="isolate-preview-toolbar">
@@ -142,22 +39,112 @@
           </div>
           {{#if previewTarget}}
             <div class="isolate-preview-actions">
-              <button type="button" class="reload-inline-preview">Reload</button>
-              <a href="/grain/{{previewTarget.grainId}}" target="_blank" rel="noopener">
-                Open in tab
+              <button type="button" class="reload-inline-preview isolate-preview-icon-action"
+                      aria-label="Reload preview" title="Reload preview">
+                <span class="icon icon-refresh" aria-hidden="true"></span>
+              </button>
+              <a class="isolate-preview-icon-action" href="/grain/{{previewTarget.grainId}}"
+                 target="_blank" rel="noopener" aria-label="Open preview in new tab"
+                 title="Open preview in new tab">
+                <span class="icon icon-open-in-new" aria-hidden="true"></span>
               </a>
-              <button type="button" class="toggle-inline-preview-logs"
-                      aria-expanded="false">Logs</button>
-              <a href="/grainlog/{{previewTarget.grainId}}" target="_blank" rel="noopener">
-                Logs in tab
-              </a>
-              <button type="button" class="close-inline-preview">Close</button>
+              <button type="button" class="open-publish-modal isolate-preview-publish"
+                      disabled={{publishDisabled}}>Publish</button>
             </div>
           {{/if}}
         </header>
         <div class="isolate-preview-frame-mount"></div>
-        <div class="isolate-preview-log-mount" hidden></div>
+        <div class="isolate-preview-log-mount"></div>
       </aside>
     </div>
+
+    {{#if detailsModalOpen}}
+      {{#modalDialogWithBackdrop onDismiss=dismissDetailsModal class="isolate-details-modal"}}
+        <form class="standard-form edit-app-details-form">
+          <h2>App details</h2>
+          <div class="form-group">
+            <label>
+              Title
+              <input name="title" type="text" maxlength="80" required
+                     value="{{metadataDraft.title}}" disabled={{busy}}>
+            </label>
+          </div>
+          <div class="metadata-details-row">
+            <div class="form-group">
+              <label>
+                Noun phrase
+                <input name="nounPhrase" type="text" maxlength="40" required
+                       value="{{metadataDraft.nounPhrase}}" disabled={{busy}}>
+              </label>
+              <span class="form-subtext">For example: document, site, or app.</span>
+            </div>
+            <div class="form-group">
+              <label>
+                Compatibility date
+                <input name="compatibilityDate" type="text" maxlength="10" required
+                       pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" placeholder="YYYY-MM-DD"
+                       value="{{metadataDraft.compatibilityDate}}"
+                       disabled={{busy}}>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>
+              Short description
+              <input name="shortDescription" type="text" maxlength="160" required
+                     value="{{metadataDraft.shortDescription}}" disabled={{busy}}>
+            </label>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="cancel-app-details">Cancel</button>
+            <button type="submit" class="save-app-details primary" disabled={{busy}}>Save</button>
+          </div>
+        </form>
+      {{/modalDialogWithBackdrop}}
+    {{/if}}
+
+    {{#if publishModalOpen}}
+      {{#modalDialogWithBackdrop onDismiss=dismissPublishModal class="isolate-publish-modal"}}
+        <form class="standard-form publish-isolate-form">
+          <h2>Publish {{draft.title}}</h2>
+          <p>Publish the exact candidate shown by the digest below.</p>
+
+          {{#if publishTargetApp}}
+            <p class="publish-destination">
+              <span>Publishing version {{publishTargetNextVersion}} of
+                <strong>{{publishTargetApp.title}}</strong>.</span>
+              <code>{{currentCandidate.normalizedDigest}}</code>
+            </p>
+          {{else}}
+            <p class="publish-destination">
+              <span>Publishing as a new app.</span>
+              <code>{{currentCandidate.normalizedDigest}}</code>
+            </p>
+          {{/if}}
+
+          {{#if selectedRevisionHistory}}
+            <section class="revision-history" aria-labelledby="revision-history-heading">
+              <h3 id="revision-history-heading">Revision history</h3>
+              <ol>
+                {{#each selectedRevisionHistory}}
+                  <li>
+                    <strong>Version {{revisionVersion}}</strong>
+                    <code>{{normalizedDigest}}</code>
+                    <time datetime="{{publishedAtIso}}">{{publishedAtLabel}}</time>
+                  </li>
+                {{/each}}
+              </ol>
+            </section>
+          {{/if}}
+
+          <div class="modal-actions">
+            <button type="button" class="cancel-publish">Cancel</button>
+            <button type="submit" class="confirm-publish primary" disabled={{publishDisabled}}>
+              Publish
+            </button>
+          </div>
+        </form>
+      {{/modalDialogWithBackdrop}}
+    {{/if}}
   </main>
 </template>
