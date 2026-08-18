@@ -18,6 +18,10 @@ import { Random } from "meteor/random";
 import chai from "chai";
 
 import { globalDb } from "/imports/db-deprecated";
+import {
+  MAX_PREVIEW_LOG_BACKLOG_BYTES,
+  watchIsolatePreviewLog,
+} from "/imports/server/isolate-preview-log";
 import { resolveIsolatePreviewForAuthoringGrain } from
   "/imports/server/isolate-preview-presentation";
 
@@ -188,6 +192,70 @@ describe("isolate preview presentation", function () {
     });
     error = await resolveIsolatePreviewForAuthoringGrain(
       globalDb, ownerId, authoringGrainId, digest).then(() => null, value => value);
+    assert.strictEqual(error.code, "preview-not-current");
+  });
+
+  it("streams the exact current preview log through a bounded ByteStream", async function () {
+    const stream = { write() {} };
+    const handle = { close() {} };
+    const backend = {
+      useGrain(grainId, callback) {
+        assert.strictEqual(grainId, previewGrainId);
+        return callback({
+          watchLog(backlogAmount, receivedStream) {
+            assert.strictEqual(backlogAmount, 8192);
+            assert.strictEqual(receivedStream, stream);
+            return { handle };
+          },
+        });
+      },
+    };
+    const result = await watchIsolatePreviewLog(
+      globalDb,
+      backend,
+      { ownerId, requestingGrainId: authoringGrainId },
+      Buffer.from(digest, "hex"),
+      8192,
+      stream,
+    );
+    assert.strictEqual(result.handle, handle);
+  });
+
+  it("rejects invalid, excessive, and stale preview log requests", async function () {
+    const backend = {
+      useGrain() {
+        assert.fail("Invalid preview log requests must not reach the backend.");
+      },
+    };
+    const grant = { ownerId, requestingGrainId: authoringGrainId };
+    const stream = { write() {} };
+
+    let error = await watchIsolatePreviewLog(
+      globalDb, backend, grant, Buffer.alloc(31), 8192, stream)
+      .then(() => null, value => value);
+    assert.strictEqual(error.code, "invalid-preview-digest");
+
+    error = await watchIsolatePreviewLog(
+      globalDb,
+      backend,
+      grant,
+      Buffer.from(digest, "hex"),
+      MAX_PREVIEW_LOG_BACKLOG_BYTES + 1,
+      stream,
+    ).then(() => null, value => value);
+    assert.strictEqual(error.code, "preview-log-limit-exceeded");
+
+    error = await watchIsolatePreviewLog(
+      globalDb, backend, grant, Buffer.from(digest, "hex"), 8192, {})
+      .then(() => null, value => value);
+    assert.strictEqual(error.code, "invalid-stream");
+
+    await globalDb.collections.grains.updateAsync(previewGrainId, {
+      $set: { "isolatePreview.candidateId": Random.id() },
+    });
+    error = await watchIsolatePreviewLog(
+      globalDb, backend, grant, Buffer.from(digest, "hex"), 8192, stream)
+      .then(() => null, value => value);
     assert.strictEqual(error.code, "preview-not-current");
   });
 });

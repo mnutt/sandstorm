@@ -75,6 +75,14 @@
           "resultStructId": "0xe164112f93095901",
           "params": [{"name": "requestId", "type": "Text"}, {"name": "bundle", "type": "IsolateBundle"}, {"name": "metadata", "type": "PreviewMetadata"}],
           "results": [{"name": "candidate", "type": "IsolateCandidate"}, {"name": "view", "type": "Grain.UiView"}]
+        },
+        {
+          "name": "watchPreviewLog",
+          "ordinal": 1,
+          "paramStructId": "0x8d9c45c10a11ec18",
+          "resultStructId": "0xc32677599dad0017",
+          "params": [{"name": "normalizedDigest", "type": "Data"}, {"name": "backlogAmount", "type": "UInt32"}, {"name": "stream", "type": "Util.ByteStream"}],
+          "results": [{"name": "handle", "type": "Util.Handle"}]
         }
       ]
     },

@@ -201,6 +201,12 @@ interface IsolatePreviewer {
     candidate :IsolateCandidate,
     view :Grain.UiView
   );
+
+  watchPreviewLog @1 (
+    normalizedDigest :Data,
+    backlogAmount :UInt32,
+    stream :Util.ByteStream
+  ) -> (handle :Util.Handle);
 }
 ```
 
@@ -212,6 +218,8 @@ Preview authority permits:
 - returning a persistent `UiView` for the preview grain;
 - returning the immutable candidate capability;
 - reading structured validation and build diagnostics.
+- streaming a bounded backlog and future runtime log output for the exact
+  current candidate to a caller-provided `ByteStream`.
 
 Preview authority does not permit:
 

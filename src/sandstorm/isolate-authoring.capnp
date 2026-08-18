@@ -94,6 +94,19 @@ interface IsolatePreviewer @0xcd90b943c38e24c3 {
     view :Grain.UiView
   );
 
+  watchPreviewLog @1 (
+    normalizedDigest :Data,
+    backlogAmount :UInt32 = 8192,
+    stream :Util.ByteStream
+  ) -> (
+    handle :Util.Handle
+  );
+  # Streams up to backlogAmount bytes from the current preview's debug log, followed by new log
+  # output, until handle is dropped. normalizedDigest is only a locator: Sandstorm resolves it
+  # again within this grant's owning account and authoring grain. The call fails if the candidate
+  # is no longer installed in the hidden preview grain. Sandstorm applies a defensive upper bound
+  # to backlogAmount.
+
   struct PowerboxTag {}
 }
 

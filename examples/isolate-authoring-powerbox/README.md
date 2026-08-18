@@ -29,6 +29,14 @@ snapshots without another Powerbox interaction. **Revoke saved grant** removes
 the saved capability; when its last saved copy is removed, Sandstorm also marks
 the durable preview grant revoked.
 
+**Read preview logs** uses that same saved preview capability to stream the
+current candidate's debug log into the authoring worker. Sandstorm resolves the
+candidate digest again under the grant's account and authoring grain, and
+rejects stale candidates. The example reads an 8 KiB backlog briefly and then
+drops the returned handle. A real authoring app can keep the handle alive to
+analyze new output as it arrives. Sandstorm caps the requested backlog at 64
+KiB.
+
 The app's storage is the source of truth for editable source. Sandstorm's
 authoring service stores immutable candidate snapshots only. **Publish reviewed
 candidate** requests a fresh, one-shot `IsolatePublisher` capability whose
@@ -60,6 +68,26 @@ const result = await previewer.preview({
 const { info } = await result.candidate.getInfo({});
 const candidateDigest = digestHex(info.normalizedDigest);
 // Serialize candidateDigest into the returned browser page.
+```
+
+Programmatic log access uses a caller-provided `ByteStream`. Dropping the
+returned handle stops the subscription:
+
+```js
+const receiver = byteStreamFromWritable(new WritableStream({
+  write(data) {
+    analyzeLogBytes(data);
+  },
+}));
+const { handle } = await previewer.watchPreviewLog({
+  normalizedDigest: info.normalizedDigest,
+  backlogAmount: 8192,
+  stream: receiver,
+});
+
+// Later, when the authoring app no longer wants log output:
+handle.client.close();
+receiver.client.close();
 ```
 
 The browser page requests shell-owned presentation and waits for the matching
@@ -99,4 +127,4 @@ await api.storage().putJson("isolate-published-app", {
 
 The complete worker includes cleanup, exact `UInt64` handling, chunked
 transfer, saved-grant restoration, digest-bound one-shot publication, and error
-display.
+display, including cleanup of the preview log stream and subscription handle.
