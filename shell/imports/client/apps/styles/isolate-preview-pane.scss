@@ -1,0 +1,84 @@
+@use "mixins/buttons" as buttons;
+@use "geometry/breakpoints" as breakpoints;
+
+.isolate-preview-toolbar {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 10px;
+  color: #222;
+  background: #f2f2f2;
+  border-bottom: 1px solid #bbb;
+}
+
+.isolate-preview-title,
+.isolate-preview-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.isolate-preview-title {
+  min-width: 0;
+
+  span {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  code {
+    color: #555;
+    font-size: 12px;
+  }
+}
+
+.isolate-preview-actions {
+  justify-content: flex-end;
+
+  button,
+  a {
+    @include buttons.button-base();
+    @include buttons.button-secondary();
+    font-size: 13px;
+    padding: 5px 8px;
+  }
+}
+
+.isolate-preview-frame-mount {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: white;
+
+  > .grain-container {
+    position: absolute;
+    inset: 0;
+  }
+}
+
+.isolate-preview-drawer {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 58%);
+  overflow: hidden;
+  background: white;
+  border-left: 1px solid #999;
+  box-shadow: -8px 0 24px rgb(0 0 0 / 22%);
+
+  @media #{breakpoints.$mobile} {
+    width: 100%;
+  }
+}

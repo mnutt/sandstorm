@@ -40,6 +40,7 @@ function jsonValue(value) {
 function renderPage(state) {
   const descriptor = JSON.stringify(state.previewerDescriptor);
   const publisherDescriptor = JSON.stringify(state.publisherDescriptor || "");
+  const previewDigest = JSON.stringify(state.result?.candidate?.normalizedDigest || "");
   const output = htmlEscape(jsonValue(state.result || state.error || {}));
   return `<!doctype html>
 <html>
@@ -122,12 +123,15 @@ function renderPage(state) {
     </div>
 
     <pre id="output">${output}</pre>
+    <p id="preview-presentation-status" aria-live="polite"></p>
 
     <script type="module">
       import { requestPowerbox } from "/__sandstorm/native-capnp/client.js";
 
       const source = document.querySelector("#source");
       const output = document.querySelector("#output");
+      const previewPresentationStatus =
+        document.querySelector("#preview-presentation-status");
       const buttons = [...document.querySelectorAll("button")];
       const initiallyDisabled = buttons.map(button => button.disabled);
 
@@ -145,6 +149,30 @@ function renderPage(state) {
         document.open();
         document.write(html);
         document.close();
+      }
+
+      function showIsolatePreview(normalizedDigest) {
+        const rpcId = typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : "isolate-preview-" + Date.now().toString(36) + "-" +
+            Math.random().toString(36).slice(2);
+
+        return new Promise((resolve, reject) => {
+          function onMessage(event) {
+            if (event.source !== window.parent || event.data?.rpcId !== rpcId) return;
+            window.removeEventListener("message", onMessage);
+            if (event.data.error) {
+              reject(new Error(event.data.error));
+            } else {
+              resolve();
+            }
+          }
+
+          window.addEventListener("message", onMessage);
+          window.parent.postMessage({
+            showIsolatePreview: { rpcId, normalizedDigest },
+          }, "*");
+        });
       }
 
       async function postPreview(powerboxResult = null) {
@@ -209,6 +237,17 @@ function renderPage(state) {
           clearBusy();
         }
       });
+
+      const previewDigest = ${previewDigest};
+      if (previewDigest) {
+        previewPresentationStatus.textContent = "Opening the current preview…";
+        showIsolatePreview(previewDigest).then(() => {
+          previewPresentationStatus.textContent = "The current preview is open.";
+        }, (error) => {
+          previewPresentationStatus.textContent =
+            "Could not open the current preview: " + (error.message || String(error));
+        });
+      }
     </script>
   </body>
 </html>`;
@@ -280,22 +319,6 @@ async function previewSource(api, previewerCapability, sourceText) {
     await api.storage().putJson(CANDIDATE_INFO_KEY, candidateInfo);
 
     const viewInfo = await view.getViewInfo({});
-    const uiViewDescriptor = await api.powerbox().uiViewDescriptor({
-      title: "Isolate Authoring Example Preview",
-    });
-    const offeredView = previewerCapability.wrapDerived(view);
-    let offered;
-    try {
-      offered = await api.powerbox().offer(offeredView, {
-        descriptor: uiViewDescriptor,
-        title: "Open isolate preview",
-        verbPhrase: "can open this isolate preview",
-        description: "A hidden, non-shareable preview grain for the current source snapshot.",
-      });
-    } finally {
-      await offeredView.drop();
-    }
-
     return {
       ok: true,
       candidate: {
@@ -313,7 +336,7 @@ async function previewSource(api, previewerCapability, sourceText) {
       previewView: {
         permissions: viewInfo.permissions.length,
         roles: viewInfo.roles.length,
-        offered,
+        presentation: "requested by the browser using the candidate digest",
       },
     };
   } finally {

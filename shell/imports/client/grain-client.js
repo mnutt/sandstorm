@@ -40,6 +40,7 @@ import { GrantedAccessRequests, GrainLog, TokenInfo } from "/imports/client/grai
 import { globalGrains, globalTopbar } from "/imports/client/shell-state";
 import { globalQuotaEnforcer, globalSubs, logoutSandstorm, prettySize } from "/imports/client/shell-client";
 import { SandstormAppList } from "/imports/client/apps/applist-client";
+import { showIsolatePreviewDrawer } from "/imports/client/apps/isolate-preview-drawer";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb, Sessions } from "/imports/db-deprecated";
 import { SandstormPowerboxRequest } from "/imports/sandstorm-ui-powerbox/powerbox-client";
@@ -1512,6 +1513,7 @@ Meteor.setInterval(function () {
 }, 60000);
 
 const memoizedNewApiToken = {};
+let isolatePreviewPresentationGeneration = 0;
 // Maps sha256(JSON.stringify(parameters)) -> {timestamp, promise}
 //
 // This memoizes calls to the Meteor method "newApiToken", so that multiple calls in rapid
@@ -1734,6 +1736,59 @@ Meteor.startup(function () {
       }, (error) => {
         event.source.postMessage({ rpcId: rpcId, error: error.toString() }, event.origin);
       });
+    } else if (event.data.showIsolatePreview) {
+      const request = event.data.showIsolatePreview;
+      const rpcId = request && request.rpcId;
+      try {
+        check(request, {
+          rpcId: String,
+          normalizedDigest: Match.Where(value =>
+            typeof value === "string" && /^[0-9a-f]{64}$/.test(value)),
+        });
+        if (senderGrain !== globalGrains.getActive()) {
+          throw new Error("Only the active authoring app can open an isolate preview.");
+        }
+      } catch (error) {
+        if (typeof rpcId === "string") {
+          event.source.postMessage({ rpcId, error: error.message }, event.origin);
+        }
+
+        return;
+      }
+
+      const generation = ++isolatePreviewPresentationGeneration;
+      Meteor.call("resolveIsolatePreviewForAuthoring",
+        senderGrain.grainId(), request.normalizedDigest, (error, target) => {
+          if (generation !== isolatePreviewPresentationGeneration) {
+            event.source.postMessage({
+              rpcId,
+              error: "A newer isolate preview request replaced this one.",
+            }, event.origin);
+            return;
+          }
+
+          if (error) {
+            event.source.postMessage({
+              rpcId,
+              error: error.reason || "The isolate preview could not be opened.",
+            }, event.origin);
+            return;
+          }
+
+          if (senderGrain !== globalGrains.getActive()) {
+            event.source.postMessage({
+              rpcId,
+              error: "The authoring app is no longer active.",
+            }, event.origin);
+            return;
+          }
+
+          showIsolatePreviewDrawer({
+            ...target,
+            sourceGrainId: senderGrain.grainId(),
+          });
+          event.source.postMessage({ rpcId, ok: true }, event.origin);
+        });
     } else if (event.data.powerboxRequest) {
       const powerboxRequest = event.data.powerboxRequest;
       check(powerboxRequest, {
