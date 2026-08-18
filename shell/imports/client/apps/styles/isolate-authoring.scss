@@ -123,6 +123,36 @@
     }
   }
 
+  .isolate-source-error {
+    box-sizing: border-box;
+    flex: none;
+    max-height: min(220px, 38%);
+    overflow: auto;
+    color: #522;
+    background: #fff7f7;
+    border-top: 1px solid #b77;
+
+    header {
+      box-sizing: border-box;
+      height: 34px;
+      padding: 7px 9px;
+      color: #622;
+      background: #f2dede;
+      border-bottom: 1px solid #d9b8b8;
+
+      strong {
+        font-weight: 500;
+      }
+    }
+
+    pre {
+      margin: 0;
+      padding: 9px;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+  }
+
   .operation-status {
     position: absolute;
     z-index: 5;
