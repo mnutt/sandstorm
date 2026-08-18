@@ -65,6 +65,26 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
     .assert.textContains(".isolate-source-error", "worker.js is not valid JavaScript")
     .clearValue("textarea[name=source]")
     .setValue("textarea[name=source]", workerSource)
+    .waitForElementPresent(".source-highlight .sh__token--keyword", short_wait)
+    .execute(function () {
+      var highlight = document.querySelector(".source-highlight");
+      var line = highlight.querySelector(".sh__line");
+      var textarea = document.querySelector(".source-editor textarea");
+      var highlightStyle = getComputedStyle(highlight);
+      var lineStyle = getComputedStyle(line);
+      var numberStyle = getComputedStyle(line, "::before");
+      var textareaStyle = getComputedStyle(textarea);
+      var highlightedCodeInset = parseFloat(highlightStyle.paddingLeft) +
+        parseFloat(lineStyle.paddingLeft);
+      return {
+        numberWidth: parseFloat(numberStyle.width),
+        aligned: Math.abs(highlightedCodeInset - parseFloat(textareaStyle.paddingLeft)) < 0.1,
+      };
+    }, [], function (response) {
+      browser.assert.ok(response.value.numberWidth > 0, "source editor displays a line-number gutter");
+      browser.assert.ok(response.value.aligned, "line-number gutter preserves editor alignment");
+    })
+    .assert.not.elementPresent("#isolate-log-injection-probe")
     .click(".preview-draft")
     .waitForElementVisible(".isolate-inline-preview iframe.grain-frame", long_wait)
     .assert.not.elementPresent(".isolate-source-error")

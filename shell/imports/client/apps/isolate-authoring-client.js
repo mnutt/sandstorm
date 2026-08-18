@@ -19,6 +19,7 @@ import { Random } from "meteor/random";
 import { ReactiveVar } from "meteor/reactive-var";
 import { Template } from "meteor/templating";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
+import { highlight } from "sugar-high";
 
 import { globalDb } from "/imports/db-deprecated";
 import { globalSubs } from "/imports/client/shell-client";
@@ -259,6 +260,14 @@ Template.isolateAuthoringPage.helpers({
 
   draft() {
     return Template.instance().draft.get();
+  },
+
+  highlightedSource() {
+    const source = Template.instance().draft.get().source;
+    // The HTML renderer separates line spans with newline text nodes. Remove those separators
+    // because the editor lays out each line span as its own row.
+    return highlight(source, { lang: "javascript" })
+      .replace(/\n(?=<span class="sh__line)/g, "");
   },
 
   busy() {
