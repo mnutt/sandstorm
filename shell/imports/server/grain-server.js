@@ -310,7 +310,11 @@ Meteor.publish("grainLog", async function (grainId) {
   let id = 0;
   const grain = await globalDb.collections.grains.findOneAsync(grainId, { fields: { oldUsers: 0 } });
   if (!grain || !this.userId || grain.userId !== this.userId) {
-    this.added("grainLog", id++, { text: "Only the grain owner can view the debug log." });
+    this.added("grainLog", `${grainId}:${id}`, {
+      grainId,
+      sequence: id++,
+      text: "Only the grain owner can view the debug log.",
+    });
     this.ready();
     return;
   }
@@ -321,12 +325,18 @@ Meteor.publish("grainLog", async function (grainId) {
   const receiver = {
     write(data) {
       connected = true;
-      _this.added("grainLog", id++, { text: data.toString("utf8") });
+      _this.added("grainLog", `${grainId}:${id}`, {
+        grainId,
+        sequence: id++,
+        text: data.toString("utf8"),
+      });
     },
 
     close() {
       if (connected) {
-        _this.added("grainLog", id++, {
+        _this.added("grainLog", `${grainId}:${id}`, {
+          grainId,
+          sequence: id++,
           text: "*** lost connection to grain (probably because it shut down) ***",
         });
       }
@@ -343,7 +353,9 @@ Meteor.publish("grainLog", async function (grainId) {
     });
   }).catch((err) => {
     if (!connected) {
-      this.added("grainLog", id++, {
+      this.added("grainLog", `${grainId}:${id}`, {
+        grainId,
+        sequence: id++,
         text: "*** couldn't connect to grain (" + err + ") ***",
       });
     }

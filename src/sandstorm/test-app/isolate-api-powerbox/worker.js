@@ -308,7 +308,10 @@ async function callIsolatePreviewer(
   api, capability, responseText = "Powerbox isolate preview") {
   const previewer = capnpClient(IsolatePreviewer, capability);
   const source = new TextEncoder().encode(
-    `export default { fetch() { return new Response(${JSON.stringify(responseText)}); } };`);
+    `export default { fetch() {
+      console.log("Powerbox preview log:", ${JSON.stringify(responseText)});
+      return new Response(${JSON.stringify(responseText)});
+    } };`);
   const exportedBundle = await exportCapnp(api, IsolateBundle, {
     async getInfo() {
       return {

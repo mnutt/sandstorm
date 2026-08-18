@@ -2147,7 +2147,8 @@ Router.map(function () {
         return {
           title: grain ? grain.title : "(deleted grain)",
           // jscs:disable requireCamelCaseOrUpperCaseIdentifiers
-          html: AnsiUp.ansi_to_html(GrainLog.find({}, { $sort: { _id: 1 } })
+          html: AnsiUp.ansi_to_html(GrainLog.find(
+              { grainId: this.params.grainId }, { sort: { sequence: 1 } })
               .map(function (entry) { return entry.text; })
               .join(""), { use_classes: true }),
           // jscs:enable requireCamelCaseOrUpperCaseIdentifiers

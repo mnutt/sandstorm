@@ -93,6 +93,7 @@ import "../imports/client/apps/app-details.html";
 import "../imports/client/apps/applist.html";
 import "../imports/client/apps/isolate-authoring.html";
 import "../imports/client/apps/isolate-preview-drawer.html";
+import "../imports/client/apps/isolate-preview-log.html";
 import "../imports/client/apps/install.html";
 import "../imports/client/billing/billingPromptLocal.html";
 import "../imports/client/grain/contact-autocomplete.html";

@@ -1,0 +1,11 @@
+<template name="isolatePreviewLog">
+  <section class="isolate-preview-log" aria-label="Preview logs">
+    <div class="isolate-preview-log-heading">
+      <strong>Logs</strong>
+      <span>Live output from the preview grain</span>
+    </div>
+    <div class="grainlog-contents isolate-preview-log-contents" aria-live="polite">
+      <pre>{{{logHtml}}}</pre>
+    </div>
+  </section>
+</template>

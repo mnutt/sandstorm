@@ -15,16 +15,22 @@
 // limitations under the License.
 
 import { GrainView } from "/imports/client/grain/grainview";
+import { IsolatePreviewLogView } from "/imports/client/apps/isolate-preview-log";
 
 import "/imports/client/apps/styles/isolate-preview-pane.scss";
 
 class IsolatePreviewPane {
-  constructor(db, mount) {
-    if (!mount) throw new Error("An isolate preview pane requires a mount element.");
+  constructor(db, mount, logMount) {
+    if (!mount || !logMount) {
+      throw new Error("An isolate preview pane requires frame and log mount elements.");
+    }
     this.db = db;
     this.mount = mount;
+    this.logMount = logMount;
     this.grainView = null;
+    this.logView = null;
     this.target = null;
+    this.logMount.hidden = true;
   }
 
   show(target) {
@@ -40,16 +46,19 @@ class IsolatePreviewPane {
 
     if (this.grainView && this.target && this.target.grainId === target.grainId) {
       this.target = { ...target };
+      if (this.logView) this.logView.reconnect();
       this.grainView.reset(!this.grainView.isIncognito());
       this.grainView.openSession();
       return;
     }
 
-    this.close();
+    if (this.grainView) this.grainView.destroy();
+    this.grainView = null;
     this.target = { ...target };
     this.grainView = new GrainView(null, this.db, target.grainId, "", null, this.mount);
     this.grainView.setActive(true);
     this.grainView.openSession();
+    if (this.logView) this.logView.setGrainId(target.grainId);
   }
 
   reload() {
@@ -58,7 +67,30 @@ class IsolatePreviewPane {
     this.grainView.openSession();
   }
 
+  toggleLogs(button) {
+    if (!this.target) return false;
+    if (this.logView) {
+      this.logView.destroy();
+      this.logView = null;
+      this.logMount.hidden = true;
+    } else {
+      this.logMount.hidden = false;
+      this.logView = new IsolatePreviewLogView(this.logMount, this.target.grainId);
+    }
+
+    const open = Boolean(this.logView);
+    if (button) {
+      button.textContent = open ? "Hide logs" : "Logs";
+      button.setAttribute("aria-expanded", String(open));
+    }
+
+    return open;
+  }
+
   close() {
+    if (this.logView) this.logView.destroy();
+    this.logView = null;
+    if (this.logMount) this.logMount.hidden = true;
     if (this.grainView) this.grainView.destroy();
     this.grainView = null;
     this.target = null;
@@ -67,6 +99,7 @@ class IsolatePreviewPane {
   destroy() {
     this.close();
     this.mount = null;
+    this.logMount = null;
   }
 }
 

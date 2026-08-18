@@ -27,6 +27,7 @@ var workerSource = [
   "export default {",
   "  fetch() {",
   "    console.log('isolate authoring browser log marker');",
+  "    console.log('<img id=\"isolate-log-injection-probe\" src=\"x\">');",
   "    return new Response('<h1>isolate authoring browser test preview</h1>', {",
   "      headers: { 'content-type': 'text/html; charset=UTF-8' },",
   "    });",
@@ -60,40 +61,41 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
     .waitForElementVisible("body", medium_wait)
     .assert.textContains("body", "isolate authoring browser test preview")
     .frameParent()
-    .click(".isolate-preview-actions a[href^='/grainlog/']")
-    .windowHandles(function (logWindows) {
-      browser
-        .switchWindow(logWindows.value[1])
-        .waitForElementVisible(".grainlog-contents > pre", medium_wait)
-        .assert.textContains(
-          ".grainlog-contents > pre", "isolate authoring browser log marker")
-        .closeWindow()
-        .switchWindow(logWindows.value[0])
-        .clearValue("textarea[name=source]")
-        .setValue("textarea[name=source]", workerSourceRevisionTwo)
-        .click(".authoring-actions button[type=submit]")
-        .waitForElementVisible(".operation-status.success", long_wait)
-        .grainFrame()
-        .waitForElementVisible("body", medium_wait)
-        .assert.textContains("body", "isolate authoring browser test revision two")
-        .frameParent()
-        .click(".reload-inline-preview")
-        .grainFrame()
-        .waitForElementVisible("body", medium_wait)
-        .assert.textContains("body", "isolate authoring browser test revision two")
-        .frameParent()
-        .click(".reset-preview")
-        .waitForElementNotPresent(".operation-status.working", long_wait)
-        .assert.textContains(".operation-status.success", "Preview data was reset")
-        .waitForElementVisible(".isolate-inline-preview iframe.grain-frame", long_wait)
-        .click(".publish-new")
-        .waitForElementVisible(".published-result", long_wait)
-        .assert.textContains(".published-result", appTitle)
-        .click(".published-result a")
-        .waitForElementVisible(actionSelector, long_wait)
-        .url(browser.launch_url + "/grain")
-        .waitForElementVisible(".grain-list", short_wait)
-        .waitForElementVisible(".no-grains", short_wait)
-        .assert.not.textContains(".grain-list", appTitle);
-    });
+    .click(".toggle-inline-preview-logs")
+    .waitForElementVisible(".isolate-preview-log-contents > pre", medium_wait)
+    .assert.textContains(
+      ".isolate-preview-log-contents > pre", "isolate authoring browser log marker")
+    .assert.textContains(
+      ".isolate-preview-log-contents > pre", "isolate-log-injection-probe")
+    .assert.not.elementPresent("#isolate-log-injection-probe")
+    .assert.attributeEquals(".toggle-inline-preview-logs", "aria-expanded", "true")
+    .click(".toggle-inline-preview-logs")
+    .waitForElementNotPresent(".isolate-preview-log", medium_wait)
+    .assert.attributeEquals(".toggle-inline-preview-logs", "aria-expanded", "false")
+    .clearValue("textarea[name=source]")
+    .setValue("textarea[name=source]", workerSourceRevisionTwo)
+    .click(".authoring-actions button[type=submit]")
+    .waitForElementVisible(".operation-status.success", long_wait)
+    .grainFrame()
+    .waitForElementVisible("body", medium_wait)
+    .assert.textContains("body", "isolate authoring browser test revision two")
+    .frameParent()
+    .click(".reload-inline-preview")
+    .grainFrame()
+    .waitForElementVisible("body", medium_wait)
+    .assert.textContains("body", "isolate authoring browser test revision two")
+    .frameParent()
+    .click(".reset-preview")
+    .waitForElementNotPresent(".operation-status.working", long_wait)
+    .assert.textContains(".operation-status.success", "Preview data was reset")
+    .waitForElementVisible(".isolate-inline-preview iframe.grain-frame", long_wait)
+    .click(".publish-new")
+    .waitForElementVisible(".published-result", long_wait)
+    .assert.textContains(".published-result", appTitle)
+    .click(".published-result a")
+    .waitForElementVisible(actionSelector, long_wait)
+    .url(browser.launch_url + "/grain")
+    .waitForElementVisible(".grain-list", short_wait)
+    .waitForElementVisible(".no-grains", short_wait)
+    .assert.not.textContains(".grain-list", appTitle);
 };

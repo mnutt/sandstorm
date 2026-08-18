@@ -32,8 +32,8 @@ class IsolatePreviewDrawer {
     this.sourceWatcher = null;
   }
 
-  attach(mount) {
-    this.previewPane = new IsolatePreviewPane(globalDb, mount);
+  attach(mount, logMount) {
+    this.previewPane = new IsolatePreviewPane(globalDb, mount, logMount);
     const target = this.target.get();
     if (target) this.previewPane.show(target);
   }
@@ -75,6 +75,10 @@ class IsolatePreviewDrawer {
     if (this.previewPane) this.previewPane.reload();
   }
 
+  toggleLogs(button) {
+    if (this.previewPane) this.previewPane.toggleLogs(button);
+  }
+
   close() {
     if (this.sourceWatcher) this.sourceWatcher.stop();
     this.sourceWatcher = null;
@@ -87,7 +91,9 @@ class IsolatePreviewDrawer {
 const isolatePreviewDrawer = new IsolatePreviewDrawer();
 
 Template.isolatePreviewDrawer.onRendered(function () {
-  this.data.attach(this.find(".isolate-preview-frame-mount"));
+  this.data.attach(
+    this.find(".isolate-preview-frame-mount"),
+    this.find(".isolate-preview-log-mount"));
 });
 
 Template.isolatePreviewDrawer.onDestroyed(function () {
@@ -109,6 +115,11 @@ Template.isolatePreviewDrawer.events({
   "click .reload-isolate-preview"(event, instance) {
     event.preventDefault();
     instance.data.reload();
+  },
+
+  "click .toggle-isolate-preview-logs"(event, instance) {
+    event.preventDefault();
+    instance.data.toggleLogs(event.currentTarget);
   },
 
   "click .close-isolate-preview"(event, instance) {

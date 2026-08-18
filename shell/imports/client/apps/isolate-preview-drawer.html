@@ -9,10 +9,13 @@
       <div class="isolate-preview-actions">
         <button type="button" class="reload-isolate-preview">Reload</button>
         <a href="/grain/{{target.grainId}}" target="_blank" rel="noopener">Open in tab</a>
-        <a href="/grainlog/{{target.grainId}}" target="_blank" rel="noopener">Logs</a>
+        <button type="button" class="toggle-isolate-preview-logs"
+                aria-expanded="false">Logs</button>
+        <a href="/grainlog/{{target.grainId}}" target="_blank" rel="noopener">Logs in tab</a>
         <button type="button" class="close-isolate-preview">Close</button>
       </div>
     </header>
     <div class="isolate-preview-frame-mount"></div>
+    <div class="isolate-preview-log-mount" hidden></div>
   </aside>
 </template>
