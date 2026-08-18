@@ -75,10 +75,6 @@ class IsolatePreviewDrawer {
     if (this.previewPane) this.previewPane.reload();
   }
 
-  toggleLogs(button) {
-    if (this.previewPane) this.previewPane.toggleLogs(button);
-  }
-
   close() {
     if (this.sourceWatcher) this.sourceWatcher.stop();
     this.sourceWatcher = null;
@@ -117,15 +113,6 @@ Template.isolatePreviewDrawer.events({
     instance.data.reload();
   },
 
-  "click .toggle-isolate-preview-logs"(event, instance) {
-    event.preventDefault();
-    instance.data.toggleLogs(event.currentTarget);
-  },
-
-  "click .close-isolate-preview"(event, instance) {
-    event.preventDefault();
-    instance.data.close();
-  },
 });
 
 function showIsolatePreviewDrawer(target) {

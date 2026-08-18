@@ -27,6 +27,7 @@ class IsolatePreviewLogView {
     if (!mount) throw new Error("An isolate preview log requires a mount element.");
     this.mount = mount;
     this.grainId = new ReactiveVar(null);
+    this.collapsed = new ReactiveVar(false);
     this.subscription = null;
     this.blazeView = Blaze.renderWithData(Template.isolatePreviewLog, this, mount);
     this.setGrainId(grainId);
@@ -46,6 +47,12 @@ class IsolatePreviewLogView {
   reconnect() {
     const grainId = this.grainId.get();
     if (grainId) this.setGrainId(grainId, true);
+  }
+
+  toggleCollapsed() {
+    const collapsed = !this.collapsed.get();
+    this.collapsed.set(collapsed);
+    this.mount.classList.toggle("collapsed", collapsed);
   }
 
   destroy() {
@@ -72,6 +79,11 @@ Template.isolatePreviewLog.onRendered(function () {
 });
 
 Template.isolatePreviewLog.events({
+  "click .toggle-isolate-preview-log"(event) {
+    event.preventDefault();
+    Template.instance().data.toggleCollapsed();
+  },
+
   "scroll .isolate-preview-log-contents"(event, instance) {
     const contents = event.currentTarget;
     instance.shouldScroll =
@@ -80,6 +92,14 @@ Template.isolatePreviewLog.events({
 });
 
 Template.isolatePreviewLog.helpers({
+  expanded() {
+    return String(!Template.instance().data.collapsed.get());
+  },
+
+  grainId() {
+    return Template.instance().data.grainId.get();
+  },
+
   logHtml() {
     const grainId = Template.instance().data.grainId.get();
     if (!grainId) return "";

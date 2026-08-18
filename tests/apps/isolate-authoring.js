@@ -17,7 +17,6 @@
 "use strict";
 
 var utils = require("../utils"),
-    actionSelector = utils.actionSelector,
     short_wait = utils.short_wait,
     medium_wait = utils.medium_wait,
     long_wait = utils.long_wait;
@@ -38,6 +37,10 @@ var workerSourceRevisionTwo = workerSource.replace(
   "isolate authoring browser test preview",
   "isolate authoring browser test revision two",
 );
+var workerSourceRevisionThree = workerSource.replace(
+  "isolate authoring browser test preview",
+  "isolate authoring browser test revision three",
+);
 
 module.exports["Test built-in isolate authoring flow"] = function (browser) {
   browser
@@ -48,34 +51,37 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
     .waitForElementVisible(".create-isolate-app", short_wait)
     .click(".create-isolate-app")
     .waitForElementVisible(".isolate-authoring-page", short_wait)
-    .clearValue("input[name=title]")
-    .setValue("input[name=title]", appTitle)
+    .click(".edit-app-details")
+    .waitForElementVisible(".edit-app-details-form", short_wait)
+    .clearValue(".edit-app-details-form input[name=title]")
+    .setValue(".edit-app-details-form input[name=title]", appTitle)
+    .click(".save-app-details")
+    .waitForElementNotPresent(".edit-app-details-form", short_wait)
+    .assert.textContains(".isolate-authoring-app-title", appTitle)
     .clearValue("textarea[name=source]")
     .setValue("textarea[name=source]", workerSource)
-    .click(".authoring-actions button[type=submit]")
-    .waitForElementVisible(".operation-status.success", long_wait)
-    .assert.textContains(".operation-status.success", "Preview is ready")
-    .waitForElementVisible(".candidate-review dd code", short_wait)
+    .click(".preview-draft")
     .waitForElementVisible(".isolate-inline-preview iframe.grain-frame", long_wait)
     .grainFrame()
     .waitForElementVisible("body", medium_wait)
     .assert.textContains("body", "isolate authoring browser test preview")
     .frameParent()
-    .click(".toggle-inline-preview-logs")
     .waitForElementVisible(".isolate-preview-log-contents > pre", medium_wait)
     .assert.textContains(
       ".isolate-preview-log-contents > pre", "isolate authoring browser log marker")
     .assert.textContains(
       ".isolate-preview-log-contents > pre", "isolate-log-injection-probe")
     .assert.not.elementPresent("#isolate-log-injection-probe")
-    .assert.attributeEquals(".toggle-inline-preview-logs", "aria-expanded", "true")
-    .click(".toggle-inline-preview-logs")
-    .waitForElementNotPresent(".isolate-preview-log", medium_wait)
-    .assert.attributeEquals(".toggle-inline-preview-logs", "aria-expanded", "false")
+    .assert.attributeEquals(".toggle-isolate-preview-log", "aria-expanded", "true")
+    .click(".toggle-isolate-preview-log")
+    .assert.attributeContains(".isolate-preview-log-mount", "class", "collapsed")
+    .assert.attributeEquals(".toggle-isolate-preview-log", "aria-expanded", "false")
+    .click(".toggle-isolate-preview-log")
+    .assert.attributeEquals(".toggle-isolate-preview-log", "aria-expanded", "true")
     .clearValue("textarea[name=source]")
     .setValue("textarea[name=source]", workerSourceRevisionTwo)
-    .click(".authoring-actions button[type=submit]")
-    .waitForElementVisible(".operation-status.success", long_wait)
+    .click(".preview-draft")
+    .waitForElementNotPresent(".operation-status.working", long_wait)
     .grainFrame()
     .waitForElementVisible("body", medium_wait)
     .assert.textContains("body", "isolate authoring browser test revision two")
@@ -89,11 +95,34 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
     .waitForElementNotPresent(".operation-status.working", long_wait)
     .assert.textContains(".operation-status.success", "Preview data was reset")
     .waitForElementVisible(".isolate-inline-preview iframe.grain-frame", long_wait)
-    .click(".publish-new")
-    .waitForElementVisible(".published-result", long_wait)
-    .assert.textContains(".published-result", appTitle)
-    .click(".published-result a")
-    .waitForElementVisible(actionSelector, long_wait)
+    .click(".open-publish-modal")
+    .waitForElementVisible(".publish-isolate-form", short_wait)
+    .assert.textContains(".publish-destination", "Publishing as a new app")
+    .assert.not.elementPresent(".publish-target")
+    .assert.not.textContains(".publish-destination code", "…")
+    .click(".confirm-publish")
+    .waitForElementNotPresent(".publish-isolate-form", long_wait)
+    .assert.textContains(".operation-status.success", "version 1")
+    .clearValue("textarea[name=source]")
+    .setValue("textarea[name=source]", workerSourceRevisionThree)
+    .click(".preview-draft")
+    .waitForElementVisible(".open-publish-modal:not([disabled])", long_wait)
+    .grainFrame()
+    .waitForElementVisible("body", long_wait)
+    .assert.textContains("body", "isolate authoring browser test revision three")
+    .frameParent()
+    .click(".open-publish-modal")
+    .waitForElementVisible(".revision-history", short_wait)
+    .assert.textContains(
+      ".publish-destination", "Publishing version 2 of " + appTitle)
+    .assert.textContains(".revision-history", "Version 1")
+    .assert.not.textContains(".revision-history code", "…")
+    .click(".confirm-publish")
+    .waitForElementNotPresent(".publish-isolate-form", long_wait)
+    .assert.textContains(".operation-status.success", "version 2")
+    .url(browser.launch_url + "/apps")
+    .waitForElementVisible(".app-list .app-button[data-app-id]", long_wait)
+    .assert.textContains(".app-list", appTitle)
     .url(browser.launch_url + "/grain")
     .waitForElementVisible(".grain-list", short_wait)
     .waitForElementVisible(".no-grains", short_wait)
