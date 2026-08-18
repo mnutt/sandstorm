@@ -18,8 +18,13 @@
 
         <section class="source-editor" aria-label="Isolate JavaScript source">
           <label class="visually-hidden" for="isolate-worker-source">Isolate JavaScript</label>
-          <textarea id="isolate-worker-source" name="source" required spellcheck="false"
-                    disabled={{busy}} value="{{draft.source}}"></textarea>
+          <div class="source-editor-surface">
+            <div class="source-editor-content">
+              <pre class="source-highlight" aria-hidden="true"><code>{{{highlightedSource}}}</code></pre>
+              <textarea id="isolate-worker-source" name="source" required spellcheck="false"
+                        disabled={{busy}} value="{{draft.source}}"></textarea>
+            </div>
+          </div>
           {{#if previewError}}
             <section class="isolate-source-error" role="alert" aria-label="Source error">
               <header><strong>Error</strong></header>

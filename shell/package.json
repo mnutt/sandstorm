@@ -63,6 +63,7 @@
     "request": "^2.88.2",
     "smtp-server": "^3.18.1",
     "stripe": "^20.3.1",
+    "sugar-high": "^2.0.1",
     "supports-color": "^8.1.1",
     "undici": "^8.10.0",
     "xml-crypto": "^6.1.2",

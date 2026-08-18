@@ -105,21 +105,102 @@
     flex: 1;
     flex-direction: column;
     min-height: 360px;
+  }
 
+  .source-editor-surface {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 300px;
+    overflow-y: scroll;
+    background: white;
+  }
+
+  .source-editor-content {
+    --source-line-number-width: 4ch;
+    --source-line-number-gap: 12px;
+    --source-gutter-width: calc(var(--source-line-number-width) + var(--source-line-number-gap));
+
+    position: relative;
+    flex: 1;
+
+    .source-highlight,
     textarea {
       box-sizing: border-box;
-      flex: 1;
       width: 100%;
-      min-height: 300px;
-      resize: none;
+      margin: 0;
       padding: 12px;
-      color: #222;
-      background: white;
+      padding-left: 3px;
       border: 0;
       border-radius: 0;
       font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      outline: none;
+      line-break: anywhere;
       tab-size: 2;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+    }
+
+    .source-highlight {
+      --sh-class: #8250df;
+      --sh-identifier: #24292f;
+      --sh-sign: #57606a;
+      --sh-property: #0550ae;
+      --sh-entity: #953800;
+      --sh-jsxliterals: #116329;
+      --sh-string: #0a3069;
+      --sh-keyword: #cf222e;
+      --sh-comment: #6e7781;
+      --sh-space: #24292f;
+
+      z-index: 0;
+      min-height: 100%;
+      color: #24292f;
+      counter-reset: source-line;
+      pointer-events: none;
+
+      code {
+        display: block;
+        font: inherit;
+      }
+
+      .sh__line {
+        display: inline-block;
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 1.5em;
+        padding-left: var(--source-gutter-width);
+
+        &::before {
+          display: inline-block;
+          box-sizing: border-box;
+          width: var(--source-line-number-width);
+          margin-left: calc(0px - var(--source-gutter-width));
+          margin-right: var(--source-line-number-gap);
+          color: #8a8a8a;
+          text-align: right;
+          content: counter(source-line);
+          counter-increment: source-line;
+          user-select: none;
+        }
+      }
+    }
+
+    textarea {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      height: 100%;
+      padding-left: calc(3px + var(--source-gutter-width));
+      overflow: hidden;
+      resize: none;
+      color: transparent;
+      background: transparent;
+      caret-color: #222;
+      outline: none;
+
+      &::selection {
+        background: rgb(124 103 163 / 25%);
+      }
     }
   }
 
