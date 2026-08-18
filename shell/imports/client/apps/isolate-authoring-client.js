@@ -229,6 +229,7 @@ Template.isolateAuthoringPage.onCreated(function () {
   this.draft = new ReactiveVar(loadDraft());
   this.busy = new ReactiveVar(false);
   this.operationStatus = new ReactiveVar(null);
+  this.previewError = new ReactiveVar(null);
   this.previewTarget = new ReactiveVar(null);
   this.metadataDraft = new ReactiveVar(null);
   this.detailsModalOpen = new ReactiveVar(false);
@@ -266,6 +267,10 @@ Template.isolateAuthoringPage.helpers({
 
   operationStatus() {
     return Template.instance().operationStatus.get();
+  },
+
+  previewError() {
+    return Template.instance().previewError.get();
   },
 
   currentCandidate() {
@@ -353,6 +358,7 @@ Template.isolateAuthoringPage.events({
     if (instance.busy.get()) return;
 
     instance.busy.set(true);
+    instance.previewError.set(null);
     setStatus(instance, "working", "Validating and starting the preview…");
     try {
       let draft = instance.draft.get();
@@ -385,7 +391,8 @@ Template.isolateAuthoringPage.events({
       instance.previewPane.show(target);
       instance.operationStatus.set(null);
     } catch (error) {
-      setStatus(instance, "error", errorMessage(error));
+      instance.operationStatus.set(null);
+      instance.previewError.set({ message: errorMessage(error) });
     } finally {
       instance.busy.set(false);
     }

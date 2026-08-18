@@ -20,6 +20,12 @@
           <label class="visually-hidden" for="isolate-worker-source">Isolate JavaScript</label>
           <textarea id="isolate-worker-source" name="source" required spellcheck="false"
                     disabled={{busy}} value="{{draft.source}}"></textarea>
+          {{#if previewError}}
+            <section class="isolate-source-error" role="alert" aria-label="Source error">
+              <header><strong>Error</strong></header>
+              <pre>{{previewError.message}}</pre>
+            </section>
+          {{/if}}
         </section>
 
         {{#if operationStatus}}

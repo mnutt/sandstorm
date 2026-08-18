@@ -19,6 +19,7 @@ import { check } from "meteor/check";
 
 import { globalDb } from "/imports/db-deprecated";
 import { getGlobalBackend } from "/imports/server/backend-instance";
+import { IsolateBundleError } from "/imports/server/isolate-bundle";
 import {
   IsolateCandidateError,
   findOwnedIsolateCandidate,
@@ -129,8 +130,8 @@ async function runAuthoringMethod(callback) {
     return await callback();
   } catch (error) {
     if (error instanceof Meteor.Error) throw error;
-    if (error instanceof IsolateCandidateError || error instanceof IsolatePreviewError ||
-        error instanceof IsolatePublisherError) {
+    if (error instanceof IsolateBundleError || error instanceof IsolateCandidateError ||
+        error instanceof IsolatePreviewError || error instanceof IsolatePublisherError) {
       throw new Meteor.Error(errorStatus(error), error.message, error.code);
     }
 
