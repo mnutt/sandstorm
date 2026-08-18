@@ -28,9 +28,17 @@ the saved capability; when its last saved copy is removed, Sandstorm also marks
 the durable preview grant revoked.
 
 The app's storage is the source of truth for editable source. Sandstorm's
-authoring service stores immutable candidate snapshots only. This example does
-not request or receive app-publishing authority: an `IsolatePreviewer` cannot
-install an app or publish a revision.
+authoring service stores immutable candidate snapshots only. **Publish reviewed
+candidate** requests a fresh, one-shot `IsolatePublisher` capability whose
+Powerbox tag commits to the displayed candidate digest, a new-app target, and
+the displayed metadata.
+When the user approves the request, Sandstorm binds the grant to the matching
+preview-ready candidate in this authoring grain. The publisher installs an
+ordinary app action without creating a first grain. The reusable
+`IsolatePreviewer` still cannot publish anything by itself. The example stores
+the `createdAppId` returned by the first publication; after previewing newer
+source, its next publisher request targets that existing app and creates a new
+revision instead of another app.
 
 The important API pieces are:
 
@@ -54,7 +62,25 @@ const uiViewDescriptor = await api.powerbox().uiViewDescriptor({
 const offeredView = previewerCapability.wrapDerived(result.view);
 await api.powerbox().offer(offeredView, { descriptor: uiViewDescriptor });
 await offeredView.drop();
+
+const publishedApp = await api.storage().getJson("isolate-published-app");
+const publishDescriptor = await api.powerbox().appInterfaceDescriptor(IsolatePublisher, {
+  normalizedDigest: info.normalizedDigest,
+  target: publishedApp
+    ? { existingApp: publishedApp.createdAppId }
+    : { newApp: undefined },
+  metadata: { title, nounPhrase, shortDescription, marketingVersion: "1.0" },
+});
+const publisherCapability = await api.powerbox().claim(publisherPowerboxResult);
+const publisher = capnpClient(IsolatePublisher, publisherCapability);
+const { result: publication } = await publisher.publish({
+  requestId: crypto.randomUUID(),
+});
+await api.storage().putJson("isolate-published-app", {
+  createdAppId: publication.createdAppId,
+});
 ```
 
 The complete worker includes cleanup, exact `UInt64` handling, chunked
-transfer, saved-grant restoration, and error display.
+transfer, saved-grant restoration, digest-bound one-shot publication, and error
+display.

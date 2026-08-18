@@ -1167,6 +1167,25 @@ function uiViewPowerboxDescriptor(options = {}) {
   return base64UrlEncodeBytes(message.toPackedUint8Array());
 }
 
+function taggedAppInterfacePowerboxDescriptor(InterfaceClass, tagValue) {
+  const metadata = nativeCapnpInterfaceMetadata(
+    InterfaceClass, "PowerboxApi.appInterfaceDescriptor()");
+  const TagClass = InterfaceClass.PowerboxTag;
+  if (!TagClass || typeof TagClass._applyInit !== "function") {
+    throw new TypeError(
+      "PowerboxApi.appInterfaceDescriptor() requires an interface with a PowerboxTag struct");
+  }
+
+  const message = new CapnpEsMessage();
+  const descriptor = message.initRoot(PowerboxDescriptor);
+  const tag = descriptor._initTags(1).get(0);
+  tag.id = metadata.interfaceId;
+  const value = tag.value;
+  CapnpEsUtils.initStruct(TagClass._capnp.size, value);
+  TagClass._applyInit(CapnpEsUtils.getAs(TagClass, value), tagValue);
+  return base64UrlEncodeBytes(message.toPackedUint8Array());
+}
+
 async function servePowerboxDescriptors(request, env) {
   const url = new URL(request.url);
 
@@ -3335,7 +3354,11 @@ export function powerbox(request, env) {
       return outboundHttpPowerboxDescriptor(env, options);
     },
 
-    async appInterfaceDescriptor(InterfaceClass) {
+    async appInterfaceDescriptor(InterfaceClass, tagValue) {
+      if (tagValue !== undefined) {
+        return taggedAppInterfacePowerboxDescriptor(InterfaceClass, tagValue);
+      }
+
       const metadata = nativeCapnpInterfaceMetadata(
         InterfaceClass, "PowerboxApi.appInterfaceDescriptor()");
       return appInterfacePowerboxDescriptor(env, {

@@ -335,7 +335,8 @@ const IsolateFactoryGrants = new Mongo.Collection("isolateFactoryGrants", collec
 //   kind: "preview" or "publish".
 //   ownerId: Account charged for and authorized to use the grant.
 //   requestingGrainId: Authoring grain for which the Powerbox grant was issued.
-//   targetCreatedAppId: Specifically authorized update target for a future publish grant.
+//   candidateId, candidateDigest, target, and metadata: Exact candidate and publication intent
+//       authorized by a publish grant.
 //   createdAt and expiresAt: Grant lifetime audit data. Expiration policy is deferred.
 //   consumedAt, consumedRequestId, and result: One-shot publication state.
 //   revokedAt: Explicit server-side revocation state.

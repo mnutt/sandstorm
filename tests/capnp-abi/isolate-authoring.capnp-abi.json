@@ -77,6 +77,21 @@
           "results": [{"name": "candidate", "type": "IsolateCandidate"}, {"name": "view", "type": "Grain.UiView"}]
         }
       ]
+    },
+    {
+      "name": "IsolatePublisher",
+      "interfaceId": "0x9cacf36bd0b3125d",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "publish",
+          "ordinal": 0,
+          "paramStructId": "0xe139695210df37ed",
+          "resultStructId": "0x9b342c4015c4580b",
+          "params": [{"name": "requestId", "type": "Text"}],
+          "results": [{"name": "result", "type": "PublishedRevision"}]
+        }
+      ]
     }
   ],
   "structs": [
@@ -104,6 +119,26 @@
       "name": "IsolatePreviewer.PowerboxTag",
       "structId": "0xac38540145bd6a37",
       "fields": []
+    },
+    {
+      "name": "PublishTarget",
+      "structId": "0x8cbb0648eda4b52f",
+      "fields": [{"name": "newApp", "ordinal": 0, "type": "Void", "discriminant": 0}, {"name": "existingApp", "ordinal": 1, "type": "Text", "discriminant": 1}]
+    },
+    {
+      "name": "AppMetadata",
+      "structId": "0xcbb974d1fd481a17",
+      "fields": [{"name": "title", "ordinal": 0, "type": "Text"}, {"name": "nounPhrase", "ordinal": 1, "type": "Text"}, {"name": "shortDescription", "ordinal": 2, "type": "Text"}, {"name": "marketingVersion", "ordinal": 3, "type": "Text"}]
+    },
+    {
+      "name": "PublishedRevision",
+      "structId": "0xac268cd4f5f4d4fb",
+      "fields": [{"name": "createdAppId", "ordinal": 0, "type": "Text"}, {"name": "revisionId", "ordinal": 1, "type": "Text"}, {"name": "appId", "ordinal": 2, "type": "Text"}, {"name": "appVersion", "ordinal": 3, "type": "UInt32"}, {"name": "title", "ordinal": 4, "type": "Text"}]
+    },
+    {
+      "name": "IsolatePublisher.PowerboxTag",
+      "structId": "0x938b7715132b4b36",
+      "fields": [{"name": "normalizedDigest", "ordinal": 0, "type": "Data"}, {"name": "target", "ordinal": 1, "type": "Struct(0x8cbb0648eda4b52f)"}, {"name": "metadata", "ordinal": 2, "type": "Struct(0xcbb974d1fd481a17)"}]
     }
   ]
 }

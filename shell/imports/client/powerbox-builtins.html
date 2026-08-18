@@ -9,6 +9,15 @@
     app.</div>
 </template>
 
+<template name="isolatePublisherPowerboxCard">
+  <div>{{option.publishIntent.action}} “{{option.publishIntent.title}}”</div>
+  {{#if option.publishIntent.targetTitle}}
+    <div>Current app: {{option.publishIntent.targetTitle}}</div>
+  {{/if}}
+  <div>Candidate: {{option.publishIntent.digest}}</div>
+  <div>This one-shot grant publishes only this reviewed candidate and target.</div>
+</template>
+
 <template name="uiViewPowerboxConfiguration">
   {{#if choseHostedObject}}
     <div class="powerbox-iframe-mount">{{ setupIframe }}</div>

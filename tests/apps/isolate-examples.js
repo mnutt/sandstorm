@@ -187,22 +187,90 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
         .waitForElementVisible("body", long_wait)
         .assert.textContains("body", "Powerbox isolate preview")
         .frameParent()
-        .waitForElementVisible(authoringTab, medium_wait)
-        .click(authoringTab)
-        .waitForElementPresent("iframe.grain-frame", long_wait)
-        .grainFrame()
-        .execute(function () {
-          const form = document.createElement("form");
-          form.method = "post";
-          form.action = "/offer-preview?updated=1";
-          document.body.appendChild(form);
-          form.submit();
-        })
-        .frameParent()
-        .assert.textContains("#grainTitle", "Powerbox Isolate Preview")
-        .waitForElementPresent("iframe.grain-frame", long_wait)
-        .grainFrame()
-        .waitForElementVisible("body", long_wait)
-        .assert.textContains("body", "Powerbox isolate preview updated");
+        .url(function (previewUrl) {
+          browser
+            .waitForElementVisible(authoringTab, medium_wait)
+            .click(authoringTab)
+            .waitForElementPresent("iframe.grain-frame", long_wait)
+            .grainFrame()
+            .executeAsync(function (path, done) {
+              fetch(path, { method: "POST" })
+                .then(response => response.text().then(() => done(response.ok)))
+                .catch(() => done(false));
+            }, ["/offer-preview?updated=1"])
+            .frameParent()
+            .url(previewUrl.value)
+            .waitForElementPresent("iframe.grain-frame", long_wait)
+            .grainFrame()
+            .waitForElementVisible("body", long_wait)
+            .assert.textContains("body", "Powerbox isolate preview updated")
+            .frameParent()
+            .url(authoringUrl.value)
+            .waitForElementPresent("iframe.grain-frame", long_wait)
+            .grainFrame()
+            .execute(function () {
+              window.location.href = "/";
+            })
+            .waitForElementVisible("#publish-isolate", medium_wait)
+            .click("#publish-isolate")
+            .frameParent()
+            .waitForElementVisible(
+              ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
+              medium_wait)
+            .assert.textContains(
+              ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
+              "Publish a new app")
+            .assert.textContains(
+              ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
+              "Powerbox Published Isolate")
+            .click(
+              ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]")
+            .grainFrame()
+            .waitForElementVisible("pre", long_wait)
+            .assert.textContains("pre", "\"published\": true")
+            .assert.textContains("pre", "\"appVersion\": 1")
+            .assert.textContains("pre", "\"title\": \"Powerbox Published Isolate\"")
+            .frameParent()
+            .url(authoringUrl.value)
+            .waitForElementPresent("iframe.grain-frame", long_wait)
+            .grainFrame()
+            .executeAsync(function (path, done) {
+              fetch(path, { method: "POST" })
+                .then(response => response.text().then(() => done(response.ok)))
+                .catch(() => done(false));
+            }, ["/offer-preview?updated=2"])
+            .frameParent()
+            .url(previewUrl.value)
+            .waitForElementPresent("iframe.grain-frame", long_wait)
+            .grainFrame()
+            .waitForElementVisible("body", long_wait)
+            .assert.textContains("body", "Powerbox isolate preview revision two")
+            .frameParent()
+            .url(authoringUrl.value)
+            .waitForElementPresent("iframe.grain-frame", long_wait)
+            .grainFrame()
+            .execute(function () {
+              window.location.href = "/";
+            })
+            .waitForElementVisible("#publish-isolate", medium_wait)
+            .click("#publish-isolate")
+            .frameParent()
+            .waitForElementVisible(
+              ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
+              medium_wait)
+            .assert.textContains(
+              ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
+              "Publish an update to")
+            .assert.textContains(
+              ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
+              "Current app: Powerbox Published Isolate")
+            .click(
+              ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]")
+            .grainFrame()
+            .waitForElementVisible("pre", long_wait)
+            .assert.textContains("pre", "\"published\": true")
+            .assert.textContains("pre", "\"appVersion\": 2")
+            .assert.textContains("pre", "\"title\": \"Powerbox Published Isolate\"");
+        });
     });
 };

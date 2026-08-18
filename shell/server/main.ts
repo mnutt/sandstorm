@@ -103,6 +103,7 @@ import "../imports/server/installer";
 import "../imports/server/install-server";
 import "../imports/server/isolate-authoring-server";
 import "../imports/server/isolate-previewer-capability";
+import "../imports/server/isolate-publisher-capability";
 import "../imports/server/notifications-server";
 import "../imports/server/pre-meteor";
 import "../imports/server/sandcats";
