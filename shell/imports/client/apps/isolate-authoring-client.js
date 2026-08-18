@@ -229,7 +229,9 @@ Template.isolateAuthoringPage.onCreated(function () {
 
 Template.isolateAuthoringPage.onRendered(function () {
   this.previewPane = new IsolatePreviewPane(
-    globalDb, this.find(".isolate-preview-frame-mount"));
+    globalDb,
+    this.find(".isolate-preview-frame-mount"),
+    this.find(".isolate-preview-log-mount"));
 });
 
 Template.isolateAuthoringPage.onDestroyed(function () {
@@ -390,6 +392,11 @@ Template.isolateAuthoringPage.events({
   "click .reload-inline-preview"(event, instance) {
     event.preventDefault();
     instance.previewPane.reload();
+  },
+
+  "click .toggle-inline-preview-logs"(event, instance) {
+    event.preventDefault();
+    instance.previewPane.toggleLogs(event.currentTarget);
   },
 
   "click .close-inline-preview"(event, instance) {

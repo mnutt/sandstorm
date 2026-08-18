@@ -146,12 +146,17 @@
               <a href="/grain/{{previewTarget.grainId}}" target="_blank" rel="noopener">
                 Open in tab
               </a>
-              <a href="/grainlog/{{previewTarget.grainId}}" target="_blank" rel="noopener">Logs</a>
+              <button type="button" class="toggle-inline-preview-logs"
+                      aria-expanded="false">Logs</button>
+              <a href="/grainlog/{{previewTarget.grainId}}" target="_blank" rel="noopener">
+                Logs in tab
+              </a>
               <button type="button" class="close-inline-preview">Close</button>
             </div>
           {{/if}}
         </header>
         <div class="isolate-preview-frame-mount"></div>
+        <div class="isolate-preview-log-mount" hidden></div>
       </aside>
     </div>
   </main>

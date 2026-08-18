@@ -63,6 +63,52 @@
   }
 }
 
+.isolate-preview-log-mount {
+  box-sizing: border-box;
+  flex: none;
+  height: min(220px, 38%);
+  min-height: 120px;
+  color: #ddd;
+  background: #111;
+  border-top: 1px solid #777;
+}
+
+.isolate-preview-log {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.isolate-preview-log-heading {
+  display: flex;
+  align-items: baseline;
+  flex: none;
+  gap: 8px;
+  padding: 5px 9px;
+  color: #eee;
+  background: #222;
+  border-bottom: 1px solid #555;
+
+  span {
+    color: #aaa;
+    font-size: 12px;
+  }
+}
+
+.isolate-preview-log-contents.grainlog-contents {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  color: #ddd;
+  background: #111;
+
+  > pre {
+    margin: 8px;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+}
+
 .isolate-preview-drawer {
   position: absolute;
   z-index: 20;

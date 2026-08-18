@@ -182,6 +182,11 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
         .waitForElementVisible("body", long_wait)
         .assert.textContains("body", "Powerbox isolate preview")
         .frameParent()
+        .click(".toggle-isolate-preview-logs")
+        .waitForElementVisible(".isolate-preview-log-contents > pre", medium_wait)
+        .assert.textContains(
+          ".isolate-preview-log-contents > pre",
+          "Powerbox preview log: Powerbox isolate preview")
         .grainFrame(authoringGrainId)
         .executeAsync(function (path, done) {
           fetch(path, { method: "POST" })
@@ -196,6 +201,10 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
         .waitForElementVisible("body", long_wait)
         .assert.textContains("body", "Powerbox isolate preview updated")
         .frameParent()
+        .waitForElementVisible(".isolate-preview-log-contents > pre", medium_wait)
+        .assert.textContains(
+          ".isolate-preview-log-contents > pre",
+          "Powerbox preview log: Powerbox isolate preview updated")
         .grainFrame(authoringGrainId)
         .execute(function () {
           window.location.href = "/";
@@ -232,6 +241,10 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
         .waitForElementVisible("body", long_wait)
         .assert.textContains("body", "Powerbox isolate preview revision two")
         .frameParent()
+        .waitForElementVisible(".isolate-preview-log-contents > pre", medium_wait)
+        .assert.textContains(
+          ".isolate-preview-log-contents > pre",
+          "Powerbox preview log: Powerbox isolate preview revision two")
         .grainFrame(authoringGrainId)
         .execute(function () {
           window.location.href = "/";
