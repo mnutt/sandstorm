@@ -1,0 +1,18 @@
+<template name="isolatePreviewDrawer">
+  <aside class="isolate-preview-drawer" aria-label="Isolate app preview">
+    <header class="isolate-preview-toolbar">
+      <div class="isolate-preview-title">
+        <strong>Preview</strong>
+        {{#if target.title}}<span>{{target.title}}</span>{{/if}}
+        <code title="{{target.normalizedDigest}}">{{shortDigest}}</code>
+      </div>
+      <div class="isolate-preview-actions">
+        <button type="button" class="reload-isolate-preview">Reload</button>
+        <a href="/grain/{{target.grainId}}" target="_blank" rel="noopener">Open in tab</a>
+        <a href="/grainlog/{{target.grainId}}" target="_blank" rel="noopener">Logs</a>
+        <button type="button" class="close-isolate-preview">Close</button>
+      </div>
+    </header>
+    <div class="isolate-preview-frame-mount"></div>
+  </aside>
+</template>

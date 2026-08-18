@@ -16,6 +16,8 @@
 
 import { GrainView } from "/imports/client/grain/grainview";
 
+import "/imports/client/apps/styles/isolate-preview-pane.scss";
+
 class IsolatePreviewPane {
   constructor(db, mount) {
     if (!mount) throw new Error("An isolate preview pane requires a mount element.");

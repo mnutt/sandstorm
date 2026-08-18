@@ -33,6 +33,9 @@ function renderPage(state) {
   const pretty = htmlEscape(JSON.stringify(state.result || state.error || {}, null, 2));
   const previewerDescriptor = JSON.stringify(state.previewerDescriptor || "");
   const publisherDescriptor = JSON.stringify(state.publisherDescriptor || "");
+  const createdPreviewDigest = JSON.stringify(
+    state.result?.call?.candidate?.normalizedDigest || "");
+  const currentPreviewDigest = JSON.stringify(state.candidateInfo?.normalizedDigest || "");
   return `<!doctype html>
 <html>
   <head>
@@ -125,9 +128,7 @@ function renderPage(state) {
     </form>
 
     ${state.candidateInfo ? `
-    <form method="post" action="/offer-preview">
-      <button id="open-isolate-preview" type="submit">Open Isolate Preview</button>
-    </form>` : ""}
+    <button id="open-isolate-preview" type="button">Show Current Isolate Preview</button>` : ""}
 
     ${state.publisherDescriptor && !state.result?.call?.published ? `
     <button id="publish-isolate" type="button">Publish Isolate as New App</button>` : ""}
@@ -145,6 +146,32 @@ function renderPage(state) {
       const output = document.querySelector("pre");
       const canonicalUrl = document.querySelector("#canonical-url");
       const oauthScopes = document.querySelector("#oauth-scopes");
+
+      function showIsolatePreview(normalizedDigest) {
+        const rpcId = typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : "isolate-preview-" + Date.now().toString(36) + "-" +
+            Math.random().toString(36).slice(2);
+
+        return new Promise((resolve, reject) => {
+          function onMessage(event) {
+            if (event.source !== window.parent || event.data?.rpcId !== rpcId) return;
+            window.removeEventListener("message", onMessage);
+            if (event.data.error) {
+              reject(new Error(event.data.error));
+            } else {
+              resolve();
+            }
+          }
+
+          window.addEventListener("message", onMessage);
+          window.parent.postMessage({
+            showIsolatePreview: { rpcId, normalizedDigest },
+          }, "*");
+        });
+      }
+
+      window.showIsolatePreview = showIsolatePreview;
       button.addEventListener("click", async () => {
         output.textContent = "Building Powerbox descriptor...";
         button.disabled = true;
@@ -233,6 +260,23 @@ function renderPage(state) {
           publishButton.disabled = false;
         }
       });
+
+      document.querySelector("#open-isolate-preview")?.addEventListener("click", async () => {
+        try {
+          await showIsolatePreview(${currentPreviewDigest});
+        } catch (error) {
+          output.textContent = (error.message || String(error)) + "\\n\\n" +
+            (error.stack || "");
+        }
+      });
+
+      const createdPreviewDigest = ${createdPreviewDigest};
+      if (createdPreviewDigest) {
+        showIsolatePreview(createdPreviewDigest).catch((error) => {
+          output.textContent = (error.message || String(error)) + "\\n\\n" +
+            (error.stack || "");
+        });
+      }
     </script>
   </body>
 </html>`;
@@ -261,7 +305,7 @@ async function callApi(capability) {
 }
 
 async function callIsolatePreviewer(
-  api, capability, offerView = false, responseText = "Powerbox isolate preview") {
+  api, capability, responseText = "Powerbox isolate preview") {
   const previewer = capnpClient(IsolatePreviewer, capability);
   const source = new TextEncoder().encode(
     `export default { fetch() { return new Response(${JSON.stringify(responseText)}); } };`);
@@ -308,20 +352,6 @@ async function callIsolatePreviewer(
     });
 
     const viewInfo = await result.view.getViewInfo({});
-    const uiViewDescriptor = await api.powerbox().uiViewDescriptor({
-      title: "Powerbox Isolate Preview",
-    });
-    if (offerView) {
-      const offeredView = capability.wrapDerived(result.view);
-      try {
-        await api.powerbox().offer(offeredView, {
-          descriptor: uiViewDescriptor,
-          title: "Open Powerbox isolate preview",
-        });
-      } finally {
-        await offeredView.drop();
-      }
-    }
     return {
       ok: true,
       candidate: {
@@ -332,7 +362,6 @@ async function callIsolatePreviewer(
         warnings: info.validationWarnings,
       },
       view: {
-        descriptorLength: uiViewDescriptor.length,
         permissionCount: viewInfo.permissions.length,
         roleCount: viewInfo.roles.length,
       },
@@ -533,7 +562,7 @@ export default {
             : updated
             ? "Powerbox isolate preview updated"
             : "Powerbox isolate preview";
-          const call = await callIsolatePreviewer(api, capability, true, responseText);
+          const call = await callIsolatePreviewer(api, capability, responseText);
           return Response.json({ ok: true, call });
         } finally {
           await capability.drop();

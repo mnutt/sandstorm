@@ -19,8 +19,10 @@ The preview call returns two capabilities:
   calls `getInfo()` and displays its digest, module metadata, compatibility
   settings, warnings, and creation time.
 - `UiView` identifies the hidden preview grain. The example calls
-  `getViewInfo()` and offers the view to the user so it can be opened without
-  making the preview appear in the normal grain list.
+  `getViewInfo()`. After the HTTP response reaches the browser, the frontend
+  sends the candidate digest to Sandstorm's shell, which verifies the current
+  grant and opens the hidden preview in a shell-owned drawer. The grain remains
+  absent from the normal grain list, and its grain ID is not exposed to the app.
 
 After the first grant, **Preview with saved grant** creates later immutable
 snapshots without another Powerbox interaction. **Revoke saved grant** removes
@@ -56,13 +58,27 @@ const result = await previewer.preview({
 });
 
 const { info } = await result.candidate.getInfo({});
-const uiViewDescriptor = await api.powerbox().uiViewDescriptor({
-  title: "Isolate Authoring Example Preview",
-});
-const offeredView = previewerCapability.wrapDerived(result.view);
-await api.powerbox().offer(offeredView, { descriptor: uiViewDescriptor });
-await offeredView.drop();
+const candidateDigest = digestHex(info.normalizedDigest);
+// Serialize candidateDigest into the returned browser page.
+```
 
+The browser page requests shell-owned presentation and waits for the matching
+reply without receiving the hidden grain's ID:
+
+```js
+const rpcId = crypto.randomUUID();
+window.parent.postMessage({
+  showIsolatePreview: {
+    rpcId,
+    normalizedDigest: candidateDigest,
+  },
+}, "*");
+```
+
+Back in the worker, publication is separately authorized for that exact
+candidate:
+
+```js
 const publishedApp = await api.storage().getJson("isolate-published-app");
 const publishDescriptor = await api.powerbox().appInterfaceDescriptor(IsolatePublisher, {
   normalizedDigest: info.normalizedDigest,
