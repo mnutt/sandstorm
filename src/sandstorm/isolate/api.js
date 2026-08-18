@@ -1,5 +1,6 @@
 import {
   CAPNP_CLIENT_SYMBOL,
+  CAPNP_EXPORT_SYMBOL,
   connectIsolateBridge,
   nativeCapnpInterfaceMetadata,
   nativeCapnpSavedTokenData,
@@ -11,7 +12,7 @@ import {
   Message as CapnpEsMessage,
   utils as CapnpEsUtils,
 } from "capnp-es/index.mjs";
-import { MainView } from "/sandstorm/grain.capnp";
+import { MainView, UiView } from "/sandstorm/grain.capnp";
 import { OutboundHttpSession } from "/sandstorm/outbound-http-session.capnp";
 import { PowerboxDescriptor, PowerboxDisplayInfo } from "/sandstorm/powerbox.capnp";
 import { ByteStream } from "/sandstorm/util.capnp";
@@ -461,6 +462,11 @@ function sessionActionCapability(env, capability, name = "session action capabil
     };
   }
 
+  if (capability?.[CAPNP_EXPORT_SYMBOL] !== true) {
+    throw new ValidationError(
+      `${name} returned by another capability must be wrapped with source.wrapDerived()`);
+  }
+
   return {
     cap,
     bridge: connectIsolateBridge(nativeCapnpBridgeApi(env), {
@@ -577,6 +583,14 @@ export class Capability {
 
   async drop() {
     return dropCapability(this.#env, this);
+  }
+
+  wrapDerived(capability) {
+    return new Capability(this.#env, capabilityCapnpClient(capability, "derived capability"), {
+      kind: "derived",
+      bridge: this._bridge(),
+      browserSessionId: this.#browserSessionId,
+    });
   }
 
   offer(request, options = {}) {
@@ -1135,6 +1149,22 @@ async function appInterfacePowerboxDescriptorInfo(env, options = {}) {
   }
   const path = `powerbox/app-interface-descriptor?${params}`;
   return cachedPowerboxDescriptorInfo(path, () => callPowerbox(env, path));
+}
+
+function uiViewPowerboxDescriptor(options = {}) {
+  const title = validate.string(options.title, "uiView.title", {
+    minLength: 1,
+    maxLength: 512,
+  });
+  const message = new CapnpEsMessage();
+  const descriptor = message.initRoot(PowerboxDescriptor);
+  const tag = descriptor._initTags(1).get(0);
+  tag.id = UiView._capnp.typeId;
+  const value = tag.value;
+  CapnpEsUtils.initStruct(UiView.PowerboxTag._capnp.size, value);
+  const tagValue = CapnpEsUtils.getAs(UiView.PowerboxTag, value);
+  tagValue.title = title;
+  return base64UrlEncodeBytes(message.toPackedUint8Array());
 }
 
 async function servePowerboxDescriptors(request, env) {
@@ -3314,6 +3344,10 @@ export function powerbox(request, env) {
           interfaceName: metadata.interfaceName,
         },
       });
+    },
+
+    async uiViewDescriptor(options = {}) {
+      return uiViewPowerboxDescriptor(options);
     },
 
     async claim(result, options = {}) {

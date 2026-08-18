@@ -1,0 +1,109 @@
+{
+  "format": "sandstorm-capnp-abi-v1",
+  "schema": "capnp:/sandstorm/isolate-authoring.capnp",
+  "interfaces": [
+    {
+      "name": "IsolateBundle",
+      "interfaceId": "0xc40007b255479838",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "getInfo",
+          "ordinal": 0,
+          "paramStructId": "0xb0dd2db7185d2cd3",
+          "resultStructId": "0xacd43e419942f09f",
+          "params": [],
+          "results": [{"name": "info", "type": "BundleInfo"}]
+        },
+        {
+          "name": "transfer",
+          "ordinal": 1,
+          "paramStructId": "0x90d4c876eb47a352",
+          "resultStructId": "0x8d0545df775088f4",
+          "params": [{"name": "receiver", "type": "BundleReceiver"}],
+          "results": []
+        }
+      ]
+    },
+    {
+      "name": "BundleReceiver",
+      "interfaceId": "0x85eb330db82a150f",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "beginModule",
+          "ordinal": 0,
+          "paramStructId": "0xb0257e7a7dd1800e",
+          "resultStructId": "0x8a0982449a91df59",
+          "params": [{"name": "index", "type": "UInt16"}],
+          "results": [{"name": "stream", "type": "Util.ByteStream"}]
+        },
+        {
+          "name": "finish",
+          "ordinal": 1,
+          "paramStructId": "0x98ad1bad837ce8ff",
+          "resultStructId": "0xf049e2af6917688f",
+          "params": [],
+          "results": []
+        }
+      ]
+    },
+    {
+      "name": "IsolateCandidate",
+      "interfaceId": "0xe7ad8c1ea7bd077a",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "getInfo",
+          "ordinal": 0,
+          "paramStructId": "0xcd48ac12e1796dab",
+          "resultStructId": "0x9e0e44e2e1ce564e",
+          "params": [],
+          "results": [{"name": "info", "type": "CandidateInfo"}]
+        }
+      ]
+    },
+    {
+      "name": "IsolatePreviewer",
+      "interfaceId": "0xcd90b943c38e24c3",
+      "superclasses": [],
+      "methods": [
+        {
+          "name": "preview",
+          "ordinal": 0,
+          "paramStructId": "0x980332a19c7a4e71",
+          "resultStructId": "0xe164112f93095901",
+          "params": [{"name": "requestId", "type": "Text"}, {"name": "bundle", "type": "IsolateBundle"}, {"name": "metadata", "type": "PreviewMetadata"}],
+          "results": [{"name": "candidate", "type": "IsolateCandidate"}, {"name": "view", "type": "Grain.UiView"}]
+        }
+      ]
+    }
+  ],
+  "structs": [
+    {
+      "name": "BundleInfo",
+      "structId": "0xc43755d1e6308a5c",
+      "fields": [{"name": "formatVersion", "ordinal": 0, "type": "UInt16"}, {"name": "mainModule", "ordinal": 1, "type": "Text"}, {"name": "compatibilityDate", "ordinal": 2, "type": "Text"}, {"name": "compatibilityFlags", "ordinal": 3, "type": "List(Text)"}, {"name": "modules", "ordinal": 4, "type": "List(Struct(0xd17a7d5a64a420fb))"}]
+    },
+    {
+      "name": "ModuleInfo",
+      "structId": "0xd17a7d5a64a420fb",
+      "fields": [{"name": "name", "ordinal": 0, "type": "Text"}, {"name": "type", "ordinal": 1, "type": "Enum(0x8a790f6296007554)"}, {"name": "size", "ordinal": 2, "type": "UInt64"}]
+    },
+    {
+      "name": "CandidateInfo",
+      "structId": "0xae3aec9700cab4d0",
+      "fields": [{"name": "normalizedDigest", "ordinal": 0, "type": "Data"}, {"name": "compatibilityDate", "ordinal": 1, "type": "Text"}, {"name": "compatibilityFlags", "ordinal": 2, "type": "List(Text)"}, {"name": "modules", "ordinal": 3, "type": "List(Struct(0xd17a7d5a64a420fb))"}, {"name": "validationWarnings", "ordinal": 4, "type": "List(Text)"}, {"name": "createdAt", "ordinal": 5, "type": "Int64"}]
+    },
+    {
+      "name": "PreviewMetadata",
+      "structId": "0xd3d2547668cf94ab",
+      "fields": [{"name": "appTitle", "ordinal": 0, "type": "Text"}, {"name": "nounPhrase", "ordinal": 1, "type": "Text"}, {"name": "shortDescription", "ordinal": 2, "type": "Text"}]
+    },
+    {
+      "name": "IsolatePreviewer.PowerboxTag",
+      "structId": "0xac38540145bd6a37",
+      "fields": []
+    }
+  ]
+}

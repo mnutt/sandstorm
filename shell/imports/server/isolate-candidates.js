@@ -182,6 +182,13 @@ async function removeOwnedIsolateCandidate(db, accountIdInput, candidateIdInput)
     fail("candidate-in-use", "This isolate candidate is retained by a capability grant.");
   }
 
+  if (db.collections.apiTokens && await db.collections.apiTokens.findOneAsync({
+    "frontendRef.isolateCandidate.candidateId": candidateId,
+    revoked: { $ne: true },
+  })) {
+    fail("candidate-in-use", "This isolate candidate is retained by a saved capability.");
+  }
+
   const removed = await db.collections.isolateCandidates.removeAsync({
     _id: candidateId,
     ownerId: accountId,

@@ -2,6 +2,13 @@
   {{ grainInfo.title }}
 </template>
 
+<template name="isolatePreviewerPowerboxCard">
+  <div>Create and run private isolate previews{{#if option.accountTitle}}
+    as {{option.accountTitle}}{{/if}}</div>
+  <div>This lets the requesting app test arbitrary isolate code, but does not let it publish an
+    app.</div>
+</template>
+
 <template name="uiViewPowerboxConfiguration">
   {{#if choseHostedObject}}
     <div class="powerbox-iframe-mount">{{ setupIframe }}</div>

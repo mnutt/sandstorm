@@ -52,6 +52,16 @@ class FrontendRefRegistry {
     return handler.restore(db, saveTemplate, frontendRef[key]);
   }
 
+  async drop(db, frontendRef) {
+    const keys = Object.keys(frontendRef);
+    if (keys.length != 1) return;
+
+    const key = keys[0];
+    const handler = this._frontendRefHandlers[key];
+    if (!handler) return;
+    if (handler.drop) await handler.drop(db, frontendRef[key]);
+  }
+
   async query(db, userAccountId, tag) {
     // Performs a powerbox query using the appropriate registered handler.
 
@@ -108,6 +118,9 @@ class FrontendRefRegistry {
     //     `saveTemplate`: The token template to pass to the PersistentImpl constructor.
     //     `capability` (returned): A Cap'n Proto capability implementing SystemPersistent along
     //         with whatever other interfaces are appropriate for the ref type.
+    //   `drop`: Optional callback invoked after a saved token of this type is removed. Has
+    //       signature `(db, value)`, where `value` is the frontend-ref field value. The callback
+    //       may inspect remaining tokens before cleaning up or revoking shared backing state.
     //   `validate`: Callback to validate a powerbox request for a new capability of this type.
     //       Has signature `(db, session, request) -> {descriptor, requirements, frontendRef}`,
     //       where:

@@ -138,6 +138,8 @@ function(sandstorm_install_native)
     hack-session.capnp
     identity-impl.capnp
     identity.capnp
+    isolate-authoring-impl.capnp
+    isolate-authoring.capnp
     isolate-worker-source.capnp
     ip.capnp
     outbound-http-session-impl.capnp

@@ -12,6 +12,7 @@ import { ByteStream } from "capnp:/sandstorm/util.capnp";
 // Shared only by trusted runtime modules. This symbol is the unforgeable protocol used
 // to obtain a live capnp-es reference without exposing it on the public API.
 export const CAPNP_CLIENT_SYMBOL = Symbol("sandstorm.capnp.client");
+export const CAPNP_EXPORT_SYMBOL = Symbol("sandstorm.capnp.export");
 const DEFAULT_BYTE_STREAM_CHUNK_BYTES = 256 * 1024;
 
 function initLocalizedText(builder, value) {
@@ -614,6 +615,7 @@ export async function exportCapnp(api, InterfaceClass, target) {
   return Object.freeze({
     client,
     [CAPNP_CLIENT_SYMBOL]: () => nativeCapnpClientReference(client, "local export capability"),
+    [CAPNP_EXPORT_SYMBOL]: true,
     browserHandoff: browserHandoffLocalExport,
     drop: dropLocalExport,
     save: async (saveOptions = {}) => {

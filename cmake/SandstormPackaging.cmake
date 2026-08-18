@@ -259,6 +259,9 @@ function(sandstorm_add_packaging_targets)
       "${_isolate_abi_dir}/isolate-account-host.capnp-abi.json"
       "capnp:/sandstorm/isolate-account-host.capnp"
     COMMAND "$<TARGET_FILE:spk>" capnp-abi --check
+      "${_isolate_abi_dir}/isolate-authoring.capnp-abi.json"
+      "capnp:/sandstorm/isolate-authoring.capnp"
+    COMMAND "$<TARGET_FILE:spk>" capnp-abi --check
       "${_isolate_abi_dir}/isolate-bridge.capnp-abi.json"
       "capnp:/sandstorm/isolate-bridge.capnp"
     COMMAND "$<TARGET_FILE:spk>" capnp-abi --check
@@ -277,6 +280,7 @@ function(sandstorm_add_packaging_targets)
       spk
       "${_isolate_abi_dir}/isolate-config.capnp-abi.json"
       "${_isolate_abi_dir}/isolate-account-host.capnp-abi.json"
+      "${_isolate_abi_dir}/isolate-authoring.capnp-abi.json"
       "${_isolate_abi_dir}/isolate-bridge.capnp-abi.json"
       "${_isolate_abi_dir}/isolate-host.capnp-abi.json"
       "${_isolate_abi_dir}/isolate-supervisor-internal.capnp-abi.json"
@@ -284,6 +288,7 @@ function(sandstorm_add_packaging_targets)
       "${_isolate_abi_dir}/outbound-http-session.capnp-abi.json"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-bridge.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-account-host.capnp"
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-authoring.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-supervisor-internal.capnp"
       "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-worker-source.capnp"

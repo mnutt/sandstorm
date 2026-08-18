@@ -1455,6 +1455,13 @@ Template.grainPowerboxOfferPopup.onCreated(function () {
         }
       });
 
+      const grain = globalDb.collections.grains.findOne(apiToken.grainId);
+      const existingView = globalGrains.getById(apiToken.grainId);
+      if (grain && grain.isolatePreview && existingView) {
+        existingView.reset(!existingView.isIncognito());
+        existingView.openSession();
+      }
+
       Router.go("grain", { grainId: apiToken.grainId });
     }
   } else if (offer && offer.uiView && offer.uiView.token) {

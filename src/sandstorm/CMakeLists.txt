@@ -20,6 +20,8 @@ set(_sandstorm_schema_relative_paths
   identity-impl.capnp
   identity.capnp
   isolate-account-host.capnp
+  isolate-authoring-impl.capnp
+  isolate-authoring.capnp
   isolate-bridge.capnp
   isolate-host.capnp
   isolate-supervisor-internal.capnp
