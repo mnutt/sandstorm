@@ -187,6 +187,28 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
           ".isolate-preview-log-contents > pre",
           "Powerbox preview log: Powerbox isolate preview")
         .grainFrame(authoringGrainId)
+        .executeAsync(function (done) {
+          fetch("/preview-log")
+            .then(response => response.json())
+            .then(result => {
+              const output = document.createElement("pre");
+              output.id = "programmatic-preview-log";
+              output.textContent = result.text || JSON.stringify(result);
+              document.body.append(output);
+              done(result.ok === true);
+            })
+            .catch(error => {
+              const output = document.createElement("pre");
+              output.id = "programmatic-preview-log";
+              output.textContent = error.message || String(error);
+              document.body.append(output);
+              done(false);
+            });
+        }, [])
+        .waitForElementVisible("#programmatic-preview-log", long_wait)
+        .assert.textContains(
+          "#programmatic-preview-log",
+          "Powerbox preview log: Powerbox isolate preview")
         .executeAsync(function (path, done) {
           fetch(path, { method: "POST" })
             .then(response => response.json())

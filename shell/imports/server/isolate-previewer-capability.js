@@ -20,6 +20,7 @@ import { getGlobalBackend } from "/imports/server/backend-instance";
 import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
 import { PersistentImpl } from "/imports/server/persistent";
 import { previewIsolateBundle } from "/imports/server/isolate-preview-service";
+import { watchIsolatePreviewLog } from "/imports/server/isolate-preview-log";
 import {
   createPreviewGrant,
   fail,
@@ -125,6 +126,20 @@ class IsolatePreviewerImpl extends PersistentImpl {
         candidate: makeCandidateCapability(this.db, result.candidate, grant),
         view,
       };
+    });
+  }
+
+  watchPreviewLog(normalizedDigest, backlogAmount, stream) {
+    return inMeteor(async () => {
+      const grant = await requirePreviewGrant(this.db, this.grantId);
+      return await watchIsolatePreviewLog(
+        this.db,
+        getGlobalBackend(),
+        grant,
+        normalizedDigest,
+        backlogAmount,
+        stream,
+      );
     });
   }
 }

@@ -4,6 +4,7 @@ import {
   IsolatePublisher,
 } from "capnp:/sandstorm/isolate-authoring.capnp";
 import {
+  byteStreamFromWritable,
   capnpClient,
   exportCapnp,
   sandstorm,
@@ -117,6 +118,7 @@ function renderPage(state) {
       <button id="revoke-preview" class="danger" type="button"
         ${state.saved ? "" : "disabled"}>Revoke saved grant</button>
       ${state.candidateInfo ? `
+      <button id="read-preview-log" class="secondary" type="button">Read preview logs</button>
       <button id="publish-candidate" type="button">${state.publishedApp
         ? "Publish update"
         : "Publish reviewed candidate"}</button>` : ""}
@@ -220,6 +222,21 @@ function renderPage(state) {
         }
       });
 
+      document.querySelector("#read-preview-log")?.addEventListener("click", async () => {
+        try {
+          setBusy("Reading the current preview log through IsolatePreviewer...");
+          const response = await fetch("/preview-log");
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.message || "Could not read preview logs.");
+          output.textContent = result.text || "The preview log is empty.";
+        } catch (error) {
+          output.textContent = (error.message || String(error)) + "\\n\\n" +
+            (error.stack || "");
+        } finally {
+          clearBusy();
+        }
+      });
+
       document.querySelector("#publish-candidate")?.addEventListener("click", async () => {
         try {
           setBusy("Opening Powerbox for one-shot IsolatePublisher authority...");
@@ -264,6 +281,10 @@ function errorDetails(error) {
 
 function digestHex(data) {
   return Array.from(data, byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function digestBytes(hex) {
+  return Uint8Array.from(hex.match(/../g), byte => Number.parseInt(byte, 16));
 }
 
 async function exportSourceBundle(api, sourceText) {
@@ -344,6 +365,46 @@ async function previewSource(api, previewerCapability, sourceText) {
   }
 }
 
+async function readPreviewLog(api) {
+  const [token, candidateInfo] = await Promise.all([
+    api.storage().get(PREVIEWER_TOKEN_KEY),
+    api.storage().getJson(CANDIDATE_INFO_KEY),
+  ]);
+  if (!token || !candidateInfo) throw new Error("Preview a candidate before reading its log.");
+
+  const restored = await api.restore(token);
+  const previewer = capnpClient(IsolatePreviewer, restored);
+  const decoder = new TextDecoder();
+  let text = "";
+  const receiver = byteStreamFromWritable(new WritableStream({
+    write(data) {
+      text += decoder.decode(data, { stream: true });
+      if (text.length > 64 * 1024) text = text.slice(-64 * 1024);
+    },
+  }));
+  let handle;
+  try {
+    ({ handle } = await previewer.watchPreviewLog({
+      normalizedDigest: digestBytes(candidateInfo.normalizedDigest),
+      backlogAmount: 8192,
+      stream: receiver,
+    }));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    handle.client.close();
+    handle = null;
+    text += decoder.decode();
+    return {
+      ok: true,
+      normalizedDigest: candidateInfo.normalizedDigest,
+      text,
+    };
+  } finally {
+    if (handle) handle.client.close();
+    receiver.client.close();
+    await restored.drop();
+  }
+}
+
 async function publishCandidate(api, publisherCapability, requestId) {
   const candidateInfo = await api.storage().getJson(CANDIDATE_INFO_KEY);
   if (!candidateInfo) throw new Error("Preview and save a candidate before publishing.");
@@ -374,8 +435,7 @@ async function readState(api, result = null, error = null) {
   ]);
   const publisherDescriptor = candidateInfo
     ? await api.powerbox().appInterfaceDescriptor(IsolatePublisher, {
-        normalizedDigest: Uint8Array.from(candidateInfo.normalizedDigest.match(/../g),
-          byte => Number.parseInt(byte, 16)),
+        normalizedDigest: digestBytes(candidateInfo.normalizedDigest),
         target: publishedApp
           ? { existingApp: publishedApp.createdAppId }
           : { newApp: undefined },
@@ -470,8 +530,16 @@ export default {
         return await render(api, { ok: true, revoked, deleted });
       }
 
+      if (request.method === "GET" && url.pathname === "/preview-log") {
+        return Response.json(await readPreviewLog(api));
+      }
+
       return await render(api);
     } catch (error) {
+      if (url.pathname === "/preview-log") {
+        return Response.json(errorDetails(error), { status: 500 });
+      }
+
       return await render(api, null, errorDetails(error), 500);
     }
   },

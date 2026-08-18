@@ -5,6 +5,7 @@ import {
 } from "capnp:/sandstorm/isolate-authoring.capnp";
 import {
   Capability,
+  byteStreamFromWritable,
   capnpClient,
   exportCapnp,
   sandstorm,
@@ -18,6 +19,7 @@ const PUBLISH_REQUEST_KEY = "isolate-publish-request";
 const API_CANONICAL_URL = "https://api.example.test/v1";
 const API_OAUTH_SCOPES = ["read"];
 const PROVIDER_DESCRIPTOR = "EAlQAQEAABEBF1EEAQH_y9-dR8kYld8AUAEBAXsRASIHZm9v";
+const PREVIEW_LOG_MARKER = "Powerbox preview log:";
 
 function htmlEscape(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
@@ -403,6 +405,59 @@ async function callIsolatePublisher(api, capability) {
   };
 }
 
+async function readCurrentPreviewLog(api) {
+  const [token, candidateInfo] = await Promise.all([
+    api.storage().get(TOKEN_KEY),
+    api.storage().getJson(CANDIDATE_INFO_KEY),
+  ]);
+  if (!token || !candidateInfo) throw new Error("No current isolate preview is available.");
+
+  const capability = await api.restore(token);
+  const previewer = capnpClient(IsolatePreviewer, capability);
+  const decoder = new TextDecoder();
+  let text = "";
+  let resolveMarker;
+  const marker = new Promise((resolve) => {
+    resolveMarker = resolve;
+  });
+  const receiver = byteStreamFromWritable(new WritableStream({
+    write(data) {
+      text += decoder.decode(data, { stream: true });
+      if (text.length > 64 * 1024) text = text.slice(-64 * 1024);
+      if (text.includes(PREVIEW_LOG_MARKER)) resolveMarker();
+    },
+  }));
+  let handle;
+  let timeout;
+  try {
+    const result = await previewer.watchPreviewLog({
+      normalizedDigest: Uint8Array.from(candidateInfo.normalizedDigest.match(/../g),
+        byte => Number.parseInt(byte, 16)),
+      backlogAmount: 8192,
+      stream: receiver,
+    });
+    handle = result.handle;
+    await Promise.race([
+      marker,
+      new Promise((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error("Timed out waiting for the current preview log."));
+        }, 5000);
+      }),
+    ]);
+    return {
+      ok: true,
+      normalizedDigest: candidateInfo.normalizedDigest,
+      text,
+    };
+  } finally {
+    clearTimeout(timeout);
+    if (handle) handle.client.close();
+    receiver.client.close();
+    await capability.drop();
+  }
+}
+
 async function callRestoredCapability(api) {
   const token = await api.storage().get(TOKEN_KEY);
   if (!token) {
@@ -589,10 +644,18 @@ export default {
         return Response.json(await readState(request, env));
       }
 
+      if (url.pathname === "/preview-log") {
+        return Response.json(await readCurrentPreviewLog(api));
+      }
+
       return new Response(renderPage(await readState(request, env)), {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     } catch (error) {
+      if (url.pathname === "/preview-log") {
+        return Response.json(errorDetails(error), { status: 500 });
+      }
+
       return new Response(renderPage(await readState(request, env, null, errorDetails(error))), {
         status: 500,
         headers: { "content-type": "text/html; charset=utf-8" },
