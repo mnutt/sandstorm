@@ -19,6 +19,7 @@ import { Random } from "meteor/random";
 import { normalizeIsolateBundle } from "/imports/server/isolate-bundle";
 import { makeIsolateContextValidator } from "/imports/server/isolate-context";
 import { IsolateError } from "/imports/server/isolate-error";
+import { mongoFindOneAndUpdateValue } from "/imports/server/isolate-mongo";
 
 const MAX_REQUEST_ID_BYTES = 256;
 const CANDIDATE_CLEANUP_RETRY_MS = 60 * 60 * 1000;
@@ -36,14 +37,6 @@ function fail(code, message) {
 
 const { normalizeActor, requireIdentifier } = makeIsolateContextValidator(
   IsolateCandidateError, "Candidate creation");
-
-function resultValue(result) {
-  if (result && Object.prototype.hasOwnProperty.call(result, "value")) {
-    return result.value;
-  }
-
-  return result;
-}
 
 function freezeCandidate(candidate) {
   if (!candidate) return candidate;
@@ -93,7 +86,7 @@ async function reserveIsolateCandidate(db, actorInput, requestIdInput, bundleInp
     { $setOnInsert: record },
     { upsert: true, returnDocument: "after" },
   );
-  const candidate = resultValue(result);
+  const candidate = mongoFindOneAndUpdateValue(result);
   if (!candidate) {
     fail("reservation-failed", "Candidate reservation did not return a record.");
   }
