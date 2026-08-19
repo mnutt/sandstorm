@@ -23,6 +23,8 @@ import {
 } from "/imports/server/grain-creation";
 import {
   findOwnedIsolateCandidate,
+  markOwnedIsolateCandidateForCleanup,
+  requestIsolateCandidateCleanup,
   reserveIsolateCandidate,
 } from "/imports/server/isolate-candidates";
 import { materializeIsolateCandidate } from "/imports/server/isolate-package-service";
@@ -174,6 +176,7 @@ async function withPreviewSlot(db, candidate, callback) {
 
 async function installCandidateInPreviewGrainLocked(db, backend, candidate) {
   let grain = await findPreviewGrain(db, candidate.ownerId, candidate.operationScope);
+  let supersededCandidateId;
   await requireEligibleAccount(db, candidate.ownerId, !grain);
 
   if (grain && grain.trashed) {
@@ -206,6 +209,15 @@ async function installCandidateInPreviewGrainLocked(db, backend, candidate) {
 
   if (grain.isolatePreview.candidateId !== candidate._id ||
       grain.packageId !== candidate.previewPackageId) {
+    if (grain.isolatePreview.candidateId !== candidate._id) {
+      supersededCandidateId = grain.isolatePreview.candidateId;
+      // Mark before the package swap. If this replica stops after updating the
+      // grain, the periodic collector can still finish reclaiming the old
+      // candidate. Until the swap succeeds, the grain reference protects it.
+      await markOwnedIsolateCandidateForCleanup(
+        db, candidate.ownerId, supersededCandidateId);
+    }
+
     grain = await updatePreviewGrainPackage(db, backend, grain, {
       ownerId: candidate.ownerId,
       packageId: candidate.previewPackageId,
@@ -225,15 +237,27 @@ async function installCandidateInPreviewGrainLocked(db, backend, candidate) {
       previewGrainId: grain._id,
       previewedAt,
     },
+    $unset: { cleanupAfter: "" },
   });
-  return grain;
+  return { grain, supersededCandidateId };
+}
+
+async function cleanupSupersededCandidate(db, candidateId) {
+  if (!candidateId) return;
+  try {
+    await requestIsolateCandidateCleanup(db, candidateId);
+  } catch (error) {
+    console.error("Could not clean up a superseded isolate candidate:", error);
+  }
 }
 
 async function installCandidateInPreviewGrain(db, backend, candidate) {
-  return (await withPreviewSlot(db, candidate, async () => {
-    const grain = await installCandidateInPreviewGrainLocked(db, backend, candidate);
-    return { grain, grainId: grain._id };
-  })).grain;
+  const installed = await withPreviewSlot(db, candidate, async () => {
+    const result = await installCandidateInPreviewGrainLocked(db, backend, candidate);
+    return { ...result, grainId: result.grain._id };
+  });
+  await cleanupSupersededCandidate(db, installed.supersededCandidateId);
+  return installed.grain;
 }
 
 function enqueuePreview(accountId, operationScope, callback) {
@@ -255,18 +279,37 @@ async function previewIsolateBundle(db, backend, actor, requestId, bundle, metad
   // Admission happens before reserving the candidate so an ineligible account
   // cannot leave normalized source in Mongo. installCandidateInPreviewGrainLocked()
   // checks again inside the cross-replica preview lease before creating a grain.
+  // Candidate reservation supplies retry identity, enqueuePreview() orders
+  // calls within one frontend, and the preview-slot lease coordinates replicas.
   await requireIsolatePreviewAdmission(db, actor);
   const candidate = await reserveIsolateCandidate(db, actor, requestId, bundle);
-  return await enqueuePreview(candidate.ownerId, candidate.operationScope, async () => {
-    return await withPreviewSlot(db, candidate, async (lease) => {
-      const materialized = await materializeIsolateCandidate(
-        db, backend.cap(), candidate.ownerId, candidate._id, metadata);
-      await refreshPreviewSlot(db, lease);
-      const grain = await installCandidateInPreviewGrainLocked(db, backend, materialized);
-      const readyCandidate = await db.collections.isolateCandidates.findOneAsync(candidate._id);
-      return { candidate: readyCandidate, grainId: grain._id };
+  try {
+    return await enqueuePreview(candidate.ownerId, candidate.operationScope, async () => {
+      const installed = await withPreviewSlot(db, candidate, async (lease) => {
+        const materialized = await materializeIsolateCandidate(
+          db, backend.cap(), candidate.ownerId, candidate._id, metadata);
+        await refreshPreviewSlot(db, lease);
+        const result = await installCandidateInPreviewGrainLocked(db, backend, materialized);
+        const readyCandidate = await db.collections.isolateCandidates.findOneAsync(candidate._id);
+        return { ...result, candidate: readyCandidate, grainId: result.grain._id };
+      });
+      await cleanupSupersededCandidate(db, installed.supersededCandidateId);
+      return { candidate: installed.candidate, grainId: installed.grainId };
     });
-  });
+  } catch (error) {
+    try {
+      await requestIsolateCandidateCleanup(
+        db,
+        candidate._id,
+        new Date(Date.now() + PREVIEW_LOCK_STALE_MS),
+        false,
+      );
+    } catch (cleanupError) {
+      error.cleanupError = cleanupError;
+    }
+
+    throw error;
+  }
 }
 
 async function resetIsolatePreview(db, backend, actor) {
@@ -316,9 +359,9 @@ async function resetIsolatePreview(db, backend, actor) {
       }
 
       await refreshPreviewSlot(db, lease);
-      const replacement = await installCandidateInPreviewGrainLocked(
+      const installed = await installCandidateInPreviewGrainLocked(
         db, backend, candidate);
-      return { grainId: replacement._id };
+      return { grainId: installed.grain._id };
     });
   });
 }

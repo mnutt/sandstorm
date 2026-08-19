@@ -19,6 +19,7 @@ import { inMeteor } from "/imports/server/async-helpers";
 import { getGlobalBackend } from "/imports/server/backend-instance";
 import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
 import { PersistentImpl } from "/imports/server/persistent";
+import { requestIsolateCandidateCleanup } from "/imports/server/isolate-candidates";
 import { previewIsolateBundle } from "/imports/server/isolate-preview-service";
 import { watchIsolatePreviewLog } from "/imports/server/isolate-preview-log";
 import {
@@ -198,6 +199,11 @@ function registerIsolatePreviewerFrontendRefs(registry) {
       return new Capnp.Capability(
         new IsolateCandidateImpl(db, saveTemplate, value.candidateId),
         AuthoringImpl.PersistentIsolateCandidate);
+    },
+
+    async drop(db, value) {
+      ownKeys(value, ["candidateId"], "Saved isolate candidate");
+      await requestIsolateCandidateCleanup(db, value.candidateId);
     },
   });
 }

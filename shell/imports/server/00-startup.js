@@ -29,6 +29,7 @@ import { onInMeteor } from "/imports/server/async-helpers";
 import { registerPaymentsApi } from "/imports/blackrock-payments/server/payments-api-server";
 import { registerUiViewQueryHandler } from "/imports/sandstorm-ui-powerbox/powerbox-server";
 import { SandstormAutoupdateApps } from "/imports/sandstorm-autoupdate-apps/autoupdate-apps";
+import { cleanupMarkedIsolateCandidates } from "/imports/server/isolate-candidates";
 let url = require("url");
 
 export const migrationsReady = migrateToLatest(globalDb, getGlobalBackend());
@@ -67,6 +68,11 @@ Meteor.onConnection((connection) => {
 SandstormDb.periodicCleanup(5 * 60 * 1000, SandstormPermissions.cleanupSelfDestructing(globalDb));
 SandstormDb.periodicCleanup(10 * 60 * 1000,
                             SandstormPermissions.cleanupClientPowerboxTokens(globalDb));
+SandstormDb.periodicCleanup(10 * 60 * 1000, () => {
+  cleanupMarkedIsolateCandidates(globalDb).catch((err) => {
+    console.error("Error cleaning up isolate candidates:", err);
+  });
+});
 SandstormDb.periodicCleanup(60 * 60 * 1000, () => {
   globalDb.cleanupExpiredAssetUploads().catch((err) => {
     console.error("Error cleaning up expired asset uploads:", err);

@@ -11,6 +11,7 @@ import {
 } from "sandstorm:api";
 
 const PREVIEWER_TOKEN_KEY = "isolate-previewer-token";
+const CANDIDATE_TOKEN_KEY = "isolate-candidate-token";
 const CANDIDATE_INFO_KEY = "isolate-candidate-info";
 const PUBLISHED_APP_KEY = "isolate-published-app";
 const SOURCE_KEY = "isolate-authoring-source";
@@ -337,6 +338,16 @@ async function previewSource(api, previewerCapability, sourceText) {
       normalizedDigest: digestHex(info.normalizedDigest),
       title: "Isolate Authoring Example",
     };
+    const candidateCapability = previewerCapability.wrapDerived(candidate);
+    try {
+      const previousToken = await api.storage().get(CANDIDATE_TOKEN_KEY);
+      const token = await candidateCapability.save({ label: "Reviewed isolate candidate" });
+      await api.storage().put(CANDIDATE_TOKEN_KEY, token);
+      if (previousToken) await api.revoke(previousToken);
+    } finally {
+      await candidateCapability.drop();
+    }
+
     await api.storage().putJson(CANDIDATE_INFO_KEY, candidateInfo);
 
     const viewInfo = await view.getViewInfo({});
@@ -418,6 +429,9 @@ async function publishCandidate(api, publisherCapability, requestId) {
     title: result.title,
   };
   await api.storage().putJson(PUBLISHED_APP_KEY, publication);
+  const candidateToken = await api.storage().get(CANDIDATE_TOKEN_KEY);
+  if (candidateToken) await api.revoke(candidateToken);
+  await api.storage().delete(CANDIDATE_TOKEN_KEY);
   await api.storage().delete(CANDIDATE_INFO_KEY);
   return {
     ok: true,

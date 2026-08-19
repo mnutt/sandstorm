@@ -16,8 +16,9 @@ chunks.
 The preview call returns two capabilities:
 
 - `IsolateCandidate` identifies the immutable normalized snapshot. The example
-  calls `getInfo()` and displays its digest, module metadata, compatibility
-  settings, warnings, and creation time.
+  calls `getInfo()`, displays its digest, module metadata, compatibility
+  settings, warnings, and creation time, and saves the capability while the
+  candidate remains eligible for publication.
 - `UiView` identifies the hidden preview grain. The example calls
   `getViewInfo()`. After the HTTP response reaches the browser, the frontend
   sends the candidate digest to Sandstorm's shell, which verifies the current
@@ -28,6 +29,12 @@ After the first grant, **Preview with saved grant** creates later immutable
 snapshots without another Powerbox interaction. **Revoke saved grant** removes
 the saved capability; when its last saved copy is removed, Sandstorm also marks
 the durable preview grant revoked.
+
+The current preview grain retains its installed candidate automatically. If an
+authoring app wants a candidate to remain publishable after a newer preview
+replaces it, it must save the returned `IsolateCandidate` capability. Revoking
+that saved capability allows Sandstorm to reclaim the superseded snapshot and
+its generated package. Retaining only the digest does not pin an old candidate.
 
 **Read preview logs** uses that same saved preview capability to stream the
 current candidate's debug log into the authoring worker. Sandstorm resolves the
@@ -67,6 +74,10 @@ const result = await previewer.preview({
 
 const { info } = await result.candidate.getInfo({});
 const candidateDigest = digestHex(info.normalizedDigest);
+const candidateCapability = previewerCapability.wrapDerived(result.candidate);
+const candidateToken = await candidateCapability.save({ label: "Reviewed isolate candidate" });
+await api.storage().put("isolate-candidate-token", candidateToken);
+await candidateCapability.drop();
 // Serialize candidateDigest into the returned browser page.
 ```
 
