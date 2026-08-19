@@ -103,7 +103,7 @@ describe("isolate preview presentation", function () {
       operationScope: scope,
       requestId: Random.id(),
       normalizedDigest: digest,
-      normalizedBundle: {},
+      bundleInfo: {},
       previewMetadata: { appTitle: "Presented preview" },
       previewPackageId: packageId,
       previewGrainId,

@@ -745,6 +745,31 @@ kj::Promise<void> BackendImpl::generateIsolatePackage(GenerateIsolatePackageCont
   return kj::READY_NOW;
 }
 
+kj::Promise<void> BackendImpl::deriveIsolatePackage(DeriveIsolatePackageContext context) {
+  auto params = context.getParams();
+  auto metadata = params.getMetadata();
+  auto generated = deriveGeneratedIsolatePackage(
+      "/var/sandstorm/apps",
+      "/var/sandstorm/tmp",
+      validateId(params.getSourcePackageId()),
+      params.getRequestedAppId(),
+      GeneratedIsolateMetadata{
+        metadata.getAppTitle(),
+        metadata.getNounPhrase(),
+        metadata.getShortDescription(),
+        metadata.getAppVersion(),
+        metadata.getMarketingVersion(),
+      });
+
+  capnp::FlatArrayMessageReader manifestReader(generated.manifest.asPtr());
+  auto manifest = manifestReader.getRoot<spk::Manifest>();
+  auto results = context.getResults(manifest.totalSize());
+  results.setPackageId(generated.packageId);
+  results.setAppId(generated.appId);
+  results.setManifest(manifest);
+  return kj::READY_NOW;
+}
+
 kj::Promise<void> BackendImpl::tryGetPackage(TryGetPackageContext context) {
   auto path = kj::str("/var/sandstorm/apps/", validateId(context.getParams().getPackageId()));
 

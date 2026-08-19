@@ -47,6 +47,12 @@ GeneratedIsolatePackage installGeneratedIsolatePackage(kj::StringPtr appRoot,
                                                        GeneratedIsolateMetadata metadata,
                                                        IsolateWorkerSource::Reader source);
 
+GeneratedIsolatePackage deriveGeneratedIsolatePackage(kj::StringPtr appRoot,
+                                                      kj::StringPtr tempRoot,
+                                                      kj::StringPtr sourcePackageId,
+                                                      kj::StringPtr requestedAppId,
+                                                      GeneratedIsolateMetadata metadata);
+
 }  // namespace sandstorm
 
 #endif  // SANDSTORM_GENERATED_ISOLATE_PACKAGE_H_

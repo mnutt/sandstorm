@@ -46,8 +46,8 @@ function candidateSummary(candidate) {
   return Object.freeze({
     candidateId: candidate._id,
     normalizedDigest: candidate.normalizedDigest,
-    compatibilityDate: candidate.normalizedBundle.compatibilityDate,
-    compatibilityFlags: candidate.normalizedBundle.compatibilityFlags,
+    compatibilityDate: candidate.bundleInfo.compatibilityDate,
+    compatibilityFlags: candidate.bundleInfo.compatibilityFlags,
     platformBindings: candidate.platformBindings || [],
     validationWarnings: candidate.validationWarnings || [],
     createdAt: candidate.createdAt,
@@ -158,8 +158,8 @@ Meteor.publish("isolateAuthoringState", function () {
     }, {
       fields: {
         normalizedDigest: 1,
-        "normalizedBundle.compatibilityDate": 1,
-        "normalizedBundle.compatibilityFlags": 1,
+        "bundleInfo.compatibilityDate": 1,
+        "bundleInfo.compatibilityFlags": 1,
         platformBindings: 1,
         validationWarnings: 1,
         createdAt: 1,

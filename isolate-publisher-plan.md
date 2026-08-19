@@ -491,7 +491,7 @@ source. The authoring application remains the mutable source of truth.
 - `requestingGrainId`, optional
 - `operationScope` and `requestId`, for idempotent reservation
 - `normalizedDigest`
-- `normalizedBundle`
+- `bundleInfo`, containing runtime settings and module names, types, and sizes
 - `totalModuleBytes`
 - `previewPackageId`
 - `previewGrainId`
@@ -502,14 +502,12 @@ source. The authoring application remains the mutable source of truth.
 - `status`: `preparing`, `ready`, `failed`, or `published`
 - `error`, optional
 
-Candidate source must not be included in broad publications. The capability and
-owner-scoped editor publication expose only what each caller needs.
-
-`normalizedBundle` is the immutable candidate snapshot, not a mutable project
-workspace. For small MVP bundles it may live directly in owner-scoped storage;
-for streamed or larger bundles it may instead be a descriptor pointing to a
-server-owned immutable blob or generated package. In either case, the authoring
-surface remains responsible for the editable project.
+Candidate source is not stored in Mongo or included in broad publications. The
+immutable generated preview package is the candidate's source artifact, and
+publication derives its package from that backend-owned artifact. Mongo retains
+only its digest, bounded metadata, lifecycle state, and package references. The
+authoring surface remains responsible for the editable project and resubmits
+source when retrying a candidate that failed before materialization.
 
 ### `createdIsolateRevisions`
 

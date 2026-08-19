@@ -235,7 +235,7 @@ const DevPackages = new Mongo.Collection("devpackages", collectionOptions);
 //   mountProc: True if the supervisor should mount /proc.
 
 const IsolateCandidates = new Mongo.Collection("isolateCandidates", collectionOptions);
-// Immutable isolate source snapshots reserved by the preview/publishing service.
+// Immutable isolate candidate records reserved by the preview/publishing service.
 // These records are server-internal and must never be broadly published to clients.
 //
 // Each contains:
@@ -245,7 +245,8 @@ const IsolateCandidates = new Mongo.Collection("isolateCandidates", collectionOp
 //   operationScope: Server-derived shell or capability grant scope for idempotency.
 //   requestId: Caller-chosen retry ID within operationScope.
 //   normalizedDigest: SHA-256 digest of the normalized candidate snapshot.
-//   normalizedBundle: Immutable normalized source and runtime configuration.
+//   bundleInfo: Immutable normalized runtime configuration and module metadata; source bytes live
+//       only in previewPackageId's backend-owned package artifact.
 //   totalModuleBytes: Admission-accounting size of the submitted modules.
 //   previewMetadata: Metadata fixed by the first package-materialization attempt.
 //   platformBindings: Global bindings supplied by the generated package.
@@ -273,9 +274,8 @@ IsolateCandidates.ensureIndexOnServer(
 );
 
 const IsolatePreviewSlots = new Mongo.Collection("isolatePreviewSlots", collectionOptions);
-// Mutable coordination records for preview grains. Candidate source remains in the immutable
-// isolateCandidates collection; a slot only binds one owner/authoring scope to its reusable grain
-// and serializes package replacement across frontend replicas.
+// Mutable coordination records for preview grains. A slot only binds one owner/authoring scope to
+// its reusable grain and serializes package replacement across frontend replicas.
 //
 // Each contains:
 //   _id: Random internal ID.

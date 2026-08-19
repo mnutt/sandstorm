@@ -41,13 +41,9 @@ const CANDIDATE_FRONTEND_REF = "isolateCandidate";
 function candidateInfo(candidate) {
   return {
     normalizedDigest: Buffer.from(candidate.normalizedDigest, "hex"),
-    compatibilityDate: candidate.normalizedBundle.compatibilityDate,
-    compatibilityFlags: candidate.normalizedBundle.compatibilityFlags,
-    modules: candidate.normalizedBundle.modules.map((module) => ({
-      name: module.name,
-      type: module.type,
-      size: Buffer.byteLength(module.content, "utf8"),
-    })),
+    compatibilityDate: candidate.bundleInfo.compatibilityDate,
+    compatibilityFlags: candidate.bundleInfo.compatibilityFlags,
+    modules: candidate.bundleInfo.modules,
     validationWarnings: candidate.validationWarnings || [],
     createdAt: String(BigInt(candidate.createdAt.getTime()) * 1000000n),
     bindings: candidate.platformBindings || [],
