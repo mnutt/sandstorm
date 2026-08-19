@@ -190,11 +190,12 @@ async function claimOperation(db, operation) {
 }
 
 async function updateOperation(db, lease, fields) {
+  const now = new Date();
   const updated = await db.collections.isolatePublishOperations.updateAsync({
     _id: lease.operationId,
     "lock.id": lease.lockId,
   }, {
-    $set: { ...fields, updatedAt: new Date() },
+    $set: { ...fields, "lock.acquiredAt": now, updatedAt: now },
     $unset: { lastError: "" },
   });
   if (updated !== 1) fail("publish-lease-lost", "Publication lost its coordination lease.");
@@ -269,9 +270,14 @@ async function requireExistingTargetOwnership(db, operation) {
   }
 }
 
-async function claimCreatedApp(db, operation) {
+async function claimCreatedApp(db, operation, lease) {
   const now = new Date();
   const staleBefore = new Date(now.getTime() - OPERATION_LOCK_STALE_MS);
+  const publishLock = {
+    operationId: operation._id,
+    lockId: lease.lockId,
+    acquiredAt: now,
+  };
   const isNew = Object.prototype.hasOwnProperty.call(operation.target, "newApp");
   if (isNew) {
     await db.collections.createdIsolateApps.rawCollection().findOneAndUpdate({
@@ -284,7 +290,7 @@ async function claimCreatedApp(db, operation) {
         appVersion: 0,
       },
       $set: {
-        publishLock: { operationId: operation._id, acquiredAt: now },
+        publishLock,
         updatedAt: now,
       },
     }, { upsert: true, returnDocument: "after" });
@@ -295,12 +301,15 @@ async function claimCreatedApp(db, operation) {
       deletedAt: { $exists: false },
       $or: [
         { publishLock: { $exists: false } },
-        { "publishLock.operationId": operation._id },
+        {
+          "publishLock.operationId": operation._id,
+          "publishLock.lockId": lease.lockId,
+        },
         { "publishLock.acquiredAt": { $lt: staleBefore } },
       ],
     }, {
       $set: {
-        publishLock: { operationId: operation._id, acquiredAt: now },
+        publishLock,
         updatedAt: now,
       },
     });
@@ -320,6 +329,7 @@ async function claimCreatedApp(db, operation) {
     _id: operation.createdAppId,
     ownerId: operation.ownerId,
     "publishLock.operationId": operation._id,
+    "publishLock.lockId": lease.lockId,
   });
   if (!app) fail("app-not-found", "The publication target could not be reserved.");
   if (operation.appId && operation.appId !== app.appId) {
@@ -327,6 +337,21 @@ async function claimCreatedApp(db, operation) {
   }
 
   return app;
+}
+
+async function refreshCreatedApp(db, operation, lease) {
+  const now = new Date();
+  const refreshed = await db.collections.createdIsolateApps.updateAsync({
+    _id: operation.createdAppId,
+    ownerId: operation.ownerId,
+    "publishLock.operationId": operation._id,
+    "publishLock.lockId": lease.lockId,
+  }, {
+    $set: { "publishLock.acquiredAt": now, updatedAt: now },
+  });
+  if (refreshed !== 1) {
+    fail("app-publish-lease-lost", "Publication lost its target app reservation.");
+  }
 }
 
 async function resolveVersion(db, lease, operation, app) {
@@ -375,12 +400,14 @@ function publicIsolatePublication(result) {
   });
 }
 
-async function releaseCreatedApp(db, operation) {
-  await db.collections.createdIsolateApps.updateAsync({
+async function releaseCreatedApp(db, operation, lease) {
+  const selector = {
     _id: operation.createdAppId,
     ownerId: operation.ownerId,
     "publishLock.operationId": operation._id,
-  }, {
+  };
+  if (lease) selector["publishLock.lockId"] = lease.lockId;
+  await db.collections.createdIsolateApps.updateAsync(selector, {
     $unset: { publishLock: "" },
     $set: { updatedAt: new Date() },
   });
@@ -397,13 +424,14 @@ async function runPublication(db, backend, initialOperation) {
     await requireEligibleAccount(db, initialOperation.ownerId);
     await requireExistingTargetOwnership(db, initialOperation);
     const candidate = await bindCandidate(db, initialOperation);
-    const app = await claimCreatedApp(db, initialOperation);
+    const app = await claimCreatedApp(db, initialOperation, lease);
     let operation = await resolveVersion(db, lease, initialOperation, app);
 
     if (!operation.packageId) {
       const generated = await materializePublishedIsolateCandidate(
         db, backend.cap(), operation.ownerId, operation.candidateId,
         operation.appId, generatedMetadata(operation));
+      await refreshCreatedApp(db, operation, lease);
       await updateOperation(db, lease, {
         state: "package-ready",
         packageId: generated.packageId,
@@ -450,6 +478,7 @@ async function runPublication(db, backend, initialOperation) {
       _id: operation.createdAppId,
       ownerId: operation.ownerId,
       "publishLock.operationId": operation._id,
+      "publishLock.lockId": lease.lockId,
     }, {
       $set: {
         publishedRevisionId: operation.revisionId,
@@ -457,6 +486,7 @@ async function runPublication(db, backend, initialOperation) {
         title: operation.metadata.title,
         nounPhrase: operation.metadata.nounPhrase,
         shortDescription: operation.metadata.shortDescription,
+        "publishLock.acquiredAt": new Date(),
         updatedAt: new Date(),
       },
     });
@@ -467,6 +497,7 @@ async function runPublication(db, backend, initialOperation) {
     await updateOperation(db, lease, { state: "revision-recorded" });
 
     await db.addUserActions(operation.ownerId, operation.packageId);
+    await refreshCreatedApp(db, operation, lease);
     if (!await db.collections.userActions.findOneAsync({
       userId: operation.ownerId,
       packageId: operation.packageId,
@@ -501,11 +532,11 @@ async function runPublication(db, backend, initialOperation) {
       _id: operation._id,
       "lock.id": lease.lockId,
     }, { $unset: { lock: "" } });
-    await releaseCreatedApp(db, operation);
+    await releaseCreatedApp(db, operation, lease);
     return result;
   } catch (error) {
     try {
-      await releaseCreatedApp(db, initialOperation);
+      await releaseCreatedApp(db, initialOperation, lease);
     } catch (releaseError) {
       error.releaseAppError = releaseError;
     }

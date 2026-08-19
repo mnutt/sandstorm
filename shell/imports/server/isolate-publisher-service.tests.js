@@ -67,6 +67,7 @@ class FakePublisherBackend {
   constructor() {
     this.calls = [];
     this.publishedFailuresRemaining = 0;
+    this.beforePublishedPackage = null;
     this.previewBindings = ["SANDSTORM_API", "POWERBOX", "STORAGE"];
     this.publishedBindings = this.previewBindings;
   }
@@ -77,6 +78,10 @@ class FakePublisherBackend {
 
   async generateIsolatePackage(requestedAppId, packageMetadata, source) {
     this.calls.push({ requestedAppId, packageMetadata, source });
+    if (requestedAppId && this.beforePublishedPackage) {
+      await this.beforePublishedPackage();
+    }
+
     if (requestedAppId && this.publishedFailuresRemaining > 0) {
       --this.publishedFailuresRemaining;
       throw new Error("simulated published package failure");
@@ -228,6 +233,60 @@ describe("isolate publisher", function () {
       .countAsync(), 1);
     assert.strictEqual(await globalDb.collections.userActions.find({ userId: ownerId })
       .countAsync(), 1);
+  });
+
+  it("does not let a stale worker clear replacement publication leases", async function () {
+    const candidate = await prepareCandidate("lease-candidate", "lease");
+    let releasePackage;
+    let packageStarted;
+    const started = new Promise(resolve => { packageStarted = resolve; });
+    backend.beforePublishedPackage = () => new Promise(resolve => {
+      releasePackage = resolve;
+      packageStarted();
+    });
+
+    const publishing = publishIsolateCandidate(
+      globalDb, backend, actor, "lease-publish", candidate._id,
+      { newApp: null }, publishedMetadata());
+    await started;
+    let operation;
+    let app;
+    try {
+      operation = await globalDb.collections.isolatePublishOperations.findOneAsync({
+        operationScope,
+        requestId: "lease-publish",
+      });
+      app = await globalDb.collections.createdIsolateApps.findOneAsync(
+        operation.createdAppId);
+
+      assert.strictEqual(app.publishLock.operationId, operation._id);
+      assert.strictEqual(app.publishLock.lockId, operation.lock.id);
+
+      const replacementLockId = Random.id();
+      const acquiredAt = new Date();
+      await globalDb.collections.isolatePublishOperations.updateAsync(operation._id, {
+        $set: { lock: { id: replacementLockId, acquiredAt } },
+      });
+      await globalDb.collections.createdIsolateApps.updateAsync(app._id, {
+        $set: {
+          publishLock: {
+            operationId: operation._id,
+            lockId: replacementLockId,
+            acquiredAt,
+          },
+        },
+      });
+    } finally {
+      releasePackage();
+    }
+
+    const error = await publishing.then(() => null, error => error);
+    const operationAfter = await globalDb.collections.isolatePublishOperations.findOneAsync(
+      operation._id);
+    const appAfter = await globalDb.collections.createdIsolateApps.findOneAsync(app._id);
+    assert.instanceOf(error, IsolatePublisherError);
+    assert.strictEqual(error.code, "app-publish-lease-lost");
+    assert.strictEqual(appAfter.publishLock.lockId, operationAfter.lock.id);
   });
 
   it("retries a deterministic package failure using the same app identity", async function () {
