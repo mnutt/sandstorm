@@ -19,6 +19,8 @@ import { simple as walkSimple } from "acorn-walk";
 import Crypto from "crypto";
 import Path from "path";
 
+import { IsolateError } from "/imports/server/isolate-error";
+
 const ISOLATE_BUNDLE_FORMAT_VERSION = 1;
 
 // These are admission guardrails, not product quotas. The aggregate limit must
@@ -47,11 +49,9 @@ const BUNDLE_FIELDS = new Set([
 ]);
 const MODULE_FIELDS = new Set(["name", "type", "content"]);
 
-class IsolateBundleError extends Error {
+class IsolateBundleError extends IsolateError {
   constructor(code, message, field) {
-    super(message);
-    this.name = "IsolateBundleError";
-    this.code = code;
+    super("IsolateBundleError", code, message);
     if (field !== undefined) this.field = field;
   }
 }

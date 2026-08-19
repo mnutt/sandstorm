@@ -17,17 +17,16 @@
 import { Random } from "meteor/random";
 
 import { normalizeIsolateBundle } from "/imports/server/isolate-bundle";
+import { IsolateError } from "/imports/server/isolate-error";
 
 const MAX_OPERATION_SCOPE_BYTES = 512;
 const MAX_REQUEST_ID_BYTES = 256;
 const CANDIDATE_CLEANUP_RETRY_MS = 60 * 60 * 1000;
 const CANDIDATE_CLEANUP_BATCH_SIZE = 100;
 
-class IsolateCandidateError extends Error {
+class IsolateCandidateError extends IsolateError {
   constructor(code, message) {
-    super(message);
-    this.name = "IsolateCandidateError";
-    this.code = code;
+    super("IsolateCandidateError", code, message);
   }
 }
 

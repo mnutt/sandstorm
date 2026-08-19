@@ -19,13 +19,9 @@ import { check } from "meteor/check";
 
 import { globalDb } from "/imports/db-deprecated";
 import { getGlobalBackend } from "/imports/server/backend-instance";
-import { IsolateBundleError } from "/imports/server/isolate-bundle";
+import { findOwnedIsolateCandidate } from "/imports/server/isolate-candidates";
+import { IsolateError } from "/imports/server/isolate-error";
 import {
-  IsolateCandidateError,
-  findOwnedIsolateCandidate,
-} from "/imports/server/isolate-candidates";
-import {
-  IsolatePreviewError,
   previewIsolateBundle,
   resetIsolatePreview,
 } from "/imports/server/isolate-preview-service";
@@ -135,8 +131,7 @@ async function runAuthoringMethod(callback) {
     return await callback();
   } catch (error) {
     if (error instanceof Meteor.Error) throw error;
-    if (error instanceof IsolateBundleError || error instanceof IsolateCandidateError ||
-        error instanceof IsolatePreviewError || error instanceof IsolatePublisherError) {
+    if (error instanceof IsolateError) {
       throw new Meteor.Error(errorStatus(error), error.message, error.code);
     }
 
