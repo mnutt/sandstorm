@@ -19,6 +19,7 @@ import { check } from "meteor/check";
 import { Random } from "meteor/random";
 
 import { ISOLATE_BUNDLE_LIMITS } from "/imports/server/isolate-bundle";
+import { requireIsolatePreviewAdmission } from "/imports/server/isolate-preview-service";
 
 const MODULE_TYPES = ["esModule", "json", "text"];
 
@@ -233,6 +234,16 @@ async function receiveIsolateBundle(bundle, wrappers = {}) {
   }
 }
 
+async function receivePreviewBundle(db, grant, bundle, wrappers = {}) {
+  const actor = {
+    accountId: grant.ownerId,
+    requestingGrainId: grant.requestingGrainId,
+    operationScope: `isolate-preview-grant:${grant._id}`,
+  };
+  await requireIsolatePreviewAdmission(db, actor);
+  return { actor, receivedBundle: await receiveIsolateBundle(bundle, wrappers) };
+}
+
 async function requirePreviewGrant(db, grantId) {
   if (typeof grantId !== "string" || grantId.length === 0) {
     fail("invalid-grant", "The isolate preview grant is invalid.");
@@ -322,6 +333,7 @@ export {
   fail,
   ownKeys,
   receiveIsolateBundle,
+  receivePreviewBundle,
   revokePreviewGrantIfUnreferenced,
   requirePreviewGrant,
 };

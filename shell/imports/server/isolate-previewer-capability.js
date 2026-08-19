@@ -25,7 +25,7 @@ import {
   createPreviewGrant,
   fail,
   ownKeys,
-  receiveIsolateBundle,
+  receivePreviewBundle,
   revokePreviewGrantIfUnreferenced,
   requirePreviewGrant,
 } from "/imports/server/isolate-previewer-service";
@@ -95,7 +95,7 @@ class IsolatePreviewerImpl extends PersistentImpl {
   preview(requestId, bundle, metadata) {
     return inMeteor(async () => {
       const grant = await requirePreviewGrant(this.db, this.grantId);
-      const receivedBundle = await receiveIsolateBundle(bundle, {
+      const { actor, receivedBundle } = await receivePreviewBundle(this.db, grant, bundle, {
         wrapByteStream: stream => new Capnp.Capability(stream, ByteStream),
         wrapReceiver: receiver => new Capnp.Capability(receiver, Authoring.BundleReceiver),
       });
@@ -103,11 +103,7 @@ class IsolatePreviewerImpl extends PersistentImpl {
       const result = await previewIsolateBundle(
         this.db,
         getGlobalBackend(),
-        {
-          accountId: grant.ownerId,
-          requestingGrainId: grant.requestingGrainId,
-          operationScope: `isolate-preview-grant:${grant._id}`,
-        },
+        actor,
         requestId,
         receivedBundle,
         {

@@ -620,6 +620,9 @@ the reserved operation; a different request ID is rejected.
 
 - Check account quota before artifact creation, preview grain creation, and
   publication.
+- Keep the inline normalized candidate record safely below Mongo's BSON
+  document ceiling. The initial defensive aggregate module bound is 15 MiB;
+  this is an admission guardrail rather than the deferred product quota.
 - Do not expire or trash a preview grain merely because it is inactive. It
   follows the ordinary grain sleep, wake, trash, and deletion lifecycle.
 - Keep candidate artifacts while referenced by a candidate capability, preview

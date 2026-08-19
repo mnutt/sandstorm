@@ -21,12 +21,14 @@ import Path from "path";
 
 const ISOLATE_BUNDLE_FORMAT_VERSION = 1;
 
-// These are admission guardrails, not product quotas. Keep byte limits aligned
-// with the shared isolate host and leave module-count room for injected helpers.
+// These are admission guardrails, not product quotas. The aggregate limit must
+// leave room below Mongo's 16 MiB BSON document limit because a normalized
+// bundle is stored inline with its candidate metadata. Leave module-count room
+// for injected helpers as well.
 const ISOLATE_BUNDLE_LIMITS = Object.freeze({
   maxModules: 512,
   maxModuleBytes: 8 * 1024 * 1024,
-  maxTotalModuleBytes: 16 * 1024 * 1024,
+  maxTotalModuleBytes: 15 * 1024 * 1024,
   maxNameBytes: 256,
   maxCompatibilityFlags: 64,
   maxCompatibilityFlagBytes: 128,
