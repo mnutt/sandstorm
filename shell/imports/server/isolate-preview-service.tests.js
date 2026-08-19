@@ -368,6 +368,27 @@ describe("isolate preview grain lifecycle", function () {
     assert.instanceOf(error, IsolatePreviewError);
     assert.strictEqual(error.code, "account-not-eligible");
     assert.strictEqual(backend.generateCalls.length, 0);
+    assert.strictEqual(await globalDb.collections.isolateCandidates.find({ ownerId })
+      .countAsync(), 0);
+    assert.strictEqual(await globalDb.collections.isolatePreviewSlots.find({ ownerId })
+      .countAsync(), 0);
+    assert.strictEqual(await globalDb.collections.grains.find({ userId: ownerId }).countAsync(), 0);
+  });
+
+  it("checks storage quota before persisting a candidate", async function () {
+    const quotaDb = Object.create(globalDb);
+    quotaDb.isUserOverQuotaAsync = async () => "outOfStorage";
+    const error = await previewIsolateBundle(
+      quotaDb, backend, actor, "over-storage-quota", bundle(), metadata())
+      .then(() => null, error => error);
+
+    assert.instanceOf(error, IsolatePreviewError);
+    assert.strictEqual(error.code, "quota-exhausted");
+    assert.strictEqual(backend.generateCalls.length, 0);
+    assert.strictEqual(await globalDb.collections.isolateCandidates.find({ ownerId })
+      .countAsync(), 0);
+    assert.strictEqual(await globalDb.collections.isolatePreviewSlots.find({ ownerId })
+      .countAsync(), 0);
     assert.strictEqual(await globalDb.collections.grains.find({ userId: ownerId }).countAsync(), 0);
   });
 });

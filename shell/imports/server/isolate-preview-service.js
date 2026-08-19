@@ -61,6 +61,17 @@ async function findPreviewGrain(db, accountId, operationScope) {
   });
 }
 
+async function requireIsolatePreviewAdmission(db, actor) {
+  if (!actor || typeof actor.accountId !== "string" || actor.accountId.length === 0 ||
+      typeof actor.operationScope !== "string" || actor.operationScope.length === 0) {
+    fail("invalid-context", "Isolate preview requires an explicit owner and scope.");
+  }
+
+  const existingGrain = await findPreviewGrain(db, actor.accountId, actor.operationScope);
+  await requireEligibleAccount(db, actor.accountId, !existingGrain);
+  return existingGrain;
+}
+
 function resultValue(result) {
   if (result && Object.prototype.hasOwnProperty.call(result, "value")) return result.value;
   return result;
@@ -241,11 +252,12 @@ async function previewIsolateBundle(db, backend, actor, requestId, bundle, metad
     fail("invalid-context", "Isolate preview requires the Sandstorm backend.");
   }
 
+  // Admission happens before reserving the candidate so an ineligible account
+  // cannot leave normalized source in Mongo. installCandidateInPreviewGrainLocked()
+  // checks again inside the cross-replica preview lease before creating a grain.
+  await requireIsolatePreviewAdmission(db, actor);
   const candidate = await reserveIsolateCandidate(db, actor, requestId, bundle);
   return await enqueuePreview(candidate.ownerId, candidate.operationScope, async () => {
-    const existingGrain = await findPreviewGrain(
-      db, candidate.ownerId, candidate.operationScope);
-    await requireEligibleAccount(db, candidate.ownerId, !existingGrain);
     return await withPreviewSlot(db, candidate, async (lease) => {
       const materialized = await materializeIsolateCandidate(
         db, backend.cap(), candidate.ownerId, candidate._id, metadata);
@@ -316,5 +328,6 @@ export {
   findPreviewGrain,
   installCandidateInPreviewGrain,
   previewIsolateBundle,
+  requireIsolatePreviewAdmission,
   resetIsolatePreview,
 };

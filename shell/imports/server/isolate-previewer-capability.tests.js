@@ -18,9 +18,11 @@ import { Random } from "meteor/random";
 import chai from "chai";
 
 import { globalDb } from "/imports/db-deprecated";
+import { ISOLATE_BUNDLE_LIMITS } from "/imports/server/isolate-bundle";
 import {
   createPreviewGrant,
   receiveIsolateBundle,
+  receivePreviewBundle,
   revokePreviewGrantIfUnreferenced,
   requirePreviewGrant,
 } from "/imports/server/isolate-previewer-service";
@@ -150,6 +152,57 @@ describe("isolate previewer capability", function () {
       .then(() => null, error => error);
     assert.match(oversizedError.message, /exceeds the .*byte limit/);
     assert.isFalse(transferred);
+
+    const aggregateOversized = {
+      async getInfo() {
+        return {
+          info: {
+            formatVersion: 1,
+            mainModule: "worker.js",
+            compatibilityDate: "2025-01-01",
+            compatibilityFlags: [],
+            modules: [{
+              name: "worker.js",
+              type: "esModule",
+              size: ISOLATE_BUNDLE_LIMITS.maxModuleBytes,
+            }, {
+              name: "extra.js",
+              type: "text",
+              size: ISOLATE_BUNDLE_LIMITS.maxTotalModuleBytes -
+                ISOLATE_BUNDLE_LIMITS.maxModuleBytes + 1,
+            }],
+          },
+        };
+      },
+      async transfer() {
+        transferred = true;
+      },
+    };
+    transferred = false;
+    const aggregateError = await receiveIsolateBundle(aggregateOversized)
+      .then(() => null, error => error);
+    assert.strictEqual(ISOLATE_BUNDLE_LIMITS.maxTotalModuleBytes, 15 * 1024 * 1024);
+    assert.match(aggregateError.message, /exceeds its total byte limit/);
+    assert.isFalse(transferred);
+  });
+
+  it("checks preview admission before receiving a Powerbox bundle", async function () {
+    const quotaDb = Object.create(globalDb);
+    quotaDb.isUserOverQuotaAsync = async () => "outOfStorage";
+    let bundleInspected = false;
+    const error = await receivePreviewBundle(quotaDb, {
+      _id: Random.id(),
+      ownerId,
+      requestingGrainId: grainId,
+    }, {
+      async getInfo() {
+        bundleInspected = true;
+        throw new Error("The bundle should not be inspected.");
+      },
+    }).then(() => null, error => error);
+
+    assert.strictEqual(error.code, "quota-exhausted");
+    assert.isFalse(bundleInspected);
   });
 
   it("mints a durable owner-bound grant and rejects a shared user", async function () {
