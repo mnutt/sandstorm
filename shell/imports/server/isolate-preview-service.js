@@ -39,6 +39,8 @@ class IsolatePreviewError extends Error {
 
 const previewQueues = new Map();
 const PREVIEW_LOCK_STALE_MS = 5 * 60 * 1000;
+const PREVIEW_CLEANUP_BATCH_SIZE = 100;
+const SHELL_PREVIEW_SCOPE_PREFIX = "shell-isolate-authoring:";
 
 function fail(code, message) {
   throw new IsolatePreviewError(code, message);
@@ -271,7 +273,8 @@ function enqueuePreview(accountId, operationScope, callback) {
   return current;
 }
 
-async function previewIsolateBundle(db, backend, actor, requestId, bundle, metadata) {
+async function previewIsolateBundle(
+    db, backend, actor, requestId, bundle, metadata, requireActive) {
   if (!backend || typeof backend.cap !== "function") {
     fail("invalid-context", "Isolate preview requires the Sandstorm backend.");
   }
@@ -286,6 +289,7 @@ async function previewIsolateBundle(db, backend, actor, requestId, bundle, metad
   try {
     return await enqueuePreview(candidate.ownerId, candidate.operationScope, async () => {
       const installed = await withPreviewSlot(db, candidate, async (lease) => {
+        if (requireActive) await requireActive();
         const materialized = await materializeIsolateCandidate(
           db, backend.cap(), candidate.ownerId, candidate._id, metadata);
         await refreshPreviewSlot(db, lease);
@@ -310,6 +314,132 @@ async function previewIsolateBundle(db, backend, actor, requestId, bundle, metad
 
     throw error;
   }
+}
+
+async function removeIsolatePreview(db, backend, ownerId, operationScope) {
+  if (!backend || typeof backend.deleteGrain !== "function") {
+    fail("invalid-context", "Isolate preview cleanup requires the Sandstorm backend.");
+  }
+
+  return await enqueuePreview(ownerId, operationScope, async () => {
+    const slot = await db.collections.isolatePreviewSlots.findOneAsync({
+      ownerId,
+      operationScope,
+    });
+    const staleBefore = new Date(Date.now() - PREVIEW_LOCK_STALE_MS);
+    if (slot?.lock?.acquiredAt instanceof Date && slot.lock.acquiredAt >= staleBefore) {
+      return false;
+    }
+
+    const grain = await findPreviewGrain(db, ownerId, operationScope);
+    const candidateIds = new Set([
+      slot?.candidateId,
+      slot?.lock?.candidateId,
+      grain?.isolatePreview?.candidateId,
+    ].filter(candidateId => typeof candidateId === "string"));
+    if (grain) {
+      const deleted = await db.deleteGrains({
+        _id: grain._id,
+        userId: ownerId,
+        "isolatePreview.scope": operationScope,
+      }, backend, "grain");
+      if (deleted !== 1) return false;
+    }
+
+    const slotRemoved = await db.collections.isolatePreviewSlots.removeAsync({
+      ownerId,
+      operationScope,
+      $or: [
+        { lock: { $exists: false } },
+        { "lock.acquiredAt": { $lt: staleBefore } },
+      ],
+    });
+    if (slot && slotRemoved !== 1) return false;
+
+    for (const candidateId of candidateIds) {
+      await requestIsolateCandidateCleanup(db, candidateId);
+    }
+
+    return true;
+  });
+}
+
+async function cleanupRevokedIsolatePreviews(db, backend, now = new Date()) {
+  const revokedBefore = new Date(now.getTime() - PREVIEW_LOCK_STALE_MS);
+  const grants = await db.collections.isolateFactoryGrants.find({
+    kind: "preview",
+    revokedAt: { $lte: revokedBefore },
+    previewCleanedAt: { $exists: false },
+  }, {
+    sort: { revokedAt: 1 },
+    limit: PREVIEW_CLEANUP_BATCH_SIZE,
+  }).fetchAsync();
+
+  let cleaned = 0;
+  for (const grant of grants) {
+    try {
+      const operationScope = `isolate-preview-grant:${grant._id}`;
+      if (!await removeIsolatePreview(db, backend, grant.ownerId, operationScope)) continue;
+      const marked = await db.collections.isolateFactoryGrants.updateAsync({
+        _id: grant._id,
+        kind: "preview",
+        revokedAt: grant.revokedAt,
+        previewCleanedAt: { $exists: false },
+      }, {
+        $set: { previewCleanedAt: now },
+      });
+      cleaned += marked;
+    } catch (error) {
+      console.error(`Could not clean up revoked isolate preview grant ${grant._id}:`, error);
+    }
+  }
+
+  return cleaned;
+}
+
+function legacyShellPreviewKey(ownerId, operationScope) {
+  if (typeof ownerId !== "string" || typeof operationScope !== "string" ||
+      !operationScope.startsWith(`${SHELL_PREVIEW_SCOPE_PREFIX}${ownerId}:`)) {
+    return null;
+  }
+
+  return `${ownerId}\0${operationScope}`;
+}
+
+async function cleanupLegacyShellIsolatePreviews(db, backend) {
+  const scopePattern = /^shell-isolate-authoring:/;
+  const slots = await db.collections.isolatePreviewSlots.find({
+    operationScope: scopePattern,
+  }, { limit: PREVIEW_CLEANUP_BATCH_SIZE }).fetchAsync();
+  const grains = await db.collections.grains.find({
+    "isolatePreview.scope": scopePattern,
+  }, {
+    fields: { userId: 1, isolatePreview: 1 },
+    limit: PREVIEW_CLEANUP_BATCH_SIZE,
+  }).fetchAsync();
+  const previews = new Map();
+  for (const slot of slots) {
+    const key = legacyShellPreviewKey(slot.ownerId, slot.operationScope);
+    if (key) previews.set(key, { ownerId: slot.ownerId, operationScope: slot.operationScope });
+  }
+
+  for (const grain of grains) {
+    const operationScope = grain.isolatePreview?.scope;
+    const key = legacyShellPreviewKey(grain.userId, operationScope);
+    if (key) previews.set(key, { ownerId: grain.userId, operationScope });
+  }
+
+  let cleaned = 0;
+  for (const preview of Array.from(previews.values()).slice(0, PREVIEW_CLEANUP_BATCH_SIZE)) {
+    try {
+      if (await removeIsolatePreview(
+        db, backend, preview.ownerId, preview.operationScope)) ++cleaned;
+    } catch (error) {
+      console.error(`Could not clean up legacy isolate preview ${preview.operationScope}:`, error);
+    }
+  }
+
+  return cleaned;
 }
 
 async function resetIsolatePreview(db, backend, actor) {
@@ -368,6 +498,8 @@ async function resetIsolatePreview(db, backend, actor) {
 
 export {
   IsolatePreviewError,
+  cleanupLegacyShellIsolatePreviews,
+  cleanupRevokedIsolatePreviews,
   findPreviewGrain,
   installCandidateInPreviewGrain,
   previewIsolateBundle,

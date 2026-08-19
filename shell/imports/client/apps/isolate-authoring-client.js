@@ -28,6 +28,7 @@ import { IsolatePreviewPane } from "/imports/client/apps/isolate-preview-pane";
 import "/imports/client/apps/styles/isolate-authoring.scss";
 
 const DRAFT_STORAGE_PREFIX = "sandstorm-isolate-authoring-draft-v1:";
+const AUTHORING_SESSION_ID = "authoring_primary";
 const DEFAULT_SOURCE = `export default {
   fetch(request) {
     const url = new URL(request.url);
@@ -47,7 +48,7 @@ function storageKey() {
 
 function defaultDraft() {
   return {
-    authoringSessionId: `authoring_${Random.id()}`,
+    authoringSessionId: AUTHORING_SESSION_ID,
     title: "My isolate app",
     nounPhrase: "app",
     shortDescription: "A small app running in a Sandstorm isolate",
@@ -71,7 +72,18 @@ function loadDraft() {
   if (stored) {
     try {
       const parsed = JSON.parse(stored);
-      if (isStoredDraft(parsed)) return parsed;
+      if (isStoredDraft(parsed)) {
+        const migrating = parsed.authoringSessionId !== AUTHORING_SESSION_ID;
+        const draft = migrating ? {
+          ...parsed,
+          authoringSessionId: AUTHORING_SESSION_ID,
+          preview: null,
+          previewRequest: null,
+          publishRequest: null,
+        } : parsed;
+        if (migrating) saveDraft(draft);
+        return draft;
+      }
     } catch (error) {
       console.warn("Ignoring an invalid browser-local isolate draft:", error);
     }

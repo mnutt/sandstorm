@@ -113,7 +113,8 @@ class IsolatePreviewerImpl extends PersistentImpl {
           shortDescription: metadata && metadata.shortDescription,
           appVersion: 0,
           marketingVersion: "preview",
-        });
+        },
+        async () => await requirePreviewGrant(this.db, this.grantId));
       const { makePersistentUiView } = await import("/imports/server/core");
       const view = await makePersistentUiView(this.db, {
         grainId: result.grainId,

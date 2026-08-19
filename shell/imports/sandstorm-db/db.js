@@ -342,9 +342,11 @@ const IsolateFactoryGrants = new Mongo.Collection("isolateFactoryGrants", collec
 //   createdAt and expiresAt: Grant lifetime audit data. Expiration policy is deferred.
 //   consumedAt, consumedRequestId, and result: One-shot publication state.
 //   revokedAt: Explicit server-side revocation state.
+//   previewCleanedAt: Time at which a revoked preview grant's hidden grain was reclaimed.
 
 IsolateFactoryGrants.ensureIndexOnServer("ownerId");
 IsolateFactoryGrants.ensureIndexOnServer("requestingGrainId");
+IsolateFactoryGrants.ensureIndexOnServer({ kind: 1, revokedAt: 1 });
 
 const UserActions = new Mongo.Collection("userActions", collectionOptions);
 // List of actions that each user has installed which create new grains.  Each app may install
