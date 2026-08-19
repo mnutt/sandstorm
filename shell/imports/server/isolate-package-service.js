@@ -16,6 +16,7 @@
 
 import { IsolateCandidateError, findOwnedIsolateCandidate } from
   "/imports/server/isolate-candidates";
+import { coalesceInFlightOperation } from "/imports/server/isolate-in-flight";
 
 const METADATA_LIMITS = Object.freeze({
   appTitle: 256,
@@ -283,25 +284,15 @@ function materializeIsolateCandidate(db, backendCap, accountId, candidateId, met
 
   const key = `${accountId}\0${candidateId}`;
   const canonicalMetadata = metadataKey(metadata);
-  const running = runningMaterializations.get(key);
-  if (running) {
-    if (running.metadata !== canonicalMetadata) {
-      return Promise.reject(new IsolateCandidateError(
-        "idempotency-conflict",
-        "This candidate is already being prepared with different package metadata."));
-    }
-
-    return running.promise;
-  }
-
-  const promise = materializeInternal(db, backendCap, accountId, candidateId, metadata);
-  runningMaterializations.set(key, { metadata: canonicalMetadata, promise });
-  promise.finally(() => {
-    if (runningMaterializations.get(key)?.promise === promise) {
-      runningMaterializations.delete(key);
-    }
-  }).catch(() => {});
-  return promise;
+  return coalesceInFlightOperation(
+    runningMaterializations,
+    key,
+    canonicalMetadata,
+    () => materializeInternal(db, backendCap, accountId, candidateId, metadata),
+    () => new IsolateCandidateError(
+      "idempotency-conflict",
+      "This candidate is already being prepared with different package metadata."),
+  );
 }
 
 export {
