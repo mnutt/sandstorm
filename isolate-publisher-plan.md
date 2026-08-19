@@ -156,7 +156,7 @@ A candidate records:
 - its owning account;
 - the requesting/authoring grain, if any;
 - the normalized bundle digest;
-- the exact normalized source and configuration;
+- the exact normalized source package artifact and bounded configuration metadata;
 - validation results and warnings;
 - the private package artifact used by preview;
 - its creation time and reference/cleanup state;
@@ -458,7 +458,9 @@ target. Each published revision gets a content-derived package ID. Because the
 app ID is packaging metadata rather than worker source, publication may need to
 materialize a final package from the normalized candidate snapshot. It must not
 change modules, bindings, compatibility settings, or other runtime behavior
-that the preview exercised.
+that the preview exercised. Generated preview modules are immutable backend
+files, so publication can hash them incrementally and hard-link them into the
+published package rather than loading or duplicating their contents.
 
 SPK signing keys and export semantics are deferred. A future export feature may
 generate or import a per-app signing key and create a conventional signed SPK
@@ -623,9 +625,11 @@ the reserved operation; a different request ID is rejected.
 
 - Check account quota before artifact creation, preview grain creation, and
   publication.
-- Keep the inline normalized candidate record safely below Mongo's BSON
-  document ceiling. The initial defensive aggregate module bound is 15 MiB;
-  this is an admission guardrail rather than the deferred product quota.
+- Keep module contents out of Mongo. The initial defensive aggregate module
+  bound remains 15 MiB only while preview normalization and the backend handoff
+  buffer the whole bundle; replace it with streaming package construction
+  before treating larger bundles as supported. This bound is an implementation
+  guardrail rather than the deferred product quota.
 - Do not expire or trash a preview grain merely because it is inactive. It
   follows the ordinary grain sleep, wake, trash, and deletion lifecycle.
 - Reuse one stable account-scoped preview slot for the built-in authoring UI so
