@@ -172,6 +172,9 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
     .assert.textContains("pre", "\"bindings\":")
     .assert.textContains("pre", "\"SANDSTORM_API\"")
     .assert.textContains("pre", "\"worker.js\"")
+    .assert.textContains("pre", "\"metadata.json\"")
+    .assert.textContains("pre", "\"preview.html\"")
+    .assert.textContains("pre", "\"sandstorm.svg\"")
     .assert.textContains("pre", "\"permissionCount\":")
     .assert.textContains("pre", "\"roleCount\":")
     .waitForElementVisible("#open-isolate-preview", medium_wait)
@@ -184,6 +187,7 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
         .frameSelector(previewFrame)
         .waitForElementVisible("body", long_wait)
         .assert.textContains("body", "Powerbox isolate preview")
+        .waitForElementVisible("#preview-multi-file-logo", medium_wait)
         .waitForElementVisible(
           "#request-preview-powerbox[data-powerbox-ready=true]", medium_wait)
         .click("#request-preview-powerbox")

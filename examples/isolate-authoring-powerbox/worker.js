@@ -2,6 +2,7 @@ import {
   IsolateBundle,
   IsolatePreviewer,
   IsolatePublisher,
+  ModuleType,
 } from "capnp:/sandstorm/isolate-authoring.capnp";
 import {
   byteStreamFromWritable,
@@ -15,11 +16,39 @@ const CANDIDATE_TOKEN_KEY = "isolate-candidate-token";
 const CANDIDATE_INFO_KEY = "isolate-candidate-info";
 const PUBLISHED_APP_KEY = "isolate-published-app";
 const SOURCE_KEY = "isolate-authoring-source";
-const DEFAULT_SOURCE = `export default {
+const MODULE_TYPE_BY_NAME = {
+  esModule: ModuleType.ES_MODULE,
+  json: ModuleType.JSON,
+  text: ModuleType.TEXT,
+};
+const SUPPORTING_MODULES = [{
+  name: "metadata.json",
+  type: "json",
+  content: JSON.stringify({
+    greeting: "Hello from an immutable multi-file isolate preview!",
+  }),
+}, {
+  name: "sandstorm.svg",
+  type: "text",
+  content: `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <rect width="96" height="96" rx="18" fill="#5b21b6"/>
+  <path d="M20 56c12-22 44-22 56 0-17-9-39-9-56 0Z" fill="#fff"/>
+</svg>`,
+}];
+const DEFAULT_SOURCE = `import metadata from "./metadata.json";
+import logo from "./sandstorm.svg";
+
+export default {
   async fetch(request) {
     console.log("preview request", request.method, request.url);
-    return new Response("Hello from an immutable isolate preview!\\n", {
-      headers: { "content-type": "text/plain; charset=utf-8" },
+    const url = new URL(request.url);
+    if (url.pathname === "/sandstorm.svg") {
+      return new Response(logo, { headers: { "content-type": "image/svg+xml" } });
+    }
+
+    return new Response("<!doctype html><h1>" + metadata.greeting +
+      "</h1><img src='/sandstorm.svg' alt='Sandstorm'>", {
+      headers: { "content-type": "text/html; charset=utf-8" },
     });
   },
 };`;
@@ -108,6 +137,10 @@ function renderPage(state) {
     <p>
       This grain owns the editable source. Each preview sends Sandstorm a new immutable,
       streamed candidate snapshot. Preview authority cannot publish an app.
+    </p>
+    <p>
+      The example bundles the editable worker with fixed <code>metadata.json</code> and
+      <code>sandstorm.svg</code> modules to demonstrate multi-file previews.
     </p>
 
     <label for="source"><strong>worker.js</strong></label>
@@ -289,7 +322,14 @@ function digestBytes(hex) {
 }
 
 async function exportSourceBundle(api, sourceText) {
-  const sourceBytes = new TextEncoder().encode(sourceText);
+  const encoder = new TextEncoder();
+  const modules = [
+    { name: "worker.js", type: "esModule", content: sourceText },
+    ...SUPPORTING_MODULES,
+  ].map(module => ({
+    ...module,
+    bytes: encoder.encode(module.content),
+  }));
   return exportCapnp(api, IsolateBundle, {
     async getInfo() {
       return {
@@ -298,22 +338,25 @@ async function exportSourceBundle(api, sourceText) {
           mainModule: "worker.js",
           compatibilityDate: "2025-01-01",
           compatibilityFlags: [],
-          modules: [{
-            name: "worker.js",
-            type: "esModule",
-            size: BigInt(sourceBytes.byteLength),
-          }],
+          modules: modules.map(module => ({
+            name: module.name,
+            type: MODULE_TYPE_BY_NAME[module.type],
+            size: BigInt(module.bytes.byteLength),
+          })),
         },
       };
     },
 
     async transfer({ receiver }) {
-      const { stream } = await receiver.beginModule({ index: 0 });
-      await stream.expectSize({ size: BigInt(sourceBytes.byteLength) });
-      const midpoint = Math.floor(sourceBytes.byteLength / 2);
-      await stream.write({ data: sourceBytes.subarray(0, midpoint) });
-      await stream.write({ data: sourceBytes.subarray(midpoint) });
-      await stream.done({});
+      for (const [index, module] of modules.entries()) {
+        const { stream } = await receiver.beginModule({ index });
+        await stream.expectSize({ size: BigInt(module.bytes.byteLength) });
+        const midpoint = Math.floor(module.bytes.byteLength / 2);
+        await stream.write({ data: module.bytes.subarray(0, midpoint) });
+        await stream.write({ data: module.bytes.subarray(midpoint) });
+        await stream.done({});
+      }
+
       await receiver.finish({});
       return {};
     },
