@@ -21,6 +21,7 @@
 #include <sandstorm/package.capnp.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include "util.h"
 
@@ -118,6 +119,54 @@ KJ_TEST("generated isolate package installs atomically and idempotently") {
   auto repeated = installGeneratedIsolatePackage(apps, temp, "", testMetadata(), source);
   KJ_EXPECT(repeated.packageId == installed.packageId);
   KJ_EXPECT(repeated.appId == installed.appId);
+}
+
+KJ_TEST("concurrent generated isolate package installs converge") {
+  auto root = kj::heapString("/tmp/sandstorm-generated-isolate-race-test-XXXXXX");
+  KJ_REQUIRE(mkdtemp(root.begin()) != nullptr, root);
+  KJ_DEFER(recursivelyDelete(root));
+  auto apps = kj::str(root, "/apps");
+  auto temp = kj::str(root, "/tmp");
+  KJ_SYSCALL(mkdir(apps.cStr(), 0700), apps);
+  KJ_SYSCALL(mkdir(temp.cStr(), 0700), temp);
+
+  capnp::MallocMessageBuilder message;
+  auto source = initSource(message);
+  constexpr size_t CHILD_COUNT = 8;
+  pid_t children[CHILD_COUNT];
+  int startPipe[2];
+  KJ_SYSCALL(pipe(startPipe));
+  for (size_t i = 0; i < CHILD_COUNT; ++i) {
+    KJ_SYSCALL(children[i] = fork());
+    if (children[i] == 0) {
+      close(startPipe[1]);
+      char ignored;
+      ssize_t readResult;
+      do {
+        readResult = read(startPipe[0], &ignored, 1);
+      } while (readResult < 0 && errno == EINTR);
+      close(startPipe[0]);
+      if (readResult < 0) _exit(2);
+
+      auto exception = kj::runCatchingExceptions([&]() {
+        installGeneratedIsolatePackage(apps, temp, "", testMetadata(), source);
+      });
+      _exit(exception == nullptr ? 0 : 1);
+    }
+  }
+
+  close(startPipe[0]);
+  close(startPipe[1]);
+  for (auto child: children) {
+    int status;
+    KJ_SYSCALL(waitpid(child, &status, 0));
+    KJ_EXPECT(WIFEXITED(status) && WEXITSTATUS(status) == 0, status);
+  }
+
+  auto installed = buildGeneratedIsolatePackage("", testMetadata(), source);
+  auto packagePath = kj::str(apps, "/", installed.packageId);
+  KJ_EXPECT(readAll(kj::str(packagePath, ".appid")) == installed.appId);
+  KJ_EXPECT(readAll(kj::str(packagePath, "/modules/0")) == "{\"ok\":true}");
 }
 
 KJ_TEST("generated isolate package uses a requested published app identity") {

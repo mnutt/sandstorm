@@ -433,7 +433,9 @@ It should:
 4. Calculate a deterministic content digest/package ID.
 5. Write to a new temporary directory under the package store.
 6. Write the binary `sandstorm-manifest` and module files.
-7. Atomically rename the directory into place.
+7. Publish the fully-written app-ID marker with an atomic no-replace operation,
+   then atomically rename the directory into place. Concurrent generation of
+   the same deterministic package must converge successfully.
 8. Return the normalized package ID and manifest.
 
 The operation should not invoke `spk dev-isolate`, FUSE, `mongosh`, or a package

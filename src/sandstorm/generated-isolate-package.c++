@@ -348,22 +348,36 @@ GeneratedIsolatePackage installGeneratedIsolatePackage(kj::StringPtr appRoot,
     writeFile(kj::str(modulesPath, "/", outputIndex), moduleContent(modules[order[outputIndex]]));
   }
 
+  // Publish only a fully-written marker. O_EXCL on the final path would let a
+  // concurrent installer observe the file between open() and write(). A hard
+  // link makes the completed temporary file visible atomically without
+  // replacing a marker installed by another process.
+  auto tempAppIdPath = kj::str(tempPath, ".appid");
+  writeFile(tempAppIdPath, result.appId.asBytes());
+  KJ_DEFER(if (access(tempAppIdPath.cStr(), F_OK) == 0) { unlink(tempAppIdPath.cStr()); });
   bool createdAppId = false;
-  KJ_ON_SCOPE_FAILURE(if (createdAppId) { unlink(appIdPath.cStr()); });
-  int appIdFd = open(appIdPath.cStr(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644);
-  if (appIdFd < 0) {
+  KJ_ON_SCOPE_FAILURE(if (createdAppId && access(finalPath.cStr(), F_OK) != 0) {
+    unlink(appIdPath.cStr());
+  });
+  if (link(tempAppIdPath.cStr(), appIdPath.cStr()) < 0) {
     int error = errno;
     KJ_REQUIRE(error == EEXIST, "Could not create generated isolate app ID file.", appIdPath,
                strerror(error));
     verifyInstalledAppId(appIdPath, result.appId);
   } else {
     createdAppId = true;
-    kj::FdOutputStream output{kj::AutoCloseFd(appIdFd)};
-    output.write(result.appId.begin(), result.appId.size());
   }
 
-  KJ_SYSCALL(rename(tempPath.cStr(), finalPath.cStr()), tempPath, finalPath);
-  moved = true;
+  if (rename(tempPath.cStr(), finalPath.cStr()) < 0) {
+    int error = errno;
+    KJ_REQUIRE((error == EEXIST || error == ENOTEMPTY) &&
+                   access(finalPath.cStr(), F_OK) == 0,
+               "Could not install generated isolate package.", tempPath, finalPath,
+               strerror(error));
+    verifyInstalledAppId(appIdPath, result.appId);
+  } else {
+    moved = true;
+  }
   return result;
 }
 
