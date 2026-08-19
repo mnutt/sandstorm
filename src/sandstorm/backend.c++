@@ -720,6 +720,86 @@ kj::Promise<void> BackendImpl::installPackage(InstallPackageContext context)  {
   return kj::READY_NOW;
 }
 
+class BackendImpl::GeneratedIsolatePackageUploadImpl final
+    : public Backend::GeneratedIsolatePackageUpload::Server {
+public:
+  explicit GeneratedIsolatePackageUploadImpl(
+      kj::Own<GeneratedIsolatePackageUploadState> state)
+      : state(kj::mv(state)) {}
+
+protected:
+  class ModuleStream final: public ByteStream::Server {
+  public:
+    ModuleStream(kj::Own<GeneratedIsolatePackageUploadState> state, uint16_t index)
+        : state(kj::mv(state)), index(index) {}
+
+    kj::Promise<void> write(WriteContext context) override {
+      state->writeModule(index, context.getParams().getData());
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<void> done(DoneContext context) override {
+      state->finishModule(index);
+      return kj::READY_NOW;
+    }
+
+    kj::Promise<void> expectSize(ExpectSizeContext context) override {
+      state->expectModuleSize(index, context.getParams().getSize());
+      return kj::READY_NOW;
+    }
+
+  private:
+    kj::Own<GeneratedIsolatePackageUploadState> state;
+    uint16_t index;
+  };
+
+  kj::Promise<void> beginModule(BeginModuleContext context) override {
+    auto index = context.getParams().getIndex();
+    state->beginModule(index);
+    context.getResults().setStream(kj::heap<ModuleStream>(kj::addRef(*state), index));
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> finish(FinishContext context) override {
+    state->finishTransfer();
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> save(SaveContext context) override {
+    auto generated = state->save();
+    capnp::FlatArrayMessageReader manifestReader(generated.manifest.asPtr());
+    auto manifest = manifestReader.getRoot<spk::Manifest>();
+    auto results = context.getResults(manifest.totalSize());
+    results.setPackageId(generated.packageId);
+    results.setAppId(generated.appId);
+    results.setManifest(manifest);
+    return kj::READY_NOW;
+  }
+
+private:
+  kj::Own<GeneratedIsolatePackageUploadState> state;
+};
+
+kj::Promise<void> BackendImpl::streamIsolatePackage(StreamIsolatePackageContext context) {
+  auto params = context.getParams();
+  auto metadata = params.getMetadata();
+  auto state = kj::refcounted<GeneratedIsolatePackageUploadState>(
+      "/var/sandstorm/apps",
+      "/var/sandstorm/tmp",
+      params.getRequestedAppId(),
+      GeneratedIsolateMetadata{
+        metadata.getAppTitle(),
+        metadata.getNounPhrase(),
+        metadata.getShortDescription(),
+        metadata.getAppVersion(),
+        metadata.getMarketingVersion(),
+      },
+      params.getInfo());
+  context.getResults().setUpload(
+      kj::heap<GeneratedIsolatePackageUploadImpl>(kj::mv(state)));
+  return kj::READY_NOW;
+}
+
 kj::Promise<void> BackendImpl::generateIsolatePackage(GenerateIsolatePackageContext context) {
   auto params = context.getParams();
   auto metadata = params.getMetadata();

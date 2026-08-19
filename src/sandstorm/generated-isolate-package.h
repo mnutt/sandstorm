@@ -18,8 +18,13 @@
 #define SANDSTORM_GENERATED_ISOLATE_PACKAGE_H_
 
 #include <capnp/serialize.h>
+#include <kj/refcount.h>
 #include <kj/string.h>
+#include <sandstorm/isolate-authoring.capnp.h>
 #include <sandstorm/isolate-worker-source.capnp.h>
+
+#include <memory>
+#include <vector>
 
 namespace sandstorm {
 
@@ -35,6 +40,42 @@ struct GeneratedIsolatePackage {
   kj::String packageId;
   kj::String appId;
   kj::Array<capnp::word> manifest;
+};
+
+class GeneratedIsolatePackageUploadState final: public kj::Refcounted {
+public:
+  GeneratedIsolatePackageUploadState(kj::StringPtr appRoot,
+                                     kj::StringPtr tempRoot,
+                                     kj::StringPtr requestedAppId,
+                                     GeneratedIsolateMetadata metadata,
+                                     BundleInfo::Reader info);
+  ~GeneratedIsolatePackageUploadState() noexcept;
+
+  void beginModule(uint16_t index);
+  void writeModule(uint16_t index, kj::ArrayPtr<const kj::byte> data);
+  void expectModuleSize(uint16_t index, uint64_t size);
+  void finishModule(uint16_t index);
+  void finishTransfer();
+  GeneratedIsolatePackage save();
+
+private:
+  struct ModuleUpload;
+
+  kj::String appRoot;
+  kj::String tempPath;
+  kj::String requestedAppId;
+  kj::String appTitle;
+  kj::String nounPhrase;
+  kj::String shortDescription;
+  uint32_t appVersion;
+  kj::String marketingVersion;
+  kj::String mainModule;
+  kj::String compatibilityDate;
+  std::vector<std::unique_ptr<ModuleUpload>> modules;
+  std::vector<size_t> order;
+  bool transferFinished = false;
+  bool saveCalled = false;
+  bool installed = false;
 };
 
 GeneratedIsolatePackage buildGeneratedIsolatePackage(kj::StringPtr requestedAppId,

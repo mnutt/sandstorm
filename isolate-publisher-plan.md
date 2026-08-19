@@ -426,7 +426,8 @@ indefinite package-like Mongo records.
 Add a narrowly typed backend operation for locally-generated isolate packages.
 It should:
 
-1. Accept the normalized manifest and bounded module data.
+1. Accept normalized bundle metadata and stream each declared module into a
+   backend-owned staging directory.
 2. Independently require an isolate-only manifest.
 3. Reject arbitrary argv, executable paths, filesystem paths, and unsupported
    binding variants.
@@ -436,7 +437,9 @@ It should:
 7. Publish the fully-written app-ID marker with an atomic no-replace operation,
    then atomically rename the directory into place. Concurrent generation of
    the same deterministic package must converge successfully.
-8. Return the normalized package ID and manifest.
+8. Install only after every module stream and the bundle receiver finish, then
+   return the normalized package ID and manifest. Dropping an unfinished upload
+   capability removes its staging directory.
 
 The operation should not invoke `spk dev-isolate`, FUSE, `mongosh`, or a package
 manager. Code from `spk dev-isolate` remains useful as a reference for module
@@ -625,11 +628,12 @@ the reserved operation; a different request ID is rejected.
 
 - Check account quota before artifact creation, preview grain creation, and
   publication.
-- Keep module contents out of Mongo. The initial defensive aggregate module
-  bound remains 15 MiB only while preview normalization and the backend handoff
-  buffer the whole bundle; replace it with streaming package construction
-  before treating larger bundles as supported. This bound is an implementation
-  guardrail rather than the deferred product quota.
+- Keep module contents out of Mongo. The backend package builder now stages
+  module streams directly to disk without an aggregate memory bound. The
+  authoring and built-in preview paths still buffer the whole bundle and retain
+  their 15 MiB guardrail until they proxy those streams into the backend upload.
+  That bound is an implementation guardrail rather than the deferred product
+  quota.
 - Do not expire or trash a preview grain merely because it is inactive. It
   follows the ordinary grain sleep, wake, trash, and deletion lifecycle.
 - Reuse one stable account-scoped preview slot for the built-in authoring UI so
@@ -688,9 +692,9 @@ durable.
 - Equivalent input produces the same digest.
 - Streamed and in-message representations of the same bundle normalize to the
   same digest.
-- Incomplete streams, undeclared or duplicate modules, and bundles that exceed
-  defensive streaming bounds are rejected without retaining a partial
-  candidate.
+- Incomplete streams and undeclared or duplicate modules are rejected without
+  retaining a partial candidate. Defensive per-module and metadata bounds apply
+  while product-level aggregate limits remain deferred.
 - Invalid paths, duplicate names, missing imports, bad JSON, bad dates,
   unsupported flags, and oversized inputs are rejected.
 - Generated manifests contain only the permitted isolate command and bindings.
