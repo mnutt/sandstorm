@@ -206,14 +206,25 @@ KJ_TEST("generated isolate package derives publication from installed source") {
   };
   auto published = deriveGeneratedIsolatePackage(
       apps, temp, preview.packageId, PUBLISHED_APP_ID, publishedMetadata);
+  capnp::MallocMessageBuilder expectedMessage;
+  auto expected = buildGeneratedIsolatePackage(
+      PUBLISHED_APP_ID, publishedMetadata, initSource(expectedMessage));
 
   KJ_EXPECT(published.appId == PUBLISHED_APP_ID);
   KJ_EXPECT(published.packageId != preview.packageId);
+  KJ_EXPECT(published.packageId == expected.packageId);
   auto publishedPath = kj::str(apps, "/", published.packageId);
   KJ_EXPECT(readAll(kj::str(publishedPath, "/modules/0")) == "{\"ok\":true}");
   KJ_EXPECT(readAll(kj::str(publishedPath, "/modules/1")) ==
             "import data from './data.json'; export default { fetch() { return "
             "data; } };");
+  struct stat previewModuleStats;
+  struct stat publishedModuleStats;
+  KJ_SYSCALL(stat(kj::str(apps, "/", preview.packageId, "/modules/1").cStr(),
+                  &previewModuleStats));
+  KJ_SYSCALL(stat(kj::str(publishedPath, "/modules/1").cStr(), &publishedModuleStats));
+  KJ_EXPECT(previewModuleStats.st_dev == publishedModuleStats.st_dev);
+  KJ_EXPECT(previewModuleStats.st_ino == publishedModuleStats.st_ino);
 
   capnp::FlatArrayMessageReader manifestReader(published.manifest.asPtr());
   auto manifest = manifestReader.getRoot<spk::Manifest>();

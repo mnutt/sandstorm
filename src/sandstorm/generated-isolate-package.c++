@@ -52,15 +52,22 @@ class Sha256 {
 public:
   Sha256() { KJ_ASSERT(crypto_hash_sha256_init(&state) == 0); }
 
-  void add(kj::ArrayPtr<const byte> value) {
+  void addSize(uint64_t size) {
     byte length[8];
-    uint64_t size = value.size();
     for (size_t i = 0; i < sizeof(length); ++i) {
       length[sizeof(length) - i - 1] = size & 0xff;
       size >>= 8;
     }
     KJ_ASSERT(crypto_hash_sha256_update(&state, length, sizeof(length)) == 0);
+  }
+
+  void addRaw(kj::ArrayPtr<const byte> value) {
     KJ_ASSERT(crypto_hash_sha256_update(&state, value.begin(), value.size()) == 0);
+  }
+
+  void add(kj::ArrayPtr<const byte> value) {
+    addSize(value.size());
+    addRaw(value);
   }
 
   void add(kj::StringPtr value) { add(value.asBytes()); }
@@ -245,6 +252,46 @@ void populateIsolateCommand(spk::Manifest::Command::Builder command,
   isolate.initBridgeConfig().initViewInfo().initAppTitle().setDefaultText(appTitle);
 }
 
+void populateIsolateCommandFromInstalled(spk::Manifest::Command::Builder command,
+                                         spk::Manifest::IsolateConfig::Reader source,
+                                         kj::StringPtr appTitle) {
+  auto isolate = command.initIsolate();
+  isolate.setMainModule(source.getMainModule());
+  isolate.setCompatibilityDate(source.getCompatibilityDate());
+  isolate.initCompatibilityFlags(0);
+  auto sourceModules = source.getModules();
+  auto modules = isolate.initModules(sourceModules.size());
+  for (auto i: kj::indices(modules)) {
+    auto input = sourceModules[i];
+    auto output = modules[i];
+    output.setName(input.getName());
+    switch (input.which()) {
+      case spk::Manifest::IsolateConfig::Module::ES_MODULE_PATH:
+        output.setEsModulePath(input.getEsModulePath());
+        break;
+      case spk::Manifest::IsolateConfig::Module::TEXT_PATH:
+        output.setTextPath(input.getTextPath());
+        break;
+      case spk::Manifest::IsolateConfig::Module::JSON_PATH:
+        output.setJsonPath(input.getJsonPath());
+        break;
+      case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
+      case spk::Manifest::IsolateConfig::Module::DATA_PATH:
+      case spk::Manifest::IsolateConfig::Module::WASM_PATH:
+        KJ_UNREACHABLE;
+    }
+  }
+
+  auto bindings = isolate.initBindings(3);
+  bindings[0].setName("SANDSTORM_API");
+  bindings[0].setSandstormApi();
+  bindings[1].setName("POWERBOX");
+  bindings[1].setPowerbox();
+  bindings[2].setName("STORAGE");
+  bindings[2].setStorage();
+  isolate.initBridgeConfig().initViewInfo().initAppTitle().setDefaultText(appTitle);
+}
+
 kj::String resolveAppId(kj::StringPtr requestedAppId, kj::ArrayPtr<const byte> digest) {
   if (requestedAppId.size() == 0) {
     return appIdString(digest);
@@ -273,6 +320,20 @@ void writeFile(kj::StringPtr path, kj::ArrayPtr<const byte> content) {
   output.write(content.begin(), content.size());
 }
 
+void addFileToHash(Sha256& hash, int fd, uint64_t size) {
+  hash.addSize(size);
+  byte buffer[64 * 1024];
+  uint64_t remaining = size;
+  while (remaining > 0) {
+    size_t requested = kj::min(static_cast<uint64_t>(sizeof(buffer)), remaining);
+    ssize_t amount;
+    KJ_SYSCALL(amount = read(fd, buffer, requested));
+    KJ_REQUIRE(amount > 0, "Generated isolate module ended before its declared file size.");
+    hash.addRaw(kj::arrayPtr(buffer, static_cast<size_t>(amount)));
+    remaining -= amount;
+  }
+}
+
 void verifyDirectory(kj::StringPtr path) {
   struct stat stats;
   KJ_SYSCALL(lstat(path.cStr(), &stats), path);
@@ -283,6 +344,51 @@ void verifyDirectory(kj::StringPtr path) {
 void verifyInstalledAppId(kj::StringPtr path, kj::StringPtr appId) {
   KJ_REQUIRE(trim(readAll(path)) == appId,
              "Generated isolate package ID collision has a different app ID.", path);
+}
+
+void commitGeneratedPackage(kj::StringPtr appRoot, kj::StringPtr tempPath,
+                            const GeneratedIsolatePackage& result) {
+  auto finalPath = kj::str(appRoot, "/", result.packageId);
+  auto appIdPath = kj::str(finalPath, ".appid");
+  bool moved = false;
+  KJ_DEFER(if (!moved && access(tempPath.cStr(), F_OK) == 0) {
+    kj::runCatchingExceptions([&]() { recursivelyDelete(tempPath); });
+  });
+  if (access(finalPath.cStr(), F_OK) == 0) {
+    verifyInstalledAppId(appIdPath, result.appId);
+    return;
+  }
+
+  // Publish only a fully-written marker. O_EXCL on the final path would let a
+  // concurrent installer observe the file between open() and write(). A hard
+  // link makes the completed temporary file visible atomically without
+  // replacing a marker installed by another process.
+  auto tempAppIdPath = kj::str(tempPath, ".appid");
+  writeFile(tempAppIdPath, result.appId.asBytes());
+  KJ_DEFER(if (access(tempAppIdPath.cStr(), F_OK) == 0) { unlink(tempAppIdPath.cStr()); });
+  bool createdAppId = false;
+  KJ_ON_SCOPE_FAILURE(if (createdAppId && access(finalPath.cStr(), F_OK) != 0) {
+    unlink(appIdPath.cStr());
+  });
+  if (link(tempAppIdPath.cStr(), appIdPath.cStr()) < 0) {
+    int error = errno;
+    KJ_REQUIRE(error == EEXIST, "Could not create generated isolate app ID file.", appIdPath,
+               strerror(error));
+    verifyInstalledAppId(appIdPath, result.appId);
+  } else {
+    createdAppId = true;
+  }
+
+  if (rename(tempPath.cStr(), finalPath.cStr()) < 0) {
+    int error = errno;
+    KJ_REQUIRE((error == EEXIST || error == ENOTEMPTY) &&
+                   access(finalPath.cStr(), F_OK) == 0,
+               "Could not install generated isolate package.", tempPath, finalPath,
+               strerror(error));
+    verifyInstalledAppId(appIdPath, result.appId);
+  } else {
+    moved = true;
+  }
 }
 
 }  // namespace
@@ -334,8 +440,8 @@ GeneratedIsolatePackage installGeneratedIsolatePackage(kj::StringPtr appRoot,
   auto tempPath =
       kj::str(tempRoot, "/generated-isolate.", getpid(), ".", time(nullptr), ".", counter++);
   KJ_SYSCALL(mkdir(tempPath.cStr(), 0700), tempPath);
-  bool moved = false;
-  KJ_DEFER(if (!moved && access(tempPath.cStr(), F_OK) == 0) {
+  bool commitStarted = false;
+  KJ_DEFER(if (!commitStarted && access(tempPath.cStr(), F_OK) == 0) {
     kj::runCatchingExceptions([&]() { recursivelyDelete(tempPath); });
   });
   auto modulesPath = kj::str(tempPath, "/modules");
@@ -348,36 +454,8 @@ GeneratedIsolatePackage installGeneratedIsolatePackage(kj::StringPtr appRoot,
     writeFile(kj::str(modulesPath, "/", outputIndex), moduleContent(modules[order[outputIndex]]));
   }
 
-  // Publish only a fully-written marker. O_EXCL on the final path would let a
-  // concurrent installer observe the file between open() and write(). A hard
-  // link makes the completed temporary file visible atomically without
-  // replacing a marker installed by another process.
-  auto tempAppIdPath = kj::str(tempPath, ".appid");
-  writeFile(tempAppIdPath, result.appId.asBytes());
-  KJ_DEFER(if (access(tempAppIdPath.cStr(), F_OK) == 0) { unlink(tempAppIdPath.cStr()); });
-  bool createdAppId = false;
-  KJ_ON_SCOPE_FAILURE(if (createdAppId && access(finalPath.cStr(), F_OK) != 0) {
-    unlink(appIdPath.cStr());
-  });
-  if (link(tempAppIdPath.cStr(), appIdPath.cStr()) < 0) {
-    int error = errno;
-    KJ_REQUIRE(error == EEXIST, "Could not create generated isolate app ID file.", appIdPath,
-               strerror(error));
-    verifyInstalledAppId(appIdPath, result.appId);
-  } else {
-    createdAppId = true;
-  }
-
-  if (rename(tempPath.cStr(), finalPath.cStr()) < 0) {
-    int error = errno;
-    KJ_REQUIRE((error == EEXIST || error == ENOTEMPTY) &&
-                   access(finalPath.cStr(), F_OK) == 0,
-               "Could not install generated isolate package.", tempPath, finalPath,
-               strerror(error));
-    verifyInstalledAppId(appIdPath, result.appId);
-  } else {
-    moved = true;
-  }
+  commitStarted = true;
+  commitGeneratedPackage(appRoot, tempPath, result);
   return result;
 }
 
@@ -386,6 +464,9 @@ GeneratedIsolatePackage deriveGeneratedIsolatePackage(kj::StringPtr appRoot,
                                                       kj::StringPtr sourcePackageId,
                                                       kj::StringPtr requestedAppId,
                                                       GeneratedIsolateMetadata metadata) {
+  verifyDirectory(appRoot);
+  verifyDirectory(tempRoot);
+  validateMetadata(metadata);
   byte parsedPackageId[PACKAGE_ID_BYTE_SIZE];
   KJ_REQUIRE(tryParsePackageId(
       sourcePackageId, kj::arrayPtr(parsedPackageId, sizeof(parsedPackageId))),
@@ -402,31 +483,52 @@ GeneratedIsolatePackage deriveGeneratedIsolatePackage(kj::StringPtr appRoot,
   KJ_REQUIRE(actions.size() == 1 && actions[0].getCommand().hasIsolate(),
       "Generated isolate source package has an invalid action.");
   auto isolate = actions[0].getCommand().getIsolate();
-
-  capnp::MallocMessageBuilder sourceMessage;
-  auto source = sourceMessage.initRoot<IsolateWorkerSource>();
-  source.setFormatVersion(1);
-  source.setMainModule(isolate.getMainModule());
-  source.setCompatibilityDate(isolate.getCompatibilityDate());
-  source.setCompatibilityFlags(isolate.getCompatibilityFlags());
-  source.initBindings(0);
+  auto mainModule = isolate.getMainModule();
+  KJ_REQUIRE(isValidModuleName(mainModule),
+      "Generated isolate source package has an invalid main module name.");
+  KJ_REQUIRE(isValidCompatibilityDate(isolate.getCompatibilityDate()),
+      "Generated isolate source package has an invalid compatibility date.");
+  KJ_REQUIRE(isolate.getCompatibilityFlags().size() == 0,
+      "Generated isolate source package has unsupported compatibility flags.");
 
   auto inputModules = isolate.getModules();
-  auto outputModules = source.initModules(inputModules.size());
+  KJ_REQUIRE(inputModules.size() > 0 && inputModules.size() <= MAX_GENERATED_MODULES,
+      "Generated isolate source package has an invalid module count.");
+  std::set<std::string> names;
+  std::vector<std::string> modulePaths;
+  Sha256 sourceHashBuilder;
+  sourceHashBuilder.add("sandstorm-generated-isolate-source-v1");
+  sourceHashBuilder.add(mainModule);
+  sourceHashBuilder.add(isolate.getCompatibilityDate());
+  bool foundMain = false;
   for (auto i: kj::indices(inputModules)) {
     auto input = inputModules[i];
-    auto output = outputModules[i];
-    output.setName(input.getName());
+    auto name = input.getName();
+    KJ_REQUIRE(isValidModuleName(name),
+        "Generated isolate source package has an invalid module name.", name);
+    KJ_REQUIRE(names.insert(std::string(name.begin(), name.size())).second,
+        "Generated isolate source package has a duplicate module name.", name);
+    if (i > 0) {
+      auto previous = inputModules[i - 1].getName();
+      KJ_REQUIRE(std::lexicographical_compare(
+          previous.begin(), previous.end(), name.begin(), name.end()),
+          "Generated isolate source package modules are not canonically ordered.");
+    }
+
     kj::StringPtr relativePath;
+    byte type;
     switch (input.which()) {
       case spk::Manifest::IsolateConfig::Module::ES_MODULE_PATH:
         relativePath = input.getEsModulePath();
+        type = static_cast<byte>(IsolateWorkerSource::Module::ES_MODULE);
         break;
       case spk::Manifest::IsolateConfig::Module::TEXT_PATH:
         relativePath = input.getTextPath();
+        type = static_cast<byte>(IsolateWorkerSource::Module::TEXT);
         break;
       case spk::Manifest::IsolateConfig::Module::JSON_PATH:
         relativePath = input.getJsonPath();
+        type = static_cast<byte>(IsolateWorkerSource::Module::JSON);
         break;
       case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
       case spk::Manifest::IsolateConfig::Module::DATA_PATH:
@@ -434,30 +536,77 @@ GeneratedIsolatePackage deriveGeneratedIsolatePackage(kj::StringPtr appRoot,
         KJ_FAIL_REQUIRE("Generated isolate source package has an unsupported module type.");
     }
 
-    KJ_REQUIRE(relativePath.startsWith("modules/") && isCanonicalPackagePath(relativePath),
+    auto expectedPath = kj::str("modules/", i);
+    KJ_REQUIRE(relativePath == expectedPath && isCanonicalPackagePath(relativePath),
         "Generated isolate source package has an invalid module path.", relativePath);
     auto moduleFd = raiiOpen(
         kj::str(packagePath, "/", relativePath), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    auto content = readAll(moduleFd.get());
-    switch (input.which()) {
-      case spk::Manifest::IsolateConfig::Module::ES_MODULE_PATH:
-        output.setEsModule(content.asBytes());
-        break;
-      case spk::Manifest::IsolateConfig::Module::TEXT_PATH:
-        output.setText(content.asBytes());
-        break;
-      case spk::Manifest::IsolateConfig::Module::JSON_PATH:
-        output.setJson(content.asBytes());
-        break;
-      case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
-      case spk::Manifest::IsolateConfig::Module::DATA_PATH:
-      case spk::Manifest::IsolateConfig::Module::WASM_PATH:
-        KJ_UNREACHABLE;
+    struct stat stats;
+    KJ_SYSCALL(fstat(moduleFd.get(), &stats), relativePath);
+    KJ_REQUIRE(S_ISREG(stats.st_mode) && stats.st_size >= 0 &&
+                   static_cast<uint64_t>(stats.st_size) <= MAX_GENERATED_MODULE_BYTES,
+        "Generated isolate source package has an invalid module file.", relativePath);
+    sourceHashBuilder.add(name);
+    sourceHashBuilder.add(kj::arrayPtr(&type, 1));
+    addFileToHash(sourceHashBuilder, moduleFd.get(), stats.st_size);
+    modulePaths.emplace_back(relativePath.begin(), relativePath.size());
+    if (name == mainModule) {
+      KJ_REQUIRE(input.which() == spk::Manifest::IsolateConfig::Module::ES_MODULE_PATH,
+          "Generated isolate source package main module is not an ES module.");
+      foundMain = true;
     }
   }
+  KJ_REQUIRE(foundMain, "Generated isolate source package main module is missing.");
 
-  return installGeneratedIsolatePackage(
-      appRoot, tempRoot, requestedAppId, metadata, source.asReader());
+  auto sourceHash = sourceHashBuilder.finish();
+  auto appId = resolveAppId(requestedAppId, sourceHash);
+  capnp::MallocMessageBuilder publishedMessage;
+  auto publishedManifest = publishedMessage.initRoot<spk::Manifest>();
+  publishedManifest.initAppTitle().setDefaultText(metadata.appTitle);
+  publishedManifest.setAppVersion(metadata.appVersion);
+  publishedManifest.initAppMarketingVersion().setDefaultText(metadata.marketingVersion);
+  publishedManifest.initMetadata().initShortDescription().setDefaultText(metadata.shortDescription);
+  auto publishedActions = publishedManifest.initActions(1);
+  auto publishedAction = publishedActions[0];
+  publishedAction.getInput().setNone();
+  publishedAction.initNounPhrase().setDefaultText(metadata.nounPhrase);
+  populateIsolateCommandFromInstalled(
+      publishedAction.initCommand(), isolate, metadata.appTitle);
+  populateIsolateCommandFromInstalled(
+      publishedManifest.initContinueCommand(), isolate, metadata.appTitle);
+  auto manifestWords = capnp::messageToFlatArray(publishedMessage);
+  GeneratedIsolatePackage result = {
+    packageIdFor(appId, manifestWords.asPtr(), sourceHash),
+    kj::mv(appId),
+    kj::mv(manifestWords),
+  };
+
+  auto finalPath = kj::str(appRoot, "/", result.packageId);
+  if (access(finalPath.cStr(), F_OK) == 0) {
+    verifyInstalledAppId(kj::str(finalPath, ".appid"), result.appId);
+    return result;
+  }
+
+  static uint counter = 0;
+  auto tempPath =
+      kj::str(tempRoot, "/derived-isolate.", getpid(), ".", time(nullptr), ".", counter++);
+  KJ_SYSCALL(mkdir(tempPath.cStr(), 0700), tempPath);
+  bool commitStarted = false;
+  KJ_DEFER(if (!commitStarted && access(tempPath.cStr(), F_OK) == 0) {
+    kj::runCatchingExceptions([&]() { recursivelyDelete(tempPath); });
+  });
+  auto modulesPath = kj::str(tempPath, "/modules");
+  KJ_SYSCALL(mkdir(modulesPath.cStr(), 0700), modulesPath);
+  writeFile(kj::str(tempPath, "/sandstorm-manifest"), result.manifest.asBytes());
+  for (auto i: kj::indices(modulePaths)) {
+    auto sourcePath = kj::str(packagePath, "/", modulePaths[i]);
+    auto destinationPath = kj::str(tempPath, "/", modulePaths[i]);
+    KJ_SYSCALL(link(sourcePath.cStr(), destinationPath.cStr()), sourcePath, destinationPath);
+  }
+
+  commitStarted = true;
+  commitGeneratedPackage(appRoot, tempPath, result);
+  return result;
 }
 
 }  // namespace sandstorm
