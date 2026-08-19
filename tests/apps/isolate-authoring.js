@@ -17,6 +17,7 @@
 "use strict";
 
 var utils = require("../utils"),
+    very_short_wait = utils.very_short_wait,
     short_wait = utils.short_wait,
     medium_wait = utils.medium_wait,
     long_wait = utils.long_wait;
@@ -61,16 +62,38 @@ var workerSource = [
   "};",
 ].join("\n");
 var workerSourceRevisionTwo = workerSource.replace(
-  "isolate authoring browser test preview",
-  "isolate authoring browser test revision two",
+  "<h1>isolate authoring browser test preview</h1>",
+  "<h1 id=\"isolate-revision-two\">isolate authoring browser test revision two</h1>",
 );
 var workerSourceRevisionThree = workerSource.replace(
-  "isolate authoring browser test preview",
-  "isolate authoring browser test revision three",
+  "<h1>isolate authoring browser test preview</h1>",
+  "<h1 id=\"isolate-revision-three\">isolate authoring browser test revision three</h1>",
 );
 var previewFrameSelector = ".isolate-inline-preview iframe.grain-frame";
 
+function waitForStableReplacementFrame(previousSrc) {
+  var observedSrc;
+  var observedAt;
+  return async function () {
+    var currentSrc = await this.getAttribute(previewFrameSelector, "src");
+    if (!currentSrc || currentSrc === previousSrc()) {
+      observedSrc = null;
+      observedAt = null;
+      return false;
+    }
+
+    if (currentSrc !== observedSrc) {
+      observedSrc = currentSrc;
+      observedAt = Date.now();
+      return false;
+    }
+
+    return Date.now() - observedAt >= 500;
+  };
+}
+
 module.exports["Test built-in isolate authoring flow"] = function (browser) {
+  var previousPreviewDigest;
   var previousPreviewFrameSrc;
 
   browser
@@ -118,7 +141,7 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
     .click(".preview-draft")
     .waitForElementVisible(".isolate-inline-preview iframe.grain-frame", long_wait)
     .assert.not.elementPresent(".isolate-source-error")
-    .grainFrame()
+    .frameSelector(previewFrameSelector)
     .waitForElementVisible("h1", medium_wait)
     .assert.textContains("h1", "isolate authoring browser test preview")
     .waitForElementVisible("#request-preview-powerbox[data-powerbox-ready=true]", medium_wait)
@@ -142,34 +165,38 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
     .click(".toggle-isolate-preview-log")
     .assert.attributeContains(".isolate-preview-log-mount", "class", "collapsed")
     .assert.attributeEquals(".toggle-isolate-preview-log", "aria-expanded", "false")
+    // The toggle moves while its 120ms height transition runs. Let it settle before clicking again.
+    .pause(150)
     .click(".toggle-isolate-preview-log")
     .assert.attributeEquals(".toggle-isolate-preview-log", "aria-expanded", "true")
+    .getAttribute(".isolate-preview-title code", "title", function (result) {
+      previousPreviewDigest = result.value;
+    })
     .getAttribute(previewFrameSelector, "src", function (result) {
       previousPreviewFrameSrc = result.value;
     })
     .clearValue("textarea[name=source]")
     .setValue("textarea[name=source]", workerSourceRevisionTwo)
     .click(".preview-draft")
-    .waitForElementNotPresent(".operation-status.working", long_wait)
     .waitUntil(async function () {
-      var currentSrc = await this.getAttribute(previewFrameSelector, "src");
-      return currentSrc && currentSrc !== previousPreviewFrameSrc;
-    }, long_wait, short_wait, "Preview revision did not open a replacement frame session")
-    .grainFrame()
-    .waitForElementVisible("h1", medium_wait)
-    .assert.textContains("h1", "isolate authoring browser test revision two")
+      var currentDigest = await this.getAttribute(".isolate-preview-title code", "title");
+      return currentDigest && currentDigest !== previousPreviewDigest;
+    }, long_wait, short_wait, "Preview revision did not produce a new candidate")
+    .waitUntil(waitForStableReplacementFrame(() => previousPreviewFrameSrc),
+      long_wait, very_short_wait, "Preview revision did not settle on a replacement frame session")
+    .frameSelector(previewFrameSelector)
+    .waitForElementVisible("#isolate-revision-two", medium_wait)
+    .assert.textContains("#isolate-revision-two", "isolate authoring browser test revision two")
     .frameParent()
     .getAttribute(previewFrameSelector, "src", function (result) {
       previousPreviewFrameSrc = result.value;
     })
     .click(".reload-inline-preview")
-    .waitUntil(async function () {
-      var currentSrc = await this.getAttribute(previewFrameSelector, "src");
-      return currentSrc && currentSrc !== previousPreviewFrameSrc;
-    }, long_wait, short_wait, "Preview reload did not open a replacement frame session")
-    .grainFrame()
-    .waitForElementVisible("h1", medium_wait)
-    .assert.textContains("h1", "isolate authoring browser test revision two")
+    .waitUntil(waitForStableReplacementFrame(() => previousPreviewFrameSrc),
+      long_wait, very_short_wait, "Preview reload did not settle on a replacement frame session")
+    .frameSelector(previewFrameSelector)
+    .waitForElementVisible("#isolate-revision-two", medium_wait)
+    .assert.textContains("#isolate-revision-two", "isolate authoring browser test revision two")
     .frameParent()
     .click(".reset-preview")
     .waitForElementNotPresent(".operation-status.working", long_wait)
@@ -191,13 +218,25 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
     .click(".confirm-publish")
     .waitForElementNotPresent(".publish-isolate-form", long_wait)
     .assert.textContains(".operation-status.success", "version 1")
+    .getAttribute(".isolate-preview-title code", "title", function (result) {
+      previousPreviewDigest = result.value;
+    })
+    .getAttribute(previewFrameSelector, "src", function (result) {
+      previousPreviewFrameSrc = result.value;
+    })
     .clearValue("textarea[name=source]")
     .setValue("textarea[name=source]", workerSourceRevisionThree)
     .click(".preview-draft")
+    .waitUntil(async function () {
+      var currentDigest = await this.getAttribute(".isolate-preview-title code", "title");
+      return currentDigest && currentDigest !== previousPreviewDigest;
+    }, long_wait, short_wait, "Third preview did not produce a new candidate")
+    .waitUntil(waitForStableReplacementFrame(() => previousPreviewFrameSrc),
+      long_wait, very_short_wait, "Third preview did not settle on a replacement frame session")
     .waitForElementVisible(".open-publish-modal:not([disabled])", long_wait)
-    .grainFrame()
-    .waitForElementVisible("body", long_wait)
-    .assert.textContains("body", "isolate authoring browser test revision three")
+    .frameSelector(previewFrameSelector)
+    .waitForElementVisible("#isolate-revision-three", long_wait)
+    .assert.textContains("#isolate-revision-three", "isolate authoring browser test revision three")
     .frameParent()
     .click(".open-publish-modal")
     .waitForElementVisible(".revision-history", short_wait)
