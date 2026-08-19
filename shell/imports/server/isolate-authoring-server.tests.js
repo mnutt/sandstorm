@@ -63,6 +63,7 @@ class FakeAuthoringBackend {
     this.generateCalls = [];
     this.startCalls = [];
     this.deleteCalls = [];
+    this.sources = new Map();
   }
 
   cap() {
@@ -80,7 +81,7 @@ class FakeAuthoringBackend {
     });
     const suffix = hash.digest("hex").slice(0, 24);
     const appId = requestedAppId || `shell-preview-app-${suffix}`;
-    return {
+    const result = {
       packageId: `shell-authoring-package-${suffix}`,
       appId,
       manifest: {
@@ -101,6 +102,14 @@ class FakeAuthoringBackend {
         continueCommand: { isolate: { phase: "continue", mainModule: source.mainModule } },
       },
     };
+    this.sources.set(result.packageId, source);
+    return result;
+  }
+
+  async deriveIsolatePackage(sourcePackageId, requestedAppId, packageMetadata) {
+    const source = this.sources.get(sourcePackageId);
+    if (!source) throw new Error("missing preview source package");
+    return await this.generateIsolatePackage(requestedAppId, packageMetadata, source);
   }
 
   async startGrainInternal(packageId, grainId, ownerId, command, isNew) {
@@ -156,7 +165,7 @@ describe("trusted shell isolate authoring boundary", function () {
     assert.throws(() => makeShellIsolateActor(null), Meteor.Error);
   });
 
-  it("returns a sanitized candidate summary while retaining source server-side", async function () {
+  it("returns a sanitized candidate summary while retaining source in its package", async function () {
     const result = await previewIsolateFromShell(
       globalDb, backend, ownerId, "shell-preview", bundle(), previewMetadata());
     const stored = await globalDb.collections.isolateCandidates.findOneAsync(
@@ -171,8 +180,9 @@ describe("trusted shell isolate authoring boundary", function () {
     assert.notProperty(result.candidate, "normalizedBundle");
     assert.notProperty(result.candidate, "previewPackageId");
     assert.notProperty(result.candidate, "ownerId");
-    assert.strictEqual(stored.normalizedBundle.modules[0].content,
-      bundle().modules[0].content);
+    assert.notProperty(stored, "normalizedBundle");
+    assert.strictEqual(stored.bundleInfo.modules[0].size,
+      Buffer.byteLength(bundle().modules[0].content, "utf8"));
     assert.strictEqual(stored.operationScope,
       makeShellIsolateActor(ownerId).operationScope);
   });

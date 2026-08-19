@@ -61,15 +61,19 @@ describe("isolate candidate persistence", function () {
     await globalDb.collections.isolateCandidates.removeAsync({ operationScope });
   });
 
-  it("stores an owner-scoped immutable snapshot without a mutable draft", async function () {
+  it("stores immutable metadata without module contents", async function () {
     const candidate = await reserveIsolateCandidate(globalDb, actor, "request-one", bundle());
     const stored = await globalDb.collections.isolateCandidates.findOneAsync(candidate._id);
 
     assert.strictEqual(candidate.ownerId, ownerId);
     assert.strictEqual(candidate.status, "preparing");
-    assert.strictEqual(candidate.normalizedBundle.mainModule, "worker.js");
+    assert.strictEqual(candidate.bundleInfo.mainModule, "worker.js");
     assert.isTrue(Object.isFrozen(candidate));
-    assert.isTrue(Object.isFrozen(candidate.normalizedBundle));
+    assert.isTrue(Object.isFrozen(candidate.bundleInfo));
+    assert.strictEqual(candidate.bundleInfo.modules[0].size,
+      Buffer.byteLength(bundle().modules[0].content, "utf8"));
+    assert.notProperty(candidate.bundleInfo.modules[0], "content");
+    assert.notProperty(stored, "normalizedBundle");
     assert.notProperty(stored, "draftSource");
     assert.notProperty(stored, "appId");
     assert.notProperty(stored, "packageId");

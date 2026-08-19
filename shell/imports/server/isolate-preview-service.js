@@ -286,7 +286,7 @@ async function previewIsolateBundle(
       const installed = await withPreviewSlot(db, candidate, async (lease) => {
         if (requireActive) await requireActive();
         const materialized = await materializeIsolateCandidate(
-          db, backend.cap(), candidate.ownerId, candidate._id, metadata);
+          db, backend.cap(), candidate.ownerId, candidate._id, metadata, bundle);
         await refreshPreviewSlot(db, lease);
         const result = await installCandidateInPreviewGrainLocked(db, backend, materialized);
         const readyCandidate = await db.collections.isolateCandidates.findOneAsync(candidate._id);

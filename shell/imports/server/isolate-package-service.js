@@ -16,6 +16,7 @@
 
 import { IsolateCandidateError, findOwnedIsolateCandidate } from
   "/imports/server/isolate-candidates";
+import { normalizeIsolateBundle } from "/imports/server/isolate-bundle";
 import { coalesceInFlightOperation } from "/imports/server/isolate-in-flight";
 
 const METADATA_LIMITS = Object.freeze({
@@ -176,8 +177,13 @@ async function registerGeneratedPackage(db, generated, accountId, published) {
   }
 }
 
-async function materializeInternal(db, backendCap, accountId, candidateId, metadata) {
+async function materializeInternal(
+    db, backendCap, accountId, candidateId, metadata, normalized) {
   let candidate = await claimMetadata(db, accountId, candidateId, metadata);
+  if (candidate.normalizedDigest !== normalized.digest) {
+    fail("idempotency-conflict", "The supplied source does not match this isolate candidate.");
+  }
+
   if (candidate.previewPackageId) return candidate;
 
   if (candidate.status === "failed") {
@@ -198,7 +204,7 @@ async function materializeInternal(db, backendCap, accountId, candidateId, metad
 
   try {
     const generated = packageResult(await backendCap.generateIsolatePackage(
-      "", metadata, bundleToWorkerSource(candidate.normalizedBundle)));
+      "", metadata, bundleToWorkerSource(normalized.bundle)));
     const platformBindings = generatedBindingNames(generated.manifest);
     await registerGeneratedPackage(db, generated, accountId, false);
     const materializedAt = new Date();
@@ -232,7 +238,7 @@ async function materializeInternal(db, backendCap, accountId, candidateId, metad
 
 async function materializePublishedIsolateCandidate(
     db, backendCap, accountId, candidateId, appId, metadataInput) {
-  if (!backendCap || typeof backendCap.generateIsolatePackage !== "function") {
+  if (!backendCap || typeof backendCap.deriveIsolatePackage !== "function") {
     fail("invalid-context", "Published candidate materialization requires a backend capability.");
   }
 
@@ -247,8 +253,8 @@ async function materializePublishedIsolateCandidate(
     fail("candidate-not-ready", "The isolate candidate must be preview-ready before publication.");
   }
 
-  const generated = packageResult(await backendCap.generateIsolatePackage(
-    appId, metadata, bundleToWorkerSource(candidate.normalizedBundle)));
+  const generated = packageResult(await backendCap.deriveIsolatePackage(
+    candidate.previewPackageId, appId, metadata));
   if (generated.appId !== appId) {
     fail("package-generation-failed", "The backend did not use the requested published app ID.");
   }
@@ -269,15 +275,18 @@ async function materializePublishedIsolateCandidate(
   });
 }
 
-function materializeIsolateCandidate(db, backendCap, accountId, candidateId, metadataInput) {
+function materializeIsolateCandidate(
+    db, backendCap, accountId, candidateId, metadataInput, bundleInput) {
   if (!backendCap || typeof backendCap.generateIsolatePackage !== "function") {
     return Promise.reject(new IsolateCandidateError(
       "invalid-context", "Candidate materialization requires a backend capability."));
   }
 
   let metadata;
+  let normalized;
   try {
     metadata = normalizeGeneratedIsolateMetadata(metadataInput);
+    normalized = normalizeIsolateBundle(bundleInput);
   } catch (error) {
     return Promise.reject(error);
   }
@@ -288,7 +297,7 @@ function materializeIsolateCandidate(db, backendCap, accountId, candidateId, met
     runningMaterializations,
     key,
     canonicalMetadata,
-    () => materializeInternal(db, backendCap, accountId, candidateId, metadata),
+    () => materializeInternal(db, backendCap, accountId, candidateId, metadata, normalized),
     () => new IsolateCandidateError(
       "idempotency-conflict",
       "This candidate is already being prepared with different package metadata."),

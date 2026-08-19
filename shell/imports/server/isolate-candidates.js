@@ -41,18 +41,32 @@ const { normalizeActor, requireIdentifier } = makeIsolateContextValidator(
 function freezeCandidate(candidate) {
   if (!candidate) return candidate;
 
-  const bundle = candidate.normalizedBundle;
-  if (bundle) {
-    if (bundle.compatibilityFlags) Object.freeze(bundle.compatibilityFlags);
-    if (bundle.modules) {
-      bundle.modules.forEach(Object.freeze);
-      Object.freeze(bundle.modules);
+  const info = candidate.bundleInfo;
+  if (info) {
+    if (info.compatibilityFlags) Object.freeze(info.compatibilityFlags);
+    if (info.modules) {
+      info.modules.forEach(Object.freeze);
+      Object.freeze(info.modules);
     }
 
-    Object.freeze(bundle);
+    Object.freeze(info);
   }
 
   return Object.freeze(candidate);
+}
+
+function bundleInfo(normalized) {
+  return {
+    formatVersion: normalized.bundle.formatVersion,
+    mainModule: normalized.bundle.mainModule,
+    compatibilityDate: normalized.bundle.compatibilityDate,
+    compatibilityFlags: normalized.bundle.compatibilityFlags,
+    modules: normalized.bundle.modules.map(module => ({
+      name: module.name,
+      type: module.type,
+      size: Buffer.byteLength(module.content, "utf8"),
+    })),
+  };
 }
 
 async function reserveIsolateCandidate(db, actorInput, requestIdInput, bundleInput) {
@@ -71,7 +85,7 @@ async function reserveIsolateCandidate(db, actorInput, requestIdInput, bundleInp
     operationScope: actor.operationScope,
     requestId,
     normalizedDigest: normalized.digest,
-    normalizedBundle: normalized.bundle,
+    bundleInfo: bundleInfo(normalized),
     totalModuleBytes: normalized.totalModuleBytes,
     validationWarnings: [],
     createdAt,

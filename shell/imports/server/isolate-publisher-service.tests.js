@@ -70,6 +70,7 @@ class FakePublisherBackend {
     this.beforePublishedPackage = null;
     this.previewBindings = ["SANDSTORM_API", "POWERBOX", "STORAGE"];
     this.publishedBindings = this.previewBindings;
+    this.sources = new Map();
   }
 
   cap() {
@@ -78,15 +79,6 @@ class FakePublisherBackend {
 
   async generateIsolatePackage(requestedAppId, packageMetadata, source) {
     this.calls.push({ requestedAppId, packageMetadata, source });
-    if (requestedAppId && this.beforePublishedPackage) {
-      await this.beforePublishedPackage();
-    }
-
-    if (requestedAppId && this.publishedFailuresRemaining > 0) {
-      --this.publishedFailuresRemaining;
-      throw new Error("simulated published package failure");
-    }
-
     const hash = Crypto.createHash("sha256");
     hash.update(requestedAppId || "preview");
     hash.update(JSON.stringify(packageMetadata));
@@ -96,7 +88,7 @@ class FakePublisherBackend {
     });
     const suffix = hash.digest("hex").slice(0, 24);
     const appId = requestedAppId || `preview-app-${suffix}`;
-    return {
+    const result = {
       packageId: `published-package-${suffix}`,
       appId,
       manifest: {
@@ -120,6 +112,23 @@ class FakePublisherBackend {
         },
       },
     };
+    this.sources.set(result.packageId, source);
+    return result;
+  }
+
+  async deriveIsolatePackage(sourcePackageId, requestedAppId, packageMetadata) {
+    const source = this.sources.get(sourcePackageId);
+    if (!source) throw new Error("missing preview source package");
+    if (this.beforePublishedPackage) await this.beforePublishedPackage();
+    if (this.publishedFailuresRemaining > 0) {
+      --this.publishedFailuresRemaining;
+      this.calls.push({ sourcePackageId, requestedAppId, packageMetadata, source });
+      throw new Error("simulated published package failure");
+    }
+
+    const result = await this.generateIsolatePackage(requestedAppId, packageMetadata, source);
+    this.calls[this.calls.length - 1].sourcePackageId = sourcePackageId;
+    return result;
   }
 }
 
@@ -161,7 +170,7 @@ describe("isolate publisher", function () {
     const candidate = await reserveIsolateCandidate(
       globalDb, actor, requestId, bundle(message));
     return await materializeIsolateCandidate(
-      globalDb, backend, ownerId, candidate._id, previewMetadata(version));
+      globalDb, backend, ownerId, candidate._id, previewMetadata(version), bundle(message));
   }
 
   it("encodes random bytes as canonical Sandstorm app IDs", function () {
@@ -514,7 +523,8 @@ describe("isolate publisher", function () {
     const otherCandidate = await reserveIsolateCandidate(
       globalDb, otherActor, "attacker-candidate", bundle("attacker"));
     const readyOtherCandidate = await materializeIsolateCandidate(
-      globalDb, backend, otherOwnerId, otherCandidate._id, previewMetadata());
+      globalDb, backend, otherOwnerId, otherCandidate._id,
+      previewMetadata(), bundle("attacker"));
     const error = await publishIsolateCandidate(
       globalDb, backend, otherActor, "attacker-publish", readyOtherCandidate._id,
       { existingApp: first.createdAppId }, publishedMetadata("Attacker title"))

@@ -134,7 +134,7 @@ describe("isolate candidate package materialization", function () {
   it("materializes the normalized source and records a ready package", async function () {
     const reserved = await reserveIsolateCandidate(globalDb, actor, "materialize", bundle());
     const ready = await materializeIsolateCandidate(
-      globalDb, backend, ownerId, reserved._id, metadata());
+      globalDb, backend, ownerId, reserved._id, metadata(), bundle());
     const storedPackage = await globalDb.collections.packages.findOneAsync(backend.packageId);
 
     assert.strictEqual(ready.status, "ready");
@@ -159,10 +159,10 @@ describe("isolate candidate package materialization", function () {
   it("coalesces concurrent package generation and makes later retries idempotent", async function () {
     const reserved = await reserveIsolateCandidate(globalDb, actor, "concurrent", bundle());
     const calls = Array.from({ length: 5 }, () => materializeIsolateCandidate(
-      globalDb, backend, ownerId, reserved._id, metadata()));
+      globalDb, backend, ownerId, reserved._id, metadata(), bundle()));
     const results = await Promise.all(calls);
     const retried = await materializeIsolateCandidate(
-      globalDb, backend, ownerId, reserved._id, metadata());
+      globalDb, backend, ownerId, reserved._id, metadata(), bundle());
 
     assert.strictEqual(new Set(results.map(result => result.previewPackageId)).size, 1);
     assert.strictEqual(retried.previewPackageId, backend.packageId);
@@ -171,18 +171,33 @@ describe("isolate candidate package materialization", function () {
 
   it("rejects metadata changes after materialization is reserved", async function () {
     const reserved = await reserveIsolateCandidate(globalDb, actor, "metadata", bundle());
-    await materializeIsolateCandidate(globalDb, backend, ownerId, reserved._id, metadata());
+    await materializeIsolateCandidate(
+      globalDb, backend, ownerId, reserved._id, metadata(), bundle());
     await expectCandidateError(materializeIsolateCandidate(
-      globalDb, backend, ownerId, reserved._id, metadata({ appTitle: "Different" })),
+      globalDb, backend, ownerId, reserved._id,
+      metadata({ appTitle: "Different" }), bundle()),
     "idempotency-conflict");
     assert.strictEqual(backend.calls.length, 1);
+  });
+
+  it("rejects retry source that does not match the candidate digest", async function () {
+    const reserved = await reserveIsolateCandidate(globalDb, actor, "source-mismatch", bundle());
+    const changed = bundle();
+    changed.modules[1].content =
+      "export default { fetch() { return new Response('changed'); } };";
+
+    await expectCandidateError(materializeIsolateCandidate(
+      globalDb, backend, ownerId, reserved._id, metadata(), changed),
+    "idempotency-conflict");
+    assert.strictEqual(backend.calls.length, 0);
   });
 
   it("records a failure and safely retries deterministic generation", async function () {
     const reserved = await reserveIsolateCandidate(globalDb, actor, "retry-failure", bundle());
     backend.failuresRemaining = 1;
     const error = await materializeIsolateCandidate(
-      globalDb, backend, ownerId, reserved._id, metadata()).then(() => null, error => error);
+      globalDb, backend, ownerId, reserved._id, metadata(), bundle())
+      .then(() => null, error => error);
     const failed = await globalDb.collections.isolateCandidates.findOneAsync(reserved._id);
 
     assert.match(error.message, /simulated backend disconnect/);
@@ -190,7 +205,7 @@ describe("isolate candidate package materialization", function () {
     assert.strictEqual(failed.error.message, "simulated backend disconnect");
 
     const ready = await materializeIsolateCandidate(
-      globalDb, backend, ownerId, reserved._id, metadata());
+      globalDb, backend, ownerId, reserved._id, metadata(), bundle());
     assert.strictEqual(ready.status, "ready");
     assert.notProperty(ready, "error");
     assert.strictEqual(backend.calls.length, 2);
@@ -206,7 +221,8 @@ describe("isolate candidate package materialization", function () {
     });
 
     await expectCandidateError(materializeIsolateCandidate(
-      globalDb, backend, ownerId, reserved._id, metadata()), "package-registration-failed");
+      globalDb, backend, ownerId, reserved._id, metadata(), bundle()),
+    "package-registration-failed");
     const storedPackage = await globalDb.collections.packages.findOneAsync(backend.packageId);
     const failed = await globalDb.collections.isolateCandidates.findOneAsync(reserved._id);
     assert.strictEqual(storedPackage.appId, "different-app-id");
@@ -225,7 +241,8 @@ describe("isolate candidate package materialization", function () {
     });
 
     await expectCandidateError(materializeIsolateCandidate(
-      globalDb, backend, ownerId, reserved._id, metadata()), "package-registration-failed");
+      globalDb, backend, ownerId, reserved._id, metadata(), bundle()),
+    "package-registration-failed");
     const storedPackage = await globalDb.collections.packages.findOneAsync(backend.packageId);
     assert.strictEqual(storedPackage.marker, "ordinary");
     assert.notProperty(storedPackage, "generatedIsolate");
@@ -234,7 +251,8 @@ describe("isolate candidate package materialization", function () {
   it("does not reveal or materialize another account's candidate", async function () {
     const reserved = await reserveIsolateCandidate(globalDb, actor, "ownership", bundle());
     await expectCandidateError(materializeIsolateCandidate(
-      globalDb, backend, `${ownerId}-other`, reserved._id, metadata()), "candidate-not-found");
+      globalDb, backend, `${ownerId}-other`, reserved._id, metadata(), bundle()),
+    "candidate-not-found");
     assert.strictEqual(backend.calls.length, 0);
   });
 

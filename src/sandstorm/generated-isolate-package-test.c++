@@ -187,6 +187,40 @@ KJ_TEST("generated isolate package uses a requested published app identity") {
   KJ_EXPECT(repeated.packageId == published.packageId);
 }
 
+KJ_TEST("generated isolate package derives publication from installed source") {
+  auto root = kj::heapString("/tmp/sandstorm-derived-isolate-test-XXXXXX");
+  KJ_REQUIRE(mkdtemp(root.begin()) != nullptr, root);
+  KJ_DEFER(recursivelyDelete(root));
+  auto apps = kj::str(root, "/apps");
+  auto temp = kj::str(root, "/tmp");
+  KJ_SYSCALL(mkdir(apps.cStr(), 0700), apps);
+  KJ_SYSCALL(mkdir(temp.cStr(), 0700), temp);
+
+  capnp::MallocMessageBuilder sourceMessage;
+  auto preview = installGeneratedIsolatePackage(
+      apps, temp, "", testMetadata(), initSource(sourceMessage));
+  const kj::StringPtr PUBLISHED_APP_ID =
+      "000h40s40n30f209185hs38f1w8124hm2hajd5ss34e1q70x3sgh";
+  GeneratedIsolateMetadata publishedMetadata = {
+    "Published app", "document", "Published from preview source", 4, "revision 4",
+  };
+  auto published = deriveGeneratedIsolatePackage(
+      apps, temp, preview.packageId, PUBLISHED_APP_ID, publishedMetadata);
+
+  KJ_EXPECT(published.appId == PUBLISHED_APP_ID);
+  KJ_EXPECT(published.packageId != preview.packageId);
+  auto publishedPath = kj::str(apps, "/", published.packageId);
+  KJ_EXPECT(readAll(kj::str(publishedPath, "/modules/0")) == "{\"ok\":true}");
+  KJ_EXPECT(readAll(kj::str(publishedPath, "/modules/1")) ==
+            "import data from './data.json'; export default { fetch() { return "
+            "data; } };");
+
+  capnp::FlatArrayMessageReader manifestReader(published.manifest.asPtr());
+  auto manifest = manifestReader.getRoot<spk::Manifest>();
+  KJ_EXPECT(manifest.getAppTitle().getDefaultText() == "Published app");
+  KJ_EXPECT(manifest.getAppVersion() == 4);
+}
+
 KJ_TEST("generated isolate package rejects caller-controlled authority and paths") {
   capnp::MallocMessageBuilder bindingMessage;
   auto bindingSource = bindingMessage.initRoot<IsolateWorkerSource>();

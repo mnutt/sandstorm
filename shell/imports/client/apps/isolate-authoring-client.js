@@ -286,12 +286,12 @@ Template.isolateAuthoringPage.helpers({
 
   candidateCompatibilityDate() {
     const candidate = currentCandidateRecord(Template.instance());
-    return candidate?.normalizedBundle?.compatibilityDate;
+    return candidate?.bundleInfo?.compatibilityDate;
   },
 
   candidateCompatibilityFlags() {
     const candidate = currentCandidateRecord(Template.instance());
-    return candidate?.normalizedBundle?.compatibilityFlags || [];
+    return candidate?.bundleInfo?.compatibilityFlags || [];
   },
 
   candidateBindings() {

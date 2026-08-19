@@ -47,12 +47,12 @@ async function insertCandidate(ownerId, grainId, normalizedDigest) {
     operationScope: `publisher-grant-test:${candidateId}`,
     requestId: candidateId,
     normalizedDigest,
-    normalizedBundle: {
+    bundleInfo: {
       formatVersion: 1,
       mainModule: "worker.js",
       compatibilityDate: "2026-08-17",
       compatibilityFlags: [],
-      modules: [{ name: "worker.js", type: "esModule", content: "export default {};" }],
+      modules: [{ name: "worker.js", type: "esModule", size: 18 }],
     },
     totalModuleBytes: 18,
     platformBindings: ["SANDSTORM_API", "POWERBOX", "STORAGE"],

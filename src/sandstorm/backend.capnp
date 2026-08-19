@@ -82,6 +82,14 @@ interface Backend {
   # empty, a deterministic internal preview identity is derived from source.
   # This method never installs an action or creates a grain.
 
+  deriveIsolatePackage @17 (
+      sourcePackageId :Text,
+      requestedAppId :Text,
+      metadata :GeneratedIsolatePackageMetadata)
+      -> (packageId :Text, appId :Text, manifest :Package.Manifest);
+  # Materialize a generated isolate package with new app metadata and identity,
+  # reusing the immutable source stored in sourcePackageId.
+
   # ----------------------------------------------------------------------------
   # backups
 

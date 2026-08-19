@@ -381,4 +381,83 @@ GeneratedIsolatePackage installGeneratedIsolatePackage(kj::StringPtr appRoot,
   return result;
 }
 
+GeneratedIsolatePackage deriveGeneratedIsolatePackage(kj::StringPtr appRoot,
+                                                      kj::StringPtr tempRoot,
+                                                      kj::StringPtr sourcePackageId,
+                                                      kj::StringPtr requestedAppId,
+                                                      GeneratedIsolateMetadata metadata) {
+  byte parsedPackageId[PACKAGE_ID_BYTE_SIZE];
+  KJ_REQUIRE(tryParsePackageId(
+      sourcePackageId, kj::arrayPtr(parsedPackageId, sizeof(parsedPackageId))),
+      "Generated isolate source package ID is invalid.");
+
+  auto packagePath = kj::str(appRoot, "/", sourcePackageId);
+  capnp::ReaderOptions manifestLimits;
+  manifestLimits.traversalLimitInWords = spk::Manifest::SIZE_LIMIT_IN_WORDS;
+  capnp::StreamFdMessageReader manifestReader(
+      raiiOpen(kj::str(packagePath, "/sandstorm-manifest"), O_RDONLY | O_CLOEXEC | O_NOFOLLOW),
+      manifestLimits);
+  auto manifest = manifestReader.getRoot<spk::Manifest>();
+  auto actions = manifest.getActions();
+  KJ_REQUIRE(actions.size() == 1 && actions[0].getCommand().hasIsolate(),
+      "Generated isolate source package has an invalid action.");
+  auto isolate = actions[0].getCommand().getIsolate();
+
+  capnp::MallocMessageBuilder sourceMessage;
+  auto source = sourceMessage.initRoot<IsolateWorkerSource>();
+  source.setFormatVersion(1);
+  source.setMainModule(isolate.getMainModule());
+  source.setCompatibilityDate(isolate.getCompatibilityDate());
+  source.setCompatibilityFlags(isolate.getCompatibilityFlags());
+  source.initBindings(0);
+
+  auto inputModules = isolate.getModules();
+  auto outputModules = source.initModules(inputModules.size());
+  for (auto i: kj::indices(inputModules)) {
+    auto input = inputModules[i];
+    auto output = outputModules[i];
+    output.setName(input.getName());
+    kj::StringPtr relativePath;
+    switch (input.which()) {
+      case spk::Manifest::IsolateConfig::Module::ES_MODULE_PATH:
+        relativePath = input.getEsModulePath();
+        break;
+      case spk::Manifest::IsolateConfig::Module::TEXT_PATH:
+        relativePath = input.getTextPath();
+        break;
+      case spk::Manifest::IsolateConfig::Module::JSON_PATH:
+        relativePath = input.getJsonPath();
+        break;
+      case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
+      case spk::Manifest::IsolateConfig::Module::DATA_PATH:
+      case spk::Manifest::IsolateConfig::Module::WASM_PATH:
+        KJ_FAIL_REQUIRE("Generated isolate source package has an unsupported module type.");
+    }
+
+    KJ_REQUIRE(relativePath.startsWith("modules/") && isCanonicalPackagePath(relativePath),
+        "Generated isolate source package has an invalid module path.", relativePath);
+    auto moduleFd = raiiOpen(
+        kj::str(packagePath, "/", relativePath), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    auto content = readAll(moduleFd.get());
+    switch (input.which()) {
+      case spk::Manifest::IsolateConfig::Module::ES_MODULE_PATH:
+        output.setEsModule(content.asBytes());
+        break;
+      case spk::Manifest::IsolateConfig::Module::TEXT_PATH:
+        output.setText(content.asBytes());
+        break;
+      case spk::Manifest::IsolateConfig::Module::JSON_PATH:
+        output.setJson(content.asBytes());
+        break;
+      case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
+      case spk::Manifest::IsolateConfig::Module::DATA_PATH:
+      case spk::Manifest::IsolateConfig::Module::WASM_PATH:
+        KJ_UNREACHABLE;
+    }
+  }
+
+  return installGeneratedIsolatePackage(
+      appRoot, tempRoot, requestedAppId, metadata, source.asReader());
+}
+
 }  // namespace sandstorm

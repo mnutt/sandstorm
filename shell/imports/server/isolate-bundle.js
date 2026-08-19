@@ -23,10 +23,10 @@ import { IsolateError } from "/imports/server/isolate-error";
 
 const ISOLATE_BUNDLE_FORMAT_VERSION = 1;
 
-// These are admission guardrails, not product quotas. The aggregate limit must
-// leave room below Mongo's 16 MiB BSON document limit because a normalized
-// bundle is stored inline with its candidate metadata. Leave module-count room
-// for injected helpers as well.
+// These are admission guardrails, not product quotas. The current aggregate
+// limit bounds the in-memory normalization and single backend RPC handoff; it
+// can be revisited when that handoff becomes fully streaming. Leave
+// module-count room for injected helpers as well.
 const ISOLATE_BUNDLE_LIMITS = Object.freeze({
   maxModules: 512,
   maxModuleBytes: 8 * 1024 * 1024,
