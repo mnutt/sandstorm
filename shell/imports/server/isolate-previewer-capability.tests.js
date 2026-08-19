@@ -19,6 +19,7 @@ import chai from "chai";
 
 import { globalDb } from "/imports/db-deprecated";
 import { ISOLATE_BUNDLE_LIMITS } from "/imports/server/isolate-bundle";
+import { requirePublishGrant } from "/imports/server/isolate-publisher-grants";
 import {
   createPreviewGrant,
   receiveIsolateBundle,
@@ -219,6 +220,9 @@ describe("isolate previewer capability", function () {
     assert.deepEqual(validated.requirements, [{
       permissionsHeld: { accountId: ownerId, grainId, permissions: [] },
     }]);
+    const publishError = await requirePublishGrant(globalDb, grantId)
+      .then(() => null, error => error);
+    assert.strictEqual(publishError.code, "grant-revoked");
 
     const sharedError = await createPreviewGrant(globalDb, {
       userId: otherId,

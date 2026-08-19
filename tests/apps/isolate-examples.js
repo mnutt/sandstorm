@@ -166,6 +166,7 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
     .waitForElementVisible("pre", long_wait)
     .assert.textContains("body", "Saved API capability token present")
     .assert.textContains("pre", "\"ok\": true")
+    .assert.textContains("pre", "\"previewerCanPublish\": false")
     .assert.textContains("pre", "\"digestBytes\": 32")
     .assert.textContains("pre", "\"compatibilityDate\": \"2025-01-01\"")
     .assert.textContains("pre", "\"bindings\":")
