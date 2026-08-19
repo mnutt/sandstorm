@@ -16,6 +16,7 @@
 
 import { Random } from "meteor/random";
 
+import { IsolateError } from "/imports/server/isolate-error";
 import {
   createGrainFromResolvedAction,
   recoverInitializingPreviewGrain,
@@ -29,11 +30,9 @@ import {
 } from "/imports/server/isolate-candidates";
 import { materializeIsolateCandidate } from "/imports/server/isolate-package-service";
 
-class IsolatePreviewError extends Error {
+class IsolatePreviewError extends IsolateError {
   constructor(code, message) {
-    super(message);
-    this.name = "IsolatePreviewError";
-    this.code = code;
+    super("IsolatePreviewError", code, message);
   }
 }
 

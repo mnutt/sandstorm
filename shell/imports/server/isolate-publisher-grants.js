@@ -22,15 +22,14 @@ import {
   normalizeTarget,
 } from "/imports/server/isolate-publisher-service";
 import { requestIsolateCandidateCleanup } from "/imports/server/isolate-candidates";
+import { IsolateError } from "/imports/server/isolate-error";
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_REQUEST_ID_BYTES = 256;
 
-class IsolatePublisherGrantError extends Error {
+class IsolatePublisherGrantError extends IsolateError {
   constructor(code, message) {
-    super(message);
-    this.name = "IsolatePublisherGrantError";
-    this.code = code;
+    super("IsolatePublisherGrantError", code, message);
     this.kjType = "failed";
   }
 }

@@ -19,6 +19,7 @@ import Crypto from "crypto";
 import { Random } from "meteor/random";
 
 import { findOwnedIsolateCandidate } from "/imports/server/isolate-candidates";
+import { IsolateError } from "/imports/server/isolate-error";
 import {
   materializePublishedIsolateCandidate,
   normalizeGeneratedIsolateMetadata,
@@ -30,11 +31,9 @@ const MAX_REQUEST_ID_BYTES = 256;
 const OPERATION_LOCK_STALE_MS = 5 * 60 * 1000;
 const runningPublications = new Map();
 
-class IsolatePublisherError extends Error {
+class IsolatePublisherError extends IsolateError {
   constructor(code, message) {
-    super(message);
-    this.name = "IsolatePublisherError";
-    this.code = code;
+    super("IsolatePublisherError", code, message);
   }
 }
 

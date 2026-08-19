@@ -19,15 +19,14 @@ import { check } from "meteor/check";
 import { Random } from "meteor/random";
 
 import { ISOLATE_BUNDLE_LIMITS } from "/imports/server/isolate-bundle";
+import { IsolateError } from "/imports/server/isolate-error";
 import { requireIsolatePreviewAdmission } from "/imports/server/isolate-preview-service";
 
 const MODULE_TYPES = ["esModule", "json", "text"];
 
-class IsolatePreviewGrantError extends Error {
+class IsolatePreviewGrantError extends IsolateError {
   constructor(code, message) {
-    super(message);
-    this.name = "IsolatePreviewGrantError";
-    this.code = code;
+    super("IsolatePreviewGrantError", code, message);
     this.kjType = "failed";
   }
 }

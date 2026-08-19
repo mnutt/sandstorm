@@ -17,12 +17,11 @@
 import { Random } from "meteor/random";
 
 import { SandstormDb } from "/imports/sandstorm-db/db";
+import { IsolateError } from "/imports/server/isolate-error";
 
-class GrainCreationError extends Error {
+class GrainCreationError extends IsolateError {
   constructor(code, message) {
-    super(message);
-    this.name = "GrainCreationError";
-    this.code = code;
+    super("GrainCreationError", code, message);
   }
 }
 

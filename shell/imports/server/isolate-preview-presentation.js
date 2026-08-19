@@ -18,15 +18,14 @@ import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
 
 import { globalDb } from "/imports/db-deprecated";
+import { IsolateError } from "/imports/server/isolate-error";
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const PREVIEW_SCOPE_PREFIX = "isolate-preview-grant:";
 
-class IsolatePreviewPresentationError extends Error {
+class IsolatePreviewPresentationError extends IsolateError {
   constructor(code, message, status = 404) {
-    super(message);
-    this.name = "IsolatePreviewPresentationError";
-    this.code = code;
+    super("IsolatePreviewPresentationError", code, message);
     this.status = status;
   }
 }

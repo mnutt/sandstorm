@@ -17,15 +17,14 @@
 import {
   resolveIsolatePreviewForAuthoringGrain,
 } from "/imports/server/isolate-preview-presentation";
+import { IsolateError } from "/imports/server/isolate-error";
 
 const DEFAULT_PREVIEW_LOG_BACKLOG_BYTES = 8192;
 const MAX_PREVIEW_LOG_BACKLOG_BYTES = 64 * 1024;
 
-class IsolatePreviewLogError extends Error {
+class IsolatePreviewLogError extends IsolateError {
   constructor(code, message) {
-    super(message);
-    this.name = "IsolatePreviewLogError";
-    this.code = code;
+    super("IsolatePreviewLogError", code, message);
     this.kjType = "failed";
   }
 }
