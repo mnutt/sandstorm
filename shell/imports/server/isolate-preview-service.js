@@ -29,7 +29,10 @@ import {
   requestIsolateCandidateCleanup,
   reserveIsolateCandidate,
 } from "/imports/server/isolate-candidates";
-import { materializeIsolateCandidate } from "/imports/server/isolate-package-service";
+import {
+  materializeIsolateCandidate,
+  materializeUploadedIsolateCandidate,
+} from "/imports/server/isolate-package-service";
 
 class IsolatePreviewError extends IsolateError {
   constructor(code, message) {
@@ -269,7 +272,7 @@ function enqueuePreview(accountId, operationScope, callback) {
 }
 
 async function previewIsolateBundle(
-    db, backend, actor, requestId, bundle, metadata, requireActive) {
+    db, backend, actor, requestId, bundle, metadata, options = {}) {
   if (!backend || typeof backend.cap !== "function") {
     fail("invalid-context", "Isolate preview requires the Sandstorm backend.");
   }
@@ -284,9 +287,12 @@ async function previewIsolateBundle(
   try {
     return await enqueuePreview(candidate.ownerId, candidate.operationScope, async () => {
       const installed = await withPreviewSlot(db, candidate, async (lease) => {
-        if (requireActive) await requireActive();
-        const materialized = await materializeIsolateCandidate(
-          db, backend.cap(), candidate.ownerId, candidate._id, metadata, bundle);
+        if (options.requireActive) await options.requireActive();
+        const materialized = options.packageUpload
+          ? await materializeUploadedIsolateCandidate(
+            db, options.packageUpload, candidate.ownerId, candidate._id, metadata, bundle)
+          : await materializeIsolateCandidate(
+            db, backend.cap(), candidate.ownerId, candidate._id, metadata, bundle);
         await refreshPreviewSlot(db, lease);
         const result = await installCandidateInPreviewGrainLocked(db, backend, materialized);
         const readyCandidate = await db.collections.isolateCandidates.findOneAsync(candidate._id);

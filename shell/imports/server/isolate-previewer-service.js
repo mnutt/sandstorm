@@ -129,8 +129,34 @@ class ModuleByteStream {
   }
 }
 
+class StagedModuleByteStream {
+  constructor(local, remote) {
+    this.local = local;
+    this.remote = remote;
+  }
+
+  async write(data) {
+    this.local.write(data);
+    await this.remote.write(data);
+  }
+
+  async expectSize(size) {
+    this.local.expectSize(size);
+    if (typeof this.remote.expectSize === "function") await this.remote.expectSize(size);
+  }
+
+  async done() {
+    try {
+      this.local.done();
+      await this.remote.done();
+    } finally {
+      if (typeof this.remote.close === "function") this.remote.close();
+    }
+  }
+}
+
 class IsolateBundleReceiver {
-  constructor(info, wrapByteStream = value => value) {
+  constructor(info) {
     if (!info || typeof info !== "object") {
       fail("invalid-bundle", "IsolateBundle.getInfo() returned no bundle information.");
     }
@@ -168,7 +194,6 @@ class IsolateBundleReceiver {
       };
     });
     this.info = info;
-    this.wrapByteStream = wrapByteStream;
     this.receivedBytes = 0;
     this.finished = false;
   }
@@ -185,7 +210,17 @@ class IsolateBundleReceiver {
     }
 
     state.opened = true;
-    return { stream: this.wrapByteStream(new ModuleByteStream(this, state)) };
+    return { stream: new ModuleByteStream(this, state) };
+  }
+
+  bundleInfo() {
+    return {
+      formatVersion: this.info.formatVersion,
+      mainModule: this.info.mainModule,
+      compatibilityDate: this.info.compatibilityDate,
+      compatibilityFlags: this.info.compatibilityFlags || [],
+      modules: this.states.map(state => state.info),
+    };
   }
 
   finish() {
@@ -219,29 +254,104 @@ class IsolateBundleReceiver {
   }
 }
 
+class StagedIsolateBundleReceiver {
+  constructor(receiver, upload, wrapByteStream = value => value) {
+    this.receiver = receiver;
+    this.upload = upload;
+    this.wrapByteStream = wrapByteStream;
+  }
+
+  async beginModule(index) {
+    const local = this.receiver.beginModule(index).stream;
+    const response = await this.upload.beginModule(index);
+    const remote = response && response.stream;
+    if (!remote || typeof remote.write !== "function" || typeof remote.done !== "function") {
+      fail("package-generation-failed", "The backend returned an invalid module upload stream.");
+    }
+
+    return { stream: this.wrapByteStream(new StagedModuleByteStream(local, remote)) };
+  }
+
+  async finish() {
+    this.receiver.finish();
+    await this.upload.finish();
+  }
+}
+
+async function transferIsolateBundle(bundle, receiver, wrappers) {
+  const receiverCap = wrappers.wrapReceiver ? wrappers.wrapReceiver(receiver) : receiver;
+  try {
+    await bundle.transfer(receiverCap);
+  } finally {
+    if (wrappers.wrapReceiver && receiverCap.close) receiverCap.close();
+  }
+}
+
 async function receiveIsolateBundle(bundle, wrappers = {}) {
   if (!bundle || typeof bundle.getInfo !== "function" || typeof bundle.transfer !== "function") {
     fail("invalid-bundle", "preview() requires a live IsolateBundle capability.");
   }
 
   const response = await bundle.getInfo();
-  const receiver = new IsolateBundleReceiver(response && response.info, wrappers.wrapByteStream);
-  const receiverCap = wrappers.wrapReceiver ? wrappers.wrapReceiver(receiver) : receiver;
+  const receiver = new IsolateBundleReceiver(response && response.info);
+  const wrapped = {
+    beginModule(index) {
+      const result = receiver.beginModule(index);
+      return { stream: wrappers.wrapByteStream
+        ? wrappers.wrapByteStream(result.stream)
+        : result.stream };
+    },
+    finish() {
+      return receiver.finish();
+    },
+  };
+  await transferIsolateBundle(bundle, wrapped, wrappers);
+  return receiver.result();
+}
+
+async function receiveStagedIsolateBundle(bundle, backendCap, metadata, wrappers = {}) {
+  if (!backendCap || typeof backendCap.streamIsolatePackage !== "function") {
+    fail("invalid-context", "Streaming an isolate bundle requires a backend capability.");
+  }
+
+  if (!bundle || typeof bundle.getInfo !== "function" || typeof bundle.transfer !== "function") {
+    fail("invalid-bundle", "preview() requires a live IsolateBundle capability.");
+  }
+
+  const response = await bundle.getInfo();
+  const receiver = new IsolateBundleReceiver(response && response.info);
+  const uploadResponse = await backendCap.streamIsolatePackage(
+    "", metadata, receiver.bundleInfo());
+  const upload = uploadResponse && uploadResponse.upload;
+  if (!upload || typeof upload.beginModule !== "function" ||
+      typeof upload.finish !== "function" || typeof upload.save !== "function") {
+    fail("package-generation-failed", "The backend returned an invalid isolate upload.");
+  }
+
   try {
-    await bundle.transfer(receiverCap);
-    return receiver.result();
-  } finally {
-    if (wrappers.wrapReceiver && receiverCap.close) receiverCap.close();
+    const stagedReceiver = new StagedIsolateBundleReceiver(
+      receiver, upload, wrappers.wrapByteStream);
+    await transferIsolateBundle(bundle, stagedReceiver, wrappers);
+    return { receivedBundle: receiver.result(), packageUpload: upload };
+  } catch (error) {
+    if (typeof upload.close === "function") upload.close();
+    throw error;
   }
 }
 
-async function receivePreviewBundle(db, grant, bundle, wrappers = {}) {
+async function receivePreviewBundle(db, grant, bundle, wrappers = {}, packageRequest) {
   const actor = {
     accountId: grant.ownerId,
     requestingGrainId: grant.requestingGrainId,
     operationScope: `isolate-preview-grant:${grant._id}`,
   };
   await requireIsolatePreviewAdmission(db, actor);
+  if (packageRequest) {
+    const staged = await receiveStagedIsolateBundle(
+      bundle, packageRequest.backendCap, packageRequest.metadata, wrappers);
+    return { actor, ...staged };
+  }
+
   return { actor, receivedBundle: await receiveIsolateBundle(bundle, wrappers) };
 }
 
@@ -335,6 +445,7 @@ export {
   ownKeys,
   receiveIsolateBundle,
   receivePreviewBundle,
+  receiveStagedIsolateBundle,
   revokePreviewGrantIfUnreferenced,
   requirePreviewGrant,
 };
