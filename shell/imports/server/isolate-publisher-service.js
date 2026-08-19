@@ -300,6 +300,7 @@ async function requireExistingTargetOwnership(db, operation) {
 
 async function claimCreatedApp(db, operation) {
   const now = new Date();
+  const staleBefore = new Date(now.getTime() - OPERATION_LOCK_STALE_MS);
   const isNew = Object.prototype.hasOwnProperty.call(operation.target, "newApp");
   if (isNew) {
     await db.collections.createdIsolateApps.rawCollection().findOneAndUpdate({
@@ -324,6 +325,7 @@ async function claimCreatedApp(db, operation) {
       $or: [
         { publishLock: { $exists: false } },
         { "publishLock.operationId": operation._id },
+        { "publishLock.acquiredAt": { $lt: staleBefore } },
       ],
     }, {
       $set: {
@@ -521,6 +523,12 @@ async function runPublication(db, backend, initialOperation) {
     await releaseCreatedApp(db, operation);
     return result;
   } catch (error) {
+    try {
+      await releaseCreatedApp(db, initialOperation);
+    } catch (releaseError) {
+      error.releaseAppError = releaseError;
+    }
+
     try {
       await abandonOperation(db, lease, error);
     } catch (abandonError) {
