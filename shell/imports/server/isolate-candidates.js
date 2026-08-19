@@ -69,14 +69,13 @@ function bundleInfo(normalized) {
   };
 }
 
-async function reserveIsolateCandidate(db, actorInput, requestIdInput, bundleInput) {
+async function reserveCandidateRecord(db, actorInput, requestIdInput, source) {
   if (!db || !db.collections || !db.collections.isolateCandidates) {
     fail("invalid-context", "Candidate creation requires the isolateCandidates collection.");
   }
 
   const actor = normalizeActor(actorInput);
   const requestId = requireIdentifier(requestIdInput, "requestId", MAX_REQUEST_ID_BYTES);
-  const normalized = normalizeIsolateBundle(bundleInput);
   const candidateId = Random.id();
   const createdAt = new Date();
   const record = {
@@ -84,10 +83,10 @@ async function reserveIsolateCandidate(db, actorInput, requestIdInput, bundleInp
     ownerId: actor.accountId,
     operationScope: actor.operationScope,
     requestId,
-    normalizedDigest: normalized.digest,
-    bundleInfo: bundleInfo(normalized),
-    totalModuleBytes: normalized.totalModuleBytes,
-    validationWarnings: [],
+    normalizedDigest: source.digest,
+    bundleInfo: source.bundleInfo,
+    totalModuleBytes: source.totalModuleBytes,
+    validationWarnings: source.validationWarnings || [],
     createdAt,
     status: "preparing",
   };
@@ -107,13 +106,67 @@ async function reserveIsolateCandidate(db, actorInput, requestIdInput, bundleInp
 
   const sameRequest = candidate.ownerId === actor.accountId &&
     candidate.requestingGrainId === actor.requestingGrainId &&
-    candidate.normalizedDigest === normalized.digest;
+    candidate.normalizedDigest === source.digest;
   if (!sameRequest) {
     fail("idempotency-conflict",
         "This candidate request ID is already reserved for different input or authority.");
   }
 
   return freezeCandidate(candidate);
+}
+
+async function reserveIsolateCandidate(db, actorInput, requestIdInput, bundleInput) {
+  const normalized = normalizeIsolateBundle(bundleInput);
+  return await reserveCandidateRecord(db, actorInput, requestIdInput, {
+    digest: normalized.digest,
+    bundleInfo: bundleInfo(normalized),
+    totalModuleBytes: normalized.totalModuleBytes,
+    validationWarnings: [],
+  });
+}
+
+async function reserveStreamedIsolateCandidate(db, actorInput, requestIdInput, snapshot) {
+  if (!snapshot || typeof snapshot !== "object" ||
+      typeof snapshot.digest !== "string" || !/^[0-9a-f]{64}$/.test(snapshot.digest) ||
+      !snapshot.bundleInfo || typeof snapshot.bundleInfo !== "object" ||
+      !Array.isArray(snapshot.bundleInfo.modules) ||
+      !Number.isSafeInteger(snapshot.totalModuleBytes) || snapshot.totalModuleBytes < 0) {
+    fail("invalid-bundle", "The streamed isolate candidate snapshot is invalid.");
+  }
+
+  const info = snapshot.bundleInfo;
+  const moduleTypes = new Set(["esModule", "json", "text", "data", "wasm"]);
+  if (info.formatVersion !== 1 || typeof info.mainModule !== "string" ||
+      typeof info.compatibilityDate !== "string" ||
+      !Array.isArray(info.compatibilityFlags) ||
+      info.compatibilityFlags.some(flag => typeof flag !== "string") ||
+      info.modules.length === 0 || info.modules.some(module =>
+        !module || typeof module.name !== "string" || !moduleTypes.has(module.type) ||
+        !Number.isSafeInteger(module.size) || module.size < 0)) {
+    fail("invalid-bundle", "The streamed isolate candidate metadata is invalid.");
+  }
+
+  const totalModuleBytes = info.modules.reduce((total, module) => total + module.size, 0);
+  if (!Number.isSafeInteger(totalModuleBytes) || totalModuleBytes !== snapshot.totalModuleBytes) {
+    fail("invalid-bundle", "The streamed isolate candidate byte count is invalid.");
+  }
+
+  return await reserveCandidateRecord(db, actorInput, requestIdInput, {
+    digest: snapshot.digest,
+    bundleInfo: {
+      formatVersion: info.formatVersion,
+      mainModule: info.mainModule,
+      compatibilityDate: info.compatibilityDate,
+      compatibilityFlags: [...info.compatibilityFlags],
+      modules: info.modules.map(module => ({
+        name: module.name,
+        type: module.type,
+        size: module.size,
+      })),
+    },
+    totalModuleBytes,
+    validationWarnings: [],
+  });
 }
 
 async function findOwnedIsolateCandidate(db, accountIdInput, candidateIdInput) {
@@ -293,4 +346,5 @@ export {
   removeOwnedIsolateCandidate,
   requestIsolateCandidateCleanup,
   reserveIsolateCandidate,
+  reserveStreamedIsolateCandidate,
 };

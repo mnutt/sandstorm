@@ -55,7 +55,8 @@ enum ModuleType {
 interface BundleReceiver @0x85eb330db82a150f {
   beginModule @0 (index :UInt16) -> (stream :Util.ByteStream);
   # Each declared index must be opened exactly once. The stream must receive exactly the size
-  # declared by BundleInfo.ModuleInfo and must end with done().
+  # declared by BundleInfo.ModuleInfo and must end with done(). A module must finish before the
+  # next module is opened, allowing Sandstorm to validate with bounded memory.
 
   finish @1 ();
   # Verifies that every module stream completed. No more modules may be opened afterward.

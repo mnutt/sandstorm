@@ -28,6 +28,7 @@ import {
   markOwnedIsolateCandidateForCleanup,
   requestIsolateCandidateCleanup,
   reserveIsolateCandidate,
+  reserveStreamedIsolateCandidate,
 } from "/imports/server/isolate-candidates";
 import {
   materializeIsolateCandidate,
@@ -283,7 +284,9 @@ async function previewIsolateBundle(
   // Candidate reservation supplies retry identity, enqueuePreview() orders
   // calls within one frontend, and the preview-slot lease coordinates replicas.
   await requireIsolatePreviewAdmission(db, actor);
-  const candidate = await reserveIsolateCandidate(db, actor, requestId, bundle);
+  const candidate = options.packageUpload
+    ? await reserveStreamedIsolateCandidate(db, actor, requestId, bundle)
+    : await reserveIsolateCandidate(db, actor, requestId, bundle);
   try {
     return await enqueuePreview(candidate.ownerId, candidate.operationScope, async () => {
       const installed = await withPreviewSlot(db, candidate, async (lease) => {
