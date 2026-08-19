@@ -23,6 +23,7 @@ import { highlight } from "sugar-high";
 
 import { globalDb } from "/imports/db-deprecated";
 import { globalSubs } from "/imports/client/shell-client";
+import { globalGrains } from "/imports/client/shell-state";
 import { IsolatePreviewPane } from "/imports/client/apps/isolate-preview-pane";
 
 import "/imports/client/apps/styles/isolate-authoring.scss";
@@ -240,6 +241,7 @@ Template.isolateAuthoringPage.onCreated(function () {
 Template.isolateAuthoringPage.onRendered(function () {
   this.previewPane = new IsolatePreviewPane(
     globalDb,
+    globalGrains,
     this.find(".isolate-preview-frame-mount"),
     this.find(".isolate-preview-log-mount"));
 });

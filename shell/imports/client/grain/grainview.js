@@ -174,6 +174,7 @@ class GrainView {
   reset(immediatelyRevealIdentity) {
     // TODO(cleanup): This duplicates some code from the GrainView constructor.
 
+    this.setPowerboxRequest(undefined);
     this._dep.changed();
     this.destroy(true);
     this._hasLoaded = undefined;
@@ -204,6 +205,7 @@ class GrainView {
     // This must be called when the GrainView is removed from the list otherwise Blaze will go on
     // rendering the iframe forever, even if it is no longer linked into the page DOM.
 
+    if (!forReset) this.setPowerboxRequest(undefined);
     Blaze.remove(this._blazeView);
 
     if (this._sessionObserver) {

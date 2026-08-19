@@ -184,6 +184,18 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
         .frameSelector(previewFrame)
         .waitForElementVisible("body", long_wait)
         .assert.textContains("body", "Powerbox isolate preview")
+        .waitForElementVisible(
+          "#request-preview-powerbox[data-powerbox-ready=true]", medium_wait)
+        .click("#request-preview-powerbox")
+        .frameParent()
+        .waitForElementVisible(
+          ".powerbox-card button[data-card-id=\"http-url-https://api.example.test/v1\"]",
+          medium_wait)
+        .click(
+          ".powerbox-card button[data-card-id=\"http-url-https://api.example.test/v1\"]")
+        .frameSelector(previewFrame)
+        .waitForElementVisible("#preview-powerbox-result", medium_wait)
+        .assert.textContains("#preview-powerbox-result", "preview powerbox granted")
         .frameParent()
         .waitForElementVisible(".isolate-preview-log-contents > pre", medium_wait)
         .assert.textContains(

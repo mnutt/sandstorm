@@ -32,6 +32,7 @@ class GrainViewList {
     check(db, SandstormDb);
     this._db = db;
     this._grains = new ReactiveVar([]);
+    this._auxiliaryGrains = new ReactiveVar([]);
 
     // Restore last-open grain list for the same URL.
 
@@ -115,6 +116,8 @@ class GrainViewList {
     });
 
     this._grains.set([]);
+    this._auxiliaryGrains.get().forEach(grain => grain.setPowerboxRequest(undefined));
+    this._auxiliaryGrains.set([]);
   }
 
   getAll() {
@@ -148,8 +151,38 @@ class GrainViewList {
     return null;
   }
 
+  getAuxiliaryByOrigin(origin) {
+    check(origin, String);
+    return this._auxiliaryGrains.get().find(grain => grain.origin() === origin) || null;
+  }
+
   contains(grainView) {
     return this._grains.get().indexOf(grainView) != -1;
+  }
+
+  addAuxiliaryGrainView(grainView) {
+    check(grainView, GrainView);
+    const grains = this._auxiliaryGrains.get();
+    if (grains.includes(grainView)) return;
+    this._auxiliaryGrains.set(grains.concat([grainView]));
+  }
+
+  removeAuxiliaryGrainView(grainView) {
+    check(grainView, GrainView);
+    const grains = this._auxiliaryGrains.get();
+    if (!grains.includes(grainView)) return;
+    grainView.setPowerboxRequest(undefined);
+    this._auxiliaryGrains.set(grains.filter(grain => grain !== grainView));
+  }
+
+  getPowerboxRequestSource() {
+    const auxiliary = this._auxiliaryGrains.get();
+    for (let index = auxiliary.length - 1; index >= 0; --index) {
+      if (auxiliary[index].showPowerboxRequest()) return auxiliary[index];
+    }
+
+    const active = this.getActive();
+    return active && active.showPowerboxRequest() ? active : null;
   }
 
   addNewGrainView(grainId, path, tokenInfo, parentElement) {
