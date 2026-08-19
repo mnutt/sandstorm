@@ -117,12 +117,10 @@ class FakeAuthoringBackend {
 
 describe("trusted shell isolate authoring boundary", function () {
   let ownerId;
-  let authoringSessionId;
   let backend;
 
   beforeEach(async function () {
     ownerId = `shell-authoring-owner-${Random.id()}`;
-    authoringSessionId = `authoring_${Random.id()}`;
     backend = new FakeAuthoringBackend();
     await globalDb.collections.users.insertAsync({
       _id: ownerId,
@@ -147,24 +145,20 @@ describe("trusted shell isolate authoring boundary", function () {
   });
 
   it("derives one stable built-in authoring scope per account", function () {
-    const actor = makeShellIsolateActor(ownerId, authoringSessionId);
-    const otherSessionActor = makeShellIsolateActor(ownerId, `other_${Random.id()}`);
-    const otherActor = makeShellIsolateActor(`${ownerId}-other`, authoringSessionId);
+    const actor = makeShellIsolateActor(ownerId);
+    const repeatedActor = makeShellIsolateActor(ownerId);
+    const otherActor = makeShellIsolateActor(`${ownerId}-other`);
 
     assert.strictEqual(actor.accountId, ownerId);
     assert.include(actor.operationScope, ownerId);
-    assert.strictEqual(actor.operationScope, otherSessionActor.operationScope);
+    assert.strictEqual(actor.operationScope, repeatedActor.operationScope);
     assert.notStrictEqual(actor.operationScope, otherActor.operationScope);
-    assert.throws(
-      () => makeShellIsolateActor(ownerId, "bad session"), Meteor.Error);
-    assert.throws(
-      () => makeShellIsolateActor(null, authoringSessionId), Meteor.Error);
+    assert.throws(() => makeShellIsolateActor(null), Meteor.Error);
   });
 
   it("returns a sanitized candidate summary while retaining source server-side", async function () {
     const result = await previewIsolateFromShell(
-      globalDb, backend, ownerId, authoringSessionId,
-      "shell-preview", bundle(), previewMetadata());
+      globalDb, backend, ownerId, "shell-preview", bundle(), previewMetadata());
     const stored = await globalDb.collections.isolateCandidates.findOneAsync(
       result.candidate.candidateId);
 
@@ -180,15 +174,14 @@ describe("trusted shell isolate authoring boundary", function () {
     assert.strictEqual(stored.normalizedBundle.modules[0].content,
       bundle().modules[0].content);
     assert.strictEqual(stored.operationScope,
-      makeShellIsolateActor(ownerId, authoringSessionId).operationScope);
+      makeShellIsolateActor(ownerId).operationScope);
   });
 
   it("replaces preview data through the same account-bound authoring scope", async function () {
     const preview = await previewIsolateFromShell(
-      globalDb, backend, ownerId, authoringSessionId,
-      "shell-reset-preview", bundle(), previewMetadata());
+      globalDb, backend, ownerId, "shell-reset-preview", bundle(), previewMetadata());
     const reset = await resetIsolatePreviewFromShell(
-      globalDb, backend, ownerId, authoringSessionId);
+      globalDb, backend, ownerId);
 
     assert.notStrictEqual(reset.grainId, preview.grainId);
     assert.notExists(await globalDb.collections.grains.findOneAsync(preview.grainId));
@@ -197,11 +190,9 @@ describe("trusted shell isolate authoring boundary", function () {
 
   it("publishes a candidate through the stable account authoring scope", async function () {
     const preview = await previewIsolateFromShell(
-      globalDb, backend, ownerId, authoringSessionId,
-      "shell-publish-preview", bundle(), previewMetadata());
+      globalDb, backend, ownerId, "shell-publish-preview", bundle(), previewMetadata());
     const published = await publishIsolateFromShell(
-      globalDb, backend, ownerId, `different_${Random.id()}`,
-      "shell-publish", preview.candidate.candidateId,
+      globalDb, backend, ownerId, "shell-publish", preview.candidate.candidateId,
       { newApp: null }, publishedMetadata());
     assert.isString(published.createdAppId);
     assert.isString(published.revisionId);

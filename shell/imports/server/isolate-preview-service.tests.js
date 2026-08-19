@@ -25,7 +25,6 @@ import { grainsMenuSelector } from "/imports/server/grain-visibility";
 import { requestIsolateCandidateCleanup } from "/imports/server/isolate-candidates";
 import {
   IsolatePreviewError,
-  cleanupLegacyShellIsolatePreviews,
   cleanupRevokedIsolatePreviews,
   previewIsolateBundle,
   resetIsolatePreview,
@@ -301,25 +300,6 @@ describe("isolate preview grain lifecycle", function () {
     assert.deepEqual(backend.deleteCalls, [{ grainId: result.grainId, ownerId }]);
     const grant = await globalDb.collections.isolateFactoryGrants.findOneAsync(grantId);
     assert.instanceOf(grant.previewCleanedAt, Date);
-  });
-
-  it("reclaims preview grains from legacy browser-local shell scopes", async function () {
-    const legacyActor = {
-      ...actor,
-      operationScope: `shell-isolate-authoring:${ownerId}:authoring_${Random.id()}`,
-    };
-    const result = await previewIsolateBundle(
-      globalDb, backend, legacyActor, "legacy-shell-preview", bundle(), metadata());
-
-    assert.strictEqual(await cleanupLegacyShellIsolatePreviews(
-      globalDb, backend), 1);
-    assert.notExists(await globalDb.collections.grains.findOneAsync(result.grainId));
-    assert.notExists(await globalDb.collections.isolatePreviewSlots.findOneAsync({
-      ownerId,
-      operationScope: legacyActor.operationScope,
-    }));
-    assert.notExists(await globalDb.collections.isolateCandidates.findOneAsync(
-      result.candidate._id));
   });
 
   it("rechecks capability authority inside the preview lease", async function () {

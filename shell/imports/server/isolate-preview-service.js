@@ -40,7 +40,6 @@ class IsolatePreviewError extends IsolateError {
 const previewQueues = new Map();
 const PREVIEW_LOCK_STALE_MS = 5 * 60 * 1000;
 const PREVIEW_CLEANUP_BATCH_SIZE = 100;
-const SHELL_PREVIEW_SCOPE_PREFIX = "shell-isolate-authoring:";
 
 function fail(code, message) {
   throw new IsolatePreviewError(code, message);
@@ -393,51 +392,6 @@ async function cleanupRevokedIsolatePreviews(db, backend, now = new Date()) {
   return cleaned;
 }
 
-function legacyShellPreviewKey(ownerId, operationScope) {
-  if (typeof ownerId !== "string" || typeof operationScope !== "string" ||
-      !operationScope.startsWith(`${SHELL_PREVIEW_SCOPE_PREFIX}${ownerId}:`)) {
-    return null;
-  }
-
-  return `${ownerId}\0${operationScope}`;
-}
-
-async function cleanupLegacyShellIsolatePreviews(db, backend) {
-  const scopePattern = /^shell-isolate-authoring:/;
-  const slots = await db.collections.isolatePreviewSlots.find({
-    operationScope: scopePattern,
-  }, { limit: PREVIEW_CLEANUP_BATCH_SIZE }).fetchAsync();
-  const grains = await db.collections.grains.find({
-    "isolatePreview.scope": scopePattern,
-  }, {
-    fields: { userId: 1, isolatePreview: 1 },
-    limit: PREVIEW_CLEANUP_BATCH_SIZE,
-  }).fetchAsync();
-  const previews = new Map();
-  for (const slot of slots) {
-    const key = legacyShellPreviewKey(slot.ownerId, slot.operationScope);
-    if (key) previews.set(key, { ownerId: slot.ownerId, operationScope: slot.operationScope });
-  }
-
-  for (const grain of grains) {
-    const operationScope = grain.isolatePreview?.scope;
-    const key = legacyShellPreviewKey(grain.userId, operationScope);
-    if (key) previews.set(key, { ownerId: grain.userId, operationScope });
-  }
-
-  let cleaned = 0;
-  for (const preview of Array.from(previews.values()).slice(0, PREVIEW_CLEANUP_BATCH_SIZE)) {
-    try {
-      if (await removeIsolatePreview(
-        db, backend, preview.ownerId, preview.operationScope)) ++cleaned;
-    } catch (error) {
-      console.error(`Could not clean up legacy isolate preview ${preview.operationScope}:`, error);
-    }
-  }
-
-  return cleaned;
-}
-
 async function resetIsolatePreview(db, backend, actor) {
   if (!backend || typeof backend.deleteGrain !== "function" ||
       typeof backend.cap !== "function") {
@@ -494,7 +448,6 @@ async function resetIsolatePreview(db, backend, actor) {
 
 export {
   IsolatePreviewError,
-  cleanupLegacyShellIsolatePreviews,
   cleanupRevokedIsolatePreviews,
   findPreviewGrain,
   installCandidateInPreviewGrain,
