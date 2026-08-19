@@ -224,7 +224,7 @@ async function registerGeneratedPackage(db, generated, accountId, published) {
 }
 
 async function materializeInternal(
-    db, backendCap, accountId, candidateId, metadata, normalized) {
+    db, accountId, candidateId, metadata, normalized, generatePackage) {
   let candidate = await claimMetadata(db, accountId, candidateId, metadata);
   if (candidate.normalizedDigest !== normalized.digest) {
     fail("idempotency-conflict", "The supplied source does not match this isolate candidate.");
@@ -249,8 +249,7 @@ async function materializeInternal(
   }
 
   try {
-    const generated = await streamNormalizedIsolatePackage(
-      backendCap, "", metadata, normalized.bundle);
+    const generated = await generatePackage();
     const platformBindings = generatedBindingNames(generated.manifest);
     await registerGeneratedPackage(db, generated, accountId, false);
     const materializedAt = new Date();
@@ -343,7 +342,39 @@ function materializeIsolateCandidate(
     runningMaterializations,
     key,
     canonicalMetadata,
-    () => materializeInternal(db, backendCap, accountId, candidateId, metadata, normalized),
+    () => materializeInternal(db, accountId, candidateId, metadata, normalized,
+      async () => await streamNormalizedIsolatePackage(
+        backendCap, "", metadata, normalized.bundle)),
+    () => new IsolateCandidateError(
+      "idempotency-conflict",
+      "This candidate is already being prepared with different package metadata."),
+  );
+}
+
+function materializeUploadedIsolateCandidate(
+    db, packageUpload, accountId, candidateId, metadataInput, bundleInput) {
+  if (!packageUpload || typeof packageUpload.save !== "function") {
+    return Promise.reject(new IsolateCandidateError(
+      "invalid-context", "Candidate materialization requires a staged package upload."));
+  }
+
+  let metadata;
+  let normalized;
+  try {
+    metadata = normalizeGeneratedIsolateMetadata(metadataInput);
+    normalized = normalizeIsolateBundle(bundleInput);
+  } catch (error) {
+    return Promise.reject(error);
+  }
+
+  const key = `${accountId}\0${candidateId}`;
+  const canonicalMetadata = metadataKey(metadata);
+  return coalesceInFlightOperation(
+    runningMaterializations,
+    key,
+    canonicalMetadata,
+    () => materializeInternal(db, accountId, candidateId, metadata, normalized,
+      async () => packageResult(await packageUpload.save())),
     () => new IsolateCandidateError(
       "idempotency-conflict",
       "This candidate is already being prepared with different package metadata."),
@@ -353,6 +384,7 @@ function materializeIsolateCandidate(
 export {
   streamNormalizedIsolatePackage,
   materializeIsolateCandidate,
+  materializeUploadedIsolateCandidate,
   materializePublishedIsolateCandidate,
   normalizeGeneratedIsolateMetadata,
   registerGeneratedPackage,

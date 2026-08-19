@@ -20,6 +20,8 @@ import { getGlobalBackend } from "/imports/server/backend-instance";
 import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
 import { PersistentImpl } from "/imports/server/persistent";
 import { requestIsolateCandidateCleanup } from "/imports/server/isolate-candidates";
+import { normalizeGeneratedIsolateMetadata } from
+  "/imports/server/isolate-package-service";
 import { previewIsolateBundle } from "/imports/server/isolate-preview-service";
 import { watchIsolatePreviewLog } from "/imports/server/isolate-preview-log";
 import {
@@ -93,34 +95,47 @@ class IsolatePreviewerImpl extends PersistentImpl {
   preview(requestId, bundle, metadata) {
     return inMeteor(async () => {
       const grant = await requirePreviewGrant(this.db, this.grantId);
-      const { actor, receivedBundle } = await receivePreviewBundle(this.db, grant, bundle, {
+      const packageMetadata = normalizeGeneratedIsolateMetadata({
+        appTitle: metadata && metadata.appTitle,
+        nounPhrase: metadata && metadata.nounPhrase,
+        shortDescription: metadata && metadata.shortDescription,
+        appVersion: 0,
+        marketingVersion: "preview",
+      });
+      const backend = getGlobalBackend();
+      const { actor, receivedBundle, packageUpload } = await receivePreviewBundle(
+        this.db, grant, bundle, {
         wrapByteStream: stream => new Capnp.Capability(stream, ByteStream),
         wrapReceiver: receiver => new Capnp.Capability(receiver, Authoring.BundleReceiver),
+      }, {
+        backendCap: backend.cap(),
+        metadata: packageMetadata,
       });
-      await requirePreviewGrant(this.db, this.grantId);
-      const result = await previewIsolateBundle(
-        this.db,
-        getGlobalBackend(),
-        actor,
-        requestId,
-        receivedBundle,
-        {
-          appTitle: metadata && metadata.appTitle,
-          nounPhrase: metadata && metadata.nounPhrase,
-          shortDescription: metadata && metadata.shortDescription,
-          appVersion: 0,
-          marketingVersion: "preview",
-        },
-        async () => await requirePreviewGrant(this.db, this.grantId));
-      const { makePersistentUiView } = await import("/imports/server/core");
-      const view = await makePersistentUiView(this.db, {
-        grainId: result.grainId,
-        accountId: grant.ownerId,
-      }, result.grainId);
-      return {
-        candidate: makeCandidateCapability(this.db, result.candidate, grant),
-        view,
-      };
+      try {
+        await requirePreviewGrant(this.db, this.grantId);
+        const result = await previewIsolateBundle(
+          this.db,
+          backend,
+          actor,
+          requestId,
+          receivedBundle,
+          packageMetadata,
+          {
+            requireActive: async () => await requirePreviewGrant(this.db, this.grantId),
+            packageUpload,
+          });
+        const { makePersistentUiView } = await import("/imports/server/core");
+        const view = await makePersistentUiView(this.db, {
+          grainId: result.grainId,
+          accountId: grant.ownerId,
+        }, result.grainId);
+        return {
+          candidate: makeCandidateCapability(this.db, result.candidate, grant),
+          view,
+        };
+      } finally {
+        if (packageUpload && typeof packageUpload.close === "function") packageUpload.close();
+      }
     });
   }
 

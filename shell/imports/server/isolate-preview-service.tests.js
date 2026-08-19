@@ -318,9 +318,11 @@ describe("isolate preview grain lifecycle", function () {
       "revoked-before-install",
       bundle(),
       metadata(),
-      async () => {
-        checked = true;
-        throw new Error("simulated revoked preview grant");
+      {
+        requireActive: async () => {
+          checked = true;
+          throw new Error("simulated revoked preview grant");
+        },
       },
     ).then(() => null, error => error);
 

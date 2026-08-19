@@ -19,11 +19,14 @@ import chai from "chai";
 
 import { globalDb } from "/imports/db-deprecated";
 import { ISOLATE_BUNDLE_LIMITS } from "/imports/server/isolate-bundle";
+import { fakeStreamedIsolatePackageUpload } from
+  "/imports/server/isolate-package-test-helpers";
 import { requirePublishGrant } from "/imports/server/isolate-publisher-grants";
 import {
   createPreviewGrant,
   receiveIsolateBundle,
   receivePreviewBundle,
+  receiveStagedIsolateBundle,
   revokePreviewGrantIfUnreferenced,
   requirePreviewGrant,
 } from "/imports/server/isolate-previewer-service";
@@ -119,6 +122,30 @@ describe("isolate previewer capability", function () {
       compatibilityFlags: [],
       modules: [{ name: "worker.js", type: "esModule", content: source }],
     });
+  });
+
+  it("tees a Powerbox transfer into backend-owned package staging", async function () {
+    const source = "export default { fetch() { return new Response('staged'); } };";
+    let savedSource;
+    const backend = {
+      async streamIsolatePackage(requestedAppId, metadata, info) {
+        assert.strictEqual(requestedAppId, "");
+        assert.strictEqual(metadata.appTitle, "Staged preview");
+        return fakeStreamedIsolatePackageUpload(info, async (value) => {
+          savedSource = value;
+          return { packageId: "staged-package", appId: "staged-app", manifest: {} };
+        });
+      },
+    };
+    const staged = await receiveStagedIsolateBundle(streamedBundle(source), backend, {
+      appTitle: "Staged preview",
+    });
+
+    assert.strictEqual(staged.receivedBundle.modules[0].content, source);
+    assert.isUndefined(savedSource);
+    const generated = await staged.packageUpload.save();
+    assert.strictEqual(generated.packageId, "staged-package");
+    assert.strictEqual(savedSource.modules[0].esModule.toString("utf8"), source);
   });
 
   it("receives binary modules without UTF-8 decoding", async function () {
