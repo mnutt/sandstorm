@@ -107,6 +107,41 @@ describe("isolate candidate bundle normalization", function () {
     assert.strictEqual(result.bundle.modules.length, 4);
   });
 
+  it("preserves binary data and Wasm modules", function () {
+    const image = Buffer.from([0x89, 0x50, 0x00, 0xff]);
+    const wasm = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    const input = bundle({
+      modules: [
+        {
+          name: "worker.js",
+          type: "esModule",
+          content: "import image from './image.bin'; import wasm from './module.wasm'; " +
+            "export default { fetch() { return new Response(image); } };",
+        },
+        { name: "image.bin", type: "data", content: image },
+        { name: "module.wasm", type: "wasm", content: wasm },
+      ],
+    });
+    const first = normalizeIsolateBundle(input);
+    image.fill(0);
+    wasm.fill(0);
+
+    const normalizedImage = first.bundle.modules.find(module => module.name === "image.bin");
+    const normalizedWasm = first.bundle.modules.find(module => module.name === "module.wasm");
+    assert.deepEqual([...normalizedImage.content], [0x89, 0x50, 0x00, 0xff]);
+    assert.deepEqual(
+      [...normalizedWasm.content], [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+
+    const second = normalizeIsolateBundle(bundle({
+      modules: [
+        { name: "module.wasm", type: "wasm", content: normalizedWasm.content },
+        { name: "image.bin", type: "data", content: normalizedImage.content },
+        input.modules[0],
+      ],
+    }));
+    assert.strictEqual(first.digest, second.digest);
+  });
+
   it("rejects unsupported format versions and unknown fields", function () {
     expectBundleError(() => normalizeIsolateBundle(bundle({ formatVersion: 2 })),
         "unsupported-format-version", "formatVersion");
@@ -160,6 +195,12 @@ describe("isolate candidate bundle normalization", function () {
         { name: "bad.json", type: "json", content: "{ nope" },
       ],
     })), "invalid-json", "modules[1].content");
+    expectBundleError(() => normalizeIsolateBundle(bundle({
+      modules: [
+        { name: "worker.js", type: "esModule", content: "import './bad.wasm';" },
+        { name: "bad.wasm", type: "wasm", content: Buffer.from("not wasm") },
+      ],
+    })), "invalid-wasm", "modules[1].content");
   });
 
   it("rejects imports that cannot be fixed inside the snapshot", function () {

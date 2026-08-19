@@ -20,7 +20,9 @@ import chai from "chai";
 import { globalDb } from "/imports/db-deprecated";
 import { IsolateCandidateError, reserveIsolateCandidate } from
   "/imports/server/isolate-candidates";
+import { normalizeIsolateBundle } from "/imports/server/isolate-bundle";
 import {
+  bundleToWorkerSource,
   materializeIsolateCandidate,
   normalizeGeneratedIsolateMetadata,
 } from "/imports/server/isolate-package-service";
@@ -124,6 +126,25 @@ describe("isolate candidate package materialization", function () {
     };
     backend = new FakeBackend();
     packageIds.push(backend.packageId);
+  });
+
+  it("hands binary data and Wasm modules to the backend unchanged", function () {
+    const image = Buffer.from([0x89, 0x50, 0x00, 0xff]);
+    const wasm = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    const normalized = normalizeIsolateBundle({
+      ...bundle(),
+      modules: [
+        bundle().modules[1],
+        { name: "image.bin", type: "data", content: image },
+        { name: "module.wasm", type: "wasm", content: wasm },
+      ],
+    });
+    const source = bundleToWorkerSource(normalized.bundle);
+    const imageModule = source.modules.find(module => module.name === "image.bin");
+    const wasmModule = source.modules.find(module => module.name === "module.wasm");
+
+    assert.deepEqual([...imageModule.data], [...image]);
+    assert.deepEqual([...wasmModule.wasm], [...wasm]);
   });
 
   afterEach(async function () {
