@@ -17,6 +17,7 @@
 import { Random } from "meteor/random";
 
 import { IsolateError } from "/imports/server/isolate-error";
+import { mongoFindOneAndUpdateValue } from "/imports/server/isolate-mongo";
 import {
   createGrainFromResolvedAction,
   recoverInitializingPreviewGrain,
@@ -75,11 +76,6 @@ async function requireIsolatePreviewAdmission(db, actor) {
   return existingGrain;
 }
 
-function resultValue(result) {
-  if (result && Object.prototype.hasOwnProperty.call(result, "value")) return result.value;
-  return result;
-}
-
 async function claimPreviewSlot(db, candidate) {
   const now = new Date();
   const inserted = await db.collections.isolatePreviewSlots.rawCollection().findOneAndUpdate({
@@ -93,10 +89,11 @@ async function claimPreviewSlot(db, candidate) {
       createdAt: now,
     },
   }, { upsert: true, returnDocument: "after" });
-  const slot = resultValue(inserted) || await db.collections.isolatePreviewSlots.findOneAsync({
-    ownerId: candidate.ownerId,
-    operationScope: candidate.operationScope,
-  });
+  const slot = mongoFindOneAndUpdateValue(inserted) ||
+    await db.collections.isolatePreviewSlots.findOneAsync({
+      ownerId: candidate.ownerId,
+      operationScope: candidate.operationScope,
+    });
   if (!slot) fail("preview-slot-failed", "Could not reserve the isolate preview slot.");
 
   const lock = {

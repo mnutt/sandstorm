@@ -22,6 +22,7 @@ import { findOwnedIsolateCandidate } from "/imports/server/isolate-candidates";
 import { makeIsolateContextValidator } from "/imports/server/isolate-context";
 import { IsolateError } from "/imports/server/isolate-error";
 import { coalesceInFlightOperation } from "/imports/server/isolate-in-flight";
+import { mongoFindOneAndUpdateValue } from "/imports/server/isolate-mongo";
 import {
   materializePublishedIsolateCandidate,
   normalizeGeneratedIsolateMetadata,
@@ -117,11 +118,6 @@ function generateAppId() {
   return encodeAppId(Crypto.randomBytes(32));
 }
 
-function resultValue(result) {
-  if (result && Object.prototype.hasOwnProperty.call(result, "value")) return result.value;
-  return result;
-}
-
 function operationInputKey(actor, candidateId, target, metadata) {
   return JSON.stringify({
     ownerId: actor.accountId,
@@ -160,7 +156,7 @@ async function reservePublishOperation(db, actor, requestId, candidateId, target
     }, {
       $setOnInsert: record,
     }, { upsert: true, returnDocument: "after" });
-  const operation = resultValue(inserted) ||
+  const operation = mongoFindOneAndUpdateValue(inserted) ||
     await db.collections.isolatePublishOperations.findOneAsync({
       operationScope: actor.operationScope,
       requestId,
@@ -440,7 +436,7 @@ async function runPublication(db, backend, initialOperation) {
       }, {
         $setOnInsert: revision,
       }, { upsert: true, returnDocument: "after" });
-    const storedRevision = resultValue(insertedRevision) ||
+    const storedRevision = mongoFindOneAndUpdateValue(insertedRevision) ||
       await db.collections.createdIsolateRevisions.findOneAsync(revision._id);
     if (!storedRevision || storedRevision.ownerId !== revision.ownerId ||
         storedRevision.createdAppId !== revision.createdAppId ||
