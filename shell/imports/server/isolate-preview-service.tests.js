@@ -23,6 +23,8 @@ import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import { grainsMenuSelector } from "/imports/server/grain-visibility";
 import { requestIsolateCandidateCleanup } from "/imports/server/isolate-candidates";
+import { fakeStreamedIsolatePackageUpload } from
+  "/imports/server/isolate-package-test-helpers";
 import {
   IsolatePreviewError,
   cleanupRevokedIsolatePreviews,
@@ -65,7 +67,12 @@ class FakePreviewBackend {
     return this;
   }
 
-  async generateIsolatePackage(requestedAppId, packageMetadata, source) {
+  async streamIsolatePackage(requestedAppId, packageMetadata, info) {
+    return fakeStreamedIsolatePackageUpload(
+      info, source => this.makeIsolatePackage(requestedAppId, packageMetadata, source));
+  }
+
+  async makeIsolatePackage(requestedAppId, packageMetadata, source) {
     this.generateCalls.push({ requestedAppId, packageMetadata, source });
     const hash = Crypto.createHash("sha256");
     hash.update(JSON.stringify(packageMetadata));

@@ -21,10 +21,12 @@ import { globalDb } from "/imports/db-deprecated";
 import { IsolateCandidateError, reserveIsolateCandidate } from
   "/imports/server/isolate-candidates";
 import { normalizeIsolateBundle } from "/imports/server/isolate-bundle";
+import { fakeStreamedIsolatePackageUpload } from
+  "/imports/server/isolate-package-test-helpers";
 import {
-  bundleToWorkerSource,
   materializeIsolateCandidate,
   normalizeGeneratedIsolateMetadata,
+  streamNormalizedIsolatePackage,
 } from "/imports/server/isolate-package-service";
 
 const { assert } = chai;
@@ -68,28 +70,30 @@ class FakeBackend {
     this.packageId = `generated-${Random.id()}`;
   }
 
-  async generateIsolatePackage(requestedAppId, packageMetadata, source) {
-    this.calls.push({ requestedAppId, packageMetadata, source });
-    if (this.failuresRemaining > 0) {
-      --this.failuresRemaining;
-      throw new Error("simulated backend disconnect");
-    }
+  async streamIsolatePackage(requestedAppId, packageMetadata, info) {
+    return fakeStreamedIsolatePackageUpload(info, async (source) => {
+      this.calls.push({ requestedAppId, packageMetadata, source });
+      if (this.failuresRemaining > 0) {
+        --this.failuresRemaining;
+        throw new Error("simulated backend disconnect");
+      }
 
-    return {
-      packageId: this.packageId,
-      appId: `preview-app-${this.packageId}`,
-      manifest: {
-        appTitle: { defaultText: packageMetadata.appTitle },
-        appVersion: packageMetadata.appVersion,
-        actions: [{
-          command: {
-            isolate: {
-              bindings: ["SANDSTORM_API", "POWERBOX", "STORAGE"].map(name => ({ name })),
+      return {
+        packageId: this.packageId,
+        appId: `preview-app-${this.packageId}`,
+        manifest: {
+          appTitle: { defaultText: packageMetadata.appTitle },
+          appVersion: packageMetadata.appVersion,
+          actions: [{
+            command: {
+              isolate: {
+                bindings: ["SANDSTORM_API", "POWERBOX", "STORAGE"].map(name => ({ name })),
+              },
             },
-          },
-        }],
-      },
-    };
+          }],
+        },
+      };
+    });
   }
 }
 
@@ -128,7 +132,7 @@ describe("isolate candidate package materialization", function () {
     packageIds.push(backend.packageId);
   });
 
-  it("hands binary data and Wasm modules to the backend unchanged", function () {
+  it("hands binary data and Wasm modules to the backend unchanged", async function () {
     const image = Buffer.from([0x89, 0x50, 0x00, 0xff]);
     const wasm = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
     const normalized = normalizeIsolateBundle({
@@ -139,7 +143,8 @@ describe("isolate candidate package materialization", function () {
         { name: "module.wasm", type: "wasm", content: wasm },
       ],
     });
-    const source = bundleToWorkerSource(normalized.bundle);
+    await streamNormalizedIsolatePackage(backend, "", metadata(), normalized.bundle);
+    const source = backend.calls[0].source;
     const imageModule = source.modules.find(module => module.name === "image.bin");
     const wasmModule = source.modules.find(module => module.name === "module.wasm");
 

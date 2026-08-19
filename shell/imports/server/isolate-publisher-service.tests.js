@@ -22,6 +22,8 @@ import chai from "chai";
 import { globalDb } from "/imports/db-deprecated";
 import { reserveIsolateCandidate } from "/imports/server/isolate-candidates";
 import { materializeIsolateCandidate } from "/imports/server/isolate-package-service";
+import { fakeStreamedIsolatePackageUpload } from
+  "/imports/server/isolate-package-test-helpers";
 import {
   IsolatePublisherError,
   encodeAppId,
@@ -77,7 +79,12 @@ class FakePublisherBackend {
     return this;
   }
 
-  async generateIsolatePackage(requestedAppId, packageMetadata, source) {
+  async streamIsolatePackage(requestedAppId, packageMetadata, info) {
+    return fakeStreamedIsolatePackageUpload(
+      info, source => this.makeIsolatePackage(requestedAppId, packageMetadata, source));
+  }
+
+  async makeIsolatePackage(requestedAppId, packageMetadata, source) {
     this.calls.push({ requestedAppId, packageMetadata, source });
     const hash = Crypto.createHash("sha256");
     hash.update(requestedAppId || "preview");
@@ -126,7 +133,7 @@ class FakePublisherBackend {
       throw new Error("simulated published package failure");
     }
 
-    const result = await this.generateIsolatePackage(requestedAppId, packageMetadata, source);
+    const result = await this.makeIsolatePackage(requestedAppId, packageMetadata, source);
     this.calls[this.calls.length - 1].sourcePackageId = sourcePackageId;
     return result;
   }

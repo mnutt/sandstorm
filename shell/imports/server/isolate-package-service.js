@@ -16,7 +16,11 @@
 
 import { IsolateCandidateError, findOwnedIsolateCandidate } from
   "/imports/server/isolate-candidates";
-import { normalizeIsolateBundle } from "/imports/server/isolate-bundle";
+import {
+  moduleContentBytes,
+  moduleContentSize,
+  normalizeIsolateBundle,
+} from "/imports/server/isolate-bundle";
 import { coalesceInFlightOperation } from "/imports/server/isolate-in-flight";
 
 const METADATA_LIMITS = Object.freeze({
@@ -27,6 +31,7 @@ const METADATA_LIMITS = Object.freeze({
 });
 
 const runningMaterializations = new Map();
+const BACKEND_UPLOAD_CHUNK_BYTES = 64 * 1024;
 
 function fail(code, message) {
   throw new IsolateCandidateError(code, message);
@@ -73,19 +78,60 @@ function metadataKey(metadata) {
   return JSON.stringify(metadata);
 }
 
-function bundleToWorkerSource(bundle) {
+function backendBundleInfo(bundle) {
   return {
     formatVersion: bundle.formatVersion,
     mainModule: bundle.mainModule,
     compatibilityDate: bundle.compatibilityDate,
     compatibilityFlags: bundle.compatibilityFlags,
-    modules: bundle.modules.map((module) => {
-      const result = { name: module.name };
-      result[module.type] = Buffer.from(module.content, "utf8");
-      return result;
-    }),
-    bindings: [],
+    modules: bundle.modules.map(module => ({
+      name: module.name,
+      type: module.type,
+      size: moduleContentSize(module),
+    })),
   };
+}
+
+async function streamModuleToBackend(upload, index, module) {
+  const response = await upload.beginModule(index);
+  const stream = response && response.stream;
+  if (!stream || typeof stream.write !== "function" || typeof stream.done !== "function") {
+    fail("package-generation-failed", "The backend returned an invalid module upload stream.");
+  }
+
+  try {
+    const content = moduleContentBytes(module);
+    if (typeof stream.expectSize === "function") await stream.expectSize(content.length);
+    for (let offset = 0; offset < content.length; offset += BACKEND_UPLOAD_CHUNK_BYTES) {
+      await stream.write(content.subarray(offset, offset + BACKEND_UPLOAD_CHUNK_BYTES));
+    }
+
+    await stream.done();
+  } finally {
+    if (typeof stream.close === "function") stream.close();
+  }
+}
+
+async function streamNormalizedIsolatePackage(
+    backendCap, requestedAppId, metadata, normalizedBundle) {
+  const response = await backendCap.streamIsolatePackage(
+    requestedAppId, metadata, backendBundleInfo(normalizedBundle));
+  const upload = response && response.upload;
+  if (!upload || typeof upload.beginModule !== "function" ||
+      typeof upload.finish !== "function" || typeof upload.save !== "function") {
+    fail("package-generation-failed", "The backend returned an invalid isolate upload.");
+  }
+
+  try {
+    for (const [index, module] of normalizedBundle.modules.entries()) {
+      await streamModuleToBackend(upload, index, module);
+    }
+
+    await upload.finish();
+    return packageResult(await upload.save());
+  } finally {
+    if (typeof upload.close === "function") upload.close();
+  }
 }
 
 function packageResult(result) {
@@ -203,8 +249,8 @@ async function materializeInternal(
   }
 
   try {
-    const generated = packageResult(await backendCap.generateIsolatePackage(
-      "", metadata, bundleToWorkerSource(normalized.bundle)));
+    const generated = await streamNormalizedIsolatePackage(
+      backendCap, "", metadata, normalized.bundle);
     const platformBindings = generatedBindingNames(generated.manifest);
     await registerGeneratedPackage(db, generated, accountId, false);
     const materializedAt = new Date();
@@ -277,7 +323,7 @@ async function materializePublishedIsolateCandidate(
 
 function materializeIsolateCandidate(
     db, backendCap, accountId, candidateId, metadataInput, bundleInput) {
-  if (!backendCap || typeof backendCap.generateIsolatePackage !== "function") {
+  if (!backendCap || typeof backendCap.streamIsolatePackage !== "function") {
     return Promise.reject(new IsolateCandidateError(
       "invalid-context", "Candidate materialization requires a backend capability."));
   }
@@ -305,7 +351,7 @@ function materializeIsolateCandidate(
 }
 
 export {
-  bundleToWorkerSource,
+  streamNormalizedIsolatePackage,
   materializeIsolateCandidate,
   materializePublishedIsolateCandidate,
   normalizeGeneratedIsolateMetadata,

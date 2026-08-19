@@ -27,6 +27,8 @@ import {
   publishIsolateFromShell,
   resetIsolatePreviewFromShell,
 } from "/imports/server/isolate-authoring-server";
+import { fakeStreamedIsolatePackageUpload } from
+  "/imports/server/isolate-package-test-helpers";
 
 const { assert } = chai;
 
@@ -70,7 +72,12 @@ class FakeAuthoringBackend {
     return this;
   }
 
-  async generateIsolatePackage(requestedAppId, packageMetadata, source) {
+  async streamIsolatePackage(requestedAppId, packageMetadata, info) {
+    return fakeStreamedIsolatePackageUpload(
+      info, source => this.makeIsolatePackage(requestedAppId, packageMetadata, source));
+  }
+
+  async makeIsolatePackage(requestedAppId, packageMetadata, source) {
     this.generateCalls.push({ requestedAppId, packageMetadata, source });
     const hash = Crypto.createHash("sha256");
     hash.update(requestedAppId || "preview");
@@ -109,7 +116,7 @@ class FakeAuthoringBackend {
   async deriveIsolatePackage(sourcePackageId, requestedAppId, packageMetadata) {
     const source = this.sources.get(sourcePackageId);
     if (!source) throw new Error("missing preview source package");
-    return await this.generateIsolatePackage(requestedAppId, packageMetadata, source);
+    return await this.makeIsolatePackage(requestedAppId, packageMetadata, source);
   }
 
   async startGrainInternal(packageId, grainId, ownerId, command, isNew) {
