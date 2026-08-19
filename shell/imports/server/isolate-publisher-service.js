@@ -393,6 +393,16 @@ function publicationResult(operation) {
   });
 }
 
+function publicIsolatePublication(result) {
+  return Object.freeze({
+    createdAppId: result.createdAppId,
+    revisionId: result.revisionId,
+    appId: result.appId,
+    appVersion: result.appVersion,
+    title: result.title,
+  });
+}
+
 async function releaseCreatedApp(db, operation) {
   await db.collections.createdIsolateApps.updateAsync({
     _id: operation.createdAppId,
@@ -579,5 +589,6 @@ export {
   generateAppId,
   normalizeAppMetadata,
   normalizeTarget,
+  publicIsolatePublication,
   publishIsolateCandidate,
 };

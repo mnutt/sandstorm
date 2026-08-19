@@ -25,6 +25,7 @@ import { materializeIsolateCandidate } from "/imports/server/isolate-package-ser
 import {
   IsolatePublisherError,
   encodeAppId,
+  publicIsolatePublication,
   publishIsolateCandidate,
 } from "/imports/server/isolate-publisher-service";
 
@@ -202,6 +203,14 @@ describe("isolate publisher", function () {
     assert.notProperty(operation, "lock");
     assert.notProperty(app, "publishLock");
     assert.strictEqual(await globalDb.collections.grains.find({ userId: ownerId }).countAsync(), 0);
+    assert.deepEqual(publicIsolatePublication(result), {
+      createdAppId: result.createdAppId,
+      revisionId: result.revisionId,
+      appId: result.appId,
+      appVersion: result.appVersion,
+      title: result.title,
+    });
+    assert.notProperty(publicIsolatePublication(result), "packageId");
   });
 
   it("coalesces concurrent calls and returns the recorded result on retry", async function () {

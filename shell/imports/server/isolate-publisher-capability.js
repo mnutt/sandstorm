@@ -30,7 +30,10 @@ import {
   requireTargetOwnership,
   revokePublishGrantIfUnreferenced,
 } from "/imports/server/isolate-publisher-grants";
-import { publishIsolateCandidate } from "/imports/server/isolate-publisher-service";
+import {
+  publicIsolatePublication,
+  publishIsolateCandidate,
+} from "/imports/server/isolate-publisher-service";
 
 const Authoring = Capnp.importSystem("sandstorm/isolate-authoring.capnp");
 const AuthoringImpl = Capnp.importSystem("sandstorm/isolate-authoring-impl.capnp");
@@ -50,16 +53,6 @@ function schemaIntent(intent) {
   };
 }
 
-function publicResult(result) {
-  return {
-    createdAppId: result.createdAppId,
-    revisionId: result.revisionId,
-    appId: result.appId,
-    appVersion: result.appVersion,
-    title: result.title,
-  };
-}
-
 class IsolatePublisherImpl extends PersistentImpl {
   constructor(db, saveTemplate, grantId) {
     super(db, saveTemplate);
@@ -72,7 +65,7 @@ class IsolatePublisherImpl extends PersistentImpl {
       let grant = await requirePublishGrant(this.db, this.grantId);
       const candidate = await requireCommittedCandidate(this.db, grant);
       grant = await consumePublishGrant(this.db, grant, requestId);
-      if (grant.result) return { result: publicResult(grant.result) };
+      if (grant.result) return { result: publicIsolatePublication(grant.result) };
 
       const result = await publishIsolateCandidate(
         this.db,
@@ -87,7 +80,7 @@ class IsolatePublisherImpl extends PersistentImpl {
         grant.target,
         grant.metadata);
       await completePublishGrant(this.db, grant, result);
-      return { result: publicResult(result) };
+      return { result: publicIsolatePublication(result) };
     });
   }
 }
