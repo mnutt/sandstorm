@@ -23,8 +23,13 @@ import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import { grainsMenuSelector } from "/imports/server/grain-visibility";
 import { requestIsolateCandidateCleanup } from "/imports/server/isolate-candidates";
-import { IsolatePreviewError, previewIsolateBundle, resetIsolatePreview } from
-  "/imports/server/isolate-preview-service";
+import {
+  IsolatePreviewError,
+  cleanupLegacyShellIsolatePreviews,
+  cleanupRevokedIsolatePreviews,
+  previewIsolateBundle,
+  resetIsolatePreview,
+} from "/imports/server/isolate-preview-service";
 
 const { assert } = chai;
 
@@ -136,6 +141,7 @@ describe("isolate preview grain lifecycle", function () {
     }
 
     await globalDb.collections.grains.removeAsync({ userId: ownerId });
+    await globalDb.collections.isolateFactoryGrants.removeAsync({ ownerId });
     await globalDb.collections.isolateCandidates.removeAsync({ ownerId });
     await globalDb.collections.isolatePreviewSlots.removeAsync({ ownerId });
     if (packageIds.length > 0) {
@@ -260,6 +266,79 @@ describe("isolate preview grain lifecycle", function () {
 
     assert.notStrictEqual(second.grainId, first.grainId);
     assert.strictEqual(await globalDb.collections.grains.find({ userId: ownerId }).countAsync(), 2);
+  });
+
+  it("reclaims the hidden grain of a revoked preview grant", async function () {
+    const grantId = Random.id();
+    const grantActor = {
+      ...actor,
+      operationScope: `isolate-preview-grant:${grantId}`,
+    };
+    const result = await previewIsolateBundle(
+      globalDb, backend, grantActor, "revoked-grant", bundle(), metadata());
+    const revokedAt = new Date(Date.now() - 10 * 60 * 1000);
+    await globalDb.collections.isolateFactoryGrants.insertAsync({
+      _id: grantId,
+      kind: "preview",
+      ownerId,
+      requestingGrainId: actor.requestingGrainId,
+      createdAt: new Date(Date.now() - 20 * 60 * 1000),
+      revokedAt,
+    });
+
+    assert.strictEqual(await cleanupRevokedIsolatePreviews(
+      globalDb, backend), 1);
+    assert.notExists(await globalDb.collections.grains.findOneAsync(result.grainId));
+    assert.notExists(await globalDb.collections.isolatePreviewSlots.findOneAsync({
+      ownerId,
+      operationScope: grantActor.operationScope,
+    }));
+    assert.notExists(await globalDb.collections.isolateCandidates.findOneAsync(
+      result.candidate._id));
+    assert.deepEqual(backend.deleteCalls, [{ grainId: result.grainId, ownerId }]);
+    const grant = await globalDb.collections.isolateFactoryGrants.findOneAsync(grantId);
+    assert.instanceOf(grant.previewCleanedAt, Date);
+  });
+
+  it("reclaims preview grains from legacy browser-local shell scopes", async function () {
+    const legacyActor = {
+      ...actor,
+      operationScope: `shell-isolate-authoring:${ownerId}:authoring_${Random.id()}`,
+    };
+    const result = await previewIsolateBundle(
+      globalDb, backend, legacyActor, "legacy-shell-preview", bundle(), metadata());
+
+    assert.strictEqual(await cleanupLegacyShellIsolatePreviews(
+      globalDb, backend), 1);
+    assert.notExists(await globalDb.collections.grains.findOneAsync(result.grainId));
+    assert.notExists(await globalDb.collections.isolatePreviewSlots.findOneAsync({
+      ownerId,
+      operationScope: legacyActor.operationScope,
+    }));
+    assert.notExists(await globalDb.collections.isolateCandidates.findOneAsync(
+      result.candidate._id));
+  });
+
+  it("rechecks capability authority inside the preview lease", async function () {
+    let checked = false;
+    const error = await previewIsolateBundle(
+      globalDb,
+      backend,
+      actor,
+      "revoked-before-install",
+      bundle(),
+      metadata(),
+      async () => {
+        checked = true;
+        throw new Error("simulated revoked preview grant");
+      },
+    ).then(() => null, error => error);
+
+    assert.isTrue(checked);
+    assert.match(error.message, /simulated revoked preview grant/);
+    assert.strictEqual(backend.generateCalls.length, 0);
+    assert.strictEqual(backend.startCalls.length, 0);
+    assert.strictEqual(await globalDb.collections.grains.find({ userId: ownerId }).countAsync(), 0);
   });
 
   it("resets preview data by replacing the grain with a fresh first start", async function () {

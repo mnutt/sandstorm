@@ -52,7 +52,10 @@ function makeShellIsolateActor(accountId, authoringSessionId) {
 
   return Object.freeze({
     accountId,
-    operationScope: `shell-isolate-authoring:${accountId}:${authoringSessionId}`,
+    // The browser-local session ID is retained for wire compatibility but is
+    // not allowed to multiply hidden preview grains. The built-in authoring
+    // surface has one stable preview scope per account.
+    operationScope: `shell-isolate-authoring:${accountId}`,
   });
 }
 

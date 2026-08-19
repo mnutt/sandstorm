@@ -627,6 +627,13 @@ the reserved operation; a different request ID is rejected.
   this is an admission guardrail rather than the deferred product quota.
 - Do not expire or trash a preview grain merely because it is inactive. It
   follows the ordinary grain sleep, wake, trash, and deletion lifecycle.
+- Reuse one stable account-scoped preview slot for the built-in authoring UI so
+  clearing browser-local draft state cannot strand additional hidden grains.
+  Reclaim legacy shell preview scopes created from the former random browser
+  session namespace.
+  A Powerbox preview slot instead follows its durable preview grant: once the
+  last saved grant is revoked, reclaim its hidden grain after the in-flight
+  preview lease window and retry cleanup periodically.
 - Keep candidate artifacts while referenced by a candidate capability, preview
   grain, publication operation, or revision. Cleanup may reclaim only artifacts
   proven to be unreferenced.

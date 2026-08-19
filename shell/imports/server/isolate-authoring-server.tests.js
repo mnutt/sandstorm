@@ -27,7 +27,6 @@ import {
   publishIsolateFromShell,
   resetIsolatePreviewFromShell,
 } from "/imports/server/isolate-authoring-server";
-import { IsolatePublisherError } from "/imports/server/isolate-publisher-service";
 
 const { assert } = chai;
 
@@ -141,12 +140,14 @@ describe("trusted shell isolate authoring boundary", function () {
     await globalDb.collections.users.removeAsync(ownerId);
   });
 
-  it("derives an account-bound scope from a non-authoritative session namespace", function () {
+  it("derives one stable built-in authoring scope per account", function () {
     const actor = makeShellIsolateActor(ownerId, authoringSessionId);
+    const otherSessionActor = makeShellIsolateActor(ownerId, `other_${Random.id()}`);
     const otherActor = makeShellIsolateActor(`${ownerId}-other`, authoringSessionId);
 
     assert.strictEqual(actor.accountId, ownerId);
     assert.include(actor.operationScope, ownerId);
+    assert.strictEqual(actor.operationScope, otherSessionActor.operationScope);
     assert.notStrictEqual(actor.operationScope, otherActor.operationScope);
     assert.throws(
       () => makeShellIsolateActor(ownerId, "bad session"), Meteor.Error);
@@ -185,22 +186,12 @@ describe("trusted shell isolate authoring boundary", function () {
     assert.isNotNull(await globalDb.collections.grains.findOneAsync(reset.grainId));
   });
 
-  it("publishes only a candidate from the same shell authoring session", async function () {
+  it("publishes a candidate through the stable account authoring scope", async function () {
     const preview = await previewIsolateFromShell(
       globalDb, backend, ownerId, authoringSessionId,
       "shell-publish-preview", bundle(), previewMetadata());
-    const error = await publishIsolateFromShell(
-      globalDb, backend, ownerId, `different_${Random.id()}`,
-      "wrong-session-publish", preview.candidate.candidateId,
-      { newApp: null }, publishedMetadata()).then(() => null, error => error);
-
-    assert.instanceOf(error, IsolatePublisherError);
-    assert.strictEqual(error.code, "candidate-not-found");
-    assert.strictEqual(await globalDb.collections.createdIsolateApps.find({ ownerId })
-      .countAsync(), 0);
-
     const published = await publishIsolateFromShell(
-      globalDb, backend, ownerId, authoringSessionId,
+      globalDb, backend, ownerId, `different_${Random.id()}`,
       "shell-publish", preview.candidate.candidateId,
       { newApp: null }, publishedMetadata());
     assert.isString(published.createdAppId);
