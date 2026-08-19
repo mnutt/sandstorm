@@ -133,6 +133,48 @@
             </p>
           {{/if}}
 
+          <section class="publish-candidate-review" aria-labelledby="candidate-review-heading">
+            <h3 id="candidate-review-heading">Candidate settings</h3>
+            <dl>
+              <div>
+                <dt>Compatibility date</dt>
+                <dd><code>{{candidateCompatibilityDate}}</code></dd>
+              </div>
+              <div>
+                <dt>Compatibility flags</dt>
+                <dd>
+                  {{#if candidateCompatibilityFlags}}
+                    {{#each candidateCompatibilityFlags}}<code>{{this}}</code>{{/each}}
+                  {{else}}
+                    None
+                  {{/if}}
+                </dd>
+              </div>
+              <div>
+                <dt>Platform bindings</dt>
+                <dd>
+                  {{#if candidateBindings}}
+                    {{#each candidateBindings}}<code>{{this}}</code>{{/each}}
+                  {{else}}
+                    None
+                  {{/if}}
+                </dd>
+              </div>
+              <div>
+                <dt>Validation warnings</dt>
+                <dd>
+                  {{#if candidateValidationWarnings}}
+                    <ul>
+                      {{#each candidateValidationWarnings}}<li>{{this}}</li>{{/each}}
+                    </ul>
+                  {{else}}
+                    None
+                  {{/if}}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
           {{#if selectedRevisionHistory}}
             <section class="revision-history" aria-labelledby="revision-history-heading">
               <h3 id="revision-history-heading">Revision history</h3>

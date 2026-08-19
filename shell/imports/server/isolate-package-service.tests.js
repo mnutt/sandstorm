@@ -79,7 +79,13 @@ class FakeBackend {
       manifest: {
         appTitle: { defaultText: packageMetadata.appTitle },
         appVersion: packageMetadata.appVersion,
-        actions: [],
+        actions: [{
+          command: {
+            isolate: {
+              bindings: ["SANDSTORM_API", "POWERBOX", "STORAGE"].map(name => ({ name })),
+            },
+          },
+        }],
       },
     };
   }
@@ -134,6 +140,9 @@ describe("isolate candidate package materialization", function () {
     assert.strictEqual(ready.status, "ready");
     assert.strictEqual(ready.previewPackageId, backend.packageId);
     assert.strictEqual(ready.previewAppId, `preview-app-${backend.packageId}`);
+    assert.deepEqual(
+      ready.platformBindings, ["SANDSTORM_API", "POWERBOX", "STORAGE"]);
+    assert.deepEqual(ready.validationWarnings, []);
     assert.instanceOf(ready.materializedAt, Date);
     assert.strictEqual(storedPackage.status, "ready");
     assert.isTrue(storedPackage.generatedIsolate);

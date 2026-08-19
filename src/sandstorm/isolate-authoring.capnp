@@ -73,6 +73,7 @@ struct CandidateInfo {
   modules @3 :List(ModuleInfo);
   validationWarnings @4 :List(Text);
   createdAt @5 :Util.DateInNs;
+  bindings @6 :List(Text);
 }
 
 struct PreviewMetadata {

@@ -107,6 +107,7 @@ async function reserveIsolateCandidate(db, actorInput, requestIdInput, bundleInp
     normalizedDigest: normalized.digest,
     normalizedBundle: normalized.bundle,
     totalModuleBytes: normalized.totalModuleBytes,
+    validationWarnings: [],
     createdAt,
     status: "preparing",
   };

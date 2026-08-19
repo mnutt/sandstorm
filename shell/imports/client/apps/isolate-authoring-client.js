@@ -298,6 +298,25 @@ Template.isolateAuthoringPage.helpers({
     return currentCandidateRecord(Template.instance());
   },
 
+  candidateCompatibilityDate() {
+    const candidate = currentCandidateRecord(Template.instance());
+    return candidate?.normalizedBundle?.compatibilityDate || candidate?.compatibilityDate;
+  },
+
+  candidateCompatibilityFlags() {
+    const candidate = currentCandidateRecord(Template.instance());
+    return candidate?.normalizedBundle?.compatibilityFlags ||
+      candidate?.compatibilityFlags || [];
+  },
+
+  candidateBindings() {
+    return currentCandidateRecord(Template.instance())?.platformBindings || [];
+  },
+
+  candidateValidationWarnings() {
+    return currentCandidateRecord(Template.instance())?.validationWarnings || [];
+  },
+
   previewTarget() {
     return Template.instance().previewTarget.get();
   },

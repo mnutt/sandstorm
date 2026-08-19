@@ -75,7 +75,10 @@ class FakePreviewBackend {
       hash.update(module.esModule || module.text || module.json);
     });
     const suffix = hash.digest("hex").slice(0, 20);
-    const actionCommand = { isolate: { mainModule: source.mainModule, phase: "new" } };
+    const bindings = ["SANDSTORM_API", "POWERBOX", "STORAGE"].map(name => ({ name }));
+    const actionCommand = {
+      isolate: { mainModule: source.mainModule, phase: "new", bindings },
+    };
     const continueCommand = { isolate: { mainModule: source.mainModule, phase: "continue" } };
     return {
       packageId: `preview-package-${suffix}`,

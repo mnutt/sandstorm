@@ -15,6 +15,28 @@
     <div>Current app: {{option.publishIntent.targetTitle}}</div>
   {{/if}}
   <div>Candidate: {{option.publishIntent.digest}}</div>
+  <div>Compatibility date: {{option.publishIntent.compatibilityDate}}</div>
+  <div>Compatibility flags:
+    {{#if option.publishIntent.compatibilityFlags}}
+      {{#each option.publishIntent.compatibilityFlags}}{{this}} {{/each}}
+    {{else}}
+      None
+    {{/if}}
+  </div>
+  <div>Platform bindings:
+    {{#if option.publishIntent.bindings}}
+      {{#each option.publishIntent.bindings}}{{this}} {{/each}}
+    {{else}}
+      None
+    {{/if}}
+  </div>
+  <div>Validation warnings:
+    {{#if option.publishIntent.validationWarnings}}
+      {{#each option.publishIntent.validationWarnings}}{{this}} {{/each}}
+    {{else}}
+      None
+    {{/if}}
+  </div>
   <div>This one-shot grant publishes only this reviewed candidate and target.</div>
 </template>
 

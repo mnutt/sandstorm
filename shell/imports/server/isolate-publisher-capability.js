@@ -138,6 +138,13 @@ function registerIsolatePublisherFrontendRef(registry) {
 
       const account = await db.collections.users.findOneAsync(userAccountId);
       if (!await db.isAccountSignedUpOrDemoAsync(account)) return [];
+      const candidate = await db.collections.isolateCandidates.findOneAsync({
+        ownerId: userAccountId,
+        normalizedDigest: intent.normalizedDigest,
+        status: "ready",
+        previewPackageId: { $exists: true },
+      }, { sort: { createdAt: -1 } });
+      if (!candidate) return [];
       let targetApp;
       try {
         targetApp = await requireTargetOwnership(db, userAccountId, intent.target);
@@ -162,6 +169,10 @@ function registerIsolatePublisherFrontendRef(registry) {
           title: intent.metadata.title,
           targetTitle: targetApp && targetApp.title,
           digest: intent.normalizedDigest,
+          compatibilityDate: candidate.normalizedBundle.compatibilityDate,
+          compatibilityFlags: candidate.normalizedBundle.compatibilityFlags,
+          bindings: candidate.platformBindings || [],
+          validationWarnings: candidate.validationWarnings || [],
         },
       }];
     },

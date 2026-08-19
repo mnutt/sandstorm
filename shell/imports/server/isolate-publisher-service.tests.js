@@ -66,6 +66,8 @@ class FakePublisherBackend {
   constructor() {
     this.calls = [];
     this.publishedFailuresRemaining = 0;
+    this.previewBindings = ["SANDSTORM_API", "POWERBOX", "STORAGE"];
+    this.publishedBindings = this.previewBindings;
   }
 
   cap() {
@@ -98,7 +100,14 @@ class FakePublisherBackend {
         actions: [{
           input: { none: null },
           nounPhrase: { defaultText: packageMetadata.nounPhrase },
-          command: { isolate: { mainModule: source.mainModule, phase: "new" } },
+          command: {
+            isolate: {
+              mainModule: source.mainModule,
+              phase: "new",
+              bindings: (requestedAppId ? this.publishedBindings : this.previewBindings)
+                .map(name => ({ name })),
+            },
+          },
         }],
         continueCommand: {
           isolate: { mainModule: source.mainModule, phase: "continue" },
@@ -236,6 +245,22 @@ describe("isolate publisher", function () {
     assert.strictEqual(publishedCalls[1].requestedAppId, result.appId);
     assert.strictEqual(await globalDb.collections.createdIsolateApps.find({ ownerId })
       .countAsync(), 1);
+  });
+
+  it("rejects a published package whose bindings differ from the reviewed preview", async function () {
+    const candidate = await prepareCandidate("binding-candidate", "bindings");
+    backend.publishedBindings = [...backend.previewBindings, "UNREVIEWED_BINDING"];
+
+    const error = await publishIsolateCandidate(
+      globalDb, backend, actor, "binding-publish", candidate._id,
+      { newApp: null }, publishedMetadata()).then(() => null, error => error);
+
+    assert.strictEqual(error.code, "package-generation-failed");
+    assert.match(error.message, /bindings differ/);
+    assert.strictEqual(await globalDb.collections.createdIsolateRevisions.find({ ownerId })
+      .countAsync(), 0);
+    assert.strictEqual(await globalDb.collections.userActions.find({ userId: ownerId })
+      .countAsync(), 0);
   });
 
   it("releases an app reservation after publication fails", async function () {

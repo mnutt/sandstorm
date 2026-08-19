@@ -248,6 +248,8 @@ const IsolateCandidates = new Mongo.Collection("isolateCandidates", collectionOp
 //   normalizedBundle: Immutable normalized source and runtime configuration.
 //   totalModuleBytes: Admission-accounting size of the submitted modules.
 //   previewMetadata: Metadata fixed by the first package-materialization attempt.
+//   platformBindings: Global bindings supplied by the generated package.
+//   validationWarnings: Immutable warnings produced while validating the candidate.
 //   previewAppId: Internal app identity derived by the package generator.
 //   previewPackageId: Immutable generated package used by the preview grain.
 //   materializedAt: Time at which previewPackageId became ready.

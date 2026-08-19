@@ -54,6 +54,8 @@ async function insertCandidate(ownerId, grainId, normalizedDigest) {
       modules: [{ name: "worker.js", type: "esModule", content: "export default {};" }],
     },
     totalModuleBytes: 18,
+    platformBindings: ["SANDSTORM_API", "POWERBOX", "STORAGE"],
+    validationWarnings: [],
     previewPackageId: `publisher-grant-package-${candidateId}`,
     status: "ready",
     createdAt: new Date(),
