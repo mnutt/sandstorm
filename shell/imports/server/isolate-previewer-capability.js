@@ -50,6 +50,7 @@ function candidateInfo(candidate) {
     })),
     validationWarnings: candidate.validationWarnings || [],
     createdAt: String(BigInt(candidate.createdAt.getTime()) * 1000000n),
+    bindings: candidate.platformBindings || [],
   };
 }
 

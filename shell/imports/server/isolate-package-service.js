@@ -96,6 +96,17 @@ function packageResult(result) {
   return result;
 }
 
+function generatedBindingNames(manifest) {
+  const bindings = manifest.actions?.[0]?.command?.isolate?.bindings;
+  if (!Array.isArray(bindings) || bindings.some(binding =>
+    !binding || typeof binding.name !== "string" || binding.name.length === 0)) {
+    fail("package-generation-failed",
+      "The generated isolate package returned invalid platform bindings.");
+  }
+
+  return bindings.map(binding => binding.name);
+}
+
 function storedError(error) {
   return {
     code: typeof error.code === "string" ? error.code : "package-generation-failed",
@@ -187,6 +198,7 @@ async function materializeInternal(db, backendCap, accountId, candidateId, metad
   try {
     const generated = packageResult(await backendCap.generateIsolatePackage(
       "", metadata, bundleToWorkerSource(candidate.normalizedBundle)));
+    const platformBindings = generatedBindingNames(generated.manifest);
     await registerGeneratedPackage(db, generated, accountId, false);
     const materializedAt = new Date();
     await db.collections.isolateCandidates.updateAsync({
@@ -198,6 +210,7 @@ async function materializeInternal(db, backendCap, accountId, candidateId, metad
         status: "ready",
         previewAppId: generated.appId,
         previewPackageId: generated.packageId,
+        platformBindings,
         materializedAt,
       },
       $unset: { error: "" },
@@ -237,6 +250,13 @@ async function materializePublishedIsolateCandidate(
     appId, metadata, bundleToWorkerSource(candidate.normalizedBundle)));
   if (generated.appId !== appId) {
     fail("package-generation-failed", "The backend did not use the requested published app ID.");
+  }
+
+  const platformBindings = generatedBindingNames(generated.manifest);
+  if (platformBindings.length !== candidate.platformBindings?.length ||
+      platformBindings.some((binding, index) => binding !== candidate.platformBindings[index])) {
+    fail("package-generation-failed",
+      "The published package bindings differ from the reviewed preview candidate.");
   }
 
   await registerGeneratedPackage(db, generated, accountId, true);

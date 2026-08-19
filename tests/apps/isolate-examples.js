@@ -168,6 +168,8 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
     .assert.textContains("pre", "\"ok\": true")
     .assert.textContains("pre", "\"digestBytes\": 32")
     .assert.textContains("pre", "\"compatibilityDate\": \"2025-01-01\"")
+    .assert.textContains("pre", "\"bindings\":")
+    .assert.textContains("pre", "\"SANDSTORM_API\"")
     .assert.textContains("pre", "\"worker.js\"")
     .assert.textContains("pre", "\"permissionCount\":")
     .assert.textContains("pre", "\"roleCount\":")
@@ -242,6 +244,18 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
         .assert.textContains(
           ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
           "Powerbox Published Isolate")
+        .assert.textContains(
+          ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
+          "Compatibility date: 2025-01-01")
+        .assert.textContains(
+          ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
+          "Platform bindings:")
+        .assert.textContains(
+          ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
+          "SANDSTORM_API")
+        .assert.textContains(
+          ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]",
+          "Validation warnings:")
         .click(
           ".powerbox-card button[data-card-id^=\"frontendref-isolate-publisher-\"]")
         .grainFrame(authoringGrainId)

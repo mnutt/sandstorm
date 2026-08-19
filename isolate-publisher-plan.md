@@ -495,6 +495,7 @@ source. The authoring application remains the mutable source of truth.
 - `totalModuleBytes`
 - `previewPackageId`
 - `previewGrainId`
+- `platformBindings`, captured from the generated preview manifest
 - `validationWarnings`
 - `createdAt`
 - `publishedRevisionId`, optional

@@ -90,7 +90,13 @@ class FakeAuthoringBackend {
         actions: [{
           input: { none: null },
           nounPhrase: { defaultText: packageMetadata.nounPhrase },
-          command: { isolate: { phase: "new", mainModule: source.mainModule } },
+          command: {
+            isolate: {
+              phase: "new",
+              mainModule: source.mainModule,
+              bindings: ["SANDSTORM_API", "POWERBOX", "STORAGE"].map(name => ({ name })),
+            },
+          },
         }],
         continueCommand: { isolate: { phase: "continue", mainModule: source.mainModule } },
       },
@@ -165,6 +171,9 @@ describe("trusted shell isolate authoring boundary", function () {
     assert.isString(result.grainId);
     assert.strictEqual(result.candidate.normalizedDigest, stored.normalizedDigest);
     assert.strictEqual(result.candidate.compatibilityDate, "2025-01-01");
+    assert.deepEqual(
+      result.candidate.platformBindings, ["SANDSTORM_API", "POWERBOX", "STORAGE"]);
+    assert.deepEqual(result.candidate.validationWarnings, []);
     assert.notProperty(result.candidate, "normalizedBundle");
     assert.notProperty(result.candidate, "previewPackageId");
     assert.notProperty(result.candidate, "ownerId");

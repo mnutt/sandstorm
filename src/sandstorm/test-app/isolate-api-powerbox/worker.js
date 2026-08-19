@@ -375,6 +375,7 @@ async function callIsolatePreviewer(
         digestBytes: info.normalizedDigest.length,
         compatibilityDate: info.compatibilityDate,
         moduleNames: info.modules.map(module => module.name),
+        bindings: info.bindings,
         warnings: info.validationWarnings,
       },
       view: {

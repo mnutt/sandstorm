@@ -362,6 +362,7 @@ async function previewSource(api, previewerCapability, sourceText) {
           type: module.type,
           size: module.size.toString(),
         })),
+        bindings: info.bindings,
         validationWarnings: info.validationWarnings,
         createdAtNanoseconds: info.createdAt.toString(),
       },
