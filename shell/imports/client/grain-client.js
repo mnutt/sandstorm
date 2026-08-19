@@ -2147,6 +2147,9 @@ Router.map(function () {
         return {
           title: grain ? grain.title : "(deleted grain)",
           // jscs:disable requireCamelCaseOrUpperCaseIdentifiers
+          // Embedded preview logs can leave more than one grain's subscription
+          // active in this client collection, so the standalone view must scope
+          // its query even though its own subscription is grain-specific.
           html: AnsiUp.ansi_to_html(GrainLog.find(
               { grainId: this.params.grainId }, { sort: { sequence: 1 } })
               .map(function (entry) { return entry.text; })

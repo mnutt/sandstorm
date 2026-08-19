@@ -370,6 +370,7 @@ async function callIsolatePreviewer(
     const viewInfo = await result.view.getViewInfo({});
     return {
       ok: true,
+      previewerCanPublish: typeof previewer.publish === "function",
       candidate: {
         normalizedDigest: candidateDigest,
         digestBytes: info.normalizedDigest.length,

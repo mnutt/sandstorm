@@ -18,6 +18,7 @@ import { Random } from "meteor/random";
 import chai from "chai";
 
 import { globalDb } from "/imports/db-deprecated";
+import { requirePreviewGrant } from "/imports/server/isolate-previewer-service";
 import {
   completePublishGrant,
   consumePublishGrant,
@@ -140,6 +141,9 @@ describe("isolate publisher capability", function () {
     assert.deepEqual(created.requirements, [{
       permissionsHeld: { accountId: ownerId, grainId, permissions: [] },
     }]);
+    const previewError = await requirePreviewGrant(globalDb, created.grantId)
+      .then(() => null, error => error);
+    assert.strictEqual(previewError.code, "grant-revoked");
 
     const missingCandidate = await createPublishGrant(globalDb, {
       userId: ownerId,
