@@ -141,11 +141,116 @@ describe("isolate previewer capability", function () {
       appTitle: "Staged preview",
     });
 
-    assert.strictEqual(staged.receivedBundle.modules[0].content, source);
+    assert.strictEqual(staged.snapshot.bundleInfo.modules[0].name, "worker.js");
+    assert.strictEqual(staged.snapshot.totalModuleBytes, Buffer.byteLength(source));
+    assert.match(staged.snapshot.digest, /^[0-9a-f]{64}$/);
     assert.isUndefined(savedSource);
     const generated = await staged.packageUpload.save();
     assert.strictEqual(generated.packageId, "staged-package");
     assert.strictEqual(savedSource.modules[0].esModule.toString("utf8"), source);
+  });
+
+  it("streams bundles larger than the old aggregate memory guardrail", async function () {
+    const main = Buffer.from("export default {};\n");
+    const assetSize = ISOLATE_BUNDLE_LIMITS.maxModuleBytes;
+    const chunk = Buffer.alloc(1024 * 1024, 0x61);
+    const moduleSizes = [main.length, assetSize, assetSize];
+    const received = [0, 0, 0];
+    const backend = {
+      async streamIsolatePackage() {
+        return {
+          upload: {
+            async beginModule(index) {
+              return {
+                stream: {
+                  async write(data) {
+                    received[index] += data.length;
+                  },
+                  async done() {},
+                  close() {},
+                },
+              };
+            },
+            async finish() {},
+            async save() {
+              return { packageId: "large-package", appId: "large-app", manifest: {} };
+            },
+            close() {},
+          },
+        };
+      },
+    };
+    const bundle = {
+      async getInfo() {
+        return {
+          info: {
+            formatVersion: 1,
+            mainModule: "worker.js",
+            compatibilityDate: "2025-01-01",
+            compatibilityFlags: [],
+            modules: [
+              { name: "worker.js", type: "esModule", size: main.length },
+              { name: "first.txt", type: "text", size: assetSize },
+              { name: "second.txt", type: "text", size: assetSize },
+            ],
+          },
+        };
+      },
+      async transfer(receiver) {
+        let response = await receiver.beginModule(0);
+        await response.stream.write(main);
+        await response.stream.done();
+        for (const index of [1, 2]) {
+          response = await receiver.beginModule(index);
+          for (let offset = 0; offset < assetSize; offset += chunk.length) {
+            await response.stream.write(chunk);
+          }
+
+          await response.stream.done();
+        }
+
+        await receiver.finish();
+      },
+    };
+    const staged = await receiveStagedIsolateBundle(bundle, backend, { appTitle: "Large" });
+
+    assert.isAbove(staged.snapshot.totalModuleBytes,
+      ISOLATE_BUNDLE_LIMITS.maxTotalModuleBytes);
+    assert.deepEqual(received, moduleSizes);
+  });
+
+  it("abandons backend staging when streamed source validation fails", async function () {
+    let uploadClosed = false;
+    const backend = {
+      async streamIsolatePackage() {
+        return {
+          upload: {
+            async beginModule() {
+              return {
+                stream: {
+                  async write() {},
+                  async done() {},
+                  close() {},
+                },
+              };
+            },
+            async finish() {},
+            async save() {
+              throw new Error("invalid source must not be saved");
+            },
+            close() {
+              uploadClosed = true;
+            },
+          },
+        };
+      },
+    };
+    const error = await receiveStagedIsolateBundle(
+      streamedBundle("export default {"), backend, { appTitle: "Invalid" })
+      .then(() => null, error => error);
+
+    assert.strictEqual(error.code, "invalid-javascript");
+    assert.isTrue(uploadClosed);
   });
 
   it("receives binary modules without UTF-8 decoding", async function () {

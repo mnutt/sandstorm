@@ -103,7 +103,7 @@ class IsolatePreviewerImpl extends PersistentImpl {
         marketingVersion: "preview",
       });
       const backend = getGlobalBackend();
-      const { actor, receivedBundle, packageUpload } = await receivePreviewBundle(
+      const { actor, snapshot, packageUpload } = await receivePreviewBundle(
         this.db, grant, bundle, {
         wrapByteStream: stream => new Capnp.Capability(stream, ByteStream),
         wrapReceiver: receiver => new Capnp.Capability(receiver, Authoring.BundleReceiver),
@@ -118,7 +118,7 @@ class IsolatePreviewerImpl extends PersistentImpl {
           backend,
           actor,
           requestId,
-          receivedBundle,
+          snapshot,
           packageMetadata,
           {
             requireActive: async () => await requirePreviewGrant(this.db, this.grantId),

@@ -224,9 +224,9 @@ async function registerGeneratedPackage(db, generated, accountId, published) {
 }
 
 async function materializeInternal(
-    db, accountId, candidateId, metadata, normalized, generatePackage) {
+    db, accountId, candidateId, metadata, sourceDigest, generatePackage) {
   let candidate = await claimMetadata(db, accountId, candidateId, metadata);
-  if (candidate.normalizedDigest !== normalized.digest) {
+  if (candidate.normalizedDigest !== sourceDigest) {
     fail("idempotency-conflict", "The supplied source does not match this isolate candidate.");
   }
 
@@ -342,7 +342,7 @@ function materializeIsolateCandidate(
     runningMaterializations,
     key,
     canonicalMetadata,
-    () => materializeInternal(db, accountId, candidateId, metadata, normalized,
+    () => materializeInternal(db, accountId, candidateId, metadata, normalized.digest,
       async () => await streamNormalizedIsolatePackage(
         backendCap, "", metadata, normalized.bundle)),
     () => new IsolateCandidateError(
@@ -352,19 +352,23 @@ function materializeIsolateCandidate(
 }
 
 function materializeUploadedIsolateCandidate(
-    db, packageUpload, accountId, candidateId, metadataInput, bundleInput) {
+    db, packageUpload, accountId, candidateId, metadataInput, snapshot) {
   if (!packageUpload || typeof packageUpload.save !== "function") {
     return Promise.reject(new IsolateCandidateError(
       "invalid-context", "Candidate materialization requires a staged package upload."));
   }
 
   let metadata;
-  let normalized;
   try {
     metadata = normalizeGeneratedIsolateMetadata(metadataInput);
-    normalized = normalizeIsolateBundle(bundleInput);
   } catch (error) {
     return Promise.reject(error);
+  }
+
+  if (!snapshot || typeof snapshot.digest !== "string" ||
+      !/^[0-9a-f]{64}$/.test(snapshot.digest)) {
+    return Promise.reject(new IsolateCandidateError(
+      "invalid-bundle", "Candidate materialization requires a valid streamed snapshot."));
   }
 
   const key = `${accountId}\0${candidateId}`;
@@ -373,7 +377,7 @@ function materializeUploadedIsolateCandidate(
     runningMaterializations,
     key,
     canonicalMetadata,
-    () => materializeInternal(db, accountId, candidateId, metadata, normalized,
+    () => materializeInternal(db, accountId, candidateId, metadata, snapshot.digest,
       async () => packageResult(await packageUpload.save())),
     () => new IsolateCandidateError(
       "idempotency-conflict",

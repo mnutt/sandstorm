@@ -17,8 +17,12 @@
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
 import { Random } from "meteor/random";
+import Crypto from "crypto";
 
-import { ISOLATE_BUNDLE_LIMITS } from "/imports/server/isolate-bundle";
+import {
+  ISOLATE_BUNDLE_LIMITS,
+  validateIsolateModuleContent,
+} from "/imports/server/isolate-bundle";
 import { IsolateError } from "/imports/server/isolate-error";
 import { requireIsolatePreviewAdmission } from "/imports/server/isolate-preview-service";
 
@@ -100,7 +104,8 @@ class ModuleByteStream {
       fail("invalid-bundle", `Module ${this.state.info.name} exceeded its declared size.`);
     }
 
-    if (this.receiver.receivedBytes + chunk.length >
+    if (this.receiver.enforceAggregateLimit &&
+        this.receiver.receivedBytes + chunk.length >
         ISOLATE_BUNDLE_LIMITS.maxTotalModuleBytes) {
       fail("bundle-limit-exceeded", "The streamed bundle exceeded its total byte limit.");
     }
@@ -125,6 +130,7 @@ class ModuleByteStream {
       fail("invalid-bundle", `Module ${this.state.info.name} ended before its declared size.`);
     }
 
+    this.receiver.finishModule(this.state);
     this.state.done = true;
   }
 }
@@ -156,7 +162,7 @@ class StagedModuleByteStream {
 }
 
 class IsolateBundleReceiver {
-  constructor(info) {
+  constructor(info, options = {}) {
     if (!info || typeof info !== "object") {
       fail("invalid-bundle", "IsolateBundle.getInfo() returned no bundle information.");
     }
@@ -168,6 +174,9 @@ class IsolateBundleReceiver {
         `A streamed bundle must contain 1-${ISOLATE_BUNDLE_LIMITS.maxModules} modules.`);
     }
 
+    this.retainContent = options.retainContent !== false;
+    this.enforceAggregateLimit = options.enforceAggregateLimit !== false;
+    this.validateContent = options.validateContent === true;
     let declaredBytes = 0;
     this.states = modules.map((module, index) => {
       if (!module || typeof module.name !== "string") {
@@ -181,7 +190,8 @@ class IsolateBundleReceiver {
       const size = boundedSize(
         module.size, ISOLATE_BUNDLE_LIMITS.maxModuleBytes, `Module ${module.name}`);
       declaredBytes += size;
-      if (declaredBytes > ISOLATE_BUNDLE_LIMITS.maxTotalModuleBytes) {
+      if (this.enforceAggregateLimit &&
+          declaredBytes > ISOLATE_BUNDLE_LIMITS.maxTotalModuleBytes) {
         fail("bundle-limit-exceeded", "The streamed bundle exceeds its total byte limit.");
       }
 
@@ -194,7 +204,10 @@ class IsolateBundleReceiver {
       };
     });
     this.info = info;
+    this.moduleNames = new Set(this.states.map(state => state.info.name));
+    this.totalModuleBytes = declaredBytes;
     this.receivedBytes = 0;
+    this.activeState = null;
     this.finished = false;
   }
 
@@ -209,8 +222,27 @@ class IsolateBundleReceiver {
       fail("invalid-bundle", `Module ${state.info.name} was opened more than once.`);
     }
 
+    if (!this.retainContent && this.activeState) {
+      fail("invalid-bundle",
+        `Module ${this.activeState.info.name} must finish before another module is opened.`);
+    }
+
     state.opened = true;
+    if (!this.retainContent) this.activeState = state;
     return { stream: new ModuleByteStream(this, state) };
+  }
+
+  finishModule(state) {
+    if (!this.validateContent) return;
+    const bytes = Buffer.concat(state.chunks, state.received);
+    const content = state.info.type === "data" || state.info.type === "wasm"
+      ? bytes
+      : decodeTextModule(bytes, state.info.name);
+    validateIsolateModuleContent(
+      state.info.name, state.info.type, content, this.moduleNames);
+    state.digest = Crypto.createHash("sha256").update(bytes).digest("hex");
+    if (!this.retainContent) state.chunks = [];
+    if (this.activeState === state) this.activeState = null;
   }
 
   bundleInfo() {
@@ -218,8 +250,8 @@ class IsolateBundleReceiver {
       formatVersion: this.info.formatVersion,
       mainModule: this.info.mainModule,
       compatibilityDate: this.info.compatibilityDate,
-      compatibilityFlags: this.info.compatibilityFlags || [],
-      modules: this.states.map(state => state.info),
+      compatibilityFlags: [...(this.info.compatibilityFlags || [])],
+      modules: this.states.map(state => ({ ...state.info })),
     };
   }
 
@@ -251,6 +283,39 @@ class IsolateBundleReceiver {
         };
       }),
     };
+  }
+
+  snapshot() {
+    if (!this.finished || this.retainContent ||
+        this.states.some(state => !/^[0-9a-f]{64}$/.test(state.digest || ""))) {
+      fail("invalid-bundle", "The streamed isolate snapshot is incomplete.");
+    }
+
+    const bundleInfo = this.bundleInfo();
+    bundleInfo.modules.sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    const digests = new Map(this.states.map(state => [state.info.name, state.digest]));
+    const canonicalText = JSON.stringify({
+      ...bundleInfo,
+      modules: bundleInfo.modules.map(module => ({
+        ...module,
+        digest: digests.get(module.name),
+      })),
+    });
+    const digest = Crypto.createHash("sha256")
+      .update("sandstorm-isolate-streamed-candidate-v1\0")
+      .update(canonicalText, "utf8")
+      .digest("hex");
+    bundleInfo.modules.forEach(Object.freeze);
+    Object.freeze(bundleInfo.modules);
+    Object.freeze(bundleInfo.compatibilityFlags);
+    Object.freeze(bundleInfo);
+    return Object.freeze({
+      digest,
+      bundleInfo,
+      totalModuleBytes: this.totalModuleBytes,
+      validationWarnings: [],
+    });
   }
 }
 
@@ -319,7 +384,11 @@ async function receiveStagedIsolateBundle(bundle, backendCap, metadata, wrappers
   }
 
   const response = await bundle.getInfo();
-  const receiver = new IsolateBundleReceiver(response && response.info);
+  const receiver = new IsolateBundleReceiver(response && response.info, {
+    retainContent: false,
+    enforceAggregateLimit: false,
+    validateContent: true,
+  });
   const uploadResponse = await backendCap.streamIsolatePackage(
     "", metadata, receiver.bundleInfo());
   const upload = uploadResponse && uploadResponse.upload;
@@ -332,7 +401,7 @@ async function receiveStagedIsolateBundle(bundle, backendCap, metadata, wrappers
     const stagedReceiver = new StagedIsolateBundleReceiver(
       receiver, upload, wrappers.wrapByteStream);
     await transferIsolateBundle(bundle, stagedReceiver, wrappers);
-    return { receivedBundle: receiver.result(), packageUpload: upload };
+    return { snapshot: receiver.snapshot(), packageUpload: upload };
   } catch (error) {
     if (typeof upload.close === "function") upload.close();
     throw error;

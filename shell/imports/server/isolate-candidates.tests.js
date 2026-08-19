@@ -25,6 +25,7 @@ import {
   removeOwnedIsolateCandidate,
   requestIsolateCandidateCleanup,
   reserveIsolateCandidate,
+  reserveStreamedIsolateCandidate,
 } from "/imports/server/isolate-candidates";
 
 const { assert } = chai;
@@ -77,6 +78,27 @@ describe("isolate candidate persistence", function () {
     assert.notProperty(stored, "draftSource");
     assert.notProperty(stored, "appId");
     assert.notProperty(stored, "packageId");
+  });
+
+  it("stores a prevalidated streamed snapshot without module contents", async function () {
+    const snapshot = {
+      digest: "a".repeat(64),
+      bundleInfo: {
+        formatVersion: 1,
+        mainModule: "worker.js",
+        compatibilityDate: "2025-01-01",
+        compatibilityFlags: [],
+        modules: [{ name: "worker.js", type: "esModule", size: 20 }],
+      },
+      totalModuleBytes: 20,
+      validationWarnings: [],
+    };
+    const candidate = await reserveStreamedIsolateCandidate(
+      globalDb, actor, "streamed-snapshot", snapshot);
+
+    assert.strictEqual(candidate.normalizedDigest, snapshot.digest);
+    assert.deepEqual(candidate.bundleInfo, snapshot.bundleInfo);
+    assert.notProperty(candidate.bundleInfo.modules[0], "content");
   });
 
   it("returns the original candidate when the same request is retried", async function () {

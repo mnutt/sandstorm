@@ -23,9 +23,9 @@ import { IsolateError } from "/imports/server/isolate-error";
 
 const ISOLATE_BUNDLE_FORMAT_VERSION = 1;
 
-// These are admission guardrails, not product quotas. The current aggregate
-// limit bounds the in-memory normalization and single backend RPC handoff; it
-// can be revisited when that handoff becomes fully streaming. Leave
+// These are admission guardrails, not product quotas. The aggregate limit
+// bounds callers that submit an in-memory JavaScript object; capability-based
+// bundles are validated and staged one module at a time instead. Leave
 // module-count room for injected helpers as well.
 const ISOLATE_BUNDLE_LIMITS = Object.freeze({
   maxModules: 512,
@@ -316,6 +316,33 @@ function validateEsModuleImports(module, moduleNames, platformImports) {
   });
 }
 
+function validateIsolateModuleContent(name, type, content, moduleNames, options = {}) {
+  const limits = Object.freeze({ ...ISOLATE_BUNDLE_LIMITS, ...(options.limits || {}) });
+  const platformImports = options.platformImports || SUPPORTED_PLATFORM_IMPORTS;
+  const field = `modules.${name}.content`;
+  if (!SUPPORTED_MODULE_TYPES.has(type)) {
+    fail("unsupported-module-type", `Unsupported module type ${type}.`, field);
+  }
+
+  if (BINARY_MODULE_TYPES.has(type)) {
+    const bytes = normalizeBinaryContent(content, field, limits);
+    if (type === "wasm" && !WebAssembly.validate(bytes)) {
+      fail("invalid-wasm", `${field} is not a valid WebAssembly module.`, field);
+    }
+
+    return;
+  }
+
+  const source = requireString(content, field);
+  requireByteLimit(source, limits.maxModuleBytes, field);
+  if (type === "json") {
+    const canonical = normalizeModuleContent(type, source, field, limits);
+    requireByteLimit(canonical, limits.maxModuleBytes, field);
+  } else if (type === "esModule") {
+    validateEsModuleImports({ name, content: source }, moduleNames, platformImports);
+  }
+}
+
 function freezeNormalizedBundle(bundle) {
   Object.freeze(bundle.compatibilityFlags);
   bundle.modules.forEach(Object.freeze);
@@ -433,4 +460,5 @@ export {
   moduleContentBytes,
   moduleContentSize,
   normalizeIsolateBundle,
+  validateIsolateModuleContent,
 };
