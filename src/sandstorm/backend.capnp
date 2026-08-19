@@ -24,6 +24,7 @@ using Supervisor = import "supervisor.capnp".Supervisor;
 using SandstormCore = import "supervisor.capnp".SandstormCore;
 using GrainInfo = import "grain.capnp".GrainInfo;
 using IsolateWorkerSource = import "isolate-worker-source.capnp".IsolateWorkerSource;
+using IsolateAuthoring = import "isolate-authoring.capnp";
 
 using WebSession = import "web-session.capnp".WebSession;
 using ApiSession = import "api-session.capnp".ApiSession;
@@ -89,6 +90,21 @@ interface Backend {
       -> (packageId :Text, appId :Text, manifest :Package.Manifest);
   # Materialize a generated isolate package with new app metadata and identity,
   # reusing the immutable source stored in sourcePackageId.
+
+  streamIsolatePackage @18 (
+      requestedAppId :Text,
+      metadata :GeneratedIsolatePackageMetadata,
+      info :IsolateAuthoring.BundleInfo)
+      -> (upload :GeneratedIsolatePackageUpload);
+  # Stage a generated isolate package module-by-module. The caller must complete
+  # every declared module, call finish(), and then call save(). Dropping all
+  # capabilities before save() removes the staged package.
+
+  interface GeneratedIsolatePackageUpload extends(IsolateAuthoring.BundleReceiver) {
+    save @0 () -> (packageId :Text, appId :Text, manifest :Package.Manifest);
+    # Atomically installs the fully-received package. May only be called once,
+    # after BundleReceiver.finish() succeeds.
+  }
 
   # ----------------------------------------------------------------------------
   # backups

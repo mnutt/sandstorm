@@ -17,6 +17,7 @@
 #include "generated-isolate-package.h"
 
 #include <capnp/serialize.h>
+#include <dirent.h>
 #include <kj/test.h>
 #include <sandstorm/package.capnp.h>
 #include <stdlib.h>
@@ -53,6 +54,34 @@ IsolateWorkerSource::Reader initSource(capnp::MallocMessageBuilder& message,
   modules[dataIndex].setName("data.json");
   modules[dataIndex].setJson(kj::StringPtr("{\"ok\":true}").asBytes());
   return source.asReader();
+}
+
+BundleInfo::Reader initBundleInfo(capnp::MallocMessageBuilder& message) {
+  auto info = message.initRoot<BundleInfo>();
+  info.setFormatVersion(1);
+  info.setMainModule("worker.js");
+  info.setCompatibilityDate("2025-01-01");
+  info.initCompatibilityFlags(0);
+  auto modules = info.initModules(2);
+  modules[0].setName("data.json");
+  modules[0].setType(ModuleType::JSON);
+  modules[0].setSize(kj::StringPtr("{\"ok\":true}").size());
+  modules[1].setName("worker.js");
+  modules[1].setType(ModuleType::ES_MODULE);
+  modules[1].setSize(
+      kj::StringPtr("import data from './data.json'; export default { fetch() "
+                    "{ return data; } };").size());
+  return info.asReader();
+}
+
+bool directoryIsEmpty(kj::StringPtr path) {
+  auto directory = opendir(path.cStr());
+  KJ_REQUIRE(directory != nullptr, path);
+  KJ_DEFER(closedir(directory));
+  while (auto entry = readdir(directory)) {
+    if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) return false;
+  }
+  return true;
 }
 
 KJ_TEST("generated isolate package has a derived manifest and stable identity") {
@@ -119,6 +148,109 @@ KJ_TEST("generated isolate package installs atomically and idempotently") {
   auto repeated = installGeneratedIsolatePackage(apps, temp, "", testMetadata(), source);
   KJ_EXPECT(repeated.packageId == installed.packageId);
   KJ_EXPECT(repeated.appId == installed.appId);
+}
+
+KJ_TEST("streamed generated isolate package preserves deterministic identity") {
+  auto root = kj::heapString("/tmp/sandstorm-streamed-isolate-test-XXXXXX");
+  KJ_REQUIRE(mkdtemp(root.begin()) != nullptr, root);
+  KJ_DEFER(recursivelyDelete(root));
+  auto apps = kj::str(root, "/apps");
+  auto temp = kj::str(root, "/tmp");
+  KJ_SYSCALL(mkdir(apps.cStr(), 0700), apps);
+  KJ_SYSCALL(mkdir(temp.cStr(), 0700), temp);
+
+  capnp::MallocMessageBuilder infoMessage;
+  auto upload = kj::refcounted<GeneratedIsolatePackageUploadState>(
+      apps, temp, "", testMetadata(), initBundleInfo(infoMessage));
+  const auto worker = kj::StringPtr(
+      "import data from './data.json'; export default { fetch() { return data; } };");
+  const auto data = kj::StringPtr("{\"ok\":true}");
+  upload->beginModule(1);
+  upload->expectModuleSize(1, worker.size());
+  upload->writeModule(1, worker.slice(0, 17).asBytes());
+  upload->writeModule(1, worker.slice(17).asBytes());
+  upload->finishModule(1);
+  upload->beginModule(0);
+  upload->writeModule(0, data.asBytes());
+  upload->finishModule(0);
+  upload->finishTransfer();
+  auto streamed = upload->save();
+
+  capnp::MallocMessageBuilder expectedMessage;
+  auto expected = buildGeneratedIsolatePackage("", testMetadata(), initSource(expectedMessage));
+  KJ_EXPECT(streamed.appId == expected.appId);
+  KJ_EXPECT(streamed.packageId == expected.packageId);
+  auto packagePath = kj::str(apps, "/", streamed.packageId);
+  KJ_EXPECT(readAll(kj::str(packagePath, "/modules/0")) == data);
+  KJ_EXPECT(readAll(kj::str(packagePath, "/modules/1")) == worker);
+}
+
+KJ_TEST("streamed generated isolate package is not aggregate-buffer limited") {
+  auto root = kj::heapString("/tmp/sandstorm-large-streamed-isolate-test-XXXXXX");
+  KJ_REQUIRE(mkdtemp(root.begin()) != nullptr, root);
+  KJ_DEFER(recursivelyDelete(root));
+  auto apps = kj::str(root, "/apps");
+  auto temp = kj::str(root, "/tmp");
+  KJ_SYSCALL(mkdir(apps.cStr(), 0700), apps);
+  KJ_SYSCALL(mkdir(temp.cStr(), 0700), temp);
+
+  constexpr size_t LARGE_MODULE_SIZE = 6 * 1024 * 1024;
+  capnp::MallocMessageBuilder infoMessage;
+  auto info = infoMessage.initRoot<BundleInfo>();
+  info.setFormatVersion(1);
+  info.setMainModule("worker.js");
+  info.setCompatibilityDate("2025-01-01");
+  info.initCompatibilityFlags(0);
+  auto modules = info.initModules(4);
+  modules[0].setName("worker.js");
+  modules[0].setType(ModuleType::ES_MODULE);
+  modules[0].setSize(19);
+  for (size_t i = 1; i < 4; ++i) {
+    modules[i].setName(kj::str("large-", i, ".txt"));
+    modules[i].setType(ModuleType::TEXT);
+    modules[i].setSize(LARGE_MODULE_SIZE);
+  }
+
+  auto upload = kj::refcounted<GeneratedIsolatePackageUploadState>(
+      apps, temp, "", testMetadata(), info.asReader());
+  auto worker = kj::StringPtr("export default {};\n");
+  upload->beginModule(0);
+  upload->writeModule(0, worker.asBytes());
+  upload->finishModule(0);
+  auto chunk = kj::heapArray<byte>(64 * 1024);
+  memset(chunk.begin(), 'x', chunk.size());
+  for (uint16_t i = 1; i < 4; ++i) {
+    upload->beginModule(i);
+    for (size_t offset = 0; offset < LARGE_MODULE_SIZE; offset += chunk.size()) {
+      upload->writeModule(i, chunk);
+    }
+    upload->finishModule(i);
+  }
+  upload->finishTransfer();
+  auto installed = upload->save();
+  struct stat stats;
+  KJ_SYSCALL(stat(kj::str(apps, "/", installed.packageId, "/modules/0").cStr(), &stats));
+  KJ_EXPECT(stats.st_size == LARGE_MODULE_SIZE);
+}
+
+KJ_TEST("abandoned streamed generated isolate package removes staged files") {
+  auto root = kj::heapString("/tmp/sandstorm-abandoned-streamed-isolate-test-XXXXXX");
+  KJ_REQUIRE(mkdtemp(root.begin()) != nullptr, root);
+  KJ_DEFER(recursivelyDelete(root));
+  auto apps = kj::str(root, "/apps");
+  auto temp = kj::str(root, "/tmp");
+  KJ_SYSCALL(mkdir(apps.cStr(), 0700), apps);
+  KJ_SYSCALL(mkdir(temp.cStr(), 0700), temp);
+
+  capnp::MallocMessageBuilder infoMessage;
+  auto upload = kj::refcounted<GeneratedIsolatePackageUploadState>(
+      apps, temp, "", testMetadata(), initBundleInfo(infoMessage));
+  upload->beginModule(0);
+  upload->writeModule(0, kj::StringPtr("{\"ok").asBytes());
+  KJ_EXPECT(!directoryIsEmpty(temp));
+  upload = nullptr;
+  KJ_EXPECT(directoryIsEmpty(temp));
+  KJ_EXPECT(directoryIsEmpty(apps));
 }
 
 KJ_TEST("concurrent generated isolate package installs converge") {

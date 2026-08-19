@@ -71,6 +71,7 @@ protected:
   kj::Promise<void> installPackage(InstallPackageContext context) override;
   kj::Promise<void> generateIsolatePackage(GenerateIsolatePackageContext context) override;
   kj::Promise<void> deriveIsolatePackage(DeriveIsolatePackageContext context) override;
+  kj::Promise<void> streamIsolatePackage(StreamIsolatePackageContext context) override;
   kj::Promise<void> tryGetPackage(TryGetPackageContext context) override;
   kj::Promise<void> deletePackage(DeletePackageContext context) override;
   kj::Promise<void> backupGrain(BackupGrainContext context) override;
@@ -130,6 +131,7 @@ private:
   // started until the backup is complete.
 
   class PackageUploadStreamImpl;
+  class GeneratedIsolatePackageUploadImpl;
   class FileUploadStream;
 
   class RunningAccountHost {

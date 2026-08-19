@@ -393,6 +393,246 @@ void commitGeneratedPackage(kj::StringPtr appRoot, kj::StringPtr tempPath,
 
 }  // namespace
 
+struct GeneratedIsolatePackageUploadState::ModuleUpload {
+  kj::String name;
+  ModuleType type;
+  uint64_t size;
+  size_t outputIndex = 0;
+  uint64_t received = 0;
+  kj::Maybe<kj::AutoCloseFd> fd;
+  bool opened = false;
+  bool done = false;
+};
+
+GeneratedIsolatePackageUploadState::GeneratedIsolatePackageUploadState(
+    kj::StringPtr appRoot,
+    kj::StringPtr tempRoot,
+    kj::StringPtr requestedAppId,
+    GeneratedIsolateMetadata metadata,
+    BundleInfo::Reader info)
+    : appRoot(kj::str(appRoot)),
+      requestedAppId(kj::str(requestedAppId)),
+      appTitle(kj::str(metadata.appTitle)),
+      nounPhrase(kj::str(metadata.nounPhrase)),
+      shortDescription(kj::str(metadata.shortDescription)),
+      appVersion(metadata.appVersion),
+      marketingVersion(kj::str(metadata.marketingVersion)),
+      mainModule(kj::str(info.getMainModule())),
+      compatibilityDate(kj::str(info.getCompatibilityDate())) {
+  verifyDirectory(this->appRoot);
+  verifyDirectory(tempRoot);
+  validateMetadata({this->appTitle, this->nounPhrase, this->shortDescription,
+                    this->appVersion, this->marketingVersion});
+  KJ_REQUIRE(info.getFormatVersion() == 1,
+      "Generated isolate package has an unsupported source format version.");
+  KJ_REQUIRE(isValidModuleName(this->mainModule),
+      "Generated isolate package has an invalid main module name.", this->mainModule);
+  KJ_REQUIRE(isValidCompatibilityDate(this->compatibilityDate),
+      "Generated isolate package has an invalid compatibility date.");
+  KJ_REQUIRE(info.getCompatibilityFlags().size() == 0,
+      "Generated isolate compatibility flags are not enabled.");
+
+  auto inputModules = info.getModules();
+  KJ_REQUIRE(inputModules.size() > 0 && inputModules.size() <= MAX_GENERATED_MODULES,
+      "Generated isolate package has an invalid module count.", inputModules.size());
+  std::set<std::string> names;
+  bool foundMain = false;
+  modules.reserve(inputModules.size());
+  order.reserve(inputModules.size());
+  for (auto i: kj::indices(inputModules)) {
+    auto input = inputModules[i];
+    auto name = input.getName();
+    KJ_REQUIRE(isValidModuleName(name),
+        "Generated isolate package has an invalid module name.", name);
+    KJ_REQUIRE(names.insert(std::string(name.begin(), name.size())).second,
+        "Generated isolate package has a duplicate module name.", name);
+    KJ_REQUIRE(input.getSize() <= MAX_GENERATED_MODULE_BYTES,
+        "Generated isolate module exceeds its size limit.", name, input.getSize());
+    KJ_REQUIRE(input.getType() == ModuleType::ES_MODULE ||
+                   input.getType() == ModuleType::JSON || input.getType() == ModuleType::TEXT,
+        "Generated isolate package contains an unsupported module type.", name);
+
+    auto module = std::make_unique<ModuleUpload>();
+    module->name = kj::str(name);
+    module->type = input.getType();
+    module->size = input.getSize();
+    if (name == this->mainModule) {
+      KJ_REQUIRE(module->type == ModuleType::ES_MODULE,
+          "Generated isolate main module must be an ES module.", name);
+      foundMain = true;
+    }
+    modules.push_back(std::move(module));
+    order.push_back(i);
+  }
+  KJ_REQUIRE(foundMain, "Generated isolate main module is missing.", this->mainModule);
+  std::sort(order.begin(), order.end(), [&](size_t left, size_t right) {
+    return modules[left]->name < modules[right]->name;
+  });
+  for (auto outputIndex: kj::indices(order)) {
+    modules[order[outputIndex]]->outputIndex = outputIndex;
+  }
+
+  static uint counter = 0;
+  tempPath = kj::str(
+      tempRoot, "/streamed-isolate.", getpid(), ".", time(nullptr), ".", counter++);
+  bool created = false;
+  KJ_DEFER(if (!created && tempPath.size() > 0 && access(tempPath.cStr(), F_OK) == 0) {
+    kj::runCatchingExceptions([&]() { recursivelyDelete(tempPath); });
+  });
+  KJ_SYSCALL(mkdir(tempPath.cStr(), 0700), tempPath);
+  KJ_SYSCALL(mkdir(kj::str(tempPath, "/modules").cStr(), 0700), tempPath);
+  created = true;
+}
+
+GeneratedIsolatePackageUploadState::~GeneratedIsolatePackageUploadState() noexcept {
+  if (!installed && tempPath.size() > 0 && access(tempPath.cStr(), F_OK) == 0) {
+    KJ_IF_MAYBE(error, kj::runCatchingExceptions([&]() { recursivelyDelete(tempPath); })) {
+      KJ_LOG(ERROR, "Could not remove abandoned generated isolate upload.", *error);
+    }
+  }
+}
+
+void GeneratedIsolatePackageUploadState::beginModule(uint16_t index) {
+  KJ_REQUIRE(!transferFinished, "beginModule() called after finish().");
+  KJ_REQUIRE(index < modules.size(), "Generated isolate module index is out of range.", index);
+  auto& module = *modules[index];
+  KJ_REQUIRE(!module.opened, "Generated isolate module was opened more than once.", index);
+  module.fd = raiiOpen(kj::str(tempPath, "/modules/", module.outputIndex),
+      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644);
+  module.opened = true;
+}
+
+void GeneratedIsolatePackageUploadState::writeModule(
+    uint16_t index, kj::ArrayPtr<const byte> data) {
+  KJ_REQUIRE(index < modules.size(), "Generated isolate module index is out of range.", index);
+  auto& module = *modules[index];
+  KJ_REQUIRE(module.opened && !module.done,
+      "Generated isolate module write occurred outside its stream lifetime.", index);
+  KJ_REQUIRE(data.size() <= module.size - module.received,
+      "Generated isolate module received more than its declared size.", module.name);
+  auto& fd = KJ_REQUIRE_NONNULL(module.fd,
+      "Generated isolate module stream has already been closed.", module.name);
+  kj::FdOutputStream(fd.get()).write(data.begin(), data.size());
+  module.received += data.size();
+}
+
+void GeneratedIsolatePackageUploadState::expectModuleSize(uint16_t index, uint64_t size) {
+  KJ_REQUIRE(index < modules.size(), "Generated isolate module index is out of range.", index);
+  auto& module = *modules[index];
+  KJ_REQUIRE(module.opened && !module.done,
+      "Generated isolate module size was declared outside its stream lifetime.", index);
+  KJ_REQUIRE(size == module.size - module.received,
+      "Generated isolate module stream size disagrees with BundleInfo.", module.name);
+}
+
+void GeneratedIsolatePackageUploadState::finishModule(uint16_t index) {
+  KJ_REQUIRE(index < modules.size(), "Generated isolate module index is out of range.", index);
+  auto& module = *modules[index];
+  KJ_REQUIRE(module.opened && !module.done,
+      "Generated isolate module stream done() was called more than once.", index);
+  KJ_REQUIRE(module.received == module.size,
+      "Generated isolate module ended before its declared size.", module.name,
+      module.received, module.size);
+  module.fd = nullptr;
+  module.done = true;
+}
+
+void GeneratedIsolatePackageUploadState::finishTransfer() {
+  KJ_REQUIRE(!transferFinished, "Generated isolate bundle finish() was called more than once.");
+  for (auto& module: modules) {
+    KJ_REQUIRE(module->done,
+        "Generated isolate bundle finished before every module completed.", module->name);
+  }
+  transferFinished = true;
+}
+
+GeneratedIsolatePackage GeneratedIsolatePackageUploadState::save() {
+  KJ_REQUIRE(transferFinished, "Generated isolate upload save() called before finish().");
+  KJ_REQUIRE(!saveCalled, "Generated isolate upload save() called more than once.");
+  saveCalled = true;
+
+  Sha256 sourceHashBuilder;
+  sourceHashBuilder.add("sandstorm-generated-isolate-source-v1");
+  sourceHashBuilder.add(mainModule);
+  sourceHashBuilder.add(compatibilityDate);
+  for (auto inputIndex: order) {
+    auto& module = *modules[inputIndex];
+    sourceHashBuilder.add(module.name);
+    byte type;
+    switch (module.type) {
+      case ModuleType::ES_MODULE:
+        type = static_cast<byte>(IsolateWorkerSource::Module::ES_MODULE);
+        break;
+      case ModuleType::TEXT:
+        type = static_cast<byte>(IsolateWorkerSource::Module::TEXT);
+        break;
+      case ModuleType::JSON:
+        type = static_cast<byte>(IsolateWorkerSource::Module::JSON);
+        break;
+    }
+    sourceHashBuilder.add(kj::arrayPtr(&type, 1));
+    auto fd = raiiOpen(kj::str(tempPath, "/modules/", module.outputIndex),
+        O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    struct stat stats;
+    KJ_SYSCALL(fstat(fd.get(), &stats), module.name);
+    KJ_REQUIRE(S_ISREG(stats.st_mode) && stats.st_size >= 0 &&
+                   static_cast<uint64_t>(stats.st_size) == module.size,
+        "Generated isolate module file changed during upload.", module.name);
+    addFileToHash(sourceHashBuilder, fd.get(), module.size);
+  }
+  auto sourceHash = sourceHashBuilder.finish();
+  auto appId = resolveAppId(requestedAppId, sourceHash);
+
+  capnp::MallocMessageBuilder message;
+  auto manifest = message.initRoot<spk::Manifest>();
+  manifest.initAppTitle().setDefaultText(appTitle);
+  manifest.setAppVersion(appVersion);
+  manifest.initAppMarketingVersion().setDefaultText(marketingVersion);
+  manifest.initMetadata().initShortDescription().setDefaultText(shortDescription);
+  auto populateCommand = [&](spk::Manifest::Command::Builder command) {
+    auto isolate = command.initIsolate();
+    isolate.setMainModule(mainModule);
+    isolate.setCompatibilityDate(compatibilityDate);
+    isolate.initCompatibilityFlags(0);
+    auto outputModules = isolate.initModules(order.size());
+    for (auto outputIndex: kj::indices(order)) {
+      auto& input = *modules[order[outputIndex]];
+      auto output = outputModules[outputIndex];
+      output.setName(input.name);
+      auto path = kj::str("modules/", outputIndex);
+      switch (input.type) {
+        case ModuleType::ES_MODULE: output.setEsModulePath(path); break;
+        case ModuleType::TEXT: output.setTextPath(path); break;
+        case ModuleType::JSON: output.setJsonPath(path); break;
+      }
+    }
+    auto bindings = isolate.initBindings(3);
+    bindings[0].setName("SANDSTORM_API");
+    bindings[0].setSandstormApi();
+    bindings[1].setName("POWERBOX");
+    bindings[1].setPowerbox();
+    bindings[2].setName("STORAGE");
+    bindings[2].setStorage();
+    isolate.initBridgeConfig().initViewInfo().initAppTitle().setDefaultText(appTitle);
+  };
+  auto actions = manifest.initActions(1);
+  actions[0].getInput().setNone();
+  actions[0].initNounPhrase().setDefaultText(nounPhrase);
+  populateCommand(actions[0].initCommand());
+  populateCommand(manifest.initContinueCommand());
+
+  auto manifestWords = capnp::messageToFlatArray(message);
+  GeneratedIsolatePackage result = {
+    packageIdFor(appId, manifestWords.asPtr(), sourceHash),
+    kj::mv(appId),
+    kj::mv(manifestWords),
+  };
+  writeFile(kj::str(tempPath, "/sandstorm-manifest"), result.manifest.asBytes());
+  commitGeneratedPackage(appRoot, tempPath, result);
+  installed = true;
+  return result;
+}
+
 GeneratedIsolatePackage buildGeneratedIsolatePackage(kj::StringPtr requestedAppId,
                                                      GeneratedIsolateMetadata metadata,
                                                      IsolateWorkerSource::Reader source) {
