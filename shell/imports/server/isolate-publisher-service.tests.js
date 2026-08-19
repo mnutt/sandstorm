@@ -238,6 +238,84 @@ describe("isolate publisher", function () {
       .countAsync(), 1);
   });
 
+  it("releases an app reservation after publication fails", async function () {
+    const failedCandidate = await prepareCandidate(
+      "released-lock-candidate", "released-lock");
+    backend.publishedFailuresRemaining = 1;
+    const error = await publishIsolateCandidate(
+      globalDb, backend, actor, "released-lock-publish", failedCandidate._id,
+      { newApp: null }, publishedMetadata()).then(() => null, error => error);
+    const failedOperation = await globalDb.collections.isolatePublishOperations.findOneAsync({
+      operationScope,
+      requestId: "released-lock-publish",
+    });
+    const appAfterFailure = await globalDb.collections.createdIsolateApps.findOneAsync(
+      failedOperation.createdAppId);
+
+    assert.match(error.message, /simulated published package failure/);
+    assert.notProperty(appAfterFailure, "publishLock");
+
+    const replacementCandidate = await prepareCandidate(
+      "replacement-candidate", "replacement");
+    const replacement = await publishIsolateCandidate(
+      globalDb, backend, actor, "replacement-publish", replacementCandidate._id,
+      { existingApp: failedOperation.createdAppId }, publishedMetadata());
+
+    assert.strictEqual(replacement.createdAppId, failedOperation.createdAppId);
+    assert.strictEqual(replacement.appVersion, 1);
+  });
+
+  it("recovers a stale app publication reservation", async function () {
+    const firstCandidate = await prepareCandidate("stale-lock-first", "first");
+    const first = await publishIsolateCandidate(
+      globalDb, backend, actor, "stale-lock-first-publish", firstCandidate._id,
+      { newApp: null }, publishedMetadata());
+    await globalDb.collections.createdIsolateApps.updateAsync(first.createdAppId, {
+      $set: {
+        publishLock: {
+          operationId: "abandoned-publication",
+          acquiredAt: new Date(Date.now() - 10 * 60 * 1000),
+        },
+      },
+    });
+
+    const secondCandidate = await prepareCandidate("stale-lock-second", "second");
+    const second = await publishIsolateCandidate(
+      globalDb, backend, actor, "stale-lock-second-publish", secondCandidate._id,
+      { existingApp: first.createdAppId }, publishedMetadata());
+
+    assert.strictEqual(second.createdAppId, first.createdAppId);
+    assert.strictEqual(second.appVersion, 2);
+    const app = await globalDb.collections.createdIsolateApps.findOneAsync(first.createdAppId);
+    assert.notProperty(app, "publishLock");
+  });
+
+  it("does not steal a current app publication reservation", async function () {
+    const firstCandidate = await prepareCandidate("current-lock-first", "first");
+    const first = await publishIsolateCandidate(
+      globalDb, backend, actor, "current-lock-first-publish", firstCandidate._id,
+      { newApp: null }, publishedMetadata());
+    await globalDb.collections.createdIsolateApps.updateAsync(first.createdAppId, {
+      $set: {
+        publishLock: {
+          operationId: "active-publication",
+          acquiredAt: new Date(),
+        },
+      },
+    });
+
+    const secondCandidate = await prepareCandidate("current-lock-second", "second");
+    const error = await publishIsolateCandidate(
+      globalDb, backend, actor, "current-lock-second-publish", secondCandidate._id,
+      { existingApp: first.createdAppId }, publishedMetadata())
+      .then(() => null, error => error);
+
+    assert.instanceOf(error, IsolatePublisherError);
+    assert.strictEqual(error.code, "app-publish-in-progress");
+    const app = await globalDb.collections.createdIsolateApps.findOneAsync(first.createdAppId);
+    assert.strictEqual(app.publishLock.operationId, "active-publication");
+  });
+
   it("resumes after recording a revision but failing to install its action", async function () {
     const candidate = await prepareCandidate("action-failure-candidate", "action-failure");
     const failingDb = Object.create(globalDb);
