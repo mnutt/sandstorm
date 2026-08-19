@@ -12,6 +12,7 @@ import {
 } from "sandstorm:api";
 
 const TOKEN_KEY = "api-powerbox-token";
+const CANDIDATE_TOKEN_KEY = "isolate-candidate-token";
 const CANDIDATE_INFO_KEY = "isolate-candidate-info";
 const PUBLISHED_APP_KEY = "isolate-published-app";
 const PUBLISHER_TOKEN_KEY = "isolate-publisher-token";
@@ -351,6 +352,16 @@ async function callIsolatePreviewer(
     const { info } = await result.candidate.getInfo({});
     const candidateDigest = Array.from(info.normalizedDigest, byte =>
       byte.toString(16).padStart(2, "0")).join("");
+    const candidateCapability = capability.wrapDerived(result.candidate);
+    try {
+      const previousToken = await api.storage().get(CANDIDATE_TOKEN_KEY);
+      const token = await candidateCapability.save({ label: "Reviewed isolate candidate" });
+      await api.storage().put(CANDIDATE_TOKEN_KEY, token);
+      if (previousToken) await api.revoke(previousToken);
+    } finally {
+      await candidateCapability.drop();
+    }
+
     await api.storage().putJson(CANDIDATE_INFO_KEY, {
       normalizedDigest: candidateDigest,
       title: "Powerbox Published Isolate",
@@ -395,6 +406,9 @@ async function callIsolatePublisher(api, capability) {
     title: result.title,
   };
   await api.storage().putJson(PUBLISHED_APP_KEY, publication);
+  const candidateToken = await api.storage().get(CANDIDATE_TOKEN_KEY);
+  if (candidateToken) await api.revoke(candidateToken);
+  await api.storage().delete(CANDIDATE_TOKEN_KEY);
   await api.storage().delete(CANDIDATE_INFO_KEY);
   await api.storage().delete(PUBLISH_REQUEST_KEY);
   return {

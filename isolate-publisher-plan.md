@@ -360,8 +360,10 @@ An App Studio or AI authoring grain uses two different Powerbox requests.
    usage will be charged. Detailed limit presentation is deferred.
 3. The authoring worker claims and saves the returned capability.
 4. Repeated Preview actions call `preview()` through the saved capability.
-5. The worker records the returned candidate digest and summary if the user may
-   publish it later; it need not retain the candidate capability.
+5. The worker records the returned candidate digest and summary. The current
+   preview grain retains its installed candidate; to keep a candidate
+   publishable after a newer preview supersedes it, the worker saves the
+   returned candidate capability.
 6. The returned preview `UiView` is offered to the current user; the existing
    shell `UiView` offer behavior opens it.
 
@@ -628,6 +630,8 @@ the reserved operation; a different request ID is rejected.
 - Keep candidate artifacts while referenced by a candidate capability, preview
   grain, publication operation, or revision. Cleanup may reclaim only artifacts
   proven to be unreferenced.
+- Treat a saved candidate capability as the explicit pin for a historical
+  candidate. A digest locates a candidate but does not retain a superseded one.
 - Preserve the isolate runtime's existing CPU, memory, request, stream, and
   storage limits.
 - Do not treat text/JSON package bindings as secret storage.

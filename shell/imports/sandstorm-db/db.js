@@ -258,11 +258,13 @@ const IsolateCandidates = new Mongo.Collection("isolateCandidates", collectionOp
 //       references its current candidate through grains.isolatePreview.candidateId.
 //   publishingOperationId: Publication which has exclusively reserved this candidate, if any.
 //   publishedRevisionId, publishedPackageId, and publishedAt: Immutable promotion result.
+//   cleanupAfter: Earliest time at which reference-aware cleanup should be retried.
 //
 // Package, preview-grain, diagnostic, and publication fields are added by later
 // idempotent state transitions. Mutable authoring projects do not belong here.
 
 IsolateCandidates.ensureIndexOnServer("ownerId");
+IsolateCandidates.ensureIndexOnServer("cleanupAfter");
 IsolateCandidates.ensureIndexOnServer(
   { operationScope: 1, requestId: 1 },
   { unique: true },

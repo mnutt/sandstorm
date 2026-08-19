@@ -22,6 +22,7 @@ import chai from "chai";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import { grainsMenuSelector } from "/imports/server/grain-visibility";
+import { requestIsolateCandidateCleanup } from "/imports/server/isolate-candidates";
 import { IsolatePreviewError, previewIsolateBundle, resetIsolatePreview } from
   "/imports/server/isolate-preview-service";
 
@@ -107,12 +108,14 @@ describe("isolate preview grain lifecycle", function () {
   let operationScope;
   let actor;
   let backend;
+  let tokenIds;
 
   beforeEach(async function () {
     ownerId = `preview-owner-${Random.id()}`;
     operationScope = `preview-scope-${Random.id()}`;
     actor = { accountId: ownerId, operationScope, requestingGrainId: Random.id() };
     backend = new FakePreviewBackend();
+    tokenIds = [];
     await globalDb.collections.users.insertAsync({
       _id: ownerId,
       type: "account",
@@ -124,8 +127,14 @@ describe("isolate preview grain lifecycle", function () {
   });
 
   afterEach(async function () {
-    const candidates = await globalDb.collections.isolateCandidates.find({ ownerId }).fetchAsync();
-    const packageIds = candidates.map(candidate => candidate.previewPackageId).filter(Boolean);
+    const packages = await globalDb.collections.packages.find({
+      generatedIsolateOwners: ownerId,
+    }, { fields: { _id: 1 } }).fetchAsync();
+    const packageIds = packages.map(pkg => pkg._id);
+    if (tokenIds.length > 0) {
+      await globalDb.collections.apiTokens.removeAsync({ _id: { $in: tokenIds } });
+    }
+
     await globalDb.collections.grains.removeAsync({ userId: ownerId });
     await globalDb.collections.isolateCandidates.removeAsync({ ownerId });
     await globalDb.collections.isolatePreviewSlots.removeAsync({ ownerId });
@@ -211,9 +220,34 @@ describe("isolate preview grain lifecycle", function () {
     assert.strictEqual(backend.startCalls.length, 2);
     assert.strictEqual(backend.startCalls[1].isNew, false);
     assert.strictEqual(backend.startCalls[1].command.isolate.phase, "continue");
-    const firstCandidate = await globalDb.collections.isolateCandidates.findOneAsync(
+    assert.notExists(await globalDb.collections.isolateCandidates.findOneAsync(
+      first.candidate._id));
+  });
+
+  it("retains a superseded candidate while a saved capability references it", async function () {
+    const first = await previewIsolateBundle(
+      globalDb, backend, actor, "saved-revision-one", bundle(), metadata(1));
+    const tokenId = Random.id();
+    tokenIds.push(tokenId);
+    await globalDb.collections.apiTokens.insertAsync({
+      _id: tokenId,
+      frontendRef: { isolateCandidate: { candidateId: first.candidate._id } },
+      owner: { frontend: null },
+      created: new Date(),
+    });
+
+    await previewIsolateBundle(globalDb, backend, actor, "saved-revision-two", bundle(
+      "export default { fetch() { return new Response('saved second'); } };"), metadata(2));
+    const retained = await globalDb.collections.isolateCandidates.findOneAsync(
       first.candidate._id);
-    assert.strictEqual(firstCandidate.previewGrainId, first.grainId);
+    assert.instanceOf(retained.cleanupAfter, Date);
+    assert.isFalse((await globalDb.collections.packages.findOneAsync(
+      first.candidate.previewPackageId)).shouldCleanup === true);
+
+    await globalDb.collections.apiTokens.removeAsync(tokenId);
+    assert.isTrue(await requestIsolateCandidateCleanup(globalDb, first.candidate._id));
+    assert.notExists(await globalDb.collections.isolateCandidates.findOneAsync(
+      first.candidate._id));
   });
 
   it("uses a separate preview grain for a separate authoring scope", async function () {

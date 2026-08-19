@@ -20,8 +20,10 @@ import chai from "chai";
 import { globalDb } from "/imports/db-deprecated";
 import {
   IsolateCandidateError,
+  cleanupMarkedIsolateCandidates,
   findOwnedIsolateCandidate,
   removeOwnedIsolateCandidate,
+  requestIsolateCandidateCleanup,
   reserveIsolateCandidate,
 } from "/imports/server/isolate-candidates";
 
@@ -128,6 +130,29 @@ describe("isolate candidate persistence", function () {
         .countAsync(), 0);
   });
 
+  it("reclaims a marked candidate after its cleanup delay", async function () {
+    const candidate = await reserveIsolateCandidate(
+      globalDb, actor, "delayed-cleanup", bundle());
+    const cleanupAfter = new Date(Date.now() + 60 * 1000);
+    assert.isFalse(await requestIsolateCandidateCleanup(
+      globalDb, candidate._id, cleanupAfter));
+    assert.deepEqual((await globalDb.collections.isolateCandidates.findOneAsync(
+      candidate._id)).cleanupAfter, cleanupAfter);
+
+    assert.deepEqual(await cleanupMarkedIsolateCandidates(
+      globalDb, new Date(cleanupAfter.getTime() - 1)), {
+      removed: 0,
+      missing: 0,
+      referenced: 0,
+    });
+    assert.deepEqual(await cleanupMarkedIsolateCandidates(globalDb, cleanupAfter), {
+      removed: 1,
+      missing: 0,
+      referenced: 0,
+    });
+    assert.notExists(await globalDb.collections.isolateCandidates.findOneAsync(candidate._id));
+  });
+
   it("removes an unreferenced owned candidate and requests generated-package cleanup",
       async function () {
     const packageUpdates = [];
@@ -168,6 +193,20 @@ describe("isolate candidate persistence", function () {
       collections: {
         isolateCandidates: { findOneAsync: async () => candidate },
         grains: { findOneAsync: async () => ({ _id: "preview-grain" }) },
+      },
+    };
+
+    await expectCandidateError(
+      removeOwnedIsolateCandidate(db, ownerId, candidate._id), "candidate-in-use");
+  });
+
+  it("refuses to remove a candidate retained for preview reset recovery", async function () {
+    const candidate = { _id: "reset-candidate", ownerId };
+    const db = {
+      collections: {
+        isolateCandidates: { findOneAsync: async () => candidate },
+        grains: { findOneAsync: async () => null },
+        isolatePreviewSlots: { findOneAsync: async () => ({ _id: "preview-slot" }) },
       },
     };
 

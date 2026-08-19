@@ -20,6 +20,8 @@ import { normalizeIsolateBundle } from "/imports/server/isolate-bundle";
 
 const MAX_OPERATION_SCOPE_BYTES = 512;
 const MAX_REQUEST_ID_BYTES = 256;
+const CANDIDATE_CLEANUP_RETRY_MS = 60 * 60 * 1000;
+const CANDIDATE_CLEANUP_BATCH_SIZE = 100;
 
 class IsolateCandidateError extends Error {
   constructor(code, message) {
@@ -143,6 +145,23 @@ async function findOwnedIsolateCandidate(db, accountIdInput, candidateIdInput) {
   return freezeCandidate(candidate || null);
 }
 
+async function markOwnedIsolateCandidateForCleanup(
+    db, accountIdInput, candidateIdInput, cleanupAfter = new Date()) {
+  const accountId = requireIdentifier(accountIdInput, "accountId", MAX_OPERATION_SCOPE_BYTES);
+  const candidateId = requireIdentifier(candidateIdInput, "candidateId", MAX_REQUEST_ID_BYTES);
+  if (!(cleanupAfter instanceof Date) || !Number.isFinite(cleanupAfter.getTime())) {
+    fail("invalid-context", "Candidate cleanup requires a valid cleanup time.");
+  }
+
+  return await db.collections.isolateCandidates.updateAsync({
+    _id: candidateId,
+    ownerId: accountId,
+    publishedRevisionId: { $exists: false },
+  }, {
+    $set: { cleanupAfter },
+  }) === 1;
+}
+
 async function removeOwnedIsolateCandidate(db, accountIdInput, candidateIdInput) {
   const accountId = requireIdentifier(accountIdInput, "accountId", MAX_OPERATION_SCOPE_BYTES);
   const candidateId = requireIdentifier(candidateIdInput, "candidateId", MAX_REQUEST_ID_BYTES);
@@ -157,6 +176,17 @@ async function removeOwnedIsolateCandidate(db, accountIdInput, candidateIdInput)
     "isolatePreview.candidateId": candidateId,
   })) {
     fail("candidate-in-use", "This isolate candidate is installed in its preview grain.");
+  }
+
+  if (db.collections.isolatePreviewSlots &&
+      await db.collections.isolatePreviewSlots.findOneAsync({
+        ownerId: accountId,
+        $or: [
+          { candidateId },
+          { "lock.candidateId": candidateId },
+        ],
+      })) {
+    fail("candidate-in-use", "This isolate candidate is retained by its preview slot.");
   }
 
   if (candidate.publishedRevisionId ||
@@ -189,6 +219,10 @@ async function removeOwnedIsolateCandidate(db, accountIdInput, candidateIdInput)
     fail("candidate-in-use", "This isolate candidate is retained by a saved capability.");
   }
 
+  // References live in several collections, so they cannot be checked and
+  // removed in one Mongo operation. Preview replacement is serialized by its
+  // slot lease; other consumers revalidate the candidate and fail closed if a
+  // grant or saved token races this final removal.
   const removed = await db.collections.isolateCandidates.removeAsync({
     _id: candidateId,
     ownerId: accountId,
@@ -212,9 +246,70 @@ async function removeOwnedIsolateCandidate(db, accountIdInput, candidateIdInput)
   return true;
 }
 
+async function attemptOwnedIsolateCandidateCleanup(db, accountId, candidateId) {
+  try {
+    return await removeOwnedIsolateCandidate(db, accountId, candidateId) ? "removed" : "missing";
+  } catch (error) {
+    if (error instanceof IsolateCandidateError && error.code === "candidate-in-use") {
+      return "referenced";
+    }
+
+    throw error;
+  }
+}
+
+async function requestIsolateCandidateCleanup(
+    db, candidateIdInput, cleanupAfter = new Date(), attemptNow = true) {
+  const candidateId = requireIdentifier(candidateIdInput, "candidateId", MAX_REQUEST_ID_BYTES);
+  const candidate = await db.collections.isolateCandidates.findOneAsync(candidateId);
+  if (!candidate) return false;
+
+  const marked = await markOwnedIsolateCandidateForCleanup(
+    db, candidate.ownerId, candidateId, cleanupAfter);
+  if (!marked || !attemptNow || cleanupAfter > new Date()) return false;
+  return await attemptOwnedIsolateCandidateCleanup(db, candidate.ownerId, candidateId) === "removed";
+}
+
+async function cleanupMarkedIsolateCandidates(
+    db, now = new Date(), limit = CANDIDATE_CLEANUP_BATCH_SIZE) {
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime()) ||
+      !Number.isSafeInteger(limit) || limit <= 0) {
+    fail("invalid-context", "Candidate cleanup requires a valid time and batch size.");
+  }
+
+  const candidates = await db.collections.isolateCandidates.find({
+    cleanupAfter: { $lte: now },
+    publishedRevisionId: { $exists: false },
+  }, {
+    sort: { cleanupAfter: 1 },
+    limit,
+    fields: { ownerId: 1 },
+  }).fetchAsync();
+  const result = { removed: 0, missing: 0, referenced: 0 };
+  for (const candidate of candidates) {
+    const disposition = await attemptOwnedIsolateCandidateCleanup(
+      db, candidate.ownerId, candidate._id);
+    ++result[disposition];
+    if (disposition === "referenced") {
+      await db.collections.isolateCandidates.updateAsync({
+        _id: candidate._id,
+        ownerId: candidate.ownerId,
+        cleanupAfter: { $lte: now },
+      }, {
+        $set: { cleanupAfter: new Date(now.getTime() + CANDIDATE_CLEANUP_RETRY_MS) },
+      });
+    }
+  }
+
+  return result;
+}
+
 export {
   IsolateCandidateError,
+  cleanupMarkedIsolateCandidates,
   findOwnedIsolateCandidate,
+  markOwnedIsolateCandidateForCleanup,
   removeOwnedIsolateCandidate,
+  requestIsolateCandidateCleanup,
   reserveIsolateCandidate,
 };

@@ -21,6 +21,7 @@ import {
   normalizeAppMetadata,
   normalizeTarget,
 } from "/imports/server/isolate-publisher-service";
+import { requestIsolateCandidateCleanup } from "/imports/server/isolate-candidates";
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_REQUEST_ID_BYTES = 256;
@@ -251,6 +252,11 @@ async function revokePublishGrantIfUnreferenced(db, grantId) {
   }, {
     $set: { revokedAt: new Date() },
   });
+  if (result > 0) {
+    const grant = await db.collections.isolateFactoryGrants.findOneAsync(grantId);
+    if (grant?.candidateId) await requestIsolateCandidateCleanup(db, grant.candidateId);
+  }
+
   return result > 0;
 }
 
