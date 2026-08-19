@@ -20,6 +20,7 @@ import { Random } from "meteor/random";
 
 import { findOwnedIsolateCandidate } from "/imports/server/isolate-candidates";
 import { IsolateError } from "/imports/server/isolate-error";
+import { coalesceInFlightOperation } from "/imports/server/isolate-in-flight";
 import {
   materializePublishedIsolateCandidate,
   normalizeGeneratedIsolateMetadata,
@@ -561,26 +562,19 @@ async function publishIsolateCandidate(
   const metadata = normalizeAppMetadata(metadataInput);
   const inputKey = operationInputKey(actor, candidateId, target, metadata);
   const key = `${actor.operationScope}\0${requestId}`;
-  const running = runningPublications.get(key);
-  if (running) {
-    if (running.inputKey !== inputKey) {
-      fail("idempotency-conflict",
-          "This publication request ID is already running with different input.");
-    }
-
-    return await running.promise;
-  }
-
-  const promise = (async () => {
-    const operation = await reservePublishOperation(
-      db, actor, requestId, candidateId, target, metadata);
-    return await runPublication(db, backend, operation);
-  })();
-  runningPublications.set(key, { inputKey, promise });
-  promise.finally(() => {
-    if (runningPublications.get(key)?.promise === promise) runningPublications.delete(key);
-  }).catch(() => {});
-  return await promise;
+  return await coalesceInFlightOperation(
+    runningPublications,
+    key,
+    inputKey,
+    async () => {
+      const operation = await reservePublishOperation(
+        db, actor, requestId, candidateId, target, metadata);
+      return await runPublication(db, backend, operation);
+    },
+    () => new IsolatePublisherError(
+      "idempotency-conflict",
+      "This publication request ID is already running with different input."),
+  );
 }
 
 export {
