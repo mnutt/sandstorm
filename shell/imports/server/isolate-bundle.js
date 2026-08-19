@@ -252,6 +252,12 @@ function moduleContentSize(module) {
     : Buffer.byteLength(module.content, "utf8");
 }
 
+function moduleContentBytes(module) {
+  return BINARY_MODULE_TYPES.has(module.type)
+    ? Buffer.from(module.content)
+    : Buffer.from(module.content, "utf8");
+}
+
 function resolveRelativeImport(moduleName, specifier, moduleNames, field) {
   if (specifier.includes("?") || specifier.includes("#")) {
     fail("unsupported-import", `${field} may not contain a query or fragment.`, field);
@@ -424,6 +430,7 @@ export {
   ISOLATE_BUNDLE_FORMAT_VERSION,
   ISOLATE_BUNDLE_LIMITS,
   IsolateBundleError,
+  moduleContentBytes,
   moduleContentSize,
   normalizeIsolateBundle,
 };

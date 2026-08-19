@@ -69,7 +69,6 @@ protected:
   kj::Promise<void> transferGrain(TransferGrainContext context) override;
   kj::Promise<void> deleteUser(DeleteUserContext context) override;
   kj::Promise<void> installPackage(InstallPackageContext context) override;
-  kj::Promise<void> generateIsolatePackage(GenerateIsolatePackageContext context) override;
   kj::Promise<void> deriveIsolatePackage(DeriveIsolatePackageContext context) override;
   kj::Promise<void> streamIsolatePackage(StreamIsolatePackageContext context) override;
   kj::Promise<void> tryGetPackage(TryGetPackageContext context) override;

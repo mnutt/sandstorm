@@ -23,7 +23,6 @@ using Package = import "package.capnp";
 using Supervisor = import "supervisor.capnp".Supervisor;
 using SandstormCore = import "supervisor.capnp".SandstormCore;
 using GrainInfo = import "grain.capnp".GrainInfo;
-using IsolateWorkerSource = import "isolate-worker-source.capnp".IsolateWorkerSource;
 using IsolateAuthoring = import "isolate-authoring.capnp";
 
 using WebSession = import "web-session.capnp".WebSession;
@@ -74,16 +73,7 @@ interface Backend {
   deletePackage @5 (packageId :Text);
   # Delete a package from disk. Succeeds silently if the package doesn't exist.
 
-  generateIsolatePackage @16 (
-      requestedAppId :Text,
-      metadata :GeneratedIsolatePackageMetadata,
-      source :IsolateWorkerSource)
-      -> (packageId :Text, appId :Text, manifest :Package.Manifest);
-  # Materialize a local, unsigned isolate-only package. If requestedAppId is
-  # empty, a deterministic internal preview identity is derived from source.
-  # This method never installs an action or creates a grain.
-
-  deriveIsolatePackage @17 (
+  deriveIsolatePackage @16 (
       sourcePackageId :Text,
       requestedAppId :Text,
       metadata :GeneratedIsolatePackageMetadata)
@@ -91,7 +81,7 @@ interface Backend {
   # Materialize a generated isolate package with new app metadata and identity,
   # reusing the immutable source stored in sourcePackageId.
 
-  streamIsolatePackage @18 (
+  streamIsolatePackage @17 (
       requestedAppId :Text,
       metadata :GeneratedIsolatePackageMetadata,
       info :IsolateAuthoring.BundleInfo)
