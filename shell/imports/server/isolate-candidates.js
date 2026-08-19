@@ -17,9 +17,9 @@
 import { Random } from "meteor/random";
 
 import { normalizeIsolateBundle } from "/imports/server/isolate-bundle";
+import { makeIsolateContextValidator } from "/imports/server/isolate-context";
 import { IsolateError } from "/imports/server/isolate-error";
 
-const MAX_OPERATION_SCOPE_BYTES = 512;
 const MAX_REQUEST_ID_BYTES = 256;
 const CANDIDATE_CLEANUP_RETRY_MS = 60 * 60 * 1000;
 const CANDIDATE_CLEANUP_BATCH_SIZE = 100;
@@ -34,34 +34,8 @@ function fail(code, message) {
   throw new IsolateCandidateError(code, message);
 }
 
-function requireIdentifier(value, name, maxBytes) {
-  if (typeof value !== "string" || value.length === 0) {
-    fail("invalid-context", `${name} must be a non-empty string.`);
-  }
-
-  if (Buffer.byteLength(value, "utf8") > maxBytes) {
-    fail("invalid-context", `${name} exceeds the ${maxBytes}-byte limit.`);
-  }
-
-  return value;
-}
-
-function normalizeActor(actor) {
-  if (!actor || typeof actor !== "object") {
-    fail("invalid-context", "Candidate creation requires an explicit actor.");
-  }
-
-  const accountId = requireIdentifier(actor.accountId, "accountId", MAX_OPERATION_SCOPE_BYTES);
-  const operationScope = requireIdentifier(
-    actor.operationScope, "operationScope", MAX_OPERATION_SCOPE_BYTES);
-  let requestingGrainId;
-  if (actor.requestingGrainId !== undefined && actor.requestingGrainId !== null) {
-    requestingGrainId = requireIdentifier(
-      actor.requestingGrainId, "requestingGrainId", MAX_OPERATION_SCOPE_BYTES);
-  }
-
-  return { accountId, operationScope, requestingGrainId };
-}
+const { normalizeActor, requireIdentifier } = makeIsolateContextValidator(
+  IsolateCandidateError, "Candidate creation");
 
 function resultValue(result) {
   if (result && Object.prototype.hasOwnProperty.call(result, "value")) {
@@ -136,7 +110,7 @@ async function reserveIsolateCandidate(db, actorInput, requestIdInput, bundleInp
 }
 
 async function findOwnedIsolateCandidate(db, accountIdInput, candidateIdInput) {
-  const accountId = requireIdentifier(accountIdInput, "accountId", MAX_OPERATION_SCOPE_BYTES);
+  const accountId = requireIdentifier(accountIdInput, "accountId");
   const candidateId = requireIdentifier(candidateIdInput, "candidateId", MAX_REQUEST_ID_BYTES);
   const candidate = await db.collections.isolateCandidates.findOneAsync({
     _id: candidateId,
@@ -147,7 +121,7 @@ async function findOwnedIsolateCandidate(db, accountIdInput, candidateIdInput) {
 
 async function markOwnedIsolateCandidateForCleanup(
     db, accountIdInput, candidateIdInput, cleanupAfter = new Date()) {
-  const accountId = requireIdentifier(accountIdInput, "accountId", MAX_OPERATION_SCOPE_BYTES);
+  const accountId = requireIdentifier(accountIdInput, "accountId");
   const candidateId = requireIdentifier(candidateIdInput, "candidateId", MAX_REQUEST_ID_BYTES);
   if (!(cleanupAfter instanceof Date) || !Number.isFinite(cleanupAfter.getTime())) {
     fail("invalid-context", "Candidate cleanup requires a valid cleanup time.");
@@ -163,7 +137,7 @@ async function markOwnedIsolateCandidateForCleanup(
 }
 
 async function removeOwnedIsolateCandidate(db, accountIdInput, candidateIdInput) {
-  const accountId = requireIdentifier(accountIdInput, "accountId", MAX_OPERATION_SCOPE_BYTES);
+  const accountId = requireIdentifier(accountIdInput, "accountId");
   const candidateId = requireIdentifier(candidateIdInput, "candidateId", MAX_REQUEST_ID_BYTES);
   const candidate = await db.collections.isolateCandidates.findOneAsync({
     _id: candidateId,
