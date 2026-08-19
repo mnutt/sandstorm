@@ -33,7 +33,7 @@ class IsolatePreviewDrawer {
   }
 
   attach(mount, logMount) {
-    this.previewPane = new IsolatePreviewPane(globalDb, mount, logMount);
+    this.previewPane = new IsolatePreviewPane(globalDb, globalGrains, mount, logMount);
     const target = this.target.get();
     if (target) this.previewPane.show(target);
   }

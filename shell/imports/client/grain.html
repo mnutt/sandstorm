@@ -596,15 +596,19 @@
         {{>sandstormTopbarItem name="webkey" topbar=globalTopbar
             template="grainApiTokenButton" popupTemplate="grainApiTokenPopup"}}
     {{/if}}
-    {{#if showPowerboxRequest}}
-    {{>sandstormTopbarItem name="request" topbar=globalTopbar template="grainPowerboxRequest"
-          startOpenModal=true popupTemplate="grainPowerboxRequestPopup" data=powerboxRequestData
-          onDismiss=cancelPowerboxRequest}}
-    {{/if}}
+    {{> grainPowerboxRequestTopbarItem}}
     {{#if showPowerboxOffer}}
       {{>sandstormTopbarItem name="offer" topbar=globalTopbar template="grainPowerboxOffer"
           startOpenModal=true popupTemplate="grainPowerboxOfferPopup" data=powerboxOfferData}}
     {{/if}}
+  {{/if}}
+</template>
+
+<template name="grainPowerboxRequestTopbarItem">
+  {{#if showPowerboxRequest}}
+    {{>sandstormTopbarItem name="request" topbar=globalTopbar template="grainPowerboxRequest"
+        startOpenModal=true popupTemplate="grainPowerboxRequestPopup" data=powerboxRequestData
+        onDismiss=cancelPowerboxRequest}}
   {{/if}}
 </template>
 

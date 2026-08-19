@@ -310,11 +310,41 @@ async function callApi(capability) {
 async function callIsolatePreviewer(
   api, capability, responseText = "Powerbox isolate preview") {
   const previewer = capnpClient(IsolatePreviewer, capability);
-  const source = new TextEncoder().encode(
-    `export default { fetch() {
-      console.log("Powerbox preview log:", ${JSON.stringify(responseText)});
-      return new Response(${JSON.stringify(responseText)});
-    } };`);
+  const previewClient = `
+    import { apiSessionPowerboxDescriptor, requestPowerbox } from
+      "/__sandstorm/native-capnp/client.js";
+    const button = document.querySelector("#request-preview-powerbox");
+    const output = document.querySelector("#preview-powerbox-result");
+    button.addEventListener("click", async () => {
+      try {
+        const descriptor = await apiSessionPowerboxDescriptor({
+          canonicalUrl: "https://api.example.test/v1",
+        });
+        const result = await requestPowerbox([descriptor], {
+          saveLabel: { defaultText: "Preview API capability" },
+        });
+        output.textContent = result.token ? "preview powerbox granted" : "missing token";
+      } catch (error) {
+        output.textContent = error.message || String(error);
+      }
+    });
+    button.dataset.powerboxReady = "true";
+  `;
+  const previewHtml = `
+    <h1>${responseText}</h1>
+    <button id="request-preview-powerbox">Request preview capability</button>
+    <pre id="preview-powerbox-result"></pre>
+    <script type="module">${previewClient}</script>
+  `;
+  const source = new TextEncoder().encode(`import { sandstorm } from "sandstorm:api";
+  export default { async fetch(request, env) {
+    const systemResponse = await sandstorm(request, env).serveSystemRoutes();
+    if (systemResponse) return systemResponse;
+    console.log("Powerbox preview log:", ${JSON.stringify(responseText)});
+    return new Response(${JSON.stringify(previewHtml)}, {
+      headers: { "content-type": "text/html; charset=UTF-8" },
+    });
+  } };`);
   const exportedBundle = await exportCapnp(api, IsolateBundle, {
     async getInfo() {
       return {

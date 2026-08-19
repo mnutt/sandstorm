@@ -23,11 +23,38 @@ var utils = require("../utils"),
 
 var appTitle = "Isolate authoring browser test";
 var workerSource = [
+  "import { sandstorm } from 'sandstorm:api';",
   "export default {",
-  "  fetch() {",
+  "  async fetch(request, env) {",
+  "    const systemResponse = await sandstorm(request, env).serveSystemRoutes();",
+  "    if (systemResponse) return systemResponse;",
   "    console.log('isolate authoring browser log marker');",
   "    console.log('<img id=\"isolate-log-injection-probe\" src=\"x\">');",
-  "    return new Response('<h1>isolate authoring browser test preview</h1>', {",
+  "    return new Response(`",
+  "      <h1>isolate authoring browser test preview</h1>",
+  "      <button id=\"request-preview-powerbox\">Request preview capability</button>",
+  "      <pre id=\"preview-powerbox-result\"></pre>",
+  "      <script type=\"module\">",
+  "        import { apiSessionPowerboxDescriptor, requestPowerbox } from",
+  "          '/__sandstorm/native-capnp/client.js';",
+  "        const button = document.querySelector('#request-preview-powerbox');",
+  "        const output = document.querySelector('#preview-powerbox-result');",
+  "        button.addEventListener('click', async () => {",
+  "          try {",
+  "            const descriptor = await apiSessionPowerboxDescriptor({",
+  "              canonicalUrl: 'https://api.example.test/v1',",
+  "            });",
+  "            const result = await requestPowerbox([descriptor], {",
+  "              saveLabel: { defaultText: 'Preview API capability' },",
+  "            });",
+  "            output.textContent = result.token ? 'preview powerbox granted' : 'missing token';",
+  "          } catch (error) {",
+  "            output.textContent = error.message || String(error);",
+  "          }",
+  "        });",
+  "        button.dataset.powerboxReady = 'true';",
+  "      </script>",
+  "    `, {",
   "      headers: { 'content-type': 'text/html; charset=UTF-8' },",
   "    });",
   "  },",
@@ -92,8 +119,18 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
     .waitForElementVisible(".isolate-inline-preview iframe.grain-frame", long_wait)
     .assert.not.elementPresent(".isolate-source-error")
     .grainFrame()
-    .waitForElementVisible("body", medium_wait)
-    .assert.textContains("body", "isolate authoring browser test preview")
+    .waitForElementVisible("h1", medium_wait)
+    .assert.textContains("h1", "isolate authoring browser test preview")
+    .waitForElementVisible("#request-preview-powerbox[data-powerbox-ready=true]", medium_wait)
+    .click("#request-preview-powerbox")
+    .frameParent()
+    .waitForElementVisible(
+      ".powerbox-card button[data-card-id=\"http-url-https://api.example.test/v1\"]",
+      medium_wait)
+    .click(".powerbox-card button[data-card-id=\"http-url-https://api.example.test/v1\"]")
+    .frameSelector(previewFrameSelector)
+    .waitForElementVisible("#preview-powerbox-result", medium_wait)
+    .assert.textContains("#preview-powerbox-result", "preview powerbox granted")
     .frameParent()
     .waitForElementVisible(".isolate-preview-log-contents > pre", medium_wait)
     .assert.textContains(
@@ -119,8 +156,8 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
       return currentSrc && currentSrc !== previousPreviewFrameSrc;
     }, long_wait, short_wait, "Preview revision did not open a replacement frame session")
     .grainFrame()
-    .waitForElementVisible("body", medium_wait)
-    .assert.textContains("body", "isolate authoring browser test revision two")
+    .waitForElementVisible("h1", medium_wait)
+    .assert.textContains("h1", "isolate authoring browser test revision two")
     .frameParent()
     .getAttribute(previewFrameSelector, "src", function (result) {
       previousPreviewFrameSrc = result.value;
@@ -131,8 +168,8 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
       return currentSrc && currentSrc !== previousPreviewFrameSrc;
     }, long_wait, short_wait, "Preview reload did not open a replacement frame session")
     .grainFrame()
-    .waitForElementVisible("body", medium_wait)
-    .assert.textContains("body", "isolate authoring browser test revision two")
+    .waitForElementVisible("h1", medium_wait)
+    .assert.textContains("h1", "isolate authoring browser test revision two")
     .frameParent()
     .click(".reset-preview")
     .waitForElementNotPresent(".operation-status.working", long_wait)

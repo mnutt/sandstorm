@@ -27,6 +27,7 @@
 #include <sandstorm/isolate/api.js.h>
 #include <sandstorm/isolate/capnp-es.js.h>
 #include <sandstorm/isolate/capnp-runtime.js.h>
+#include <sandstorm/isolate/platform-capnp-es.js.h>
 
 #include <capnp/message.h>
 #include <capnp/compat/http-over-capnp.h>
@@ -761,6 +762,10 @@ void addGeneratedIsolateHelperModules(IsolateRuntimeConfig& config) {
   }
   for (auto& module: ISOLATE_CAPNP_ES_MODULES) {
     addGeneratedIsolateModule(config, capnpEsSchemeRelativeRuntimeSpecifier(module.name),
+        IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);
+  }
+  for (auto& module: ISOLATE_PLATFORM_CAPNP_ES_MODULES) {
+    addGeneratedIsolateModule(config, module.name,
         IsolateRuntimeConfig::ModuleType::ES_MODULE, module.source);
   }
 }

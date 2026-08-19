@@ -20,11 +20,12 @@ import { IsolatePreviewLogView } from "/imports/client/apps/isolate-preview-log"
 import "/imports/client/apps/styles/isolate-preview-pane.scss";
 
 class IsolatePreviewPane {
-  constructor(db, mount, logMount) {
-    if (!mount || !logMount) {
+  constructor(db, grains, mount, logMount) {
+    if (!grains || !mount || !logMount) {
       throw new Error("An isolate preview pane requires frame and log mount elements.");
     }
     this.db = db;
+    this.grains = grains;
     this.mount = mount;
     this.logMount = logMount;
     this.grainView = null;
@@ -51,10 +52,14 @@ class IsolatePreviewPane {
       return;
     }
 
-    if (this.grainView) this.grainView.destroy();
+    if (this.grainView) {
+      this.grains.removeAuxiliaryGrainView(this.grainView);
+      this.grainView.destroy();
+    }
     this.grainView = null;
     this.target = { ...target };
     this.grainView = new GrainView(null, this.db, target.grainId, "", null, this.mount);
+    this.grains.addAuxiliaryGrainView(this.grainView);
     this.grainView.setActive(true);
     this.grainView.openSession();
     if (this.logView) {
@@ -73,7 +78,10 @@ class IsolatePreviewPane {
   close() {
     if (this.logView) this.logView.destroy();
     this.logView = null;
-    if (this.grainView) this.grainView.destroy();
+    if (this.grainView) {
+      this.grains.removeAuxiliaryGrainView(this.grainView);
+      this.grainView.destroy();
+    }
     this.grainView = null;
     this.target = null;
   }
@@ -82,6 +90,7 @@ class IsolatePreviewPane {
     this.close();
     this.mount = null;
     this.logMount = null;
+    this.grains = null;
   }
 }
 

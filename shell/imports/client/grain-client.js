@@ -830,20 +830,20 @@ Template.grain.helpers({
     return current && current.powerboxOfferData();
   },
 
-  showPowerboxRequest: function () {
-    const current = globalGrains.getActive();
-    return current && current.showPowerboxRequest();
+});
+
+Template.grainPowerboxRequestTopbarItem.helpers({
+  showPowerboxRequest() {
+    return !!globalGrains.getPowerboxRequestSource();
   },
 
-  powerboxRequestData: function () {
-    const current = globalGrains.getActive();
-    return current && current.powerboxRequestData();
+  powerboxRequestData() {
+    return globalGrains.getPowerboxRequestSource()?.powerboxRequestData();
   },
 
-  cancelPowerboxRequest: function () {
+  cancelPowerboxRequest() {
     return () => {
-      const current = globalGrains.getActive();
-      current.setPowerboxRequest(undefined);
+      globalGrains.getPowerboxRequestSource()?.setPowerboxRequest(undefined);
       return "remove";
     };
   },
@@ -1531,7 +1531,8 @@ Meteor.startup(function () {
 
     // Look up the grain that this postmessage came from, so we can map behavior into that
     // particular grain's state
-    const senderGrain = globalGrains.getByOrigin(event.origin);
+    const senderGrain = globalGrains.getByOrigin(event.origin) ||
+      (event.data?.powerboxRequest && globalGrains.getAuxiliaryByOrigin(event.origin));
     if (!senderGrain) {
       // We got a postMessage from an origin that is not a grain we currently believe is open.
       // Ignore it. (It may be aimed at some other message listener registered elsewhere...)
@@ -1812,7 +1813,10 @@ Meteor.startup(function () {
         grainId: senderGrain.grainId(),
         // Attach grain context to the request.
 
-        onCompleted: function () { globalTopbar.closePopup(); },
+        onCompleted: function () {
+          senderGrain.setPowerboxRequest(undefined);
+          globalTopbar.closePopup();
+        },
         // Allow the grain to close the popup when we've completed the request.
       };
       const requestContext = new SandstormPowerboxRequest(globalDb, powerboxRequestInfo, GrainView);

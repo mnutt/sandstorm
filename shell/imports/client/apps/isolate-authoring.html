@@ -1,6 +1,7 @@
 <template name="isolateAuthoringPage">
   {{setDocumentTitle}}
   {{#sandstormTopbarItem name="title" priority=5 topbar=globalTopbar}}Create app{{/sandstormTopbarItem}}
+  {{> grainPowerboxRequestTopbarItem}}
 
   <main class="isolate-authoring-page">
     <div class="isolate-authoring-workspace {{#if previewTarget}}has-preview{{/if}}">
