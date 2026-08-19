@@ -10,8 +10,10 @@ spk dev-isolate --title "Isolate Authoring Powerbox" \
 Open the grain, edit the worker source, and choose **Grant and preview**. The
 browser requests Sandstorm's `IsolatePreviewer` through Powerbox. The app saves
 the grant, restores it, exports the current editor contents as an
-`IsolateBundle`, and streams the module through `ByteStream` in multiple
-chunks.
+`IsolateBundle`, and streams each module through `ByteStream` in multiple
+chunks. The bundle includes the editable `worker.js`, structured settings in
+`metadata.json`, and an SVG text asset. Modules are completed sequentially so
+Sandstorm only needs to retain the module currently being validated.
 
 The preview call returns two capabilities:
 

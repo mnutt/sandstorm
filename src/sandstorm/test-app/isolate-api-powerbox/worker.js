@@ -2,6 +2,7 @@ import {
   IsolateBundle,
   IsolatePreviewer,
   IsolatePublisher,
+  ModuleType,
 } from "capnp:/sandstorm/isolate-authoring.capnp";
 import {
   Capability,
@@ -332,19 +333,47 @@ async function callIsolatePreviewer(
   `;
   const previewHtml = `
     <h1>${responseText}</h1>
+    <img id="preview-multi-file-logo" src="/sandstorm.svg" alt="Sandstorm">
     <button id="request-preview-powerbox">Request preview capability</button>
     <pre id="preview-powerbox-result"></pre>
     <script type="module">${previewClient}</script>
   `;
-  const source = new TextEncoder().encode(`import { sandstorm } from "sandstorm:api";
+  const encoder = new TextEncoder();
+  const modules = [{
+    name: "worker.js",
+    type: ModuleType.ES_MODULE,
+    bytes: encoder.encode(`import { sandstorm } from "sandstorm:api";
+  import metadata from "./metadata.json";
+  import previewHtml from "./preview.html";
+  import logo from "./sandstorm.svg";
   export default { async fetch(request, env) {
     const systemResponse = await sandstorm(request, env).serveSystemRoutes();
     if (systemResponse) return systemResponse;
-    console.log("Powerbox preview log:", ${JSON.stringify(responseText)});
-    return new Response(${JSON.stringify(previewHtml)}, {
+    const url = new URL(request.url);
+    if (url.pathname === "/sandstorm.svg") {
+      return new Response(logo, { headers: { "content-type": "image/svg+xml" } });
+    }
+    console.log("Powerbox preview log:", metadata.responseText);
+    return new Response(previewHtml, {
       headers: { "content-type": "text/html; charset=UTF-8" },
     });
-  } };`);
+  } };`),
+  }, {
+    name: "metadata.json",
+    type: ModuleType.JSON,
+    bytes: encoder.encode(JSON.stringify({ responseText })),
+  }, {
+    name: "preview.html",
+    type: ModuleType.TEXT,
+    bytes: encoder.encode(previewHtml),
+  }, {
+    name: "sandstorm.svg",
+    type: ModuleType.TEXT,
+    bytes: encoder.encode(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">
+        <rect width="32" height="32" fill="#5b21b6"/>
+      </svg>`),
+  }];
   const exportedBundle = await exportCapnp(api, IsolateBundle, {
     async getInfo() {
       return {
@@ -353,17 +382,25 @@ async function callIsolatePreviewer(
           mainModule: "worker.js",
           compatibilityDate: "2025-01-01",
           compatibilityFlags: [],
-          modules: [{ name: "worker.js", type: "esModule", size: BigInt(source.byteLength) }],
+          modules: modules.map(module => ({
+            name: module.name,
+            type: module.type,
+            size: BigInt(module.bytes.byteLength),
+          })),
         },
       };
     },
 
     async transfer(params) {
-      const { stream } = await params.receiver.beginModule({ index: 0 });
-      await stream.expectSize({ size: BigInt(source.byteLength) });
-      await stream.write({ data: source.subarray(0, 19) });
-      await stream.write({ data: source.subarray(19) });
-      await stream.done({});
+      for (const [index, module] of modules.entries()) {
+        const { stream } = await params.receiver.beginModule({ index });
+        await stream.expectSize({ size: BigInt(module.bytes.byteLength) });
+        const midpoint = Math.min(19, module.bytes.byteLength);
+        await stream.write({ data: module.bytes.subarray(0, midpoint) });
+        await stream.write({ data: module.bytes.subarray(midpoint) });
+        await stream.done({});
+      }
+
       await params.receiver.finish({});
       return {};
     },
