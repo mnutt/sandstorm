@@ -632,8 +632,6 @@ the reserved operation; a different request ID is rejected.
   follows the ordinary grain sleep, wake, trash, and deletion lifecycle.
 - Reuse one stable account-scoped preview slot for the built-in authoring UI so
   clearing browser-local draft state cannot strand additional hidden grains.
-  Reclaim legacy shell preview scopes created from the former random browser
-  session namespace.
   A Powerbox preview slot instead follows its durable preview grant: once the
   last saved grant is revoked, reclaim its hidden grain after the in-flight
   preview lease window and retry cleanup periodically.

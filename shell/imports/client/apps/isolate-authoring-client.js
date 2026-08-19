@@ -28,7 +28,6 @@ import { IsolatePreviewPane } from "/imports/client/apps/isolate-preview-pane";
 import "/imports/client/apps/styles/isolate-authoring.scss";
 
 const DRAFT_STORAGE_PREFIX = "sandstorm-isolate-authoring-draft-v1:";
-const AUTHORING_SESSION_ID = "authoring_primary";
 const DEFAULT_SOURCE = `export default {
   fetch(request) {
     const url = new URL(request.url);
@@ -48,7 +47,6 @@ function storageKey() {
 
 function defaultDraft() {
   return {
-    authoringSessionId: AUTHORING_SESSION_ID,
     title: "My isolate app",
     nounPhrase: "app",
     shortDescription: "A small app running in a Sandstorm isolate",
@@ -60,8 +58,6 @@ function defaultDraft() {
 
 function isStoredDraft(value) {
   return value && typeof value === "object" &&
-    typeof value.authoringSessionId === "string" &&
-    /^[A-Za-z0-9_-]{8,128}$/.test(value.authoringSessionId) &&
     (value.publishTargetId === undefined || typeof value.publishTargetId === "string") &&
     ["title", "nounPhrase", "shortDescription", "compatibilityDate", "source"]
       .every(field => typeof value[field] === "string");
@@ -73,16 +69,7 @@ function loadDraft() {
     try {
       const parsed = JSON.parse(stored);
       if (isStoredDraft(parsed)) {
-        const migrating = parsed.authoringSessionId !== AUTHORING_SESSION_ID;
-        const draft = migrating ? {
-          ...parsed,
-          authoringSessionId: AUTHORING_SESSION_ID,
-          preview: null,
-          previewRequest: null,
-          publishRequest: null,
-        } : parsed;
-        if (migrating) saveDraft(draft);
-        return draft;
+        return parsed;
       }
     } catch (error) {
       console.warn("Ignoring an invalid browser-local isolate draft:", error);
@@ -194,7 +181,6 @@ async function publish(instance, target) {
     saveDraft(draft);
     const result = await Meteor.callAsync(
       "isolateAuthoringPublish",
-      draft.authoringSessionId,
       publishRequest.requestId,
       preview.candidateId,
       target,
@@ -223,9 +209,7 @@ Router.map(function () {
     path: "/apps/create",
     template: "isolateAuthoringPage",
     waitOn: function () {
-      const draft = loadDraft();
-      return globalSubs.concat(
-        Meteor.subscribe("isolateAuthoringState", draft.authoringSessionId));
+      return globalSubs.concat(Meteor.subscribe("isolateAuthoringState"));
     },
     data: function () {
       if (!Meteor.userId() && !Meteor.loggingIn()) {
@@ -300,13 +284,12 @@ Template.isolateAuthoringPage.helpers({
 
   candidateCompatibilityDate() {
     const candidate = currentCandidateRecord(Template.instance());
-    return candidate?.normalizedBundle?.compatibilityDate || candidate?.compatibilityDate;
+    return candidate?.normalizedBundle?.compatibilityDate;
   },
 
   candidateCompatibilityFlags() {
     const candidate = currentCandidateRecord(Template.instance());
-    return candidate?.normalizedBundle?.compatibilityFlags ||
-      candidate?.compatibilityFlags || [];
+    return candidate?.normalizedBundle?.compatibilityFlags || [];
   },
 
   candidateBindings() {
@@ -410,7 +393,6 @@ Template.isolateAuthoringPage.events({
       saveDraft(draft);
       const result = await Meteor.callAsync(
         "isolateAuthoringPreview",
-        draft.authoringSessionId,
         previewRequest.requestId,
         bundleFromDraft(draft),
         previewMetadata(draft),
@@ -480,8 +462,7 @@ Template.isolateAuthoringPage.events({
     setStatus(instance, "working", "Replacing the preview grain and its data…");
     try {
       const draft = instance.draft.get();
-      const result = await Meteor.callAsync(
-        "isolateAuthoringResetPreview", draft.authoringSessionId);
+      const result = await Meteor.callAsync("isolateAuthoringResetPreview");
       const preview = currentPreview(instance);
       const updated = {
         ...draft,

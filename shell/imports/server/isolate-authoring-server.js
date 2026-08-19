@@ -31,27 +31,13 @@ import {
   publishIsolateCandidate,
 } from "/imports/server/isolate-publisher-service";
 
-const AUTHORING_SESSION_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
-
-function invalidSession() {
-  throw new Meteor.Error(400, "The isolate authoring session ID is invalid.");
-}
-
-function makeShellIsolateActor(accountId, authoringSessionId) {
+function makeShellIsolateActor(accountId) {
   if (typeof accountId !== "string" || accountId.length === 0) {
     throw new Meteor.Error(403, "You must be logged in to author an isolate app.");
   }
 
-  if (typeof authoringSessionId !== "string" ||
-      !AUTHORING_SESSION_PATTERN.test(authoringSessionId)) {
-    invalidSession();
-  }
-
   return Object.freeze({
     accountId,
-    // The browser-local session ID is retained for wire compatibility but is
-    // not allowed to multiply hidden preview grains. The built-in authoring
-    // surface has one stable preview scope per account.
     operationScope: `shell-isolate-authoring:${accountId}`,
   });
 }
@@ -74,8 +60,8 @@ function candidateSummary(candidate) {
 const publicationSummary = publicIsolatePublication;
 
 async function previewIsolateFromShell(
-    db, backend, accountId, authoringSessionId, requestId, bundle, metadata) {
-  const actor = makeShellIsolateActor(accountId, authoringSessionId);
+    db, backend, accountId, requestId, bundle, metadata) {
+  const actor = makeShellIsolateActor(accountId);
   const result = await previewIsolateBundle(db, backend, actor, requestId, bundle, metadata);
   return Object.freeze({
     candidate: candidateSummary(result.candidate),
@@ -84,15 +70,15 @@ async function previewIsolateFromShell(
 }
 
 async function resetIsolatePreviewFromShell(
-    db, backend, accountId, authoringSessionId) {
-  const actor = makeShellIsolateActor(accountId, authoringSessionId);
+    db, backend, accountId) {
+  const actor = makeShellIsolateActor(accountId);
   const result = await resetIsolatePreview(db, backend, actor);
   return Object.freeze({ grainId: result.grainId });
 }
 
 async function publishIsolateFromShell(
-    db, backend, accountId, authoringSessionId, requestId, candidateId, target, metadata) {
-  const actor = makeShellIsolateActor(accountId, authoringSessionId);
+    db, backend, accountId, requestId, candidateId, target, metadata) {
+  const actor = makeShellIsolateActor(accountId);
   const candidate = await findOwnedIsolateCandidate(db, accountId, candidateId);
   if (!candidate || candidate.operationScope !== actor.operationScope) {
     throw new IsolatePublisherError(
@@ -134,38 +120,32 @@ async function runAuthoringMethod(callback) {
 }
 
 Meteor.methods({
-  async isolateAuthoringPreview(authoringSessionId, requestId, bundle, metadata) {
-    check(authoringSessionId, String);
+  async isolateAuthoringPreview(requestId, bundle, metadata) {
     check(requestId, String);
     return await runAuthoringMethod(() => previewIsolateFromShell(
-      globalDb, getGlobalBackend(), this.userId,
-      authoringSessionId, requestId, bundle, metadata));
+      globalDb, getGlobalBackend(), this.userId, requestId, bundle, metadata));
   },
 
-  async isolateAuthoringResetPreview(authoringSessionId) {
-    check(authoringSessionId, String);
+  async isolateAuthoringResetPreview() {
     return await runAuthoringMethod(() => resetIsolatePreviewFromShell(
-      globalDb, getGlobalBackend(), this.userId, authoringSessionId));
+      globalDb, getGlobalBackend(), this.userId));
   },
 
   async isolateAuthoringPublish(
-      authoringSessionId, requestId, candidateId, target, metadata) {
-    check(authoringSessionId, String);
+      requestId, candidateId, target, metadata) {
     check(requestId, String);
     check(candidateId, String);
     return await runAuthoringMethod(() => publishIsolateFromShell(
-      globalDb, getGlobalBackend(), this.userId,
-      authoringSessionId, requestId, candidateId, target, metadata));
+      globalDb, getGlobalBackend(), this.userId, requestId, candidateId, target, metadata));
   },
 });
 
-Meteor.publish("isolateAuthoringState", function (authoringSessionId) {
-  check(authoringSessionId, String);
+Meteor.publish("isolateAuthoringState", function () {
   if (!this.userId) return [];
 
   let actor;
   try {
-    actor = makeShellIsolateActor(this.userId, authoringSessionId);
+    actor = makeShellIsolateActor(this.userId);
   } catch (error) {
     this.error(error);
     return [];

@@ -30,10 +30,7 @@ import { registerPaymentsApi } from "/imports/blackrock-payments/server/payments
 import { registerUiViewQueryHandler } from "/imports/sandstorm-ui-powerbox/powerbox-server";
 import { SandstormAutoupdateApps } from "/imports/sandstorm-autoupdate-apps/autoupdate-apps";
 import { cleanupMarkedIsolateCandidates } from "/imports/server/isolate-candidates";
-import {
-  cleanupLegacyShellIsolatePreviews,
-  cleanupRevokedIsolatePreviews,
-} from "/imports/server/isolate-preview-service";
+import { cleanupRevokedIsolatePreviews } from "/imports/server/isolate-preview-service";
 let url = require("url");
 
 export const migrationsReady = migrateToLatest(globalDb, getGlobalBackend());
@@ -80,9 +77,6 @@ SandstormDb.periodicCleanup(10 * 60 * 1000, () => {
 SandstormDb.periodicCleanup(10 * 60 * 1000, () => {
   cleanupRevokedIsolatePreviews(globalDb, getGlobalBackend()).catch((err) => {
     console.error("Error cleaning up revoked isolate previews:", err);
-  });
-  cleanupLegacyShellIsolatePreviews(globalDb, getGlobalBackend()).catch((err) => {
-    console.error("Error cleaning up legacy isolate previews:", err);
   });
 });
 SandstormDb.periodicCleanup(60 * 60 * 1000, () => {
