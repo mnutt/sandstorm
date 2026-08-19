@@ -41,8 +41,11 @@ var workerSourceRevisionThree = workerSource.replace(
   "isolate authoring browser test preview",
   "isolate authoring browser test revision three",
 );
+var previewFrameSelector = ".isolate-inline-preview iframe.grain-frame";
 
 module.exports["Test built-in isolate authoring flow"] = function (browser) {
+  var previousPreviewFrameSrc;
+
   browser
     .init()
     .loginDevAccount()
@@ -104,15 +107,29 @@ module.exports["Test built-in isolate authoring flow"] = function (browser) {
     .assert.attributeEquals(".toggle-isolate-preview-log", "aria-expanded", "false")
     .click(".toggle-isolate-preview-log")
     .assert.attributeEquals(".toggle-isolate-preview-log", "aria-expanded", "true")
+    .getAttribute(previewFrameSelector, "src", function (result) {
+      previousPreviewFrameSrc = result.value;
+    })
     .clearValue("textarea[name=source]")
     .setValue("textarea[name=source]", workerSourceRevisionTwo)
     .click(".preview-draft")
     .waitForElementNotPresent(".operation-status.working", long_wait)
+    .waitUntil(async function () {
+      var currentSrc = await this.getAttribute(previewFrameSelector, "src");
+      return currentSrc && currentSrc !== previousPreviewFrameSrc;
+    }, long_wait, short_wait, "Preview revision did not open a replacement frame session")
     .grainFrame()
     .waitForElementVisible("body", medium_wait)
     .assert.textContains("body", "isolate authoring browser test revision two")
     .frameParent()
+    .getAttribute(previewFrameSelector, "src", function (result) {
+      previousPreviewFrameSrc = result.value;
+    })
     .click(".reload-inline-preview")
+    .waitUntil(async function () {
+      var currentSrc = await this.getAttribute(previewFrameSelector, "src");
+      return currentSrc && currentSrc !== previousPreviewFrameSrc;
+    }, long_wait, short_wait, "Preview reload did not open a replacement frame session")
     .grainFrame()
     .waitForElementVisible("body", medium_wait)
     .assert.textContains("body", "isolate authoring browser test revision two")
