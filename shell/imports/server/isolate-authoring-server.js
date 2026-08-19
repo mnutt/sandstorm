@@ -27,6 +27,7 @@ import {
 } from "/imports/server/isolate-preview-service";
 import {
   IsolatePublisherError,
+  publicIsolatePublication,
   publishIsolateCandidate,
 } from "/imports/server/isolate-publisher-service";
 
@@ -70,15 +71,7 @@ function candidateSummary(candidate) {
   });
 }
 
-function publicationSummary(result) {
-  return Object.freeze({
-    createdAppId: result.createdAppId,
-    revisionId: result.revisionId,
-    appId: result.appId,
-    appVersion: result.appVersion,
-    title: result.title,
-  });
-}
+const publicationSummary = publicIsolatePublication;
 
 async function previewIsolateFromShell(
     db, backend, accountId, authoringSessionId, requestId, bundle, metadata) {
