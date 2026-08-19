@@ -126,7 +126,14 @@ describe("isolate candidate persistence", function () {
       reserveIsolateCandidate(globalDb, null, "request", bundle()), "invalid-context");
     await expectCandidateError(
       reserveIsolateCandidate(globalDb, actor, "", bundle()), "invalid-context");
-    assert.strictEqual(await globalDb.collections.isolateCandidates.find({ operationScope })
+    await expectCandidateError(
+      reserveIsolateCandidate(globalDb, actor, "bad\0request", bundle()), "invalid-context");
+    await expectCandidateError(
+      reserveIsolateCandidate(globalDb, {
+        ...actor,
+        operationScope: "bad\0scope",
+      }, "request", bundle()), "invalid-context");
+    assert.strictEqual(await globalDb.collections.isolateCandidates.find({ ownerId })
         .countAsync(), 0);
   });
 

@@ -19,6 +19,7 @@ import Crypto from "crypto";
 import { Random } from "meteor/random";
 
 import { findOwnedIsolateCandidate } from "/imports/server/isolate-candidates";
+import { makeIsolateContextValidator } from "/imports/server/isolate-context";
 import { IsolateError } from "/imports/server/isolate-error";
 import { coalesceInFlightOperation } from "/imports/server/isolate-in-flight";
 import {
@@ -27,7 +28,6 @@ import {
 } from "/imports/server/isolate-package-service";
 
 const APP_ID_ALPHABET = "0123456789acdefghjkmnpqrstuvwxyz";
-const MAX_IDENTIFIER_BYTES = 512;
 const MAX_REQUEST_ID_BYTES = 256;
 const OPERATION_LOCK_STALE_MS = 5 * 60 * 1000;
 const runningPublications = new Map();
@@ -42,33 +42,8 @@ function fail(code, message) {
   throw new IsolatePublisherError(code, message);
 }
 
-function requireIdentifier(value, field, maximumBytes = MAX_IDENTIFIER_BYTES) {
-  if (typeof value !== "string" || value.length === 0 || value.includes("\0")) {
-    fail("invalid-context", `${field} must be a non-empty string without NUL characters.`);
-  }
-
-  if (Buffer.byteLength(value, "utf8") > maximumBytes) {
-    fail("invalid-context", `${field} exceeds the ${maximumBytes}-byte limit.`);
-  }
-
-  return value;
-}
-
-function normalizeActor(input) {
-  if (!input || typeof input !== "object") {
-    fail("invalid-context", "Isolate publication requires an explicit actor.");
-  }
-
-  const actor = {
-    accountId: requireIdentifier(input.accountId, "accountId"),
-    operationScope: requireIdentifier(input.operationScope, "operationScope"),
-  };
-  if (input.requestingGrainId !== undefined && input.requestingGrainId !== null) {
-    actor.requestingGrainId = requireIdentifier(input.requestingGrainId, "requestingGrainId");
-  }
-
-  return actor;
-}
+const { normalizeActor, requireIdentifier } = makeIsolateContextValidator(
+  IsolatePublisherError, "Isolate publication");
 
 function normalizeTarget(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
