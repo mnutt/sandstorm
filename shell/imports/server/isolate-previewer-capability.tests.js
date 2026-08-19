@@ -121,6 +121,43 @@ describe("isolate previewer capability", function () {
     });
   });
 
+  it("receives binary modules without UTF-8 decoding", async function () {
+    const image = Buffer.from([0x89, 0x50, 0x00, 0xff]);
+    const wasm = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    const result = await receiveIsolateBundle({
+      async getInfo() {
+        return {
+          info: {
+            formatVersion: 1,
+            mainModule: "worker.js",
+            compatibilityDate: "2025-01-01",
+            compatibilityFlags: [],
+            modules: [
+              { name: "worker.js", type: "esModule", size: 19 },
+              { name: "image.bin", type: "data", size: image.length },
+              { name: "module.wasm", type: "wasm", size: wasm.length },
+            ],
+          },
+        };
+      },
+      async transfer(receiver) {
+        for (const [index, content] of [
+          Buffer.from("export default {};\n"), image, wasm,
+        ].entries()) {
+          const { stream } = await receiver.beginModule(index);
+          await stream.write(content);
+          await stream.done();
+        }
+
+        await receiver.finish();
+      },
+    });
+
+    assert.isTrue(Buffer.isBuffer(result.modules[1].content));
+    assert.deepEqual([...result.modules[1].content], [...image]);
+    assert.deepEqual([...result.modules[2].content], [...wasm]);
+  });
+
   it("rejects incomplete and over-limit streams before candidate persistence", async function () {
     const incomplete = streamedBundle("short");
     incomplete.transfer = async (receiver) => {

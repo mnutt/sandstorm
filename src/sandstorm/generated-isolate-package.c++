@@ -121,9 +121,11 @@ kj::ArrayPtr<const byte> moduleContent(IsolateWorkerSource::Module::Reader modul
       return module.getText();
     case IsolateWorkerSource::Module::JSON:
       return module.getJson();
-    case IsolateWorkerSource::Module::COMMON_JS_MODULE:
     case IsolateWorkerSource::Module::DATA:
+      return module.getData();
     case IsolateWorkerSource::Module::WASM:
+      return module.getWasm();
+    case IsolateWorkerSource::Module::COMMON_JS_MODULE:
       KJ_FAIL_REQUIRE("Generated isolate package contains an unsupported module type.",
                       module.getName());
   }
@@ -235,9 +237,13 @@ void populateIsolateCommand(spk::Manifest::Command::Builder command,
       case IsolateWorkerSource::Module::JSON:
         output.setJsonPath(path);
         break;
-      case IsolateWorkerSource::Module::COMMON_JS_MODULE:
       case IsolateWorkerSource::Module::DATA:
+        output.setDataPath(path);
+        break;
       case IsolateWorkerSource::Module::WASM:
+        output.setWasmPath(path);
+        break;
+      case IsolateWorkerSource::Module::COMMON_JS_MODULE:
         KJ_UNREACHABLE;
     }
   }
@@ -275,9 +281,13 @@ void populateIsolateCommandFromInstalled(spk::Manifest::Command::Builder command
       case spk::Manifest::IsolateConfig::Module::JSON_PATH:
         output.setJsonPath(input.getJsonPath());
         break;
-      case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
       case spk::Manifest::IsolateConfig::Module::DATA_PATH:
+        output.setDataPath(input.getDataPath());
+        break;
       case spk::Manifest::IsolateConfig::Module::WASM_PATH:
+        output.setWasmPath(input.getWasmPath());
+        break;
+      case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
         KJ_UNREACHABLE;
     }
   }
@@ -449,7 +459,8 @@ GeneratedIsolatePackageUploadState::GeneratedIsolatePackageUploadState(
     KJ_REQUIRE(input.getSize() <= MAX_GENERATED_MODULE_BYTES,
         "Generated isolate module exceeds its size limit.", name, input.getSize());
     KJ_REQUIRE(input.getType() == ModuleType::ES_MODULE ||
-                   input.getType() == ModuleType::JSON || input.getType() == ModuleType::TEXT,
+                   input.getType() == ModuleType::JSON || input.getType() == ModuleType::TEXT ||
+                   input.getType() == ModuleType::DATA || input.getType() == ModuleType::WASM,
         "Generated isolate package contains an unsupported module type.", name);
 
     auto module = std::make_unique<ModuleUpload>();
@@ -569,6 +580,12 @@ GeneratedIsolatePackage GeneratedIsolatePackageUploadState::save() {
       case ModuleType::JSON:
         type = static_cast<byte>(IsolateWorkerSource::Module::JSON);
         break;
+      case ModuleType::DATA:
+        type = static_cast<byte>(IsolateWorkerSource::Module::DATA);
+        break;
+      case ModuleType::WASM:
+        type = static_cast<byte>(IsolateWorkerSource::Module::WASM);
+        break;
     }
     sourceHashBuilder.add(kj::arrayPtr(&type, 1));
     auto fd = raiiOpen(kj::str(tempPath, "/modules/", module.outputIndex),
@@ -604,6 +621,8 @@ GeneratedIsolatePackage GeneratedIsolatePackageUploadState::save() {
         case ModuleType::ES_MODULE: output.setEsModulePath(path); break;
         case ModuleType::TEXT: output.setTextPath(path); break;
         case ModuleType::JSON: output.setJsonPath(path); break;
+        case ModuleType::DATA: output.setDataPath(path); break;
+        case ModuleType::WASM: output.setWasmPath(path); break;
       }
     }
     auto bindings = isolate.initBindings(3);
@@ -770,9 +789,15 @@ GeneratedIsolatePackage deriveGeneratedIsolatePackage(kj::StringPtr appRoot,
         relativePath = input.getJsonPath();
         type = static_cast<byte>(IsolateWorkerSource::Module::JSON);
         break;
-      case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
       case spk::Manifest::IsolateConfig::Module::DATA_PATH:
+        relativePath = input.getDataPath();
+        type = static_cast<byte>(IsolateWorkerSource::Module::DATA);
+        break;
       case spk::Manifest::IsolateConfig::Module::WASM_PATH:
+        relativePath = input.getWasmPath();
+        type = static_cast<byte>(IsolateWorkerSource::Module::WASM);
+        break;
+      case spk::Manifest::IsolateConfig::Module::COMMON_JS_MODULE_PATH:
         KJ_FAIL_REQUIRE("Generated isolate source package has an unsupported module type.");
     }
 

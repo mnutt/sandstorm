@@ -22,7 +22,7 @@ import { ISOLATE_BUNDLE_LIMITS } from "/imports/server/isolate-bundle";
 import { IsolateError } from "/imports/server/isolate-error";
 import { requireIsolatePreviewAdmission } from "/imports/server/isolate-preview-service";
 
-const MODULE_TYPES = ["esModule", "json", "text"];
+const MODULE_TYPES = ["esModule", "json", "text", "data", "wasm"];
 
 class IsolatePreviewGrantError extends IsolateError {
   constructor(code, message) {
@@ -77,7 +77,7 @@ function boundedSize(value, maximum, label) {
   return size;
 }
 
-function decodeModule(bytes, name) {
+function decodeTextModule(bytes, name) {
   const content = bytes.toString("utf8");
   if (!Buffer.from(content, "utf8").equals(bytes)) {
     fail("invalid-bundle", `Module ${name} is not valid UTF-8.`);
@@ -210,7 +210,9 @@ class IsolateBundleReceiver {
         return {
           name: state.info.name,
           type: state.info.type,
-          content: decodeModule(bytes, state.info.name),
+          content: state.info.type === "data" || state.info.type === "wasm"
+            ? bytes
+            : decodeTextModule(bytes, state.info.name),
         };
       }),
     };

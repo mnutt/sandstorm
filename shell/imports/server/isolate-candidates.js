@@ -16,7 +16,7 @@
 
 import { Random } from "meteor/random";
 
-import { normalizeIsolateBundle } from "/imports/server/isolate-bundle";
+import { moduleContentSize, normalizeIsolateBundle } from "/imports/server/isolate-bundle";
 import { makeIsolateContextValidator } from "/imports/server/isolate-context";
 import { IsolateError } from "/imports/server/isolate-error";
 import { mongoFindOneAndUpdateValue } from "/imports/server/isolate-mongo";
@@ -64,7 +64,7 @@ function bundleInfo(normalized) {
     modules: normalized.bundle.modules.map(module => ({
       name: module.name,
       type: module.type,
-      size: Buffer.byteLength(module.content, "utf8"),
+      size: moduleContentSize(module),
     })),
   };
 }

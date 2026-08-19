@@ -185,6 +185,83 @@ KJ_TEST("streamed generated isolate package preserves deterministic identity") {
   KJ_EXPECT(readAll(kj::str(packagePath, "/modules/1")) == worker);
 }
 
+KJ_TEST("generated isolate packages preserve binary data and Wasm modules") {
+  auto root = kj::heapString("/tmp/sandstorm-binary-streamed-isolate-test-XXXXXX");
+  KJ_REQUIRE(mkdtemp(root.begin()) != nullptr, root);
+  KJ_DEFER(recursivelyDelete(root));
+  auto apps = kj::str(root, "/apps");
+  auto temp = kj::str(root, "/tmp");
+  KJ_SYSCALL(mkdir(apps.cStr(), 0700), apps);
+  KJ_SYSCALL(mkdir(temp.cStr(), 0700), temp);
+
+  const byte imageBytes[] = {0x89, 0x50, 0x00, 0xff};
+  const byte wasmBytes[] = {0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00};
+  const auto worker = kj::StringPtr(
+      "import image from './image.bin'; import wasm from './module.wasm'; "
+      "export default { fetch() { return new Response(image); } };");
+  capnp::MallocMessageBuilder infoMessage;
+  auto info = infoMessage.initRoot<BundleInfo>();
+  info.setFormatVersion(1);
+  info.setMainModule("worker.js");
+  info.setCompatibilityDate("2025-01-01");
+  info.initCompatibilityFlags(0);
+  auto modules = info.initModules(3);
+  modules[0].setName("worker.js");
+  modules[0].setType(ModuleType::ES_MODULE);
+  modules[0].setSize(worker.size());
+  modules[1].setName("image.bin");
+  modules[1].setType(ModuleType::DATA);
+  modules[1].setSize(sizeof(imageBytes));
+  modules[2].setName("module.wasm");
+  modules[2].setType(ModuleType::WASM);
+  modules[2].setSize(sizeof(wasmBytes));
+
+  auto upload = kj::refcounted<GeneratedIsolatePackageUploadState>(
+      apps, temp, "", testMetadata(), info.asReader());
+  upload->beginModule(0);
+  upload->writeModule(0, worker.asBytes());
+  upload->finishModule(0);
+  upload->beginModule(1);
+  upload->writeModule(1, imageBytes);
+  upload->finishModule(1);
+  upload->beginModule(2);
+  upload->writeModule(2, wasmBytes);
+  upload->finishModule(2);
+  upload->finishTransfer();
+  auto streamed = upload->save();
+
+  capnp::MallocMessageBuilder sourceMessage;
+  auto source = sourceMessage.initRoot<IsolateWorkerSource>();
+  source.setFormatVersion(1);
+  source.setMainModule("worker.js");
+  source.setCompatibilityDate("2025-01-01");
+  source.initCompatibilityFlags(0);
+  source.initBindings(0);
+  auto sourceModules = source.initModules(3);
+  sourceModules[0].setName("worker.js");
+  sourceModules[0].setEsModule(worker.asBytes());
+  sourceModules[1].setName("image.bin");
+  sourceModules[1].setData(kj::arrayPtr(imageBytes, sizeof(imageBytes)));
+  sourceModules[2].setName("module.wasm");
+  sourceModules[2].setWasm(kj::arrayPtr(wasmBytes, sizeof(wasmBytes)));
+  auto buffered = buildGeneratedIsolatePackage("", testMetadata(), source.asReader());
+  KJ_EXPECT(streamed.appId == buffered.appId);
+  KJ_EXPECT(streamed.packageId == buffered.packageId);
+
+  auto packagePath = kj::str(apps, "/", streamed.packageId);
+  auto image = readAll(kj::str(packagePath, "/modules/0"));
+  auto wasm = readAll(kj::str(packagePath, "/modules/1"));
+  KJ_EXPECT(image.asBytes() == kj::arrayPtr(imageBytes, sizeof(imageBytes)));
+  KJ_EXPECT(wasm.asBytes() == kj::arrayPtr(wasmBytes, sizeof(wasmBytes)));
+  capnp::FlatArrayMessageReader manifestReader(streamed.manifest.asPtr());
+  auto manifestModules = manifestReader.getRoot<spk::Manifest>()
+      .getActions()[0].getCommand().getIsolate().getModules();
+  KJ_EXPECT(manifestModules[0].getName() == "image.bin");
+  KJ_EXPECT(manifestModules[0].getDataPath() == "modules/0");
+  KJ_EXPECT(manifestModules[1].getName() == "module.wasm");
+  KJ_EXPECT(manifestModules[1].getWasmPath() == "modules/1");
+}
+
 KJ_TEST("streamed generated isolate package is not aggregate-buffer limited") {
   auto root = kj::heapString("/tmp/sandstorm-large-streamed-isolate-test-XXXXXX");
   KJ_REQUIRE(mkdtemp(root.begin()) != nullptr, root);

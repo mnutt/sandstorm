@@ -130,11 +130,13 @@ interface BundleReceiver {
 }
 ```
 
-The exact streaming protocol can be chosen with the schema implementation. It
-must authenticate module metadata, reject duplicate or undeclared modules,
-apply per-module and aggregate size limits while streaming, require every
-opened stream to finish, and calculate its own normalized digest rather than
-trusting a caller-supplied digest.
+The implemented streaming protocol declares each module's name, typed-module
+kind, and byte size before transfer, then opens one bounded byte stream per
+module index. ES module, JSON, and text contents are UTF-8; data and Wasm
+modules remain binary. Sandstorm authenticates module metadata, rejects
+duplicate or undeclared modules, applies defensive bounds while streaming,
+requires every opened stream to finish, and calculates its own normalized
+digest rather than trusting a caller-supplied digest.
 
 The MVP UI may expose only one `worker.js` ES module even if the internal format
 is designed for a small list of modules. This avoids baking a single-file

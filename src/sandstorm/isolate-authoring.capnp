@@ -48,6 +48,8 @@ enum ModuleType {
   esModule @0;
   json @1;
   text @2;
+  data @3;
+  wasm @4;
 }
 
 interface BundleReceiver @0x85eb330db82a150f {

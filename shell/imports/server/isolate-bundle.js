@@ -37,7 +37,8 @@ const ISOLATE_BUNDLE_LIMITS = Object.freeze({
   maxJsonDepth: 100,
 });
 
-const SUPPORTED_MODULE_TYPES = new Set(["esModule", "json", "text"]);
+const SUPPORTED_MODULE_TYPES = new Set(["esModule", "json", "text", "data", "wasm"]);
+const BINARY_MODULE_TYPES = new Set(["data", "wasm"]);
 const SUPPORTED_PLATFORM_IMPORTS = new Set(["sandstorm:api"]);
 const DEFAULT_COMPATIBILITY_FLAGS = new Set();
 const BUNDLE_FIELDS = new Set([
@@ -225,6 +226,32 @@ function normalizeModuleContent(type, source, field, limits) {
   return stableJson(parsed, 0, limits.maxJsonDepth, field);
 }
 
+function normalizeBinaryContent(value, field, limits) {
+  let content;
+  if (Buffer.isBuffer(value)) {
+    content = Buffer.from(value);
+  } else if (value instanceof ArrayBuffer) {
+    content = Buffer.from(value.slice(0));
+  } else if (ArrayBuffer.isView(value)) {
+    content = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+    content = Buffer.from(content);
+  } else {
+    fail("invalid-type", `${field} must contain bytes for a binary module.`, field);
+  }
+
+  if (content.length > limits.maxModuleBytes) {
+    fail("limit-exceeded", `${field} exceeds the ${limits.maxModuleBytes}-byte limit.`, field);
+  }
+
+  return content;
+}
+
+function moduleContentSize(module) {
+  return BINARY_MODULE_TYPES.has(module.type)
+    ? module.content.length
+    : Buffer.byteLength(module.content, "utf8");
+}
+
 function resolveRelativeImport(moduleName, specifier, moduleNames, field) {
   if (specifier.includes("?") || specifier.includes("#")) {
     fail("unsupported-import", `${field} may not contain a query or fragment.`, field);
@@ -328,11 +355,22 @@ function normalizeIsolateBundle(input, options = {}) {
     }
 
     const contentField = `${field}.content`;
-    const inputContent = requireString(value.content, contentField);
-    const inputBytes = requireByteLimit(inputContent, limits.maxModuleBytes, contentField);
-    const content = normalizeModuleContent(type, inputContent, contentField, limits);
-    const normalizedBytes = requireByteLimit(content, limits.maxModuleBytes, contentField);
-    const contentBytes = Math.max(inputBytes, normalizedBytes);
+    let content;
+    let contentBytes;
+    if (BINARY_MODULE_TYPES.has(type)) {
+      content = normalizeBinaryContent(value.content, contentField, limits);
+      if (type === "wasm" && !WebAssembly.validate(content)) {
+        fail("invalid-wasm", `${contentField} is not a valid WebAssembly module.`, contentField);
+      }
+
+      contentBytes = content.length;
+    } else {
+      const inputContent = requireString(value.content, contentField);
+      const inputBytes = requireByteLimit(inputContent, limits.maxModuleBytes, contentField);
+      content = normalizeModuleContent(type, inputContent, contentField, limits);
+      const normalizedBytes = requireByteLimit(content, limits.maxModuleBytes, contentField);
+      contentBytes = Math.max(inputBytes, normalizedBytes);
+    }
     totalModuleBytes += contentBytes;
     if (totalModuleBytes > limits.maxTotalModuleBytes) {
       fail("limit-exceeded",
@@ -365,7 +403,15 @@ function normalizeIsolateBundle(input, options = {}) {
       input.compatibilityFlags, limits, supportedFlags),
     modules,
   });
-  const canonicalText = JSON.stringify(bundle);
+  const canonicalText = JSON.stringify({
+    ...bundle,
+    modules: bundle.modules.map(module => ({
+      ...module,
+      content: BINARY_MODULE_TYPES.has(module.type)
+        ? { base64: module.content.toString("base64") }
+        : module.content,
+    })),
+  });
   const digest = Crypto.createHash("sha256")
       .update("sandstorm-isolate-candidate-v1\0")
       .update(canonicalText, "utf8")
@@ -378,5 +424,6 @@ export {
   ISOLATE_BUNDLE_FORMAT_VERSION,
   ISOLATE_BUNDLE_LIMITS,
   IsolateBundleError,
+  moduleContentSize,
   normalizeIsolateBundle,
 };
