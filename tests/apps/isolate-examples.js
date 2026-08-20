@@ -323,6 +323,21 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
         .waitForElementVisible("pre", long_wait)
         .assert.textContains("pre", "\"published\": true")
         .assert.textContains("pre", "\"appVersion\": 2")
-        .assert.textContains("pre", "\"title\": \"Powerbox Published Isolate\"");
+        .assert.textContains("pre", "\"title\": \"Powerbox Published Isolate\"")
+        .getText("pre", function (result) {
+          const publication = JSON.parse(result.value).call.result;
+          browser
+            .frameParent()
+            .url(browser.launch_url + "/apps/" + publication.appId)
+            .waitForElementVisible(actionSelector, long_wait)
+            .click(actionSelector)
+            .waitForElementVisible("#grainTitle", medium_wait)
+            .grainFrame()
+            .waitForElementVisible("body", long_wait)
+            .assert.textContains("body", "Powerbox isolate preview revision two")
+            .waitForElementVisible("#preview-multi-file-logo", medium_wait)
+            .assert.textContains("#preview-data-module", "1,2,3,255")
+            .assert.textContains("#preview-wasm-module", "42");
+        });
     });
 };
