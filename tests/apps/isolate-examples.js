@@ -175,6 +175,8 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
     .assert.textContains("pre", "\"metadata.json\"")
     .assert.textContains("pre", "\"preview.html\"")
     .assert.textContains("pre", "\"sandstorm.svg\"")
+    .assert.textContains("pre", "\"asset.bin\"")
+    .assert.textContains("pre", "\"add.wasm\"")
     .assert.textContains("pre", "\"permissionCount\":")
     .assert.textContains("pre", "\"roleCount\":")
     .waitForElementVisible("#open-isolate-preview", medium_wait)
@@ -188,6 +190,8 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
         .waitForElementVisible("body", long_wait)
         .assert.textContains("body", "Powerbox isolate preview")
         .waitForElementVisible("#preview-multi-file-logo", medium_wait)
+        .assert.textContains("#preview-data-module", "1,2,3,255")
+        .assert.textContains("#preview-wasm-module", "42")
         .waitForElementVisible(
           "#request-preview-powerbox[data-powerbox-ready=true]", medium_wait)
         .click("#request-preview-powerbox")
