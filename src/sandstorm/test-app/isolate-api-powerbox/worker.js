@@ -346,6 +346,8 @@ async function callIsolatePreviewer(
   import metadata from "./metadata.json";
   import previewHtml from "./preview.html";
   import logo from "./sandstorm.svg";
+  import binaryAsset from "./asset.bin";
+  import addModule from "./add.wasm";
   export default { async fetch(request, env) {
     const systemResponse = await sandstorm(request, env).serveSystemRoutes();
     if (systemResponse) return systemResponse;
@@ -354,7 +356,11 @@ async function callIsolatePreviewer(
       return new Response(logo, { headers: { "content-type": "image/svg+xml" } });
     }
     console.log("Powerbox preview log:", metadata.responseText);
-    return new Response(previewHtml, {
+    const dataText = Array.from(new Uint8Array(binaryAsset)).join(",");
+    const wasmResult = new WebAssembly.Instance(addModule).exports.add(20, 22);
+    return new Response(previewHtml +
+      '<p id="preview-data-module">' + dataText + '</p>' +
+      '<p id="preview-wasm-module">' + wasmResult + '</p>', {
       headers: { "content-type": "text/html; charset=UTF-8" },
     });
   } };`),
@@ -373,6 +379,20 @@ async function callIsolatePreviewer(
       `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">
         <rect width="32" height="32" fill="#5b21b6"/>
       </svg>`),
+  }, {
+    name: "asset.bin",
+    type: ModuleType.DATA,
+    bytes: Uint8Array.of(1, 2, 3, 255),
+  }, {
+    name: "add.wasm",
+    type: ModuleType.WASM,
+    bytes: Uint8Array.of(
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+      0x01, 0x07, 0x01, 0x60, 0x02, 0x7f, 0x7f, 0x01,
+      0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01,
+      0x03, 0x61, 0x64, 0x64, 0x00, 0x00, 0x0a, 0x09,
+      0x01, 0x07, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a,
+      0x0b),
   }];
   const exportedBundle = await exportCapnp(api, IsolateBundle, {
     async getInfo() {
