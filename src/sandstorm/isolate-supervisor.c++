@@ -61,6 +61,7 @@
 #include <sandstorm/supervisor.capnp.h>
 #include <sandstorm/util.capnp.h>
 #include <sandstorm/web-session.capnp.h>
+#include <sqlite3.h>
 #include <netinet/in.h>
 #include <sodium/randombytes.h>
 #include <sys/stat.h>
@@ -142,7 +143,8 @@ struct IsolateRuntimeConfig final: public kj::Refcounted {
   kj::String appTitle;
   kj::String apiPath;
   kj::String runtimeStateDir;
-  kj::String storageRootPath;
+  kj::String kvDatabasePath;
+  kj::String filesRootPath;
   kj::Own<capnp::MallocMessageBuilder> viewInfoMessage;
   kj::Vector<kj::String> compatibilityFlags;
   kj::Vector<Module> modules;
@@ -166,6 +168,49 @@ struct SpoolFile final: public kj::AtomicRefcounted {
   kj::AutoCloseFd fd;
 };
 
+class DurableDataActivity final: public kj::Refcounted {
+public:
+  class Token final {
+  public:
+    explicit Token(kj::Own<DurableDataActivity> activity): activity(kj::mv(activity)) {}
+    ~Token() noexcept { activity->finish(); }
+
+  private:
+    kj::Own<DurableDataActivity> activity;
+  };
+
+  kj::Own<Token> start() {
+    KJ_REQUIRE(!quiescing, "isolate durable data is quiescing for shutdown");
+    ++active;
+    return kj::heap<Token>(kj::addRef(*this));
+  }
+
+  kj::Promise<void> quiesce() {
+    quiescing = true;
+    if (active == 0) return kj::READY_NOW;
+    KJ_REQUIRE(idleFulfiller == nullptr, "isolate durable data is already quiescing");
+    auto paf = kj::newPromiseAndFulfiller<void>();
+    idleFulfiller = kj::mv(paf.fulfiller);
+    return kj::mv(paf.promise);
+  }
+
+private:
+  size_t active = 0;
+  bool quiescing = false;
+  kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> idleFulfiller;
+
+  void finish() noexcept {
+    KJ_ASSERT(active > 0);
+    --active;
+    if (active == 0) {
+      KJ_IF_MAYBE(fulfiller, idleFulfiller) {
+        (*fulfiller)->fulfill();
+        idleFulfiller = nullptr;
+      }
+    }
+  }
+};
+
 class SpoolIoWorker final {
 public:
   SpoolIoWorker(): thread([this]() noexcept { run(); }) {
@@ -183,27 +228,32 @@ public:
     });
   }
 
+  template <typename Func>
+  auto executeAsync(Func&& func) {
+    return getExecutor()->executeAsync(kj::fwd<Func>(func));
+  }
+
   kj::Promise<void> write(kj::Own<SpoolFile> file, kj::Array<byte> data) {
-    return getExecutor()->executeAsync(
+    return executeAsync(
         [file = kj::mv(file), data = kj::mv(data)]() mutable {
       writeAllToFd(file->fd.get(), data);
     });
   }
 
   kj::Promise<void> sync(kj::Own<SpoolFile> file) {
-    return getExecutor()->executeAsync([file = kj::mv(file)]() mutable {
+    return executeAsync([file = kj::mv(file)]() mutable {
       KJ_SYSCALL(fsync(file->fd.get()));
     });
   }
 
   kj::Promise<void> rewind(kj::Own<SpoolFile> file) {
-    return getExecutor()->executeAsync([file = kj::mv(file)]() mutable {
+    return executeAsync([file = kj::mv(file)]() mutable {
       KJ_SYSCALL(lseek(file->fd.get(), 0, SEEK_SET));
     });
   }
 
   kj::Promise<kj::Array<byte>> read(kj::Own<SpoolFile> file, size_t maxBytes) {
-    return getExecutor()->executeAsync(
+    return executeAsync(
         [file = kj::mv(file), maxBytes]() mutable -> kj::Array<byte> {
       auto buffer = kj::heapArray<byte>(maxBytes);
       ssize_t count;
@@ -249,6 +299,8 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
         sandstormCore(kj::mv(sandstormCore)),
         spoolIo(spoolIo),
         sessions(kj::refcounted<IsolateSessionRegistry>()),
+        durableDataActivity(kj::refcounted<DurableDataActivity>()),
+        hIsolateFileSize(headerTableBuilder.add("X-Sandstorm-File-Size")),
         httpFactory(byteStreamFactory, headerTableBuilder),
         ownedHeaderTable(headerTableBuilder.build()),
         headerTable(*ownedHeaderTable) {}
@@ -287,8 +339,10 @@ struct IsolateRuntimeHost final: public kj::Refcounted {
   SandstormCore::Client sandstormCore;
   SpoolIoWorker& spoolIo;
   kj::Own<IsolateSessionRegistry> sessions;
+  kj::Own<DurableDataActivity> durableDataActivity;
   capnp::ByteStreamFactory byteStreamFactory;
   kj::HttpHeaderTable::Builder headerTableBuilder;
+  kj::HttpHeaderId hIsolateFileSize;
   capnp::HttpOverCapnpFactory httpFactory;
   kj::Own<kj::HttpHeaderTable> ownedHeaderTable;
   kj::HttpHeaderTable& headerTable;
@@ -989,12 +1043,14 @@ kj::Array<byte> prepareRuntimeState(kj::StringPtr varPath, IsolateRuntimeConfig&
   config.runtimeStateDir = kj::str(bundleDir);
   auto modulesDir = kj::str(bundleDir, "/modules");
   auto bindingsDir = kj::str(bundleDir, "/bindings");
-  auto storageRootPath = kj::str(varPath, "/isolate-storage");
-  config.storageRootPath = kj::heapString(storageRootPath);
+  auto kvDatabasePath = kj::str(varPath, "/isolate-kv.sqlite");
+  auto filesRootPath = kj::str(varPath, "/isolate-files");
+  config.kvDatabasePath = kj::heapString(kvDatabasePath);
+  config.filesRootPath = kj::heapString(filesRootPath);
   ensureDirectory(bundleDir);
   ensureDirectory(modulesDir);
   ensureDirectory(bindingsDir);
-  ensureDirectory(storageRootPath);
+  ensureDirectory(filesRootPath);
 
   kj::Vector<char> manifest;
   manifest.addAll(kj::StringPtr("{\n  "));
@@ -4198,77 +4254,308 @@ IsolateBridge::Client SandstormApiBindingService::makeBridge(
   return kj::heap<IsolateBridgeImpl>(config, host);
 }
 
+struct KvListEntry {
+  kj::String key;
+  uint64_t bytes;
+};
+
+class SqliteKvState final: public kj::AtomicRefcounted {
+public:
+  explicit SqliteKvState(kj::StringPtr path): path(kj::heapString(path)) {}
+
+  ~SqliteKvState() noexcept {
+    if (db != nullptr) sqlite3_close_v2(db);
+  }
+
+  kj::Maybe<kj::Array<byte>> get(kj::StringPtr key) {
+    ensureOpen();
+    sqlite3_stmt* statement = prepare("SELECT value FROM kv WHERE key = ?1");
+    KJ_DEFER(sqlite3_finalize(statement));
+    bindKey(statement, key);
+    int rc = sqlite3_step(statement);
+    if (rc == SQLITE_DONE) return nullptr;
+    requireSqlite(rc, "reading isolate KV value");
+    auto size = sqlite3_column_bytes(statement, 0);
+    auto result = kj::heapArray<byte>(size);
+    if (size > 0) memcpy(result.begin(), sqlite3_column_blob(statement, 0), size);
+    return kj::mv(result);
+  }
+
+  kj::Maybe<uint64_t> head(kj::StringPtr key) {
+    ensureOpen();
+    sqlite3_stmt* statement = prepare("SELECT length(value) FROM kv WHERE key = ?1");
+    KJ_DEFER(sqlite3_finalize(statement));
+    bindKey(statement, key);
+    int rc = sqlite3_step(statement);
+    if (rc == SQLITE_DONE) return nullptr;
+    requireSqlite(rc, "reading isolate KV metadata");
+    return static_cast<uint64_t>(sqlite3_column_int64(statement, 0));
+  }
+
+  void put(kj::StringPtr key, kj::ArrayPtr<const byte> value) {
+    ensureOpen();
+    sqlite3_stmt* statement = prepare(
+        "INSERT INTO kv(key, value) VALUES(?1, ?2) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+    KJ_DEFER(sqlite3_finalize(statement));
+    bindKey(statement, key);
+    requireSqlite(sqlite3_bind_blob64(statement, 2, value.begin(), value.size(), SQLITE_TRANSIENT),
+        "binding isolate KV value", SQLITE_OK);
+    requireSqlite(sqlite3_step(statement), "writing isolate KV value", SQLITE_DONE);
+  }
+
+  bool remove(kj::StringPtr key) {
+    ensureOpen();
+    sqlite3_stmt* statement = prepare("DELETE FROM kv WHERE key = ?1");
+    KJ_DEFER(sqlite3_finalize(statement));
+    bindKey(statement, key);
+    requireSqlite(sqlite3_step(statement), "deleting isolate KV value", SQLITE_DONE);
+    return sqlite3_changes(db) > 0;
+  }
+
+  kj::Array<KvListEntry> list() {
+    ensureOpen();
+    sqlite3_stmt* statement = prepare("SELECT key, length(value) FROM kv ORDER BY key");
+    KJ_DEFER(sqlite3_finalize(statement));
+    kj::Vector<KvListEntry> result;
+    for (;;) {
+      int rc = sqlite3_step(statement);
+      if (rc == SQLITE_DONE) break;
+      requireSqlite(rc, "listing isolate KV values");
+      auto key = reinterpret_cast<const char*>(sqlite3_column_text(statement, 0));
+      result.add(KvListEntry{
+        kj::str(key), static_cast<uint64_t>(sqlite3_column_int64(statement, 1))});
+    }
+    return result.releaseAsArray();
+  }
+
+private:
+  kj::String path;
+  sqlite3* db = nullptr;
+
+  void requireSqlite(int rc, kj::StringPtr operation, int expected = SQLITE_ROW) {
+    if (rc != expected) {
+      KJ_FAIL_REQUIRE(operation, rc, db == nullptr ? "SQLite database is not open" : sqlite3_errmsg(db));
+    }
+  }
+
+  void ensureOpen() {
+    if (db != nullptr) return;
+    int rc = sqlite3_open_v2(path.cStr(), &db,
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
+    requireSqlite(rc, "opening isolate KV database", SQLITE_OK);
+    requireSqlite(sqlite3_busy_timeout(db, 5000), "configuring isolate KV busy timeout", SQLITE_OK);
+    exec("PRAGMA journal_mode = DELETE");
+    exec("PRAGMA synchronous = FULL");
+    exec("PRAGMA temp_store = MEMORY");
+    exec("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID");
+  }
+
+  void exec(kj::StringPtr sql) {
+    char* error = nullptr;
+    int rc = sqlite3_exec(db, sql.cStr(), nullptr, nullptr, &error);
+    if (rc != SQLITE_OK) {
+      auto description = kj::str(error == nullptr ? sqlite3_errmsg(db) : error);
+      if (error != nullptr) sqlite3_free(error);
+      KJ_FAIL_REQUIRE("executing isolate KV schema statement", rc, description);
+    }
+  }
+
+  sqlite3_stmt* prepare(kj::StringPtr sql) {
+    sqlite3_stmt* statement = nullptr;
+    requireSqlite(sqlite3_prepare_v2(db, sql.cStr(), sql.size(), &statement, nullptr),
+        "preparing isolate KV statement", SQLITE_OK);
+    return statement;
+  }
+
+  void bindKey(sqlite3_stmt* statement, kj::StringPtr key) {
+    requireSqlite(sqlite3_bind_text(statement, 1, key.begin(), key.size(), SQLITE_TRANSIENT),
+        "binding isolate KV key", SQLITE_OK);
+  }
+};
+
+struct IsolateFileTarget {
+  kj::AutoCloseFd directory;
+  kj::String name;
+};
+
+struct OpenIsolateFile {
+  kj::Own<SpoolFile> file;
+  uint64_t size;
+};
+
+struct IsolateFileUpload {
+  IsolateFileUpload(kj::AutoCloseFd directory, kj::String name, kj::String temporaryName,
+      kj::Own<SpoolFile> file)
+      : directory(kj::mv(directory)), name(kj::mv(name)), temporaryName(kj::mv(temporaryName)),
+        file(kj::mv(file)) {}
+
+  ~IsolateFileUpload() noexcept {
+    if (!committed && unlinkat(directory, temporaryName.cStr(), 0) < 0 && errno != ENOENT) {
+      KJ_LOG(ERROR, "Failed to clean up incomplete isolate file upload.", temporaryName, errno);
+    }
+  }
+
+  kj::AutoCloseFd directory;
+  kj::String name;
+  kj::String temporaryName;
+  kj::Own<SpoolFile> file;
+  bool committed = false;
+};
+
+kj::AutoCloseFd duplicateFileDescriptor(int fd) {
+  int result;
+  KJ_SYSCALL(result = dup(fd));
+  return kj::AutoCloseFd(result);
+}
+
+kj::Maybe<IsolateFileTarget> openIsolateFileTarget(
+    kj::AutoCloseFd root, kj::StringPtr path, bool createDirectories) {
+  size_t componentStart = 0;
+  for (;;) {
+    KJ_IF_MAYBE(separator, path.slice(componentStart).findFirst('/')) {
+      size_t componentEnd = componentStart + *separator;
+      auto component = kj::str(path.slice(componentStart, componentEnd));
+      int next = openat(root, component.cStr(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+      if (next < 0 && errno == ENOENT && createDirectories) {
+        if (mkdirat(root, component.cStr(), 0770) < 0 && errno != EEXIST) {
+          KJ_FAIL_SYSCALL("mkdirat", errno, component);
+        }
+        KJ_SYSCALL(next = openat(root, component.cStr(),
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW), component);
+      } else if (next < 0) {
+        int error = errno;
+        if (!createDirectories && (error == ENOENT || error == ENOTDIR || error == ELOOP)) {
+          return nullptr;
+        }
+        KJ_FAIL_SYSCALL("openat", error, component);
+      }
+      root = kj::AutoCloseFd(next);
+      componentStart = componentEnd + 1;
+    } else {
+      return IsolateFileTarget{kj::mv(root), kj::str(path.slice(componentStart))};
+    }
+  }
+}
+
+kj::Maybe<OpenIsolateFile> openIsolateFileIfExists(kj::AutoCloseFd root, kj::StringPtr path) {
+  auto maybeTarget = openIsolateFileTarget(kj::mv(root), path, false);
+  if (maybeTarget == nullptr) return nullptr;
+  auto target = kj::mv(KJ_ASSERT_NONNULL(maybeTarget));
+  int fd = openat(target.directory, target.name.cStr(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (fd < 0) {
+    int error = errno;
+    if (error == ENOENT || error == ENOTDIR || error == ELOOP) return nullptr;
+    KJ_FAIL_SYSCALL("openat", error, path);
+  }
+  kj::AutoCloseFd ownedFd(fd);
+  struct stat stats;
+  KJ_SYSCALL(fstat(ownedFd, &stats), path);
+  if (!S_ISREG(stats.st_mode)) return nullptr;
+  return OpenIsolateFile{
+    kj::atomicRefcounted<SpoolFile>(kj::mv(ownedFd)), static_cast<uint64_t>(stats.st_size)};
+}
+
+kj::Own<IsolateFileUpload> createIsolateFileUpload(kj::AutoCloseFd root, kj::StringPtr path) {
+  auto maybeTarget = openIsolateFileTarget(kj::mv(root), path, true);
+  auto target = kj::mv(KJ_ASSERT_NONNULL(maybeTarget));
+  for (uint attempt = 0; attempt < 16; ++attempt) {
+    auto temporaryName = kj::str(
+        ".sandstorm-upload-", getpid(), "-", randombytes_random(), "-", attempt);
+    int fd = openat(target.directory, temporaryName.cStr(),
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0660);
+    if (fd >= 0) {
+      return kj::heap<IsolateFileUpload>(kj::mv(target.directory), kj::mv(target.name),
+          kj::mv(temporaryName), kj::atomicRefcounted<SpoolFile>(kj::AutoCloseFd(fd)));
+    }
+    if (errno != EEXIST) KJ_FAIL_SYSCALL("openat", errno, temporaryName);
+  }
+  KJ_FAIL_REQUIRE("could not allocate a unique isolate file upload name", path);
+}
+
 class StorageBindingService final: public kj::HttpService {
 public:
-  StorageBindingService(kj::HttpHeaderTable& headerTable, kj::StringPtr storageRootPath)
-      : headerTable(headerTable), storageRoot(openStorageRoot(storageRootPath)) {}
+  StorageBindingService(kj::HttpHeaderTable& headerTable, kj::StringPtr kvDatabasePath,
+      kj::StringPtr filesRootPath, kj::HttpHeaderId hFileSize, SpoolIoWorker& ioWorker,
+      kj::Own<DurableDataActivity> activity)
+      : headerTable(headerTable), hFileSize(hFileSize), ioWorker(ioWorker),
+        activity(kj::mv(activity)),
+        kvState(kj::atomicRefcounted<SqliteKvState>(kvDatabasePath)),
+        filesRoot(openFilesRoot(filesRootPath)) {}
 
   kj::Promise<void> request(
       kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
       kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) override {
-    (void)headers;
-    auto key = isolateStorageKeyFromUrl(url);
-    KJ_LOG(INFO, "Isolate storage binding received request.", kj::str(method), key);
-
-    if (method == kj::HttpMethod::GET && key.size() == 0) {
-      return sendJson(response, 200, "OK", renderIndex());
-    }
-
-    if (!isValidIsolateStorageKey(key)) {
-      return sendJson(response, 400, "Bad Request", kj::heapString(
-          "{\n  \"ok\": false,\n  \"error\": \"invalid storage key\"\n}\n"));
-    }
-
-    switch (method) {
-      case kj::HttpMethod::GET:
-        return get(kj::mv(key), response);
-      case kj::HttpMethod::HEAD:
-        return head(kj::mv(key), response);
-      case kj::HttpMethod::PUT:
-        return requestBody.readAllBytes(MAX_STORAGE_VALUE_BYTES + 2)
-            .then([this, key = kj::mv(key), &response]
-                (kj::Array<byte>&& body) mutable {
-          if (body.size() > MAX_STORAGE_VALUE_BYTES) {
-            return sendJson(response, 413, "Payload Too Large", kj::str(
-                "{\n  \"ok\": false,\n"
-                "  \"error\": \"isolate storage value exceeds maximum allowed size\",\n"
-                "  \"maxBytes\": ", MAX_STORAGE_VALUE_BYTES, "\n}\n"));
-          }
-
-          if (!storagePathIsMissingOrRegular(key)) {
-            return sendJson(response, 409, "Conflict", kj::heapString(
-                "{\n  \"ok\": false,\n"
-                "  \"error\": \"storage key is blocked by a non-regular file\"\n}\n"));
-          }
-
-          writeStorageFile(key, body);
-          return sendJson(response, 200, "OK", renderStored(body.size()));
-        });
-      case kj::HttpMethod::DELETE:
-        return deleteStorageFile(kj::mv(key), response);
-      default:
-        return sendJson(response, 405, "Method Not Allowed", kj::heapString(
-            "{\n  \"ok\": false,\n  \"error\": \"method not allowed\"\n}\n"));
-    }
+    auto token = activity->start();
+    return requestActive(method, url, headers, requestBody, response).attach(kj::mv(token));
   }
 
 private:
-  static constexpr size_t MAX_STORAGE_VALUE_BYTES = 1024 * 1024;
+  kj::Promise<void> requestActive(
+      kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
+      kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) {
+    auto path = requestPath(url);
+    KJ_LOG(INFO, "Isolate durable-data binding received request.", kj::str(method), path);
 
-  enum class StoragePathState {
-    MISSING,
-    REGULAR,
-    NON_REGULAR,
-  };
+    if (path.startsWith("/kv/")) {
+      auto key = kj::str(path.slice(strlen("/kv/")));
+      if (key.size() == 0 && method == kj::HttpMethod::GET) return listKv(response);
+      if (!isValidIsolateKvKey(key)) {
+        return sendJson(response, 400, "Bad Request", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"invalid KV key\"\n}\n"));
+      }
+      return requestKv(method, kj::mv(key), requestBody, response);
+    }
+
+    if (path == "/files") {
+      KJ_IF_MAYBE(filePath, findIsolateQueryParam(url, "path")) {
+        if (!isValidIsolateFilePath(*filePath)) {
+          return sendJson(response, 400, "Bad Request", kj::heapString(
+              "{\n  \"ok\": false,\n  \"error\": \"invalid file path\"\n}\n"));
+        }
+        kj::Maybe<uint64_t> expectedFileBytes;
+        KJ_IF_MAYBE(value, headers.get(hFileSize)) {
+          KJ_IF_MAYBE(parsed, parseUInt(*value, 10)) {
+            expectedFileBytes = *parsed;
+          } else {
+            return sendJson(response, 400, "Bad Request", kj::heapString(
+                "{\n  \"ok\": false,\n  \"error\": \"invalid file size\"\n}\n"));
+          }
+        }
+        return requestFile(
+            method, kj::mv(*filePath), expectedFileBytes, requestBody, response);
+      }
+      return sendJson(response, 400, "Bad Request", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"missing file path\"\n}\n"));
+    }
+
+    return sendJson(response, 404, "Not Found", kj::heapString(
+        "{\n  \"ok\": false,\n  \"error\": \"unknown storage endpoint\"\n}\n"));
+  }
+
+  static constexpr size_t MAX_KV_VALUE_BYTES = 1024 * 1024;
+  static constexpr uint64_t MAX_FILE_BYTES = 64 * 1024 * 1024;
+  static constexpr size_t FILE_STREAM_CHUNK_BYTES = 64 * 1024;
 
   kj::HttpHeaderTable& headerTable;
-  kj::AutoCloseFd storageRoot;
+  kj::HttpHeaderId hFileSize;
+  SpoolIoWorker& ioWorker;
+  kj::Own<DurableDataActivity> activity;
+  kj::Own<SqliteKvState> kvState;
+  kj::AutoCloseFd filesRoot;
 
-  static kj::AutoCloseFd openStorageRoot(kj::StringPtr path) {
+  static kj::AutoCloseFd openFilesRoot(kj::StringPtr path) {
     int fd;
     KJ_SYSCALL(fd = open(path.cStr(),
         O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW), path);
     return kj::AutoCloseFd(fd);
+  }
+
+  static kj::String requestPath(kj::StringPtr url) {
+    KJ_IF_MAYBE(query, url.findFirst('?')) {
+      return kj::str(url.slice(0, *query));
+    }
+    return kj::heapString(url);
   }
 
   kj::Promise<void> sendJson(kj::HttpService::Response& response, uint statusCode,
@@ -4280,175 +4567,251 @@ private:
     return promise.attach(kj::mv(stream), kj::mv(body));
   }
 
-  kj::Promise<void> get(kj::String key, kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(fd, openStorageFileIfExists(key)) {
-      auto body = readAllBytes(*fd);
+  kj::Promise<void> requestKv(kj::HttpMethod method, kj::String key,
+      kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) {
+    switch (method) {
+      case kj::HttpMethod::GET: return getKv(kj::mv(key), response);
+      case kj::HttpMethod::HEAD: return headKv(kj::mv(key), response);
+      case kj::HttpMethod::DELETE: return deleteKv(kj::mv(key), response);
+      case kj::HttpMethod::PUT:
+        return requestBody.readAllBytes(MAX_KV_VALUE_BYTES + 2)
+            .then([this, key = kj::mv(key), &response](kj::Array<byte>&& body) mutable {
+          if (body.size() > MAX_KV_VALUE_BYTES) {
+            return sendJson(response, 413, "Payload Too Large", kj::str(
+                "{\n  \"ok\": false,\n"
+                "  \"error\": \"isolate KV value exceeds maximum allowed size\",\n"
+                "  \"maxBytes\": ", MAX_KV_VALUE_BYTES, "\n}\n"));
+          }
+          auto bytes = body.size();
+          return ioWorker.executeAsync(
+              [state = kj::atomicAddRef(*kvState), key = kj::mv(key), body = kj::mv(body)]() mutable {
+            state->put(key, body);
+          }).then([this, &response, bytes]() {
+            return sendJson(response, 200, "OK", kj::str(
+                "{\n  \"ok\": true,\n  \"bytes\": ", bytes, "\n}\n"));
+          });
+        });
+      default:
+        return sendJson(response, 405, "Method Not Allowed", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"method not allowed\"\n}\n"));
+    }
+  }
+
+  kj::Promise<void> getKv(kj::String key, kj::HttpService::Response& response) {
+    return ioWorker.executeAsync(
+        [state = kj::atomicAddRef(*kvState), key = kj::mv(key)]() mutable {
+      return state->get(key);
+    }).then([this, &response](kj::Maybe<kj::Array<byte>>&& result) mutable {
+      KJ_IF_MAYBE(value, result) {
+        auto body = kj::mv(*value);
+        kj::HttpHeaders responseHeaders(headerTable);
+        responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream");
+        auto stream = response.send(200, "OK", responseHeaders, body.size());
+        return stream->write(body.begin(), body.size()).attach(kj::mv(stream), kj::mv(body));
+      }
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"KV key not found\"\n}\n"));
+    });
+  }
+
+  kj::Promise<void> headKv(kj::String key, kj::HttpService::Response& response) {
+    return ioWorker.executeAsync(
+        [state = kj::atomicAddRef(*kvState), key = kj::mv(key)]() mutable {
+      return state->head(key);
+    }).then([this, &response](kj::Maybe<uint64_t> result) {
       kj::HttpHeaders responseHeaders(headerTable);
-      responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream");
-      auto stream = response.send(200, "OK", responseHeaders, body.size());
-      auto promise = stream->write(body.begin(), body.size());
-      return promise.attach(kj::mv(stream), kj::mv(body), kj::mv(key));
-    }
-
-    return sendJson(response, 404, "Not Found", kj::heapString(
-        "{\n  \"ok\": false,\n  \"error\": \"storage key not found\"\n}\n"));
-  }
-
-  kj::Promise<void> head(kj::String key, kj::HttpService::Response& response) {
-    KJ_IF_MAYBE(fd, openStorageFileIfExists(key)) {
-      struct stat stats;
-      KJ_SYSCALL(fstat(*fd, &stats));
-      kj::HttpHeaders responseHeaders(headerTable);
-      responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream");
-      responseHeaders.add("X-Sandstorm-Storage-Bytes", kj::str(stats.st_size));
-      response.send(200, "OK", responseHeaders, uint64_t(0));
-      return kj::READY_NOW;
-    }
-
-    kj::HttpHeaders responseHeaders(headerTable);
-    response.send(404, "Not Found", responseHeaders, uint64_t(0));
-    return kj::READY_NOW;
-  }
-
-  kj::Maybe<kj::AutoCloseFd> openStorageFileIfExists(kj::StringPtr key) {
-    int fd = openat(storageRoot, key.cStr(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (fd == -1) {
-      int error = errno;
-      if (error == ENOENT || error == ENOTDIR || error == ELOOP) {
-        return nullptr;
+      KJ_IF_MAYBE(bytes, result) {
+        responseHeaders.add("X-Sandstorm-Kv-Bytes", kj::str(*bytes));
+        response.send(200, "OK", responseHeaders, uint64_t(0));
+      } else {
+        response.send(404, "Not Found", responseHeaders, uint64_t(0));
       }
-
-      KJ_FAIL_SYSCALL("openat", error, key);
-    }
-
-    kj::AutoCloseFd result(fd);
-    struct stat stats;
-    KJ_SYSCALL(fstat(result.get(), &stats), key);
-    if (!S_ISREG(stats.st_mode)) {
-      return nullptr;
-    }
-
-    return kj::mv(result);
+    });
   }
 
-  StoragePathState inspectStoragePath(kj::StringPtr key) {
-    struct stat stats;
-    if (fstatat(storageRoot, key.cStr(), &stats, AT_SYMLINK_NOFOLLOW) != 0) {
-      int error = errno;
-      if (error == ENOENT || error == ENOTDIR) {
-        return StoragePathState::MISSING;
-      }
-
-      KJ_FAIL_SYSCALL("fstatat", error, key);
-    }
-
-    return S_ISREG(stats.st_mode) ? StoragePathState::REGULAR : StoragePathState::NON_REGULAR;
+  kj::Promise<void> deleteKv(kj::String key, kj::HttpService::Response& response) {
+    return ioWorker.executeAsync(
+        [state = kj::atomicAddRef(*kvState), key = kj::mv(key)]() mutable {
+      return state->remove(key);
+    }).then([this, &response](bool deleted) {
+      return sendJson(response, 200, "OK", kj::str(
+          "{\n  \"ok\": true,\n  \"deleted\": ", deleted ? "true" : "false", "\n}\n"));
+    });
   }
 
-  bool storagePathIsMissingOrRegular(kj::StringPtr key) {
-    return inspectStoragePath(key) != StoragePathState::NON_REGULAR;
-  }
-
-  kj::Promise<void> deleteStorageFile(kj::String key, kj::HttpService::Response& response) {
-    switch (inspectStoragePath(key)) {
-      case StoragePathState::MISSING:
-        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
-      case StoragePathState::REGULAR:
-        KJ_SYSCALL(unlinkat(storageRoot, key.cStr(), 0), key);
-        return sendJson(response, 200, "OK", kj::heapString("{\n  \"ok\": true\n}\n"));
-      case StoragePathState::NON_REGULAR:
-        return sendJson(response, 409, "Conflict", kj::heapString(
-            "{\n  \"ok\": false,\n"
-            "  \"error\": \"storage key is blocked by a non-regular file\"\n}\n"));
-    }
-
-    KJ_UNREACHABLE;
-  }
-
-  void writeStorageFile(kj::StringPtr key, kj::ArrayPtr<const byte> content) {
-    auto tmpName = kj::str(".tmp-", getpid(), "-", key);
-    switch (inspectStoragePath(tmpName)) {
-      case StoragePathState::MISSING:
-        break;
-      case StoragePathState::REGULAR:
-        KJ_SYSCALL(unlinkat(storageRoot, tmpName.cStr(), 0), tmpName);
-        break;
-      case StoragePathState::NON_REGULAR:
-        KJ_FAIL_REQUIRE("refusing to replace non-regular temporary storage file", tmpName);
-    }
-
-    int fd;
-    KJ_SYSCALL(fd = openat(storageRoot, tmpName.cStr(),
-        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0660), tmpName);
-    kj::AutoCloseFd output(fd);
-    writeAllToFd(output, content);
-    KJ_SYSCALL(fsync(output), tmpName);
-    KJ_SYSCALL(renameat(storageRoot, tmpName.cStr(), storageRoot, key.cStr()), tmpName, key);
-    KJ_SYSCALL(fsync(storageRoot));
-  }
-
-  kj::String renderStored(size_t bytes) {
-    return kj::str("{\n  \"ok\": true,\n  \"bytes\": ", bytes, "\n}\n");
-  }
-
-  kj::String renderIndex() {
-    auto files = listStorageDirectory();
-    kj::Vector<char> json;
-    json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"keys\": ["));
-    uint64_t totalBytes = 0;
-    bool first = true;
-    for (auto& file: files) {
-      if (!isValidIsolateStorageKey(file)) {
-        continue;
-      }
-
-      KJ_IF_MAYBE(fd, openStorageFileIfExists(file)) {
-        struct stat stats;
-        KJ_SYSCALL(fstat(*fd, &stats));
-
-        totalBytes += static_cast<uint64_t>(stats.st_size);
-        if (!first) json.addAll(kj::StringPtr(", "));
+  kj::Promise<void> listKv(kj::HttpService::Response& response) {
+    return ioWorker.executeAsync([state = kj::atomicAddRef(*kvState)]() mutable {
+      return state->list();
+    }).then([this, &response](kj::Array<KvListEntry>&& entries) mutable {
+      kj::Vector<char> json;
+      json.addAll(kj::StringPtr("{\n  \"ok\": true,\n  \"keys\": ["));
+      uint64_t totalBytes = 0;
+      for (auto i: kj::indices(entries)) {
+        auto& entry = entries[i];
+        totalBytes += entry.bytes;
+        if (i > 0) json.addAll(kj::StringPtr(", "));
         json.addAll(kj::StringPtr("{ "));
-        appendJsonField(json, "name", file);
-        json.addAll(kj::StringPtr(", \"bytes\": "));
-        json.addAll(kj::str(stats.st_size));
-        json.addAll(kj::StringPtr(" }"));
-        first = false;
+        appendJsonField(json, "name", entry.key);
+        json.addAll(kj::str(", \"bytes\": ", entry.bytes, " }"));
       }
-    }
-    json.addAll(kj::StringPtr("],\n  \"totalBytes\": "));
-    json.addAll(kj::str(totalBytes));
-    json.addAll(kj::StringPtr("\n}\n"));
-    json.add('\0');
-    return kj::String(json.releaseAsArray());
+      json.addAll(kj::str("],\n  \"totalBytes\": ", totalBytes, "\n}\n"));
+      json.add('\0');
+      return sendJson(response, 200, "OK", kj::String(json.releaseAsArray()));
+    });
   }
 
-  kj::Vector<kj::String> listStorageDirectory() {
-    int directoryFd;
-    KJ_SYSCALL(directoryFd = openat(storageRoot, ".",
-        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
-    DIR* dir = fdopendir(directoryFd);
-    if (dir == nullptr) {
-      int error = errno;
-      KJ_SYSCALL(close(directoryFd));
-      KJ_FAIL_SYSCALL("fdopendir", error);
+  kj::Promise<void> requestFile(kj::HttpMethod method, kj::String path,
+      kj::Maybe<uint64_t> expectedFileBytes,
+      kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) {
+    switch (method) {
+      case kj::HttpMethod::GET: return openFile(kj::mv(path), response, false);
+      case kj::HttpMethod::HEAD: return openFile(kj::mv(path), response, true);
+      case kj::HttpMethod::PUT:
+        KJ_IF_MAYBE(size, expectedFileBytes) {
+          if (*size > MAX_FILE_BYTES) {
+            return sendJson(response, 413, "Payload Too Large", kj::str(
+                "{\n  \"ok\": false,\n"
+                "  \"error\": \"isolate file exceeds maximum allowed size\",\n"
+                "  \"maxBytes\": ", MAX_FILE_BYTES, "\n}\n"));
+          }
+          return writeFile(kj::mv(path), *size, requestBody, response);
+        }
+        return sendJson(response, 411, "Length Required", kj::heapString(
+            "{\n  \"ok\": false,\n"
+            "  \"error\": \"file uploads require an expected size\"\n}\n"));
+      case kj::HttpMethod::DELETE: return deleteFile(kj::mv(path), response);
+      default:
+        return sendJson(response, 405, "Method Not Allowed", kj::heapString(
+            "{\n  \"ok\": false,\n  \"error\": \"method not allowed\"\n}\n"));
     }
-    KJ_DEFER(KJ_SYSCALL(closedir(dir)) { break; });
+  }
 
-    kj::Vector<kj::String> result;
-    for (;;) {
-      errno = 0;
-      auto entry = readdir(dir);
-      if (entry == nullptr) {
-        int error = errno;
-        if (error != 0) KJ_FAIL_SYSCALL("readdir", error);
-        break;
-      }
-      if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
-        result.add(kj::str(entry->d_name));
-      }
+  kj::Promise<void> writeFile(kj::String path, uint64_t expectedBytes,
+      kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) {
+    // Begin an indeterminate-length response before reading the request stream. Fetch uploads are
+    // half-duplex, and the HTTP-over-Cap'n-Proto bridge needs a response stream to exist before it
+    // can deliver the request body's final EOF marker. The response body is not completed until
+    // the upload has been fsynced and atomically renamed into place.
+    kj::HttpHeaders responseHeaders(headerTable);
+    responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/json; charset=utf-8");
+    auto responseBody = response.send(200, "OK", responseHeaders);
+    auto root = duplicateFileDescriptor(filesRoot);
+    return ioWorker.executeAsync([root = kj::mv(root), path = kj::mv(path)]() mutable {
+      return createIsolateFileUpload(kj::mv(root), path);
+    }).then([this, &requestBody, responseBody = kj::mv(responseBody), expectedBytes](
+        kj::Own<IsolateFileUpload>&& upload) mutable {
+      return pumpFileUpload(
+          requestBody, kj::mv(upload), kj::mv(responseBody), expectedBytes, 0);
+    });
+  }
+
+  kj::Promise<void> pumpFileUpload(kj::AsyncInputStream& input,
+      kj::Own<IsolateFileUpload> upload, kj::Own<kj::AsyncOutputStream> responseBody,
+      uint64_t expectedBytes, uint64_t bytes) {
+    if (bytes == expectedBytes) {
+      return ioWorker.executeAsync(
+          [upload = kj::mv(upload), bytes]() mutable -> uint64_t {
+        KJ_SYSCALL(fsync(upload->file->fd), upload->temporaryName);
+        KJ_SYSCALL(renameat(upload->directory, upload->temporaryName.cStr(),
+            upload->directory, upload->name.cStr()), upload->temporaryName, upload->name);
+        KJ_SYSCALL(fsync(upload->directory));
+        upload->committed = true;
+        return bytes;
+      }).then([responseBody = kj::mv(responseBody)](uint64_t storedBytes) mutable {
+        auto body = kj::str(
+            "{\n  \"ok\": true,\n  \"bytes\": ", storedBytes, "\n}\n");
+        return responseBody->write(body.begin(), body.size())
+            .attach(kj::mv(responseBody), kj::mv(body));
+      });
     }
-    return result;
+
+    auto buffer = kj::heapArray<byte>(static_cast<size_t>(
+        kj::min(expectedBytes - bytes, uint64_t(FILE_STREAM_CHUNK_BYTES))));
+    return input.tryRead(buffer.begin(), 1, buffer.size())
+        .then([this, &input, upload = kj::mv(upload), responseBody = kj::mv(responseBody), bytes,
+              expectedBytes, buffer = kj::mv(buffer)](
+              size_t count) mutable -> kj::Promise<void> {
+      KJ_REQUIRE(count > 0, "isolate file upload ended before its declared size",
+          bytes, expectedBytes);
+
+      auto nextBytes = bytes + count;
+      KJ_ASSERT(nextBytes <= expectedBytes);
+
+      auto chunk = kj::heapArray<byte>(count);
+      memcpy(chunk.begin(), buffer.begin(), count);
+      return ioWorker.write(kj::atomicAddRef(*upload->file), kj::mv(chunk))
+          .then([this, &input, upload = kj::mv(upload),
+                 responseBody = kj::mv(responseBody), expectedBytes, nextBytes]() mutable {
+        return pumpFileUpload(input, kj::mv(upload), kj::mv(responseBody),
+            expectedBytes, nextBytes);
+      });
+    });
+  }
+
+  kj::Promise<void> openFile(
+      kj::String path, kj::HttpService::Response& response, bool headOnly) {
+    auto root = duplicateFileDescriptor(filesRoot);
+    return ioWorker.executeAsync([root = kj::mv(root), path = kj::mv(path)]() mutable {
+      return openIsolateFileIfExists(kj::mv(root), path);
+    }).then([this, &response, headOnly](kj::Maybe<OpenIsolateFile>&& result) mutable {
+      KJ_IF_MAYBE(opened, result) {
+        auto file = kj::mv(*opened);
+        kj::HttpHeaders responseHeaders(headerTable);
+        responseHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "application/octet-stream");
+        responseHeaders.add("X-Sandstorm-File-Bytes", kj::str(file.size));
+        if (headOnly) {
+          response.send(200, "OK", responseHeaders, uint64_t(0));
+          return kj::Promise<void>(kj::READY_NOW);
+        }
+        auto output = response.send(200, "OK", responseHeaders, file.size);
+        return pumpFileDownload(kj::mv(file.file), kj::mv(output), file.size);
+      }
+      if (headOnly) {
+        kj::HttpHeaders responseHeaders(headerTable);
+        response.send(404, "Not Found", responseHeaders, uint64_t(0));
+        return kj::Promise<void>(kj::READY_NOW);
+      }
+      return sendJson(response, 404, "Not Found", kj::heapString(
+          "{\n  \"ok\": false,\n  \"error\": \"file not found\"\n}\n"));
+    });
+  }
+
+  kj::Promise<void> pumpFileDownload(kj::Own<SpoolFile> file,
+      kj::Own<kj::AsyncOutputStream> output, uint64_t remaining) {
+    if (remaining == 0) return kj::Promise<void>(kj::READY_NOW).attach(kj::mv(output));
+    auto chunkSize = static_cast<size_t>(kj::min(remaining, uint64_t(FILE_STREAM_CHUNK_BYTES)));
+    return ioWorker.read(kj::atomicAddRef(*file), chunkSize)
+        .then([this, file = kj::mv(file), output = kj::mv(output), remaining]
+              (kj::Array<byte>&& chunk) mutable {
+      KJ_REQUIRE(chunk.size() > 0, "isolate file ended before its declared size");
+      auto count = chunk.size();
+      return output->write(chunk.begin(), chunk.size()).attach(kj::mv(chunk))
+          .then([this, file = kj::mv(file), output = kj::mv(output), remaining, count]() mutable {
+        return pumpFileDownload(kj::mv(file), kj::mv(output), remaining - count);
+      });
+    });
+  }
+
+  kj::Promise<void> deleteFile(kj::String path, kj::HttpService::Response& response) {
+    auto root = duplicateFileDescriptor(filesRoot);
+    return ioWorker.executeAsync([root = kj::mv(root), path = kj::mv(path)]() mutable {
+      auto maybeTarget = openIsolateFileTarget(kj::mv(root), path, false);
+      if (maybeTarget == nullptr) return false;
+      auto target = kj::mv(KJ_ASSERT_NONNULL(maybeTarget));
+      struct stat stats;
+      if (fstatat(target.directory, target.name.cStr(), &stats, AT_SYMLINK_NOFOLLOW) < 0) {
+        int error = errno;
+        if (error == ENOENT || error == ENOTDIR) return false;
+        KJ_FAIL_SYSCALL("fstatat", error, path);
+      }
+      KJ_REQUIRE(S_ISREG(stats.st_mode), "refusing to delete a non-regular isolate file", path);
+      KJ_SYSCALL(unlinkat(target.directory, target.name.cStr(), 0), path);
+      KJ_SYSCALL(fsync(target.directory));
+      return true;
+    }).then([this, &response](bool deleted) {
+      return sendJson(response, 200, "OK", kj::str(
+          "{\n  \"ok\": true,\n  \"deleted\": ", deleted ? "true" : "false", "\n}\n"));
+    });
   }
 };
 
@@ -4465,7 +4828,10 @@ public:
         service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host);
         break;
       case IsolateBindingServices::Binding::STORAGE:
-        service = kj::heap<StorageBindingService>(host->headerTable, config->storageRootPath);
+        service = kj::heap<StorageBindingService>(host->headerTable,
+            config->kvDatabasePath, config->filesRootPath,
+            host->hIsolateFileSize, host->spoolIo,
+            kj::addRef(*host->durableDataActivity));
         break;
       case IsolateBindingServices::Binding::POWERBOX:
         service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host, true);
@@ -4568,14 +4934,16 @@ public:
   kj::Promise<void> syncStorage(SyncStorageContext context) override {
     lifecycle->requireRunning();
     (void)context;
-    auto fd = raiiOpen(varPath, O_RDONLY | O_DIRECTORY);
-    KJ_SYSCALL(syncfs(fd));
-
-    auto bytes = computeDiskUsage(varPath);
-    KJ_LOG(INFO, "Reporting isolate grain disk usage.", varPath, bytes);
-    auto req = sandstormCore.reportGrainSizeRequest();
-    req.setBytes(bytes);
-    return req.send().ignoreResult();
+    return runtimeHost->spoolIo.executeAsync([path = kj::str(varPath)]() -> uint64_t {
+      auto fd = raiiOpen(path, O_RDONLY | O_DIRECTORY);
+      KJ_SYSCALL(syncfs(fd));
+      return computeDiskUsage(path);
+    }).then([this](uint64_t bytes) {
+      KJ_LOG(INFO, "Reporting isolate grain disk usage.", varPath, bytes);
+      auto req = sandstormCore.reportGrainSizeRequest();
+      req.setBytes(bytes);
+      return req.send().ignoreResult();
+    });
   }
 
   kj::Promise<void> shutdown(ShutdownContext context) override {
@@ -4584,7 +4952,19 @@ public:
     // Existing sessions must observe a disconnect so the gateway's CapRedirector will reopen
     // them against the replacement worker. Ordinary runtime failures remain HTTP 502 responses.
     runtimeHost->disconnectHosted();
-    return lifecycle->shutdown();
+    auto stopPromise = lifecycle->shutdown();
+    auto durableDataIdle = runtimeHost->durableDataActivity->quiesce();
+    return stopPromise.then([durableDataIdle = kj::mv(durableDataIdle)]() mutable {
+      return kj::mv(durableDataIdle);
+    }).then([this]() {
+      // Hosted workers perform KV and file operations on the shared blocking-I/O executor. A
+      // completed shutdown must be a durable-data barrier so callers can safely inspect or archive
+      // the grain as soon as this RPC returns.
+      return runtimeHost->spoolIo.executeAsync([path = kj::str(varPath)]() {
+        auto fd = raiiOpen(path, O_RDONLY | O_DIRECTORY);
+        KJ_SYSCALL(syncfs(fd));
+      });
+    });
   }
 
   kj::Promise<void> restore(RestoreContext context) override {

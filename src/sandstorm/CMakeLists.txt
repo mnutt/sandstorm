@@ -254,7 +254,7 @@ sandstorm_add_executable(test-app test-app/test-app.c++)
 sandstorm_make_static(test-app)
 
 if(BUILD_TESTING)
-  foreach(_test IN ITEMS appid-replacements id-to-text util)
+  foreach(_test IN ITEMS appid-replacements id-to-text isolate-util util)
     set(_target "sandstorm-${_test}-test")
     add_executable("${_target}" "${_test}-test.c++")
     target_link_libraries("${_target}" PRIVATE

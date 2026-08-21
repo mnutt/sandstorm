@@ -566,7 +566,7 @@ export default {
     if (url.pathname === "/browser-storage-write" && request.method === "POST") {
       const body = await request.json();
       const value = String(body.value || "");
-      const put = await env.STORAGE.fetch("http://storage/browser-storage-test", {
+      const put = await env.STORAGE.fetch("http://storage/kv/browser-storage-test", {
         method: "PUT",
         body: value,
       });
@@ -579,7 +579,7 @@ export default {
     }
 
     if (url.pathname === "/browser-storage-read") {
-      const get = await env.STORAGE.fetch("http://storage/browser-storage-test");
+      const get = await env.STORAGE.fetch("http://storage/kv/browser-storage-test");
       if (get.status === 404) {
         return Response.json({
           ok: false,
@@ -1145,13 +1145,13 @@ export default {
       }, { status: ok ? 200 : 500 });
     }
 
-    if (url.pathname === "/storage-helper-self-test") {
-      const store = sandstorm(request, env).storage();
+    if (url.pathname === "/kv-helper-self-test") {
+      const store = sandstorm(request, env).kv();
       const bytes = makeBytes(257);
       const putBytes = await store.put("helper-bytes", bytes);
       const readBytes = await store.getBytes("helper-bytes");
       const putJson = await store.putJson("helper-json", {
-        fixture: "storage-helper",
+        fixture: "kv-helper",
         count: 3,
         nested: { ok: true },
       });
@@ -1182,10 +1182,65 @@ export default {
       });
     }
 
-    if (url.pathname === "/shared-storage-isolation") {
+    if (url.pathname === "/files-helper-self-test") {
+      const fileStore = sandstorm(request, env).files();
+      const path = "streaming/large-fixture.bin";
+      const totalBytes = 2 * 1024 * 1024 + 317;
+      let writeOffset = 0;
+      let expectedChecksum = 0;
+      const body = new ReadableStream({
+        pull(controller) {
+          if (writeOffset >= totalBytes) {
+            controller.close();
+            return;
+          }
+          const size = Math.min(65536, totalBytes - writeOffset);
+          const chunk = new Uint8Array(size);
+          for (let i = 0; i < size; ++i) {
+            chunk[i] = (writeOffset + i) % 251;
+            expectedChecksum = (expectedChecksum + chunk[i]) >>> 0;
+          }
+          writeOffset += size;
+          controller.enqueue(chunk);
+        },
+      });
+
+      const written = await fileStore.write(path, body, { size: totalBytes });
+      const stat = await fileStore.stat(path);
+      const opened = await fileStore.open(path);
+      const reader = opened.body.getReader();
+      let readBytes = 0;
+      let actualChecksum = 0;
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        readBytes += chunk.value.byteLength;
+        for (const value of chunk.value) actualChecksum = (actualChecksum + value) >>> 0;
+      }
+      const deleted = await fileStore.delete(path);
+      const missing = await fileStore.stat(path);
+      const missingNested = await fileStore.stat("does/not/exist.bin");
+
+      return Response.json({
+        ok: written.ok && stat.size === totalBytes && opened.size === totalBytes &&
+          readBytes === totalBytes && actualChecksum === expectedChecksum &&
+          deleted.deleted && missing === undefined && missingNested === undefined,
+        written,
+        stat,
+        opened: { path: opened.path, size: opened.size },
+        readBytes,
+        expectedChecksum,
+        actualChecksum,
+        deleted,
+        missing,
+        missingNested,
+      });
+    }
+
+    if (url.pathname === "/shared-kv-isolation") {
       const key = "shared-host-isolation";
       if (url.searchParams.has("value")) {
-        const put = await env.STORAGE.fetch(`http://storage/${key}`, {
+        const put = await env.STORAGE.fetch(`http://storage/kv/${key}`, {
           method: "PUT",
           body: url.searchParams.get("value"),
         });
@@ -1194,11 +1249,24 @@ export default {
         }
       }
 
-      const read = await env.STORAGE.fetch(`http://storage/${key}`);
+      const read = await env.STORAGE.fetch(`http://storage/kv/${key}`);
       return Response.json({
         ok: read.ok,
         value: read.ok ? await read.text() : null,
       }, { status: read.ok ? 200 : 500 });
+    }
+
+    if (url.pathname === "/shared-file-isolation") {
+      const fileStore = sandstorm(request, env).files();
+      const path = "shared-host/isolation.txt";
+      if (url.searchParams.has("value")) {
+        await fileStore.write(path, url.searchParams.get("value"));
+      }
+      const opened = await fileStore.open(path);
+      const value = opened ? await new Response(opened.body).text() : null;
+      return Response.json({ ok: opened !== undefined, value }, {
+        status: opened === undefined ? 500 : 200,
+      });
     }
 
 

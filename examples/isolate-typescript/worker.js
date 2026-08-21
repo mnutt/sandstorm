@@ -5,7 +5,7 @@ import { exportCapnp, sandstorm, validate } from "sandstorm:api";
 import { TypedCounter } from "capnp:./typed-counter.capnp";
 async function increment(api, step = 1) {
   const amount = validate.integer(step, "step", { min: 1, max: 100 });
-  const store = api.storage();
+  const store = api.kv();
   const current = Number(await store.get("typescript-counter") || "0");
   const value = current + amount;
   await store.put("typescript-counter", String(value));

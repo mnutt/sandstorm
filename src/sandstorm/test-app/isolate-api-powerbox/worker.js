@@ -441,15 +441,15 @@ async function callIsolatePreviewer(
       byte.toString(16).padStart(2, "0")).join("");
     const candidateCapability = capability.wrapDerived(result.candidate);
     try {
-      const previousToken = await api.storage().get(CANDIDATE_TOKEN_KEY);
+      const previousToken = await api.kv().get(CANDIDATE_TOKEN_KEY);
       const token = await candidateCapability.save({ label: "Reviewed isolate candidate" });
-      await api.storage().put(CANDIDATE_TOKEN_KEY, token);
+      await api.kv().put(CANDIDATE_TOKEN_KEY, token);
       if (previousToken) await api.revoke(previousToken);
     } finally {
       await candidateCapability.drop();
     }
 
-    await api.storage().putJson(CANDIDATE_INFO_KEY, {
+    await api.kv().putJson(CANDIDATE_INFO_KEY, {
       normalizedDigest: candidateDigest,
       title: "Powerbox Published Isolate",
     });
@@ -477,12 +477,12 @@ async function callIsolatePreviewer(
 }
 
 async function callIsolatePublisher(api, capability) {
-  const candidateInfo = await api.storage().getJson(CANDIDATE_INFO_KEY);
+  const candidateInfo = await api.kv().getJson(CANDIDATE_INFO_KEY);
   if (!candidateInfo) throw new Error("No reviewed isolate candidate is available.");
-  let requestId = await api.storage().get(PUBLISH_REQUEST_KEY);
+  let requestId = await api.kv().get(PUBLISH_REQUEST_KEY);
   if (!requestId) {
     requestId = `powerbox-publish-${crypto.randomUUID()}`;
-    await api.storage().put(PUBLISH_REQUEST_KEY, requestId);
+    await api.kv().put(PUBLISH_REQUEST_KEY, requestId);
   }
 
   const publisher = capnpClient(IsolatePublisher, capability);
@@ -494,12 +494,12 @@ async function callIsolatePublisher(api, capability) {
     appVersion: result.appVersion,
     title: result.title,
   };
-  await api.storage().putJson(PUBLISHED_APP_KEY, publication);
-  const candidateToken = await api.storage().get(CANDIDATE_TOKEN_KEY);
+  await api.kv().putJson(PUBLISHED_APP_KEY, publication);
+  const candidateToken = await api.kv().get(CANDIDATE_TOKEN_KEY);
   if (candidateToken) await api.revoke(candidateToken);
-  await api.storage().delete(CANDIDATE_TOKEN_KEY);
-  await api.storage().delete(CANDIDATE_INFO_KEY);
-  await api.storage().delete(PUBLISH_REQUEST_KEY);
+  await api.kv().delete(CANDIDATE_TOKEN_KEY);
+  await api.kv().delete(CANDIDATE_INFO_KEY);
+  await api.kv().delete(PUBLISH_REQUEST_KEY);
   return {
     ok: true,
     published: true,
@@ -510,8 +510,8 @@ async function callIsolatePublisher(api, capability) {
 
 async function readCurrentPreviewLog(api) {
   const [token, candidateInfo] = await Promise.all([
-    api.storage().get(TOKEN_KEY),
-    api.storage().getJson(CANDIDATE_INFO_KEY),
+    api.kv().get(TOKEN_KEY),
+    api.kv().getJson(CANDIDATE_INFO_KEY),
   ]);
   if (!token || !candidateInfo) throw new Error("No current isolate preview is available.");
 
@@ -562,7 +562,7 @@ async function readCurrentPreviewLog(api) {
 }
 
 async function callRestoredCapability(api) {
-  const token = await api.storage().get(TOKEN_KEY);
+  const token = await api.kv().get(TOKEN_KEY);
   if (!token) {
     throw new Error(`No saved Powerbox token is available at ${TOKEN_KEY}`);
   }
@@ -592,7 +592,7 @@ async function readApiResponse(response) {
 
 async function readState(request, env, result = null, error = null) {
   const api = appApi(request, env);
-  const store = api.storage();
+  const store = api.kv();
   const savedToken = await store.get(TOKEN_KEY);
   const url = new URL(request.url);
   const previewerFlow = url.searchParams.has("isolatePreviewer");
@@ -664,7 +664,7 @@ export default {
         const capability = await api.powerbox().claim(body);
         const tokenKey = body.isolatePublisher ? PUBLISHER_TOKEN_KEY : TOKEN_KEY;
         const previousPublisherToken = body.isolatePublisher
-          ? await api.storage().get(tokenKey)
+          ? await api.kv().get(tokenKey)
           : null;
         const token = await capability.save({
           label: body.isolatePublisher
@@ -673,7 +673,7 @@ export default {
             ? "Isolate preview authority"
             : `API: ${canonicalUrl}`,
         });
-        const store = await api.storage().put(tokenKey, token);
+        const store = await api.kv().put(tokenKey, token);
         if (previousPublisherToken) await api.revoke(previousPublisherToken);
         const savedCapability = await api.restore(token);
         const savedClass = savedCapability instanceof Capability;
@@ -694,7 +694,7 @@ export default {
           token,
           store,
           savedDrop,
-          storageKey: tokenKey,
+          kvKey: tokenKey,
           call,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },
@@ -705,7 +705,7 @@ export default {
         const call = await callRestoredCapability(api);
         return new Response(renderPage(await readState(request, env, {
           ok: true,
-          storageKey: TOKEN_KEY,
+          kvKey: TOKEN_KEY,
           call,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },
@@ -713,7 +713,7 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/offer-preview") {
-        const token = await api.storage().get(TOKEN_KEY);
+        const token = await api.kv().get(TOKEN_KEY);
         if (!token) throw new Error("No saved IsolatePreviewer capability.");
         const capability = await api.restore(token);
         try {
@@ -731,9 +731,9 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/disconnect") {
-        const token = await api.storage().get(TOKEN_KEY);
+        const token = await api.kv().get(TOKEN_KEY);
         const dropSaved = token ? await api.revoke(token) : { ok: true, found: false };
-        const deleteToken = await api.storage().delete(TOKEN_KEY);
+        const deleteToken = await api.kv().delete(TOKEN_KEY);
         return new Response(renderPage(await readState(request, env, {
           ok: true,
           dropSaved,

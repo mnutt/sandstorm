@@ -635,7 +635,11 @@ int main(int argc, char** argv) {
       appPersistence);
   sandstorm::fetchPath(io.waitScope, supervisor, core, "sandstorm-api-binding-probe");
   sandstorm::fetchPath(io.waitScope, supervisor, core, "powerbox-binding-probe");
-  sandstorm::fetchPath(io.waitScope, supervisor, core, "storage-helper-self-test");
+  sandstorm::fetchPath(io.waitScope, supervisor, core, "kv-helper-self-test");
+  auto files = sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "files-helper-self-test");
+  KJ_REQUIRE(sandstorm::contains(files, "\"ok\":true"),
+      "shared host did not stream isolate files", files);
   auto bindingValues = sandstorm::fetchPath(
       io.waitScope, supervisor, core, "binding-values-probe");
   KJ_REQUIRE(bindingValues ==
@@ -656,9 +660,13 @@ int main(int argc, char** argv) {
       "\"body\":\"hello through service binding\",\"customHeader\":\"present\"}}",
       "shared host did not route the service binding", serviceBinding);
   auto firstStorage = sandstorm::fetchPath(
-      io.waitScope, supervisor, core, "shared-storage-isolation?value=first");
+      io.waitScope, supervisor, core, "shared-kv-isolation?value=first");
   KJ_REQUIRE(firstStorage == "{\"ok\":true,\"value\":\"first\"}",
-      "first shared grain did not retain its storage value", firstStorage);
+      "first shared grain did not retain its KV value", firstStorage);
+  auto firstFile = sandstorm::fetchPath(
+      io.waitScope, supervisor, core, "shared-file-isolation?value=first-file");
+  KJ_REQUIRE(firstFile == "{\"ok\":true,\"value\":\"first-file\"}",
+      "first shared grain did not retain its file", firstFile);
 
   // A second live grain proves that the account control plane and native workerd host are
   // genuinely multi-tenant rather than merely a different one-process-per-grain launcher.
@@ -667,11 +675,15 @@ int main(int argc, char** argv) {
   coreImpl.setSupervisor("testgrain456", second);
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
   auto secondStorage = sandstorm::fetchPath(
-      io.waitScope, second, core, "shared-storage-isolation?value=second");
+      io.waitScope, second, core, "shared-kv-isolation?value=second");
   KJ_REQUIRE(secondStorage == "{\"ok\":true,\"value\":\"second\"}",
-      "second shared grain did not retain its storage value", secondStorage);
+      "second shared grain did not retain its KV value", secondStorage);
+  auto secondFile = sandstorm::fetchPath(
+      io.waitScope, second, core, "shared-file-isolation?value=second-file");
+  KJ_REQUIRE(secondFile == "{\"ok\":true,\"value\":\"second-file\"}",
+      "second shared grain did not retain its file", secondFile);
   auto isolatedFirstStorage = sandstorm::fetchPath(
-      io.waitScope, supervisor, core, "shared-storage-isolation");
+      io.waitScope, supervisor, core, "shared-kv-isolation");
   KJ_REQUIRE(isolatedFirstStorage == "{\"ok\":true,\"value\":\"first\"}",
       "second shared grain overwrote the first grain's storage", isolatedFirstStorage);
 
@@ -718,18 +730,30 @@ int main(int argc, char** argv) {
   sandstorm::fetchPath(io.waitScope, restarted, core, "echo");
   sandstorm::fetchPath(io.waitScope, restarted, core, "sandstorm-api-binding-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "powerbox-binding-probe");
-  sandstorm::fetchPath(io.waitScope, restarted, core, "storage-helper-self-test");
+  sandstorm::fetchPath(io.waitScope, restarted, core, "kv-helper-self-test");
+  auto restartedFiles = sandstorm::fetchPath(
+      io.waitScope, restarted, core, "files-helper-self-test");
+  KJ_REQUIRE(sandstorm::contains(restartedFiles, "\"ok\":true"),
+      "restarted shared host did not stream isolate files", restartedFiles);
   sandstorm::fetchPath(io.waitScope, restarted, core, "binding-values-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "data-binding-probe");
   sandstorm::fetchPath(io.waitScope, restarted, core, "service-loopback");
   auto restartedStorage = sandstorm::fetchPath(
-      io.waitScope, restarted, core, "shared-storage-isolation");
+      io.waitScope, restarted, core, "shared-kv-isolation");
   KJ_REQUIRE(restartedStorage == "{\"ok\":true,\"value\":\"first\"}",
-      "shared grain restart lost or crossed storage authority", restartedStorage);
+      "shared grain restart lost or crossed KV authority", restartedStorage);
+  auto restartedFile = sandstorm::fetchPath(
+      io.waitScope, restarted, core, "shared-file-isolation");
+  KJ_REQUIRE(restartedFile == "{\"ok\":true,\"value\":\"first-file\"}",
+      "shared grain restart lost or crossed file authority", restartedFile);
   auto isolatedSecondStorage = sandstorm::fetchPath(
-      io.waitScope, second, core, "shared-storage-isolation");
+      io.waitScope, second, core, "shared-kv-isolation");
   KJ_REQUIRE(isolatedSecondStorage == "{\"ok\":true,\"value\":\"second\"}",
-      "first shared grain restart changed the second grain's storage", isolatedSecondStorage);
+      "first shared grain restart changed the second grain's KV", isolatedSecondStorage);
+  auto isolatedSecondFile = sandstorm::fetchPath(
+      io.waitScope, second, core, "shared-file-isolation");
+  KJ_REQUIRE(isolatedSecondFile == "{\"ok\":true,\"value\":\"second-file\"}",
+      "first shared grain restart changed the second grain's file", isolatedSecondFile);
   sandstorm::fetchPath(io.waitScope, second, core, "echo");
   return 0;
 }

@@ -220,12 +220,13 @@ Create `const api = sandstorm(request, env)` once per request and prefer these
 methods in application code:
 
 - `api.session()` for Sandstorm session and user metadata
-- `api.storage()` for isolate storage
+- `api.kv()` for small durable key/value state
+- `api.files()` for streaming durable files
 - `api.powerbox()` for browser-mediated Powerbox claiming and offers
 - `api.webSession()` and `api.apiSession()` for route-backed capabilities
 - `api.restore(token)`, `api.revoke(token)`, and `api.use(token, fn)` for
   durable saved capability tokens
-- `api.powerboxGrants()` for storage-backed Powerbox connection helpers
+- `api.powerboxGrants()` for KV-backed Powerbox connection helpers
 - `api.powerboxFulfillment()` for provider-side Powerbox fulfillment routes
 - `api.serveSystemRoutes()` before normal app routes
 
@@ -234,6 +235,41 @@ exports. App code should prefer the `sandstorm()` facade unless it has a
 specific framework integration reason to pass `request` and `env` through
 manually. Undocumented exports and the raw injected bindings are implementation
 details.
+
+### Durable KV and files
+
+Use KV for small state that is naturally addressed by a key:
+
+```js
+const kvStore = api.kv();
+await kvStore.putJson("settings", { color: "blue" });
+const settings = await kvStore.getJson("settings");
+```
+
+Use files when the value should be streamed rather than materialized in the
+worker's memory:
+
+```js
+const fileStore = api.files();
+await fileStore.write("imports/archive.zip", uploadStream, {
+  size: uploadSize,
+});
+
+const stored = await fileStore.open("imports/archive.zip");
+if (stored) {
+  return new Response(stored.body, {
+    headers: { "content-length": String(stored.size) },
+  });
+}
+```
+
+`files.write()` infers the byte length of strings, typed arrays, array buffers,
+blobs, and URL-encoded parameters. Pass `{ size }` for a `ReadableStream`; the
+declared size lets the half-duplex fetch transport commit the upload without
+buffering it or waiting for an ambiguous end-of-body signal. Writes replace a
+file atomically after its contents and containing directory have been synced.
+File paths are canonical grain-relative paths: they cannot be absolute or
+contain empty, `.` or `..` components.
 
 Operational tooling can use `api.unstable.status()` for a liveness probe. The
 namespace is a deliberate quarantine boundary: its member names and response
@@ -455,7 +491,7 @@ const cap = await api.powerbox().claim(requested);
 
 try {
   const token = await cap.save({ label: "Chosen API" });
-  await api.storage().put("chosen-api-token", token);
+  await api.kv().put("chosen-api-token", token);
   const response = await cap.fetch("/status");
 } finally {
   await cap.drop();
@@ -486,7 +522,7 @@ automatically with `api.use()`:
 
 ```js
 const api = sandstorm(request, env);
-const token = await api.storage().get("chosen-api-token");
+const token = await api.kv().get("chosen-api-token");
 
 if (token) {
   const response = await api.use(token, cap => cap.fetch("/status"));
@@ -500,9 +536,9 @@ To revoke the stored grant, drop both the durable token and the app's stored
 copy:
 
 ```js
-const token = await api.storage().get("chosen-api-token");
+const token = await api.kv().get("chosen-api-token");
 if (token) await api.revoke(token);
-await api.storage().delete("chosen-api-token");
+await api.kv().delete("chosen-api-token");
 ```
 
 Use `inspectPowerboxQuery()` while developing if a query does not show the
@@ -541,7 +577,7 @@ The returned token is a string. Sandstorm creates and validates the underlying
 durable token, but the isolate app decides where to store that string. The
 usual choices are:
 
-- isolate storage, through `api.storage()`
+- isolate key/value state, through `api.kv()`
 - an app-defined data file or database
 - not storing it at all, if the grant should be used only during the current
   interaction
@@ -551,7 +587,7 @@ It does not revoke saved durable tokens. To revoke a saved token, call:
 
 ```js
 await api.revoke(token);
-await api.storage().delete("chosen-document-token");
+await api.kv().delete("chosen-document-token");
 ```
 
 ## Service Bindings
@@ -581,10 +617,13 @@ that account; backend recovery restarts the account host. A failure from one
 stopped or idle-evicted worker is grain-local and does not recycle healthy
 sibling grains.
 
-Isolate storage limits each value to 1 MiB. There is no separate aggregate
-key-count or byte quota inside the isolate storage helper; the grain's normal
-Sandstorm storage accounting is the aggregate policy. Applications should not
-interpret the per-value limit as a reservation of unlimited storage.
+Isolate KV limits each value to 1 MiB and stores values in a per-grain SQLite
+database. Files are stored as ordinary files in the grain and currently have a
+64 MiB per-file limit, matching the isolate runtime's request and response
+limits. There is no separate aggregate key-count or byte quota inside either
+helper; the grain's normal Sandstorm storage accounting is the aggregate
+policy. Applications should not interpret a per-value limit as a reservation
+of unlimited storage.
 
 Two persistence families are intentional. Route-backed WebSession and
 ApiSession objects are supervisor-owned and remain stable across app-code

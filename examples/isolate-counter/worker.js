@@ -6,7 +6,7 @@ import helpText from "./help.txt";
 export default {
   async fetch(request, env) {
     const api = sandstorm(request, env);
-    const store = api.storage();
+    const store = api.kv();
     const key = "counter";
     const current = Number(await store.get(key) || "0");
     const next = current + 1;

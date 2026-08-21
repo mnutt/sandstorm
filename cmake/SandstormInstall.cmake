@@ -61,6 +61,9 @@ function(sandstorm_install_native)
     VERBATIM)
 
   set(_isolate_host_bin "${CMAKE_BINARY_DIR}/bin/isolate-host")
+  set(_sqlite_generated_dir "${CMAKE_BINARY_DIR}/generated/sqlite")
+  set(_sqlite_source "${_sqlite_generated_dir}/sqlite3.c")
+  set(_sqlite_header "${_sqlite_generated_dir}/sqlite3.h")
   # Bazel resolves /usr/lib/ccache/clang to the ccache binary, then invokes it
   # directly with Clang flags. Hide the symlink farm so it finds Clang itself.
   set(_bazel_path "$ENV{PATH}")
@@ -87,6 +90,39 @@ function(sandstorm_install_native)
   endif()
 
   add_custom_command(
+    OUTPUT
+      "${_sqlite_source}"
+      "${_sqlite_header}"
+    COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_bazel_path}"
+      "${_bazel}" build ${_bazel_build_options}
+      @sqlite3//:amalgamation
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_sqlite_generated_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${_workerd_embed_dir}/bazel-bin/external/sqlite3+/sqlite3.c"
+      "${_sqlite_source}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${_workerd_embed_dir}/bazel-bin/external/sqlite3+/sqlite3.h"
+      "${_sqlite_header}"
+    WORKING_DIRECTORY "${_workerd_embed_dir}"
+    DEPENDS "${_bazel}" "${_workerd_embed_stamp}"
+    COMMENT "Building the pinned SQLite amalgamation"
+    VERBATIM)
+
+  # Use workerd's pinned SQLite amalgamation so Sandstorm's static runtime
+  # binaries do not depend on whichever SQLite happens to be installed on the
+  # build host.
+  add_library(sandstorm_sqlite STATIC "${_sqlite_source}" "${_sqlite_header}")
+  target_include_directories(sandstorm_sqlite PUBLIC "${_sqlite_generated_dir}")
+  target_compile_definitions(sandstorm_sqlite PRIVATE
+    SQLITE_DEFAULT_FOREIGN_KEYS=1
+    SQLITE_MAX_ALLOCATION_SIZE=16777216
+    SQLITE_OMIT_SHARED_CACHE
+    SQLITE_PRINTF_PRECISION_LIMIT=100000)
+  target_compile_options(sandstorm_sqlite PRIVATE
+    "$<$<COMPILE_LANGUAGE:C>:-w>")
+  target_link_libraries(sandstorm_core PRIVATE sandstorm_sqlite)
+
+  add_custom_command(
     OUTPUT "${_isolate_host_bin}"
     COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_bazel_path}"
       "${_bazel}" build ${_bazel_build_options}
@@ -100,6 +136,7 @@ function(sandstorm_install_native)
     DEPENDS "${_bazel}" "${_workerd_embed_stamp}"
     COMMENT "Building the embedded workerd isolate host"
     VERBATIM)
+
   add_custom_target(isolate-host DEPENDS "${_isolate_host_bin}")
   install(PROGRAMS "${_isolate_host_bin}"
     DESTINATION "${CMAKE_INSTALL_BINDIR}"

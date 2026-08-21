@@ -383,15 +383,15 @@ async function previewSource(api, previewerCapability, sourceText) {
     };
     const candidateCapability = previewerCapability.wrapDerived(candidate);
     try {
-      const previousToken = await api.storage().get(CANDIDATE_TOKEN_KEY);
+      const previousToken = await api.kv().get(CANDIDATE_TOKEN_KEY);
       const token = await candidateCapability.save({ label: "Reviewed isolate candidate" });
-      await api.storage().put(CANDIDATE_TOKEN_KEY, token);
+      await api.kv().put(CANDIDATE_TOKEN_KEY, token);
       if (previousToken) await api.revoke(previousToken);
     } finally {
       await candidateCapability.drop();
     }
 
-    await api.storage().putJson(CANDIDATE_INFO_KEY, candidateInfo);
+    await api.kv().putJson(CANDIDATE_INFO_KEY, candidateInfo);
 
     const viewInfo = await view.getViewInfo({});
     return {
@@ -422,8 +422,8 @@ async function previewSource(api, previewerCapability, sourceText) {
 
 async function readPreviewLog(api) {
   const [token, candidateInfo] = await Promise.all([
-    api.storage().get(PREVIEWER_TOKEN_KEY),
-    api.storage().getJson(CANDIDATE_INFO_KEY),
+    api.kv().get(PREVIEWER_TOKEN_KEY),
+    api.kv().getJson(CANDIDATE_INFO_KEY),
   ]);
   if (!token || !candidateInfo) throw new Error("Preview a candidate before reading its log.");
 
@@ -461,7 +461,7 @@ async function readPreviewLog(api) {
 }
 
 async function publishCandidate(api, publisherCapability, requestId) {
-  const candidateInfo = await api.storage().getJson(CANDIDATE_INFO_KEY);
+  const candidateInfo = await api.kv().getJson(CANDIDATE_INFO_KEY);
   if (!candidateInfo) throw new Error("Preview and save a candidate before publishing.");
   const publisher = capnpClient(IsolatePublisher, publisherCapability);
   const { result } = await publisher.publish({ requestId });
@@ -472,11 +472,11 @@ async function publishCandidate(api, publisherCapability, requestId) {
     appVersion: result.appVersion,
     title: result.title,
   };
-  await api.storage().putJson(PUBLISHED_APP_KEY, publication);
-  const candidateToken = await api.storage().get(CANDIDATE_TOKEN_KEY);
+  await api.kv().putJson(PUBLISHED_APP_KEY, publication);
+  const candidateToken = await api.kv().get(CANDIDATE_TOKEN_KEY);
   if (candidateToken) await api.revoke(candidateToken);
-  await api.storage().delete(CANDIDATE_TOKEN_KEY);
-  await api.storage().delete(CANDIDATE_INFO_KEY);
+  await api.kv().delete(CANDIDATE_TOKEN_KEY);
+  await api.kv().delete(CANDIDATE_INFO_KEY);
   return {
     ok: true,
     publication,
@@ -484,12 +484,12 @@ async function publishCandidate(api, publisherCapability, requestId) {
 }
 
 async function readState(api, result = null, error = null) {
-  const storage = api.storage();
+  const kvStore = api.kv();
   const [token, source, candidateInfo, publishedApp] = await Promise.all([
-    storage.get(PREVIEWER_TOKEN_KEY),
-    storage.get(SOURCE_KEY),
-    storage.getJson(CANDIDATE_INFO_KEY),
-    storage.getJson(PUBLISHED_APP_KEY),
+    kvStore.get(PREVIEWER_TOKEN_KEY),
+    kvStore.get(SOURCE_KEY),
+    kvStore.getJson(CANDIDATE_INFO_KEY),
+    kvStore.getJson(PUBLISHED_APP_KEY),
   ]);
   const publisherDescriptor = candidateInfo
     ? await api.powerbox().appInterfaceDescriptor(IsolatePublisher, {
@@ -544,16 +544,16 @@ export default {
       if (request.method === "POST" && url.pathname === "/preview") {
         const body = await readJson(request);
         const source = typeof body.source === "string" ? body.source : DEFAULT_SOURCE;
-        await api.storage().put(SOURCE_KEY, source);
+        await api.kv().put(SOURCE_KEY, source);
 
         let claimed;
-        let token = await api.storage().get(PREVIEWER_TOKEN_KEY);
+        let token = await api.kv().get(PREVIEWER_TOKEN_KEY);
         if (body.powerboxResult) {
           const previousToken = token;
           claimed = await api.powerbox().claim(body.powerboxResult);
           try {
             token = await claimed.save({ label: "Isolate preview authority" });
-            await api.storage().put(PREVIEWER_TOKEN_KEY, token);
+            await api.kv().put(PREVIEWER_TOKEN_KEY, token);
             if (previousToken) await api.revoke(previousToken);
           } finally {
             await claimed.drop();
@@ -582,9 +582,9 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/revoke") {
-        const token = await api.storage().get(PREVIEWER_TOKEN_KEY);
+        const token = await api.kv().get(PREVIEWER_TOKEN_KEY);
         const revoked = token ? await api.revoke(token) : { ok: true, skipped: true };
-        const deleted = await api.storage().delete(PREVIEWER_TOKEN_KEY);
+        const deleted = await api.kv().delete(PREVIEWER_TOKEN_KEY);
         return await render(api, { ok: true, revoked, deleted });
       }
 

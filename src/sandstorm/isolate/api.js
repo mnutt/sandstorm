@@ -321,52 +321,73 @@ class NativeCapnpBridgeUnavailableError extends Error {
   }
 }
 
-function storageUrl(key = "") {
-  return `http://storage/${encodeURIComponent(key === "" ? "" : validate.storageKey(key))}`;
+function kvUrl(key = "") {
+  return `http://storage/kv/${encodeURIComponent(key === "" ? "" : validate.kvKey(key))}`;
 }
 
-async function readStorageJson(response) {
+function fileUrl(path) {
+  return `http://storage/files?path=${encodeURIComponent(validate.filePath(path))}`;
+}
+
+function fileBodySize(body, declaredSize) {
+  if (declaredSize !== undefined) {
+    if (!Number.isSafeInteger(declaredSize) || declaredSize < 0) {
+      throw new TypeError("files.write() size must be a non-negative safe integer");
+    }
+    return declaredSize;
+  }
+  if (typeof body === "string") return new TextEncoder().encode(body).byteLength;
+  if (body instanceof ArrayBuffer) return body.byteLength;
+  if (ArrayBuffer.isView(body)) return body.byteLength;
+  if (typeof Blob !== "undefined" && body instanceof Blob) return body.size;
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+    return new TextEncoder().encode(body.toString()).byteLength;
+  }
+  throw new TypeError("files.write() requires { size } for a streaming body");
+}
+
+async function readDurableResult(response) {
   if (!response.ok) {
     return { ok: false, status: response.status, body: await response.text() };
   }
   return response.json();
 }
 
-export function storage(env) {
+export function kv(env) {
   return {
     async put(key, value) {
-      const response = await env.STORAGE.fetch(storageUrl(key), {
+      const response = await env.STORAGE.fetch(kvUrl(key), {
         method: "PUT",
         body: typeof value === "string" || value instanceof Uint8Array
           ? value
           : JSON.stringify(value),
       });
-      return readStorageJson(response);
+      return readDurableResult(response);
     },
 
     async putJson(key, value) {
-      const response = await env.STORAGE.fetch(storageUrl(key), {
+      const response = await env.STORAGE.fetch(kvUrl(key), {
         method: "PUT",
         headers: { "content-type": "application/json; charset=utf-8" },
         body: JSON.stringify(value),
       });
-      return readStorageJson(response);
+      return readDurableResult(response);
     },
 
     async get(key) {
-      const response = await env.STORAGE.fetch(storageUrl(key));
+      const response = await env.STORAGE.fetch(kvUrl(key));
       if (response.status === 404) return undefined;
       if (!response.ok) {
-        throw new Error(`storage get ${key} failed with ${response.status}`);
+        throw new Error(`KV get ${key} failed with ${response.status}`);
       }
       return response.text();
     },
 
     async getBytes(key) {
-      const response = await env.STORAGE.fetch(storageUrl(key));
+      const response = await env.STORAGE.fetch(kvUrl(key));
       if (response.status === 404) return undefined;
       if (!response.ok) {
-        throw new Error(`storage getBytes ${key} failed with ${response.status}`);
+        throw new Error(`KV getBytes ${key} failed with ${response.status}`);
       }
       return new Uint8Array(await response.arrayBuffer());
     },
@@ -377,20 +398,64 @@ export function storage(env) {
     },
 
     async head(key) {
-      const response = await env.STORAGE.fetch(storageUrl(key), { method: "HEAD" });
+      const response = await env.STORAGE.fetch(kvUrl(key), { method: "HEAD" });
       return {
         ok: response.ok,
         status: response.status,
-        bytes: response.headers.get("x-sandstorm-storage-bytes"),
+        bytes: response.headers.get("x-sandstorm-kv-bytes"),
       };
     },
 
     async delete(key) {
-      return readStorageJson(await env.STORAGE.fetch(storageUrl(key), { method: "DELETE" }));
+      return readDurableResult(await env.STORAGE.fetch(kvUrl(key), { method: "DELETE" }));
     },
 
     async list() {
-      return readStorageJson(await env.STORAGE.fetch(storageUrl()));
+      return readDurableResult(await env.STORAGE.fetch(kvUrl()));
+    },
+  };
+}
+
+export function files(env) {
+  return {
+    async write(path, body, options = {}) {
+      const size = fileBodySize(body, options.size);
+      const response = await env.STORAGE.fetch(fileUrl(path), {
+        method: "PUT",
+        headers: { "x-sandstorm-file-size": String(size) },
+        body,
+      });
+      return readDurableResult(response);
+    },
+
+    async open(path) {
+      const response = await env.STORAGE.fetch(fileUrl(path));
+      if (response.status === 404) return undefined;
+      if (!response.ok) {
+        throw new Error(`file open ${path} failed with ${response.status}`);
+      }
+      return {
+        path,
+        size: Number(response.headers.get("x-sandstorm-file-bytes") ||
+          response.headers.get("content-length") || "0"),
+        body: response.body,
+      };
+    },
+
+    async stat(path) {
+      const response = await env.STORAGE.fetch(fileUrl(path), { method: "HEAD" });
+      if (response.status === 404) return undefined;
+      if (!response.ok) {
+        throw new Error(`file stat ${path} failed with ${response.status}`);
+      }
+      return {
+        path,
+        size: Number(response.headers.get("x-sandstorm-file-bytes") || "0"),
+      };
+    },
+
+    async delete(path) {
+      return readDurableResult(await env.STORAGE.fetch(fileUrl(path), { method: "DELETE" }));
     },
   };
 }
@@ -1416,7 +1481,7 @@ function normalizePowerboxGrant(id, spec) {
   const description = spec.description === undefined || spec.description === null
     ? ""
     : normalizePowerboxGrantText(spec.description, "", `grants.${grantId}.description`, 1024);
-  const storageKey = validate.storageKey(spec.storageKey ?? spec.key ?? grantId, `grants.${grantId}.storageKey`);
+  const kvKey = validate.kvKey(spec.kvKey ?? spec.key ?? grantId, `grants.${grantId}.kvKey`);
   const requiredPermissions = permissionNames({
     requiredPermissions: spec.requiredPermissions ?? spec.claimOptions?.requiredPermissions,
   });
@@ -1430,7 +1495,7 @@ function normalizePowerboxGrant(id, spec) {
     id: grantId,
     title,
     description,
-    storageKey,
+    kvKey,
     query: publicPowerboxGrantQuery(spec),
     saveLabel: normalizePowerboxGrantSaveLabel(
       saveOptions.label, title, `grants.${grantId}.save.label`),
@@ -1467,7 +1532,7 @@ function publicPowerboxGrant(grant, connected = false) {
     id: grant.id,
     title: grant.title,
     description: grant.description,
-    storageKey: grant.storageKey,
+    kvKey: grant.kvKey,
     query: grant.query,
     saveLabel: grant.saveLabel,
     requiredPermissions: grant.requiredPermissions,
@@ -1476,13 +1541,13 @@ function publicPowerboxGrant(grant, connected = false) {
 }
 
 async function powerboxGrantStatus(env, grant) {
-  const token = await storage(env).get(grant.storageKey);
+  const token = await kv(env).get(grant.kvKey);
   return {
     ok: true,
     id: grant.id,
     title: grant.title,
     description: grant.description,
-    storageKey: grant.storageKey,
+    kvKey: grant.kvKey,
     connected: Boolean(token),
   };
 }
@@ -1922,7 +1987,7 @@ function powerboxGrantFromRoute(grants, encodedId) {
 export function powerboxGrants(request, env, options = {}) {
   const prefix = routePrefix(options, POWERBOX_GRANTS_PREFIX, "Powerbox grants routePrefix");
   const grants = normalizePowerboxGrantList(options);
-  const store = storage(env);
+  const store = kv(env);
 
   async function status(id = undefined) {
     if (id !== undefined && id !== null) {
@@ -1949,7 +2014,7 @@ export function powerboxGrants(request, env, options = {}) {
     let token;
     try {
       token = await cap.save(grant.saveOptions);
-      await store.put(grant.storageKey, token);
+      await store.put(grant.kvKey, token);
       let testResult;
       if (grant.test !== undefined) {
         if (typeof grant.test !== "function") {
@@ -1960,14 +2025,14 @@ export function powerboxGrants(request, env, options = {}) {
       return {
         ok: true,
         id: grant.id,
-        storageKey: grant.storageKey,
+        kvKey: grant.kvKey,
         status: await powerboxGrantStatus(env, grant),
         test: testResult,
       };
     } catch (error) {
       if (token) {
         await revokeCapabilityToken(env, token).catch(() => {});
-        await store.delete(grant.storageKey).catch(() => {});
+        await store.delete(grant.kvKey).catch(() => {});
       }
       throw error;
     } finally {
@@ -1977,24 +2042,24 @@ export function powerboxGrants(request, env, options = {}) {
 
   async function revoke(id) {
     const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
-    const token = await store.get(grant.storageKey);
+    const token = await store.get(grant.kvKey);
     if (!token) {
       return {
         ok: true,
         id: grant.id,
-        storageKey: grant.storageKey,
+        kvKey: grant.kvKey,
         revoked: false,
-        deleted: await store.delete(grant.storageKey),
+        deleted: await store.delete(grant.kvKey),
         status: await powerboxGrantStatus(env, grant),
       };
     }
 
     const revoked = await revokeCapabilityToken(env, token);
-    const deleted = await store.delete(grant.storageKey);
+    const deleted = await store.delete(grant.kvKey);
     return {
       ok: true,
       id: grant.id,
-      storageKey: grant.storageKey,
+      kvKey: grant.kvKey,
       revoked: true,
       revoke: revoked,
       deleted,
@@ -2009,7 +2074,7 @@ export function powerboxGrants(request, env, options = {}) {
     revoke,
     async use(id, fn) {
       const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
-      const token = await store.get(grant.storageKey);
+      const token = await store.get(grant.kvKey);
       if (!token) {
         throw new Error(`missing saved token for Powerbox grant: ${grant.id}`);
       }
@@ -2017,7 +2082,7 @@ export function powerboxGrants(request, env, options = {}) {
     },
     token(id) {
       const grant = powerboxGrantFromRoute(grants, encodeURIComponent(String(id)));
-      return store.get(grant.storageKey);
+      return store.get(grant.kvKey);
     },
     async serve(routeRequest = request) {
       const url = new URL(routeRequest.url);
@@ -3506,7 +3571,8 @@ export function sandstorm(request, env) {
     unstable: Object.freeze({
       status: () => callSandstorm(env, "status"),
     }),
-    storage: () => storage(env),
+    kv: () => kv(env),
+    files: () => files(env),
     powerbox: () => powerbox(request, env),
     webSession: (options = {}) => createWebSessionCapability(env, withBrowserSession(options)),
     apiSession: (options = {}) => createApiSessionCapability(env, withBrowserSession(options)),

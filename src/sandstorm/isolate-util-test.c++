@@ -35,22 +35,22 @@ KJ_TEST("isolate package paths must be canonical and package-relative") {
   KJ_EXPECT(!isCanonicalPackagePath("modules/./worker.js"));
 }
 
-KJ_TEST("isolate storage keys are extracted and validated") {
-  KJ_EXPECT(isolateStorageKeyFromUrl("/") == "");
-  KJ_EXPECT(isolateStorageKeyFromUrl("/counter") == "counter");
-  KJ_EXPECT(isolateStorageKeyFromUrl("///counter?ignored=true") == "counter");
-  KJ_EXPECT(isolateStorageKeyFromUrl("/nested/path") == "nested/path");
+KJ_TEST("isolate KV keys are extracted and validated") {
+  KJ_EXPECT(isolateKvKeyFromUrl("/") == "");
+  KJ_EXPECT(isolateKvKeyFromUrl("/counter") == "counter");
+  KJ_EXPECT(isolateKvKeyFromUrl("///counter?ignored=true") == "counter");
+  KJ_EXPECT(isolateKvKeyFromUrl("/nested/path") == "nested/path");
 
-  KJ_EXPECT(isValidIsolateStorageKey("counter"));
-  KJ_EXPECT(isValidIsolateStorageKey("counter-1_2.name"));
-  KJ_EXPECT(isValidIsolateStorageKey("ABCxyz012"));
+  KJ_EXPECT(isValidIsolateKvKey("counter"));
+  KJ_EXPECT(isValidIsolateKvKey("counter-1_2.name"));
+  KJ_EXPECT(isValidIsolateKvKey("ABCxyz012"));
 
-  KJ_EXPECT(!isValidIsolateStorageKey(""));
-  KJ_EXPECT(!isValidIsolateStorageKey(".hidden"));
-  KJ_EXPECT(!isValidIsolateStorageKey("a..b"));
-  KJ_EXPECT(!isValidIsolateStorageKey("../bad"));
-  KJ_EXPECT(!isValidIsolateStorageKey("bad/key"));
-  KJ_EXPECT(!isValidIsolateStorageKey("bad key"));
+  KJ_EXPECT(!isValidIsolateKvKey(""));
+  KJ_EXPECT(!isValidIsolateKvKey(".hidden"));
+  KJ_EXPECT(!isValidIsolateKvKey("a..b"));
+  KJ_EXPECT(!isValidIsolateKvKey("../bad"));
+  KJ_EXPECT(!isValidIsolateKvKey("bad/key"));
+  KJ_EXPECT(!isValidIsolateKvKey("bad key"));
 
   kj::Vector<char> longKeyChars;
   for (size_t i = 0; i < 129; ++i) {
@@ -58,15 +58,30 @@ KJ_TEST("isolate storage keys are extracted and validated") {
   }
   longKeyChars.add('\0');
   auto longKey = kj::String(longKeyChars.releaseAsArray());
-  KJ_EXPECT(!isValidIsolateStorageKey(longKey));
+  KJ_EXPECT(!isValidIsolateKvKey(longKey));
+}
+
+KJ_TEST("isolate file paths are canonical and relative") {
+  KJ_EXPECT(isValidIsolateFilePath("photo.jpg"));
+  KJ_EXPECT(isValidIsolateFilePath("attachments/2026/photo.jpg"));
+  KJ_EXPECT(isValidIsolateFilePath("unicode/caf\xc3\xa9.txt"));
+
+  KJ_EXPECT(!isValidIsolateFilePath(""));
+  KJ_EXPECT(!isValidIsolateFilePath("/absolute"));
+  KJ_EXPECT(!isValidIsolateFilePath("trailing/"));
+  KJ_EXPECT(!isValidIsolateFilePath("double//slash"));
+  KJ_EXPECT(!isValidIsolateFilePath("./relative"));
+  KJ_EXPECT(!isValidIsolateFilePath("parent/../escape"));
+  KJ_EXPECT(!isValidIsolateFilePath(".sandstorm-upload"));
 }
 
 KJ_TEST("isolate query parameters are percent-decoded") {
-  KJ_EXPECT(decodeIsolateQueryComponent("simple") == "simple");
-  KJ_EXPECT(decodeIsolateQueryComponent("a%20b+c") == "a b c");
-  KJ_EXPECT(decodeIsolateQueryComponent("view%2Cedit") == "view,edit");
+  KJ_EXPECT(decodeIsolateQueryComponent(kj::StringPtr("simple").asArray()) == "simple");
+  KJ_EXPECT(decodeIsolateQueryComponent(kj::StringPtr("a%20b+c").asArray()) == "a b c");
+  KJ_EXPECT(decodeIsolateQueryComponent(kj::StringPtr("view%2Cedit").asArray()) == "view,edit");
   KJ_EXPECT_THROW_MESSAGE(
-      "malformed isolate query parameter encoding", decodeIsolateQueryComponent("bad%xxescape"));
+      "malformed isolate query parameter encoding",
+      decodeIsolateQueryComponent(kj::StringPtr("bad%xxescape").asArray()));
 
   auto token = findIsolateQueryParam(
       "/powerbox/claim-request?sessionId=session%2Fone&token=req%2Btoken%3D%3D",
@@ -99,8 +114,10 @@ KJ_TEST("isolate query parameters are percent-decoded") {
 }
 
 KJ_TEST("isolate response helper detects structured headers") {
-  KJ_EXPECT(isolateEqualsIgnoreCase("Content-Type", "content-type"));
-  KJ_EXPECT(!isolateEqualsIgnoreCase("Content-Type", "content-length"));
+  KJ_EXPECT(isolateEqualsIgnoreCase(
+      kj::StringPtr("Content-Type").asArray(), "content-type"));
+  KJ_EXPECT(!isolateEqualsIgnoreCase(
+      kj::StringPtr("Content-Type").asArray(), "content-length"));
 
   KJ_EXPECT(isStructuredIsolateResponseHeader("Content-Type"));
   KJ_EXPECT(isStructuredIsolateResponseHeader("Content-Encoding"));

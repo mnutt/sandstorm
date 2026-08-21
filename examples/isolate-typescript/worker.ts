@@ -15,7 +15,7 @@ interface Env extends SandstormEnv {
 
 async function increment(api: SandstormApi, step: number = 1): Promise<{ value: number }> {
   const amount = validate.integer(step, "step", { min: 1, max: 100 });
-  const store = api.storage();
+  const store = api.kv();
   const current = Number(await store.get("typescript-counter") || "0");
   const value = current + amount;
   await store.put("typescript-counter", String(value));
