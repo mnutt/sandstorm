@@ -186,6 +186,40 @@ module.exports["Test isolate previewer Powerbox flow"] = function (browser) {
       const previewFrame = ".isolate-preview-drawer iframe.grain-frame";
       browser
         .waitForElementVisible(previewFrame, long_wait)
+        .execute(function () {
+          const main = document.querySelector("body > .main-content");
+          const source = main?.querySelector(":scope > .grain-container.active-grain");
+          const preview = main?.querySelector(":scope > .isolate-preview-drawer");
+          if (!main || !source || !preview) return false;
+          const mainRect = main.getBoundingClientRect();
+          const sourceRect = source.getBoundingClientRect();
+          const previewRect = preview.getBoundingClientRect();
+          return main.classList.contains("isolate-preview-drawer-open") &&
+            Math.abs(sourceRect.width - previewRect.width) <= 2 &&
+            Math.abs(sourceRect.width + previewRect.width - mainRect.width) <= 2;
+        }, [], function (result) {
+          browser.assert.equal(result.value, true,
+            "Powerbox preview and authoring grain split the main window evenly");
+        })
+        .assert.attributeEquals(".close-isolate-preview", "aria-label", "Close preview")
+        .click(".close-isolate-preview")
+        .waitForElementNotPresent(".isolate-preview-drawer", medium_wait)
+        .execute(function () {
+          const main = document.querySelector("body > .main-content");
+          const source = main?.querySelector(":scope > .grain-container.active-grain");
+          if (!main || !source) return false;
+          return !main.classList.contains("isolate-preview-drawer-open") &&
+            Math.abs(source.getBoundingClientRect().width -
+              main.getBoundingClientRect().width) <= 2;
+        }, [], function (result) {
+          browser.assert.equal(result.value, true,
+            "Closing the Powerbox preview restores the authoring grain width");
+        })
+        .grainFrame(authoringGrainId)
+        .waitForElementVisible("#open-isolate-preview", medium_wait)
+        .click("#open-isolate-preview")
+        .frameParent()
+        .waitForElementVisible(previewFrame, long_wait)
         .frameSelector(previewFrame)
         .waitForElementVisible("body", long_wait)
         .assert.textContains("body", "Powerbox isolate preview")

@@ -30,6 +30,7 @@ class IsolatePreviewDrawer {
     this.blazeView = null;
     this.previewPane = null;
     this.sourceWatcher = null;
+    this.mainContent = null;
   }
 
   attach(mount, logMount) {
@@ -41,6 +42,8 @@ class IsolatePreviewDrawer {
   detach() {
     if (this.previewPane) this.previewPane.destroy();
     this.previewPane = null;
+    if (this.mainContent) this.mainContent.classList.remove("isolate-preview-drawer-open");
+    this.mainContent = null;
   }
 
   show(target) {
@@ -48,7 +51,15 @@ class IsolatePreviewDrawer {
     if (!this.blazeView) {
       const mainContent = document.querySelector("body>.main-content");
       if (!mainContent) throw new Error("The isolate preview drawer has no shell mount.");
-      this.blazeView = Blaze.renderWithData(Template.isolatePreviewDrawer, this, mainContent);
+      this.mainContent = mainContent;
+      mainContent.classList.add("isolate-preview-drawer-open");
+      try {
+        this.blazeView = Blaze.renderWithData(Template.isolatePreviewDrawer, this, mainContent);
+      } catch (error) {
+        mainContent.classList.remove("isolate-preview-drawer-open");
+        this.mainContent = null;
+        throw error;
+      }
     } else if (this.previewPane) {
       this.previewPane.show(target);
     }
@@ -111,6 +122,11 @@ Template.isolatePreviewDrawer.events({
   "click .reload-isolate-preview"(event, instance) {
     event.preventDefault();
     instance.data.reload();
+  },
+
+  "click .close-isolate-preview"(event, instance) {
+    event.preventDefault();
+    instance.data.close();
   },
 
 });
