@@ -53,11 +53,25 @@ export const validate = {
       validator.call(this, value, name, options);
   },
 
-  storageKey(value, name = "key") {
+  kvKey(value, name = "key") {
     const key = this.string(value, name, { minLength: 1, maxLength: 128 });
     if (key.startsWith(".") || key.includes("..") || !/^[A-Za-z0-9_.-]+$/.test(key)) {
-      throw new ValidationError(`${name} is not a valid storage key`);
+      throw new ValidationError(`${name} is not a valid KV key`);
     }
     return key;
+  },
+
+  filePath(value, name = "path") {
+    const path = this.string(value, name, { minLength: 1, maxLength: 1024 });
+    if (path.startsWith("/") || path.endsWith("/") || /[\0-\x1f\x7f]/.test(path)) {
+      throw new ValidationError(`${name} is not a valid file path`);
+    }
+
+    const parts = path.split("/");
+    if (parts.some((part) => part.length === 0 || part === "." || part === ".." ||
+        part.length > 255 || part.startsWith(".sandstorm-"))) {
+      throw new ValidationError(`${name} is not a valid file path`);
+    }
+    return path;
   },
 };

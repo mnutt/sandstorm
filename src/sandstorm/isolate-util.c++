@@ -60,7 +60,7 @@ bool isCanonicalPackagePath(kj::StringPtr path) {
   return true;
 }
 
-kj::String isolateStorageKeyFromUrl(kj::StringPtr url) {
+kj::String isolateKvKeyFromUrl(kj::StringPtr url) {
   size_t begin = 0;
   size_t end = url.size();
   KJ_IF_MAYBE(query, url.findFirst('?')) {
@@ -72,7 +72,7 @@ kj::String isolateStorageKeyFromUrl(kj::StringPtr url) {
   return kj::str(url.slice(begin, end));
 }
 
-bool isValidIsolateStorageKey(kj::StringPtr key) {
+bool isValidIsolateKvKey(kj::StringPtr key) {
   if (key.size() == 0 || key.size() > 128 || key.startsWith(".")) {
     return false;
   }
@@ -91,6 +91,33 @@ bool isValidIsolateStorageKey(kj::StringPtr key) {
       return false;
     }
   }
+  return true;
+}
+
+bool isValidIsolateFilePath(kj::StringPtr path) {
+  if (path.size() == 0 || path.size() > 1024 || path.startsWith("/") || path.endsWith("/")) {
+    return false;
+  }
+
+  size_t componentStart = 0;
+  for (size_t i = 0; i <= path.size(); ++i) {
+    if (i < path.size()) {
+      auto c = static_cast<unsigned char>(path[i]);
+      if (c == 0 || c < 0x20 || c == 0x7f) return false;
+    }
+
+    if (i == path.size() || path[i] == '/') {
+      auto component = path.slice(componentStart, i);
+      if (component.size() == 0 || component.size() > 255 ||
+          component == kj::StringPtr(".").asArray() ||
+          component == kj::StringPtr("..").asArray() ||
+          component.startsWith(kj::StringPtr(".sandstorm-").asArray())) {
+        return false;
+      }
+      componentStart = i + 1;
+    }
+  }
+
   return true;
 }
 

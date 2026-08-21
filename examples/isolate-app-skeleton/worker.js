@@ -12,7 +12,7 @@ function hello(api, name) {
 }
 
 async function increment(api) {
-  const store = api.storage();
+  const store = api.kv();
   const current = Number(await store.get("skeleton-counter") || "0");
   const next = current + 1;
   await store.put("skeleton-counter", String(next));

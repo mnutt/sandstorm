@@ -25,8 +25,9 @@
 namespace sandstorm {
 
 bool isCanonicalPackagePath(kj::StringPtr path);
-kj::String isolateStorageKeyFromUrl(kj::StringPtr url);
-bool isValidIsolateStorageKey(kj::StringPtr key);
+kj::String isolateKvKeyFromUrl(kj::StringPtr url);
+bool isValidIsolateKvKey(kj::StringPtr key);
+bool isValidIsolateFilePath(kj::StringPtr path);
 kj::String decodeIsolateQueryComponent(kj::ArrayPtr<const char> value);
 kj::Maybe<kj::String> findIsolateQueryParam(kj::StringPtr url, kj::StringPtr name);
 kj::Array<kj::String> findIsolateQueryParams(kj::StringPtr url, kj::StringPtr name);

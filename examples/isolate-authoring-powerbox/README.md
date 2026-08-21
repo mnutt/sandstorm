@@ -78,7 +78,7 @@ const { info } = await result.candidate.getInfo({});
 const candidateDigest = digestHex(info.normalizedDigest);
 const candidateCapability = previewerCapability.wrapDerived(result.candidate);
 const candidateToken = await candidateCapability.save({ label: "Reviewed isolate candidate" });
-await api.storage().put("isolate-candidate-token", candidateToken);
+await api.kv().put("isolate-candidate-token", candidateToken);
 await candidateCapability.drop();
 // Serialize candidateDigest into the returned browser page.
 ```
@@ -120,7 +120,7 @@ Back in the worker, publication is separately authorized for that exact
 candidate:
 
 ```js
-const publishedApp = await api.storage().getJson("isolate-published-app");
+const publishedApp = await api.kv().getJson("isolate-published-app");
 const publishDescriptor = await api.powerbox().appInterfaceDescriptor(IsolatePublisher, {
   normalizedDigest: info.normalizedDigest,
   target: publishedApp
@@ -133,7 +133,7 @@ const publisher = capnpClient(IsolatePublisher, publisherCapability);
 const { result: publication } = await publisher.publish({
   requestId: crypto.randomUUID(),
 });
-await api.storage().putJson("isolate-published-app", {
+await api.kv().putJson("isolate-published-app", {
   createdAppId: publication.createdAppId,
 });
 ```

@@ -43,6 +43,7 @@ function(sandstorm_install_native)
     DEPENDS ${_host_deps} "${PROJECT_SOURCE_DIR}/cmake/InstallIsolateHost.cmake"
     COMMENT "Installing the prebuilt isolate host"
     VERBATIM)
+
   add_custom_target(isolate-host DEPENDS "${_isolate_host_bin}")
   add_custom_target(verify-isolate-host-artifact
     COMMAND "${CMAKE_COMMAND}" ${_host_args} -DVERIFY_ONLY=ON
@@ -130,6 +131,33 @@ function(sandstorm_install_native)
       COMPONENT native)
     list(APPEND _native_targets node_capnp)
   endif()
+
+  # KV storage needs SQLite in Sandstorm, independently of the prebuilt worker host.
+  set(_sqlite_dir "${CMAKE_BINARY_DIR}/generated/sqlite")
+  set(_sqlite_archive "${_sqlite_dir}/sqlite-amalgamation-3470000.zip")
+  set(_sqlite_source_dir "${_sqlite_dir}/sqlite-amalgamation-3470000")
+  add_custom_command(
+    OUTPUT "${_sqlite_source_dir}/sqlite3.c" "${_sqlite_source_dir}/sqlite3.h"
+    COMMAND "${CMAKE_COMMAND}"
+      "-DURL=https://sqlite.org/2024/sqlite-amalgamation-3470000.zip"
+      "-DOUTPUT=${_sqlite_archive}"
+      "-DSHA256=2842fddbb1cc33f66c7da998a57535f14a6bfee159676a07bb4bf3e59375d93e"
+      -P "${PROJECT_SOURCE_DIR}/cmake/DownloadVerified.cmake"
+    COMMAND "${CMAKE_COMMAND}" -E chdir "${_sqlite_dir}"
+      "${CMAKE_COMMAND}" -E tar xf "${_sqlite_archive}"
+    DEPENDS "${PROJECT_SOURCE_DIR}/cmake/DownloadVerified.cmake"
+    COMMENT "Downloading the pinned SQLite amalgamation"
+    VERBATIM)
+  add_library(sandstorm_sqlite STATIC
+    "${_sqlite_source_dir}/sqlite3.c" "${_sqlite_source_dir}/sqlite3.h")
+  target_include_directories(sandstorm_sqlite PUBLIC "${_sqlite_source_dir}")
+  target_compile_definitions(sandstorm_sqlite PRIVATE
+    SQLITE_DEFAULT_FOREIGN_KEYS=1
+    SQLITE_MAX_ALLOCATION_SIZE=16777216
+    SQLITE_OMIT_SHARED_CACHE
+    SQLITE_PRINTF_PRECISION_LIMIT=100000)
+  target_compile_options(sandstorm_sqlite PRIVATE "$<$<COMPILE_LANGUAGE:C>:-w>")
+  target_link_libraries(sandstorm_core PRIVATE sandstorm_sqlite)
 
   set(_native_stage_stamp "${CMAKE_BINARY_DIR}/stage/.native.stamp")
   add_custom_command(

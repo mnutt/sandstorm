@@ -188,7 +188,7 @@ async function readApiResponse(response) {
 }
 
 async function readState(request, env, result = null, error = null) {
-  const store = sandstorm(request, env).storage();
+  const store = sandstorm(request, env).kv();
   const savedToken = await store.get(TOKEN_KEY);
   return {
     canonicalUrl: API_CANONICAL_URL,
@@ -235,7 +235,7 @@ export default {
         let call;
         try {
           token = await capability.save({ label: `API: ${canonicalUrl}` });
-          await api.storage().put(TOKEN_KEY, token);
+          await api.kv().put(TOKEN_KEY, token);
           call = await callApi(body.skipApiCall ? null : capability);
         } finally {
           await capability.drop();
@@ -244,7 +244,7 @@ export default {
         return new Response(renderPage(await readState(request, env, {
           ok: true,
           requested: body,
-          storageKey: TOKEN_KEY,
+          kvKey: TOKEN_KEY,
           saved: Boolean(token),
           call,
         })), {
@@ -253,7 +253,7 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/restore") {
-        const token = await api.storage().get(TOKEN_KEY);
+        const token = await api.kv().get(TOKEN_KEY);
         if (!token) {
           throw new Error("No saved API token");
         }
@@ -263,7 +263,7 @@ export default {
         const call = await readApiResponse(response);
         return new Response(renderPage(await readState(request, env, {
           ok: true,
-          storageKey: TOKEN_KEY,
+          kvKey: TOKEN_KEY,
           call,
         })), {
           headers: { "content-type": "text/html; charset=utf-8" },
@@ -271,9 +271,9 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/disconnect") {
-        const token = await api.storage().get(TOKEN_KEY);
+        const token = await api.kv().get(TOKEN_KEY);
         const revoked = token ? await api.revoke(token) : { ok: true, skipped: true };
-        const deleted = await api.storage().delete(TOKEN_KEY);
+        const deleted = await api.kv().delete(TOKEN_KEY);
         return new Response(renderPage(await readState(request, env, {
           ok: true,
           revoked,

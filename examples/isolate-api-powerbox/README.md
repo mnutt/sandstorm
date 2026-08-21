@@ -11,7 +11,7 @@ native browser Cap'n Proto client, which builds a packed `ApiSession`
 descriptor, runs Sandstorm's existing Powerbox `postMessage` flow, and sends
 the returned request token back to the worker. The worker then saves the browser
 result by calling `api.powerbox().claim(...)`, `cap.save(...)`, and
-`api.storage().put(...)`. The URL and scopes are editable; the worker serves the
+`api.kv().put(...)`. The URL and scopes are editable; the worker serves the
 native client and claim route with `sandstorm(request, env).serveSystemRoutes()`,
 so the descriptor and claim plumbing do not have to be hand-coded in browser
 code.

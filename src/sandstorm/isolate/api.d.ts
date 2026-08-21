@@ -30,7 +30,8 @@ declare module "sandstorm:api" {
       name?: string,
       options?: unknown,
     ): T;
-    storageKey(value: unknown, name?: string): string;
+    kvKey(value: unknown, name?: string): string;
+    filePath(value: unknown, name?: string): string;
   }
 
   export const validate: Validator;
@@ -93,7 +94,7 @@ declare module "sandstorm:api" {
     descriptor?: PowerboxDescriptorInfo;
   }
 
-  export interface StorageApi {
+  export interface KvApi {
     put(key: string, value: string | Uint8Array | unknown): Promise<unknown>;
     putJson(key: string, value: unknown): Promise<unknown>;
     get(key: string): Promise<string | undefined>;
@@ -102,6 +103,22 @@ declare module "sandstorm:api" {
     head(key: string): Promise<{ ok: boolean; status: number; bytes: string | null }>;
     delete(key: string): Promise<unknown>;
     list(): Promise<unknown>;
+  }
+
+  export interface FileInfo {
+    path: string;
+    size: number;
+  }
+
+  export interface StoredFile extends FileInfo {
+    body: ReadableStream<Uint8Array> | null;
+  }
+
+  export interface FilesApi {
+    write(path: string, body: BodyInit, options?: { size?: number }): Promise<unknown>;
+    open(path: string): Promise<StoredFile | undefined>;
+    stat(path: string): Promise<FileInfo | undefined>;
+    delete(path: string): Promise<unknown>;
   }
 
   export interface WebSessionCapabilityOptions {
@@ -212,7 +229,7 @@ declare module "sandstorm:api" {
     title?: string;
     label?: string;
     description?: string;
-    storageKey?: string;
+    kvKey?: string;
     key?: string;
     query?: unknown;
     descriptor?: string;
@@ -275,7 +292,8 @@ declare module "sandstorm:api" {
   export interface SandstormApi {
     session(): SessionInfo;
     readonly unstable: UnstableSandstormDiagnostics;
-    storage(): StorageApi;
+    kv(): KvApi;
+    files(): FilesApi;
     powerbox(): PowerboxApi;
     webSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
     apiSession(options?: WebSessionCapabilityOptions): Promise<Capability>;
@@ -287,7 +305,8 @@ declare module "sandstorm:api" {
     serveSystemRoutes(options?: SystemRouteOptions): Promise<Response | null>;
   }
 
-  export function storage(env: SandstormEnv): StorageApi;
+  export function kv(env: SandstormEnv): KvApi;
+  export function files(env: SandstormEnv): FilesApi;
   export function powerbox(request: Request, env: SandstormEnv): PowerboxApi;
   export function powerboxGrants(
     request: Request,
