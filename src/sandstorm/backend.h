@@ -119,6 +119,7 @@ private:
   };
 
   struct BackingUpGrain {
+    kj::String grainId;
     kj::ForkedPromise<void> promise;
     // Promise will be fulfiled when the backup is complete.
   };
@@ -169,6 +170,10 @@ private:
 
   kj::Promise<IsolateAccountHost::Client> getAccountHost(kj::StringPtr ownerId);
   void eraseAccountHost(kj::StringPtr ownerId, uint64_t generation);
+  kj::Own<kj::PromiseFulfiller<void>> markGrainBackingUp(kj::StringPtr grainId);
+  kj::Promise<void> writeGrainBackup(BackupGrainContext context,
+      kj::Maybe<Cgroup::FreezeHandle> freezeHandle,
+      kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> backupFulfiller);
   kj::Promise<kj::Own<kj::AsyncIoStream>> connectUnixSocket(
       kj::String path, uint attemptsRemaining = 500);
 

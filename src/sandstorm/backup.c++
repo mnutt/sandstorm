@@ -152,10 +152,35 @@ bool BackupMain::run(kj::StringPtr grainDir) {
     KJ_SYSCALL(chown("/tmp/tmp", *u, 0));
   }
 
-  // Bind in the grain's `data` (=`sandbox`).
-  KJ_SYSCALL(mkdir("/tmp/tmp/data", 0777));
-  bind(kj::str(grainDir, "/sandbox"), "/tmp/tmp/data",
-       MS_NODEV | MS_NOSUID | MS_NOEXEC | (restore ? 0 : MS_RDONLY));
+  // Isolate grains keep their public KV and file APIs outside `sandbox`, since the worker itself
+  // never receives ambient filesystem access. Include those paths explicitly while preserving
+  // the historical `data/` layout for traditional grains and old backups.
+  if (restore) {
+    KJ_SYSCALL(mkdir("/tmp/tmp/grain", 0777));
+    bind(grainDir, "/tmp/tmp/grain", MS_NODEV | MS_NOSUID | MS_NOEXEC);
+    KJ_SYSCALL(mkdir("/tmp/tmp/grain/data", 0777));
+    bind(kj::str(grainDir, "/sandbox"), "/tmp/tmp/grain/data",
+         MS_NODEV | MS_NOSUID | MS_NOEXEC);
+  } else {
+    // Bind in the grain's historical `data` (=`sandbox`) archive path.
+    KJ_SYSCALL(mkdir("/tmp/tmp/data", 0777));
+    bind(kj::str(grainDir, "/sandbox"), "/tmp/tmp/data",
+         MS_NODEV | MS_NOSUID | MS_NOEXEC | MS_RDONLY);
+
+    auto kvPath = kj::str(grainDir, "/isolate-kv.sqlite");
+    if (access(kvPath.cStr(), F_OK) == 0) {
+      KJ_SYSCALL(mknod("/tmp/tmp/isolate-kv.sqlite", S_IFREG | 0666, 0));
+      bind(kvPath, "/tmp/tmp/isolate-kv.sqlite",
+          MS_RDONLY | MS_NOEXEC | MS_NOSUID | MS_NODEV);
+    }
+
+    auto filesPath = kj::str(grainDir, "/isolate-files");
+    if (access(filesPath.cStr(), F_OK) == 0) {
+      KJ_SYSCALL(mkdir("/tmp/tmp/isolate-files", 0777));
+      bind(filesPath, "/tmp/tmp/isolate-files",
+          MS_RDONLY | MS_NOEXEC | MS_NOSUID | MS_NODEV);
+    }
+  }
 
   // Bind in the grain's `log`. When restoring, we discard the log.
   if (!restore) {
@@ -214,12 +239,21 @@ bool BackupMain::run(kj::StringPtr grainDir) {
   // TODO(someday): Find a zip library that doesn't suck and use it instead of shelling out
   //   to zip/unzip.
   if (restore) {
-    Subprocess({"unzip", "-q", "file.zip", "data/*", "metadata"}).waitForSuccess();
+    // Extract the historical data directory and the optional isolate durable-data paths in one
+    // subprocess. `grain/data` is a bind mount of `grain/sandbox`, while the isolate paths land
+    // directly in the grain root. Info-ZIP returns 11 when optional names do not match, which is
+    // expected for old backups.
+    auto restoreProcess = Subprocess({"unzip", "-qq", "file.zip", "data/*", "metadata",
+        "isolate-kv.sqlite", "isolate-files", "isolate-files/*", "-d", "grain"});
+    int restoreExit = restoreProcess.waitForExit();
+    KJ_REQUIRE(restoreExit == 0 || restoreExit == 11,
+        "failed to restore grain backup", restoreExit);
 
     // Read metadata file to stdout.
-    kj::FdInputStream in(raiiOpen("metadata", O_RDONLY | O_CLOEXEC));
+    kj::FdInputStream in(raiiOpen("grain/metadata", O_RDONLY | O_CLOEXEC));
     kj::FdOutputStream out(STDOUT_FILENO);
     pump(in, out);
+    KJ_SYSCALL(unlink("grain/metadata"));
   } else {
     Subprocess::Options zipOptions({"zip", "-qy@", "-"});
     auto inPipe = Pipe::make();
@@ -288,4 +322,3 @@ bool BackupMain::findFilesToZip(kj::StringPtr path, kj::OutputStream& out) {
 }
 
 } // namespace sandstorm
-

@@ -152,6 +152,17 @@ function(sandstorm_install_native)
       "${PROJECT_SOURCE_DIR}/cmake/RunIsolateHostControlTest.sh"
     COMMENT "Testing the shared isolate host control plane"
     VERBATIM)
+  add_custom_target(isolate-backup-roundtrip-test
+    COMMAND bash "${PROJECT_SOURCE_DIR}/cmake/RunIsolateBackupRoundTripTest.sh"
+      "$<TARGET_FILE:sandstorm>"
+      "${CMAKE_BINARY_DIR}"
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate/api.js"
+    DEPENDS
+      sandstorm
+      "${PROJECT_SOURCE_DIR}/cmake/RunIsolateBackupRoundTripTest.sh"
+      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate/api.js"
+    COMMENT "Testing isolate KV and file backup round-trips"
+    VERBATIM)
   set(_native_targets
     sandstorm
     spk
