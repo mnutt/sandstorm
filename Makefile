@@ -90,6 +90,7 @@ $(eval $(call cmake_target,verify-isolate-release-bundle,verify-isolate-release-
 $(eval $(call cmake_target,isolate-host,isolate-host))
 $(eval $(call cmake_target,isolate-host-control-test,isolate-host-control-test))
 $(eval $(call cmake_target,isolate-account-host-integration-test,isolate-account-host-integration-test))
+$(eval $(call cmake_target,isolate-backup-roundtrip-test,isolate-backup-roundtrip-test))
 $(eval $(call cmake_target,isolate-backend-recovery-test,isolate-backend-recovery-test))
 
 isolate-memory-benchmark: configure

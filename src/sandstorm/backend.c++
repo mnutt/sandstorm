@@ -859,30 +859,70 @@ kj::Promise<void> BackendImpl::deletePackage(DeletePackageContext context) {
 
 // =======================================================================================
 
+kj::Own<kj::PromiseFulfiller<void>> BackendImpl::markGrainBackingUp(kj::StringPtr grainId) {
+  auto paf = kj::newPromiseAndFulfiller<void>();
+  BackingUpGrain backingUp{kj::str(grainId), paf.promise.fork()};
+  auto key = backingUp.grainId.asPtr();
+  supervisors.erase(grainId);
+  KJ_ASSERT(supervisors.insert(std::make_pair(key, kj::mv(backingUp))).second);
+  return kj::mv(paf.fulfiller);
+}
+
 kj::Promise<void> BackendImpl::backupGrain(BackupGrainContext context) {
-  kj::Maybe<Cgroup::FreezeHandle> freezeHandle;
-  kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> backupFulfiller;
+  auto grainId = context.getParams().getGrainId();
+  auto iter = supervisors.find(grainId);
+  if (iter == supervisors.end()) {
+    return writeGrainBackup(context, nullptr, markGrainBackingUp(grainId));
+  }
+
+  KJ_SWITCH_ONEOF(iter->second) {
+    KJ_CASE_ONEOF(g, BackingUpGrain) {
+      return g.promise.addBranch().then([this, context]() mutable {
+        return backupGrain(context);
+      });
+    }
+    KJ_CASE_ONEOF(g, StartingGrain) {
+      if (!g.accountHosted) {
+        kj::Maybe<Cgroup::FreezeHandle> freezeHandle;
+        KJ_IF_MAYBE(cg, cgroup) {
+          freezeHandle = cg->getChild(grainId).freeze();
+        }
+        return writeGrainBackup(context, kj::mv(freezeHandle), nullptr);
+      }
+
+      // Account-hosted workers perform durable-data I/O in a process shared by all of the
+      // account's grains, so freezing a per-grain cgroup cannot produce a consistent snapshot.
+      // Stop just this worker and mark it as backing up. Requests attempting to reopen it wait
+      // for the archive to finish, then boot a fresh worker against the same grain directory.
+      auto supervisor = g.promise.addBranch();
+      auto ownedGrainId = kj::str(grainId);
+      auto backupFulfiller = markGrainBackingUp(grainId);
+      return supervisor.then([](Supervisor::Client client) mutable {
+        return client.shutdownRequest().send().ignoreResult();
+      }).then([this, context, backupFulfiller = kj::mv(backupFulfiller)]() mutable {
+        return writeGrainBackup(context, nullptr, kj::mv(backupFulfiller));
+      }).catch_([this, grainId = kj::mv(ownedGrainId)](kj::Exception&& exception)
+          -> kj::Promise<void> {
+        supervisors.erase(grainId);
+        return kj::mv(exception);
+      });
+    }
+  }
+
+  KJ_UNREACHABLE;
+}
+
+kj::Promise<void> BackendImpl::writeGrainBackup(BackupGrainContext context,
+    kj::Maybe<Cgroup::FreezeHandle> freezeHandle,
+    kj::Maybe<kj::Own<kj::PromiseFulfiller<void>>> backupFulfiller) {
 
   auto params = context.getParams();
 
   auto grainId = params.getGrainId();
   auto path = kj::str("/var/sandstorm/backups/", params.getBackupId());
-
-  auto iter = supervisors.find(grainId);
-  if(iter == supervisors.end()) {
-    // Not running. Mark the grain as backing up, so nobody tries to boot it
-    // until we're done:
-    auto paf = kj::newPromiseAndFulfiller<void>();
-    supervisors.insert(std::make_pair(grainId, BackingUpGrain{paf.promise.fork()}));
-    backupFulfiller = kj::mv(paf.fulfiller);
-  } else {
-    // If cgroups is available, freeze the corresponding cgroup
-    // during the backup:
-    KJ_IF_MAYBE(cg, cgroup) {
-      auto grainCgroup = cg->getChild(grainId);
-      freezeHandle = grainCgroup.freeze();
-    }
-  }
+  auto ownedGrainId = kj::str(grainId);
+  auto cleanupGrainId = kj::str(grainId);
+  bool hasBackupMarker = backupFulfiller != nullptr;
 
   recursivelyCreateParent(path);
   auto grainDir = kj::str("/var/sandstorm/grains/", grainId);
@@ -920,7 +960,7 @@ kj::Promise<void> BackendImpl::backupGrain(BackupGrainContext context) {
   return promise.attach(kj::mv(metadataMsg), kj::mv(metadataStreamFd), kj::mv(output))
       .then([
           this,
-          grainId,
+          grainId = kj::mv(ownedGrainId),
           KJ_MVCAP(process),
           KJ_MVCAP(freezeHandle),
           KJ_MVCAP(backupFulfiller)
@@ -932,6 +972,10 @@ kj::Promise<void> BackendImpl::backupGrain(BackupGrainContext context) {
       (*f)->fulfill();
       supervisors.erase(grainId);
     }
+  }).catch_([this, hasBackupMarker, grainId = kj::mv(cleanupGrainId)](
+      kj::Exception&& exception) -> kj::Promise<void> {
+    if (hasBackupMarker) supervisors.erase(grainId);
+    return kj::mv(exception);
   });
 }
 
@@ -970,8 +1014,14 @@ kj::Promise<void> BackendImpl::restoreGrain(RestoreGrainContext context) {
   auto asyncInput = ioProvider.wrapInputFd(input, kj::LowLevelAsyncIoProvider::ALREADY_CLOEXEC);
 
   auto promise = capnp::readMessage(*asyncInput);
-  return promise.attach(kj::mv(input), kj::mv(asyncInput), kj::mv(process))
-      .then([context](kj::Own<capnp::MessageReader>&& message) mutable {
+  return promise.attach(kj::mv(input), kj::mv(asyncInput))
+      .then([context, process = kj::mv(process), grainDir = kj::mv(grainDir)](
+          kj::Own<capnp::MessageReader>&& message) mutable {
+    process.waitForSuccess();
+    // BackupMain uses this empty directory as the mountpoint that maps archive `data/` entries
+    // back onto the grain's `sandbox/`. Once its mount namespace exits, remove the mountpoint from
+    // the restored grain root.
+    KJ_SYSCALL(rmdir(kj::str(grainDir, "/data").cStr()), grainDir);
     auto metadata = message->getRoot<GrainInfo>();
     context.getResults(capnp::MessageSize { metadata.totalSize().wordCount + 4, 0 })
         .setInfo(metadata);
