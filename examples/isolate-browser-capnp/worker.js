@@ -106,9 +106,6 @@ function renderPage() {
     </main>
 
     <script type="module">
-      import { BrowserCounter } from "/__sandstorm/capnp/browser-counter.capnp.js";
-      import { connectBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
-
       const valueOutput = document.querySelector("#value");
       const amountInput = document.querySelector("#amount");
       const incrementButton = document.querySelector("#increment");
@@ -151,15 +148,24 @@ function renderPage() {
       }
 
       async function connect() {
+        log.textContent = "Loading generated Cap'n Proto modules...";
+        const [{ BrowserCounter }, { connectBrowserNativeCapnp }] = await Promise.all([
+          import("/__sandstorm/capnp/browser-counter.capnp.js"),
+          import("/__sandstorm/native-capnp/client.js"),
+        ]);
+
+        log.textContent = "Requesting counter capability...";
         const response = await fetch("/counter-capability", { method: "POST" });
         const result = await response.json();
         if (!response.ok || !result.ok) {
           throw new Error(result.error || "counter capability request failed");
         }
 
+        log.textContent = "Connecting to counter capability...";
         counter = connectBrowserNativeCapnp(result.capability, BrowserCounter, {
           connectionId: "browser-counter-" + result.capability.id,
         });
+        log.textContent = "Reading counter...";
         show(await requestCounter("read"), "read");
         incrementButton.disabled = false;
         resetButton.disabled = false;

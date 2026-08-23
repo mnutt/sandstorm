@@ -40,6 +40,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	tests/assets/isolate-test-app.spk isolate-test-app-spk isolate-test-app-dev \
 	tests/assets/isolate-api-powerbox-test-app.spk \
 	tests/assets/isolate-api-provider-test-app.spk \
+	tests/assets/isolate-browser-capnp-test-app.spk \
 	meteor-testapp-stage meteor-testapp-spk meteor-testapp-dev \
 	tests/assets/meteor-testapp.spk release-gate-upgrade-308
 
@@ -120,6 +121,7 @@ $(eval $(call cmake_target,isolate-test,isolate-test))
 $(eval $(call cmake_target,isolate-ci,isolate-ci))
 $(eval $(call cmake_target,tests/assets/isolate-api-powerbox-test-app.spk,isolate-api-powerbox-test-app-spk))
 $(eval $(call cmake_target,tests/assets/isolate-api-provider-test-app.spk,isolate-api-provider-test-app-spk))
+$(eval $(call cmake_target,tests/assets/isolate-browser-capnp-test-app.spk,isolate-browser-capnp-test-app-spk))
 $(eval $(call cmake_target,app-index.spk,app-index-spk))
 $(eval $(call cmake_target,app-index-spk,app-index-spk))
 $(eval $(call cmake_target,app-index-dev,app-index-dev))

@@ -416,6 +416,59 @@ function(sandstorm_add_packaging_targets)
     isolate-api-provider-app.key
     isolate-api-provider)
 
+  set(_browser_capnp_source
+    "${PROJECT_SOURCE_DIR}/examples/isolate-browser-capnp")
+  set(_browser_capnp_stage
+    "${_spk_stage}/sandstorm/isolate-browser-capnp-test-app")
+  set(_browser_capnp_stage_capnp
+    "${_browser_capnp_stage}/isolate-browser-capnp.capnp")
+  add_custom_command(
+    OUTPUT "${_browser_capnp_stage_capnp}"
+    COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_browser_capnp_stage}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+      "${_browser_capnp_stage}/isolate-browser-capnp"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${_browser_capnp_source}/worker.js"
+      "${_browser_capnp_stage}/isolate-browser-capnp/worker.js"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${_browser_capnp_source}/browser-counter.capnp"
+      "${_browser_capnp_stage}/isolate-browser-capnp/browser-counter.capnp"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${_browser_capnp_source}/README.md"
+      "${_browser_capnp_stage}/isolate-browser-capnp/README.md"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${_browser_capnp_source}/isolate-browser-capnp.capnp"
+      "${_browser_capnp_stage_capnp}"
+    DEPENDS
+      "${_browser_capnp_source}/worker.js"
+      "${_browser_capnp_source}/browser-counter.capnp"
+      "${_browser_capnp_source}/README.md"
+      "${_browser_capnp_source}/isolate-browser-capnp.capnp"
+    COMMENT "Staging the browser Capnp example test app"
+    VERBATIM)
+
+  set(_browser_capnp_spk
+    "${PROJECT_SOURCE_DIR}/tests/assets/isolate-browser-capnp-test-app.spk")
+  add_custom_command(
+    OUTPUT "${_browser_capnp_spk}"
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "SANDSTORM_CAPNP_ES_COMPILER_MODULE=${_capnp_es_compiler}"
+      "$<TARGET_FILE:spk>" pack
+        -k "${_browser_capnp_source}/isolate-browser-capnp.key"
+        -I "${PROJECT_SOURCE_DIR}/src"
+        -I "${_spk_stage}"
+        -p "${_browser_capnp_stage_capnp}:pkgdef"
+        "${_browser_capnp_spk}"
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+    DEPENDS
+      spk
+      "${_capnp_es_compiler_deps}"
+      "${_browser_capnp_stage_capnp}"
+      "${_browser_capnp_source}/isolate-browser-capnp.key"
+    COMMENT "Packing isolate-browser-capnp-test-app.spk"
+    VERBATIM)
+  add_custom_target(isolate-browser-capnp-test-app-spk DEPENDS "${_browser_capnp_spk}")
+
   set(_app_index_source "${PROJECT_SOURCE_DIR}/src/sandstorm/app-index")
   set(_app_index_stage "${_spk_stage}/sandstorm/app-index")
   set(_app_index_stage_stamp "${_package_dir}/app-index-stage.stamp")
@@ -656,7 +709,7 @@ function(sandstorm_add_packaging_targets)
 
   add_custom_target(isolate-examples-test
     COMMAND "${CMAKE_COMMAND}" -E env
-      "TESTCASE=tests/apps/isolate-examples.js"
+      "TESTCASE=apps/isolate-examples.js"
       "${PROJECT_SOURCE_DIR}/tests/run-local.sh"
       "${_fast_package}"
       "${_test_app_spk}"
@@ -665,6 +718,7 @@ function(sandstorm_add_packaging_targets)
       test-app-spk
       isolate-api-powerbox-test-app-spk
       isolate-api-provider-test-app-spk
+      isolate-browser-capnp-test-app-spk
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     USES_TERMINAL
     COMMENT "Running isolate example system tests"

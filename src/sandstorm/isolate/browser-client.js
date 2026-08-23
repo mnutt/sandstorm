@@ -174,7 +174,7 @@ async function nativeCapnpBrowserMessageBytes(data) {
   return nativeCapnpMessageBytes(data);
 }
 
-export function browserNativeCapnpRpcSessionUrl(connectionId) {
+export function browserNativeCapnpRpcSessionUrl(connectionId, handoffId) {
   const normalizedConnectionId = normalizeConnectionId(connectionId);
   const url = new URL(
     "/__sandstorm/native-capnp/rpc-session",
@@ -185,11 +185,14 @@ export function browserNativeCapnpRpcSessionUrl(connectionId) {
     url.protocol = "ws:";
   }
   url.searchParams.set("connectionId", normalizedConnectionId);
+  if (typeof handoffId === "string" && handoffId.length > 0) {
+    url.searchParams.set("id", handoffId);
+  }
   return url;
 }
 
-export function openBrowserNativeCapnpRpcSession(connectionId) {
-  const url = browserNativeCapnpRpcSessionUrl(connectionId);
+export function openBrowserNativeCapnpRpcSession(connectionId, handoffId) {
+  const url = browserNativeCapnpRpcSessionUrl(connectionId, handoffId);
   return new Promise((resolve, reject) => {
     const webSocket = new WebSocket(url.href);
     let settled = false;
@@ -540,6 +543,7 @@ export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTranspor
   constructor(options = {}) {
     super();
     this.connectionId = normalizeConnectionId(options.connectionId);
+    this.handoffId = options.handoffId;
     this.connection = null;
     this.kind = "browserIsolateBridgeWebSocketRpc";
   }
@@ -581,7 +585,8 @@ export class BrowserNativeCapnpBridgeWebSocketTransport extends DeferredTranspor
     }
 
     if (!this.#openPromise) {
-      this.#openPromise = openBrowserNativeCapnpRpcSession(this.connectionId).then((webSocket) => {
+      this.#openPromise = openBrowserNativeCapnpRpcSession(
+        this.connectionId, this.handoffId).then((webSocket) => {
         webSocket.addEventListener("message", async (event) => {
           try {
             this.resolve(await nativeCapnpBrowserMessageBytes(event.data));
@@ -616,17 +621,11 @@ export function connectBrowserNativeCapnp(target, InterfaceClass, options = {}) 
     throw new TypeError("connectBrowserNativeCapnp() requires a capnp-es generated interface");
   }
   const normalizedTarget = normalizeNativeCapnpCapabilitySlot(target);
-  const connection = createBrowserNativeCapnpConnection(options);
-  const bridge = connection.bootstrap(BrowserIsolateBridge);
-  const claimed = bridge.getHandoffCapability({ id: normalizedTarget.id });
-  const cap = capnpCapabilityFromResult(claimed, "browser handoff capability pipeline");
-  if (!cap) {
-    connection.transport.close();
-    throw new NativeCapnpBridgeProtocolError(
-      "browser isolate bridge did not return a handoff capability pipeline");
-  }
-  const client = browserNativeCapnpClient(
-    cap, InterfaceClass, "browser handoff capability pipeline");
+  const connection = createBrowserNativeCapnpConnection({
+    ...options,
+    handoffId: normalizedTarget.id,
+  });
+  const client = connection.bootstrap(InterfaceClass);
   return Object.assign(client, {
     capability: normalizedTarget,
     connection,

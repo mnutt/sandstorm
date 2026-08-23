@@ -1491,13 +1491,6 @@ kj::Promise<void> pumpAtMost(kj::AsyncInputStream& input, ByteStream::Client str
   });
 }
 
-class IsolateWebSocketEntropySource final: public kj::EntropySource {
-public:
-  void generate(kj::ArrayPtr<byte> buffer) override {
-    randombytes_buf(buffer.begin(), buffer.size());
-  }
-};
-
 class IsolateWebSocketBridgeState final: public kj::Refcounted,
                                          private kj::TaskSet::ErrorHandler {
 public:
@@ -1506,7 +1499,10 @@ public:
       : pipe(kj::refcounted<WebSessionWebSocketPipe>(kj::mv(callerStream))),
         incoming(pipe->getIncomingStreamCapability()),
         runtimeWebSocket(kj::mv(runtimeWebSocket)),
-        callerWebSocket(kj::newWebSocket(kj::addRef(*pipe), entropySource)),
+        // This side writes server-to-client frames to the WebSession caller, so it must not mask
+        // them. The runtime WebSocket is the client side of the other hop and handles masking
+        // client-to-server frames there.
+        callerWebSocket(kj::newWebSocket(kj::addRef(*pipe), nullptr)),
         tasks(*this) {
     tasks.add(this->runtimeWebSocket->pumpTo(*callerWebSocket)
         .then([this]() { closing = true; }));
@@ -1517,7 +1513,6 @@ public:
   WebSession::WebSocketStream::Client getIncoming() { return incoming; }
 
 private:
-  static IsolateWebSocketEntropySource entropySource;
   kj::Own<WebSessionWebSocketPipe> pipe;
   WebSession::WebSocketStream::Client incoming;
   kj::Own<kj::WebSocket> runtimeWebSocket;
@@ -1531,8 +1526,6 @@ private:
     }
   }
 };
-
-IsolateWebSocketEntropySource IsolateWebSocketBridgeState::entropySource;
 
 class IsolateWebSocketBridge final: public WebSession::WebSocketStream::Server {
 public:
