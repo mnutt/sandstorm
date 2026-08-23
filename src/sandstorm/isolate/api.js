@@ -5,6 +5,7 @@ import {
   nativeCapnpInterfaceMetadata,
   nativeCapnpSavedTokenData,
   nativeCapnpSavedTokenText,
+  serveLocalBrowserCapnpHandoff,
 } from "sandstorm-internal:capnp-runtime";
 import {
   dataBytes as CapnpEsDataBytes,
@@ -2219,6 +2220,9 @@ async function serveBrowserSystemRoute(request, env) {
 
   if (url.pathname === "/__sandstorm/native-capnp/rpc-session" &&
       request.method === "GET") {
+    const localHandoff = serveLocalBrowserCapnpHandoff(request);
+    if (localHandoff) return localHandoff;
+
     const headers = {};
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
       headers.Upgrade = "websocket";

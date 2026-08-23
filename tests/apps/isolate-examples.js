@@ -32,6 +32,9 @@ var apiPowerboxSpk = process.env.ISOLATE_API_POWERBOX_TEST_SPK ||
 var apiProviderAppId = "mkhmn9rg2phfv3dvcnd71ud45jp70139h0e3sgqkh6rg2ydk3z00";
 var apiProviderSpk = process.env.ISOLATE_API_PROVIDER_TEST_SPK ||
     path.join(repoRoot, "tests/assets/isolate-api-provider-test-app.spk");
+var browserCapnpAppId = "k7tvjx2asx9rqe0y064r5jxcwwy68fase72pk3qat4ud1ttuwyk0";
+var browserCapnpSpk = process.env.ISOLATE_BROWSER_CAPNP_TEST_SPK ||
+    path.join(repoRoot, "tests/assets/isolate-browser-capnp-test-app.spk");
 
 function ensureApiPowerboxSpk() {
   if (process.env.ISOLATE_API_POWERBOX_TEST_SPK) return;
@@ -46,6 +49,15 @@ function ensureApiProviderSpk() {
   if (process.env.ISOLATE_API_PROVIDER_TEST_SPK) return;
 
   childProcess.execFileSync("make", ["tests/assets/isolate-api-provider-test-app.spk"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+  });
+}
+
+function ensureBrowserCapnpSpk() {
+  if (process.env.ISOLATE_BROWSER_CAPNP_TEST_SPK) return;
+
+  childProcess.execFileSync("make", ["tests/assets/isolate-browser-capnp-test-app.spk"], {
     cwd: repoRoot,
     stdio: "inherit",
   });
@@ -82,6 +94,22 @@ function uploadAndOpenExample(browser, appId, spkPath) {
     .click(actionSelector)
     .waitForElementVisible("#grainTitle", medium_wait);
 }
+
+module.exports["Test isolate browser Capnp example"] = function (browser) {
+  ensureBrowserCapnpSpk();
+
+  installAndOpenExample(browser, browserCapnpAppId, browserCapnpSpk)
+    .grainFrame()
+    .waitForElementVisible("#increment:not([disabled])", long_wait)
+    .assert.textContains("#log", "\"operation\": \"read\"")
+    .assert.textContains("#log", "\"transport\": \"browser-native-capnp\"")
+    .click("#increment")
+    .assert.textContains("#log", "\"operation\": \"increment\"")
+    .assert.textContains("#value", "1")
+    .click("#reset")
+    .assert.textContains("#log", "\"operation\": \"reset\"")
+    .assert.textContains("#value", "0");
+};
 
 module.exports["Test isolate API Powerbox example consumer flow"] = function (browser) {
   ensureApiPowerboxSpk();

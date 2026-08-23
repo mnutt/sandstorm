@@ -533,6 +533,108 @@ export function capnpClient(InterfaceClass, capability) {
     capability[CAPNP_CLIENT_SYMBOL](), "live Sandstorm capability"));
 }
 
+// A worker-exported capability must remain on the worker's own RPC connection. Passing it through
+// a request-scoped supervisor bridge would leave the supervisor holding a capability whose backing
+// worker connection ended with the request that created the handoff.
+const localBrowserHandoffs = new Map();
+
+function newLocalBrowserHandoffId() {
+  if (typeof globalThis.crypto?.getRandomValues !== "function") {
+    throw new NativeCapnpBridgeProtocolError(
+      "cryptographically secure browser handoff IDs are unavailable");
+  }
+  return nativeCapnpBase64UrlEncode(globalThis.crypto.getRandomValues(new Uint8Array(18)));
+}
+
+class LocalBrowserCapnpTransport extends CapnpEsDeferredTransport {
+  constructor(webSocket, onClose) {
+    super();
+    this.webSocket = webSocket;
+    this.connection = null;
+    this.onClose = onClose;
+    webSocket.accept();
+    webSocket.addEventListener("message", async (event) => {
+      try {
+        const data = typeof Blob !== "undefined" && event.data instanceof Blob
+          ? await event.data.arrayBuffer()
+          : event.data;
+        this.resolve(nativeCapnpMessageBytes(data));
+      } catch (error) {
+        this.abort(error);
+      }
+    });
+    webSocket.addEventListener("close", () => this.close());
+    webSocket.addEventListener("error", (event) => this.abort(event.error || event));
+  }
+
+  sendMessage(message) {
+    if (this.closed) {
+      throw new CapnpUnavailableError("browser Cap'n Proto transport is closed");
+    }
+    this.webSocket.send(nativeCapnpRootMessageBytes(message));
+  }
+
+  abort(error) {
+    if (this.connection && !this.connection.closed) {
+      this.connection.shutdown(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    this.close(error);
+  }
+
+  close(error) {
+    if (this.closed) return;
+    try {
+      this.webSocket.close(error === undefined ? 1000 : 1011);
+    } catch (_) {}
+    super.close(error);
+    this.onClose();
+  }
+}
+
+export function serveLocalBrowserCapnpHandoff(request) {
+  const url = new URL(request.url);
+  const ids = url.searchParams.getAll("id");
+  if (url.pathname !== "/__sandstorm/native-capnp/rpc-session" ||
+      request.method !== "GET" || ids.length === 0) {
+    return null;
+  }
+  if (ids.length !== 1 || ids[0].length === 0) {
+    return new Response("invalid browser Cap'n Proto handoff id", { status: 400 });
+  }
+  if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+    return new Response("browser Cap'n Proto handoffs require WebSocket upgrade", { status: 426 });
+  }
+
+  const id = ids[0];
+  const handoff = localBrowserHandoffs.get(id);
+  const sessionId = request.headers.get("x-sandstorm-session-id") || "";
+  if (!handoff || !sessionId || handoff.sessionId !== sessionId) {
+    return new Response("browser Cap'n Proto handoff not found", { status: 404 });
+  }
+
+  // Claim before constructing the connection so concurrent requests cannot reuse the handoff.
+  localBrowserHandoffs.delete(id);
+  const [browserSocket, serverSocket] = Object.values(new WebSocketPair());
+  let transport;
+  transport = new LocalBrowserCapnpTransport(serverSocket, () => {
+    handoff.transports.delete(transport);
+    if (handoff.transports.size === 0) {
+      handoff.owner.delete(handoff);
+    }
+  });
+  handoff.transports.add(transport);
+  try {
+    const connection = new CapnpEsConn(transport);
+    transport.connection = connection;
+    connection.initMain(handoff.InterfaceClass, handoff.target);
+  } catch (error) {
+    transport.close(error);
+    throw error;
+  }
+  return new Response(null, { status: 101, webSocket: browserSocket });
+}
+
 export async function exportCapnp(api, InterfaceClass, target) {
   validateNativeCapnpGeneratedInterface(InterfaceClass, "exportCapnp()");
   if (typeof InterfaceClass.Server !== "function") {
@@ -551,7 +653,7 @@ export async function exportCapnp(api, InterfaceClass, target) {
   const server = new InterfaceClass.Server(target);
   const client = server.client();
   const publicInterfaceId = interfaceMetadata.interfaceIdHex;
-  const browserHandoffs = new Map();
+  const browserHandoffs = new Set();
   let dropped = false;
 
   async function dropLocalExport() {
@@ -560,21 +662,14 @@ export async function exportCapnp(api, InterfaceClass, target) {
     }
 
     dropped = true;
-    let firstError;
-    for (const [handoffId, bridge] of browserHandoffs) {
-      try {
-        await bridge.dropBrowserHandoff({ id: handoffId });
-        bridge.close();
-      } catch (error) {
-        bridge.close(error);
-        if (firstError === undefined) firstError = error;
+    for (const handoff of [...browserHandoffs]) {
+      if (localBrowserHandoffs.get(handoff.id) === handoff) {
+        localBrowserHandoffs.delete(handoff.id);
       }
+      for (const transport of [...handoff.transports]) transport.close();
     }
     browserHandoffs.clear();
     server.close?.();
-    if (firstError) {
-      throw firstError;
-    }
 
     return undefined;
   }
@@ -587,29 +682,37 @@ export async function exportCapnp(api, InterfaceClass, target) {
       throw new TypeError("CapnpExport.browserHandoff() requires a Request");
     }
     const sessionId = nativeCapnpBrowserHandoffSessionId({ request });
-    const bridge = connectIsolateBridge(api);
-    try {
-      const stored = await bridge.createBrowserHandoff((params) => {
-        initCapnpCapabilityParam(params, client, "local export capability");
-        params.sessionId = sessionId;
-      });
-      if (!stored || typeof stored.id !== "string" || stored.id.length === 0) {
-        throw new NativeCapnpBridgeProtocolError(
-          "isolate bridge returned an invalid local export browser handoff id");
+    // A reconnect supersedes any handoff that this export issued to the same session but that the
+    // browser never claimed. Active connections remain independent until they close or drop().
+    for (const handoff of [...browserHandoffs]) {
+      if (handoff.sessionId === sessionId && localBrowserHandoffs.get(handoff.id) === handoff) {
+        localBrowserHandoffs.delete(handoff.id);
+        browserHandoffs.delete(handoff);
       }
-      browserHandoffs.set(stored.id, bridge);
-      return Object.freeze({
-        type: "capability",
-        id: stored.id,
-        kind: "receiverHosted",
-        residence: "browserHandoff",
-        interfaceId: publicInterfaceId,
-        interfaceName: interfaceMetadata.interfaceName,
-      });
-    } catch (error) {
-      bridge.close(error);
-      throw error;
     }
+
+    let id;
+    do {
+      id = newLocalBrowserHandoffId();
+    } while (localBrowserHandoffs.has(id));
+    const handoff = {
+      id,
+      sessionId,
+      InterfaceClass,
+      target,
+      transports: new Set(),
+      owner: browserHandoffs,
+    };
+    localBrowserHandoffs.set(id, handoff);
+    browserHandoffs.add(handoff);
+    return Object.freeze({
+      type: "capability",
+      id,
+      kind: "receiverHosted",
+      residence: "browserHandoff",
+      interfaceId: publicInterfaceId,
+      interfaceName: interfaceMetadata.interfaceName,
+    });
   }
 
   return Object.freeze({

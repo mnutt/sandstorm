@@ -25,6 +25,7 @@ const test = require("node:test");
 
 const REPO_DIR = path.resolve(__dirname, "..");
 const REPO_TMP_DIR = path.join(REPO_DIR, "tmp");
+const EXAMPLES_DIR = path.join(REPO_DIR, "examples");
 const SPK_BIN = process.env.SPK_BIN || path.join(REPO_DIR, "bin/spk");
 const CAPNP_BIN = process.env.CAPNP_BIN || path.join(REPO_DIR, "tmp/capnp/compiler/capnp");
 const CAPNP_ES_COMPILER_MODULE = process.env.CAPNP_ES_COMPILER_MODULE ||
@@ -325,6 +326,121 @@ test("isolate authoring Powerbox example packages public schemas and bindings", 
   assert.ok(bindings.get("SANDSTORM_API").sandstormApi === null);
   assert.ok(bindings.get("POWERBOX").powerbox === null);
   assert.ok(bindings.get("STORAGE").storage === null);
+});
+
+test("every isolate example packages with its documented modules and bindings", async (t) => {
+  await requireExecutable(SPK_BIN, "Build the project first, e.g. make fast.");
+  try {
+    await requireFile(
+      CAPNP_ES_COMPILER_MODULE,
+      "Set CAPNP_ES_COMPILER_MODULE to the @mnutt/capnp-es compiler module.");
+  } catch (err) {
+    t.skip(err.message);
+    return;
+  }
+
+  const examples = {
+    "isolate-api-powerbox": {},
+    "isolate-app-skeleton": {
+      modules: ["ui.js"],
+    },
+    "isolate-authoring-powerbox": {},
+    "isolate-browser-capnp": {
+      modules: ["capnp:./browser-counter.capnp"],
+    },
+    "isolate-capability-provider": {
+      modules: ["ui.js"],
+    },
+    "isolate-capnp-rpc": {
+      modules: ["capnp:./greeter.capnp", "capnp:./greeting.capnp"],
+    },
+    "isolate-counter": {
+      modules: ["ui.js", "metadata.json", "help.txt"],
+    },
+    "isolate-hello": {},
+    "isolate-object-store": {
+      args: ["--app-interface", "capnp:./object-store.capnp#ObjectStore"],
+      modules: ["capnp:./object-store.capnp"],
+    },
+    "isolate-service-binding": {
+      args: [
+        "--text-binding", "MESSAGE=hello from a text binding",
+        "--json-binding", "SETTINGS={\"mode\":\"dev\"}",
+        "--data-binding",
+        `PAYLOAD=${path.join(EXAMPLES_DIR, "isolate-service-binding/payload.bin")}`,
+        "--service-binding", "LOOPBACK=main",
+      ],
+      bindings: {
+        MESSAGE: { text: "hello from a text binding" },
+        SETTINGS: { json: "{\"mode\":\"dev\"}" },
+        PAYLOAD: { data: Array.from(Buffer.from("isolate data binding payload\n")) },
+        LOOPBACK: { service: "main" },
+      },
+    },
+    "isolate-streaming": {
+      modules: ["ui.js", "metadata.json"],
+    },
+    "isolate-typescript": {
+      modules: ["capnp:./typed-counter.capnp"],
+    },
+  };
+
+  const discoveredExamples = (await fs.readdir(EXAMPLES_DIR, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("isolate-"))
+    .map((entry) => entry.name)
+    .sort();
+  assert.deepEqual(discoveredExamples, Object.keys(examples).sort(),
+    "each isolate example must have an explicit packaging test");
+
+  for (const [name, options] of Object.entries(examples)) {
+    await t.test(name, async () => {
+      const workerPath = path.join(EXAMPLES_DIR, name, "worker.js");
+      const title = `Packaging test: ${name}`;
+      const { stdout } = await runCommand(SPK_BIN, [
+        "dev-isolate",
+        "--print-manifest-json",
+        "--title", title,
+        ...(options.args || []),
+        workerPath,
+      ], {
+        cwd: REPO_DIR,
+        env: {
+          ...process.env,
+          SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
+        },
+      });
+      const manifest = JSON.parse(stdout);
+      const isolate = manifest.continueCommand.isolate;
+      const modules = new Map(isolate.modules.map((module) => [module.name, module]));
+      const bindings = new Map(isolate.bindings.map((binding) => [binding.name, binding]));
+
+      assert.equal(manifest.appTitle.defaultText, title);
+      assert.equal(isolate.mainModule, "worker.js");
+      assert.equal(isolate.compatibilityDate, "2025-01-01");
+      assert.equal(
+        modules.get("worker.js").esModulePath,
+        "__sandstorm_dev_isolate_app/worker.js");
+      for (const moduleName of options.modules || []) {
+        assert.ok(modules.has(moduleName), `${name} packages ${moduleName}`);
+      }
+
+      assert.deepEqual(bindings.get("SANDSTORM_API"), {
+        name: "SANDSTORM_API",
+        sandstormApi: null,
+      });
+      assert.deepEqual(bindings.get("POWERBOX"), {
+        name: "POWERBOX",
+        powerbox: null,
+      });
+      assert.deepEqual(bindings.get("STORAGE"), {
+        name: "STORAGE",
+        storage: null,
+      });
+      for (const [bindingName, expected] of Object.entries(options.bindings || {})) {
+        assert.deepEqual(bindings.get(bindingName), { name: bindingName, ...expected });
+      }
+    });
+  }
 });
 
 test("spk dev-isolate resolves app-interface schemas outside the repo", async (t) => {

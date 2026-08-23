@@ -7,9 +7,9 @@ spk dev-isolate --title "Browser Capnp Counter" examples/isolate-browser-capnp/w
 ```
 
 This example uses generated `capnp:` code in both the isolate worker and the
-browser UI. The worker exports a `BrowserCounter` capability, hands the browser
-an id-backed capability slot, and the browser calls that capability over the
-browser native Cap'n Proto WebSocket bridge.
+browser UI. The worker exports a `BrowserCounter` capability and hands the
+browser a session-bound, single-use ID. The browser uses that ID to open a
+native Cap'n Proto WebSocket RPC connection back to the worker.
 
 The worker defines and exports a `BrowserCounter` capability with:
 
@@ -26,6 +26,6 @@ import { connectBrowserNativeCapnp } from "/__sandstorm/native-capnp/client.js";
 ```
 
 `POST /counter-capability` exports the server-side counter once per isolate
-instance and calls `exported.browserHandoff(request)`. The browser passes that slot to
-`connectBrowserNativeCapnp()` and then calls `read()`, `increment()`, and
-`reset()` directly as Cap'n Proto RPC methods.
+instance and calls `exported.browserHandoff(request)`. The browser passes that
+handoff to `connectBrowserNativeCapnp()` and then calls `read()`, `increment()`,
+and `reset()` directly as Cap'n Proto RPC methods.
