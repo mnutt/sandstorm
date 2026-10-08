@@ -45,6 +45,25 @@ const HOSTNAME = ROOT_URL.hostname;
 
 const RECIPIENT_LIMIT = 20;
 
+// Mailparser represents RFC 5322 groups as { name, group: [...] }, but EmailAddress only
+// supports individual mailboxes. Flatten groups (including empty ones) and copy only schema fields.
+function normalizeAddresses(header) {
+  const result = [];
+  const append = (entries) => {
+    entries.forEach((entry) => {
+      if (Array.isArray(entry.group)) {
+        append(entry.group);
+      } else {
+        result.push({ address: entry.address, name: entry.name || "" });
+      }
+    });
+  };
+  // Repeated address headers can be represented as an array of AddressObjects.
+  const headers = Array.isArray(header) ? header : [header];
+  headers.forEach((value) => append((value && value.value) || []));
+  return result;
+}
+
 // Every day, reset all per-user sent counts to zero.
 // TODO(cleanup): Consider a more granular approach. For example, each user could have a timer
 //   after which their count will reset. We'd only check the timer when that user is trying to
@@ -83,18 +102,18 @@ Meteor.startup(function () {
     onData: (req, session, callback) => {
       simpleParser(req).then((mail) => {
         // Extract the 'from' address.
+        const fromAddresses = normalizeAddresses(mail.from);
         let from;
-        if (mail.from && mail.from.value && mail.from.value.length > 0) {
-          // It's theoretically possible for the message to have multiple 'from' headers, but this
-          // never really happens in legitimate practice so we'll just take the first one.
-          from = mail.from.value[0];
+        if (fromAddresses.length > 0) {
+          // The schema accepts only one sender. Take the first mailbox after expanding groups.
+          from = fromAddresses[0];
         } else {
-          // The mail body is missing a 'From:' header. We'll use the bounce address instead,
+          // The 'From:' header has no mailboxes. We'll use the bounce address instead,
           // with the caveat that this is sometimes *not* the original sender
           // but rather some intermediate agent (e.g. a mailing list daemon). See:
           //   http://en.wikipedia.org/wiki/Bounce_address
           // TODO(someday): Is this really right, or should we report a blank address instead?
-          from = { address: session.envelope.mailFrom, name: false };
+          from = { address: session.envelope.mailFrom.address || "", name: "" };
         }
 
         let attachments = [];
@@ -111,13 +130,14 @@ Meteor.startup(function () {
           });
         }
 
-        if (mail.replyTo && mail.replyTo.value && mail.replyTo.value.length > 1) {
-          console.error("More than one reply-to address address was received in an email.");
+        const replyTo = normalizeAddresses(mail.replyTo);
+        if (replyTo.length > 1) {
+          console.error("More than one reply-to address was received in an email.");
         }
 
-        const to = (mail.to && mail.to.value) || [];
-        const cc = (mail.cc && mail.cc.value) || [];
-        const bcc = (mail.bcc && mail.bcc.value) || [];
+        const to = normalizeAddresses(mail.to);
+        const cc = normalizeAddresses(mail.cc);
+        const bcc = normalizeAddresses(mail.bcc);
         const references = Array.isArray(mail.references)
             ? mail.references
             : (mail.references ? [mail.references] : []);
@@ -134,7 +154,8 @@ Meteor.startup(function () {
           to: to,
           cc: cc,
           bcc: bcc,
-          replyTo: (mail.replyTo && mail.replyTo.value && mail.replyTo.value[0]) || {},
+          // Like From, Reply-To accepts only one mailbox in the current schema.
+          replyTo: replyTo[0] || {},
           messageId: mail.messageId || Random.id() + "@" + HOSTNAME,
           references: references,
           inReplyTo: inReplyTo,
