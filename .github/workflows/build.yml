@@ -124,7 +124,9 @@ jobs:
             export CCACHE_MAXSIZE="1G"
             #     export CCACHE_DEBUG=1
             export CCACHE_SLOPPINESS="time_macros"
-            export PATH=/usr/lib/ccache:$CLANGDIR:$PATH
+            # The CI preset enables ccache through CMake's compiler launchers.
+            # Keep compiler paths pointing to Clang itself for Bazel.
+            export PATH=$CLANGDIR:$PATH
 
             cmake --preset ci
             cmake --build --preset ci
