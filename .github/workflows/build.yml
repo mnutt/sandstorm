@@ -8,6 +8,7 @@ permissions:
 
 env:
   CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CLANGDIR: /usr/lib/llvm-19/bin
 jobs:
   build_and_test:
     runs-on: ubuntu-24.04
@@ -45,7 +46,8 @@ jobs:
             which go || (sudo apt-get update && sudo apt-get install golang-go)
 
             sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ninja-build ccache apparmor
+                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ninja-build ccache apparmor \
+                clang-19 lld-19 libc++-19-dev libc++abi-19-dev libunwind-19-dev
 
             # Ubuntu 24.04 restricts unprivileged user namespaces by default via AppArmor.
             # Sandstorm requires user namespaces for sandboxing, so grant that permission
