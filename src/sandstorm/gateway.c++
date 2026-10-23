@@ -316,10 +316,23 @@ kj::Promise<void> GatewayService::requestHelper(
 
         // TODO(cleanup): Powerbox requests seem to send a path that doesn't necessarily start
         //   with '/'. Why? Dunno. Fix.
+        auto sessionId = parsed.query[0].value.asPtr();
+        bool validSessionId = sessionId.size() == 64;
+        for (char c: sessionId) {
+          validSessionId &= (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+        }
+        if (!validSessionId) return sendError(400, "Bad Request", response, "Invalid session ID");
+
         auto path = kj::mv(parsed.query[1].value);
         if (!path.startsWith("/")) {
           path = kj::str('/', path);
         }
+
+        bool validPath = !path.startsWith("//");
+        for (char c: path) {
+          validPath &= static_cast<unsigned char>(c) >= 0x20 && c != 0x7f && c != '\\';
+        }
+        if (!validPath) return sendError(400, "Bad Request", response, "Invalid redirect path");
 
         kj::HttpHeaders responseHeaders(tables.headerTable);
         // We avoid registering a header ID for Set-Cookie. See comments in web-session-bridge.c++.
@@ -393,7 +406,7 @@ kj::Promise<void> GatewayService::sendError(
     uint statusCode, kj::StringPtr statusText, Response& response, kj::StringPtr message) {
   kj::HttpHeaders respHeaders(tables.headerTable);
   respHeaders.set(kj::HttpHeaderId::CONTENT_TYPE, "text/plain; charset=UTF-8");
-  auto stream = response.send(403, "Unauthorized", respHeaders, message.size());
+  auto stream = response.send(statusCode, statusText, respHeaders, message.size());
   auto promise = stream->write(message.begin(), message.size());
   return promise.attach(kj::mv(stream));
 }

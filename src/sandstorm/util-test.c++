@@ -16,12 +16,62 @@
 
 #include "util.h"
 #include "web-session-bridge.h"
+#include "gateway.h"
+#include <kj/encoding.h>
 #include <kj/test.h>
 #include <sys/wait.h>
 #include <kj/async-io.h>
 
 namespace sandstorm {
 namespace {
+
+struct GatewayFixture {
+  kj::AsyncIoContext io = kj::setupAsyncIo();
+  kj::HttpHeaderTable::Builder builder;
+  GatewayService::Tables tables{builder};
+  kj::HttpHeaderId location = builder.add("Location");
+  kj::HttpHeaderId cookie = builder.add("Set-Cookie");
+  kj::Own<kj::HttpHeaderTable> headerTable = builder.build();
+  kj::Own<kj::HttpClient> shell = kj::newHttpClient(
+      io.provider->getTimer(), *headerTable, io.provider->getNetwork(), nullptr);
+  GatewayService gateway{io.provider->getTimer(), *shell, nullptr, tables,
+      "http://shell.example", "*.example", nullptr, false};
+  kj::Promise<void> cleanup = gateway.cleanupLoop();
+  kj::Own<kj::HttpClient> client = kj::newHttpClient(gateway);
+};
+
+KJ_TEST("UI init redirects remain local and session cookies contain only valid IDs") {
+  GatewayFixture fixture;
+  kj::HttpHeaders headers(*fixture.headerTable);
+  headers.set(kj::HttpHeaderId::HOST, "ui-test.example");
+  auto check = [&](kj::StringPtr token, kj::StringPtr path, uint status,
+                   kj::StringPtr expectedPath = "") {
+    auto url = kj::str("/_sandstorm-init?sessionid=", kj::encodeUriComponent(token),
+                      "&path=", kj::encodeUriComponent(path));
+    auto request = fixture.client->request(kj::HttpMethod::GET, url, headers);
+    auto response = request.response.wait(fixture.io.waitScope);
+    KJ_EXPECT(response.statusCode == status, path, token);
+    if (status == 303) {
+      KJ_EXPECT(response.headers->get(fixture.location).orDefault("") == expectedPath);
+      KJ_EXPECT(response.headers->get(fixture.cookie).orDefault("") ==
+          kj::str("sandstorm-sid=", token, "; HttpOnly"));
+    } else {
+      KJ_EXPECT(response.headers->get(fixture.cookie) == nullptr);
+      KJ_EXPECT(response.headers->get(fixture.location) == nullptr);
+    }
+    response.body->readAllText().wait(fixture.io.waitScope);
+  };
+  auto token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"_kj;
+  check(token, "/documents?q=1", 303, "/documents?q=1");
+  check(token, "legacy", 303, "/legacy");
+  for (auto path: {"//other.example", "/\\other.example", "\\other.example", "/a\r\nLocation: x", "/a\t"}) {
+    check(token, path, 400);
+  }
+  check("", "/", 400);
+  check("short", "/", 400);
+  check(kj::str(token, "a"), "/", 400);
+  check(kj::str(token.slice(1), ";"), "/", 400);
+}
 
 KJ_TEST("HTTP entity-tag lists preserve values and handle large headers") {
   capnp::MallocMessageBuilder message;
