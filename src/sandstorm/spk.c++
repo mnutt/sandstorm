@@ -1405,13 +1405,17 @@ private:
     // use as input below. We'll do all that in a thread to keep the code simple.
     byte packageHash[crypto_hash_sha256_BYTES];
     Pipe spkPipe = Pipe::make();
-    auto hashThread = new kj::Thread([&]() {
+    Pipe cancelHash = Pipe::make();
+    auto hashThread = kj::heap<kj::Thread>([&]() {
       crypto_hash_sha256_state packageHashState;
       KJ_ASSERT(crypto_hash_sha256_init(&packageHashState) == 0);
 
       byte buffer[8192];
       kj::FdOutputStream out(kj::mv(spkPipe.writeEnd));
       for (;;) {
+        struct pollfd fds[] = {{spkfd, POLLIN, 0}, {cancelHash.readEnd, POLLIN, 0}};
+        KJ_SYSCALL(poll(fds, 2, -1));
+        if (fds[1].revents != 0) return;
         ssize_t n;
         KJ_SYSCALL(n = read(spkfd, buffer, sizeof(buffer)));
         if (n == 0) break;
@@ -1419,7 +1423,13 @@ private:
         out.write(buffer, n);
       }
 
-      KJ_ASSERT(crypto_hash_sha256_final(&packageHashState, packageHash));
+      KJ_ASSERT(crypto_hash_sha256_final(&packageHashState, packageHash) == 0);
+    });
+    KJ_DEFER({
+      // The xz child (if started below) is destroyed first. Unblock the hash thread before
+      // joining it, including when bad magic is rejected before xz starts.
+      cancelHash.writeEnd = nullptr;
+      spkPipe.readEnd = nullptr;
     });
 
     // Check the magic number.
@@ -1448,8 +1458,10 @@ private:
     byte publicKey[crypto_sign_PUBLICKEYBYTES];
     byte sigBytes[crypto_hash_sha512_BYTES + crypto_sign_BYTES];
     {
-      // TODO(security): Set a small limit on signature size?
-      capnp::InputStreamMessageReader signatureMessage(in);
+      // The envelope only contains a public key and a signed hash.
+      capnp::ReaderOptions signatureLimits;
+      signatureLimits.traversalLimitInWords = 1024;
+      capnp::InputStreamMessageReader signatureMessage(in, signatureLimits);
       auto signature = signatureMessage.getRoot<spk::Signature>();
       auto pkReader = signature.getPublicKey();
       if (pkReader.size() != sizeof(publicKey)) {

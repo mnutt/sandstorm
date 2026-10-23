@@ -21,6 +21,7 @@
 #include "spk.h"
 #include <sodium/crypto_sign.h>
 #include <sodium/crypto_hash_sha512.h>
+#include <sodium/crypto_hash_sha256.h>
 #include "app-index/keybase.h"
 #include "app-index/indexer.h"
 #include <kj/encoding.h>
@@ -102,6 +103,127 @@ public:
   }
   char directory[40] = "/tmp/sandstorm-package.XXXXXX";
 };
+
+KJ_TEST("Package signature envelopes have a small message limit") {
+  PackageFixture fixture;
+  capnp::MallocMessageBuilder manifest;
+  manifest.initRoot<spk::Manifest>();
+  auto manifestWords = capnp::messageToFlatArray(manifest);
+  capnp::MallocMessageBuilder archive;
+  auto file = archive.initRoot<spk::Archive>().initFiles(1)[0];
+  file.setName("sandstorm-manifest");
+  file.setRegular(manifestWords.asBytes());
+  for (uint padding: {0, 16384}) {
+    auto packed = fixture.pack(archive, padding);
+    auto temp = raiiOpen(fixture.path("verified"), O_CREAT | O_TRUNC | O_RDWR, 0600);
+    capnp::MallocMessageBuilder info;
+    if (padding == 0) {
+      auto contents = readAll(packed);
+      byte digest[crypto_hash_sha256_BYTES];
+      KJ_ASSERT(crypto_hash_sha256(digest, contents.asBytes().begin(), contents.size()) == 0);
+      KJ_SYSCALL(lseek(packed, 0, SEEK_SET));
+      verifySpk(packed, temp, info.initRoot<spk::VerifiedInfo>());
+      auto actual = capnp::AnyStruct::Builder(info.getRoot<spk::VerifiedInfo>().getPackageId())
+          .getDataSection();
+      KJ_EXPECT(memcmp(actual.begin(), digest, actual.size()) == 0);
+    } else {
+      KJ_EXPECT_THROW_MESSAGE("Message is too large",
+          verifySpk(packed, temp, info.initRoot<spk::VerifiedInfo>()));
+      struct stat stats;
+      KJ_SYSCALL(fstat(temp, &stats));
+      KJ_EXPECT(stats.st_size == 0);
+    }
+  }
+}
+
+KJ_TEST("Package verification rejects bad magic while input remains open") {
+  Subprocess child([]() {
+    alarm(5);
+    PackageFixture fixture;
+    Pipe pipe = Pipe::make();
+    kj::FdOutputStream(pipe.writeEnd.get()).write("badmagic", 8);
+    // Keep the writer open: rejection must cancel the hash thread's next read.
+    auto temp = raiiOpen(fixture.path("verified"), O_CREAT | O_TRUNC | O_RDWR, 0600);
+    capnp::MallocMessageBuilder info;
+    auto error = kj::runCatchingExceptions([&]() {
+      verifySpk(pipe.readEnd, temp, info.initRoot<spk::VerifiedInfo>());
+    });
+    KJ_REQUIRE(strstr(KJ_REQUIRE_NONNULL(error).getDescription().cStr(),
+                      "Does not appear to be an .spk") != nullptr);
+    alarm(0);
+    return 0;
+  });
+  child.waitForSuccess();
+}
+
+KJ_TEST("Package verification cancels a hash reader after rejecting the signature") {
+  PackageFixture fixture;
+  capnp::MallocMessageBuilder archive;
+  archive.initRoot<spk::Archive>().initFiles(0);
+  auto packed = fixture.pack(archive, 16384);
+  auto bytes = readAll(packed);
+  KJ_REQUIRE(bytes.size() < 4096);
+  Subprocess child([&]() {
+    // A timeout turns a stuck join into a test failure instead of hanging the suite.
+    alarm(5);
+    Pipe pipe = Pipe::make();
+    Subprocess writer([&]() {
+      pipe.readEnd = nullptr;
+      kj::FdOutputStream output(pipe.writeEnd.get());
+      output.write(bytes.begin(), bytes.size());
+      // Supply enough XZ stream padding to flush the decompressor's input buffers, but
+      // leave the input open. Verification must return without waiting for this writer.
+      byte padding[65536] = {};
+      output.write(padding, sizeof(padding));
+      for (;;) pause();
+      return 0;
+    });
+    pipe.writeEnd = nullptr;
+    auto temp = raiiOpen(fixture.path("verified"), O_CREAT | O_TRUNC | O_RDWR, 0600);
+    capnp::MallocMessageBuilder info;
+    auto error = kj::runCatchingExceptions([&]() {
+      verifySpk(pipe.readEnd, temp, info.initRoot<spk::VerifiedInfo>());
+    });
+    KJ_REQUIRE(strstr(KJ_REQUIRE_NONNULL(error).getDescription().cStr(),
+                      "Message is too large") != nullptr);
+    alarm(0);
+    return 0;
+  });
+  child.waitForSuccess();
+}
+
+KJ_TEST("Backend package uploads reject oversized advertised sizes") {
+  auto io = kj::setupAsyncIo();
+  Backend::Client backend = kj::heap<BackendImpl>(*io.lowLevelProvider,
+      io.provider->getNetwork(), nullptr, nullptr, nullptr, false, false);
+  auto stream = backend.installPackageRequest().send().getStream();
+  auto size = stream.expectSizeRequest();
+  size.setSize(MAX_PACKAGE_UPLOAD_BYTES + 1);
+  KJ_EXPECT_THROW_MESSAGE("Package upload is too large", size.send().wait(io.waitScope));
+  auto validSize = stream.expectSizeRequest();
+  validSize.setSize(MAX_PACKAGE_UPLOAD_BYTES);
+  validSize.send().wait(io.waitScope);
+}
+
+KJ_TEST("App-index uploads reject oversized hints and writes after done") {
+  auto io = kj::setupAsyncIo();
+  appindex::Indexer indexer;
+  auto stream = indexer.newUploadStream();
+  auto size = stream.expectSizeRequest();
+  size.setSize(MAX_PACKAGE_UPLOAD_BYTES + 1);
+  KJ_EXPECT_THROW_MESSAGE("Package upload is too large", size.send().wait(io.waitScope));
+  auto write = stream.writeRequest();
+  write.setData("1234"_kj.asBytes());
+  write.send().wait(io.waitScope);
+  // Hints are checked against the maximum; write() enforces the remaining budget.
+  auto lateHint = stream.expectSizeRequest();
+  lateHint.setSize(MAX_PACKAGE_UPLOAD_BYTES);
+  lateHint.send().wait(io.waitScope);
+  stream.doneRequest().send().wait(io.waitScope);
+  auto afterDone = stream.writeRequest();
+  afterDone.setData("x"_kj.asBytes());
+  KJ_EXPECT_THROW_MESSAGE("after done", afterDone.send().wait(io.waitScope));
+}
 
 KJ_TEST("Package unpacking requires a regular root manifest") {
   for (uint type = 0; type < 5; ++type) {

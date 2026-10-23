@@ -25,6 +25,9 @@
 
 namespace sandstorm {
 
+static constexpr uint64_t MAX_PACKAGE_UPLOAD_BYTES = 2ull << 30;
+// Leave room for compression overhead above the unpacked archive limit.
+
 kj::Own<AbstractMain> getSpkMain(kj::ProcessContext& context);
 
 kj::String unpackSpk(int spkfd, kj::StringPtr outdir, kj::StringPtr tmpdir);

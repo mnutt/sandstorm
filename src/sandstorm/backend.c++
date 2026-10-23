@@ -406,6 +406,8 @@ protected:
   kj::Promise<void> write(WriteContext context) override {
     auto forked = writeQueue.then([this,context]() mutable {
       auto data = context.getParams().getData();
+      KJ_REQUIRE(data.size() <= remainingBytes, "Package upload is too large");
+      remainingBytes -= data.size();
       return KJ_REQUIRE_NONNULL(inputWriteEnd, "called write() after done()")
           ->write(data.begin(), data.size());
     }).fork();
@@ -426,7 +428,8 @@ protected:
   }
 
   kj::Promise<void> expectSize(ExpectSizeContext context) override {
-    // don't care
+    KJ_REQUIRE(context.getParams().getSize() <= MAX_PACKAGE_UPLOAD_BYTES,
+        "Package upload is too large");
     return kj::READY_NOW;
   }
 
@@ -480,6 +483,7 @@ private:
   kj::String tmpdir;
   Subprocess unpackProcess;
   bool saveCalled = false;
+  uint64_t remainingBytes = MAX_PACKAGE_UPLOAD_BYTES;
 
   static kj::String tempDirname() {
     static uint counter = 0;

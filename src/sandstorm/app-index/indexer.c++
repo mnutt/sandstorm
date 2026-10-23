@@ -537,7 +537,15 @@ protected:
   kj::Promise<void> write(WriteContext context) override {
     KJ_REQUIRE(!doneCalled, "called write() after done()");
     auto data = context.getParams().getData();
+    KJ_REQUIRE(data.size() <= remainingBytes, "Package upload is too large");
+    remainingBytes -= data.size();
     kj::FdOutputStream(spkFile.getFd()).write(data.begin(), data.size());
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> expectSize(ExpectSizeContext context) override {
+    KJ_REQUIRE(context.getParams().getSize() <= MAX_PACKAGE_UPLOAD_BYTES,
+        "Package upload is too large");
     return kj::READY_NOW;
   }
 
@@ -607,6 +615,7 @@ protected:
 
 private:
   StagingFile spkFile;
+  uint64_t remainingBytes = MAX_PACKAGE_UPLOAD_BYTES;
   kj::PromiseFulfillerPair<void> doneCalledPaf = kj::newPromiseAndFulfiller<void>();
   bool doneCalled = false;
   bool getResultCalled = false;
