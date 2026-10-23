@@ -58,9 +58,8 @@ const makePool = function (mailConfig) {
 
   const secure = (mailConfig.port === 465);
   const tlsOptions = {
-    // Previously, node 0.10 did not attempt to validate certificates received when connecting
-    // with STARTTLS, so to avoid regressing we need to preserve that behavior here for now.
-    rejectUnauthorized: false,
+    // Use Node's configured trust roots when connecting to the SMTP server.
+    rejectUnauthorized: true,
   };
 
   const pool = nodemailer.createTransport({
