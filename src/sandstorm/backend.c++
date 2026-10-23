@@ -27,7 +27,8 @@ namespace sandstorm {
 static constexpr kj::StringPtr SERVER_RUNTIME = "classic"_kj;
 
 static kj::StringPtr validateId(kj::StringPtr id) {
-  KJ_REQUIRE(id.size() >= 8 && !id.startsWith(".") && id.findFirst('/') == nullptr, id);
+  KJ_REQUIRE(id.size() >= 8 && !id.startsWith(".") && id.findFirst('/') == nullptr &&
+      id.findFirst('\0') == nullptr, "invalid object ID", id);
   return id;
 }
 
@@ -542,8 +543,8 @@ kj::Promise<void> BackendImpl::backupGrain(BackupGrainContext context) {
 
   auto params = context.getParams();
 
-  auto grainId = params.getGrainId();
-  auto path = kj::str("/var/sandstorm/backups/", params.getBackupId());
+  auto grainId = validateId(params.getGrainId());
+  auto path = kj::str("/var/sandstorm/backups/", validateId(params.getBackupId()));
 
   auto iter = supervisors.find(grainId);
   if(iter == supervisors.end()) {
@@ -615,8 +616,8 @@ kj::Promise<void> BackendImpl::backupGrain(BackupGrainContext context) {
 kj::Promise<void> BackendImpl::restoreGrain(RestoreGrainContext context) {
   auto params = context.getParams();
 
-  auto path = kj::str("/var/sandstorm/backups/", params.getBackupId());
-  auto grainDir = kj::str("/var/sandstorm/grains/", params.getGrainId());
+  auto path = kj::str("/var/sandstorm/backups/", validateId(params.getBackupId()));
+  auto grainDir = kj::str("/var/sandstorm/grains/", validateId(params.getGrainId()));
 
   // Similar to the supervisor, the "backup" command sets up its own sandbox, and for that to work
   // we need to pass along root privileges to it.
@@ -704,7 +705,7 @@ private:
 };
 
 kj::Promise<void> BackendImpl::uploadBackup(UploadBackupContext context) {
-  auto path = kj::str("/var/sandstorm/backups/", context.getParams().getBackupId());
+  auto path = kj::str("/var/sandstorm/backups/", validateId(context.getParams().getBackupId()));
   context.releaseParams();
 
   recursivelyCreateParent(path);
@@ -716,7 +717,7 @@ kj::Promise<void> BackendImpl::uploadBackup(UploadBackupContext context) {
 
 kj::Promise<void> BackendImpl::downloadBackup(DownloadBackupContext context) {
   auto params = context.getParams();
-  auto path = kj::str("/var/sandstorm/backups/", params.getBackupId());
+  auto path = kj::str("/var/sandstorm/backups/", validateId(params.getBackupId()));
   auto stream = params.getStream();
   context.releaseParams();
 
@@ -734,7 +735,7 @@ kj::Promise<void> BackendImpl::downloadBackup(DownloadBackupContext context) {
 }
 
 kj::Promise<void> BackendImpl::deleteBackup(DeleteBackupContext context) {
-  auto path = kj::str("/var/sandstorm/backups/", context.getParams().getBackupId());
+  auto path = kj::str("/var/sandstorm/backups/", validateId(context.getParams().getBackupId()));
   while (unlink(path.cStr()) < 0) {
     int error = errno;
     if (error == ENOENT) {

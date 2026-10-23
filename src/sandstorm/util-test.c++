@@ -17,6 +17,7 @@
 #include "util.h"
 #include "web-session-bridge.h"
 #include "gateway.h"
+#include "backend.h"
 #include <kj/encoding.h>
 #include <kj/test.h>
 #include <sys/wait.h>
@@ -24,6 +25,35 @@
 
 namespace sandstorm {
 namespace {
+
+KJ_TEST("Backup RPCs reject invalid object IDs before accessing files") {
+  auto io = kj::setupAsyncIo();
+  Backend::Client backend = kj::heap<BackendImpl>(*io.lowLevelProvider,
+      io.provider->getNetwork(), nullptr, nullptr, nullptr, false, false);
+  const char embeddedNul[] = "abcdefgh\0suffix";
+  for (auto invalid: {""_kj, "short"_kj, ".abcdefgh"_kj, "abcdefgh/child"_kj,
+                     kj::StringPtr(embeddedNul, sizeof(embeddedNul) - 1)}) {
+    auto upload = backend.uploadBackupRequest();
+    upload.setBackupId(invalid);
+    KJ_EXPECT_THROW_MESSAGE("invalid object ID", upload.send().wait(io.waitScope));
+    auto download = backend.downloadBackupRequest();
+    download.setBackupId(invalid);
+    KJ_EXPECT_THROW_MESSAGE("invalid object ID", download.send().wait(io.waitScope));
+    auto remove = backend.deleteBackupRequest();
+    remove.setBackupId(invalid);
+    KJ_EXPECT_THROW_MESSAGE("invalid object ID", remove.send().wait(io.waitScope));
+    for (bool invalidGrain: {false, true}) {
+      auto backup = backend.backupGrainRequest();
+      backup.setBackupId(invalidGrain ? "abcdefgh"_kj : invalid);
+      backup.setGrainId(invalidGrain ? invalid : "abcdefgh"_kj);
+      KJ_EXPECT_THROW_MESSAGE("invalid object ID", backup.send().wait(io.waitScope));
+      auto restore = backend.restoreGrainRequest();
+      restore.setBackupId(invalidGrain ? "abcdefgh"_kj : invalid);
+      restore.setGrainId(invalidGrain ? invalid : "abcdefgh"_kj);
+      KJ_EXPECT_THROW_MESSAGE("invalid object ID", restore.send().wait(io.waitScope));
+    }
+  }
+}
 
 struct GatewayFixture {
   kj::AsyncIoContext io = kj::setupAsyncIo();
