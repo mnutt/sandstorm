@@ -161,12 +161,6 @@ private:
   template <typename Builder>
   void initContent(Builder&& builder, const kj::HttpHeaders& headers);
 
-  capnp::Orphan<capnp::List<WebSession::ETag>> parseETagList(
-      capnp::Orphanage orphanage, kj::StringPtr text,
-      kj::Vector<kj::Tuple<kj::String, bool>> parsed = kj::Vector<kj::Tuple<kj::String, bool>>());
-
-  kj::Tuple<kj::String, bool> parseETagInternal(kj::StringPtr& text);
-
   kj::Promise<void> handleStreamingRequestResponse(
       WebSession::RequestStream::Client reqStream,
       kj::AsyncInputStream& requestBody,
@@ -189,6 +183,10 @@ private:
 
   class ByteStreamImpl;
 };
+
+// Decode an HTTP entity-tag list without consuming stack proportional to its length.
+capnp::Orphan<capnp::List<WebSession::ETag>> parseETagList(
+    capnp::Orphanage orphanage, kj::StringPtr text);
 
 }  // namespace sandstorm
 

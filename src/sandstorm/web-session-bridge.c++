@@ -1060,26 +1060,27 @@ void WebSessionBridge::initContent(Builder&& builder, const kj::HttpHeaders& hea
   }
 }
 
-capnp::Orphan<capnp::List<WebSession::ETag>> WebSessionBridge::parseETagList(
-    capnp::Orphanage orphanage, kj::StringPtr text,
-    kj::Vector<kj::Tuple<kj::String, bool>> parsed) {
-  parsed.add(parseETagInternal(text));
-  if (text.size() > 0) {
+static kj::Tuple<kj::String, bool> parseETagInternal(kj::StringPtr& text);
+
+capnp::Orphan<capnp::List<WebSession::ETag>> parseETagList(
+    capnp::Orphanage orphanage, kj::StringPtr text) {
+  kj::Vector<kj::Tuple<kj::String, bool>> parsed;
+  for (;;) {
+    parsed.add(parseETagInternal(text));
+    if (text.size() == 0) break;
     KJ_REQUIRE(text[0] == ',', "etag must be followed by comma", text);
-    return parseETagList(orphanage, text.slice(1), kj::mv(parsed));
-  } else {
-    auto result = orphanage.newOrphan<capnp::List<WebSession::ETag>>(parsed.size());
-    auto list = result.get();
-    for (size_t i: kj::indices(parsed)) {
-      auto etag = list[i];
-      etag.setValue(kj::get<0>(parsed[i]));
-      etag.setWeak(kj::get<1>(parsed[i]));
-    }
-    return result;
+    text = text.slice(1);
   }
+  auto result = orphanage.newOrphan<capnp::List<WebSession::ETag>>(parsed.size());
+  auto list = result.get();
+  for (size_t i: kj::indices(parsed)) {
+    list[i].setValue(kj::get<0>(parsed[i]));
+    list[i].setWeak(kj::get<1>(parsed[i]));
+  }
+  return result;
 }
 
-kj::Tuple<kj::String, bool> WebSessionBridge::parseETagInternal(kj::StringPtr& text) {
+static kj::Tuple<kj::String, bool> parseETagInternal(kj::StringPtr& text) {
   const char* p = text.begin();
 
   while (*p == ' ') ++p;

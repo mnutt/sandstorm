@@ -15,12 +15,36 @@
 // limitations under the License.
 
 #include "util.h"
+#include "web-session-bridge.h"
 #include <kj/test.h>
 #include <sys/wait.h>
 #include <kj/async-io.h>
 
 namespace sandstorm {
 namespace {
+
+KJ_TEST("HTTP entity-tag lists preserve values and handle large headers") {
+  capnp::MallocMessageBuilder message;
+  auto parsed = parseETagList(message.getOrphanage(), " \"first\", W/\"second\",\"\"");
+  auto tags = parsed.getReader();
+  KJ_ASSERT(tags.size() == 3);
+  KJ_EXPECT(tags[0].getValue() == "first" && !tags[0].getWeak());
+  KJ_EXPECT(tags[1].getValue() == "second" && tags[1].getWeak());
+  KJ_EXPECT(tags[2].getValue() == "" && !tags[2].getWeak());
+  KJ_EXPECT_THROW_MESSAGE("etag must be followed by comma",
+      parseETagList(message.getOrphanage(), "\"a\";\"b\""));
+  KJ_EXPECT_THROW_MESSAGE("invalid ETag", parseETagList(message.getOrphanage(), "\"a\","));
+
+  for (auto empty: {""_kj, "   "_kj, kj::StringPtr(nullptr)}) {
+    KJ_EXPECT_THROW_MESSAGE("invalid ETag", parseETagList(message.getOrphanage(), empty));
+  }
+
+  auto text = kj::heapString(3 * 40000 - 1);
+  for (size_t i = 0; i < text.size(); ++i) text[i] = i % 3 == 2 ? ',' : '"';
+  auto large = parseETagList(message.getOrphanage(), text);
+  KJ_ASSERT(large.getReader().size() == 40000);
+  for (auto tag: large.getReader()) KJ_EXPECT(tag.getValue() == "" && !tag.getWeak());
+}
 
 KJ_TEST("HeaderWhitelist") {
   const char* WHITELIST[] = {
