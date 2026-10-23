@@ -213,3 +213,27 @@ module.exports["Test email token creation and login behavior"] = function (brows
 
   browser.end();
 };
+
+module.exports["Test SAML popup displays error details as text"] = function (browser) {
+  browser.url(browser.launch_url + "/").timeouts("script", medium_wait)
+    .executeAsync(function (done) {
+      Meteor.call("testSamlPopupResponses", function (error, result) {
+        if (error) return done({ error: error.message });
+        var failure = new DOMParser().parseFromString(result.failure.html, "text/html");
+        var success = new DOMParser().parseFromString(result.success.html, "text/html");
+        done({
+          error: null, status: result.failure.status, contentType: result.failure.headers["Content-Type"],
+          text: failure.querySelector("div").textContent, expectedText: result.expectedText,
+          images: failure.querySelectorAll("img").length,
+          closes: success.querySelector("script").textContent.includes("window.close()"),
+        });
+      });
+    }, [], function (result) {
+      browser.assert.equal(result.value.error, null);
+      browser.assert.equal(result.value.status, 200);
+      browser.assert.equal(result.value.contentType, "text/html");
+      browser.assert.equal(result.value.text, result.value.expectedText, "error details remain literal");
+      browser.assert.equal(result.value.images, 0, "error details do not create elements");
+      browser.assert.equal(result.value.closes, true, "successful login still closes its popup");
+    }).end();
+};

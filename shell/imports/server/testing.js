@@ -36,6 +36,7 @@ import {
 } from "/imports/blackrock-payments/server/payments-server";
 import { MAILING_LIST_BONUS } from "/imports/blackrock-payments/constants";
 import { LDAP } from "/imports/server/accounts/ldap";
+import { closePopup as closeSamlPopup } from "/imports/server/accounts/saml/saml-server";
 import { validateSandstormLoginAttempt } from "/imports/server/accounts/accounts-server";
 import {
   emailTokenLoginHandler,
@@ -355,6 +356,19 @@ if(isTesting) {
       }
 
       throw new Meteor.Error("setup-session-still-valid", "Setup session token still authorized.");
+    },
+
+    testSamlPopupResponses: function () {
+      const error = new Error(`<img src=x onerror="window.popupMarkupExecuted=true"> & 'details'`);
+      const render = (error) => {
+        const result = {};
+        closeSamlPopup({
+          writeHead(status, headers) { Object.assign(result, { status, headers }); },
+          end(html) { result.html = html; },
+        }, error);
+        return result;
+      };
+      return { failure: render(error), success: render(), expectedText: String(error) };
     },
 
     testRegressionLdapQuotaReturnValue: async function () {

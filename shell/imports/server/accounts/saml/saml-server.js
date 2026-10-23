@@ -1,4 +1,5 @@
 import Url from "url";
+import { escapeHtml } from "/imports/shared/template-values";
 import zlib from "zlib";
 
 import { Meteor } from "meteor/meteor";
@@ -97,12 +98,12 @@ const samlUrlToObject = function (url) {
   };
 };
 
-const closePopup = function (res, err) {
+export const closePopup = function (res, err) {
   res.writeHead(200, { "Content-Type": "text/html" });
   let content =
         "<html><head><script>window.close()</script></head></html>";
   if (err)
-    content = "<html><body><h2>Sorry, an error occured</h2><div>" + err + '</div><a onclick="window.close();">Close Window</a> <a href="/admin/status" target="_blank">View system log (admin only)</a></body></html>';
+    content = "<html><body><h2>Sorry, an error occured</h2><div>" + escapeHtml(err) + '</div><a onclick="window.close();">Close Window</a> <a href="/admin/status" target="_blank">View system log (admin only)</a></body></html>';
   res.end(content, "utf-8");
 };
 
