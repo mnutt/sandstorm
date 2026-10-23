@@ -192,6 +192,14 @@ kj::String packageIdString(kj::ArrayPtr<const kj::byte> packageId) {
   return kj::encodeHex(packageId);
 }
 
+kj::StringPtr validateIdentityId(kj::StringPtr id) {
+  KJ_REQUIRE(id.size() == 32, "invalid identity ID", id);
+  for (char c: id) {
+    KJ_REQUIRE((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'), "invalid identity ID", id);
+  }
+  return id;
+}
+
 bool tryParsePackageId(kj::StringPtr in, spk::PackageId::Builder out) {
   return tryParsePackageId(in, capnp::AnyStruct::Builder(kj::mv(out)).getDataSection());
 }

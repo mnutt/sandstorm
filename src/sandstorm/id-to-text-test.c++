@@ -22,6 +22,24 @@
 namespace sandstorm {
 namespace {
 
+KJ_TEST("Saved identity filenames require canonical hex IDs") {
+  KJ_EXPECT(validateIdentityId("0123456789abcdef0123456789abcdef") ==
+      "0123456789abcdef0123456789abcdef");
+  KJ_EXPECT_THROW_MESSAGE("invalid identity ID", validateIdentityId(""));
+  KJ_EXPECT_THROW_MESSAGE("invalid identity ID", validateIdentityId("0123456789abcdef"));
+  KJ_EXPECT_THROW_MESSAGE("invalid identity ID", validateIdentityId("0123456789abcdef0123456789abcdef0"));
+  for (uint value = 0; value < 256; ++value) {
+    auto id = kj::heapString("0123456789abcdef0123456789abcdef");
+    id[12] = static_cast<char>(value);
+    bool valid = (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f');
+    if (valid) {
+      KJ_EXPECT(validateIdentityId(id) == id);
+    } else {
+      KJ_EXPECT_THROW_MESSAGE("invalid identity ID", validateIdentityId(id));
+    }
+  }
+}
+
 KJ_TEST("App IDs to text") {
   capnp::MallocMessageBuilder builder;
   auto id = builder.initRoot<spk::AppId>();

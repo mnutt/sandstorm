@@ -58,6 +58,7 @@
 
 #include "version.h"
 #include "util.h"
+#include "id-to-text.h"
 #include "bridge-proxy.h"
 
 namespace sandstorm {
@@ -1332,12 +1333,7 @@ private:
   }
 
   Identity::Client loadIdentityFromDisk(kj::StringPtr textId) {
-    KJ_ASSERT(textId.size() == 32, "invalid identity ID", textId);
-    for (char c: textId) {
-      if ((c < '0' || '9' < c) && (c < 'a' && 'f' < c)) {
-        KJ_FAIL_ASSERT("invalid identity ID", textId);
-      }
-    }
+    validateIdentityId(textId);
 
     char buf[512];
     ssize_t n;

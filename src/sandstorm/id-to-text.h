@@ -39,6 +39,9 @@ kj::String packageIdString(kj::ArrayPtr<const kj::byte> packageId);
 bool tryParsePackageId(kj::StringPtr in, spk::PackageId::Builder out);
 bool tryParsePackageId(kj::StringPtr in, kj::ArrayPtr<kj::byte> out);
 
+// Validate the canonical lowercase hexadecimal name used for saved identity files.
+kj::StringPtr validateIdentityId(kj::StringPtr id);
+
 // =======================================================================================
 // JSON handlers for AppId and PackageId, converting them to their standard textual form.
 //
