@@ -12,7 +12,7 @@
 
     <ul class="app-updates">
     {{#each appUpdatesList}}
-      <li>{{{_ "notifications.appUpdateNotificationItem.appUpdates" name=name version=marketingVersion}}}</li>
+      <li>{{{_html "notifications.appUpdateNotificationItem.appUpdates" name=name version=marketingVersion}}}</li>
     {{/each}}
     </ul>
 
@@ -36,7 +36,7 @@
       <img src="/email.svg">
     </div>
 
-    {{{_ "notifications.mailingListBonusNotificationItem.explanationWithBonus" (renderStorage MAILING_LIST_BONUS)}}}
+    {{{_html "notifications.mailingListBonusNotificationItem.explanationWithBonus" (renderStorage MAILING_LIST_BONUS)}}}
 
     <div class="notification-footer">
       <span title="{{timestamp}}" class="notification-timestamp">{{dateString timestamp}}</span>
@@ -98,7 +98,7 @@
     </div>
 
     <div class="notification-title">
-      {{{_ "notifications.backgroundedGrainNotificationItem.title" grain=grainTitle}}}
+      {{{_html "notifications.backgroundedGrainNotificationItem.title" grain=grainTitle}}}
     </div>
 
     {{text.defaultText}}
@@ -137,7 +137,7 @@
     </div>
 
     <div class="notification-title">
-      {{{_ "notifications.grainActivityNotificationItem.title" sender=senderName grain=grainTitle}}}
+      {{{_html "notifications.grainActivityNotificationItem.title" sender=senderName grain=grainTitle}}}
     </div>
 
     {{text.defaultText}} {{#if multiple}}x{{count}}{{/if}}

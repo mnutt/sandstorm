@@ -873,6 +873,31 @@ if(isTesting) {
       }
     },
 
+    testNotificationNameFixture: async function (id, remove) {
+      if (typeof id !== "string" || !id.startsWith("test-notification-rendering-")) {
+        throw new Error("Invalid notification fixture ID");
+      }
+      if (remove) {
+        await globalDb.collections.notifications.removeAsync(id);
+        await globalDb.collections.grains.removeAsync(id);
+        await Meteor.users.removeAsync(id);
+      } else {
+        const name = `<img src=x onerror="window.notificationMarkupExecuted=true"> & 'Name'`;
+        await Meteor.users.insertAsync({
+          _id: id, type: "account", createdAt: new Date(),
+          loginCredentials: [], nonloginCredentials: [], profile: { name },
+        });
+        await globalDb.collections.grains.insertAsync({
+          _id: id, userId: this.userId, title: name + " grain", appId: "rendering-test",
+        });
+        await globalDb.collections.notifications.insertAsync({
+          _id: id, userId: this.userId, initiatingAccount: id, grainId: id,
+          timestamp: new Date(), isUnread: true, text: { defaultText: "Notification rendering test" },
+        });
+      }
+      return true;
+    },
+
     testAdminProfileNameFixture: async function (userId, remove) {
       if (typeof userId !== "string" || !userId.startsWith("test-profile-rendering-")) {
         throw new Error("Invalid profile fixture ID");
