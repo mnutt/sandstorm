@@ -124,6 +124,32 @@ void WebSessionBridge::restrictParentFrame(kj::StringPtr parent, kj::StringPtr s
   }
 }
 
+namespace {
+class BodyPrefix final: public kj::AsyncInputStream {
+public:
+  BodyPrefix(kj::AsyncInputStream& input, uint64_t remaining)
+      : input(input), remaining(remaining) {}
+
+  kj::Promise<size_t> tryRead(void* buffer, size_t minBytes, size_t maxBytes) override {
+    if (remaining == 0) return size_t(0);
+    maxBytes = kj::min(uint64_t(maxBytes), remaining);
+    return input.tryRead(buffer, kj::min(minBytes, maxBytes), maxBytes)
+        .then([this](size_t count) { remaining -= count; return count; });
+  }
+
+private:
+  kj::AsyncInputStream& input;
+  uint64_t remaining;
+};
+
+kj::Promise<kj::Array<byte>> readBodyPrefix(kj::AsyncInputStream& input, uint64_t limit) {
+  KJ_REQUIRE(limit < uint64_t(kj::maxValue));
+  auto prefix = kj::heap<BodyPrefix>(input, limit + 1);
+  auto result = prefix->readAllBytes();
+  return result.attach(kj::mv(prefix));
+}
+}  // namespace
+
 kj::Promise<void> WebSessionBridge::request(
     kj::HttpMethod method, kj::StringPtr path, const kj::HttpHeaders& headers,
     kj::AsyncInputStream& requestBody, Response& response) {
@@ -148,9 +174,12 @@ kj::Promise<void> WebSessionBridge::request(
 
     case kj::HttpMethod::POST: {
       auto doNonStreaming = [this,path,&headers,&requestBody,&response]() {
-        return requestBody.readAllBytes()
+        return readBodyPrefix(requestBody, options.maxBufferedBodySize)
             .then([this,path,&headers,&response]
                   (kj::Array<byte>&& data) mutable {
+          if (data.size() > options.maxBufferedBodySize) {
+            return response.sendError(413, "Request body too large", tables.headerTable);
+          }
           auto req = session.postRequest();
           req.setPath(path);
           auto content = req.initContent();
@@ -197,9 +226,12 @@ kj::Promise<void> WebSessionBridge::request(
 
     case kj::HttpMethod::PUT: {
       auto doNonStreaming = [this,path,&headers,&requestBody,&response]() {
-        return requestBody.readAllBytes()
+        return readBodyPrefix(requestBody, options.maxBufferedBodySize)
             .then([this,path,&headers,&response]
                   (kj::Array<byte>&& data) mutable {
+          if (data.size() > options.maxBufferedBodySize) {
+            return response.sendError(413, "Request body too large", tables.headerTable);
+          }
           auto req = session.putRequest();
           req.setPath(path);
           auto content = req.initContent();
@@ -252,9 +284,12 @@ kj::Promise<void> WebSessionBridge::request(
     }
 
     case kj::HttpMethod::PATCH: {
-      return requestBody.readAllBytes()
+      return readBodyPrefix(requestBody, options.maxBufferedBodySize)
           .then([this,path,&headers,&response]
                 (kj::Array<byte>&& data) mutable {
+        if (data.size() > options.maxBufferedBodySize) {
+          return response.sendError(413, "Request body too large", tables.headerTable);
+        }
         auto req = session.patchRequest();
         req.setPath(path);
         auto content = req.initContent();
@@ -292,8 +327,11 @@ kj::Promise<void> WebSessionBridge::request(
     }
 
     case kj::HttpMethod::MKCOL: {
-      return requestBody.readAllBytes()
+      return readBodyPrefix(requestBody, options.maxBufferedBodySize)
           .then([this,path,&headers,&response](kj::Array<byte> data) {
+        if (data.size() > options.maxBufferedBodySize) {
+          return response.sendError(413, "Request body too large", tables.headerTable);
+        }
         auto req = session.mkcolRequest();
         req.setPath(path);
         auto content = req.initContent();
@@ -370,8 +408,11 @@ kj::Promise<void> WebSessionBridge::request(
     }
 
     case kj::HttpMethod::REPORT: {
-      return requestBody.readAllBytes()
+      return readBodyPrefix(requestBody, options.maxBufferedBodySize)
           .then([this,path,&headers,&response](kj::Array<byte> data) {
+        if (data.size() > options.maxBufferedBodySize) {
+          return response.sendError(413, "Request body too large", tables.headerTable);
+        }
         auto req = session.reportRequest();
         req.setPath(path);
         auto content = req.initContent();
@@ -493,16 +534,23 @@ kj::Promise<kj::Maybe<kj::String>> WebSessionBridge::davXmlContent(
         .then([]() -> kj::Maybe<kj::String> { return nullptr; });
   }
 
+  auto read = [this, &response](kj::AsyncInputStream& input) {
+    return readBodyPrefix(input, options.maxBufferedBodySize)
+        .then([this, &response](kj::Array<byte> data) -> kj::Promise<kj::Maybe<kj::String>> {
+      if (data.size() > options.maxBufferedBodySize) {
+        return response.sendError(413, "Request body too large", tables.headerTable)
+            .then([]() -> kj::Maybe<kj::String> { return nullptr; });
+      }
+      return kj::Maybe<kj::String>(kj::str(data.asChars()));
+    });
+  };
   KJ_IF_MAYBE(enc, headers.get(tables.hContentEncoding)) {
     KJ_REQUIRE(*enc == "gzip", "unknown Content-Encoding", *enc);
-
     auto zstream = kj::heap<kj::GzipAsyncInputStream>(body);
-    auto promise = zstream->readAllText();
-    return promise.attach(kj::mv(zstream))
-        .then([](kj::String str) -> kj::Maybe<kj::String> { return kj::mv(str); });
+    auto promise = read(*zstream);
+    return promise.attach(kj::mv(zstream));
   } else {
-    return body.readAllText()
-        .then([](kj::String str) -> kj::Maybe<kj::String> { return kj::mv(str); });
+    return read(body);
   }
 }
 

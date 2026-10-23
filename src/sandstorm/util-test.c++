@@ -19,6 +19,7 @@
 #include "gateway.h"
 #include "backend.h"
 #include <kj/encoding.h>
+#include <kj/compat/gzip.h>
 #include <kj/test.h>
 #include <sys/wait.h>
 #include <kj/async-io.h>
@@ -52,6 +53,254 @@ KJ_TEST("Backup RPCs reject invalid object IDs before accessing files") {
       restore.setGrainId(invalidGrain ? invalid : "abcdefgh"_kj);
       KJ_EXPECT_THROW_MESSAGE("invalid object ID", restore.send().wait(io.waitScope));
     }
+  }
+}
+
+class BodyInput final: public kj::AsyncInputStream {
+public:
+  BodyInput(kj::ArrayPtr<const byte> data, bool knownLength): data(data), knownLength(knownLength) {}
+  kj::Promise<size_t> tryRead(void* buffer, size_t, size_t maxBytes) override {
+    auto size = kj::min(maxBytes, data.size());
+    memcpy(buffer, data.begin(), size);
+    data = data.slice(size, data.size());
+    consumed += size;
+    return size;
+  }
+  kj::Maybe<uint64_t> tryGetLength() override {
+    if (knownLength) return data.size();
+    return nullptr;
+  }
+  size_t consumed = 0;
+private:
+  kj::ArrayPtr<const byte> data;
+  bool knownLength;
+};
+
+class DiscardBody final: public kj::AsyncOutputStream {
+public:
+  kj::Promise<void> write(const void*, size_t) override { return kj::READY_NOW; }
+  kj::Promise<void> write(kj::ArrayPtr<const kj::ArrayPtr<const byte>>) override {
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> whenWriteDisconnected() override { return kj::NEVER_DONE; }
+};
+
+class BodyResponse final: public kj::HttpService::Response {
+public:
+  uint status = 0;
+  kj::Own<kj::AsyncOutputStream> send(uint code, kj::StringPtr, const kj::HttpHeaders&,
+                                    kj::Maybe<uint64_t>) override {
+    KJ_REQUIRE(status == 0);
+    status = code;
+    return kj::heap<DiscardBody>();
+  }
+  kj::Own<kj::WebSocket> acceptWebSocket(const kj::HttpHeaders&) override {
+    KJ_FAIL_REQUIRE("unexpected websocket");
+  }
+};
+
+class BufferedSession final: public WebSession::Server {
+public:
+  BufferedSession(size_t& received): received(received) {}
+  kj::Promise<void> post(PostContext context) override {
+    received = context.getParams().getContent().getContent().size();
+    context.getResults().initNoContent();
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> put(PutContext context) override {
+    received = context.getParams().getContent().getContent().size();
+    context.getResults().initNoContent();
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> patch(PatchContext context) override {
+    received = context.getParams().getContent().getContent().size();
+    context.getResults().initNoContent();
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> mkcol(MkcolContext context) override {
+    received = context.getParams().getContent().getContent().size();
+    context.getResults().initNoContent();
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> report(ReportContext context) override {
+    received = context.getParams().getContent().getContent().size();
+    context.getResults().initNoContent();
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> proppatch(ProppatchContext context) override {
+    received = context.getParams().getXmlContent().size();
+    context.getResults().initNoContent();
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> propfind(PropfindContext context) override {
+    received = context.getParams().getXmlContent().size();
+    context.getResults().initNoContent();
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> lock(LockContext context) override {
+    received = context.getParams().getXmlContent().size();
+    context.getResults().initNoContent();
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> acl(AclContext context) override {
+    received = context.getParams().getXmlContent().size();
+    context.getResults().initNoContent();
+    return kj::READY_NOW;
+  }
+private:
+  size_t& received;
+};
+
+class UploadStream final: public WebSession::RequestStream::Server {
+public:
+  UploadStream(size_t& received): received(received) {}
+  kj::Promise<void> write(WriteContext context) override {
+    received += context.getParams().getData().size();
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> expectSize(ExpectSizeContext) override { return kj::READY_NOW; }
+  kj::Promise<void> done(DoneContext) override {
+    complete.fulfiller->fulfill();
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> getResponse(GetResponseContext context) override {
+    return complete.promise.then([context = kj::mv(context)]() mutable {
+      context.getResults().initNoContent();
+    });
+  }
+private:
+  size_t& received;
+  kj::PromiseFulfillerPair<void> complete = kj::newPromiseAndFulfiller<void>();
+};
+
+class StreamingSession final: public WebSession::Server {
+public:
+  StreamingSession(size_t& received): received(received) {}
+  kj::Promise<void> postStreaming(PostStreamingContext context) override {
+    context.getResults().setStream(kj::heap<UploadStream>(received));
+    return kj::READY_NOW;
+  }
+  kj::Promise<void> putStreaming(PutStreamingContext context) override {
+    context.getResults().setStream(kj::heap<UploadStream>(received));
+    return kj::READY_NOW;
+  }
+private:
+  size_t& received;
+};
+
+KJ_TEST("Buffered HTTP bodies have an inclusive limit, including decoded WebDAV content") {
+  auto io = kj::setupAsyncIo();
+  kj::HttpHeaderTable::Builder builder;
+  WebSessionBridge::Tables tables(builder);
+  auto contentEncoding = builder.add("Content-Encoding");
+  auto headerTable = builder.build();
+  WebSessionBridge::Options options;
+  options.maxBufferedBodySize = 1024;
+  size_t received = kj::maxValue;
+  WebSessionBridge bridge(io.provider->getTimer(), kj::heap<BufferedSession>(received),
+                          nullptr, tables, options);
+  kj::HttpHeaders headers(*headerTable);
+  for (auto method: {kj::HttpMethod::POST, kj::HttpMethod::PUT, kj::HttpMethod::PATCH,
+                    kj::HttpMethod::MKCOL, kj::HttpMethod::REPORT, kj::HttpMethod::PROPPATCH,
+                    kj::HttpMethod::PROPFIND, kj::HttpMethod::LOCK, kj::HttpMethod::ACL}) {
+    for (bool knownLength: {false, true}) {
+      for (size_t size: {0, 1024, 1025, 4096}) {
+        auto data = kj::heapArray<byte>(size);
+        memset(data.begin(), 'x', size);
+        BodyInput input(data, knownLength);
+        BodyResponse response;
+        received = kj::maxValue;
+        bridge.request(method, "/body", headers, input, response).wait(io.waitScope);
+        KJ_EXPECT(response.status == (size <= 1024 ? 204 : 413), method, size, knownLength);
+        KJ_EXPECT(received == (size <= 1024 ? size : size_t(kj::maxValue)));
+        KJ_EXPECT(input.consumed <= 1025);
+      }
+    }
+  }
+  WebSessionBridge streamingBridge(io.provider->getTimer(), kj::heap<StreamingSession>(received),
+                                   nullptr, tables, options);
+  for (auto method: {kj::HttpMethod::POST, kj::HttpMethod::PUT}) {
+    for (bool knownLength: {false, true}) {
+      auto data = kj::heapArray<byte>(65536);
+      memset(data.begin(), 'x', data.size());
+      BodyInput input(data, knownLength);
+      BodyResponse response;
+      received = 0;
+      streamingBridge.request(method, "/body", headers, input, response).wait(io.waitScope);
+      KJ_EXPECT(response.status == 204);
+      KJ_EXPECT(received == data.size());
+    }
+  }
+  headers.set(contentEncoding, "gzip");
+  for (size_t size: {1024, 1025, 65536}) {
+    auto data = kj::heapArray<byte>(size);
+    memset(data.begin(), 'x', size);
+    kj::VectorOutputStream compressed;
+    {
+      kj::GzipOutputStream gzip(compressed);
+      gzip.write(data.begin(), data.size());
+    }
+    KJ_EXPECT(compressed.getArray().size() < 1024);
+    BodyInput input(compressed.getArray(), false);
+    BodyResponse response;
+    received = kj::maxValue;
+    bridge.request(kj::HttpMethod::PROPPATCH, "/body", headers, input, response).wait(io.waitScope);
+    KJ_EXPECT(response.status == (size <= 1024 ? 204 : 413), size);
+    KJ_EXPECT(received == (size <= 1024 ? size : size_t(kj::maxValue)));
+  }
+}
+
+KJ_TEST("Legacy uploads larger than eight MiB still work with the default buffer limit") {
+  auto io = kj::setupAsyncIo();
+  kj::HttpHeaderTable::Builder builder;
+  WebSessionBridge::Tables tables(builder);
+  auto headerTable = builder.build();
+  size_t received = 0;
+  WebSessionBridge bridge(io.provider->getTimer(), kj::heap<BufferedSession>(received),
+                          nullptr, tables, WebSessionBridge::Options());
+  kj::HttpHeaders headers(*headerTable);
+  auto data = kj::heapArray<byte>(9 * 1024 * 1024);
+  memset(data.begin(), 'x', data.size());
+  BodyInput input(data, true);
+  BodyResponse response;
+  bridge.request(kj::HttpMethod::POST, "/body", headers, input, response).wait(io.waitScope);
+  KJ_EXPECT(response.status == 204);
+  KJ_EXPECT(received == data.size());
+}
+
+class FailingBodyInput final: public kj::AsyncInputStream {
+public:
+  kj::Promise<size_t> tryRead(void*, size_t, size_t) override {
+    return KJ_EXCEPTION(FAILED, "Reached limit before EOF.");
+  }
+};
+
+class FailingBodySession final: public WebSession::Server {
+public:
+  kj::Promise<void> post(PostContext) override {
+    return KJ_EXCEPTION(FAILED, "Reached limit before EOF.");
+  }
+};
+
+KJ_TEST("Application errors are not mistaken for oversized request bodies") {
+  auto io = kj::setupAsyncIo();
+  kj::HttpHeaderTable::Builder builder;
+  WebSessionBridge::Tables tables(builder);
+  auto headerTable = builder.build();
+  WebSessionBridge bridge(io.provider->getTimer(), kj::heap<FailingBodySession>(),
+                          nullptr, tables, WebSessionBridge::Options());
+  kj::HttpHeaders headers(*headerTable);
+  BodyInput input(kj::arrayPtr(reinterpret_cast<const byte*>("ok"), 2), true);
+  BodyResponse response;
+  KJ_EXPECT_THROW_MESSAGE("Reached limit before EOF.",
+      bridge.request(kj::HttpMethod::POST, "/body", headers, input, response).wait(io.waitScope));
+  KJ_EXPECT(response.status == 0);
+  for (auto method: {kj::HttpMethod::POST, kj::HttpMethod::PROPPATCH}) {
+    FailingBodyInput failedInput;
+    BodyResponse failedResponse;
+    KJ_EXPECT_THROW_MESSAGE("Reached limit before EOF.",
+        bridge.request(method, "/body", headers, failedInput, failedResponse).wait(io.waitScope));
+    KJ_EXPECT(failedResponse.status == 0);
   }
 }
 

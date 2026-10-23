@@ -73,6 +73,10 @@ public:
   };
 
   struct Options {
+    uint64_t maxBufferedBodySize = 64 * 1024 * 1024;
+    // Match the default Cap'n Proto traversal budget (64 MiB) for legacy uploads and
+    // decoded WebDAV bodies. Streaming uploads remain unlimited by this buffer cap.
+
     bool allowCookies = false;
     // Should cookies be passed through or dropped on the floor?
 
