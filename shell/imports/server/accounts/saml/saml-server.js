@@ -3,6 +3,7 @@ import zlib from "zlib";
 
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
+import { Random } from "meteor/random";
 import { pick } from "/imports/shared/collection-utils";
 import { Accounts } from "meteor/accounts-base";
 
@@ -21,13 +22,40 @@ const HOSTNAME = Url.parse(process.env.ROOT_URL).hostname;
 
 // TODO(soon): This may need to be a Mongo collection in order to work when the frontend is
 //   replicated (but currently SAML is not used on any Blackrock servers).
-const _loginResultForCredentialToken = {};
+const PENDING_TOKEN_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_PENDING_CREDENTIAL_TOKENS = 10000;
 
-const retrieveCredential = function (credentialToken) {
-  const result = _loginResultForCredentialToken[credentialToken];
-  delete _loginResultForCredentialToken[credentialToken];
-  return result;
-};
+export class SamlLoginCache {
+  constructor() {
+    this.requests = new Map();
+  }
+
+  remember(requestId, value) {
+    const now = Date.now();
+    // Keep insertion order consistent with request age, including replacement of an existing ID.
+    this.requests.delete(requestId);
+    while (this.requests.size > 0) {
+      const [id, pending] = this.requests.entries().next().value;
+      if (now - pending.timestamp < PENDING_TOKEN_TIMEOUT_MS) break;
+      this.requests.delete(id);
+    }
+    if (this.requests.size >= MAX_PENDING_CREDENTIAL_TOKENS) {
+      this.requests.delete(this.requests.keys().next().value);
+    }
+    this.requests.set(requestId, { value, timestamp: now });
+  }
+
+  consume(requestId) {
+    const pending = this.requests.get(requestId);
+    this.requests.delete(requestId);
+    if (!pending || Date.now() - pending.timestamp >= PENDING_TOKEN_TIMEOUT_MS) return undefined;
+    return pending.value;
+  }
+}
+
+const pendingRequests = new SamlLoginCache();
+
+const completedRequests = new SamlLoginCache();
 
 Accounts.registerLoginHandler(function (loginRequest) {
   if (!loginRequest.saml || !loginRequest.credentialToken) {
@@ -38,7 +66,7 @@ Accounts.registerLoginHandler(function (loginRequest) {
     throw new Meteor.Error(403, "SAML service is disabled.");
   }
 
-  const loginResult = retrieveCredential(loginRequest.credentialToken);
+  const loginResult = completedRequests.consume(loginRequest.credentialToken);
   if (!loginResult) {
     throw new Meteor.Error(500, "SAML login did not complete.");
   } else if (loginResult.profile && loginResult.profile.email) {
@@ -133,7 +161,7 @@ const middleware = async function (req, res, next) {
 
     if (samlObject.actionName === "authorize") {
       service.callbackUrl = Meteor.absoluteUrl("_saml/validate/" + service.provider);
-      service.id = samlObject.credentialToken;
+      service.id = "_" + Random.id();
       const _saml = new SAML(service);
       const url = await new Promise((resolve, reject) => {
         _saml.getAuthorizeUrl(req, (err, nextUrl) => {
@@ -145,6 +173,8 @@ const middleware = async function (req, res, next) {
         });
       });
 
+      if (!samlObject.credentialToken) throw new Error("Missing SAML credential token");
+      pendingRequests.remember(service.id, samlObject.credentialToken);
       res.writeHead(302, { "Location": url });
       res.end();
     } else if (samlObject.actionName === "validate") {
@@ -162,17 +192,22 @@ const middleware = async function (req, res, next) {
       });
 
       // Do NOT use samlObject.credentialToken; it isn't signed!
-      const credentialToken = profile.inResponseToId || profile.InResponseTo;
-      if (!credentialToken) {
+      const requestId = profile.inResponseToId;
+      if (!requestId) {
         throw new Error(
             "SAML response missing InResponseTo attribute. Sandstorm does not support " +
             "IdP-initiated authentication; authentication requests must start " +
             "from the user choosing SAML login in the Sandstorm UI.");
       }
+      const credentialToken = pendingRequests.consume(requestId);
+      if (!credentialToken) {
+        throw new Error(
+            "SAML response does not correspond to a pending login request. " +
+            "Authentication requests must start from the user choosing SAML login in the " +
+            "Sandstorm UI.");
+      }
 
-      _loginResultForCredentialToken[credentialToken] = {
-        profile: profile,
-      };
+      completedRequests.remember(credentialToken, { profile });
 
       closePopup(res);
     } else {

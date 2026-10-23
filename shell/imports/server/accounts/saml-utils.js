@@ -3,7 +3,7 @@ import querystring from "querystring";
 import Url from "url";
 import xml2js from "xml2js";
 import xmlbuilder from "xmlbuilder";
-import xmlCrypto from "xml-crypto";
+import { SignedXml } from "xml-crypto";
 import { DOMParser } from "@xmldom/xmldom";
 import zlib from "zlib";
 
@@ -157,28 +157,68 @@ SAML.prototype.getLogoutUrl = function (req, callback) {
 };
 
 SAML.prototype.certToPEM = function (cert) {
-  cert = cert.match(/.{1,64}/g).join("\n");
-  cert = "-----BEGIN CERTIFICATE-----\n" + cert;
-  cert = cert + "\n-----END CERTIFICATE-----\n";
-  return cert;
+  if (cert.includes("-----BEGIN CERTIFICATE-----")) return cert;
+  const lines = cert.replace(/\s/g, "").match(/.{1,64}/g);
+  if (!lines) throw new Error("Missing SAML certificate");
+  return "-----BEGIN CERTIFICATE-----\n" + lines.join("\n") + "\n-----END CERTIFICATE-----\n";
 };
 
 SAML.prototype.validateSignature = function (xml, cert) {
-  const _this = this;
-  const doc = new DOMParser().parseFromString(xml);
-  const signature = xmlCrypto.xpath(doc, "//*[local-name(.)='Signature' and namespace-uri(.)='http://www.w3.org/2000/09/xmldsig#']")[0];
-  const sig = new xmlCrypto.SignedXml();
-  sig.keyInfoProvider = {
-    getKeyInfo: function (key) {
-      return "<X509Data></X509Data>";
-    },
+  const protocol = "urn:oasis:names:tc:SAML:2.0:protocol";
+  const assertionNamespace = "urn:oasis:names:tc:SAML:2.0:assertion";
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  const response = doc.documentElement;
+  if (!response || response.localName !== "Response" || response.namespaceURI !== protocol) {
+    throw new Error("Expected a SAML Response");
+  }
 
-    getKey: function (keyInfo) {
-      return _this.certToPEM(cert);
-    },
-  };
-  sig.loadSignature(signature.toString());
-  return sig.checkSignature(xml);
+  const assertions = Array.from(response.childNodes).filter(node =>
+    node.localName === "Assertion" && node.namespaceURI === assertionNamespace);
+  if (assertions.length !== 1) throw new Error("Expected exactly one SAML assertion");
+  const assertion = assertions[0];
+  const signatures = Array.from(doc.getElementsByTagNameNS(
+      "http://www.w3.org/2000/09/xmldsig#", "Signature"));
+  for (const signature of signatures) {
+    const target = signature.parentNode;
+    if (target !== response && target !== assertion) continue;
+    const verifier = new SignedXml({
+      publicCert: this.certToPEM(cert),
+      getCertFromKeyInfo: () => null,
+    });
+    verifier.loadSignature(signature);
+    if (!verifier.checkSignature(xml)) continue;
+    const references = verifier.getSignedReferences();
+    if (references.length !== 1) continue;
+    const verifiedXml = references[0];
+    const verified = new DOMParser().parseFromString(verifiedXml, "application/xml").documentElement;
+    if (verified.localName !== target.localName || verified.namespaceURI !== target.namespaceURI ||
+        !target.getAttribute("ID") || verified.getAttribute("ID") !== target.getAttribute("ID")) continue;
+    if (target === response) return verifiedXml;
+
+    // Correlate assertion-signed responses using only the signed bearer confirmation.
+    const children = (node, name) => Array.from(node.childNodes).filter(child =>
+      child.localName === name && child.namespaceURI === assertionNamespace);
+    const subjects = children(verified, "Subject");
+    const confirmations = subjects.length === 1 ? children(subjects[0], "SubjectConfirmation") : [];
+    const data = confirmations.length === 1 && confirmations[0].getAttribute("Method") ===
+        "urn:oasis:names:tc:SAML:2.0:cm:bearer"
+      ? children(confirmations[0], "SubjectConfirmationData") : [];
+    if (data.length !== 1 || !data[0].getAttribute("InResponseTo")) {
+      throw new Error("Missing signed SAML request confirmation");
+    }
+
+    const envelope = doc.implementation.createDocument(protocol, "samlp:Response", null);
+    for (const [outer, inner] of [["InResponseTo", "InResponseTo"], ["Destination", "Recipient"]]) {
+      const value = data[0].getAttribute(inner);
+      if (response.hasAttribute(outer) && response.getAttribute(outer) !== value) {
+        throw new Error("SAML response disagrees with signed " + inner);
+      }
+      if (value) envelope.documentElement.setAttribute(outer, value);
+    }
+    envelope.documentElement.appendChild(envelope.importNode(verified, true));
+    return envelope.toString();
+  }
+  throw new Error("Invalid SAML signature");
 };
 
 SAML.prototype.getElement = function (parentElement, elementName) {
@@ -213,13 +253,16 @@ SAML.prototype.parseLogoutRequest = function (xml, callback) {
 SAML.prototype.validateResponse = function (samlResponse, callback) {
   const _this = this;
   const xml = Buffer.from(samlResponse, "base64").toString("utf8");
+  let verifiedXml;
+  try {
+    if (!_this.options.cert || !_this.options.cert.trim()) throw new Error("Missing SAML certificate");
+    verifiedXml = _this.validateSignature(xml, _this.options.cert);
+  } catch (err) {
+    return callback(err, null, false, xml);
+  }
   const parser = new xml2js.Parser({ explicitRoot: true });
-  parser.parseString(xml, function (err, doc) {
-    // Verify signature
-    if (_this.options.cert && !_this.validateSignature(xml, _this.options.cert)) {
-      return callback(new Error("Invalid signature"), null, false, xml);
-    }
-
+  parser.parseString(verifiedXml, function (err, doc) {
+    if (err) return callback(err, null, false, xml);
     const response = _this.getElement(doc, "Response");
     if (response) {
       const assertion = _this.getElement(response, "Assertion");
@@ -234,7 +277,7 @@ SAML.prototype.validateResponse = function (samlResponse, callback) {
       }
 
       if (response.$ && response.$.Destination) {
-        if (!response.$.Destination.startsWith(process.env.ROOT_URL)) {
+        if (response.$.Destination !== Meteor.absoluteUrl("_saml/validate/default")) {
           return callback(new Error("SAML Response received with invalid Destination: " +
             response.$.Destination), null, false, xml);
         }
@@ -266,8 +309,12 @@ SAML.prototype.validateResponse = function (samlResponse, callback) {
           const subjectConfirmationData = _this.getElement(subjectConfirmation[0],
             "SubjectConfirmationData")[0];
           if (subjectConfirmationData) {
+            const signedRequestId = subjectConfirmationData.$.InResponseTo;
+            if (signedRequestId && signedRequestId !== profile.inResponseToId) {
+              return callback(new Error("SAML request confirmations disagree"), null, false, xml);
+            }
             const recipient = subjectConfirmationData.$.Recipient;
-            if (recipient && !recipient.startsWith(process.env.ROOT_URL)) {
+            if (recipient && recipient !== Meteor.absoluteUrl("_saml/validate/default")) {
               return callback(new Error("SAML sent to wrong recipient"), null, false, xml);
             }
 
@@ -325,6 +372,7 @@ SAML.prototype.validateResponse = function (samlResponse, callback) {
         }
       }
 
+      const claims = Object.create(null);
       const attributeStatement = _this.getElement(assertion[0], "AttributeStatement");
       if (attributeStatement) {
         const attributes = _this.getElement(attributeStatement[0], "Attribute");
@@ -333,37 +381,42 @@ SAML.prototype.validateResponse = function (samlResponse, callback) {
           attributes.forEach(function (attribute) {
             const value = _this.getElement(attribute, "AttributeValue");
             if (typeof value[0] === "string") {
-              profile[attribute.$.Name] = value[0];
+              claims[attribute.$.Name] = value[0];
             } else {
-              profile[attribute.$.Name] = value[0]._;
+              claims[attribute.$.Name] = value[0]._;
             }
           });
         }
 
-        if (!profile.mail && profile["urn:oid:0.9.2342.19200300.100.1.3"]) {
+        if (!claims.mail && claims["urn:oid:0.9.2342.19200300.100.1.3"]) {
           // See http://www.incommonfederation.org/attributesummary.html for definition of attribute OIDs
-          profile.mail = profile["urn:oid:0.9.2342.19200300.100.1.3"];
+          claims.mail = claims["urn:oid:0.9.2342.19200300.100.1.3"];
         }
 
-        if (!profile.email && profile.mail) {
-          profile.email = profile.mail;
+        if (!claims.email && claims.mail) {
+          claims.email = claims.mail;
         }
 
-        const microsoftEmail = profile["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"];
-        if (!profile.email && microsoftEmail) {
-          profile.email = microsoftEmail;
+        const microsoftEmail = claims["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"];
+        if (!claims.email && microsoftEmail) {
+          claims.email = microsoftEmail;
         }
 
-        const azureAdEmail = profile["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"];
-        if (!profile.email && azureAdEmail) {
-          profile.email = azureAdEmail;
+        const azureAdEmail = claims["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"];
+        if (!claims.email && azureAdEmail) {
+          claims.email = azureAdEmail;
         }
 
-        const microsoftDisplayName = profile["http://schemas.microsoft.com/identity/claims/displayname"];
-        if (!profile.displayName && microsoftDisplayName) {
-          profile.displayName = microsoftDisplayName;
+        const microsoftDisplayName = claims["http://schemas.microsoft.com/identity/claims/displayname"];
+        if (!claims.displayName && microsoftDisplayName) {
+          claims.displayName = microsoftDisplayName;
         }
       }
+
+      // Only identity attributes belong in the profile. Protocol fields above must remain
+      // bound to their XML elements, even when an attribute happens to use the same name.
+      profile.email = claims.email;
+      profile.displayName = claims.displayName;
 
       if (!profile.email && profile.nameID && profile.nameIDFormat && profile.nameIDFormat.indexOf("emailAddress") >= 0) {
         profile.email = profile.nameID;
