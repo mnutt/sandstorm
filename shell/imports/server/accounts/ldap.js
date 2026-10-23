@@ -49,6 +49,11 @@ LDAP.prototype.ldapCheck = async function (db, options) {
   let hasOwnProperty = Object.prototype.hasOwnProperty;
   hasOwnProperty = hasOwnProperty.call.bind(hasOwnProperty);
 
+  if (!hasOwnProperty(options, "searchUsername") &&
+      (typeof options.ldapPass !== "string" || options.ldapPass.length === 0)) {
+    return { error: new Meteor.Error(403, "LDAP login requires a nonempty password.") };
+  }
+
   if ((hasOwnProperty(options, "username") && hasOwnProperty(options, "ldapPass")) ||
       hasOwnProperty(options, "searchUsername")) {
     const [ldapBase, ldapUrl, ldapSearchUsername, ldapFilter, ldapSearchBindDn, ldapSearchBindPassword,
