@@ -23,6 +23,7 @@ import { Meteor } from "meteor/meteor";
 import { Match, check } from "meteor/check";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
 
+import { ssrfSafeLookup } from "/imports/server/networking";
 import { inMeteor } from "/imports/server/async-helpers";
 import { httpCallAsync } from "/imports/server/http-helpers";
 import { globalDb } from "/imports/db-deprecated";
@@ -58,13 +59,14 @@ export function setTransferDownloaderDisabledForTests(disabled) {
   transferDownloaderDisabledForTests = !!disabled;
 }
 
-function defaultTransferBackupRequest(source, remoteFileToken) {
-  let requestMethod = NodeHttp.request;
-  if (source.startsWith("https:")) {
-    requestMethod = NodeHttps.request;
-  }
-
-  return requestMethod(source + "/downloadBackup/" + remoteFileToken);
+export async function defaultTransferBackupRequest(source, remoteFileToken, lookup) {
+  const safe = await ssrfSafeLookup(globalDb,
+      source + "/downloadBackup/" + encodeURIComponent(remoteFileToken), lookup);
+  const requestMethod = safe.url.startsWith("https:") ? NodeHttps.request : NodeHttp.request;
+  return requestMethod(safe.url, {
+    headers: { Host: safe.host },
+    servername: safe.servername,
+  });
 }
 
 let transferBackupRequest = defaultTransferBackupRequest;
@@ -469,7 +471,14 @@ export class Downloader {
       // Start downloading.
       console.log("mass transfer: downloading:", this.grainId);
 
-      this.request = transferBackupRequest(this.source, this.remoteFileToken);
+      this.request = await transferBackupRequest(this.source, this.remoteFileToken);
+      if (this.canceled) {
+        // No response/error handlers have been installed yet. Destroying a pending request
+        // can emit an asynchronous socket error; cancellation intentionally discards it.
+        this.request.on("error", () => {});
+        this.request.destroy();
+        return;
+      }
       this.request.end();
 
       const response = await new Promise((resolve, reject) => {

@@ -151,7 +151,7 @@ async function selectSafeAddress(db, parsedUrl, addresses) {
   }
 }
 
-async function ssrfSafeLookup(db, url) {
+async function ssrfSafeLookup(db, url, lookup = lookupAsync) {
   // Given an HTTP/HTTPS URL, look up the hostname, verify it doesn't point to a blacklisted IP,
   // then return an object of {url, host}, where `url` has the original hostname substituted with
   // an IP address, and `host` is the original hostname suitable for sending in the `Host` header.
@@ -163,7 +163,7 @@ async function ssrfSafeLookup(db, url) {
   }
 
   const addresses = await new Promise((resolve, reject) => {
-    lookupAsync(parsedUrl.hostname, { all: true, hints: Dns.ADDRCONFIG }, (err, result) => {
+    lookup(parsedUrl.hostname, { all: true, hints: Dns.ADDRCONFIG }, (err, result) => {
       if (err) {
         reject(err);
       } else {

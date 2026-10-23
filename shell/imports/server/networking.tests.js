@@ -1,3 +1,10 @@
+import Http from "http";
+import { globalDb } from "/imports/db-deprecated";
+import { ssrfSafeLookup } from "/imports/server/networking";
+import {
+  Downloader, defaultTransferBackupRequest, setTransferDownloaderDisabledForTests,
+  setTransferDownloaderHooksForTests,
+} from "/imports/server/transfers-server";
 
 import chai from "chai";
 import Url from "url";
@@ -97,5 +104,81 @@ describe("Fetch networking security", function () {
     assert.strictEqual(redirect.url, "https://origin.example/next");
     assert.strictEqual(redirect.method, "PUT");
     assert.strictEqual(redirect.body, "body");
+  });
+});
+
+describe("Transfer download addresses", function () {
+  this.timeout(15000);
+  it("checks rejected inputs and successful controls", async function () {
+  const previousBlacklist = await globalDb.collections.settings.findOneAsync("ipBlacklist");
+  const hits = [];
+  const server = Http.createServer((request, response) => {
+    hits.push({ path: request.url, host: request.headers.host });
+    response.end("backup fixture");
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const source = "http://transfer-test.invalid:" + server.address().port;
+  const lookup = address => (hostname, options, callback) => {
+    if (hostname !== "transfer-test.invalid") throw new Error("Unexpected lookup hostname");
+    callback(null, [{ address, family: 4 }]);
+  };
+  let downloader;
+  let transferId;
+  setTransferDownloaderDisabledForTests(true);
+  try {
+    await globalDb.collections.settings.upsertAsync("ipBlacklist", { value: "127.0.0.0/8" });
+    // Earlier transfer phases can see a different answer from the eventual download.
+    for (const phase of ["list", "prepare"]) {
+      const safe = await ssrfSafeLookup(globalDb, source + "/transfers/" + phase, lookup("93.184.216.34"));
+      if (safe.address !== "93.184.216.34") throw new Error("Public-address control failed");
+    }
+    transferId = await globalDb.collections.incomingTransfers.insertAsync({
+      userId: "test-transfer-address", grainId: "test-transfer-address-grain", source,
+      downloading: true, remoteFileToken: "test-token",
+    });
+    setTransferDownloaderHooksForTests({
+      request: (source, token) => defaultTransferBackupRequest(source, token, lookup("127.0.0.1")),
+    });
+    downloader = new Downloader(await globalDb.collections.incomingTransfers.findOneAsync(transferId));
+    await downloader.promise;
+    if (hits.length !== 0 || !downloader.error || !/blacklisted/.test(downloader.error)) {
+      throw new Error("Transfer did not reject the changed destination address: " + downloader.error);
+    }
+
+    await globalDb.collections.settings.upsertAsync("ipBlacklist", { value: "" });
+    // A successful connection to this otherwise-unresolvable hostname proves the checked
+    // address is used by the socket, while the original Host header is retained.
+    const request = await defaultTransferBackupRequest(source, "test-token", lookup("127.0.0.1"));
+    await new Promise((resolve, reject) => {
+      request.once("error", reject);
+      request.setTimeout(5000, () => request.destroy(new Error("Transfer control timed out")));
+      request.once("response", response => {
+        response.once("error", reject);
+        response.once("end", resolve);
+        response.resume();
+      });
+      request.end();
+    });
+    if (hits.length !== 1 || hits[0].path !== "/downloadBackup/test-token" ||
+        hits[0].host !== "transfer-test.invalid:" + server.address().port) {
+      throw new Error("Allowed download did not retain the original host and path");
+    }
+    return true;
+  } finally {
+    if (downloader) { downloader.cancel(); await downloader.promise; }
+    setTransferDownloaderHooksForTests(null);
+    if (transferId) await globalDb.collections.incomingTransfers.removeAsync(transferId);
+    setTransferDownloaderDisabledForTests(false);
+    if (previousBlacklist) {
+      await globalDb.collections.settings.upsertAsync("ipBlacklist", previousBlacklist);
+    } else {
+      await globalDb.collections.settings.removeAsync("ipBlacklist");
+    }
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
   });
 });

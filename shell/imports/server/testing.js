@@ -58,6 +58,7 @@ import {
 import { SandstormAutoupdateApps } from "/imports/sandstorm-autoupdate-apps/autoupdate-apps";
 import { isTesting } from "/imports/shared/testing";
 import Crypto from "crypto";
+import Http from "http";
 import { EventEmitter } from "events";
 
 async function clearUser(id) {
