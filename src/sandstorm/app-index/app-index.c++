@@ -368,7 +368,7 @@ public:
         //
         // TODO(cleanup): we should probably fetch the info at submission time and save
         // it then.
-        auto fingerprint = path.slice(strlen("keybase/"));
+        auto fingerprint = keybase::validateFingerprint(path.slice(strlen("keybase/")));
         auto token = kj::FdInputStream(raiiOpen("/var/keybase-token", O_RDONLY)).readAllBytes();
         auto req = sandstormApi.restoreRequest();
         req.setToken(token);

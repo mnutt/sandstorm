@@ -18,6 +18,8 @@
 #include "web-session-bridge.h"
 #include "gateway.h"
 #include "backend.h"
+#include "app-index/keybase.h"
+#include "app-index/indexer.h"
 #include <kj/encoding.h>
 #include <kj/compat/gzip.h>
 #include <kj/test.h>
@@ -53,6 +55,55 @@ KJ_TEST("Backup RPCs reject invalid object IDs before accessing files") {
       restore.setGrainId(invalidGrain ? invalid : "abcdefgh"_kj);
       KJ_EXPECT_THROW_MESSAGE("invalid object ID", restore.send().wait(io.waitScope));
     }
+  }
+}
+
+class ProfileApi final: public ApiSession::Server {
+public:
+  ProfileApi(kj::String& path): path(path) {}
+  kj::Promise<void> get(GetContext context) override {
+    path = kj::str(context.getParams().getPath());
+    context.getResults().initContent().initBody().setBytes(
+        "{\"status\":{\"code\":0,\"name\":\"OK\"},\"them\":[]}"_kj.asBytes());
+    return kj::READY_NOW;
+  }
+private:
+  kj::String& path;
+};
+
+KJ_TEST("Profile lookups and saved profiles require hexadecimal fingerprints") {
+  auto io = kj::setupAsyncIo();
+  kj::String path;
+  appindex::keybase::Endpoint endpoint(kj::heap<ProfileApi>(path));
+  appindex::Indexer indexer;
+  capnp::MallocMessageBuilder message;
+  for (size_t length: {32, 40, 64}) {
+    auto fingerprint = kj::heapString(length);
+    memset(fingerprint.begin(), 'a', length);
+    fingerprint[0] = 'F';
+    fingerprint[1] = '0';
+    KJ_EXPECT(endpoint.getFingerPrintIdentity(fingerprint).wait(io.waitScope) == nullptr);
+    KJ_EXPECT(path == kj::str("user/lookup.json?key_fingerprint=", fingerprint,
+                             "&fields=pictures,profile,proofs_summary"));
+  }
+  auto reject = [&](kj::StringPtr fingerprint) {
+    path = nullptr;
+    KJ_EXPECT_THROW_MESSAGE("invalid PGP fingerprint",
+        endpoint.getFingerPrintIdentity(fingerprint).wait(io.waitScope));
+    KJ_EXPECT(path.size() == 0);
+    KJ_EXPECT_THROW_MESSAGE("invalid PGP fingerprint", indexer.addKeybaseProfile(fingerprint, message));
+  };
+  for (auto invalid: {""_kj, "abc"_kj, "../profile"_kj,
+      "012345678901234567890123456789012345678"_kj,
+      "01234567890123456789012345678901234567890"_kj}) {
+    reject(invalid);
+  }
+  for (uint value = 0; value < 256; ++value) {
+    char c = value;
+    if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) continue;
+    auto fingerprint = kj::str("0123456789012345678901234567890123456789");
+    fingerprint[20] = c;
+    reject(fingerprint);
   }
 }
 

@@ -14,6 +14,16 @@
 
 namespace sandstorm::appindex::keybase {
 
+kj::StringPtr validateFingerprint(kj::StringPtr fingerprint) {
+  KJ_REQUIRE(fingerprint.size() == 32 || fingerprint.size() == 40 || fingerprint.size() == 64,
+      "invalid PGP fingerprint");
+  for (char c: fingerprint) {
+    KJ_REQUIRE((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'),
+        "invalid PGP fingerprint");
+  }
+  return fingerprint;
+}
+
 kj::String getPowerboxDescriptor() {
   capnp::MallocMessageBuilder msg;
   auto desc = msg.initRoot<PowerboxDescriptor>();
@@ -88,7 +98,7 @@ kj::Promise<kj::Own<LookupResults::Reader>> Endpoint::lookupFingerPrint(kj::Stri
   auto req = apiSession.getRequest();
   req.setPath(kj::str(
     "user/lookup.json?key_fingerprint=",
-    pgpFingerPrint,
+    validateFingerprint(pgpFingerPrint),
     "&fields=pictures,profile,proofs_summary"));
   auto context = req.initContext();
   auto paf = kj::newPromiseAndFulfiller<ByteStream::Client>();

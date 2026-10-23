@@ -25,6 +25,9 @@
 
 namespace sandstorm::appindex::keybase {
 
+kj::StringPtr validateFingerprint(kj::StringPtr fingerprint);
+// Check a hexadecimal PGP fingerprint before using it in a query or filename.
+
 kj::String getPowerboxDescriptor();
 // Return a base64-encoded, packed PowerboxDescriptor for the keybase API, for
 // use by the client in making a powerbox request.

@@ -17,6 +17,7 @@
 #include "indexer.h"
 #include <sandstorm/app-index/app-index.capnp.h>
 #include <sandstorm/spk.h>
+#include "keybase.h"
 #include <sandstorm/id-to-text.h>
 #include <sandstorm/appid-replacements.h>
 #include <capnp/serialize.h>
@@ -71,6 +72,7 @@ private:
 // =======================================================================================
 
 void Indexer::addKeybaseProfile(kj::StringPtr fingerprint, capnp::MallocMessageBuilder& message) {
+  keybase::validateFingerprint(fingerprint);
   StagingFile file("/var/keybase");
   capnp::writeMessageToFd(file.getFd(), message);
   file.finalize(kj::str("/var/keybase/", fingerprint));
