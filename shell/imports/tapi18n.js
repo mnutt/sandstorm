@@ -8,7 +8,7 @@ import nl from "/i18n/nl.i18n.json";
 import ru from "/i18n/ru.i18n.json";
 import zhCN from "/i18n/zh-CN.i18n.json";
 import zhTW from "/i18n/zh-TW.i18n.json";
-import { coerceTemplateText } from "/imports/shared/template-values";
+import { coerceTemplateText, escapeHtml } from "/imports/shared/template-values";
 
 const dictionaries = {
   en,
@@ -146,7 +146,20 @@ export function templateI18nHelper(key, ...args) {
   return translated;
 }
 
+export function templateI18nHtmlHelper(key, ...args) {
+  const escaped = args.map((argument) => {
+    if (argument && typeof argument === "object" && hasOwn(argument, "hash")) {
+      return { ...argument, hash: Object.fromEntries(Object.entries(argument.hash)
+          .map(([name, value]) => [name, escapeHtml(coerceTemplateText(value) || "")])) };
+    }
+
+    return escapeHtml(coerceTemplateText(argument) || "");
+  });
+  return templateI18nHelper(key, ...escaped);
+}
+
 if (Meteor.isClient) {
+  Template.registerHelper("_html", templateI18nHtmlHelper);
   Template.registerHelper("_", templateI18nHelper);
 }
 

@@ -873,6 +873,22 @@ if(isTesting) {
       }
     },
 
+    testAdminProfileNameFixture: async function (userId, remove) {
+      if (typeof userId !== "string" || !userId.startsWith("test-profile-rendering-")) {
+        throw new Error("Invalid profile fixture ID");
+      }
+      if (remove) {
+        await Meteor.users.removeAsync(userId);
+      } else {
+        await Meteor.users.insertAsync({
+          _id: userId, type: "account", createdAt: new Date(),
+          loginCredentials: [], nonloginCredentials: [],
+          profile: { name: `<img src=x onerror="window.profileMarkupExecuted=true"> & 'Name'` },
+        });
+      }
+      return true;
+    },
+
     testRegressionAccountSuspensionAndDeletion: async function () {
       const adminId = "test-suspension-admin-" + Random.id();
       const adminCredentialId = "test-suspension-admin-credential-" + Random.id();

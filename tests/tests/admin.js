@@ -54,3 +54,41 @@ module.exports["Test admin cannot remove own admin permission"] = function (brow
     })
     .end();
 };
+
+module.exports["Test delete dialog displays profile names as text"] = function (browser) {
+  var targetId = "test-profile-rendering-" + Math.random().toString(36).slice(2);
+  browser.loginDevAccount(null, true)
+    .executeAsync(function (id, done) {
+      Meteor.call("testAdminProfileNameFixture", id, false, function (error) {
+        done(error ? error.message : null);
+      });
+    }, [targetId], function (result) {
+      browser.assert.equal(result.value, null, "profile fixture created");
+    })
+    .url(browser.launch_url + "/admin/users/" + targetId)
+    .waitForElementVisible("button[name=delete-account]", medium_wait)
+    .click("button[name=delete-account]")
+    .waitForElementVisible(".admin-user-confirm-delete", medium_wait)
+    .execute(function () {
+      var dialog = document.querySelector(".admin-user-confirm-delete");
+      return {
+        executed: !!window.profileMarkupExecuted,
+        images: dialog.querySelectorAll("img").length,
+        text: dialog.textContent,
+        emphasized: Array.from(dialog.querySelectorAll("strong")).map(function (node) { return node.textContent; }),
+      };
+    }, [], function (result) {
+      var expected = '<img src=x onerror="window.profileMarkupExecuted=true"> & \'Name\'';
+      browser.assert.equal(result.value.executed, false);
+      browser.assert.equal(result.value.images, 0, "profile markup does not create elements");
+      browser.assert.ok(result.value.text.includes(expected), "dialog displays the literal name");
+      browser.assert.ok(result.value.emphasized.includes("not"), "translation keeps its emphasis");
+    })
+    .executeAsync(function (id, done) {
+      Meteor.call("testAdminProfileNameFixture", id, true, function (error) {
+        done(error ? error.message : null);
+      });
+    }, [targetId], function (result) {
+      browser.assert.equal(result.value, null, "profile fixture removed");
+    }).end();
+};

@@ -34,3 +34,7 @@ export const coerceTemplateText = (value) => {
 
   return undefined;
 };
+
+export const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+})[character]);

@@ -304,7 +304,7 @@ isLoginCredential: Boolean
         {{/if}}
 
         <h2>{{_ (con txt "deletePopup.title") guessUserName}}</h2>
-        <p>{{{_ (con txt "deletePopup.explanation") guessUserName guessUserName}}}</p>
+        <p>{{{_html (con txt "deletePopup.explanation") guessUserName guessUserName}}}</p>
         <p>{{_ (con txt "deletePopup.detail") guessUserName}}</p>
         <ul>
           <li>{{_ (con txt "deletePopup.detail1") guessUserName}}</li>
