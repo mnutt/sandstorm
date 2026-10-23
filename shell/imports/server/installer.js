@@ -92,10 +92,10 @@ const startInstallInternal = (pkg) => {
   installer.start();
 };
 
-export function cancelDownload(packageId) {
-  globalDb.collections.packages.removeAsync({ _id: packageId, status: "download" }).catch((err) => {
-    console.error("Failed to cancel package download:", err);
-  });
+export function cancelDownload(packageId, initiatedBy) {
+  const selector = { _id: packageId, status: "download" };
+  if (initiatedBy !== undefined) selector.initiatedBy = initiatedBy;
+  return globalDb.collections.packages.removeAsync(selector);
 }
 
 const cancelDownloadInternal = (pkg) => {

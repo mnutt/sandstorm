@@ -77,3 +77,9 @@ if (run_xfail) {
       .end();
   };
 }
+
+module.exports["Test package download cancellation"] = function (browser) {
+  browser.url(browser.launch_url + "/").timeouts("script", utils.medium_wait);
+  utils.callMeteorTestMethod(browser, "testRegressionDownloadCancellation");
+  browser.end();
+};

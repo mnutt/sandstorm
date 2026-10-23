@@ -1621,6 +1621,77 @@ if(isTesting) {
       }
     },
 
+    testRegressionDownloadCancellation: async function () {
+      const ownerId = "test-download-owner-" + Random.id();
+      const otherId = "test-download-other-" + Random.id();
+      const adminId = "test-download-admin-" + Random.id();
+      const packageIds = [Crypto.randomBytes(16).toString("hex"), Crypto.randomBytes(16).toString("hex")];
+      const requests = new Set();
+      const server = Http.createServer((request, response) => {
+        requests.add(request.url);
+        response.writeHead(200, { "Content-Length": "1000000" });
+        response.write("pending package data");
+      });
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const call = (name, userId, args) => getMethodHandler(name).apply({
+        userId, connection: { sandstormDb: globalDb },
+      }, args);
+      const waitForDownload = async (packageId) => {
+        const deadline = Date.now() + 5000;
+        while (!requests.has("/" + packageId + ".spk")) {
+          if (Date.now() > deadline) throw new Error("Package download did not start");
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+      };
+      try {
+        for (const userId of [ownerId, otherId, adminId]) {
+          await Meteor.users.insertAsync({
+            _id: userId, type: "account", signupKey: "test", plan: "standard",
+            isAdmin: userId === adminId, loginCredentials: [], nonloginCredentials: [],
+            profile: { name: "Download test" },
+          });
+        }
+        for (const [index, packageId] of packageIds.entries()) {
+          const url = "http://127.0.0.1:" + server.address().port + "/" + packageId + ".spk";
+          await call("ensureInstalled", ownerId, [packageId, url, false]);
+          await waitForDownload(packageId);
+          await call("ensureInstalled", otherId, [packageId, url, false]);
+          const pkg = await globalDb.collections.packages.findOneAsync(packageId);
+          if (!pkg || pkg.status !== "download" || pkg.initiatedBy !== ownerId) {
+            throw new Error("Download did not retain its initiating account");
+          }
+          for (const userId of [null, otherId]) {
+            try {
+              await call("cancelDownload", userId, [packageId]);
+              throw new Error("A different account canceled the download");
+            } catch (error) {
+              if (!(error instanceof Meteor.Error) || error.error !== 403) throw error;
+            }
+            if (!await globalDb.collections.packages.findOneAsync(packageId)) {
+              throw new Error("A rejected cancellation removed the package");
+            }
+          }
+          if (index === 1) {
+            // Existing downloads may predate the initiating-account field.
+            await globalDb.collections.packages.updateAsync(packageId, { $unset: { initiatedBy: 1 } });
+          }
+          await call("cancelDownload", index === 0 ? ownerId : adminId, [packageId]);
+          if (await globalDb.collections.packages.findOneAsync(packageId)) {
+            throw new Error("The initiating account or administrator could not cancel the download");
+          }
+        }
+        return true;
+      } finally {
+        await globalDb.collections.packages.removeAsync({ _id: { $in: packageIds } });
+        await Meteor.users.removeAsync({ _id: { $in: [ownerId, otherId, adminId] } });
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+      }
+    },
+
     testRegressionAdminMethods: async function () {
       const adminId = "test-admin-account-" + Random.id();
       const targetUserId = "test-admin-target-" + Random.id();

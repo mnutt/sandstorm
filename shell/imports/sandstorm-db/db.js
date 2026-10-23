@@ -217,6 +217,7 @@ const Packages = new Mongo.Collection("packages", collectionOptions);
 //       collector should at some point check whether there are any other references and, if not,
 //       delete the package.
 //   url:  When status is "download", the URL from which the SPK can be obtained, if provided.
+//   initiatedBy: Account that started the download, or null for automatic installs.
 //   isAutoUpdated: This package was downloaded as part of an auto-update. We shouldn't clean it up
 //     even if it has no users.
 //   authorPgpKeyFingerprint: Verified PGP key fingerprint (SHA-1, hex, all-caps) of the app
@@ -3098,13 +3099,14 @@ if (Meteor.isServer) {
     }, { multi: true });
   };
 
-  SandstormDb.prototype.startInstall = async function (packageId, url, retryFailed, isAutoUpdated) {
+  SandstormDb.prototype.startInstall = async function (packageId, url, retryFailed, isAutoUpdated, initiatedBy) {
     // Mark package for possible installation.
     const fields = {
       status: "download",
       progress: 0,
       url: url,
       isAutoUpdated: !!isAutoUpdated,
+      initiatedBy: initiatedBy || null,
     };
 
     if (retryFailed) {

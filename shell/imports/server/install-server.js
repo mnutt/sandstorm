@@ -62,11 +62,16 @@ const localizedTextPattern = {
 // because Meteor.userId() is not available in server-side routes.
 
 Meteor.methods({
-  cancelDownload: function (packageId) {
+  cancelDownload: async function (packageId) {
     check(packageId, String);
-
-    // TODO(security):  Only let user cancel download if they initiated it.
-    cancelDownload(packageId);
+    if (!this.userId) throw new Meteor.Error(403, "You must be logged in to cancel a download.");
+    const db = this.connection.sandstormDb;
+    if (await db.isAdminById(this.userId)) return cancelDownload(packageId);
+    const pkg = await db.collections.packages.findOneAsync(packageId);
+    if (!pkg || pkg.initiatedBy !== this.userId) {
+      throw new Meteor.Error(403, "Only the initiating account or an admin can cancel this download.");
+    }
+    return cancelDownload(packageId, this.userId);
   },
 
   newUploadToken: async function () {
@@ -131,7 +136,7 @@ Meteor.methods({
     }
 
     if (!pkg || isRetry) {
-      await globalDb.startInstall(packageId, url, isRetry);
+      await globalDb.startInstall(packageId, url, isRetry, false, this.userId);
     }
   },
 });
