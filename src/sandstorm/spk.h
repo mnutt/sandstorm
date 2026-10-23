@@ -19,6 +19,7 @@
 
 #include "abstract-main.h"
 #include <fcntl.h>
+#include <kj/io.h>
 #include <sys/types.h>
 #include <sandstorm/package.capnp.h>
 
@@ -30,6 +31,9 @@ kj::String unpackSpk(int spkfd, kj::StringPtr outdir, kj::StringPtr tmpdir);
 // Read an SPK from `spkfd` placing all of the files in `outdir`. A (large) temporary file
 // will be written (and then deleted) in the directory `tmpdir`. The procedure returns the verified
 // app ID, or throws an exception before writing any output if the signature was not valid.
+
+kj::Maybe<kj::AutoCloseFd> tryOpenPackageManifest(kj::StringPtr packageDir);
+// Open an existing package's regular manifest file without following symlinks.
 
 void verifySpk(int spkfd, int tmpfile, spk::VerifiedInfo::Builder output);
 // Temporarily uncompress the spk, check its signature, and fill in `output` with relevant info.

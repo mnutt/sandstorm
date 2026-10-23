@@ -1740,9 +1740,24 @@ private:
     // same security reasons this limit exists in the first place.)
     options.nestingLimit = 128;
 
-    capnp::FlatArrayMessageReader archiveMessage(tmpWords, options);
+    // Check the root manifest before creating any output files. Use a separate reader so that the
+    // scan and the unpack each get the normal traversal budget; the archive is traversed twice.
+    {
+      capnp::FlatArrayMessageReader archiveMessage(tmpWords, options);
+      auto files = archiveMessage.getRoot<spk::Archive>().getFiles();
+      bool foundManifest = false;
+      for (auto file: files) {
+        if (file.getName() == "sandstorm-manifest") {
+          KJ_REQUIRE(!foundManifest, "Archive contained duplicate manifest.");
+          KJ_REQUIRE(file.isRegular(), "sandstorm-manifest is not a regular file");
+          foundManifest = true;
+        }
+      }
+      KJ_REQUIRE(foundManifest, "Package contains no sandstorm-manifest");
+    }
 
     // Unpack.
+    capnp::FlatArrayMessageReader archiveMessage(tmpWords, options);
     unpackDir(archiveMessage.getRoot<spk::Archive>().getFiles(), dirname);
 
     // Note the appid.
@@ -2437,6 +2452,17 @@ private:
 
 kj::Own<AbstractMain> getSpkMain(kj::ProcessContext& context) {
   return kj::heap<SpkTool>(context);
+}
+
+kj::Maybe<kj::AutoCloseFd> tryOpenPackageManifest(kj::StringPtr packageDir) {
+  auto file = raiiOpenIfExists(kj::str(packageDir, "/sandstorm-manifest"),
+                              O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+  KJ_IF_MAYBE(fd, file) {
+    struct stat stats;
+    KJ_SYSCALL(fstat(*fd, &stats));
+    KJ_REQUIRE(S_ISREG(stats.st_mode), "sandstorm-manifest is not a regular file");
+  }
+  return kj::mv(file);
 }
 
 kj::String unpackSpk(int spkfd, kj::StringPtr outdir, kj::StringPtr tmpdir) {

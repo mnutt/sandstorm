@@ -18,6 +18,9 @@
 #include "web-session-bridge.h"
 #include "gateway.h"
 #include "backend.h"
+#include "spk.h"
+#include <sodium/crypto_sign.h>
+#include <sodium/crypto_hash_sha512.h>
 #include "app-index/keybase.h"
 #include "app-index/indexer.h"
 #include <kj/encoding.h>
@@ -56,6 +59,104 @@ KJ_TEST("Backup RPCs reject invalid object IDs before accessing files") {
       KJ_EXPECT_THROW_MESSAGE("invalid object ID", restore.send().wait(io.waitScope));
     }
   }
+}
+
+class PackageFixture {
+public:
+  PackageFixture() {
+    KJ_REQUIRE(mkdtemp(directory) != nullptr);
+  }
+  ~PackageFixture() noexcept(false) { recursivelyDelete(directory); }
+  kj::String path(kj::StringPtr name) { return kj::str(directory, "/", name); }
+
+  kj::AutoCloseFd pack(capnp::MessageBuilder& archive, uint signaturePadding = 0) {
+    auto words = capnp::messageToFlatArray(archive);
+    auto bytes = words.asBytes();
+    byte hash[crypto_hash_sha512_BYTES];
+    crypto_hash_sha512(hash, bytes.begin(), bytes.size());
+    byte publicKey[crypto_sign_PUBLICKEYBYTES];
+    byte secretKey[crypto_sign_SECRETKEYBYTES];
+    KJ_ASSERT(crypto_sign_keypair(publicKey, secretKey) == 0);
+    byte signature[crypto_hash_sha512_BYTES + crypto_sign_BYTES];
+    unsigned long long signatureSize;
+    KJ_ASSERT(crypto_sign(signature, &signatureSize, hash, sizeof(hash), secretKey) == 0);
+    capnp::MallocMessageBuilder signatureMessage;
+    auto root = signatureMessage.initRoot<spk::Signature>();
+    root.setPublicKey(kj::arrayPtr(publicKey, sizeof(publicKey)));
+    root.setSignature(kj::arrayPtr(signature, size_t(signatureSize)));
+    // Padding is unreachable data, useful for testing the outer message size limit.
+    if (signaturePadding > 0) signatureMessage.getOrphanage().newOrphan<capnp::Data>(signaturePadding);
+    auto raw = raiiOpen(path("raw"), O_CREAT | O_TRUNC | O_RDWR, 0600);
+    capnp::writeMessageToFd(raw, signatureMessage);
+    kj::FdOutputStream(raw.get()).write(bytes.begin(), bytes.size());
+    KJ_SYSCALL(lseek(raw, 0, SEEK_SET));
+    auto packed = raiiOpen(path("package.spk"), O_CREAT | O_TRUNC | O_RDWR, 0600);
+    auto magic = spk::MAGIC_NUMBER.get();
+    kj::FdOutputStream(packed.get()).write(magic.begin(), magic.size());
+    Subprocess::Options options({"xz", "-c"});
+    options.stdin = raw;
+    options.stdout = packed;
+    Subprocess(kj::mv(options)).waitForSuccess();
+    KJ_SYSCALL(lseek(packed, 0, SEEK_SET));
+    return packed;
+  }
+  char directory[40] = "/tmp/sandstorm-package.XXXXXX";
+};
+
+KJ_TEST("Package unpacking requires a regular root manifest") {
+  for (uint type = 0; type < 5; ++type) {
+    PackageFixture fixture;
+    capnp::MallocMessageBuilder manifest;
+    manifest.initRoot<spk::Manifest>();
+    auto manifestWords = capnp::messageToFlatArray(manifest);
+    capnp::MallocMessageBuilder archive;
+    auto files = archive.initRoot<spk::Archive>().initFiles(type == 4 ? 0 : 1);
+    if (type != 4) {
+      files[0].setName("sandstorm-manifest");
+      switch (type) {
+        case 0: files[0].setRegular(manifestWords.asBytes()); break;
+        case 1: files[0].setSymlink("other-file"); break;
+        case 2: files[0].initDirectory(0); break;
+        case 3: files[0].setExecutable(manifestWords.asBytes()); break;
+      }
+    }
+    auto packed = fixture.pack(archive);
+    auto output = fixture.path("output");
+    KJ_SYSCALL(mkdir(output.cStr(), 0700));
+    if (type == 0) {
+      KJ_EXPECT(unpackSpk(packed, output, fixture.directory).size() > 0);
+      auto file = tryOpenPackageManifest(output);
+      KJ_EXPECT(file != nullptr);
+    } else {
+      KJ_EXPECT_THROW_MESSAGE(type == 4 ? "no sandstorm-manifest" : "not a regular file",
+          unpackSpk(packed, output, fixture.directory));
+      KJ_EXPECT(listDirectory(output).size() == 0);
+    }
+  }
+}
+
+KJ_TEST("Installed manifests must be regular files and are opened without following links") {
+  PackageFixture fixture;
+  auto name = fixture.path("sandstorm-manifest");
+  KJ_EXPECT(tryOpenPackageManifest(fixture.directory) == nullptr);
+  {
+    auto fd = raiiOpen(name, O_CREAT | O_WRONLY, 0600);
+    kj::FdOutputStream(fd.get()).write("manifest", 8);
+  }
+  {
+    auto fd = tryOpenPackageManifest(fixture.directory);
+    KJ_EXPECT(kj::FdInputStream(KJ_REQUIRE_NONNULL(fd).get()).readAllText() == "manifest");
+  }
+  auto target = fixture.path("target");
+  KJ_SYSCALL(rename(name.cStr(), target.cStr()));
+  KJ_SYSCALL(symlink("target", name.cStr()));
+  KJ_EXPECT_THROW(FAILED, tryOpenPackageManifest(fixture.directory));
+  KJ_SYSCALL(unlink(name.cStr()));
+  KJ_SYSCALL(mkdir(name.cStr(), 0700));
+  KJ_EXPECT_THROW_MESSAGE("not a regular file", tryOpenPackageManifest(fixture.directory));
+  KJ_SYSCALL(rmdir(name.cStr()));
+  KJ_SYSCALL(mkfifo(name.cStr(), 0600));
+  KJ_EXPECT_THROW_MESSAGE("not a regular file", tryOpenPackageManifest(fixture.directory));
 }
 
 class ProfileApi final: public ApiSession::Server {

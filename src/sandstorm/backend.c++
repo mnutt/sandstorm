@@ -452,8 +452,8 @@ protected:
 
       capnp::ReaderOptions manifestLimits;
       manifestLimits.traversalLimitInWords = spk::Manifest::SIZE_LIMIT_IN_WORDS;
-      capnp::StreamFdMessageReader reader(raiiOpen(
-          kj::str(finalName, "/sandstorm-manifest"), O_RDONLY), manifestLimits);
+      auto manifestFile = tryOpenPackageManifest(finalName);
+      capnp::StreamFdMessageReader reader(kj::mv(KJ_REQUIRE_NONNULL(manifestFile)), manifestLimits);
       auto manifest = reader.getRoot<spk::Manifest>();
 
       capnp::MessageSize sizeHint = manifest.totalSize();
@@ -506,7 +506,7 @@ kj::Promise<void> BackendImpl::installPackage(InstallPackageContext context)  {
 kj::Promise<void> BackendImpl::tryGetPackage(TryGetPackageContext context) {
   auto path = kj::str("/var/sandstorm/apps/", validateId(context.getParams().getPackageId()));
 
-  KJ_IF_MAYBE(file, raiiOpenIfExists(kj::str(path, "/sandstorm-manifest"), O_RDONLY)) {
+  KJ_IF_MAYBE(file, tryOpenPackageManifest(path)) {
     capnp::ReaderOptions manifestLimits;
     manifestLimits.traversalLimitInWords = spk::Manifest::SIZE_LIMIT_IN_WORDS;
     capnp::StreamFdMessageReader reader(kj::mv(*file), manifestLimits);
