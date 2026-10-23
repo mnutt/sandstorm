@@ -144,7 +144,7 @@ Meteor.methods({
       throw new Meteor.Error(403, "Only admins can unsuspend other users.");
     }
 
-    await this.connection.sandstormDb.unsuspendAccount(userId, this.userId);
+    await this.connection.sandstormDb.unsuspendAccount(userId);
   },
 
   async unsuspendOwnAccount() {
@@ -152,6 +152,6 @@ Meteor.methods({
       throw new Meteor.Error(403, "Must be logged in to unsuspend an account");
     }
 
-    await this.connection.sandstormDb.unsuspendAccount(this.userId);
+    await this.connection.sandstormDb.unsuspendAccount(this.userId, { voluntaryOnly: true });
   },
 });

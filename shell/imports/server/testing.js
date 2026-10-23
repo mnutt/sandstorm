@@ -1025,6 +1025,23 @@ if(isTesting) {
               "suspendAccount(willDelete) did not send admin deletion email.");
         }
 
+        try {
+          await callSuspensionMethod("unsuspendOwnAccount", targetId, []);
+          throw new Meteor.Error("suspension-own-admin-accepted",
+              "An account cleared its administrator suspension.");
+        } catch (err) {
+          if (err.error !== 403) throw err;
+        }
+
+        target = await Meteor.users.findOneAsync(targetId);
+        targetCredential = await Meteor.users.findOneAsync(targetCredentialId);
+        if (!target.suspended || !targetCredential.suspended ||
+            !(await globalDb.collections.grains.findOneAsync(grainId)).suspended ||
+            !(await globalDb.collections.apiTokens.findOneAsync(apiTokenId)).suspended) {
+          throw new Meteor.Error("suspension-own-admin-state",
+              "Rejected self-restoration changed suspended account resources.");
+        }
+
         await callSuspensionMethod("unsuspendAccount", adminId, [targetId]);
         target = await Meteor.users.findOneAsync(targetId);
         targetCredential = await Meteor.users.findOneAsync(targetCredentialId);
@@ -1054,6 +1071,11 @@ if(isTesting) {
               /No longer needed/.test(email.text || ""))) {
           throw new Meteor.Error("suspension-delete-own-emails",
               "deleteOwnAccount did not send user/admin deletion emails.");
+        }
+
+        await callSuspensionMethod("unsuspendOwnAccount", selfDeleteId, []);
+        if ((await Meteor.users.findOneAsync(selfDeleteId)).suspended) {
+          throw new Meteor.Error("suspension-own-restore", "Voluntary deletion could not be canceled.");
         }
 
         await globalDb.collections.settings.upsertAsync({ _id: "organizationMembership" }, {

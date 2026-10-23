@@ -23,6 +23,20 @@ import { Random } from "meteor/random";
 import { SHA256 } from "meteor/sha";
 import { iconSrcForPackage } from "/imports/sandstorm-identicons/helpers";
 
+// Suspension touches the account, grains, tokens, and credentials. Keep operations for the
+// same account ordered across SandstormDb instances in this frontend.
+const accountSuspensions = new Map();
+async function serializeAccountSuspension(userId, action) {
+  const previous = accountSuspensions.get(userId) || Promise.resolve();
+  const operation = previous.catch(() => {}).then(action);
+  accountSuspensions.set(userId, operation);
+  try {
+    return await operation;
+  } finally {
+    if (accountSuspensions.get(userId) === operation) accountSuspensions.delete(userId);
+  }
+}
+
 let appIndexHttpCallForTests;
 let serverHttpCall;
 function setAppIndexHttpCallForTests(call) {
@@ -2492,68 +2506,77 @@ Object.assign(SandstormDb.prototype, {
     check(byAdminUserId, Match.OneOf(String, null, undefined));
     check(willDelete, Boolean);
 
-    const user = await this.collections.users.findOneAsync({ _id: userId });
-    const suspension = {
-      timestamp: new Date(),
-      willDelete: willDelete || false,
-    };
-    if (byAdminUserId) {
-      suspension.admin = byAdminUserId;
-    } else {
-      suspension.voluntary = true;
-    }
+    return serializeAccountSuspension(userId, async () => {
+      const user = await this.collections.users.findOneAsync({ _id: userId });
+      const suspension = {
+        timestamp: new Date(),
+        willDelete: willDelete || false,
+      };
+      if (byAdminUserId) {
+        suspension.admin = byAdminUserId;
+      } else {
+        suspension.voluntary = true;
+      }
 
-    await this.collections.users.updateAsync({ _id: userId }, { $set: { suspended: suspension } });
-    await this.collections.grains.updateAsync({ userId: userId }, { $set: { suspended: true } }, { multi: true });
+      await this.collections.users.updateAsync({ _id: userId }, { $set: { suspended: suspension } });
+      await this.collections.grains.updateAsync({ userId: userId }, { $set: { suspended: true } }, { multi: true });
 
-    await this.collections.apiTokens.updateAsync({ "owner.user.accountId": userId },
-      { $set: { suspended: true } }, { multi: true });
+      await this.collections.apiTokens.updateAsync({ "owner.user.accountId": userId },
+        { $set: { suspended: true } }, { multi: true });
 
-    delete suspension.willDelete;
-    // Only mark the parent account for deletion. This makes the query simpler later.
+      delete suspension.willDelete;
+      // Only mark the parent account for deletion. This makes the query simpler later.
 
-    for (const credential of user.loginCredentials) {
-      await this.suspendCredential(credential.id, suspension);
-    }
-
-    for (const credential of user.nonloginCredentials) {
-      if (await this.collections.users.find({ $or: [
-        { "loginCredentials.id": credential.id },
-        { "nonloginCredentials.id": credential.id },
-      ], }).countAsync() === 1) {
-        // Only suspend non-login credential that are unique to this account.
+      for (const credential of user.loginCredentials) {
         await this.suspendCredential(credential.id, suspension);
       }
-    }
 
-    // Force logout this user
-    await this.collections.users.updateAsync({ _id: userId },
-      { $unset: { "services.resume.loginTokens": 1 } });
-    if (user && user.loginCredentials) {
-      for (const credential of user.loginCredentials) {
-        await Meteor.users.updateAsync({ _id: credential.id },
-            { $unset: { "services.resume.loginTokens": 1 } });
+      for (const credential of user.nonloginCredentials) {
+        if (await this.collections.users.find({ $or: [
+          { "loginCredentials.id": credential.id },
+          { "nonloginCredentials.id": credential.id },
+        ], }).countAsync() === 1) {
+          // Only suspend non-login credential that are unique to this account.
+          await this.suspendCredential(credential.id, suspension);
+        }
       }
-    }
+
+      // Force logout this user
+      await this.collections.users.updateAsync({ _id: userId },
+        { $unset: { "services.resume.loginTokens": 1 } });
+      if (user && user.loginCredentials) {
+        for (const credential of user.loginCredentials) {
+          await Meteor.users.updateAsync({ _id: credential.id },
+              { $unset: { "services.resume.loginTokens": 1 } });
+        }
+      }
+    });
   },
 
-  async unsuspendAccount(userId) {
+  async unsuspendAccount(userId, { voluntaryOnly = false } = {}) {
     check(userId, String);
 
-    const user = await this.collections.users.findOneAsync({ _id: userId });
-    await this.collections.users.updateAsync({ _id: userId }, { $unset: { suspended: 1 } });
-    await this.collections.grains.updateAsync({ userId: userId }, { $unset: { suspended: 1 } }, { multi: true });
+    return serializeAccountSuspension(userId, async () => {
+      const user = await this.collections.users.findOneAsync({ _id: userId });
+      const selector = { _id: userId };
+      if (voluntaryOnly) selector["suspended.voluntary"] = true;
+      const changed = await this.collections.users.updateAsync(selector, { $unset: { suspended: 1 } });
+      if (!changed) {
+        throw new Meteor.Error(403, "Only a voluntary account deletion can be canceled.");
+      }
+      await this.collections.grains.updateAsync({ userId: userId }, { $unset: { suspended: 1 } }, { multi: true });
 
-    await this.collections.apiTokens.updateAsync({ "owner.user.accountId": userId },
-      { $unset: { suspended: true } }, { multi: true });
+      await this.collections.apiTokens.updateAsync({ "owner.user.accountId": userId },
+        { $unset: { suspended: true } }, { multi: true });
 
-    for (const credential of user.loginCredentials) {
-      await this.unsuspendCredential(credential.id);
-    }
+      for (const credential of user.loginCredentials) {
+        await this.unsuspendCredential(credential.id);
+      }
 
-    for (const credential of user.nonloginCredentials) {
-      await this.unsuspendCredential(credential.id);
-    }
+      for (const credential of user.nonloginCredentials) {
+        await this.unsuspendCredential(credential.id);
+      }
+    });
   },
 
   async deletePendingAccounts(deletionCoolingOffTime, backend, cb) {
