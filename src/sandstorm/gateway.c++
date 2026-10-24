@@ -817,8 +817,8 @@ kj::Promise<void> GatewayService::getStaticPublished(
 
     KJ_UNREACHABLE;
   }).attach(kj::mv(ownPath), kj::mv(streamAndAborter.aborter))
-      .catch_([this,publicId,originalPath,&headers,&response,retryCount,oldGeneration]
-              (kj::Exception&& e) -> kj::Promise<void> {
+      .catch_([this,publicId = kj::str(publicId),originalPath,&headers,&response,retryCount,
+               oldGeneration](kj::Exception&& e) -> kj::Promise<void> {
     if (e.getType() == kj::Exception::Type::DISCONNECTED && retryCount < 2) {
       auto iter = staticPublishers.find(publicId);
       if (iter != staticPublishers.end() && iter->second.generation == oldGeneration) {

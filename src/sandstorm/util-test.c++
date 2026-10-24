@@ -578,6 +578,70 @@ KJ_TEST("Application errors are not mistaken for oversized request bodies") {
   }
 }
 
+class MissingPublishedFile final: public Supervisor::Server {
+  kj::Promise<void> getWwwFileHack(GetWwwFileHackContext context) override {
+    context.getResults().setStatus(Supervisor::WwwFileStatus::NOT_FOUND);
+    return kj::READY_NOW;
+  }
+};
+
+class RefreshingPublisherRouter final: public GatewayRouter::Server {
+public:
+  uint routes = 0;
+  kj::Vector<kj::String> requestedIds;
+  kj::Own<kj::PromiseFulfiller<void>> disconnect;
+
+  kj::Promise<void> routeForeignHostname(RouteForeignHostnameContext context) override {
+    auto info = context.getResults().initInfo();
+    info.setStaticPublishing(routes++ == 0 ? "original-publisher" : "replacement-publisher");
+    info.setTtlSeconds(0);
+    return kj::READY_NOW;
+  }
+
+  kj::Promise<void> getStaticPublishingHost(GetStaticPublishingHostContext context) override {
+    requestedIds.add(kj::str(context.getParams().getPublicId()));
+    if (requestedIds.size() == 1) {
+      auto pair = kj::newPromiseAndFulfiller<void>();
+      disconnect = kj::mv(pair.fulfiller);
+      return kj::mv(pair.promise);
+    }
+    context.getResults().setSupervisor(kj::heap<MissingPublishedFile>());
+    return kj::READY_NOW;
+  }
+};
+
+KJ_TEST("Static publishing retries preserve the ID after the hostname cache refreshes") {
+  auto io = kj::setupAsyncIo();
+  kj::HttpHeaderTable::Builder builder;
+  GatewayService::Tables tables(builder);
+  auto headerTable = builder.build();
+  auto shell = kj::newHttpClient(io.provider->getTimer(), *headerTable,
+      io.provider->getNetwork(), nullptr);
+  auto router = kj::heap<RefreshingPublisherRouter>();
+  auto& state = *router;
+  GatewayService gateway(io.provider->getTimer(), *shell, kj::mv(router), tables,
+      "http://shell.example", "*.example", nullptr, false);
+  auto cleanup = gateway.cleanupLoop();
+  auto client = kj::newHttpClient(gateway);
+  kj::HttpHeaders headers(*headerTable);
+  headers.set(kj::HttpHeaderId::HOST, "published.test");
+  auto first = client->request(kj::HttpMethod::GET, "/", headers);
+  KJ_EXPECT(!first.response.poll(io.waitScope));
+  KJ_ASSERT(state.requestedIds.size() == 1);
+  auto second = client->request(kj::HttpMethod::GET, "/", headers);
+  auto secondResponse = second.response.wait(io.waitScope);
+  KJ_EXPECT(secondResponse.statusCode == 404);
+  secondResponse.body->readAllText().wait(io.waitScope);
+  state.disconnect->reject(KJ_EXCEPTION(DISCONNECTED, "publisher restarted"));
+  auto firstResponse = first.response.wait(io.waitScope);
+  KJ_EXPECT(firstResponse.statusCode == 404);
+  firstResponse.body->readAllText().wait(io.waitScope);
+  KJ_ASSERT(state.requestedIds.size() == 3);
+  KJ_EXPECT(state.requestedIds[0] == "original-publisher");
+  KJ_EXPECT(state.requestedIds[1] == "replacement-publisher");
+  KJ_EXPECT(state.requestedIds[2] == "original-publisher");
+}
+
 struct GatewayFixture {
   kj::AsyncIoContext io = kj::setupAsyncIo();
   kj::HttpHeaderTable::Builder builder;
