@@ -19,6 +19,7 @@
 #include "gateway.h"
 #include "backend.h"
 #include "spk.h"
+#include <sys/resource.h>
 #include <sodium/crypto_sign.h>
 #include <sodium/crypto_hash_sha512.h>
 #include <sodium/crypto_hash_sha256.h>
@@ -744,6 +745,40 @@ bool hasSubstring(kj::StringPtr haystack, kj::StringPtr needle) {
     }
   }
   return false;
+}
+
+KJ_TEST("Large exec argument and environment vectors fail normally on a small stack") {
+  Subprocess test([]() {
+    struct rlimit stackLimit = {256 * 1024, 256 * 1024};
+    KJ_SYSCALL(setrlimit(RLIMIT_STACK, &stackLimit));
+    struct rlimit coreLimit = {0, 0};
+    KJ_SYSCALL(setrlimit(RLIMIT_CORE, &coreLimit));
+    alarm(10);
+    for (bool largeEnvironment: {false, true}) {
+      auto entries = kj::heapArray<kj::StringPtr>(50000);
+      for (auto& entry: entries) entry = largeEnvironment ? "TEST_VALUE=x" : "x";
+      Subprocess::Options options("/bin/true");
+      options.searchPath = false;
+      if (largeEnvironment) {
+        options.environment = entries.asPtr();
+      } else {
+        entries[0] = "/bin/true";
+        options.argv = entries;
+        options.environment = kj::ArrayPtr<const kj::StringPtr>();
+      }
+      Pipe errors = Pipe::make();
+      options.stderr = errors.writeEnd;
+      Subprocess child(kj::mv(options));
+      errors.writeEnd = nullptr;
+      // The kernel's exec limit should report an error; constructing the vectors must not
+      // exhaust the child's stack first.
+      KJ_REQUIRE(hasSubstring(readAll(errors.readEnd), "execve("));
+      KJ_REQUIRE(child.waitForExit() == 1);
+    }
+    alarm(0);
+    return 0;
+  });
+  test.waitForSuccess();
 }
 
 KJ_TEST("Subprocess") {

@@ -706,12 +706,28 @@ kj::MainBuilder::Validity SupervisorMain::run() {
   int fds[2];
   KJ_SYSCALL(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds));
 
+  // Prepare exec vectors before forking the app process.
+  auto argv = kj::heapArray<char*>(command.size() + 1);
+  for (uint i: kj::indices(command)) {
+    argv[i] = const_cast<char*>(command[i].cStr());
+  }
+  argv[command.size()] = nullptr;
+
+  auto env = kj::heapArray<char*>(environment.size() + 1);
+  for (uint i: kj::indices(environment)) {
+    env[i] = const_cast<char*>(environment[i].cStr());
+  }
+  env[environment.size()] = nullptr;
+
+  char** argvp = argv.begin();
+  char** envp = env.begin();
+
   // Now time to run the start command, in a further chroot.
   KJ_SYSCALL(childPid = fork());
   if (childPid == 0) {
     // We're in the child.
     KJ_SYSCALL(close(fds[0]));  // just to be safe, even though it's CLOEXEC.
-    runChild(fds[1], kj::mv(startEventFd));
+    runChild(fds[1], kj::mv(startEventFd), argvp, envp);
   } else {
     // We're in the supervisor.
     KJ_DEFER(killChild());
@@ -1394,7 +1410,8 @@ void SupervisorMain::DefaultSystemConnector::checkIfAlreadyRunning() const {
 
 // =====================================================================================
 
-[[noreturn]] void SupervisorMain::runChild(int apiFd, kj::AutoCloseFd startEventFd) {
+[[noreturn]] void SupervisorMain::runChild(
+    int apiFd, kj::AutoCloseFd startEventFd, char** argvp, char** envp) {
   // We are the child.
 
   enterSandbox();
@@ -1430,21 +1447,6 @@ void SupervisorMain::DefaultSystemConnector::checkIfAlreadyRunning() const {
   // Redirect stdout to stderr, so that our own stdout serves one purpose:  to notify the parent
   // process when we're ready to accept connections.  We previously directed stderr to a log file.
   KJ_SYSCALL(dup2(STDERR_FILENO, STDOUT_FILENO));
-
-  char* argv[command.size() + 1];
-  for (uint i: kj::indices(command)) {
-    argv[i] = const_cast<char*>(command[i].cStr());
-  }
-  argv[command.size()] = nullptr;
-
-  char* env[environment.size() + 1];
-  for (uint i: kj::indices(environment)) {
-    env[i] = const_cast<char*>(environment[i].cStr());
-  }
-  env[environment.size()] = nullptr;
-
-  char** argvp = argv;  // work-around Clang not liking lambda + vararray
-  char** envp = env;    // same
 
   KJ_SYSCALL(execve(argvp[0], argvp, envp), argvp[0]);
   KJ_UNREACHABLE;

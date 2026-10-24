@@ -598,6 +598,24 @@ bool HeaderWhitelist::matches(kj::StringPtr header) const {
 
 Subprocess::Subprocess(Options&& options)
     : name(kj::heapString(options.argv.size() > 0 ? options.argv[0] : options.executable)) {
+  // Allocate exec vectors before fork, so the child does not need to allocate them.
+  auto argv = kj::heapArray<char*>(options.argv.size() + 1);
+  for (auto i: kj::indices(options.argv)) {
+    argv[i] = const_cast<char*>(options.argv[i].cStr());
+  }
+  argv[options.argv.size()] = nullptr;
+  char** argvp = argv.begin();
+
+  kj::Array<char*> environ;
+  KJ_IF_MAYBE(e, options.environment) {
+    environ = kj::heapArray<char*>(e->size() + 1);
+    for (auto i: kj::indices(*e)) {
+      environ[i] = const_cast<char*>((*e)[i].cStr());
+    }
+    environ[e->size()] = nullptr;
+  }
+  char** environp = environ.begin();
+
   KJ_SYSCALL(pid = fork());
   if (pid == 0) {
     KJ_DEFER(_exit(1));  // Do not under any circumstances return from this stack frame!
@@ -649,25 +667,7 @@ Subprocess::Subprocess(Options&& options)
         KJ_SYSCALL(setresuid(*u, *u, *u));
       }
 
-      // Make the args vector.
-      char* argv[options.argv.size() + 1];
-      for (auto i: kj::indices(options.argv)) {
-        // exec*() is not const-correct. :(
-        argv[i] = const_cast<char*>(options.argv[i].cStr());
-      }
-      argv[options.argv.size()] = nullptr;
-      char** argvp = argv;  // lambda can't capture variable-size array
-
-      KJ_IF_MAYBE(e, options.environment) {
-        // Make the environment vector.
-        char* environ[e->size() + 1];
-        for (auto i: kj::indices(*e)) {
-          // exec*() is not const-correct. :(
-          environ[i] = const_cast<char*>((*e)[i].cStr());
-        }
-        environ[e->size()] = nullptr;
-        char** environp = environ;  // lambda can't capture variable-size array
-
+      if (options.environment != nullptr) {
         if (options.searchPath) {
           KJ_SYSCALL(execvpe(options.executable.cStr(), argvp, environp), options.executable);
         } else {
