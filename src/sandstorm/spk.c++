@@ -164,7 +164,8 @@ public:
   SpkTool(kj::ProcessContext& context): context(context) {
     char buf[PATH_MAX + 1];
     ssize_t n;
-    KJ_SYSCALL(n = readlink("/proc/self/exe", buf, sizeof(buf)));
+    KJ_SYSCALL(n = readlink("/proc/self/exe", buf, PATH_MAX));
+    KJ_REQUIRE(n < PATH_MAX, "Executable path is too long");
     buf[n] = '\0';
     exePath = kj::heapString(buf, n);
     if (exePath.endsWith("/sandstorm")) {
