@@ -1,5 +1,18 @@
 # Sandstorm Tests
 
+## Backup upload unit tests
+
+These tests run without a Sandstorm server, using Node.js 22 or later:
+
+```sh
+node tests/unittests/backup-upload.mjs
+node tests/unittests/transfer-logging.mjs
+```
+
+Run them from the repository root. They cover upload backpressure, RPC and input
+failures, cleanup, and transfer progress logging. They do not measure production
+transfer throughput or replace the transfer integration tests.
+
 ## Setup
 
 From the tests directory, run `npm install` to install the Node dependencies. The test runner uses

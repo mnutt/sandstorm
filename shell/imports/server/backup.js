@@ -22,6 +22,7 @@ import { Router } from "meteor/vlasky:galvanized-iron-router";
 
 import { inMeteor } from "/imports/server/async-helpers";
 import { getGlobalBackend } from "/imports/server/backend-instance";
+import { uploadBackupStream } from "/imports/server/backup-upload";
 
 import Capnp from "/imports/server/capnp";
 import { SandstormDb } from "/imports/sandstorm-db/db";
@@ -335,21 +336,9 @@ const downloadGrainBackup = async (tokenId, response, retryCount = 0) => {
   await cleanupToken(tokenId);
 }
 
-export const storeGrainBackup = async (tokenId, inputStream) => {
+export const storeGrainBackup = async (tokenId, inputStream, onProgress) => {
   const stream = getGlobalBackend().cap().uploadBackup(tokenId).stream;
-
-  await new Promise((resolve, reject) => {
-    inputStream.on("data", (data) => {
-      stream.write(data);
-    });
-    inputStream.on("end", () => {
-      resolve(stream.done());
-    });
-    inputStream.on("error", (err) => {
-      stream.close();
-      reject(err);
-    });
-  });
+  await uploadBackupStream(inputStream, stream, onProgress);
 }
 
 Router.map(function () {

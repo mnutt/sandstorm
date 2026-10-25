@@ -404,12 +404,36 @@ async function revokeTransferTokens(db, userId) {
 export class Downloader {
   constructor(transfer) {
     Object.assign(this, transfer);
+    this.startedAt = Date.now();
+    this.stageStartedAt = this.startedAt;
+    this.lastProgressAt = this.startedAt;
+    this.stage = "starting";
+    this.bytesStored = 0;
     this.promise = Promise.resolve().then(() => inMeteor(() => this.run()));
     this.canceled = false;
   }
 
+  logStatus(event) {
+    const now = Date.now();
+    // Do not include authorization or backup tokens in diagnostics.
+    console.log("mass transfer:", event, JSON.stringify({
+      time: new Date(now).toISOString(), transferId: this._id, grainId: this.grainId,
+      stage: this.stage, bytesStored: this.bytesStored,
+      elapsedSeconds: Math.floor((now - this.startedAt) / 1000),
+      stageSeconds: Math.floor((now - this.stageStartedAt) / 1000),
+      idleSeconds: Math.floor((now - this.lastProgressAt) / 1000),
+    }));
+  }
+
+  setStage(stage) {
+    this.stage = stage;
+    this.stageStartedAt = this.lastProgressAt = Date.now();
+    this.logStatus("stage");
+  }
+
   cancel() {
     this.canceled = true;
+    this.logStatus("stopping worker");
 
     if (this.request) {
       try { this.request.destroy(); } catch (err) {}
@@ -418,11 +442,13 @@ export class Downloader {
   }
 
   async run() {
+    const heartbeat = setInterval(() => this.logStatus("progress"), 30000);
     try {
       while (!this.canceled) {
         await this.nextStep();
       }
     } catch (err) {
+      this.logStatus(this.canceled ? "canceled" : "failed");
       console.log("error in grain transfer:", err.stack);
       this.error = err.message;
       if (!await globalDb.collections.incomingTransfers.findOneAsync({ _id: this._id, downloading: true })) {
@@ -444,13 +470,20 @@ export class Downloader {
 
         this.canceled = true;
       }
+    } finally {
+      clearInterval(heartbeat);
+      if (this.request) {
+        this.request.destroy();
+        delete this.request;
+      }
+      this.logStatus("worker stopped");
     }
   }
 
   async nextStep() {
     if (!this.remoteFileToken) {
       // Request grain download.
-      console.log("mass transfer: packing:", this.grainId);
+      this.setStage("packing");
 
       let response = await transferHttpCall("POST", this.source + "/transfers/prepare/" + this.grainId,
           { headers: {"Authorization": "Bearer " + this.token} });
@@ -467,11 +500,11 @@ export class Downloader {
 
     if (!this.localFileToken) {
       // Start downloading.
-      console.log("mass transfer: downloading:", this.grainId);
+      this.setStage("connecting for download");
+
+      const localFileToken = await transferCreateBackupToken();
 
       this.request = transferBackupRequest(this.source, this.remoteFileToken);
-      this.request.end();
-
       const response = await new Promise((resolve, reject) => {
         this.request.on("response", response => {
           resolve(response);
@@ -479,14 +512,19 @@ export class Downloader {
         this.request.on("error", err => {
           reject(err);
         });
+        this.request.end();
       });
 
-      if (this.canceled) return;
+      if (this.canceled) {
+        response.destroy();
+        return;
+      }
 
       if (response.statusCode != 200) {
         response.destroy();
         if (response.statusCode == 425) {
           // Timed out waiting for file to be ready. Try again.
+          this.logStatus("source backup not ready; retrying");
           return this.nextStep();
         } else if (response.statusCode == 403 || response.statusCode == 404) {
           // Assume token is dead and we need to get a new one.
@@ -499,8 +537,12 @@ export class Downloader {
 
       if (this.canceled) return;
 
-      let localFileToken = await transferCreateBackupToken();
-      await transferStoreGrainBackup(localFileToken, response);
+      this.setStage("downloading");
+      await transferStoreGrainBackup(localFileToken, response, bytes => {
+        this.bytesStored = bytes;
+        this.lastProgressAt = Date.now();
+      });
+      this.logStatus("download stored");
 
       if (this.canceled) return;
 
@@ -514,7 +556,7 @@ export class Downloader {
 
     {
       // Finish unpacking.
-      console.log("mass transfer: unpacking:", this.grainId);
+      this.setStage("unpacking");
 
       const localGrainId = await transferRestoreGrainBackup(this.localFileToken,
           await Meteor.users.findOneAsync({ _id: this.userId }), this);
@@ -524,10 +566,12 @@ export class Downloader {
         this.canceled = true;
       }
       let canceled = this.canceled;
+      this.setStage("recording completion");
       await globalDb.collections.incomingTransfers.updateAsync({_id: this._id}, {
         $set: { localGrainId },
         $unset: { downloading: 1, localFileToken: 1, remoteFileToken: 1 }
       });
+      this.setStage("completed");
       if (!canceled) {
         await startOneTransfer(globalDb, this.userId);
         this.canceled = true;
