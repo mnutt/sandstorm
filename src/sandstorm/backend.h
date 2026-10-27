@@ -31,6 +31,17 @@ namespace kj {
 
 namespace sandstorm {
 
+struct BackingUpGrain {
+  kj::String grainId;
+  kj::ForkedPromise<void> promise;
+  // Promise will be fulfiled when the backup is complete.
+};
+
+inline BackingUpGrain makeBackingUpGrain(kj::StringPtr grainId,
+                                         kj::ForkedPromise<void> promise) {
+  return { kj::heapString(grainId), kj::mv(promise) };
+}
+
 class BackendImpl final: public Backend::Server, private kj::TaskSet::ErrorHandler {
 public:
   BackendImpl(kj::LowLevelAsyncIoProvider& ioProvider,
@@ -92,11 +103,6 @@ private:
   struct StartingGrain {
     kj::String grainId;
     kj::ForkedPromise<Supervisor::Client> promise;
-  };
-
-  struct BackingUpGrain {
-    kj::ForkedPromise<void> promise;
-    // Promise will be fulfiled when the backup is complete.
   };
 
   std::map<kj::StringPtr, kj::OneOf<StartingGrain, BackingUpGrain>> supervisors;

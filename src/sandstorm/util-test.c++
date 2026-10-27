@@ -34,6 +34,31 @@
 namespace sandstorm {
 namespace {
 
+KJ_TEST("BackingUpGrain owns its supervisor-cache key") {
+  auto io = kj::setupAsyncIo();
+  auto paf = kj::newPromiseAndFulfiller<void>();
+  std::map<kj::StringPtr, BackingUpGrain> supervisors;
+  kj::StringPtr completionGrainId;
+  {
+    auto requestGrainId = kj::str("grain-key");
+    auto entry = makeBackingUpGrain(requestGrainId, paf.promise.fork());
+    KJ_EXPECT(entry.grainId.begin() != requestGrainId.begin());
+    completionGrainId = entry.grainId;
+    supervisors.insert(std::make_pair(completionGrainId, kj::mv(entry)));
+
+    // Mutating the request storage must not change the map key, even before
+    // releasing it as backupGrain() does with context.releaseParams().
+    requestGrainId[0] = 'X';
+    KJ_EXPECT(supervisors.begin()->first == "grain-key"_kj);
+  }
+
+  // Both the cache and completion callback must outlive the request storage.
+  KJ_EXPECT(supervisors.begin()->first == "grain-key"_kj);
+  KJ_EXPECT(supervisors.find("grain-key") != supervisors.end());
+  KJ_EXPECT(supervisors.erase(completionGrainId) == 1);
+  paf.fulfiller->fulfill();
+}
+
 KJ_TEST("Backup RPCs reject invalid object IDs before accessing files") {
   auto io = kj::setupAsyncIo();
   Backend::Client backend = kj::heap<BackendImpl>(*io.lowLevelProvider,

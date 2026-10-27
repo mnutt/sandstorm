@@ -551,11 +551,14 @@ kj::Promise<void> BackendImpl::backupGrain(BackupGrainContext context) {
   auto path = kj::str("/var/sandstorm/backups/", validateId(params.getBackupId()));
 
   auto iter = supervisors.find(grainId);
+  kj::StringPtr completionGrainId;
   if(iter == supervisors.end()) {
     // Not running. Mark the grain as backing up, so nobody tries to boot it
     // until we're done:
     auto paf = kj::newPromiseAndFulfiller<void>();
-    supervisors.insert(std::make_pair(grainId, BackingUpGrain{paf.promise.fork()}));
+    auto backingUp = makeBackingUpGrain(grainId, paf.promise.fork());
+    completionGrainId = backingUp.grainId;
+    supervisors.insert(std::make_pair(completionGrainId, kj::mv(backingUp)));
     backupFulfiller = kj::mv(paf.fulfiller);
   } else {
     // If cgroups is available, freeze the corresponding cgroup
@@ -602,7 +605,7 @@ kj::Promise<void> BackendImpl::backupGrain(BackupGrainContext context) {
   return promise.attach(kj::mv(metadataMsg), kj::mv(metadataStreamFd), kj::mv(output))
       .then([
           this,
-          grainId,
+          completionGrainId,
           KJ_MVCAP(process),
           KJ_MVCAP(freezeHandle),
           KJ_MVCAP(backupFulfiller)
@@ -612,7 +615,7 @@ kj::Promise<void> BackendImpl::backupGrain(BackupGrainContext context) {
     process.waitForSuccess();
     KJ_IF_MAYBE(f, backupFulfiller) {
       (*f)->fulfill();
-      supervisors.erase(grainId);
+      supervisors.erase(completionGrainId);
     }
   });
 }
