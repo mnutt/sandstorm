@@ -16,6 +16,7 @@
 
 
 import zlib from "zlib";
+import vm from "vm";
 
 import chai from "chai";
 
@@ -25,7 +26,7 @@ import { Meteor } from "meteor/meteor";
 import { Random } from "meteor/random";
 
 import { SandstormDb } from "/imports/sandstorm-db/db";
-import { SamlLoginCache } from "/imports/server/accounts/saml/saml-server";
+import { closePopup, SamlLoginCache } from "/imports/server/accounts/saml/saml-server";
 import { SAML } from "/imports/server/accounts/saml-utils";
 import samlFixtures from "/imports/server/saml-test-fixtures.json";
 
@@ -64,6 +65,40 @@ function getMethodHandler(name) {
 }
 
 if (Meteor.isServer) {
+  describe("SAML popup response", function () {
+    it("escapes HTML script delimiters while preserving login credentials", function () {
+      const credentials = {
+        token: '</script><script>throw new Error("injected")</script><!--',
+        secret: '</ScRiPt><img src=x onerror="alert(1)">\'"\\\n',
+      };
+      let html;
+      closePopup({
+        writeHead() {},
+        end(content) { html = content; },
+      }, undefined, credentials);
+
+      const match = html.match(/^<html><head><script>([\s\S]*)<\/script><\/head><\/html>$/);
+      assert.isNotNull(match);
+      const script = match[1];
+      assert.notInclude(script, "<", "Credential data must not introduce HTML markup");
+
+      let posted;
+      let closed = false;
+      vm.runInNewContext(script, {
+        window: {
+          location: { origin: "https://sandstorm.example" },
+          opener: { postMessage(data, origin) { posted = { data, origin }; } },
+          close() { closed = true; },
+        },
+      });
+      assert.equal(posted.data.type, "sandstorm-saml-login");
+      assert.equal(posted.data.credentialToken, credentials.token);
+      assert.equal(posted.data.credentialSecret, credentials.secret);
+      assert.equal(posted.origin, "https://sandstorm.example");
+      assert.isTrue(closed);
+    });
+  });
+
   describe("SAML server methods", function () {
     this.timeout(10000);
 
@@ -400,6 +435,35 @@ if (Meteor.isServer) {
       }
     });
 
+    it("rejects malformed credential tokens before generating an authorization URL", async function () {
+      await setSamlSettingsForTests();
+      const previousServices = Accounts.loginServices;
+      const originalGetAuthorizeUrl = SAML.prototype.getAuthorizeUrl;
+      const originalConsoleError = console.error;
+      let authorizeCalls = 0;
+      try {
+        Accounts.loginServices = { ...previousServices, saml: { isEnabled: () => true } };
+        console.error = function () {};
+        SAML.prototype.getAuthorizeUrl = function (_req, callback) {
+          authorizeCalls++;
+          callback(null, Meteor.absoluteUrl("_saml/config/default"));
+        };
+        for (const token of ["", "constructor", "_" + "a".repeat(39),
+          "_" + "a".repeat(41), "_" + "g".repeat(40),
+          "_" + "a".repeat(40) + "\n", '</script><script>alert(1)</script>']) {
+          const response = await httpCallAsync("GET",
+            Meteor.absoluteUrl("_saml/authorize/default/" + encodeURIComponent(token)));
+          assert.include(response.content, "Invalid SAML credential token");
+        }
+        assert.equal(authorizeCalls, 0);
+      } finally {
+        console.error = originalConsoleError;
+        SAML.prototype.getAuthorizeUrl = originalGetAuthorizeUrl;
+        Accounts.loginServices = previousServices;
+        await clearSamlSettingsForTests();
+      }
+    });
+
     it("accepts each pending request once and rejects expired requests", async function () {
       await setSamlSettingsForTests();
       const previousServices = Accounts.loginServices;
@@ -410,7 +474,7 @@ if (Meteor.isServer) {
       const originalNow = Date.now;
       let requestId;
       let responseId;
-      const token = makeId("credential");
+      const token = "_" + Random.hexString(40);
       try {
         Accounts.loginServices = { ...previousServices, saml: { isEnabled: () => true } };
         console.error = function () {};

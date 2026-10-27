@@ -9,8 +9,34 @@ const initiateLogin = function (options, callback, dimensions) {
     (dimensions && dimensions.width) || 650,
     (dimensions && dimensions.height) || 500);
   let popupClosed;
+  let finished = false;
+  let checkPopupOpen;
 
-  const checkPopupOpen = setInterval(function () {
+  const finish = function (error, result) {
+    if (finished) return;
+    finished = true;
+    clearInterval(checkPopupOpen);
+    window.removeEventListener("message", messageListener);
+    callback(error, result);
+  };
+
+  const messageListener = function (event) {
+    if (event.origin !== window.location.origin) return;
+    if (event.source !== popup) return;
+    const data = event.data;
+    if (!data || data.type !== "sandstorm-saml-login") return;
+    if (data.credentialToken !== options.credentialToken) return;
+    if (typeof data.credentialSecret !== "string" || !data.credentialSecret) return;
+
+    finish(null, {
+      credentialToken: data.credentialToken,
+      credentialSecret: data.credentialSecret,
+    });
+  };
+
+  window.addEventListener("message", messageListener);
+
+  checkPopupOpen = setInterval(function () {
     try {
       // Fix for #328 - added a second test criteria (popup.closed === undefined)
       // to humour this Android quirk:
@@ -25,8 +51,7 @@ const initiateLogin = function (options, callback, dimensions) {
     }
 
     if (popupClosed) {
-      clearInterval(checkPopupOpen);
-      callback(options.credentialToken);
+      finish(new Error("SAML login did not complete."));
     }
   }, 100);
 };
@@ -65,8 +90,15 @@ const loginWithSaml = function (options, callback) {
   options.credentialToken = credentialToken;
 
   initiateLogin(options, function (error, result) {
+    if (error) {
+      callback(error);
+      return;
+    }
+
     Accounts.callLoginMethod({
-      methodArguments: [{ saml: true, credentialToken: credentialToken }],
+      methodArguments: [{ saml: true,
+                          credentialToken: result.credentialToken,
+                          credentialSecret: result.credentialSecret }],
       userCallback: callback,
     });
   });
