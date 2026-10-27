@@ -25,6 +25,7 @@ import { Random } from "meteor/random";
 
 import Capnp from "/imports/server/capnp";
 import { SandstormDb } from "/imports/sandstorm-db/db";
+import { assertGrainIsPublishable } from "/imports/server/grain-lifecycle";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 
@@ -605,15 +606,16 @@ class GatewayRouterImpl {
   getStaticPublishingHost(publicId) {
     return inMeteor(async () => {
       const grain = await globalDb.collections.grains.findOneAsync(
-          { publicId: publicId }, { fields: { _id: 1 } });
-      if (grain) {
-        await awaitRateLimit("WWW", publicId, grain.userId);
-        return globalThis.globalBackend.useGrain(grain._id, supervisor => {
-          return supervisor.keepAlive().then(() => { return { supervisor }; });
-        });
-      } else {
+          { publicId: publicId }, { fields: { _id: 1, userId: 1, trashed: 1, suspended: 1 } });
+      if (!grain) {
         throw new Meteor.Error(404, "No such grain for public ID: " + publicId);
       }
+
+      assertGrainIsPublishable(grain);
+      await awaitRateLimit("WWW", publicId, grain.userId);
+      return globalThis.globalBackend.useGrain(grain._id, supervisor => {
+        return supervisor.keepAlive().then(() => { return { supervisor }; });
+      });
     });
   }
 

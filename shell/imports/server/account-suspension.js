@@ -27,6 +27,20 @@ export function setAccountSuspensionEmailSenderForTests(sender) {
   accountSuspensionEmailSender = sender || send;
 }
 
+async function shutdownSuspendedGrains(db, userId) {
+  if (!globalThis.globalBackend) return;
+
+  const grains = await db.collections.grains.find(
+    { userId, suspended: true }, { fields: { _id: 1, userId: 1 } }).fetchAsync();
+  for (const grain of grains) {
+    try {
+      await globalThis.globalBackend.shutdownGrain(grain._id, grain.userId);
+    } catch (err) {
+      console.error("Failed to shutdown suspended grain", grain._id, err);
+    }
+  }
+}
+
 async function sendDeletionEmails(db, deletedUserId, byAdminUserId, feedback) {
   const deletedUser = await db.getUser(deletedUserId);
 
@@ -110,6 +124,7 @@ Meteor.methods({
     }
 
     await db.suspendAccount(userId, this.userId, willDelete);
+    await shutdownSuspendedGrains(db, userId);
 
     if (willDelete) {
       await sendDeletionEmails(db, userId, this.userId);
@@ -133,6 +148,7 @@ Meteor.methods({
     }
 
     await db.suspendAccount(this.userId, null, true);
+    await shutdownSuspendedGrains(db, this.userId);
 
     await sendDeletionEmails(db, this.userId, null, feedback);
   },

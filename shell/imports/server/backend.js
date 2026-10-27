@@ -13,6 +13,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+import { assertGrainIsPublishable } from "/imports/server/grain-lifecycle";
 
 import { Meteor } from "meteor/meteor";
 import { inMeteor } from "/imports/server/async-helpers";
@@ -101,9 +102,7 @@ class SandstormBackend {
       throw new Meteor.Error(404, "Grain Not Found", "Grain ID: " + grainId);
     }
 
-    if (grain.trashed) {
-      throw new Meteor.Error(403, "Grain is in the trash bin", "Grain ID: " + grainId);
-    }
+    assertGrainIsPublishable(grain);
 
     // If a DevPackage with the same app ID is currently active, we let it override the installed
     // package, so that the grain runs using the dev app.
