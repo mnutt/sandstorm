@@ -23,6 +23,7 @@ import { Random } from "meteor/random";
 
 import { send as sendEmail } from "/imports/server/email";
 import { SandstormDb } from "/imports/sandstorm-db/db";
+import { assertGrainIsPublishable } from "/imports/server/grain-lifecycle";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 
@@ -526,6 +527,22 @@ Meteor.methods({
         throw new Meteor.Error(403, "Demo users are not allowed to share by email.");
       }
 
+      const grain = await globalDb.collections.grains.findOneAsync(
+          grainId, { fields: { _id: 1, userId: 1, trashed: 1, suspended: 1 } });
+      if (!grain) {
+        throw new Meteor.Error(404, "No such grain");
+      }
+
+      assertGrainIsPublishable(grain);
+
+      // Follow the permission graph so direct invitations work and revoked upstream
+      // shares cannot authorize new invitations.
+      if (!(await SandstormPermissions.mayOpenGrainAsync(globalDb, {
+        grain: { _id: grainId, accountId: this.userId },
+      }))) {
+        throw new Meteor.Error(403, "Must have sharing access to this grain.");
+      }
+
       const escapedMessage = message.replace(/&/g, "&amp;")
                                     .replace(/</g, "&lt;")
                                     .replace(/>/g, "&gt;")
@@ -566,6 +583,12 @@ Meteor.methods({
             outerResult.failures.push({ contact: contact, error: e.toString() });
           }
         } else {
+          const recipient = await Meteor.users.findOneAsync({ _id: contact._id, type: "account" });
+          if (!recipient) {
+            outerResult.failures.push({ contact: contact, error: "Recipient is not an account." });
+            continue;
+          }
+
           const result = await SandstormPermissions.createNewApiToken(
             globalDb, { accountId: accountId }, grainId,
             "direct invitation to " + contact.profile.name,
