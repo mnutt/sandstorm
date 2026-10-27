@@ -83,7 +83,9 @@ export const createGrainBackup = async (userId, grainId, async) => {
 
   const accounts = await Meteor.users.find({ _id: { $in: [...Object.keys(users)] } }).fetchAsync();
   accounts.forEach((account) => {
-    let credentialIds = account.loginCredentials.map((credential) => credential.id);
+    if (account.type !== "account") return;
+
+    let credentialIds = (account.loginCredentials || []).map((credential) => credential.id);
 
     grainInfo.users.push({
       identityId: users[account._id],
