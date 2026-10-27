@@ -61,8 +61,14 @@ Meteor.methods({
       // probably now have two payment accounts. Mark this invite as used but also add a special
       // flag so we can find it later and cancel the dupe payment account. Record who tried to
       // use it so that we can transfer credits over if needed.
-      await globalDb.collections.signupKeys.updateAsync(
-          key, { $set: { used: true, rejectedBy: this.userId } });
+      const claim = await globalDb.collections.signupKeys.rawCollection().findOneAndUpdate(
+          { _id: key, used: { $ne: true } },
+          { $set: { used: true, rejectedBy: this.userId } },
+          { returnDocument: "before" });
+      const claimed = claim && claim.value !== undefined ? claim.value : claim;
+      if (!claimed) {
+        throw new Meteor.Error(403, "Invalid key or already used.");
+      }
       return;
     }
 
@@ -86,7 +92,15 @@ Meteor.methods({
       userFields["payments.id"] = keyInfo.payments.id;
     }
 
+    const claim = await globalDb.collections.signupKeys.rawCollection().findOneAndUpdate(
+        { _id: key, used: { $ne: true } },
+        { $set: { used: true } },
+        { returnDocument: "before" });
+    const claimed = claim && claim.value !== undefined ? claim.value : claim;
+    if (!claimed) {
+      throw new Meteor.Error(403, "Invalid key or already used.");
+    }
+
     await Meteor.users.updateAsync(this.userId, { $set: userFields });
-    await globalDb.collections.signupKeys.updateAsync(key, { $set: { used: true } });
   },
 });
