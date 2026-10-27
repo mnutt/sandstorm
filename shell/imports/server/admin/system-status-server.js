@@ -1,32 +1,27 @@
 import { Meteor } from "meteor/meteor";
 import { Router } from "meteor/vlasky:galvanized-iron-router";
-import { Random } from "meteor/random";
 
 import Crypto from "crypto";
 import Fs from "fs";
 import { checkAuthAsync } from "/imports/server/auth";
 
 import { SANDSTORM_LOGDIR } from "/imports/server/constants";
+import {
+  SystemLogDownloadTokens,
+  SYSTEM_LOG_DOWNLOAD_TOKEN_VALIDITY_DURATION,
+} from "/imports/server/admin/system-log-download-token";
 
 const hashSessionId = function (sessionId) {
   return Crypto.createHash("sha256").update(sessionId).digest("base64");
 };
 
-// An in-memory map of random id -> timestamp, used to authorize requests to download the system
-// log.
-const SYSTEM_LOG_DOWNLOAD_TOKENS = {};
-const SYSTEM_LOG_DOWNLOAD_TOKEN_VALIDITY_DURATION = 60000; // 60 seconds
-
 Meteor.methods({
   async adminGetServerLogDownloadToken(setupToken) {
     await checkAuthAsync(this.connection.sandstormDb, this.userId, setupToken);
 
-    const token = Random.id(22);
-    SYSTEM_LOG_DOWNLOAD_TOKENS[token] = Date.now();
+    const token = SystemLogDownloadTokens.issue();
     setTimeout(() => {
-      if (SYSTEM_LOG_DOWNLOAD_TOKENS[token]) {
-        delete SYSTEM_LOG_DOWNLOAD_TOKENS[token];
-      }
+      SystemLogDownloadTokens.remove(token);
     }, SYSTEM_LOG_DOWNLOAD_TOKEN_VALIDITY_DURATION * 2);
     return token;
   },
@@ -39,10 +34,8 @@ Router.map(function () {
     action() {
       const token = this.params.tokenId;
       const response = this.response;
-      const issueDate = SYSTEM_LOG_DOWNLOAD_TOKENS[token];
-      delete SYSTEM_LOG_DOWNLOAD_TOKENS[token]; // Clear the token from the in-memory map.
-      if (issueDate === undefined ||
-          issueDate + SYSTEM_LOG_DOWNLOAD_TOKEN_VALIDITY_DURATION < Date.now()) {
+      const issueDate = SystemLogDownloadTokens.take(token);
+      if (issueDate === null) {
         // Require download to start within 60 seconds of the adminGetServerLogDownloadToken
         // method being called.
         response.writeHead(404, { "Content-Type": "text/plain" });
