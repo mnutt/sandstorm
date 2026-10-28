@@ -34,3 +34,6 @@ for name, batches in groups.items():
     segments = ', '.join(f'{key}={statistics.mean(r[key] for r in good):.4f}'
                          for key in ['toAppMs', 'handlerMs', 'fromAppMs'])
     print(f"  mean segments: {segments}; reused sockets: {sum(r['reusedSocket'] for r in good)}/{len(good)}")
+
+    if all(b["summary"].get("appConnections") is not None for b in batches):
+        print("  app connections per batch:", [b["summary"]["appConnections"] for b in batches])

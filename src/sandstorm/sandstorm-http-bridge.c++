@@ -59,6 +59,7 @@
 #include "version.h"
 #include "util.h"
 #include "bridge-proxy.h"
+#include "http-connection-pool.h"
 
 namespace sandstorm {
 
@@ -160,9 +161,11 @@ class HttpParser final: public sandstorm::Handle::Server,
                   private http_parser,
                   private kj::TaskSet::ErrorHandler {
 public:
-  HttpParser(sandstorm::ByteStream::Client responseStream, bool ignoreBody = false)
+  HttpParser(sandstorm::ByteStream::Client responseStream, bool ignoreBody = false,
+             bool allowReuse = false)
     : responseStream(responseStream),
       ignoreBody(ignoreBody),
+      allowReuse(allowReuse),
       taskSet(*this) {
     memset(&settings, 0, sizeof(settings));
     settings.on_status = &on_status;
@@ -208,7 +211,7 @@ public:
           // Error while writing.
 
           // Shut down input, so that the app knows it can stop generating it.
-          responseInput->abortRead();
+          if (responseInput.get() != nullptr) responseInput->abortRead();
 
           // Drop the response stream, so that Sandstorm knows no more data is coming.
           responseStream = nullptr;
@@ -221,6 +224,15 @@ public:
         return readResponse(stream);
       }
     });
+  }
+
+  bool canReuse() {
+    return allowReuse && messageComplete && !upgrade &&
+        http_should_keep_alive(this);
+  }
+
+  void setReusePool(kj::Own<HttpConnectionPool> pool) {
+    reusePool = kj::mv(pool);
   }
 
   void pumpStream(kj::Own<kj::AsyncIoStream>&& stream) {
@@ -488,6 +500,7 @@ private:
 
   sandstorm::ByteStream::Client responseStream;
   bool ignoreBody;
+  bool allowReuse;
   kj::TaskSet taskSet;
   http_parser_settings settings;
   kj::Vector<RawHeader> rawHeaders;
@@ -509,6 +522,7 @@ private:
   capnp::Orphan<capnp::Data> nextWriteData;
   size_t nextWriteSize = 0;  // how many bytes are already in `nextWriteData`
 
+  kj::Own<HttpConnectionPool> reusePool;
   kj::Own<kj::AsyncIoStream> responseInput;
   byte buffer[8192];
 
@@ -611,6 +625,12 @@ private:
       } else if (messageComplete || actual == 0) {
         // The parser is done or the stream has closed.
         streamDone = true;
+        // The complete framed body is now in our write buffers. Its downstream delivery can
+        // finish independently of the app socket. Cancellation must never close a socket
+        // already returned to the pool and acquired by another request.
+        if (canReuse() && reusePool.get() != nullptr && !aborted) {
+          reusePool->put(kj::mv(responseInput));
+        }
         KJ_IF_MAYBE(w, writeReady) {
           w->get()->fulfill();
           writeReady = nullptr;
@@ -770,6 +790,7 @@ private:
 
   void onMessageComplete() {
     messageComplete = true;
+    if (allowReuse) http_parser_pause(this, 1);
   }
 
   static int on_headers_complete(http_parser *p) {
@@ -1450,7 +1471,8 @@ public:
     GetParams::Reader params = context.getParams();
     kj::String httpRequest = makeHeaders(
         params.getIgnoreBody() ? "HEAD" : "GET", params.getPath(), params.getContext());
-    return sendRequest(toBytes(httpRequest), context, params.getIgnoreBody());
+    return sendRequest(toBytes(httpRequest), context, params.getIgnoreBody(),
+                       keepAlive && !params.getIgnoreBody());
   }
 
   kj::Promise<void> post(PostContext context) override {
@@ -1700,6 +1722,11 @@ private:
   kj::Maybe<OwnCapnp<BridgeObjectId::HttpApi>> apiInfo;
   kj::Own<SessionInfo::Reader> sessionInfo;
 
+  // Opt-in experiment: GET connections are recycled only after complete response framing.
+  bool keepAlive = getenv("SANDSTORM_HTTP_BRIDGE_KEEPALIVE") != nullptr &&
+      strcmp(getenv("SANDSTORM_HTTP_BRIDGE_KEEPALIVE"), "1") == 0;
+  kj::Own<HttpConnectionPool> connections = kj::refcounted<HttpConnectionPool>();
+
   kj::String makeHeaders(kj::StringPtr method, kj::StringPtr path,
                          WebSession::Context::Reader context,
                          kj::String extraHeader1 = nullptr,
@@ -1708,7 +1735,8 @@ private:
     kj::Vector<kj::String> lines(16);
 
     lines.add(kj::str(method, " ", rootPath, path, " HTTP/1.1"));
-    lines.add(kj::str("Connection: close"));
+    lines.add(kj::str(keepAlive && method == "GET" ?
+        "Connection: keep-alive" : "Connection: close"));
     if (extraHeader1 != nullptr) {
       lines.add(kj::mv(extraHeader1));
     }
@@ -1884,32 +1912,45 @@ private:
   }
 
   template <typename Context>
-  kj::Promise<void> sendRequest(kj::Array<byte> httpRequest, Context& context, bool ignoreBody = false) {
+  kj::Promise<void> sendRequest(kj::Array<byte> httpRequest, Context& context,
+                                bool ignoreBody = false, bool reuse = false) {
     sandstorm::ByteStream::Client responseStream =
         context.getParams().getContext().getResponseStream();
     context.releaseParams();
-    return serverAddr.connect().then(
-        [KJ_MVCAP(httpRequest), responseStream, context, ignoreBody]
+    auto pool = kj::addRef(*connections);
+    auto connect = [&]() -> kj::Promise<kj::Own<kj::AsyncIoStream>> {
+      if (reuse) {
+        KJ_IF_MAYBE(stream, pool->take()) { return kj::mv(*stream); }
+      }
+      return serverAddr.connect();
+    };
+    return connect().then(
+        [KJ_MVCAP(httpRequest), responseStream, context, ignoreBody, reuse, KJ_MVCAP(pool)]
         (kj::Own<kj::AsyncIoStream>&& stream) mutable {
       kj::ArrayPtr<const byte> httpRequestRef = httpRequest;
       auto& streamRef = *stream;
       return streamRef.write(httpRequestRef.begin(), httpRequestRef.size())
           .attach(kj::mv(httpRequest))
-          .then([KJ_MVCAP(stream), responseStream, context, ignoreBody]() mutable {
+          .then([KJ_MVCAP(stream), responseStream, context, ignoreBody, reuse, KJ_MVCAP(pool)]() mutable {
         // Note:  Do not do stream->shutdownWrite() as some HTTP servers will decide to close the
         // socket immediately on EOF, even if they have not actually responded to previous requests
         // yet.
-        auto parser = kj::heap<HttpParser>(responseStream, ignoreBody);
+        auto parser = kj::heap<HttpParser>(responseStream, ignoreBody, reuse);
+        if (reuse) parser->setReusePool(kj::addRef(*pool));
         auto results = context.getResults();
 
         return parser->readResponse(*stream).then(
-            [results, KJ_MVCAP(stream), KJ_MVCAP(parser)]
+            [results, KJ_MVCAP(stream), KJ_MVCAP(parser), KJ_MVCAP(pool)]
             (kj::ArrayPtr<byte> remainder) mutable {
           KJ_ASSERT(remainder.size() == 0);
-          parser->pumpStream(kj::mv(stream));
           auto &parserRef = *parser;
           sandstorm::Handle::Client handle = kj::mv(parser);
           parserRef.build(results, handle);
+          if (parserRef.canReuse()) {
+            pool->put(kj::mv(stream));
+          } else {
+            parserRef.pumpStream(kj::mv(stream));
+          }
         });
       });
     });
@@ -3021,4 +3062,6 @@ private:
 
 }  // namespace sandstorm
 
+#ifndef SANDSTORM_HTTP_BRIDGE_TEST
 KJ_MAIN(sandstorm::SandstormHttpBridgeMain)
+#endif

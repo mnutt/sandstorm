@@ -172,3 +172,51 @@ real application. The app performs no per-request database or filesystem work.
 python3 tests/profiling/summarize-latency.py /tmp/latency-baseline-001
 node --test tests/profiling/latency-client.test.js tests/profiling/server-profiler.test.js
 ```
+
+## Experimental HTTP bridge connection reuse
+
+Set `SANDSTORM_HTTP_BRIDGE_KEEPALIVE=1` in the app manifest command's `environ` (both the
+new-grain action and `continueCommand`) to enable the experiment. It is disabled by default.
+This changes the bridge packaged **inside the app**, not the Sandstorm host binary. Rebuild
+and reinstall the test SPK when comparing versions of the bridge.
+
+The bridge reuses connections for GET requests, including streamed responses once their complete
+HTTP framing has been consumed. It keeps at most 20 idle connections per WebSession, checks
+idle age on acquisition (less than five seconds), and observes disconnects while idle. Other
+methods and upgrades retain their existing connection behavior. Connections are not shared
+between WebSessions. Responses requesting closure, EOF-delimited responses, incomplete bodies,
+and canceled reads are not returned to the pool. There is no HTTP pipelining or automatic retry.
+A peer can still close a socket between acquisition and the next request: handling that race
+and broader real-app compatibility testing remain prerequisites to enabling this by default.
+
+The test app now returns a per-process connection ID. `appConnections` counts distinct internal
+app connections used in each measured batch; this is separate from the client-facing
+`reusedConnections`. Without reuse, 1,000 grain requests use 1,000 app connections. With reuse,
+the expected count is around the requested concurrency (scheduling can alter that count).
+
+To produce matching off/on packages after building `latency-test-app-spk`:
+
+```sh
+cp build/release/packages/latency-test-app.spk /tmp/latency-off.spk
+python3 - <<'PY'
+from pathlib import Path
+p = Path('build/release/packages/latency-app/package.capnp')
+s = p.read_text()
+environment = 'environ = [(key = "SANDSTORM_HTTP_BRIDGE_KEEPALIVE", value = "1")], '
+s = s.replace('command = (argv =', 'command = (' + environment + 'argv =')
+s = s.replace('continueCommand = (argv =', 'continueCommand = (' + environment + 'argv =')
+p.with_name('keepalive.capnp').write_text(s)
+PY
+build/release/bin/spk pack -k tests/profiling/latency-app/test-only.key -I src \
+  -p build/release/packages/latency-app/keepalive.capnp:pkgdef /tmp/latency-on.spk
+```
+
+Run each package with `--scenario latency --mode baseline`, using different output directories.
+Keep the bundle and direct-control binary identical. Run the scenarios sequentially to avoid
+competition for CPU, and reverse off/on order in a subsequent comparison if investigating small
+differences. `--mode both` is useful for attribution, but baseline runs determine timing.
+
+```sh
+cmake --build --preset release --target sandstorm-http-bridge-test
+build/release/bin/sandstorm-http-bridge-test
+```
