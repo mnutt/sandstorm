@@ -13,9 +13,12 @@ var isDevShellMode = process.argv.length > 2;
 
 var firstInheritedFd = isDevShellMode ? 65 : 3;
 
-function sandstormMain() {
+async function sandstormMain() {
   process.env.SANDSTORM_SMTP_LISTEN_HANDLE = (firstInheritedFd + 2).toString();
   process.env.SANDSTORM_BACKEND_HANDLE = (firstInheritedFd + 1).toString();
+  if (process.env.SANDSTORM_PROFILE_SERVER === "1") {
+    await require("./server-profiler.js").start("/var/profile").ready;
+  }
   monkeypatchHttpForGateway();
 
   if (isDevShellMode) {
@@ -87,4 +90,7 @@ function monkeypatchHttpForGateway() {
   }
 }
 
-sandstormMain();
+sandstormMain().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

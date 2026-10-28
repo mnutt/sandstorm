@@ -243,6 +243,8 @@ Config readConfig(const char *path, bool parseUids) {
       config.allowDevAccounts = value == "true" || value == "yes";
     } else if (key == "IS_TESTING") {
       config.isTesting = value == "true" || value == "yes";
+    } else if (key == "PROFILE_SERVER") {
+      config.profileServer = value == "true" || value == "yes";
     } else if (key == "HIDE_TROUBLESHOOTING") {
       config.hideTroubleshooting = value == "true" || value == "yes";
     } else if (key == "SMTP_LISTEN_PORT") {
@@ -291,6 +293,8 @@ Config readConfig(const char *path, bool parseUids) {
     config.ports = kj::mv(ports);
   }
 
+  KJ_REQUIRE(!config.profileServer || config.isTesting,
+      "PROFILE_SERVER requires IS_TESTING=true");
   return config;
 }
 
