@@ -748,9 +748,25 @@ export const WebSession_Response_ClientErrorCode = {
   REQUEST_URI_TOO_LONG: 8,
   UNSUPPORTED_MEDIA_TYPE: 9,
   IM_ATEAPOT: 10,
-  UNPROCESSABLE_ENTITY: 12
+  UNPROCESSABLE_ENTITY: 12,
+  UNAUTHORIZED: 13,
+  /**
+* An upstream API authentication failure is not a Sandstorm login challenge.
+* WWW-Authenticate remains excluded from the response header whitelist.
+*
+*/
+  TOO_MANY_REQUESTS: 14
 } as const;
 export type WebSession_Response_ClientErrorCode = (typeof WebSession_Response_ClientErrorCode)[keyof typeof WebSession_Response_ClientErrorCode];
+export const WebSession_Response_ServerErrorCode = {
+  INTERNAL_SERVER_ERROR: 0,
+  NOT_IMPLEMENTED: 1,
+  BAD_GATEWAY: 2,
+  SERVICE_UNAVAILABLE: 3,
+  GATEWAY_TIMEOUT: 4,
+  HTTP_VERSION_NOT_SUPPORTED: 5
+} as const;
+export type WebSession_Response_ServerErrorCode = (typeof WebSession_Response_ServerErrorCode)[keyof typeof WebSession_Response_ServerErrorCode];
 export class WebSession_Response_Header extends $.Struct {
   static readonly _capnp = {
     displayName: "Header",
@@ -1286,8 +1302,6 @@ export class WebSession_Response_ClientError extends $.Struct {
 /**
 * HTTP 5xx-level error.  The platform will generate a suitable error page.
 *
-* We don't support status codes here because basically none of them are applicable anyway
-* except 500.
 *
 */
 export class WebSession_Response_ServerError extends $.Struct {
@@ -1298,10 +1312,22 @@ export class WebSession_Response_ServerError extends $.Struct {
     typeIdHex: "f0475101099acdc9",
     size: new $.ObjectSize(8, 9),
     fields: [
-      { name: "descriptionHtml", codeOrder: 0, ordinal: 9, kind: "slot", offset: 1, type: { kind: "text" } },
-      { name: "nonHtmlBody", codeOrder: 1, ordinal: 22, kind: "slot", offset: 2, type: { kind: "struct", typeId: 0x9497e63b399a2c01n, typeIdHex: "9497e63b399a2c01", displayName: "ErrorBody" } }
+      { name: "statusCode", codeOrder: 0, ordinal: 23, kind: "slot", offset: 0, type: { kind: "enum", typeId: 0xcb0bfcb6876e95c1n, typeIdHex: "cb0bfcb6876e95c1", displayName: "ServerErrorCode" } },
+      { name: "descriptionHtml", codeOrder: 1, ordinal: 9, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "nonHtmlBody", codeOrder: 2, ordinal: 22, kind: "slot", offset: 2, type: { kind: "struct", typeId: 0x9497e63b399a2c01n, typeIdHex: "9497e63b399a2c01", displayName: "ErrorBody" } }
     ] as const,
+    defaultStatusCode: $.getUint16Mask(0)
   };
+  /**
+* Older readers ignore this field and continue reporting 500.
+*
+*/
+  get statusCode(): WebSession_Response_ServerErrorCode {
+    return $.utils.getUint16(0, this, WebSession_Response_ServerError._capnp.defaultStatusCode) as WebSession_Response_ServerErrorCode;
+  }
+  set statusCode(value: WebSession_Response_ServerErrorCode) {
+    $.utils.setUint16(0, value, this, WebSession_Response_ServerError._capnp.defaultStatusCode);
+  }
   /**
 * Optional extended description of the error, as an HTML document.
 *
@@ -1353,8 +1379,6 @@ export const WebSession_Response_Which = {
   /**
 * HTTP 5xx-level error.  The platform will generate a suitable error page.
 *
-* We don't support status codes here because basically none of them are applicable anyway
-* except 500.
 *
 */
   NO_CONTENT: 4,
@@ -1386,6 +1410,7 @@ export class WebSession_Response extends $.Struct {
   static readonly SERVER_ERROR = WebSession_Response_Which.SERVER_ERROR;
   static readonly SuccessCode = WebSession_Response_SuccessCode;
   static readonly ClientErrorCode = WebSession_Response_ClientErrorCode;
+  static readonly ServerErrorCode = WebSession_Response_ServerErrorCode;
   static readonly Header = WebSession_Response_Header;
   static readonly ErrorBody = WebSession_Response_ErrorBody;
   static readonly _capnp = {
@@ -1547,8 +1572,6 @@ export class WebSession_Response extends $.Struct {
   /**
 * HTTP 5xx-level error.  The platform will generate a suitable error page.
 *
-* We don't support status codes here because basically none of them are applicable anyway
-* except 500.
 *
 */
   get serverError(): WebSession_Response_ServerError {

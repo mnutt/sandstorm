@@ -294,8 +294,12 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
       imATeapot            @10 $httpStatus(id = 418, title = "I'm a teapot");
       unprocessableEntity  @12 $httpStatus(id = 422, title = "Unprocessable Entity");
 
+      unauthorized        @13 $httpStatus(id = 401, title = "Unauthorized");
+      tooManyRequests     @14 $httpStatus(id = 429, title = "Too Many Requests");
+      # An upstream API authentication failure is not a Sandstorm login challenge.
+      # WWW-Authenticate remains excluded from the response header whitelist.
+
       # Not applicable:
-      #   401 Unauthorized:  We don't do HTTP authentication.
       #   402 Payment Required:  LOL
       #   407 Proxy Authentication Required:  Not a proxy.
       #   408 Request Timeout:  Not possible; the entire request is provided with the call.
@@ -305,6 +309,15 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
       #   416 Requested Range Not Satisfiable:  Ranges not implemented (might be later).
       #   417 Expectation Failed:  Like 412.
       #   Others:  Not standard.
+    }
+
+    enum ServerErrorCode {
+      internalServerError @0 $httpStatus(id = 500, title = "Internal Server Error");
+      notImplemented @1 $httpStatus(id = 501, title = "Not Implemented");
+      badGateway @2 $httpStatus(id = 502, title = "Bad Gateway");
+      serviceUnavailable @3 $httpStatus(id = 503, title = "Service Unavailable");
+      gatewayTimeout @4 $httpStatus(id = 504, title = "Gateway Timeout");
+      httpVersionNotSupported @5 $httpStatus(id = 505, title = "HTTP Version Not Supported");
     }
 
     union {
@@ -407,8 +420,8 @@ interface WebSession @0xa50711a14d35a8ce extends(Grain.UiSession) {
       serverError :group {
         # HTTP 5xx-level error.  The platform will generate a suitable error page.
         #
-        # We don't support status codes here because basically none of them are applicable anyway
-        # except 500.
+        statusCode @23 :ServerErrorCode = internalServerError;
+        # Older readers ignore this field and continue reporting 500.
 
         descriptionHtml @9 :Text;
         # Optional extended description of the error, as an HTML document.

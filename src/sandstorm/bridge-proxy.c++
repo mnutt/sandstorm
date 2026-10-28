@@ -164,10 +164,12 @@ private:
         return req.send().getCap();
       })).castAs<ApiSession>();
 
+      WebSessionBridge::Options options;
+      options.allowApiResponseHeaders = true;
       TokenInfo info {
         kj::heapString(token),
         kj::refcounted<WebSessionBridge>(timer, cap, nullptr,
-            webSessionBridgeTables, WebSessionBridge::Options())
+            webSessionBridgeTables, options)
       };
       auto result = kj::addRef(*info.service);
       kj::StringPtr key = info.key;

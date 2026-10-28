@@ -17,6 +17,8 @@
 import Capnp from "/imports/server/capnp";
 const WebSession = Capnp.importSystem("sandstorm/web-session.capnp").WebSession;
 
+const ApiSession = Capnp.importSystem("sandstorm/api-session.capnp").ApiSession;
+
 class HeaderWhitelist {
   constructor(list) {
     this._headers = {};
@@ -48,4 +50,7 @@ class HeaderWhitelist {
 const REQUEST_HEADER_WHITELIST = new HeaderWhitelist(WebSession.Context.headerWhitelist);
 const RESPONSE_HEADER_WHITELIST = new HeaderWhitelist(WebSession.Response.headerWhitelist);
 
-export { HeaderWhitelist, REQUEST_HEADER_WHITELIST, RESPONSE_HEADER_WHITELIST };
+const API_RESPONSE_HEADER_WHITELIST = new HeaderWhitelist(ApiSession.responseHeaderWhitelist);
+
+export { HeaderWhitelist, REQUEST_HEADER_WHITELIST, RESPONSE_HEADER_WHITELIST,
+  API_RESPONSE_HEADER_WHITELIST };

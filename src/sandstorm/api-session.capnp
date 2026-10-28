@@ -25,6 +25,17 @@ interface ApiSession @0xc879e379c625cdc7 extends(WebSession.WebSession) {
   # A special case of WebSession but for APIs. It doesn't provide much other
   # than a unique type id that we can identify ApiSessions with
 
+  const responseHeaderWhitelist :List(Text) = [
+    # Operational metadata accepted by the external API driver and the grain-local HTTP proxy.
+    # This does not extend browser-facing WebSession policy or permit authentication challenges.
+    "retry-after",
+    "x-request-id",
+    "x-ratelimit-limit-requests", "x-ratelimit-limit-tokens",
+    "x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens",
+    "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens",
+    "openai-processing-ms", "openai-version",
+  ];
+
   struct Params {
     # Normally, we strip the remote address from requests, since most applications shouldn't need
     # it.  However, for those that benefit from it (like analytics), clients can opt into passing

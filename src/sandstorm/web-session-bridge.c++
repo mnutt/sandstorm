@@ -15,6 +15,7 @@
 // limitations under the License.
 
 #include "web-session-bridge.h"
+#include <sandstorm/api-session.capnp.h>
 #include "web-session-websocket.h"
 #include <kj/debug.h>
 #include <capnp/schema.h>
@@ -97,6 +98,11 @@ WebSessionBridge::Tables::Tables(kj::HttpHeaderTable::Builder& headerTableBuilde
             capnp::Schema::from<WebSession::Response::ClientErrorCode>().getEnumerants()) {
         return getHttpStatusAnnotation(enumerant);
       }),
+      serverErrorCodeTable(KJ_MAP(enumerant,
+            capnp::Schema::from<WebSession::Response::ServerErrorCode>().getEnumerants()) {
+        return getHttpStatusAnnotation(enumerant);
+      }),
+      apiResponseHeaderWhitelist(*ApiSession::RESPONSE_HEADER_WHITELIST),
       requestHeaderWhitelist(*WebSession::Context::HEADER_WHITELIST),
       responseHeaderWhitelist(*WebSession::Response::HEADER_WHITELIST) {}
 
@@ -1044,7 +1050,8 @@ kj::Promise<void> WebSessionBridge::handleResponse(
     exposedHeaders.add("ETag");
     for (auto addlHeader: addlHeaders) {
       auto name = addlHeader.getName();
-      if (tables.responseHeaderWhitelist.matches(name)) {
+      if (tables.responseHeaderWhitelist.matches(name) ||
+          (options.allowApiResponseHeaders && tables.apiResponseHeaderWhitelist.matches(name))) {
         headers.add(name, addlHeader.getValue());
         exposedHeaders.add(name);
       }
@@ -1265,8 +1272,9 @@ kj::Promise<void> WebSessionBridge::handleResponse(
       case WebSession::Response::SERVER_ERROR: {
         auto error = in.getServerError();
 
+        auto status = lookupStatus(tables.serverErrorCodeTable, error.getStatusCode());
         return handleErrorBody(
-            error, 500, "Internal Server Error", headers, kj::mv(in), out);
+            error, status.getId(), status.getTitle(), headers, kj::mv(in), out);
       }
     }
 

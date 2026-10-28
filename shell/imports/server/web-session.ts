@@ -11,6 +11,8 @@ export type ResponseCodeInfo =
   | {
       type: "clientError",
       clientErrorCode:
+        | "unauthorized"
+        | "tooManyRequests"
         | "badRequest"
         | "forbidden"
         | "notFound"
@@ -24,7 +26,8 @@ export type ResponseCodeInfo =
         | "imATeapot",
       descriptionHtml: string,
     }
-  | { type: "serverError" }
+  | { type: "serverError", serverErrorCode: "internalServerError" | "notImplemented" |
+      "badGateway" | "serviceUnavailable" | "gatewayTimeout" | "httpVersionNotSupported" }
 
 export const responseCodes: { [k: number]: ResponseCodeInfo } = {
   200: { type: "content", code: "ok" },
@@ -47,6 +50,7 @@ export const responseCodes: { [k: number]: ResponseCodeInfo } = {
   307: { type: "redirect", switchToGet: false, isPermanent: false },
   308: { type: "redirect", switchToGet: false, isPermanent: true },
   400: { type: "clientError", clientErrorCode: "badRequest", descriptionHtml: "Bad Request" },
+  401: { type: "clientError", clientErrorCode: "unauthorized", descriptionHtml: "Unauthorized" },
   403: { type: "clientError", clientErrorCode: "forbidden", descriptionHtml: "Forbidden" },
   404: { type: "clientError", clientErrorCode: "notFound", descriptionHtml: "Not Found" },
   405: { type: "clientError", clientErrorCode: "methodNotAllowed", descriptionHtml: "Method Not Allowed" },
@@ -58,10 +62,11 @@ export const responseCodes: { [k: number]: ResponseCodeInfo } = {
   414: { type: "clientError", clientErrorCode: "requestUriTooLong", descriptionHtml: "Request-URI Too Long" },
   415: { type: "clientError", clientErrorCode: "unsupportedMediaType", descriptionHtml: "Unsupported Media Type" },
   418: { type: "clientError", clientErrorCode: "imATeapot", descriptionHtml: "I'm a teapot" },
-  500: { type: "serverError" },
-  501: { type: "serverError" },
-  502: { type: "serverError" },
-  503: { type: "serverError" },
-  504: { type: "serverError" },
-  505: { type: "serverError" },
+  429: { type: "clientError", clientErrorCode: "tooManyRequests", descriptionHtml: "Too Many Requests" },
+  500: { type: "serverError", serverErrorCode: "internalServerError" },
+  501: { type: "serverError", serverErrorCode: "notImplemented" },
+  502: { type: "serverError", serverErrorCode: "badGateway" },
+  503: { type: "serverError", serverErrorCode: "serviceUnavailable" },
+  504: { type: "serverError", serverErrorCode: "gatewayTimeout" },
+  505: { type: "serverError", serverErrorCode: "httpVersionNotSupported" },
 };

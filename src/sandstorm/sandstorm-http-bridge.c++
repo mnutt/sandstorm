@@ -61,6 +61,10 @@
 #include "bridge-proxy.h"
 #include "http-connection-pool.h"
 
+#ifdef SANDSTORM_HTTP_BRIDGE_TEST
+#include <kj/test.h>
+#endif
+
 namespace sandstorm {
 
 kj::Array<byte> toBytes(kj::StringPtr text, kj::ArrayPtr<const byte> data = nullptr) {
@@ -84,6 +88,7 @@ struct HttpStatusInfo {
     struct { bool shouldResetForm; } noContent;
     struct { bool isPermanent; bool switchToGet; } redirect;
     WebSession::Response::ClientErrorCode clientErrorCode;
+    WebSession::Response::ServerErrorCode serverErrorCode;
   };
 };
 
@@ -134,6 +139,14 @@ std::unordered_map<uint, HttpStatusInfo> makeStatusCodes() {
         static_cast<WebSession::Response::ClientErrorCode>(enumerant.getOrdinal());
   }
 
+  for (capnp::EnumSchema::Enumerant enumerant:
+       capnp::Schema::from<WebSession::Response::ServerErrorCode>().getEnumerants()) {
+    auto& info = result[getHttpStatusAnnotation(enumerant).getId()];
+    info.type = WebSession::Response::SERVER_ERROR;
+    info.serverErrorCode =
+        static_cast<WebSession::Response::ServerErrorCode>(enumerant.getOrdinal());
+  }
+
   result[204] = noContentInfo(false);
   result[205] = noContentInfo(true);
 
@@ -155,6 +168,7 @@ std::unordered_map<uint, HttpStatusInfo> makeStatusCodes() {
 const std::unordered_map<uint, HttpStatusInfo> HTTP_STATUS_CODES = makeStatusCodes();
 const HeaderWhitelist REQUEST_HEADER_WHITELIST(*WebSession::Context::HEADER_WHITELIST);
 const HeaderWhitelist RESPONSE_HEADER_WHITELIST(*WebSession::Response::HEADER_WHITELIST);
+const HeaderWhitelist API_RESPONSE_HEADER_WHITELIST(*ApiSession::RESPONSE_HEADER_WHITELIST);
 #pragma clang diagnostic pop
 
 class HttpParser final: public sandstorm::Handle::Server,
@@ -255,6 +269,7 @@ public:
       statusInfo.clientErrorCode = WebSession::Response::ClientErrorCode::BAD_REQUEST;
     } else if (status_code / 100 == 5) {
       statusInfo.type = WebSession::Response::SERVER_ERROR;
+      statusInfo.serverErrorCode = WebSession::Response::ServerErrorCode::INTERNAL_SERVER_ERROR;
     } else {
       KJ_FAIL_REQUIRE(
           "Application used unsupported HTTP status code.  Status codes must be whitelisted "
@@ -297,7 +312,8 @@ public:
     // more than once.
     kj::Vector<Header*> headersMatching;
     for (auto& header: headers) {
-      if (RESPONSE_HEADER_WHITELIST.matches(header.first)) {
+      if (RESPONSE_HEADER_WHITELIST.matches(header.first) ||
+          API_RESPONSE_HEADER_WHITELIST.matches(header.first)) {
         headersMatching.add(&header.second);
       }
     }
@@ -412,16 +428,33 @@ public:
       case WebSession::Response::CLIENT_ERROR: {
         auto error = builder.initClientError();
         error.setStatusCode(statusInfo.clientErrorCode);
-        auto text = error.initDescriptionHtml(body.size());
-        memcpy(text.begin(), body.begin(), body.size());
+        buildErrorBody(error);
         break;
       }
       case WebSession::Response::SERVER_ERROR: {
-        auto text = builder.initServerError().initDescriptionHtml(body.size());
-        memcpy(text.begin(), body.begin(), body.size());
+        auto error = builder.initServerError();
+        error.setStatusCode(statusInfo.serverErrorCode);
+        buildErrorBody(error);
         break;
       }
     }
+  }
+
+  template <typename T>
+  void buildErrorBody(T error) {
+    auto contentType = findHeader("content-type");
+    KJ_IF_MAYBE(type, contentType) {
+      if (!type->startsWith("text/html")) {
+        auto content = error.initNonHtmlBody();
+        content.setMimeType(*type);
+        content.setData(body.asPtr().asBytes());
+        KJ_IF_MAYBE(value, findHeader("content-encoding")) { content.setEncoding(*value); }
+        KJ_IF_MAYBE(value, findHeader("content-language")) { content.setLanguage(*value); }
+        return;
+      }
+    }
+    auto text = error.initDescriptionHtml(body.size());
+    memcpy(text.begin(), body.begin(), body.size());
   }
 
   void buildForWebSocket(WebSession::OpenWebSocketResults::Builder builder) {
@@ -3059,6 +3092,41 @@ private:
     }
   }
 };
+
+#ifdef SANDSTORM_HTTP_BRIDGE_TEST
+KJ_TEST("HTTP error parser preserves API status, JSON body, and operational metadata") {
+  kj::EventLoop loop;
+  kj::WaitScope waitScope(loop);
+  for (uint status: {401, 429, 500, 502, 503, 504}) {
+    auto pipe = kj::newTwoWayPipe();
+    auto raw = kj::str("HTTP/1.1 ", status, " Test\r\nContent-Type: application/json\r\n",
+        "Content-Length: 16\r\nX-Request-Id: test-id\r\nWWW-Authenticate: secret\r\n\r\n",
+        "{\"error\":\"test\"}");
+    auto writing = pipe.ends[0]->write(raw.begin(), raw.size());
+    HttpParser parser(nullptr);
+    parser.readResponse(*pipe.ends[1]).wait(waitScope);
+    writing.wait(waitScope);
+    capnp::MallocMessageBuilder message;
+    auto response = message.initRoot<WebSession::Response>();
+    parser.build(response, nullptr);
+    auto reader = response.asReader();
+    if (status < 500) {
+      auto error = reader.getClientError();
+      KJ_EXPECT(error.getStatusCode() == (status == 401
+          ? WebSession::Response::ClientErrorCode::UNAUTHORIZED
+          : WebSession::Response::ClientErrorCode::TOO_MANY_REQUESTS));
+      KJ_EXPECT(kj::str(error.getNonHtmlBody().getData().asChars()) == "{\"error\":\"test\"}");
+      KJ_EXPECT(error.getNonHtmlBody().getMimeType() == "application/json");
+    } else {
+      auto error = reader.getServerError();
+      KJ_EXPECT(static_cast<uint>(error.getStatusCode()) == status - 500);
+      KJ_EXPECT(kj::str(error.getNonHtmlBody().getData().asChars()) == "{\"error\":\"test\"}");
+    }
+    KJ_ASSERT(reader.getAdditionalHeaders().size() == 1);
+    KJ_EXPECT(reader.getAdditionalHeaders()[0].getName() == "x-request-id");
+  }
+}
+#endif
 
 }  // namespace sandstorm
 

@@ -1,4 +1,4 @@
-// Run with: node --test tests/http-api-powerbox.test.cjs
+// Run with: NODE_PATH=shell/node_modules node --test tests/http-api-powerbox.test.cjs
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
@@ -6,39 +6,7 @@ const http = require('node:http');
 const test = require('node:test');
 const path = require('node:path');
 const root = path.join(__dirname, '..');
-const profileSource = fs.readFileSync(path.join(root,
-    'shell/imports/shared/http-api-profile.js'), 'utf8').replace(/export /g, '');
-const profile = vm.runInNewContext(profileSource +
-    '\n({httpApiProfile, httpAuthenticationHint, validateHttpConnection})', { URL });
-
-function driver() {
-  let registration;
-  const source = fs.readFileSync(path.join(root,
-      'shell/imports/server/drivers/external-ui-view.js'), 'utf8')
-      .replace(/^import [\s\S]*?;\n/gm, '');
-  const context = {
-    ...profile, URL, Buffer, Promise,
-    Meteor: { startup: fn => fn(), Error: class extends Error {
-      constructor(code, message) { super(message); }
-    } },
-    Match: { OneOf() {}, Optional() {} }, check() {},
-    frontendRefRegistry: { register: value => { registration = value; } },
-    PersistentImpl: class {},
-    Capnp: {
-      importSystem: () => ({ ApiSession: { typeId: 'api', PowerboxTag: {} } }),
-      parse: (schema, value) => value,
-      serialize: (schema, value) => value,
-      Capability: class { constructor(value) { return value; } },
-    },
-    Url: require('node:url'), Http: http, Https: require('node:https'),
-    ssrfSafeLookup: async (db, url) => ({ url, host: new URL(url).host }),
-    REQUEST_HEADER_WHITELIST: { matches: name => name === 'x-test' },
-    RESPONSE_HEADER_WHITELIST: { matches: () => false },
-    responseCodes: { 200: { type: 'content', code: 'ok' } },
-  };
-  vm.runInNewContext(source, context);
-  return registration;
-}
+const { driver, profile, apiHeaders } = require('./helpers/http-api-driver.cjs');
 
 test('authentication hints open configuration; unknown hints never downgrade', () => {
   const registry = driver();
@@ -103,7 +71,7 @@ test('restored grants inject credentials and headers with isolated per-request h
   });
   assert.equal(received.filter(headers => headers['x-test']).length, 1);
   for (const name of ['Authorization', 'OPENAI-PROJECT', 'OpenAI-Project']) {
-    await assert.rejects(session.get('blocked', {
+    assert.throws(() => session.get('blocked', {
       additionalHeaders: [{ name, value: 'override' }],
     }), /Cannot override/);
   }
@@ -149,4 +117,200 @@ test('credential form submits to the shell and clears its secret input', () => {
   template.handlers['input input.secret'].call(data, { currentTarget: input }, instance);
   template.destroyed.call(instance);
   assert.equal(input.value, '');
+});
+
+test('ApiSession rejects escaped paths before lookup or credential acquisition', () => {
+  let lookups = 0;
+  const session = driver({ ssrfSafeLookupOrProxy() { lookups++; } }).restore({}, {}, {
+    url: 'https://example.com/v1', auth: { bearer: 'remote-key' },
+  });
+  session._ensureAuthorization = () => { throw new Error('must not acquire credentials'); };
+  for (const path of ['../outside', '//other.example', 'https://other.example', '%2e%2e/outside']) {
+    assert.throws(() => session.get(path, {}));
+  }
+  assert.throws(() => session.get('responses', { additionalHeaders: [
+    { name: 'X-Test', value: 'a' }, { name: 'x-test', value: 'b' },
+  ] }));
+  assert.equal(lookups, 0);
+});
+
+test('Basic authentication survives restore; closing ApiSession aborts pending requests', async t => {
+  let authorize;
+  const authorized = new Promise(resolve => { authorize = resolve; });
+  const server = http.createServer((req, res) => {
+    authorize(req.headers.authorization);
+    res.writeHead(200);
+    res.write('pending');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  const session = driver().restore({}, {}, {
+    url: `http://127.0.0.1:${server.address().port}/api`,
+    auth: { basic: { username: 'user', password: 'password' } },
+  });
+  const result = session.get('pending', {});
+  assert.equal(await authorized, 'Basic ' + Buffer.from('user:password').toString('base64'));
+  session.close();
+  await assert.rejects(result, { kjType: 'disconnected' });
+  assert.equal(session._requests.size, 0);
+  assert.throws(() => session.get('again', {}), /closed/);
+});
+
+
+test('external ApiSession preserves API error JSON and only approved operational headers', async t => {
+  const server = http.createServer((req, res) => {
+    const status = Number(req.url.split('/').pop());
+    res.writeHead(status, {
+      'content-type': 'application/json', 'retry-after': '3', 'x-request-id': 'req-test',
+      'x-ratelimit-remaining-tokens': '10',
+      'www-authenticate': 'Bearer realm="remote"', 'set-cookie': 'unsafe=value',
+      'access-control-allow-origin': '*', 'content-security-policy': "default-src *",
+    });
+    res.end(JSON.stringify({ error: { status } }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const session = driver().restore({}, {}, {
+    url: `http://127.0.0.1:${server.address().port}/v1`, auth: { bearer: 'remote-key' },
+  });
+  for (const [status, kind, code] of [
+    [401, 'clientError', 'unauthorized'], [429, 'clientError', 'tooManyRequests'],
+    [500, 'serverError', 'internalServerError'], [502, 'serverError', 'badGateway'],
+    [503, 'serverError', 'serviceUnavailable'], [504, 'serverError', 'gatewayTimeout'],
+  ]) {
+    const result = await session.get(String(status), {});
+    assert.equal(result[kind].statusCode, code);
+    assert.equal(result[kind].nonHtmlBody.mimeType, 'application/json');
+    assert.equal(JSON.parse(result[kind].nonHtmlBody.data.toString()).error.status, status);
+    assert.equal(result.additionalHeaders.length, 3);
+    assert.ok(result.additionalHeaders.every(header => apiHeaders.includes(header.name)));
+  }
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(r => { resolve = r; });
+  return { promise, resolve };
+}
+
+async function streamingFixture(t, handler, requestOptions = {}) {
+  const server = http.createServer(handler);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  return driver({ requestOptions }).restore({}, {}, {
+    url: `http://127.0.0.1:${server.address().port}/v1`, auth: { bearer: 'test' },
+  });
+}
+
+test('SSE headers and chunks arrive before EOF; writes honor backpressure', async t => {
+  const first = deferred();
+  const unblock = deferred();
+  const closed = deferred();
+  let upstream;
+  const session = await streamingFixture(t, (req, res) => {
+    upstream = res;
+    res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+    res.flushHeaders();
+  });
+  const chunks = [];
+  let done = false;
+  let active = 0;
+  const response = await session.post('responses', { content: Buffer.from('{}') }, {
+    responseStream: {
+      async write(data) {
+        assert.equal(active++, 0, 'only one outstanding write');
+        if (data.length) {
+          chunks.push(data.toString());
+          first.resolve();
+          await unblock.promise;
+        }
+        active--;
+      },
+      done() { done = true; },
+      close() { closed.resolve(); },
+    },
+  });
+  assert.ok(response.content.body.stream);
+  assert.equal(response.content.mimeType, 'text/event-stream; charset=utf-8');
+  upstream.write('data: one\n\n');
+  await first.promise;
+  upstream.end('data: two\n\n');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(chunks.join(''), 'data: one\n\n');
+  assert.equal(done, false);
+  unblock.resolve();
+  await closed.promise;
+  assert.equal(chunks.join(''), 'data: one\n\ndata: two\n\n');
+  assert.equal(done, true);
+  response.content.body.stream.close();
+});
+
+for (const mode of ['handle', 'session', 'upstream', 'write', 'idle', 'lifetime']) {
+  test(`SSE ${mode} failure closes the stream without done and releases the socket`, async t => {
+    const closed = deferred();
+    const socketClosed = deferred();
+    let upstream;
+    let done = false;
+    let canceledWrite = false;
+    const session = await streamingFixture(t, (req, res) => {
+      upstream = res;
+      res.on('close', socketClosed.resolve);
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.flushHeaders();
+    }, { streamIdleTimeoutMs: mode === 'idle' ? 30 : 1000,
+      streamTimeoutMs: mode === 'lifetime' ? 30 : 1000 });
+    const response = await session.get('responses', { responseStream: {
+      write() {
+        if (mode === 'write') return Promise.reject(new Error('receiver failed'));
+        if (mode === 'idle') {
+          const pending = new Promise(() => {});
+          pending.cancel = () => { canceledWrite = true; };
+          return pending;
+        }
+      },
+      done() { done = true; },
+      close() { closed.resolve(); },
+    } });
+    if (mode === 'handle') response.content.body.stream.close();
+    if (mode === 'session') session.close();
+    if (mode === 'upstream') upstream.destroy();
+    await closed.promise;
+    await socketClosed.promise;
+    assert.equal(done, false);
+    if (mode === 'idle') assert.equal(canceledWrite, true);
+    response.content.body.stream.close();
+  });
+}
+
+
+test('SSE proxy responses retain early bytes while the receiver stalls', async t => {
+  const closed = deferred();
+  const firstWrite = deferred();
+  const unblock = deferred();
+  const server = http.createServer((req, res) => {
+    assert.equal(req.url, 'http://approved.example/v1/responses');
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end('data: first\n\ndata: last\n\n');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const session = driver({ ssrfSafeLookupOrProxy: async () => ({
+    proxy: `http://127.0.0.1:${server.address().port}`,
+  }) }).restore({}, {}, { url: 'http://approved.example/v1', auth: { bearer: 'test' } });
+  const chunks = [];
+  let done = false;
+  await session.get('responses', { responseStream: {
+    async write(data) {
+      if (!data.length) { firstWrite.resolve(); await unblock.promise; }
+      chunks.push(data);
+    },
+    done() { done = true; },
+    close() { closed.resolve(); },
+  } });
+  await firstWrite.promise;
+  await new Promise(resolve => setTimeout(resolve, 25));
+  unblock.resolve();
+  await closed.promise;
+  assert.equal(done, true);
+  assert.equal(Buffer.concat(chunks).toString(), 'data: first\n\ndata: last\n\n');
 });

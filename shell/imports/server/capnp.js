@@ -96,6 +96,14 @@ WebSession.WebSession.Response.headerWhitelist = [
   "x-oc-mtime",
 ];
 
+ApiSession.ApiSession.responseHeaderWhitelist = [
+  "retry-after", "x-request-id",
+  "x-ratelimit-limit-requests", "x-ratelimit-limit-tokens",
+  "x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens",
+  "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens",
+  "openai-processing-ms", "openai-version",
+];
+
 const MODULES = Object.values(SCHEMAS);
 const interfaceByTypeId = new Map();
 const enumByDisplayName = new Map();
@@ -212,6 +220,9 @@ function importSystem(path) {
 
 function connect(address, bootstrapCap) {
   const conn = new capnp.Conn(transportFromAddress(address));
+  // Let connection failures reject outstanding RPCs rather than escaping the receive loop as
+  // an unhandled rejection (including normal peer shutdown after a response completes).
+  conn.onError = err => conn.shutdown(err);
   if (bootstrapCap?._serverTarget) {
     conn.initMain(bootstrapCap._interfaceClass, bootstrapCap._serverTarget);
   }
@@ -380,6 +391,16 @@ class ResultPromise {
     return this._pipeline;
   }
 
+  cancel() {
+    // Observe the result before rejecting it, without creating an unhandled cleanup promise.
+    this.promise().catch(() => {});
+    if (typeof this._answer.cancel === "function") {
+      this._answer.cancel(new Error("RPC call canceled."));
+    } else {
+      this._answer.pipelineClose([]);
+    }
+  }
+
   then(onFulfilled, onRejected) {
     return this.promise().then(onFulfilled, onRejected);
   }
@@ -487,7 +508,8 @@ function closeSharedClient(wrapped) {
 
 function isExpectedCloseError(err) {
   const message = String(err?.message || "");
-  return message.includes("pipeline closed") ||
+  return err?.code === "disconnected" || err?.kjType === "disconnected" ||
+      message.includes("pipeline closed") ||
       message.includes("already closed") ||
       message.includes("Called null capability") ||
       message.includes("Peer disconnected") ||
