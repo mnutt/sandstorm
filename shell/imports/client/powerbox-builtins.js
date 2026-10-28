@@ -19,6 +19,8 @@ import { Template } from "meteor/templating";
 import { ReactiveVar } from "meteor/reactive-var";
 import { Accounts } from "meteor/accounts-base";
 
+import { httpApiProfile, validateHttpConnection } from "/imports/shared/http-api-profile";
+
 const prepareViewInfoForDisplay = function (viewInfo) {
   const result = { ...(viewInfo || {}) };
   if (result.permissions) indexElements(result.permissions);
@@ -279,17 +281,73 @@ Template.addNewVerifiedEmailPowerboxCard.powerboxIconSrc = () => "/add-email-m.s
 Template.httpUrlPowerboxCard.powerboxIconSrc = () => "/web-m.svg";
 
 Template.httpArbitraryPowerboxCard.powerboxIconSrc = () => "/web-m.svg";
-Template.httpArbitraryPowerboxConfiguration.events({
-  "click .connect-button": function (event, instance) {
-    event.preventDefault();
-    const input = instance.find("form>input.url");
+Template.httpArbitraryPowerboxConfiguration.onCreated(function () {
+  this._httpUrl = new ReactiveVar(this.data.option.httpUrl || "");
+  this._httpAuth = new ReactiveVar(this.data.option.authentication || "none");
+  this._httpError = new ReactiveVar("");
+  this._httpSecretInputs = new Set();
+});
 
-    this.powerboxRequest.completeNewFrontendRef({
-      http: {
-        url: input.value,
-        auth: { none: null },
-      },
-    });
+Template.httpArbitraryPowerboxConfiguration.helpers({
+  destination: () => Template.instance()._httpUrl.get(),
+  profile: () => httpApiProfile(Template.instance()._httpUrl.get()),
+  bearer: () => Template.instance()._httpAuth.get() === "bearer",
+  basic: () => Template.instance()._httpAuth.get() === "basic",
+  authSelected: kind => Template.instance()._httpAuth.get() === kind,
+  urlDetails: () => describeOutboundHttpUrl(Template.instance()._httpUrl.get()),
+  error: () => Template.instance()._httpError.get(),
+});
+
+const clearHttpSecrets = instance => {
+  instance.findAll("input.secret").forEach(input => { input.value = ""; });
+};
+
+Template.httpArbitraryPowerboxConfiguration.onDestroyed(function () {
+  this._httpSecretInputs.forEach(input => { input.value = ""; });
+  this._httpSecretInputs.clear();
+});
+
+Template.httpArbitraryPowerboxConfiguration.events({
+  "input input.secret": function (event, instance) {
+    instance._httpSecretInputs.add(event.currentTarget);
+  },
+
+  "input input.url": function (event, instance) {
+    clearHttpSecrets(instance);
+    instance.findAll("input.connection-header").forEach(input => { input.value = ""; });
+    instance._httpUrl.set(event.currentTarget.value);
+    const profile = httpApiProfile(event.currentTarget.value);
+    if (profile) instance._httpAuth.set(profile.authentication);
+  },
+
+  "change select.authentication": function (event, instance) {
+    clearHttpSecrets(instance);
+    instance._httpAuth.set(event.currentTarget.value);
+  },
+
+  "submit form": function (event, instance) {
+    event.preventDefault();
+    const value = selector => instance.find(selector).value;
+    const kind = instance._httpAuth.get();
+    let auth = { none: null };
+    if (kind === "bearer") auth = { bearer: value("input.bearer") };
+    if (kind === "basic") {
+      auth = { basic: { username: value("input.username"), password: value("input.password") } };
+    }
+
+    const http = { url: instance._httpUrl.get(), auth };
+    http.connectionHeaders = instance.findAll("input.connection-header")
+        .filter(input => input.value)
+        .map(input => ({ name: input.name, value: input.value }));
+    try {
+      validateHttpConnection(http);
+    } catch (err) {
+      instance._httpError.set(err.message);
+      return;
+    }
+
+    clearHttpSecrets(instance);
+    this.powerboxRequest.completeNewFrontendRef({ http });
   },
 });
 

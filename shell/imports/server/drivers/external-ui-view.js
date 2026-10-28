@@ -28,6 +28,8 @@ import { globalDb } from "/imports/db-deprecated";
 
 import { responseCodes } from "/imports/server/web-session";
 
+import { httpAuthenticationHint, validateHttpConnection } from "/imports/shared/http-api-profile";
+
 import Url from "url";
 import Http from "http";
 import Https from "https";
@@ -90,12 +92,12 @@ async function refreshOAuth(url, refreshToken) {
   return response.data;
 }
 
-function newExternalHttpSession(url, auth, db, saveTemplate) {
+function newExternalHttpSession(url, auth, db, saveTemplate, connectionHeaders = []) {
   // `url` and `auth` are the corresponding members of `ApiToken.frontendRef.http`.
 
   const createCap = () => {
     return new Capnp.Capability(new ExternalWebSession(url,
-        {},
+        { headers: Object.fromEntries(connectionHeaders.map(({ name, value }) => [name, value])) },
         auth,
         db, saveTemplate), PersistentApiSession);
   };
@@ -109,12 +111,13 @@ function registerHttpApiFrontendRef(registry) {
     typeId: ApiSession.typeId,
 
     restore(db, saveTemplate, value) {
-      return newExternalHttpSession(value.url, value.auth, db, saveTemplate);
+      return newExternalHttpSession(value.url, value.auth, db, saveTemplate, value.connectionHeaders);
     },
 
     validate(db, session, request) {
       check(request, {
         url: String,
+        connectionHeaders: Match.Optional([{ name: String, value: String }]),
         auth: Match.OneOf(
             { none: null },
             { bearer: String },
@@ -122,37 +125,10 @@ function registerHttpApiFrontendRef(registry) {
             { oauth: { credentialToken: String, credentialSecret: String } }),
       });
 
-      if (!request.url.startsWith("https://") &&
-          !request.url.startsWith("http://")) {
-        throw new Meteor.Error(400, "URL must be HTTP or HTTPS.");
-      }
-
-      // Check for URL patterns.
-      const parsedUrl = Url.parse(request.url);
-
-      if (parsedUrl.auth) {
-        const parts = parsedUrl.auth.split(":");
-        if (parts.length === 2) {
-          if ("none" in request.auth) {
-            request.auth = { basic: { username: parts[0], password: parts[1] } };
-          } else {
-            throw new Meteor.Error(400, "Can't support multiple authentication mechanisms at once");
-          }
-        }
-
-        parsedUrl.auth = null;
-        request.url = Url.format(parsedUrl);
-      }
-
-      if (parsedUrl.hash) {
-        if ("none" in request.auth) {
-          request.auth = { bearer: parsedUrl.hash.slice(1) };
-        } else {
-          throw new Meteor.Error(400, "Can't support multiple authentication mechanisms at once");
-        }
-
-        parsedUrl.hash = null;
-        request.url = Url.format(parsedUrl);
+      try {
+        validateHttpConnection(request);
+      } catch (err) {
+        throw new Meteor.Error(400, err.message);
       }
 
       if (request.auth.oauth) {
@@ -177,7 +153,11 @@ function registerHttpApiFrontendRef(registry) {
         //   account? (As a non-login credential.)
       }
 
-      const descriptor = { tags: [{ id: ApiSession.typeId }] };
+      const authentication = request.auth.basic ? "basic" :
+          (request.auth.bearer || request.auth.refresh ? "bearer" : "");
+      const descriptor = { tags: [{ id: ApiSession.typeId,
+        value: Capnp.serialize(ApiSession.PowerboxTag, { authentication }),
+      }] };
       return { descriptor, requirements: [], frontendRef: request };
     },
 
@@ -185,6 +165,9 @@ function registerHttpApiFrontendRef(registry) {
       const tag = tagValue ? Capnp.parse(ApiSession.PowerboxTag, tagValue) : {};
 
       const options = [];
+      const authentication = httpAuthenticationHint(tag.authentication);
+      // Unknown hints must never fall back to an anonymous connection.
+      if (authentication === null) return options;
 
       if (tag.canonicalUrl &&
           (tag.canonicalUrl.startsWith("https://") ||
@@ -203,12 +186,15 @@ function registerHttpApiFrontendRef(registry) {
             oauthScopes: tag.oauthScopes,
           });
         } else {
-          // TODO(soon): Support tag.authentication.
-
           options.push({
             _id: "http-url-" + tag.canonicalUrl,
             frontendRef: { http: { url: tag.canonicalUrl, auth: { none: null } } },
             cardTemplate: "httpUrlPowerboxCard",
+            ...(authentication !== "none" ? {
+              configureTemplate: "httpArbitraryPowerboxConfiguration",
+              httpUrl: tag.canonicalUrl,
+              authentication,
+            } : {}),
           });
         }
       }
@@ -217,6 +203,7 @@ function registerHttpApiFrontendRef(registry) {
       // if canonicalUrl exists.
       options.push({
         _id: "http-arbitrary",
+        authentication,
         cardTemplate: "httpArbitraryPowerboxCard",
         configureTemplate: "httpArbitraryPowerboxConfiguration",
       });
@@ -356,7 +343,7 @@ class ExternalWebSession extends PersistentImpl {
           .then(() => session._ensureAuthorization())
           .then((authorization) => {
       const options = { ...session.options };
-      options.headers = options.headers || {};
+      options.headers = { ...options.headers };
       if (authorization) {
         options.headers.authorization = authorization;
       }
@@ -407,8 +394,14 @@ class ExternalWebSession extends PersistentImpl {
 
       // set additional headers
       (context.additionalHeaders || []).forEach(header => {
-        if (REQUEST_HEADER_WHITELIST.matches(header.name)) {
-          options.headers[header.name] = header.value;
+        const name = header.name.toLowerCase();
+        if (name === "authorization" ||
+            Object.prototype.hasOwnProperty.call(session.options.headers || {}, name)) {
+          throw new Error("Cannot override a connection-managed header.");
+        }
+
+        if (REQUEST_HEADER_WHITELIST.matches(name)) {
+          options.headers[name] = header.value;
         }
       });
 
