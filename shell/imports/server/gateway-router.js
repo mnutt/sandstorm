@@ -708,7 +708,9 @@ function makeErrorSession(err) {
   }
 
 
-  const responseCodeInfo = responseCodes[code];
+  // Adding external API error codes must not change gateway authentication-error handling.
+  // These codes historically used the generic error session; gateway.c++ owns login challenges.
+  const responseCodeInfo = code === 401 || code === 429 ? undefined : responseCodes[code];
   let response;
   if(responseCodeInfo !== undefined && responseCodeInfo.type === "clientError") {
     response = {
