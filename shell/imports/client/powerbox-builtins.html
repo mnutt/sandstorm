@@ -116,10 +116,40 @@
 
 <template name="httpArbitraryPowerboxConfiguration">
   <form>
-    {{_ "powerboxBuiltins.httpArbitraryPowerboxConfiguration.explanation"}}
-    <input class="url" type="text" placeholder="{{_ "powerboxBuiltins.httpArbitraryPowerboxConfiguration.placeholder"}}">
+    <label>{{_ "powerboxBuiltins.httpCredentials.destination"}}
+      <input class="url" type="url" required value="{{destination}}" readonly="{{option.httpUrl}}"
+             placeholder="https://api.example.com/v1">
+    </label>
+    {{#with profile}}<p>{{title}}</p>{{/with}}
+    {{#with urlDetails}}
+      <p>{{_ "powerboxBuiltins.httpCredentials.scope"}} {{scheme}} {{host}}{{basePath}}</p>
+      {{#if isPlainHttp}}<p class="warning-message">{{_ "powerboxBuiltins.httpCredentials.plainHttp"}}</p>{{/if}}
+    {{/with}}
+    <label>{{_ "powerboxBuiltins.httpCredentials.authentication"}}
+      <select class="authentication">
+        <option value="none" selected="{{authSelected 'none'}}">{{_ "powerboxBuiltins.httpCredentials.none"}}</option>
+        <option value="bearer" selected="{{authSelected 'bearer'}}">Bearer</option>
+        <option value="basic" selected="{{authSelected 'basic'}}">Basic</option>
+      </select>
+    </label>
+    {{#if bearer}}
+      <label>{{#if profile}}{{profile.secretLabel}}{{else}}{{_ "powerboxBuiltins.httpCredentials.token"}}{{/if}}
+        <input class="secret bearer" type="password" required autocomplete="off">
+      </label>
+    {{/if}}
+    {{#if basic}}
+      <label>{{_ "powerboxBuiltins.httpCredentials.username"}}<input class="username secret" type="text" required autocomplete="off"></label>
+      <label>{{_ "powerboxBuiltins.httpCredentials.password"}}<input class="secret password" type="password" autocomplete="new-password"></label>
+    {{/if}}
+    {{#if profile}}
+      <label>{{_ "powerboxBuiltins.httpCredentials.organization"}}<input class="connection-header" name="openai-organization" type="text"></label>
+      <label>{{_ "powerboxBuiltins.httpCredentials.project"}}<input class="connection-header" name="openai-project" type="text"></label>
+    {{/if}}
+    <p>{{_ "powerboxBuiltins.httpCredentials.authority"}}</p>
+    <p>{{_ "powerboxBuiltins.httpCredentials.revocation"}}</p>
+    {{#if error}}<p class="error-message">{{error}}</p>{{/if}}
     <div class="choose-buttons">
-      <button class="connect-button">{{_ "powerboxBuiltins.httpArbitraryPowerboxConfiguration.connectButton"}}</button>
+      <button type="submit" class="connect-button">{{_ "powerboxBuiltins.httpArbitraryPowerboxConfiguration.connectButton"}}</button>
     </div>
   </form>
 </template>

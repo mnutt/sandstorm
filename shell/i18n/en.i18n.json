@@ -505,6 +505,20 @@
     "httpArbitraryPowerboxCard": {
       "explanation": "Specify URL..."
     },
+    "httpCredentials": {
+      "destination": "Destination base URL",
+      "scope": "Destination and base path:",
+      "plainHttp": "Warning: credentials and requests will be sent over unencrypted HTTP.",
+      "authentication": "Authentication",
+      "none": "None",
+      "token": "Bearer token",
+      "username": "Username",
+      "password": "Password",
+      "organization": "Organization ID (optional)",
+      "project": "Project ID (optional)",
+      "authority": "This app can use the connection with your credentials, including operations that change data or incur charges. No HTTP method restriction is applied. Sandstorm holds the credential; the app receives a capability.",
+      "revocation": "Revoking this Sandstorm connection does not revoke the credential at the provider."
+    },
     "httpArbitraryPowerboxConfiguration": {
       "explanation": "Enter URL:",
       "placeholder": "https://example.com",

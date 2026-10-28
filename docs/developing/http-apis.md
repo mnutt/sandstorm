@@ -278,3 +278,39 @@ If you want to capture IP address by default for your app, you can distribute sa
 with the app that sets the `X-Sandstorm-Passthrough` header on `XMLHttpRequest` calls. One app that
 does this is
 [Piwik](https://apps.sandstorm.io/app/xuajusd5d4a9v4js71ru0cwj9wn984q1x8kny10htsp8f5dcfep0).
+
+### Managed credentials in Powerbox
+
+Request `ApiSession` with `PowerboxTag.authentication` set to `"bearer"` or `"basic"`
+to prompt for a credential in Sandstorm's UI. With a canonical URL, the URL card
+opens the credential form. Without an authentication hint, the existing anonymous
+URL card remains available. Unknown authentication hints produce no HTTP driver
+cards. The arbitrary URL form allows the user to select authentication explicitly.
+Google/GitHub OAuth scope requests retain their existing flow.
+
+For OpenAI, request `canonicalUrl = "https://api.openai.com/v1"` and
+`authentication = "bearer"`. The Sandstorm-owned profile labels the secret as an
+API key and offers optional organization and project IDs. The driver validates
+these settings and injects `OpenAI-Organization` / `OpenAI-Project` with the saved
+bearer token. Provider recognition requires the exact base URL (with an optional
+trailing slash); an app-provided label is not provider identity. Generic bearer
+and Basic authentication also work with other HTTP destinations.
+
+Credentials belong in the form fields, not in the URL. New grants reject URL
+userinfo, fragments, and queries. Previously saved references still restore.
+Changing an editable destination clears credential and connection-setting inputs.
+Secrets use the existing encrypted `frontendRef.http.auth` persistence fields;
+optional `connectionHeaders` contain only the approved non-secret provider settings.
+Descriptors contain the authentication kind, never the credential. Additional
+caller headers cannot override connection-managed headers, regardless of casing.
+
+This grants the service authority associated with the credential, including
+potentially billable operations. No method restriction or spending limit is
+imposed. Revoking the Sandstorm capability does not revoke the provider's API key.
+Transport confinement, timeout/streaming improvements, and preservation of API
+error statuses are separate follow-up work; this change alone is not a complete
+OpenAI integration.
+
+Focused driver regressions run with `node --test tests/http-api-powerbox.test.cjs`.
+They use a local HTTP server and mock the Meteor/Cap'n Proto boundary; they do not
+replace the browser Powerbox and persistence/revocation integration suite.
