@@ -307,10 +307,120 @@ caller headers cannot override connection-managed headers, regardless of casing.
 This grants the service authority associated with the credential, including
 potentially billable operations. No method restriction or spending limit is
 imposed. Revoking the Sandstorm capability does not revoke the provider's API key.
-Transport confinement, timeout/streaming improvements, and preservation of API
-error statuses are separate follow-up work; this change alone is not a complete
-OpenAI integration.
+SSE response streaming is supported as described below. Streaming request uploads
+remain separate work.
 
-Focused driver regressions run with `node --test tests/http-api-powerbox.test.cjs`.
+Focused driver regressions run with the command below.
 They use a local HTTP server and mock the Meteor/Cap'n Proto boundary; they do not
 replace the browser Powerbox and persistence/revocation integration suite.
+
+### External HTTP transport boundaries
+
+The external `ApiSession` driver and the compatibility `OutboundHttpSession` driver
+share `shell/imports/server/http-transport.js`. A base URL must be HTTP(S), with no
+userinfo, query, fragment, whitespace, backslash, dot segments, encoded separators,
+or malformed percent escapes. These checks also apply when restoring saved grants;
+old unsafe base URLs must be re-granted with a valid base URL.
+
+Request paths must be relative. Leading slashes, absolute URLs, fragments, raw
+whitespace/backslashes, dot segments (including encoded dots), encoded slashes or
+backslashes in the path, and malformed percent escapes are rejected before network
+resolution or credential acquisition. Ordinary query strings are allowed on a
+request. `post("responses", ...)` against either `/v1` or `/v1/` reaches
+`/v1/responses`; an empty request path reaches the exact normalized base URL.
+Confinement assumes the provider interprets URL paths normally, without additional
+application-specific decoding or rewrite rules.
+
+Every request gets fresh headers and a fresh network-policy lookup. Direct requests
+pin the checked address while retaining the approved Host and TLS hostname. Configured
+`HTTP_PROXY` / `HTTPS_PROXY` settings use the existing networking helper; the proxy
+is responsible for destination-address filtering when it performs DNS resolution.
+Redirects are returned without following them. Shared browser/receiving-grain header
+whitelists have not been broadened.
+
+A server-controlled 120-second overall deadline includes DNS/proxy setup, credential
+acquisition, upload, and response consumption. Transport errors, premature response
+closure, and response-consumer failures destroy the request and reject unfinished
+work; requests are not automatically retried. Session disposal cancels tracked
+operations, and dropping an unfinished compatibility upload stream cancels its request.
+The current capnp-es shell adapter does not forward individual incoming RPC
+cancellation to JavaScript promises, so per-call RPC cancellation is still a follow-up.
+Already-running DNS and OAuth lookup promises cannot be forcibly canceled, but their
+late results cannot start an expired HTTP request.
+
+Run the focused suites after installing shell dependencies:
+
+```sh
+NODE_PATH="$PWD/shell/node_modules" node --test \
+  tests/http-api-powerbox.test.cjs tests/http-transport.test.cjs
+```
+
+These exercise both driver adapters and real local HTTP/proxy servers. The tests
+mock the Meteor and Cap'n Proto boundary; full browser, persistence, revocation,
+and live TLS integration coverage remain separate.
+
+### API errors and response metadata
+
+External API responses preserve 401, 429, and 500–505 statuses with structured
+error bodies, including JSON content types. Unknown server status codes fall back
+to 500. The grain-local capability proxy forwards the operational metadata listed
+in `ApiSession.responseHeaderWhitelist`: retry timing, request IDs, rate-limit
+counts/reset times, and OpenAI processing time/version. Browser gateway response
+headers retain their existing policy. Provider authentication challenges, cookies,
+and provider-controlled browser security policies are not forwarded.
+
+These schema additions require rebuilding consumers for full fidelity. Older C++
+bridges fall back to 400 for the new client-error enum values and 500 for server
+errors; older generated Rust bindings cannot decode the new enum values. Update
+both ApiSession and WebSession schemas together when rebuilding an app.
+
+Native conversion regressions use the existing KJ/CTest framework:
+
+```sh
+cmake --build build/dev --target sandstorm-web-session-bridge-test sandstorm-http-bridge-test
+ctest --test-dir build/dev -R 'sandstorm/(web-session-bridge|http-bridge)$' --output-on-failure
+```
+
+These cover HTTP/RPC error conversion, JSON bodies, metadata filtering, and unknown
+enum fallbacks. They do not require a live provider account.
+
+### SSE response streaming
+
+A successful `text/event-stream` response uses the existing `Context.responseStream`
+and `content.body.stream` contract. Submit the normal JSON POST, including
+`"stream": true` for the Responses API, and supply a ByteStream receiver. Keep the
+returned lifetime handle alive while receiving data; drop it to cancel. A plain
+HTTP app using the grain-local capability proxy receives an ordinary streamed HTTP
+response. No additional public API is needed.
+
+Headers are delivered before the first provider event. Each ByteStream write is
+awaited before reading another chunk, so slow receivers apply backpressure.
+Provider bytes are forwarded unchanged, including across arbitrary UTF-8/event
+boundaries. JSON errors remain buffered and keep their original status and body.
+Callers must treat release without `done()` as an incomplete transfer.
+
+DNS, credentials, upload, and response headers retain the 120-second setup limit.
+Once SSE headers arrive, the stream has a ten-minute lifetime and a sixty-second
+idle limit. Idle time includes a blocked downstream write, not just silence from
+the provider. These limits are server controlled. Stream handle release, session
+closure, upstream truncation, write failure, or a deadline destroys the upstream
+request and releases the receiver; failures never call `done()` or trigger retries.
+Per-call RPC cancellation before response headers remains subject to the shell
+adapter limitation described above.
+
+The real RPC regression suite uses the capnp-es shell adapter and a C++ HTTP receiver,
+covering successful streams, upstream truncation, idle/stalled receivers, and
+prompt cancellation by handle release. Use Node 24, matching the shell runtime:
+
+```sh
+cmake --build build/dev --target sandstorm-api-stream-probe
+API_STREAM_PROBE="$PWD/build/dev/bin/sandstorm-api-stream-probe" \
+NODE_PATH="$PWD/shell/node_modules" \
+  /path/to/node24 --test tests/http-api-stream-rpc.test.cjs
+```
+
+The `llm-proxy` sample app accepts `stream: true`, holds the RPC connection for the
+response lifetime, and forwards chunks through a bounded queue. It logs usage from
+a terminal Responses event only after a successful `done()`. Missing/truncated or
+oversized accounting metadata is left incomplete or unpriced; response bytes are
+still forwarded unchanged.

@@ -17,13 +17,12 @@
 import { Meteor } from "meteor/meteor";
 import { Match, check } from "meteor/check";
 
-import Http from "http";
-import Https from "https";
-import Request from "request";
 
 import Capnp from "/imports/server/capnp";
 import { PersistentImpl } from "/imports/server/persistent";
-import { ssrfSafeLookupOrProxy } from "/imports/server/networking";
+import {
+  validateBaseUrl, buildHttpUrl, sanitizeHeaders, makeTransportError, startHttpRequest,
+} from "/imports/server/http-transport";
 
 const OutboundHttpSession =
     Capnp.importSystem("sandstorm/outbound-http-session.capnp").OutboundHttpSession;
@@ -39,121 +38,6 @@ const METHOD_NAMES = [
   "HEAD",
   "OPTIONS",
 ];
-
-const BLOCKED_HEADERS = new Set([
-  "host",
-  "connection",
-  "content-length",
-  "transfer-encoding",
-  "te",
-  "trailer",
-  "upgrade",
-  "keep-alive",
-]);
-
-const OUTBOUND_HTTP_REQUEST_TIMEOUT_MS = 120 * 1000;
-const ENCODED_PATH_SEPARATOR = /%(2f|5c)/i;
-const INVALID_PERCENT_ENCODING = /%(?![0-9a-fA-F]{2})/;
-
-function makeTimeoutError() {
-  const err = new Error("Outbound HTTP request timed out.");
-  err.kjType = "overloaded";
-  return err;
-}
-
-function makeTransportError(err) {
-  if (err && err.kjType) return err;
-
-  const message = err && err.message ? err.message : String(err);
-  const result = new Error("Outbound HTTP request failed: " + message);
-  result.kjType = "disconnected";
-  if (err && err.code) result.code = err.code;
-  return result;
-}
-
-function isDotSegment(segment) {
-  const lower = segment.toLowerCase();
-  return lower === "." ||
-      lower === ".." ||
-      lower === "%2e" ||
-      lower === ".%2e" ||
-      lower === "%2e." ||
-      lower === "%2e%2e";
-}
-
-function validatePathScope(pathname, description) {
-  if (INVALID_PERCENT_ENCODING.test(pathname)) {
-    throw new Meteor.Error(400, description + " must not contain malformed percent escapes.");
-  }
-
-  if (pathname.includes("\\") || ENCODED_PATH_SEPARATOR.test(pathname)) {
-    throw new Meteor.Error(400, description + " must not contain encoded slashes.");
-  }
-
-  if (pathname.split("/").some(isDotSegment)) {
-    throw new Meteor.Error(400, description + " must not contain dot segments.");
-  }
-}
-
-function rawPathnameFromHttpUrl(url) {
-  const authority = /^https?:\/\/[^/?#]*/i.exec(url);
-  if (!authority) return null;
-
-  const pathStart = authority[0].length;
-  if (url[pathStart] !== "/") return "/";
-
-  let pathEnd = url.length;
-  const queryStart = url.indexOf("?", pathStart);
-  const fragmentStart = url.indexOf("#", pathStart);
-  if (queryStart !== -1) pathEnd = Math.min(pathEnd, queryStart);
-  if (fragmentStart !== -1) pathEnd = Math.min(pathEnd, fragmentStart);
-
-  return url.slice(pathStart, pathEnd) || "/";
-}
-
-function validateBaseUrl(url) {
-  check(url, String);
-
-  if (url.includes("\\")) {
-    throw new Meteor.Error(400, "URL path must not contain encoded slashes.");
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch (err) {
-    throw new Meteor.Error(400, "Invalid URL.");
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Meteor.Error(400, "URL must be HTTP or HTTPS.");
-  }
-
-  const rawPathname = rawPathnameFromHttpUrl(url);
-  if (!rawPathname) {
-    throw new Meteor.Error(400, "URL must be HTTP or HTTPS.");
-  }
-
-  validatePathScope(rawPathname, "URL path");
-
-  if (!parsed.hostname) {
-    throw new Meteor.Error(400, "URL must include a host.");
-  }
-
-  if (parsed.username || parsed.password) {
-    throw new Meteor.Error(400, "URL must not include credentials.");
-  }
-
-  if (parsed.hash) {
-    throw new Meteor.Error(400, "URL must not include a fragment.");
-  }
-
-  if (parsed.search) {
-    throw new Meteor.Error(400, "URL must not include a query string.");
-  }
-
-  return parsed.toString();
-}
 
 function methodName(method) {
   if (typeof method === "number") {
@@ -182,50 +66,6 @@ function schemaMethodName(method) {
   return methodName(method).toLowerCase();
 }
 
-function headerAllowed(name) {
-  const lower = name.toLowerCase();
-  return !BLOCKED_HEADERS.has(lower) &&
-      !lower.startsWith("proxy-") &&
-      !lower.startsWith("sec-") &&
-      lower !== "forwarded" &&
-      lower !== "via" &&
-      !lower.startsWith("x-forwarded-");
-}
-
-function sanitizeHeaders(headers) {
-  check(headers, Match.Optional([{
-    name: String,
-    value: String,
-  }]));
-
-  const result = {};
-  const seen = new Set();
-
-  (headers || []).forEach((header) => {
-    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(header.name)) {
-      throw new Meteor.Error(400, "Invalid HTTP header name: " + header.name);
-    }
-
-    if (/[\r\n]/.test(header.value)) {
-      throw new Meteor.Error(400, "Invalid HTTP header value for: " + header.name);
-    }
-
-    const lower = header.name.toLowerCase();
-    if (!headerAllowed(lower)) {
-      throw new Meteor.Error(400, "Blocked HTTP header: " + header.name);
-    }
-
-    if (seen.has(lower)) {
-      throw new Meteor.Error(400, "Duplicate HTTP header: " + header.name);
-    }
-
-    seen.add(lower);
-    result[header.name] = header.value;
-  });
-
-  return result;
-}
-
 function responseHeaders(resp) {
   const headers = [];
 
@@ -241,30 +81,21 @@ function responseHeaders(resp) {
   return headers;
 }
 
-function writeResponseBody(resp, responseStream) {
-  let chain = Promise.resolve();
-
-  return new Promise((resolve, reject) => {
-    resp.on("data", (chunk) => {
-      resp.pause();
-      chain = chain.then(() => responseStream.write(chunk))
-          .then(() => resp.resume(), (err) => reject(makeTransportError(err)));
-    });
-
-    resp.on("end", () => {
-      chain.then(() => responseStream.done())
-          .then(resolve, (err) => reject(makeTransportError(err)));
-    });
-
-    resp.on("error", (err) => reject(makeTransportError(err)));
-  });
+async function writeResponseBody(resp, responseStream) {
+  for await (const chunk of resp) await responseStream.write(chunk);
+  await responseStream.done();
 }
 
 class OutboundRequestStream {
-  constructor(req, responsePromise) {
+  constructor(req, responsePromise, cancel) {
     this._req = req;
     this._responsePromise = responsePromise;
     this._done = false;
+    this._cancel = cancel;
+  }
+
+  close() {
+    if (!this._done) this._cancel();
   }
 
   write(data) {
@@ -302,41 +133,19 @@ class OutboundHttpSessionImpl extends PersistentImpl {
     this._baseUrl = validateBaseUrl(baseUrl);
     this._methods = methods && methods.length > 0 ? methods.map(methodName) : null;
     this._db = db;
+    this._requests = new Set();
+    this._closed = false;
   }
 
-  _buildUrl(path) {
-    check(path, String);
-
-    if (path.startsWith("/") || path.startsWith("//") ||
-        /^[A-Za-z][A-Za-z0-9+\-.]*:/.test(path)) {
-      throw new Meteor.Error(400, "Request path must be relative to the granted base URL.");
-    }
-
-    const pathOnly = path.split(/[?#]/, 1)[0];
-    validatePathScope(pathOnly, "Request path");
-
-    if (path === "") return this._baseUrl;
-
-    const base = new URL(this._baseUrl);
-    const basePath = base.pathname || "/";
-    const basePrefix = basePath.endsWith("/") ? basePath : basePath + "/";
-
-    const requestBase = new URL(this._baseUrl);
-    requestBase.pathname = basePrefix;
-
-    const resolved = new URL(path || "", requestBase.toString());
-    const expectedOrigin = base.origin;
-
-    if (resolved.origin !== expectedOrigin ||
-        !(resolved.pathname === basePath || resolved.pathname.startsWith(basePrefix))) {
-      throw new Meteor.Error(403, "Request path escapes the granted base URL.");
-    }
-
-    return resolved.toString();
+  close() {
+    this._closed = true;
+    this._requests.forEach(request => request.cancel());
+    this._requests.clear();
   }
 
   _startRequest(method, path, headers, responseStream, contentLength) {
-    const fullUrl = this._buildUrl(path);
+    if (this._closed) throw new Error("HTTP session is closed.");
+    const fullUrl = buildHttpUrl(this._baseUrl, path);
     const httpMethod = methodName(method);
     if (this._methods && this._methods.indexOf(httpMethod) === -1) {
       throw new Meteor.Error(403, "HTTP method is not allowed by this capability.");
@@ -347,100 +156,24 @@ class OutboundHttpSessionImpl extends PersistentImpl {
       requestHeaders["content-length"] = String(contentLength);
     }
 
-    return new Promise((resolve, reject) => {
-      let req;
-      let timeoutHandle;
-      let timedOut = false;
-      let timeoutError;
-
-      const clearRequestTimeout = () => {
-        if (timeoutHandle) {
-          clearTimeout(timeoutHandle);
-          timeoutHandle = undefined;
-        }
-      };
-
-      timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        timeoutError = makeTimeoutError();
-        if (req) req.destroy(timeoutError);
-        reject(timeoutError);
-      }, OUTBOUND_HTTP_REQUEST_TIMEOUT_MS);
-
-      ssrfSafeLookupOrProxy(this._db, fullUrl).then((safe) => {
-        if (timedOut) return;
-
-        try {
-          const parsed = new URL(safe.proxy ? fullUrl : safe.url);
-          requestHeaders.host = safe.proxy ? parsed.host : safe.host;
-
-          const options = safe.proxy ? {
-            method: httpMethod,
-            url: fullUrl,
-            proxy: safe.proxy,
-            followRedirect: false,
-            headers: requestHeaders,
-          } : {
-            method: httpMethod,
-            protocol: parsed.protocol,
-            hostname: parsed.hostname,
-            port: parsed.port,
-            path: parsed.pathname + parsed.search,
-            headers: requestHeaders,
-            servername: safe.host.split(":")[0],
-          };
-
-          const requestMethod = safe.proxy ? Request :
-              parsed.protocol === "https:" ? Https.request : Http.request;
-
-          const responsePromise = new Promise((resolveResponse, rejectResponse) => {
-            const handleResponse = (resp) => {
-              let response;
-              try {
-                response = {
-                  statusCode: resp.statusCode,
-                  statusText: resp.statusMessage || "",
-                  headers: responseHeaders(resp),
-                };
-              } catch (err) {
-                clearRequestTimeout();
-                const transportError = makeTransportError(err);
-                rejectResponse(transportError);
-                req.destroy(transportError);
-                return;
-              }
-
-              resolveResponse(response);
-              writeResponseBody(resp, responseStream).then(clearRequestTimeout, (err) => {
-                clearRequestTimeout();
-                console.error("OutboundHttpSession response stream failed:", err.stack || err);
-                req.destroy(err);
-              });
-            };
-
-            req = safe.proxy ? requestMethod(options) : requestMethod(options, handleResponse);
-            if (safe.proxy) req.on("response", handleResponse);
-
-            req.on("error", (err) => {
-              clearRequestTimeout();
-              rejectResponse(makeTransportError(err));
-            });
-          });
-
-          resolve({ req, responsePromise });
-        } catch (err) {
-          const transportError = makeTransportError(err);
-          if (req) req.destroy(transportError);
-          else {
-            clearRequestTimeout();
-          }
-          reject(transportError);
-        }
-      }, (err) => {
-        clearRequestTimeout();
-        reject(makeTransportError(err));
-      });
+    const operation = startHttpRequest({
+      db: this._db, url: fullUrl, method: httpMethod, headers: requestHeaders,
+      consumeResponse: resp => writeResponseBody(resp, responseStream),
     });
+    this._requests.add(operation);
+    const release = () => {
+      this._requests.delete(operation);
+      // Dropping without done() communicates an incomplete transfer to the receiver.
+      if (responseStream.close) responseStream.close();
+    };
+    operation.completion.then(release, release);
+    const responsePromise = operation.response.then(resp => ({
+      statusCode: resp.statusCode,
+      statusText: resp.statusMessage || "",
+      headers: responseHeaders(resp),
+    }));
+    responsePromise.catch(() => {});
+    return operation.started.then(req => ({ req, responsePromise, cancel: operation.cancel }));
   }
 
   request(method, path, headers, body, responseStream) {
@@ -468,10 +201,10 @@ class OutboundHttpSessionImpl extends PersistentImpl {
   }
 
   requestStreaming(method, path, headers, responseStream) {
-    return this._startRequest(method, path, headers, responseStream).then(({ req, responsePromise }) => {
+    return this._startRequest(method, path, headers, responseStream).then(({ req, responsePromise, cancel }) => {
       return {
         requestStream: new Capnp.Capability(
-            new OutboundRequestStream(req, responsePromise),
+            new OutboundRequestStream(req, responsePromise, cancel),
             OutboundHttpSession.RequestStream),
       };
     });

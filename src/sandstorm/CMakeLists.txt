@@ -263,7 +263,9 @@ sandstorm_add_executable(test-app test-app/test-app.c++)
 sandstorm_make_static(test-app)
 
 if(BUILD_TESTING)
-  foreach(_test IN ITEMS appid-replacements id-to-text isolate-util util http-bridge)
+  add_executable(sandstorm-api-stream-probe api-stream-probe.c++)
+  target_link_libraries(sandstorm-api-stream-probe PRIVATE sandstorm_core)
+  foreach(_test IN ITEMS appid-replacements id-to-text isolate-util util http-bridge web-session-bridge)
     set(_target "sandstorm-${_test}-test")
     add_executable("${_target}" "${_test}-test.c++")
     target_link_libraries("${_target}" PRIVATE
