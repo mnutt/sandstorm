@@ -115,6 +115,7 @@ METEOR_DEV_BUNDLE=$("$SOURCE_ROOT/find-meteor-dev-bundle.sh")
 cp -r "$SHELL_BUILD_DIR/bundle" "$BUNDLE_DIR"
 rm -f "$BUNDLE_DIR/README"
 cp "$SOURCE_ROOT/meteor-bundle-main.js" "$BUNDLE_DIR/sandstorm-main.js"
+cp "$SOURCE_ROOT/server-profiler.js" "$BUNDLE_DIR/server-profiler.js"
 
 # Meteor wants us to do `npm install` in the bundle to prepare it. Its generated server manifest
 # pins build helpers that have since received security fixes, so update those pins before install.

@@ -257,6 +257,10 @@ target_link_libraries(app-index PRIVATE
   sandstorm_app_index
   sandstorm_warnings)
 
+add_executable(latency-test-app "${PROJECT_SOURCE_DIR}/tests/profiling/latency-app/server.c++")
+target_link_libraries(latency-test-app PRIVATE CapnProto::kj-http CapnProto::kj-async)
+sandstorm_make_static(latency-test-app)
+
 sandstorm_add_executable(test-app test-app/test-app.c++)
 sandstorm_make_static(test-app)
 

@@ -2843,6 +2843,10 @@ private:
       clearSignalMask();
 
       setupShellEnvironment(config);
+      if (config.profileServer) {
+        KJ_REQUIRE(config.isTesting, "PROFILE_SERVER requires IS_TESTING=true");
+        KJ_SYSCALL(setenv("SANDSTORM_PROFILE_SERVER", "1", true));
+      }
 
       kj::String buildstamp;
       if (SANDSTORM_BUILD == 0) {

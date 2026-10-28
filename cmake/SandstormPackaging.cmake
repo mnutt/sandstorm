@@ -71,6 +71,25 @@ function(sandstorm_add_packaging_targets)
     add_custom_target("${target}-spk" DEPENDS "${_spk}")
   endfunction()
 
+  set(_latency_source "${PROJECT_SOURCE_DIR}/tests/profiling/latency-app")
+  set(_latency_stage "${_package_dir}/latency-app")
+  set(_latency_spk "${_package_dir}/latency-test-app.spk")
+  add_custom_command(
+    OUTPUT "${_latency_spk}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_latency_stage}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "$<TARGET_FILE:latency-test-app>" "$<TARGET_FILE:sandstorm-http-bridge>"
+      "${_latency_source}/package.capnp" "${_latency_stage}"
+    COMMAND "$<TARGET_FILE:spk>" pack
+      -k "${_latency_source}/test-only.key"
+      -I "${PROJECT_SOURCE_DIR}/src"
+      -p "${_latency_stage}/package.capnp:pkgdef" "${_latency_spk}"
+    DEPENDS latency-test-app sandstorm-http-bridge spk
+      "${_latency_source}/package.capnp" "${_latency_source}/test-only.key"
+    COMMENT "Packing the HTTP request-latency test app"
+    VERBATIM)
+  add_custom_target(latency-test-app-spk DEPENDS "${_latency_spk}")
+
   set(_test_app_source "${PROJECT_SOURCE_DIR}/src/sandstorm/test-app")
   set(_test_app_stage "${_spk_stage}/sandstorm/test-app")
   set(_test_app_stage_stamp "${_package_dir}/test-app-stage.stamp")
@@ -621,6 +640,7 @@ function(sandstorm_add_packaging_targets)
       "${PROJECT_SOURCE_DIR}/find-meteor-dev-bundle.sh"
       "${PROJECT_SOURCE_DIR}/localedata-C"
       "${PROJECT_SOURCE_DIR}/meteor-bundle-main.js"
+      "${PROJECT_SOURCE_DIR}/server-profiler.js"
       ${_bundle_capnp_schemas}
     COMMENT "Assembling the Sandstorm bundle"
     VERBATIM)
