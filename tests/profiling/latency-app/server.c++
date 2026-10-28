@@ -14,7 +14,8 @@ static uint64_t monotonicNs() {
 
 class Service final: public kj::HttpService {
 public:
-  explicit Service(const kj::HttpHeaderTable& table): table(table) {}
+  Service(const kj::HttpHeaderTable& table, uint64_t bootId, uint64_t connectionId)
+      : table(table), bootId(bootId), connectionId(connectionId) {}
   kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr url,
       const kj::HttpHeaders&, kj::AsyncInputStream&, Response& response) override {
     auto received = monotonicNs();
@@ -33,21 +34,26 @@ public:
     // These are application-boundary timestamps, not kernel send/receive timestamps.
     auto sending = monotonicNs();
     auto body = kj::str("sandstorm-latency-v1\n", id, "\n", getpid(), "\n",
-                        received, "\n", sending, "\n", bootId, "\n");
+                        received, "\n", sending, "\n", bootId, "\n", connectionId, "\n");
     auto stream = response.send(200, "OK", headers, body.size());
     return stream->write(body.begin(), body.size()).attach(kj::mv(stream), kj::mv(body));
   }
 private:
   const kj::HttpHeaderTable& table;
-  const uint64_t bootId = monotonicNs();
+  const uint64_t bootId;
+  const uint64_t connectionId;
 };
 
 int main(int argc, char** argv) {
   KJ_REQUIRE(argc == 2, "usage: latency-test-app PORT");
   auto io = kj::setupAsyncIo();
   kj::HttpHeaderTable table;
-  Service service(table);
-  kj::HttpServer server(io.provider->getTimer(), table, service);
+  const auto bootId = monotonicNs();
+  uint64_t connections = 0;
+  kj::HttpServer server(io.provider->getTimer(), table,
+      [&](kj::AsyncIoStream&) -> kj::Own<kj::HttpService> {
+    return kj::heap<Service>(table, bootId, ++connections);
+  });
   auto address = io.provider->getNetwork().parseAddress(kj::str("127.0.0.1:", argv[1])).wait(io.waitScope);
   auto listener = address->listen();
   server.listenHttp(*listener).wait(io.waitScope);

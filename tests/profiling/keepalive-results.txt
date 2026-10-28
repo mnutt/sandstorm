@@ -1,0 +1,43 @@
+HTTP bridge connection-reuse experiment, 2026-10-28
+
+Matched final-build runs: keepalive-on2 followed by keepalive-off2.
+Artifacts: /home/michael/src/sandstorm/.e2e-profiling-artifacts/
+Comparison data: keepalive-comparison.json
+
+Local unprofiled HTTP, same optimized bridge and tiny app binaries for off/on.
+Only the package command environment enables reuse. Existing production-built
+Meteor bundle with optimized native host/addon, as in the original experiment.
+Each run: 5 x 1000 measured requests per concurrency and path, with 100 warmup
+requests per batch. Direct-control/grain order alternates between repetitions.
+All 30,000 measured warm requests and 5 cold restarts passed in each run.
+
+Concurrency       mean off/on (ms)    p95 off/on      p99 off/on
+1                 0.244 / 0.207      0.306 / 0.269   0.356 / 0.309
+5                 0.475 / 0.355      0.731 / 0.581   0.861 / 0.703
+20                1.719 / 1.251      2.327 / 1.567   2.857 / 1.893
+
+Mean latency reduced by approximately 15%, 25%, and 27%, respectively.
+Concurrency-20 throughput: 11,530 -> 15,801 requests/sec (37% increase).
+Connection IDs verified 1000 app connections per batch with reuse disabled,
+versus exactly 1, 5, or 20 connections in every enabled batch. Client-facing
+connections were reused in both cases. Cold means: 19.18 ms off, 18.86 ms on;
+five cold observations do not establish a meaningful cold-latency improvement.
+
+Direct means off/on: 0.057/0.057, 0.166/0.162, 0.662/0.691 ms. These controls
+show some machine/client variance. This is a promising local experiment, not
+a production-wide performance guarantee or a fixed-arrival-rate load test.
+
+An earlier buffered-only prototype improved concurrency performance but reused
+poorly at concurrency 1: separately received headers/body activated streaming.
+The final experiment also recycles streamed GET connections after consuming the
+complete HTTP framing. Eight C++ tests cover framing, close semantics, bounded
+pooling, disconnect cleanup, body isolation, fragmented fixed/chunked delivery,
+cancellation, and downstream failure after a socket has already been recycled.
+Four Node profiler/client tests pass, including connection counting.
+
+Disabled by default. Enable using SANDSTORM_HTTP_BRIDGE_KEEPALIVE=1 in the app
+command environment; see README.md for package generation. The idle pool is
+session-local and capped at 20 connections. Acquisition rejects idle entries
+aged five seconds or more and detected disconnects. A server close racing with
+acquisition can still fail a request; no automatic retries are implemented.
+Resolve that race and test broader real-app behavior before enabling by default.

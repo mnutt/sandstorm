@@ -41,9 +41,10 @@ function makeClient(origin, cookie = "", concurrency = 1) {
           response.on("end", () => {
             const end = process.hrtime.bigint();
             try {
-              const [magic, echoed, pid, received, sending, bootId] = body.trim().split("\n");
+              const [magic, echoed, pid, received, sending, bootId, appConnectionId] = body.trim().split("\n");
               if (response.statusCode !== 200 || magic !== "sandstorm-latency-v1" || echoed !== id ||
-                  !/^\d+$/.test(pid) || !/^\d+$/.test(received) || !/^\d+$/.test(sending) || !/^\d+$/.test(bootId)) {
+                  !/^\d+$/.test(pid) || !/^\d+$/.test(received) || !/^\d+$/.test(sending) || !/^\d+$/.test(bootId) ||
+                  (appConnectionId !== undefined && !/^\d+$/.test(appConnectionId))) {
                 throw new Error(`Invalid response: status=${response.statusCode}, body=${body.slice(0, 100)}`);
               }
               const appReceive = BigInt(received), appSend = BigInt(sending);
@@ -52,7 +53,7 @@ function makeClient(origin, cookie = "", concurrency = 1) {
               }
               finish({ totalMs: Number(end - start) / 1e6, ttfbMs: Number(headerTime - start) / 1e6,
                 toAppMs: Number(appReceive - start) / 1e6, handlerMs: Number(appSend - appReceive) / 1e6,
-                fromAppMs: Number(end - appSend) / 1e6, reusedSocket: request.reusedSocket, appPid: +pid, bootId });
+                fromAppMs: Number(end - appSend) / 1e6, reusedSocket: request.reusedSocket, appPid: +pid, bootId, appConnectionId });
             } catch (error) { finish({ error: error.message }); }
           });
         });
@@ -82,6 +83,8 @@ async function batch(client, count, concurrency, prefix) {
   const summary = { startedAt, monotonicStartNs: startNs, count, concurrency, durationMs,
     errors: count - good.length, successfulRequestsPerSecond: good.length * 1000 / durationMs,
     clientCpuMs: (cpu.user + cpu.system) / 1000,
+    appConnections: good.every(row => row.appConnectionId) ?
+      new Set(good.map(row => `${row.bootId}:${row.appConnectionId}`)).size : null,
     reusedConnections: good.filter(row => row.reusedSocket).length };
   for (const name of ["totalMs", "ttfbMs", "toAppMs", "handlerMs", "fromAppMs"]) {
     summary[name] = distribution(good.map(row => row[name]));

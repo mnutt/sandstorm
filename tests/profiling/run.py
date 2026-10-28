@@ -100,7 +100,8 @@ def main():
     source_files = ['server-profiler.js', 'meteor-bundle-main.js', 'tests/profiling/run.py',
                     'tests/profiling/davros.js', 'tests/profiling/perf-launch.py', 'tests/profiling/harness.js',
                     'tests/profiling/latency.js', 'tests/profiling/latency-client.js',
-                    'tests/profiling/latency-app/server.c++', 'src/sandstorm/config.c++',
+                    'tests/profiling/latency-app/server.c++', 'src/sandstorm/sandstorm-http-bridge.c++',
+                    'src/sandstorm/http-connection-pool.h', 'src/sandstorm/config.c++',
                     'src/sandstorm/config.h', 'src/sandstorm/run-bundle.c++']
     manifest['sourceHashes'] = {file: sha256(ROOT / file) for file in source_files}
     (output / 'source.diff').write_bytes(subprocess.check_output(['git', 'diff'], cwd=ROOT))

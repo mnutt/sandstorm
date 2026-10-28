@@ -10,7 +10,7 @@ test("percentiles use nearest rank, with a real mean and an empty result", () =>
 });
 
 test("validates every response, bounds concurrency, reuses sockets, and measures all latency segments", async () => {
-  let active = 0, peak = 0, count = 0, bad = false;
+  let active = 0, peak = 0, count = 0, bad = false, connections = 0;
   const server = http.createServer((req, res) => {
     active++; count++; peak = Math.max(peak, active);
     const received = process.hrtime.bigint();
@@ -18,10 +18,11 @@ test("validates every response, bounds concurrency, reuses sockets, and measures
     setTimeout(() => {
       res.writeHead(200, { "Cache-Control": "no-store", "Content-Type": "text/plain" });
       const sending = process.hrtime.bigint();
-      res.end(`sandstorm-latency-v1\n${bad ? "wrong" : id}\n1\n${received}\n${sending}\n42\n`);
+      res.end(`sandstorm-latency-v1\n${bad ? "wrong" : id}\n1\n${received}\n${sending}\n42\n${req.socket.connectionId}\n`);
       active--;
     }, 3);
   });
+  server.on("connection", socket => { socket.connectionId = ++connections; });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const client = makeClient(`http://127.0.0.1:${server.address().port}`, "", 5);
   try {
@@ -32,6 +33,7 @@ test("validates every response, bounds concurrency, reuses sockets, and measures
     assert.equal(count, 110);
     assert.equal(peak, 5);
     assert.equal(measured.summary.reusedConnections, 100);
+    assert.equal(measured.summary.appConnections, 5);
     assert.equal(new Set(measured.records.map(row => row.id)).size, 100);
     for (const row of measured.records) {
       assert.ok(row.handlerMs >= 1);
