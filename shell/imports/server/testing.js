@@ -317,6 +317,10 @@ if(isTesting) {
     },
 
     fetchAppIndexTest: async function () {
+      // Use the working public mirror for both the index and package downloads.
+      await globalDb.collections.settings.upsertAsync({ _id: "appIndexUrl" }, {
+        $set: { value: "https://apps.sandstorm.org" },
+      });
       await globalDb.collections.appIndex.removeAsync({});
       await SandstormAutoupdateApps.updateAppIndex(this.connection.sandstormDb);
     },
