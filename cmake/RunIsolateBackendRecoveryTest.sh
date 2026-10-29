@@ -11,13 +11,19 @@ root=$6
 
 app_root=$root/apps
 grain_root=$root/grains
-state_root=$root/state
+state_root=
 
 cleanup() {
+  if [[ -n "$state_root" ]]; then
+    rm -rf "$state_root"
+  fi
   rm -rf "$root"
 }
 trap cleanup EXIT
 
+# Account sockets must fit in sockaddr_un even with a long CI checkout path.
+# Use /tmp explicitly since TMPDIR can itself be under the build directory.
+state_root=$(mktemp -d /tmp/ss-recovery.XXXXXXXX)
 rm -rf "$root"
 mkdir -p "$app_root" "$grain_root" "$state_root"
 "$spk" unpack "$test_spk" "$app_root/testpackage123"
