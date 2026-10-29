@@ -18,6 +18,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const browserRuntimeBenchmark = require("./browser-runtime");
 const { medium_wait, very_long_wait } = require("../utils");
 
 function envNumber(name, fallback) {
@@ -101,100 +102,6 @@ function printBenchmark(result) {
   });
 }
 
-function browserScheduleBenchmark(options, doneBenchmark) {
-  function getMeteor() {
-    return window.Meteor ||
-        window.Package && window.Package.meteor && window.Package.meteor.Meteor;
-  }
-
-  function frameState() {
-    const meteor = getMeteor();
-    return {
-      meteor: typeof meteor,
-      meteorCall: typeof (meteor && meteor.call),
-      href: window.location.href,
-      title: document.title,
-      body: document.body && document.body.innerText &&
-          document.body.innerText.slice(0, 200),
-    };
-  }
-
-  function waitForMeteorCall() {
-    const deadline = Date.now() + (options.meteorWaitMs || 30000);
-    return new Promise((resolve, reject) => {
-      function poll() {
-        const meteor = getMeteor();
-        if (meteor && typeof meteor.call === "function") {
-          resolve();
-        } else if (Date.now() >= deadline) {
-          reject(new Error("Timed out waiting for app Meteor.call: " +
-              JSON.stringify(frameState())));
-        } else {
-          window.setTimeout(poll, 50);
-        }
-      }
-
-      poll();
-    });
-  }
-
-  function summarize(samples, totalMs) {
-    const sorted = samples.slice().sort((left, right) => left - right);
-    const percentile = (fraction) => {
-      const index = Math.min(sorted.length - 1, Math.floor(sorted.length * fraction));
-      return sorted[index];
-    };
-
-    return {
-      name: "app.systemApi.schedule",
-      iterations: samples.length,
-      totalMs: totalMs,
-      opsPerSecond: samples.length / (totalMs / 1000),
-      avgMs: totalMs / samples.length,
-      minMs: sorted[0],
-      p50Ms: percentile(0.50),
-      p95Ms: percentile(0.95),
-      p99Ms: percentile(0.99),
-      maxMs: sorted[sorted.length - 1],
-    };
-  }
-
-  function scheduleOne(label) {
-    return new Promise((resolve, reject) => {
-      getMeteor().call("schedule", label, function (err) {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      });
-    });
-  }
-
-  (async function () {
-    await waitForMeteorCall();
-
-    for (let i = 0; i < options.warmup; ++i) {
-      await scheduleOne("node-capnp-benchmark-warmup-" + i + "-" + Date.now());
-    }
-
-    const samples = [];
-    const totalStart = window.performance.now();
-    for (let i = 0; i < options.iterations; ++i) {
-      const start = window.performance.now();
-      await scheduleOne("node-capnp-benchmark-" + i + "-" + Date.now());
-      samples.push(window.performance.now() - start);
-    }
-
-    doneBenchmark({ result: summarize(samples, window.performance.now() - totalStart) });
-  })().catch((err) => {
-    doneBenchmark({
-      error: {
-        message: err && (err.reason || err.message) || String(err),
-      },
-    });
-  });
-}
 
 function writeBenchmarkReport(result) {
   const reportDir = path.resolve(__dirname, "../reports/benchmarks");
@@ -297,11 +204,11 @@ module.exports["Benchmark node-capnp through Sandstorm paths"] = function (brows
     .grainFrame()
     .timeouts("script", very_long_wait)
     .perform(function (client, done) {
-      client.executeAsync(browserScheduleBenchmark, [appBenchmarkOptions], function (result) {
+      client.executeAsync(browserRuntimeBenchmark, [appBenchmarkOptions], function (result) {
         const value = result.value || {};
         client.assert.equal(value.error || null, null,
-            "app schedule benchmark completed without error");
-        client.assert.ok(!!value.result, "app schedule benchmark returned results");
+            "app Meteor runtime benchmark completed without error");
+        client.assert.ok(!!value.result, "app Meteor runtime benchmark returned results");
         if (!value.result) {
           done();
           return;
