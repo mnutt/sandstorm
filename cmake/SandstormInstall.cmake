@@ -1,5 +1,7 @@
 include(GNUInstallDirs)
 function(sandstorm_install_native)
+  # Keep staging progress and errors without listing every installed file and license.
+  set(CMAKE_INSTALL_MESSAGE NEVER)
   set(_isolate_host_bin "${CMAKE_BINARY_DIR}/bin/isolate-host")
   set(_host_release "${CMAKE_BINARY_DIR}/isolate-host-${SANDSTORM_ISOLATE_HOST_VERSION}")
   set(_archive "${_host_release}.tar.xz")

@@ -640,11 +640,17 @@ export default {
 
     if (url.pathname === "/upload-stream") {
       let bodyBytes = 0;
-      const reader = request.body.getReader();
+      // Count bytes without one JavaScript callback per transport fragment. The test exercises
+      // upload size limits, so use bounded BYOB reads to stay within the host's CPU budget.
+      const reader = request.body.getReader({ mode: "byob" });
+      let buffer = new ArrayBuffer(1024 * 1024);
       for (;;) {
-        const { done, value } = await reader.read();
+        const { done, value } = await reader.read(new Uint8Array(buffer), {
+          min: buffer.byteLength,
+        });
+        if (value) bodyBytes += value.byteLength;
         if (done) break;
-        bodyBytes += value.byteLength;
+        buffer = value.buffer;
       }
       return Response.json({
         ok: true,

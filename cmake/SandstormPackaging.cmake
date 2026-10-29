@@ -50,6 +50,7 @@ function(sandstorm_add_packaging_targets)
       COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_stage}/${asset_dir}"
       COMMAND "${CMAKE_COMMAND}" -E copy_directory
         "${_source}/${asset_dir}" "${_stage}/${asset_dir}"
+      COMMAND "${CMAKE_COMMAND}" -E touch "${_stage_capnp}"
       DEPENDS "${_source}/${capnp_file}" ${_asset_files}
       COMMENT "Staging ${target}"
       VERBATIM)
@@ -137,6 +138,7 @@ function(sandstorm_add_packaging_targets)
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${_isolate_test_app_source}/isolate-test"
       "${_isolate_test_app_stage}/isolate-test"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${_isolate_test_app_stage_capnp}"
     DEPENDS "${_isolate_test_app_capnp}" ${_isolate_test_app_files}
     COMMENT "Staging the Sandstorm isolate test app package"
     VERBATIM)
