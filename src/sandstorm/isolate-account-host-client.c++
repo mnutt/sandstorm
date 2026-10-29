@@ -235,6 +235,7 @@ public:
 
 Supervisor::Client startGrain(kj::WaitScope& waitScope, IsolateAccountHost::Client account,
     SandstormCore::Client core, kj::StringPtr grainId, kj::StringPtr packageId, bool isNew) {
+  KJ_CONTEXT("startGrain", grainId, packageId, isNew);
   auto request = account.startGrainRequest();
   request.setGrainId(grainId);
   request.setPackageId(packageId);
@@ -277,6 +278,7 @@ WebSession::Client newWebSession(kj::WaitScope& waitScope, Supervisor::Client su
 
 kj::String fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
     SandstormCore::Client core, kj::StringPtr path) {
+  KJ_CONTEXT("fetchPath", path);
   auto keepAlive = supervisor.keepAliveRequest();
   keepAlive.setCore(core);
   keepAlive.send().wait(waitScope);
@@ -312,12 +314,14 @@ kj::String fetchPath(kj::WaitScope& waitScope, Supervisor::Client supervisor,
 
 void testUnknownLengthUploads(kj::AsyncIoContext& io, Supervisor::Client supervisor,
     SandstormCore::Client core) {
+  KJ_CONTEXT("testUnknownLengthUploads");
   auto keepAlive = supervisor.keepAliveRequest();
   keepAlive.setCore(core);
   keepAlive.send().wait(io.waitScope);
   auto session = newWebSession(io.waitScope, supervisor);
 
   auto runUpload = [&](uint64_t size) {
+    KJ_CONTEXT("upload", size);
     auto request = session.postStreamingRequest();
     request.setPath("upload-stream");
     request.setMimeType("application/octet-stream");
@@ -418,6 +422,7 @@ void testUnknownLengthUploads(kj::AsyncIoContext& io, Supervisor::Client supervi
 }
 
 void testStreamingResponse(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
+  KJ_CONTEXT("testStreamingResponse");
   auto session = newWebSession(waitScope, supervisor);
   auto counted = kj::newPromiseAndFulfiller<uint64_t>();
   auto request = session.getRequest();
@@ -451,6 +456,7 @@ void testStreamingResponse(kj::WaitScope& waitScope, Supervisor::Client supervis
 }
 
 void testWebSocket(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
+  KJ_CONTEXT("testWebSocket");
   auto session = newWebSession(waitScope, supervisor);
 
   auto request = session.openWebSocketRequest();
@@ -487,6 +493,7 @@ void testWebSocket(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
 }
 
 void testBrowserBootstrap(kj::WaitScope& waitScope, Supervisor::Client supervisor) {
+  KJ_CONTEXT("testBrowserBootstrap");
   auto session = newWebSession(waitScope, supervisor);
   auto request = session.openWebSocketRequest();
   request.setPath(

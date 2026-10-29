@@ -279,6 +279,8 @@ void setupNativeHostSeccomp(bool logSeccompViolations) {
     SCMP_SYS(arch_prctl),
     SCMP_SYS(bind),
     SCMP_SYS(brk),
+    // Thread CPU clocks require the syscall; unlike wall clocks they cannot use the vDSO.
+    SCMP_SYS(clock_gettime),
     SCMP_SYS(clock_nanosleep),
     SCMP_SYS(close),
     SCMP_SYS(connect),

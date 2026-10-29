@@ -2294,7 +2294,9 @@ private:
         return kj::READY_NOW;
       }
 
-      auto maxBytes = static_cast<size_t>(kj::min(remaining, uint64_t(8192)));
+      // Match ByteStream's maximum write size. Smaller chunks multiply RPC and JavaScript
+      // stream callbacks enough to exhaust the host's CPU budget on large uploads.
+      auto maxBytes = static_cast<size_t>(kj::min(remaining, uint64_t(64 * 1024)));
       return host->spoolIo.read(kj::atomicAddRef(*file), maxBytes).then(
           [this, file = kj::mv(file), &output, remaining](kj::Array<byte> buffer) mutable {
         KJ_REQUIRE(buffer.size() > 0,

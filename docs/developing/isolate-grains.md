@@ -621,7 +621,7 @@ endpoints, transport framing, host protocols, or the members of
 
 ## Building with the standalone host
 
-Sandstorm downloads the pinned `mnutt/isolate-host` v0.1.0 Linux x86-64 release;
+Sandstorm downloads the pinned `mnutt/isolate-host` v0.1.1 Linux x86-64 release;
 Bazel and a workerd source checkout are no longer needed. CMake verifies the archive
 SHA-256 before extraction and the executable SHA-256 before installation. The
 `isolate-host` target and `bin/isolate-host` location remain unchanged.
