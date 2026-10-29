@@ -4809,6 +4809,17 @@ private:
     return nullptr;
   }
 
+  static kj::String devIsolateCapnpCompiler() {
+    // CMake builds capnp next to spk, without the capnpc installation alias.
+    // Prefer that compiler so schema generation uses the same version as spk.
+    kj::Vector<kj::String> candidates;
+    addDevIsolateInstallHomeCandidates(candidates, "/bin/capnp");
+    for (auto& candidate: candidates) {
+      if (access(candidate.cStr(), X_OK) == 0) return kj::mv(candidate);
+    }
+    return kj::str("capnp");
+  }
+
   static kj::String generateDevIsolateCapnpEsOutput(
       kj::StringPtr resolvedPath, kj::StringPtr rootDir, DevIsolateCapnpEsOutputKind kind) {
     auto compilerModule = devIsolateCapnpEsCompilerModule();
@@ -4821,8 +4832,9 @@ private:
     auto capnpcErrPipe = Pipe::make();
     auto rootInclude = kj::str("-I", rootDir);
     auto sandstormInclude = kj::str("-I", devIsolateSandstormSchemaIncludeDir());
+    auto capnpCompiler = devIsolateCapnpCompiler();
     Subprocess::Options capnpcOptions({
-        "capnpc", "-o-", rootInclude, sandstormInclude, "-I/usr/include", resolvedPath});
+        capnpCompiler, "compile", "-o-", rootInclude, sandstormInclude, "-I/usr/include", resolvedPath});
     capnpcOptions.stdout = capnpcOutPipe.writeEnd;
     capnpcOptions.stderr = capnpcErrPipe.writeEnd;
     Subprocess capnpc(kj::mv(capnpcOptions));
@@ -4832,7 +4844,7 @@ private:
     auto codegenRequest = readAllBytes(capnpcOutPipe.readEnd);
     auto capnpcStderr = readAll(capnpcErrPipe.readEnd);
     auto capnpcExit = capnpc.waitForExit();
-    KJ_REQUIRE(capnpcExit == 0, "capnpc failed while generating capnp-es module.",
+    KJ_REQUIRE(capnpcExit == 0, "capnp compile failed while generating capnp-es module.",
         resolvedPath, capnpcStderr);
 
     auto nodeInPipe = Pipe::make();

@@ -859,6 +859,13 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     /Isolate service bindings may only target the worker-local main service/);
 
   const spkPath = path.join(fixtureRoot, "pkg.spk");
+  // Match a clean CI machine: Node and xz are available, but neither capnp nor capnpc
+  // is on PATH. spk must use the compiler built alongside it.
+  const toolPath = path.join(fixtureRoot, "bin");
+  await fs.mkdir(toolPath);
+  await fs.symlink(process.execPath, path.join(toolPath, "node"));
+  const { stdout: xzPath } = await runCommand("sh", ["-c", "command -v xz"]);
+  await fs.symlink(xzPath.trim(), path.join(toolPath, "xz"));
   await runCommand(SPK_BIN, [
     "pack",
     `-k${path.join(REPO_DIR, "src/sandstorm/test-app/isolate-test-app.key")}`,
@@ -869,6 +876,7 @@ test("spk pack materializes generated capnp modules for packaged isolates", asyn
     cwd: REPO_DIR,
     env: {
       ...process.env,
+      PATH: toolPath,
       SANDSTORM_CAPNP_ES_COMPILER_MODULE: CAPNP_ES_COMPILER_MODULE,
     },
   });
