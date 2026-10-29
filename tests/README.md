@@ -78,7 +78,7 @@ windows when debugging. You can do this by setting `SHOW_BROWSER=true`:
 
 The node-capnp baseline benchmark drives Sandstorm through the browser and
 test-only Meteor methods. The benchmark code does not import `capnp` directly;
-it measures the shell/backend RPC paths that currently use node-capnp.
+it measures the shell/backend RPC implementation in the selected build.
 
 To run it against a local test Sandstorm instance:
 
@@ -93,8 +93,10 @@ You can tune the run with environment variables:
 
     NODE_CAPNP_BENCH_ITERS=1000 NODE_CAPNP_BENCH_WARMUP=100 make benchmark-node-capnp
 
-The app/system-API scheduling sub-benchmark defaults to fewer iterations since
-it creates scheduled-job records. Tune it separately with
+The app sub-benchmark calls the fixture's `getServerRuntime` Meteor method and
+reports `app.meteor.getServerRuntime`. It measures a browser-to-app DDP round trip,
+not a system-API scheduling call; do not compare it with historical
+`app.systemApi.schedule` results. Tune it separately with
 `NODE_CAPNP_BENCH_APP_ITERS` and `NODE_CAPNP_BENCH_APP_WARMUP`.
 
 Results are printed to stdout and written to `tests/reports/benchmarks/`.
