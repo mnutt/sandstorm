@@ -2,10 +2,6 @@ function(sandstorm_add_frontend_targets)
   if(NOT SANDSTORM_BUILD_FRONTEND)
     return()
   endif()
-  if(NOT SANDSTORM_BUILD_NODE_CAPNP)
-    message(STATUS "Frontend targets disabled because SANDSTORM_BUILD_NODE_CAPNP is OFF")
-    return()
-  endif()
 
   find_program(SANDSTORM_MARKDOWN_EXECUTABLE NAMES markdown REQUIRED)
   find_program(SANDSTORM_FIND_EXECUTABLE NAMES find REQUIRED)
@@ -130,23 +126,29 @@ function(sandstorm_add_frontend_targets)
     DEPENDS
       "${PROJECT_SOURCE_DIR}/shell/package.json"
       "${PROJECT_SOURCE_DIR}/shell/package-lock.json"
+      "${PROJECT_SOURCE_DIR}/deps/capnp-es-shell/capnp-es-0.0.14.tgz"
     COMMENT "Installing Meteor shell dependencies"
     VERBATIM)
 
-  set(CAPNP_ES_DIR "$ENV{HOME}/p/personal/capnp-es" CACHE PATH "capnp-es checkout")
-  set(CAPNP_ES_COMPILER "${CAPNP_ES_DIR}/dist/compiler/capnpc-ts.mjs"
-    CACHE FILEPATH "capnp-es TypeScript compiler")
+  set(CAPNP_ES_COMPILER "" CACHE FILEPATH
+    "Optional capnp-es TypeScript compiler override for local development")
+  set(_capnp_es_compiler_dependency)
+  if(CAPNP_ES_COMPILER)
+    list(APPEND _capnp_es_compiler_dependency "${CAPNP_ES_COMPILER}")
+  endif()
   file(GLOB_RECURSE _capnp_es_schema_sources CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/sandstorm/*.capnp")
   set(_capnp_es_stamp "${_frontend_dir}/capnp-es-schemas.stamp")
   add_custom_command(
     OUTPUT "${_capnp_es_stamp}"
     COMMAND "${CMAKE_COMMAND}" -E env
-      "CAPNP_ES_DIR=${CAPNP_ES_DIR}" "CAPNP_ES_COMPILER=${CAPNP_ES_COMPILER}"
+      "CAPNP_ES_COMPILER=${CAPNP_ES_COMPILER}"
+      "CAPNP=$<TARGET_FILE:capnp_tool>"
       "${_meteor_bin}/node" "${PROJECT_SOURCE_DIR}/tools/generate-capnp-es-schemas.mjs"
     COMMAND "${CMAKE_COMMAND}" -E touch "${_capnp_es_stamp}"
     DEPENDS "${PROJECT_SOURCE_DIR}/tools/generate-capnp-es-schemas.mjs"
-      "${CAPNP_ES_COMPILER}" ${_capnp_es_schema_sources}
+      "${_shell_npm_stamp}" ${_capnp_es_compiler_dependency}
+      ${_capnp_es_schema_sources} capnp_tool
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
     COMMENT "Generating capnp-es schemas"
     VERBATIM)

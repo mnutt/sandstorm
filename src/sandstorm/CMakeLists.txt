@@ -1,7 +1,7 @@
 include(SandstormCapnp)
 include(SandstormFrontend)
 include(SandstormInstall)
-include(SandstormNodeCapnp)
+include(SandstormMeteor)
 include(SandstormPackaging)
 
 set(_sandstorm_schema_relative_paths

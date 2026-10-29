@@ -36,8 +36,8 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/ci",
       "cacheVariables": {
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_C_COMPILER": "${sourceDir}/deps/llvm-build/bin/clang",
+        "CMAKE_CXX_COMPILER": "${sourceDir}/deps/llvm-build/bin/clang++",
         "CMAKE_C_COMPILER_LAUNCHER": "ccache",
         "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",

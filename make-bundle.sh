@@ -25,7 +25,6 @@ SHELL_BUILD_DIR=${SANDSTORM_SHELL_BUILD_DIR:-$SOURCE_ROOT/shell-build}
 BUNDLE_DIR=${SANDSTORM_BUNDLE_DIR:-$SOURCE_ROOT/bundle}
 WORK_DIR=${SANDSTORM_WORK_DIR:-$SOURCE_ROOT/tmp}
 CACHE_DIR=${SANDSTORM_CACHE_DIR:-$SOURCE_ROOT/hack}
-NODE_MODULES_DIR=${SANDSTORM_NODE_MODULES_DIR:-$NATIVE_STAGE/node_modules}
 
 mkdir -p "$WORK_DIR" "$CACHE_DIR"
 rm -rf "$BUNDLE_DIR"
@@ -279,8 +278,6 @@ mkdir -p "$BUNDLE_DIR/usr/include"/{capnp,sandstorm}
 cp "$SOURCE_ROOT"/src/capnp/!(*test*).capnp "$BUNDLE_DIR/usr/include/capnp"
 cp "$SOURCE_ROOT"/src/sandstorm/!(*-internal).capnp "$BUNDLE_DIR/usr/include/sandstorm"
 
-# Copy over node_modules.
-cp -r "$NODE_MODULES_DIR" "$BUNDLE_DIR/node_modules"
 
 # Copy over all necessary shared libraries.
 (ldd "$BUNDLE_DIR"/bin/* $(find "$BUNDLE_DIR" -name '*.node') || true) | \
