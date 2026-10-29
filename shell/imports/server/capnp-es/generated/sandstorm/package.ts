@@ -171,11 +171,12 @@ export class Manifest_Command extends $.Struct {
     id: "c64951b2a02886cf",
     typeId: 0xc64951b2a02886cfn,
     typeIdHex: "c64951b2a02886cf",
-    size: new $.ObjectSize(0, 3),
+    size: new $.ObjectSize(0, 4),
     fields: [
       { name: "argv", codeOrder: 0, ordinal: 1, kind: "slot", offset: 1, type: { kind: "list", elementType: { kind: "text" } } },
       { name: "environ", codeOrder: 1, ordinal: 2, kind: "slot", offset: 2, type: { kind: "list", elementType: { kind: "struct", typeId: 0x94a081e4abb13424n, typeIdHex: "94a081e4abb13424", displayName: "KeyValue" } } },
-      { name: "deprecatedExecutablePath", codeOrder: 2, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } }
+      { name: "deprecatedExecutablePath", codeOrder: 2, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "isolate", codeOrder: 3, ordinal: 3, kind: "slot", offset: 3, type: { kind: "struct", typeId: 0xd5b4dacda9ef3910n, typeIdHex: "d5b4dacda9ef3910", displayName: "IsolateConfig" } }
     ] as const,
   };
   static _Environ: $.ListCtor<KeyValue>;
@@ -237,7 +238,394 @@ export class Manifest_Command extends $.Struct {
   set deprecatedExecutablePath(value: string) {
     $.utils.setText(0, value, this);
   }
+  _adoptIsolate(value: $.Orphan<Manifest_IsolateConfig>): void {
+    $.utils.adopt(value, $.utils.getPointer(3, this));
+  }
+  _disownIsolate(): $.Orphan<Manifest_IsolateConfig> {
+    return $.utils.disown(this.isolate);
+  }
+  /**
+* If present, run this command as an isolate grain rather than as a Linux process inside the
+* traditional Sandstorm sandbox. `argv`, `environ`, and `deprecatedExecutablePath` are ignored
+* for isolate commands; the trusted native host instantiates the declared modules and bindings
+* directly rather than launching an application-selected runtime process.
+*
+*/
+  get isolate(): Manifest_IsolateConfig {
+    return $.utils.getStruct(3, Manifest_IsolateConfig, this);
+  }
+  _hasIsolate(): boolean {
+    return !$.utils.isNull($.utils.getPointer(3, this));
+  }
+  _initIsolate(): Manifest_IsolateConfig {
+    return $.utils.initStructAt(3, Manifest_IsolateConfig, this);
+  }
+  set isolate(value: Manifest_IsolateConfig) {
+    $.utils.copyFrom(value, $.utils.getPointer(3, this));
+  }
   toString(): string { return "Manifest_Command_" + super.toString(); }
+}
+export const Manifest_IsolateConfig_Module_Which = {
+  ES_MODULE_PATH: 0,
+  COMMON_JS_MODULE_PATH: 1,
+  TEXT_PATH: 2,
+  DATA_PATH: 3,
+  WASM_PATH: 4,
+  JSON_PATH: 5
+} as const;
+export type Manifest_IsolateConfig_Module_Which = (typeof Manifest_IsolateConfig_Module_Which)[keyof typeof Manifest_IsolateConfig_Module_Which];
+export class Manifest_IsolateConfig_Module extends $.Struct {
+  static readonly ES_MODULE_PATH = Manifest_IsolateConfig_Module_Which.ES_MODULE_PATH;
+  static readonly COMMON_JS_MODULE_PATH = Manifest_IsolateConfig_Module_Which.COMMON_JS_MODULE_PATH;
+  static readonly TEXT_PATH = Manifest_IsolateConfig_Module_Which.TEXT_PATH;
+  static readonly DATA_PATH = Manifest_IsolateConfig_Module_Which.DATA_PATH;
+  static readonly WASM_PATH = Manifest_IsolateConfig_Module_Which.WASM_PATH;
+  static readonly JSON_PATH = Manifest_IsolateConfig_Module_Which.JSON_PATH;
+  static readonly _capnp = {
+    displayName: "Module",
+    id: "a691c983138f8206",
+    typeId: 0xa691c983138f8206n,
+    typeIdHex: "a691c983138f8206",
+    size: new $.ObjectSize(8, 2),
+    fields: [
+      { name: "name", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "esModulePath", codeOrder: 1, ordinal: 1, discriminantValue: 0, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "commonJsModulePath", codeOrder: 2, ordinal: 2, discriminantValue: 1, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "textPath", codeOrder: 3, ordinal: 3, discriminantValue: 2, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "dataPath", codeOrder: 4, ordinal: 4, discriminantValue: 3, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "wasmPath", codeOrder: 5, ordinal: 5, discriminantValue: 4, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "jsonPath", codeOrder: 6, ordinal: 6, discriminantValue: 5, kind: "slot", offset: 1, type: { kind: "text" } }
+    ] as const,
+  };
+  get name(): string {
+    return $.utils.getText(0, this);
+  }
+  set name(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  get esModulePath(): string {
+    $.utils.testWhich("esModulePath", $.utils.getUint16(0, this), 0, this);
+    return $.utils.getText(1, this);
+  }
+  get _isEsModulePath(): boolean {
+    return $.utils.getUint16(0, this) === 0;
+  }
+  set esModulePath(value: string) {
+    $.utils.setUint16(0, 0, this);
+    $.utils.setText(1, value, this);
+  }
+  get commonJsModulePath(): string {
+    $.utils.testWhich("commonJsModulePath", $.utils.getUint16(0, this), 1, this);
+    return $.utils.getText(1, this);
+  }
+  get _isCommonJsModulePath(): boolean {
+    return $.utils.getUint16(0, this) === 1;
+  }
+  set commonJsModulePath(value: string) {
+    $.utils.setUint16(0, 1, this);
+    $.utils.setText(1, value, this);
+  }
+  get textPath(): string {
+    $.utils.testWhich("textPath", $.utils.getUint16(0, this), 2, this);
+    return $.utils.getText(1, this);
+  }
+  get _isTextPath(): boolean {
+    return $.utils.getUint16(0, this) === 2;
+  }
+  set textPath(value: string) {
+    $.utils.setUint16(0, 2, this);
+    $.utils.setText(1, value, this);
+  }
+  get dataPath(): string {
+    $.utils.testWhich("dataPath", $.utils.getUint16(0, this), 3, this);
+    return $.utils.getText(1, this);
+  }
+  get _isDataPath(): boolean {
+    return $.utils.getUint16(0, this) === 3;
+  }
+  set dataPath(value: string) {
+    $.utils.setUint16(0, 3, this);
+    $.utils.setText(1, value, this);
+  }
+  get wasmPath(): string {
+    $.utils.testWhich("wasmPath", $.utils.getUint16(0, this), 4, this);
+    return $.utils.getText(1, this);
+  }
+  get _isWasmPath(): boolean {
+    return $.utils.getUint16(0, this) === 4;
+  }
+  set wasmPath(value: string) {
+    $.utils.setUint16(0, 4, this);
+    $.utils.setText(1, value, this);
+  }
+  get jsonPath(): string {
+    $.utils.testWhich("jsonPath", $.utils.getUint16(0, this), 5, this);
+    return $.utils.getText(1, this);
+  }
+  get _isJsonPath(): boolean {
+    return $.utils.getUint16(0, this) === 5;
+  }
+  set jsonPath(value: string) {
+    $.utils.setUint16(0, 5, this);
+    $.utils.setText(1, value, this);
+  }
+  toString(): string { return "Manifest_IsolateConfig_Module_" + super.toString(); }
+  which(): Manifest_IsolateConfig_Module_Which {
+    return $.utils.getUint16(0, this) as Manifest_IsolateConfig_Module_Which;
+  }
+}
+export const Manifest_IsolateConfig_Binding_Which = {
+  TEXT: 0,
+  DATA: 1,
+  JSON: 2,
+  SANDSTORM_API: 3,
+  STORAGE: 4,
+  POWERBOX: 5,
+  SERVICE: 6
+} as const;
+export type Manifest_IsolateConfig_Binding_Which = (typeof Manifest_IsolateConfig_Binding_Which)[keyof typeof Manifest_IsolateConfig_Binding_Which];
+export class Manifest_IsolateConfig_Binding extends $.Struct {
+  static readonly TEXT = Manifest_IsolateConfig_Binding_Which.TEXT;
+  static readonly DATA = Manifest_IsolateConfig_Binding_Which.DATA;
+  static readonly JSON = Manifest_IsolateConfig_Binding_Which.JSON;
+  static readonly SANDSTORM_API = Manifest_IsolateConfig_Binding_Which.SANDSTORM_API;
+  static readonly STORAGE = Manifest_IsolateConfig_Binding_Which.STORAGE;
+  static readonly POWERBOX = Manifest_IsolateConfig_Binding_Which.POWERBOX;
+  static readonly SERVICE = Manifest_IsolateConfig_Binding_Which.SERVICE;
+  static readonly _capnp = {
+    displayName: "Binding",
+    id: "8b2734f75ad2d39b",
+    typeId: 0x8b2734f75ad2d39bn,
+    typeIdHex: "8b2734f75ad2d39b",
+    size: new $.ObjectSize(8, 2),
+    fields: [
+      { name: "name", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "text", codeOrder: 1, ordinal: 1, discriminantValue: 0, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "data", codeOrder: 2, ordinal: 2, discriminantValue: 1, kind: "slot", offset: 1, type: { kind: "data" } },
+      { name: "json", codeOrder: 3, ordinal: 3, discriminantValue: 2, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "sandstormApi", codeOrder: 4, ordinal: 4, discriminantValue: 3, kind: "slot", offset: 0, type: { kind: "void" } },
+      { name: "storage", codeOrder: 5, ordinal: 5, discriminantValue: 4, kind: "slot", offset: 0, type: { kind: "void" } },
+      { name: "powerbox", codeOrder: 6, ordinal: 6, discriminantValue: 5, kind: "slot", offset: 0, type: { kind: "void" } },
+      { name: "service", codeOrder: 7, ordinal: 7, discriminantValue: 6, kind: "slot", offset: 1, type: { kind: "text" } }
+    ] as const,
+  };
+  get name(): string {
+    return $.utils.getText(0, this);
+  }
+  set name(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  get text(): string {
+    $.utils.testWhich("text", $.utils.getUint16(0, this), 0, this);
+    return $.utils.getText(1, this);
+  }
+  get _isText(): boolean {
+    return $.utils.getUint16(0, this) === 0;
+  }
+  set text(value: string) {
+    $.utils.setUint16(0, 0, this);
+    $.utils.setText(1, value, this);
+  }
+  _adoptData(value: $.Orphan<$.Data>): void {
+    $.utils.setUint16(0, 1, this);
+    $.utils.adopt(value, $.utils.getPointer(1, this));
+  }
+  _disownData(): $.Orphan<$.Data> {
+    return $.utils.disown(this.data);
+  }
+  get data(): $.Data {
+    $.utils.testWhich("data", $.utils.getUint16(0, this), 1, this);
+    return $.utils.getData(1, this);
+  }
+  _hasData(): boolean {
+    return !$.utils.isNull($.utils.getPointer(1, this));
+  }
+  _initData(length: number): $.Data {
+    $.utils.setUint16(0, 1, this);
+    return $.utils.initData(1, length, this);
+  }
+  get _isData(): boolean {
+    return $.utils.getUint16(0, this) === 1;
+  }
+  set data(value: $.Data) {
+    $.utils.setUint16(0, 1, this);
+    $.utils.copyFrom(value, $.utils.getPointer(1, this));
+  }
+  get json(): string {
+    $.utils.testWhich("json", $.utils.getUint16(0, this), 2, this);
+    return $.utils.getText(1, this);
+  }
+  get _isJson(): boolean {
+    return $.utils.getUint16(0, this) === 2;
+  }
+  set json(value: string) {
+    $.utils.setUint16(0, 2, this);
+    $.utils.setText(1, value, this);
+  }
+  get _isSandstormApi(): boolean {
+    return $.utils.getUint16(0, this) === 3;
+  }
+  set sandstormApi(_: true) {
+    $.utils.setUint16(0, 3, this);
+  }
+  get _isStorage(): boolean {
+    return $.utils.getUint16(0, this) === 4;
+  }
+  set storage(_: true) {
+    $.utils.setUint16(0, 4, this);
+  }
+  get _isPowerbox(): boolean {
+    return $.utils.getUint16(0, this) === 5;
+  }
+  set powerbox(_: true) {
+    $.utils.setUint16(0, 5, this);
+  }
+  get service(): string {
+    $.utils.testWhich("service", $.utils.getUint16(0, this), 6, this);
+    return $.utils.getText(1, this);
+  }
+  get _isService(): boolean {
+    return $.utils.getUint16(0, this) === 6;
+  }
+  set service(value: string) {
+    $.utils.setUint16(0, 6, this);
+    $.utils.setText(1, value, this);
+  }
+  toString(): string { return "Manifest_IsolateConfig_Binding_" + super.toString(); }
+  which(): Manifest_IsolateConfig_Binding_Which {
+    return $.utils.getUint16(0, this) as Manifest_IsolateConfig_Binding_Which;
+  }
+}
+/**
+* Configuration for grains implemented as V8 isolates.
+*
+* This intentionally resembles workerd's Worker configuration model: code is supplied as
+* modules, access to outside resources is supplied as explicit bindings, and compatibility
+* dates/flags define the runtime API surface.
+*
+*/
+export class Manifest_IsolateConfig extends $.Struct {
+  static readonly Module = Manifest_IsolateConfig_Module;
+  static readonly Binding = Manifest_IsolateConfig_Binding;
+  static readonly _capnp = {
+    displayName: "IsolateConfig",
+    id: "d5b4dacda9ef3910",
+    typeId: 0xd5b4dacda9ef3910n,
+    typeIdHex: "d5b4dacda9ef3910",
+    size: new $.ObjectSize(0, 6),
+    fields: [
+      { name: "mainModule", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "modules", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "list", elementType: { kind: "struct", typeId: 0xa691c983138f8206n, typeIdHex: "a691c983138f8206", displayName: "Module" } } },
+      { name: "compatibilityDate", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "text" } },
+      { name: "compatibilityFlags", codeOrder: 3, ordinal: 3, kind: "slot", offset: 3, type: { kind: "list", elementType: { kind: "text" } } },
+      { name: "bindings", codeOrder: 4, ordinal: 4, kind: "slot", offset: 4, type: { kind: "list", elementType: { kind: "struct", typeId: 0x8b2734f75ad2d39bn, typeIdHex: "8b2734f75ad2d39b", displayName: "Binding" } } },
+      { name: "bridgeConfig", codeOrder: 5, ordinal: 5, kind: "slot", offset: 5, type: { kind: "struct", typeId: 0xdd8c82383168c096n, typeIdHex: "dd8c82383168c096", displayName: "BridgeConfig" } }
+    ] as const,
+  };
+  static _Modules: $.ListCtor<Manifest_IsolateConfig_Module>;
+  static _Bindings: $.ListCtor<Manifest_IsolateConfig_Binding>;
+  /**
+* Name of the module containing the default Worker-style entrypoint.
+*
+*/
+  get mainModule(): string {
+    return $.utils.getText(0, this);
+  }
+  set mainModule(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  _adoptModules(value: $.Orphan<$.List<Manifest_IsolateConfig_Module>>): void {
+    $.utils.adopt(value, $.utils.getPointer(1, this));
+  }
+  _disownModules(): $.Orphan<$.List<Manifest_IsolateConfig_Module>> {
+    return $.utils.disown(this.modules);
+  }
+  /**
+* JavaScript, Wasm, and data modules available to the isolate.
+*
+*/
+  get modules(): $.List<Manifest_IsolateConfig_Module> {
+    return $.utils.getList(1, Manifest_IsolateConfig._Modules, this);
+  }
+  _hasModules(): boolean {
+    return !$.utils.isNull($.utils.getPointer(1, this));
+  }
+  _initModules(length: number): $.List<Manifest_IsolateConfig_Module> {
+    return $.utils.initList(1, Manifest_IsolateConfig._Modules, length, this);
+  }
+  set modules(value: $.List<Manifest_IsolateConfig_Module>) {
+    $.utils.copyFrom(value, $.utils.getPointer(1, this));
+  }
+  get compatibilityDate(): string {
+    return $.utils.getText(2, this);
+  }
+  set compatibilityDate(value: string) {
+    $.utils.setText(2, value, this);
+  }
+  _adoptCompatibilityFlags(value: $.Orphan<$.List<string>>): void {
+    $.utils.adopt(value, $.utils.getPointer(3, this));
+  }
+  _disownCompatibilityFlags(): $.Orphan<$.List<string>> {
+    return $.utils.disown(this.compatibilityFlags);
+  }
+  get compatibilityFlags(): $.List<string> {
+    return $.utils.getList(3, $.TextList, this);
+  }
+  _hasCompatibilityFlags(): boolean {
+    return !$.utils.isNull($.utils.getPointer(3, this));
+  }
+  _initCompatibilityFlags(length: number): $.List<string> {
+    return $.utils.initList(3, $.TextList, length, this);
+  }
+  set compatibilityFlags(value: $.List<string>) {
+    $.utils.copyFrom(value, $.utils.getPointer(3, this));
+  }
+  _adoptBindings(value: $.Orphan<$.List<Manifest_IsolateConfig_Binding>>): void {
+    $.utils.adopt(value, $.utils.getPointer(4, this));
+  }
+  _disownBindings(): $.Orphan<$.List<Manifest_IsolateConfig_Binding>> {
+    return $.utils.disown(this.bindings);
+  }
+  /**
+* Explicit capabilities exposed to the isolate as properties of the `env` object.
+*
+*/
+  get bindings(): $.List<Manifest_IsolateConfig_Binding> {
+    return $.utils.getList(4, Manifest_IsolateConfig._Bindings, this);
+  }
+  _hasBindings(): boolean {
+    return !$.utils.isNull($.utils.getPointer(4, this));
+  }
+  _initBindings(length: number): $.List<Manifest_IsolateConfig_Binding> {
+    return $.utils.initList(4, Manifest_IsolateConfig._Bindings, length, this);
+  }
+  set bindings(value: $.List<Manifest_IsolateConfig_Binding>) {
+    $.utils.copyFrom(value, $.utils.getPointer(4, this));
+  }
+  _adoptBridgeConfig(value: $.Orphan<BridgeConfig>): void {
+    $.utils.adopt(value, $.utils.getPointer(5, this));
+  }
+  _disownBridgeConfig(): $.Orphan<BridgeConfig> {
+    return $.utils.disown(this.bridgeConfig);
+  }
+  /**
+* View/session metadata for HTTP-style isolate apps. This mirrors the role of BridgeConfig
+* for sandstorm-http-bridge apps.
+*
+*/
+  get bridgeConfig(): BridgeConfig {
+    return $.utils.getStruct(5, BridgeConfig, this);
+  }
+  _hasBridgeConfig(): boolean {
+    return !$.utils.isNull($.utils.getPointer(5, this));
+  }
+  _initBridgeConfig(): BridgeConfig {
+    return $.utils.initStructAt(5, BridgeConfig, this);
+  }
+  set bridgeConfig(value: BridgeConfig) {
+    $.utils.copyFrom(value, $.utils.getPointer(5, this));
+  }
+  toString(): string { return "Manifest_IsolateConfig_" + super.toString(); }
 }
 export const Manifest_Action_Input_Which = {
   /**
@@ -441,6 +829,7 @@ export class Manifest_Action extends $.Struct {
 export class Manifest extends $.Struct {
   static readonly SIZE_LIMIT_IN_WORDS = 0x100000n;
   static readonly Command = Manifest_Command;
+  static readonly IsolateConfig = Manifest_IsolateConfig;
   static readonly Action = Manifest_Action;
   static readonly _capnp = {
     displayName: "Manifest",
@@ -916,7 +1305,7 @@ export class BridgeConfig extends $.Struct {
   /**
 * Specifies a path which will be prefixed to all API requests -- that is, requests coming in
 * through the API endpoint as described in:
-*     https://docs.sandstorm.io/en/latest/developing/http-apis/
+*     https://docs.sandstorm.org/en/latest/developing/http-apis/
 *
 * Note that this form of HTTP APIs is old and will eventually be deprecated. In the fantastic
 * future, available APIs should be defined by `powerboxApis`, below. However, as of this writing,
@@ -931,7 +1320,7 @@ export class BridgeConfig extends $.Struct {
 * your UI's URL schema, which is often convenient. To actually restrict what an API token
 * holder is allowed to do, you MUST use permissions and enforce them for both API and UI
 * requests. See:
-*     https://docs.sandstorm.io/en/latest/developing/auth/
+*     https://docs.sandstorm.org/en/latest/developing/auth/
 *
 */
   get apiPath(): string {
@@ -2661,6 +3050,8 @@ export class Archive extends $.Struct {
   toString(): string { return "Archive_" + super.toString(); }
 }
 Manifest_Command._Environ = $.CompositeList(KeyValue);
+Manifest_IsolateConfig._Modules = $.CompositeList(Manifest_IsolateConfig_Module);
+Manifest_IsolateConfig._Bindings = $.CompositeList(Manifest_IsolateConfig_Binding);
 Manifest_Action_Input._Capability = $.CompositeList(PowerboxDescriptor);
 Manifest._Actions = $.CompositeList(Manifest_Action);
 SourceMap._SearchPath = $.CompositeList(SourceMap_Mapping);

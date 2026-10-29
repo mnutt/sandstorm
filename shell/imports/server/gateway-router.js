@@ -418,7 +418,9 @@ class GatewayRouterImpl {
       logGatewayCapnp("sessionCapability.addRequirements", { grainId: session.grainId, sessionId });
 
       let hasLoaded = session.hasLoaded;
-      let webSession = Capnp.proxyClient(cap.castAs(WebSession), WebSession);
+      // Forward the capability directly. A JavaScript forwarding server retains temporary
+      // response-stream handles until GC, which can exhaust the grain's socket limit.
+      let webSession = cap.castAs(WebSession);
 
       rawSession.close();
       persistent.close();

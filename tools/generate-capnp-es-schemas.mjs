@@ -66,8 +66,7 @@ function generate({
   for (const file of walk(outDir)) {
     if (!file.endsWith(extension)) continue;
     const before = fs.readFileSync(file, "utf8");
-    let normalized = before
-      .replace(/from "capnp-es\/capnp\/([^"]+)"/g, 'from "capnp-es/dist/capnp/$1.mjs"');
+    let normalized = before;
 
     if (stripLocalJsExtensions) {
       normalized = normalized.replace(/from "(\.{1,2}\/[^"]+)\.js"/g, 'from "$1"');
