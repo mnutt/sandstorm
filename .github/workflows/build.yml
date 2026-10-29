@@ -38,6 +38,11 @@ jobs:
           path: |
             build/ci/_deps/libsodium
           key: cmake-deps-${{ runner.os }}-${{ steps.deps-cache-key.outputs.hash }}
+      - name: cache pinned Clang toolchain
+        uses: actions/cache@v5
+        with:
+          path: deps/llvm-build
+          key: chromium-clang-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps/clang/scripts/update.py') }}
       - name: install dependencies
         run: |
             export DEBIAN_FRONTEND=noninteractive
@@ -46,8 +51,7 @@ jobs:
             which go || (sudo apt-get update && sudo apt-get install golang-go)
 
             sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ninja-build ccache apparmor \
-                clang-19 lld-19
+                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ninja-build ccache apparmor
 
             # Ubuntu 24.04 restricts unprivileged user namespaces by default via AppArmor.
             # Sandstorm requires user namespaces for sandboxing, so grant that permission
@@ -95,6 +99,8 @@ jobs:
             EOF
             sudo mv /tmp/sandstorm-ci-apparmor /etc/apparmor.d/sandstorm-ci
             sudo apparmor_parser -r /etc/apparmor.d/sandstorm-ci
+      - name: install pinned Clang toolchain
+        run: make toolchain
       - name: install Meteor and pinned toolchain
         run: |
             set -o pipefail
@@ -127,7 +133,6 @@ jobs:
             #     export CCACHE_DEBUG=1
             export CCACHE_SLOPPINESS="time_macros"
             # The CI preset enables ccache through CMake's compiler launchers.
-            export PATH=$CLANGDIR:$PATH
 
             cmake --preset ci
             cmake --build --preset ci

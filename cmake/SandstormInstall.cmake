@@ -88,61 +88,6 @@ function(sandstorm_install_native)
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT native)
 
-  set(_sandstorm_node_schemas
-    activity.capnp
-    api-session-impl.capnp
-    api-session.capnp
-    backend.capnp
-    email-impl.capnp
-    email.capnp
-    grain.capnp
-    hack-session.capnp
-    identity-impl.capnp
-    identity.capnp
-    isolate-authoring-impl.capnp
-    isolate-authoring.capnp
-    isolate-worker-source.capnp
-    ip.capnp
-    outbound-http-session-impl.capnp
-    outbound-http-session.capnp
-    package.capnp
-    payments.capnp
-    persistentuiview.capnp
-    powerbox.capnp
-    supervisor.capnp
-    update-tool.capnp
-    util.capnp
-    web-session.capnp)
-  list(TRANSFORM _sandstorm_node_schemas
-    PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
-  install(FILES ${_sandstorm_node_schemas}
-    DESTINATION node_modules/sandstorm
-    COMPONENT native)
-
-  set(_capnp_node_schemas
-    c++.capnp
-    persistent.capnp
-    rpc-twoparty.capnp
-    rpc.capnp
-    schema.capnp
-    stream.capnp)
-  list(TRANSFORM _capnp_node_schemas
-    PREPEND "${PROJECT_SOURCE_DIR}/src/capnp/")
-  install(FILES ${_capnp_node_schemas}
-    DESTINATION node_modules/capnp
-    COMPONENT native)
-
-  if(SANDSTORM_BUILD_NODE_CAPNP)
-    install(TARGETS node_capnp
-      LIBRARY DESTINATION node_modules
-      COMPONENT native)
-    install(FILES
-      "${PROJECT_SOURCE_DIR}/deps/node-capnp/src/node-capnp/capnp.js"
-      DESTINATION node_modules
-      COMPONENT native)
-    list(APPEND _native_targets node_capnp)
-  endif()
-
   # KV storage needs SQLite in Sandstorm, independently of the prebuilt worker host.
   set(_sqlite_dir "${CMAKE_BINARY_DIR}/generated/sqlite")
   set(_sqlite_archive "${_sqlite_dir}/sqlite-amalgamation-3470000.zip")

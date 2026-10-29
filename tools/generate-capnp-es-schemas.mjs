@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const capnpEsDir = process.env.CAPNP_ES_DIR || path.join(process.env.HOME, "p/personal/capnp-es");
+const capnpEsDir = process.env.CAPNP_ES_DIR || path.join(repoRoot, "shell/node_modules/capnp-es");
 const tsCompiler = process.env.CAPNP_ES_COMPILER ||
   path.join(capnpEsDir, "dist/compiler/capnpc-ts.mjs");
 const outputs = [
@@ -15,7 +15,6 @@ const outputs = [
     cwd: repoRoot,
     extension: ".ts",
     importPath: "src",
-    language: "ts",
     outDir: path.join(repoRoot, "shell/imports/server/capnp-es/generated"),
     sources: [
       ...findCapnpFiles(path.join(repoRoot, "src/sandstorm")),
@@ -34,48 +33,71 @@ function generate({
   cwd,
   extension,
   importPath,
-  language,
   outDir,
   sources,
   srcPrefix,
   stripLocalJsExtensions,
 }) {
-  fs.rmSync(outDir, { force: true, recursive: true });
-  fs.mkdirSync(outDir, { recursive: true });
+  const parent = path.dirname(outDir);
+  fs.mkdirSync(parent, { recursive: true });
+  const temporary = fs.mkdtempSync(path.join(parent, ".capnp-es-"));
+  const staged = path.join(temporary, "generated");
+  const previous = path.join(temporary, "previous");
+  fs.mkdirSync(staged);
+  try {
+    const result = childProcess.spawnSync(
+      process.env.CAPNP || "capnp",
+      [
+        "compile",
+        `-o${compiler}:${staged}`,
+        `--src-prefix=${srcPrefix}`,
+        `-I${importPath}`,
+        ...sources,
+      ],
+      {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH || ""}` },
+      },
+    );
 
-  const result = childProcess.spawnSync(
-    process.execPath,
-    [
-      compiler,
-      `-o${language}:${outDir}`,
-      `--src-prefix=${srcPrefix}`,
-      `-I${importPath}`,
-      ...sources,
-    ],
-    {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
-  if (result.status !== 0) process.exit(result.status ?? 1);
-
-  for (const file of walk(outDir)) {
-    if (!file.endsWith(extension)) continue;
-    const before = fs.readFileSync(file, "utf8");
-    let normalized = before;
-
-    if (stripLocalJsExtensions) {
-      normalized = normalized.replace(/from "(\.{1,2}\/[^"]+)\.js"/g, 'from "$1"');
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(`capnp-es compiler failed (${result.signal || result.status})`);
     }
 
-    const after = extension === ".ts" && !normalized.startsWith("// @ts-nocheck\n")
-      ? `// @ts-nocheck\n${normalized}`
-      : normalized;
-    if (after !== before) fs.writeFileSync(file, after);
+    for (const file of walk(staged)) {
+      if (!file.endsWith(extension)) continue;
+      const before = fs.readFileSync(file, "utf8");
+      let normalized = before;
+
+      if (stripLocalJsExtensions) {
+        normalized = normalized.replace(/from "(\.{1,2}\/[^"]+)\.js"/g, 'from "$1"');
+      }
+
+      const after = extension === ".ts" && !normalized.startsWith("// @ts-nocheck\n")
+        ? `// @ts-nocheck\n${normalized}`
+        : normalized;
+      if (after !== before) fs.writeFileSync(file, after);
+    }
+
+    const hadPrevious = fs.existsSync(outDir);
+    if (hadPrevious) fs.renameSync(outDir, previous);
+    try {
+      fs.renameSync(staged, outDir);
+    } catch (error) {
+      if (hadPrevious) fs.renameSync(previous, outDir);
+      throw error;
+    }
+  } finally {
+    // Preserve the backup if restoring it failed, rather than deleting the
+    // caller's last successful bindings along with temporary output.
+    if (!fs.existsSync(previous) || fs.existsSync(outDir)) {
+      fs.rmSync(temporary, { recursive: true, force: true });
+    }
   }
 }
 

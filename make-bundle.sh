@@ -25,7 +25,6 @@ SHELL_BUILD_DIR=${SANDSTORM_SHELL_BUILD_DIR:-$SOURCE_ROOT/shell-build}
 BUNDLE_DIR=${SANDSTORM_BUNDLE_DIR:-$SOURCE_ROOT/bundle}
 WORK_DIR=${SANDSTORM_WORK_DIR:-$SOURCE_ROOT/tmp}
 CACHE_DIR=${SANDSTORM_CACHE_DIR:-$SOURCE_ROOT/hack}
-NODE_MODULES_DIR=${SANDSTORM_NODE_MODULES_DIR:-$NATIVE_STAGE/node_modules}
 CAPNP_ES_NPM_DIR=${SANDSTORM_CAPNP_ES_NPM_DIR:-$SOURCE_ROOT/tmp/capnp-es-npm}
 
 mkdir -p "$WORK_DIR" "$CACHE_DIR"
@@ -295,9 +294,6 @@ cp -R "$CAPNP_ES_NPM_DIR/node_modules/@mnutt/capnp-es/dist" \
 mkdir -p "$BUNDLE_DIR/usr/lib/capnp-es/node_modules"
 cp -R "$CAPNP_ES_NPM_DIR/node_modules/typescript" \
   "$BUNDLE_DIR/usr/lib/capnp-es/node_modules/typescript"
-
-# Copy over node_modules staged by the native CMake install.
-cp -r "$NODE_MODULES_DIR" "$BUNDLE_DIR/node_modules"
 
 # Copy over all necessary shared libraries.
 (ldd "$BUNDLE_DIR"/bin/* $(find "$BUNDLE_DIR" -name '*.node') || true) | \
