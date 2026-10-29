@@ -165,7 +165,7 @@ jobs:
           # the constant below.
           cmake --build --preset ci --target lint | tee lint.log
           num_problems=$(cat lint.log | grep ' problems (0 errors, ' | awk '{print $2}')
-          [ "$num_problems" = 366 ]
+          [ "$num_problems" = 367 ]
       # The test harness installs Chrome matching its pinned ChromeDriver and runs it directly.
       - name: test
         run: |

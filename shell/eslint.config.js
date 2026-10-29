@@ -18,6 +18,7 @@ module.exports = [
       "**/_build/**",
       "**/build-assets/**",
       "**/build-chunks/**",
+      "imports/server/capnp-es/generated/**",
     ],
   },
   {
