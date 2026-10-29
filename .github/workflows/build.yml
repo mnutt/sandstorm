@@ -37,6 +37,11 @@ jobs:
           path: |
             build/ci/_deps/libsodium
           key: cmake-deps-${{ runner.os }}-${{ steps.deps-cache-key.outputs.hash }}
+      - name: cache pinned Clang toolchain
+        uses: actions/cache@v5
+        with:
+          path: deps/llvm-build
+          key: chromium-clang-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps/clang/scripts/update.py') }}
       - name: install dependencies
         run: |
             export DEBIAN_FRONTEND=noninteractive
@@ -45,7 +50,8 @@ jobs:
             which go || (sudo apt-get update && sudo apt-get install golang-go)
 
             sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ninja-build ccache apparmor
+                build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ninja-build ccache apparmor \
+                libc++-19-dev libc++abi-19-dev
 
             # Ubuntu 24.04 restricts unprivileged user namespaces by default via AppArmor.
             # Sandstorm requires user namespaces for sandboxing, so grant that permission
@@ -93,6 +99,27 @@ jobs:
             EOF
             sudo mv /tmp/sandstorm-ci-apparmor /etc/apparmor.d/sandstorm-ci
             sudo apparmor_parser -r /etc/apparmor.d/sandstorm-ci
+      - name: install pinned Clang toolchain
+        run: make toolchain
+      - name: verify workerd C++ standard library
+        run: |
+          cat > "$RUNNER_TEMP/workerd-toolchain-check.cc" <<'EOF'
+          #include <atomic>
+          #include <cstdint>
+          #include <string>
+          static_assert(std::atomic_ref<char>::required_alignment == sizeof(char));
+          int main(int argc, char** argv) {
+            alignas(std::atomic_ref<std::uint64_t>::required_alignment) std::uint64_t value = argc;
+            std::atomic_ref<std::uint64_t> ref(value);
+            ref.store(1, std::memory_order_relaxed);
+            return ref.load(std::memory_order_relaxed) != 1 || std::string(argv[0]).empty();
+          }
+          EOF
+          deps/llvm-build/bin/clang++ -std=c++23 -stdlib=libc++ -nostdlib++ -fuse-ld=lld \
+            "$RUNNER_TEMP/workerd-toolchain-check.cc" -L/usr/lib/llvm-19/lib \
+            -l:libc++.a -l:libc++abi.a -lm \
+            -o "$RUNNER_TEMP/workerd-toolchain-check"
+          "$RUNNER_TEMP/workerd-toolchain-check"
       - name: install Meteor and pinned toolchain
         run: |
             set -o pipefail
@@ -125,8 +152,7 @@ jobs:
             #     export CCACHE_DEBUG=1
             export CCACHE_SLOPPINESS="time_macros"
             # The CI preset enables ccache through CMake's compiler launchers.
-            # Keep compiler paths pointing to Clang itself for Bazel.
-            export PATH=$CLANGDIR:$PATH
+            # The preset selects the pinned Clang directly for both CMake and Bazel.
 
             cmake --preset ci
             cmake --build --preset ci

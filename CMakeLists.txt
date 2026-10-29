@@ -40,7 +40,6 @@ set(SANDSTORM_CAPNP_ES_NPM_VERSION 0.3.0 CACHE STRING
   "npm @mnutt/capnp-es version used for isolate schema generation")
 set(SANDSTORM_CAPNP_ES_COMPILER_MODULE "" CACHE FILEPATH
   "Optional capnp-es compiler module override for local development")
-option(SANDSTORM_BUILD_NODE_CAPNP "Build the capnp.node addon" ON)
 option(SANDSTORM_BUILD_FRONTEND "Enable Meteor shell build targets" ON)
 option(SANDSTORM_STATIC_RUNTIME_BINARIES
   "Statically link the sandbox runtime binaries" ON)

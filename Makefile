@@ -46,7 +46,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 
 all: package
 
-ifeq ($(filter $(CMAKE_PRESET),dev release),$(CMAKE_PRESET))
+ifeq ($(filter $(CMAKE_PRESET),dev release ci),$(CMAKE_PRESET))
 configure: toolchain
 endif
 configure:

@@ -1,8 +1,13 @@
 include(SandstormCapnp)
 include(SandstormFrontend)
 include(SandstormInstall)
-include(SandstormNodeCapnp)
+include(SandstormMeteor)
 include(SandstormPackaging)
+
+# Resolve the pinned Node toolchain before expanding paths in custom commands.
+# On a fresh configure the Meteor dev-bundle cache entry does not exist yet.
+sandstorm_resolve_meteor_toolchain()
+set(_platform_capnp_es_node "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node")
 
 set(_sandstorm_schema_relative_paths
   activity.capnp
@@ -133,7 +138,7 @@ add_custom_command(
     "${PROJECT_SOURCE_DIR}/cmake/EmbedPlatformCapnpEs.py"
     "${_platform_capnp_es_header}"
     "${_platform_capnp_es_manifest}"
-    "${SANDSTORM_METEOR_DEV_BUNDLE}/bin/node"
+    "${_platform_capnp_es_node}"
     "$<TARGET_FILE:capnp_tool>"
     "${_platform_capnp_es_compiler}"
     "${PROJECT_SOURCE_DIR}/src"
@@ -282,10 +287,6 @@ if(BUILD_TESTING)
     CapnProto::kj-test)
   add_test(NAME sandstorm/generated-isolate-package
     COMMAND "$<TARGET_FILE:sandstorm-generated-isolate-package-test>")
-endif()
-
-if(SANDSTORM_BUILD_NODE_CAPNP)
-  sandstorm_add_node_capnp()
 endif()
 
 sandstorm_install_native()
