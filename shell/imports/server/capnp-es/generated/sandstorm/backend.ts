@@ -3,8 +3,9 @@
 import * as $ from "capnp-es";
 import { ApiSession, ApiSession$Client, ApiSession_Params, ApiSession_PowerboxTag, ApiSession_PowerboxTag_OAuthScope } from "./api-session";
 import { AppPersistent, AppPersistent$Client, GrainInfo, GrainInfo_User, MainView, MainView$Client, PermissionDef, RoleDef, SandstormApi, SandstormApi$Client, ScheduledJob, ScheduledJob_Callback, ScheduledJob_Callback$Client, SchedulingPeriod, SessionContext, SessionContext$Client, SharingLink, SharingLink$Client, UiSession, UiSession$Client, UiView, UiView$Client, UiView_PowerboxTag, UiView_ViewInfo, ViewSharingLink, ViewSharingLink$Client, ViewSharingLink_RoleAssignment } from "./grain";
-import { AppId, Archive, Archive_File, BridgeConfig, BridgeConfig_PowerboxApi, Category, CategoryInfo, KeyFile, Manifest, Manifest_Action, Manifest_Command, Metadata, Metadata_Icon, Metadata_Screenshot, OpenSourceLicense, OsiLicenseInfo, PackageDefinition, PackageId, Signature, SourceMap, SourceMap_Mapping, VerifiedInfo } from "./package";
-import { ApiTokenOwner, DenormalizedGrainMetadata, MembraneRequirement, PersistentHandle, PersistentHandle$Client, PersistentOngoingNotification, PersistentOngoingNotification$Client, SandstormCore, SandstormCore$Client, Supervisor, Supervisor$Client, SupervisorObjectId, Supervisor_WwwFileStatus, SystemPersistent, SystemPersistent$Client, SystemPersistent_RevocationObserver, SystemPersistent_RevocationObserver$Client } from "./supervisor";
+import { AppMetadata, BundleInfo, BundleReceiver, BundleReceiver$Client, CandidateInfo, IsolateBundle, IsolateBundle$Client, IsolateCandidate, IsolateCandidate$Client, IsolatePreviewer, IsolatePreviewer$Client, IsolatePreviewer_PowerboxTag, IsolatePublisher, IsolatePublisher$Client, IsolatePublisher_PowerboxTag, ModuleInfo, ModuleType, PreviewMetadata, PublishTarget, PublishedRevision, type BundleReceiver$Server$Target } from "./isolate-authoring";
+import { AppId, Archive, Archive_File, BridgeConfig, BridgeConfig_PowerboxApi, Category, CategoryInfo, KeyFile, Manifest, Manifest_Action, Manifest_Command, Manifest_IsolateConfig, Manifest_IsolateConfig_Binding, Manifest_IsolateConfig_Module, Metadata, Metadata_Icon, Metadata_Screenshot, OpenSourceLicense, OsiLicenseInfo, PackageDefinition, PackageId, Signature, SourceMap, SourceMap_Mapping, VerifiedInfo } from "./package";
+import { ApiTokenOwner, DenormalizedGrainMetadata, MembraneRequirement, PersistentHandle, PersistentHandle$Client, PersistentOngoingNotification, PersistentOngoingNotification$Client, SandstormCore, SandstormCore$Client, Supervisor, Supervisor$Client, SupervisorObjectId, SupervisorObjectId_RouteBackedSession, SupervisorObjectId_RouteBackedSession_Type, Supervisor_WwwFileStatus, SystemPersistent, SystemPersistent$Client, SystemPersistent_RevocationObserver, SystemPersistent_RevocationObserver$Client } from "./supervisor";
 import { Assignable, Assignable$Client, Assignable_Getter, Assignable_Getter$Client, Assignable_Setter, Assignable_Setter$Client, Blob, Blob$Client, ByteStream, ByteStream$Client, Handle, Handle$Client, KeyValue, LocalizedText, LocalizedText_Localization, StaticAsset, StaticAsset$Client, StaticAsset_Protocol, type ByteStream$Server$Target } from "./util";
 import { HttpStatusDescriptor, WebSession, WebSession$Client, WebSession_AcceptedEncoding, WebSession_AcceptedType, WebSession_CachePolicy, WebSession_CachePolicy_Scope, WebSession_Context, WebSession_Context_Header, WebSession_Cookie, WebSession_ETag, WebSession_Options, WebSession_Params, WebSession_PostContent, WebSession_PropfindDepth, WebSession_PutContent, WebSession_RequestStream, WebSession_RequestStream$Client, WebSession_Response, WebSession_Response_ClientErrorCode, WebSession_Response_ErrorBody, WebSession_Response_Header, WebSession_Response_SuccessCode, WebSession_WebSocketStream, WebSession_WebSocketStream$Client } from "./web-session";
 export const _capnpFileId = 0xdcbc0d702b1b47a5n;
@@ -163,6 +164,151 @@ export class Backend_PackageUploadStream extends $.Interface {
     methods: Backend_PackageUploadStream$Client.methods,
   };
   toString(): string { return "Backend_PackageUploadStream_" + super.toString(); }
+}
+export class Backend_GeneratedIsolatePackageUpload_Save$Params extends $.Struct {
+  static readonly _capnp = {
+    displayName: "save$Params",
+    id: "b6ee933f60e20aeb",
+    typeId: 0xb6ee933f60e20aebn,
+    typeIdHex: "b6ee933f60e20aeb",
+    size: new $.ObjectSize(0, 0),
+    fields: [] as const,
+  };
+  toString(): string { return "Backend_GeneratedIsolatePackageUpload_Save$Params_" + super.toString(); }
+}
+export class Backend_GeneratedIsolatePackageUpload_Save$Results extends $.Struct {
+  static readonly _capnp = {
+    displayName: "save$Results",
+    id: "8aa4423780c77b4b",
+    typeId: 0x8aa4423780c77b4bn,
+    typeIdHex: "8aa4423780c77b4b",
+    size: new $.ObjectSize(0, 3),
+    fields: [
+      { name: "packageId", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "appId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "manifest", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "struct", typeId: 0x855f296a69e6e1can, typeIdHex: "855f296a69e6e1ca", displayName: "Manifest" } }
+    ] as const,
+  };
+  get packageId(): string {
+    return $.utils.getText(0, this);
+  }
+  set packageId(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  get appId(): string {
+    return $.utils.getText(1, this);
+  }
+  set appId(value: string) {
+    $.utils.setText(1, value, this);
+  }
+  _adoptManifest(value: $.Orphan<Manifest>): void {
+    $.utils.adopt(value, $.utils.getPointer(2, this));
+  }
+  _disownManifest(): $.Orphan<Manifest> {
+    return $.utils.disown(this.manifest);
+  }
+  get manifest(): Manifest {
+    return $.utils.getStruct(2, Manifest, this);
+  }
+  _hasManifest(): boolean {
+    return !$.utils.isNull($.utils.getPointer(2, this));
+  }
+  _initManifest(): Manifest {
+    return $.utils.initStructAt(2, Manifest, this);
+  }
+  set manifest(value: Manifest) {
+    $.utils.copyFrom(value, $.utils.getPointer(2, this));
+  }
+  toString(): string { return "Backend_GeneratedIsolatePackageUpload_Save$Results_" + super.toString(); }
+}
+export class Backend_GeneratedIsolatePackageUpload_Save$Results$Promise {
+  pipeline: $.Pipeline<any, any, Backend_GeneratedIsolatePackageUpload_Save$Results>;
+  constructor(pipeline: $.Pipeline<any, any, Backend_GeneratedIsolatePackageUpload_Save$Results>) {
+    this.pipeline = pipeline;
+  }
+  async promise(): Promise<Backend_GeneratedIsolatePackageUpload_Save$Results> {
+    return await this.pipeline.struct();
+  }
+}
+export class Backend_GeneratedIsolatePackageUpload$Client {
+  client: $.Client;
+  static readonly interfaceId: bigint = 0xdab8ef0f2416af63n;
+  constructor(client: $.Client) {
+    this.client = client;
+  }
+  static readonly ownMethods: [
+    $.Method<Backend_GeneratedIsolatePackageUpload_Save$Params, Backend_GeneratedIsolatePackageUpload_Save$Results>
+  ] = [
+    {
+      ParamsClass: Backend_GeneratedIsolatePackageUpload_Save$Params,
+      ResultsClass: Backend_GeneratedIsolatePackageUpload_Save$Results,
+      interfaceId: Backend_GeneratedIsolatePackageUpload$Client.interfaceId,
+      methodId: 0,
+      interfaceName: "sandstorm/backend.capnp:Backend.GeneratedIsolatePackageUpload",
+      methodName: "save",
+      paramFields: Backend_GeneratedIsolatePackageUpload_Save$Params._capnp.fields,
+      resultFields: Backend_GeneratedIsolatePackageUpload_Save$Results._capnp.fields
+    }
+  ];
+  static readonly methods: $.Method<any, any>[] = [
+    ...BundleReceiver$Client.methods,
+    ...Backend_GeneratedIsolatePackageUpload$Client.ownMethods
+  ];
+  beginModule(...args: Parameters<BundleReceiver$Client["beginModule"]>): ReturnType<BundleReceiver$Client["beginModule"]> {
+    return BundleReceiver$Client.prototype.beginModule.apply(this, args);
+  }
+  finish(...args: Parameters<BundleReceiver$Client["finish"]>): ReturnType<BundleReceiver$Client["finish"]> {
+    return BundleReceiver$Client.prototype.finish.apply(this, args);
+  }
+  /**
+* Atomically installs the fully-received package. May only be called once,
+* after BundleReceiver.finish() succeeds.
+*
+*/
+  save(paramsFunc?: (params: Backend_GeneratedIsolatePackageUpload_Save$Params) => void): Backend_GeneratedIsolatePackageUpload_Save$Results$Promise {
+    const answer = this.client.call({
+      method: Backend_GeneratedIsolatePackageUpload$Client.ownMethods[0],
+      paramsFunc: paramsFunc
+    });
+    const pipeline = new $.Pipeline(Backend_GeneratedIsolatePackageUpload_Save$Results, answer);
+    return new Backend_GeneratedIsolatePackageUpload_Save$Results$Promise(pipeline);
+  }
+}
+$.Registry.register(Backend_GeneratedIsolatePackageUpload$Client.interfaceId, Backend_GeneratedIsolatePackageUpload$Client);
+export interface Backend_GeneratedIsolatePackageUpload$Server$Target extends BundleReceiver$Server$Target {
+  save(params: Backend_GeneratedIsolatePackageUpload_Save$Params, results: Backend_GeneratedIsolatePackageUpload_Save$Results): Promise<void>;
+}
+export class Backend_GeneratedIsolatePackageUpload$Server extends $.Server {
+  readonly target: Backend_GeneratedIsolatePackageUpload$Server$Target;
+  constructor(target: Backend_GeneratedIsolatePackageUpload$Server$Target) {
+    super(target, [
+      ...(BundleReceiver$Client.methods as $.Method<any, any>[]).map((method) => ({
+        ...(method as any),
+        impl: target[method.methodName as keyof Backend_GeneratedIsolatePackageUpload$Server$Target] as any
+      })),
+      {
+        ...Backend_GeneratedIsolatePackageUpload$Client.ownMethods[0],
+        impl: target.save
+      }
+    ]);
+    this.target = target;
+  }
+  client(): Backend_GeneratedIsolatePackageUpload$Client {
+    return new Backend_GeneratedIsolatePackageUpload$Client(this);
+  }
+}
+export class Backend_GeneratedIsolatePackageUpload extends $.Interface {
+  static readonly Client = Backend_GeneratedIsolatePackageUpload$Client;
+  static readonly Server = Backend_GeneratedIsolatePackageUpload$Server;
+  static readonly _capnp = {
+    displayName: "GeneratedIsolatePackageUpload",
+    id: "dab8ef0f2416af63",
+    typeId: 0xdab8ef0f2416af63n,
+    typeIdHex: "dab8ef0f2416af63",
+    size: new $.ObjectSize(0, 0),
+    methods: Backend_GeneratedIsolatePackageUpload$Client.methods,
+  };
+  toString(): string { return "Backend_GeneratedIsolatePackageUpload_" + super.toString(); }
 }
 export class Backend_StartGrain$Params extends $.Struct {
   static readonly _capnp = {
@@ -1031,6 +1177,193 @@ export class Backend_GetGrainStorageUsage$Results$Promise {
     return await this.pipeline.struct();
   }
 }
+export class Backend_DeriveIsolatePackage$Params extends $.Struct {
+  static readonly _capnp = {
+    displayName: "deriveIsolatePackage$Params",
+    id: "c08dce85912c1abb",
+    typeId: 0xc08dce85912c1abbn,
+    typeIdHex: "c08dce85912c1abb",
+    size: new $.ObjectSize(0, 3),
+    fields: [
+      { name: "sourcePackageId", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "requestedAppId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "metadata", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "struct", typeId: 0x83d5e2a5d01ddfben, typeIdHex: "83d5e2a5d01ddfbe", displayName: "GeneratedIsolatePackageMetadata" } }
+    ] as const,
+  };
+  get sourcePackageId(): string {
+    return $.utils.getText(0, this);
+  }
+  set sourcePackageId(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  get requestedAppId(): string {
+    return $.utils.getText(1, this);
+  }
+  set requestedAppId(value: string) {
+    $.utils.setText(1, value, this);
+  }
+  _adoptMetadata(value: $.Orphan<GeneratedIsolatePackageMetadata>): void {
+    $.utils.adopt(value, $.utils.getPointer(2, this));
+  }
+  _disownMetadata(): $.Orphan<GeneratedIsolatePackageMetadata> {
+    return $.utils.disown(this.metadata);
+  }
+  get metadata(): GeneratedIsolatePackageMetadata {
+    return $.utils.getStruct(2, GeneratedIsolatePackageMetadata, this);
+  }
+  _hasMetadata(): boolean {
+    return !$.utils.isNull($.utils.getPointer(2, this));
+  }
+  _initMetadata(): GeneratedIsolatePackageMetadata {
+    return $.utils.initStructAt(2, GeneratedIsolatePackageMetadata, this);
+  }
+  set metadata(value: GeneratedIsolatePackageMetadata) {
+    $.utils.copyFrom(value, $.utils.getPointer(2, this));
+  }
+  toString(): string { return "Backend_DeriveIsolatePackage$Params_" + super.toString(); }
+}
+export class Backend_DeriveIsolatePackage$Results extends $.Struct {
+  static readonly _capnp = {
+    displayName: "deriveIsolatePackage$Results",
+    id: "e2f36609906b38b3",
+    typeId: 0xe2f36609906b38b3n,
+    typeIdHex: "e2f36609906b38b3",
+    size: new $.ObjectSize(0, 3),
+    fields: [
+      { name: "packageId", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "appId", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "manifest", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "struct", typeId: 0x855f296a69e6e1can, typeIdHex: "855f296a69e6e1ca", displayName: "Manifest" } }
+    ] as const,
+  };
+  get packageId(): string {
+    return $.utils.getText(0, this);
+  }
+  set packageId(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  get appId(): string {
+    return $.utils.getText(1, this);
+  }
+  set appId(value: string) {
+    $.utils.setText(1, value, this);
+  }
+  _adoptManifest(value: $.Orphan<Manifest>): void {
+    $.utils.adopt(value, $.utils.getPointer(2, this));
+  }
+  _disownManifest(): $.Orphan<Manifest> {
+    return $.utils.disown(this.manifest);
+  }
+  get manifest(): Manifest {
+    return $.utils.getStruct(2, Manifest, this);
+  }
+  _hasManifest(): boolean {
+    return !$.utils.isNull($.utils.getPointer(2, this));
+  }
+  _initManifest(): Manifest {
+    return $.utils.initStructAt(2, Manifest, this);
+  }
+  set manifest(value: Manifest) {
+    $.utils.copyFrom(value, $.utils.getPointer(2, this));
+  }
+  toString(): string { return "Backend_DeriveIsolatePackage$Results_" + super.toString(); }
+}
+export class Backend_DeriveIsolatePackage$Results$Promise {
+  pipeline: $.Pipeline<any, any, Backend_DeriveIsolatePackage$Results>;
+  constructor(pipeline: $.Pipeline<any, any, Backend_DeriveIsolatePackage$Results>) {
+    this.pipeline = pipeline;
+  }
+  async promise(): Promise<Backend_DeriveIsolatePackage$Results> {
+    return await this.pipeline.struct();
+  }
+}
+export class Backend_StreamIsolatePackage$Params extends $.Struct {
+  static readonly _capnp = {
+    displayName: "streamIsolatePackage$Params",
+    id: "8dd2a7aba8641fa3",
+    typeId: 0x8dd2a7aba8641fa3n,
+    typeIdHex: "8dd2a7aba8641fa3",
+    size: new $.ObjectSize(0, 3),
+    fields: [
+      { name: "requestedAppId", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "metadata", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "struct", typeId: 0x83d5e2a5d01ddfben, typeIdHex: "83d5e2a5d01ddfbe", displayName: "GeneratedIsolatePackageMetadata" } },
+      { name: "info", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "struct", typeId: 0xc43755d1e6308a5cn, typeIdHex: "c43755d1e6308a5c", displayName: "BundleInfo" } }
+    ] as const,
+  };
+  get requestedAppId(): string {
+    return $.utils.getText(0, this);
+  }
+  set requestedAppId(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  _adoptMetadata(value: $.Orphan<GeneratedIsolatePackageMetadata>): void {
+    $.utils.adopt(value, $.utils.getPointer(1, this));
+  }
+  _disownMetadata(): $.Orphan<GeneratedIsolatePackageMetadata> {
+    return $.utils.disown(this.metadata);
+  }
+  get metadata(): GeneratedIsolatePackageMetadata {
+    return $.utils.getStruct(1, GeneratedIsolatePackageMetadata, this);
+  }
+  _hasMetadata(): boolean {
+    return !$.utils.isNull($.utils.getPointer(1, this));
+  }
+  _initMetadata(): GeneratedIsolatePackageMetadata {
+    return $.utils.initStructAt(1, GeneratedIsolatePackageMetadata, this);
+  }
+  set metadata(value: GeneratedIsolatePackageMetadata) {
+    $.utils.copyFrom(value, $.utils.getPointer(1, this));
+  }
+  _adoptInfo(value: $.Orphan<BundleInfo>): void {
+    $.utils.adopt(value, $.utils.getPointer(2, this));
+  }
+  _disownInfo(): $.Orphan<BundleInfo> {
+    return $.utils.disown(this.info);
+  }
+  get info(): BundleInfo {
+    return $.utils.getStruct(2, BundleInfo, this);
+  }
+  _hasInfo(): boolean {
+    return !$.utils.isNull($.utils.getPointer(2, this));
+  }
+  _initInfo(): BundleInfo {
+    return $.utils.initStructAt(2, BundleInfo, this);
+  }
+  set info(value: BundleInfo) {
+    $.utils.copyFrom(value, $.utils.getPointer(2, this));
+  }
+  toString(): string { return "Backend_StreamIsolatePackage$Params_" + super.toString(); }
+}
+export class Backend_StreamIsolatePackage$Results extends $.Struct {
+  static readonly _capnp = {
+    displayName: "streamIsolatePackage$Results",
+    id: "fc3a8608d0b73789",
+    typeId: 0xfc3a8608d0b73789n,
+    typeIdHex: "fc3a8608d0b73789",
+    size: new $.ObjectSize(0, 1),
+    fields: [
+      { name: "upload", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "interface", typeId: 0xdab8ef0f2416af63n, typeIdHex: "dab8ef0f2416af63", displayName: "GeneratedIsolatePackageUpload" } }
+    ] as const,
+  };
+  get upload(): Backend_GeneratedIsolatePackageUpload$Client {
+    return new Backend_GeneratedIsolatePackageUpload$Client($.utils.getInterfaceClientOrNullAt(0, this));
+  }
+  set upload(value: Backend_GeneratedIsolatePackageUpload$Client) {
+    $.utils.setInterfacePointer(this.segment.message.addCap(value.client), $.utils.getPointer(0, this));
+  }
+  toString(): string { return "Backend_StreamIsolatePackage$Results_" + super.toString(); }
+}
+export class Backend_StreamIsolatePackage$Results$Promise {
+  pipeline: $.Pipeline<any, any, Backend_StreamIsolatePackage$Results>;
+  constructor(pipeline: $.Pipeline<any, any, Backend_StreamIsolatePackage$Results>) {
+    this.pipeline = pipeline;
+  }
+  getUpload(): Backend_GeneratedIsolatePackageUpload$Client {
+    return new Backend_GeneratedIsolatePackageUpload$Client(this.pipeline.getPipeline(Backend_GeneratedIsolatePackageUpload, 0).client());
+  }
+  async promise(): Promise<Backend_StreamIsolatePackage$Results> {
+    return await this.pipeline.struct();
+  }
+}
 export class Backend$Client {
   client: $.Client;
   static readonly interfaceId: bigint = 0xc1b0e9713ac1ad4fn;
@@ -1053,7 +1386,9 @@ export class Backend$Client {
     $.Method<Backend_TransferGrain$Params, Backend_TransferGrain$Results>,
     $.Method<Backend_DeleteUser$Params, Backend_DeleteUser$Results>,
     $.Method<Backend_Ping$Params, Backend_Ping$Results>,
-    $.Method<Backend_GetGrainStorageUsage$Params, Backend_GetGrainStorageUsage$Results>
+    $.Method<Backend_GetGrainStorageUsage$Params, Backend_GetGrainStorageUsage$Results>,
+    $.Method<Backend_DeriveIsolatePackage$Params, Backend_DeriveIsolatePackage$Results>,
+    $.Method<Backend_StreamIsolatePackage$Params, Backend_StreamIsolatePackage$Results>
   ] = [
     {
       ParamsClass: Backend_StartGrain$Params,
@@ -1214,6 +1549,26 @@ export class Backend$Client {
       methodName: "getGrainStorageUsage",
       paramFields: Backend_GetGrainStorageUsage$Params._capnp.fields,
       resultFields: Backend_GetGrainStorageUsage$Results._capnp.fields
+    },
+    {
+      ParamsClass: Backend_DeriveIsolatePackage$Params,
+      ResultsClass: Backend_DeriveIsolatePackage$Results,
+      interfaceId: Backend$Client.interfaceId,
+      methodId: 16,
+      interfaceName: "sandstorm/backend.capnp:Backend",
+      methodName: "deriveIsolatePackage",
+      paramFields: Backend_DeriveIsolatePackage$Params._capnp.fields,
+      resultFields: Backend_DeriveIsolatePackage$Results._capnp.fields
+    },
+    {
+      ParamsClass: Backend_StreamIsolatePackage$Params,
+      ResultsClass: Backend_StreamIsolatePackage$Results,
+      interfaceId: Backend$Client.interfaceId,
+      methodId: 17,
+      interfaceName: "sandstorm/backend.capnp:Backend",
+      methodName: "streamIsolatePackage",
+      paramFields: Backend_StreamIsolatePackage$Params._capnp.fields,
+      resultFields: Backend_StreamIsolatePackage$Results._capnp.fields
     }
   ];
   /**
@@ -1412,6 +1767,33 @@ export class Backend$Client {
     const pipeline = new $.Pipeline(Backend_GetGrainStorageUsage$Results, answer);
     return new Backend_GetGrainStorageUsage$Results$Promise(pipeline);
   }
+  /**
+* Materialize a generated isolate package with new app metadata and identity,
+* reusing the immutable source stored in sourcePackageId.
+*
+*/
+  deriveIsolatePackage(paramsFunc?: (params: Backend_DeriveIsolatePackage$Params) => void): Backend_DeriveIsolatePackage$Results$Promise {
+    const answer = this.client.call({
+      method: Backend$Client.methods[16],
+      paramsFunc: paramsFunc
+    });
+    const pipeline = new $.Pipeline(Backend_DeriveIsolatePackage$Results, answer);
+    return new Backend_DeriveIsolatePackage$Results$Promise(pipeline);
+  }
+  /**
+* Stage a generated isolate package module-by-module. The caller must complete
+* every declared module, call finish(), and then call save(). Dropping all
+* capabilities before save() removes the staged package.
+*
+*/
+  streamIsolatePackage(paramsFunc?: (params: Backend_StreamIsolatePackage$Params) => void): Backend_StreamIsolatePackage$Results$Promise {
+    const answer = this.client.call({
+      method: Backend$Client.methods[17],
+      paramsFunc: paramsFunc
+    });
+    const pipeline = new $.Pipeline(Backend_StreamIsolatePackage$Results, answer);
+    return new Backend_StreamIsolatePackage$Results$Promise(pipeline);
+  }
 }
 $.Registry.register(Backend$Client.interfaceId, Backend$Client);
 export interface Backend$Server$Target {
@@ -1431,6 +1813,8 @@ export interface Backend$Server$Target {
   deleteUser(params: Backend_DeleteUser$Params, results: Backend_DeleteUser$Results): Promise<void>;
   ping(params: Backend_Ping$Params, results: Backend_Ping$Results): Promise<void>;
   getGrainStorageUsage(params: Backend_GetGrainStorageUsage$Params, results: Backend_GetGrainStorageUsage$Results): Promise<void>;
+  deriveIsolatePackage(params: Backend_DeriveIsolatePackage$Params, results: Backend_DeriveIsolatePackage$Results): Promise<void>;
+  streamIsolatePackage(params: Backend_StreamIsolatePackage$Params, results: Backend_StreamIsolatePackage$Results): Promise<void>;
 }
 export class Backend$Server extends $.Server {
   readonly target: Backend$Server$Target;
@@ -1499,6 +1883,14 @@ export class Backend$Server extends $.Server {
       {
         ...Backend$Client.methods[15],
         impl: target.getGrainStorageUsage
+      },
+      {
+        ...Backend$Client.methods[16],
+        impl: target.deriveIsolatePackage
+      },
+      {
+        ...Backend$Client.methods[17],
+        impl: target.streamIsolatePackage
       }
     ]);
     this.target = target;
@@ -1514,6 +1906,7 @@ export class Backend$Server extends $.Server {
 */
 export class Backend extends $.Interface {
   static readonly PackageUploadStream = Backend_PackageUploadStream;
+  static readonly GeneratedIsolatePackageUpload = Backend_GeneratedIsolatePackageUpload;
   static readonly Client = Backend$Client;
   static readonly Server = Backend$Server;
   static readonly _capnp = {
@@ -1525,6 +1918,53 @@ export class Backend extends $.Interface {
     methods: Backend$Client.methods,
   };
   toString(): string { return "Backend_" + super.toString(); }
+}
+export class GeneratedIsolatePackageMetadata extends $.Struct {
+  static readonly _capnp = {
+    displayName: "GeneratedIsolatePackageMetadata",
+    id: "83d5e2a5d01ddfbe",
+    typeId: 0x83d5e2a5d01ddfben,
+    typeIdHex: "83d5e2a5d01ddfbe",
+    size: new $.ObjectSize(8, 4),
+    fields: [
+      { name: "appTitle", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "nounPhrase", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "shortDescription", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "text" } },
+      { name: "appVersion", codeOrder: 3, ordinal: 3, kind: "slot", offset: 0, type: { kind: "uint32" } },
+      { name: "marketingVersion", codeOrder: 4, ordinal: 4, kind: "slot", offset: 3, type: { kind: "text" } }
+    ] as const,
+  };
+  get appTitle(): string {
+    return $.utils.getText(0, this);
+  }
+  set appTitle(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  get nounPhrase(): string {
+    return $.utils.getText(1, this);
+  }
+  set nounPhrase(value: string) {
+    $.utils.setText(1, value, this);
+  }
+  get shortDescription(): string {
+    return $.utils.getText(2, this);
+  }
+  set shortDescription(value: string) {
+    $.utils.setText(2, value, this);
+  }
+  get appVersion(): number {
+    return $.utils.getUint32(0, this);
+  }
+  set appVersion(value: number) {
+    $.utils.setUint32(0, value, this);
+  }
+  get marketingVersion(): string {
+    return $.utils.getText(3, this);
+  }
+  set marketingVersion(value: string) {
+    $.utils.setText(3, value, this);
+  }
+  toString(): string { return "GeneratedIsolatePackageMetadata_" + super.toString(); }
 }
 export class GatewayRouter_StaticResource extends $.Struct {
   static readonly _capnp = {

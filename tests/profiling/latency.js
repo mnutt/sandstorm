@@ -72,6 +72,26 @@ module.exports = {
       if (!(await unauthorized.request("unauthorized")).error) throw new Error("Grain accepted an unauthenticated request");
       unauthorized.close(); clients.delete(unauthorized);
 
+      const rpcResults = [];
+      for (let repeat = 1; repeat <= options.repetitions; repeat++) {
+        await browser.executeAsync(function (id, done) {
+          Meteor.call("benchmarkNodeCapnpBaseline", {
+            grainId: id, iterations: 1000, warmup: 100, includeSamples: true, profile: false,
+          }, (error, result) => done({ error: error ? error.message : null, result }));
+        }, [grainId], response => {
+          if (!response.value || response.value.error) throw new Error(JSON.stringify(response));
+          rpcResults.push(response.value.result);
+          fs.writeFileSync(path.join(output, "rpc-results.json"), JSON.stringify(rpcResults, null, 2));
+        });
+      }
+
+      if (process.env.E2E_FD_DIAGNOSTIC === "true") {
+        const connection = client(origin, cookie, 1);
+        await require("./fd-diagnostic")({ connection, batch, output });
+        await browser.end();
+        return;
+      }
+
       for (const concurrency of options.concurrency) {
         for (let repeat = 1; repeat <= options.repetitions; repeat++) {
           // Alternate control/stack order to reduce systematic warm-cache and machine-load bias.
