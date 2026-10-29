@@ -1,47 +1,31 @@
-@0xe912b22cf61cd218;
-
+@0xa2baaef09ab261af;
 $import "/capnp/c++.capnp".namespace("sandstorm");
 using Http = import "/capnp/compat/http-over-capnp.capnp";
 
-interface IsolateHost @0xb15098c984fb8f32 {
-  # Account-scoped control plane for the shared workerd host.
-  #
-  # The backend creates one host per account trust domain and gives its control capability only to
-  # the trusted account host in that domain. The account host supplies a bounded worker bundle and
-  # freshly-attenuated services; the V8-bearing host receives no grain filesystem root.
-
-  startGrain @0 (
-      grainId :Text,
-      services :IsolateBindingServices,
-      workerSource :Data) -> (grain :HostedIsolate);
-  # Instantiate or retain the named grain's worker. Repeated calls for the same grain are idempotent.
-  # `services` is a freshly attenuated capability for this grain, never a backend-wide interface.
+# Trusted controller for a single process/trust domain. The caller supplies already
+# attenuated services. This interface confers authority to create and retain workers.
+interface IsolateHost @0xdcdaa5a88a3fd342 {
+  startWorker @0 (workerId :Text, services :IsolateBindingServices, workerSource :Data)
+      -> (worker :HostedIsolate);
+  # An existing running ID is retained unchanged, including its source and services.
+  # Stop it before replacing it. IDs are opaque, nonempty, at most 256 bytes.
+  getInfo @1 () -> (protocolVersion :UInt16, sourceFormatVersion :UInt16);
 }
 
-interface IsolateBindingServices @0xd8b8ffcb9dbf83ea {
-  enum Binding {
-    sandstormApi @0;
-    storage @1;
-    powerbox @2;
-  }
-
-  getService @0 (binding :Binding) -> (service :Http.HttpService);
-  # Returns one service already confined to this grain. The native host can route requests through
-  # the capability but cannot derive another grain's service or storage path.
-
-  getBridge @1 () -> (bridge :Capability);
-  # Returns the grain-scoped native capability bootstrap. The embedded host exposes this through
-  # a direct binary message channel; worker code does not discover it through HTTP or WebSockets.
+interface IsolateBindingServices @0xa729f6e28d4b02ed {
+  getService @0 (name :Text) -> (service :Http.HttpService);
+  # Requests preserve the URL supplied by workerd, including scheme and authority.
+  getBridge @1 (name :Text) -> (bridge :Capability);
+  # Named capabilities are scoped to this worker. A bridge is an opaque Cap'n Proto
+  # bootstrap exposed through a bounded native byte channel, without FD passing.
 }
 
-interface HostedIsolate @0xae62f18e41ff24cb {
+interface HostedIsolate @0xe07a19005d5be30c {
   keepAlive @0 ();
-  # Refresh the eviction deadline without changing the worker or its transport bindings.
-
   stop @1 ();
-  # Evict this worker. Existing live RPC and HTTP connections fail; durable tokens remain valid.
-
   getHttpService @2 () -> (service :Http.HttpService);
-  # Returns this grain's worker ingress as a streaming HTTP capability. Possession of this
-  # HostedIsolate capability, rather than a grain ID or bearer token, authorizes ingress.
+  # Ingress authority comes from possession of this capability, not a worker ID.
+  # Stop/idle eviction invalidates existing ingress and worker-local services,
+  # cancels host HTTP operations, and closes native channels. It does not roll back
+  # side effects already accepted by remote services.
 }

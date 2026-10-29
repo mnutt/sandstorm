@@ -618,3 +618,30 @@ Compatibility dates and flags cover observable runtime behavior, including
 workerd behavior selected by Sandstorm. They do not stabilize private binding
 endpoints, transport framing, host protocols, or the members of
 `api.unstable`; those remain outside the app contract described above.
+
+## Building with the standalone host
+
+Sandstorm downloads the pinned `mnutt/isolate-host` v0.1.0 Linux x86-64 release;
+Bazel and a workerd source checkout are no longer needed. CMake verifies the archive
+SHA-256 before extraction and the executable SHA-256 before installation. The
+`isolate-host` target and `bin/isolate-host` location remain unchanged.
+`make verify-isolate-host-artifact` checks the selected artifact, and packaging
+also checks that the bundled executable matches it. Release licenses and the
+manifest are included under `usr/share/isolate-host` in the bundle.
+
+For local host development, configure with
+`cmake --preset dev -DSANDSTORM_ISOLATE_HOST_EXECUTABLE=/absolute/path/to/isolate-host`.
+Clear that setting to return to the release. The override must implement protocol
+version 1 and source format version 1; it is copied into the usual build location.
+It does not trigger a host source build. The published release requires glibc 2.38
+and uses libc, libm, and the ELF loader, which the existing account sandbox mounts
+as individual files. Test replacements in the account sandbox, not just standalone.
+
+The host schemas are vendored from v0.1.0 with their C++ namespace changed to
+`sandstorm`. The trusted bundle builder writes that format directly, including
+named HTTP/native bindings and the module aliases required by generated schema
+imports. There is no support for the former private host protocol or bundle format.
+
+When upgrading the release, update the archive and binary hashes in
+`CMakeLists.txt`, vendor its schemas without changing IDs or ordinals, and run
+`make isolate-ci` plus browser isolate suites and the memory/cross-grain benchmarks.

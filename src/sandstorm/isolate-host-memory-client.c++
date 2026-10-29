@@ -56,6 +56,9 @@ export default { fetch() { return new Response("memory-benchmark-ready"); } };
   capnp::EzRpcClient rpc(kj::str("unix:", argv[1]));
   auto& waitScope = rpc.getWaitScope();
   auto host = rpc.getMain<sandstorm::IsolateHost>();
+  auto info = host.getInfoRequest().send().wait(waitScope);
+  KJ_REQUIRE(info.getProtocolVersion() == 1 && info.getSourceFormatVersion() == 1,
+      "unsupported isolate-host protocol or source format");
   sandstorm::IsolateBindingServices::Client services = kj::heap<NoBindingServices>();
 
   capnp::ByteStreamFactory byteStreamFactory;
@@ -65,11 +68,11 @@ export default { fetch() { return new Response("memory-benchmark-ready"); } };
   kj::Vector<sandstorm::HostedIsolate::Client> grains(workerCount);
 
   for (auto i: kj::zeroTo(workerCount)) {
-    auto start = host.startGrainRequest();
-    start.setGrainId(kj::str("benchmark", i + 10000000));
+    auto start = host.startWorkerRequest();
+    start.setWorkerId(kj::str("benchmark", i + 10000000));
     start.setServices(services);
     start.setWorkerSource(sourceBytes);
-    auto grain = start.send().wait(waitScope).getGrain();
+    auto grain = start.send().wait(waitScope).getWorker();
 
     auto getHttp = grain.getHttpServiceRequest().send().wait(waitScope);
     auto service = httpFactory.capnpToKj(getHttp.getService());

@@ -47,7 +47,7 @@ jobs:
 
             sudo apt-get update && sudo apt-get install -y --no-install-recommends \
                 build-essential libcap-dev xz-utils zip unzip strace curl discount git python3 zlib1g-dev cmake ninja-build ccache apparmor \
-                clang-19 lld-19 libc++-19-dev libc++abi-19-dev libunwind-19-dev
+                clang-19 lld-19
 
             # Ubuntu 24.04 restricts unprivileged user namespaces by default via AppArmor.
             # Sandstorm requires user namespaces for sandboxing, so grant that permission
@@ -127,7 +127,6 @@ jobs:
             #     export CCACHE_DEBUG=1
             export CCACHE_SLOPPINESS="time_macros"
             # The CI preset enables ccache through CMake's compiler launchers.
-            # Keep compiler paths pointing to Clang itself for Bazel.
             export PATH=$CLANGDIR:$PATH
 
             cmake --preset ci

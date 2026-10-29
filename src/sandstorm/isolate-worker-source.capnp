@@ -1,10 +1,9 @@
-@0xb7f2e6f16c82ad91;
+@0xe641693c74a19b1d;
 
 using Cxx = import "/capnp/c++.capnp";
 $Cxx.namespace("sandstorm");
 
-# Sandstorm-owned, binary handoff from the per-grain supervisor bundle builder to the shared
-# workerd host. Paths and worker identity are deliberately absent.
+# Packed worker bundle supplied by the controller. No filesystem paths or worker identity.
 struct IsolateWorkerSource {
   formatVersion @5 :UInt16;
   # Persisted handoff format version. Writers currently emit 1; readers reject every other value
@@ -34,10 +33,9 @@ struct IsolateWorkerSource {
       text @1 :Data;
       data @2 :Data;
       json @3 :Data;
-      sandstormApi @4 :Void;
-      storage @5 :Void;
-      powerbox @6 :Void;
-      service @7 :Text;
+      httpService @4 :Text; # Name resolved through IsolateBindingServices.getService.
+      capnp @5 :Text; # Name resolved through IsolateBindingServices.getBridge.
+      service @6 :Text; # Worker-local Fetcher; currently only "main" is supported.
     }
   }
 }

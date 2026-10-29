@@ -52,7 +52,7 @@ public:
         headerTable(headerTableBuilder.build()) {}
 
   kj::Promise<void> getService(GetServiceContext context) override {
-    KJ_REQUIRE(context.getParams().getBinding() == IsolateBindingServices::Binding::STORAGE,
+    KJ_REQUIRE(context.getParams().getName() == "storage",
         "control test requested an unexpected binding service");
     context.getResults().setService(httpFactory.kjToCapnp(
         kj::heap<TestStorageService>(*headerTable, stored)));
@@ -118,7 +118,7 @@ export default {
   bindings[1].setName("SETTINGS");
   bindings[1].setJson(kj::StringPtr("{\"enabled\":true}").asBytes());
   bindings[2].setName("STORAGE");
-  bindings[2].setStorage();
+  bindings[2].setHttpService("storage");
   kj::VectorOutputStream sourceOutput;
   capnp::writePackedMessage(sourceOutput, sourceMessage);
   auto sourceBytes = sourceOutput.getArray();
@@ -162,14 +162,17 @@ export default { fetch() { return new Response("memory limit failed"); } };
   capnp::EzRpcClient rpc(kj::str("unix:", argv[1]));
   auto& waitScope = rpc.getWaitScope();
   auto host = rpc.getMain<sandstorm::IsolateHost>();
+  auto info = host.getInfoRequest().send().wait(waitScope);
+  KJ_REQUIRE(info.getProtocolVersion() == 1 && info.getSourceFormatVersion() == 1,
+      "unsupported isolate-host protocol or source format");
   sandstorm::IsolateBindingServices::Client services =
       kj::heap<sandstorm::BindingServicesImpl>();
 
-  auto start = host.startGrainRequest();
-  start.setGrainId("testgrain123");
+  auto start = host.startWorkerRequest();
+  start.setWorkerId("testgrain123");
   start.setServices(services);
   start.setWorkerSource(sourceBytes);
-  auto grain = start.send().wait(waitScope).getGrain();
+  auto grain = start.send().wait(waitScope).getWorker();
   grain.keepAliveRequest().send().wait(waitScope);
 
   capnp::ByteStreamFactory byteStreamFactory;
@@ -209,11 +212,11 @@ export default { fetch() { return new Response("memory limit failed"); } };
       (void)staleRequest.response.wait(waitScope);
     });
 
-    auto restart = host.startGrainRequest();
-    restart.setGrainId("testgrain123");
+    auto restart = host.startWorkerRequest();
+    restart.setWorkerId("testgrain123");
     restart.setServices(services);
     restart.setWorkerSource(sourceBytes);
-    auto restarted = restart.send().wait(waitScope).getGrain();
+    auto restarted = restart.send().wait(waitScope).getWorker();
     auto restartedHttp = restarted.getHttpServiceRequest().send().wait(waitScope);
     auto restartedService = httpFactory.capnpToKj(restartedHttp.getService());
     auto restartedClient = kj::newHttpClient(*restartedService);
@@ -240,11 +243,11 @@ export default { fetch() { return new Response("memory limit failed"); } };
   KJ_REQUIRE(httpResponse.body->readAllText().wait(waitScope) == "shared-storage-ok",
       "hosted worker did not round-trip through its storage binding");
 
-  auto cpuStart = host.startGrainRequest();
-  cpuStart.setGrainId("cpugrain123");
+  auto cpuStart = host.startWorkerRequest();
+  cpuStart.setWorkerId("cpugrain123");
   cpuStart.setServices(services);
   cpuStart.setWorkerSource(sourceBytes);
-  auto cpuGrain = cpuStart.send().wait(waitScope).getGrain();
+  auto cpuGrain = cpuStart.send().wait(waitScope).getWorker();
   auto cpuHttp = cpuGrain.getHttpServiceRequest().send().wait(waitScope);
   auto cpuService = httpFactory.capnpToKj(cpuHttp.getService());
   auto cpuClient = kj::newHttpClient(*cpuService);
@@ -271,11 +274,11 @@ export default { fetch() { return new Response("memory limit failed"); } };
   cpuGrain.stopRequest().send().wait(waitScope);
 
   sandstorm::expectFailure([&]() {
-    auto memoryStart = host.startGrainRequest();
-    memoryStart.setGrainId("memorygrain123");
+    auto memoryStart = host.startWorkerRequest();
+    memoryStart.setWorkerId("memorygrain123");
     memoryStart.setServices(services);
     memoryStart.setWorkerSource(memoryBytes);
-    auto memoryGrain = memoryStart.send().wait(waitScope).getGrain();
+    auto memoryGrain = memoryStart.send().wait(waitScope).getWorker();
     auto memoryHttp = memoryGrain.getHttpServiceRequest().send().wait(waitScope);
     auto memoryService = httpFactory.capnpToKj(memoryHttp.getService());
     auto memoryClient = kj::newHttpClient(*memoryService);
@@ -304,11 +307,11 @@ export default { fetch() { return new Response("memory limit failed"); } };
     (void)staleRequest.response.wait(waitScope);
   });
 
-  auto restart = host.startGrainRequest();
-  restart.setGrainId("testgrain123");
+  auto restart = host.startWorkerRequest();
+  restart.setWorkerId("testgrain123");
   restart.setServices(services);
   restart.setWorkerSource(sourceBytes);
-  auto restartedGrain = restart.send().wait(waitScope).getGrain();
+  auto restartedGrain = restart.send().wait(waitScope).getWorker();
   restartedGrain.keepAliveRequest().send().wait(waitScope);
   auto restartedHttp = restartedGrain.getHttpServiceRequest().send().wait(waitScope);
   auto restartedService = httpFactory.capnpToKj(restartedHttp.getService());
@@ -329,34 +332,35 @@ export default { fetch() { return new Response("memory limit failed"); } };
   });
   restartedGrain.stopRequest().send().wait(waitScope);
   sandstorm::expectFailure([&]() {
-    auto invalid = host.startGrainRequest();
-    invalid.setGrainId("../escape");
+    auto invalid = host.startWorkerRequest();
+    invalid.setWorkerId("");
     invalid.setServices(services);
+    invalid.setWorkerSource(sourceBytes);
     invalid.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
-    auto incomplete = host.startGrainRequest();
-    incomplete.setGrainId("missingworker123");
+    auto incomplete = host.startWorkerRequest();
+    incomplete.setWorkerId("missingworker123");
     incomplete.setServices(services);
     incomplete.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
-    auto invalid = host.startGrainRequest();
-    invalid.setGrainId("invalidjson");
+    auto invalid = host.startWorkerRequest();
+    invalid.setWorkerId("invalidjson");
     invalid.setServices(services);
     invalid.setWorkerSource(invalidBytes);
     invalid.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
-    auto unsupported = host.startGrainRequest();
-    unsupported.setGrainId("unsupportedversion");
+    auto unsupported = host.startWorkerRequest();
+    unsupported.setWorkerId("unsupportedversion");
     unsupported.setServices(services);
     unsupported.setWorkerSource(unsupportedBytes);
     unsupported.send().wait(waitScope);
   });
   sandstorm::expectFailure([&]() {
-    auto oversized = host.startGrainRequest();
-    oversized.setGrainId("oversizedbundle");
+    auto oversized = host.startWorkerRequest();
+    oversized.setWorkerId("oversizedbundle");
     oversized.setServices(services);
     oversized.setWorkerSource(
         kj::heapArray<kj::byte>(16 * 1024 * 1024 + 1).asPtr());

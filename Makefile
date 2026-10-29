@@ -35,7 +35,7 @@ CMAKE_BUILD = cmake --build --preset $(CMAKE_PRESET)
 	isolate-capnp-abi-check \
 	isolate-capnp-corpus-test isolate-capnp-fuzz isolate-capnp-types-test \
 	isolate-capnp-toolchain-test isolate-test \
-	stage-native verify-workerd-source isolate-host shell-env shell-build shell-build-debug bundle \
+	stage-native verify-isolate-host-artifact isolate-host shell-env shell-build shell-build-debug bundle \
 	test-app.spk test-app-spk test-app-dev app-index.spk app-index-spk app-index-dev \
 	tests/assets/isolate-test-app.spk isolate-test-app-spk isolate-test-app-dev \
 	tests/assets/isolate-api-powerbox-test-app.spk \
@@ -85,7 +85,7 @@ $(eval $(call cmake_target,typecheck,typecheck))
 $(eval $(call cmake_target,typecheck-ts,typecheck))
 $(eval $(call cmake_target,installer-test,installer-test))
 $(eval $(call cmake_target,stage-native,stage-native))
-$(eval $(call cmake_target,verify-workerd-source,verify-workerd-source))
+$(eval $(call cmake_target,verify-isolate-host-artifact,verify-isolate-host-artifact))
 $(eval $(call cmake_target,verify-isolate-release-bundle,verify-isolate-release-bundle))
 $(eval $(call cmake_target,isolate-host,isolate-host))
 $(eval $(call cmake_target,isolate-host-control-test,isolate-host-control-test))

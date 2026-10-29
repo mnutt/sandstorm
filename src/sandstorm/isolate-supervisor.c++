@@ -15,6 +15,7 @@
 // limitations under the License.
 
 #include "isolate-supervisor.h"
+#include "isolate-host-adapter.h"
 
 #include "isolate-capnp-framing.h"
 #include "isolate-native-host-launch.h"
@@ -314,7 +315,8 @@ struct IsolateMainViewRegistration final {
         .then([this, path = kj::mv(path)](kj::Own<kj::HttpClient>&& client) mutable {
       kj::HttpHeaders headers(host.headerTable);
       headers.set(kj::HttpHeaderId::HOST, "sandbox");
-      auto request = client->request(kj::HttpMethod::POST, path, headers, uint64_t(0));
+      auto request = client->request(
+          kj::HttpMethod::POST, isolateHostIngressUrl(path), headers, uint64_t(0));
       auto requestBody = kj::mv(request.body);
       return request.response.then(
           [client = kj::mv(client), requestBody = kj::mv(requestBody)](
@@ -1064,7 +1066,17 @@ kj::Array<byte> prepareRuntimeState(kj::StringPtr varPath, IsolateRuntimeConfig&
       case IsolateRuntimeConfig::ModuleType::JSON: output.setJson(input.content); break;
     }
   }
-  auto bindings = source.initBindings(config.bindings.size());
+  addIsolateHostModuleAliases(source);
+  bool needsNativeBridge = false;
+  for (auto& binding: config.bindings) {
+    if (binding.type == IsolateRuntimeConfig::BindingType::SANDSTORM_API) {
+      needsNativeBridge = true;
+    }
+  }
+  auto bindingCount = config.bindings.size() + size_t(needsNativeBridge);
+  KJ_REQUIRE(bindingCount <= MAX_ISOLATE_BINDINGS,
+      "Isolate bindings including native bridge exceed host count limit.");
+  auto bindings = source.initBindings(bindingCount);
   for (auto i: kj::indices(config.bindings)) {
     auto& input = config.bindings[i];
     auto output = bindings[i];
@@ -1073,16 +1085,22 @@ kj::Array<byte> prepareRuntimeState(kj::StringPtr varPath, IsolateRuntimeConfig&
       case IsolateRuntimeConfig::BindingType::TEXT: output.setText(input.value); break;
       case IsolateRuntimeConfig::BindingType::DATA: output.setData(input.value); break;
       case IsolateRuntimeConfig::BindingType::JSON: output.setJson(input.value); break;
-      case IsolateRuntimeConfig::BindingType::SANDSTORM_API: output.setSandstormApi(); break;
-      case IsolateRuntimeConfig::BindingType::STORAGE: output.setStorage(); break;
-      case IsolateRuntimeConfig::BindingType::POWERBOX: output.setPowerbox(); break;
+      case IsolateRuntimeConfig::BindingType::SANDSTORM_API: output.setHttpService("sandstormApi"); break;
+      case IsolateRuntimeConfig::BindingType::STORAGE: output.setHttpService("storage"); break;
+      case IsolateRuntimeConfig::BindingType::POWERBOX: output.setHttpService("powerbox"); break;
       case IsolateRuntimeConfig::BindingType::SERVICE: output.setService(input.serviceName); break;
     }
+  }
+  if (needsNativeBridge) {
+    auto bridge = bindings[config.bindings.size()];
+    bridge.setName("__SANDSTORM_NATIVE_CAPNP");
+    bridge.setCapnp("sandstormApi");
   }
   kj::VectorOutputStream sourceBytes;
   capnp::writePackedMessage(sourceBytes, sourceMessage);
   auto result = kj::heapArray<byte>(sourceBytes.getArray());
   writeFile(kj::str(bundleDir, "/worker-source.capnp.bin"), result);
+  KJ_REQUIRE(result.size() <= 16 * 1024 * 1024, "Worker source exceeds host byte limit.");
   return result;
 }
 
@@ -2219,7 +2237,8 @@ private:
         copyHeadersToHttp(request, headers);
 
         auto httpRequest = newState->client->request(
-            toHttpMethod(request.method), request.path, headers, request.expectedBodySize);
+            toHttpMethod(request.method), isolateHostIngressUrl(request.path), headers,
+            request.expectedBodySize);
         KJ_REQUIRE(httpRequest.body.get() != nullptr,
             "streaming request did not produce a request body stream");
         newState->requestBody = kj::mv(httpRequest.body);
@@ -2241,7 +2260,7 @@ private:
         copyHeadersToHttp(request, headers);
 
         auto httpRequest = state->client->request(
-            toHttpMethod(request.method), request.path, headers, bytesReceived);
+            toHttpMethod(request.method), isolateHostIngressUrl(request.path), headers, bytesReceived);
         auto response = kj::mv(httpRequest.response);
 
         if (httpRequest.body.get() != nullptr && bytesReceived > 0) {
@@ -2319,8 +2338,8 @@ private:
       copyHeadersToHttp(request, headers);
 
       auto bodySize = static_cast<uint64_t>(request.body.size());
-      auto httpRequest = state->client->request(toHttpMethod(request.method), request.path, headers,
-          bodySize);
+      auto httpRequest = state->client->request(toHttpMethod(request.method),
+          isolateHostIngressUrl(request.path), headers, bodySize);
       auto response = kj::mv(httpRequest.response);
 
       if (httpRequest.body.get() != nullptr && request.body.size() > 0) {
@@ -2352,7 +2371,7 @@ private:
             kj::Own<kj::HttpClient>&& client) mutable -> kj::Promise<void> {
       kj::HttpHeaders headers(host->headerTable);
       copyHeadersToHttp(request, headers);
-      return client->openWebSocket(request.path, headers)
+      return client->openWebSocket(isolateHostIngressUrl(request.path), headers)
           .then([client = kj::mv(client), clientStream = kj::mv(clientStream), results](
               kj::HttpClient::WebSocketResponse&& response) mutable -> kj::Promise<void> {
         if (response.statusCode != 101) {
@@ -4426,6 +4445,21 @@ private:
   }
 };
 
+// The generic host preserves absolute URLs. Sandstorm services route on paths;
+// retain escaped query values and empty components when removing the origin.
+class HostBindingHttpAdapter final: public kj::HttpService {
+public:
+  explicit HostBindingHttpAdapter(kj::Own<kj::HttpService> inner): inner(kj::mv(inner)) {}
+  kj::Promise<void> request(kj::HttpMethod method, kj::StringPtr url,
+      const kj::HttpHeaders& headers, kj::AsyncInputStream& body,
+      kj::HttpService::Response& response) override {
+    auto path = isolateHostServicePath(url);
+    return inner->request(method, path, headers, body, response).attach(kj::mv(path));
+  }
+private:
+  kj::Own<kj::HttpService> inner;
+};
+
 class HostedIsolateBindingServices final: public IsolateBindingServices::Server {
 public:
   HostedIsolateBindingServices(
@@ -4434,22 +4468,23 @@ public:
 
   kj::Promise<void> getService(GetServiceContext context) override {
     kj::Own<kj::HttpService> service;
-    switch (context.getParams().getBinding()) {
-      case IsolateBindingServices::Binding::SANDSTORM_API:
-        service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host);
-        break;
-      case IsolateBindingServices::Binding::STORAGE:
-        service = kj::heap<StorageBindingService>(host->headerTable, config->storageRootPath);
-        break;
-      case IsolateBindingServices::Binding::POWERBOX:
-        service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host, true);
-        break;
+    auto name = context.getParams().getName();
+    if (name == "sandstormApi") {
+      service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host);
+    } else if (name == "storage") {
+      service = kj::heap<StorageBindingService>(host->headerTable, config->storageRootPath);
+    } else if (name == "powerbox") {
+      service = kj::heap<SandstormApiBindingService>(host->headerTable, *config, *host, true);
+    } else {
+      KJ_FAIL_REQUIRE("unknown isolate HTTP binding service", name);
     }
+    service = kj::heap<HostBindingHttpAdapter>(kj::mv(service));
     context.getResults().setService(host->exportHttpService(kj::mv(service)));
     return kj::READY_NOW;
   }
 
   kj::Promise<void> getBridge(GetBridgeContext context) override {
+    KJ_REQUIRE(context.getParams().getName() == "sandstormApi", "unknown native bridge");
     context.getResults().setBridge(SandstormApiBindingService::makeBridge(*config, *host));
     return kj::READY_NOW;
   }
@@ -4940,8 +4975,8 @@ public:
       auto runtimeHost = kj::refcounted<IsolateRuntimeHost>(
           network, timer, grainId, coreCap, spoolIo);
 
-      auto nativeStart = nativeHost.startGrainRequest();
-      nativeStart.setGrainId(grainId);
+      auto nativeStart = nativeHost.startWorkerRequest();
+      nativeStart.setWorkerId(grainId);
       nativeStart.setWorkerSource(admitted->workerSource);
       nativeStart.setServices(kj::heap<HostedIsolateBindingServices>(
           kj::addRef(*admitted->runtimeConfig), kj::addRef(*runtimeHost)));
@@ -4949,7 +4984,7 @@ public:
           admitted = kj::mv(admitted), coreRedirector = kj::mv(coreRedirector),
           runtimeHost = kj::mv(runtimeHost),
           coreCap = kj::mv(coreCap)](auto response) mutable -> Supervisor::Client {
-        auto hosted = response.getGrain();
+        auto hosted = response.getWorker();
         HostedIsolate::Client lifecycleHosted = hosted;
         runtimeHost->setHosted(kj::mv(hosted));
         auto lifecycle = kj::refcounted<HostedSupervisorLifecycle>(
@@ -4969,7 +5004,7 @@ public:
     }).fork();
 
     // Publish the fork before admission begins. Concurrent callers for this grain join the same
-    // startup and cannot race a duplicate nativeHost.startGrain() call.
+    // startup and cannot race a duplicate nativeHost.startWorker() call.
     auto response = start.addBranch().then(
         [context](Supervisor::Client&& supervisor) mutable {
       context.getResults().setSupervisor(supervisor);
@@ -5099,6 +5134,9 @@ kj::MainBuilder::Validity IsolateAccountHostMain::run() {
   auto nativeStream = io.lowLevelProvider->wrapSocketFd(kj::mv(nativePipe.readEnd));
   capnp::TwoPartyClient nativeRpc(*nativeStream);
   auto nativeHost = nativeRpc.bootstrap().castAs<IsolateHost>();
+  auto info = nativeHost.getInfoRequest().send().wait(io.waitScope);
+  KJ_REQUIRE(info.getProtocolVersion() == 1 && info.getSourceFormatVersion() == 1,
+      "unsupported isolate-host protocol or source format");
 
   capnp::TwoPartyServer server(kj::heap<IsolateAccountHostImpl>(io.unixEventPort,
       io.provider->getNetwork(), io.provider->getTimer(), kj::mv(nativeHost),

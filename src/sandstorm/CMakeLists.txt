@@ -177,6 +177,7 @@ add_library(sandstorm_core STATIC
   isolate-session-registry.c++
   isolate-supervisor.c++
   isolate-util.c++
+  isolate-host-adapter.c++
   sandbox.c++
   send-fd.c++
   smtp-proxy.c++
@@ -257,7 +258,10 @@ sandstorm_add_executable(test-app test-app/test-app.c++)
 sandstorm_make_static(test-app)
 
 if(BUILD_TESTING)
-  foreach(_test IN ITEMS appid-replacements id-to-text util)
+  add_test(NAME sandstorm/isolate-host-artifact
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/cmake/TestInstallIsolateHost.py"
+      "${CMAKE_COMMAND}" "${PROJECT_SOURCE_DIR}/cmake/InstallIsolateHost.cmake")
+  foreach(_test IN ITEMS appid-replacements id-to-text util isolate-host-adapter)
     set(_target "sandstorm-${_test}-test")
     add_executable("${_target}" "${_test}-test.c++")
     target_link_libraries("${_target}" PRIVATE

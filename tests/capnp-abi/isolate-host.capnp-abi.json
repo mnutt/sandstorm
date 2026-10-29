@@ -4,72 +4,82 @@
   "interfaces": [
     {
       "name": "IsolateHost",
-      "interfaceId": "0xb15098c984fb8f32",
+      "interfaceId": "0xdcdaa5a88a3fd342",
       "superclasses": [],
       "methods": [
         {
-          "name": "startGrain",
+          "name": "startWorker",
           "ordinal": 0,
-          "paramStructId": "0xb5a7ca26b34ff476",
-          "resultStructId": "0x8fdf1a99638978ff",
-          "params": [{"name": "grainId", "type": "Text"}, {"name": "services", "type": "IsolateBindingServices"}, {"name": "workerSource", "type": "Data"}],
-          "results": [{"name": "grain", "type": "HostedIsolate"}]
+          "paramStructId": "0x8e71d6535512d965",
+          "resultStructId": "0xb1b95e84cc99a69d",
+          "params": [{"name": "workerId", "type": "Text"}, {"name": "services", "type": "IsolateBindingServices"}, {"name": "workerSource", "type": "Data"}],
+          "results": [{"name": "worker", "type": "HostedIsolate"}]
+        },
+        {
+          "name": "getInfo",
+          "ordinal": 1,
+          "paramStructId": "0xc8e414f8af053db1",
+          "resultStructId": "0xbb276678e12699fb",
+          "params": [],
+          "results": [{"name": "protocolVersion", "type": "UInt16"}, {"name": "sourceFormatVersion", "type": "UInt16"}]
         }
       ]
     },
     {
       "name": "IsolateBindingServices",
-      "interfaceId": "0xd8b8ffcb9dbf83ea",
+      "interfaceId": "0xa729f6e28d4b02ed",
       "superclasses": [],
       "methods": [
         {
           "name": "getService",
           "ordinal": 0,
-          "paramStructId": "0xdf2f3459f08c99bf",
-          "resultStructId": "0x9858a4fb8b22b9cb",
-          "params": [{"name": "binding", "type": "Binding"}],
+          "paramStructId": "0xc4abc36172b7edbf",
+          "resultStructId": "0x8cb503f160ad12eb",
+          "params": [{"name": "name", "type": "Text"}],
           "results": [{"name": "service", "type": "Http.HttpService"}]
         },
         {
           "name": "getBridge",
           "ordinal": 1,
-          "paramStructId": "0xfdb5ed634441a833",
-          "resultStructId": "0xbe20a297f24d964b",
-          "params": [],
+          "paramStructId": "0x89689fefa2f65448",
+          "resultStructId": "0xd699852493ee031a",
+          "params": [{"name": "name", "type": "Text"}],
           "results": [{"name": "bridge", "type": "Capability"}]
         }
       ]
     },
     {
       "name": "HostedIsolate",
-      "interfaceId": "0xae62f18e41ff24cb",
+      "interfaceId": "0xe07a19005d5be30c",
       "superclasses": [],
       "methods": [
         {
           "name": "keepAlive",
           "ordinal": 0,
-          "paramStructId": "0xd9155c437d33ca74",
-          "resultStructId": "0x9c69338aa91638fa",
+          "paramStructId": "0xaa6a46da7b00a9c9",
+          "resultStructId": "0xbbef52e614cd49a0",
           "params": [],
           "results": []
         },
         {
           "name": "stop",
           "ordinal": 1,
-          "paramStructId": "0xc23ce9ea936cbb06",
-          "resultStructId": "0xf69e659bf4e5fe0c",
+          "paramStructId": "0xf17ffcc84041f010",
+          "resultStructId": "0xf471336640722dc3",
           "params": [],
           "results": []
         },
         {
           "name": "getHttpService",
           "ordinal": 2,
-          "paramStructId": "0xbe043e659c1299aa",
-          "resultStructId": "0xd94a9bf7a8b06c5e",
+          "paramStructId": "0x8c24a3405aa3a2a6",
+          "resultStructId": "0xa471f275936bec88",
           "params": [],
           "results": [{"name": "service", "type": "Http.HttpService"}]
         }
       ]
     }
+  ],
+  "structs": [
   ]
 }

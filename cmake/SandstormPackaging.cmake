@@ -586,9 +586,9 @@ function(sandstorm_add_packaging_targets)
 
   _sandstorm_add_tarball(package "" FALSE)
   _sandstorm_add_tarball(package-fast "-fast" TRUE)
-  add_dependencies(bundle verify-workerd-source)
-  add_dependencies(package verify-workerd-source)
-  add_dependencies(package-fast verify-workerd-source)
+  add_dependencies(bundle verify-isolate-host-artifact)
+  add_dependencies(package verify-isolate-host-artifact)
+  add_dependencies(package-fast verify-isolate-host-artifact)
 
   find_program(SANDSTORM_TEST_EXECUTABLE NAMES test REQUIRED)
   add_custom_target(verify-isolate-release-bundle
@@ -649,7 +649,7 @@ function(sandstorm_add_packaging_targets)
 
   add_custom_target(isolate-examples-test
     COMMAND "${CMAKE_COMMAND}" -E env
-      "TESTCASE=tests/apps/isolate-examples.js"
+      "TESTCASE=apps/isolate-examples.js"
       "${PROJECT_SOURCE_DIR}/tests/run-local.sh"
       "${_fast_package}"
       "${_test_app_spk}"
@@ -664,7 +664,7 @@ function(sandstorm_add_packaging_targets)
     VERBATIM)
 
   add_custom_target(isolate-ci
-    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target verify-workerd-source
+    COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target verify-isolate-host-artifact
     COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target verify-isolate-release-bundle
     COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target isolate-test
     COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target isolate-host-control-test

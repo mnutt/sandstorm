@@ -1,106 +1,53 @@
 include(GNUInstallDirs)
-find_package(Git REQUIRED)
-find_program(SANDSTORM_PATCH_EXECUTABLE NAMES patch REQUIRED)
-
 function(sandstorm_install_native)
-  add_custom_target(verify-workerd-source
-    COMMAND "${CMAKE_COMMAND}"
-      "-DGIT=${GIT_EXECUTABLE}"
-      "-DREPOSITORY=${PROJECT_SOURCE_DIR}/deps/workerd"
-      "-DEXPECTED=${SANDSTORM_WORKERD_SOURCE_COMMIT}"
-      "-DPATCH=${PROJECT_SOURCE_DIR}/patches/workerd/0001-add-sandstorm-isolate-host-target.patch"
-      -P "${PROJECT_SOURCE_DIR}/cmake/VerifyGitHead.cmake"
-    DEPENDS
-      "${PROJECT_SOURCE_DIR}/deps/workerd"
-      "${PROJECT_SOURCE_DIR}/cmake/VerifyGitHead.cmake"
-      "${PROJECT_SOURCE_DIR}/patches/workerd/0001-add-sandstorm-isolate-host-target.patch"
-    COMMENT "Verifying the pinned workerd source checkout"
-    VERBATIM)
-
-  set(_bazel "${CMAKE_BINARY_DIR}/tools/bazel-${SANDSTORM_BAZEL_VERSION}")
-  add_custom_command(
-    OUTPUT "${_bazel}"
-    COMMAND "${CMAKE_COMMAND}"
-      "-DURL=https://github.com/bazelbuild/bazel/releases/download/${SANDSTORM_BAZEL_VERSION}/bazel-${SANDSTORM_BAZEL_VERSION}-linux-x86_64"
-      "-DOUTPUT=${_bazel}"
-      "-DSHA256=${SANDSTORM_BAZEL_LINUX_X86_64_SHA256}"
-      -P "${PROJECT_SOURCE_DIR}/cmake/DownloadVerified.cmake"
-    DEPENDS "${PROJECT_SOURCE_DIR}/cmake/DownloadVerified.cmake"
-    COMMENT "Downloading Bazel ${SANDSTORM_BAZEL_VERSION}"
-    VERBATIM)
-
-  set(_workerd_embed_dir "${CMAKE_BINARY_DIR}/workerd-embed")
-  set(_workerd_embed_stamp "${_workerd_embed_dir}/.sandstorm-source.stamp")
-  set(_workerd_patch
-    "${PROJECT_SOURCE_DIR}/patches/workerd/0001-add-sandstorm-isolate-host-target.patch")
-  add_custom_command(
-    OUTPUT "${_workerd_embed_stamp}"
-    COMMAND "${CMAKE_COMMAND}" -E remove_directory "${_workerd_embed_dir}"
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory
-      "${PROJECT_SOURCE_DIR}/deps/workerd" "${_workerd_embed_dir}"
-    COMMAND "${CMAKE_COMMAND}" -E copy
-      "${PROJECT_SOURCE_DIR}/isolate-host/isolate-host-main.c++"
-      "${_workerd_embed_dir}/src/workerd/server/sandstorm-isolate-host.c++"
-    COMMAND "${CMAKE_COMMAND}" -E copy
-      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host.capnp"
-      "${_workerd_embed_dir}/src/workerd/server/sandstorm-isolate-host.capnp"
-    COMMAND "${CMAKE_COMMAND}" -E copy
-      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-worker-source.capnp"
-      "${_workerd_embed_dir}/src/workerd/server/sandstorm-isolate-worker-source.capnp"
-    COMMAND "${CMAKE_COMMAND}" -E chdir "${_workerd_embed_dir}"
-      "${SANDSTORM_PATCH_EXECUTABLE}" --batch --fuzz=0 -p1 -i "${_workerd_patch}"
-    COMMAND "${CMAKE_COMMAND}" -E touch "${_workerd_embed_stamp}"
-    DEPENDS
-      verify-workerd-source
-      "${PROJECT_SOURCE_DIR}/deps/workerd"
-      "${PROJECT_SOURCE_DIR}/isolate-host/isolate-host-main.c++"
-      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-host.capnp"
-      "${PROJECT_SOURCE_DIR}/src/sandstorm/isolate-worker-source.capnp"
-      "${_workerd_patch}"
-    COMMENT "Preparing the embedded workerd host source"
-    VERBATIM)
-
   set(_isolate_host_bin "${CMAKE_BINARY_DIR}/bin/isolate-host")
-  # Bazel resolves /usr/lib/ccache/clang to the ccache binary, then invokes it
-  # directly with Clang flags. Hide the symlink farm so it finds Clang itself.
-  set(_bazel_path "$ENV{PATH}")
-  string(REGEX REPLACE "^/usr/lib/ccache:" "" _bazel_path "${_bazel_path}")
-
-  # Keep Bazel's compiler (and its detected standard-library include paths) in
-  # sync with the compiler selected by CMake. This also avoids stale Bazel
-  # toolchain detection when libc++ is installed after the first build.
-  set(_bazel_build_options
-    --config=release
-    "--repo_env=CC=${CMAKE_C_COMPILER}")
-
-  # Some Linux distributions, including Arch, package the static libc++ ABI
-  # runtime separately. Workerd's Linux configuration links libc++.a directly,
-  # so add libc++abi.a when the platform provides it as a separate archive.
-  set(_saved_find_library_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
-  set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
-  find_library(SANDSTORM_LIBCXXABI_STATIC_LIBRARY NAMES c++abi)
-  set(CMAKE_FIND_LIBRARY_SUFFIXES "${_saved_find_library_suffixes}")
-  if(SANDSTORM_LIBCXXABI_STATIC_LIBRARY)
-    list(APPEND _bazel_build_options
-      "--linkopt=${SANDSTORM_LIBCXXABI_STATIC_LIBRARY}"
-      "--host_linkopt=${SANDSTORM_LIBCXXABI_STATIC_LIBRARY}")
+  set(_host_release "${CMAKE_BINARY_DIR}/isolate-host-${SANDSTORM_ISOLATE_HOST_VERSION}")
+  set(_archive "${_host_release}.tar.xz")
+  if(SANDSTORM_ISOLATE_HOST_EXECUTABLE)
+    get_filename_component(_host_source "${SANDSTORM_ISOLATE_HOST_EXECUTABLE}" ABSOLUTE)
+    set(_host_hash "")
+    set(_host_deps "${_host_source}")
+  else()
+    if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+      message(FATAL_ERROR "The isolate-host release supports Linux x86-64 only; supply SANDSTORM_ISOLATE_HOST_EXECUTABLE for this platform.")
+    endif()
+    add_custom_command(OUTPUT "${_archive}"
+      COMMAND "${CMAKE_COMMAND}"
+        "-DURL=https://github.com/mnutt/isolate-host/releases/download/v${SANDSTORM_ISOLATE_HOST_VERSION}/isolate-host-${SANDSTORM_ISOLATE_HOST_VERSION}-linux-x86_64.tar.xz"
+        "-DOUTPUT=${_archive}"
+        "-DSHA256=${SANDSTORM_ISOLATE_HOST_SHA256}"
+        -P "${PROJECT_SOURCE_DIR}/cmake/DownloadVerified.cmake"
+      DEPENDS "${PROJECT_SOURCE_DIR}/cmake/DownloadVerified.cmake"
+      COMMENT "Downloading isolate-host ${SANDSTORM_ISOLATE_HOST_VERSION}"
+      VERBATIM)
+    set(_host_source "${_host_release}/bin/isolate-host")
+    set(_host_hash "${SANDSTORM_ISOLATE_HOST_BINARY_SHA256}")
+    set(_host_deps "${_archive}")
+    install(DIRECTORY "${_host_release}/licenses/"
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/isolate-host/licenses" COMPONENT native)
+    install(FILES "${_host_release}/LICENSE" "${_host_release}/NOTICE"
+      "${_host_release}/manifest.json"
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/isolate-host" COMPONENT native)
   endif()
-
-  add_custom_command(
-    OUTPUT "${_isolate_host_bin}"
-    COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_bazel_path}"
-      "${_bazel}" build ${_bazel_build_options}
-      //src/workerd/server:sandstorm-isolate-host
-    COMMAND "${CMAKE_COMMAND}" -E copy
-      "${_workerd_embed_dir}/bazel-bin/src/workerd/server/sandstorm-isolate-host"
-      "${_isolate_host_bin}.new"
-    COMMAND "${CMAKE_COMMAND}" -E rename
-      "${_isolate_host_bin}.new" "${_isolate_host_bin}"
-    WORKING_DIRECTORY "${_workerd_embed_dir}"
-    DEPENDS "${_bazel}" "${_workerd_embed_stamp}"
-    COMMENT "Building the embedded workerd isolate host"
+  set(_host_args
+    "-DSOURCE=${_host_source}" "-DOUTPUT=${_isolate_host_bin}"
+    "-DARCHIVE=${_archive}" "-DRELEASE_DIR=${_host_release}"
+    "-DARCHIVE_SHA256=${SANDSTORM_ISOLATE_HOST_SHA256}"
+    "-DBINARY_SHA256=${_host_hash}"
+    "-DLOCAL_OVERRIDE=${SANDSTORM_ISOLATE_HOST_EXECUTABLE}")
+  add_custom_command(OUTPUT "${_isolate_host_bin}"
+    COMMAND "${CMAKE_COMMAND}" ${_host_args}
+      -P "${PROJECT_SOURCE_DIR}/cmake/InstallIsolateHost.cmake"
+    DEPENDS ${_host_deps} "${PROJECT_SOURCE_DIR}/cmake/InstallIsolateHost.cmake"
+    COMMENT "Installing the prebuilt isolate host"
     VERBATIM)
   add_custom_target(isolate-host DEPENDS "${_isolate_host_bin}")
+  add_custom_target(verify-isolate-host-artifact
+    COMMAND "${CMAKE_COMMAND}" ${_host_args} -DVERIFY_ONLY=ON
+      -P "${PROJECT_SOURCE_DIR}/cmake/InstallIsolateHost.cmake"
+    DEPENDS isolate-host
+    COMMENT "Verifying the selected isolate-host artifact"
+    VERBATIM)
   install(PROGRAMS "${_isolate_host_bin}"
     DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT native)

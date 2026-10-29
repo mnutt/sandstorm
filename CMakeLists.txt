@@ -29,13 +29,13 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 set(SANDSTORM_BUILD 0 CACHE STRING "Sandstorm release build number")
-set(SANDSTORM_WORKERD_SOURCE_COMMIT ea5e86d22f16996a3d8fdb8922c34eb7e8711cd3
-  CACHE STRING "Pinned workerd source commit")
-set(SANDSTORM_BAZEL_VERSION 9.1.0 CACHE STRING
-  "Bazel version used to build the embedded workerd host")
-set(SANDSTORM_BAZEL_LINUX_X86_64_SHA256
-  a667454f3f4f8878df8199136b82c199f6ada8477b337fae3b1ef854f01e4e2f
-  CACHE STRING "SHA-256 for the pinned Bazel Linux x86-64 binary")
+set(SANDSTORM_ISOLATE_HOST_VERSION 0.1.0)
+set(SANDSTORM_ISOLATE_HOST_SHA256
+  2861c648fca7a0a71ce69bde6f33cb5346b3dc0f71aba4ea65e0680ab3cac6fa)
+set(SANDSTORM_ISOLATE_HOST_BINARY_SHA256
+  b5ba1331842f998058fb05da679138adc35f8bc8ad62bcb0bc4fbf7ae2305dbc)
+set(SANDSTORM_ISOLATE_HOST_EXECUTABLE "" CACHE FILEPATH
+  "Optional prebuilt isolate-host executable for local development")
 set(SANDSTORM_CAPNP_ES_NPM_VERSION 0.3.0 CACHE STRING
   "npm @mnutt/capnp-es version used for isolate schema generation")
 set(SANDSTORM_CAPNP_ES_COMPILER_MODULE "" CACHE FILEPATH

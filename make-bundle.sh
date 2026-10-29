@@ -143,6 +143,10 @@ mkdir -p "$BUNDLE_DIR/bin"
 cp "$NATIVE_STAGE/bin/sandstorm-http-bridge" "$BUNDLE_DIR/bin/sandstorm-http-bridge"
 cp "$NATIVE_STAGE/bin/sandstorm" "$BUNDLE_DIR/sandstorm"
 cp "$NATIVE_STAGE/bin/isolate-host" "$BUNDLE_DIR/bin/isolate-host"
+if [ -d "$NATIVE_STAGE/share/isolate-host" ]; then
+  mkdir -p "$BUNDLE_DIR/usr/share"
+  cp -a "$NATIVE_STAGE/share/isolate-host" "$BUNDLE_DIR/usr/share/"
+fi
 cp "$METEOR_DEV_BUNDLE/bin/node" "$BUNDLE_DIR/bin"
 
 # We used to pull mongodb out of the meteor dev bundle, but we need to figure out how to safely
