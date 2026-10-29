@@ -3,6 +3,17 @@ const { IgnorePlugin } = require("@rspack/core");
 const path = require("node:path");
 
 module.exports = defineConfig((Meteor) => ({
+  output: {
+    clean: {
+      // Rspack can pass absolute paths. Match generated directories relative to its output
+      // root, so a checkout under a parent named "build" does not lose all public/private assets.
+      keep(filename) {
+        const outputRoot = path.resolve(__dirname, Meteor.isServer ? "private" : "public");
+        const relative = path.isAbsolute(filename) ? path.relative(outputRoot, filename) : filename;
+        return !/^build(?:-[^/\\]+)?(?:[/\\]|$)/.test(relative);
+      },
+    },
+  },
   performance: Meteor.isServer
     ? false
     : {
