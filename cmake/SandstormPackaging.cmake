@@ -634,6 +634,8 @@ function(sandstorm_add_packaging_targets)
     COMMAND "${CMAKE_COMMAND}" -E env
       "SANDSTORM_METEOR_TESTAPP_PATH=${_meteor_testapp_spk}"
       "ISOLATE_TEST_SPK=${_isolate_test_app_spk}"
+      "ISOLATE_API_POWERBOX_TEST_SPK=${_api_powerbox_spk}"
+      "ISOLATE_API_PROVIDER_TEST_SPK=${PROJECT_SOURCE_DIR}/tests/assets/isolate-api-provider-test-app.spk"
       "${PROJECT_SOURCE_DIR}/tests/run-local.sh"
       "${_package_dir}/sandstorm-${SANDSTORM_BUILD}-fast.tar.xz"
       "${_test_app_spk}"
@@ -652,6 +654,8 @@ function(sandstorm_add_packaging_targets)
   add_custom_target(isolate-examples-test
     COMMAND "${CMAKE_COMMAND}" -E env
       "TESTCASE=apps/isolate-examples.js"
+      "ISOLATE_API_POWERBOX_TEST_SPK=${_api_powerbox_spk}"
+      "ISOLATE_API_PROVIDER_TEST_SPK=${PROJECT_SOURCE_DIR}/tests/assets/isolate-api-provider-test-app.spk"
       "${PROJECT_SOURCE_DIR}/tests/run-local.sh"
       "${_fast_package}"
       "${_test_app_spk}"
